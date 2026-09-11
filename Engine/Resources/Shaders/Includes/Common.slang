@@ -869,9 +869,9 @@ struct FLightShadowData
 
 struct FLightData
 {
-    uint   NumLights;
+    uint   _PadNumLights;   // the live counts are the spans' own
     uint   bHasIBL;       // 1 = environment IBL cubes valid; 0 = skylight-only flat ambient fallback
-    uint   NumShadows;    // bounds the Shadows allocation; every assigned ShadowDataIndex is below it
+    uint   _PadNumShadows;
     uint   Padding;
     float3 SunDirection;   // to-light: FROM surface TOWARD the sun (== Lights[0].Direction)
     uint   bHasSun;
@@ -886,9 +886,9 @@ struct FLightData
     // z = contact-shadow world length (0 = off), w = contact-shadow tap count.
     float4 ShadowParams2;
     float4 AmbientLight;
-    // Sized to the live count, so never index these past NumLights / NumShadows.
-    FLight*           Lights;
-    FLightShadowData* Shadows;
+    // Each carries its own live count, so no caller has to remember a separate bound.
+    GPUSpan<FLight>           Lights;
+    GPUSpan<FLightShadowData> Shadows;
 };
 
 struct FCluster

@@ -1172,6 +1172,10 @@ namespace Lumina
         /// Frame the slot was written on, so a slot is only read once its copy has certainly landed.
         TArray<uint64, RHI::kFramesInFlight>                StreamingFeedbackStamp = {};
         uint32                                              StreamingFeedbackSlots = 0;
+
+        // Live prefix of Frame.Lighting.Lights / .Shadows; the GPU side reads these off the spans.
+        uint32                                              NumLiveLights  = 0;
+        uint32                                              NumLiveShadows = 0;
         uint64                                              StreamingFeedbackFrame = 0;
         
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          RenderBucketRing = {};

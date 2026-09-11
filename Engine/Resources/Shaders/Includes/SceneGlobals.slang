@@ -427,8 +427,8 @@ float4 GetCollectionVec4(uint MatIndex, uint Slot, uint Index)
 
 FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }
 
-FLight GetLightAt(uint Index)       { return loadAligned<16>(LightData().Lights + Index); }
-uint   GetNumLights()               { return LightData().NumLights;     }
+FLight GetLightAt(uint Index)       { return SpanGetAligned(&LightData().Lights, Index); }
+uint   GetNumLights()               { return LightData().Lights.Count;  }
 float3 GetSunDirection()            { return LightData().SunDirection;  }
 float3 GetAmbientLightColor()       { return LightData().AmbientLight.xyz; }
 float  GetAmbientLightIntensity()   { return LightData().AmbientLight.w;   }
@@ -451,15 +451,21 @@ float3 GetVolumetricAmbientRadiance()
     return Ambient * GetAmbientLightIntensity();
 }
 
-// Callers must check Light.ShadowDataIndex != INDEX_NONE first.
+// A ShadowDataIndex of INDEX_NONE, or one left over from a frame with more shadows than this one, is
+// out of range rather than special: the span's count rejects both and the caller gets an identity tile.
 float4x4 GetShadowViewProjection(int ShadowDataIndex, uint ViewIndex)
 {
-    return LightData().Shadows[ShadowDataIndex].ViewProjection[ViewIndex];
+    return SpanGet(&LightData().Shadows, (uint)ShadowDataIndex).ViewProjection[ViewIndex];
 }
 
 FLightShadow GetShadowTile(int ShadowDataIndex, uint Face)
 {
-    return loadAligned<16>(&LightData().Shadows[ShadowDataIndex].Shadow[Face]);
+    if (!SpanContains(&LightData().Shadows, (uint)ShadowDataIndex))
+    {
+        FLightShadow Empty = {};
+        return Empty;
+    }
+    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).Shadow[Face]);
 }
 
 float    GetTime()                  { return Scene().Time;       }

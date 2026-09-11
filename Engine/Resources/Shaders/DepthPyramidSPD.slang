@@ -24,7 +24,7 @@ struct FPushConstants
     float2 InvPyramidSize;
     uint   SrcDepthIndex;
     uint   ReduceMax;       // 0 = min (reverse-Z camera depth), 1 = max (standard-Z shadow depth)
-    uint*  AtomicCounter;
+    GPUSpan<uint> AtomicCounter;
     uint   MipUAV[SPD_MAX_MIPS];
 };
 
@@ -223,7 +223,7 @@ void ComputeMain(
     if (all(TT == uint2(0, 0)))
     {
         uint OldCount;
-        InterlockedAdd(Pass().AtomicCounter[0], 1u, OldCount);
+        InterlockedAdd(SpanAt(&Pass().AtomicCounter, 0u)[0], 1u, OldCount);
         SpdIsLastWorkgroup = ((OldCount + 1u) == Pass().NumWorkGroups);
     }
 
@@ -233,7 +233,7 @@ void ComputeMain(
 
     if (all(TT == uint2(0, 0)))
     {
-        Pass().AtomicCounter[0] = 0u;
+        SpanSet(&Pass().AtomicCounter, 0u, 0u);
     }
 
     // Walk mip-5 in 64x64 sub-tiles. Pyramids up to 2048-wide fit in one.

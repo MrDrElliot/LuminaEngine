@@ -2,6 +2,7 @@
 
 #include "MaterialTypes.h"
 #include "RHI.h"
+#include "GPUSpan.h"
 #include "Containers/Vector.h"
 
 namespace Lumina
@@ -43,6 +44,10 @@ namespace Lumina::RHI
 
         // Also the per-frame publish point for a staged table, which is why it is not const.
         RUNTIME_API GPUPtr GetMaterialBuffer();
+
+        // What consumers should bind: publishes the table and hands back the address with the slot count
+        // it is valid for, so neither can be passed on without the other.
+        RUNTIME_API TGPUSpan<FMaterialUniforms> GetMaterialSpan();
 
         /** Slots the table can currently hold; grows by doubling. */
         RUNTIME_API uint32 GetCapacity() const;
@@ -112,6 +117,8 @@ namespace Lumina::RHI
         RUNTIME_API void UpdateRange(int32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize);
 
         RUNTIME_API GPUPtr GetBuffer() const { return CollectionBuffer.Gpu; }
+
+        TGPUSpan<FMaterialCollectionUniforms> GetSpan() const { return { CollectionBuffer }; }
 
     private:
 

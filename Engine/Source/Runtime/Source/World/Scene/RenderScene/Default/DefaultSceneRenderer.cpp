@@ -3449,15 +3449,15 @@ namespace Lumina
             PublishStreamingFeedback();
 
             // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
-            LightData.NumLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
+            NumLiveLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
 
 
             // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
             AllocateShadowTiles();
 
             // Same overshoot as LightCount, and this is the last writer of the shadow counter.
-            LightData.NumShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
-                                             (uint32)MAX_SHADOWS);
+            NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
+                                       (uint32)MAX_SHADOWS);
 
             // Serial after parallel light pass; skylight below reads ActiveEnv + LightData.SunDirection set by ProcessDirectionalLight.
             const SEnvironmentComponent* ActiveEnv = nullptr;
@@ -4350,12 +4350,8 @@ namespace Lumina
             }
             SceneRootShared = FSceneRoot{};
             // Only the live prefix of each array reaches the ring; the header carries where they landed.
-            LightData.LightsAddress = (LightData.NumLights > 0)
-                ? RHI::CopyTransientArray(Frame.Lighting.Lights.data(), LightData.NumLights).Address
-                : 0;
-            LightData.ShadowsAddress = (LightData.NumShadows > 0)
-                ? RHI::CopyTransientArray(Frame.Lighting.Shadows.data(), LightData.NumShadows).Address
-                : 0;
+            LightData.Lights  = RHI::CopyTransientArray(Frame.Lighting.Lights.data(),  NumLiveLights);
+            LightData.Shadows = RHI::CopyTransientArray(Frame.Lighting.Shadows.data(), NumLiveShadows);
             SceneBindings.Lights = RHI::CopyTransient(LightData);
             if (VisibleInstanceRing[CurrentFrameSlot])
             {
@@ -4419,6 +4415,8 @@ namespace Lumina
                                                                 Frame.ReflectionProbes.Probes.size());
             }
 
+            SceneRootShared.Materials            = Render().GetMaterialManager().GetMaterialSpan();
+            SceneRootShared.Collections          = Render().GetCollectionManager().GetSpan();
             SceneRootShared.MeshletDrawList      = { GetMeshletDrawList(), DrawListCapacity };
             SceneRootShared.PreSkinnedVertices   = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
             SceneRootShared.SkinnedFrameData     = { SkinnedFrameDataBuffer };
@@ -6691,7 +6689,7 @@ namespace Lumina
             float  InvPyramidSize[2];
             uint32 SrcDepthIndex;
             uint32 ReduceMax;
-            uint64 AtomicCounter;
+            RHI::TGPUSpan<uint32> AtomicCounter;
             uint32 MipUAV[SpdMaxMips];
         } PC = {};
 
@@ -6716,7 +6714,7 @@ namespace Lumina
 
         PC.SrcDepthIndex      = (uint32)SrcDepthSlot;
         PC.ReduceMax          = bReduceMax ? 1u : 0u;
-        PC.AtomicCounter      = SpdCounter.Gpu;
+        PC.AtomicCounter      = { SpdCounter };
         for (uint32 i = 0; i < SpdMaxMips; ++i)
         {
             const uint32 SrcMip = (i < MipCount) ? i : 0u;
@@ -7827,22 +7825,22 @@ namespace Lumina
         struct FSelectionOutlinePC
         {
             FVector4    OutlineColor;
-            RHI::GPUPtr SelectionBits;
+            RHI::TGPUSpan<uint32> SelectionBits;
             uint32      PickerIndex;
-            uint32      SelectionBitWords;
             uint32      EntityIndexMask;
             float       Thickness;
+            uint32      _Pad0;
         } PC = {};
+        static_assert(sizeof(FSelectionOutlinePC) == 48, "FSelectionOutlinePC must match SelectionOutline.slang.");
 
-        PC.SelectionBits     = RHI::CopyTransientArray(SelectionBits.data(), SelectionBits.size()).Address;
+        PC.SelectionBits     = RHI::CopyTransientArray(SelectionBits.data(), SelectionBits.size());
         PC.PickerIndex       = (uint32)PickerSlot;
-        PC.SelectionBitWords = (uint32)SelectionBits.size();
         // From the handle traits rather than a literal, so a change there cannot mask off real index bits.
         PC.EntityIndexMask   = ECS::FEntity::IndexMask;
         PC.Thickness         = 2.0f;
         PC.OutlineColor      = FVector4(1.0f, 0.42f, 0.05f, 1.0f);
 
-        if (PC.SelectionBits != 0)
+        if (!PC.SelectionBits.IsEmpty())
         {
             RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         }
@@ -10842,7 +10840,7 @@ namespace Lumina
         const auto& LightData       = Frame.Lighting.LightData;
         const auto& SceneGlobalData = Frame.SceneGlobalData;
 
-        const bool bSunVolumetric = LightData.NumLights > 0
+        const bool bSunVolumetric = LightData.Lights.Count > 0
             && EnumHasAnyFlags(Frame.Lighting.Lights[0].Flags, ELightFlags::Directional)
             && EnumHasAnyFlags(Frame.Lighting.Lights[0].Flags, ELightFlags::Volumetric);
 
@@ -12100,7 +12098,7 @@ namespace Lumina
             : Math::Normalize(FVector3(0.3f, 0.8f, 0.4f));
 
         FVector3 SunColor = FVector3(1.0f);
-        if (LightData.bHasSun && LightData.NumLights > 0)
+        if (LightData.bHasSun && LightData.Lights.Count > 0)
         {
             const FLight&  Sun    = Frame.Lighting.Lights[0];
             const FVector4 Unpack = UnpackColor(Sun.Color);

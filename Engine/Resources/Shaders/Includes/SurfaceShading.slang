@@ -743,8 +743,9 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         }
 
         // Cheap culls read only Position/Radius; the full 64B light is fetched only once some lane wants it.
-        float3 LightPos = LightData().Lights[LightIndex].Position;
-        float  Radius   = LightData().Lights[LightIndex].Radius;
+        const FLight Culled = GetLightAt(LightIndex);
+        float3 LightPos = Culled.Position;
+        float  Radius   = Culled.Radius;
 
         float3 LightToFrag = LightPos - WorldPosition;
         float  DistSq      = dot(LightToFrag, LightToFrag);

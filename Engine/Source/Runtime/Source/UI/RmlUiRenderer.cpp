@@ -33,14 +33,15 @@ namespace Lumina
     // ScreenSize must stay at offset 16, since relaxed block layout forbids a straddling vector.
     struct FUIMaterialBrushArgs
     {
-        RHI::GPUPtr Materials;
+        RHI::TGPUSpan<FMaterialUniforms> Materials;
         uint32      MaterialIndex;
         float       Time;
+        uint32      _Pad0[2];
         uint32      ScreenSize[4];   // .xy = brush resolution
     };
 
-    static_assert(sizeof(FUIMaterialBrushArgs) == 32, "FUIMaterialArgs layout must match UIMaterialGlobals.slang");
-    static_assert(offsetof(FUIMaterialBrushArgs, ScreenSize) == 16, "ScreenSize must not straddle a 16-byte boundary");
+    static_assert(sizeof(FUIMaterialBrushArgs) == 48, "FUIMaterialArgs layout must match UIMaterialGlobals.slang");
+    static_assert(offsetof(FUIMaterialBrushArgs, ScreenSize) == 32, "ScreenSize must not straddle a 16-byte boundary");
 
     // Mirrors UIFilter.slang::FUiFilterArgs.
     struct FUiFilterArgs
@@ -2477,7 +2478,7 @@ namespace Lumina
             }
 
             FUIMaterialBrushArgs Args = {};
-            Args.Materials     = RenderManager->GetMaterialManager().GetMaterialBuffer();
+            Args.Materials     = RenderManager->GetMaterialManager().GetMaterialSpan();
             Args.ScreenSize[0] = Tex.BrushSize.x;
             Args.ScreenSize[1] = Tex.BrushSize.y;
             Args.Time          = Time;

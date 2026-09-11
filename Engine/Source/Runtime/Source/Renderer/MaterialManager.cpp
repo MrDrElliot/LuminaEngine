@@ -37,6 +37,15 @@ namespace Lumina::RHI
         return MaterialBuffer.Gpu;
     }
 
+    TGPUSpan<FMaterialUniforms> FMaterialManager::GetMaterialSpan()
+    {
+        FWriteScopeLock Lock(Mutex);
+        PublishPendingLocked();
+        // Capacity, not the assigned count: a slot past the live prefix is a stale index, and reading the
+        // zeroed slot it points at is what the shader's fallbacks already expect.
+        return { MaterialBuffer, Capacity };
+    }
+
     uint32 FMaterialManager::GetCapacity() const
     {
         FReadScopeLock Lock(Mutex);

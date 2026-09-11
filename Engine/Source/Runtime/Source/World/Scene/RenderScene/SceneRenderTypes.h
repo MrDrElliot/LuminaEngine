@@ -516,11 +516,10 @@ namespace Lumina
     // Header only; the arrays hang off it by address so a frame uploads the live prefix, not the cap.
     struct FSceneLightData
     {
-        uint32              NumLights{};
+        uint32              _PadNumLights{};    // the live counts are the spans' own
         // 1 when the environment IBL cubes are valid; 0 means skylight-only -> shader adds a flat ambient.
         uint32              bHasIBL{};
-        // Bounds the Shadows allocation; every assigned ShadowDataIndex is below it.
-        uint32              NumShadows{};
+        uint32              _PadNumShadows{};
         uint32              Padding0{};
 
         FVector3           SunDirection{};   // to-light: FROM surface TOWARD the sun (== Lights[0].Direction)
@@ -538,14 +537,14 @@ namespace Lumina
 
         FVector4           AmbientLight{};
 
-        uint64              LightsAddress{};    // FLight[NumLights]
-        uint64              ShadowsAddress{};   // FLightShadowData[NumShadows]
+        RHI::TGPUSpan<FLight>           Lights;
+        RHI::TGPUSpan<FLightShadowData> Shadows;
     };
 
-    static_assert(sizeof(FSceneLightData) == 144, "FSceneLightData layout must match FLightData in Common.slang");
+    static_assert(sizeof(FSceneLightData) == 160, "FSceneLightData layout must match FLightData in Common.slang");
     VERIFY_SSBO_ALIGNMENT(FSceneLightData);
-    // Relaxed block layout rejects a vector straddling 16, so the pointers must follow the last one.
-    static_assert(offsetof(FSceneLightData, LightsAddress) == 128, "LightsAddress must sit at 128");
+    // Relaxed block layout rejects a vector straddling 16, so the spans must follow the last one.
+    static_assert(offsetof(FSceneLightData, Lights) == 128, "Lights must sit at 128");
     
     struct FLineBatch
     {
