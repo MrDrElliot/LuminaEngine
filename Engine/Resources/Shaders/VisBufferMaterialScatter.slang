@@ -12,7 +12,6 @@ struct FMaterialScatterArgs
     uint  ScreenW;
     uint  ScreenH;
     uint  DrawListCount;
-    uint  _Pad0;
 };
 FMaterialScatterArgs* Pass() { return GetPassArgs<FMaterialScatterArgs>(); }
 

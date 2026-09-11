@@ -150,6 +150,7 @@ namespace Lumina
         uint32  LayerWeightsIndex = 0;   // PS bindless 2D-array
         uint32  _Pad0             = 0;
     };
+    static_assert(sizeof(FTerrainPushConstants) == 72, "FTerrainPushConstants must match TerrainCommon.slang.");
 
     struct FTerrainCullPushConstants
     {
@@ -158,4 +159,5 @@ namespace Lumina
         RHI::TGPUSpan<FTerrainVisibleMeshlet> VisibleMeshlets;
         RHI::TGPUSpan<RHI::FDrawIndirectArguments> TerrainIndirect;
     };
+    static_assert(sizeof(FTerrainCullPushConstants) == 64, "FTerrainCullPushConstants must match TerrainCull.slang.");
 }

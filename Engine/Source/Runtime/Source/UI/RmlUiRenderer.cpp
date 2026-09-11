@@ -1061,6 +1061,7 @@ namespace Lumina
             RHI::TGPUSpan<FUiColorStop> Stops;
             RHI::TGPUSpan<FUiClipMask>  ClipMasks;
         };
+        static_assert(sizeof(FRmlUiArgs) == 64, "FRmlUiArgs must match RmlUiCommon.slang.");
 
         const FRmlUiArgs Args { DrawsSpan, { Batch.VertexBuffer }, StopsSpan, MasksSpan };
         const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);

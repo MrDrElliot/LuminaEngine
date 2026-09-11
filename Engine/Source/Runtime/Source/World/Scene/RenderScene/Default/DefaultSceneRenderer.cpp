@@ -4116,19 +4116,19 @@ namespace Lumina
             uint32 MaxRange;
             uint32 _Pad;
             RHI::TGPUSpan<uint32>            SlotList;
-            RHI::TGPUSpan<FSkinnedFrameData> SkinnedData;
+            RHI::TGPUSpan<FSkinnedFrameData> SkinnedFrameData;
             RHI::TGPUSpan<FInstanceStatic>   RetainedStatic;
             RHI::TGPUSpan<FMeshletSphere>    OutBounds;
             RHI::TGPUSpan<FMeshletCone>      OutCones;
         } PC = {};
         static_assert(sizeof(FSkinnedBoundsPC) == 88, "FSkinnedBoundsPC must match SkinnedMeshletBounds.slang.");
 
-        PC.MaxRange       = SkinnedBoundsMaxRange;
-        PC.SlotList       = { SkinnedSlotListBuffer, NumSkinned };
-        PC.SkinnedData    = { SkinnedFrameDataBuffer };
-        PC.RetainedStatic = { RetainedStaticBuffer, RetainedStaticCapacity };
-        PC.OutBounds      = { SkinnedMeshletBoundsBuffer, SkinnedMeshletBoundsCapacity };
-        PC.OutCones       = { SkinnedMeshletConeBuffer, SkinnedMeshletBoundsCapacity };
+        PC.MaxRange         = SkinnedBoundsMaxRange;
+        PC.SlotList         = { SkinnedSlotListBuffer, NumSkinned };
+        PC.SkinnedFrameData = { SkinnedFrameDataBuffer };
+        PC.RetainedStatic   = { RetainedStaticBuffer, RetainedStaticCapacity };
+        PC.OutBounds        = { SkinnedMeshletBoundsBuffer, SkinnedMeshletBoundsCapacity };
+        PC.OutCones         = { SkinnedMeshletConeBuffer, SkinnedMeshletBoundsCapacity };
 
         constexpr uint32 kBoundsGroupSize = 64;
         const uint32 GroupsX = (SkinnedBoundsMaxRange + kBoundsGroupSize - 1u) / kBoundsGroupSize;
@@ -7450,9 +7450,8 @@ namespace Lumina
             uint32      ScreenW;
             uint32      ScreenH;
             uint32      DrawListCount;
-            uint32      _Pad0;
         } ScatterPC = {};
-        static_assert(sizeof(FMaterialScatterPC) == 72, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
+        static_assert(sizeof(FMaterialScatterPC) == 64, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
         ScatterPC.Cursors        = CursorsSpan;
         ScatterPC.PixelList      = { PixelList, Layout.PixelCapacity };
         ScatterPC.SlotByMaterial = SlotByMaterialSpan;
@@ -8113,6 +8112,7 @@ namespace Lumina
                 RHI::TGPUSpan<FVector4>     ModuleParams;
                 RHI::TGPUSpan<float>        Attributes;
             };
+            static_assert(sizeof(FParticleSimArgs) == 72, "FParticleSimArgs must match ParticleSimCommon.slang.");
 
             FParticleSimArgs SimArgs = {};
             SimArgs.ParamsAddr   = RHI::CopyTransient(SimParams);
@@ -8188,6 +8188,7 @@ namespace Lumina
                 uint32 SortCount;
                 uint32 _Pad0;
             };
+            static_assert(sizeof(FParticleSortArgs) == 56, "FParticleSortArgs must match ParticleSortCompact.slang.");
 
             FParticleSortArgs SortArgs = {};
             SortArgs.Particles  = { State.ParticleBuffer, State.AllocatedMax };
@@ -9051,6 +9052,8 @@ namespace Lumina
         uint32  _Pad1 = 0;
         uint32  _Pad2 = 0;
     };
+    static_assert(sizeof(FGrassScatterPushConstants) == 200,
+        "FGrassScatterPushConstants must match GrassScatter.slang.");
 
     void FDefaultSceneRenderer::GrassScatterPass(RHI::FCmdListH CL)
     {
