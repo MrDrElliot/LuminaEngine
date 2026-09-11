@@ -13317,52 +13317,42 @@ namespace Lumina
 
             struct FCullInstancesPC
             {
-                uint32 NumRetained;
                 uint32 NumViews;
                 uint32 NumBatches;
                 uint32 bUseLODs;
-                uint32 MaxVisibleInstances;
-                uint32 NumSurfaceDescs;
                 uint32 SkinFrameTag;
-                uint32 PreSkinCapacity;
-                uint32 NumSkinnedSlots;
-                uint64 RetainedCullEntriesAddr;
-                uint64 RetainedTransformsAddr;
-                uint64 RetainedStaticAddr;
-                uint64 SurfaceDescsAddr;
-                uint64 OutInstancesAddr;
-                uint64 OutInstanceCountAddr;
-                uint64 OutInstanceViewRangesAddr;
-                uint64 OutBucketsAddr;
-                uint64 OutOverflowFlagAddr;
-                uint64 SkinnedFrameDataAddr;
-                uint64 OutPreSkinCursorAddr;
+                RHI::TGPUSpan<FInstanceCullEntry> RetainedCullEntries;
+                RHI::TGPUSpan<FTransform3x4>      RetainedTransforms;
+                RHI::TGPUSpan<FInstanceStatic>    RetainedStatic;
+                RHI::TGPUSpan<FSurfaceDescGPU>    SurfaceDescs;
+                RHI::TGPUSpan<FGPUInstance>       OutInstances;
+                RHI::TGPUSpan<uint32>             OutInstanceCount;
+                RHI::TGPUSpan<FUIntVector2>       OutInstanceViewRanges;
+                RHI::TGPUSpan<FRenderBucketGPU>   OutBuckets;
+                RHI::TGPUSpan<uint32>             OutOverflowFlag;
+                RHI::TGPUSpan<FSkinnedFrameData>  SkinnedFrameData;
+                RHI::TGPUSpan<FPreSkinnedVertex>  PreSkinArena;
+                RHI::TGPUSpan<uint32>             OutPreSkinCursor;
             };
-            static_assert(sizeof(FCullInstancesPC) == 128, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 208, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
-            PC.NumRetained              = RetainedSlots;
-            PC.NumViews                 = NumCullViews;
-            PC.NumBatches               = NumBatches;
-            PC.bUseLODs                 = FrameSettings.bUseLODs ? 1u : 0u;
-            PC.MaxVisibleInstances      = VisibleCapacity;
-            PC.NumSurfaceDescs          = UploadedSurfaceDescs;
-            PC.SkinFrameTag             = CurrentSkinnedFrameTag;
-            PC.PreSkinCapacity          = PreSkinnedVertexCapacity;
-            PC.NumSkinnedSlots          = SkinnedFrameDataBuffer
-                                        ? (uint32)Math::Min<uint64>(SkinnedFrameDataBuffer.Size / sizeof(FSkinnedFrameData), 0xFFFFFFFFull)
-                                        : 0u;
-            PC.RetainedCullEntriesAddr  = RetainedCullEntryBuffer.Gpu;
-            PC.RetainedTransformsAddr   = RetainedTransformBuffer.Gpu;
-            PC.RetainedStaticAddr       = RetainedStaticBuffer.Gpu;
-            PC.SurfaceDescsAddr         = SurfaceDescBuffer.Gpu;
-            PC.OutInstancesAddr         = VisibleInstanceRing[Slot].Gpu;
-            PC.OutInstanceCountAddr     = GetCullCounters().Gpu;
-            PC.OutInstanceViewRangesAddr = GetInstanceViewRanges().Gpu;
-            PC.OutBucketsAddr           = GetRenderBuckets().Gpu;
-            PC.OutOverflowFlagAddr      = GetCullCounters().Gpu + sizeof(uint32);
-            PC.SkinnedFrameDataAddr     = SkinnedFrameDataBuffer.Gpu;
-            PC.OutPreSkinCursorAddr     = GetCullCounters().Gpu + sizeof(uint32) * 2;
+            PC.NumViews               = NumCullViews;
+            PC.NumBatches             = NumBatches;
+            PC.bUseLODs               = FrameSettings.bUseLODs ? 1u : 0u;
+            PC.SkinFrameTag           = CurrentSkinnedFrameTag;
+            PC.RetainedCullEntries    = { RetainedCullEntryBuffer, RetainedSlots };
+            PC.RetainedTransforms     = { RetainedTransformBuffer, RetainedSlots };
+            PC.RetainedStatic         = { RetainedStaticBuffer, RetainedSlots };
+            PC.SurfaceDescs           = { SurfaceDescBuffer, UploadedSurfaceDescs };
+            PC.OutInstances           = { VisibleInstanceRing[Slot], VisibleCapacity };
+            PC.OutInstanceCount       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 1u);
+            PC.OutInstanceViewRanges  = { GetInstanceViewRanges() };
+            PC.OutBuckets             = { GetRenderBuckets(), NumCullViews * NumBatches };
+            PC.OutOverflowFlag        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu + sizeof(uint32), 1u);
+            PC.SkinnedFrameData       = { SkinnedFrameDataBuffer };
+            PC.PreSkinArena           = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
+            PC.OutPreSkinCursor       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu + sizeof(uint32) * 2, 1u);
 
             // Blades are appended into the retained block here, between its upload and the cull that
             // reads it, so grass is just more instances by the time anything downstream looks.
@@ -13385,28 +13375,28 @@ namespace Lumina
             {
                 uint32 NumViews;
                 uint32 NumDraws;
-                uint32 MaxVisibleInstances;
-                uint32 DrawListCapacityArg;
-                uint32 BlockListCapacityArg;
-                uint32 PreSkinCapacityArg;
-                uint64 BucketsAddr;
-                uint64 InstanceCountAddr;
-                uint64 OutTotalsAddr;
-                uint64 OutBlockDispatchArgsAddr;
+                RHI::TGPUSpan<FUIntVector2>      DrawList;
+                RHI::TGPUSpan<FUIntVector2>      BlockList;
+                RHI::TGPUSpan<FPreSkinnedVertex> PreSkinArena;
+                RHI::TGPUSpan<FGPUInstance>      VisibleInstances;
+                RHI::TGPUSpan<FRenderBucketGPU>  Buckets;
+                RHI::TGPUSpan<uint32>            InstanceCount;
+                RHI::TGPUSpan<uint32>            OutTotals;
+                RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutBlockDispatchArgs;
             };
-            static_assert(sizeof(FBuildDrawPrefixPC) == 56, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+            static_assert(sizeof(FBuildDrawPrefixPC) == 136, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
 
             FBuildDrawPrefixPC PC = {};
-            PC.NumViews                 = SeedViews;
-            PC.NumDraws                 = NumBatches;
-            PC.MaxVisibleInstances      = VisibleCapacity;
-            PC.DrawListCapacityArg      = DrawListCapacity;
-            PC.BlockListCapacityArg     = BlockListCapacity;
-            PC.PreSkinCapacityArg       = PreSkinnedVertexCapacity;
-            PC.BucketsAddr              = GetRenderBuckets().Gpu;
-            PC.InstanceCountAddr        = GetCullCounters().Gpu;
-            PC.OutTotalsAddr            = GetTotals().Gpu;
-            PC.OutBlockDispatchArgsAddr = GetBlockDispatchArgs().Gpu;
+            PC.NumViews             = SeedViews;
+            PC.NumDraws             = NumBatches;
+            PC.DrawList             = { GetMeshletDrawList(), DrawListCapacity };
+            PC.BlockList            = { GetMeshletBlocks(), BlockListCapacity };
+            PC.PreSkinArena         = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
+            PC.VisibleInstances     = { VisibleInstanceRing[Slot], VisibleCapacity };
+            PC.Buckets              = { GetRenderBuckets() };
+            PC.InstanceCount        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 4u);
+            PC.OutTotals            = { GetTotals(), kTotalsSlots };
+            PC.OutBlockDispatchArgs = { GetBlockDispatchArgs() };
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DrawPrefixShader));
             RHI::CmdDispatch(CL, MakeArgs(PC), 1u, 1u, 1u);
@@ -13427,22 +13417,21 @@ namespace Lumina
                 {
                     uint32 NumViews;
                     uint32 NumBatches;
-                    uint32 MaxVisibleInstances;
-                    uint32 _Pad0;
-                    uint64 InstanceCountAddr;
-                    uint64 InstanceViewRangesAddr;
-                    uint64 BucketsAddr;
-                    uint64 OutBlockListAddr;
+                    RHI::TGPUSpan<uint32>           InstanceCount;
+                    RHI::TGPUSpan<FGPUInstance>     VisibleInstances;
+                    RHI::TGPUSpan<FUIntVector2>     InstanceViewRanges;
+                    RHI::TGPUSpan<FRenderBucketGPU> Buckets;
+                    RHI::TGPUSpan<FUIntVector2>     OutBlockList;
                 } BPC = {};
-                static_assert(sizeof(FBuildMeshletBlocksPC) == 48, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
+                static_assert(sizeof(FBuildMeshletBlocksPC) == 88, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
 
-                BPC.NumViews             = NumCullViews;
-                BPC.NumBatches           = NumBatches;
-                BPC.MaxVisibleInstances  = VisibleCapacity;
-                BPC.InstanceCountAddr    = GetCullCounters().Gpu;
-                BPC.InstanceViewRangesAddr = GetInstanceViewRanges().Gpu;
-                BPC.BucketsAddr          = GetRenderBuckets().Gpu;
-                BPC.OutBlockListAddr     = GetMeshletBlocks().Gpu;
+                BPC.NumViews           = NumCullViews;
+                BPC.NumBatches         = NumBatches;
+                BPC.InstanceCount      = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Gpu, 4u);
+                BPC.VisibleInstances   = { VisibleInstanceRing[Slot], VisibleCapacity };
+                BPC.InstanceViewRanges = { GetInstanceViewRanges() };
+                BPC.Buckets            = { GetRenderBuckets() };
+                BPC.OutBlockList       = { GetMeshletBlocks(), BlockListCapacity };
 
                 RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BlocksShader));
 
@@ -14271,20 +14260,20 @@ namespace Lumina
             uint32 SubDrawsPerSlice;
             uint32 _Pad0;
             uint32 _Pad1;
-            uint64 BucketsAddr;
-            uint64 OutCullDispatchArgsAddr;
-            uint64 OutMeshDrawArgsAddr;
+            RHI::TGPUSpan<FRenderBucketGPU> Buckets;
+            RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutCullDispatchArgs;
+            RHI::TGPUSpan<RHI::FDrawMeshTasksIndirectArguments> OutMeshDrawArgs;
         } APC = {};
-        static_assert(sizeof(FCullArgsPC) == 56, "FCullArgsPC must match BuildMeshletCullArgs.slang.");
+        static_assert(sizeof(FCullArgsPC) == 80, "FCullArgsPC must match BuildMeshletCullArgs.slang.");
 
         APC.NumViews                = NumViews;
         APC.NumDraws                = NumDraws;
         APC.Slice                   = (uint32)Slice;
         APC.MaxMeshGroups           = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
         APC.SubDrawsPerSlice        = MeshSubDrawsPerSlice;
-        APC.BucketsAddr             = GetRenderBuckets().Gpu;
-        APC.OutCullDispatchArgsAddr = GetMeshletCullDispatchArgs().Gpu;
-        APC.OutMeshDrawArgsAddr     = GetMeshDrawArgs().Gpu;
+        APC.Buckets             = { GetRenderBuckets() };
+        APC.OutCullDispatchArgs = { GetMeshletCullDispatchArgs() };
+        APC.OutMeshDrawArgs     = { GetMeshDrawArgs() };
 
         // Serial prefix, so one group; the post pass below is per-bucket and takes a real grid.
         constexpr uint32 kArgsGroupSize = 64;
@@ -14301,22 +14290,21 @@ namespace Lumina
             uint32 NumViews;
             uint32 NumDraws;
             uint32 Slice;
-            uint32 VisibilityCapacity;
-            uint64 BucketsAddr;
-            uint64 BlockListAddr;
-            uint64 PrevVisibilityAddr;
-            uint64 OutVisibilityAddr;
+            uint32 _Pad0;
+            RHI::TGPUSpan<FRenderBucketGPU> Buckets;
+            RHI::TGPUSpan<FUIntVector2>     BlockList;
+            RHI::TGPUSpan<uint32>           PrevVisibility;
+            RHI::TGPUSpan<uint32>           OutVisibility;
         } CPC = {};
-        static_assert(sizeof(FMeshletCullPC) == 48, "FMeshletCullPC must match MeshletCull.slang.");
+        static_assert(sizeof(FMeshletCullPC) == 80, "FMeshletCullPC must match MeshletCull.slang.");
 
-        CPC.NumViews      = NumViews;
-        CPC.NumDraws      = NumDraws;
-        CPC.Slice         = (uint32)Slice;
-        CPC.VisibilityCapacity  = InstanceVisibilityCapacity;
-        CPC.BucketsAddr         = GetRenderBuckets().Gpu;
-        CPC.BlockListAddr       = GetMeshletBlocks().Gpu;
-        CPC.PrevVisibilityAddr  = GetInstanceVisibilityPrev().Gpu;
-        CPC.OutVisibilityAddr   = GetInstanceVisibilityWrite().Gpu;
+        CPC.NumViews       = NumViews;
+        CPC.NumDraws       = NumDraws;
+        CPC.Slice          = (uint32)Slice;
+        CPC.Buckets        = { GetRenderBuckets() };
+        CPC.BlockList      = { GetMeshletBlocks() };
+        CPC.PrevVisibility = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
+        CPC.OutVisibility  = { GetInstanceVisibilityWrite(), InstanceVisibilityCapacity };
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
         RHI::CmdDispatchIndirect(CL, MakeArgs(CPC), GetMeshletCullDispatchArgs());

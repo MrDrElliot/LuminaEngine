@@ -9,15 +9,14 @@ struct FBuildMeshletBlocksArgs
 {
     uint            NumViews;
     uint            NumBatches;
-    // Clamped exactly as BuildDrawPrefix clamps it: the append cursor counts past capacity on overflow.
-    uint            MaxVisibleInstances;
-    uint            _Pad0;
 
-    uint*           InstanceCount;
+    GPUSpan<uint>          InstanceCount;
+    // Clamped exactly as BuildDrawPrefix clamps it: the append cursor counts past capacity on overflow.
+    GPUSpan<FGPUInstance>  VisibleInstances;
     // (base, count) per (visible instance, view), written by CullInstances at reservation time.
-    uint2*          InstanceViewRanges;
-    FRenderBucket*  Buckets;
-    FMeshletBlock*  OutBlockList;
+    GPUSpan<uint2>         InstanceViewRanges;
+    GPUSpan<FRenderBucket> Buckets;
+    GPUSpan<FMeshletBlock> OutBlockList;
 };
 FBuildMeshletBlocksArgs* Pass() { return GetPassArgs<FBuildMeshletBlocksArgs>(); }
 
@@ -26,7 +25,7 @@ FBuildMeshletBlocksArgs* Pass() { return GetPassArgs<FBuildMeshletBlocksArgs>();
 void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 {
     const uint NumViews         = max(Pass().NumViews, 1u);
-    const uint VisibleInstances = min(Pass().InstanceCount[0], Pass().MaxVisibleInstances);
+    const uint VisibleInstances = min(SpanGet(&Pass().InstanceCount, 0u), Pass().VisibleInstances.Count);
 
     // Undoes the Y fold the dispatch applies past MAX_DISPATCH_AXIS groups.
     const uint Flat       = ThreadID.x + ThreadID.y * MAX_DISPATCH_AXIS * 64u;
@@ -42,7 +41,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
     // whole point: the two used to compute it independently in matching branch order, and a drift
     // between them handed one bucket room nobody used and silently dropped another's newest mesh.
     // Already clamped to the mesh's meshlet total, and zero when the pair is invisible or out of range.
-    const uint2 Range = Pass().InstanceViewRanges[Flat];
+    const uint2 Range = SpanGet(&Pass().InstanceViewRanges, Flat);
     const uint  Count = Range.y;
     if (Count == 0u)
     {
@@ -58,7 +57,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         return;
     }
 
-    FRenderBucket* Bucket = Pass().Buckets + (ViewIndex * Pass().NumBatches + DrawID);
+    FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ViewIndex * Pass().NumBatches + DrawID);
     const uint Blocks = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
 
     // One atomic for the whole run: an instance's blocks are contiguous by construction.
@@ -76,6 +75,6 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         Block.InstanceID         = InstanceID;
         Block.PackedBaseAndCount = FMeshletBlock::Pack(Range.x + First,
                                                        min(MESHLET_CULL_GROUP_SIZE, Count - First));
-        Pass().OutBlockList[Slot + b] = Block;
+        SpanSet(&Pass().OutBlockList, Slot + b, Block);
     }
 }

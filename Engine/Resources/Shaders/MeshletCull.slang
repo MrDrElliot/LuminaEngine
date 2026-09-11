@@ -31,15 +31,15 @@ struct FMeshletCullArgs
     uint            NumDraws;
     // MESHLET_SLICE_EARLY or MESHLET_SLICE_LATE.
     uint            Slice;
-    // Bounds RetainedSlot, and 0 when either buffer is missing, so the reads short-circuit.
-    uint            VisibilityCapacity;
+    uint            _Pad0;
 
-    FRenderBucket*  Buckets;
-    FMeshletBlock*  BlockList;
+    GPUSpan<FRenderBucket> Buckets;
+    GPUSpan<FMeshletBlock> BlockList;
     // Read by BOTH dispatches and written by neither: the partition needs them to see one set of flags.
-    uint*           PrevVisibility;
+    // Its own count bounds RetainedSlot, and is 0 when the buffer is missing, so the reads short-circuit.
+    GPUSpan<uint>          PrevVisibility;
     // OR only: an instance's blocks span workgroups, so a store lets an occluded one clear a visible bit.
-    uint*           OutVisibility;
+    GPUSpan<uint>          OutVisibility;
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
@@ -49,7 +49,7 @@ FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
 uint EmitMeshletSlot(uint ArgIdx, uint InstanceID, uint MeshletIdx)
 {
-    FRenderBucket* Bucket = Pass().Buckets + ArgIdx;
+    FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ArgIdx);
     const uint Slot = AppendReserve(&Bucket.DrawCursor, Bucket.DrawCapacity, Bucket.DrawBase);
     if (Slot == kAppendFull)
     {
@@ -74,7 +74,7 @@ uint FindBucketForWork(uint WorkIndex, uint NumBuckets)
     while (Lo + 1u < Hi)
     {
         const uint Mid = (Lo + Hi) >> 1u;
-        if (Pass().Buckets[Mid].CullWorkBase <= WorkIndex)
+        if (SpanAt(&Pass().Buckets, Mid).CullWorkBase <= WorkIndex)
         {
             Lo = Mid;
         }
@@ -107,7 +107,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     {
         ArgIdx = FindBucketForWork(WorkIndex, NumBuckets);
 
-        const FRenderBucket Bucket = loadAligned<16>(Pass().Buckets + ArgIdx);
+        const FRenderBucket Bucket = SpanGetAligned(&Pass().Buckets, ArgIdx);
         const uint BlockSlot = WorkIndex - Bucket.CullWorkBase;
 
         // Bounded by what BuildMeshletBlocks APPENDED, not what CullInstances reserved: blocks above the
@@ -126,7 +126,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     const bool bHasWork = bBlockInRange && (!bLate || bTwoPhase);
 
     // Workgroup-uniform, so this is a uniform branch: blocks the builder never filled are never read.
-    const FMeshletBlock Block = bHasWork ? Pass().BlockList[BlockIdx] : (FMeshletBlock)0;
+    const FMeshletBlock Block = bHasWork ? SpanGet(&Pass().BlockList, BlockIdx) : (FMeshletBlock)0;
     const uint InstanceID = Block.InstanceID;
     const uint MeshletIdx = Block.MeshletBase + ThreadID;
 
@@ -142,8 +142,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     if (bHasWork && bTwoPhase)
     {
         RetainedSlot = Inst.RetainedSlot;
-        bWasVisible  = (RetainedSlot < Pass().VisibilityCapacity)
-                     && (Pass().PrevVisibility[RetainedSlot] != 0u);
+        bWasVisible  = SpanGet(&Pass().PrevVisibility, RetainedSlot) != 0u;
     }
 
     // Late only, because the early phase is a replay and an instance dropped there is dropped for good.
@@ -196,8 +195,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // OR only, never a store: an instance's blocks are spread across workgroups, and a plain write would
     // let a fully-occluded block clear a flag a visible one had just set. The zero comes from the clear
     // the CPU issues against this buffer at the top of the frame.
-    if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && RetainedSlot < Pass().VisibilityCapacity)
+    if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && SpanContains(&Pass().OutVisibility, RetainedSlot))
     {
-        InterlockedOr(Pass().OutVisibility[RetainedSlot], 1u);
+        InterlockedOr(SpanAt(&Pass().OutVisibility, RetainedSlot)[0], 1u);
     }
 }

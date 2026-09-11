@@ -7,7 +7,7 @@
 namespace Lumina
 {
     static TFixedVector<FObjectInitializer*, 4> InitializerStack;
-    static FRecursiveMutex Mutex;
+    static FRecursiveMutex InitializerMutex;
     
     FObjectInitializer::FObjectInitializer(CPackage* InPackage, const FConstructCObjectParams& InParams)
         : Package(InPackage)
@@ -18,7 +18,7 @@ namespace Lumina
 
     FObjectInitializer::~FObjectInitializer()
     {
-        FRecursiveScopeLock Lock(Mutex);
+        FRecursiveScopeLock Lock(InitializerMutex);
         InitializerStack.pop_back();
     }
 
@@ -29,7 +29,7 @@ namespace Lumina
 
     void FObjectInitializer::Construct()
     {
-        FRecursiveScopeLock Lock(Mutex);
+        FRecursiveScopeLock Lock(InitializerMutex);
         InitializerStack.push_back(this);
     }
 }

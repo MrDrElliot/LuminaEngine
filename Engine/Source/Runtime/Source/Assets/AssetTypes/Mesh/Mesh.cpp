@@ -10,6 +10,7 @@
 #include "Tools/Import/ImportHelpers.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Renderer/MeshQuantization.h"
+#include <cfloat>
 
 
 namespace Lumina
