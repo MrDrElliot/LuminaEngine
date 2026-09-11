@@ -29,9 +29,9 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         const float Clear[4] = { 0.0f, 0.0f, 1.0f, 1.0f };
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdClearTexture(CL, Texture, Clear);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
 
         RHI::RetireSampledSlot(Slot);
@@ -58,14 +58,14 @@ namespace Lumina::RHITests
 
         // Enough work that the submission is unlikely to have retired by the time we return.
         const float Clear[4] = { 1.0f, 1.0f, 0.0f, 1.0f };
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         for (uint32 i = 0; i < 64; ++i)
         {
             RHI::CmdMemset(CL, { Buffer.Gpu, 4 * 1024 * 1024 }, i);
             RHI::Barriers::TransferToTransfer(CL);
         }
         RHI::CmdClearTexture(CL, Texture, Clear);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
         // No wait.
         RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &CL, 1 });
@@ -96,7 +96,7 @@ namespace Lumina::RHITests
         for (uint32 i = 0; i < RHI::kFramesInFlight * 2; ++i)
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::Barriers::AllToTransfer(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
             RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &CL, 1 });
             Ctx.PumpFrames(1);
         }

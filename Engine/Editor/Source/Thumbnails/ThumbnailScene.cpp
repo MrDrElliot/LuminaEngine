@@ -183,7 +183,7 @@ namespace Lumina
             RHI::SetDebugName(Out.Readback.Gpu, "Readback.Thumbnail");
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback, Out.Width);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 

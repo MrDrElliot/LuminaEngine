@@ -697,15 +697,6 @@ namespace Lumina::RHI
 
     namespace Barriers
     {
-        inline void ComputeToAll(FCmdListH CL)
-        {
-            CmdBarrier(CL,
-                EStageFlags::Compute,
-                EStageFlags::Compute | EStageFlags::VertexShader | EStageFlags::PixelShader |
-                EStageFlags::MeshShader |
-                EStageFlags::IndirectArguments | EStageFlags::FragmentTests | EStageFlags::Transfer);
-        }
-
         // MeshShader belongs in the SOURCE mask: a mesh shader that reads the draw list also writes.
         inline void RasterToRead(FCmdListH CL)
         {
@@ -725,19 +716,9 @@ namespace Lumina::RHI
                 EStageFlags::RasterColorOut | EStageFlags::FragmentTests);
         }
 
-        inline void TransferToAll(FCmdListH CL)
-        {
-            CmdBarrier(CL, EStageFlags::Transfer, EStageFlags::AllCommands);
-        }
-        
         inline void TransferToTransfer(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Transfer, EStageFlags::Transfer);
-        }
-
-        inline void AllToTransfer(FCmdListH CL)
-        {
-            CmdBarrier(CL, EStageFlags::AllCommands, EStageFlags::Transfer);
         }
 
         /** Snapshotting a scene target into a scratch copy; only raster, shader and transfer writes reach one. */

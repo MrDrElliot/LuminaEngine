@@ -1152,7 +1152,7 @@ namespace Lumina::RmlUi
             if (Rendered == 0)
             {
                 // Order this frame's widget RT writes after the previous frame's sampling of them.
-                RHI::CmdBarrier(CmdList, RHI::EStageFlags::AllCommands, RHI::EStageFlags::RasterColorOut);
+                RHI::CmdBarrier(CmdList, RHI::EStageFlags::PixelShader, RHI::EStageFlags::RasterColorOut);
             }
 
             State.Renderer->EndFrame();
@@ -1236,9 +1236,9 @@ namespace Lumina::RmlUi
             }
             // Renderer uses LoadOp=Load; clear here so editor can composite its own background under a transparent canvas.
             const float Clear[4] = { E->ClearColor.x, E->ClearColor.y, E->ClearColor.z, E->ClearColor.w };
-            RHI::Barriers::AllToTransfer(CmdList);
+            RHI::CmdBarrier(CmdList, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
             RHI::CmdClearTexture(CmdList, E->Target, Clear);
-            RHI::Barriers::TransferToAll(CmdList);
+            RHI::CmdBarrier(CmdList, RHI::EStageFlags::Transfer, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader);
 
             // A resized preview target starts undefined, so loading it showed a frame of garbage.
             const FVector4 PreviewClear(0.0f, 0.0f, 0.0f, 0.0f);

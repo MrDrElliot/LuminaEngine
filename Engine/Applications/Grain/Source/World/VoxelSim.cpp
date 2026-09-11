@@ -107,7 +107,7 @@ namespace Grain
         const RHI::FCmdListH CL = RHI::OpenCommandList();
         RHI::CmdMemcpy(CL, { GridAlloc.Gpu, size_t(GridBytes) }, { Staging.Gpu, size_t(GridBytes) });
         RHI::CmdMemzero(CL, { CoarseAlloc.Gpu, CoarseBytes });
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
         const uint64 Value = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), Value);
 

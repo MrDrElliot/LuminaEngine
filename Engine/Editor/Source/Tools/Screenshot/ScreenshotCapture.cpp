@@ -223,7 +223,7 @@ namespace Lumina::Screenshot
         RHI::SetDebugName(Readback.Gpu, "Readback.Screenshot");
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdCopyTextureToMemory(CL, SrcImage.Texture, RHI::FTextureSlice{}, Readback, Out.ResolutionX);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});

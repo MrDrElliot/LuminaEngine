@@ -562,7 +562,7 @@ namespace Lumina::RHI
                 {
                     continue;
                 }
-                Barriers::TransferToAll(Targets[i].CL);
+                RHI::CmdBarrier(Targets[i].CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer);
                 Result |= (1u << i);
             }
             

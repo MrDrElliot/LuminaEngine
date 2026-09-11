@@ -80,12 +80,12 @@ namespace Lumina::RHITests
             RHI::CmdEndRenderPass(CL);
 
             RHI::Barriers::RasterToRead(CL);
-            RHI::Barriers::AllToTransfer(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
 
             RHI::FTextureSlice Slice;
             Slice.Extent = FUIntVector3(Size, Size, 1);
             RHI::CmdCopyTextureToMemory(CL, Target, Slice, Readback, Size);
-            RHI::Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
             Ctx.SubmitAndWait(CL);
 
@@ -148,9 +148,9 @@ namespace Lumina::RHITests
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatch(CL, Args, Count / 64, 1, 1);
-        RHI::Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
         RHI::CmdMemcpy(CL, { Readback.Gpu, Bytes }, { Output.Gpu, Bytes });
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
 
         const auto* Words = Readback.CpuAs<const uint32>();
@@ -197,10 +197,10 @@ namespace Lumina::RHITests
 
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatchIndirect(CL, Args, IndirectArgs);
-        RHI::Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
 
         RHI::CmdMemcpy(CL, { Readback.Gpu, Groups * sizeof(uint32) }, { Output.Gpu, Groups * sizeof(uint32) });
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
 
         const auto* Words = Readback.CpuAs<const uint32>();
@@ -256,12 +256,12 @@ namespace Lumina::RHITests
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatch(CL, Args, 1, 1, 1);
-        RHI::Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
         RHI::CmdCopyTextureToMemory(CL, Managed.Texture, Slice, Readback, Size);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
 
         const auto* Pixels = Readback.CpuAs<const uint8>();
@@ -313,9 +313,9 @@ namespace Lumina::RHITests
             const RHI::FCmdListH CL = Ctx.OpenCL();
             RHI::CmdSetPipeline(CL, Pipeline);
             RHI::CmdDispatch(CL, Args, 1, 1, 1);
-            RHI::Barriers::ComputeToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
             RHI::CmdMemcpy(CL, { Readback.Gpu, sizeof(uint32) }, { Output.Gpu, sizeof(uint32) });
-            RHI::Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
             Ctx.SubmitAndWait(CL);
 
             const auto* Word = Readback.CpuAs<const uint32>();

@@ -77,14 +77,14 @@ namespace Lumina::RHITests
         const RHI::FCmdListH CL = Ctx.OpenCL();
 
         const float Clear[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdClearTexture(CL, Texture, Clear);
         RHI::Barriers::TransferToTransfer(CL);
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
         RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback, Size);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
         Ctx.SubmitAndWait(CL);
 
@@ -110,9 +110,9 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         const float Clear[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdClearTexture(CL, Texture, Clear);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
     }
 
@@ -123,9 +123,9 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         const uint32 Clear[4] = { 0xFFFFFFFFu, 0u, 0u, 0u };
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdClearTextureUInt(CL, Texture, Clear);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
     }
 
@@ -141,11 +141,11 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         const float Clear[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdClearTexture(CL, Source, Clear);
         RHI::Barriers::TransferToTransfer(CL);
         RHI::CmdCopyTexture(CL, Source, Slice, Dest, Slice);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
     }
 
@@ -162,11 +162,11 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         const float Clear[4] = { 0.25f, 0.5f, 0.75f, 1.0f };
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdClearTexture(CL, Source, Clear);
         RHI::Barriers::TransferToTransfer(CL);
         RHI::CmdBlitTexture(CL, Source, SourceSlice, Dest, DestSlice, RHI::EFilter::Linear);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
     }
 
@@ -192,9 +192,9 @@ namespace Lumina::RHITests
         Slice.Extent = FUIntVector3(Size, Size, 1);
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
         RHI::CmdCopyTextureToMemory(CL, Texture, Slice, Readback, Size);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         Ctx.SubmitAndWait(CL);
 
         const auto* Pixels = Readback.CpuAs<const uint8>();

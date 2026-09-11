@@ -947,7 +947,7 @@ namespace Grain
             Stage(ChildAlloc, ChildIndices.data(), ChildIndices.size() * sizeof(uint32)) &&
             Stage(PayloadAlloc, Payload.data(), Payload.size() * sizeof(uint32));
 
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader | RHI::EStageFlags::VertexShader);
         const uint64 Value = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), Value);
 

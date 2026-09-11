@@ -60,12 +60,12 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH First = Ctx.OpenCL();
         RHI::CmdMemzero(First, { FirstBuffer.Gpu, 256 });
-        RHI::Barriers::TransferToAll(First);
+        RHI::CmdBarrier(First, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         const uint64 FirstValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &First, 1 });
 
         const RHI::FCmdListH Second = Ctx.OpenCL();
         RHI::CmdMemzero(Second, { SecondBuffer.Gpu, 256 });
-        RHI::Barriers::TransferToAll(Second);
+        RHI::CmdBarrier(Second, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
         const uint64 SecondValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &Second, 1 });
 
         RHI_CHECK(SecondValue > FirstValue);
@@ -127,7 +127,7 @@ namespace Lumina::RHITests
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
             RHI::CmdMemset(CL, { Buffer.Gpu, 256 }, i);
-            RHI::Barriers::TransferToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
             Ctx.SubmitAndWait(CL);
         }
     }

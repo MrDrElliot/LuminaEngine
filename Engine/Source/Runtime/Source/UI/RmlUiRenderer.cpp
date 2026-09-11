@@ -1002,10 +1002,10 @@ namespace Lumina
             Memory::Memcpy(VBStage.Cpu, BatchVertices.data(), VBytes);
             Memory::Memcpy(IBStage.Cpu, BatchIndices.data(),  IBytes);
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::VertexShader, RHI::EStageFlags::Transfer);
             RHI::CmdMemcpy(CL, { Batch.VertexBuffer.Gpu, VBytes }, { VBStage.Gpu, VBytes });
             RHI::CmdMemcpy(CL, { Batch.IndexBuffer.Gpu, IBytes }, { IBStage.Gpu, IBytes });
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::VertexShader);
 
             Batch.Draws      = Move(BatchDrawData);
             Batch.Stops      = Move(BatchStops);
@@ -1093,7 +1093,7 @@ namespace Lumina
 
         RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::Transfer);
         RHI::CmdBlitTexture(CL, CurrentTarget, Slice, LayerTexture(DestLayer), Slice, RHI::EFilter::Nearest);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer);
     }
 
     void FRmlUiRenderer::CopyLayerToTexture(RHI::FCmdListH CL, uint32 SourceLayer, RHI::FTextureH Dest,
@@ -2372,9 +2372,9 @@ namespace Lumina
             {
                 // Clear to transparent so the document breaks instead of showing the old asset.
                 const float Transparent[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                RHI::CmdBarrier(CmdList, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
+                RHI::CmdBarrier(CmdList, RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
                 RHI::CmdClearTexture(CmdList, Tex.Managed.Texture, Transparent);
-                RHI::CmdBarrier(CmdList, RHI::EStageFlags::Transfer, RHI::EStageFlags::AllCommands);
+                RHI::CmdBarrier(CmdList, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader);
                 Tex.bBrushStale   = true;
                 Tex.bBrushCleared = true;
             }

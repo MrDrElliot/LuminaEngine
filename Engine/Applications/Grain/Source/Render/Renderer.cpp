@@ -324,7 +324,7 @@ namespace Grain
             const uint32 GroupZ = Axis == 2 ? kHalfGroups : kGroups;
 
             RHI::CmdDispatch(CL, RHI::CopyTransient(Args), GroupX, GroupY, GroupZ);
-            RHI::Barriers::ComputeToAll(CL);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
         }
 
         FSimArgs CoarseArgs;
@@ -342,7 +342,7 @@ namespace Grain
         RHI::CmdSetPipeline(CL, SimCoarsePipeline);
         RHI::CmdDispatch(CL, RHI::CopyTransient(CoarseArgs),
             uint32(kSimCoarseSide / 4), uint32(kSimCoarseSide / 4), uint32(kSimCoarseSide / 4));
-        RHI::Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
 
         RHI::CmdEndMarker(CL);
     }
@@ -381,11 +381,11 @@ namespace Grain
 
         RHI::CmdSetPipeline(CL, PickPipeline);
         RHI::CmdDispatch(CL, Block, 1, 1, 1);
-        RHI::Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
 
         RHI::CmdSetPipeline(CL, DestroyPipeline);
         RHI::CmdDispatch(CL, Block, 2, 2, 2);
-        RHI::Barriers::ComputeToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
 
         RHI::CmdEndMarker(CL);
 
@@ -735,12 +735,12 @@ namespace Grain
         DrawComposite(CL, Capture, Extent);
 
         RHI::Barriers::RasterToRead(CL);
-        RHI::Barriers::AllToTransfer(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Extent.x, Extent.y, 1);
         RHI::CmdCopyTextureToMemory(CL, Capture, Slice, Readback, Extent.x);
-        RHI::Barriers::TransferToAll(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
 
         const uint64 Value = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), Value);
