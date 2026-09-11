@@ -77,12 +77,6 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
         return kNoPreSkinBase;
     }
 
-    // Same gate TestMeshletAgainstView needs: a count over a null array has been seen in a GPU dump.
-    if (Header.Meshlets == nullptr)
-    {
-        return kNoPreSkinBase;
-    }
-
     const uint FirstVertex = Header.Meshlets[MeshletOffset].VertexOffset;
     const FMeshlet Last    = loadAligned<16>(Header.Meshlets + (MeshletOffset + MeshletCount - 1u));
     const uint EndVertex   = Last.VertexOffset + Last.VertexCount;
@@ -132,7 +126,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     FSkinnedFrameData Skin = (FSkinnedFrameData)0;
     if (bSkinned)
     {
-        if (Pass().SkinnedFrameData == nullptr || SlotIdx >= Pass().NumSkinnedSlots)
+        if (SlotIdx >= Pass().NumSkinnedSlots)
         {
             return;
         }

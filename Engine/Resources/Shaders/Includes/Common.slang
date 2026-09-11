@@ -456,7 +456,7 @@ struct FMeshletHeader
     uint*           Triangles;
     FMeshletCone*   Cones;
 
-    // Null unless the mesh is skinned. A skinned vertex's JointIndices address BonePalettes[meshlet].
+    // A skinned vertex's JointIndices address BonePalettes[meshlet]; BonePaletteCount bounds it.
     FMeshletBonePalette* BonePalettes;
     uint*                BoneIndices;
 
@@ -481,8 +481,11 @@ struct FMeshletHeader
     // null-checked anywhere.
     uint            MeshletCount;
 
+    // Entries in BonePalettes. Zero on a static mesh, which is how "carries no palette" is spelled.
+    uint            BonePaletteCount;
+
     // Pads the stride to 128 so the Slang and C++ layouts agree; FMeshletHeaderGPU is alignas(16).
-    uint            _LocalBoundsPad0, _LocalBoundsPad1;
+    uint            _LocalBoundsPad1;
 
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }

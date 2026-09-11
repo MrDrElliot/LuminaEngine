@@ -76,12 +76,14 @@ namespace Lumina::MeshletHeaderSlab
         {
             FMeshletHeaderGPU Header = {};
 
-            // MeshletCount stays 0, and these addresses exist only for readers that clamp instead.
-            Header.MeshletsAddress  = GNullGeometry.Gpu;
-            Header.SpheresAddress   = GNullGeometry.Gpu;
-            Header.VerticesAddress  = GNullGeometry.Gpu;
-            Header.TrianglesAddress = GNullGeometry.Gpu;
-            Header.ConesAddress     = GNullGeometry.Gpu;
+            // Both counts stay 0, and these addresses exist only for readers that clamp instead.
+            Header.MeshletsAddress     = GNullGeometry.Gpu;
+            Header.SpheresAddress      = GNullGeometry.Gpu;
+            Header.VerticesAddress     = GNullGeometry.Gpu;
+            Header.TrianglesAddress    = GNullGeometry.Gpu;
+            Header.ConesAddress        = GNullGeometry.Gpu;
+            Header.BonePalettesAddress = GNullGeometry.Gpu;
+            Header.BoneIndicesAddress  = GNullGeometry.Gpu;
 
             // Zero is a VALID heap slot, so the sentinel has to be written explicitly.
             Header.DistanceFieldIndex = DistanceField::kInvalidIndex;
@@ -332,9 +334,11 @@ namespace Lumina::MeshletHeaderSlab
         }
 
         // The invariant every consumer relies on, a non-zero count promises its arrays exist.
-        if (Header.MeshletCount != 0
-            && (Header.MeshletsAddress == 0 || Header.SpheresAddress == 0 || Header.VerticesAddress == 0
-                || Header.TrianglesAddress == 0 || Header.ConesAddress == 0))
+        if ((Header.MeshletCount != 0
+             && (Header.MeshletsAddress == 0 || Header.SpheresAddress == 0 || Header.VerticesAddress == 0
+                 || Header.TrianglesAddress == 0 || Header.ConesAddress == 0))
+            || (Header.BonePaletteCount != 0
+                && (Header.BonePalettesAddress == 0 || Header.BoneIndicesAddress == 0)))
         {
             LOG_ERROR("MeshletHeaderSlab: refusing header for slot {}: count {} over null arrays "
                       "(meshlets {}, spheres {}, vertices {}, triangles {}, cones {}). Slot left describing no geometry.",
@@ -360,13 +364,26 @@ namespace Lumina::MeshletHeaderSlab
         // Bumped BEFORE the upload, so a queued reset recognizes that the contents have changed.
         ++GSlotVersion[Slot];
 
-        GMirror[Slot] = Header;
-        RHI::UploadBuffer(GSlab, &Header, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
+        // No address reaches a shader as 0. An array the mesh does not carry points at the null page and
+        // is spelled by its count, so no consumer has to test a pointer before dereferencing it.
+        FMeshletHeaderGPU Mapped = Header;
+        for (uint64* Address : { &Mapped.MeshletsAddress, &Mapped.SpheresAddress, &Mapped.VerticesAddress,
+                                 &Mapped.TrianglesAddress, &Mapped.ConesAddress, &Mapped.BonePalettesAddress,
+                                 &Mapped.BoneIndicesAddress })
+        {
+            if (*Address == 0)
+            {
+                *Address = GNullGeometry.Gpu;
+            }
+        }
+
+        GMirror[Slot] = Mapped;
+        RHI::UploadBuffer(GSlab, &Mapped, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
 
         // The staged slab's mirror copy was queued before this write, so it has to be repeated there.
         if (GPendingSlab.Gpu != 0 && Slot < GPendingCapacity)
         {
-            RHI::UploadBuffer(GPendingSlab, &Header, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
+            RHI::UploadBuffer(GPendingSlab, &Mapped, sizeof(FMeshletHeaderGPU), (uint64)Slot * sizeof(FMeshletHeaderGPU));
         }
     }
 
@@ -378,7 +395,7 @@ namespace Lumina::MeshletHeaderSlab
         }
 
         FScopeLock Lock(GMutex);
-        return Slot < (uint32)GMirror.size() && GMirror[Slot].BonePalettesAddress != 0;
+        return Slot < (uint32)GMirror.size() && GMirror[Slot].BonePaletteCount != 0;
     }
 
     RHI::GPUPtr GetAddress()

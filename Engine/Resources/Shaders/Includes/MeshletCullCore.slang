@@ -54,7 +54,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.MaxScale = sqrt(max(SqScaleX, max(SqScaleY, SqScaleZ)));
 
     Ctx.SkinnedBoundsBase = kNoSkinnedBounds;
-    if (Ctx.bSkinned && SkinnedFrameData() != nullptr && SkinnedMeshletBounds() != nullptr)
+    if (Ctx.bSkinned && I.RetainedSlot < GetSceneRoot().SkinnedFrameDataCount)
     {
         // CullInstances already rejected any skinned slot whose frame tag was stale, so this is current.
         Ctx.SkinnedBoundsBase = SkinnedFrameData()[I.RetainedSlot].SkinnedBoundsBase;
@@ -96,10 +96,12 @@ FMeshletBoundsCache MakeMeshletBoundsCache()
     return C;
 }
 
-// The posed sphere when this frame wrote one, and the bind-pose sphere otherwise.
+// The posed sphere when this frame wrote one, and the bind-pose sphere otherwise. The base is folded
+// from a slice the bounds pass may have skipped, so it is the arena's count that says whether it landed.
 FMeshletSphere LoadMeshletSphere(FMeshletHeader* Header, uint SkinnedBoundsBase, uint MeshletIdx)
 {
-    if (SkinnedBoundsBase != kNoSkinnedBounds)
+    if (SkinnedBoundsBase != kNoSkinnedBounds
+        && (SkinnedBoundsBase + MeshletIdx) < GetSceneRoot().SkinnedBoundsCount)
     {
         return loadAligned<16>(SkinnedMeshletBounds() + (SkinnedBoundsBase + MeshletIdx));
     }
@@ -143,21 +145,12 @@ void EnsureMeshletCone(FMeshletHeader* Header, FMeshletCullContext Ctx, inout FM
     C.bConeReady = true;
     C.bHasCone   = false;
 
-    if (Ctx.SkinnedBoundsBase != kNoSkinnedBounds)
+    // Same arena and same bound as the posed sphere, since one base addresses both.
+    if (Ctx.SkinnedBoundsBase != kNoSkinnedBounds
+        && (Ctx.SkinnedBoundsBase + C.MeshletIdx) < GetSceneRoot().SkinnedBoundsCount)
     {
-        if (SkinnedMeshletCones() == nullptr)
-        {
-            return;
-        }
-
         // Rewritten per frame against this pose, and packed exactly like the baked one.
         ApplyMeshletCone(Ctx, SkinnedMeshletCones()[Ctx.SkinnedBoundsBase + C.MeshletIdx], C);
-        return;
-    }
-
-    // Same reasoning as the sphere gate, a header without cones is a meshlet without one.
-    if (Header.Cones == nullptr)
-    {
         return;
     }
 
@@ -186,8 +179,7 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
         // LOD table while Spheres/Cones come from the header, and only the header knows how long they are.
         // A mesh that has died leaves the instance naming the null header, whose count is 0, so this is
         // also what stops a stale instance from indexing geometry that is no longer there.
-        // The count is the documented bound, but a GPU dump caught a count over a null Spheres.
-        bKeep = MeshletIdx < Header.MeshletCount && Header.Spheres != nullptr;
+        bKeep = MeshletIdx < Header.MeshletCount;
 
         if (bKeep)
         {

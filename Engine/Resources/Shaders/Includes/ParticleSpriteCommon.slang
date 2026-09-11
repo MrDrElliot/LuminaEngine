@@ -26,7 +26,8 @@ struct FParticlePushConstants
     int    AttrSlotPrevPosY;
     int    AttrSlotPrevPosZ;
     uint   MaterialIndex;          // Materials() slot, read only by the Particle material domain
-    uint*  SortedIndices;          // live particles back-to-front, null when the sort pass did not run
+    uint   bSorted;                // 0 draws unsorted at full capacity, and SortedIndices is not read
+    uint*  SortedIndices;          // live particles back-to-front
 };
 FParticlePushConstants* Pass() { return GetPassArgs<FParticlePushConstants>(); }
 
@@ -81,7 +82,7 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
     const uint QuadIndex = VertexIndex % 6;
 
     // The sorted draw covers only live particles, so the slot has to be looked up, not derived.
-    const uint ParticleIndex = (Pass().SortedIndices != nullptr)
+    const uint ParticleIndex = (Pass().bSorted != 0u)
         ? Pass().SortedIndices[VertexIndex / 6]
         : (VertexIndex / 6);
 

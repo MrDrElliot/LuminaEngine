@@ -42,7 +42,7 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
     else                         { bSkinned = Ref.InstHasFlag(EInstanceFlags::Skinned); }
 
     // A shorter snapshot cannot be indexed safely, because ResolvePaletteBone clamps against the live count.
-    const bool bPrevPoseUsable = (PrevBones() != nullptr)
+    const bool bPrevPoseUsable = (GetSceneRoot().PrevBoneCount != 0u)
                               && (GetSceneRoot().PrevBoneCount >= Scene().CullData.BoneNum);
 
     if (bSkinned && bPrevPoseUsable)
@@ -57,13 +57,12 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
 
 float4x4 PrevModelMatrixOf(FGPUInstance* Inst, float4x4 Fallback)
 {
-    FTransform3x4* Prev = PrevRetainedTransforms();
     const uint Slot = Inst.RetainedSlot;
-    if (Prev == nullptr || Slot >= GetSceneRoot().PrevRetainedTransformCount)
+    if (Slot >= GetSceneRoot().PrevRetainedTransformCount)
     {
         return Fallback;
     }
-    return Prev[Slot].ToMatrix();
+    return PrevRetainedTransforms()[Slot].ToMatrix();
 }
 
 [shader("compute")]

@@ -33,14 +33,13 @@ FSkinnedBoundsArgs* Pass() { return GetPassArgs<FSkinnedBoundsArgs>(); }
 void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 {
     const uint SlotListIdx = GlobalID.y;
-    if (SlotListIdx >= Pass().NumSlots || Pass().OutBounds == nullptr)
+    if (SlotListIdx >= Pass().NumSlots)
     {
         return;
     }
 
     const uint SlotIdx = Pass().SlotList[SlotListIdx];
-    if (SlotIdx >= Pass().RetainedCapacity || Pass().RetainedStatic == nullptr
-        || Pass().SkinnedFrameData == nullptr)
+    if (SlotIdx >= Pass().RetainedCapacity)
     {
         return;
     }
@@ -70,13 +69,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
     // Slot 0 is the null header, so this is readable for any slot value the slab can name.
     FMeshletHeader* Header = Static.MeshletHeader;
-    if (MeshletHeaders() == nullptr || Bones() == nullptr)
-    {
-        return;
-    }
 
     // Bounded by the header's own count, because only the header knows how long its arrays are.
-    if (MeshletIdx >= Header.MeshletCount || Header.Spheres == nullptr)
+    if (MeshletIdx >= Header.MeshletCount)
     {
         return;
     }
@@ -97,29 +92,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
         Pass().OutBounds[OutIdx] = Bind;
 
         // Bind pose is exact here, so the authored cone carries over verbatim with no widening.
-        if (Pass().OutCones != nullptr)
-        {
-            FMeshletCone Out = DisabledMeshletCone();
-            if (Header.Cones != nullptr)
-            {
-                Out = Header.Cones[MeshletIdx];
-            }
-            Pass().OutCones[OutIdx] = Out;
-        }
+        Pass().OutCones[OutIdx] = Header.Cones[MeshletIdx];
         return;
     }
 
     const float4 BindCenter = float4(Bind.Center, 1.0);
 
-    const bool bWantCone = Pass().OutCones != nullptr;
-    const bool bHasCone  = bWantCone && Header.Cones != nullptr;
-
-    // Loaded under a branch rather than a ternary, so a null Cones is never dereferenced to feed a select.
-    float4 BindCone = float4(0.0, 0.0, 1.0, 1.0);
-    if (bHasCone)
-    {
-        BindCone = DecodeMeshletCone(Header.Cones[MeshletIdx]);
-    }
+    const float4 BindCone = DecodeMeshletCone(Header.Cones[MeshletIdx]);
     const float3 BindAxis = BindCone.xyz;
 
     float3 Lo = float3( 3.4e38,  3.4e38,  3.4e38);
@@ -144,12 +123,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
         MaxScaledRadius = max(MaxScaledRadius, sqrt(max(SqScaleX, max(SqScaleY, SqScaleZ))) * Bind.Radius);
 
-        if (bHasCone)
-        {
-            AxisSum += normalize(float3(dot(Rows.R0.xyz, BindAxis),
-                                        dot(Rows.R1.xyz, BindAxis),
-                                        dot(Rows.R2.xyz, BindAxis)));
-        }
+        AxisSum += normalize(float3(dot(Rows.R0.xyz, BindAxis),
+                                    dot(Rows.R1.xyz, BindAxis),
+                                    dot(Rows.R2.xyz, BindAxis)));
     }
 
     const float3 Center = (Lo + Hi) * 0.5;
@@ -162,13 +138,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
     Pass().OutBounds[OutIdx] = Out;
 
-    if (!bWantCone)
-    {
-        return;
-    }
-
     // An authored cutoff of 1.0 already means no cone, so nothing here can make it reject.
-    if (!bHasCone || BindCone.w >= 1.0 || dot(AxisSum, AxisSum) <= 1e-12)
+    if (BindCone.w >= 1.0 || dot(AxisSum, AxisSum) <= 1e-12)
     {
         Pass().OutCones[OutIdx] = DisabledMeshletCone();
         return;

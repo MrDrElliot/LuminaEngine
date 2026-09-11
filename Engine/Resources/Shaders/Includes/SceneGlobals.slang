@@ -2,7 +2,7 @@
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
-// Must match FSceneRoot in SceneRenderTypes.h (200 B, scalar layout); the hottest pointers ride in FRHIRoot.
+// Must match FSceneRoot in SceneRenderTypes.h (216 B, scalar layout); the hottest pointers ride in FRHIRoot.
 struct FSceneRoot
 {
     FBoneTransform*      Bones;
@@ -49,6 +49,9 @@ struct FSceneRoot
     // Entries in the snapshots above, which lag a frame and can be shorter than the live arrays.
     uint  PrevBoneCount;
     uint  PrevRetainedTransformCount;
+    // Entries in SkinnedFrameData, and in SkinnedMeshletBounds/SkinnedMeshletCones respectively.
+    uint  SkinnedFrameDataCount;
+    uint  SkinnedBoundsCount;
 };
 
 // gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.
@@ -155,7 +158,7 @@ void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, 
     // Range, not just the ~0u sentinel: a stale or corrupt slot is simply out of range, and both index the
     // same buffer, so both have to be rejected before the write. Getting this wrong is an MMU fault, which
     // is how it was found. Uniform across the wave, so this branch costs no divergence.
-    if (Feedback == nullptr || MaterialSlot >= GetSceneRoot().StreamingFeedbackCount)
+    if (MaterialSlot >= GetSceneRoot().StreamingFeedbackCount)
     {
         return;
     }
@@ -336,7 +339,7 @@ FMeshletBonePalette GetBonePalette(FMeshletHeader* Header, uint MeshletIndex)
     Palette.Offset = 0u;
     Palette.Count  = 0u;
 
-    if (Header.BonePalettes != nullptr && Header.BoneIndices != nullptr && MeshletIndex < Header.MeshletCount)
+    if (MeshletIndex < Header.BonePaletteCount)
     {
         Palette = Header.BonePalettes[MeshletIndex];
     }
@@ -351,16 +354,12 @@ uint ResolvePaletteBone(FMeshletHeader* Header, FMeshletBonePalette Palette, uin
     return min(Global, Scene().CullData.BoneNum - 1u);
 }
 
-// True when the bone arena and this meshlet's palette can both actually be read.
-bool CanSkinMeshletWith(FBoneTransform* BoneArray, FMeshletBonePalette Palette, uint BoneOffset)
-{
-    return (BoneArray != nullptr) && (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u)
-        && (BoneOffset != kNoBoneSlice);
-}
-
+// True when the bone arena and this meshlet's palette can both actually be read. The arena the caller
+// will read from is irrelevant: PrevBones is gated by PrevBoneCount, which is the shorter of the two.
 bool CanSkinMeshlet(FMeshletBonePalette Palette, uint BoneOffset)
 {
-    return CanSkinMeshletWith(Bones(), Palette, BoneOffset);
+    return (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u)
+        && (BoneOffset != kNoBoneSlice);
 }
 
 FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
@@ -390,7 +389,7 @@ FPreSkinnedVertex SkinVertexWith(FBoneTransform* BoneArray, FMeshletHeader* Head
     const FMeshletBonePalette Palette = GetBonePalette(Header, MeshletIndex);
 
     FSkinRows Rows = IdentitySkinRows();
-    if (CanSkinMeshletWith(BoneArray, Palette, BoneOffset))
+    if (CanSkinMeshlet(Palette, BoneOffset))
     {
         Rows = BlendSkinRows(
             loadAligned<16>(BoneArray + ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)),

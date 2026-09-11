@@ -133,16 +133,13 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // Guarded rather than folded into an && chain: this is the deepest dependent hop any lane makes
     // before the cull proper, and unconditional it was paid by workgroups with nothing to do.
     //
-    // The header used to be null-checked here. It cannot be null now -- an instance carries a slot and
-    // slot 0 is the null header -- so what is left is the instance buffer itself, which the CPU can
-    // legitimately fail to allocate. TestMeshletAgainstView bounds every read by the header's own count.
+    // TestMeshletAgainstView bounds every read by the header's own count.
     FGPUInstance* Inst = Instances() + InstanceID;
-    const bool bInstanceOK = bHasWork && (Instances() != nullptr);
 
     // Workgroup-uniform once the block is loaded, so both the load and the branches below are uniform.
     uint RetainedSlot = 0u;
     bool bWasVisible  = false;
-    if (bInstanceOK && bTwoPhase)
+    if (bHasWork && bTwoPhase)
     {
         RetainedSlot = Inst.RetainedSlot;
         bWasVisible  = (RetainedSlot < Pass().VisibilityCapacity)
@@ -152,7 +149,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // Late only, because the early phase is a replay and an instance dropped there is dropped for good.
     bool bInstanceOccluded = false;
 
-    if (bInstanceOK && bLate && bTwoPhase && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
+    if (bHasWork && bLate && bTwoPhase && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
     {
         // The one occlusion test a skinned instance can take, since its sphere is re-fed every frame.
         const float4 Sphere = loadAligned<16>(&Inst.SphereBounds);
@@ -169,7 +166,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // LATE tests everything, including instances EARLY already drew and it will not emit: that test is
     // what rewrites the flag for next frame. EARLY only tests what it can emit -- an instance it is not
     // going to draw costs it nothing.
-    const bool bTest = bInstanceOK && !bInstanceOccluded && (ThreadID < Block.Count) && (bLate || bEmitPhase);
+    const bool bTest = bHasWork && !bInstanceOccluded && (ThreadID < Block.Count) && (bLate || bEmitPhase);
     bool       bKeep = bTest && bEmitPhase;
     bool       bLaneVisible = false;
 

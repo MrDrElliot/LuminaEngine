@@ -60,13 +60,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     const uint WorkIndex = GroupID.x + GroupID.y * (uint)MAX_DISPATCH_AXIS;
     const uint NumPairs  = Pass().NumPairs;
 
-    // The root carries PreSkinnedVertices only when its buffer exists, and the retained payload's header
-    // pointer is whatever the last bind left there. ResolveMeshlet refuses a null header for the same reason;
-    // this pass used to reach straight through both. The store was already bounded -- the reads that feed it
-    // were not, and it is a read that faults.
-    if (NumPairs == 0u || Pass().WorkBase == nullptr || Pass().SlotList == nullptr
-        || Pass().SkinnedData == nullptr || Pass().RetainedStatic == nullptr
-        || PreSkinnedVertices() == nullptr)
+    if (NumPairs == 0u)
     {
         return;
     }

@@ -74,7 +74,6 @@ groupshared uint gsRunning;
 void ComputeMain(uint Lane : SV_GroupIndex)
 {
     const uint NumPairs = Pass().NumSlots * 2u;
-    const bool bHaveInputs = Pass().SlotList != nullptr && Pass().SkinnedData != nullptr;
 
     if (Lane == 0u)
     {
@@ -88,7 +87,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         const uint Pair = TileBase + Lane;
 
         uint Count = 0u;
-        if (bHaveInputs && Pair < NumPairs)
+        if (Pair < NumPairs)
         {
             const FSkinnedFrameData Data = Pass().SkinnedData[Pass().SlotList[Pair >> 1u]];
             Count = SkinBlockMeshletCount(Data, (Pair & 1u) != 0u);

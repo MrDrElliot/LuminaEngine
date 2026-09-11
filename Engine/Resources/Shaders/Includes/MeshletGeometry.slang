@@ -36,17 +36,6 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     // Held in a local because every accessor call re-emits the root load instead of reusing it.
     FMeshletDraw* DrawList = GetSceneRoot().MeshletDrawListPtr;
 
-    // A pass that draws without these page-faults the device rather than producing a wrong pixel.
-    if (DrawList == nullptr || Instances() == nullptr)
-    {
-        FMeshletRef Empty;
-        Empty.SkinnedVertexBase = kNoPreSkinBase;
-        Empty.GlobalMeshletIdx  = 0u;
-        Empty.InstanceID        = 0u;
-        Empty.M                 = (FMeshlet)0;
-        return Empty;
-    }
-
     // Issued before the draw fetch so the two independent chains overlap instead of serializing.
     const uint ExpectedTag = Scene().CullData.MeshletDrawTag;
 

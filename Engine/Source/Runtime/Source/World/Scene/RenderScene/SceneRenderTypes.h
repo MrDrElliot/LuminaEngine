@@ -1200,9 +1200,13 @@ namespace Lumina
         // Entries in the snapshots above, which lag a frame and can be shorter than the live arrays.
         uint32 PrevBoneCount          = 0;
         uint32 PrevRetainedTransformCount = 0;
+        // Entries in SkinnedFrameData, and in SkinnedMeshletBounds/SkinnedMeshletCones respectively. Zero
+        // when the buffer does not exist, which is the only thing a reader is allowed to test.
+        uint32 SkinnedFrameDataCount  = 0;
+        uint32 SkinnedBoundsCount     = 0;
     };
-    // 20 pointers + 12 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
-    static_assert(sizeof(FSceneRoot) == 208, "FSceneRoot must match SceneGlobals.slang");
+    // 20 pointers + 14 indices; RHI::FSceneBindings is the only home for SceneData, Lights and Instances.
+    static_assert(sizeof(FSceneRoot) == 216, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

@@ -4434,6 +4434,13 @@ namespace Lumina
             SceneRootShared.SkinnedMeshletBounds = SkinnedMeshletBoundsBuffer.Gpu;
             SceneRootShared.SkinnedFrameData     = SkinnedFrameDataBuffer.Gpu;
             SceneRootShared.SkinnedMeshletCones  = SkinnedMeshletConeBuffer.Gpu;
+
+            // Both spheres and cones are indexed by one base, so the shorter of the two is the bound.
+            SceneRootShared.SkinnedFrameDataCount = SkinnedFrameDataBuffer
+                ? (uint32)Math::Min<uint64>(SkinnedFrameDataBuffer.Size / sizeof(FSkinnedFrameData), 0xFFFFFFFFull)
+                : 0u;
+            SceneRootShared.SkinnedBoundsCount = (SkinnedMeshletBoundsBuffer && SkinnedMeshletConeBuffer)
+                ? SkinnedMeshletBoundsCapacity : 0u;
             if (IsGTAOEnabled())
             {
                 SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
@@ -6389,7 +6396,7 @@ namespace Lumina
 
         ResizeBufferIfNeeded(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
                              SkinWorkBaseLowUsage[Slot], true, EBufferInit::Zeroed, "Skinning.WorkBase");
-        if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs()
+        if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs() || !GetPreSkinnedVerticesBuffer()
             || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
         {
             return;
@@ -8346,9 +8353,10 @@ namespace Lumina
             int32    AttrSlotPrevPosY;
             int32    AttrSlotPrevPosZ;
             uint32   MaterialIndex;      // Materials() slot; read only by the Particle material stages
-            uint64   SortedIndicesAddr;  // 0 when the emitter is drawn unsorted at full capacity
+            uint32   bSorted;            // 0 draws unsorted at full capacity, and SortedIndices is not read
+            uint64   SortedIndicesAddr;
         };
-        static_assert(sizeof(FParticlePushConstants) == 88, "FParticlePushConstants must match the slang pass block.");
+        static_assert(sizeof(FParticlePushConstants) == 96, "FParticlePushConstants must match the slang pass block.");
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
@@ -8408,7 +8416,8 @@ namespace Lumina
             PC.AttrSlotPrevPosY   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosY];
             PC.AttrSlotPrevPosZ   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosZ];
             PC.MaterialIndex      = bMaterial ? (uint32)Item.MaterialIndex : 0u;
-            PC.SortedIndicesAddr  = bSorted ? State.SortIndexBuffer.Gpu : 0ull;
+            PC.bSorted            = bSorted ? 1u : 0u;
+            PC.SortedIndicesAddr  = State.SortIndexBuffer.Gpu;
 
             if (bSorted)
             {
