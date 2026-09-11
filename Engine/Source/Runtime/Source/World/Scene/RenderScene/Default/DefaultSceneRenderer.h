@@ -4,6 +4,7 @@
 
 
 #include "Renderer/ShaderHandle.h"
+#include "SceneBuffer.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/Allocators/Allocator.h"
 #include "Memory/SmartPtr.h"
@@ -706,21 +707,13 @@ namespace Lumina
         void SpotShadowPass(RHI::FCmdListH CL);
         void CascadedShowPass(RHI::FCmdListH CL, uint32 CascadeViewBase);
         void DecalPass(RHI::FCmdListH CL);
-        /** Classic two-phase: Early replays the set that was visible last frame, with no Hi-Z, to build
-            the pyramid; Late tests every instance against that pyramid and draws the ones Early did not.
-            A view without ECullViewFlags::MeshletHiZ is single-phase and drawn entirely by Early. */
         void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
                            ECullPhase::Type Phase = ECullPhase::Early);
-        /** Count pixels per material, prefix-sum the counts, scatter every pixel's position into its
-            material's run of the list, and build the indirect args the two passes below dispatch on. */
         void VisBufferClassifyPass(RHI::FCmdListH CL);
-        /** One indirect compute dispatch per material over its own pixel run; writes the GBuffer. */
         void MaterialGBufferPass(RHI::FCmdListH CL);
-        /** One indirect compute dispatch over every classified pixel; writes lit HDR. */
         void DeferredLightingPass(RHI::FCmdListH CL);
         #if USING(WITH_EDITOR)
         void PickerResolvePass(RHI::FCmdListH CL);
-        // Edge-detects the Picker RT, so billboards, widgets and world text outline as well as meshes.
         void SelectionOutlinePass(RHI::FCmdListH CL);
         #endif
         #if !defined(LE_SHIPPING)
@@ -996,6 +989,20 @@ namespace Lumina
             return 0;
         }
 
+        template<typename T>
+        void DispatchCompute(RHI::FCmdListH CL, FShaderH Shader, const T& PassData, uint32 GroupsX, uint32 GroupsY = 1u, uint32 GroupsZ = 1u)
+        {
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(Shader));
+            RHI::CmdDispatch(CL, MakeArgs(PassData), GroupsX, GroupsY, GroupsZ);
+        }
+
+        template<typename T>
+        void DispatchComputeIndirect(RHI::FCmdListH CL, FShaderH Shader, const T& PassData, RHI::FGPURange Arguments)
+        {
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(Shader));
+            RHI::CmdDispatchIndirect(CL, MakeArgs(PassData), Arguments);
+        }
+
         // Sets the full-extent viewport + scissor for the current render area.
         static void SetViewportScissor(RHI::FCmdListH CL, const FUIntVector2& Extent);
 
@@ -1013,18 +1020,8 @@ namespace Lumina
         /** What a freshly (re)allocated scene buffer holds. Undefined is the honest description of what
          *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
          *  a buffer that is provably rewritten in full before anything reads it. */
-        // Zeroed is an opt-in with a stated invariant; Undefined is poisoned in Development to expose missed writes.
-        enum class EBufferInit : uint8
-        {
-            Undefined,
-            Zeroed,
-        };
-
-        // DebugName rides every reallocation, so a fault in one of these resolves to a name in the
-        // device-lost report rather than a bare address. Nothing else reads it.
-        void ResizeBufferIfNeeded(RHI::FCmdListH CL, RHI::FGPUAllocation& Buffer, uint64 NeededSize, float SlackFactor,
-                                  uint32& LowUsageCounter, bool bAllowShrink = true,
-                                  EBufferInit Init = EBufferInit::Undefined, const char* DebugName = nullptr);
+        // Grows to the buffer's policy, and shrinks only while both the policy and the caller allow it.
+        void ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink = true);
 
         // Freed when this slot's previous GPU work has completed.
         void DeferFree(const RHI::FGPUAllocation& Allocation);
@@ -1059,26 +1056,15 @@ namespace Lumina
         };
         FFrozenCull FrozenCull;
         
-        RHI::FGPUAllocation                                        PreSkinnedVerticesBuffer;
-        uint32                                              PreSkinnedVerticesLowUsage = 0;
+        FSceneBuffer PreSkinnedVerticesBuffer { "Cull.PreSkinnedVertices", 1.2f };
 
-        TArray<uint32,       RHI::kFramesInFlight>          InstanceBufferLowUsage = {};
-        TArray<uint64,       RHI::kFramesInFlight>          InstanceBufferSerial = {};
-        TArray<uint32, RHI::kFramesInFlight>                RenderBucketRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MeshletDrawListRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MeshDrawArgsRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                InstanceViewRangeRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MeshletBlockRingLowUsage = {};
         // Sharing one buffer would clear the flags the late dispatch still needs to read.
-        TArray<RHI::FGPUAllocation, 2>                            InstanceVisibilityBuffers = {};
-        TArray<uint32, 2>                                  InstanceVisibilityLowUsage = {};
+        TArray<FSceneBuffer, 2> InstanceVisibilityBuffers = MakeSceneRing<2>("Retained.InstanceVisibility", 1.5f, EBufferInit::Zeroed);
         uint32                                             InstanceVisibilityCapacity = 0;
         uint8                                              InstanceVisibilityWriteIndex = 0;
         // Stamped by the late cull; starts past zero so a never-written slot can never read as visible.
         uint32                                             InstanceVisibilityTag = 1;
         uint32                                             LastStaleValidationGeneration = 0;
-        TArray<uint32, RHI::kFramesInFlight>                MaterialClassifyRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MaterialPixelListRingLowUsage = {};
         TArray<FSceneImage, (int)ENamedImage::Num>          NamedImages = {};
 
         /** Reconcile cached sample count with the world setting; reallocates every view's MS images when it changes. */
@@ -1204,60 +1190,48 @@ namespace Lumina
         uint32                                              NumLiveShadows = 0;
         uint64                                              StreamingFeedbackFrame = 0;
         
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          RenderBucketRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MeshletDrawListRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MeshDrawArgsRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          FrameScratchRing = {};
-        TArray<uint32, RHI::kFramesInFlight>                                       FrameScratchLowUsage = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MeshletBlockRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          BlockDispatchArgsRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          SkinWorkBaseRing = {};
-        TArray<uint32,       RHI::kFramesInFlight>                          SkinWorkBaseLowUsage = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          SkinDispatchArgsRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MeshletCullDispatchArgsRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          InstanceViewRangeRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          TotalsRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight> RenderBucketRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.RenderBuckets", 1.5f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> MeshletDrawListRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshletDrawList", kSceneBufferGrowth);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> MeshDrawArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshDrawArgs", 1.2f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> FrameScratchRing = MakeSceneRing<RHI::kFramesInFlight>("Frame.Scratch", 1.5f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> MeshletBlockRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshletBlocks", 1.2f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> BlockDispatchArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.BlockDispatchArgs", 1.0f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> SkinWorkBaseRing = MakeSceneRing<RHI::kFramesInFlight>("Skinning.WorkBase", 1.5f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> SkinDispatchArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.SkinDispatchArgs", 1.0f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> MeshletCullDispatchArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshletCullDispatchArgs", 1.0f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> InstanceViewRangeRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.InstanceViewRanges", 1.25f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> TotalsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.Totals", 1.0f);
         TArray<bool, RHI::kFramesInFlight>                                  TotalsZeroed = {};
 
         RHI::FGPUAllocation GetTotals() const { return TotalsRing[CurrentFrameSlot]; }
 
-        RHI::FGPUAllocation                                        RetainedCullEntryBuffer;
-        RHI::FGPUAllocation                                        RetainedTransformBuffer;
-        RHI::FGPUAllocation                                        RetainedStaticBuffer;
-        RHI::FGPUAllocation                                        SurfaceDescBuffer;
-        RHI::FGPUAllocation                                        BoneArenaBuffer;
-        uint32                                              BoneArenaLowUsage = 0;
+        FSceneBuffer RetainedCullEntryBuffer { "Retained.CullEntries", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer RetainedTransformBuffer { "Retained.Transforms", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer RetainedStaticBuffer { "Retained.Static", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer SurfaceDescBuffer { "Retained.SurfaceDescs", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer BoneArenaBuffer { "Skinning.BoneArena", 1.5f };
         // Snapshots taken before each frame's incremental uploads land, so motion vectors have a past.
         RHI::FGPUAllocation                                        PrevBoneArenaBuffer;
         RHI::FGPUAllocation                                        PrevRetainedTransformBuffer;
         bool                                                bPrevMotionStateValid = false;
         void SnapshotMotionState(RHI::FCmdListH CL);
-        RHI::FGPUAllocation                                        SkinnedFrameDataBuffer;
-        uint32                                              SkinnedFrameDataLowUsage = 0;
-        RHI::FGPUAllocation                                        SkinnedSlotListBuffer;
-        uint32                                              SkinnedSlotListLowUsage = 0;
+        FSceneBuffer SkinnedFrameDataBuffer { "Skinning.FrameData", 1.25f };
+        FSceneBuffer SkinnedSlotListBuffer { "Skinning.SlotList", 1.5f };
         TVector<uint32>                                     SkinnedUploadScratch;
         TVector<FUIntVector2>                               SkinnedRunScratch;
         uint32                                              CurrentSkinnedFrameTag = 0;
         // Per-frame posed meshlet spheres, so the cull can reject skinned geometry per meshlet.
-        RHI::FGPUAllocation                                        SkinnedMeshletBoundsBuffer;
-        uint32                                              SkinnedMeshletBoundsLowUsage = 0;
+        FSceneBuffer SkinnedMeshletBoundsBuffer { "Skinning.MeshletBounds", 1.25f };
         // Same index space and same base as the bounds arena, so the two are sized together.
-        RHI::FGPUAllocation                                        SkinnedMeshletConeBuffer;
-        uint32                                              SkinnedMeshletConeLowUsage = 0;
+        FSceneBuffer SkinnedMeshletConeBuffer { "Skinning.MeshletCones", 1.25f };
         uint32                                              SkinnedMeshletBoundsCapacity = 0;
         // Longest per-slot meshlet range, which is the x extent of the bounds dispatch.
         uint32                                              SkinnedBoundsMaxRange = 0;
         // Slots the retained static buffer actually holds, which bounds the header lookup in that pass.
         uint32                                              RetainedStaticCapacity = 0;
-        uint32                                              RetainedCullEntryLowUsage = 0;
-        uint32                                              RetainedTransformLowUsage = 0;
-        uint32                                              RetainedStaticLowUsage = 0;
-        uint32                                              SurfaceDescLowUsage = 0;
         uint32                                              UploadedSurfaceDescs = 0;
 
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>          VisibleInstanceRing = {};
-        TArray<uint32,       RHI::kFramesInFlight>          VisibleInstanceLowUsage = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight> VisibleInstanceRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.VisibleInstances", kSceneBufferGrowth);
 
 
         // (base, count) per (skinned instance, view) for the CPU-fed head of the visible buffer, which
@@ -1353,8 +1327,8 @@ namespace Lumina
         uint32                                              MeshletDrawTagCounter = 0;
         uint32                                              FrameVisibleInstanceCapacity = 0;
         void   UpdateMeshletBoundFeedback(uint8 Slot);
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MaterialClassifyRing = {};
-        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>                          MaterialPixelListRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialClassifyRing = MakeSceneRing<RHI::kFramesInFlight>("Material.ClassifyBlock", 1.0f, EBufferInit::Undefined, /*bAllowShrink*/ false);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialPixelListRing = MakeSceneRing<RHI::kFramesInFlight>("Material.PixelList", 1.2f);
         
         uint8                                                           CurrentFrameSlot = 0;
 

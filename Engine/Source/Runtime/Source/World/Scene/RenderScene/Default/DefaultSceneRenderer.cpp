@@ -257,19 +257,19 @@ namespace Lumina
                 Buffer = {};
             }
         };
-        FreeBuffer(PreSkinnedVerticesBuffer);
+        PreSkinnedVerticesBuffer.Release();
 
-        FreeBuffer(RetainedCullEntryBuffer);
-        FreeBuffer(RetainedTransformBuffer);
-        FreeBuffer(RetainedStaticBuffer);
-        FreeBuffer(SkinnedMeshletBoundsBuffer);
-        FreeBuffer(SkinnedMeshletConeBuffer);
-        FreeBuffer(SurfaceDescBuffer);
-        FreeBuffer(BoneArenaBuffer);
-        FreeBuffer(SkinnedFrameDataBuffer);
-        FreeBuffer(SkinnedSlotListBuffer);
-        FreeBuffer(InstanceVisibilityBuffers[0]);
-        FreeBuffer(InstanceVisibilityBuffers[1]);
+        RetainedCullEntryBuffer.Release();
+        RetainedTransformBuffer.Release();
+        RetainedStaticBuffer.Release();
+        SkinnedMeshletBoundsBuffer.Release();
+        SkinnedMeshletConeBuffer.Release();
+        SurfaceDescBuffer.Release();
+        BoneArenaBuffer.Release();
+        SkinnedFrameDataBuffer.Release();
+        SkinnedSlotListBuffer.Release();
+        InstanceVisibilityBuffers[0].Release();
+        InstanceVisibilityBuffers[1].Release();
 
         for (auto& [Entity, States] : GrassGPUStates)
         {
@@ -281,22 +281,20 @@ namespace Lumina
 
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
-            FreeBuffer(RenderBucketRing[Slot]);
-            FreeBuffer(MeshletDrawListRing[Slot]);
-            FreeBuffer(MeshDrawArgsRing[Slot]);
-            FreeBuffer(FrameScratchRing[Slot]);
-            FreeBuffer(MeshletBlockRing[Slot]);
-            FreeBuffer(BlockDispatchArgsRing[Slot]);
-            FreeBuffer(MeshletCullDispatchArgsRing[Slot]);
-            FreeBuffer(SkinDispatchArgsRing[Slot]);
-            FreeBuffer(SkinWorkBaseRing[Slot]);
-            FreeBuffer(InstanceViewRangeRing[Slot]);
-            FreeBuffer(MaterialClassifyRing[Slot]);
-            FreeBuffer(MaterialPixelListRing[Slot]);
-
-            // GPU-driven scene per-frame outputs.
-            FreeBuffer(VisibleInstanceRing[Slot]);
-            FreeBuffer(TotalsRing[Slot]);
+            RenderBucketRing[Slot].Release();
+            MeshletDrawListRing[Slot].Release();
+            MeshDrawArgsRing[Slot].Release();
+            FrameScratchRing[Slot].Release();
+            MeshletBlockRing[Slot].Release();
+            BlockDispatchArgsRing[Slot].Release();
+            MeshletCullDispatchArgsRing[Slot].Release();
+            SkinDispatchArgsRing[Slot].Release();
+            SkinWorkBaseRing[Slot].Release();
+            InstanceViewRangeRing[Slot].Release();
+            MaterialClassifyRing[Slot].Release();
+            MaterialPixelListRing[Slot].Release();
+            VisibleInstanceRing[Slot].Release();
+            TotalsRing[Slot].Release();
 
             // Raw GPUPtr rather than an RHI::FGPUAllocation (CPURead allocation, persistently mapped).
             if (MeshletBoundReadback[Slot].Gpu != 0)
@@ -1051,8 +1049,7 @@ namespace Lumina
         }
 
         const uint64 UsedBytes = kScratchGrassCursorsOffset + (uint64)GrassCursors * sizeof(uint32);
-        ResizeBufferIfNeeded(CL, FrameScratchRing[CurrentFrameSlot], UsedBytes, 1.5f, FrameScratchLowUsage[CurrentFrameSlot],
-                             true, EBufferInit::Undefined, "Frame.Scratch");
+        ReserveBuffer(CL, FrameScratchRing[CurrentFrameSlot], UsedBytes);
 
         RHI::CmdMemzero(CL, { FrameScratchRing[CurrentFrameSlot].Gpu, UsedBytes });
         Barriers::TransferToCompute(CL);
@@ -1092,27 +1089,24 @@ namespace Lumina
     {
 
         // GPU pre-skinning output, written by Skinning.slang and read by every draw VS via BDA.
-        PreSkinnedVerticesBuffer = CreateSceneBuffer(sizeof(FPreSkinnedVertex) * 64 * 1024, "Cull.PreSkinnedVertices");
+        PreSkinnedVerticesBuffer.Allocate(sizeof(FPreSkinnedVertex) * 64 * 1024);
 
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
-            MeshletDrawListRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.MeshletDrawList");
+            // Sized for real in CompileDrawCommands_Render.
+            MeshletDrawListRing[Slot].Allocate(sizeof(uint32) * 2);
+            RenderBucketRing[Slot].Allocate(sizeof(FRenderBucketGPU));
+            MeshletBlockRing[Slot].Allocate(sizeof(uint32) * 2);
+            SkinWorkBaseRing[Slot].Allocate(sizeof(uint32) * 2);
+            VisibleInstanceRing[Slot].Allocate(sizeof(FGPUInstance));
 
-            // Per-(view, draw) cull layout. Sized for real in CompileDrawCommands_Render.
-            RenderBucketRing[Slot] = CreateSceneBuffer(sizeof(FRenderBucketGPU), "Cull.RenderBuckets");
+            // Fixed size, one grid each, rewritten every frame.
+            BlockDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments));
+            SkinDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments));
+            MeshletCullDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments));
 
-            MeshletBlockRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.MeshletBlocks");
-            // Fixed size, one grid, rewritten by BuildDrawPrefix every frame.
-            BlockDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments), "Cull.BlockDispatchArgs");
-            SkinDispatchArgsRing[Slot]  = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments), "Cull.SkinDispatchArgs");
-            SkinWorkBaseRing[Slot]      = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.SkinWorkBase");
-            MeshletCullDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments), "Cull.MeshletCullDispatchArgs");
-
-            TotalsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * kTotalsSlots, "Cull.Totals");
+            TotalsRing[Slot].Allocate(sizeof(uint32) * kTotalsSlots);
             TotalsZeroed[Slot] = false;
-
-            // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_Render.
-            VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance), "Cull.VisibleInstances");
 
             if (MeshletBoundReadback[Slot].Gpu == 0)
             {
@@ -2135,28 +2129,23 @@ namespace Lumina
         StagedWrites.clear();
     }
 
-    void FDefaultSceneRenderer::ResizeBufferIfNeeded(RHI::FCmdListH CL, RHI::FGPUAllocation& Buffer, uint64 NeededSize,
-                                                   float SlackFactor, uint32& LowUsageCounter,
-                                                   bool bAllowShrink, EBufferInit Init, const char* DebugName)
+    void FDefaultSceneRenderer::ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink)
     {
-        NeededSize = Math::Max<uint64>(NeededSize, 16ull);
-
-        auto AlignUp16 = [](uint64 Size) { return (Size + 15ull) & ~15ull; };
+        NeededBytes = Math::Max<uint64>(NeededBytes, 16ull);
 
         // Allocates before retiring the old one, so a failed grow leaves the previous usable.
         const auto Reallocate = [&]() -> bool
         {
-            const RHI::FGPUAllocation Grown = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)), DebugName);
+            const RHI::FGPUAllocation Grown = CreateSceneBuffer(Buffer.SlackedBytes(NeededBytes), Buffer.DebugName);
             if (!Grown)
             {
                 return false;
             }
 
             DeferFree(Buffer);
-            Buffer = Grown;
-            LowUsageCounter = 0;
+            Buffer.Adopt(Grown);
 
-            if (Init == EBufferInit::Zeroed)
+            if (Buffer.Init == EBufferInit::Zeroed)
             {
                 RHI::CmdMemzero(CL, Buffer);
                 RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments);
@@ -2171,29 +2160,29 @@ namespace Lumina
             return true;
         };
 
-        if (NeededSize > Buffer.Size)
+        if (NeededBytes > Buffer.Size)
         {
             if (!Reallocate())
             {
                 LOG_ERROR("RenderScene: scene buffer '{}' could not grow to {} MiB; keeping the {} MiB it "
                           "already has and running degraded.",
-                          DebugName != nullptr ? DebugName : "<unnamed>",
-                          NeededSize / (1024ull * 1024ull), Buffer.Size / (1024ull * 1024ull));
+                          Buffer.DebugName != nullptr ? Buffer.DebugName : "<unnamed>",
+                          NeededBytes / (1024ull * 1024ull), Buffer.Size / (1024ull * 1024ull));
             }
             return;
         }
 
         // Shrink after sustained low usage (<25% of capacity).
-        if (bAllowShrink && NeededSize * 4ull < Buffer.Size)
+        if (bAllowShrink && Buffer.bAllowShrink && NeededBytes * 4ull < Buffer.Size)
         {
-            if (++LowUsageCounter >= 120u)
+            if (++Buffer.LowUsageFrames >= 120u)
             {
                 Reallocate();
             }
         }
         else
         {
-            LowUsageCounter = 0;
+            Buffer.LowUsageFrames = 0;
         }
     }
 

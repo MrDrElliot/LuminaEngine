@@ -131,9 +131,6 @@ namespace Lumina
         return Resolved;
     }
 
-    // The whole margin for a demand-fed buffer, both its spike headroom and its reallocation spacing.
-    inline constexpr float kSceneBufferGrowth = 1.5f;
-
     // Bounds VRAM, not correctness, since the claim and store both clamp and losers skin inline.
     inline uint32 GetMaxPreSkinnedVertices()
     {

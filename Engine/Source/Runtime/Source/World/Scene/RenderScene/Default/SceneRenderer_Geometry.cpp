@@ -772,8 +772,7 @@ namespace Lumina
                 NormalArgs.HeightmapIndex       = (uint32)State.HeightmapTexture.GetResourceID();
                 NormalArgs.NormalUAV            = (uint32)State.NormalTexture.GetMipUAVIndex(0);
 
-                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(NormalShader));
-                RHI::CmdDispatch(CL, MakeArgs(NormalArgs), RenderUtils::GetGroupCount((uint32)NW, 8u),
+                DispatchCompute(CL, NormalShader, NormalArgs, RenderUtils::GetGroupCount((uint32)NW, 8u),
                                                    RenderUtils::GetGroupCount((uint32)NH, 8u), 1u);
 
                 // Normals are sampled by the terrain VS/PS.

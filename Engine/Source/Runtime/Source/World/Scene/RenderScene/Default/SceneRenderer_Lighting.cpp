@@ -350,12 +350,8 @@ namespace Lumina
 
         Layout.BlockSize = AlignClassifyRegion(Cursor);
 
-        ResizeBufferIfNeeded(CL, MaterialClassifyRing[CurrentFrameSlot], Layout.BlockSize, 1.0f,
-                             MaterialClassifyRingLowUsage[CurrentFrameSlot], /*bAllowShrink*/ false,
-                             EBufferInit::Undefined, "Material.ClassifyBlock");
-        ResizeBufferIfNeeded(CL, MaterialPixelListRing[CurrentFrameSlot], PixelListSize, 1.2f,
-                             MaterialPixelListRingLowUsage[CurrentFrameSlot], true, EBufferInit::Undefined,
-                             "Material.PixelList");
+        ReserveBuffer(CL, MaterialClassifyRing[CurrentFrameSlot], Layout.BlockSize);
+        ReserveBuffer(CL, MaterialPixelListRing[CurrentFrameSlot], PixelListSize);
 
         if (!GetMaterialClassify() || !GetMaterialPixelList())
         {
@@ -446,8 +442,7 @@ namespace Lumina
         CountPC.ScreenH             = Layout.ScreenH;
         CountPC.DrawListCount       = DrawListCapacity;
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CountCS));
-        RHI::CmdDispatch(CL, MakeArgs(CountPC), GroupsX, GroupsY, 1u);
+        DispatchCompute(CL, CountCS, CountPC, GroupsX, GroupsY, 1u);
 
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
 
@@ -468,8 +463,7 @@ namespace Lumina
         PrefixPC.LightArgs = RHI::TGPUSpan<uint32>::FromAddress(LitArgsAddr, 3u);
         PrefixPC.Total     = RHI::TGPUSpan<uint32>::FromAddress(TotalAddr, 1u);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(PrefixCS));
-        RHI::CmdDispatch(CL, MakeArgs(PrefixPC), 1u, 1u, 1u);
+        DispatchCompute(CL, PrefixCS, PrefixPC, 1u, 1u, 1u);
 
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
 
@@ -492,8 +486,7 @@ namespace Lumina
         ScatterPC.ScreenH        = Layout.ScreenH;
         ScatterPC.DrawListCount  = DrawListCapacity;
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScatterCS));
-        RHI::CmdDispatch(CL, MakeArgs(ScatterPC), GroupsX, GroupsY, 1u);
+        DispatchCompute(CL, ScatterCS, ScatterPC, GroupsX, GroupsY, 1u);
 
         // The pixel list feeds the material dispatches; the argument triples feed the indirect fetch.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
@@ -666,8 +659,7 @@ namespace Lumina
         PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
         PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
+        DispatchComputeIndirect(CL, LightingCS, PC, Classify.Skip(Layout.LightArgsOffset));
 
         // The lit HDR target is drawn into by the forward passes, sampled, and read by the post chain.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
@@ -824,8 +816,7 @@ namespace Lumina
             PC.FinalValuePower          = FinalValuePower;
             PC.DepthMIPSamplingOffset   = DepthMipSamplingOffset;
 
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(MainCS));
-            RHI::CmdDispatch(CL, MakeArgs(PC),
+            DispatchCompute(CL, MainCS, PC, 
                 RenderUtils::GetGroupCount(Width, 8u),
                 RenderUtils::GetGroupCount(Height, 8u), 1);
 
@@ -2319,8 +2310,7 @@ namespace Lumina
         PC.DetailWindOffset  = FVector2(PC.WindOffset.x * C.DetailWindFactor,
                                         PC.WindOffset.y * C.DetailWindFactor);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CloudCS));
-        RHI::CmdDispatch(CL, MakeArgs(PC),
+        DispatchCompute(CL, CloudCS, PC, 
                          RenderUtils::GetGroupCount(PC.ScreenW, CloudTileSize),
                          RenderUtils::GetGroupCount(PC.ScreenH, CloudTileSize), 1);
 
@@ -2423,8 +2413,7 @@ namespace Lumina
         PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
         PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SSRCS));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
+        DispatchComputeIndirect(CL, SSRCS, PC, Classify.Skip(Layout.LightArgsOffset));
 
         // HDR is a UAV write here, then a color attachment, a sampled input, and a post-chain read.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,

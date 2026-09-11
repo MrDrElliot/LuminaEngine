@@ -19,8 +19,7 @@ namespace Lumina
         const SIZE_T ArenaBytes = (SIZE_T)ArenaCount * sizeof(FBoneTransform);
 
         const RHI::GPUPtr PrevArena = BoneArenaBuffer.Gpu;
-        ResizeBufferIfNeeded(CL, BoneArenaBuffer, ArenaBytes, 1.5f, BoneArenaLowUsage, /*bAllowShrink*/ true,
-                             EBufferInit::Undefined, "Skinning.BoneArena");
+        ReserveBuffer(CL, BoneArenaBuffer, ArenaBytes);
         if (!BoneArenaBuffer)
         {
             return;
@@ -97,10 +96,8 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION("Upload Skinned Frame Data");
 
-        ResizeBufferIfNeeded(CL, SkinnedFrameDataBuffer, Data.size() * sizeof(FSkinnedFrameData), 1.25f,
-                             SkinnedFrameDataLowUsage, true, EBufferInit::Undefined, "Skinning.FrameData");
-        ResizeBufferIfNeeded(CL, SkinnedSlotListBuffer, Slots.size() * sizeof(uint32), 1.5f,
-                             SkinnedSlotListLowUsage, true, EBufferInit::Undefined, "Skinning.SlotList");
+        ReserveBuffer(CL, SkinnedFrameDataBuffer, Data.size() * sizeof(FSkinnedFrameData));
+        ReserveBuffer(CL, SkinnedSlotListBuffer, Slots.size() * sizeof(uint32));
         if (!SkinnedFrameDataBuffer || !SkinnedSlotListBuffer)
         {
             return;
@@ -129,20 +126,16 @@ namespace Lumina
             BoundsTotal += Len;
         }
 
-        ResizeBufferIfNeeded(CL, SkinnedMeshletBoundsBuffer,
-                             Math::Max<SIZE_T>(sizeof(FMeshletSphere), (SIZE_T)BoundsTotal * sizeof(FMeshletSphere)),
-                             1.25f, SkinnedMeshletBoundsLowUsage, true, EBufferInit::Undefined, "Skinning.MeshletBounds");
+        ReserveBuffer(CL, SkinnedMeshletBoundsBuffer, Math::Max<SIZE_T>(sizeof(FMeshletSphere), (SIZE_T)BoundsTotal * sizeof(FMeshletSphere)));
 
-        ResizeBufferIfNeeded(CL, SkinnedMeshletConeBuffer,
-                             Math::Max<SIZE_T>(sizeof(FMeshletCone), (SIZE_T)BoundsTotal * sizeof(FMeshletCone)),
-                             1.25f, SkinnedMeshletConeLowUsage, true, EBufferInit::Undefined, "Skinning.MeshletCones");
+        ReserveBuffer(CL, SkinnedMeshletConeBuffer, Math::Max<SIZE_T>(sizeof(FMeshletCone), (SIZE_T)BoundsTotal * sizeof(FMeshletCone)));
 
         // The smaller of the two, since one base indexes both and a slot must fit in each.
         const uint32 SphereCap = SkinnedMeshletBoundsBuffer
-            ? (uint32)Math::Min<uint64>(SkinnedMeshletBoundsBuffer.Size / sizeof(FMeshletSphere), 0xFFFFFFFFull)
+            ? SkinnedMeshletBoundsBuffer.CapacityOf<FMeshletSphere>()
             : 0u;
         const uint32 ConeCap = SkinnedMeshletConeBuffer
-            ? (uint32)Math::Min<uint64>(SkinnedMeshletConeBuffer.Size / sizeof(FMeshletCone), 0xFFFFFFFFull)
+            ? SkinnedMeshletConeBuffer.CapacityOf<FMeshletCone>()
             : 0u;
 
         SkinnedMeshletBoundsCapacity = Math::Min(SphereCap, ConeCap);
@@ -278,8 +271,7 @@ namespace Lumina
         // Slots past the grid limit were given kNoSkinnedBounds above, so dropping them here loses nothing.
         const uint32 GroupsY = Math::Min(NumSkinned, kMaxSkinnedBoundsDispatchY);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BoundsShader));
-        RHI::CmdDispatch(CL, MakeArgs(PC), GroupsX, GroupsY, 1u);
+        DispatchCompute(CL, BoundsShader, PC, GroupsX, GroupsY, 1u);
 
         // Read by the cull, which is the next thing to run.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
@@ -322,15 +314,13 @@ namespace Lumina
         // Must mirror MeshletCullPass' bucket count exactly, which clamps both operands to 1.
         const SIZE_T NumArgSlots = (SIZE_T)Math::Max(NumCullViews, 1u) * (SIZE_T)Math::Max(NumDraws, 1u);
         
-        ResizeBufferIfNeeded(CL, PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage,
-                             true, EBufferInit::Undefined, "Cull.PreSkinnedVertices");
+        ReserveBuffer(CL, PreSkinnedVerticesBuffer, PreSkinnedSize);
         PreSkinnedVertexCapacity = (uint32)Math::Min<uint64>(
             PreSkinnedVerticesBuffer.Size / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
         {
             const uint8 Slot = CurrentFrameSlot;
-            ResizeBufferIfNeeded(CL, MeshletDrawListRing[Slot], MeshletDrawListSize, kSceneBufferGrowth, MeshletDrawListRingLowUsage[Slot],
-                                 true, EBufferInit::Undefined, "Cull.MeshletDrawList");
-            DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].Size / (sizeof(uint32) * 2), 0xFFFFFFFFull);
+            ReserveBuffer(CL, MeshletDrawListRing[Slot], MeshletDrawListSize);
+            DrawListCapacity = MeshletDrawListRing[Slot].CapacityOf<FUIntVector2>();
 
             // Read after the resize, because last frame's value describes the other ring slot's buffer.
             const uint32 MaxGroups = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
@@ -352,8 +342,7 @@ namespace Lumina
                 NumArgSlots * (SIZE_T)kMeshletSliceCount * (SIZE_T)MeshSubDrawsPerSlice
                     * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
-            ResizeBufferIfNeeded(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot],
-                                 true, EBufferInit::Undefined, "Cull.MeshDrawArgs");
+            ReserveBuffer(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize);
             
             // Windowed peak, not the last readback: that count lags kFramesInFlight and collapses the
             // allocation the moment the camera looks at something empty.
@@ -369,9 +358,7 @@ namespace Lumina
 
             VisibleCapacityWanted = Math::Min(VisibleCapacityWanted, VisibleCapacityMax);
 
-            ResizeBufferIfNeeded(CL, VisibleInstanceRing[Slot],
-                                 (SIZE_T)VisibleCapacityWanted * sizeof(FGPUInstance), kSceneBufferGrowth,
-                                 VisibleInstanceLowUsage[Slot], true, EBufferInit::Undefined, "Cull.VisibleInstances");
+            ReserveBuffer(CL, VisibleInstanceRing[Slot], (SIZE_T)VisibleCapacityWanted * sizeof(FGPUInstance));
 
             // From the allocation rather than the request, so a grow that failed cannot hand the cull
             // room it does not have, and the slack the grow already paid for is not thrown away.
@@ -382,8 +369,7 @@ namespace Lumina
                 sizeof(uint32) * 2,
                 (SIZE_T)FrameVisibleInstanceCapacity * (SIZE_T)Math::Max(NumCullViews, 1u) * sizeof(uint32) * 2);
             
-            ResizeBufferIfNeeded(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot],
-                                 true, EBufferInit::Undefined, "Cull.InstanceViewRanges");
+            ReserveBuffer(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize);
 
             // Only the GPU knows how many blocks were appended, and its counter lags the frames in flight.
             const uint32 BlockListWanted = BlockListDemand.Observe(LastBlocksRequested);
@@ -391,9 +377,8 @@ namespace Lumina
             const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
                 (SIZE_T)Math::Max<uint32>(BlockListWanted, 1u) * sizeof(uint32) * 2);
-            ResizeBufferIfNeeded(CL, MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot],
-                                 true, EBufferInit::Undefined, "Cull.MeshletBlocks");
-            BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].Size / (sizeof(uint32) * 2), 0xFFFFFFFFull);
+            ReserveBuffer(CL, MeshletBlockRing[Slot], MeshletBlockSize);
+            BlockListCapacity = MeshletBlockRing[Slot].CapacityOf<FUIntVector2>();
 
             // Requirement is from kFramesInFlight ago, capacity is from now, so print both sides.
             const auto LogOverflow = [](const char* What, uint32 Needed, uint32 GrownTo)
@@ -617,8 +602,7 @@ namespace Lumina
         const uint8  Slot     = CurrentFrameSlot;
         const uint32 NumPairs = NumSkinned * 2u;
 
-        ResizeBufferIfNeeded(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
-                             SkinWorkBaseLowUsage[Slot], true, EBufferInit::Undefined, "Skinning.WorkBase");
+        ReserveBuffer(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32));
         if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs() || !GetPreSkinnedVerticesBuffer()
             || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
         {
@@ -641,8 +625,7 @@ namespace Lumina
             WPC.OutWorkBase     = { SkinWorkBaseRing[Slot], NumPairs };
             WPC.OutDispatchArgs = { GetSkinDispatchArgs() };
 
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(WorkShader));
-            RHI::CmdDispatch(CL, MakeArgs(WPC), 1u, 1u, 1u);
+            DispatchCompute(CL, WorkShader, WPC, 1u, 1u, 1u);
 
             RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
                 RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
@@ -664,8 +647,7 @@ namespace Lumina
         PC.RetainedStatic = { RetainedStaticBuffer };
         PC.OutVertices    = { GetPreSkinnedVerticesBuffer() };
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkinShader));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetSkinDispatchArgs());
+        DispatchComputeIndirect(CL, SkinShader, PC, GetSkinDispatchArgs());
 
         // Pre-skinned vertices feed every draw VS.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute);
@@ -848,12 +830,9 @@ namespace Lumina
             const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
 
             // Retained state is zeroed on growth because a free slot IS zero; the CPU writes zero on free too.
-            ResizeBufferIfNeeded(CL, RetainedCullEntryBuffer, CullBytes,      1.5f, RetainedCullEntryLowUsage, Upload.bFull,
-                                 EBufferInit::Zeroed, "Retained.CullEntries");
-            ResizeBufferIfNeeded(CL, RetainedTransformBuffer, TransformBytes, 1.5f, RetainedTransformLowUsage, Upload.bFull,
-                                 EBufferInit::Zeroed, "Retained.Transforms");
-            ResizeBufferIfNeeded(CL, RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull,
-                                 EBufferInit::Zeroed, "Retained.Static");
+            ReserveBuffer(CL, RetainedCullEntryBuffer, CullBytes,      /*bAllowShrink*/ Upload.bFull);
+            ReserveBuffer(CL, RetainedTransformBuffer, TransformBytes, /*bAllowShrink*/ Upload.bFull);
+            ReserveBuffer(CL, RetainedStaticBuffer,    StaticBytes,    /*bAllowShrink*/ Upload.bFull);
 
             // Flipped so last frame's set stays readable all frame; both dispatches take their phase from it.
             InstanceVisibilityWriteIndex ^= 1u;
@@ -864,11 +843,10 @@ namespace Lumina
             for (uint32 v = 0; v < 2u; ++v)
             {
                 // Zeroed because zero is the one tag no frame ever stamps, so a new slot has no history.
-                ResizeBufferIfNeeded(CL, InstanceVisibilityBuffers[v], VisBytes, 1.5f, InstanceVisibilityLowUsage[v],
-                                     true, EBufferInit::Zeroed, "Retained.InstanceVisibility");
+                ReserveBuffer(CL, InstanceVisibilityBuffers[v], VisBytes);
 
                 VisCapacity = Math::Min(VisCapacity, InstanceVisibilityBuffers[v]
-                    ? (uint32)Math::Min<uint64>(InstanceVisibilityBuffers[v].Size / sizeof(uint32), 0xFFFFFFFFull)
+                    ? InstanceVisibilityBuffers[v].CapacityOf<uint32>()
                     : 0u);
             }
 
@@ -916,9 +894,9 @@ namespace Lumina
                     WriteBufferRuns(CL, RetainedStaticBuffer.Gpu, SrcStatic, sizeof(FInstanceStatic), RetainedRunScratch);
                 }
             }
-            const uint32 CullCap      = (uint32)Math::Min<uint64>(RetainedCullEntryBuffer.Size / sizeof(FInstanceCullEntry), 0xFFFFFFFFull);
-            const uint32 TransformCap = (uint32)Math::Min<uint64>(RetainedTransformBuffer.Size / sizeof(FTransform3x4), 0xFFFFFFFFull);
-            const uint32 StaticCap    = (uint32)Math::Min<uint64>(RetainedStaticBuffer.Size / sizeof(FInstanceStatic), 0xFFFFFFFFull);
+            const uint32 CullCap      = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>();
+            const uint32 TransformCap = RetainedTransformBuffer.CapacityOf<FTransform3x4>();
+            const uint32 StaticCap    = RetainedStaticBuffer.CapacityOf<FInstanceStatic>();
             RetainedDeviceCapacity.store(Math::Min(CullCap, Math::Min(TransformCap, StaticCap)), std::memory_order_release);
             RetainedStaticCapacity = StaticCap;
         }
@@ -929,8 +907,7 @@ namespace Lumina
             const SIZE_T DescBytes = Math::Max<SIZE_T>(sizeof(FSurfaceDescGPU), (SIZE_T)NumDescs * sizeof(FSurfaceDescGPU));
             const RHI::GPUPtr PrevDescs = SurfaceDescBuffer.Gpu;
             // Same reasoning as above, since a reclaim drops descriptors this frame may not re-send.
-            ResizeBufferIfNeeded(CL, SurfaceDescBuffer, DescBytes, 1.5f, SurfaceDescLowUsage, Upload.bSurfaceDescsChanged,
-                                 EBufferInit::Zeroed, "Retained.SurfaceDescs");
+            ReserveBuffer(CL, SurfaceDescBuffer, DescBytes, /*bAllowShrink*/ Upload.bSurfaceDescsChanged);
 
             if (SurfaceDescBuffer.Gpu != PrevDescs)
             {
@@ -958,9 +935,7 @@ namespace Lumina
         const uint32 SeedViews       = Math::Max(NumCullViews, 1u);
         const SIZE_T ViewDrawEntries = (SIZE_T)SeedViews * (SIZE_T)NumBatches;
         // MeshDrawArgsRing is deliberately NOT resized here; CompileDrawCommands_Render sizes it.
-        ResizeBufferIfNeeded(CL, RenderBucketRing[Slot],
-                             ViewDrawEntries * sizeof(FRenderBucketGPU), 1.5f, RenderBucketRingLowUsage[Slot],
-                             true, EBufferInit::Undefined, "Cull.RenderBuckets");
+        ReserveBuffer(CL, RenderBucketRing[Slot], ViewDrawEntries * sizeof(FRenderBucketGPU));
 
         // Every field starts at zero, since CullInstances accumulates skinned batches too.
         RHI::CmdMemset(CL, { GetRenderBuckets().Gpu, ViewDrawEntries * sizeof(FRenderBucketGPU) }, 0u);
@@ -1059,8 +1034,7 @@ namespace Lumina
             PC.OutTotals            = { GetTotals(), kTotalsSlots };
             PC.OutBlockDispatchArgs = { GetBlockDispatchArgs() };
 
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DrawPrefixShader));
-            RHI::CmdDispatch(CL, MakeArgs(PC), 1u, 1u, 1u);
+            DispatchCompute(CL, DrawPrefixShader, PC, 1u, 1u, 1u);
 
             RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
                 RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader |
@@ -1163,8 +1137,7 @@ namespace Lumina
         const uint32 PostGroups = (NumViews * NumDraws + kArgsGroupSize - 1u) / kArgsGroupSize;
 
         APC.bPost = 0u;
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ArgsShader));
-        RHI::CmdDispatch(CL, MakeArgs(APC), 1u, 1u, 1u);
+        DispatchCompute(CL, ArgsShader, APC, 1u, 1u, 1u);
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
             RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
 
@@ -1190,14 +1163,12 @@ namespace Lumina
         CPC.PrevVisibility = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
         CPC.OutVisibility  = { GetInstanceVisibilityWrite(), InstanceVisibilityCapacity };
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(CPC), GetMeshletCullDispatchArgs());
+        DispatchComputeIndirect(CL, CullShader, CPC, GetMeshletCullDispatchArgs());
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments);
 
         // Turn what it appended into the slice every draw indexes, and the counts they draw from.
         APC.bPost = 1u;
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ArgsShader));
-        RHI::CmdDispatch(CL, MakeArgs(APC), PostGroups, 1u, 1u);
+        DispatchCompute(CL, ArgsShader, APC, PostGroups, 1u, 1u);
 
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
             RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader |
