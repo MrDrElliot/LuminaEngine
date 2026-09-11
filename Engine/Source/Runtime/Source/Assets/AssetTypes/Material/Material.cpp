@@ -49,6 +49,35 @@ namespace Lumina
         static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count,
             "GMaterialStages must cover every EMaterialShaderStage");
 
+        // A default material short of a required stage stops every world from extracting, silently.
+        void ReportDefaultMaterialReadiness(const CMaterial* Material, const char* What)
+        {
+            if (Material == nullptr || Material->IsReadyForRender())
+            {
+                return;
+            }
+
+            FString Missing;
+            for (size_t s = 0; s < (size_t)EMaterialShaderStage::Count; ++s)
+            {
+                const EMaterialShaderStage Stage = (EMaterialShaderStage)s;
+                if (!Material->IsStageRequired(Stage) || Material->GetStage(Stage) != FShaderH{})
+                {
+                    continue;
+                }
+                if (!Missing.empty())
+                {
+                    Missing += ", ";
+                }
+                Missing += GMaterialStages[s].Suffix;
+            }
+
+            LOG_ERROR("The {} finished creation without these required stages [{}]. No world can extract a "
+                      "frame while it is unready, so every viewport stays on its clear color. Rebuild it from "
+                      "File, Shaders, Recompile Default Material once the shader error above is fixed.",
+                      What, Missing);
+        }
+
         FMaterialStageBlob* FindStageBlob(TVector<FMaterialStageBlob>& Stages, EMaterialShaderStage Stage)
         {
             for (FMaterialStageBlob& Blob : Stages)
@@ -445,6 +474,8 @@ namespace Lumina
 
     bool CMaterial::HasRequiredStages() const
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         for (size_t s = 0; s < (size_t)EMaterialShaderStage::Count; ++s)
         {
             if (IsStageRequired((EMaterialShaderStage)s) && StageEntries[s] == nullptr)
@@ -468,10 +499,15 @@ namespace Lumina
     void CMaterial::PostLoad()
     {
         LUMINA_MEMORY_SCOPE("Materials");
+
+        // A compile dispatched before this one landed can still be writing Stages from a worker.
         bool bHasCompiledStage = false;
-        for (const FMaterialStageBlob& Blob : Stages)
         {
-            bHasCompiledStage |= !Blob.Spirv.empty();
+            FRecursiveScopeLock StageLock(ShaderStageMutex);
+            for (const FMaterialStageBlob& Blob : Stages)
+            {
+                bHasCompiledStage |= !Blob.Spirv.empty();
+            }
         }
 
         // A stamped hash with no stages is an asset saved before Stages existed, and it recompiles like a stale one.
@@ -492,6 +528,8 @@ namespace Lumina
             }
             else
             {
+                FRecursiveScopeLock StageLock(ShaderStageMutex);
+
                 for (const FMaterialStageBlob& Blob : Stages)
                 {
                     if (!Blob.Spirv.empty() && Blob.Stage < (uint8)EMaterialShaderStage::Count)
@@ -657,11 +695,13 @@ namespace Lumina
         CMaterialInterface::OnDestroy();
 
         // Before MaterialIndex can be recycled by the next material.
-
-        for (FShaderH& Entry : StageEntries)
         {
-            FShaderLibrary::Release(Entry);
-            Entry = {};
+            FRecursiveScopeLock StageLock(ShaderStageMutex);
+            for (FShaderH& Entry : StageEntries)
+            {
+                FShaderLibrary::Release(Entry);
+                Entry = {};
+            }
         }
 
         ClearPermutations();
@@ -876,11 +916,14 @@ namespace Lumina
                 FString Source;
                 if (!VFS::ReadFile(Source, FString("/Engine/Resources/Shaders/MaterialShader/") + Stage.Path))
                 {
+                    LOG_ERROR("Failed to read '{}' for the default material; nothing will render.", Stage.Path);
                     continue;
                 }
 
                 if (Source.find(VertexToken) == FString::npos)
                 {
+                    LOG_ERROR("'{}' is missing [{}]; the default material cannot build one of its stages.",
+                              Stage.Path, VertexToken);
                     continue;
                 }
                 ReplaceAllTokens(Source, VertexToken, VertexReplacement);
@@ -912,11 +955,20 @@ namespace Lumina
         {
             // The deferred compute shader needs BOTH tokens, the WPO reconstruction and the pixel graph.
             FString LoadedDeferredString;
-            if (VFS::ReadFile(LoadedDeferredString, "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang"))
+            if (!VFS::ReadFile(LoadedDeferredString, "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang"))
+            {
+                LOG_ERROR("Failed to read DeferredMaterial.slang for the default material; nothing will render.");
+            }
+            else
             {
                 ReplaceAllTokens(LoadedDeferredString, VertexToken, VertexReplacement);
                 size_t DefPPos = LoadedDeferredString.find(Token);
-                if (DefPPos != FString::npos)
+                if (DefPPos == FString::npos)
+                {
+                    LOG_ERROR("DeferredMaterial.slang is missing [{}]; the default material cannot build its "
+                              "deferred stage.", Token);
+                }
+                else
                 {
                     ReplaceAllTokens(LoadedDeferredString, Token, PixelReplacement);
                     FShaderCompileOptions DeferredOptions;
@@ -932,6 +984,7 @@ namespace Lumina
         ShaderCompiler->Flush();
 
         DefaultMaterial->PostLoad();
+        ReportDefaultMaterialReadiness(DefaultMaterial, "default material");
     }
 
     void CMaterial::CreateDefaultTerrainMaterial()
@@ -1033,10 +1086,13 @@ namespace Lumina
         ShaderCompiler->Flush();
 
         DefaultTerrainMaterial->PostLoad();
+        ReportDefaultMaterialReadiness(DefaultTerrainMaterial, "default terrain material");
     }
 
     void CMaterial::SetStageBinaries(EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         TVector<uint32>& Binaries = FindOrAddStageBlob(Stages, Stage).Spirv;
         if (Binaries.data() != Spirv.data())
         {
@@ -1046,6 +1102,8 @@ namespace Lumina
 
     void CMaterial::CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
 
         SetStageBinaries(Stage, Spirv);
@@ -1074,6 +1132,8 @@ namespace Lumina
 
     FShaderH CMaterial::GetStageForKey(EMaterialShaderStage Stage, uint64 Key) const
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         if (Key != GetDefaultStaticSwitchKey())
         {
             for (const FMaterialShaderPermutation& Permutation : Permutations)
@@ -1097,6 +1157,8 @@ namespace Lumina
 
     bool CMaterial::HasPermutation(uint64 Key) const
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         if (Key == GetDefaultStaticSwitchKey())
         {
             return true;
@@ -1107,6 +1169,8 @@ namespace Lumina
 
     void CMaterial::CommitPermutationStage(uint64 Key, EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         auto Found = Algo::FindIf(Permutations, [Key](const FMaterialShaderPermutation& P) { return P.Key == Key; });
         if (Found == Permutations.end())
         {
@@ -1176,6 +1240,8 @@ namespace Lumina
 
     void CMaterial::ClearPermutation(uint64 Key)
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         auto Found = Algo::FindIf(Permutations, [Key](const FMaterialShaderPermutation& P) { return P.Key == Key; });
         if (Found == Permutations.end())
         {
@@ -1194,6 +1260,9 @@ namespace Lumina
     bool CMaterial::CommitPermutationStageIfCurrent(uint64 Key, uint32 Generation, EMaterialShaderStage Stage,
         TSpan<const uint32> Spirv)
     {
+        // One lock over the test and the commit, or a clear between them revives the permutation it dropped.
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         if (Generation != PermutationGeneration)
         {
             return false;
@@ -1205,6 +1274,8 @@ namespace Lumina
 
     void CMaterial::ClearPermutations()
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         // Moved unconditionally, since a compile in flight was dispatched against the outgoing numbering.
         ++PermutationGeneration;
 
@@ -1233,6 +1304,8 @@ namespace Lumina
 
     void CMaterial::ClearShaderStage(EMaterialShaderStage Stage)
     {
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+
         for (SIZE_T i = 0; i < Stages.size(); ++i)
         {
             if (Stages[i].Stage == (uint8)Stage)

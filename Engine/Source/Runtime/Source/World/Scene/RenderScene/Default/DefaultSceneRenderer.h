@@ -1481,6 +1481,7 @@ namespace Lumina
         // Frames that reached Submit in RenderView, so Output holds a real image rather than undefined memory.
         uint64                                  FramesComposited = 0;
         bool                                    bWarnedNoComposite = false;
+        bool                                    bWarnedFallbackMaterial = false;
 
         // A resize destroys Output, and only a ticking world can repaint it. Held until Extract runs.
         FUIntVector2                            PendingPrimarySize = FUIntVector2(0);

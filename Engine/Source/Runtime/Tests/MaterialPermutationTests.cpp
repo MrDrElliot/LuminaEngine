@@ -5,6 +5,7 @@
 #include "Containers/HashTable.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Threading/Thread.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
 
@@ -316,6 +317,52 @@ namespace Lumina
         Expected["Parallax"] = true;
         EXPECT_EQ(Child->GetStaticSwitchKey(), Material->MakeStaticSwitchKey(Expected));
         EXPECT_NE(Child->GetStaticSwitchKey(), Parent->GetStaticSwitchKey());
+    }
+
+    // One compile dispatches a shader per stage, and every worker calls back on the same material.
+    TEST(MaterialPermutation, ConcurrentStageCommitsAllLand)
+    {
+        FScopedShaderLibrary Scope;
+
+        constexpr size_t kStageCount = (size_t)EMaterialShaderStage::Count;
+
+        CMaterial* Material = NewObject<CMaterial>();
+        ASSERT_NE(Material, nullptr);
+
+        TVector<TVector<uint32>> Blobs;
+        for (size_t s = 0; s < kStageCount; ++s)
+        {
+            Blobs.push_back(MakeBlob((uint32)s + 11u, 16u + (uint32)s));
+        }
+
+        TAtomic<uint32> Start{0};
+
+        TVector<TUniquePtr<FThread>> Threads;
+        for (size_t s = 0; s < kStageCount; ++s)
+        {
+            Threads.push_back(MakeUnique<FThread>([&Material, &Blobs, &Start, s]()
+            {
+                while (Start.load(std::memory_order_acquire) == 0)
+                {
+                    Threading::ThreadYield();
+                }
+                Material->SetStageBinaries((EMaterialShaderStage)s,
+                    TSpan<const uint32>(Blobs[s].data(), Blobs[s].size()));
+            }));
+        }
+
+        Start.store(1, std::memory_order_release);
+        for (TUniquePtr<FThread>& Thread : Threads)
+        {
+            Thread->Join();
+        }
+
+        for (size_t s = 0; s < kStageCount; ++s)
+        {
+            const TVector<uint32>& Stored = Material->GetShaderStageBinaries((EMaterialShaderStage)s);
+            EXPECT_EQ(Stored.size(), Blobs[s].size()) << "stage " << s << " lost its binaries";
+            EXPECT_TRUE(Stored == Blobs[s]) << "stage " << s << " stored another stage's binaries";
+        }
     }
 
     // A material with no switches must not pay for any of this, and keys as zero.

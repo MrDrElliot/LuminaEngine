@@ -159,11 +159,26 @@ namespace Lumina
         CMaterial* FallbackMaterial = CMaterial::GetDefaultMaterial();
         if (!IsValid(FallbackMaterial) || !FallbackMaterial->IsReadyForRender())
         {
+            // A frame or two at startup is normal; a default material that never compiled never recovers.
+            if (!bWarnedFallbackMaterial)
+            {
+                bWarnedFallbackMaterial = true;
+                LOG_WARN("Extract skipped: the default material is {}. Every frame is skipped until it is "
+                         "ready, and the viewport shows its clear color.",
+                         IsValid(FallbackMaterial) ? "still compiling" : "missing");
+            }
+
             ExtractFrame = nullptr;
 
             // Nothing rendered, so next frame's HZB is not this frame's depth.
             bDepthPyramidValid.store(false, std::memory_order_release);
             return;
+        }
+
+        if (bWarnedFallbackMaterial)
+        {
+            bWarnedFallbackMaterial = false;
+            LOG_DISPLAY("Default material is ready; extract resumed.");
         }
 
         ResetPass_Extract();

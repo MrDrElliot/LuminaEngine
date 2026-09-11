@@ -291,6 +291,9 @@ namespace Lumina
         PROPERTY()
         TVector<FMaterialStageBlob>             Stages;
 
+        // Guards Stages, Permutations and StageEntries, which one compile writes from a worker per stage.
+        mutable FRecursiveMutex                 ShaderStageMutex;
+
         PROPERTY()
         TVector<FMaterialParameter>             Parameters;
 
