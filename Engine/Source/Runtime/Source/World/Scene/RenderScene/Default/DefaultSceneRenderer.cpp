@@ -7938,7 +7938,7 @@ namespace Lumina
                 State.SortIndexBuffer    = {};
                 State.SortDrawArgsBuffer = {};
 
-                State.ParticleBufferSize = (uint64)MaxParticles * 64ull;
+                State.ParticleBufferSize = (uint64)MaxParticles * sizeof(FGPUParticle);
                 State.ParticleBuffer     = RHI::Malloc(State.ParticleBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
                 State.SpawnCounterBuffer = RHI::Malloc(sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
                 RHI::SetDebugName(State.ParticleBuffer.Gpu,     "Particles.Particles");
@@ -8108,20 +8108,22 @@ namespace Lumina
             struct FParticleSimArgs
             {
                 uint64 ParamsAddr;
-                uint64 ParticlesAddr;
-                uint64 SpawnCounterAddr;
-                uint64 ModuleParamsAddr;
-                uint64 AttributesAddr;
+                RHI::TGPUSpan<FGPUParticle> Particles;
+                RHI::TGPUSpan<uint32>       SpawnCounter;
+                RHI::TGPUSpan<FVector4>     ModuleParams;
+                RHI::TGPUSpan<float>        Attributes;
             };
 
-            FParticleSimArgs SimArgs;
-            SimArgs.ParamsAddr       = RHI::CopyTransient(SimParams);
-            SimArgs.ParticlesAddr    = State.ParticleBuffer.Gpu;
-            SimArgs.SpawnCounterAddr = State.SpawnCounterBuffer.Gpu;
-            SimArgs.ModuleParamsAddr = Item.ModuleParamValues.empty()
-                ? 0ull
-                : RHI::CopyTransientArray(Item.ModuleParamValues.data(), Item.ModuleParamValues.size()).Address;
-            SimArgs.AttributesAddr   = State.AttributeBuffer.Gpu;
+            FParticleSimArgs SimArgs = {};
+            SimArgs.ParamsAddr   = RHI::CopyTransient(SimParams);
+            SimArgs.Particles    = { State.ParticleBuffer, MaxParticles };
+            SimArgs.SpawnCounter = { State.SpawnCounterBuffer };
+            if (!Item.ModuleParamValues.empty())
+            {
+                SimArgs.ModuleParams = RHI::CopyTransientArray(Item.ModuleParamValues.data(),
+                                                               Item.ModuleParamValues.size());
+            }
+            SimArgs.Attributes   = { State.AttributeBuffer };
 
             RHI::CmdDispatch(CL, MakeArgs(SimArgs), RenderUtils::GetGroupCount(MaxParticles, 64u), 1u, 1u);
             bAnySimulated = true;
@@ -8180,19 +8182,18 @@ namespace Lumina
             // Mirrors FParticleSortArgs in ParticleSortCompact.slang, pointers first to stay 8-aligned.
             struct FParticleSortArgs
             {
-                uint64 ParticlesAddr;
-                uint64 OutIndicesAddr;
-                uint64 OutDrawArgsAddr;
-                uint32 ParticleCount;
+                RHI::TGPUSpan<FGPUParticle> Particles;
+                RHI::TGPUSpan<uint32>       OutIndices;
+                RHI::TGPUSpan<RHI::FDrawIndirectArguments> OutDrawArgs;
                 uint32 SortCount;
+                uint32 _Pad0;
             };
 
-            FParticleSortArgs SortArgs;
-            SortArgs.ParticlesAddr   = State.ParticleBuffer.Gpu;
-            SortArgs.OutIndicesAddr  = State.SortIndexBuffer.Gpu;
-            SortArgs.OutDrawArgsAddr = State.SortDrawArgsBuffer.Gpu;
-            SortArgs.ParticleCount   = State.AllocatedMax;
-            SortArgs.SortCount       = State.SortCount;
+            FParticleSortArgs SortArgs = {};
+            SortArgs.Particles  = { State.ParticleBuffer, State.AllocatedMax };
+            SortArgs.OutIndices = { State.SortIndexBuffer };
+            SortArgs.OutDrawArgs = { State.SortDrawArgsBuffer };
+            SortArgs.SortCount  = State.SortCount;
 
             RHI::CmdDispatch(CL, MakeArgs(SortArgs), 1u, 1u, 1u);
         }
@@ -9006,10 +9007,10 @@ namespace Lumina
     // Matches FGrassScatterPushConstants in GrassScatter.slang.
     struct FGrassScatterPushConstants
     {
-        uint64  OutCullEntriesAddr = 0;
-        uint64  OutTransformsAddr  = 0;
-        uint64  OutStaticAddr      = 0;
-        uint64  OutCursorAddr      = 0;
+        RHI::TGPUSpan<FInstanceCullEntry> OutCullEntries;
+        RHI::TGPUSpan<FTransform3x4>      OutTransforms;
+        RHI::TGPUSpan<FInstanceStatic>    OutStatic;
+        RHI::TGPUSpan<uint32>             OutCursor;
 
         uint32  HeightmapIndex    = 0;
         uint32  NormalIndex       = 0;
@@ -9032,9 +9033,9 @@ namespace Lumina
         uint32  Seed          = 0;
 
         uint32  GridSide     = 0;
-        uint32  MaxInstances = 0;
+        uint32  _PadMaxInstances = 0;
 
-        uint32  InstanceSlotBase  = 0;
+        uint32  _PadInstanceSlotBase = 0;
         uint32  DrawIDAndFlags    = 0;
         uint32  SurfaceDescIndex  = 0;
         uint32  MeshletHeaderSlot = 0;
@@ -9156,10 +9157,15 @@ namespace Lumina
                 }
 
                 FGrassScatterPushConstants Push{};
-                Push.OutCullEntriesAddr = RetainedCullEntryBuffer.Gpu;
-                Push.OutTransformsAddr  = RetainedTransformBuffer.Gpu;
-                Push.OutStaticAddr      = RetainedStaticBuffer.Gpu;
-                Push.OutCursorAddr      = State.CursorBuffer.Gpu;
+                // Sliced to the reserved block, so the shader indexes it block-locally and cannot name a
+                // retained slot that belongs to something else.
+                Push.OutCullEntries = RHI::TGPUSpan<FInstanceCullEntry>::Slice(
+                    RetainedCullEntryBuffer, Binding.InstanceSlotBase, Binding.Capacity);
+                Push.OutTransforms  = RHI::TGPUSpan<FTransform3x4>::Slice(
+                    RetainedTransformBuffer, Binding.InstanceSlotBase, Binding.Capacity);
+                Push.OutStatic      = RHI::TGPUSpan<FInstanceStatic>::Slice(
+                    RetainedStaticBuffer, Binding.InstanceSlotBase, Binding.Capacity);
+                Push.OutCursor      = { State.CursorBuffer };
                 Push.HeightmapIndex     = (uint32)Terrain.HeightmapTexture.GetResourceID();
                 Push.NormalIndex        = (uint32)Terrain.NormalTexture.GetResourceID();
                 Push.LayerWeightsIndex  = (uint32)Terrain.LayerWeightTexture.GetResourceID();
@@ -9177,8 +9183,7 @@ namespace Lumina
                 Push.bRandomYaw         = Species.bRandomYaw ? 1u : 0u;
                 Push.Seed               = Species.Seed;
                 Push.GridSide           = GridSide;
-                Push.MaxInstances       = Binding.Capacity;
-                Push.InstanceSlotBase   = Binding.InstanceSlotBase;
+
                 Push.DrawIDAndFlags     = Binding.DrawIDAndFlags;
                 Push.SurfaceDescIndex   = Binding.SurfaceDescIndex;
                 Push.MeshletHeaderSlot  = Binding.MeshletHeaderSlot;

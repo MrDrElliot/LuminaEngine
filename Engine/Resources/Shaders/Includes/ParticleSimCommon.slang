@@ -74,27 +74,27 @@ struct FParticleSimParams
 // Everything by device address; matches FParticleSimArgs in DefaultSceneRenderer.cpp.
 struct FParticleSimArgs
 {
-    FParticleSimParams* Params;
-    FGPUParticle*       Particles;
-    uint*               SpawnCounter;   // scratch counter, sized 4 bytes
+    FParticleSimParams*  Params;
+    GPUSpan<FGPUParticle> Particles;
+    GPUSpan<uint>         SpawnCounter;   // scratch counter, one element
     // Module-stack value inputs, one float4 slot per parameter, in the order FParticleCompiler assigned
-    // them. Null when the stack declared no parameters, in which case nothing reads MP().
-    float4*             ModuleParams;
+    // them. Empty when the stack declared no parameters, in which case nothing reads MP().
+    GPUSpan<float4>       ModuleParams;
     // Declared per-particle attributes: PARTICLE_ATTR_FLOATS floats per particle, parallel to the core
-    // particle buffer and indexed by the same particle index. A plain float* rather than a generated
+    // particle buffer and indexed by the same particle index. A plain float span rather than a generated
     // struct because this header is parsed before any generated code and cannot name a generated type.
-    float*              Attributes;
+    GPUSpan<float>        Attributes;
 };
 
-FParticleSimArgs*   SimArgs()      { return GetPassArgs<FParticleSimArgs>(); }
-FParticleSimParams* SimParams()    { return SimArgs().Params; }
-FGPUParticle*       Particles()    { return SimArgs().Particles; }
-uint*               SpawnCounter() { return SimArgs().SpawnCounter; }
-float*              PAttr()        { return SimArgs().Attributes; }
+FParticleSimArgs*      SimArgs()      { return GetPassArgs<FParticleSimArgs>(); }
+FParticleSimParams*    SimParams()    { return SimArgs().Params; }
+GPUSpan<FGPUParticle>* Particles()    { return &SimArgs().Particles; }
+GPUSpan<uint>*         SpawnCounter() { return &SimArgs().SpawnCounter; }
+GPUSpan<float>*        PAttr()        { return &SimArgs().Attributes; }
 
 // Module parameter slot accessor. Generated module code indexes this instead of embedding literals, so
 // the compiled shader is invariant to the values and only a structural stack edit needs a rebuild.
-float4 MP(uint Slot) { return SimArgs().ModuleParams[Slot]; }
+float4 MP(uint Slot) { return SpanGet(&SimArgs().ModuleParams, Slot); }
 
 // Baked curve/gradient tables. MUST match kParticleLUTSamples in ParticleCompiler.h -- the compiler lays
 // the tables out with this stride, so a mismatch reads into the next parameter.
