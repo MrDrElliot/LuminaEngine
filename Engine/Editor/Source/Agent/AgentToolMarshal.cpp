@@ -214,7 +214,7 @@ namespace Lumina::Agent
             default:
                 // Refused for the same reason the schema refuses it, so the two halves cannot drift.
                 OutError = Lumina::Format("'{}' is a {}, which is not supported yet.",
-                    Path, Property->TypeName.ToString());
+                    Path, Property->GetTypeName().ToString());
                 return false;
             }
         }

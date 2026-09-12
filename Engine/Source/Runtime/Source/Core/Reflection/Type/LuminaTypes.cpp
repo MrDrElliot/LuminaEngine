@@ -7,6 +7,10 @@
 
 namespace Lumina
 {
+    // Well inside a cache line. Properties are among the most numerous objects in the engine, so the block
+    // stays packed; this catches a member added without checking where it lands as much as one that grows it.
+    static_assert(sizeof(FProperty) == 56, "FProperty changed size; re-check its member order.");
+
     // Tight-packing types such as bool and struct override NetSerialize on their own property class.
     void FProperty::NetSerialize(FNetArchive& Ar, void* Value)
     {
@@ -20,29 +24,67 @@ namespace Lumina
         *static_cast<bool*>(Value) = bValue; // no-op when writing
     }
 
-    void FProperty::Init()
+    namespace
     {
-        visit([this](auto& Value)
+        // TypeFlags already names the type, so the FName is looked up rather than stored on every property.
+        struct FPropertyTypeNames
         {
-            Value->AddProperty(this);
-        }, Owner);
-   
+            FPropertyTypeNames()
+            {
+                for (size_t Index = 0; Index < std::size(Names); ++Index)
+                {
+                    Names[Index] = FName(PropertyTypeFlagNames[Index]);
+                }
+            }
+
+            FName Names[(size_t)EPropertyTypeFlags::Count];
+        };
     }
-    
+
     const FName& FProperty::GetTypeName() const
     {
-        return TypeName;
+        static const FPropertyTypeNames Table;
+
+        DEBUG_ASSERT(TypeFlags < EPropertyTypeFlags::Count);
+        return Table.Names[(size_t)TypeFlags];
     }
     
-    void FProperty::OnMetadataFinalized()
+    FCStringView FProperty::GetMetadata(FStringView Key) const
     {
-        if (const FString* MaybeDisplayName = Metadata.TryGetMetadata("DisplayName"))
+        // A property carries a handful of pairs, so a scan beats hashing and never touches the name pool.
+        // Case-insensitive because the keys used to be FNames, whose comparison is case-folded.
+        for (uint16 Index = 0; Index < NumMetadata; ++Index)
         {
-            DisplayName = *MaybeDisplayName;
+            if (EqualsIgnoreCase(Key, FStringView(MetadataEntries[Index].NameUTF8)))
+            {
+                return FCStringView(MetadataEntries[Index].ValueUTF8);
+            }
+        }
+        return FCStringView();
+    }
+
+    bool FProperty::HasMetadata(FStringView Key) const
+    {
+        for (uint16 Index = 0; Index < NumMetadata; ++Index)
+        {
+            if (EqualsIgnoreCase(Key, FStringView(MetadataEntries[Index].NameUTF8)))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FProperty::OnMetadataFinalized(FPropertyArena& Arena)
+    {
+        // An authored name already lives in the metadata table, so only a derived one needs arena storage.
+        if (const FCStringView MaybeDisplayName = GetMetadata("DisplayName"); !MaybeDisplayName.empty())
+        {
+            DisplayName = MaybeDisplayName.c_str();
         }
         else
         {
-            DisplayName = MakeDisplayNameFromName(TypeFlags, Name);
+            DisplayName = Arena.CopyString(MakeDisplayNameFromName(TypeFlags, Name));
         }
     }
 

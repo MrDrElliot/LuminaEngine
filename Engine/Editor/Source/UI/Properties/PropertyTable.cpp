@@ -257,13 +257,13 @@ namespace Lumina
         bRequireAll = true;
         bHides = false;
 
-        const FString* Expression = Source->TryGetMetadata("EditCondition");
-        if (Expression == nullptr || Expression->empty())
+        const FCStringView Expression = Source->GetMetadata("EditCondition");
+        if (Expression.empty())
         {
             return;
         }
 
-        const FStringView Full(Expression->c_str(), Expression->size());
+        const FStringView Full = Expression;
         TVector<FStringView> TermViews;
         size_t Start = 0;
         while (Start <= Full.size())
@@ -315,8 +315,8 @@ namespace Lumina
                 return;
             }
 
-            CStruct** Owner = Containers::GetIf<CStruct*>(&Source->Owner);
-            Term.Property = (Owner && *Owner) ? (*Owner)->GetProperty(FName(NameView)) : nullptr;
+            CStruct* Owner = Source->GetOwnerStruct();
+            Term.Property = Owner != nullptr ? Owner->GetProperty(FName(NameView)) : nullptr;
             if (Term.Property == nullptr || Term.Property == Source)
             {
                 Terms.clear();
@@ -830,12 +830,12 @@ namespace Lumina
             return;
         }
 
-        const FString* Tooltip = Property->TryGetMetadata("ToolTip");
-        if (Tooltip == nullptr)
+        FStringView Tooltip = Property->GetMetadata("ToolTip");
+        if (Tooltip.empty())
         {
-            Tooltip = &Property->GetPropertyDisplayName();
+            Tooltip = Property->GetPropertyDisplayName();
         }
-        ImGuiX::WrappedTooltip_Internal(*Tooltip);
+        ImGuiX::WrappedTooltip_Internal(Tooltip);
     }
 
     // Shared by the leaf row and the map-entry editors, returning null for struct and array types.
@@ -890,7 +890,7 @@ namespace Lumina
         {
             return FStringView();
         }
-        const FString& Display = PropertyHandle->Property->GetPropertyDisplayName();
+        const FCStringView Display = PropertyHandle->Property->GetPropertyDisplayName();
         return FStringView(Display.c_str(), Display.size());
     }
 
@@ -2030,15 +2030,14 @@ namespace Lumina
             return;
         }
 
-        FProperty* Current = Struct->LinkedProperty;
-        while (Current != nullptr)
+        for (FProperty* Current : Struct->GetProperties())
         {
             if (Current->IsVisible())
             {
                 FString CategoryPath = "General";
-                if (Current->Metadata.HasMetadata("Category"))
+                if (Current->HasMetadata("Category"))
                 {
-                    CategoryPath = Current->Metadata.GetMetadata("Category");
+                    CategoryPath = Current->GetMetadata("Category").c_str();
                 }
                 
                 FCategoryPropertyRow* TargetRow = nullptr;
@@ -2075,8 +2074,6 @@ namespace Lumina
                 TSharedPtr<FPropertyHandle> Property = MakeShared<FPropertyHandle>(Object, DefaultObject, Current);
                 TargetRow->AddProperty(Property);
             }
-
-            Current = static_cast<FProperty*>(Current->Next);
         }
     }
 

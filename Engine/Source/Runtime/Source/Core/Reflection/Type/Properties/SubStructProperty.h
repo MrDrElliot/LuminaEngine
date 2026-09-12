@@ -13,8 +13,8 @@ namespace Lumina
     public:
         DECLARE_FPROPERTY(EPropertyTypeFlags::SubStruct)
 
-        FSubStructProperty(const FFieldOwner& InOwner, const FSubStructPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FSubStructProperty(const FSubStructPropertyParams* Params)
+            : FProperty(Params)
         {
             MetaStruct = Params->StructFunc();
             SetElementSize(sizeof(void*));

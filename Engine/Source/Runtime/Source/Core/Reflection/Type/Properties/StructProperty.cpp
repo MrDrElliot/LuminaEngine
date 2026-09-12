@@ -27,14 +27,12 @@ namespace Lumina
             return Ops->Equals(ValueA, ValueB);
         }
 
-        FProperty* Current = Struct->LinkedProperty;
-        while (Current != nullptr)
+        for (FProperty* Current : Struct->GetProperties())
         {
             if (!Current->Identical_InContainer(ValueA, ValueB))
             {
                 return false;
             }
-            Current = static_cast<FProperty*>(Current->Next);
         }
         return true;
     }
@@ -47,11 +45,9 @@ namespace Lumina
             return;
         }
 
-        FProperty* Current = Struct->LinkedProperty;
-        while (Current != nullptr)
+        for (FProperty* Current : Struct->GetProperties())
         {
             Current->CopyCompleteValue_InContainer(Dst, Src);
-            Current = static_cast<FProperty*>(Current->Next);
         }
     }
 }

@@ -24,6 +24,10 @@ internal static unsafe partial class LayoutValidator
     [NativeCall("LuminaSharp_PropertyType_Count")]
     private static partial int PropertyTypeNativeCount();
 
+    /// <summary>Native Lumina::EPropertyFlags bit for a flag name ("Replicated"), or -1 if unknown.</summary>
+    [NativeCall("LuminaSharp_PropertyFlag_Value")]
+    private static partial int PropertyFlagNativeValue(string Name);
+
     private static readonly MethodInfo SizeOf =
         typeof(Unsafe).GetMethod(nameof(Unsafe.SizeOf), BindingFlags.Public | BindingFlags.Static)!;
 
@@ -103,13 +107,31 @@ internal static unsafe partial class LayoutValidator
             Failures.Append($"\n  - EPropertyType has {PropertyTypes.Length} members in C# but native EPropertyTypeFlags has {NativeTypeCount}.");
         }
 
+        // The EPropertyFlags mirror. A wrong bit here does not crash: it produces a field that quietly stops
+        // replicating, or serializes when it was meant to be editor-only, so it is worth the startup check.
+        int FlagsChecked = 0;
+        foreach (EPropertyFlags Value in Enum.GetValues(typeof(EPropertyFlags)))
+        {
+            if (Value == EPropertyFlags.None)
+            {
+                continue;
+            }
+
+            int NativeValue = PropertyFlagNativeValue(Value.ToString());
+            if (NativeValue != (int)Value)
+            {
+                Failures.Append($"\n  - EPropertyFlags.{Value} is {(int)Value} in C# but native reports {NativeValue}.");
+            }
+            ++FlagsChecked;
+        }
+
         if (Failures.Length > 0)
         {
             Debug.LogError($"FATAL: C#/C++ interop layout validation FAILED, refusing to start C# (a mismatched blittable layout or enum would corrupt memory). Fix the C# mirror or the native type:{Failures}");
             return false;
         }
 
-        Debug.Log($"Interop layout validated: {Validated} native mirrors + {PropertyTypes.Length} EPropertyType members match native.");
+        Debug.Log($"Interop layout validated: {Validated} native mirrors + {PropertyTypes.Length} EPropertyType + {FlagsChecked} EPropertyFlags members match native.");
         return true;
     }
 }

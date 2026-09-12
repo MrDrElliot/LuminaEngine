@@ -14,8 +14,8 @@ namespace Lumina
     public:
         DECLARE_FPROPERTY(EPropertyTypeFlags::Class)
 
-        FClassProperty(const FFieldOwner& InOwner, const FClassPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FClassProperty(const FClassPropertyParams* Params)
+            : FProperty(Params)
         {
             MetaClass = Params->ClassFunc();
             SetElementSize(sizeof(void*));

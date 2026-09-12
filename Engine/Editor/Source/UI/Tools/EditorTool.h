@@ -383,7 +383,8 @@ namespace Lumina
         NODISCARD virtual bool IsUnsavedDocument() { return false; }
 
         /** @TODO Cache and compare */
-        NODISCARD uint64 GetID() const { return GetToolName().GetID(); }
+        // The CONTENT hash, not the name index: an ImGui dock class has to mean the same thing next session.
+        NODISCARD uint64 GetID() const { return GetToolName().GetStableHash(); }
         
         FORCEINLINE ImGuiID GetCurrDockID() const        { return CurrDockID; }
         FORCEINLINE ImGuiID GetDesiredDockID() const     { return DesiredDockID; }

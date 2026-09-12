@@ -76,7 +76,7 @@ namespace Lumina::Scripting
 
         void ReadStruct(const CStruct* Struct, const void* Buffer, TVector<FScriptPropertyEntry>& Out)
         {
-            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+            for (FProperty* Property : Struct->GetProperties())
             {
                 FScriptPropertyEntry Entry;
                 Entry.Name = Property->GetPropertyName();
@@ -87,7 +87,7 @@ namespace Lumina::Scripting
 
         void WriteStruct(const CStruct* Struct, void* Buffer, const TVector<FScriptPropertyEntry>& Values)
         {
-            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+            for (FProperty* Property : Struct->GetProperties())
             {
                 if (const FScriptPropertyEntry* Entry = FindEntry(Values, Property->GetPropertyName()))
                 {

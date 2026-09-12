@@ -11,13 +11,13 @@ namespace Lumina
     class FArrayProperty : public FProperty
     {
     public:
-        FArrayProperty(const FFieldOwner& InOwner, const FArrayPropertyParams* Params)
-            : FProperty(InOwner, Params)
+        explicit FArrayProperty(const FArrayPropertyParams* Params)
+            : FProperty(Params)
         {
             Ops = Params->GetOpsFn ? Params->GetOpsFn() : nullptr;
         }
         
-        void AddProperty(FProperty* Property) override { Inner.reset(Property); }
+        void AddProperty(FProperty* Property) override { Inner = Property; }
 
         void Serialize(FArchive& Ar, void* Value) override;
         void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;
@@ -35,7 +35,7 @@ namespace Lumina
         void DestructValue(void* Value) const override  { if (Ops && Ops->DestructContainer)  { Ops->DestructContainer(Value, Ops->ContainerContext); } }
         bool OwnsStorage() const override { return Ops != nullptr && Ops->ConstructContainer != nullptr; }
 
-        FProperty* GetInternalProperty() const { return Inner.get(); }
+        FProperty* GetInternalProperty() const { return Inner; }
 
         /** The element ops table. Exposed so C# can build a Lumina.TVector<T> view over any array property. */
         const FVectorOps* GetOps() const { return Ops; }
@@ -104,7 +104,8 @@ namespace Lumina
 
         const FVectorOps*       Ops = nullptr;
 
-        TUniquePtr<FProperty>   Inner;
+        // Placed in the owning type's arena alongside this property, which is what frees it.
+        FProperty*              Inner = nullptr;
 
     };
 }

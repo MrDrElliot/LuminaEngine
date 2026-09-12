@@ -47,7 +47,7 @@ namespace Lumina
             Ops->Copy(Dest, Src);
             return;
         }
-        for (FProperty* Current = LinkedProperty; Current; Current = static_cast<FProperty*>(Current->Next))
+        for (FProperty* Current : AllProperties)
         {
             Current->CopyCompleteValue_InContainer(Dest, Src);
         }
@@ -59,7 +59,7 @@ namespace Lumina
         {
             return Ops->Equals(A, B);
         }
-        for (FProperty* Current = LinkedProperty; Current; Current = static_cast<FProperty*>(Current->Next))
+        for (FProperty* Current : AllProperties)
         {
             if (!Current->Identical_InContainer(A, B))
             {
@@ -125,30 +125,20 @@ namespace Lumina
             SuperStruct->Link();
         }
 
-        if (SuperStruct && SuperStruct->LinkedProperty)
+        // Copied, not spliced: a struct with no own properties used to adopt the super's list head outright,
+        // so a later AddProperty walked into the super and appended there instead.
+        AllProperties = OwnProperties;
+        if (SuperStruct != nullptr)
         {
-            FProperty* SuperProperty = SuperStruct->LinkedProperty;
-
-            if (LinkedProperty == nullptr)
-            {
-                LinkedProperty = SuperProperty;
-            }
-            else
-            {
-                FProperty* Current = LinkedProperty;
-                while (Current->Next != nullptr)
-                {
-                    Current = (FProperty*)Current->Next;
-                }
-                Current->Next = SuperProperty;
-            }
+            AllProperties.insert(AllProperties.end(),
+                SuperStruct->AllProperties.begin(), SuperStruct->AllProperties.end());
         }
     }
 
     void CStruct::Unlink()
     {
-        // Past Link the tail is the SUPER's chain, spliced on rather than copied, so the super is untouched.
-        LinkedProperty = nullptr;
+        OwnProperties.clear();
+        AllProperties.clear();
         bLinked = false;
     }
 
@@ -161,7 +151,7 @@ namespace Lumina
     
     FProperty* CStruct::GetProperty(const FName& Name) const
     {
-        for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+        for (FProperty* Current : AllProperties)
         {
             if (Current->Name == Name)
             {
@@ -174,21 +164,7 @@ namespace Lumina
 
     void CStruct::AddProperty(FProperty* Property)
     {
-        if (LinkedProperty == nullptr)
-        {
-            LinkedProperty = Property;
-        }
-        else
-        {
-            FProperty* Current = LinkedProperty;
-            while (Current->Next != nullptr)
-            {
-                Current = (FProperty*)Current->Next;
-            }
-            Current->Next = Property;
-        }
-        
-        Property->Next = nullptr;
+        OwnProperties.push_back(Property);
     }
     
     static bool ReadNumericValue(FArchive& Ar, const FName& TypeName, double& OutValue)
@@ -220,7 +196,7 @@ namespace Lumina
             int64 NumPropertiesWritePos = Ar.Tell();
             Ar << NumProperties;
             
-            for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+            for (FProperty* Current : AllProperties)
             {
                 if (!Current->ShouldSerialize())
                 {
@@ -276,7 +252,7 @@ namespace Lumina
                 return;
             }
 
-            FProperty* Current = LinkedProperty;
+            size_t NextInOrder = 0;
             for (uint32 i = 0; i < NumProperties; ++i)
             {
                 FPropertyTag Tag;
@@ -286,17 +262,17 @@ namespace Lumina
         
                 FProperty* FoundProperty = nullptr;
 
-                // O(n) fast path assuming order is unchanged.
-                if (Current && Current->GetPropertyName() == Tag.Name)
+                // O(1) fast path assuming order is unchanged.
+                if (NextInOrder < AllProperties.size() && AllProperties[NextInOrder]->GetPropertyName() == Tag.Name)
                 {
-                    FoundProperty = Current;
-                    Current = (FProperty*)Current->Next;
+                    FoundProperty = AllProperties[NextInOrder];
+                    ++NextInOrder;
                 }
 
-                // O(n^2) fallback for reordered properties.
+                // O(n) fallback for reordered properties.
                 if (FoundProperty == nullptr)
                 {
-                    for (FProperty* Search = LinkedProperty; Search; Search = (FProperty*)Search->Next)
+                    for (FProperty* Search : AllProperties)
                     {
                         if (Search->GetPropertyName() == Tag.Name)
                         {
@@ -309,13 +285,13 @@ namespace Lumina
                 // Match old tag names against the ';'-joined Aliases metadata of renamed properties.
                 if (FoundProperty == nullptr)
                 {
-                    for (FProperty* Search = LinkedProperty; Search; Search = (FProperty*)Search->Next)
+                    for (FProperty* Search : AllProperties)
                     {
                         if (!Search->HasMetadata("Aliases"))
                         {
                             continue;
                         }
-                        const FString& Aliases = Search->GetMetadata("Aliases");
+                        const FCStringView Aliases = Search->GetMetadata("Aliases");
                         for (size_t Start = 0; Start <= Aliases.size(); )
                         {
                             size_t End = Aliases.find(';', Start);
@@ -385,7 +361,7 @@ namespace Lumina
 
     void CStruct::SerializeTaggedProperties(IStructuredArchive::FRecord& Record, void* Data, void const* Defaults) const
     {
-        for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+        for (FProperty* Current : AllProperties)
         {
             if (!Current->ShouldSerialize())
             {
@@ -401,7 +377,7 @@ namespace Lumina
     void CStruct::NetSerializeProperties(FNetArchive& Ar, void* Data) const
     {
         // Walk the same PROPERTY(Replicated) fields. NetSerialize reads or writes per the archive's mode.
-        for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+        for (FProperty* Current : AllProperties)
         {
             if (!Current->ShouldSerialize() || Current->IsEditorOnly() || !Current->IsReplicated())
             {
@@ -423,7 +399,7 @@ namespace Lumina
         }
 
         // No Replicated filter here, since the struct is serialized as a unit.
-        for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+        for (FProperty* Current : AllProperties)
         {
             if (!Current->ShouldSerialize())
             {
@@ -442,7 +418,7 @@ namespace Lumina
     uint32 CStruct::GetNetReplicatedPropertyCount() const
     {
         uint32 Count = 0;
-        for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+        for (FProperty* Current : AllProperties)
         {
             if (IsNetReplicatedField(Current))
             {
@@ -471,7 +447,7 @@ namespace Lumina
         Tmp.NameToNetIndex     = HookSource.NameToNetIndex;
         Tmp.NetIndexToName     = HookSource.NetIndexToName;
 
-        for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+        for (FProperty* Current : AllProperties)
         {
             if (!IsNetReplicatedField(Current))
             {
@@ -489,7 +465,7 @@ namespace Lumina
     void CStruct::NetReadReplicatedMasked(FNetArchive& Ar, void* Data, const uint8* Mask) const
     {
         uint32 Index = 0;
-        for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
+        for (FProperty* Current : AllProperties)
         {
             if (!IsNetReplicatedField(Current))
             {

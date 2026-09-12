@@ -149,7 +149,7 @@ namespace Lumina
                 const CObject* Defaults = Class->GetDefaultObject<CObject>();
                 if (Defaults != nullptr)
                 {
-                    for (FProperty* Current = Class->LinkedProperty; Current; Current = (FProperty*)Current->Next)
+                    for (FProperty* Current : Class->GetProperties())
                     {
                         if (Current->HasMetadata("DuplicateTransient"))
                         {

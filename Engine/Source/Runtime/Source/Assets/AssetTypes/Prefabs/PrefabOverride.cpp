@@ -12,18 +12,18 @@ namespace Lumina::PrefabOverride
 {
     namespace
     {
-        // Iterated without walking GetSuperStruct, since CStruct::Link already spliced the super onto the tail.
+        // Iterated without walking GetSuperStruct, since CStruct::Link already flattened the super into it.
 
         // An opaque struct has an empty property chain, so its bytes still copy through the leaf path.
         bool StructHasReflectedProperties(CStruct* Struct)
         {
-            return Struct != nullptr && Struct->LinkedProperty != nullptr;
+            return Struct != nullptr && !Struct->GetProperties().empty();
         }
 
         // Such a component exposes no reflected leaf, so it is treated as one atomic leaf instead.
         bool HasSerializableLeaf(CStruct* Struct)
         {
-            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+            for (FProperty* Property : Struct->GetProperties())
             {
                 if (Property->ShouldSerialize())
                 {
@@ -84,7 +84,7 @@ namespace Lumina::PrefabOverride
         template<typename Visitor>
         void ForEachLeafPair(CStruct* Struct, void* Inst, const void* Pref, const FString& Prefix, Visitor& Visit)
         {
-            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+            for (FProperty* Property : Struct->GetProperties())
             {
                 if (!Property->ShouldSerialize())
                 {

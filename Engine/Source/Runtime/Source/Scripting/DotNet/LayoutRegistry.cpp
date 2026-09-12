@@ -60,6 +60,30 @@ LUMINA_DOTNET_EXPORT(int32, PropertyType_Value)(const char* Name, int32 Len)
     return -1;
 }
 
+// A [Property] flag is a bit both sides must agree on, and a wrong bit is a silently wrong behaviour
+// (a field that quietly stops replicating) rather than a crash, so it is checked at bootstrap like the kinds.
+LUMINA_DOTNET_EXPORT(int32, PropertyFlag_Value)(const char* Name, int32 Len)
+{
+    if (Name == nullptr || Len <= 0)
+    {
+        return -1;
+    }
+    for (size_t Index = 0; Index < std::size(::Lumina::PropertyFlagNames); ++Index)
+    {
+        const char* Candidate = ::Lumina::PropertyFlagNames[Index];
+        if (std::strlen(Candidate) == (size_t)Len && std::memcmp(Candidate, Name, (size_t)Len) == 0)
+        {
+            return (int32)::Lumina::PropertyFlagValues[Index];
+        }
+    }
+    return -1;
+}
+
+LUMINA_DOTNET_EXPORT(int32, PropertyFlag_Count)()
+{
+    return (int32)std::size(::Lumina::PropertyFlagNames);
+}
+
 LUMINA_DOTNET_EXPORT(int32, PropertyType_Count)()
 {
     return (int32)::Lumina::EPropertyTypeFlags::Count;

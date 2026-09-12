@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Scripting/ManagedTypeRegistry.h"
+
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
@@ -78,6 +80,47 @@ namespace Lumina::DotNet
     // GetScriptGeneration() changes (its pointer dangles once the old generation unloads). Game thread only.
     RUNTIME_API void* ResolveManagedExport(FStringView Name);
 
+    /**
+     * One managed engine export, named where it is used and resolved on first call.
+     *
+     * The alternative -- and what the host used to do for every export -- is a field in one central struct
+     * plus a typedef plus a line in a bootstrap resolve block, so a subsystem could not add a managed entry
+     * point without editing the host. Declaring the export beside its caller costs one line and nothing in
+     * the host at all.
+     *
+     * Only for exports in LuminaSharp.dll, which is loaded for the life of the process, so a resolved pointer
+     * stays valid across script reloads. A SCRIPT assembly's export dies with its generation and must be
+     * resolved per use instead of held here.
+     */
+    template<typename TSignature>
+    class TManagedExport
+    {
+    public:
+
+        explicit TManagedExport(const char* InName)
+            : Name(InName)
+        {}
+
+        /** Null until the host is up, and retried until it resolves, so declaration order does not matter. */
+        TSignature Get() const
+        {
+            if (Pointer == nullptr)
+            {
+                Pointer = reinterpret_cast<TSignature>(ResolveManagedExport(Name));
+            }
+            return Pointer;
+        }
+
+        explicit operator bool() const { return Get() != nullptr; }
+
+        const char* GetName() const { return Name; }
+
+    private:
+
+        const char*        Name;
+        mutable TSignature Pointer = nullptr;
+    };
+
     //~ C# runtime diagnostics
     struct FScriptDiagnostics
     {
@@ -155,6 +198,9 @@ namespace Lumina::DotNet
     };
 
     // Reports every loaded C# data type + its native base. Drives CScriptStruct minting + the editor pickers.
+    /** One crossing per type for everything the reload stages need, so no stage gathers for itself. */
+    RUNTIME_API void GatherManagedTypeDefinitions(TVector<Scripting::FManagedTypeDefinition>& Out);
+
     RUNTIME_API void GatherScriptStructTypes(TVector<FScriptStructTypeDesc>& Out);
 
     // Reads one data type's member schema, addressed by StableId. False when the type is unknown.

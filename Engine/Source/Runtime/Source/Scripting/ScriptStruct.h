@@ -8,6 +8,8 @@
 #include "Core/LuminaMacros.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Field.h"
+#include "Core/Object/ScriptClass.h"
+#include "Core/Object/ScriptEnum.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Platform/GenericPlatform.h"
@@ -144,7 +146,24 @@ namespace Lumina
     private:
 
         struct FFieldPlan;
-        struct FKindLayout;
+        struct FKindResolver;
+        struct FKindResolvers;
+
+    public:
+
+        /** The footprint a kind's value occupies, plus whatever type had to be resolved or minted for it. */
+        struct FKindLayout
+        {
+            uint32         Size   = 0;
+            uint32         Align  = 1;
+            CStruct*       Native = nullptr;   // a Struct naming a native type
+            CScriptStruct* Script = nullptr;   // a minted sub-struct, or an InstancedStruct's candidate base
+        };
+
+    private:
+
+        /** Null for a kind a schema cannot express as a value, which is how a container element is refused. */
+        static const FKindResolver* FindKindResolver(EPropertyTypeFlags Kind);
 
         /**
          * The two questions asked of every export kind -- how big is it, and what FProperty represents it --
@@ -162,7 +181,7 @@ namespace Lumina
          * refusing them is exactly what enforces the rule for elements.
          */
         bool ResolveKindLayout(const Scripting::FScriptExportType& Type, const FName& DiagName, FKindLayout& Out);
-        FProperty* MakeForKind(const FFieldOwner& Owner, const FName& FieldName, uint32 Offset,
+        FProperty* MakeForKind(const FPropertyOwner& Owner, const FName& FieldName, uint32 Offset,
             const Scripting::FScriptExportType& Type, CStruct* Resolved);
 
         bool ResolvePlan(const Scripting::FScriptExportField& Field, FFieldPlan& Out);
@@ -179,21 +198,34 @@ namespace Lumina
         // tagged with its stable C# type name in ScriptTypeName metadata.
         CScriptStruct* MintInstanceCandidate(const Scripting::FScriptExportInstanceCandidate& Candidate, CScriptStruct* Base);
 
-        CEnum* MintEnum(const Scripting::FScriptExportType& Type);
+        CScriptEnum* MintEnum(const Scripting::FScriptExportType& Type);
         void FreeRuntimeData();
+
+    public:
+
+        /** The schema this record emitted, kept so the next reload can say WHAT changed rather than only
+         *  that something did. Lives here because the record already outlives the properties it emitted. */
+        const Scripting::FScriptExportSchema& GetAppliedSchema() const { return AppliedSchema; }
+        void SetAppliedSchema(const Scripting::FScriptExportSchema& InSchema) { AppliedSchema = InSchema; }
+
+    private:
+
+        Scripting::FScriptExportSchema                 AppliedSchema;
 
         uint8*                                          Defaults = nullptr;
         bool                                           bRequiresLifecycle = false;
         TVector<TObjectPtr<CScriptStruct>>             SubStructs;
-        TVector<TObjectPtr<CEnum>>                     MintedEnums;
+        TVector<TObjectPtr<CScriptEnum>>               MintedEnums;
 
         // Keyed by type shape, so many fields of one type share a single mint within this layout.
         THashMap<FString, CScriptStruct*>              SubStructsByKey;
-        THashMap<FString, CEnum*>                      EnumsByKey;
+        THashMap<FString, CScriptEnum*>                EnumsByKey;
 
         TVector<Scripting::FScriptArrayElementDesc*>   ElementDescs;
         TVector<Scripting::FScriptMapElementDesc*>     MapDescs;
         bool                                           bRuntimeFreed = false;
+
+
     };
 
 }
@@ -217,10 +249,10 @@ namespace Lumina::Scripting
      *
      * Returns the number of properties appended.
      */
-    RUNTIME_API uint32 AppendScriptPropertiesToClass(CClass* Target, const FScriptExportSchema& Schema);
+    RUNTIME_API uint32 AppendScriptPropertiesToClass(CScriptClass* Target, const FScriptExportSchema& Schema);
 
-    /** Drops a retired minted class's layout record. Only safe once the class has no live instances. */
-    RUNTIME_API void ForgetScriptClassLayout(CClass* Target);
+    /** Drops a minted class's layout records. Only safe once the class has no live instances. */
+    RUNTIME_API void ForgetScriptClassLayout(CScriptClass* Target);
 
     /**
      * Resets every `[SkipHotReload]` script property on Object to its class default.
@@ -237,6 +269,23 @@ namespace Lumina::Scripting
      *  edits (a tooltip, a Min/Max) deliberately do not change it. */
     RUNTIME_API FString DescribeScriptSchemaLayout(const FScriptExportSchema& Schema);
 
+    /**
+     * What differs between the block Target currently carries and Schema.
+     *
+     * Replaces a single "matches / does not match" answer, which forced a full rebuild for any edit at all
+     * and so made a metadata-only change either rebuild the class or, because a rebuild refuses while
+     * instances are live, silently not take. Each flag has its own remedy: Layout rebuilds, Metadata is
+     * reapplied in place, Defaults is replayed onto the CDO.
+     */
+    RUNTIME_API EScriptTypeDirty DiffScriptClassLayout(const CScriptClass* Target, const FScriptExportSchema& Schema);
+
+    /**
+     * Reapplies editor-facing metadata from Schema onto the properties Target already carries, without
+     * touching the layout. Valid only when DiffScriptClassLayout reported no Layout change, since it matches
+     * fields to properties by position.
+     */
+    RUNTIME_API void RefreshScriptPropertyMetadata(CScriptClass* Target, const FScriptExportSchema& Schema);
+
     // Identity of one exported type's shape, so a type used by many fields is minted once.
     RUNTIME_API FString DescribeScriptTypeSignature(const FScriptExportType& Type);
 
@@ -244,7 +293,7 @@ namespace Lumina::Scripting
     RUNTIME_API void AdvanceScriptTypeGeneration();
 
     /** True when Target's appended block already matches Schema, so a hot reload needs no rebuild. */
-    RUNTIME_API bool ScriptClassLayoutMatches(CClass* Target, const FScriptExportSchema& Schema);
+    RUNTIME_API bool ScriptClassLayoutMatches(const CScriptClass* Target, const FScriptExportSchema& Schema);
 
     /**
      * Rebuilds Target's appended property block from Schema, for a hot reload that added, removed, retyped
@@ -262,7 +311,7 @@ namespace Lumina::Scripting
      *
      * Declared defaults are NOT applied; as with a first mint, the caller replays them onto the new CDO.
      */
-    RUNTIME_API bool MigrateMintedClassLayout(CClass* Target, const FScriptExportSchema& Schema);
+    RUNTIME_API bool MigrateMintedClassLayout(CScriptClass* Target, const FScriptExportSchema& Schema);
 
     // Per-ScriptClass cache of minted script structs, owned by the .NET host and cleared on reload.
     class FScriptStructRegistry

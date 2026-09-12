@@ -12,8 +12,8 @@ namespace Lumina
     public:
         DECLARE_FPROPERTY(EPropertyTypeFlags::SoftObject)
 
-        FSoftObjectProperty(const FFieldOwner& InOwner, const FSoftObjectPropertyParams* Params)
-            : FProperty(InOwner, Params)
+        explicit FSoftObjectProperty(const FSoftObjectPropertyParams* Params)
+            : FProperty(Params)
         {
             ObjectClass = Params->ClassFunc ? Params->ClassFunc() : nullptr;
             // Storage is FSoftObjectPath (path + GUID). TSoftObjectPtr<T> is

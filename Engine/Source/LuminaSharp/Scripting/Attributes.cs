@@ -59,6 +59,32 @@ public sealed class SkipHotReloadAttribute : Attribute
 }
 
 /// <summary>
+/// Reflected property flags. A hand-written mirror of native <c>Lumina::EPropertyFlags</c>, single-sourced
+/// there from <c>EPropertyFlags.inl</c> and checked member-by-member at bootstrap: a wrong bit is a field that
+/// quietly stops replicating rather than a crash, so it fails loudly at startup instead.
+/// </summary>
+[Flags]
+public enum EPropertyFlags : uint
+{
+    None               = 0,
+
+    /// <summary>Shown in the details panel. Implied by <see cref="PropertyAttribute"/>.</summary>
+    Editable           = 1u << 0,
+    /// <summary>Shown but not editable.</summary>
+    ReadOnly           = 1u << 1,
+    /// <summary>Never written to a package.</summary>
+    NoSerialize        = 1u << 2,
+    /// <summary>Not writable through reflection at all.</summary>
+    Const              = 1u << 3,
+    /// <summary>Stripped from cooked packages.</summary>
+    EditorOnly         = 1u << 11,
+    /// <summary>Participates in network replication.</summary>
+    Replicated         = 1u << 12,
+    /// <summary>Duplication resets this to its default rather than copying it.</summary>
+    DuplicateTransient = 1u << 16,
+}
+
+/// <summary>
 /// Exposes a script field/property to the editor (and saves it).
 /// </summary>
 [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
@@ -84,6 +110,14 @@ public sealed class PropertyAttribute : Attribute
 
     /// <summary>Draw a color picker for a Vector3/Vector4 value instead of drag fields.</summary>
     public bool Color { get; set; }
+
+    /// <summary>
+    /// Reflected flags for this property, on top of the Editable one <see cref="PropertyAttribute"/> implies.
+    ///
+    /// This is how a script field says the things the engine already understood but C# could not express:
+    /// <c>Replicated</c>, <c>ReadOnly</c>, <c>EditorOnly</c>, <c>Const</c>, <c>DuplicateTransient</c>.
+    /// </summary>
+    public EPropertyFlags Flags { get; set; } = EPropertyFlags.None;
 
     public bool HasMin => !float.IsNaN(Min);
     public bool HasMax => !float.IsNaN(Max);

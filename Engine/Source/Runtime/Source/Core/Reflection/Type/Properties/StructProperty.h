@@ -10,8 +10,8 @@ namespace Lumina
     public:
         DECLARE_FPROPERTY(EPropertyTypeFlags::Struct)
 
-        FStructProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FStructProperty(const FPropertyParams* Params)
+            : FProperty(Params)
         {
             auto* StructParams = (const FStructPropertyParams*)Params;
             CStruct* InternalStruct = StructParams->StructFunc();

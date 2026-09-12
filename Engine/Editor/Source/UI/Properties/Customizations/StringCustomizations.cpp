@@ -24,14 +24,14 @@ namespace Lumina
         // Null when the property asks for no picker, which leaves it a plain text field.
         const INamePickerSource* ResolvePickerSource(FProperty* Property, FStringView& OutKind)
         {
-            const FString* Kind = Property->TryGetMetadata("Picker");
-            if (Kind == nullptr)
+            const FCStringView Kind = Property->GetMetadata("Picker");
+            if (Kind.empty())
             {
                 return nullptr;
             }
 
-            OutKind = FStringView(Kind->c_str(), Kind->size());
-            return NamePicker::Find(FName(Kind->c_str()));
+            OutKind = Kind;
+            return NamePicker::Find(FName(Kind.c_str()));
         }
 
         void DrawUnknownPicker(FStringView Kind)

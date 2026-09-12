@@ -52,9 +52,9 @@ namespace
         return Field;
     }
 
-    CClass* MintWithSchema(const char* ClassName, const Scripting::FScriptExportSchema& Schema, uint32& OutShimSize)
+    CScriptClass* MintWithSchema(const char* ClassName, const Scripting::FScriptExportSchema& Schema, uint32& OutShimSize)
     {
-        CClass* Minted = FScriptableRegistry::Mint(ClassName, "CScriptableTest", 0);
+        CScriptClass* Minted = FScriptableRegistry::Mint(ClassName, "CScriptableTest", 0);
         if (Minted == nullptr)
         {
             return nullptr;
@@ -77,7 +77,7 @@ TEST(ScriptClassProperties, SchemaFieldsBecomeRealPropertiesPastTheShim)
     Schema.Fields.push_back(MakeScalarField("Enabled", EPropertyTypeFlags::Bool));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_Layout", Schema, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_Layout", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     FProperty* Speed = Sub->GetProperty(FName("Speed"));
@@ -128,7 +128,7 @@ TEST(ScriptClassProperties, ScriptPropertiesRoundTripThroughTheStockSerializer)
     Schema.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_Serialize", Schema, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_Serialize", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     FProperty* Speed = Sub->GetProperty(FName("Speed"));
@@ -172,7 +172,7 @@ TEST(ScriptClassProperties, StorageOwningFieldsAreConstructedPerInstance)
     Schema.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_Strings", Schema, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_Strings", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     FProperty* Label = Sub->GetProperty(FName("Label"));
@@ -208,7 +208,7 @@ TEST(ScriptClassProperties, StringPropertiesRoundTripThroughTheStockSerializer)
     Schema.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_StringSerialize", Schema, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_StringSerialize", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     FProperty* Label = Sub->GetProperty(FName("Label"));
@@ -249,7 +249,7 @@ TEST(ScriptClassProperties, ValuesOnTheDefaultObjectSeedEveryInstance)
     Schema.Fields.push_back(MakeScalarField("Label", EPropertyTypeFlags::String));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_Defaults", Schema, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_Defaults", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     FProperty* Speed = Sub->GetProperty(FName("Speed"));
@@ -361,7 +361,7 @@ namespace
 TEST(ScriptClassProperties, EveryReflectedKindIsAppendedPastTheShim)
 {
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_EveryKind", MakeEveryKindSchema(), ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_EveryKind", MakeEveryKindSchema(), ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     for (const char* Name : GEveryKindNames)
@@ -403,7 +403,7 @@ TEST(ScriptClassProperties, EveryReflectedKindIsAppendedPastTheShim)
 TEST(ScriptClassProperties, AppendedContainersAreUsableThroughTheStockPropertyApi)
 {
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_Containers", MakeEveryKindSchema(), ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_Containers", MakeEveryKindSchema(), ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     CObject* Object = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
@@ -449,7 +449,7 @@ TEST(ScriptClassProperties, AppendedContainersAreUsableThroughTheStockPropertyAp
 TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer)
 {
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_ContainerSerialize", MakeEveryKindSchema(), ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_ContainerSerialize", MakeEveryKindSchema(), ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     FArrayProperty* Ints = static_cast<FArrayProperty*>(Sub->GetProperty(FName("AnIntArray")));
@@ -498,7 +498,7 @@ TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
     Schema.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Unchanged", Schema, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Unchanged", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     // An identical schema must compare equal, or every reload pays a rebuild for nothing.
@@ -527,13 +527,76 @@ TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
     EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Renamed));
 }
 
+// A reload has to say WHAT changed, not just that something did: a reworded tooltip must reach the editor
+// without a rebuild, which refuses while instances are live and so used to drop the edit on the floor.
+TEST(ScriptClassReload, ADiffSeparatesLayoutFromMetadataAndDefaults)
+{
+    Scripting::FScriptExportSchema Schema;
+    Schema.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields[0].Meta.Set(FName("Tooltip"), "how fast");
+
+    uint32 ShimSize = 0;
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Diff", Schema, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    EXPECT_EQ(Scripting::DiffScriptClassLayout(Sub, Schema), EScriptTypeDirty::None)
+        << "an identical schema must be clean, or every reload pays for nothing";
+
+    Scripting::FScriptExportSchema Retitled;
+    Retitled.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Retitled.Fields[0].Meta.Set(FName("Tooltip"), "how fast it goes");
+    EXPECT_EQ(Scripting::DiffScriptClassLayout(Sub, Retitled), EScriptTypeDirty::Metadata);
+
+    Scripting::FScriptExportSchema Revalued;
+    Revalued.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Revalued.Fields[0].Meta.Set(FName("Tooltip"), "how fast");
+    Revalued.Fields[0].Default.Kind = Scripting::EScriptValueKind::Double;
+    Revalued.Fields[0].Default.AsDouble = 3.0;
+    EXPECT_EQ(Scripting::DiffScriptClassLayout(Sub, Revalued), EScriptTypeDirty::Defaults);
+
+    Scripting::FScriptExportSchema Retyped;
+    Retyped.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Double));
+    EXPECT_TRUE(EnumHasAnyFlags(Scripting::DiffScriptClassLayout(Sub, Retyped), EScriptTypeDirty::Layout));
+}
+
+// The metadata-only remedy: reapplied against the properties already in place, with the block untouched.
+TEST(ScriptClassReload, RefreshingMetadataKeepsTheSamePropertiesAndReachesTheEditor)
+{
+    Scripting::FScriptExportSchema Schema;
+    Schema.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Schema.Fields[0].Meta.Set(FName("Tooltip"), "how fast");
+
+    uint32 ShimSize = 0;
+    CScriptClass* Sub = MintWithSchema("ScriptReload_MetaRefresh", Schema, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    FProperty* Before = Sub->GetProperty(FName("Speed"));
+    ASSERT_NE(Before, nullptr);
+    EXPECT_EQ(FStringView(Before->GetMetadata("Tooltip")), FStringView("how fast"));
+
+    Scripting::FScriptExportSchema Retitled;
+    Retitled.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Retitled.Fields[0].Meta.Set(FName("Tooltip"), "how fast it goes");
+    Retitled.Fields[0].Meta.Set(FName("Category"), "Movement");
+
+    Scripting::RefreshScriptPropertyMetadata(Sub, Retitled);
+
+    FProperty* After = Sub->GetProperty(FName("Speed"));
+    EXPECT_EQ(After, Before) << "a metadata refresh must not rebuild the block";
+    EXPECT_EQ(FStringView(After->GetMetadata("Tooltip")), FStringView("how fast it goes"));
+    EXPECT_EQ(FStringView(After->GetMetadata("Category")), FStringView("Movement"));
+
+    // And the record now agrees, so the next reload sees no change rather than the same one again.
+    EXPECT_EQ(Scripting::DiffScriptClassLayout(Sub, Retitled), EScriptTypeDirty::None);
+}
+
 TEST(ScriptClassReload, AddingAPropertyRebuildsTheBlock)
 {
     Scripting::FScriptExportSchema Before;
     Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Added", Before, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Added", Before, ShimSize);
     ASSERT_NE(Sub, nullptr);
     ASSERT_NE(Sub->GetProperty(FName("Speed")), nullptr);
     ASSERT_EQ(Sub->GetProperty(FName("Health")), nullptr);
@@ -577,7 +640,7 @@ TEST(ScriptClassReload, RemovingAndRetypingAPropertyRebuildTheBlock)
     Before.Fields.push_back(MakeScalarField("Doomed", EPropertyTypeFlags::Int32));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Removed", Before, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Removed", Before, ShimSize);
     ASSERT_NE(Sub, nullptr);
     ASSERT_NE(Sub->GetProperty(FName("Doomed")), nullptr);
 
@@ -608,7 +671,7 @@ TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
     Before.Fields.push_back(MakeField("Label", MakeType(EPropertyTypeFlags::String)));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Values", Before, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Values", Before, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     CObject* Authored = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
@@ -661,7 +724,7 @@ TEST(ScriptClassReload, ARebuildIsRefusedWhileInstancesAreLive)
     Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Refused", Before, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Refused", Before, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     CObject* Live = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
@@ -696,7 +759,7 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     Before.Fields.push_back(MakeField("Values", List));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Containers", Before, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Containers", Before, ShimSize);
     ASSERT_NE(Sub, nullptr);
     ASSERT_NE(Sub->GetProperty(FName("Values")), nullptr);
 
@@ -754,7 +817,7 @@ TEST(ScriptClassReload, RepeatedRebuildsRetainOnlyOneSupersededLayout)
     Initial.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Bounded", Initial, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Bounded", Initial, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     const size_t AfterFirstBuild = CountObjectsNamed("ScriptClassLayout_ScriptReload_Bounded");
@@ -811,7 +874,7 @@ TEST(ScriptClassProperties, IdenticalTypesShareOneMintedLayout)
     Schema.Fields.push_back(MakeSharedEnumField("ModeB"));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptProps_SharedMint", Schema, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptProps_SharedMint", Schema, ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     auto StructOf = [&](const char* FieldName) -> CStruct*
@@ -854,7 +917,7 @@ TEST(ScriptClassReload, EditingASubStructShapeDoesNotStrandMints)
     };
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_ShapeChurn", SchemaWithInnerFields(1), ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_ShapeChurn", SchemaWithInnerFields(1), ShimSize);
     ASSERT_NE(Sub, nullptr);
 
     const size_t Baseline = CountObjectsNamed("ScriptSubStruct_");
@@ -880,7 +943,7 @@ TEST(ScriptClassReload, ASupersededLayoutIsFreedAtTheNextGeneration)
     Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
 
     uint32 ShimSize = 0;
-    CClass* Sub = MintWithSchema("ScriptReload_Generational", Before, ShimSize);
+    CScriptClass* Sub = MintWithSchema("ScriptReload_Generational", Before, ShimSize);
     ASSERT_NE(Sub, nullptr);
     ASSERT_EQ(CountObjectsNamed("ScriptClassLayout_ScriptReload_Generational"), 1u);
 

@@ -25,6 +25,28 @@ namespace
         return static_cast<CEntityScriptTest*>(
             EntityScripts::Attach(Registry, Entity, CEntityScriptTest::StaticClass()));
     }
+
+    // An update phase is C# data, so only a minted class carries one. This is the shape production has:
+    // a script type minted over a native scriptable base, which is what the driver then dispatches.
+    CEntityScriptTest* AttachMintedTestScript(ECS::FRegistry& Registry, ECS::FEntity Entity, const char* TypeName)
+    {
+        FScriptableNativeInfo Info;
+        Info.GetBaseClass = &CEntityScriptTest::StaticClass;
+        Info.Factory      = &CEntityScriptTest::__PlacementNew;
+        Info.ShimSize     = CEntityScriptTest::StaticClass()->GetSize();
+        Info.ShimAlign    = CEntityScriptTest::StaticClass()->GetAlignment();
+        FScriptableRegistry::RegisterNative("CEntityScriptTest", Info);
+
+        CScriptClass* Minted = FScriptableRegistry::Mint(TypeName, "CEntityScriptTest", 0);
+        if (Minted == nullptr)
+        {
+            return nullptr;
+        }
+        ProcessNewlyLoadedCObjects();
+        Minted->GetDefaultObject();
+
+        return static_cast<CEntityScriptTest*>(EntityScripts::Attach(Registry, Entity, Minted));
+    }
 }
 
 // The native half, a C++ subclass through the same driver a C# script uses.
@@ -66,11 +88,11 @@ TEST(EntityScriptUnification, UpdatePhaseSelectsWhichPassRunsOnUpdate)
     ECS::FRegistry Registry{};
     const ECS::FEntity Entity = Registry.Create();
 
-    CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
+    CEntityScriptTest* Script = AttachMintedTestScript(Registry, Entity, "EntityScript_GTestPhase");
     ASSERT_NE(Script, nullptr);
 
-    CClass* Class = Script->GetClass();
-    ASSERT_NE(Class, nullptr);
+    CScriptClass* Class = ToScriptClass(Script->GetClass());
+    ASSERT_NE(Class, nullptr) << "the phase lives on a minted class, so the script must be one";
     const uint8 PriorPhase = Class->ScriptUpdatePhase;
     Class->ScriptUpdatePhase = (uint8)EScriptUpdatePhase::PostPhysics;
 
@@ -269,7 +291,7 @@ TEST(EntityScriptUnification, ManyScriptsAndEntitiesTickThroughOneLoop)
 // A minted CClass is attached and ticked by the SAME driver, with no separate code path.
 TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
 {
-    CClass* Minted = FScriptableRegistry::Mint("EntityScript_GTestMinted", "CEntityScript", 0);
+    CScriptClass* Minted = FScriptableRegistry::Mint("EntityScript_GTestMinted", "CEntityScript", 0);
     ASSERT_NE(Minted, nullptr) << "minting failed (is the CEntityScript shim registered?)";
     ProcessNewlyLoadedCObjects();
     Minted->GetDefaultObject();
@@ -377,7 +399,7 @@ TEST(EntityScriptUnification, ScriptPropertyValuesSurviveTheComponentRoundTrip)
         Label.Type->Kind = EPropertyTypeFlags::String;
     }
 
-    CClass* Minted = FScriptableRegistry::Mint("EntityScript_GTestValues", "CEntityScript", 0);
+    CScriptClass* Minted = FScriptableRegistry::Mint("EntityScript_GTestValues", "CEntityScript", 0);
     ASSERT_NE(Minted, nullptr);
     ASSERT_GT(Scripting::AppendScriptPropertiesToClass(Minted, Schema), 0u);
     ProcessNewlyLoadedCObjects();
@@ -473,7 +495,7 @@ TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
         Before.Fields.push_back(std::move(Speed));
     }
 
-    CClass* Minted = FScriptableRegistry::Mint("EvacTest_Script", "CEntityScript", 0);
+    CScriptClass* Minted = FScriptableRegistry::Mint("EvacTest_Script", "CEntityScript", 0);
     ASSERT_NE(Minted, nullptr);
     Scripting::AppendScriptPropertiesToClass(Minted, Before);
     ProcessNewlyLoadedCObjects();
@@ -579,7 +601,7 @@ TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
     Scripting::FScriptExportSchema Before;
     Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
 
-    CClass* Minted = FScriptableRegistry::Mint("RenameProp_Script", "CEntityScript", 0);
+    CScriptClass* Minted = FScriptableRegistry::Mint("RenameProp_Script", "CEntityScript", 0);
     ASSERT_NE(Minted, nullptr);
     Scripting::AppendScriptPropertiesToClass(Minted, Before);
     ProcessNewlyLoadedCObjects();
@@ -637,7 +659,7 @@ TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
     Scripting::FScriptExportSchema Before;
     Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
 
-    CClass* Minted = FScriptableRegistry::Mint("RenameNoAlias_Script", "CEntityScript", 0);
+    CScriptClass* Minted = FScriptableRegistry::Mint("RenameNoAlias_Script", "CEntityScript", 0);
     ASSERT_NE(Minted, nullptr);
     Scripting::AppendScriptPropertiesToClass(Minted, Before);
     ProcessNewlyLoadedCObjects();
@@ -683,7 +705,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     Scripting::FScriptExportSchema Schema;
     Schema.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
 
-    CClass* Old = FScriptableRegistry::Mint("RenameClass_Before", "CEntityScript", 0);
+    CScriptClass* Old = FScriptableRegistry::Mint("RenameClass_Before", "CEntityScript", 0);
     ASSERT_NE(Old, nullptr);
     Scripting::AppendScriptPropertiesToClass(Old, Schema);
     ProcessNewlyLoadedCObjects();
@@ -705,7 +727,7 @@ TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
     }
 
     // The reload brings up the renamed type and registers where the old name went.
-    CClass* New = FScriptableRegistry::Mint("RenameClass_After", "CEntityScript", 0);
+    CScriptClass* New = FScriptableRegistry::Mint("RenameClass_After", "CEntityScript", 0);
     ASSERT_NE(New, nullptr);
     Scripting::AppendScriptPropertiesToClass(New, Schema);
     ProcessNewlyLoadedCObjects();
@@ -756,7 +778,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
         Schema.Fields.push_back(std::move(Scratch));
     }
 
-    CClass* Minted = FScriptableRegistry::Mint("SkipHotReload_Script", "CEntityScript", 0);
+    CScriptClass* Minted = FScriptableRegistry::Mint("SkipHotReload_Script", "CEntityScript", 0);
     ASSERT_NE(Minted, nullptr);
     Scripting::AppendScriptPropertiesToClass(Minted, Schema);
     ProcessNewlyLoadedCObjects();

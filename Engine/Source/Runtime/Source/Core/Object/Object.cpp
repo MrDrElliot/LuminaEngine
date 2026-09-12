@@ -60,7 +60,7 @@ namespace Lumina
         CObject* Duplicate = NewObject(GetClass(), GetPackage());
         if (CClass* Class = GetClass())
         {
-            for (FProperty* Current = Class->LinkedProperty; Current; Current = (FProperty*)Current->Next)
+            for (FProperty* Current : Class->GetProperties())
             {
                 if (Current->IsDuplicateTransient())
                 {
@@ -95,7 +95,7 @@ namespace Lumina
         
         if (CClass* Class = GetClass())
         {
-            for (FProperty* Current = Class->LinkedProperty; Current; Current = (FProperty*)Current->Next)
+            for (FProperty* Current : Class->GetProperties())
             {
                 if (Current->IsDuplicateTransient())
                 {

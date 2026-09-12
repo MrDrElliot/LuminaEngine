@@ -23,15 +23,15 @@ namespace Lumina::Agent
         // Doc comments land in ToolTip, so a normal comment above a PROPERTY becomes the description.
         void ApplyDescription(const FProperty& Property, nlohmann::json& Out)
         {
-            const FString* Text = Property.TryGetMetadata("ToolTip");
-            if (Text == nullptr || Text->empty())
+            const FCStringView Text = Property.GetMetadata("ToolTip");
+            if (Text.empty())
             {
                 return;
             }
 
             // An object property already wrote what it wants, so the comment joins it rather than replacing it.
             const std::string Existing = Out.contains("description") ? Out["description"].get<std::string>() : std::string();
-            const std::string Comment  = Detail::ToStandard(FStringView(*Text));
+            const std::string Comment  = Detail::ToStandard(Text);
 
             Out["description"] = Existing.empty() ? Comment : Comment + " " + Existing;
         }
@@ -228,7 +228,7 @@ namespace Lumina::Agent
             default:
                 // Refused outright, so a tool never advertises a shape the parser would not accept.
                 return Reject(Lumina::Format("{} properties are not supported yet",
-                    Property->TypeName.ToString()));
+                    Property->GetTypeName().ToString()));
             }
 
             ApplyDescription(*Property, Out);

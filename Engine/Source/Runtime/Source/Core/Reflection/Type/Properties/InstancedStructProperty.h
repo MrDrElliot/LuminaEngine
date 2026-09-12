@@ -13,7 +13,7 @@ namespace Lumina
     public:
         DECLARE_FPROPERTY(EPropertyTypeFlags::InstancedStruct)
 
-        FInstancedStructProperty(const FFieldOwner& InOwner, const FInstancedStructPropertyParams* Params);
+        explicit FInstancedStructProperty(const FInstancedStructPropertyParams* Params);
 
         RUNTIME_API void Serialize(FArchive& Ar, void* Value) override;
         RUNTIME_API void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;

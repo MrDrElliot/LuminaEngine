@@ -9,8 +9,8 @@ namespace Lumina
     class FOptionalProperty : public FProperty
     {
     public:
-        FOptionalProperty(const FFieldOwner& InOwner, const FOptionalPropertyParams* Params)
-            : FProperty(InOwner, Params)
+        explicit FOptionalProperty(const FOptionalPropertyParams* Params)
+            : FProperty(Params)
             , HasValueFn(Params->HasValueFn)
             , GetValueFn(Params->GetValueFn)
             , SetValueFn(Params->SetValueFn)
@@ -21,9 +21,9 @@ namespace Lumina
         DECLARE_FPROPERTY(EPropertyTypeFlags::Optional)
 
         /** Inner property (payload type) installed via ConstructProperties. */
-        void AddProperty(FProperty* Property) override { Inner.reset(Property); }
+        void AddProperty(FProperty* Property) override { Inner = Property; }
 
-        FProperty* GetInternalProperty() const { return Inner.get(); }
+        FProperty* GetInternalProperty() const { return Inner; }
 
         bool  HasValue(const void* InContainer) const { return HasValueFn(InContainer); }
         void* GetValue(void* InContainer) const       { return GetValueFn(InContainer); }
@@ -44,6 +44,6 @@ namespace Lumina
         OptionalSetValuePtr     SetValueFn;
         OptionalResetPtr        ResetFn;
 
-        TUniquePtr<FProperty>   Inner;
+        FProperty*              Inner = nullptr;
     };
 }

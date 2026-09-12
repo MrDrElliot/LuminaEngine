@@ -66,7 +66,10 @@ namespace Lumina
         
         for (CObjectBase* Object : It->second)
         {
-            if (Object->GetClass() == Class && !Object->HasAnyFlag(OF_MarkedDestroy))
+            // Subclasses count: FindObject<T> asks for a base, and a minted class answers as a CScriptClass
+            // rather than a CClass, so an exact compare would stop finding it by name.
+            if (Object->GetClass() != nullptr && Object->GetClass()->IsChildOf(Class)
+                && !Object->HasAnyFlag(OF_MarkedDestroy))
             {
                 return Object;
             }

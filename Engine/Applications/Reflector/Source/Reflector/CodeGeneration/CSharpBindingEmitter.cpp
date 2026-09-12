@@ -1860,7 +1860,7 @@ namespace Lumina::Reflection
                 Writer.Linef("        virtual %s %s(%s) override", SeRetCpp(FB).c_str(), Name.c_str(), CppParams.c_str());
                 Writer.Line("        {");
                 // The class-level test is one perfectly predicted load, so only then look up the managed instance.
-                Writer.Linef("            if (GetClass()->ScriptOverrides & (1ull << %d))", E.Index);
+                Writer.Linef("            if (Lumina::HasScriptOverride(GetClass(), %d))", E.Index);
                 Writer.Line("            {");
                 Writer.Line("                void* __h = Lumina::Scriptable::GetOrCreateInstance(this);");
                 Writer.Linef("                typedef %s (*FThunk)(void*%s);", SeRetAbiCpp(FB).c_str(), AbiTypes.c_str());

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Core/Object/ScriptClass.h"
+#include "ManagedTypeRegistry.h"
+
 #include "Containers/HashTable.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
@@ -40,9 +43,9 @@ namespace Lumina
     {
         static void RegisterNative(const char* NativeClassName, const FScriptableNativeInfo& Info);
 
-        static CClass* Mint(FStringView TypeName, FStringView NativeBaseName, uint64 OverrideFlags);
+        static CScriptClass* Mint(FStringView TypeName, FStringView NativeBaseName, uint64 OverrideFlags);
 
-        static void RefreshMintedClasses();
+        static void RefreshMintedClasses(TSpan<const Scripting::FManagedTypeDefinition> Definitions);
 
         /**
          * Records that a script class used to be called OldName and is now NewName, so a saved reference to

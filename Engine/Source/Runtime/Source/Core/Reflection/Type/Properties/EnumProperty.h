@@ -9,8 +9,8 @@ namespace Lumina
     {
     public:
 
-        FEnumProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FEnumProperty(const FPropertyParams* Params)
+            : FProperty(Params)
         {
             auto* EnumParams = static_cast<const FEnumPropertyParams*>(Params);
             CEnum* InternalEnum = EnumParams->EnumFunc();
@@ -18,8 +18,8 @@ namespace Lumina
             SetEnum(InternalEnum);
         }
         
-        void AddProperty(FProperty* Property) override { InnerProperty.reset(static_cast<FNumericProperty*>(Property)); }
-        RUNTIME_API FNumericProperty* GetInnerProperty() const { return InnerProperty.get(); }
+        void AddProperty(FProperty* Property) override { InnerProperty = static_cast<FNumericProperty*>(Property); }
+        RUNTIME_API FNumericProperty* GetInnerProperty() const { return InnerProperty; }
 
         void SetEnum(CEnum* InEnum);
 
@@ -45,7 +45,7 @@ namespace Lumina
 
     private:
 
-        TUniquePtr<FNumericProperty> InnerProperty;
+        FNumericProperty* InnerProperty = nullptr;
         CEnum* Enum = nullptr;
     };
 }

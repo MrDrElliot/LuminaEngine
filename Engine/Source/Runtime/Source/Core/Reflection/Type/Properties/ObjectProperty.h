@@ -9,8 +9,8 @@ namespace Lumina
     public:
         DECLARE_FPROPERTY(EPropertyTypeFlags::Object)
 
-        FObjectProperty(const FFieldOwner& InOwner, const FObjectPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FObjectProperty(const FObjectPropertyParams* Params)
+            : FProperty(Params)
         {
             ObjectClass = Params->ClassFunc();
             SetElementSize(sizeof(TObjectPtr<CObject>));

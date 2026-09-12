@@ -10,6 +10,10 @@
 
 namespace Lumina
 {
+    // An index plus a number, not a 64-bit hash plus a number. FName is a member of nearly every reflected
+    // thing in the engine, so this is load-bearing for CObjectBase fitting in a cache line.
+    static_assert(sizeof(FName) == 8, "FName grew; CObjectBase and FProperty are sized around it.");
+
     // Append-only arena for interned name strings.
     class FStringPool
     {
@@ -45,15 +49,26 @@ namespace Lumina
         size_t TotalReserved = 0;
     };
 
+    /**
+     * Interns names and hands out a DENSE INDEX as the identity.
+     *
+     * The index is what makes an FName 8 bytes instead of 16: a 64-bit hash needs all its bits to stay
+     * collision-free, an index needs only as many as there are distinct names. Resolving one is an array
+     * subscript rather than a hash lookup, so c_str() got cheaper too.
+     *
+     * The content hash is kept alongside, because it -- not the index -- is what is stable across runs, and
+     * a couple of callers legitimately want that (a per-class colour, an ImGui dock class).
+     */
     class FNameTable
     {
     public:
         
         FNameTable();
         
-        uint64 GetOrCreateID(const char* Str, size_t Length);
+        uint32 GetOrCreateIndex(const char* Str, size_t Length);
         
-        const char* GetString(uint64 ID) const;
+        const char* GetString(uint32 Index) const;
+        uint64 GetStableHash(uint32 Index) const;
         size_t GetMemoryUsage() const;
         
     private:
@@ -63,7 +78,12 @@ namespace Lumina
     private:
         
         FMutex Mutex;
-        THashMap<uint64, const char*> HashToString;
+
+        //~ Parallel, indexed by the name's index: its interned text and the hash it was found by.
+        TVector<const char*> Strings;
+        TVector<uint64>      Hashes;
+
+        THashMap<uint64, uint32> HashToIndex;
         FStringPool Pool;
         
         static constexpr size_t INITIAL_CAPACITY = 16384;
@@ -73,11 +93,16 @@ namespace Lumina
     
     FNameTable::FNameTable()
     {
-        HashToString.reserve(INITIAL_CAPACITY);
-        HashToString.insert_or_assign(0, "NAME_None");
+        HashToIndex.reserve(INITIAL_CAPACITY);
+        Strings.reserve(INITIAL_CAPACITY);
+        Hashes.reserve(INITIAL_CAPACITY);
+
+        // Index 0 is the empty name, so a default-constructed FName resolves without touching the table.
+        Strings.push_back("NAME_None");
+        Hashes.push_back(0);
     }
 
-    uint64 FNameTable::GetOrCreateID(const char* Str, size_t Length)
+    uint32 FNameTable::GetOrCreateIndex(const char* Str, size_t Length)
     {
         if (!Str || !Str[0])
         {
@@ -99,32 +124,51 @@ namespace Lumina
             Lower[i] = (C >= 'A' && C <= 'Z') ? char(C + ('a' - 'A')) : C;
         }
 
-        const uint64 ID = Hash::XXHash::GetHash64(Lower, Length);
+        const uint64 Hash = Hash::XXHash::GetHash64(Lower, Length);
 
         FScopeLock Lock(Mutex);
-            
-        auto It = HashToString.find(ID);
-        if (It != HashToString.end())
+
+        // Probes on a hash hit whose text differs. The old table returned on the hash alone, so two unrelated
+        // names that collided became the SAME name silently; at 64 bits that is vanishingly unlikely, but it
+        // is the kind of unlikely that is impossible to diagnose when it happens.
+        for (uint64 Key = Hash; ; ++Key)
         {
-            return ID;
+            auto It = HashToIndex.find(Key);
+            if (It == HashToIndex.end())
+            {
+                const char* PermanentStr = Pool.AllocateString(Str, Length);
+
+                const uint32 Index = (uint32)Strings.size();
+                Strings.push_back(PermanentStr);
+                Hashes.push_back(Hash);
+                HashToIndex.insert_or_assign(Key, Index);
+                return Index;
+            }
+
+            // Case-folded, matching the lowercased form the hash was taken of.
+            const char* Existing = Strings[It->second];
+            if (strlen(Existing) == Length && EqualsIgnoreCase(FStringView(Existing, Length), FStringView(Str, Length)))
+            {
+                return It->second;
+            }
         }
-            
-        const char* PermanentStr = Pool.AllocateString(Str, Length);
-            
-        HashToString.insert_or_assign(ID, PermanentStr);
-            
-        return ID;
     }
 
-    const char* FNameTable::GetString(uint64 ID) const
+    const char* FNameTable::GetString(uint32 Index) const
     {
-        auto It = HashToString.find(ID);
-        return (It != HashToString.end()) ? It->second : nullptr;
+        return Index < Strings.size() ? Strings[Index] : nullptr;
+    }
+
+    uint64 FNameTable::GetStableHash(uint32 Index) const
+    {
+        return Index < Hashes.size() ? Hashes[Index] : 0;
     }
 
     size_t FNameTable::GetMemoryUsage() const
     {
-        return HashToString.size() * (sizeof(uint64) + sizeof(char*)) + GetStringPoolUsage();
+        return HashToIndex.size() * (sizeof(uint64) + sizeof(uint32))
+             + Strings.size() * (sizeof(const char*) + sizeof(uint64))
+             + GetStringPoolUsage();
     }
 
     size_t FNameTable::GetStringPoolUsage() const
@@ -250,14 +294,14 @@ namespace Lumina
             Number = ExternalNumber + 1;
         }
 
-        ID = GetNameTable().GetOrCreateID(Str, Length);
+        Index = GetNameTable().GetOrCreateIndex(Str, Length);
     }
 
     FName::FName(const char* Str, uint32 InNumber)
     {
         if (Str && Str[0])
         {
-            ID = GetNameTable().GetOrCreateID(Str, strlen(Str));
+            Index = GetNameTable().GetOrCreateIndex(Str, strlen(Str));
         }
 
         Number = InNumber + 1;
@@ -265,7 +309,7 @@ namespace Lumina
 
     const char* FName::c_str() const
     {
-        const char* Base = GetNameTable().GetString(ID);
+        const char* Base = GetNameTable().GetString(Index);
 
         if (Number == FName::kNoNumber)
         {
@@ -287,7 +331,7 @@ namespace Lumina
 
     void FName::AppendString(FString& Out) const
     {
-        const char* Base = GetNameTable().GetString(ID);
+        const char* Base = GetNameTable().GetString(Index);
         if (Base)
         {
             Out.append(Base);
@@ -315,7 +359,7 @@ namespace Lumina
 
     size_t FName::Length() const
     {
-        const char* Base = GetNameTable().GetString(ID);
+        const char* Base = GetNameTable().GetString(Index);
         size_t Len = Base ? strlen(Base) : 0;
 
         if (Number != FName::kNoNumber)
@@ -332,11 +376,16 @@ namespace Lumina
         return Len;
     }
 
+    uint64 FName::GetStableHash() const
+    {
+        return GetNameTable().GetStableHash(Index);
+    }
+
     char FName::At(size_t Pos) const
     {
         if (Number == FName::kNoNumber)
         {
-            const char* Str = GetNameTable().GetString(ID);
+            const char* Str = GetNameTable().GetString(Index);
             size_t Len = Str ? strlen(Str) : 0;
             return (Pos < Len) ? Str[Pos] : '\0';
         }

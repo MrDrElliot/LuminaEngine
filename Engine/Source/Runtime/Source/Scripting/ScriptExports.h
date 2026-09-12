@@ -86,6 +86,8 @@ namespace Lumina::Scripting
     struct FScriptExportField
     {
         FName                         Name;
+        /** Author-declared Lumina::EPropertyFlags from [Property(Flags = ...)], OR'd onto the minted property. */
+        uint32                        Flags = 0;
         TSharedPtr<FScriptExportType> Type;
         FScriptExportMeta             Meta;      ///< Editor display data, rebuilt per load.
         // The C# field initializer. Only the TOP-LEVEL schema used to carry defaults, so a nested struct or

@@ -1,41 +1,57 @@
 ﻿#include "RuntimePCH.h"
 #include "Memory/MemoryTracking.h"
 #include "Class.h"
+#include "ScriptClass.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Metadata/PropertyMetadata.h"
 #include "Package/Package.h"
 
+IMPLEMENT_INTRINSIC_CLASS(CClass, CStruct, RUNTIME_API)
+
 namespace Lumina
 {
-    RUNTIME_API void AllocateStaticClass(const TCHAR* Package, const TCHAR* Name, CClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc)
+    static CPackage* ResolveClassPackage(const TCHAR* Package)
     {
-        DEBUG_ASSERT(*OutClass == nullptr);
-        
-        CPackage* PackageObject = nullptr;
-
-        if (Package && Package[0] != '\0')
+        if (Package == nullptr || Package[0] == '\0')
         {
-            PackageObject = FindObject<CPackage>(Package);
-            if (PackageObject == nullptr)
-            {
-                PackageObject = NewObject<CPackage>(nullptr, Package);
-            }
+            return nullptr;
         }
 
-        *OutClass = Memory::New<CClass>(PackageObject, FName(Name), Size, Alignment, OF_None, FactoryFunc);
-        
-        CClass* NewClass = *OutClass;
+        CPackage* PackageObject = FindObject<CPackage>(Package);
+        if (PackageObject == nullptr)
+        {
+            PackageObject = NewObject<CPackage>(nullptr, Package);
+        }
+        return PackageObject;
+    }
+
+    static void LinkAndQueueStaticClass(CClass* NewClass, CClass* (*SuperClassFn)())
+    {
         CClass* SuperClass = SuperClassFn();
-        bool bValidSuperClass = (SuperClass != NewClass);
-        
+        const bool bValidSuperClass = (SuperClass != NewClass);
+
         NewClass->SetSuperStruct(bValidSuperClass ? SuperClass : nullptr);
 
         NewClass->RegisterDependencies();
         NewClass->BeginRegister();
     }
-    
 
-    IMPLEMENT_INTRINSIC_CLASS(CClass, CStruct, RUNTIME_API)
+    RUNTIME_API void AllocateStaticClass(const TCHAR* Package, const TCHAR* Name, CClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc)
+    {
+        DEBUG_ASSERT(*OutClass == nullptr);
+
+        *OutClass = Memory::New<CClass>(ResolveClassPackage(Package), FName(Name), Size, Alignment, OF_None, FactoryFunc);
+        LinkAndQueueStaticClass(*OutClass, SuperClassFn);
+    }
+
+    RUNTIME_API void AllocateStaticScriptClass(const TCHAR* Package, const TCHAR* Name, CScriptClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc)
+    {
+        DEBUG_ASSERT(*OutClass == nullptr);
+
+        *OutClass = Memory::New<CScriptClass>(ResolveClassPackage(Package), FName(Name), Size, Alignment, OF_None, FactoryFunc);
+        LinkAndQueueStaticClass(*OutClass, SuperClassFn);
+    }
+    
 
     bool CField::HasMeta(const FName& Key) const
     {
@@ -47,40 +63,9 @@ namespace Lumina
         return Metadata.GetMetadata(Key);
     }
 
-    bool CClass::ConstructScriptProperties(void* Object) const
+    CClass* CClass::GetMetaClass() const
     {
-        if (Object == nullptr || ScriptProperties.empty())
-        {
-            return false;
-        }
-
-        uint8* Base = static_cast<uint8*>(Object);
-        for (FProperty* Property : ScriptLifecycleProperties)
-        {
-            Property->ConstructValue(Base + Property->Offset);
-        }
-        
-        if (ClassDefaultObject != nullptr && ClassDefaultObject != Object)
-        {
-            const uint8* DefaultBase = reinterpret_cast<const uint8*>(ClassDefaultObject);
-            for (FProperty* Property : ScriptProperties)
-            {
-                Property->CopyCompleteValue(Base + Property->Offset, DefaultBase + Property->Offset);
-            }
-        }
-        return true;
-    }
-
-    void CClass::DestructScriptProperties(void* Object) const
-    {
-        if (Object == nullptr)
-        {
-            return;
-        }
-        for (FProperty* Property : ScriptLifecycleProperties)
-        {
-            Property->DestructValue(static_cast<uint8*>(Object) + Property->Offset);
-        }
+        return StaticClass();
     }
 
     CObject* CClass::EmplaceInstance(void* Memory) const

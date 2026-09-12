@@ -24,7 +24,8 @@ namespace Lumina
 
         /** Internal number meaning "no numeric suffix". External numbers are stored as +1 of this. */
         static constexpr uint32 kNoNumber   = 0;
-        static constexpr uint64 kNoName     = 0;
+        /** Index 0 is the empty name, which is why a default-constructed FName never touches the table. */
+        static constexpr uint32 kNoName     = 0;
 
         using value_type = char;
 
@@ -44,13 +45,22 @@ namespace Lumina
         FName(const FFixedWString& Str) : FName(StringUtils::FromWideString(Str.c_str())) {}
         FName(FStringView Str) : FName(FString(Str.data(), Str.length()).c_str()) {}
 
-        explicit FName(uint64 InID) : ID(InID) {}
+        explicit FName(uint32 InIndex) : Index(InIndex) {}
 
-        bool IsNone() const { return ID == 0 && Number == kNoNumber; }
+        bool IsNone() const { return Index == kNoName && Number == kNoNumber; }
 
-        /** Case-folded hash of the base string, ignoring any numeric suffix, so it is not an identity. */
-        uint64 GetID() const { return ID; }
-        uint64 GetComparisonID() const { return ID; }
+        /**
+         * This name's identity: a dense index into the name table, unique per distinct string.
+         *
+         * Comparable and hashable, but NOT stable across runs -- it depends on the order names were first
+         * seen. Anything that needs a value stable between sessions wants GetStableHash.
+         */
+        uint32 GetID() const { return Index; }
+        uint32 GetComparisonID() const { return Index; }
+
+        /** Content hash of the base string, identical in every run. For a persisted or displayed derivation
+         *  (a per-name colour, an ImGui id) that must not move between sessions. */
+        RUNTIME_API uint64 GetStableHash() const;
 
         /** Whether this name carries a numeric suffix (e.g. "Entity_3"). */
         bool HasNumber() const { return Number != kNoNumber; }
@@ -59,9 +69,9 @@ namespace Lumina
         uint32 GetNumber() const { return Number == kNoNumber ? 0 : Number - 1; }
 
         /** Same base name with the numeric suffix stripped. */
-        FName GetBaseName() const { return FName(ID); }
+        FName GetBaseName() const { return FName(Index); }
 
-        explicit operator uint64() const { return ID; }
+        explicit operator uint32() const { return Index; }
 
         /**
          * Pointer to a null-terminated rendering of this name including any numeric suffix.
@@ -86,7 +96,7 @@ namespace Lumina
 
         size_t Hash() const
         {
-            return Number == kNoNumber ? ID : ID ^ (static_cast<uint64>(Number) * 0x9E3779B97F4A7C15ull);
+            return Number == kNoNumber ? Index : Index ^ (static_cast<uint64>(Number) * 0x9E3779B97F4A7C15ull);
         }
 
         const char* operator * () const
@@ -97,7 +107,7 @@ namespace Lumina
 
     private:
 
-        uint64 ID       = kNoName;
+        uint32 Index    = kNoName;
         uint32 Number   = kNoNumber;
     };
 

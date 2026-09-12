@@ -16,6 +16,53 @@ namespace LuminaSharp;
 /// </summary>
 internal static class Serializer
 {
+    /// <summary>'LSCH'. Mirrors Lumina::Scripting::kScriptSchemaMagic.</summary>
+    private const uint SchemaMagic = 0x4843534Cu;
+
+    /// <summary>
+    /// Mirrors Lumina::Scripting::kScriptSchemaVersion. Bump only when an existing field changes meaning,
+    /// type or position -- APPENDING to the end of a record needs no bump, because every record carries its
+    /// byte length and an older reader skips what it does not recognise.
+    /// </summary>
+    private const ushort SchemaVersion = 1;
+
+    /// <summary>Mirrors Lumina::Scripting::EScriptSchemaRecord.</summary>
+    private enum ERecord : byte
+    {
+        Field = 0,
+        Meta,
+        Type,
+        Candidate,
+    }
+
+    /// <summary>
+    /// Opens a length-delimited record and backfills its length on dispose.
+    ///
+    /// The tag and length are what let the native reader resync: it skips to the end of any record it does
+    /// not fully understand rather than misreading the remainder of the buffer.
+    /// </summary>
+    private readonly struct Record : IDisposable
+    {
+        private readonly BinaryWriter Writer;
+        private readonly long LengthPosition;
+
+        public Record(BinaryWriter InWriter, ERecord Tag)
+        {
+            Writer = InWriter;
+            Writer.Write((byte)Tag);
+            LengthPosition = Writer.BaseStream.Position;
+            Writer.Write(0u);
+        }
+
+        public void Dispose()
+        {
+            long End = Writer.BaseStream.Position;
+            Writer.BaseStream.Position = LengthPosition;
+            Writer.Write((uint)(End - LengthPosition - sizeof(uint)));
+            Writer.BaseStream.Position = End;
+        }
+    }
+
     // ---- Schema (managed -> native): types + meta + default values, recursive ----
 
     public static byte[] WriteSchema(TypeDescription Description)
@@ -25,20 +72,13 @@ internal static class Serializer
         using var Stream = new MemoryStream();
         using var Writer = new BinaryWriter(Stream, Encoding.UTF8, leaveOpen: true);
 
+        Writer.Write(SchemaMagic);
+        Writer.Write(SchemaVersion);
+
         Writer.Write(Description.Properties.Count);
         foreach (ScriptProperty Property in Description.Properties)
         {
-            WriteString(Writer, Property.Name);
-            WriteAliases(Writer, Property.Aliases);
-            WriteMeta(Writer, Property.Meta, Property.Hidden);
-            Writer.Write((byte)(Property.SkipHotReload ? 1 : 0));
-            WriteType(Writer, Property.Type);
-
-            // A native-owned view has no declared default to capture: the instance this reads from is
-            // unbound (created purely to describe the type), so its view points at no storage at all.
-            // Reading through it would decode a container header at address zero.
-            object? DefaultValue = (Defaults != null && !Property.IsNativeOwnedView) ? Property.Get(Defaults) : null;
-            WriteValue(Writer, Property.Type, DefaultValue);
+            WriteField(Writer, Property, Defaults, bTopLevel: true);
         }
 
         Writer.Flush();
@@ -64,8 +104,35 @@ internal static class Serializer
         return Stream.ToArray();
     }
 
+    // The one writer for a field, matching the native ReadField: the top level, a nested struct and an
+    // instanced candidate all go through here so the framing can never differ between them.
+    private static void WriteField(BinaryWriter Writer, ScriptProperty Property, object? Owner, bool bTopLevel)
+    {
+        using var Frame = new Record(Writer, ERecord.Field);
+
+        WriteString(Writer, Property.Name);
+        WriteAliases(Writer, Property.Aliases);
+        WriteMeta(Writer, Property.Meta, Property.Hidden);
+
+        // Only a top-level field has a hot-reload identity, so only it carries the byte.
+        if (bTopLevel)
+        {
+            Writer.Write((byte)(Property.SkipHotReload ? 1 : 0));
+        }
+
+        WriteType(Writer, Property.Type);
+
+        // A native-owned view has no declared default to capture: the instance this reads from is
+        // unbound (created purely to describe the type), so its view points at no storage at all.
+        // Reading through it would decode a container header at address zero.
+        object? DefaultValue = (Owner != null && !Property.IsNativeOwnedView) ? Property.Get(Owner) : null;
+        WriteValue(Writer, Property.Type, DefaultValue);
+    }
+
     private static void WriteMeta(BinaryWriter Writer, PropertyAttribute? Meta, bool bHidden = false)
     {
+        using var Frame = new Record(Writer, ERecord.Meta);
+
         WriteString(Writer, Meta?.Category ?? "");
         WriteString(Writer, Meta?.Tooltip ?? "");
         WriteString(Writer, Meta?.Units ?? "");
@@ -86,6 +153,9 @@ internal static class Serializer
 
         Writer.Write((byte)((Meta?.Color ?? false) ? 1 : 0));
         Writer.Write((byte)(bHidden ? 1 : 0));
+
+        // Appended, which the Meta record's length prefix makes safe against an older native reader.
+        Writer.Write((uint)(Meta?.Flags ?? EPropertyFlags.None));
     }
 
     // Type descriptor; parsed in lockstep by the native ReadType. The kind is the shared reflected taxonomy
@@ -94,6 +164,8 @@ internal static class Serializer
     // two apart from one uniform shape.
     private static void WriteType(BinaryWriter Writer, ScriptType Type)
     {
+        using var Frame = new Record(Writer, ERecord.Type);
+
         Writer.Write((byte)Type.Kind);
         Writer.Write((byte)(Type.IsEntity ? 1 : 0));
         Writer.Write((byte)(Type.IsInputAction ? 1 : 0));
@@ -143,6 +215,8 @@ internal static class Serializer
                 Writer.Write(Candidates.Count);
                 foreach (ScriptInstanceCandidate Candidate in Candidates)
                 {
+                    using var CandidateFrame = new Record(Writer, ERecord.Candidate);
+
                     WriteString(Writer, Candidate.TypeName);
                     WriteFields(Writer, Candidate.Fields, Candidate.Clr);
                 }
@@ -162,11 +236,7 @@ internal static class Serializer
         Writer.Write(List.Count);
         foreach (ScriptProperty Field in List)
         {
-            WriteString(Writer, Field.Name);
-            WriteAliases(Writer, Field.Aliases);
-            WriteMeta(Writer, Field.Meta, Field.Hidden);
-            WriteType(Writer, Field.Type);
-            WriteValue(Writer, Field.Type, Defaults != null ? Field.Get(Defaults) : null);
+            WriteField(Writer, Field, Defaults, bTopLevel: false);
         }
     }
 

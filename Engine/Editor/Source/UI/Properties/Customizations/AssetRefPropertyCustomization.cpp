@@ -26,10 +26,10 @@ namespace Lumina
 
         // Kinds this slot accepts, from PROPERTY(AssetType="..."); empty meta == all kinds.
         TVector<ETextAssetKind> AllowedKinds;
-        if (Property->Property != nullptr && Property->Property->HasMetadata(FName("AssetType")))
+        if (Property->Property != nullptr && Property->Property->HasMetadata("AssetType"))
         {
-            const FString& Meta = Property->Property->GetMetadata(FName("AssetType"));
-            AllowedKinds = TextAsset::ParseAssetTypeMeta(FStringView(Meta.c_str(), Meta.size()));
+            const FCStringView Meta = Property->Property->GetMetadata("AssetType");
+            AllowedKinds = TextAsset::ParseAssetTypeMeta(Meta);
         }
         else
         {

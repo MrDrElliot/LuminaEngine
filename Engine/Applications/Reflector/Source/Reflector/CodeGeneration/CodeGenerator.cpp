@@ -724,6 +724,7 @@ namespace Lumina::Reflection
         {
             if (T->Type == FReflectedType::EType::Class && T->HasMetadata("Scriptable"))
             {
+                Writer.Line("#include \"Core/Object/ScriptClass.h\"");
                 Writer.Line("#include \"Scripting/ScriptableObject.h\"");
                 Writer.Line("#include \"Scripting/DotNet/DotNetHost.h\"");
                 Writer.Line("#include <new>");

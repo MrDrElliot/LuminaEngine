@@ -240,7 +240,7 @@ namespace Lumina
         // Type-uniform, so it is one class-level byte rather than anything stored per script instance.
         EScriptUpdatePhase ScriptPhase(const CEntityScript* Script)
         {
-            const CClass* Class = Script != nullptr ? Script->GetClass() : nullptr;
+            const CScriptClass* Class = Script != nullptr ? ToScriptClass(Script->GetClass()) : nullptr;
             return Class != nullptr ? static_cast<EScriptUpdatePhase>(Class->ScriptUpdatePhase)
                                     : EScriptUpdatePhase::PrePhysics;
         }

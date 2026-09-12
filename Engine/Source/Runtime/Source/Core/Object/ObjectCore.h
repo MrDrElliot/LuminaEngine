@@ -126,39 +126,33 @@ namespace Lumina
         return T::StaticClass()->template GetDefaultObject<T>();
     }
     
+    /** Single-sourced from EPropertyFlags.inl so the enum, its names and the C# mirror cannot drift. */
     enum class EPropertyFlags : uint32
     {
-        None                = 0,
-        Editable            = BIT(0),
-        ReadOnly            = BIT(1),
-        NoSerialize         = BIT(2),
-        Const               = BIT(3),
-        Private             = BIT(4),
-        Protected           = BIT(5),
-        SubField            = BIT(6),
-        Trivial             = BIT(7),
-        // Prefab instancing remaps these raw entity ids, and a flag survives where METADATA_PARAMS strips metadata.
-        EntityHandle        = BIT(8),
-        Builtin             = BIT(9),
-        BulkSerialize       = BIT(10),
-        // Property exists only for editor tooling. Stripped from cooked
-        // packages (see CStruct::SerializeTaggedProperties + FArchive::IsCooking).
-        EditorOnly          = BIT(11),
-        // Property participates in network replication (PROPERTY(Replicated)). Read by
-        // CStruct::NetSerializeProperties; a flag test, not a metadata lookup.
-        Replicated          = BIT(12),
-
-        //~ Script (C#) interop specifiers, independent of the editor flags above. Read by the Reflector's
-        //  C# binding emitter to shape the generated wrapper member, NOT the editor property grid.
-        ScriptReadOnly      = BIT(13), // C# wrapper emits a getter only (no setter), even if editor-editable.
-        ScriptWritable      = BIT(14), // C# wrapper emits a setter even if the property is editor ReadOnly/Const.
-        ScriptHidden        = BIT(15), // No C# wrapper member is emitted for this property at all.
-
-        // Duplication resets this property instead of copying it, and a flag survives where METADATA_PARAMS strips metadata.
-        DuplicateTransient  = BIT(16),
+        None = 0,
+#define LE_PROPERTY_FLAG(Name, Bit) Name = BIT(Bit),
+#include "EPropertyFlags.inl"
+#undef LE_PROPERTY_FLAG
     };
 
     ENUM_CLASS_FLAGS(EPropertyFlags);
+
+    //~ Parallel name/value tables, for the bootstrap check against LuminaSharp.EPropertyFlags.
+    inline constexpr const char* PropertyFlagNames[] =
+    {
+#define LE_PROPERTY_FLAG(Name, Bit) #Name,
+#include "EPropertyFlags.inl"
+#undef LE_PROPERTY_FLAG
+    };
+
+    inline constexpr uint32 PropertyFlagValues[] =
+    {
+#define LE_PROPERTY_FLAG(Name, Bit) (1u << (Bit)),
+#include "EPropertyFlags.inl"
+#undef LE_PROPERTY_FLAG
+    };
+
+    static_assert(std::size(PropertyFlagNames) == std::size(PropertyFlagValues));
 
     /** The reflected property-type taxonomy. Single-sourced from EPropertyTypeFlags.inl so the enum and its
      *  name tables can never drift. Also mirrored by LuminaSharp.EPropertyType (validated at bootstrap) and by

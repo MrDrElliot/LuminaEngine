@@ -2,6 +2,7 @@
 
 #include "Core/Object/Field.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/PropertyArena.h"
 #include "Core/Serialization/Structured/StructuredArchive.h"
 #include "Metadata/PropertyMetadata.h"
 #include "Platform/GenericPlatform.h"
@@ -12,6 +13,7 @@
 namespace Lumina
 {
     struct FPropertyParams;
+    class CStruct;
     class IStructuredArchive;
     class FNetArchive;
 }
@@ -20,34 +22,39 @@ namespace Lumina
 {
 
     #define DECLARE_FPROPERTY(Type) \
-    static EPropertyTypeFlags StaticType() { return Type; } \
-    virtual EPropertyTypeFlags GetType() override { return StaticType(); }
+    static EPropertyTypeFlags StaticType() { return Type; }
     
-    class FProperty : public FField
+    /** Exactly one cache line; keep the member block packed when adding to it. */
+    class FProperty
     {
     public:
         
-        FProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            :FField(InOwner)
+        explicit FProperty(const FPropertyParams* Params)
         {
             Offset      = Params->Offset;
             Name        = Params->Name;
-            Owner       = InOwner;
             TypeFlags   = Params->TypeFlags;
             Flags       = Params->PropertyFlags;
-
-            TypeName = PropertyTypeToString(TypeFlags);
-            Init();
         }
         
+        virtual ~FProperty() = default;
+
         LE_NO_COPYMOVE(FProperty);
-        
-        /** Adds self to owner. */
-        void Init();
+
+        const FName& GetPropertyName() const { return Name; }
+
+        /** Empty until the metadata pass runs, which is editor-only. */
+        FCStringView GetPropertyDisplayName() const { return DisplayName != nullptr ? FCStringView(DisplayName) : FCStringView(); }
+
+        /** Attaches an inner property (array element, map key/value, enum or optional payload). */
+        RUNTIME_API virtual void AddProperty(FProperty* Property) { UNREACHABLE(); }
 
         RUNTIME_API size_t GetElementSize() const { return ElementSize; }
         RUNTIME_API void SetElementSize(size_t Size) { ElementSize = (uint32)Size; }
-        RUNTIME_API virtual EPropertyTypeFlags GetType() { return TypeFlags; }
+        RUNTIME_API EPropertyTypeFlags GetType() const { return TypeFlags; }
+
+        /** The struct that declares this property, or null for a container inner. */
+        NODISCARD CStruct* GetOwnerStruct() const { return OwnerStruct; }
 
         template<typename ValueType>
         ValueType* SetValuePtr(void* ContainerPtr, const ValueType& Value, int64 ArrayIndex = 0) const
@@ -130,7 +137,7 @@ namespace Lumina
 
         RUNTIME_API bool IsA(EPropertyTypeFlags Flag) const { return TypeFlags == Flag; }
         
-        const FName& GetTypeName() const;
+        RUNTIME_API const FName& GetTypeName() const;
         
         NODISCARD bool IsReadOnly()     const       { return EnumHasAnyFlags(Flags, EPropertyFlags::ReadOnly); }
         NODISCARD bool IsEditorOnly()   const       { return EnumHasAnyFlags(Flags, EPropertyFlags::EditorOnly); }
@@ -152,11 +159,16 @@ namespace Lumina
         NODISCARD bool CanBeBulkSerialized() const  { return EnumHasAnyFlags(Flags, EPropertyFlags::BulkSerialize); }
 
         
-        const FString* TryGetMetadata(const FName& Key) const { return Metadata.TryGetMetadata(Key); }
-        const FString& GetMetadata(const FName& Key) const { return Metadata.GetMetadata(Key); }
-        bool HasMetadata(const FName& Key) const { return Metadata.HasMetadata(Key); }
+        /** Empty when the key is absent. Null-terminated, so it hands straight to a C API. */
+        RUNTIME_API FCStringView GetMetadata(FStringView Key) const;
+        RUNTIME_API bool HasMetadata(FStringView Key) const;
+        FCStringView TryGetMetadata(FStringView Key) const { return GetMetadata(Key); }
 
-        void OnMetadataFinalized();
+        /** The generated table outlives the binary, so this is stored rather than copied. */
+        void SetMetadata(const FMetaDataPairParam* Entries, uint16 Count) { MetadataEntries = Entries; NumMetadata = Count; }
+
+        /** Places the display name in Arena, so it costs a pointer rather than an FString and a malloc. */
+        RUNTIME_API void OnMetadataFinalized(FPropertyArena& Arena);
         static FString MakeDisplayNameFromName(EPropertyTypeFlags TypeFlags, const FName& InName);
 
         RUNTIME_API virtual FString ToString(const void* Data) const { return "<unknown>"; }
@@ -178,11 +190,24 @@ namespace Lumina
         
     public:
 
-        FMetaDataPair       Metadata;
-        FName               TypeName;
-        uint32              ElementSize;
-        EPropertyFlags      Flags;
-        EPropertyTypeFlags  TypeFlags;
+        FName               Name;
+
+        uint32              Offset = 0;
+        uint32              ElementSize = 0;
+        EPropertyFlags      Flags = EPropertyFlags::None;
+        EPropertyTypeFlags  TypeFlags = EPropertyTypeFlags::None;
+
+        // Sits in the byte the flags above leave over rather than costing the property anything of its own.
+        uint16              NumMetadata = 0;
+
+        // Arena-owned, so a display name costs a pointer here instead of an FString and its allocation.
+        const char*         DisplayName = nullptr;
+
+        // Set when the property is attached; an inner is reached through the property that holds it instead.
+        CStruct*            OwnerStruct = nullptr;
+
+        // Points at the generated static table, or at one the arena built for a script-minted property.
+        const FMetaDataPairParam* MetadataEntries = nullptr;
     };
 
     template <typename PropertyBaseClass>
@@ -191,8 +216,8 @@ namespace Lumina
     public:
         
         template <typename PropertyCodegenParams>
-        TPropertyWithSetterAndGetter(const FFieldOwner& InOwner, const PropertyCodegenParams* Prop)
-            : PropertyBaseClass(InOwner, Prop)
+        explicit TPropertyWithSetterAndGetter(const PropertyCodegenParams* Prop)
+            : PropertyBaseClass(Prop)
             , SetterFunc(Prop->SetterFunc)
             , GetterFunc(Prop->GetterFunc)
         {
@@ -242,8 +267,8 @@ namespace Lumina
     {
     public:
 
-        FNumericProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FNumericProperty(const FPropertyParams* Params)
+            :FProperty(Params)
         {}
 
         RUNTIME_API virtual void SetIntPropertyValue(void* Data, uint64 Value) const { }
@@ -297,8 +322,8 @@ namespace Lumina
 
         using TTypeInfo = TPropertyTypeLayout<TCPPType>;
         
-        TProperty(FFieldOwner InOwner, const FPropertyParams* Params)
-            :TBacking(InOwner, Params)
+        explicit TProperty(const FPropertyParams* Params)
+            :TBacking(Params)
         {
             this->ElementSize = TTypeInfo::Size;
         }
@@ -325,8 +350,8 @@ namespace Lumina
         using TTypeInfo = TPropertyTypeLayout<TCPPType>;
         using Super = TProperty<FNumericProperty, TCPPType>;
 
-        TProperty_Numeric(FFieldOwner InOwner, const FPropertyParams* Params)
-            :Super(InOwner, Params)
+        explicit TProperty_Numeric(const FPropertyParams* Params)
+            :Super(Params)
         {}
 
         virtual FString ToString(const void* Data) const override;
@@ -392,8 +417,8 @@ namespace Lumina
 
         DECLARE_FPROPERTY(EPropertyTypeFlags::Bool)
 
-        FBoolProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FBoolProperty(const FPropertyParams* Params)
+            : Super(Params)
         {}
 
         // Tight: a bool is one bit on the wire.
@@ -406,8 +431,8 @@ namespace Lumina
         using Super = TProperty_Numeric<int8>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::Int8)
 
-        FInt8Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FInt8Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -417,8 +442,8 @@ namespace Lumina
         using Super = TProperty_Numeric<int16>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::Int16)
 
-        FInt16Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FInt16Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -428,8 +453,8 @@ namespace Lumina
         using Super = TProperty_Numeric<int32>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::Int32)
 
-        FInt32Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FInt32Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -439,8 +464,8 @@ namespace Lumina
         using Super = TProperty_Numeric<int64>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::Int64)
 
-        FInt64Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FInt64Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -450,8 +475,8 @@ namespace Lumina
         using Super = TProperty_Numeric<uint8>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::UInt8)
 
-        FUInt8Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FUInt8Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -461,8 +486,8 @@ namespace Lumina
         using Super = TProperty_Numeric<uint16>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::UInt16)
 
-        FUInt16Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FUInt16Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -472,8 +497,8 @@ namespace Lumina
         using Super = TProperty_Numeric<uint32>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::UInt32)
 
-        FUInt32Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FUInt32Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -483,8 +508,8 @@ namespace Lumina
         using Super = TProperty_Numeric<uint64>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::UInt64)
 
-        FUInt64Property(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FUInt64Property(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -494,8 +519,8 @@ namespace Lumina
         using Super = TProperty_Numeric<float>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::Float)
 
-        FFloatProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FFloatProperty(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 
@@ -505,8 +530,8 @@ namespace Lumina
         using Super = TProperty_Numeric<double>;
         DECLARE_FPROPERTY(EPropertyTypeFlags::Double)
 
-        FDoubleProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            : Super(InOwner, Params)
+        explicit FDoubleProperty(const FPropertyParams* Params)
+            : Super(Params)
         {}
     };
 

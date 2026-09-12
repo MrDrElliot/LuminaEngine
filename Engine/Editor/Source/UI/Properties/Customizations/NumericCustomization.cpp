@@ -186,7 +186,7 @@ namespace Lumina
 
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
 
-        if (Prop->Metadata.HasMetadata("Color"))
+        if (Prop->HasMetadata("Color"))
         {
             ImGui::ColorEdit3("##", Math::ValuePtr(DisplayValue));
         }
@@ -264,7 +264,7 @@ namespace Lumina
 
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
 
-        if (Prop->Metadata.HasMetadata("Color"))
+        if (Prop->HasMetadata("Color"))
         {
             ImGui::ColorEdit4("##", Math::ValuePtr(DisplayValue));
         }

@@ -5,10 +5,12 @@
 #include "Object.h"
 #include "Class/StructTraits.h"
 #include "Containers/Function.h"
+#include "Containers/Span.h"
 #include "Core/Math/TransformFwd.h"
 #include "Core/Reflection/Type/Metadata/PropertyMetadata.h"
 #include "Core/Templates/Align.h"
 #include "Initializer/ObjectInitializer.h"
+#include "PropertyArena.h"
 #include "Memory/SmartPtr.h"
 
 RUNTIME_API Lumina::CClass* Construct_CClass_Lumina_CStruct();
@@ -38,8 +40,6 @@ namespace Lumina
             , Size(InSize)
             , Alignment(InAlignment)
         {}
-
-        FProperty* LinkedProperty = nullptr;
 
         RUNTIME_API uint32 GetAlignedSize() const { return Align(Size, Alignment); }
         RUNTIME_API uint32 GetSize() const { return Size; }
@@ -107,6 +107,16 @@ namespace Lumina
 
         /** Searches full inheritance chain. */
         RUNTIME_API FProperty* GetProperty(const FName& Name) const;
+
+        /** Every property on this type: its own in declaration order, then each super's. Valid after Link. */
+        NODISCARD TSpan<FProperty* const> GetProperties() const { return AllProperties; }
+
+        /** Only the properties declared on this type, without the inherited ones. */
+        NODISCARD TSpan<FProperty* const> GetOwnProperties() const { return OwnProperties; }
+
+        /** Storage for this type's own properties. Compile-time types place theirs here; a script-minted
+         *  layout keeps owning its own, since it frees and rebuilds them on reload. */
+        NODISCARD FPropertyArena& GetPropertyArena() { return PropertyArena; }
 
         RUNTIME_API virtual void AddProperty(FProperty* Property);
 
@@ -177,11 +187,9 @@ namespace Lumina
         requires (std::is_base_of_v<FProperty, PropertyType> && std::is_invocable_v<TFunc, PropertyType*>)
         void ForEachProperty(TFunc&& Func)
         {
-            PropertyType* Current = static_cast<PropertyType*>(LinkedProperty);
-            while (Current != nullptr)
+            for (FProperty* Property : AllProperties)
             {
-                Invoke(Func, Current);
-                Current = static_cast<PropertyType*>(Current->Next);
+                Invoke(Func, static_cast<PropertyType*>(Property));
             }
         }
 
@@ -221,14 +229,15 @@ namespace Lumina
         RUNTIME_API virtual void Link();
 
         /**
-         * Drops this struct's property list and clears the linked latch, so AddProperty + Link can run again.
+         * Forgets this struct's own properties and the flattened list, so AddProperty + Link can run again.
          *
-         * Only the HEAD is dropped. Link splices the super's chain onto this struct's tail, so the list this
-         * walks is partly borrowed; the super still owns its own properties and is untouched. Whatever this
-         * struct itself added is the caller's to dispose of, and this does not free it.
+         * The super is untouched: its properties are copied into the flattened list rather than spliced, so
+         * there is nothing here that the super still reaches through. Whatever this struct itself added is
+         * the caller's to dispose of, and this does not free it.
          *
          * Exists for one caller: rebuilding a runtime-minted class's appended property block when a C# hot
-         * reload changes the script's property set. Do not use it on a compile-time class.
+         * reload changes the script's property set. Do not use it on a compile-time class, whose properties
+         * are owned by the arena this leaves untouched.
          */
         RUNTIME_API void Unlink();
 
@@ -246,6 +255,14 @@ namespace Lumina
         TVector<CStruct*> BaseChain;
         TUniquePtr<FStructOps> StructOps;
 
+        // Declaration order, and contiguous, so every walker reads them the way they were laid out.
+        TVector<FProperty*> OwnProperties;
+
+        // OwnProperties then each super's, flattened by Link so a walk never chases into another type.
+        TVector<FProperty*> AllProperties;
+
+        FPropertyArena PropertyArena;
+
         // Points at a function-local static owned by Meta::GetComponentOps, so this never owns it.
         const FComponentOps* ComponentOps = nullptr;
 
@@ -257,8 +274,8 @@ namespace Lumina
     };
 
 
-    /** Final class for fields and functions. */
-    class LUMINA_VISIBLE_TYPE CClass final : public CStruct
+    /** Reflected class. Subclassed by CScriptClass for a type whose layout is built at runtime. */
+    class LUMINA_VISIBLE_TYPE CClass : public CStruct
     {
     public:
 
@@ -267,35 +284,9 @@ namespace Lumina
 
         using FactoryFunctionType = CObject*(*)(void*);
 
-        /** For a runtime-minted C# subclass of a REFLECT(Scriptable) native class: which ScriptEvents the
-         *  subclass actually overrides (bit i == the wrapper's [ScriptEvent(i)]). Zero for every native class,
-         *  which is exactly what makes a non-overridden event cost one predictable class-level test in the
-         *  generated shim instead of a per-instance lookup. Set once at mint (FScriptableRegistry). */
-        uint64 ScriptOverrides = 0;
-
-        /** EScriptUpdatePhase for a minted entity-script class, from its C# [UpdatePhase]. Zero elsewhere. */
-        uint8 ScriptUpdatePhase = 0;
-
-        /** Every property appended to this class from a script type's schema, in layout order. They live past
-         *  the C++ shim the class was minted from. Empty for every native class. */
-        TVector<FProperty*> ScriptProperties;
-
-        /** The subset of ScriptProperties whose values own storage, so they need construction/destruction over
-         *  the object's trailing block. Holds the properties themselves rather than any description of them:
-         *  each one knows how to build its own value (FProperty::ConstructValue), so adding a new property
-         *  kind teaches that kind and changes nothing here. */
-        TVector<FProperty*> ScriptLifecycleProperties;
-
-        /** Placement-constructs every script-appended property. Called from StaticAllocateObject once the
-         *  object's class is known, before PostInitProperties -- so a script's first callback sees valid
-         *  values rather than a memzeroed FString, which is a plausible-looking empty string that corrupts
-         *  on the first assignment. Returns whether anything was constructed, which is what stamps
-         *  OF_ScriptProperties and therefore what decides if the destructor comes back here at all. */
-        RUNTIME_API bool ConstructScriptProperties(void* Object) const;
-
-        /** Mirror of the above, from ~CObjectBase. Must be kept in lockstep: a construct without its destruct
-         *  leaks, the reverse double-frees. */
-        RUNTIME_API void DestructScriptProperties(void* Object) const;
+        /** The reflected class OF this class object, for the registrar that finalizes a type object before
+         *  anything can look one up. A subclass returns its own so the object casts to it afterwards. */
+        RUNTIME_API virtual CClass* GetMetaClass() const;
 
         CClass() = default;
 
@@ -360,6 +351,9 @@ namespace Lumina
     }
 
     RUNTIME_API void AllocateStaticClass(const TCHAR* Package, const TCHAR* Name, CClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc);
+
+    /** As above, but the class object itself is a CScriptClass, so a minted type casts to one. */
+    RUNTIME_API void AllocateStaticScriptClass(const TCHAR* Package, const TCHAR* Name, class CScriptClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc);
     
 
     template<typename Class>

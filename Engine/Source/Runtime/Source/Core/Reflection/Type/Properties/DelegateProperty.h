@@ -13,8 +13,8 @@ namespace Lumina
     public:
         DECLARE_FPROPERTY(EPropertyTypeFlags::Delegate)
 
-        FDelegateProperty(const FFieldOwner& InOwner, const FDelegatePropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FDelegateProperty(const FDelegatePropertyParams* Params)
+            : FProperty(Params)
         {
             PayloadStruct = Params->PayloadStructFunc ? Params->PayloadStructFunc() : nullptr;
             SetElementSize(sizeof(FScriptDelegate));

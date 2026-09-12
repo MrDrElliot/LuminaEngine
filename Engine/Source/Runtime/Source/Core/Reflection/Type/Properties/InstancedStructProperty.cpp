@@ -8,8 +8,8 @@
 
 namespace Lumina
 {
-    FInstancedStructProperty::FInstancedStructProperty(const FFieldOwner& InOwner, const FInstancedStructPropertyParams* Params)
-        : FProperty(InOwner, Params)
+    FInstancedStructProperty::FInstancedStructProperty(const FInstancedStructPropertyParams* Params)
+        : FProperty(Params)
     {
         // Null for a bare FInstancedStruct, which constrains nothing and accepts any reflected struct.
         MetaStruct = Params->StructFunc != nullptr ? Params->StructFunc() : nullptr;
@@ -22,9 +22,9 @@ namespace Lumina
         if (!bResolvedStructBase)
         {
             bResolvedStructBase = true;
-            if (const FString* Base = TryGetMetadata("StructBase"))
+            if (const FCStringView Base = GetMetadata("StructBase"); !Base.empty())
             {
-                MetaStruct = FindObject<CStruct>(FName(Base->c_str()));
+                MetaStruct = FindObject<CStruct>(FName(Base.c_str()));
             }
         }
         return MetaStruct;

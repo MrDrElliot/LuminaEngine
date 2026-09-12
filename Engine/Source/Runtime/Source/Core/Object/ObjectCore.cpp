@@ -5,7 +5,9 @@
 #include "ObjectCore.h"
 #include "Class.h"
 #include "Object.h"
+#include "Cast.h"
 #include "ObjectAllocator.h"
+#include "ScriptClass.h"
 #include "ObjectHash.h"
 #include "ObjectIterator.h"
 #include "Assets/AssetManager/AssetManager.h"
@@ -13,6 +15,7 @@
 #include "Core/Engine/Engine.h"
 #include "Core/Math/Math.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Reflection/Type/PropertyRegistry.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
@@ -52,8 +55,10 @@ namespace Lumina
 
         NewObject->ConstructInternal(FObjectInitializer(Params.Package, Params));
 
-        // The flag is what lets the destructor skip its class unless there is trailing storage.
-        if (Params.Class->ConstructScriptProperties(NewObject))
+        // Only a runtime-minted class has a trailing block, so the cast is the test. The flag is what lets
+        // the destructor skip its class unless there is trailing storage.
+        if (const CScriptClass* ScriptClass = ToScriptClass(Params.Class);
+            ScriptClass != nullptr && ScriptClass->ConstructScriptProperties(NewObject))
         {
             NewObject->SetFlag(OF_ScriptProperties);
         }
@@ -307,159 +312,50 @@ namespace Lumina
             Type == "DoubleProperty";
     }
 
-    static void ConstructPropertyMetadata(FProperty* NewProperty, uint16 NumMetadata, const FMetaDataPairParam* ParamArray)
+    // The emitter's table is a static constexpr array that outlives the binary, so it is pointed at, not copied.
+    static void ConstructPropertyMetadata(FPropertyArena& Arena, FProperty* NewProperty, uint16 NumMetadata, const FMetaDataPairParam* ParamArray)
     {
-        for (uint16 i = 0; i < NumMetadata; ++i)
-        {
-            const FMetaDataPairParam& Param = ParamArray[i];
-            NewProperty->Metadata.AddValue(Param.NameUTF8, Param.ValueUTF8);
-        }
-        
-        NewProperty->OnMetadataFinalized();
+        NewProperty->SetMetadata(ParamArray, NumMetadata);
+        NewProperty->OnMetadataFinalized(Arena);
     }
 
-    template<typename TPropertyType, typename TPropertyParamType>
-    TPropertyType* NewFProperty(FFieldOwner Owner, const FPropertyParams* Param)
+    // Sized from the widest property, so one type's whole set lands in a single block; an undershoot only
+    // costs another block, never a move, so nothing that already points into the arena is disturbed.
+    static constexpr size_t kArenaBytesPerProperty = 192;
+
+    void ConstructProperties(const FPropertyOwner& Owner, const FPropertyParams* const*& Properties, uint32& NumProperties)
     {
-        const TPropertyParamType* TypedParam = static_cast<const TPropertyParamType*>(Param);
-        TPropertyType* Type = nullptr;
-        
-        if(Param->GetterFunc || Param->SetterFunc)
+        const FPropertyParams* Param = *--Properties;
+        const FPropertyKindOps& Ops = GetPropertyKindOps(Param->TypeFlags);
+
+        FProperty* NewProperty = nullptr;
+        if (!Ops.IsValid())
         {
-            Type = Memory::New<TPropertyWithSetterAndGetter<TPropertyType>>(Owner, TypedParam);
+            LOG_CRITICAL("Unsupported property type found while creating: {}", Param->Name);
         }
         else
         {
-            Type = Memory::New<TPropertyType>(Owner, TypedParam);
-        }
-        
-        if (TypedParam->NumMetaData)
-        {
-            ConstructPropertyMetadata(Type, TypedParam->NumMetaData, TypedParam->MetaDataArray);
-        }
-        return Type;
-    }
-    
-    
-    void ConstructProperties(const FFieldOwner& FieldOwner, const FPropertyParams* const*& Properties, uint32& NumProperties)
-    {
-        const FPropertyParams* Param = *--Properties;
+            NewProperty = Ops.Construct(Owner, Param);
 
-        // Non-zero if property has an inner property next in Properties list.
-        uint32 ReadMore = 0;
-
-        
-        FProperty* NewProperty = nullptr;
-    
-        switch (Param->TypeFlags)
-        {
-        case EPropertyTypeFlags::Int8:
-            NewFProperty<FInt8Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Int16:
-            NewFProperty<FInt16Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Int32:
-            NewFProperty<FInt32Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Int64:
-            NewFProperty<FInt64Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::UInt8:
-            NewFProperty<FUInt8Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::UInt16:
-            NewFProperty<FUInt16Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::UInt32:
-            NewFProperty<FUInt32Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::UInt64:
-            NewFProperty<FUInt64Property, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Float:
-            NewFProperty<FFloatProperty, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Double:
-            NewFProperty<FDoubleProperty, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Bool:
-            NewFProperty<FBoolProperty, FNumericPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Object:
-            NewFProperty<FObjectProperty, FObjectPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::SoftObject:
-            NewFProperty<FSoftObjectProperty, FSoftObjectPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Class:
-            NewFProperty<FClassProperty, FClassPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Name:
-            NewFProperty<FNameProperty, FNamePropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::String:
-            NewFProperty<FStringProperty, FStringPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Struct:
-            NewFProperty<FStructProperty, FStructPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::SubStruct:
-            NewFProperty<FSubStructProperty, FSubStructPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::InstancedStruct:
-            NewFProperty<FInstancedStructProperty, FInstancedStructPropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Delegate:
-            NewFProperty<FDelegateProperty, FDelegatePropertyParams>(FieldOwner, Param);
-            break;
-        case EPropertyTypeFlags::Enum:
+            uint16 NumMetaData = 0;
+            const FMetaDataPairParam* MetaDataArray = nullptr;
+            Ops.GetMetadata(Param, NumMetaData, MetaDataArray);
+            if (NumMetaData != 0)
             {
-                NewProperty = NewFProperty<FEnumProperty, FEnumPropertyParams>(FieldOwner, Param);
-                
-                ReadMore = 1;
+                ConstructPropertyMetadata(*Owner.Arena, NewProperty, NumMetaData, MetaDataArray);
             }
-            break;
-        case EPropertyTypeFlags::Vector:
-            {
-                NewProperty = NewFProperty<FArrayProperty, FArrayPropertyParams>(FieldOwner, Param);
-
-                ReadMore = 1;
-            }
-            break;
-        case EPropertyTypeFlags::Map:
-            {
-                // The emitter lays them out so the recursion attaches Key on the first pass and Value on the second.
-                NewProperty = NewFProperty<FMapProperty, FMapPropertyParams>(FieldOwner, Param);
-
-                ReadMore = 2;
-            }
-            break;
-        case EPropertyTypeFlags::Optional:
-            {
-                // Like Vector/Enum, the next FPropertyParams describes the inner payload type.
-                NewProperty = NewFProperty<FOptionalProperty, FOptionalPropertyParams>(FieldOwner, Param);
-
-                ReadMore = 1;
-            }
-            break;
-        default:
-            {
-                LOG_CRITICAL("Unsupported property type found while creating: {}", Param->Name);
-            }
-            break;
         }
 
         --NumProperties;
-        for (; ReadMore; --ReadMore)
+
+        // An inner is the next params entry, and the kind is what says how many of them to expect.
+        for (uint8 Remaining = Ops.NumInnerParams; Remaining != 0 && NewProperty != nullptr; --Remaining)
         {
-            FFieldOwner Owner;
-            Owner.Emplace<FField*>(NewProperty);
-            ConstructProperties(Owner, Properties, NumProperties);
+            ConstructProperties(Owner.Inner(NewProperty), Properties, NumProperties);
         }
 
-        // The inner only gets its own size after Init has already run AddProperty.
-        if (Param->TypeFlags == EPropertyTypeFlags::Enum)
+        // The inner only gets its own size after it has already been attached to the enum property.
+        if (Param->TypeFlags == EPropertyTypeFlags::Enum && NewProperty != nullptr)
         {
             FEnumProperty* EnumProperty = static_cast<FEnumProperty*>(NewProperty);
             if (const FNumericProperty* Inner = EnumProperty->GetInnerProperty())
@@ -471,12 +367,15 @@ namespace Lumina
 
     void InitializeAndCreateFProperties(CStruct* Outer, const FPropertyParams* const* PropertyArray, uint32 NumProperties)
     {
+        FPropertyArena& Arena = Outer->GetPropertyArena();
+        Arena.Reserve(NumProperties * kArenaBytesPerProperty);
+
+        const FPropertyOwner Owner{ &Arena, Outer, nullptr };
+
         // Iterates backwards.
         PropertyArray += NumProperties;
         while (NumProperties)
         {
-            FFieldOwner Owner;
-            Owner.Emplace<CStruct*>(Outer);
             ConstructProperties(Owner, PropertyArray, NumProperties);
         }
     }

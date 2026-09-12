@@ -8,8 +8,8 @@ namespace Lumina
     {
     public:
 
-        FStringProperty(const FFieldOwner& InOwner, const FPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FStringProperty(const FPropertyParams* Params)
+            : FProperty(Params)
         {
             SetElementSize(sizeof(FString));
         }
@@ -32,8 +32,8 @@ namespace Lumina
     {
     public:
         
-        FNameProperty(FFieldOwner InOwner, const FPropertyParams* Params)
-            :FProperty(InOwner, Params)
+        explicit FNameProperty(const FPropertyParams* Params)
+            : FProperty(Params)
         {
             SetElementSize(sizeof(FName));
         }

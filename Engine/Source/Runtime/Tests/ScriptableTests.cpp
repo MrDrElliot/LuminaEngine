@@ -17,7 +17,7 @@ TEST(Scriptable, MintInstantiateAndNativeDefaultDispatch)
     CClass* Base = CScriptableTest::StaticClass();
     ASSERT_NE(Base, nullptr);
 
-    CClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestSub", "CScriptableTest", 0);
+    CScriptClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestSub", "CScriptableTest", 0);
     ASSERT_NE(Sub, nullptr) << "minting failed (is the CScriptableTest shim registered?)";
     ProcessNewlyLoadedCObjects(); // finalize registration + CDO so FindObject/NewObject work
 
@@ -44,20 +44,25 @@ TEST(Scriptable, MintStampsTheOverrideMaskOnTheClass)
 {
     constexpr uint64 Mask = (1ull << 0) | (1ull << 3);
 
-    CClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestMask", "CScriptableTest", Mask);
+    CScriptClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestMask", "CScriptableTest", Mask);
     ASSERT_NE(Sub, nullptr);
     ProcessNewlyLoadedCObjects();
     Sub->GetDefaultObject();
 
     EXPECT_EQ(Sub->ScriptOverrides, Mask) << "the mask a C# subclass reported was not stamped on its class";
-    EXPECT_EQ(CScriptableTest::StaticClass()->ScriptOverrides, 0ull)
-        << "a native class must carry an empty mask, so its shim never even looks for a managed instance";
+    EXPECT_TRUE(HasScriptOverride(Sub, 0));
+    EXPECT_TRUE(HasScriptOverride(Sub, 3));
+    EXPECT_FALSE(HasScriptOverride(Sub, 1));
+
+    EXPECT_EQ(Cast<CScriptClass>(CScriptableTest::StaticClass()), nullptr)
+        << "a native class must not be script-defined at all, so its shim never looks for a managed instance";
+    EXPECT_FALSE(HasScriptOverride(CScriptableTest::StaticClass(), 0));
 }
 
 // With the bit set but no managed instance, the shim must fall through to the C++ default.
 TEST(Scriptable, DispatchFallsBackToNativeWhenNoManagedInstanceExists)
 {
-    CClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestDispatch", "CScriptableTest", 1ull << 0);
+    CScriptClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestDispatch", "CScriptableTest", 1ull << 0);
     ASSERT_NE(Sub, nullptr);
     ProcessNewlyLoadedCObjects();
     Sub->GetDefaultObject();
@@ -83,7 +88,7 @@ TEST(Scriptable, DispatchFallsBackToNativeWhenNoManagedInstanceExists)
 // The class default object must never acquire a managed counterpart.
 TEST(Scriptable, DefaultObjectNeverGetsAManagedInstance)
 {
-    CClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestCdo", "CScriptableTest", 1ull << 0);
+    CScriptClass* Sub = FScriptableRegistry::Mint("ScriptableTest_GTestCdo", "CScriptableTest", 1ull << 0);
     ASSERT_NE(Sub, nullptr);
     ProcessNewlyLoadedCObjects();
 

@@ -1316,11 +1316,11 @@ namespace Lumina::ECS::Utils
             return Property->IsA(EPropertyTypeFlags::UInt32) || Property->IsA(EPropertyTypeFlags::Int32);
         }
 
-        // One pass over LinkedProperty, NOT one per super, since Link splices the super chain onto it.
+        // One pass over the flattened list, NOT one per super, since Link already folded the supers in.
         template<typename Visitor>
         void ForEachEntityRefInStruct(CStruct* Struct, void* Data, Visitor& Visit)
         {
-            for (FProperty* Property = Struct->LinkedProperty; Property != nullptr; Property = static_cast<FProperty*>(Property->Next))
+            for (FProperty* Property : Struct->GetProperties())
             {
                 if (IsPackedEntityHandle(Property) && Property->IsEntityHandle())
                 {

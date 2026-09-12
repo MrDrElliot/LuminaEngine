@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ScriptableObject.h"
+#include "ManagedTypeRegistry.h"
 
 #include "EntityScript.h"
 
@@ -60,9 +61,9 @@ namespace Lumina
             static THashMap<FString, FScriptableNativeInfo> Map;
             return Map;
         }
-        THashMap<FName, CClass*>& GMintedClasses()
+        THashMap<FName, CScriptClass*>& GMintedClasses()
         {
-            static THashMap<FName, CClass*> Map;
+            static THashMap<FName, CScriptClass*> Map;
             return Map;
         }
 
@@ -139,7 +140,7 @@ namespace Lumina
         }
 
         // Returns false while live instances remain, since destroying the class would dangle their pointers.
-        bool TryRetireMintedClass(const FName& NameId, CClass* Class)
+        bool TryRetireMintedClass(const FName& NameId, CScriptClass* Class)
         {
             int32 LiveInstances = 0;
             GObjectArray.ForEachObject([&](CObjectBase* Base, int32)
@@ -177,10 +178,11 @@ namespace Lumina
             {
                 DefaultObject->RemoveFromRoot();
             }
-            Class->RemoveFromRoot();
-
-            // Safe only past the live-instance check, since the record owns what the properties point at.
+            // Before un-rooting, which frees the class: the layout lives ON it, so the other order is a
+            // use-after-free rather than the tidy-up it reads as.
             Scripting::ForgetScriptClassLayout(Class);
+
+            Class->RemoveFromRoot();
 
             LOG_DISPLAY("Scriptable: retired minted class '{}' (its C# type no longer exists).", NameId.c_str());
             return true;
@@ -193,7 +195,7 @@ namespace Lumina
         GNativeInfos()[FString(NativeClassName)] = Info;
     }
 
-    CClass* FScriptableRegistry::Mint(FStringView TypeName, FStringView NativeBaseName, uint64 OverrideFlags)
+    CScriptClass* FScriptableRegistry::Mint(FStringView TypeName, FStringView NativeBaseName, uint64 OverrideFlags)
     {
         const FString Name(TypeName.data(), TypeName.size());
         const FName NameId(Name.c_str());
@@ -217,8 +219,8 @@ namespace Lumina
         }
 
         const FScriptableNativeInfo& Info = It->second;
-        CClass* Minted = nullptr;
-        AllocateStaticClass(TEXT("/Script"), UTF8_TO_TCHAR(Name.c_str()), &Minted,
+        CScriptClass* Minted = nullptr;
+        AllocateStaticScriptClass(TEXT("/Script"), UTF8_TO_TCHAR(Name.c_str()), &Minted,
             Info.ShimSize, Info.ShimAlign, Info.GetBaseClass, Info.Factory);
         if (Minted != nullptr)
         {
@@ -303,13 +305,19 @@ namespace Lumina
         }
     }
 
-    void FScriptableRegistry::RefreshMintedClasses()
+    void FScriptableRegistry::RefreshMintedClasses(TSpan<const Scripting::FManagedTypeDefinition> Definitions)
     {
         // Before any rebuild, so this reload's retirements are stamped with the generation it opens.
         Scripting::AdvanceScriptTypeGeneration();
 
-        TVector<DotNet::FScriptableTypeDesc> Descs;
-        DotNet::GatherScriptableTypes(Descs);
+        TVector<const Scripting::FManagedTypeDefinition*> Descs;
+        for (const Scripting::FManagedTypeDefinition& Definition : Definitions)
+        {
+            if (Definition.Kind == Scripting::EManagedTypeKind::ScriptableClass)
+            {
+                Descs.push_back(&Definition);
+            }
+        }
 
         // Read both to decide what to evacuate and to resolve a saved reference to the old name.
         TVector<DotNet::FScriptableAlias> Aliases;
@@ -321,19 +329,15 @@ namespace Lumina
 
         // An object's size is baked in at allocation, so a changed property set needs an empty class.
         THashSet<CClass*> NeedRebuild;
-        for (const DotNet::FScriptableTypeDesc& Desc : Descs)
+        for (const Scripting::FManagedTypeDefinition* Desc : Descs)
         {
-            const FName NameId(Desc.TypeName.c_str());
-            auto Existing = GMintedClasses().find(NameId);
+            auto Existing = GMintedClasses().find(Desc->TypeName);
             if (Existing == GMintedClasses().end() || Existing->second->GetDefaultObjectIfCreated() == nullptr)
             {
                 continue;   // a first mint appends rather than rebuilds
             }
 
-            Scripting::FScriptExportSchema Schema;
-            TVector<Scripting::FScriptPropertyEntry> Defaults;
-            if (DotNet::GatherScriptSchema(Desc.TypeName, Schema, Defaults)
-                && !Scripting::ScriptClassLayoutMatches(Existing->second, Schema))
+            if (Desc->bHasSchema && !Scripting::ScriptClassLayoutMatches(Existing->second, Desc->Schema))
             {
                 NeedRebuild.insert(Existing->second);
             }
@@ -372,9 +376,9 @@ namespace Lumina
 
         // AFTER the evacuation, so a renamed class retires now instead of lingering in editor pickers.
         THashSet<FName> LiveNames;
-        for (const DotNet::FScriptableTypeDesc& Desc : Descs)
+        for (const Scripting::FManagedTypeDefinition* Desc : Descs)
         {
-            LiveNames.insert(FName(Desc.TypeName.c_str()));
+            LiveNames.insert(Desc->TypeName);
         }
         TVector<FName> StaleNames;
         for (const auto& [Name, Class] : GMintedClasses())
@@ -393,19 +397,18 @@ namespace Lumina
         }
 
         bool bMintedAny = false;
-        TVector<CClass*> NeedDefaults;
-        for (const DotNet::FScriptableTypeDesc& Desc : Descs)
+        TVector<CScriptClass*> NeedDefaults;
+        for (const Scripting::FManagedTypeDefinition* Desc : Descs)
         {
-            if (CClass* Minted = Mint(Desc.TypeName, Desc.NativeBaseName, Desc.OverrideFlags))
+            if (CScriptClass* Minted = Mint(Desc->TypeName.c_str(), Desc->NativeBaseName, Desc->OverrideFlags))
             {
                 // Minted classes are REUSED by name, so an added or removed override must update the mask.
-                Minted->ScriptOverrides = Desc.OverrideFlags;
-                Minted->ScriptUpdatePhase = Desc.UpdatePhase;
+                Minted->ScriptOverrides = Desc->OverrideFlags;
+                Minted->ScriptUpdatePhase = Desc->UpdatePhase;
 
                 // Re-appending would duplicate properties, so a changed schema tears the block down and rebuilds.
-                Scripting::FScriptExportSchema Schema;
-                TVector<Scripting::FScriptPropertyEntry> Defaults;
-                const bool bHaveSchema = DotNet::GatherScriptSchema(Desc.TypeName, Schema, Defaults);
+                const Scripting::FScriptExportSchema& Schema = Desc->Schema;
+                const bool bHaveSchema = Desc->bHasSchema;
 
                 if (Minted->GetDefaultObjectIfCreated() == nullptr)
                 {
@@ -415,17 +418,34 @@ namespace Lumina
                         if (Count > 0)
                         {
                             LOG_DISPLAY("Scriptable '{}': appended {} script propert{} to the minted class.",
-                                Desc.TypeName.c_str(), Count, Count == 1 ? "y" : "ies");
+                                Desc->TypeName.c_str(), Count, Count == 1 ? "y" : "ies");
                             NeedDefaults.push_back(Minted);
                         }
                     }
                 }
-                else if (bHaveSchema && !Scripting::ScriptClassLayoutMatches(Minted, Schema))
+                else if (bHaveSchema)
                 {
-                    // Refuses while live instances remain, since they are laid out at the old size.
-                    if (Scripting::MigrateMintedClassLayout(Minted, Schema))
+                    const EScriptTypeDirty Dirty = Scripting::DiffScriptClassLayout(Minted, Schema);
+
+                    if (EnumHasAnyFlags(Dirty, EScriptTypeDirty::Layout))
                     {
-                        NeedDefaults.push_back(Minted);
+                        // Refuses while live instances remain, since they are laid out at the old size.
+                        if (Scripting::MigrateMintedClassLayout(Minted, Schema))
+                        {
+                            NeedDefaults.push_back(Minted);
+                        }
+                    }
+                    else
+                    {
+                        // No reshape, so these land without touching instances that are already live.
+                        if (EnumHasAnyFlags(Dirty, EScriptTypeDirty::Metadata))
+                        {
+                            Scripting::RefreshScriptPropertyMetadata(Minted, Schema);
+                        }
+                        if (EnumHasAnyFlags(Dirty, EScriptTypeDirty::Defaults))
+                        {
+                            NeedDefaults.push_back(Minted);
+                        }
                     }
                 }
 
@@ -440,7 +460,7 @@ namespace Lumina
         }
 
         // It runs on the managed side because an initializer is an arbitrary C# expression.
-        for (CClass* Minted : NeedDefaults)
+        for (CScriptClass* Minted : NeedDefaults)
         {
             CObject* DefaultObject = Minted->GetDefaultObject();
             DotNet::ApplyScriptableDefaults(Minted->GetName().ToString(), DefaultObject);

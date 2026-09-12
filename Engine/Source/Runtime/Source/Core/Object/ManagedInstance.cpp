@@ -26,6 +26,9 @@ namespace Lumina
         };
     }
 
+    // Exactly one cache line. Every object in the engine is one of these.
+    static_assert(sizeof(CObjectBase) == 64, "CObjectBase left its cache line; re-check the member order.");
+
     static_assert(sizeof(CObjectBase) == sizeof(FObjectBaseLayoutProbe),
         "ManagedInstanceSlot grew CObjectBase instead of fitting the padding after ObjectFlags. Re-check the "
         "field order in Core/Object/ObjectBase.h before accepting a larger object.");

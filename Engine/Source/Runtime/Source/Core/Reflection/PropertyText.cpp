@@ -75,7 +75,7 @@ namespace Lumina::Reflection
             return false;
         }
 
-        switch (const_cast<FProperty*>(Property)->GetType())
+        switch (Property->GetType())
         {
         case EPropertyTypeFlags::Int8:
         case EPropertyTypeFlags::Int16:
