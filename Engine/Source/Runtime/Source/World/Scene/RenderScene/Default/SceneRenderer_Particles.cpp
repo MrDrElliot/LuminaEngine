@@ -250,7 +250,10 @@ namespace Lumina
             }
 
             // Buffer fills (zero/reset/counter) must land before the sim reads them.
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
 
@@ -284,7 +287,10 @@ namespace Lumina
         if (bAnySimulated)
         {
             // Simulated particles feed the sort pass, then the render pass VS.
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
         }
     }
 
@@ -353,7 +359,10 @@ namespace Lumina
         if (bAnySorted)
         {
             // The compacted draw reads the sorted indices in its VS and its count as indirect arguments.
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
         }
     }
 

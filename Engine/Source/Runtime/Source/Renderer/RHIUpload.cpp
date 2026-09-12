@@ -562,7 +562,10 @@ namespace Lumina::RHI
                 {
                     continue;
                 }
-                RHI::CmdBarrier(Targets[i].CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer);
+                RHI::CmdBarrier(Targets[i].CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
                 Result |= (1u << i);
             }
             

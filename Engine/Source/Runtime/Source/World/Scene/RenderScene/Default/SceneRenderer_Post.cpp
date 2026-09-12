@@ -193,7 +193,10 @@ namespace Lumina
             if (Mip > 0)
             {
                 // Order against the previous mip's writes.
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             }
 
             FBloomDownPushConstants PC = {};
@@ -228,7 +231,10 @@ namespace Lumina
             const uint32 DstH   = std::max<uint32>(Mip0H >> DstMip, 1u);
 
             // Order against the previous mip's writes (down chain, then each up step).
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
             FBloomUpCSPushConstants PC = {};
             PC.SrcTexelSize = FVector2(1.0f / (float)SrcW, 1.0f / (float)SrcH);
@@ -244,7 +250,10 @@ namespace Lumina
                              RenderUtils::GetGroupCount(DstH, BloomTileSize), 1);
         }
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     namespace
@@ -327,7 +336,10 @@ namespace Lumina
                          RenderUtils::GetGroupCount(HDRWidth, HistogramTileSize),
                          RenderUtils::GetGroupCount(HDRHght,  HistogramTileSize), 1);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(AvgCS));
 
@@ -347,7 +359,10 @@ namespace Lumina
 
         RHI::CmdDispatch(CL, MakeArgs(AvgPC), 1, 1, 1);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::ToneMappingPass(RHI::FCmdListH CL)
@@ -498,16 +513,28 @@ namespace Lumina
         {
             if (Source->Texture.Handle != LDR.Texture.Handle)
             {
-                RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                    RHI::EStageFlags::Transfer,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                 RHI::CmdCopyTexture(CL, Source->Texture, RHI::FTextureSlice{}, LDR.Texture, RHI::FTextureSlice{});
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::PixelShader,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             }
         }
         else
         {
-            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdCopyTexture(CL, Source->Texture, RHI::FTextureSlice{}, CurrentView->Output.Texture, RHI::FTextureSlice{});
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
     }
 

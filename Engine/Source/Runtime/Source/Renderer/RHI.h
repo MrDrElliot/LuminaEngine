@@ -131,6 +131,26 @@ namespace Lumina::RHI
     };
     
     ENUM_CLASS_FLAGS(EStageFlags);
+
+    // Paired with EStageFlags on a barrier. Any is the wildcard the old two-argument form implied.
+    enum class EAccessFlags : uint16
+    {
+        None              = 0,
+        TransferRead      = BIT(0),
+        TransferWrite     = BIT(1),
+        ShaderRead        = BIT(2),
+        ShaderWrite       = BIT(3),
+        ColorRead         = BIT(4),
+        ColorWrite        = BIT(5),
+        DepthStencilRead  = BIT(6),
+        DepthStencilWrite = BIT(7),
+        IndirectRead      = BIT(8),
+        IndexRead         = BIT(9),
+        HostRead          = BIT(10),
+        Any               = BIT(11),
+    };
+
+    ENUM_CLASS_FLAGS(EAccessFlags);
     
     enum class EFrontFace : uint8
     {
@@ -552,6 +572,7 @@ namespace Lumina::RHI
     
     RUNTIME_API uint32         GetMaxMeshWorkGroupCount();
 
+    RUNTIME_API bool           SupportsSwapchainMaintenance1();
     RUNTIME_API bool           SupportsAsyncCompute();
     RUNTIME_API bool           SupportsAsyncTransfer();
 
@@ -693,7 +714,13 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdClearTexture(FCmdListH CL, FTextureH Texture, const float Value[4]);
     RUNTIME_API void        CmdClearTextureUInt(FCmdListH CL, FTextureH Texture, const uint32 Value[4]);
 
-    RUNTIME_API void        CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After);
+    RUNTIME_API void        CmdBarrier(FCmdListH CL, EStageFlags Before, EAccessFlags BeforeAccess,
+                                       EStageFlags After, EAccessFlags AfterAccess);
+
+    inline void CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After)
+    {
+        CmdBarrier(CL, Before, EAccessFlags::Any, After, EAccessFlags::Any);
+    }
 
     namespace Barriers
     {
@@ -703,22 +730,30 @@ namespace Lumina::RHI
             CmdBarrier(CL,
                 EStageFlags::RasterColorOut | EStageFlags::FragmentTests |
                 EStageFlags::MeshShader,
+                EAccessFlags::ColorWrite | EAccessFlags::DepthStencilWrite | EAccessFlags::ShaderWrite,
                 EStageFlags::PixelShader | EStageFlags::VertexShader | EStageFlags::Compute |
                 EStageFlags::MeshShader |
                 EStageFlags::IndirectArguments |
-                EStageFlags::RasterColorOut | EStageFlags::FragmentTests);
+                EStageFlags::RasterColorOut | EStageFlags::FragmentTests,
+                EAccessFlags::ShaderRead | EAccessFlags::IndirectRead |
+                EAccessFlags::ColorRead | EAccessFlags::ColorWrite |
+                EAccessFlags::DepthStencilRead | EAccessFlags::DepthStencilWrite);
         }
 
         inline void RasterToRaster(FCmdListH CL)
         {
             CmdBarrier(CL,
                 EStageFlags::RasterColorOut | EStageFlags::FragmentTests,
-                EStageFlags::RasterColorOut | EStageFlags::FragmentTests);
+                EAccessFlags::ColorWrite | EAccessFlags::DepthStencilWrite,
+                EStageFlags::RasterColorOut | EStageFlags::FragmentTests,
+                EAccessFlags::ColorRead | EAccessFlags::ColorWrite |
+                EAccessFlags::DepthStencilRead | EAccessFlags::DepthStencilWrite);
         }
 
         inline void TransferToTransfer(FCmdListH CL)
         {
-            CmdBarrier(CL, EStageFlags::Transfer, EStageFlags::Transfer);
+            CmdBarrier(CL, EStageFlags::Transfer, EAccessFlags::TransferWrite,
+                           EStageFlags::Transfer, EAccessFlags::TransferRead | EAccessFlags::TransferWrite);
         }
 
         /** Snapshotting a scene target into a scratch copy; only raster, shader and transfer writes reach one. */
@@ -727,36 +762,39 @@ namespace Lumina::RHI
             CmdBarrier(CL,
                 EStageFlags::RasterColorOut | EStageFlags::PixelShader |
                 EStageFlags::Compute | EStageFlags::Transfer,
-                EStageFlags::Transfer);
+                EAccessFlags::ColorWrite | EAccessFlags::ShaderWrite | EAccessFlags::TransferWrite,
+                EStageFlags::Transfer, EAccessFlags::TransferRead);
         }
 
         /** Pairs with SceneToTransfer where the copy is only ever sampled, never fetched indirectly. */
         inline void TransferToShaders(FCmdListH CL)
         {
-            CmdBarrier(CL, EStageFlags::Transfer,
-                EStageFlags::PixelShader | EStageFlags::Compute);
+            CmdBarrier(CL, EStageFlags::Transfer, EAccessFlags::TransferWrite,
+                EStageFlags::PixelShader | EStageFlags::Compute, EAccessFlags::ShaderRead);
         }
 
         /** Uploads/clears feeding the GPU scene: consumed by the cull dispatches and the geometry front end. */
         // Narrow variants: use only where every reader of every buffer written is in the destination.
         inline void TransferToCompute(FCmdListH CL)
         {
-            CmdBarrier(CL, EStageFlags::Transfer,
-                EStageFlags::Compute | EStageFlags::MeshShader);
+            CmdBarrier(CL, EStageFlags::Transfer, EAccessFlags::TransferWrite,
+                EStageFlags::Compute | EStageFlags::MeshShader, EAccessFlags::ShaderRead);
         }
 
         /** A cull dispatch whose output feeds later dispatches, the task/mesh stages, and indirect fetch. */
         inline void ComputeToGeometry(FCmdListH CL)
         {
-            CmdBarrier(CL, EStageFlags::Compute,
+            CmdBarrier(CL, EStageFlags::Compute, EAccessFlags::ShaderWrite,
                 EStageFlags::Compute | EStageFlags::MeshShader |
-                EStageFlags::IndirectArguments);
+                EStageFlags::IndirectArguments,
+                EAccessFlags::ShaderRead | EAccessFlags::IndirectRead);
         }
 
         /** A dispatch that writes nothing but indirect arguments. */
         inline void ComputeToIndirect(FCmdListH CL)
         {
-            CmdBarrier(CL, EStageFlags::Compute, EStageFlags::IndirectArguments);
+            CmdBarrier(CL, EStageFlags::Compute, EAccessFlags::ShaderWrite,
+                           EStageFlags::IndirectArguments, EAccessFlags::IndirectRead);
         }
     }
 

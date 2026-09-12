@@ -107,9 +107,15 @@ namespace Lumina
         auto RecordCapture = [&]()
         {
             RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
             // Waits on this copy only, since a device-wide idle would stall unrelated in-flight frame work.
             const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
             RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);

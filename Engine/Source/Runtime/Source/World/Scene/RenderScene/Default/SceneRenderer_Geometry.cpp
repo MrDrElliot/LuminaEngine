@@ -49,7 +49,10 @@ namespace Lumina
 
             if (Op.Mode == FTexturePaintOp::EMode::Clear)
             {
-                RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                    RHI::EStageFlags::Transfer,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                 const float Clear[4] = { Op.Color.r, Op.Color.g, Op.Color.b, Op.Color.a };
                 RHI::CmdClearTexture(CL, Op.Target, Clear);
                 continue;
@@ -83,7 +86,10 @@ namespace Lumina
             }
 
             // Order against any prior clear/paint of the same target.
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
             FPaintPC PC = {};
             PC.TargetIndex   = Op.TargetUAV;
@@ -106,8 +112,8 @@ namespace Lumina
         }
 
         // Painted texels are sampled by materials in every shader stage.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute,
-                        RHI::EStageFlags::PixelShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite,
+                        RHI::EStageFlags::PixelShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
     }
 
     void FDefaultSceneRenderer::VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
@@ -170,7 +176,10 @@ namespace Lumina
             return;
         }
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
 
         const FSceneImage& VisRT   = GetNamedImage(ENamedImage::VisBuffer);
         const FSceneImage& DepthRT = GetNamedImage(ENamedImage::DepthAttachment);
@@ -743,7 +752,10 @@ namespace Lumina
             if (bHeightDirty && NormalShader)
             {
                 // Heightmap upload must land before the normal recompute samples it.
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
                 const int32 NMinX = Math::Max(RectMin.x - 1, 0);
                 const int32 NMinY = Math::Max(RectMin.y - 1, 0);
@@ -776,7 +788,10 @@ namespace Lumina
                                                    RenderUtils::GetGroupCount((uint32)NH, 8u), 1u);
 
                 // Normals are sampled by the terrain VS/PS.
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
             }
 
             if (TerrainItem.bGeometryRebuilt)
@@ -815,7 +830,10 @@ namespace Lumina
 
         if (bAnyUpload)
         {
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
         }
     }
 
@@ -860,7 +878,10 @@ namespace Lumina
             InitialArgs.FirstVertex   = 0u;
             InitialArgs.FirstInstance = 0u;
             WriteBuffer(CL, State.IndirectDrawBuffer.Gpu, &InitialArgs, sizeof(InitialArgs));
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
 
             if (!bAnyDispatched)
             {
@@ -879,7 +900,10 @@ namespace Lumina
 
         if (bAnyDispatched)
         {
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
         }
     }
 
@@ -1105,7 +1129,10 @@ namespace Lumina
 
         if (bAnyDispatched)
         {
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
         if (!GrassRetireScratch.empty())
@@ -1125,12 +1152,18 @@ namespace Lumina
                 }
 
                 // Four bytes each, on the GPU; the count never comes back to the CPU.
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::Transfer,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                 for (const FGrassRetireItem& Item : GrassRetireScratch)
                 {
                     RHI::CmdMemcpy(CL, { Item.PrevCursor.Gpu, sizeof(uint32) }, Item.Cursor);
                 }
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             }
             GrassRetireScratch.clear();
         }

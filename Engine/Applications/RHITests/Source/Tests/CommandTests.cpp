@@ -17,7 +17,10 @@ namespace Lumina::RHITests
 
             const RHI::FCmdListH CL = Ctx.OpenCL();
             RHI::CmdMemcpy(CL, { Readback.Gpu, Size }, { Source.Gpu, Size });
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
             Ctx.SubmitAndWait(CL);
 
             return Readback.CpuAs<const uint32>();
@@ -32,7 +35,10 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdMemset(CL, { Buffer.Gpu, Size }, 0xABCDEF01u);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Host,
+            RHI::EAccessFlags::HostRead);
         Ctx.SubmitAndWait(CL);
 
         const uint32* Words = ReadBack(Ctx, Buffer, Size);
@@ -52,7 +58,10 @@ namespace Lumina::RHITests
             RHI::CmdMemset(CL, { Buffer.Gpu, Size }, 0xFFFFFFFFu);
             RHI::Barriers::TransferToTransfer(CL);
             RHI::CmdMemzero(CL, { Buffer.Gpu, Size });
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
             Ctx.SubmitAndWait(CL);
         }
 
@@ -74,7 +83,10 @@ namespace Lumina::RHITests
             RHI::CmdMemset(CL, { Source.Gpu, Size }, 0x11223344u);
             RHI::Barriers::TransferToTransfer(CL);
             RHI::CmdMemcpy(CL, { Dest.Gpu, Size }, { Source.Gpu, Size });
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
             Ctx.SubmitAndWait(CL);
         }
 
@@ -98,7 +110,10 @@ namespace Lumina::RHITests
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
             RHI::CmdWriteMemory(CL, { Buffer.Gpu, sizeof(Source) }, Source);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
             Ctx.SubmitAndWait(CL);
         }
 
@@ -113,12 +128,21 @@ namespace Lumina::RHITests
     {
         const RHI::FCmdListH CL = Ctx.OpenCL();
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
         RHI::Barriers::RasterToRead(CL);
         RHI::Barriers::RasterToRaster(CL);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         RHI::Barriers::TransferToTransfer(CL);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         RHI::Barriers::TransferToCompute(CL);
         RHI::Barriers::ComputeToGeometry(CL);
         RHI::Barriers::ComputeToIndirect(CL);
@@ -157,7 +181,10 @@ namespace Lumina::RHITests
         {
             const RHI::FCmdListH CL = Ctx.OpenCL();
             RHI::CmdMemcpy(CL, { Dest.Gpu, sizeof(FPayload) }, { Gpu, sizeof(FPayload) });
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
             Ctx.SubmitAndWait(CL);
         }
 

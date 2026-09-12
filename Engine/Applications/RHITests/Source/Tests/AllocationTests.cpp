@@ -28,12 +28,18 @@ namespace Lumina::RHITests
             const RHI::FCmdListH CL = Ctx.OpenCL();
 
             RHI::CmdBeginMarker(CL, "AllocProbe");
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdMemzero(CL, { Buffer.Gpu, 4096 });
 
             const float Clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
             RHI::CmdClearTexture(CL, Texture, Clear);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
 
             const uint32 Payload[4] = { 1, 2, 3, 4 };
             const RHI::GPUPtr Args = RHI::CopyTransientArray(Payload, 4).Address;

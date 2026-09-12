@@ -186,6 +186,30 @@ namespace Lumina::RHI
     constexpr uint64 kMinMemoryPageSize = 8ull * 1024 * 1024;
 
 
+    static constexpr VkAccessFlags2 ToVkAccess(EAccessFlags Flags)
+    {
+        constexpr VkAccessFlags2 Wildcard = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        if (EnumHasAnyFlags(Flags, EAccessFlags::Any))
+        {
+            return Wildcard;
+        }
+
+        VkAccessFlags2 Out = 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::TransferRead)      ? VK_ACCESS_2_TRANSFER_READ_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::TransferWrite)     ? VK_ACCESS_2_TRANSFER_WRITE_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderRead)        ? VK_ACCESS_2_SHADER_STORAGE_READ_BIT
+                                                                      | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderWrite)       ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ColorRead)         ? VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ColorWrite)        ? VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::DepthStencilRead)  ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::DepthStencilWrite) ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::IndirectRead)      ? VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::IndexRead)         ? VK_ACCESS_2_INDEX_READ_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::HostRead)          ? VK_ACCESS_2_HOST_READ_BIT : 0;
+        return Out;
+    }
+
     static constexpr VkPipelineStageFlags2 ToVkPipelineState(EStageFlags Flags)
     {
         VkPipelineStageFlags2 Out = 0;
@@ -572,6 +596,8 @@ namespace Lumina::RHI
         TVector<FTextureH>     Images;             // external FTextures (one per swapchain image)
         TVector<VkSemaphore>   AcquireSemaphores;  // binary, ring
         TVector<VkSemaphore>   PresentSemaphores;  // binary, one per image
+        TVector<VkFence>       PresentFences;      // one per image, empty without swapchain maintenance1
+        TVector<uint8>         PresentFenceInFlight;
         uint32                 AcquireIndex;
         uint32                 CurrentImageIndex;
         VkSemaphore            CurrentAcquire;
@@ -589,6 +615,8 @@ namespace Lumina::RHI
         uint32                          MeshRequiredSubgroupSize = 0;
         // Commands can take a device address directly, so recording one needs no buffer lookup.
         bool                            bDeviceAddressCommands = false;
+        // Present fences retire an old swapchain without idling every queue on the device.
+        bool                            bSwapchainMaintenance1 = false;
 #if USING(WITH_EDITOR)
         bool                            bPipelineStats = false;
         // Capture the driver's internal representations too, which costs pipeline creation time.
@@ -733,6 +761,9 @@ namespace Lumina::RHI
     static void DestroySwapchainImages(FSwapchain& SC);
 
     static TVector<Native::FDeviceCreationRequest> GPendingDeviceRequests;
+
+    // Set during instance creation; swapchain maintenance1 cannot be enabled without it.
+    static bool GSurfaceMaintenance1Available = false;
 
     // Resolve a GPUPtr (possibly interior) to its owning allocation. Caller holds MemoryMutex (shared).
     // Bumped under the write lock on every insert, erase and clear, which is what can move a cached block.
@@ -1799,6 +1830,34 @@ namespace Lumina::RHI
             InstanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         }
 
+        if (!DeviceDesc.bHeadless)
+        {
+            uint32 InstCount = 0;
+            vkEnumerateInstanceExtensionProperties(nullptr, &InstCount, nullptr);
+            TVector<VkExtensionProperties> InstAvail(InstCount);
+            vkEnumerateInstanceExtensionProperties(nullptr, &InstCount, InstAvail.data());
+
+            auto HasInstanceExt = [&InstAvail](const char* Name)
+            {
+                for (const VkExtensionProperties& E : InstAvail)
+                {
+                    if (strcmp(E.extensionName, Name) == 0) { return true; }
+                }
+                return false;
+            };
+
+            const char* SurfaceMaint = nullptr;
+            if (HasInstanceExt(VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME))      { SurfaceMaint = VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME; }
+            else if (HasInstanceExt(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME)) { SurfaceMaint = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME; }
+
+            if (SurfaceMaint != nullptr && HasInstanceExt(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME))
+            {
+                InstanceExtensions.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+                InstanceExtensions.push_back(SurfaceMaint);
+                GSurfaceMaintenance1Available = true;
+            }
+        }
+
         if (!GPendingDeviceRequests.empty())
         {
             uint32 AvailCount = 0;
@@ -2226,6 +2285,7 @@ namespace Lumina::RHI
         bool bBufferMarker   = false;
         bool bMemoryPriority = false;
         bool bUnifiedImageLayouts = false;
+        bool bSwapchainMaintenance1 = false;
         bool bDeviceAddressCommands = false;
         bool bComputeDerivatives = false;
 #if USING(WITH_EDITOR)
@@ -2272,6 +2332,11 @@ namespace Lumina::RHI
             bBufferMarker   = EnableIfPresent(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
             const bool bLayerKnowsUnifiedLayouts = ValidationLayerVersion == 0 || ValidationLayerVersion >= VK_MAKE_API_VERSION(0, 1, 4, 311);
             bUnifiedImageLayouts = bLayerKnowsUnifiedLayouts && EnableIfPresent(VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME);
+            if (GSurfaceMaintenance1Available)
+            {
+                bSwapchainMaintenance1 = EnableIfPresent(VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)
+                                      || EnableIfPresent(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+            }
             bMemoryPriority = EnableIfPresent(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
             if (bMemoryPriority)
             {
@@ -2399,6 +2464,15 @@ namespace Lumina::RHI
         {
             UnifiedLayoutFeatures.unifiedImageLayouts = VK_TRUE;
             Chain(UnifiedLayoutFeatures);
+        }
+
+        VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR SwapchainMaint1Features
+            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR };
+        if (bSwapchainMaintenance1)
+        {
+            SwapchainMaint1Features.swapchainMaintenance1 = VK_TRUE;
+            Chain(SwapchainMaint1Features);
+            GDevice->bSwapchainMaintenance1 = true;
         }
         
         VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR DerivativeFeatures
@@ -4950,11 +5024,40 @@ namespace Lumina::RHI
         SC.PresentSemaphores.resize(Count);
         SC.AcquireSemaphores.resize(AcquireCount);
 
+        if (GDevice->bSwapchainMaintenance1)
+        {
+            SC.PresentFences.resize(Count);
+            SC.PresentFenceInFlight.assign(Count, 0);
+            const VkFenceCreateInfo FenceInfo { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+            for (uint32 i = 0; i < Count; ++i) { VK_CHECK(vkCreateFence(*GDevice, &FenceInfo, nullptr, &SC.PresentFences[i])); }
+        }
+
         const VkSemaphoreCreateInfo SemInfo { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
         for (uint32 i = 0; i < Count; ++i)        { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &SC.PresentSemaphores[i])); }
         for (uint32 i = 0; i < AcquireCount; ++i) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &SC.AcquireSemaphores[i])); }
 
         return true;
+    }
+
+    // Blocks on this swapchain's outstanding presents only, which is what replaces the device-wide idle.
+    static void WaitSwapchainPresents(FSwapchain& SC)
+    {
+        TVector<VkFence> Pending;
+        for (size_t i = 0; i < SC.PresentFences.size(); ++i)
+        {
+            if (SC.PresentFenceInFlight[i] != 0)
+            {
+                Pending.push_back(SC.PresentFences[i]);
+            }
+        }
+
+        if (!Pending.empty())
+        {
+            vkWaitForFences(*GDevice, (uint32)Pending.size(), Pending.data(), VK_TRUE, UINT64_MAX);
+            vkResetFences(*GDevice, (uint32)Pending.size(), Pending.data());
+        }
+
+        for (uint8& InFlight : SC.PresentFenceInFlight) { InFlight = 0; }
     }
 
     static void DestroySwapchainImages(FSwapchain& SC)
@@ -4964,6 +5067,11 @@ namespace Lumina::RHI
             GDevice->Textures.Erase(Image);
         }
         SC.Images.clear();
+
+        WaitSwapchainPresents(SC);
+        for (VkFence Fence : SC.PresentFences) { vkDestroyFence(*GDevice, Fence, nullptr); }
+        SC.PresentFences.clear();
+        SC.PresentFenceInFlight.clear();
 
         for (VkSemaphore Semaphore : SC.PresentSemaphores) { vkDestroySemaphore(*GDevice, Semaphore, nullptr); }
         for (VkSemaphore Semaphore : SC.AcquireSemaphores) { vkDestroySemaphore(*GDevice, Semaphore, nullptr); }
@@ -5025,12 +5133,21 @@ namespace Lumina::RHI
         }
     }
 
+    bool SupportsSwapchainMaintenance1()
+    {
+        return GDevice != nullptr && GDevice->bSwapchainMaintenance1;
+    }
+
     void RecreateSwapchain(FSwapchainH Swapchain, const FUIntVector2& Extent)
     {
         FAllQueuesLock QueueLock;
-        vkDeviceWaitIdle(*GDevice);
 
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
+        if (!GDevice->bSwapchainMaintenance1)
+        {
+            vkDeviceWaitIdle(*GDevice);
+        }
+
         VkSwapchainKHR Old = SC.Swapchain;
 
         DestroySwapchainImages(SC);
@@ -5294,10 +5411,29 @@ namespace Lumina::RHI
         VkQueue GraphicsQueue = GDevice->Queues[(uint32)EQueueType::Graphics];
         VK_CHECK(vkQueueSubmit2(GraphicsQueue, 1, &Submit, VK_NULL_HANDLE));
 
+        VkFence PresentFence = VK_NULL_HANDLE;
+        if (!SC.PresentFences.empty())
+        {
+            PresentFence = SC.PresentFences[SC.CurrentImageIndex];
+            if (SC.PresentFenceInFlight[SC.CurrentImageIndex] != 0)
+            {
+                vkWaitForFences(*GDevice, 1, &PresentFence, VK_TRUE, UINT64_MAX);
+                vkResetFences(*GDevice, 1, &PresentFence);
+            }
+        }
+
+        const VkSwapchainPresentFenceInfoKHR PresentFenceInfo
+        {
+            .sType          = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR,
+            .pNext          = nullptr,
+            .swapchainCount = 1,
+            .pFences        = &PresentFence,
+        };
+
         VkPresentInfoKHR PresentInfo
         {
             .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .pNext              = nullptr,
+            .pNext              = PresentFence != VK_NULL_HANDLE ? &PresentFenceInfo : nullptr,
             .waitSemaphoreCount = 1,
             .pWaitSemaphores    = &PresentSem,
             .swapchainCount     = 1,
@@ -5307,6 +5443,10 @@ namespace Lumina::RHI
         };
 
         const VkResult Result = vkQueuePresentKHR(GraphicsQueue, &PresentInfo);
+        if (PresentFence != VK_NULL_HANDLE && Result != VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            SC.PresentFenceInFlight[SC.CurrentImageIndex] = 1;
+        }
         return Result == VK_SUCCESS;
     }
 
@@ -6034,23 +6174,61 @@ namespace Lumina::RHI
         return Clamped;
     }
 
-    void CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After)
+    // Drops access bits whose only stages the queue clamp removed, since Vulkan rejects that pairing.
+    static EAccessFlags ClampAccessToStages(EAccessFlags Access, EStageFlags Stages)
+    {
+        if (EnumHasAnyFlags(Access, EAccessFlags::Any) || EnumHasAnyFlags(Stages, EStageFlags::AllCommands))
+        {
+            return Access;
+        }
+
+        constexpr EStageFlags ShaderStages = EStageFlags::Compute | EStageFlags::PixelShader |
+                                             EStageFlags::VertexShader | EStageFlags::MeshShader;
+        constexpr EStageFlags DepthStages  = EStageFlags::FragmentTests | EStageFlags::PixelShader;
+
+        auto Keep = [&](EAccessFlags Bit, EStageFlags Needed)
+        {
+            if (EnumHasAnyFlags(Access, Bit) && !EnumHasAnyFlags(Stages, Needed))
+            {
+                Access &= ~Bit;
+            }
+        };
+
+        Keep(EAccessFlags::TransferRead,      EStageFlags::Transfer);
+        Keep(EAccessFlags::TransferWrite,     EStageFlags::Transfer);
+        Keep(EAccessFlags::ShaderRead,        ShaderStages);
+        Keep(EAccessFlags::ShaderWrite,       ShaderStages);
+        Keep(EAccessFlags::ColorRead,         EStageFlags::RasterColorOut);
+        Keep(EAccessFlags::ColorWrite,        EStageFlags::RasterColorOut);
+        Keep(EAccessFlags::DepthStencilRead,  DepthStages);
+        Keep(EAccessFlags::DepthStencilWrite, DepthStages);
+        Keep(EAccessFlags::IndirectRead,      EStageFlags::IndirectArguments);
+        Keep(EAccessFlags::IndexRead,         EStageFlags::VertexShader);
+        Keep(EAccessFlags::HostRead,          EStageFlags::Host);
+
+        // Everything the caller asked for was clamped away, so widen rather than drop the dependency.
+        return Access == EAccessFlags::None ? EAccessFlags::Any : Access;
+    }
+
+    void CmdBarrier(FCmdListH CL, EStageFlags Before, EAccessFlags BeforeAccess,
+                    EStageFlags After, EAccessFlags AfterAccess)
     {
         const EQueueType Queue = GDevice->CommandLists[CL].Queue;
 
-        const VkPipelineStageFlags2 SrcStage = ToVkPipelineState(ClampStagesToQueue(Before, Queue));
-        const VkPipelineStageFlags2 DstStage = ToVkPipelineState(ClampStagesToQueue(After, Queue));
-        
-        constexpr auto Access = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
-        
+        const EStageFlags SrcStages = ClampStagesToQueue(Before, Queue);
+        const EStageFlags DstStages = ClampStagesToQueue(After, Queue);
+
+        const VkPipelineStageFlags2 SrcStage = ToVkPipelineState(SrcStages);
+        const VkPipelineStageFlags2 DstStage = ToVkPipelineState(DstStages);
+
         VkMemoryBarrier2 BarrierInfo
         {
             .sType          = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
             .pNext          = nullptr,
             .srcStageMask   = SrcStage,
-            .srcAccessMask  = Access,
+            .srcAccessMask  = ToVkAccess(ClampAccessToStages(BeforeAccess, SrcStages)),
             .dstStageMask   = DstStage,
-            .dstAccessMask  = Access
+            .dstAccessMask  = ToVkAccess(ClampAccessToStages(AfterAccess, DstStages))
         };
         
         VkDependencyInfo DepInfo

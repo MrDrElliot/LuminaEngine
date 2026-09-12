@@ -832,7 +832,10 @@ namespace Lumina
         CollectStreamingFeedback(CL);
 
         // Last, so the copy captures the fully uploaded state and next frame reads it as the past.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         SnapshotMotionState(CL);
 
         RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
@@ -1249,6 +1252,11 @@ namespace Lumina
         case ENamedImage::Velocity:
         case ENamedImage::TemporalHistoryA:
         case ENamedImage::TemporalHistoryB:
+        case ENamedImage::GTAOWorkingDepth:
+        case ENamedImage::GTAOEdges:
+        case ENamedImage::GTAO:
+        case ENamedImage::GTAODenoise:
+        case ENamedImage::GTAOBlur:
             return true;
         default:
             return false;
@@ -1303,6 +1311,22 @@ namespace Lumina
             OutDesc.Format = EFormat::RGBA8_UNORM;
             return true;
 
+        // XeGTAO runs entirely in compute at full resolution, so every stage target needs a storage view.
+        case ENamedImage::GTAOEdges:
+        case ENamedImage::GTAO:
+        case ENamedImage::GTAODenoise:
+        case ENamedImage::GTAOBlur:
+            OutDesc.Format = EFormat::R8_UNORM;
+            OutDesc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
+                             RHI::EImageUsageFlags::Storage;
+            return true;
+
+        case ENamedImage::GTAOWorkingDepth:
+            OutDesc.Format   = EFormat::R32_FLOAT;
+            OutDesc.MipCount = GTAODepthMipLevels;
+            OutDesc.Usage    = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            return true;
+
         default:
             return false;
         }
@@ -1322,7 +1346,7 @@ namespace Lumina
         const bool bDecals       = !Frame.Primitives.DecalExtracts.empty();
         const bool bWater        = !Frame.Water.Surfaces.empty();
 
-        auto Want = [this, &View](ENamedImage Image, bool bNeeded)
+        auto Want = [this, &View](ENamedImage Image, bool bNeeded, bool bMipUAVs = false)
         {
             if (!bNeeded)
             {
@@ -1343,7 +1367,7 @@ namespace Lumina
                 return;
             }
 
-            Slot = CreateSceneImage(Desc);
+            Slot = CreateSceneImage(Desc, /*bSampled*/ true, bMipUAVs);
             RHI::SetDebugName(Slot.Texture, ENamedImageToString(Image));
         };
 
@@ -1364,6 +1388,13 @@ namespace Lumina
         Want(ENamedImage::Velocity,         bTemporal || (View.bIsPrimary && IsVelocityDebugActive()));
         Want(ENamedImage::TemporalHistoryA, bTemporal);
         Want(ENamedImage::TemporalHistoryB, bTemporal);
+
+        const bool bGTAO = IsGTAOEnabled();
+        Want(ENamedImage::GTAOWorkingDepth, bGTAO, /*bMipUAVs*/ true);
+        Want(ENamedImage::GTAOEdges,        bGTAO, /*bMipUAVs*/ true);
+        Want(ENamedImage::GTAO,             bGTAO, /*bMipUAVs*/ true);
+        Want(ENamedImage::GTAODenoise,      bGTAO, /*bMipUAVs*/ true);
+        Want(ENamedImage::GTAOBlur,         bGTAO, /*bMipUAVs*/ true);
 
         // A freshly created pair holds whatever the allocator handed back, which is not a previous frame.
         if (bTemporal && !bHadTemporalTargets)
@@ -1453,27 +1484,8 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::SMAABlend] = CreateSceneImage(Desc);
 
-        // XeGTAO runs entirely in compute at full resolution, so every stage target needs a storage view.
-        Desc.Format    = EFormat::R8_UNORM;
-        Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
-        Desc.Usage     = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
-                         RHI::EImageUsageFlags::Storage;
-        View.Images[(int)ENamedImage::GTAOEdges]   = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
-        View.Images[(int)ENamedImage::GTAO]        = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
-        View.Images[(int)ENamedImage::GTAODenoise] = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
-        View.Images[(int)ENamedImage::GTAOBlur]    = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
-
-        {
-            RHI::FTextureDesc WorkingDepthDesc;
-            WorkingDepthDesc.Type      = RHI::ETextureType::Tex2D;
-            WorkingDepthDesc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
-            WorkingDepthDesc.Format    = EFormat::R32_FLOAT;
-            WorkingDepthDesc.MipCount  = GTAODepthMipLevels;
-            WorkingDepthDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
-            View.Images[(int)ENamedImage::GTAOWorkingDepth] = CreateSceneImage(WorkingDepthDesc, true, /*bMipUAVs*/ true);
-        }
-
-        Desc.Usage = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
+        Desc.Format = EFormat::R8_UNORM;
+        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
         View.Images[(int)ENamedImage::ShadowMask]  = CreateSceneImage(Desc);
 
         // Scene depth; transfer-dst for the no-occluder clear.
@@ -1512,7 +1524,7 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::GBufferA] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
         View.Images[(int)ENamedImage::GBufferC] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
-        Desc.Format = EFormat::RGBA16_FLOAT;
+        Desc.Format = EFormat::R10G10B10A2_UNORM;
         View.Images[(int)ENamedImage::GBufferB] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
         Desc.Format = EFormat::R11G11B10_FLOAT;
         View.Images[(int)ENamedImage::GBufferD] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
@@ -1648,7 +1660,10 @@ namespace Lumina
         constexpr uint32 BRDFLutTile = 8u;
         const uint32 Groups = RenderUtils::GetGroupCount(BRDFLutSize, BRDFLutTile);
         RHI::CmdDispatch(CL, ArgsPtr, Groups, Groups, 1);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         const uint64 BakeValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), BakeValue);
@@ -1716,9 +1731,15 @@ namespace Lumina
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
         const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         RHI::CmdClearTexture(CL, NamedImages[(int)ENamedImage::ProbePrefiltered].Texture, Black);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         const uint64 ClearValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
         RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), ClearValue);
 
@@ -1820,13 +1841,19 @@ namespace Lumina
         SCENE_GPU_SCOPE(CL, "Streaming Feedback");
 
         // Every material lane that reports into the mask has run by now, so it is complete.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         RHI::CmdMemcpy(CL, { StreamingFeedbackReadback[Slot].Gpu, StreamingFeedbackBuffer.Size }, StreamingFeedbackBuffer);
 
         // Zero AFTER the copy, so the next frame's mask is what it sampled, not a growing union.
         RHI::Barriers::TransferToTransfer(CL);
         RHI::CmdMemzero(CL, StreamingFeedbackBuffer);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         StreamingFeedbackStamp[Slot] = ++StreamingFeedbackFrame;
     }
@@ -2148,13 +2175,19 @@ namespace Lumina
             if (Buffer.Init == EBufferInit::Zeroed)
             {
                 RHI::CmdMemzero(CL, Buffer);
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
             }
             #if !defined(LE_SHIPPING)
             else if (CVarPoisonUninitializedBuffers.GetValue())
             {
                 RHI::CmdMemset(CL, Buffer, kUninitializedBufferPoison);
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
             }
             #endif
             return true;

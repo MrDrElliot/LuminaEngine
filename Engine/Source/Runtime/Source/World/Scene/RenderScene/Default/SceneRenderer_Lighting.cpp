@@ -117,9 +117,15 @@ namespace Lumina
             RHI::FTextureSlice DstSlice = SrcSlice;
             DstSlice.Layer = (uint32)Face;
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdCopyTexture(CL, FaceColor.Texture, SrcSlice, CaptureCube.Texture, DstSlice);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
         {
@@ -147,7 +153,10 @@ namespace Lumina
                     RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
                 }
 
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             }
         }
 
@@ -185,7 +194,10 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(), ClusterDispatchGroups, 1, 1);
 
         // LightCull consumes the cluster AABBs next.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::LightCullPass(RHI::FCmdListH CL)
@@ -214,7 +226,10 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(), LightCullGroups, 1, 1);
 
         // Cluster light lists feed the lit pixel shaders.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     static constexpr uint32 GMaterialMaxSlots = MATERIAL_MAX_SLOTS;
@@ -444,7 +459,10 @@ namespace Lumina
 
         DispatchCompute(CL, CountCS, CountPC, GroupsX, GroupsY, 1u);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         struct FPrefixSumPC
         {
@@ -465,7 +483,10 @@ namespace Lumina
 
         DispatchCompute(CL, PrefixCS, PrefixPC, 1u, 1u, 1u);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         struct FMaterialScatterPC
         {
@@ -489,7 +510,10 @@ namespace Lumina
         DispatchCompute(CL, ScatterCS, ScatterPC, GroupsX, GroupsY, 1u);
 
         // The pixel list feeds the material dispatches; the argument triples feed the indirect fetch.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
     }
 
     // Compute, not a rasterized quad, since a pixel shader runs the graph 4x on a 1-pixel tri.
@@ -603,7 +627,10 @@ namespace Lumina
             RHI::CmdDispatchIndirect(CL, ArgsAlloc.Gpu + Slot * sizeof(FDeferredMaterialPC), Classify.Skip(Layout.MaterialArgsOffset + Slot * (uint32)sizeof(RHI::FDispatchIndirectArguments)));
         }
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     // Background, terrain and undeferred materials were never classified, so they keep the env pass.
@@ -662,8 +689,8 @@ namespace Lumina
         DispatchComputeIndirect(CL, LightingCS, PC, Classify.Skip(Layout.LightArgsOffset));
 
         // The lit HDR target is drawn into by the forward passes, sampled, and read by the post chain.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
-                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
     }
     
     void FDefaultSceneRenderer::GTAOPass(RHI::FCmdListH CL)
@@ -766,7 +793,10 @@ namespace Lumina
                 RenderUtils::GetGroupCount(Width, PrefilterTile),
                 RenderUtils::GetGroupCount(Height, PrefilterTile), 1);
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
         {
@@ -820,7 +850,10 @@ namespace Lumina
                 RenderUtils::GetGroupCount(Width, 8u),
                 RenderUtils::GetGroupCount(Height, 8u), 1);
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
         {
@@ -879,7 +912,10 @@ namespace Lumina
                     RenderUtils::GetGroupCount(Width, 16u),
                     RenderUtils::GetGroupCount(Height, 8u), 1);
 
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             }
         }
     }
@@ -1523,7 +1559,10 @@ namespace Lumina
 
         const uint32 Groups = RenderUtils::GetGroupCount(Shadow.GetSizeX(), 8);
         RHI::CmdDispatch(CL, MakeArgs(PC), Groups, Groups, 1u);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::FroxelInjectPass(RHI::FCmdListH CL)
@@ -1586,7 +1625,10 @@ namespace Lumina
                          RenderUtils::GetGroupCount(FroxelGridSize.z, 4));
 
         // Integrate reads the scatter volume next.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::FroxelIntegratePass(RHI::FCmdListH CL)
@@ -1627,7 +1669,10 @@ namespace Lumina
                          RenderUtils::GetGroupCount(FroxelGridSize.y, 8),
                          1u);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::AtmosphereCompositePass(RHI::FCmdListH CL)
@@ -1696,7 +1741,10 @@ namespace Lumina
                          RenderUtils::GetGroupCount(Width,  AtmosphereTileSize),
                          RenderUtils::GetGroupCount(Height, AtmosphereTileSize), 1);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::WaterPass(RHI::FCmdListH CL)
@@ -1861,11 +1909,17 @@ namespace Lumina
         if (!FrameFlags.bHasEnvironment)
         {
             const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::SkyCube).Texture, Black);
             RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::SkyIrradiance).Texture, Black);
             RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::SkyPrefilter).Texture, Black);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             return;
         }
 
@@ -1915,7 +1969,10 @@ namespace Lumina
             const uint32 FaceSize = SkyCube.GetSizeX();
             const uint32 GroupsXY = RenderUtils::GetGroupCount(FaceSize, EquirectTile);
             RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             return;
         }
 
@@ -1955,7 +2012,10 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
 
         // Convolution + environment pass read the cube next.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::IrradianceConvolutionPass(RHI::FCmdListH CL)
@@ -2000,7 +2060,10 @@ namespace Lumina
         const uint32 GroupsXY = RenderUtils::GetGroupCount(FaceSize, IrradianceTile);
         RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::PrefilterEnvMapPass(RHI::FCmdListH CL)
@@ -2054,7 +2117,10 @@ namespace Lumina
             RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
         }
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::EnvironmentPass(RHI::FCmdListH CL)
@@ -2250,7 +2316,10 @@ namespace Lumina
             const uint32 BakeGroups = RenderUtils::GetGroupCount(kCloudNoiseSize, CloudNoiseTileSize);
             RHI::CmdDispatch(CL, MakeArgs(BakePC), BakeGroups, BakeGroups, BakeGroups);
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             CurrentView->bCloudNoiseBaked = true;
         }
 
@@ -2315,7 +2384,10 @@ namespace Lumina
                          RenderUtils::GetGroupCount(PC.ScreenH, CloudTileSize), 1);
 
         // The scatter volume feeds AtmosphereCompositePass and the cloud shadow map, both dispatches.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         AtmosphereTerms.CloudScatterIndex = (uint32)Scatter.GetResourceID();
     }
@@ -2416,8 +2488,8 @@ namespace Lumina
         DispatchComputeIndirect(CL, SSRCS, PC, Classify.Skip(Layout.LightArgsOffset));
 
         // HDR is a UAV write here, then a color attachment, a sampled input, and a post-chain read.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
-                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
     }
 
     void FDefaultSceneRenderer::AerialPerspectivePass(RHI::FCmdListH CL)
@@ -2473,7 +2545,10 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(LutPC), LutGroups, LutGroups, 1);
 
         // Only AtmosphereCompositePass reads the LUT, and it is a dispatch.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         AtmosphereTerms.AerialInScatterIndex     = (uint32)InScatter.GetResourceID();
         AtmosphereTerms.AerialTransmittanceIndex = (uint32)Transmittance.GetResourceID();

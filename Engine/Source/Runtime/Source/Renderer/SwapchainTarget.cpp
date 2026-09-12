@@ -25,7 +25,11 @@ namespace Lumina::RHI
         if (IsValid(Swapchain))
         {
             // Recording is synchronous, so only submitted work can still name these images.
-            WaitDeviceIdle();
+            // Present fences already drain this swapchain, so only the fallback path needs the idle.
+            if (!SupportsSwapchainMaintenance1())
+            {
+                WaitDeviceIdle();
+            }
             Retire(Swapchain);
         }
         else if (IsValid(Surface))

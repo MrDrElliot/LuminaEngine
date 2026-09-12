@@ -3,12 +3,14 @@
 #include "GlobalRHI.slang"
 
 // The deferred GBuffer contract -- nothing else may define this layout; a drifted channel silently
-// reinterprets every surface. FULL at 20 B/pixel, so clearcoat BORROWS SelfShadow and Specular.
+// reinterprets every surface. FULL at 16 B/pixel, so clearcoat BORROWS SelfShadow and Specular.
 
-// Flags byte (GBufferC.a): bit 0 = receive shadow, bits 1-3 = shading model, bits 4-7 free.
+// Flags byte (GBufferC.a): bit 0 = receive shadow, bits 1-3 = shading model, bits 4-7 = foliage thickness.
 #define GBUFFER_FLAG_RECEIVE_SHADOW 1u
 #define GBUFFER_SHADING_MODEL_SHIFT 1u
 #define GBUFFER_SHADING_MODEL_MASK  7u
+#define GBUFFER_THICKNESS_SHIFT     4u
+#define GBUFFER_THICKNESS_MASK      15u
 
 // Three bits, so seven more models fit. Mirrored by EMaterialShadingModel (MaterialInterface.h) --
 // keep the values in lockstep.
@@ -17,6 +19,9 @@ static const uint ShadingModel_Unlit     = 1u;
 static const uint ShadingModel_Clearcoat = 2u;
 // Two-sided thin translucency for leaves and grass. BORROWS the emissive channels, so foliage is not emissive.
 static const uint ShadingModel_Foliage   = 3u;
+
+// r11g11b10 carries no alpha, so thickness rides the spare flag bits
+uint PackThickness01(float Thickness) { return (uint)(saturate(Thickness) * 15.0 + 0.5); }
 
 // Bindless indices of the four targets. The material pass fills these with STORAGE slots and the readers
 // with SAMPLED slots; the field order is the channel order above in both directions.
@@ -49,7 +54,7 @@ struct FGBufferData
 
     // Foliage model only, borrowed from the emissive channels.
     float3 Transmission;        // colour the leaf passes through, already the lit tint the artist wants
-    float  Thickness;           // 0 = opaque leaf, 1 = fully thin; scales the whole transmitted lobe
+    float  Thickness;           // 0 = opaque leaf, 1 = fully thin; scales the whole transmitted lobe, quantized to 4 bits
 };
 
 bool IsUnlit(FGBufferData G) { return G.ShadingModel == ShadingModel_Unlit; }
@@ -84,26 +89,24 @@ struct FGBufferPacked
 
 FGBufferPacked PackGBuffer(FGBufferData G)
 {
-    uint Flags = 0u;
-    Flags |= G.bReceiveShadow ? GBUFFER_FLAG_RECEIVE_SHADOW : 0u;
-    Flags |= (G.ShadingModel & GBUFFER_SHADING_MODEL_MASK) << GBUFFER_SHADING_MODEL_SHIFT;
-
     const bool bClearcoat = (G.ShadingModel == ShadingModel_Clearcoat);
     const bool bFoliage   = (G.ShadingModel == ShadingModel_Foliage);
 
+    uint Flags = 0u;
+    Flags |= G.bReceiveShadow ? GBUFFER_FLAG_RECEIVE_SHADOW : 0u;
+    Flags |= (G.ShadingModel & GBUFFER_SHADING_MODEL_MASK) << GBUFFER_SHADING_MODEL_SHIFT;
+    Flags |= (bFoliage ? PackThickness01(G.Thickness) : 0u) << GBUFFER_THICKNESS_SHIFT;
+
     // The borrowed channels. Written unconditionally from a select so the store stays branchless.
-    const float ChannelBA = bClearcoat ? saturate(G.Clearcoat)          : saturate(G.SelfShadow);
+    const float ChannelBB = bClearcoat ? saturate(G.Clearcoat)          : saturate(G.SelfShadow);
     const float ChannelCB = bClearcoat ? saturate(G.ClearcoatRoughness) : saturate(G.Specular);
     const float3 ChannelD = bFoliage   ? saturate(G.Transmission)       : max(G.Emissive, float3(0.0, 0.0, 0.0));
-    const float ChannelDA = bFoliage   ? saturate(G.Thickness)          : 0.0;
 
     FGBufferPacked P;
     P.A = float4(saturate(G.BaseColor), saturate(G.AmbientOcclusion));
-    // Not normalized on store: the material pass already normalizes, and fp16 keeps it unit to well
-    // within what the BRDF can distinguish.
-    P.B = float4(G.WorldNormal, ChannelBA);
+    P.B = float4(OctEncode01(G.WorldNormal), ChannelBB, 0.0);
     P.C = float4(saturate(G.Roughness), saturate(G.Metallic), ChannelCB, (float)Flags / 255.0);
-    P.D = float4(ChannelD, ChannelDA);
+    P.D = float4(ChannelD, 0.0);
     return P;
 }
 
@@ -114,8 +117,7 @@ FGBufferData UnpackGBuffer(float4 A, float4 B, float4 C, float4 D)
     FGBufferData G;
     G.BaseColor        = A.rgb;
     G.AmbientOcclusion = A.a;
-    G.WorldNormal      = normalize(B.xyz);
-    G.SelfShadow       = B.a;
+    G.WorldNormal      = OctDecode01(B.rg);
     G.Roughness        = C.r;
     G.Metallic         = C.g;
     G.bReceiveShadow   = (Flags & GBUFFER_FLAG_RECEIVE_SHADOW) != 0u;
@@ -126,13 +128,13 @@ FGBufferData UnpackGBuffer(float4 A, float4 B, float4 C, float4 D)
     const bool bClearcoat = (G.ShadingModel == ShadingModel_Clearcoat);
     const bool bFoliage   = (G.ShadingModel == ShadingModel_Foliage);
 
-    G.SelfShadow         = bClearcoat ? 1.0 : B.a;
+    G.SelfShadow         = bClearcoat ? 1.0 : B.b;
     G.Specular           = bClearcoat ? 0.5 : C.b;
-    G.Clearcoat          = bClearcoat ? B.a : 0.0;
+    G.Clearcoat          = bClearcoat ? B.b : 0.0;
     G.ClearcoatRoughness = bClearcoat ? C.b : 0.03;
     G.Emissive           = bFoliage ? float3(0.0, 0.0, 0.0) : D.rgb;
     G.Transmission       = bFoliage ? D.rgb : float3(0.0, 0.0, 0.0);
-    G.Thickness          = bFoliage ? D.a   : 0.0;
+    G.Thickness          = bFoliage ? (float)((Flags >> GBUFFER_THICKNESS_SHIFT) & GBUFFER_THICKNESS_MASK) / 15.0 : 0.0;
     return G;
 }
 

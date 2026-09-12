@@ -274,7 +274,10 @@ namespace Lumina
         DispatchCompute(CL, BoundsShader, PC, GroupsX, GroupsY, 1u);
 
         // Read by the cull, which is the next thing to run.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::CompileDrawCommands_Render(RHI::FCmdListH CL)
@@ -627,8 +630,8 @@ namespace Lumina
 
             DispatchCompute(CL, WorkShader, WPC, 1u, 1u, 1u);
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
-                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
         }
 
         struct FSkinningPushConstants
@@ -650,7 +653,10 @@ namespace Lumina
         DispatchComputeIndirect(CL, SkinShader, PC, GetSkinDispatchArgs());
 
         // Pre-skinned vertices feed every draw VS.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
     }
 
     void FDefaultSceneRenderer::BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
@@ -672,8 +678,8 @@ namespace Lumina
         const uint32 NumMips = Math::Min(MipCount, SpdMaxMips);
 
         RHI::CmdBarrier(CL,
-            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests,
-            RHI::EStageFlags::Compute);
+            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests, RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::DepthStencilWrite,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
 
@@ -725,7 +731,10 @@ namespace Lumina
 
         RHI::CmdDispatch(CL, MakeArgs(PC), DispatchX, DispatchY, 1);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::DepthPyramidPass(RHI::FCmdListH CL)
@@ -817,7 +826,10 @@ namespace Lumina
         if (!TotalsZeroed[Slot] && GetTotals())
         {
             RHI::CmdMemset(CL, GetTotals(), 0u);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             TotalsZeroed[Slot] = true;
         }
 
@@ -1036,9 +1048,9 @@ namespace Lumina
 
             DispatchCompute(CL, DrawPrefixShader, PC, 1u, 1u, 1u);
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
                 RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader |
-                RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer);
+                RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
         }
 
         {
@@ -1073,7 +1085,10 @@ namespace Lumina
                 RHI::CmdDispatchIndirect(CL, MakeArgs(BPC), GetBlockDispatchArgs());
 
                 // The block list has exactly one reader, and it is compute now in MeshletCullPass below.
-                RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             }
         }
 
@@ -1138,8 +1153,8 @@ namespace Lumina
 
         APC.bPost = 0u;
         DispatchCompute(CL, ArgsShader, APC, 1u, 1u, 1u);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
-            RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
 
         struct FMeshletCullPC
         {
@@ -1164,15 +1179,18 @@ namespace Lumina
         CPC.OutVisibility  = { GetInstanceVisibilityWrite(), InstanceVisibilityCapacity };
 
         DispatchComputeIndirect(CL, CullShader, CPC, GetMeshletCullDispatchArgs());
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
 
         // Turn what it appended into the slice every draw indexes, and the counts they draw from.
         APC.bPost = 1u;
         DispatchCompute(CL, ArgsShader, APC, PostGroups, 1u, 1u);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
             RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader |
-            RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::PixelShader);
+            RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
     }
 
     void FDefaultSceneRenderer::DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,

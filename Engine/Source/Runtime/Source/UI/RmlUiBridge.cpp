@@ -1152,7 +1152,10 @@ namespace Lumina::RmlUi
             if (Rendered == 0)
             {
                 // Order this frame's widget RT writes after the previous frame's sampling of them.
-                RHI::CmdBarrier(CmdList, RHI::EStageFlags::PixelShader, RHI::EStageFlags::RasterColorOut);
+                RHI::CmdBarrier(CmdList,
+                    RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::RasterColorOut,
+                    RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
             }
 
             State.Renderer->EndFrame();
@@ -1163,7 +1166,10 @@ namespace Lumina::RmlUi
         if (Rendered > 0)
         {
             // Widget RT writes visible to the scene's widget pass sampling them later this frame.
-            RHI::CmdBarrier(CmdList, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CmdList,
+                RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
         State.WidgetRenderCursor = (uint32)((State.WidgetRenderCursor + 1) % JobCount);
@@ -1236,9 +1242,15 @@ namespace Lumina::RmlUi
             }
             // Renderer uses LoadOp=Load; clear here so editor can composite its own background under a transparent canvas.
             const float Clear[4] = { E->ClearColor.x, E->ClearColor.y, E->ClearColor.z, E->ClearColor.w };
-            RHI::CmdBarrier(CmdList, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CmdList,
+                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdClearTexture(CmdList, E->Target, Clear);
-            RHI::CmdBarrier(CmdList, RHI::EStageFlags::Transfer, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CmdList,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
 
             // A resized preview target starts undefined, so loading it showed a frame of garbage.
             const FVector4 PreviewClear(0.0f, 0.0f, 0.0f, 0.0f);
@@ -1251,7 +1263,10 @@ namespace Lumina::RmlUi
         if (bAnyRendered)
         {
             // Preview RT writes visible to ImGui sampling them this frame.
-            RHI::CmdBarrier(CmdList, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CmdList,
+                RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
     }
 

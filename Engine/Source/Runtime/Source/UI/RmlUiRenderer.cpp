@@ -1002,10 +1002,16 @@ namespace Lumina
             Memory::Memcpy(VBStage.Cpu, BatchVertices.data(), VBytes);
             Memory::Memcpy(IBStage.Cpu, BatchIndices.data(),  IBytes);
 
-            RHI::CmdBarrier(CL, RHI::EStageFlags::VertexShader, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::VertexShader, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdMemcpy(CL, { Batch.VertexBuffer.Gpu, VBytes }, { VBStage.Gpu, VBytes });
             RHI::CmdMemcpy(CL, { Batch.IndexBuffer.Gpu, IBytes }, { IBStage.Gpu, IBytes });
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::VertexShader);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::VertexShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
 
             Batch.Draws      = Move(BatchDrawData);
             Batch.Stops      = Move(BatchStops);
@@ -1091,9 +1097,15 @@ namespace Lumina
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(CurrentSize.x, CurrentSize.y, 1);
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         RHI::CmdBlitTexture(CL, CurrentTarget, Slice, LayerTexture(DestLayer), Slice, RHI::EFilter::Nearest);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FRmlUiRenderer::CopyLayerToTexture(RHI::FCmdListH CL, uint32 SourceLayer, RHI::FTextureH Dest,
@@ -1114,7 +1126,10 @@ namespace Lumina
         Args.SamplerIndex = GRmlUiSamplerIndex;
         Args.SourceRect   = SourceRect;
 
-        RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         OpenPassSized(CL, Dest, true, DestSize);
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDraw(CL, RHI::CopyTransient(Args), 3, 1, 0, 0);
@@ -1283,7 +1298,10 @@ namespace Lumina
             const bool bClear = bBase && bTargetClearPending;
             const bool bSavedScissor = bPassScissorSet;
             bPassScissorSet = false;
-            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             OpenPass(CL, LayerTexture(Active), bClear);
             bPassScissorSet = bSavedScissor;
             if (bClear)
@@ -1490,7 +1508,10 @@ namespace Lumina
         }
 
         // The source was just written as a color attachment, so make those writes visible to sampling.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         OpenPass(CL, LayerTexture(DestLayer), !bBlend);
         RHI::CmdSetPipeline(CL, Pipeline);
@@ -2372,9 +2393,15 @@ namespace Lumina
             {
                 // Clear to transparent so the document breaks instead of showing the old asset.
                 const float Transparent[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                RHI::CmdBarrier(CmdList, RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
+                RHI::CmdBarrier(CmdList,
+                    RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::Transfer,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                 RHI::CmdClearTexture(CmdList, Tex.Managed.Texture, Transparent);
-                RHI::CmdBarrier(CmdList, RHI::EStageFlags::Transfer, RHI::EStageFlags::PixelShader);
+                RHI::CmdBarrier(CmdList,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::PixelShader,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
                 Tex.bBrushStale   = true;
                 Tex.bBrushCleared = true;
             }
@@ -2513,7 +2540,10 @@ namespace Lumina
         if (bAnyWrites)
         {
             // Brush RT writes visible to the UI pass sampling them.
-            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut, RHI::EStageFlags::PixelShader);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::PixelShader,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
     }
 }

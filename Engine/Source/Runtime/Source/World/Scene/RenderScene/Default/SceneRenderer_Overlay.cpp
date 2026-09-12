@@ -747,7 +747,10 @@ namespace Lumina
 
         if (bWritesDepth)
         {
-            RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::FragmentTests);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::FragmentTests,
+                RHI::EAccessFlags::DepthStencilRead | RHI::EAccessFlags::DepthStencilWrite);
         }
 
         RHI::CmdBeginRenderPass(CL, Pass);

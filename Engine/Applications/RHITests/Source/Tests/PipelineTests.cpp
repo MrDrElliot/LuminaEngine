@@ -80,12 +80,18 @@ namespace Lumina::RHITests
             RHI::CmdEndRenderPass(CL);
 
             RHI::Barriers::RasterToRead(CL);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
 
             RHI::FTextureSlice Slice;
             Slice.Extent = FUIntVector3(Size, Size, 1);
             RHI::CmdCopyTextureToMemory(CL, Target, Slice, Readback, Size);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
 
             Ctx.SubmitAndWait(CL);
 
@@ -148,9 +154,15 @@ namespace Lumina::RHITests
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatch(CL, Args, Count / 64, 1, 1);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         RHI::CmdMemcpy(CL, { Readback.Gpu, Bytes }, { Output.Gpu, Bytes });
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Host,
+            RHI::EAccessFlags::HostRead);
         Ctx.SubmitAndWait(CL);
 
         const auto* Words = Readback.CpuAs<const uint32>();
@@ -193,14 +205,23 @@ namespace Lumina::RHITests
 
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdWriteMemory(CL, { IndirectArgs.Gpu, sizeof(Dispatch) }, &Dispatch);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::IndirectArguments);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::IndirectRead);
 
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatchIndirect(CL, Args, IndirectArgs);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
 
         RHI::CmdMemcpy(CL, { Readback.Gpu, Groups * sizeof(uint32) }, { Output.Gpu, Groups * sizeof(uint32) });
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Host,
+            RHI::EAccessFlags::HostRead);
         Ctx.SubmitAndWait(CL);
 
         const auto* Words = Readback.CpuAs<const uint32>();
@@ -256,12 +277,18 @@ namespace Lumina::RHITests
         const RHI::FCmdListH CL = Ctx.OpenCL();
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDispatch(CL, Args, 1, 1, 1);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
 
         RHI::FTextureSlice Slice;
         Slice.Extent = FUIntVector3(Size, Size, 1);
         RHI::CmdCopyTextureToMemory(CL, Managed.Texture, Slice, Readback, Size);
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Host,
+            RHI::EAccessFlags::HostRead);
         Ctx.SubmitAndWait(CL);
 
         const auto* Pixels = Readback.CpuAs<const uint8>();
@@ -313,9 +340,15 @@ namespace Lumina::RHITests
             const RHI::FCmdListH CL = Ctx.OpenCL();
             RHI::CmdSetPipeline(CL, Pipeline);
             RHI::CmdDispatch(CL, Args, 1, 1, 1);
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Transfer);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Transfer,
+                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdMemcpy(CL, { Readback.Gpu, sizeof(uint32) }, { Output.Gpu, sizeof(uint32) });
-            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Host,
+                RHI::EAccessFlags::HostRead);
             Ctx.SubmitAndWait(CL);
 
             const auto* Word = Readback.CpuAs<const uint32>();
@@ -497,7 +530,10 @@ namespace Lumina::RHITests
         // A transfer write is illegal inside a render pass, so this has to complete before one opens.
         const RHI::FCmdListH Stage = Ctx.OpenCL();
         RHI::CmdWriteMemory(Stage, { IndirectArgs.Gpu, sizeof(DrawArgs) }, &DrawArgs);
-        RHI::CmdBarrier(Stage, RHI::EStageFlags::Transfer, RHI::EStageFlags::IndirectArguments);
+        RHI::CmdBarrier(Stage,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::IndirectRead);
         Ctx.SubmitAndWait(Stage);
 
         RenderAndCheckPixel(Ctx, "RHITests.MeshIndirectTarget", [&](RHI::FCmdListH CL)
