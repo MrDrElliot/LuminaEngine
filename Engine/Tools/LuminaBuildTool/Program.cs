@@ -133,6 +133,13 @@ public static class Program
               -Module=<name>            Rank within one module only
               -All                      Include toolchain and SDK headers
 
+            Clean options (with no target, whole trees are cleaned rather than one target):
+              -Full                     Also delete Binaries and .sln files, and the engine tree
+                                        alongside the project when -Project is given
+              -Regenerate               Rewrite both IDE workspaces once every delete succeeded
+            -DryRun lists what would go instead. A delete an open IDE is blocking fails the command,
+            because a half-cleaned tree regenerates against stale output.
+
             Options:
               -Platform=<name>          Windows64 | Linux64 (default: host platform)
               -Configuration=<name>     Debug | Development | Shipping (default: Development)
