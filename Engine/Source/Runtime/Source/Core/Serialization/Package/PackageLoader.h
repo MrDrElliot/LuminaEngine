@@ -4,6 +4,7 @@
 #include "Memory/Memory.h"
 #include "Memory/SmartPtr.h"
 #include "Core/Templates/LuminaTemplate.h"
+#include "PackageNameTable.h"
 
 namespace Lumina
 {
@@ -47,6 +48,12 @@ namespace Lumina
         virtual FArchive& operator<<(CObject*& Value) override;
         virtual FArchive& operator<<(FObjectHandle& Value) override;
 
+        // names come back as slots in the package's table, older files carry text
+        virtual FArchive& operator<<(FName& Value) override;
+
+        // held, not borrowed, so a concurrent save cannot replace it under a read in flight
+        void SetNameTable(TSharedPtr<const FPackageNameTable> InNames) { Names = Move(InNames); }
+
         // Mirrors FPackageSaver, since FTextureSourceFile picks its inline or bulk layout from this answer on read too.
         bool SupportsBulkData() const override { return true; }
 
@@ -55,5 +62,6 @@ namespace Lumina
         // Owns the read, not the bytes; the shared reference is what keeps them alive.
         TSharedPtr<FPackageFileBytes> Bytes;
         CPackage* Package;
+        TSharedPtr<const FPackageNameTable> Names;
     };
 }

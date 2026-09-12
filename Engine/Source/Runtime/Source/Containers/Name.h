@@ -71,6 +71,14 @@ namespace Lumina
         /** Same base name with the numeric suffix stripped. */
         FName GetBaseName() const { return FName(Index); }
 
+        // rebuilds a numbered name from parts stored separately, only valid where HasNumber() was true
+        static FName FromIndexAndNumber(uint32 InIndex, uint32 InExternalNumber)
+        {
+            FName Result(InIndex);
+            Result.Number = InExternalNumber + 1;
+            return Result;
+        }
+
         explicit operator uint32() const { return Index; }
 
         /**

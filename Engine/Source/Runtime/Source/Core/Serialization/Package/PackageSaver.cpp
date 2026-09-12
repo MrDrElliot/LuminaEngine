@@ -2,6 +2,7 @@
 #include "PackageSaver.h"
 
 #include "Core/Object/Package/Package.h"
+#include "Core/Versioning/CoreVersion.h"
 
 namespace Lumina
 {
@@ -48,6 +49,18 @@ namespace Lumina
             return FSaveReferenceBuilderArchive::operator<<(Object);
         }
 
+        return *this;
+    }
+
+    FArchive& FPackageSaver::operator<<(FName& Value)
+    {
+        // mirrors FPackageLoader, so a version-pinned save round-trips through the path that reads it
+        if (GetFileVersion() < (int32)ELuminaEngineVersion::PACKAGE_NAME_TABLE)
+        {
+            return FArchive::operator<<(Value);
+        }
+
+        SerializePackageName(*this, Value, &NameMap, nullptr);
         return *this;
     }
 

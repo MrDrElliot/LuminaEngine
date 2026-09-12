@@ -2,6 +2,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/Archiver.h"
+#include "PackageNameTable.h"
 
 namespace Lumina
 {
@@ -68,6 +69,13 @@ namespace Lumina
         virtual FArchive& operator<<(CObject*& Value) override;
         virtual FArchive& operator<<(FObjectHandle& Value) override;
 
+        // every name in the stream is a slot in the package's table rather than inline text
+        virtual FArchive& operator<<(FName& Value) override;
+
+        // the table itself, written after everything that refers to it and located from the header
+        const FPackageNameMap& GetNameMap() const { return NameMap; }
+        void SerializeNameTable() { NameMap.Serialize(*this); }
+
         /** Folds the soft target's GUID into the ImportTable as a Soft edge;
          *  a GUID already present as a hard import keeps the hard slot. */
         virtual void RegisterSoftAssetReference(const FGuid& AssetGUID) override;
@@ -94,6 +102,7 @@ namespace Lumina
     private:
 
         CPackage*                   Package;
+        FPackageNameMap             NameMap;
         THashMap<CObject*, uint32>  ObjectToIndexMap;
         THashSet<FGuid>             SoftReferencedGUIDs;
         TVector<uint8>              BulkBytes;

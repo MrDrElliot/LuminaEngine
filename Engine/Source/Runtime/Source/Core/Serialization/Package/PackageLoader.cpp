@@ -3,6 +3,7 @@
 
 #include "Core/Object/ObjectArray.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Versioning/CoreVersion.h"
 
 namespace Lumina
 {
@@ -15,6 +16,17 @@ namespace Lumina
         Value = Package->IndexToObject(Index);
         
         return Ar;
+    }
+
+    FArchive& FPackageLoader::operator<<(FName& Value)
+    {
+        if (Names == nullptr || GetFileVersion() < (int32)ELuminaEngineVersion::PACKAGE_NAME_TABLE)
+        {
+            return FArchive::operator<<(Value);
+        }
+
+        SerializePackageName(*this, Value, nullptr, Names.get());
+        return *this;
     }
 
     FArchive& FPackageLoader::operator<<(FObjectHandle& Value)

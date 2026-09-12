@@ -9,6 +9,7 @@
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Core/Serialization/Package/PackageLoader.h"
 #include "Core/Serialization/Package/PackageSaver.h"
+#include "Core/Versioning/CoreVersion.h"
 #include "Memory/SmartPtr.h"
 
 namespace Lumina
@@ -86,6 +87,8 @@ namespace Lumina
         int32 ExportCount;
         int64 ObjectDataOffset;
         int64 ThumbnailDataOffset;
+        // written last, since names are only known once the rest of the package has been serialized
+        int64 NameTableOffset = 0;
 
         friend FArchive& operator << (FArchive& Ar, FPackageHeader& Data)
         {
@@ -97,6 +100,12 @@ namespace Lumina
             Ar << Data.ExportCount;
             Ar << Data.ObjectDataOffset;
             Ar << Data.ThumbnailDataOffset;
+
+            // branches on the version just read, so this works before the archive carries it
+            if (Data.Version >= (int32)ELuminaEngineVersion::PACKAGE_NAME_TABLE)
+            {
+                Ar << Data.NameTableOffset;
+            }
 
             return Ar;
         }
@@ -167,6 +176,9 @@ namespace Lumina
         
         int32 Index;
     };
+
+    // test only, pins the version SavePackage stamps and encodes at, 0 restores the current version
+    RUNTIME_API void SetForcedPackageSaveVersion(int32 Version);
 
     class CPackage : public CObject
     {
@@ -245,8 +257,11 @@ namespace Lumina
 
         void CreateLoader(const TVector<uint8>& FileBinary);
 
-        // The cached bytes and the version to stamp a reader with, re-read on demand, null for a transient package.
-        TSharedPtr<FPackageFileBytes> AcquireLoaderBytes(int32& OutFileVersion);
+        // the bytes, the version to stamp a reader with and the table to resolve its slots, re-read on demand
+        TSharedPtr<FPackageFileBytes> AcquireLoaderBytes(int32& OutFileVersion, TSharedPtr<const FPackageNameTable>& OutNames);
+
+        // leaves Ar where it found it, and reports an empty table for a file whose names are inline text
+        RUNTIME_API static bool ReadNameTable(FArchive& Ar, const FPackageHeader& Header, FPackageNameTable& OutNames);
 
         RUNTIME_API void BuildSaveContext(FSaveContext& Context);
 
@@ -347,6 +362,9 @@ namespace Lumina
 
         // Version every reader over LoaderBytes is stamped with, or an older asset misparses on reload.
         int32                           LoaderFileVersion = 0;
+
+        // LoaderBytes' own table, parsed on first use, shared so a reader mid-flight keeps the one it started with
+        TSharedPtr<FPackageNameTable>   LoaderNames;
 
         // Guards publication of LoaderBytes only. Reads run outside it, one cursor each.
         mutable FMutex                  LoaderBytesMutex;

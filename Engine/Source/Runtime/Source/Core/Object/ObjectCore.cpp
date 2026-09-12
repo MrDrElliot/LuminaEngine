@@ -257,59 +257,68 @@ namespace Lumina
         }
     }
 
-    bool IsValueValidForType(double Value, const FName& TypeName)
+    EPropertyTypeFlags PropertyTypeFromName(const FName& TypeName)
     {
-        if (TypeName == "Int8Property")
+        // only reached by a pre-PACKAGE_NAME_TABLE load, so the table is built on the first such file
+        struct FNames
         {
-            return Value >= INT8_MIN && Value <= INT8_MAX;
-        }
-        if (TypeName == "Int16Property")
+            FNames()
+            {
+                for (size_t Index = 0; Index < std::size(Entries); ++Index)
+                {
+                    Entries[Index] = FName(PropertyTypeFlagNames[Index]);
+                }
+            }
+
+            FName Entries[(size_t)EPropertyTypeFlags::Count];
+        };
+        static const FNames Table;
+
+        for (size_t Index = 0; Index < std::size(Table.Entries); ++Index)
         {
-            return Value >= INT16_MIN && Value <= INT16_MAX;
+            if (Table.Entries[Index] == TypeName)
+            {
+                return (EPropertyTypeFlags)Index;
+            }
         }
-        if (TypeName == "IntProperty")
-        {
-            return Value >= INT32_MIN && Value <= INT32_MAX;
-        }
-        if (TypeName == "Int64Property")
-        {
-            return Value >= (double)INT64_MIN && Value <= (double)INT64_MAX;
-        }
-        if (TypeName == "UInt8Property")
-        {
-            return Value >= 0 && Value <= UINT8_MAX;
-        }
-        if (TypeName == "UInt16Property")
-        {
-            return Value >= 0 && Value <= UINT16_MAX;
-        }
-        if (TypeName == "UInt32Property")
-        {
-            return Value >= 0 && Value <= UINT32_MAX;
-        }
-        if (TypeName == "UInt64Property")
-        {
-            return Value >= 0 && Value <= (double)UINT64_MAX;
-        }
-        if (TypeName == "FloatProperty" || TypeName == "DoubleProperty")
-        {
-            return true;
-        }
-        return false;
+
+        return EPropertyTypeFlags::None;
     }
 
-    bool IsPropertyNumeric(const FName& Type)
+    bool IsValueValidForType(double Value, EPropertyTypeFlags Type)
     {
-        return Type == "Int8Property" ||
-            Type == "Int16Property" ||
-            Type == "Int32Property" ||
-            Type == "Int64Property" ||
-            Type == "UInt8Property" ||
-            Type == "UInt16Property" ||
-            Type == "UInt32Property" ||
-            Type == "UInt64Property" ||
-            Type == "FloatProperty" || 
-            Type == "DoubleProperty";
+        switch (Type)
+        {
+        case EPropertyTypeFlags::Int8:   return Value >= INT8_MIN && Value <= INT8_MAX;
+        case EPropertyTypeFlags::Int16:  return Value >= INT16_MIN && Value <= INT16_MAX;
+        case EPropertyTypeFlags::Int32:  return Value >= INT32_MIN && Value <= INT32_MAX;
+        case EPropertyTypeFlags::Int64:  return Value >= (double)INT64_MIN && Value <= (double)INT64_MAX;
+        case EPropertyTypeFlags::UInt8:  return Value >= 0 && Value <= UINT8_MAX;
+        case EPropertyTypeFlags::UInt16: return Value >= 0 && Value <= UINT16_MAX;
+        case EPropertyTypeFlags::UInt32: return Value >= 0 && Value <= UINT32_MAX;
+        case EPropertyTypeFlags::UInt64: return Value >= 0 && Value <= (double)UINT64_MAX;
+        case EPropertyTypeFlags::Float:
+        case EPropertyTypeFlags::Double: return true;
+        default:                         return false;
+        }
+    }
+
+    bool IsPropertyNumeric(EPropertyTypeFlags Type)
+    {
+        switch (Type)
+        {
+        case EPropertyTypeFlags::Int8:
+        case EPropertyTypeFlags::Int16:
+        case EPropertyTypeFlags::Int32:
+        case EPropertyTypeFlags::Int64:
+        case EPropertyTypeFlags::UInt8:
+        case EPropertyTypeFlags::UInt16:
+        case EPropertyTypeFlags::UInt32:
+        case EPropertyTypeFlags::UInt64:
+        case EPropertyTypeFlags::Float:
+        case EPropertyTypeFlags::Double: return true;
+        default:                         return false;
+        }
     }
 
     // The emitter's table is a static constexpr array that outlives the binary, so it is pointed at, not copied.

@@ -776,7 +776,7 @@ namespace Lumina
         FName PackageFileName = VFS::FileName(Path, true);
 
         FPackageHeader Header;
-        FMemoryReader Reader(Bytes);
+        FPackageContainerReader Reader(Bytes);
         Reader << Header;
 
         if (Header.Tag != PACKAGE_FILE_TAG)
@@ -794,6 +794,16 @@ namespace Lumina
         }
 
         Reader.SetFileVersion(Header.Version);
+
+        // the export and import tables name things through slots, so the table comes first
+        FPackageNameTable Names;
+        if (!CPackage::ReadNameTable(Reader, Header, Names))
+        {
+            LOG_ERROR("AssetRegistry: {} has an unreadable name table", Path);
+            RecordFailedAsset(Path);
+            return;
+        }
+        Reader.SetNameTable(&Names);
 
         if (Header.ExportTableOffset < 0 || static_cast<size_t>(Header.ExportTableOffset) > Bytes.size())
         {

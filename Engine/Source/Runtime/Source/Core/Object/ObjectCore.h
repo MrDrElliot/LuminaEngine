@@ -197,8 +197,12 @@ namespace Lumina
     
     RUNTIME_API EPropertyTypeFlags PropertyStringToType(FName String);
     
-    RUNTIME_API bool IsValueValidForType(double Value, const FName& TypeName);
-    RUNTIME_API bool IsPropertyNumeric(const FName& Type);
+    // the kind a name spells, for a file that stored types as text, None if it spells nothing
+    RUNTIME_API EPropertyTypeFlags PropertyTypeFromName(const FName& TypeName);
+
+    // whether Value survives a conversion into Type, which is what gates a numeric property's migration
+    RUNTIME_API bool IsValueValidForType(double Value, EPropertyTypeFlags Type);
+    RUNTIME_API bool IsPropertyNumeric(EPropertyTypeFlags Type);
     
     template <typename T>
     struct TRegistrationInfo

@@ -167,19 +167,22 @@ namespace Lumina
         OwnProperties.push_back(Property);
     }
     
-    static bool ReadNumericValue(FArchive& Ar, const FName& TypeName, double& OutValue)
+    static bool ReadNumericValue(FArchive& Ar, EPropertyTypeFlags Type, double& OutValue)
     {
-        if (TypeName == "Int8Property") { int8 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "Int16Property") { int16 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "Int32Property") { int32 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "Int64Property") { int64 v; Ar << v; OutValue = (double)v; return true; }
-        if (TypeName == "UInt8Property") { uint8 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "UInt16Property") { uint16 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "UInt32Property") { uint32 v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "UInt64Property") { uint64 v; Ar << v; OutValue = (double)v; return true; }
-        if (TypeName == "FloatProperty") { float v; Ar << v; OutValue = v; return true; }
-        if (TypeName == "DoubleProperty") { Ar << OutValue; return true; }
-        return false;
+        switch (Type)
+        {
+        case EPropertyTypeFlags::Int8:   { int8   v; Ar << v; OutValue = v; return true; }
+        case EPropertyTypeFlags::Int16:  { int16  v; Ar << v; OutValue = v; return true; }
+        case EPropertyTypeFlags::Int32:  { int32  v; Ar << v; OutValue = v; return true; }
+        case EPropertyTypeFlags::Int64:  { int64  v; Ar << v; OutValue = (double)v; return true; }
+        case EPropertyTypeFlags::UInt8:  { uint8  v; Ar << v; OutValue = v; return true; }
+        case EPropertyTypeFlags::UInt16: { uint16 v; Ar << v; OutValue = v; return true; }
+        case EPropertyTypeFlags::UInt32: { uint32 v; Ar << v; OutValue = v; return true; }
+        case EPropertyTypeFlags::UInt64: { uint64 v; Ar << v; OutValue = (double)v; return true; }
+        case EPropertyTypeFlags::Float:  { float  v; Ar << v; OutValue = v; return true; }
+        case EPropertyTypeFlags::Double: { Ar << OutValue; return true; }
+        default:                         return false;
+        }
     }
     
     void CStruct::SerializeTaggedProperties(FArchive& Ar, void* Data) const
@@ -209,16 +212,14 @@ namespace Lumina
                 }
 
                 FPropertyTag PropertyTag;
-                PropertyTag.Type = Current->GetTypeName();
+                PropertyTag.Type = Current->GetType();
                 PropertyTag.Name = Current->GetPropertyName();
 
-                // Placeholder tag; rewritten with final size after serialize.
+                // placeholder rewritten with the final size, so nothing in the tag may be variable length
                 int64 TagPosition = Ar.Tell();
                 Ar << PropertyTag;
                 int64 AfterTagPosition = Ar.Tell();
-            
-                PropertyTag.Offset = AfterTagPosition;
-                
+
                 void* ValuePtr = Current->GetValuePtr<void>(Data);
 
                 Current->Serialize(Ar, ValuePtr);
@@ -323,35 +324,35 @@ namespace Lumina
                         continue;
                     }
                     
-                    if (FoundProperty->GetTypeName() == Tag.Type)
+                    if (FoundProperty->GetType() == Tag.Type)
                     {
                         void* ValuePtr = FoundProperty->GetValuePtr<void>(Data);
                         FoundProperty->Serialize(Ar, ValuePtr);
                     }
-                    else if (IsPropertyNumeric(FoundProperty->GetTypeName()) && IsPropertyNumeric(Tag.Type))
+                    else if (IsPropertyNumeric(FoundProperty->GetType()) && IsPropertyNumeric(Tag.Type))
                     {
                         double OldValue = 0.0;
                         if (!ReadNumericValue(Ar, Tag.Type, OldValue))
                         {
                             LOG_ERROR("Failed to read numeric value for property '{}'", Tag.Name);
                         }
-                        else if (IsValueValidForType(OldValue, FoundProperty->GetTypeName()))
+                        else if (IsValueValidForType(OldValue, FoundProperty->GetType()))
                         {
                             FoundProperty->SetValue(Data, OldValue);
-                                            
-                            LOG_WARN("Property '{}' type changed from '{}' to '{}', converted value to new type.", 
-                            Tag.Name, Tag.Type, FoundProperty->GetTypeName());
+
+                            LOG_WARN("Property '{}' type changed from '{}' to '{}', converted value to new type.",
+                            Tag.Name, PropertyTypeToString(Tag.Type), PropertyTypeToString(FoundProperty->GetType()));
                         }
                         else
                         {
-                            LOG_WARN("Property '{}' type changed from '{}' to '{}', but the value cannot fit in the new type.", 
-                            Tag.Name, Tag.Type, FoundProperty->GetTypeName());
+                            LOG_WARN("Property '{}' type changed from '{}' to '{}', but the value cannot fit in the new type.",
+                            Tag.Name, PropertyTypeToString(Tag.Type), PropertyTypeToString(FoundProperty->GetType()));
                         }
                     }
                 }
                 else
                 {
-                    LOG_WARN("Property '{}' of type '{}' not found in struct, skipping", Tag.Name.ToString(), Tag.Type.ToString());
+                    LOG_WARN("Property '{}' of type '{}' not found in struct, skipping", Tag.Name.ToString(), PropertyTypeToString(Tag.Type));
                 }
         
                 Ar.Seek(DataStartPos + Tag.Size);
