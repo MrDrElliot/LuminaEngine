@@ -5,6 +5,7 @@
 #include "Containers/String.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -230,6 +231,42 @@ LUMINA_DOTNET_EXPORT(void*, FindClassByName)(const char* Name, int Len)
         return nullptr;
     }
     return FindObject<CClass>(FName(FStringView(Name, (size_t)Len)));
+}
+
+/**
+ * Constructs a CObject from script, the managed face of NewObject.
+ *
+ * Package null means the engine transient package, so an object a script makes is not accidentally part of
+ * anything that gets saved. Name empty means the class picks a unique one, exactly as native construction does.
+ *
+ * The object comes back with no strong reference held on its behalf, which is what native construction does
+ * too: the caller is expected to store it somewhere that owns it, a [Property] holding a TObjectPtr being the
+ * usual answer. Nothing collects it in the meantime, since lifetime here is refcounting rather than a GC.
+ */
+LUMINA_DOTNET_EXPORT(void*, NewObject)(void* Class, void* Package, const char* Name, int NameLen)
+{
+    CClass* ObjectClass = static_cast<CClass*>(Class);
+    if (ObjectClass == nullptr)
+    {
+        LOG_ERROR("NewObject from script was given no class");
+        return nullptr;
+    }
+
+    // Defensive: every generated class carries a factory, but a hand-written one may omit DEFINE_CLASS_FACTORY,
+    // and EmplaceInstance would assert on it rather than saying which class was at fault.
+    if (ObjectClass->FactoryFunction == nullptr)
+    {
+        LOG_ERROR("NewObject from script: '{}' cannot be instantiated, it has no factory", ObjectClass->GetName());
+        return nullptr;
+    }
+
+    CPackage* Outer = (Package != nullptr) ? static_cast<CPackage*>(Package) : CPackage::GetTransientPackage();
+
+    const FName ObjectName = (Name != nullptr && NameLen > 0)
+        ? FName(FStringView(Name, (size_t)NameLen))
+        : NAME_None;
+
+    return NewObject(ObjectClass, Outer, ObjectName, FGuid::New());
 }
 
 LUMINA_DOTNET_EXPORT(int32, ClassGetName)(void* Class, char* Buf, int Cap)

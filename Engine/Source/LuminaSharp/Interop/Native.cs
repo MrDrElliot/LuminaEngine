@@ -55,6 +55,7 @@ public static unsafe partial class Native
     [NativeCall] public static partial IntPtr PropGetClass(IntPtr C, IntPtr Prop);
     [NativeCall] public static partial void PropSetClass(IntPtr C, IntPtr Prop, IntPtr Class);
     [NativeCall] public static partial IntPtr FindClassByName(string Name);
+    [NativeCall] public static partial IntPtr NewObject(IntPtr Class, IntPtr Package, string Name);
     [NativeCall] public static partial string ClassGetName(IntPtr Class);
     [NativeCall] public static partial IntPtr ClassGetDefaultObject(IntPtr Class);
 
