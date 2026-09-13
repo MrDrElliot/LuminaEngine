@@ -29,6 +29,8 @@ namespace Lumina::Scripting
 
             void SeekTo(const uint8* Position) { P = Position < End ? Position : End; }
 
+            size_t Remaining() const { return P < End ? (size_t)(End - P) : 0; }
+
             // Returning without advancing would desync the cursor and silently misread the tail.
             FString Str()
             {
@@ -369,6 +371,27 @@ namespace Lumina::Scripting
             return Field;
         }
 
+        // Its parameters are ordinary fields, so a call frame is described by exactly what describes a member.
+        bool ReadFunction(FBlobReader& R, FScriptExportFunction& Out)
+        {
+            FRecordScope Scope(R, EScriptSchemaRecord::Function);
+            if (R.bError)
+            {
+                return false;
+            }
+
+            Out.Name = FName(R.Str());
+            Out.ReturnIndex = R.I32();
+
+            const int32 Count = R.I32();
+            for (int32 i = 0; i < Count && !R.bError; ++i)
+            {
+                Out.Params.push_back(ReadField(R, /*bTopLevel*/ false));
+            }
+
+            return !R.bError && !Out.Name.IsNone();
+        }
+
         bool ParseSchemaBlobInternal(const TVector<uint8>& Blob, FScriptExportSchema& OutSchema,
             TVector<FScriptPropertyEntry>& OutDefaults)
         {
@@ -405,6 +428,21 @@ namespace Lumina::Scripting
 
                 OutSchema.Fields.push_back(std::move(Field));
                 OutDefaults.push_back(std::move(Entry));
+            }
+
+            // Written after the fields, so a reader that stopped at their count simply never sees them and a
+            // buffer from before functions existed leaves the list empty rather than failing.
+            if (!R.bError && R.Remaining() > 0)
+            {
+                const int32 FunctionCount = R.I32();
+                for (int32 i = 0; i < FunctionCount && !R.bError; ++i)
+                {
+                    FScriptExportFunction Function;
+                    if (ReadFunction(R, Function))
+                    {
+                        OutSchema.Functions.push_back(std::move(Function));
+                    }
+                }
             }
 
             if (R.bError)

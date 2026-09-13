@@ -61,7 +61,7 @@ namespace Lumina
             return;
         }
 
-        Thunk(Context, Frame);
+        Thunk(*this, Context, Frame);
     }
 
     FFunction* FFunctionBuilder::Build(FPropertyArena& Arena, CStruct* Owner, const FFunctionParams& Params,

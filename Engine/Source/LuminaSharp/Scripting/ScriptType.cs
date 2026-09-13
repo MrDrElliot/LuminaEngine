@@ -116,6 +116,25 @@ public sealed class ScriptType
 }
 
 /// <summary>One serializable member of a script type, with name, accessors, type shape, and editor metadata.</summary>
+/// <summary>One [ScriptFunction] method: its name and the fields of its call frame.</summary>
+public sealed class ScriptFunction
+{
+    public ScriptFunction(string Name, IReadOnlyList<ScriptProperty> Params, int ReturnIndex)
+    {
+        this.Name = Name;
+        this.Params = Params;
+        this.ReturnIndex = ReturnIndex;
+    }
+
+    public string Name { get; }
+
+    /// <summary>Arguments in declaration order, the return value last when there is one.</summary>
+    public IReadOnlyList<ScriptProperty> Params { get; }
+
+    /// <summary>Index into Params of the return value, or -1 for a function that returns nothing.</summary>
+    public int ReturnIndex { get; }
+}
+
 public sealed class ScriptProperty
 {
     public string Name { get; init; } = "";

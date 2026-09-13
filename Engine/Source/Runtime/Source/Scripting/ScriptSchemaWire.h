@@ -38,5 +38,6 @@ namespace Lumina::Scripting
         Meta,           ///< the editor-facing hints on a field, which is the bag that grows most
         Type,           ///< one FScriptExportType node, recursive
         Candidate,      ///< one instanced-struct candidate
+        Function,       ///< one [ScriptFunction]: its name, its parameters as fields, and its return index
     };
 }

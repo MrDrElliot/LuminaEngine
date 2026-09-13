@@ -29,3 +29,15 @@ namespace Lumina::Scripting
                                              const FScriptExportSchema& ParamSchema, int32 ReturnIndex,
                                              FFunction::FNativeFuncPtr Thunk);
 }
+
+namespace Lumina::Scripting
+{
+    /**
+     * The thunk every script-declared function is minted with.
+     *
+     * One thunk serves all of them, which is why FFunction hands its thunk the function being dispatched:
+     * it forwards the object's managed instance, the function and the frame to a single managed entry point,
+     * and the managed side reads its arguments back out of the frame through the parameters themselves.
+     */
+    RUNTIME_API void ScriptFunctionThunk(const FFunction& Function, void* Context, void* Frame);
+}

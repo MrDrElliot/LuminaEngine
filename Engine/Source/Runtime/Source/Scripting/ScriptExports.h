@@ -127,6 +127,18 @@ namespace Lumina::Scripting
         TVector<FScriptExportInstanceCandidate>     Candidates;  ///< InstancedStruct kind, the selectable concrete types.
     };
 
+    /** One [ScriptFunction] method: its name, and its parameters as the fields of its call frame. */
+    struct FScriptExportFunction
+    {
+        FName                        Name;
+
+        /** Arguments in declaration order, with the return value last when there is one. */
+        TVector<FScriptExportField>  Params;
+
+        /** Index into Params of the return value, or -1 for a function that returns nothing. */
+        int32                        ReturnIndex = -1;
+    };
+
     struct FScriptExportSchema
     {
         TVector<FScriptExportField> Fields;
@@ -142,6 +154,10 @@ namespace Lumina::Scripting
         /** Stable identity of the C# type this schema came from, independent of the minted object's name.
          *  Empty for the schemas that are not published data types. */
         FName ScriptTypeName;
+
+        /** Functions the type declared with [ScriptFunction], each describing its own call frame. Written
+         *  after the fields so a reader that only knows about fields stops at their count and ignores these. */
+        TVector<FScriptExportFunction> Functions;
 
         bool IsValid() const { return !Fields.empty(); }
     };

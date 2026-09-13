@@ -680,6 +680,7 @@ internal sealed class TypeDescription
     public Type Type { get; }
     public IReadOnlyList<ScriptProperty> Properties { get; private set; } = Array.Empty<ScriptProperty>();
     public IReadOnlyList<ScriptButton> Buttons { get; private set; } = Array.Empty<ScriptButton>();
+    public IReadOnlyList<ScriptFunction> Functions { get; private set; } = Array.Empty<ScriptFunction>();
     private IReadOnlyList<ScriptProperty> InputBindings = Array.Empty<ScriptProperty>();
     public bool HasInputBindings { get; private set; }
 
@@ -692,8 +693,56 @@ internal sealed class TypeDescription
     {
         Properties = Library.BuildMembers(Type, 0, new HashSet<Type>());
         Buttons = ComputeButtons(Type);
+        Functions = ComputeFunctions(Type, Library);
         InputBindings = ComputeInputBindings(Properties);
         HasInputBindings = InputBindings.Count > 0;
+    }
+
+    // The [ScriptFunction] methods, described the same way a property is: a parameter is a field of the call
+    // frame, so it goes through the same type resolver and needs no description of its own.
+    private static IReadOnlyList<ScriptFunction> ComputeFunctions(Type Type, TypeLibrary Library)
+    {
+        List<ScriptFunction>? Found = null;
+
+        foreach (MethodInfo Method in Type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        {
+            if (Method.GetCustomAttribute<ScriptFunctionAttribute>() == null)
+            {
+                continue;
+            }
+
+            if (Method.IsGenericMethod)
+            {
+                Debug.LogError($"[ScriptFunction] {Type.Name}.{Method.Name} is generic, which has no single call frame; it is not reflected.");
+                continue;
+            }
+
+            List<ScriptProperty> Params = new();
+            foreach (ParameterInfo Parameter in Method.GetParameters())
+            {
+                Params.Add(new ScriptProperty
+                {
+                    Name = Parameter.Name ?? $"Arg{Params.Count}",
+                    Type = Library.ResolveType(Parameter.ParameterType, 0, new HashSet<Type>()),
+                });
+            }
+
+            int ReturnIndex = -1;
+            if (Method.ReturnType != typeof(void))
+            {
+                ReturnIndex = Params.Count;
+                Params.Add(new ScriptProperty
+                {
+                    Name = "ReturnValue",
+                    Type = Library.ResolveType(Method.ReturnType, 0, new HashSet<Type>()),
+                });
+            }
+
+            Found ??= new List<ScriptFunction>();
+            Found.Add(new ScriptFunction(Method.Name, Params, ReturnIndex));
+        }
+
+        return (IReadOnlyList<ScriptFunction>?)Found ?? Array.Empty<ScriptFunction>();
     }
 
     // The [Property] members that are input bindings, gathered once per type so the per-frame poll is a

@@ -20,6 +20,33 @@ public static class NativeObjectMarshal
         return Object == IntPtr.Zero ? null : Wrapper<T>.ForObject(Object);
     }
 
+    // The same wrapper for a type only known at runtime, which is what a reflective call has. The generic
+    // instantiation is cached, since resolving it per call would cost more than the call.
+    private static readonly global::System.Collections.Generic.Dictionary<Type, global::System.Reflection.MethodInfo> FromHandleByType = new();
+
+    /// <summary>The canonical wrapper, for a type resolved at runtime rather than named in source.</summary>
+    public static NativeObject? FromHandleOfType(IntPtr Object, Type Wanted)
+    {
+        if (Object == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        global::System.Reflection.MethodInfo? Made;
+        lock (FromHandleByType)
+        {
+            if (!FromHandleByType.TryGetValue(Wanted, out Made))
+            {
+                Made = typeof(NativeObjectMarshal)
+                    .GetMethod(nameof(FromHandle))!
+                    .MakeGenericMethod(Wanted);
+                FromHandleByType[Wanted] = Made;
+            }
+        }
+
+        return Made.Invoke(null, new object[] { Object }) as NativeObject;
+    }
+
     /// <summary>The native pointer behind a wrapper, or zero for null.</summary>
     public static IntPtr ToHandle(NativeObject? Value)
     {

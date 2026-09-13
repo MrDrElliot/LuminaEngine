@@ -124,7 +124,7 @@ namespace Lumina::Reflection
                 ? (Owner + "::" + Function->Name + "(" + Arguments + ")")
                 : ("((" + Owner + "*)Context)->" + Function->Name + "(" + Arguments + ")");
 
-            Writer.Linef("static void %s(void* Context, void* Frame)", Thunk.c_str());
+            Writer.Linef("static void %s(const Lumina::FFunction&, void* Context, void* Frame)", Thunk.c_str());
             Writer.Line("{");
             if (!Function->TopLevelParams.empty())
             {

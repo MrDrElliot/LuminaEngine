@@ -5,6 +5,8 @@
 #include "Containers/String.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/Class.h"
+#include "Core/Reflection/Type/Function.h"
+#include "Core/Templates/IntegerCompare.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
 #include "Core/Object/ObjectCore.h"
@@ -267,6 +269,47 @@ LUMINA_DOTNET_EXPORT(void*, NewObject)(void* Class, void* Package, const char* N
         : NAME_None;
 
     return NewObject(ObjectClass, Outer, ObjectName, FGuid::New());
+}
+
+//~ Reflected functions. The managed dispatcher walks these to read a call frame, which it can do with the
+//  property accessors above because a frame is a container like any other.
+
+LUMINA_DOTNET_EXPORT(int32, FunctionParamCount)(const void* Function)
+{
+    return Function ? (int32)static_cast<const FFunction*>(Function)->GetArguments().size() : 0;
+}
+
+LUMINA_DOTNET_EXPORT(const void*, FunctionParamAt)(const void* Function, int32 Index)
+{
+    if (Function == nullptr || Index < 0)
+    {
+        return nullptr;
+    }
+    const TSpan<FProperty* const> Arguments = static_cast<const FFunction*>(Function)->GetArguments();
+    return Cmp::Less(Index, Arguments.size()) ? Arguments[Index] : nullptr;
+}
+
+LUMINA_DOTNET_EXPORT(const void*, FunctionReturnParam)(const void* Function)
+{
+    return Function ? static_cast<const FFunction*>(Function)->GetReturnParam() : nullptr;
+}
+
+LUMINA_DOTNET_EXPORT(int32, FunctionGetName)(const void* Function, char* Buf, int Cap)
+{
+    if (Function == nullptr)
+    {
+        return 0;
+    }
+    const FName& Name = static_cast<const FFunction*>(Function)->GetFunctionName();
+    const char* S = Name.c_str();
+    const int L = S ? (int)Name.length() : 0;
+    if (S && Buf && Cap > 0)
+    {
+        const int Copy = L < Cap ? L : Cap - 1;
+        Memory::Memcpy(Buf, (void*)S, (size_t)Copy);
+        Buf[Copy] = '\0';
+    }
+    return L;
 }
 
 LUMINA_DOTNET_EXPORT(int32, ClassGetName)(void* Class, char* Buf, int Cap)

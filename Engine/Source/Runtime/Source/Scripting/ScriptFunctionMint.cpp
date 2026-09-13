@@ -4,6 +4,9 @@
 #include "Core/Object/ScriptClass.h"
 #include "Log/Log.h"
 #include "ScriptStruct.h"
+#include "ScriptableObject.h"
+#include "DotNet/DotNetHost.h"
+#include "Core/Object/Object.h"
 
 namespace Lumina::Scripting
 {
@@ -42,5 +45,43 @@ namespace Lumina::Scripting
         Class.AddFunction(Function);
 
         return Function;
+    }
+}
+
+namespace Lumina::Scripting
+{
+    void ScriptFunctionThunk(const FFunction& Function, void* Context, void* Frame)
+    {
+        CObject* Object = static_cast<CObject*>(Context);
+        if (Object == nullptr)
+        {
+            LOG_ERROR("Script function '{}' was invoked with no object to call it on", Function.GetFunctionName());
+            return;
+        }
+
+        // Resolved once; the host returns null until the assembly carrying it is up, so this keeps asking.
+        static void* Dispatcher = nullptr;
+        if (Dispatcher == nullptr)
+        {
+            Dispatcher = DotNet::ResolveManagedExport("__InvokeScriptFunction");
+        }
+
+        if (Dispatcher == nullptr)
+        {
+            LOG_ERROR("Script function '{}' cannot run: the managed dispatcher is not available",
+                Function.GetFunctionName());
+            return;
+        }
+
+        void* Instance = Scriptable::GetOrCreateInstance(Object);
+        if (Instance == nullptr)
+        {
+            LOG_ERROR("Script function '{}': '{}' has no managed instance to call it on",
+                Function.GetFunctionName(), Object->GetName());
+            return;
+        }
+
+        using FDispatch = void (*)(void*, const void*, void*);
+        reinterpret_cast<FDispatch>(Dispatcher)(Instance, &Function, Frame);
     }
 }

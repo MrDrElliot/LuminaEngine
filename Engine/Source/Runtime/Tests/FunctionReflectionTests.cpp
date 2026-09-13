@@ -94,19 +94,19 @@ namespace
         int32 ReturnValue;
     };
 
-    void Thunk_Double(void* Context, void* Frame)
+    void Thunk_Double(const FFunction&, void* Context, void* Frame)
     {
         FDouble_Parms& P = *(FDouble_Parms*)Frame;
         P.ReturnValue = ((FSubject*)Context)->Double(P.X);
     }
 
-    void Thunk_Greet(void* Context, void* Frame)
+    void Thunk_Greet(const FFunction&, void* Context, void* Frame)
     {
         FGreet_Parms& P = *(FGreet_Parms*)Frame;
         ((FSubject*)Context)->Greet(P.Name, P.Times);
     }
 
-    void Thunk_Sum(void*, void* Frame)
+    void Thunk_Sum(const FFunction&, void*, void* Frame)
     {
         FSum_Parms& P = *(FSum_Parms*)Frame;
         P.ReturnValue = FSubject::Sum(P.A, P.B);
@@ -118,7 +118,7 @@ namespace
         int32          ReturnValue;
     };
 
-    void Thunk_Total(void* Context, void* Frame)
+    void Thunk_Total(const FFunction&, void* Context, void* Frame)
     {
         FTotal_Parms& P = *(FTotal_Parms*)Frame;
         P.ReturnValue = ((FSubject*)Context)->Total(P.Values);
@@ -133,7 +133,7 @@ namespace
         TObjectPtr<CObject> ReturnValue;
     };
 
-    void Thunk_Echo(void* Context, void* Frame)
+    void Thunk_Echo(const FFunction&, void* Context, void* Frame)
     {
         FEcho_Parms& P = *(FEcho_Parms*)Frame;
         P.ReturnValue = (CObject*)(((FSubject*)Context)->Echo((CObject*)P.In.Get()));
@@ -175,7 +175,7 @@ namespace
         int32                  ReturnValue;
     };
 
-    void Thunk_Lookup(void* Context, void* Frame)
+    void Thunk_Lookup(const FFunction&, void* Context, void* Frame)
     {
         FLookup_Parms& P = *(FLookup_Parms*)Frame;
         P.ReturnValue = ((FSubject*)Context)->Lookup(P.Table, P.Key);
@@ -188,7 +188,7 @@ namespace
         FString Moved;
     };
 
-    void Thunk_Consume(void* Context, void* Frame)
+    void Thunk_Consume(const FFunction&, void* Context, void* Frame)
     {
         FConsume_Parms& P = *(FConsume_Parms*)Frame;
         ((FSubject*)Context)->Consume(std::move(P.Moved));

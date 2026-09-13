@@ -33,6 +33,7 @@ internal static class Serializer
         Meta,
         Type,
         Candidate,
+        Function,
     }
 
     /// <summary>
@@ -79,6 +80,22 @@ internal static class Serializer
         foreach (ScriptProperty Property in Description.Properties)
         {
             WriteField(Writer, Property, Defaults, bTopLevel: true);
+        }
+
+        // After the fields, so a reader that stops at their count never sees them and one built before
+        // functions existed leaves the list empty rather than failing on a record it does not know.
+        Writer.Write(Description.Functions.Count);
+        foreach (ScriptFunction Function in Description.Functions)
+        {
+            using var Frame = new Record(Writer, ERecord.Function);
+            WriteString(Writer, Function.Name);
+            Writer.Write(Function.ReturnIndex);
+            Writer.Write(Function.Params.Count);
+            foreach (ScriptProperty Parameter in Function.Params)
+            {
+                // No owner, so no default is captured: a parameter's value comes from the call, not the type.
+                WriteField(Writer, Parameter, null, bTopLevel: false);
+            }
         }
 
         Writer.Flush();

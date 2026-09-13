@@ -55,8 +55,13 @@ namespace Lumina
     {
     public:
 
-        /** Calls the real function, unpacking Frame into typed arguments. Generated per function. */
-        using FNativeFuncPtr = void (*)(void* Context, void* Frame);
+        /**
+         * Calls the real function, unpacking Frame into typed arguments.
+         *
+         * Takes the function it is dispatching, which a generated thunk ignores because it only ever serves
+         * one, and a shared thunk needs because it serves every script-declared function there is.
+         */
+        using FNativeFuncPtr = void (*)(const FFunction& Function, void* Context, void* Frame);
 
         /** The alignment every frame is given, so a frame never has to carry its own. */
         static constexpr size_t kFrameAlignment = alignof(std::max_align_t);

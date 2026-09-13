@@ -80,19 +80,105 @@ namespace
 
         void NilValue() { U8((uint8)EScriptValueKind::Nil); }
 
+        // Only a top-level field carries the hot-reload byte, so a nested one that wrote it would put every
+        // reader a byte out from there on.
         void ScalarField(const char* Name, EPropertyTypeFlags Kind, const char* Tooltip = "",
-                         uint32 Flags = 0, bool bWriteFlags = false)
+                         uint32 Flags = 0, bool bWriteFlags = false, bool bTopLevel = true)
         {
             const size_t L = Open(EScriptSchemaRecord::Field);
             Str(Name);
             I32(0);                 // no aliases
             Meta("", Tooltip, Flags, bWriteFlags);
-            U8(0);                  // not SkipHotReload
+            if (bTopLevel)
+            {
+                U8(0);              // not SkipHotReload
+            }
             ScalarType(Kind);
             NilValue();
             Close(L);
         }
+
+        void Function(const char* Name, int32 ReturnIndex, const TVector<const char*>& ParamNames,
+                      const TVector<EPropertyTypeFlags>& ParamKinds)
+        {
+            const size_t L = Open(EScriptSchemaRecord::Function);
+            Str(Name);
+            I32(ReturnIndex);
+            I32((int32)ParamNames.size());
+            for (size_t i = 0; i < ParamNames.size(); ++i)
+            {
+                ScalarField(ParamNames[i], ParamKinds[i], "", 0, false, /*bTopLevel*/ false);
+            }
+            Close(L);
+        }
     };
+}
+
+// Functions are written after the fields, so a buffer that has none is exactly what it was before they existed.
+TEST(ScriptSchemaCodec, ASchemaWithNoFunctionsStillParses)
+{
+    FTestSchemaWriter W;
+    W.Header();
+    W.I32(1);
+    W.ScalarField("Speed", EPropertyTypeFlags::Float);
+
+    FScriptExportSchema Schema;
+    TVector<FScriptPropertyEntry> Defaults;
+    ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema, Defaults));
+
+    EXPECT_EQ(Schema.Fields.size(), 1u);
+    EXPECT_TRUE(Schema.Functions.empty());
+}
+
+TEST(ScriptSchemaCodec, ADeclaredFunctionRoundTripsWithItsParameters)
+{
+    FTestSchemaWriter W;
+    W.Header();
+    W.I32(1);
+    W.ScalarField("Speed", EPropertyTypeFlags::Float);
+
+    W.I32(1);
+    W.Function("Add", 2, { "A", "B", "ReturnValue" },
+        { EPropertyTypeFlags::Int32, EPropertyTypeFlags::Int32, EPropertyTypeFlags::Int32 });
+
+    FScriptExportSchema Schema;
+    TVector<FScriptPropertyEntry> Defaults;
+    ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema, Defaults));
+
+    ASSERT_EQ(Schema.Functions.size(), 1u);
+    const FScriptExportFunction& Function = Schema.Functions[0];
+
+    EXPECT_EQ(Function.Name, FName("Add"));
+    EXPECT_EQ(Function.ReturnIndex, 2);
+    ASSERT_EQ(Function.Params.size(), 3u);
+    EXPECT_EQ(Function.Params[0].Name, FName("A"));
+    EXPECT_EQ(Function.Params[2].Name, FName("ReturnValue"));
+
+    // The fields are untouched by what follows them, which is what makes appending safe.
+    EXPECT_EQ(Schema.Fields.size(), 1u);
+}
+
+TEST(ScriptSchemaCodec, SeveralFunctionsKeepTheirOrder)
+{
+    FTestSchemaWriter W;
+    W.Header();
+    W.I32(1);
+    W.ScalarField("Speed", EPropertyTypeFlags::Float);
+
+    W.I32(2);
+    W.Function("First", -1, {}, {});
+    W.Function("Second", 0, { "Out" }, { EPropertyTypeFlags::Bool });
+
+    FScriptExportSchema Schema;
+    TVector<FScriptPropertyEntry> Defaults;
+    ASSERT_TRUE(ParseSchemaBlob(W.Bytes, Schema, Defaults));
+
+    ASSERT_EQ(Schema.Functions.size(), 2u);
+    EXPECT_EQ(Schema.Functions[0].Name, FName("First"));
+    EXPECT_EQ(Schema.Functions[0].ReturnIndex, -1);
+    EXPECT_TRUE(Schema.Functions[0].Params.empty());
+    EXPECT_EQ(Schema.Functions[1].Name, FName("Second"));
+    EXPECT_EQ(Schema.Functions[1].ReturnIndex, 0);
 }
 
 TEST(ScriptSchemaCodec, AWellFormedBufferRoundTrips)

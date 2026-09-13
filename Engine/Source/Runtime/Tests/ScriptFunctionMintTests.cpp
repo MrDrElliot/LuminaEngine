@@ -21,18 +21,13 @@ namespace
 {
     int32 GThunkCalls = 0;
 
-    void TestScriptThunk(void* Context, void* Frame)
+    void TestScriptThunk(const FFunction& Function, void* Context, void* Frame)
     {
         ++GThunkCalls;
-
-        const FFunction* Function = static_cast<const FFunction*>(Context);
-        if (Function == nullptr)
-        {
-            return;
-        }
+        (void)Context;
 
         int32 Sum = 0;
-        for (FProperty* Argument : Function->GetArguments())
+        for (FProperty* Argument : Function.GetArguments())
         {
             if (Argument->GetType() == EPropertyTypeFlags::Int32)
             {
@@ -40,7 +35,7 @@ namespace
             }
         }
 
-        if (FProperty* Return = Function->GetReturnParam())
+        if (FProperty* Return = Function.GetReturnParam())
         {
             *Return->GetValuePtr<int32>(Frame) = Sum;
         }
@@ -173,8 +168,8 @@ TEST(ScriptFunctionMint, CallingItReachesTheThunkThroughAFrame)
     Frame.At<int32>(0) = 17;
     Frame.At<int32>(1) = 25;
 
-    // The function stands in for the object here, since the thunk reads the frame through its parameters.
-    Frame.Invoke(const_cast<FFunction*>(Minted.Function));
+    // The thunk is handed the function it is dispatching, so it needs nothing from the object here.
+    Frame.Invoke(Minted.Class->GetDefaultObject());
 
     EXPECT_EQ(GThunkCalls, CallsBefore + 1);
     EXPECT_EQ(Frame.Return<int32>(), 42);
@@ -193,6 +188,6 @@ TEST(ScriptFunctionMint, AFunctionWithNoParametersIsStillCallable)
 
     const int32 CallsBefore = GThunkCalls;
     FFunctionFrame Frame(*Minted.Function);
-    Frame.Invoke(const_cast<FFunction*>(Minted.Function));
+    Frame.Invoke(Minted.Class->GetDefaultObject());
     EXPECT_EQ(GThunkCalls, CallsBefore + 1);
 }

@@ -56,6 +56,16 @@ public static unsafe partial class Native
     [NativeCall] public static partial void PropSetClass(IntPtr C, IntPtr Prop, IntPtr Class);
     [NativeCall] public static partial IntPtr FindClassByName(string Name);
     [NativeCall] public static partial IntPtr NewObject(IntPtr Class, IntPtr Package, string Name);
+
+    // Reflected functions, for the dispatcher that reads a call frame through its parameters.
+    [NativeCall] public static partial int FunctionParamCount(IntPtr Function);
+    [NativeCall] public static partial IntPtr FunctionParamAt(IntPtr Function, int Index);
+    [NativeCall] public static partial IntPtr FunctionReturnParam(IntPtr Function);
+    [NativeCall] public static partial string FunctionGetName(IntPtr Function);
+
+    // The offset of a property within whatever container holds it, which is how a call frame's blittable
+    // slots are addressed without a crossing per argument.
+    [NativeCall] public static partial int PropertyOffset(IntPtr Prop);
     [NativeCall] public static partial string ClassGetName(IntPtr Class);
     [NativeCall] public static partial IntPtr ClassGetDefaultObject(IntPtr Class);
 

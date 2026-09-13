@@ -169,6 +169,20 @@ public sealed class ScriptEventAttribute : Attribute
     public int Index { get; }
 }
 
+/// <summary>
+/// Publishes this method as a reflected function on the minted class, so native and other scripts can find
+/// it by name and call it without a generated binding.
+/// </summary>
+/// <remarks>
+/// Parameters and the return value become real FPropertys describing the call frame, so they are limited to
+/// kinds the reflection system can describe. A method whose signature cannot be described is reported at
+/// mint time and left unreflected rather than half-bound.
+/// </remarks>
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+public sealed class ScriptFunctionAttribute : Attribute
+{
+}
+
 /// <summary>Exposes a parameterless method as a clickable button in the script component's inspector.
 /// Clicking it invokes the method on the live script instance (only while the game is running). Methods
 /// taking arguments are ignored with a warning.</summary>

@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "ScriptFunctionMint.h"
 #include "ScriptStruct.h"
 #include "Memory/Construct.h"
 
@@ -1523,6 +1524,17 @@ namespace Lumina::Scripting
         // The record's arena owns the properties, so anchoring it on the class is what keeps them alive.
         Record->SetAppliedSchema(Schema);
         Target->LayoutRecord = static_cast<CStruct*>(Record.Get());
+
+        // After the block, since a function's frame is laid out in the same record's arena, and before the
+        // caller links: AddFunction only reaches the flattened list when Link runs after it.
+        for (const FScriptExportFunction& Declared : Schema.Functions)
+        {
+            FScriptExportSchema ParamSchema;
+            ParamSchema.Fields = Declared.Params;
+
+            MintScriptFunction(*Target, *Record, Declared.Name, ParamSchema, Declared.ReturnIndex,
+                &ScriptFunctionThunk);
+        }
         Target->ShimSize = ShimSize;
         Target->ShimAlign = ShimAlign;
         Target->bHasAppendedBlock = true;
