@@ -16,6 +16,7 @@
 #include "TaskSystem/TaskSystem.h"
 #include "Thumbnail/PackageThumbnail.h"
 #include "miniz.h"
+#include "zstd.h"
 #include "Log/Log.h"
 #include "Core/Templates/IntegerCompare.h"
 
@@ -37,8 +38,51 @@ namespace Lumina
 
         // Chunked container.
         constexpr uint32 kPackageChunkMagic   = 0x32435A4C; // 'LZC2'
-        constexpr uint32 kPackageChunkVersion = 1;
+        constexpr uint32 kPackageChunkVersion = 2;
         constexpr uint32 kPackageChunkSize    = 4u * 1024 * 1024; // 4 MiB uncompressed per chunk
+
+        // version 1 named no codec because deflate was the only one, so it is what a v1 container holds
+        enum class EPackageCodec : uint32
+        {
+            Deflate = 0,
+            Zstd    = 1,
+        };
+
+        constexpr EPackageCodec kPackageCodec = EPackageCodec::Zstd;
+
+        // the editor saves on every edit and wants the speed, a cook ships once and can afford the search.
+        // measured on a package corpus that compresses 30x, where everything past 9 was the same size for
+        // more time, so cook stops there rather than at a level whose only cost is cook time
+        constexpr int kZstdLevelSave = 3;
+        constexpr int kZstdLevelCook = 9;
+
+        // reused per thread, since a context carries the working memory a fresh one would allocate and a
+        // small package is one chunk, where that allocation would outweigh the compression itself
+        struct FZstdContexts
+        {
+            ~FZstdContexts()
+            {
+                if (CCtx != nullptr) { ZSTD_freeCCtx(CCtx); }
+                if (DCtx != nullptr) { ZSTD_freeDCtx(DCtx); }
+            }
+
+            ZSTD_CCtx* Compress()
+            {
+                if (CCtx == nullptr) { CCtx = ZSTD_createCCtx(); }
+                return CCtx;
+            }
+
+            ZSTD_DCtx* Decompress()
+            {
+                if (DCtx == nullptr) { DCtx = ZSTD_createDCtx(); }
+                return DCtx;
+            }
+
+            ZSTD_CCtx* CCtx = nullptr;
+            ZSTD_DCtx* DCtx = nullptr;
+        };
+
+        thread_local FZstdContexts GZstdContexts;
 
         // Putting the location at the END keeps the header wire-compatible with no two-pass save.
         constexpr uint32 kBulkTrailerMagic   = 0x4B4C424C; // 'LBLK'
@@ -88,24 +132,68 @@ namespace Lumina
             return true;
         }
 
-        bool DeflateChunk(const uint8* Src, size_t Len, TVector<uint8>& Out)
+        bool CompressChunk(EPackageCodec Codec, int Level, const uint8* Src, size_t Len, TVector<uint8>& Out)
         {
-            mz_ulong Bound = mz_compressBound((mz_ulong)Len);
+            if (Codec == EPackageCodec::Zstd)
+            {
+                Out.resize(ZSTD_compressBound(Len));
+
+                const size_t Written = ZSTD_compressCCtx(GZstdContexts.Compress(), Out.data(), Out.size(),
+                                                         Src, Len, Level);
+                if (ZSTD_isError(Written))
+                {
+                    LOG_ERROR("zstd could not compress a {}-byte chunk: {}", Len, ZSTD_getErrorName(Written));
+                    Out.clear();
+                    return false;
+                }
+
+                Out.resize(Written);
+                return true;
+            }
+
+            // only reachable through SetForcedPackageCodec, which is what lets the two be compared
+            const mz_ulong Bound = mz_compressBound((mz_ulong)Len);
             Out.resize((size_t)Bound);
             mz_ulong OutLen = Bound;
-            const int Ret = mz_compress2(Out.data(), &OutLen, Src, (mz_ulong)Len, MZ_DEFAULT_LEVEL);
-            if (Ret != MZ_OK)
+            if (mz_compress2(Out.data(), &OutLen, Src, (mz_ulong)Len, Level) != MZ_OK)
             {
                 Out.clear();
                 return false;
             }
+
             Out.resize((size_t)OutLen);
             return true;
         }
 
-        // Deflate In into the chunked container; chunks compress in parallel (one task each).
-        bool CompressPackageBinary(const TVector<uint8>& In, TVector<uint8>& Out)
+        // Dst must already be the chunk's full uncompressed length, which the container header carries.
+        bool DecompressChunk(EPackageCodec Codec, const uint8* Src, size_t SrcLen, uint8* Dst, size_t DstLen)
         {
+            if (Codec == EPackageCodec::Zstd)
+            {
+                const size_t Read = ZSTD_decompressDCtx(GZstdContexts.Decompress(), Dst, DstLen, Src, SrcLen);
+                if (ZSTD_isError(Read))
+                {
+                    LOG_ERROR("zstd could not decompress a chunk: {}", ZSTD_getErrorName(Read));
+                    return false;
+                }
+                return Read == DstLen;
+            }
+
+            mz_ulong OutLen = (mz_ulong)DstLen;
+            const int Ret = mz_uncompress(Dst, &OutLen, Src, (mz_ulong)SrcLen);
+            return Ret == MZ_OK && OutLen == DstLen;
+        }
+
+        // test only, see SetForcedPackageCodec
+        int32 GForcedCodec = -1;
+        int32 GForcedLevel = 0;
+
+        // Compress In into the chunked container; chunks compress in parallel (one task each).
+        bool CompressPackageBinary(const TVector<uint8>& In, TVector<uint8>& Out, int DefaultLevel)
+        {
+            const EPackageCodec Codec = (GForcedCodec >= 0) ? (EPackageCodec)GForcedCodec : kPackageCodec;
+            const int           Level = (GForcedCodec >= 0) ? GForcedLevel : DefaultLevel;
+
             LUMINA_PROFILE_SCOPE();
 
             const uint64 Total     = In.size();
@@ -118,7 +206,7 @@ namespace Lumina
             {
                 const size_t Start = (size_t)i * kPackageChunkSize;
                 const size_t Len   = (size_t)((Total - Start) < kPackageChunkSize ? (Total - Start) : kPackageChunkSize);
-                ChunkOk[i] = DeflateChunk(In.data() + Start, Len, ChunkBytes[i]) ? 1 : 0;
+                ChunkOk[i] = CompressChunk(Codec, Level, In.data() + Start, Len, ChunkBytes[i]) ? 1 : 0;
             };
 
             if (NumChunks <= 1)
@@ -143,7 +231,7 @@ namespace Lumina
             const size_t TotalCompressed = Algo::Accumulate(ChunkBytes, size_t(0),
                 [](const TVector<uint8>& Chunk) { return Chunk.size(); });
 
-            const size_t HeaderBytes = sizeof(uint32) * 2 + sizeof(uint64) + sizeof(uint32) * 2
+            const size_t HeaderBytes = sizeof(uint32) * 3 + sizeof(uint64) + sizeof(uint32) * 2
                                      + (size_t)NumChunks * sizeof(uint32);
             Out.resize(HeaderBytes + TotalCompressed);
 
@@ -153,6 +241,7 @@ namespace Lumina
 
             WriteU32(kPackageChunkMagic);
             WriteU32(kPackageChunkVersion);
+            WriteU32((uint32)Codec);
             WriteU64(Total);
             WriteU32(kPackageChunkSize);
             WriteU32(NumChunks);
@@ -175,8 +264,9 @@ namespace Lumina
             const size_t  Size  = Raw.size();
             size_t        Off   = 0;
 
-            const size_t FixedHeader = sizeof(uint32) * 2 + sizeof(uint64) + sizeof(uint32) * 2;
-            if (Size < FixedHeader)
+            // a v1 container has no codec word, so the fixed part is one u32 shorter there
+            const size_t MinHeader = sizeof(uint32) * 2 + sizeof(uint64) + sizeof(uint32) * 2;
+            if (Size < MinHeader)
             {
                 LOG_ERROR("DecompressChunkedPackage: truncated header");
                 return false;
@@ -185,19 +275,44 @@ namespace Lumina
             auto ReadU32 = [&]() { uint32 V; std::memcpy(&V, P + Off, sizeof(V)); Off += sizeof(V); return V; };
             auto ReadU64 = [&]() { uint64 V; std::memcpy(&V, P + Off, sizeof(V)); Off += sizeof(V); return V; };
 
-            const uint32 Magic     = ReadU32();
-            const uint32 Version   = ReadU32();
+            const uint32 Magic   = ReadU32();
+            const uint32 Version = ReadU32();
+
+            if (Magic != kPackageChunkMagic || Version == 0 || Version > kPackageChunkVersion)
+            {
+                LOG_ERROR("DecompressChunkedPackage: bad header (magic {:#x}, version {})", Magic, Version);
+                return false;
+            }
+
+            EPackageCodec Codec = EPackageCodec::Deflate;
+            if (Version >= 2)
+            {
+                if (Size < MinHeader + sizeof(uint32))
+                {
+                    LOG_ERROR("DecompressChunkedPackage: truncated header");
+                    return false;
+                }
+
+                const uint32 RawCodec = ReadU32();
+                if (RawCodec > (uint32)EPackageCodec::Zstd)
+                {
+                    LOG_ERROR("DecompressChunkedPackage: unknown codec {}", RawCodec);
+                    return false;
+                }
+                Codec = (EPackageCodec)RawCodec;
+            }
+
             const uint64 Total     = ReadU64();
             const uint32 ChunkSize = ReadU32();
             const uint32 NumChunks = ReadU32();
 
-            if (Magic != kPackageChunkMagic || Version != kPackageChunkVersion || ChunkSize == 0)
+            if (ChunkSize == 0)
             {
-                LOG_ERROR("DecompressChunkedPackage: bad header (magic/version/chunkSize)");
+                LOG_ERROR("DecompressChunkedPackage: zero chunk size");
                 return false;
             }
 
-            if (Size < FixedHeader + (size_t)NumChunks * sizeof(uint32))
+            if (Size < Off + (size_t)NumChunks * sizeof(uint32))
             {
                 LOG_ERROR("DecompressChunkedPackage: truncated size table");
                 return false;
@@ -205,7 +320,7 @@ namespace Lumina
 
             TVector<uint32> Sizes(NumChunks);
             TVector<size_t> Offsets(NumChunks);
-            size_t DataOff = FixedHeader + (size_t)NumChunks * sizeof(uint32);
+            size_t DataOff = Off + (size_t)NumChunks * sizeof(uint32);
             for (uint32 i = 0; i < NumChunks; ++i)
             {
                 Sizes[i]   = ReadU32();
@@ -227,12 +342,9 @@ namespace Lumina
             {
                 const size_t OutStart = (size_t)i * ChunkSize;
                 const size_t Expected = (size_t)(((uint64)OutStart + ChunkSize <= Total) ? ChunkSize : (Total - OutStart));
-                mz_ulong OutLen = (mz_ulong)Expected;
-                const int Ret = mz_uncompress(Out.data() + OutStart, &OutLen, P + Offsets[i], (mz_ulong)Sizes[i]);
-                if (Ret != MZ_OK || OutLen != Expected)
+                if (!DecompressChunk(Codec, P + Offsets[i], Sizes[i], Out.data() + OutStart, Expected))
                 {
-                    LOG_ERROR("DecompressChunkedPackage: chunk {} inflate failed (ret={}, got={}, expected={})",
-                        i, Ret, (uint64)OutLen, (uint64)Expected);
+                    LOG_ERROR("DecompressChunkedPackage: chunk {} of {} failed to decompress", i, NumChunks);
                     ChunkOk[i] = 0;
                 }
             };
@@ -1050,6 +1162,12 @@ namespace Lumina
         GForcedSaveVersion = Version;
     }
 
+    void SetForcedPackageCodec(int32 Codec, int32 Level)
+    {
+        GForcedCodec = Codec;
+        GForcedLevel = Level;
+    }
+
     namespace
     {
         // Clears then repopulates the export and import tables so back-to-back saves stay consistent.
@@ -1116,7 +1234,7 @@ namespace Lumina
             Writer.Seek(0);
             Writer << Header;
 
-            if (!CompressPackageBinary(OutUncompressed, OutCompressed))
+            if (!CompressPackageBinary(OutUncompressed, OutCompressed, bCooking ? kZstdLevelCook : kZstdLevelSave))
             {
                 return false;
             }

@@ -170,6 +170,13 @@ namespace PackageLoadBench
         double                InflateMs   = 0.0;
     };
 
+    // pins the container's codec and level for the duration, so codecs measure against each other in one run
+    struct FForcedCodec
+    {
+        FForcedCodec(int32 Codec, int32 Level) { SetForcedPackageCodec(Codec, Level); }
+        ~FForcedCodec() { SetForcedPackageCodec(-1, 0); }
+    };
+
     // pins saves to the encoding before PACKAGE_NAME_TABLE, so both formats measure in one run
     struct FLegacyFormat
     {
@@ -354,6 +361,52 @@ namespace PackageLoadBench
 }
 
 using namespace PackageLoadBench;
+
+// every codec and level on one machine, which is the only fair way to pick between them
+TEST(PackageLoadBenchmark, DISABLED_Codecs)
+{
+    FQuietLog Quiet;
+
+    struct FCodecCase
+    {
+        const char* Name;
+        int32       Codec;
+        int32       Level;
+    };
+
+    // codec 0 is deflate, 1 is zstd
+    const FCodecCase Cases[] = {
+        { "deflate 6 (was)",  0,  6 },
+        { "deflate 1",        0,  1 },
+        { "zstd 1",           1,  1 },
+        { "zstd 3 (now)",     1,  3 },
+        { "zstd 9",           1,  9 },
+        { "zstd 12 (cook)",   1, 12 },
+        { "zstd 19",          1, 19 },
+    };
+
+    std::printf("\n%-16s %9s %9s %10s %9s\n", "codec", "save", "load", "on disk", "ratio");
+
+    for (const FCodecCase& Case : Cases)
+    {
+        char Tag[64];
+        std::snprintf(Tag, sizeof(Tag), "Codec_%d_%d", Case.Codec, Case.Level);
+
+        FCorpus Corpus;
+        {
+            FForcedCodec Forced(Case.Codec, Case.Level);
+            Corpus = BuildCorpus(Tag, 40, 64, CParticleEmitter::StaticClass());
+        }
+
+        const FPhases Phases = RunColdLoad(Corpus, nullptr, 8);
+        const double  Total  = Phases.LoadPackageMs + Phases.FullyLoadMs;
+
+        std::printf("%-16s %7.2fms %7.2fms %8.0fK %8.2fx\n", Case.Name,
+            Corpus.BuildMs, Total, (double)Corpus.FileBytes / 1024.0,
+            Corpus.FileBytes ? (double)Corpus.PlainBytes / (double)Corpus.FileBytes : 0.0);
+        std::fflush(stdout);
+    }
+}
 
 // both encodings on one machine, the only way to compare them without trusting run-to-run noise
 TEST(PackageLoadBenchmark, DISABLED_NameTableVsInlineNames)

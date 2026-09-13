@@ -31,6 +31,7 @@ public class Runtime : LuminaModuleRules
             "RPMalloc",
             "XXHash",
             "Miniz",
+            "Zstd",
 
             "GLFW",
             "ImGui",

@@ -180,6 +180,9 @@ namespace Lumina
     // test only, pins the version SavePackage stamps and encodes at, 0 restores the current version
     RUNTIME_API void SetForcedPackageSaveVersion(int32 Version);
 
+    // test only, pins the container's codec and compression level, a negative codec restores the default
+    RUNTIME_API void SetForcedPackageCodec(int32 Codec, int32 Level);
+
     class CPackage : public CObject
     {
     public:
