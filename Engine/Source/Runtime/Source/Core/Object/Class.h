@@ -18,6 +18,7 @@ RUNTIME_API Lumina::CClass* Construct_CClass_Lumina_CStruct();
 namespace Lumina
 {
     class FProperty;
+    class FFunction;
     class FNetArchive;
     struct FComponentOps;
 }
@@ -113,6 +114,16 @@ namespace Lumina
 
         /** Only the properties declared on this type, without the inherited ones. */
         NODISCARD TSpan<FProperty* const> GetOwnProperties() const { return OwnProperties; }
+
+        /** Every reflected function on this type: its own in declaration order, then each super's. */
+        NODISCARD TSpan<FFunction* const> GetFunctions() const { return AllFunctions; }
+
+        NODISCARD TSpan<FFunction* const> GetOwnFunctions() const { return OwnFunctions; }
+
+        /** Nearest declaration of Name walking up the chain, or null. */
+        RUNTIME_API NODISCARD FFunction* FindFunction(const FName& Name) const;
+
+        RUNTIME_API void AddFunction(FFunction* Function);
 
         /** Storage for this type's own properties. Compile-time types place theirs here; a script-minted
          *  layout keeps owning its own, since it frees and rebuilds them on reload. */
@@ -260,6 +271,10 @@ namespace Lumina
 
         // OwnProperties then each super's, flattened by Link so a walk never chases into another type.
         TVector<FProperty*> AllProperties;
+
+        // The same pair for functions. An override shadows its base because the derived copy comes first.
+        TVector<FFunction*> OwnFunctions;
+        TVector<FFunction*> AllFunctions;
 
         FPropertyArena PropertyArena;
 

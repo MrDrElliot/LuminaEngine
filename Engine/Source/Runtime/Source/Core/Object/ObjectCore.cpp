@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Containers/Algorithm.h"
 
 #include <atomic>
 
@@ -332,6 +333,10 @@ namespace Lumina
     // costs another block, never a move, so nothing that already points into the arena is disturbed.
     static constexpr size_t kArenaBytesPerProperty = 192;
 
+    // The function itself plus the pointer array for its parameters; the parameters are properties and
+    // already counted through the reservation above.
+    static constexpr size_t kArenaBytesPerFunction = 128;
+
     void ConstructProperties(const FPropertyOwner& Owner, const FPropertyParams* const*& Properties, uint32& NumProperties)
     {
         const FPropertyParams* Param = *--Properties;
@@ -389,6 +394,57 @@ namespace Lumina
         }
     }
 
+    void InitializeAndCreateFFunctions(CStruct* Outer, const FFunctionParams* const* FunctionArray, uint32 NumFunctions)
+    {
+        if (NumFunctions == 0)
+        {
+            return;
+        }
+
+        FPropertyArena& Arena = Outer->GetPropertyArena();
+        Arena.Reserve(NumFunctions * kArenaBytesPerFunction);
+
+        TVector<FProperty*> Collected;
+        TVector<FProperty*> Ordered;
+
+        for (uint32 Index = 0; Index < NumFunctions; ++Index)
+        {
+            const FFunctionParams& Params = *FunctionArray[Index];
+
+            Ordered.clear();
+
+            // One call consumes exactly one top-level parameter plus its inners, and only the top-level one
+            // reaches the collector, so taking them one at a time is what makes the argument order exact
+            // rather than inferred from where inners happen to sit.
+            const FPropertyParams* const* Walk = Params.Params + Params.NumParamEntries;
+            uint32 Remaining = Params.NumParamEntries;
+            while (Remaining != 0)
+            {
+                Collected.clear();
+                const FPropertyOwner Owner{ &Arena, nullptr, nullptr, &Collected };
+                ConstructProperties(Owner, Walk, Remaining);
+
+                if (Collected.size() != 1)
+                {
+                    LOG_CRITICAL("Reflected function '{}' produced {} top-level parameters from one entry",
+                        Params.Name, Collected.size());
+                    continue;
+                }
+
+                Ordered.push_back(Collected[0]);
+            }
+
+            // The walk runs from the end of the array, so reversing lands declaration order.
+            Algo::Reverse(Ordered);
+
+            FFunction* Function = FFunctionBuilder::Build(Arena, Outer, Params, Ordered);
+            if (Function != nullptr)
+            {
+                Outer->AddFunction(Function);
+            }
+        }
+    }
+
     static CPackage* FindOrCreatePackage(const TCHAR* PackageName)
     {
         CPackage* Package = nullptr;
@@ -417,7 +473,8 @@ namespace Lumina
         CObjectForceRegistration(FinalClass);
         
         InitializeAndCreateFProperties(FinalClass, Params.Params, Params.NumProperties);
-        
+        InitializeAndCreateFFunctions(FinalClass, Params.Functions, Params.NumFunctions);
+
         for (uint16 i = 0; i < Params.NumMetaData; ++i)
         {
             const FMetaDataPairParam& Param = Params.MetaDataArray[i];
@@ -476,7 +533,8 @@ namespace Lumina
         CObjectForceRegistration(FinalClass);
         
         InitializeAndCreateFProperties(FinalClass, Params.Params, Params.NumProperties);
-        
+        InitializeAndCreateFFunctions(FinalClass, Params.Functions, Params.NumFunctions);
+
         for (uint16 i = 0; i < Params.NumMetaData; ++i)
         {
             const FMetaDataPairParam& Param = Params.MetaDataArray[i];

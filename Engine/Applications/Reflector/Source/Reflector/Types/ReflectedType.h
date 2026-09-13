@@ -129,6 +129,16 @@ namespace Lumina::Reflection
         void PushProperty(std::unique_ptr<FReflectedProperty>&& NewProperty);
         void PushFunction(std::unique_ptr<FReflectedFunction>&& NewFunction);
 
+        // Removes a property this type was handed and returns it. A function parameter is created through
+        // the same factory a member is, which attaches it here, and a parameter is not a member.
+        std::unique_ptr<FReflectedProperty> TakeBackProperty(FReflectedProperty* Property);
+
+        /// Takes back every property added from FirstIndex onward, keeping the order they were added in.
+        /// A container parameter adds its inners as well as itself, and all of them belong to the function.
+        std::vector<std::unique_ptr<FReflectedProperty>> TakeBackPropertiesFrom(size_t FirstIndex);
+
+        size_t NumProperties() const { return Props.size(); }
+
         std::string GetTypeName() const override { return "CStruct"; }
 
         void DefineInitialHeader(FCodeWriter& Writer, const std::string& FileID) override;
@@ -144,6 +154,18 @@ namespace Lumina::Reflection
         void EmitPropertyFieldDeclarations(FCodeWriter& Writer) const;
         void EmitPropertyDefinitions(FCodeWriter& Writer, std::string_view StaticsName);
         void EmitPropertyPointerTable(FCodeWriter& Writer, std::string_view StaticsName) const;
+
+        //~ Native FFunction reflection, shared by classes and structs the same way the property emitters are.
+
+        /// True when at least one function on this type could be described, so the tables are worth emitting.
+        bool HasNativeFunctions() const;
+
+        /// The frame struct and thunk for each function. File scope, since offsetof is taken against them.
+        void EmitFunctionFrames(FCodeWriter& Writer) const;
+
+        void EmitFunctionFieldDeclarations(FCodeWriter& Writer) const;
+        void EmitFunctionDefinitions(FCodeWriter& Writer, std::string_view StaticsName) const;
+        void EmitFunctionPointerTable(FCodeWriter& Writer, std::string_view StaticsName) const;
 
         std::string Parent;
     };

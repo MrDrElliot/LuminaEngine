@@ -93,6 +93,10 @@ namespace Lumina
         CStruct*        Struct = nullptr;
         FProperty*      Field  = nullptr;
 
+        // A function parameter belongs to neither, so it is collected here and the function takes it from
+        // there. Set in place of Struct, which is what keeps a parameter off the owning type's member list.
+        TVector<FProperty*>* Collector = nullptr;
+
         template<typename T, typename TParams>
         T* Build(const TParams* Params) const
         {
@@ -102,7 +106,7 @@ namespace Lumina
         }
 
         /** Owner for an inner of Property (array element, map key/value, enum or optional payload). */
-        NODISCARD FPropertyOwner Inner(FProperty* Property) const { return FPropertyOwner{ Arena, nullptr, Property }; }
+        NODISCARD FPropertyOwner Inner(FProperty* Property) const { return FPropertyOwner{ Arena, nullptr, Property, nullptr }; }
 
         RUNTIME_API void Attach(FProperty* Property) const;
     };

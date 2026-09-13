@@ -143,6 +143,33 @@ namespace Lumina::Reflection
             return FriendlyFromQualified(QualifiedName) + "_Metadata";
         }
 
+        // The frame a reflected call is made through: "<Type>_<Func>_Parms". offsetof is taken against it,
+        // so the compiler is what lays the frame out rather than the generator.
+        inline std::string FunctionParmsStruct(std::string_view TypeName, std::string_view FunctionName)
+        {
+            std::string Out(TypeName.data(), TypeName.data() + TypeName.size());
+            Out += "_";
+            Out.append(FunctionName.data(), FunctionName.size());
+            Out += "_Parms";
+            return Out;
+        }
+
+        inline std::string FunctionThunk(std::string_view TypeName, std::string_view FunctionName)
+        {
+            std::string Out("Thunk_");
+            Out.append(TypeName.data(), TypeName.size());
+            Out += "_";
+            Out.append(FunctionName.data(), FunctionName.size());
+            return Out;
+        }
+
+        inline std::string FunctionParamsStatic(std::string_view FunctionName)
+        {
+            std::string Out("Func_");
+            Out.append(FunctionName.data(), FunctionName.size());
+            return Out;
+        }
+
         // Per-property metadata array inside a Statics struct: "<PropName>_Metadata".
         inline std::string MetadataArrayForProperty(std::string_view PropertyName)
         {

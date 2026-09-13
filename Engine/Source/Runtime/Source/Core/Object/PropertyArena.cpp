@@ -100,6 +100,10 @@ namespace Lumina
             Property->OwnerStruct = Struct;
             Struct->AddProperty(Property);
         }
+        else if (Collector != nullptr)
+        {
+            Collector->push_back(Property);
+        }
         else
         {
             Field->AddProperty(Property);

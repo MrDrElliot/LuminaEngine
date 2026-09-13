@@ -599,12 +599,27 @@ namespace Lumina::Reflection
 
                 if (auto* Struct = dynamic_cast<FReflectedStruct*>(Type.get()))
                 {
-                    for (auto& Property : Struct->Props)
+                    auto DeclareFor = [&](FReflectedProperty& Property)
                     {
-                        if (const auto* PropType = Db.GetReflectedType<FReflectedType>(FStringHash(Property->TypeName)))
+                        if (const auto* PropType = Db.GetReflectedType<FReflectedType>(FStringHash(Property.TypeName)))
                         {
                             const std::string PropApi = Names::ProjectApiMacro(PropType->Header->Project->Name);
-                            Property->DeclareCrossModuleReference(PropApi, Writer);
+                            Property.DeclareCrossModuleReference(PropApi, Writer);
+                        }
+                    };
+
+                    for (auto& Property : Struct->Props)
+                    {
+                        DeclareFor(*Property);
+                    }
+
+                    // A function parameter reaches another module's type exactly as a member does, and its
+                    // property definition names that type's Construct function the same way.
+                    for (auto& Function : Struct->Functions)
+                    {
+                        for (auto& Parameter : Function->ParamEntries)
+                        {
+                            DeclareFor(*Parameter);
                         }
                     }
                 }
@@ -718,6 +733,8 @@ namespace Lumina::Reflection
         Writer.Line("#include \"Core/Profiler/Profile.h\"");
         Writer.Line("#include \"Core/Math/Hash/Hash.h\"");
         Writer.Line("#include \"Core/Object/Class.h\"");
+        Writer.Line("#include \"Core/Object/ObjectCore.h\"");
+        Writer.Line("#include \"Core/Reflection/Type/Function.h\"");
         Writer.Line("#include \"Containers/ContainerOps.h\"");
         // Pull the headers and placement-new only when the header actually declares a Scriptable class.
         for (const auto& T : Types)

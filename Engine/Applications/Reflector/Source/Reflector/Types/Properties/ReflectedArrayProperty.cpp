@@ -8,7 +8,7 @@ namespace Lumina
     void FReflectedArrayProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
         // The per-property forwarder returns the shared GetVectorOpsFor table, a static member for scope.
-        const std::string CustomData = AccessorScope + Name + "ArrayOps_WrapperImpl";
+        const std::string CustomData = AccessorScope + AccessorNameBase() + "ArrayOps_WrapperImpl";
         const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
         AppendPropertyDef(Writer, PropertyFlagStr.c_str(), "Lumina::EPropertyTypeFlags::Vector", CustomData);
     }
@@ -22,8 +22,8 @@ namespace Lumina
     {
         FReflectedProperty::DeclareAccessors(Writer, FileID);
 
-        Writer.Macrof("static void %sArrayGetter_WrapperImpl(const void* Object, void* OutValue);", Name.c_str());
-        Writer.Macrof("static const ::Lumina::FVectorOps* %sArrayOps_WrapperImpl();", Name.c_str());
+        Writer.Macrof("static void %sArrayGetter_WrapperImpl(const void* Object, void* OutValue);", AccessorNameBase().c_str());
+        Writer.Macrof("static const ::Lumina::FVectorOps* %sArrayOps_WrapperImpl();", AccessorNameBase().c_str());
 
         return true;
     }
@@ -33,7 +33,7 @@ namespace Lumina
         FReflectedProperty::DefineAccessors(Writer, ReflectedType);
 
         const std::string& Q = AccessorDefinitionScope;
-        const char* N = Name.c_str();
+        const char* N = AccessorNameBase().c_str();
         const char* Raw = RawTypeName.c_str();      // The container type, e.g. TVector<T> or TFixedVector<T, N>.
 
         // Object is the container instance itself, and the caller resolves the member offset via GetValuePtr.

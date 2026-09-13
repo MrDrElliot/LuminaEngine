@@ -60,6 +60,13 @@ namespace Lumina
         std::string                   Outer;
 
         // "Owner::" normally, a free-function symbol prefix when the owner has no body to declare them in.
+        // What the accessor wrappers are named after. A member uses its own name, which is unique within its
+        // type. A function parameter has no type to be unique within, so it is given a distinct base here
+        // instead of renaming the parameter, whose name is what the reflected signature reports.
+        std::string                   AccessorBaseName;
+
+        const std::string& AccessorNameBase() const { return AccessorBaseName.empty() ? Name : AccessorBaseName; }
+
         std::string                   AccessorScope;
 
         // The same prefix as spelled at the definition site, which sits inside the owner's namespace.

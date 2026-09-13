@@ -1,5 +1,8 @@
 #pragma once
 
+// Spells out its own integer types rather than relying on whoever includes it first to have pulled them.
+#include <cstdint>
+
 namespace Lumina
 {
     

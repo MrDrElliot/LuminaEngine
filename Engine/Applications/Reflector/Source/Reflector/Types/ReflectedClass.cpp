@@ -79,13 +79,24 @@ namespace Lumina::Reflection
             {
                 Writer.Line();
                 Writer.Linef("\t(uint32)std::size(%s_Metadata),", MetadataSymbol.c_str());
-                Writer.Linef("\t%s_Metadata", MetadataSymbol.c_str());
+                Writer.Appendf("\t%s_Metadata", MetadataSymbol.c_str());
             }
             else
             {
+                // Spelled out rather than left off, since the function table below is positional after them.
                 Writer.Line();
+                Writer.Line("\t0,");
+                Writer.Append("\tnullptr");
             }
 
+            if (Class.HasNativeFunctions())
+            {
+                Writer.Line(",");
+                Writer.Line("\tFuncPointers,");
+                Writer.Append("\t(uint32)std::size(FuncPointers)");
+            }
+
+            Writer.Line();
             Writer.Line("};");
             Writer.Line();
         }
@@ -99,6 +110,9 @@ namespace Lumina::Reflection
 
         Writer.Linef("// Begin %s", DisplayName.c_str());
         Writer.Linef("IMPLEMENT_CLASS(%s, %s)", Namespace.c_str(), DisplayName.c_str());
+
+        // Frames and thunks first: offsetof below is taken against them, so they have to be complete.
+        EmitFunctionFrames(Writer);
 
         // Statics struct.
         Writer.Linef("struct %s", Statics.c_str());
@@ -116,6 +130,7 @@ namespace Lumina::Reflection
         {
             Writer.Line("static const Lumina::FPropertyParams* const PropPointers[];");
         }
+        EmitFunctionFieldDeclarations(Writer);
 
         Writer.PopIndent();
         Writer.Line("};");
@@ -137,6 +152,9 @@ namespace Lumina::Reflection
             EmitPropertyDefinitions(Writer, Statics);
             EmitPropertyPointerTable(Writer, Statics);
         }
+
+        EmitFunctionDefinitions(Writer, Statics);
+        EmitFunctionPointerTable(Writer, Statics);
 
         EmitClassParams(Writer, *this, Statics);
 

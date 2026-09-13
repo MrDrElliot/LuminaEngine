@@ -5,6 +5,7 @@
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Core/LuminaMacros.h"
+#include "Core/Reflection/Type/Function.h"
 #include "Platform/GenericPlatform.h"
 
 
@@ -198,6 +199,9 @@ namespace Lumina
     RUNTIME_API EPropertyTypeFlags PropertyStringToType(FName String);
     
     // the kind a name spells, for a file that stored types as text, None if it spells nothing
+    /** Builds Outer's reflected functions in its property arena, parameters included. */
+    RUNTIME_API void InitializeAndCreateFFunctions(CStruct* Outer, const FFunctionParams* const* FunctionArray, uint32 NumFunctions);
+
     RUNTIME_API EPropertyTypeFlags PropertyTypeFromName(const FName& TypeName);
 
     // whether Value survives a conversion into Type, which is what gates a numeric property's migration
@@ -369,15 +373,39 @@ namespace Lumina
         const FMetaDataPairParam* MetaDataArray;
     };
     
+    /**
+     * One reflected function as the generated code declares it.
+     *
+     * Params are ordinary FPropertyParams whose Offset is an offsetof into the generated parameter struct,
+     * so the compiler lays the frame out and the same construction path builds them as builds a member.
+     */
+    struct FFunctionParams
+    {
+        const char*                     Name;
+        EFunctionFlags                  Flags;
+        const FPropertyParams* const*   Params;
+        /** Length of Params, container inners included, exactly as a type's property array counts them. */
+        uint16                          NumParamEntries;
+        /** Index among the TOP-LEVEL parameters of the return value, or -1 for a void function. */
+        int16                           ReturnIndex;
+        /** sizeof the generated parameter struct, which is the frame a call needs. */
+        uint16                          ParmsSize;
+        FFunction::FNativeFuncPtr       Thunk;
+    };
+
     struct FClassParams
     {
         CClass*                         (*RegisterFunc)();
 
         const FPropertyParams* const*   Params;
         uint32                          NumProperties;
-        
+
         uint16                          NumMetaData;
         const FMetaDataPairParam*       MetaDataArray;
+
+        // Last so a generated file that predates functions still initializes, leaving a type with none.
+        const FFunctionParams* const*   Functions = nullptr;
+        uint32                          NumFunctions = 0;
     };
 
     struct FStructParams
@@ -389,9 +417,12 @@ namespace Lumina
         uint32                          NumProperties;
         uint16                          SizeOf;
         uint16                          AlignOf;
-        
+
         uint16 NumMetaData;
         const FMetaDataPairParam* MetaDataArray;
+
+        const FFunctionParams* const*   Functions = nullptr;
+        uint32                          NumFunctions = 0;
     };
     
     struct FEnumeratorParam

@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Core/Reflection/Type/Function.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Class/StructTraits.h"
 #include "Core/Object/Field.h"
@@ -133,12 +134,22 @@ namespace Lumina
             AllProperties.insert(AllProperties.end(),
                 SuperStruct->AllProperties.begin(), SuperStruct->AllProperties.end());
         }
+
+        // Derived first, so FindFunction reaches an override before the declaration it replaces.
+        AllFunctions = OwnFunctions;
+        if (SuperStruct != nullptr)
+        {
+            AllFunctions.insert(AllFunctions.end(),
+                SuperStruct->AllFunctions.begin(), SuperStruct->AllFunctions.end());
+        }
     }
 
     void CStruct::Unlink()
     {
         OwnProperties.clear();
         AllProperties.clear();
+        OwnFunctions.clear();
+        AllFunctions.clear();
         bLinked = false;
     }
 
@@ -165,6 +176,25 @@ namespace Lumina
     void CStruct::AddProperty(FProperty* Property)
     {
         OwnProperties.push_back(Property);
+    }
+
+    void CStruct::AddFunction(FFunction* Function)
+    {
+        OwnFunctions.push_back(Function);
+    }
+
+    FFunction* CStruct::FindFunction(const FName& Name) const
+    {
+        // AllFunctions is derived-first, so the nearest declaration is the first match.
+        for (FFunction* Current : AllFunctions)
+        {
+            if (Current->GetFunctionName() == Name)
+            {
+                return Current;
+            }
+        }
+
+        return nullptr;
     }
     
     static bool ReadNumericValue(FArchive& Ar, EPropertyTypeFlags Type, double& OutValue)

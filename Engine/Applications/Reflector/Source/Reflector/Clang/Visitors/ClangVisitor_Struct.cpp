@@ -8,6 +8,7 @@
 #include <Reflector/Types/ReflectedType.h>
 #include "Reflector/Clang/ClangParserContext.h"
 #include "Reflector/Clang/Utils.h"
+#include "Reflector/CodeGeneration/ReflectionNames.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"
 #include "Reflector/ReflectionCore/ReflectionMacro.h"
 #include "Reflector/ReflectionSpecifiers.h"
@@ -495,7 +496,14 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::Object:
 		{
-			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
+			// A member is a TObjectPtr<T>, whose T is the template argument. A function parameter is a raw
+			// T*, where the class is the pointee; both spellings describe the same object property.
+			CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
+			if (ArgType.kind == CXType_Invalid)
+			{
+				ArgType = clang_getUnqualifiedType(clang_getPointeeType(clang_getCanonicalType(FieldInfo.Type)));
+			}
+
 			std::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
 			if (!ParamFieldInfo.has_value())
 			{
@@ -745,6 +753,228 @@ namespace Lumina::Reflection::Visitor
 	}
 
 
+	// Whether a record derives from CObject, which is what separates an object reference from a pointer to a
+	// plain struct. CreateFuncField calls every pointer an object, and an ECS component is a struct, so a
+	// raw pointer to one would otherwise be described as an object property naming a class that has none.
+	static bool DerivesFromCObject(CXType RecordType, int Depth = 0)
+	{
+		if (Depth > 16)
+		{
+			return false;
+		}
+
+		const CXCursor Declaration = clang_getTypeDeclaration(clang_getCanonicalType(RecordType));
+		if (clang_Cursor_isNull(Declaration) != 0)
+		{
+			return false;
+		}
+
+		if (ClangUtils::GetCursorSpelling(Declaration) == "CObject")
+		{
+			return true;
+		}
+
+		struct FSearch
+		{
+			bool bFound = false;
+			int  Depth  = 0;
+		};
+
+		FSearch Search{ false, Depth };
+
+		clang_visitChildren(Declaration, [](CXCursor Cursor, CXCursor, CXClientData Data) -> CXChildVisitResult
+		{
+			FSearch* State = static_cast<FSearch*>(Data);
+			if (clang_getCursorKind(Cursor) == CXCursor_CXXBaseSpecifier
+				&& DerivesFromCObject(clang_getCursorType(Cursor), State->Depth + 1))
+			{
+				State->bFound = true;
+				return CXChildVisit_Break;
+			}
+			return CXChildVisit_Continue;
+		}, &Search);
+
+		return Search.bFound;
+	}
+
+	// Kinds a call frame can hold today.
+	//
+	// Containers and maps are out because their inners are created through the same factory, which attaches
+	// them to the owning type, and untangling that for a parameter is worth doing on its own. Object and
+	// class are out for a sharper reason: the property factory derives the pointee from a TObjectPtr<T>'s
+	// template argument, and a raw CWorld* parameter carries no such argument, so it cannot be qualified.
+	// Both want CreateFuncField to describe the inner type, which is the next piece of this rather than a
+	// reason to hold the rest back.
+	static bool IsSupportedParameterKind(EPropertyTypeFlags Kind)
+	{
+		switch (Kind)
+		{
+		case EPropertyTypeFlags::Int8:
+		case EPropertyTypeFlags::Int16:
+		case EPropertyTypeFlags::Int32:
+		case EPropertyTypeFlags::Int64:
+		case EPropertyTypeFlags::UInt8:
+		case EPropertyTypeFlags::UInt16:
+		case EPropertyTypeFlags::UInt32:
+		case EPropertyTypeFlags::UInt64:
+		case EPropertyTypeFlags::Float:
+		case EPropertyTypeFlags::Double:
+		case EPropertyTypeFlags::Bool:
+		case EPropertyTypeFlags::Name:
+		case EPropertyTypeFlags::String:
+		case EPropertyTypeFlags::Struct:
+		case EPropertyTypeFlags::Vector:
+		case EPropertyTypeFlags::Optional:
+		case EPropertyTypeFlags::Object:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	// Turns the parsed signature into the properties the generated frame is described by. A function whose
+	// arguments cannot all be described stays unreflected natively, which costs nothing that worked before.
+	static void BuildNativeFunctionParameters(FClangParserContext* Context, FReflectedStruct* Struct,
+	                                         FReflectedFunction& Function, const CXCursor& Cursor)
+	{
+		if (Function.bHasOmittedArgs)
+		{
+			return;
+		}
+
+		// Qualified, because offsetof against it is emitted at file scope while the frame itself is declared
+		// inside the type's namespace.
+		const std::string ParmsStruct = (Struct->Namespace.empty() ? std::string() : Struct->Namespace + "::")
+			+ Names::FunctionParmsStruct(Struct->DisplayName, Function.Name);
+
+		auto AddParameter = [&](const FFieldInfo& Info, const std::string& MemberName) -> bool
+		{
+			if (!IsSupportedParameterKind(Info.Flags))
+			{
+				return false;
+			}
+
+			const CXTypeKind Kind = clang_getCanonicalType(Info.Type).kind;
+
+			// An rvalue reference would need the thunk to move out of the frame, which is a different
+			// ownership story than handing the slot over; not worth it for how rare it is in a signature.
+			if (Kind == CXType_RValueReference)
+			{
+				return false;
+			}
+
+			const CXType Stored = clang_getUnqualifiedType(clang_getNonReferenceType(Info.Type));
+			std::string StorageType = ClangUtils::GetSafeTypeAsString(Stored);
+			if (StorageType.empty() || ClangUtils::IsLibclangPlaceholderName(StorageType))
+			{
+				return false;
+			}
+
+			// FObjectProperty sizes itself as TObjectPtr<CObject> and its copy and teardown go through the
+			// handle to keep the refcount straight, so the frame has to hold one too. Spelled against
+			// CObject rather than the declared class, whose definition a generated file need not have, and
+			// the thunk casts on the way out. The handle also keeps the object alive across the call.
+			std::string ObjectCastType;
+			if (Info.Flags == EPropertyTypeFlags::Object)
+			{
+				const CXType Pointee = clang_getPointeeType(clang_getCanonicalType(Stored));
+				if (!DerivesFromCObject(Pointee))
+				{
+					return false;
+				}
+
+				ObjectCastType = StorageType;
+				StorageType = "Lumina::TObjectPtr<Lumina::CObject>";
+			}
+
+			// Described as what the frame stores, not as the signature spelled it. A TVector<float> reaches
+			// here as const TVector<float>&, and template arguments live on the record rather than on the
+			// reference to it, so the inner type could not be found without looking through it first.
+			FFieldInfo StoredInfo = Info;
+			StoredInfo.Type = Stored;
+
+			// The raw spelling drives a container's ops lookup and its casts, so it has to be the stored
+			// type as well; left as written it would form a pointer to a reference.
+			StoredInfo.RawFieldType = StorageType;
+
+			// A container adds its inners here too, so everything added from this mark belongs to the
+			// function. Taking only the outer back would leave the inners as fake members of the type.
+			const size_t Mark = Struct->NumProperties();
+
+			FReflectedProperty* Raw = nullptr;
+			if (!CreatePropertyForType(Context, Struct, Raw, StoredInfo) || Raw == nullptr)
+			{
+				return false;
+			}
+
+			std::vector<std::unique_ptr<FReflectedProperty>> Taken = Struct->TakeBackPropertiesFrom(Mark);
+			if (Taken.empty() || Taken.back().get() != Raw)
+			{
+				return false;
+			}
+
+			// The outer is pushed after its inners, so it is the last one taken and the only one that is
+			// a frame member; an inner is described by its owner and emits offset 0.
+			Taken.back()->Name  = MemberName;
+			Taken.back()->Outer = ParmsStruct;
+
+			// A container's accessor wrappers are members of the owning type for a member property. A
+			// parameter has no type to be scoped by, so they become free functions beside the frame and take
+			// their uniqueness from the function and the position rather than from the parameter's name.
+			Taken.back()->AccessorBaseName = Names::FunctionParamsStatic(Function.Name) + "_P"
+				+ std::to_string(Function.TopLevelParams.size());
+
+			// Defined beside the frame, so inside the type's namespace, and referenced from the property
+			// definitions at file scope, so named through it there.
+			Taken.back()->AccessorScope = Struct->Namespace.empty() ? std::string() : (Struct->Namespace + "::");
+			Taken.back()->AccessorDefinitionScope.clear();
+
+			FReflectedProperty* TopLevel = Taken.back().get();
+			for (auto& Entry : Taken)
+			{
+				Function.ParamEntries.push_back(std::move(Entry));
+			}
+
+			Function.TopLevelParams.push_back(TopLevel);
+			Function.ParameterStorageTypes.push_back(std::move(StorageType));
+			Function.ParameterObjectCastTypes.push_back(std::move(ObjectCastType));
+			Function.ParameterIsReference.push_back(Kind == CXType_LValueReference);
+			return true;
+		};
+
+		auto Abandon = [&]
+		{
+			Function.ParamEntries.clear();
+			Function.TopLevelParams.clear();
+			Function.ParameterStorageTypes.clear();
+			Function.ParameterObjectCastTypes.clear();
+			Function.ParameterIsReference.clear();
+			Function.ReturnIndex = -1;
+		};
+
+		for (const FFieldInfo& Argument : Function.Arguments)
+		{
+			if (!AddParameter(Argument, Argument.Name))
+			{
+				Abandon();
+				return;
+			}
+		}
+
+		if (Function.Return.has_value())
+		{
+			if (!AddParameter(Function.Return.value(), "ReturnValue"))
+			{
+				Abandon();
+				return;
+			}
+			Function.ReturnIndex = (int)Function.TopLevelParams.size() - 1;
+		}
+
+		Function.bReflectNatively = true;
+		(void)Cursor;
+	}
+
 	static bool CreateFunctionForType(const CXCursor& Cursor, FClangParserContext* Context, FReflectedStruct* Struct, FReflectedFunction*& OutFunction)
 	{
 		OutFunction = nullptr;
@@ -786,6 +1016,11 @@ namespace Lumina::Reflection::Visitor
 			NewFunction->Return = CreateFuncField(Context, ResultType);
 		}
 		
+		NewFunction->bIsStatic = clang_CXXMethod_isStatic(Cursor) != 0;
+		NewFunction->bIsConst  = clang_CXXMethod_isConst(Cursor) != 0;
+
+		BuildNativeFunctionParameters(Context, Struct, *NewFunction, Cursor);
+
 		OutFunction = NewFunction.get();
 		Struct->PushFunction(std::move(NewFunction));
 

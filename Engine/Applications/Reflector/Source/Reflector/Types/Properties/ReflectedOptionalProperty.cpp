@@ -27,7 +27,7 @@ namespace Lumina
             {
                 CustomData += ", ";
             }
-            CustomData += AccessorScope + Name + kOptionalFatTailSuffixes[i];
+            CustomData += AccessorScope + AccessorNameBase() + kOptionalFatTailSuffixes[i];
         }
 
         const std::string PropertyFlagStr = PropertyFlagsToString(PropertyFlags);
@@ -43,10 +43,10 @@ namespace Lumina
     {
         FReflectedProperty::DeclareAccessors(Writer, FileID);
 
-        Writer.Macrof("static bool  %sOptionalHasValue_WrapperImpl(const void* Object);", Name.c_str());
-        Writer.Macrof("static void* %sOptionalGetValue_WrapperImpl(void* Object);", Name.c_str());
-        Writer.Macrof("static void  %sOptionalSetValue_WrapperImpl(void* Object, const void* InValue);", Name.c_str());
-        Writer.Macrof("static void  %sOptionalReset_WrapperImpl(void* Object);", Name.c_str());
+        Writer.Macrof("static bool  %sOptionalHasValue_WrapperImpl(const void* Object);", AccessorNameBase().c_str());
+        Writer.Macrof("static void* %sOptionalGetValue_WrapperImpl(void* Object);", AccessorNameBase().c_str());
+        Writer.Macrof("static void  %sOptionalSetValue_WrapperImpl(void* Object, const void* InValue);", AccessorNameBase().c_str());
+        Writer.Macrof("static void  %sOptionalReset_WrapperImpl(void* Object);", AccessorNameBase().c_str());
 
         return true;
     }
@@ -56,7 +56,7 @@ namespace Lumina
         FReflectedProperty::DefineAccessors(Writer, ReflectedType);
 
         const std::string& Q = AccessorDefinitionScope;
-        const char* N = Name.c_str();
+        const char* N = AccessorNameBase().c_str();
         const char* Raw = RawTypeName.c_str();      // The wrapper type, e.g. TOptional<T>.
         const char* Elem = ElementTypeName.c_str(); // The payload type T.
 

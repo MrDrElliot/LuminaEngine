@@ -529,6 +529,10 @@ namespace Lumina::ClangUtils
 
     /// Printable C++ type expression for casts in generated code, falling back to the semantic
     /// qualified name when libclang's printer would emit an "(unnamed ...)" placeholder.
+    // The type a call frame stores a parameter as: a reference is stored as its referent, and the top-level
+    // const goes with it, since the frame owns the value the call then passes along by reference.
+    inline std::string GetParameterStorageTypeAsString(CXType Type);
+
     inline std::string GetSafeTypeAsString(CXType Type)
     {
         std::string Result;
@@ -551,4 +555,10 @@ namespace Lumina::ClangUtils
         return Result;
     }
 
+
+    inline std::string GetParameterStorageTypeAsString(CXType Type)
+    {
+        const CXType Stored = clang_getUnqualifiedType(clang_getNonReferenceType(Type));
+        return GetSafeTypeAsString(Stored);
+    }
 }

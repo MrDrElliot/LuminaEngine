@@ -45,6 +45,39 @@ namespace Lumina::Reflection
         Functions.push_back(std::move(NewFunction));
     }
 
+    std::vector<std::unique_ptr<FReflectedProperty>> FReflectedStruct::TakeBackPropertiesFrom(size_t FirstIndex)
+    {
+        std::vector<std::unique_ptr<FReflectedProperty>> Taken;
+        if (FirstIndex >= Props.size())
+        {
+            return Taken;
+        }
+
+        Taken.reserve(Props.size() - FirstIndex);
+        for (size_t Index = FirstIndex; Index < Props.size(); ++Index)
+        {
+            Taken.push_back(std::move(Props[Index]));
+        }
+        Props.erase(Props.begin() + (std::ptrdiff_t)FirstIndex, Props.end());
+
+        return Taken;
+    }
+
+    std::unique_ptr<FReflectedProperty> FReflectedStruct::TakeBackProperty(FReflectedProperty* Property)
+    {
+        for (auto It = Props.begin(); It != Props.end(); ++It)
+        {
+            if (It->get() == Property)
+            {
+                std::unique_ptr<FReflectedProperty> Owned = std::move(*It);
+                Props.erase(It);
+                return Owned;
+            }
+        }
+
+        return nullptr;
+    }
+
     void FReflectedStruct::EmitMetadataArrays(FCodeWriter& Writer) const
     {
         // Type-level metadata.
@@ -221,13 +254,24 @@ namespace Lumina::Reflection
             {
                 Writer.Line(",");
                 Writer.Linef("\t(uint32)std::size(%s_Metadata),", MetadataSymbol.c_str());
-                Writer.Linef("\t%s_Metadata", MetadataSymbol.c_str());
+                Writer.Appendf("\t%s_Metadata", MetadataSymbol.c_str());
             }
             else
             {
-                Writer.Line();
+                // Spelled out rather than left off, since the function table below is positional after them.
+                Writer.Line(",");
+                Writer.Line("\t0,");
+                Writer.Append("\tnullptr");
             }
 
+            if (Struct.HasNativeFunctions())
+            {
+                Writer.Line(",");
+                Writer.Line("\tFuncPointers,");
+                Writer.Append("\t(uint32)std::size(FuncPointers)");
+            }
+
+            Writer.Line();
             Writer.Line("};");
             Writer.Line();
         }
@@ -251,6 +295,9 @@ namespace Lumina::Reflection
         Writer.Linef("static Lumina::FStructRegistrationInfo %s;", RegInfo.c_str());
         Writer.Line();
 
+        // Frames and thunks first: offsetof below is taken against them, so they have to be complete.
+        EmitFunctionFrames(Writer);
+
         // Statics struct body.
         Writer.Linef("struct %s", Statics.c_str());
         Writer.BeginBlock();
@@ -266,6 +313,7 @@ namespace Lumina::Reflection
 
         EmitPropertyFieldDeclarations(Writer);
         Writer.Line("static const Lumina::FStructParams StructParams;");
+        EmitFunctionFieldDeclarations(Writer);
 
         if (!Props.empty())
         {
@@ -310,6 +358,9 @@ namespace Lumina::Reflection
             EmitPropertyDefinitions(Writer, Statics);
             EmitPropertyPointerTable(Writer, Statics);
         }
+
+        EmitFunctionDefinitions(Writer, Statics);
+        EmitFunctionPointerTable(Writer, Statics);
 
         // FStructParams singleton definition.
         EmitStructParams(Writer, *this, Statics);

@@ -5,6 +5,8 @@
 #include <Reflector/Types/FieldInfo.h>
 
 #include <optional>
+#include <memory>
+#include "Reflector/Types/Properties/ReflectedProperty.h"
 
 namespace Lumina
 {
@@ -31,6 +33,35 @@ namespace Lumina
         // True for a C++ virtual method. Only a virtual is overridable from C#: the Scriptable codegen
         // generates a native shim override + a reverse-dispatch managed thunk so a C# subclass can override it.
         bool                            bIsVirtual = false;
+
+        bool                            bIsStatic = false;
+        bool                            bIsConst = false;
+
+        //~ Native FFunction reflection. Populated only when every argument and the return can be both
+        //  described as a property and stored in a frame; a function that cannot is left unreflected
+        //  natively rather than failing the build, since reflecting it is additive.
+        bool                                             bReflectNatively = false;
+
+        /// Every property describing the frame, flat and in emission order: a container's inners come
+        /// immediately before it, exactly as a type's own property table lays its members out.
+        std::vector<std::unique_ptr<FReflectedProperty>>  ParamEntries;
+
+        /// The frame's actual members, in declaration order, return last when there is one. Points into
+        /// ParamEntries and excludes the inners, which are described by their owner rather than declared.
+        std::vector<FReflectedProperty*>                 TopLevelParams;
+
+        /// Storage type spellings parallel to TopLevelParams, which is what the frame struct declares.
+        std::vector<std::string>                         ParameterStorageTypes;
+
+        /// The declared pointer type an object parameter is cast back to, empty for anything else. The frame
+        /// holds a TObjectPtr<CObject>, because that is the storage FObjectProperty describes.
+        std::vector<std::string>                         ParameterObjectCastTypes;
+
+        /// True for a parameter the real signature takes by reference, so the thunk hands the slot over.
+        std::vector<bool>                                ParameterIsReference;
+
+        /// Index into TopLevelParams of the return value, or -1 when the function returns void.
+        int                                              ReturnIndex = -1;
 
         //~ Free-function (SCRIPT_EXPORT) fields. A free function has no owning type: it binds to a named C#
         //  static class and is called by its fully-qualified name in the generated thunk.
