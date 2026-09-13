@@ -65,25 +65,41 @@ namespace Lumina
     }
 
     FFunction* FFunctionBuilder::Build(FPropertyArena& Arena, CStruct* Owner, const FFunctionParams& Params,
-                                       TSpan<FProperty* const> OrderedParams)
+                                      TSpan<FProperty* const> OrderedParams)
+    {
+        return BuildCore(Arena, Owner, FName(Params.Name), Params.Flags, OrderedParams,
+                         Params.ReturnIndex, Params.ParmsSize, Params.Thunk);
+    }
+
+    FFunction* FFunctionBuilder::BuildMinted(FPropertyArena& Arena, CStruct* Owner, const FName& Name,
+                                             EFunctionFlags Flags, TSpan<FProperty* const> OrderedParams,
+                                             int32 ReturnIndex, uint16 ParmsSize,
+                                             FFunction::FNativeFuncPtr Thunk)
+    {
+        return BuildCore(Arena, Owner, Name, Flags, OrderedParams, ReturnIndex, ParmsSize, Thunk);
+    }
+
+    FFunction* FFunctionBuilder::BuildCore(FPropertyArena& Arena, CStruct* Owner, const FName& Name,
+                                           EFunctionFlags Flags, TSpan<FProperty* const> OrderedParams,
+                                           int32 ReturnIndex, uint16 ParmsSize, FFunction::FNativeFuncPtr Thunk)
     {
         const uint16 NumParams = (uint16)OrderedParams.size();
 
-        if (Params.ReturnIndex >= (int16)NumParams)
+        if (ReturnIndex >= (int32)NumParams)
         {
             LOG_ERROR("Reflected function '{}' names parameter {} as its return, and it has {}",
-                Params.Name, Params.ReturnIndex, NumParams);
+                Name, ReturnIndex, NumParams);
             return nullptr;
         }
 
-        // Every parameter has to fit the frame the generated struct sized, or a call writes past it.
+        // Every parameter has to fit the frame, or a call writes past it.
         for (FProperty* Param : OrderedParams)
         {
-            if (Param->Offset + Param->GetElementSize() > Params.ParmsSize)
+            if (Param->Offset + Param->GetElementSize() > ParmsSize)
             {
                 LOG_ERROR("Reflected function '{}': parameter '{}' at offset {} size {} does not fit a "
-                          "{}-byte frame", Params.Name, Param->GetPropertyName(), Param->Offset,
-                          Param->GetElementSize(), Params.ParmsSize);
+                          "{}-byte frame", Name, Param->GetPropertyName(), Param->Offset,
+                          Param->GetElementSize(), ParmsSize);
                 return nullptr;
             }
         }
@@ -104,14 +120,14 @@ namespace Lumina
             }
         }
 
-        Function->Name        = FName(Params.Name);
+        Function->Name        = Name;
         Function->OwnerStruct = Owner;
         Function->Params      = ParamArray;
-        Function->ReturnParam = (Params.ReturnIndex >= 0) ? ParamArray[Params.ReturnIndex] : nullptr;
-        Function->Thunk       = Params.Thunk;
-        Function->Flags       = Params.Flags;
+        Function->ReturnParam = (ReturnIndex >= 0) ? ParamArray[ReturnIndex] : nullptr;
+        Function->Thunk       = Thunk;
+        Function->Flags       = Flags;
         Function->NumParams   = NumParams;
-        Function->ParmsSize   = Params.ParmsSize;
+        Function->ParmsSize   = ParmsSize;
 
         // The flag and the pointer are two spellings of the same fact, so they cannot be allowed to disagree.
         if (Function->ReturnParam != nullptr)

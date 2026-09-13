@@ -1053,11 +1053,13 @@ namespace Lumina
         return true;
     }
 
-    FProperty* CScriptStruct::CreateProperty(CStruct* Target, const FFieldPlan& Plan, uint32 Offset)
+    FProperty* CScriptStruct::CreateProperty(CStruct* Target, const FFieldPlan& Plan, uint32 Offset, TVector<FProperty*>* Collector)
     {
         const FScriptExportField& Field = *Plan.Field;
         const FScriptExportType& Type = *Field.Type;
-        const FPropertyOwner Owner{ &GetPropertyArena(), Target, nullptr };
+
+        // Either the target owns the property as a member or the collector takes it as a parameter, never both.
+        const FPropertyOwner Owner{ &GetPropertyArena(), Collector != nullptr ? nullptr : Target, nullptr, Collector };
 
         if (Plan.bArray)
         {
@@ -1098,7 +1100,7 @@ namespace Lumina
         return Property;
     }
 
-    CScriptStruct::FEmittedLayout CScriptStruct::EmitLayoutInto(CStruct* Target, uint32 BaseOffset, const FScriptExportSchema& Schema)
+    CScriptStruct::FEmittedLayout CScriptStruct::EmitLayoutInto(CStruct* Target, uint32 BaseOffset, const FScriptExportSchema& Schema, TVector<FProperty*>* Collector)
     {
         FEmittedLayout Result;
         Result.EndOffset = BaseOffset;
@@ -1136,7 +1138,7 @@ namespace Lumina
                 break;
             }
 
-            FProperty* Property = CreateProperty(Target, Plan, Offset);
+            FProperty* Property = CreateProperty(Target, Plan, Offset, Collector);
             if (Property == nullptr)
             {
                 continue;

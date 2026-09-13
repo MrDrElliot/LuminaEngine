@@ -120,6 +120,22 @@ namespace Lumina
         /** Null when the declaration is inconsistent, which is reported rather than half-built. */
         RUNTIME_API static FFunction* Build(FPropertyArena& Arena, CStruct* Owner, const FFunctionParams& Params,
                                             TSpan<FProperty* const> OrderedParams);
+
+        /**
+         * The same thing for a function a script declared, whose name is already interned and whose frame was
+         * laid out at runtime rather than by a compiler. Every generated function comes through Build.
+         */
+        RUNTIME_API static FFunction* BuildMinted(FPropertyArena& Arena, CStruct* Owner, const FName& Name,
+                                                  EFunctionFlags Flags, TSpan<FProperty* const> OrderedParams,
+                                                  int32 ReturnIndex, uint16 ParmsSize,
+                                                  FFunction::FNativeFuncPtr Thunk);
+
+    private:
+
+        // Both entry points land here, so a minted function is held to the same invariants as a generated one.
+        static FFunction* BuildCore(FPropertyArena& Arena, CStruct* Owner, const FName& Name, EFunctionFlags Flags,
+                                    TSpan<FProperty* const> OrderedParams, int32 ReturnIndex, uint16 ParmsSize,
+                                    FFunction::FNativeFuncPtr Thunk);
     };
 
     /**

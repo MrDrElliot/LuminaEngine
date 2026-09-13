@@ -110,8 +110,12 @@ namespace Lumina
         };
 
         // The record owning the emitted properties' element descriptions, so it must outlive every instance of Target.
+        //
+        // Collector, when given, takes the emitted properties instead of Target's member list. A call frame is
+        // laid out the same way an instance is but its slots are parameters, and a parameter that landed in the
+        // member list would show up as a field of the type.
         RUNTIME_API FEmittedLayout EmitLayoutInto(CStruct* Target, uint32 BaseOffset,
-            const Scripting::FScriptExportSchema& Schema);
+            const Scripting::FScriptExportSchema& Schema, TVector<FProperty*>* Collector = nullptr);
 
         const void* GetDefaults() const { return Defaults; }
 
@@ -185,7 +189,7 @@ namespace Lumina
             const Scripting::FScriptExportType& Type, CStruct* Resolved);
 
         bool ResolvePlan(const Scripting::FScriptExportField& Field, FFieldPlan& Out);
-        FProperty* CreateProperty(CStruct* Target, const FFieldPlan& Plan, uint32 Offset);
+        FProperty* CreateProperty(CStruct* Target, const FFieldPlan& Plan, uint32 Offset, TVector<FProperty*>* Collector);
         bool ResolveElement(const Scripting::FScriptExportType& Type, const FName& DiagName, Scripting::FScriptArrayElementDesc& Out);
         FProperty* CreateElement(void* ArrayOwner, const Scripting::FScriptExportType& Type, Scripting::FScriptArrayElementDesc& Desc);
         CScriptStruct* MintSubStruct(const Scripting::FScriptExportType& Type);
