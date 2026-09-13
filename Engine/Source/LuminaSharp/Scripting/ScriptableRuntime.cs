@@ -23,7 +23,7 @@ internal sealed class ScriptableRuntime
     private readonly EntityScriptRuntime EntityScripts;
 
     // Cached per user-type override bitmask (which ScriptEvents the subclass overrides); keyed by the user type.
-    private readonly Dictionary<Type, int> OverrideFlagsByType = new();
+    private readonly Dictionary<Type, ulong> OverrideFlagsByType = new();
 
     public ScriptableRuntime(TypeLibrary Library, EntityScriptRuntime EntityScripts)
     {
@@ -64,7 +64,7 @@ internal sealed class ScriptableRuntime
             Interop.FInteropString Base = new(NativeBase, BaseScratch);
             try
             {
-                Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length, (ulong)GetOverrideFlags(Type),
+                Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length, GetOverrideFlags(Type),
                     GetUpdatePhase(Type));
             }
             finally
@@ -191,27 +191,40 @@ internal sealed class ScriptableRuntime
 
     // Bit i is set when the user subclass overrides the ScriptEvent the wrapper declared with [ScriptEvent(i)].
     // An override moves the method's DeclaringType out of the engine assembly (LuminaSharp.dll) into user code.
-    private int GetOverrideFlags(Type Type)
+    private ulong GetOverrideFlags(Type Type)
     {
-        if (OverrideFlagsByType.TryGetValue(Type, out int Cached))
+        if (OverrideFlagsByType.TryGetValue(Type, out ulong Cached))
         {
             return Cached;
         }
 
-        int Flags = 0;
+        // Held as 64 bits to match the native mask. Built as an int, 1 << 31 set the sign bit and then
+        // sign-extended on the way to ulong, turning on every event from 31 upwards.
+        ulong Flags = 0;
         Assembly Engine = typeof(ScriptableRuntime).Assembly;
         foreach (MethodInfo Method in Type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
         {
             ScriptEventAttribute? Event = Method.GetCustomAttribute<ScriptEventAttribute>(inherit: true);
-            if (Event != null && Method.DeclaringType is { } Decl && Decl.Assembly != Engine)
+            if (Event == null || Method.DeclaringType is not { } Decl || Decl.Assembly == Engine)
             {
-                Flags |= 1 << Event.Index;
+                continue;
             }
+
+            if (Event.Index < 0 || Event.Index >= MaxScriptEvents)
+            {
+                Debug.LogError($"ScriptEvent index {Event.Index} on {Type.Name}.{Method.Name} is outside the {MaxScriptEvents}-event mask; the override will not bind.");
+                continue;
+            }
+
+            Flags |= 1UL << Event.Index;
         }
 
         OverrideFlagsByType[Type] = Flags;
         return Flags;
     }
+
+    /// Mirrors CScriptClass::kMaxScriptEvents, the width of the native override mask.
+    private const int MaxScriptEvents = 64;
 
     // Which physics phase this class's OnUpdate runs in, from [UpdatePhase]; PrePhysics when unmarked.
     private static byte GetUpdatePhase(Type Type)

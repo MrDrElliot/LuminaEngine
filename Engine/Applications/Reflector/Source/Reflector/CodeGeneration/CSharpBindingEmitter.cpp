@@ -1838,6 +1838,13 @@ namespace Lumina::Reflection
             // The forwarding shim and its registration, in an anonymous namespace so both stay TU-local.
             Writer.Line("namespace");
             Writer.Line("{");
+
+            // The mask is one word wide, so a base that declares more events than it holds would silently
+            // stop dispatching the ones past the end. Caught here rather than at runtime.
+            Writer.Linef("    static_assert(%d <= Lumina::CScriptClass::kMaxScriptEvents,", (int)Events.size());
+            Writer.Linef("        \"%s declares more ScriptEvents than the override mask holds\");", Qualified);
+            Writer.Line();
+
             Writer.Linef("    class %s final : public %s", Shim.c_str(), Qualified);
             Writer.Line("    {");
             // The managed instance lives in the object's slot and the override mask on the CClass, so this is bare.

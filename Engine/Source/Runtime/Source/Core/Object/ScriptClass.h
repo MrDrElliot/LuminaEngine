@@ -57,6 +57,10 @@ namespace Lumina
 
         RUNTIME_API CClass* GetMetaClass() const override;
 
+        /** How many ScriptEvents one Scriptable base can declare, which is the width of the mask below.
+         *  The generated shim asserts against it, so exceeding it fails the build rather than the run. */
+        static constexpr int32 kMaxScriptEvents = 64;
+
         /** Which ScriptEvents the C# subclass actually overrides (bit i == the wrapper's [ScriptEvent(i)]),
          *  so a non-overridden event costs one class-level test in the generated shim rather than a lookup. */
         uint64 ScriptOverrides = 0;
