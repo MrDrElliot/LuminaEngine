@@ -60,6 +60,10 @@ namespace Lumina
         /// True for a parameter the real signature takes by reference, so the thunk hands the slot over.
         std::vector<bool>                                ParameterIsReference;
 
+        /// True where the signature takes an rvalue reference, so the call moves out of the frame's slot.
+        /// A moved-from value is still destructible, which is all the frame teardown needs of it.
+        std::vector<bool>                                ParameterIsRvalue;
+
         /// Index into TopLevelParams of the return value, or -1 when the function returns void.
         int                                              ReturnIndex = -1;
 

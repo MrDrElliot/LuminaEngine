@@ -2,6 +2,8 @@
 
 #include "Containers/String.h"
 #include "Containers/ContainerOps.h"
+#include "Containers/HashTable.h"
+#include <utility>
 #include "Containers/Vector.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectBase.h"
@@ -58,6 +60,19 @@ namespace
         }
 
         CObject* Echoed = nullptr;
+
+        int32 Lookup(const THashMap<FName, int32>& Table, FName Key)
+        {
+            const auto It = Table.find(Key);
+            return It != Table.end() ? It->second : -1;
+        }
+
+        void Consume(FString&& Moved)
+        {
+            Taken = Move(Moved);
+        }
+
+        FString Taken;
     };
 
     struct FDouble_Parms
@@ -153,6 +168,52 @@ namespace
 
     const FFunctionParams GTotalFn = { "Total", EFunctionFlags::None, GTotalParams, 3, 1, sizeof(FTotal_Parms), &Thunk_Total };
 
+    struct FLookup_Parms
+    {
+        THashMap<FName, int32> Table;
+        FName                  Key;
+        int32                  ReturnValue;
+    };
+
+    void Thunk_Lookup(void* Context, void* Frame)
+    {
+        FLookup_Parms& P = *(FLookup_Parms*)Frame;
+        P.ReturnValue = ((FSubject*)Context)->Lookup(P.Table, P.Key);
+    }
+
+    const FMapOps* LookupTableOps() { return GetMapOpsFor<THashMap<FName, int32>>(); }
+
+    struct FConsume_Parms
+    {
+        FString Moved;
+    };
+
+    void Thunk_Consume(void* Context, void* Frame)
+    {
+        FConsume_Parms& P = *(FConsume_Parms*)Frame;
+        ((FSubject*)Context)->Consume(std::move(P.Moved));
+    }
+
+    // The emitter orders a map's entries [Value, Key, Map], which the runtime's backward walk relies on.
+    const FNumericPropertyParams GLookupValueInner = { "Table_Value", EPropertyFlags::SubField, EPropertyTypeFlags::Int32, nullptr, nullptr, 0 };
+    const FNamePropertyParams GLookupKeyInner = { "Table_Key", EPropertyFlags::SubField, EPropertyTypeFlags::Name, nullptr, nullptr, 0 };
+    const FMapPropertyParams GLookupTable = { { "Table", EPropertyFlags::None, EPropertyTypeFlags::Map, nullptr, nullptr, offsetof(FLookup_Parms, Table) }, &LookupTableOps };
+    const FNamePropertyParams GLookupKey = { "Key", EPropertyFlags::None, EPropertyTypeFlags::Name, nullptr, nullptr, offsetof(FLookup_Parms, Key) };
+    const FNumericPropertyParams GLookupRet = { "ReturnValue", EPropertyFlags::None, EPropertyTypeFlags::Int32, nullptr, nullptr, offsetof(FLookup_Parms, ReturnValue) };
+    const FPropertyParams* const GLookupParams[] = {
+        (const FPropertyParams*)&GLookupValueInner,
+        (const FPropertyParams*)&GLookupKeyInner,
+        (const FPropertyParams*)&GLookupTable,
+        (const FPropertyParams*)&GLookupKey,
+        (const FPropertyParams*)&GLookupRet,
+    };
+
+    const FStringPropertyParams GConsumeMoved = { "Moved", EPropertyFlags::None, EPropertyTypeFlags::String, nullptr, nullptr, offsetof(FConsume_Parms, Moved) };
+    const FPropertyParams* const GConsumeParams[] = { (const FPropertyParams*)&GConsumeMoved };
+
+    const FFunctionParams GLookupFn  = { "Lookup",  EFunctionFlags::None, GLookupParams, 5, 2, sizeof(FLookup_Parms), &Thunk_Lookup };
+    const FFunctionParams GConsumeFn = { "Consume", EFunctionFlags::None, GConsumeParams, 1, -1, sizeof(FConsume_Parms), &Thunk_Consume };
+
     const FObjectPropertyParams GEchoIn = { { "In", EPropertyFlags::None, EPropertyTypeFlags::Object, nullptr, nullptr, offsetof(FEcho_Parms, In) }, &CScriptableTest::StaticClass };
     const FObjectPropertyParams GEchoRet = { { "ReturnValue", EPropertyFlags::None, EPropertyTypeFlags::Object, nullptr, nullptr, offsetof(FEcho_Parms, ReturnValue) }, &CScriptableTest::StaticClass };
     const FPropertyParams* const GEchoParams[] = {
@@ -162,7 +223,7 @@ namespace
 
     const FFunctionParams GEchoFn = { "Echo", EFunctionFlags::None, GEchoParams, 2, 1, sizeof(FEcho_Parms), &Thunk_Echo };
 
-    const FFunctionParams* const GAllFunctions[] = { &GDoubleFn, &GGreetFn, &GSumFn, &GTotalFn, &GEchoFn };
+    const FFunctionParams* const GAllFunctions[] = { &GDoubleFn, &GGreetFn, &GSumFn, &GTotalFn, &GEchoFn, &GLookupFn, &GConsumeFn };
 
     // One struct carrying the three, built once so every test reads the same linked type.
     CStruct& SubjectStruct()
@@ -188,7 +249,7 @@ TEST(FunctionReflection, AStructReportsTheFunctionsItDeclares)
 {
     CStruct& Struct = SubjectStruct();
 
-    EXPECT_EQ(Struct.GetFunctions().size(), 5u);
+    EXPECT_EQ(Struct.GetFunctions().size(), 7u);
     ASSERT_NE(Struct.FindFunction("Double"), nullptr);
     ASSERT_NE(Struct.FindFunction("Greet"), nullptr);
     ASSERT_NE(Struct.FindFunction("Sum"), nullptr);
@@ -375,4 +436,50 @@ TEST(FunctionReflection, AnObjectArgumentTravelsAsAHandle)
     EXPECT_EQ(Subject_Object->GetStrongRefCount(), RefsBefore) << "and lets go of it once torn down";
 
     Subject_Object->ConditionalBeginDestroy();
+}
+
+// A map contributes two inners and is still one argument, and the pair order is the emitter's ABI contract.
+TEST(FunctionReflection, AMapParameterIsOneArgumentWithTwoInners)
+{
+    const FFunction* Lookup = SubjectStruct().FindFunction("Lookup");
+    ASSERT_NE(Lookup, nullptr);
+
+    ASSERT_EQ(Lookup->GetParams().size(), 3u) << "Table, Key and the return; the inners are not declared";
+    EXPECT_EQ(Lookup->GetParams()[0]->GetPropertyName(), FName("Table"));
+    EXPECT_EQ(Lookup->GetParams()[0]->GetType(), EPropertyTypeFlags::Map);
+    EXPECT_EQ(Lookup->GetParams()[1]->GetPropertyName(), FName("Key"));
+    EXPECT_EQ(Lookup->GetArguments().size(), 2u);
+}
+
+TEST(FunctionReflection, ACallWithAMapArgumentRoundTrips)
+{
+    const FFunction* Lookup = SubjectStruct().FindFunction("Lookup");
+    ASSERT_NE(Lookup, nullptr);
+    ASSERT_TRUE(Lookup->GetParams()[0]->OwnsStorage());
+
+    FSubject Subject;
+
+    FFunctionFrame Frame(*Lookup);
+    Frame.At<THashMap<FName, int32>>(0).emplace(FName("Answer"), 42);
+    Frame.At<FName>(1) = FName("Answer");
+    Frame.Invoke(&Subject);
+
+    EXPECT_EQ(Frame.Return<int32>(), 42);
+}
+
+// An rvalue parameter is moved out of the frame, and the moved-from slot is still torn down safely.
+TEST(FunctionReflection, AnRvalueParameterIsMovedOutOfTheFrame)
+{
+    const FFunction* Consume = SubjectStruct().FindFunction("Consume");
+    ASSERT_NE(Consume, nullptr);
+
+    FSubject Subject;
+
+    {
+        FFunctionFrame Frame(*Consume);
+        Frame.At<FString>(0) = "Long enough that the move has something on the heap to steal";
+        Frame.Invoke(&Subject);
+    }
+
+    EXPECT_EQ(Subject.Taken, "Long enough that the move has something on the heap to steal");
 }

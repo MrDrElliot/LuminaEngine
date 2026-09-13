@@ -825,6 +825,7 @@ namespace Lumina::Reflection::Visitor
 		case EPropertyTypeFlags::Struct:
 		case EPropertyTypeFlags::Vector:
 		case EPropertyTypeFlags::Optional:
+		case EPropertyTypeFlags::Map:
 		case EPropertyTypeFlags::Object:
 			return true;
 		default:
@@ -855,13 +856,7 @@ namespace Lumina::Reflection::Visitor
 			}
 
 			const CXTypeKind Kind = clang_getCanonicalType(Info.Type).kind;
-
-			// An rvalue reference would need the thunk to move out of the frame, which is a different
-			// ownership story than handing the slot over; not worth it for how rare it is in a signature.
-			if (Kind == CXType_RValueReference)
-			{
-				return false;
-			}
+			const bool bIsRvalueReference = (Kind == CXType_RValueReference);
 
 			const CXType Stored = clang_getUnqualifiedType(clang_getNonReferenceType(Info.Type));
 			std::string StorageType = ClangUtils::GetSafeTypeAsString(Stored);
@@ -939,6 +934,7 @@ namespace Lumina::Reflection::Visitor
 			Function.ParameterStorageTypes.push_back(std::move(StorageType));
 			Function.ParameterObjectCastTypes.push_back(std::move(ObjectCastType));
 			Function.ParameterIsReference.push_back(Kind == CXType_LValueReference);
+			Function.ParameterIsRvalue.push_back(bIsRvalueReference);
 			return true;
 		};
 
@@ -949,6 +945,7 @@ namespace Lumina::Reflection::Visitor
 			Function.ParameterStorageTypes.clear();
 			Function.ParameterObjectCastTypes.clear();
 			Function.ParameterIsReference.clear();
+			Function.ParameterIsRvalue.clear();
 			Function.ReturnIndex = -1;
 		};
 

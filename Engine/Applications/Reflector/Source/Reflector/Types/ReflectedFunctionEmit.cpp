@@ -108,6 +108,10 @@ namespace Lumina::Reflection
                 {
                     Arguments += "(" + CastType + ")P." + Function->TopLevelParams[Index]->Name + ".Get()";
                 }
+                else if (Function->ParameterIsRvalue[Index])
+                {
+                    Arguments += "std::move(P." + Function->TopLevelParams[Index]->Name + ")";
+                }
                 else
                 {
                     Arguments += "P.";

@@ -735,6 +735,7 @@ namespace Lumina::Reflection
         Writer.Line("#include \"Core/Object/Class.h\"");
         Writer.Line("#include \"Core/Object/ObjectCore.h\"");
         Writer.Line("#include \"Core/Reflection/Type/Function.h\"");
+        Writer.Line("#include <utility>");
         Writer.Line("#include \"Containers/ContainerOps.h\"");
         // Pull the headers and placement-new only when the header actually declares a Scriptable class.
         for (const auto& T : Types)
