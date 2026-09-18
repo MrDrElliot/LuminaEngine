@@ -590,7 +590,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         StringBuilder Solution = new();
         Solution.AppendLine();
         Solution.AppendLine("Microsoft Visual Studio Solution File, Format Version 12.00");
-        Solution.AppendLine("# Visual Studio Version 17");
+        Solution.AppendLine("# Visual Studio Version 18");
 
         foreach ((string FolderPath, Guid FolderGuid) in FolderGuids.OrderBy(P => P.Key, StringComparer.OrdinalIgnoreCase))
         {

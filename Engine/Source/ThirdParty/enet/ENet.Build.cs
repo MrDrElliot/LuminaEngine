@@ -19,6 +19,8 @@ public class ENet : LuminaThirdPartyModuleRules
             "peer.c",
             "protocol.c",
         });
+        // Compiler is confused by TryGet style condition in win32.c
+        Warnings[CompilerWarning.MaybeUninitialized] = WarningSeverity.Off;
 
         if (Target.Platform == BuildPlatform.Windows64)
         {

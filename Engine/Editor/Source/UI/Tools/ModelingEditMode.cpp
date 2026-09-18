@@ -17,7 +17,7 @@
 
 namespace Lumina
 {
-    namespace
+    namespace ModelingEditModePrivate
     {
         const FVector4 kPreviewColor(0.35f, 0.85f, 1.00f, 1.0f);
         const FVector4 kDragColor   (1.00f, 0.80f, 0.25f, 1.0f);
@@ -138,6 +138,7 @@ namespace Lumina
             World->DrawBox(Center, HalfExtents, FQuat::Identity(), Color, Thickness, false, -1.0f);
         }
     }
+    using namespace ModelingEditModePrivate;
 
     float FModelingEditMode::SnapAxis(float Value) const
     {

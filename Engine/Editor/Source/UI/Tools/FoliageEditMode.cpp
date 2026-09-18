@@ -19,7 +19,7 @@
 
 namespace Lumina
 {
-    namespace
+    namespace FoliageEditModePrivate
     {
         void BuildRayFromScreen(const SCameraComponent& Camera, ImVec2 PixelWithinViewport, ImVec2 ViewportSize, FVector3& OutOrigin, FVector3& OutDir)
         {
@@ -80,6 +80,7 @@ namespace Lumina
             return Math::FromAxisAngle(Axis, std::acos(D));
         }
     }
+    using namespace FoliageEditModePrivate;
 
     float FFoliageEditMode::RandFloat()
     {
