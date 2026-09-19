@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Containers/Name.h"
+#include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/FunctionLibrary.h"
 #include "Core/Object/ObjectMacros.h"
@@ -51,5 +52,16 @@ namespace Lumina
         /** A string return, which is the two-pass caller-buffer protocol. */
         FUNCTION()
         static FName BenchGetName();
+
+        /** Returns a name of exactly Length characters, so a test can straddle the managed scratch buffer. */
+        FUNCTION()
+        static FString MakeName(int32 Length);
+
+        /** Counts calls into MakeName, so a test can pin how many crossings one string return costs. */
+        FUNCTION()
+        static int32 GetMakeNameCallCount();
+
+        FUNCTION()
+        static void ResetMakeNameCallCount();
     };
 }

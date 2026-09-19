@@ -47,6 +47,7 @@ namespace
     using FResolveKindFn   = int32(*)(int32*);
     using FDescribedFn     = int32(*)(uint8*);
     using FVecIntsFn       = int32(*)(int32, int32*, int32*, int32*);
+    using FStringBindFn    = int32(*)(int32, int32*, int32*, int32*);
     using FVecEntitiesFn   = int32(*)(int32, uint32*);
     using FVecStructsFn    = int32(*)(int32, float*);
     using FBindCallbackFn  = uint64(*)();
@@ -852,6 +853,38 @@ TEST_F(FFrameMarshalTest, AnOutContainerLargerThanTheScratchBufferStillArrivesWh
     EXPECT_EQ(First, 0);
     EXPECT_EQ(Last, Count - 1);
     EXPECT_EQ(Calls, 2) << "an overflow refills an exact buffer, so the query runs a second time";
+}
+
+// A string return sizes into stack scratch first, so an ordinary name costs one crossing rather than two.
+TEST_F(FFrameMarshalTest, AStringReturnThatFitsTheScratchBufferCostsOneCrossing)
+{
+    auto* Bind = (FStringBindFn)DotNet::ResolveManagedExport("Test_StringBinding");
+    ASSERT_NE(Bind, nullptr);
+
+    int32 Calls = 0;
+    int32 First = -1;
+    int32 Last = -1;
+    const int32 Length = 32;
+    EXPECT_EQ(Bind(Length, &Calls, &First, &Last), Length);
+    EXPECT_EQ(Calls, 1) << "a string that fits the scratch buffer should cost one crossing";
+    EXPECT_EQ(First, 'a');
+    EXPECT_EQ(Last, 'a' + ((Length - 1) % 26));
+}
+
+// Past the scratch the binding sizes an exact buffer and refills it, which is the only path that calls twice.
+TEST_F(FFrameMarshalTest, AStringReturnLargerThanTheScratchBufferStillArrivesWhole)
+{
+    auto* Bind = (FStringBindFn)DotNet::ResolveManagedExport("Test_StringBinding");
+    ASSERT_NE(Bind, nullptr);
+
+    int32 Calls = 0;
+    int32 First = -1;
+    int32 Last = -1;
+    const int32 Length = 900;
+    EXPECT_EQ(Bind(Length, &Calls, &First, &Last), Length);
+    EXPECT_EQ(Calls, 2) << "an overflow refills an exact buffer, so the query runs a second time";
+    EXPECT_EQ(First, 'a');
+    EXPECT_EQ(Last, 'a' + ((Length - 1) % 26));
 }
 
 TEST_F(FFrameMarshalTest, AnOutContainerOfEntitiesKeepsItsPackedIds)

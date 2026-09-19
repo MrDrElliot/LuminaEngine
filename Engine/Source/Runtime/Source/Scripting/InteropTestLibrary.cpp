@@ -7,6 +7,7 @@ namespace Lumina
     namespace
     {
         int32 GMakeRangeCalls = 0;
+        int32 GMakeNameCalls = 0;
     }
 
     void CInteropTestLibrary::MakeRange(int32 Count, TVector<int32>& Out)
@@ -63,5 +64,29 @@ namespace Lumina
     {
         static const FName Name("InteropBenchmarkName");
         return Name;
+    }
+
+    FString CInteropTestLibrary::MakeName(int32 Length)
+    {
+        ++GMakeNameCalls;
+
+        // Cycled rather than repeated, so a truncated or spliced result cannot read as correct.
+        FString Text;
+        Text.reserve((size_t)Math::Max(Length, 0));
+        for (int32 Index = 0; Index < Length; ++Index)
+        {
+            Text.push_back((char)('a' + (Index % 26)));
+        }
+        return Text;
+    }
+
+    int32 CInteropTestLibrary::GetMakeNameCallCount()
+    {
+        return GMakeNameCalls;
+    }
+
+    void CInteropTestLibrary::ResetMakeNameCallCount()
+    {
+        GMakeNameCalls = 0;
     }
 }
