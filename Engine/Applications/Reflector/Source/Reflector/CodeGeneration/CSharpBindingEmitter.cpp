@@ -832,7 +832,9 @@ namespace Lumina::Reflection
                         Api, G, Qualified, M, M);
                     break;
                 case EBind::StructValue:
-                    Writer.Linef("extern \"C\" %s %s %s(%s* Self, int Index) { if (Index < 0 || Index >= (int)Self->%s.size()) return %s{}; return Self->%s[(size_t)Index]; }",
+                    Writer.Linef("extern \"C\" %s Lumina::Scripting::TScriptReturn<%s>::Type %s(%s* Self, int Index) "
+                        "{ if (Index < 0 || Index >= (int)Self->%s.size()) return Lumina::Scripting::PackScriptReturn(%s{}); "
+                        "return Lumina::Scripting::PackScriptReturn(Self->%s[(size_t)Index]); }",
                         Api, B.Elem->TargetCpp.c_str(), G, Qualified, M, B.Elem->TargetCpp.c_str(), M);
                     break;
                 case EBind::StructOpaque:

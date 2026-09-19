@@ -296,6 +296,20 @@ internal static unsafe class InteropTestHooks
         return Values.Length;
     }
 
+    // Reads a reflected string return back through the generated binding and reports what arrived.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_StringBinding(int Length, int* OutCalls, int* OutFirst, int* OutLast)
+    {
+        CInteropTestLibrary.ResetMakeNameCallCount();
+        string Value = CInteropTestLibrary.MakeName(Length);
+
+        *OutCalls = CInteropTestLibrary.GetMakeNameCallCount();
+        *OutFirst = Value.Length > 0 ? Value[0] : -1;
+        *OutLast = Value.Length > 0 ? Value[Value.Length - 1] : -1;
+        return Value.Length;
+    }
+
     // The entity element, which every converted buffer export uses, and a wider struct element beside it.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
