@@ -11,6 +11,7 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "World/Entity/Systems/SystemContext.h"
+#include "World/World.h"
 
 using namespace Lumina;
 
@@ -215,6 +216,18 @@ namespace
 // Returning the sink by value swallowed the connect, which left the auto-activate camera unbound.
 static_assert(std::is_reference_v<decltype(std::declval<const FSystemContext&>().EventSink<FSinkProbeEvent>())>,
     "FSystemContext::EventSink must hand back the dispatcher's sink, not a copy of it.");
+
+// Every wrapper below forwards a signal that lives in the registry, so a deduced value would drop the connect.
+static_assert(std::is_reference_v<decltype(std::declval<CWorld&>().OnConstruct<SStaticMeshComponent>())>,
+    "CWorld::OnConstruct must hand back the registry's signal, not a copy of it.");
+static_assert(std::is_reference_v<decltype(std::declval<CWorld&>().OnDestroy<SStaticMeshComponent>())>,
+    "CWorld::OnDestroy must hand back the registry's signal, not a copy of it.");
+static_assert(std::is_reference_v<decltype(std::declval<CWorld&>().OnUpdate<SStaticMeshComponent>())>,
+    "CWorld::OnUpdate must hand back the registry's signal, not a copy of it.");
+static_assert(std::is_reference_v<decltype(std::declval<CWorld&>().OnEntityConstruct())>,
+    "CWorld::OnEntityConstruct must hand back the registry's signal, not a copy of it.");
+static_assert(std::is_reference_v<decltype(std::declval<CWorld&>().OnEntityDestroy())>,
+    "CWorld::OnEntityDestroy must hand back the registry's signal, not a copy of it.");
 
 TEST(EventDispatcher, ConnectingThroughTheSinkReachesTrigger)
 {
