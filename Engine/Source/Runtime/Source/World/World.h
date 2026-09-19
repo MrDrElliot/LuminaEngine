@@ -434,15 +434,15 @@ namespace Lumina
         // The using-declaration keeps CObject's destroy hook visible alongside the component sink.
         using CObject::OnDestroy;
 
-        template<typename T> NODISCARD auto OnConstruct() { return EntityRegistry.GetSignals<T>().OnConstruct; }
+        template<typename T> NODISCARD auto& OnConstruct() { return EntityRegistry.GetSignals<T>().OnConstruct; }
 
-        template<typename T> NODISCARD auto OnDestroy()   { return EntityRegistry.GetSignals<T>().OnDestroy; }
+        template<typename T> NODISCARD auto& OnDestroy()   { return EntityRegistry.GetSignals<T>().OnDestroy; }
 
-        template<typename T> NODISCARD auto OnUpdate()    { return EntityRegistry.GetSignals<T>().OnUpdate; }
+        template<typename T> NODISCARD auto& OnUpdate()    { return EntityRegistry.GetSignals<T>().OnUpdate; }
 
-        NODISCARD auto OnEntityConstruct() { return EntityRegistry.OnEntityCreated(); }
+        NODISCARD auto& OnEntityConstruct() { return EntityRegistry.OnEntityCreated(); }
 
-        NODISCARD auto OnEntityDestroy()   { return EntityRegistry.OnEntityDestroyed(); }
+        NODISCARD auto& OnEntityDestroy()   { return EntityRegistry.OnEntityDestroyed(); }
 
         //~ Singletons.
 

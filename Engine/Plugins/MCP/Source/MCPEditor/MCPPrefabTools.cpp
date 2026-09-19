@@ -15,6 +15,7 @@
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/World.h"
 
@@ -223,6 +224,80 @@ namespace Lumina::MCP
                     return Agent::FToolResult::Ok(Lumina::Format("Spawned '{}' as {}.", Out.Name, Out.Entity));
                 });
         }
+
+        // How you add components to a prefab through MCP: the entity tools only reach the main world, so
+        // edit a placed instance there and write it back over the asset.
+        void RegisterCapture(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SCapturePrefabParams, SCapturePrefabResult>(
+                Owner, "prefab.capture",
+                "Overwrite a prefab asset with a placed instance's entities, save it, and refresh every other instance.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SCapturePrefabParams& In, SCapturePrefabResult& Out)
+                {
+                    FString SceneError;
+                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    if (ScenePtr == nullptr)
+                    {
+                        return Agent::FToolResult::Error("No world editor is open, so there is nothing to capture from.");
+                    }
+
+                    if (SessionOps::IsSimulating())
+                    {
+                        return Agent::FToolResult::Error("Stop play-in-editor first.");
+                    }
+
+                    CPrefab* Prefab = nullptr;
+                    FString Error;
+                    if (!Agent::ResolveAsset<CPrefab>(FStringView(In.Asset), Prefab, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    ECS::FRegistry& Registry = *ScenePtr;
+                    ECS::FEntity Root = ECS::NullEntity;
+                    if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Root, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    CWorld* World = SessionOps::GetSceneWorld(SceneError);
+                    Prefab->CaptureFromWorld(World, Root);
+
+                    // Anchor the captured root at origin so the prefab opens centered in its editor.
+                    Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
+                    {
+                        Out.EntityCount++;
+                        const FRelationshipComponent* Rel = Prefab->Registry.TryGet<FRelationshipComponent>(E);
+                        if (Rel != nullptr && Rel->Parent != ECS::NullEntity)
+                        {
+                            return;
+                        }
+                        if (STransformComponent* Tx = Prefab->Registry.TryGet<STransformComponent>(E))
+                        {
+                            Tx->SetLocalTransform(FTransform());
+                        }
+                    });
+
+                    CPackage* Package = Prefab->GetPackage();
+                    if (Package == nullptr)
+                    {
+                        return Agent::FToolResult::Error("That prefab has no package to save.");
+                    }
+
+                    const FFixedString Path = Package->GetPackagePath();
+                    if (!CPackage::SavePackage(Package, Path))
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
+                    }
+
+                    FAssetRegistry::Get().AssetSaved(Prefab);
+                    Prefab->RefreshInstancesInLoadedWorlds();
+
+                    Out.Path = FString(Path.c_str());
+                    return Agent::FToolResult::Ok(Lumina::Format("Captured {} into {}.", In.Entity, Out.Path));
+                });
+        }
     }
 
     void RegisterPrefabTools(FStringView Owner)
@@ -230,5 +305,6 @@ namespace Lumina::MCP
         RegisterList(Owner);
         RegisterDescribePrefab(Owner);
         RegisterSpawn(Owner);
+        RegisterCapture(Owner);
     }
 }

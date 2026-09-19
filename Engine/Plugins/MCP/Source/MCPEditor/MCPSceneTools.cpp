@@ -7,6 +7,8 @@
 #include "Agent/AgentToolRegistry.h"
 #include "MCPTextMatch.h"
 #include "Core/Engine/Engine.h"
+#include "Core/Object/ObjectCore.h"
+#include "Scripting/EntityScript.h"
 #include "Session/SessionOps.h"
 #include "Scene/SceneOps.h"
 #include "World/Entity/Components/NameComponent.h"
@@ -306,6 +308,55 @@ namespace Lumina::MCP
                 });
         }
 
+        // Scripts are subobjects, not assets, so entity.set_property cannot put one in SEntityScriptComponent.
+        void RegisterAddScript(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SAddScriptParams, SAddScriptResult>(
+                Owner, "entity.add_script",
+                "Attach a C# or C++ entity script class to an entity, as the inspector's script picker does.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SAddScriptParams& In, SAddScriptResult& Out)
+                {
+                    FString SceneError;
+                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    if (ScenePtr == nullptr)
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+
+                    ECS::FRegistry& Registry = *ScenePtr;
+
+                    ECS::FEntity Entity = ECS::NullEntity;
+                    FString Error;
+                    if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Entity, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    CClass* ScriptClass = FindObject<CClass>(FName(In.ScriptClass));
+                    if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format(
+                            "'{}' is not a loaded CEntityScript class.", In.ScriptClass));
+                    }
+
+                    CEntityScript* Script = nullptr;
+                    SessionOps::RunTransacted("Add Script (agent)", [&]()
+                    {
+                        Script = EntityScripts::Attach(Registry, Entity, ScriptClass);
+                    }, SceneError);
+
+                    if (Script == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("'{}' could not be attached.", In.ScriptClass));
+                    }
+
+                    Out.bAdded = true;
+                    return Agent::FToolResult::Ok(Lumina::Format("Attached {} to '{}'.",
+                        In.ScriptClass, NameOf(Registry, Entity)));
+                });
+        }
+
         void RegisterSetEntityProperty(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSetPropertyParams, SSetPropertyResult>(
@@ -521,6 +572,7 @@ namespace Lumina::MCP
         RegisterDescribeEntity(Owner);
         RegisterCreateEntity(Owner);
         RegisterAddComponent(Owner);
+        RegisterAddScript(Owner);
         RegisterSetEntityProperty(Owner);
         RegisterRemoveComponent(Owner);
         RegisterDestroyEntities(Owner);

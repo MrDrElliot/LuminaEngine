@@ -77,9 +77,13 @@ public unsafe class NativeObject
     /// It is not a constructor for a reason: the managed wrapper is created lazily, AFTER a loaded object
     /// already holds its authored values, so assigning there would overwrite them with the declared default.
     /// </summary>
-    protected internal virtual void __ApplyScriptDefaults()
+    protected virtual void __ApplyScriptDefaults()
     {
     }
+
+    // Plain protected on the virtual, so a script assembly overrides it the same way whether or not it is
+    // a friend of this one; the engine reaches it through this wrapper.
+    internal void ApplyScriptDefaults() => __ApplyScriptDefaults();
 
     /// <summary>The live native pointer. Throws <see cref="InvalidOperationException"/> if the object has
     /// been destroyed; every generated accessor reads through here, so touching a dead reference fails

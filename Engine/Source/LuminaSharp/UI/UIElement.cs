@@ -144,6 +144,21 @@ public readonly unsafe struct UIElement
         }
     }
 
+    /// <summary>Border box in document pixels (X, Y, Width, Height); all zero for an invalid element.</summary>
+    public (float X, float Y, float Width, float Height) Box
+    {
+        get
+        {
+            if (!IsValid)
+            {
+                return (0, 0, 0, 0);
+            }
+            Span<float> XYWH = stackalloc float[4];
+            Native.UI_GetElementBox(Ptr, XYWH);
+            return (XYWH[0], XYWH[1], XYWH[2], XYWH[3]);
+        }
+    }
+
     /// <summary>First descendant matching a CSS selector, or an invalid element.</summary>
     public UIElement Query(string Selector) => new(World, IsValid ? Native.UI_QuerySelector(Ptr, Selector) : IntPtr.Zero);
 

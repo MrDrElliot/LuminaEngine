@@ -184,7 +184,7 @@ internal sealed class ScriptableRuntime
         Instance.BindNativeHandle(new IntPtr(unchecked((long)NativeDefaultObject)));
         try
         {
-            Instance.__ApplyScriptDefaults();
+            Instance.ApplyScriptDefaults();
         }
         catch (Exception Exception)
         {

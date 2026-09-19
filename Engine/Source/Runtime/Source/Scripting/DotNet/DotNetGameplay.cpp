@@ -279,6 +279,14 @@ LUMINA_DOTNET_EXPORT(void, UI_ElementFocus)(void* Element) { RmlUi::ElementFocus
 LUMINA_DOTNET_EXPORT(void, UI_ElementBlur)(void* Element)  { RmlUi::ElementBlur(Element); }
 LUMINA_DOTNET_EXPORT(void, UI_ElementClick)(void* Element) { RmlUi::ElementClick(Element); }
 
+LUMINA_DOTNET_EXPORT(void, UI_GetElementBox)(void* Element, float* OutXYWH, int32 Count)
+{
+    if (Count >= 4)
+    {
+        RmlUi::ElementGetBox(Element, OutXYWH);
+    }
+}
+
 LUMINA_DOTNET_EXPORT(void*, UI_AddEventListener)(uint64 World, void* Element, const char* Type, int32 Len)
 {
     return RmlUi::AddElementEventListener(AsWorld(World), Element, UIView(Type, Len));

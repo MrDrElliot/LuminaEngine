@@ -345,8 +345,7 @@ internal static class ScriptPropertyRewriter
         private static IEnumerable<MemberDeclarationSyntax> BuildDefaultsMethod(List<string> Defaults)
         {
             var Builder = new StringBuilder();
-            // 'protected', not 'protected internal': the base member is protected internal in ANOTHER
-            // assembly, and internal does not cross assemblies, so C# requires the override to narrow.
+            // The base virtual is plain protected (NativeObject.ApplyScriptDefaults wraps it for the engine).
             Builder.AppendLine("protected override void __ApplyScriptDefaults()");
             Builder.AppendLine("{");
             Builder.AppendLine("    base.__ApplyScriptDefaults();");

@@ -170,6 +170,28 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SAddScriptParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Entity;
+
+        /** Script class name as the inspector's script picker shows it, such as Game.InventoryUI. */
+        PROPERTY()
+        FString ScriptClass;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAddScriptResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bAdded = false;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SSetPropertyParams
     {
         GENERATED_BODY()

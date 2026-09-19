@@ -35,6 +35,7 @@ public static unsafe partial class Native
     [NativeCall] public static partial void   UI_ElementFocus(IntPtr Element);
     [NativeCall] public static partial void   UI_ElementBlur(IntPtr Element);
     [NativeCall] public static partial void   UI_ElementClick(IntPtr Element);
+    [NativeCall] public static partial void   UI_GetElementBox(IntPtr Element, Span<float> OutXYWH);
 
     // Event listeners (managed thunk + GCHandle context, like the registry signals).
     [NativeCall] public static partial IntPtr UI_AddEventListener(ulong World, IntPtr Element, string Type);

@@ -28,6 +28,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Project script assemblies call Reflector-bound libraries, whose generated thunks pass a
+         NativeObject.Handle and marshal strings through Interop; both are internal here. -->
+    <InternalsVisibleTo Include="Game" />
+
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" />
 
     <!-- Referenced as an analyzer, not as a library. -->

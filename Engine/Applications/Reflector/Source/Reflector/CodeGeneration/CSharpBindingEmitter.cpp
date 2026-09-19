@@ -1763,7 +1763,10 @@ namespace Lumina::Reflection
                     case EBind::Number:      RetCpp = FB.Ret.Cpp;       Body = "return " + CallExpr + ";";          break;
                     case EBind::Bool:        RetCpp = "unsigned char";  Body = "return " + CallExpr + " ? 1 : 0;";  break;
                     case EBind::Enum:        RetCpp = "int";            Body = "return (int)" + CallExpr + ";";      break;
-                    case EBind::StructValue: RetCpp = FB.Ret.TargetCpp; Body = "return " + CallExpr + ";";          break;
+                    case EBind::StructValue:
+                        RetCpp = "Lumina::Scripting::TScriptReturn<" + FB.Ret.TargetCpp + ">::Type";
+                        Body = "return Lumina::Scripting::PackScriptReturn(" + CallExpr + ");";
+                        break;
                     case EBind::Object:
                         RetCpp = "void*";
                         Body = FB.Ret.bObjectPtrValue
@@ -2381,7 +2384,10 @@ namespace Lumina::Reflection
                     case EBind::Number:      RetCpp = FB.Ret.Cpp;        Body = "return " + CallExpr + ";";          break;
                     case EBind::Bool:        RetCpp = "unsigned char";   Body = "return " + CallExpr + " ? 1 : 0;";  break;
                     case EBind::Enum:        RetCpp = "int";             Body = "return (int)" + CallExpr + ";";      break;
-                    case EBind::StructValue: RetCpp = FB.Ret.TargetCpp;  Body = "return " + CallExpr + ";";          break;
+                    case EBind::StructValue:
+                        RetCpp = "Lumina::Scripting::TScriptReturn<" + FB.Ret.TargetCpp + ">::Type";
+                        Body = "return Lumina::Scripting::PackScriptReturn(" + CallExpr + ");";
+                        break;
                     case EBind::Object:
                         RetCpp = "void*";
                         Body = FB.Ret.bObjectPtrValue

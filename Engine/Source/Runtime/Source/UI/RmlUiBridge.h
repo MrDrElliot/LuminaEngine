@@ -200,6 +200,8 @@ namespace Lumina::RmlUi
     RUNTIME_API void    ElementFocus(void* Element);
     RUNTIME_API void    ElementBlur(void* Element);
     RUNTIME_API void    ElementClick(void* Element);
+    /** Border box in document pixels: X, Y, Width, Height. Zeroes when the element is gone. */
+    RUNTIME_API void    ElementGetBox(void* Element, float* OutXYWH);
 
     // Event listeners. Add binds a managed thunk (+ GCHandle context) to one element's event and returns
     // an opaque listener handle (null on failure); Remove detaches + frees it. Listeners are owned by the

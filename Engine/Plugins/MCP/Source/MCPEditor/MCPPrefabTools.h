@@ -144,6 +144,32 @@ namespace Lumina
         FString Name;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SCapturePrefabParams
+    {
+        GENERATED_BODY()
+
+        /** GUID of the prefab to overwrite, from prefab.list. */
+        PROPERTY()
+        FString Asset;
+
+        /** Root of the placed instance to capture, from scene.list_entities or prefab.spawn. */
+        PROPERTY()
+        FString Entity;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SCapturePrefabResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Path;
+
+        PROPERTY()
+        int32 EntityCount = 0;
+    };
+
     namespace MCP
     {
         void RegisterPrefabTools(FStringView Owner);

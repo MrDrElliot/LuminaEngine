@@ -45,7 +45,7 @@ namespace Lumina
 
 
         template<typename T>
-        NODISCARD auto EventSink() const
+        NODISCARD auto& EventSink() const
         {
             return Dispatcher.Sink<T>();
         }

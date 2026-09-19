@@ -1907,6 +1907,23 @@ namespace Lumina::RmlUi
         }
     }
 
+    void ElementGetBox(void* Element, float* OutXYWH)
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        OutXYWH[0] = OutXYWH[1] = OutXYWH[2] = OutXYWH[3] = 0.0f;
+        if (!State.bInitialized || Element == nullptr)
+        {
+            return;
+        }
+        const Rml::Vector2f Offset = AsElement(Element)->GetAbsoluteOffset(Rml::BoxArea::Border);
+        const Rml::Vector2f Size = AsElement(Element)->GetBox().GetSize(Rml::BoxArea::Border);
+        OutXYWH[0] = Offset.x;
+        OutXYWH[1] = Offset.y;
+        OutXYWH[2] = Size.x;
+        OutXYWH[3] = Size.y;
+    }
+
     void* AddElementEventListener(CWorld* World, void* Element, FStringView EventType)
     {
         FState& State = S();
