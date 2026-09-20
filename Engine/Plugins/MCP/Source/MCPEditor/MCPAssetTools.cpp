@@ -4,12 +4,16 @@
 #include "Agent/AgentToolRegistry.h"
 #include "MCPTextMatch.h"
 #include "Asset/AssetOps.h"
+#include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/Algorithm.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
+#include "Tools/Import/Importer.h"
+#include "Tools/Import/TextureImporter.h"
+#include <filesystem>
 
 namespace Lumina::MCP
 {
@@ -143,6 +147,41 @@ namespace Lumina::MCP
                 });
         }
 
+        // Each missing level is created in turn, because CreateDir does not build a chain. Returns how many.
+        bool CreateFolderChain(FStringView Path, size_t& OutCreated, FString& OutError)
+        {
+            TVector<FString> Missing;
+            FStringView Walk(Path);
+
+            while (!Walk.empty() && !VFS::Exists(Walk))
+            {
+                Missing.push_back(FString(Walk.data(), Walk.size()));
+
+                const FStringView Up = VFS::Parent(Walk, true);
+
+                // Parent hands back an unchanged view at the top, which would spin here forever.
+                if (Up.size() >= Walk.size())
+                {
+                    break;
+                }
+
+                Walk = Up;
+            }
+
+            for (auto It = Missing.rbegin(); It != Missing.rend(); ++It)
+            {
+                const AssetOps::FPathOpResult Result = AssetOps::CreateFolder(FStringView(*It));
+                if (!Result.bSucceeded)
+                {
+                    OutError = Result.Error;
+                    return false;
+                }
+            }
+
+            OutCreated = Missing.size();
+            return true;
+        }
+
         void RegisterCreateFolder(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SCreateFolderParams, SPathOpResult>(
@@ -163,45 +202,23 @@ namespace Lumina::MCP
                             "Folders belong under /Game/Content, since nothing scans for assets elsewhere.");
                     }
 
-                    // Each missing level is created in turn, because CreateDir does not build a chain.
-                    TVector<FString> Missing;
-                    FStringView Walk(In.Path);
-
-                    while (!Walk.empty() && !VFS::Exists(Walk))
+                    size_t Missing = 0;
+                    if (!CreateFolderChain(FStringView(In.Path), Missing, Error))
                     {
-                        Missing.push_back(FString(Walk.data(), Walk.size()));
-
-                        const FStringView Up = VFS::Parent(Walk, true);
-
-                        // Parent hands back an unchanged view at the top, which would spin here forever.
-                        if (Up.size() >= Walk.size())
-                        {
-                            break;
-                        }
-
-                        Walk = Up;
+                        return Agent::FToolResult::Error(Error);
                     }
 
-                    if (Missing.empty())
+                    if (Missing == 0)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("{} already exists.", In.Path));
                     }
 
-                    for (auto It = Missing.rbegin(); It != Missing.rend(); ++It)
-                    {
-                        const AssetOps::FPathOpResult Result = AssetOps::CreateFolder(FStringView(*It));
-                        if (!Result.bSucceeded)
-                        {
-                            return Agent::FToolResult::Error(Result.Error);
-                        }
-                    }
-
                     Out.Path = In.Path;
 
-                    return Agent::FToolResult::Ok(Missing.size() == 1
+                    return Agent::FToolResult::Ok(Missing == 1
                         ? Lumina::Format("Created {}.", In.Path)
                         : Lumina::Format("Created {}, along with {} folder(s) above it.",
-                            In.Path, Missing.size() - 1));
+                            In.Path, Missing - 1));
                 });
         }
 
@@ -296,10 +313,132 @@ namespace Lumina::MCP
                     return Agent::FToolResult::Ok(Lumina::Format("Saved {}.", Out.Path));
                 });
         }
+
+        // Mirrors the content browser's OS-drop import, minus the settings dialog, for one file at a time.
+        void ImportOneFile(const std::filesystem::path& File, const FString& Folder, ETextureGroup TextureGroup,
+            SImportAssetsResult& Out)
+        {
+            const FString SourcePath = FString(File.generic_string().c_str());
+            const FString FileName = FString(File.filename().string().c_str());
+
+            CImporter* ImporterCDO = CImporterRegistry::Get().FindImporterForExtension(VFS::Extension(FStringView(SourcePath)));
+            if (ImporterCDO == nullptr)
+            {
+                return;
+            }
+
+            const FFixedString Destination = Paths::Combine(FStringView(Folder), VFS::FileName(FStringView(SourcePath), true));
+            FFixedString OnDisk = Destination;
+            CPackage::AddPackageExt(OnDisk);
+            if (FindObject<CPackage>(Destination) != nullptr || VFS::Exists(OnDisk))
+            {
+                Out.Skipped++;
+                return;
+            }
+
+            CImporter* Importer = CImporterRegistry::CreateImporterOfClass(ImporterCDO->GetClass());
+            if (CTextureImporter* TextureImporter = Cast<CTextureImporter>(Importer))
+            {
+                TextureImporter->Group = TextureGroup;
+            }
+
+            FImportResult Result;
+            Importer->BuildAssets(FImportRequest{ FFixedString(SourcePath.c_str()), Destination }, Result, nullptr);
+
+            for (auto It = Result.CreatedObjects.rbegin(); It != Result.CreatedObjects.rend(); ++It)
+            {
+                (*It)->ConditionalBeginDestroy();
+            }
+            CImporterRegistry::DestroyImporter(Importer);
+
+            if (Result.Succeeded())
+            {
+                Out.Imported.push_back(FString(Destination.c_str()));
+            }
+            else
+            {
+                Out.Failed.push_back(FileName + ": " + Result.Error);
+            }
+        }
+
+        void ImportDirectory(const std::filesystem::path& Directory, const FString& Folder, const SImportAssetsParams& In,
+            SImportAssetsResult& Out)
+        {
+            for (const std::filesystem::directory_entry& Entry : std::filesystem::directory_iterator(Directory))
+            {
+                if (!Entry.is_directory())
+                {
+                    ImportOneFile(Entry.path(), Folder, In.TextureGroup, Out);
+                    continue;
+                }
+
+                if (!In.Recursive)
+                {
+                    continue;
+                }
+
+                const FString SubFolder = Folder + "/" + FString(Entry.path().filename().string().c_str());
+                if (!VFS::Exists(FStringView(SubFolder)) && !AssetOps::CreateFolder(FStringView(SubFolder)).bSucceeded)
+                {
+                    Out.Failed.push_back(SubFolder + ": could not create folder");
+                    continue;
+                }
+
+                ImportDirectory(Entry.path(), SubFolder, In, Out);
+            }
+        }
+
+        void RegisterImportAssets(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SImportAssetsParams, SImportAssetsResult>(
+                Owner, "assets.import",
+                "Import a source file, or every importable file in a directory, into a content folder. "
+                "Existing assets are skipped, so a rerun resumes an import that timed out.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SImportAssetsParams& In, SImportAssetsResult& Out)
+                {
+                    FString Error;
+                    if (!IsWellFormedPath(In.DestinationFolder, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    if (!AssetOps::IsAssetLocation(FStringView(In.DestinationFolder)))
+                    {
+                        return Agent::FToolResult::Error(
+                            "Assets belong under /Game/Content, since nothing scans for them elsewhere.");
+                    }
+
+                    const std::filesystem::path Source(In.Source.c_str());
+                    if (!std::filesystem::exists(Source))
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("{} does not exist.", In.Source));
+                    }
+
+                    size_t Created = 0;
+                    if (!CreateFolderChain(FStringView(In.DestinationFolder), Created, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    if (std::filesystem::is_directory(Source))
+                    {
+                        ImportDirectory(Source, In.DestinationFolder, In, Out);
+                    }
+                    else
+                    {
+                        ImportOneFile(Source, In.DestinationFolder, In.TextureGroup, Out);
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format("Imported {}, skipped {}, failed {}.",
+                        Out.Imported.size(), Out.Skipped, Out.Failed.size()));
+                });
+        }
     }
 
     void RegisterAssetTools(FStringView Owner)
     {
+        RegisterImportAssets(Owner);
         RegisterSaveAsset(Owner);
         RegisterListFolders(Owner);
         RegisterCreateFolder(Owner);

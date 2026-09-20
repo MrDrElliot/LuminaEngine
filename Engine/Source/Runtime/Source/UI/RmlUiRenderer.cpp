@@ -888,12 +888,14 @@ namespace Lumina
                 }
 
                 uint32 ResourceID = DefaultWhite.SampledSlot;
+                bool   bStraightAlpha = false;
                 if (Draw.Texture != 0)
                 {
                     auto TexIt = Textures.find(Draw.Texture);
                     if (TexIt != Textures.end() && TexIt->second.ResourceID != RHI::kInvalidHeapSlot)
                     {
-                        ResourceID = TexIt->second.ResourceID;
+                        ResourceID     = TexIt->second.ResourceID;
+                        bStraightAlpha = TexIt->second.bStraightAlpha;
                     }
                 }
                 if (ResourceID == RHI::kInvalidHeapSlot)
@@ -914,7 +916,7 @@ namespace Lumina
                     : FVector4(0.0f, 0.0f, FullW, FullH);
                 DD.TextureID    = ResourceID;
                 DD.SamplerIndex = GRmlUiSamplerIndex;
-                DD.ShaderType   = 0;
+                DD.ShaderType   = bStraightAlpha ? kUIShaderTexturedStraight : kUIShaderTextured;
                 DD.StopOffset   = 0;
                 DD.ShaderParams = FVector4(0.0f);
                 DD.StopCount    = 0;
@@ -1644,6 +1646,7 @@ namespace Lumina
         FTexture Tex;
         Tex.ResourceID      = (uint32)ResourceID;
         Tex.AssetKeepalive  = Texture;
+        Tex.bStraightAlpha  = true;
         Textures.emplace(Handle, Move(Tex));
 
         OutDimensions.x = int(Extent.x);

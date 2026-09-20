@@ -39,5 +39,9 @@ namespace Lumina
         // Fired by FEngine::RequestExitGame when gameplay asks to quit. The editor binds this to end the
         // PIE session instead; when unbound (packaged game) the engine exits the process.
         RUNTIME_API static TMulticastDelegate<void>                  OnGameQuitRequested;
+
+        // Fired each frame right after the OS event pump, before input actions are evaluated. Synthetic input
+        // delivered here takes the same path and the same frame as a real key.
+        RUNTIME_API static TMulticastDelegate<void>                  OnInputPumped;
     };
 }

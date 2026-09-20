@@ -768,6 +768,13 @@ namespace Lumina::RmlUi
         return true;
     }
 
+    bool LoadFontFace(FStringView Path, FStringView Family, bool bBold, bool bItalic)
+    {
+        return Rml::LoadFontFace(Rml::String(Path.data(), Path.size()), Rml::String(Family.data(), Family.size()),
+            bItalic ? Rml::Style::FontStyle::Italic : Rml::Style::FontStyle::Normal,
+            bBold ? Rml::Style::FontWeight::Bold : Rml::Style::FontWeight::Normal);
+    }
+
     void Shutdown()
     {
         FState& State = S();

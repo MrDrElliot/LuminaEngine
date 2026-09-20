@@ -414,9 +414,9 @@ namespace Lumina
             CrashReporting::SetUser("", EditorSettings->CrashReportContactEmail);
         }
 
-        DeveloperToolUI = CreateDevelopmentTools();
+        DeveloperToolUI.Reset(CreateDevelopmentTools());
         DeveloperToolUI->Initialize(UpdateContext);
-        GApp->GetEventProcessor().RegisterEventHandler(DeveloperToolUI, (int32)EInputLayer::EditorChrome);
+        GApp->GetEventProcessor().RegisterEventHandler(DeveloperToolUI.Get(), (int32)EInputLayer::EditorChrome);
         BootMark("DeveloperToolUI");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::EditorInit);
@@ -459,7 +459,7 @@ namespace Lumina
 
         #if USING(WITH_EDITOR)
         DeveloperToolUI->Deinitialize(UpdateContext);
-        delete DeveloperToolUI;
+        DeveloperToolUI.Reset();
         #endif
 
         DestroyGameInstance();

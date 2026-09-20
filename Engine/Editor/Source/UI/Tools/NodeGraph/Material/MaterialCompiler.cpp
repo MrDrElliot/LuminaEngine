@@ -2046,6 +2046,7 @@ namespace Lumina
 		UVSetValue.Deriv = EDerivState::Valid;
 		UVSetValue.DDX   = SetName + "_DDX";
 		UVSetValue.DDY   = SetName + "_DDY";
+		UVSetValue.ComponentCount = 2;
 
 		const bool bScaleIsConstant = (Tiling == nullptr || !Tiling->HasConnection())
 		                           || TilingValue.Deriv == EDerivState::Zero;

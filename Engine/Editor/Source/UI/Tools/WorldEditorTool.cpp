@@ -1572,8 +1572,7 @@ namespace Lumina
         }
 
         // It needs only the world's net state, so it draws before the editor-only gizmo gate below.
-
-        if (World->IsGameWorld() || bGameViewMode)
+        if (!HasEditorCameraControl() || bGameViewMode)
         {
             return;
         }
@@ -4453,7 +4452,7 @@ namespace Lumina
         if (bGamePreviewRunning && Event.IsA<FKeyPressedEvent>())
         {
             FKeyPressedEvent& Key = Event.As<FKeyPressedEvent>();
-            if (Key.GetKeyCode() == EKey::Escape && !Key.IsRepeat())
+            if (Key.GetKeyCode() == EKey::Escape && Key.IsModifierDown(EKey::LeftShift) && !Key.IsRepeat())
             {
                 bStopPlayRequested = true;
                 return true;

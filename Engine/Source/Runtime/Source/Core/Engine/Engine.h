@@ -8,6 +8,7 @@
 #include "Core/Object/ObjectReinstancer.h"
 #include "Networking/INetworkTransport.h"
 #include "Assets/AssetRegistry/CookRoot.h"
+#include "Tools/UI/DevelopmentToolUI.h"
 
 
 namespace Lumina
@@ -16,7 +17,6 @@ namespace Lumina
     class FAssetRegistry;
     class FRenderManager;
     class IImGuiRenderer;
-    class IDevelopmentToolUI;
     class FAssetManager;
     class FApplication;
     class FWindow;
@@ -68,7 +68,7 @@ namespace Lumina
 
         #if WITH_EDITOR
         RUNTIME_API virtual IDevelopmentToolUI* CreateDevelopmentTools() = 0;
-        RUNTIME_API IDevelopmentToolUI* GetDevelopmentToolsUI() const { return DeveloperToolUI; }
+        RUNTIME_API IDevelopmentToolUI* GetDevelopmentToolsUI() const { return DeveloperToolUI.Get(); }
         #endif
 
 
@@ -173,7 +173,7 @@ namespace Lumina
         bool                          bHasCarriedConnection = false;
 
         #if WITH_EDITOR
-        IDevelopmentToolUI*     DeveloperToolUI =       nullptr;
+        TUniquePtr<IDevelopmentToolUI> DeveloperToolUI;
         #endif
         
         FString                     ProjectName;

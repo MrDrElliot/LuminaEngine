@@ -138,6 +138,7 @@ namespace Lumina::MCP
 
         Transport.Stop();
 
+        UnregisterEditorSessionTools();
         Dispatcher.UnregisterOwner(GOwner);
         Agent::FToolRegistry::Get().UnregisterOwner(GOwner);
     }

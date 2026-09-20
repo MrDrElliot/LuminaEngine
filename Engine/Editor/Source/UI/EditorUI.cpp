@@ -979,7 +979,7 @@ namespace Lumina
             FInputProcessor::Get().SetMouseMode(EMouseMode::Normal);
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && GamePreviewTool != nullptr)
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && ImGui::IsKeyDown(ImGuiMod_Shift) && GamePreviewTool != nullptr)
         {
             WorldEditorTool->GetOnPreviewStopRequestedDelegate().Broadcast();
         }

@@ -1886,6 +1886,16 @@ namespace Lumina::Reflection
         {
             if (!ClassifyFunction(Fn, Type, Db, Out)) { return false; }
             if (!Out.bVoid && !ScriptEventArgSupported(Out.Ret)) { return false; }
+            for (FArg& A : Out.Args)
+            {
+                if (A.Kind == EBind::Str && A.bIsName)
+                {
+                    A.Kind      = EBind::StructValue; 
+                    A.CSharp    = "global::Lumina.FName"; 
+                    A.TargetCpp = "Lumina::FName"; 
+                    A.bIsName   = false;
+                }
+            }
             for (const FArg& A : Out.Args) { if (!ScriptEventArgSupported(A)) { return false; } }
             return true;
         }

@@ -1,6 +1,13 @@
 #include "MCPEditorSessionTools.h"
 
+#include "Agent/AgentGameThread.h"
 #include "Agent/AgentToolRegistry.h"
+#include "Containers/ConcurrentQueue.h"
+#include "Core/Delegates/CoreDelegates.h"
+#include "Core/Windows/Window.h"
+#include "Core/Windows/WindowInput.h"
+#include "Core/Threading/Thread.h"
+#include "Input/InputViewport.h"
 #include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
 #include "Core/Console/ConsoleVariable.h"
@@ -445,15 +452,118 @@ namespace Lumina::MCP
                     return Agent::FToolResult::Ok(Lumina::Format("{} = {}", Name, Out.Output));
                 });
         }
+
+        // Drained at the event pump so a key takes a real key's path and frame; anything later is already Held.
+        TConcurrentQueue<FKeyInput> InjectedKeys;
+        FDelegateHandle InputPumpedHandle;
+
+        void ForwardInjectedKeys()
+        {
+            FWindow* Window = Windowing::GetPrimaryWindowHandle();
+            FKeyInput Input;
+            while (InjectedKeys.TryDequeue(Input))
+            {
+                Window->OnKey.Broadcast(Window, Input);
+            }
+        }
+
+        // Runs on the transport thread on purpose: a tap needs the release to land a frame after the press.
+        void RegisterSendKey(FStringView Owner)
+        {
+            InputPumpedHandle = FCoreDelegates::OnInputPumped.AddStatic(&ForwardInjectedKeys);
+
+            Agent::FToolRegistry::Get().Register<SSendKeyParams, SSendKeyResult>(
+                Owner, "editor.send_key",
+                "Send a key to the editor as if typed, giving the game viewport input focus first. "
+                "Use it to drive play-in-editor: open menus, toggle panels, trigger bindings.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
+                [](const SSendKeyParams& In, SSendKeyResult& Out)
+                {
+                    const bool bPress   = In.Action == "Tap" || In.Action == "Press";
+                    const bool bRelease = In.Action == "Tap" || In.Action == "Release";
+                    if (!bPress && !bRelease)
+                    {
+                        return Agent::FToolResult::Error("Action has to be Tap, Press or Release.");
+                    }
+
+                    auto OnGameThread = [](TMoveOnlyFunction<void()>&& Work)
+                    {
+                        return Agent::FGameThreadGate::Run(Move(Work), Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds())
+                            == Agent::EGameThreadResult::Ran;
+                    };
+
+                    const bool bFocused = OnGameThread([&]()
+                    {
+                        FInputViewportRegistry& Viewports = FInputViewportRegistry::Get();
+                        Viewports.SetGameInputFocused(true);
+
+                        // Keys route to the focused viewport, which the editor only sets while its OS window is foreground.
+                        FString SceneError;
+                        if (CWorld* World = SessionOps::GetSceneWorld(SceneError))
+                        {
+                            if (FInputViewport* Viewport = Viewports.FindViewportForWorld(World))
+                            {
+                                Viewports.SetActiveViewport(Viewport);
+                                Viewports.SetFocusedViewport(Viewport);
+                            }
+                        }
+                        Out.bGameInputFocused = Viewports.GetFocusedViewport() != nullptr;
+                    });
+                    if (!bFocused)
+                    {
+                        return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
+                    }
+
+                    // ImGui releases the keyboard at the next frame start, so a key sent this frame would be swallowed.
+                    Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
+
+                    auto Send = [&](bool bPressed)
+                    {
+                        FKeyInput Input;
+                        Input.Key      = In.Key;
+                        Input.bPressed = bPressed;
+                        Input.bCtrl    = In.bCtrl;
+                        Input.bShift   = In.bShift;
+                        Input.bAlt     = In.bAlt;
+                        InjectedKeys.Enqueue(Input);
+                    };
+
+                    if (bPress)
+                    {
+                        Send(true);
+                    }
+
+                    // Both halves in one pump would leave the key Held before any action edge is evaluated.
+                    if (bPress && bRelease)
+                    {
+                        Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
+                    }
+
+                    if (bRelease)
+                    {
+                        Send(false);
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format("Sent {}.", In.Action));
+                });
+        }
     }
 
     void RegisterEditorSessionTools(FStringView Owner)
     {
+        RegisterSendKey(Owner);
         RegisterUndoRedo(Owner);
         RegisterPlayControl(Owner);
         RegisterTabs(Owner);
         RegisterScreenshot(Owner);
         RegisterLogTail(Owner);
         RegisterConsoleExec(Owner);
+    }
+
+    void UnregisterEditorSessionTools()
+    {
+        // The pump delegate outlives this DLL, so a stale entry would be destroyed after unload.
+        FCoreDelegates::OnInputPumped.Remove(InputPumpedHandle);
+        InputPumpedHandle = {};
     }
 }

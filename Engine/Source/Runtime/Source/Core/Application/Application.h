@@ -7,8 +7,8 @@
 
 namespace Lumina
 {
-	struct FWindowSpecs;
 	struct FKeyInput;
+	struct FWindowSpecs;
 	struct FMouseButtonInput;
 	struct FMouseMoveInput;
 	struct FMouseScrollInput;

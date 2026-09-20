@@ -3,6 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Events/KeyCodes.h"
 
 #include "MCPEditorSessionTools.generated.h"
 
@@ -263,9 +264,47 @@ namespace Lumina
         bool bDone = false;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SSendKeyParams
+    {
+        GENERATED_BODY()
+
+        /** Key to send, by EKey name such as I, Escape, F1 or Space. */
+        PROPERTY()
+        EKey Key = EKey::Space;
+
+        /** Tap presses and releases across two frames; Press or Release sends only that half. */
+        PROPERTY()
+        FString Action = "Tap";
+
+        PROPERTY()
+        bool bCtrl = false;
+
+        PROPERTY()
+        bool bShift = false;
+
+        PROPERTY()
+        bool bAlt = false;
+
+        /** How long a Tap stays down, so a game polling key state sees at least one frame of it. */
+        PROPERTY()
+        int32 HoldMilliseconds = 100;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSendKeyResult
+    {
+        GENERATED_BODY()
+
+        /** Whether the game viewport had input focus once the key went in. */
+        PROPERTY()
+        bool bGameInputFocused = false;
+    };
+
     namespace MCP
     {
         // Undo, play control, tabs and observability: what an agent needs to see and steer the editor session.
         void RegisterEditorSessionTools(FStringView Owner);
+        void UnregisterEditorSessionTools();
     }
 }
