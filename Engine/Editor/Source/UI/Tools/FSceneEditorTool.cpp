@@ -3223,9 +3223,7 @@ namespace Lumina
             ImGui::Spacing();
     
             ImGui::SetNextItemWidth(-1.0f);
-            bool bShouldClose = ImGui::InputText("##Name", InputBuffer.data(), 
-                                                  InputBuffer.max_size(), 
-                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+            bool bShouldClose = ImGuiX::InputText("##Name", InputBuffer, ImGuiInputTextFlags_EnterReturnsTrue);
     
             ImGui::Spacing();
             ImGui::Separator();

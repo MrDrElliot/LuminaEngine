@@ -84,7 +84,7 @@ namespace Lumina
         ImGui::SetNextItemWidth(TextWidth);
         FFixedString TableLabel = Table != nullptr ? Table->GetName().c_str() : "None";
         ImGui::PushStyleColor(ImGuiCol_Text, Table != nullptr ? GMutedText : GEmptyText);
-        ImGui::InputText("##Table", TableLabel.data(), TableLabel.max_size(),
+        ImGuiX::InputText("##Table", TableLabel,
             ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_AutoSelectAll);
         ImGui::PopStyleColor();
 

@@ -2964,12 +2964,12 @@ namespace Lumina
 
             ImGui::TextUnformatted("Folder");
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##Folder", DirBuffer.data(), DirBuffer.max_size());
+            ImGuiX::InputText("##Folder", DirBuffer);
 
             ImGui::Spacing();
             ImGui::TextUnformatted("Name");
             ImGui::SetNextItemWidth(-1.0f);
-            const bool bEnter = ImGui::InputText("##Name", NameBuffer.data(), NameBuffer.max_size(), ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool bEnter = ImGuiX::InputText("##Name", NameBuffer, ImGuiInputTextFlags_EnterReturnsTrue);
 
             if (!ErrorMessage.empty())
             {
@@ -3185,12 +3185,12 @@ namespace Lumina
 
             ImGui::TextUnformatted("Folder");
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputText("##Folder", DirBuffer.data(), DirBuffer.max_size());
+            ImGuiX::InputText("##Folder", DirBuffer);
 
             ImGui::Spacing();
             ImGui::TextUnformatted("Name");
             ImGui::SetNextItemWidth(-1.0f);
-            const bool bEnter = ImGui::InputText("##Name", NameBuffer.data(), NameBuffer.max_size(), ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool bEnter = ImGuiX::InputText("##Name", NameBuffer, ImGuiInputTextFlags_EnterReturnsTrue);
 
             if (!ErrorMessage.empty())
             {

@@ -98,7 +98,7 @@ namespace Lumina
         
             ImGui::PushStyleColor(ImGuiCol_Text, bHasObject ? ImVec4(0.6f, 0.6f, 0.6f, 1.0f) : ImVec4(1.0f, 0.19f, 0.19f, 1.0f));
         
-            ImGui::InputText("##ObjectPathText", PathString.data(), PathString.max_size(), ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_ReadOnly);
+            ImGuiX::InputText("##ObjectPathText", PathString, ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_ReadOnly);
         
             ImGuiX::TextTooltip("{}", PathString);
         

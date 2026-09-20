@@ -66,6 +66,26 @@ namespace Lumina::ImGuiX
     // Same as HelpMarker but with a custom leading icon (e.g. LE_ICON_INFORMATION_OUTLINE).
     RUNTIME_API void HelpMarkerIcon(const char* Icon, FStringView Help);
 
+    template <typename TString>
+    int StringInputResizeCallback(ImGuiInputTextCallbackData* Data)
+    {
+        if (Data->EventFlag == ImGuiInputTextFlags_CallbackResize)
+        {
+            TString* String = static_cast<TString*>(Data->UserData);
+            String->resize(static_cast<size_t>(Data->BufTextLen));
+            Data->Buf = String->data();
+        }
+        return 0;
+    }
+
+    // Never hand ImGui a string's max_size(); that is the type's theoretical limit, not its writable bytes.
+    template <typename TString>
+    bool InputText(const char* Label, TString& String, ImGuiInputTextFlags Flags = ImGuiInputTextFlags_None)
+    {
+        return ImGui::InputText(Label, String.data(), String.capacity() + 1,
+            Flags | ImGuiInputTextFlags_CallbackResize, &StringInputResizeCallback<TString>, &String);
+    }
+
     template <typename... TArgs>
     void Text(Fmt::TFormatString<std::decay_t<TArgs>...> Fmt, TArgs&&... Args)
     {
