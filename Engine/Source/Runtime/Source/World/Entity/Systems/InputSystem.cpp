@@ -37,6 +37,17 @@ namespace Lumina
         const uint32 Serial = Ctx->GetActionsSerial();
         const float DeltaSeconds = (float)Context.GetDeltaTime();
 
+        static thread_local TVector<int32> ChangedActionIndices;
+        ChangedActionIndices.clear();
+        for (int32 i = 0; i < (int32)States.size(); ++i)
+        {
+            const FInputActionState& State = States[i];
+            if (State.IsPressed() || State.IsReleased() || State.X != 0.0f || State.Y != 0.0f)
+            {
+                ChangedActionIndices.push_back(i);
+            }
+        }
+
         // Snapshot first, since a callback spawning an entity mutates the storage a live view walks.
         static thread_local TVector<ECS::FEntity> Entities;
         Entities.clear();
@@ -67,7 +78,7 @@ namespace Lumina
                 EntityScripts::DispatchInput(Registry, Entity, Event);
             }
 
-            EntityScripts::PollInputBindings(Registry, Entity, States.data(), (int32)States.size(), Serial, DeltaSeconds);
+            EntityScripts::PollInputBindings(Registry, Entity, States.data(), (int32)States.size(), ChangedActionIndices, Serial, DeltaSeconds);
         }
     }
 }

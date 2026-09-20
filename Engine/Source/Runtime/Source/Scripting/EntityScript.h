@@ -6,6 +6,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Input/InputAction.h"
 #include "Input/InputEvent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Entity/Events/PerceptionEvent.h"
@@ -53,6 +54,10 @@ namespace Lumina
          *  SInputComponent, and only while their viewport has game input focus -- see SInputSystem. */
         FUNCTION()
         virtual void OnInput(SInputEvent Event) {}
+
+        /** An authored action with an edge this frame: pressed, released, or an axis off zero. The native
+         *  counterpart of a C# SInputAction event, so a C++ script binds actions rather than keys. */
+        virtual void OnAction(FName Action, const FInputActionState& State) {}
 
         //~ Physics callbacks. Delivered by the physics scene's contact drain to every script on the entity,
         //~ so a C++ and a C# script receive them through the same virtual. The event is oriented per-entity
@@ -193,7 +198,9 @@ namespace Lumina
         RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);
 
         // Hands every script on Entity this frame's action states so C# InputAction / InputAxis bindings raise their events. Native scripts have no bindings and cost one null check.
-        RUNTIME_API void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States, int32 Count, uint32 Serial, float DeltaTime);
+        // ChangedActionIndices is found once per world per frame; only those actions reach OnAction.
+        RUNTIME_API void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States, int32 Count,
+            TSpan<const int32> ChangedActionIndices, uint32 Serial, float DeltaTime);
 
         /** Delivers a perception event to every script on the PERCEIVER entity. bSensed picks
          *  OnTargetPerceived vs OnTargetLost. */

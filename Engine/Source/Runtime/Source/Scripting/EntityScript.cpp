@@ -11,6 +11,7 @@
 #include "World/WorldManager.h"
 #include "ScriptableObject.h"
 #include "DotNet/DotNetHost.h"
+#include "Input/InputActionMap.h"
 #include "ScriptStruct.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
@@ -519,7 +520,7 @@ namespace Lumina
         }
 
         void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
-            int32 Count, uint32 Serial, float DeltaTime)
+            int32 Count, TSpan<const int32> ChangedActionIndices, uint32 Serial, float DeltaTime)
         {
             FScriptSnapshot Scripts;
             SnapshotScripts(Registry, Entity, Scripts);
@@ -527,10 +528,21 @@ namespace Lumina
             for (TObjectPtr<CEntityScript>& Held : Scripts)
             {
                 CEntityScript* Script = Held.Get();
-                if (IsStillAttached(Registry, Entity, Script))
+                if (!IsStillAttached(Registry, Entity, Script))
                 {
-                    DotNet::PollScriptInput(Script, States, Count, Serial, DeltaTime);
+                    continue;
                 }
+
+                const TVector<SInputAction>& Actions = FInputActionMap::Get().GetAllActions();
+                for (int32 i : ChangedActionIndices)
+                {
+                    if (i < Count && i < (int32)Actions.size())
+                    {
+                        Script->OnAction(Actions[i].Name, States[i]);
+                    }
+                }
+
+                DotNet::PollScriptInput(Script, States, Count, Serial, DeltaTime);
             }
         }
 
