@@ -7,6 +7,7 @@
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
+#include "TaskSystem/FiberSync.h"
 
 namespace Lumina
 {
@@ -73,5 +74,9 @@ namespace Lumina
         
         FMutex                      RequestMutex;
         TAtomic<uint32>             PendingTasks;
+
+        // Fiber-aware, so a Flush from a worker parks its fiber instead of the thread underneath it.
+        mutable FFiberMutex             PendingMutex;
+        mutable FFiberConditionVariable PendingSignal;
     };
 }
