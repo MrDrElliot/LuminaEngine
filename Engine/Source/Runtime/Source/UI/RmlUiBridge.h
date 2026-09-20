@@ -8,6 +8,7 @@
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
 #include "Renderer/RHI.h"
+#include "UI/UITypes.h"
 
 namespace Rml
 {
@@ -216,10 +217,6 @@ namespace Lumina::RmlUi
     // The listener's FScriptDelegateBase, which script binds to and whose destructor releases those binds.
     RUNTIME_API void* GetElementEventListenerDelegate(void* Listener);
     
-    // Scalar wire type for a bound variable. Mirrors LuminaSharp's EUIVarType. Numbers cross as double and
-    // are coerced to the registered type in the cache (so {{ Health }} formats as int, not "100.000000").
-    enum class EUIVarType : int32 { Bool = 0, Int = 1, Float = 2, Double = 3, String = 4 };
-
     // Native -> managed writeback for two-way bound variables. For String, Number is 0 and (Str,StrLen) is
     // the UTF-8 value (valid only for the call); otherwise Str is null and Number carries the value.
     using FManagedDataSetThunk   = void (*)(void* Context, int32 Field, int32 Type, double Number, const char* Str, int32 StrLen);

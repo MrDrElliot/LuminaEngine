@@ -12,30 +12,30 @@ namespace LuminaSharp;
 public readonly unsafe struct UIElement
 {
     internal readonly ulong World;
-    internal readonly IntPtr Ptr;
+    internal readonly Lumina.FUIElement Handle;
 
-    internal UIElement(ulong World, IntPtr Ptr)
+    internal UIElement(ulong World, Lumina.FUIElement Handle)
     {
         this.World = World;
-        this.Ptr = Ptr;
+        this.Handle = Handle;
     }
 
     /// <summary>False if a query missed or the owning document has been closed.</summary>
-    public bool IsValid => Ptr != IntPtr.Zero;
+    public bool IsValid => Handle.IsValid;
 
     /// <summary>Plain text content. The setter HTML-escapes its value (so arbitrary strings render
     /// literally); the getter returns the element's inner RML markup. For markup use <see cref="Rml"/>.</summary>
     public string Text
     {
         get => Rml;
-        set { if (IsValid) Native.UI_SetInnerRml(Ptr, Escape(value)); }
+        set { if (IsValid) Lumina.CUILibrary.SetInnerRml(Handle, Escape(value)); }
     }
 
     /// <summary>The element's inner RML markup (set is NOT escaped -- pass real markup).</summary>
     public string Rml
     {
-        get => IsValid ? Native.UI_GetInnerRml(Ptr) : string.Empty;
-        set { if (IsValid) Native.UI_SetInnerRml(Ptr, value); }
+        get => IsValid ? Lumina.CUILibrary.GetInnerRml(Handle) : string.Empty;
+        set { if (IsValid) Lumina.CUILibrary.SetInnerRml(Handle, value); }
     }
 
     /// <summary>Set plain text (escaped). Same as the <see cref="Text"/> setter, as a method.</summary>
@@ -43,17 +43,17 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_SetInnerRml(Ptr, Escape(Value));
+            Lumina.CUILibrary.SetInnerRml(Handle, Escape(Value));
         }
     }
 
-    public string GetAttribute(string Name) => IsValid ? Native.UI_GetAttribute(Ptr, Name) : string.Empty;
+    public string GetAttribute(string Name) => IsValid ? Lumina.CUILibrary.GetAttribute(Handle, Name) : string.Empty;
 
     public void SetAttribute(string Name, string Value)
     {
         if (IsValid)
         {
-            Native.UI_SetAttribute(Ptr, Name, Value);
+            Lumina.CUILibrary.SetAttribute(Handle, Name, Value);
         }
     }
 
@@ -63,7 +63,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_SetProperty(Ptr, Property, Value);
+            Lumina.CUILibrary.SetProperty(Handle, Property, Value);
         }
     }
 
@@ -72,7 +72,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_RemoveProperty(Ptr, Property);
+            Lumina.CUILibrary.RemoveProperty(Handle, Property);
         }
     }
 
@@ -80,7 +80,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_SetClass(Ptr, Class, 1);
+            Lumina.CUILibrary.SetClass(Handle, Class, true);
         }
     }
 
@@ -88,7 +88,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_SetClass(Ptr, Class, 0);
+            Lumina.CUILibrary.SetClass(Handle, Class, false);
         }
     }
 
@@ -96,17 +96,17 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_SetClass(Ptr, Class, Active ? 1 : 0);
+            Lumina.CUILibrary.SetClass(Handle, Class, Active);
         }
     }
 
-    public bool HasClass(string Class) => IsValid && Native.UI_IsClassSet(Ptr, Class) != 0;
+    public bool HasClass(string Class) => IsValid && Lumina.CUILibrary.IsClassSet(Handle, Class);
 
     /// <summary>Show or hide the element via the CSS <c>display</c> property. (Property form; usable on a
     /// stored element variable. For a chained call -- <c>doc["x"].SetVisible(false)</c> -- use the method.)</summary>
     public bool Visible
     {
-        set { if (IsValid) Native.UI_SetProperty(Ptr, "display", value ? "block" : "none"); }
+        set { if (IsValid) Lumina.CUILibrary.SetProperty(Handle, "display", value ? "block" : "none"); }
     }
 
     /// <summary>Show/hide via the CSS <c>display</c> property. Method form, so it chains off an indexer
@@ -115,7 +115,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_SetProperty(Ptr, "display", Value ? "block" : "none");
+            Lumina.CUILibrary.SetProperty(Handle, "display", Value ? "block" : "none");
         }
     }
 
@@ -123,7 +123,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_ElementFocus(Ptr);
+            Lumina.CUILibrary.FocusElement(Handle);
         }
     }
 
@@ -131,7 +131,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_ElementBlur(Ptr);
+            Lumina.CUILibrary.BlurElement(Handle);
         }
     }
 
@@ -140,7 +140,7 @@ public readonly unsafe struct UIElement
     {
         if (IsValid)
         {
-            Native.UI_ElementClick(Ptr);
+            Lumina.CUILibrary.ClickElement(Handle);
         }
     }
 
@@ -153,14 +153,13 @@ public readonly unsafe struct UIElement
             {
                 return (0, 0, 0, 0);
             }
-            Span<float> XYWH = stackalloc float[4];
-            Native.UI_GetElementBox(Ptr, XYWH);
-            return (XYWH[0], XYWH[1], XYWH[2], XYWH[3]);
+            Lumina.FVector4 XYWH = Lumina.CUILibrary.GetElementBox(Handle);
+            return (XYWH.X, XYWH.Y, XYWH.Z, XYWH.W);
         }
     }
 
     /// <summary>First descendant matching a CSS selector, or an invalid element.</summary>
-    public UIElement Query(string Selector) => new(World, IsValid ? Native.UI_QuerySelector(Ptr, Selector) : IntPtr.Zero);
+    public UIElement Query(string Selector) => new(World, IsValid ? Lumina.CUILibrary.QuerySelector(Handle, Selector) : default);
 
     // ---- events ----
 
@@ -179,21 +178,21 @@ public readonly unsafe struct UIElement
         // A struct can't be captured by a lambda, so copy the world handle into a local first.
         ulong WorldId = World;
 
-        IntPtr Listener = Native.UI_AddEventListener(WorldId, Ptr, EventType);
-        if (Listener == IntPtr.Zero)
+        Lumina.FUIEventListener Listener = Lumina.CUILibrary.AddEventListener(UI.WorldOf(WorldId), Handle, EventType);
+        if (!Listener.IsValid)
         {
             return UIEventSubscription.Empty;
         }
 
         // Binding through the listener's own delegate is what lets its destructor release this handle,
         // whether the element, the world or the script generation is what goes away first.
-        IntPtr Event = Native.UI_GetEventListenerDelegate(Listener);
+        ulong Event = Lumina.CUILibrary.GetEventListenerDelegate(Listener);
         DelegateBinding Binding = DelegateBindings.Bind((void*)Event,
             new PayloadInvoker<UIEventData> { Handler = Data => Handler(new UIEvent(WorldId, Data)) });
 
         if (!Binding.IsValid)
         {
-            Native.UI_RemoveEventListener(WorldId, Listener);
+            Lumina.CUILibrary.RemoveEventListener(UI.WorldOf(WorldId), Listener);
             return UIEventSubscription.Empty;
         }
 

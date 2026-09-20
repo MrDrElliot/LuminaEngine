@@ -30,6 +30,9 @@ public readonly struct TSubclassOf<T> : IEquatable<TSubclassOf<T>> where T : Nat
         return Object == IntPtr.Zero ? null : Wrapper<T>.ForObject(Object);
     }
 
+    /// Widen to a base class handle. Native re-checks the base, so a wrong widen arrives there as invalid.
+    public TSubclassOf<TBase> AsBase<TBase>() where TBase : NativeObject => new(ClassPtr);
+
     /// Resolves a class by name. Invalid when nothing is registered under it; the assignment still checks the base.
     public static TSubclassOf<T> FromName(string ClassName)
     {

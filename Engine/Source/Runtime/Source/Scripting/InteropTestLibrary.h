@@ -3,9 +3,13 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/FunctionLibrary.h"
+#include "Core/Object/ObjectHandleTyped.h"
+#include "Core/Object/SubclassOf.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Vector/VectorTypes.h"
+#include "UI/UITypes.h"
 #include "World/ECS/Entity.h"
 #include "InteropTestLibrary.generated.h"
 
@@ -31,6 +35,14 @@ namespace Lumina
         FUNCTION()
         static void MakeVectorRange(int32 Count, TVector<FVector3>& Out);
 
+        /** An object element, which crosses as a raw pointer and is rebuilt through the wrapper cache. */
+        FUNCTION()
+        static void MakeObjectRange(int32 Count, TVector<TObjectPtr<CInteropTestLibrary>>& Out);
+
+        /** Reads a class handle back, so a test can pin that a TSubclassOf argument arrives intact. */
+        FUNCTION()
+        static FName ReadClassName(TSubclassOf<CInteropTestLibrary> Class);
+
         /** Counts calls into MakeRange, so a test can pin how many crossings one binding costs. */
         FUNCTION()
         static int32 GetMakeRangeCallCount();
@@ -52,6 +64,13 @@ namespace Lumina
         /** A string return, which is the two-pass caller-buffer protocol. */
         FUNCTION()
         static FName BenchGetName();
+
+        /** The one-uint64 handle shape a non-reflectable native pointer crosses in. */
+        FUNCTION()
+        static FUIElement MakeHandle(uint64 Value);
+
+        FUNCTION()
+        static uint64 ReadHandle(FUIElement Handle);
 
         /** Returns a name of exactly Length characters, so a test can straddle the managed scratch buffer. */
         FUNCTION()

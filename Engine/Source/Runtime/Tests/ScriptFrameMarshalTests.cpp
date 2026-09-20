@@ -50,6 +50,9 @@ namespace
     using FStringBindFn    = int32(*)(int32, int32*, int32*, int32*);
     using FVecEntitiesFn   = int32(*)(int32, uint32*);
     using FVecStructsFn    = int32(*)(int32, float*);
+    using FHandleRoundTripFn = uint64(*)(uint64);
+    using FObjectArrayFn     = int32(*)(int32, int32*);
+    using FClassHandleFn     = int32(*)();
     using FBindCallbackFn  = uint64(*)();
     using FCallbackResFn   = uint64(*)(int32*);
     using FBindWrapperFn   = void*(*)(void*);
@@ -906,6 +909,39 @@ TEST_F(FFrameMarshalTest, AnOutContainerOfBlittableStructsKeepsItsStride)
     float LastY = 0.0f;
     EXPECT_EQ(Structs(6, &LastY), 6);
     EXPECT_FLOAT_EQ(LastY, 10.0f);
+}
+
+// An out container of objects crosses as raw pointers, so every element has to arrive as the canonical
+// managed instance for its object rather than a fresh wrapper per element.
+TEST_F(FFrameMarshalTest, AnOutContainerOfObjectsRebuildsTheCanonicalWrapper)
+{
+    auto* Objects = (FObjectArrayFn)DotNet::ResolveManagedExport("Test_ObjectArrayBinding");
+    ASSERT_NE(Objects, nullptr);
+
+    int32 bIdentical = 0;
+    EXPECT_EQ(Objects(5, &bIdentical), 5);
+    EXPECT_EQ(bIdentical, 1) << "the same object must wrap to the same managed instance";
+
+    EXPECT_EQ(Objects(0, &bIdentical), 0);
+}
+
+// A class handle is a CClass pointer at offset zero, so a TSubclassOf argument crosses without a name.
+TEST_F(FFrameMarshalTest, AClassHandleArgumentNamesTheSameClassNatively)
+{
+    auto* RoundTrip = (FClassHandleFn)DotNet::ResolveManagedExport("Test_ClassHandleRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    EXPECT_EQ(RoundTrip(), 1);
+}
+
+// A handle wider than the managed int width must not be truncated on the way out or back.
+TEST_F(FFrameMarshalTest, AHandleStructCrossesBothWaysWithoutLosingItsHighBits)
+{
+    auto* RoundTrip = (FHandleRoundTripFn)DotNet::ResolveManagedExport("Test_HandleStructRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    EXPECT_EQ(RoundTrip(0x7FFE'1234'ABCD'EF01ULL), 0x7FFE'1234'ABCD'EF01ULL);
+    EXPECT_EQ(RoundTrip(0ULL), 0ULL);
 }
 
 // A script callback crosses as the handle owning its closure, so firing it has to run that closure once and

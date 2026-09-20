@@ -201,6 +201,7 @@ namespace LuminaSharp
         bool nativeRefReturn = false;
         bool nativeRefReturnIsCObject = false;
         string nativeRefRetType = string.Empty;
+        bool arrayElemIsCObject = false;
         if (method.ReturnsVoid)
         {
             retCs = "void";
@@ -227,13 +228,19 @@ namespace LuminaSharp
                     nativeTypes.Add("int");     // returned byte length
                     break;
                 case Kind.Array:
+                {
                     // The same two-pass buffer ABI as a string return, counted in elements rather than bytes.
                     arrayReturn = true;
-                    arrayElemFq = ((IArrayTypeSymbol)method.ReturnType).ElementType.ToDisplayString(fq);
-                    nativeTypes.Add(arrayElemFq + "*");
+                    ITypeSymbol arrayElem = ((IArrayTypeSymbol)method.ReturnType).ElementType;
+                    arrayElemFq = arrayElem.ToDisplayString(fq);
+                    // A CObject element crosses as its handle and is rebuilt managed-side, so its wire width
+                    // is a pointer rather than the managed reference the array holds.
+                    arrayElemIsCObject = IsCObjectRef(arrayElem);
+                    nativeTypes.Add(arrayElemIsCObject ? "global::System.IntPtr*" : arrayElemFq + "*");
                     nativeTypes.Add("int");
                     nativeTypes.Add("int");
                     break;
+                }
                 case Kind.Bool:
                     nativeTypes.Add("byte");
                     wrap = call => $"{call} != 0";
@@ -287,6 +294,43 @@ namespace LuminaSharp
                      + pad + "    int __w = " + field + "(" + prefix + "__bp, __len);\n"
                      + pad + "    return global::LuminaSharp.Interop.GetString(__bp, __w < __len ? __w : __len);\n"
                      + pad + "}\n";
+            }
+            if (arrayReturn && arrayElemIsCObject)
+            {
+                string prefix = callArgs.Count > 0 ? coreArgs + ", " : string.Empty;
+                string wrap = "global::LuminaSharp.Wrapper<" + arrayElemFq + ">.ForObject";
+                // An element whose managed instance could not be rebuilt is dropped rather than left null.
+                return pad + "int __cap = 1024 / global::System.IntPtr.Size;\n"
+                     + pad + "global::System.IntPtr* __sb = stackalloc global::System.IntPtr[__cap];\n"
+                     + pad + "int __len = " + field + "(" + prefix + "__sb, __cap);\n"
+                     + pad + "if (__len <= 0) { return global::System.Array.Empty<" + arrayElemFq + ">(); }\n"
+                     + pad + "global::System.IntPtr[] __raw;\n"
+                     + pad + "int __w;\n"
+                     + pad + "if (__len <= __cap)\n"
+                     + pad + "{\n"
+                     + pad + "    __raw = new global::System.IntPtr[__len];\n"
+                     + pad + "    new global::System.ReadOnlySpan<global::System.IntPtr>(__sb, __len).CopyTo(__raw);\n"
+                     + pad + "    __w = __len;\n"
+                     + pad + "}\n"
+                     + pad + "else\n"
+                     + pad + "{\n"
+                     + pad + "    __raw = new global::System.IntPtr[__len];\n"
+                     + pad + "    fixed (global::System.IntPtr* __bp = __raw)\n"
+                     + pad + "    {\n"
+                     + pad + "        __w = " + field + "(" + prefix + "__bp, __len);\n"
+                     + pad + "    }\n"
+                     + pad + "    if (__w > __len) { __w = __len; }\n"
+                     + pad + "    if (__w < 0) { __w = 0; }\n"
+                     + pad + "}\n"
+                     + pad + "" + arrayElemFq + "[] __buf = new " + arrayElemFq + "[__w];\n"
+                     + pad + "int __n = 0;\n"
+                     + pad + "for (int __i = 0; __i < __w; ++__i)\n"
+                     + pad + "{\n"
+                     + pad + "    " + arrayElemFq + "? __e = " + wrap + "(__raw[__i]);\n"
+                     + pad + "    if (__e is not null) { __buf[__n++] = __e; }\n"
+                     + pad + "}\n"
+                     + pad + "if (__n < __w) { global::System.Array.Resize(ref __buf, __n); }\n"
+                     + pad + "return __buf;\n";
             }
             if (arrayReturn)
             {

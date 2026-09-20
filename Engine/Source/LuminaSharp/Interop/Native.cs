@@ -123,19 +123,6 @@ public static unsafe partial class Native
     [NativeCall] public static partial void RegistryDisconnect(ulong World, IntPtr Ops, int Kind, IntPtr Handle);
     [NativeCall] public static partial void RegistryPatch(ulong World, uint Entity, IntPtr Ops);
 
-
-    // Appends a script of the named class to an entity and binds it; returns the new instance's handle.
-    [NativeCall] public static partial IntPtr AddEntityScript(ulong World, uint Entity, string ClassName);
-
-    // Lookup over the native CEntityScript component. Class-keyed, so these find a C++ script too. The
-    // FindEntityScripts buffer may be null/0 to just ask for the count (the return value is the true total
-    // either way, so an under-sized buffer is retried rather than silently truncating).
-    [NativeCall] public static partial IntPtr FindEntityScript(ulong World, uint Entity, string ClassName);
-    [NativeCall] public static partial int FindEntityScripts(ulong World, uint Entity, string ClassName, void** OutScripts, int Capacity);
-
-    // Removes the slot holding the given instance handle, destroying the managed instance.
-    [NativeCall] public static partial void RemoveEntityScript(ulong World, uint Entity, IntPtr Instance);
-
     // runtime view iteration for the C# View<...>. Native gathers a CHUNK of entities + parallel
     // component pointers per call (one crossing per chunk). Hand-written delegate* binds: the chunk
     // pointers (uint*, void**) aren't shapes the [NativeCall] generator covers. See DotNetView.cpp.

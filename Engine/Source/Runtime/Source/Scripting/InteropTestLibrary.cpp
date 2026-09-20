@@ -35,6 +35,20 @@ namespace Lumina
         }
     }
 
+    // Its own class default object, so the element is a real reflected CObject with no world to build.
+    void CInteropTestLibrary::MakeObjectRange(int32 Count, TVector<TObjectPtr<CInteropTestLibrary>>& Out)
+    {
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            Out.emplace_back(StaticClass()->GetDefaultObject<CInteropTestLibrary>());
+        }
+    }
+
+    FName CInteropTestLibrary::ReadClassName(TSubclassOf<CInteropTestLibrary> Class)
+    {
+        return Class.IsValid() ? Class.Get()->GetName() : FName();
+    }
+
     int32 CInteropTestLibrary::GetMakeRangeCallCount()
     {
         return GMakeRangeCalls;
@@ -64,6 +78,18 @@ namespace Lumina
     {
         static const FName Name("InteropBenchmarkName");
         return Name;
+    }
+
+    FUIElement CInteropTestLibrary::MakeHandle(uint64 Value)
+    {
+        FUIElement Handle;
+        Handle.Handle = Value;
+        return Handle;
+    }
+
+    uint64 CInteropTestLibrary::ReadHandle(FUIElement Handle)
+    {
+        return Handle.Handle;
     }
 
     FString CInteropTestLibrary::MakeName(int32 Length)

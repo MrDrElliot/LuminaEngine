@@ -8,16 +8,6 @@ using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
-/// Scalar wire type for a bound variable; mirrors native RmlUi::EUIVarType.
-internal enum UIVarType
-{
-    Bool = 0,
-    Int = 1,
-    Float = 2,
-    Double = 3,
-    String = 4,
-}
-
 /// One argument of a data-event-* call; mirrors native RmlUi::FUIArg (UTF-8 ptr+len).
 [StructLayout(LayoutKind.Sequential)]
 internal struct UIArg
@@ -35,7 +25,7 @@ public sealed unsafe class UIDataModel : IDisposable
     private readonly ulong _world;
     private readonly string _name;
     private readonly ViewModel _viewModel;
-    private IntPtr _native;          // FManagedDataModel*
+    private Lumina.FUIDataModel _native;
     private GCHandle _self;
 
     // Scalar fields; list index == native field id (dense, assigned in registration order).
@@ -56,9 +46,9 @@ public sealed unsafe class UIDataModel : IDisposable
         public readonly PropertyInfo Property;
         public readonly Func<object, object?> Get;
         public readonly Action<object, object?>? Set;
-        public readonly UIVarType Type;
+        public readonly Lumina.EUIVarType Type;
 
-        public ScalarField(PropertyInfo property, Func<object, object?> get, Action<object, object?>? set, UIVarType type)
+        public ScalarField(PropertyInfo property, Func<object, object?> get, Action<object, object?>? set, Lumina.EUIVarType type)
         {
             Property = property;
             Get = get;
@@ -105,8 +95,9 @@ public sealed unsafe class UIDataModel : IDisposable
         _viewModel = Model;
         _self = GCHandle.Alloc(this);
 
-        _native = Native.UI_CreateDataModel(World, Name, GCHandle.ToIntPtr(_self), SetThunkPtr, EventThunkPtr);
-        if (_native == IntPtr.Zero)
+        _native = Lumina.CUILibrary.CreateDataModel(UI.WorldOf(World), Name,
+            (ulong)GCHandle.ToIntPtr(_self), (ulong)SetThunkPtr, (ulong)EventThunkPtr);
+        if (!_native.IsValid)
         {
             _self.Free();
             return;
@@ -119,7 +110,7 @@ public sealed unsafe class UIDataModel : IDisposable
     }
 
     /// False if the model failed to register or has been disposed.
-    public bool IsValid => _native != IntPtr.Zero;
+    public bool IsValid => _native.IsValid;
 
     /// The data-model name on the world's UI context.
     public string Name => _name;
@@ -144,9 +135,9 @@ public sealed unsafe class UIDataModel : IDisposable
             }
             string Name = Attribute.Name ?? Property.Name;
 
-            if (TryMapType(Property.PropertyType, out UIVarType VarType))
+            if (TryMapType(Property.PropertyType, out Lumina.EUIVarType VarType))
             {
-                int Field = Native.UI_ModelBindScalar(_native, Name, (int)VarType);
+                int Field = Lumina.CUILibrary.BindScalar(_native, Name, VarType);
                 if (Field < 0)
                 {
                     continue;
@@ -157,7 +148,7 @@ public sealed unsafe class UIDataModel : IDisposable
             }
             else if (TryGetItemType(Property.PropertyType, out Type ItemType) && HasBindMembers(ItemType))
             {
-                int Field = Native.UI_ModelBindList(_native, Name);
+                int Field = Lumina.CUILibrary.BindList(_native, Name);
                 if (Field < 0)
                 {
                     continue;
@@ -165,7 +156,7 @@ public sealed unsafe class UIDataModel : IDisposable
                 ItemMember[] Members = BuildItemMembers(ItemType);
                 foreach (ItemMember Member in Members)
                 {
-                    Native.UI_ModelBindListMember(_native, Field, Member.Name);
+                    Lumina.CUILibrary.BindListMember(_native, Field, Member.Name);
                 }
                 int ListIndex = _lists.Count;
                 _lists.Add(new ListField { Get = PropertyAccessor.Getter(Property), Field = Field, Members = Members });
@@ -188,33 +179,33 @@ public sealed unsafe class UIDataModel : IDisposable
             string CommandName = Attribute.Name ?? Method.Name;
             int CommandId = _commands.Count;
             _commands.Add(new Command(Method));
-            Native.UI_ModelBindCommand(_native, CommandName, CommandId);
+            Lumina.CUILibrary.BindCommand(_native, CommandName, CommandId);
         }
     }
 
     /// Push one property (scalar or list) to the view by name (called by ViewModel.Set).
     internal void OnPropertyChanged(string Name)
     {
-        if (_applyingFromNative || _native == IntPtr.Zero)
+        if (_applyingFromNative || !_native.IsValid)
         {
             return;
         }
         if (_fieldByName.TryGetValue(Name, out int Field))
         {
             WriteScalar(Field);
-            Native.UI_ModelDirty(_native, Field);
+            Lumina.CUILibrary.MarkDirty(_native, Field);
         }
         else if (_listByName.TryGetValue(Name, out int ListIndex))
         {
             WriteList(ListIndex);
-            Native.UI_ModelListDirty(_native, _lists[ListIndex].Field);
+            Lumina.CUILibrary.MarkListDirty(_native, _lists[ListIndex].Field);
         }
     }
 
     /// Re-push every bound property (scalars + lists) and mark the whole model dirty.
     public void PushAll()
     {
-        if (_native == IntPtr.Zero)
+        if (!_native.IsValid)
         {
             return;
         }
@@ -226,20 +217,20 @@ public sealed unsafe class UIDataModel : IDisposable
         {
             WriteList(i);
         }
-        Native.UI_ModelDirtyAll(_native);   // covers scalar AND list (custom) variables
+        Lumina.CUILibrary.MarkAllDirty(_native);   // covers scalar and list variables alike
     }
 
     private void WriteScalar(int Field)
     {
         ScalarField F = _fields[Field];
         object? Value = F.Get(_viewModel);
-        if (F.Type == UIVarType.String)
+        if (F.Type == Lumina.EUIVarType.String)
         {
-            Native.UI_ModelSetString(_native, Field, Value as string ?? string.Empty);
+            Lumina.CUILibrary.SetString(_native, Field, Value as string ?? string.Empty);
         }
         else
         {
-            Native.UI_ModelSetNumber(_native, Field, ToNumber(Value, F.Type));
+            Lumina.CUILibrary.SetNumber(_native, Field, ToNumber(Value, F.Type));
         }
     }
 
@@ -261,12 +252,12 @@ public sealed unsafe class UIDataModel : IDisposable
             }
         }
 
-        Native.UI_ModelListResize(_native, List.Field, Rows.Count);
+        Lumina.CUILibrary.ResizeList(_native, List.Field, Rows.Count);
         for (int Row = 0; Row < Rows.Count; Row++)
         {
             for (int Col = 0; Col < List.Members.Length; Col++)
             {
-                Native.UI_ModelListSetCell(_native, List.Field, Row, Col, ToCell(List.Members[Col].Get(Rows[Row])));
+                Lumina.CUILibrary.SetListCell(_native, List.Field, Row, Col, ToCell(List.Members[Col].Get(Rows[Row])));
             }
         }
     }
@@ -285,7 +276,7 @@ public sealed unsafe class UIDataModel : IDisposable
             return;   // display-only property; ignore writebacks
         }
 
-        object Value = F.Type == UIVarType.String
+        object Value = F.Type == Lumina.EUIVarType.String
             ? (StrLen > 0 ? Marshal.PtrToStringUTF8(Str, StrLen) ?? string.Empty : string.Empty)
             : ConvertNumber(F.Property.PropertyType, Number);
 
@@ -394,10 +385,10 @@ public sealed unsafe class UIDataModel : IDisposable
     public void Dispose()
     {
         Registry.Remove((_world, _name));
-        if (_native != IntPtr.Zero)
+        if (_native.IsValid)
         {
-            Native.UI_DestroyDataModel(_native);
-            _native = IntPtr.Zero;
+            Lumina.CUILibrary.DestroyDataModel(_native);
+            _native = default;
         }
         if (_self.IsAllocated)
         {
@@ -408,17 +399,17 @@ public sealed unsafe class UIDataModel : IDisposable
 
     // ---- type mapping ----
 
-    private static bool TryMapType(Type Type, out UIVarType VarType)
+    private static bool TryMapType(Type Type, out Lumina.EUIVarType VarType)
     {
-        if (Type.IsEnum) { VarType = UIVarType.Int; return true; }
-        if (Type == typeof(bool)) { VarType = UIVarType.Bool; return true; }
-        if (Type == typeof(string)) { VarType = UIVarType.String; return true; }
-        if (Type == typeof(float)) { VarType = UIVarType.Float; return true; }
-        if (Type == typeof(double)) { VarType = UIVarType.Double; return true; }
+        if (Type.IsEnum) { VarType = Lumina.EUIVarType.Int; return true; }
+        if (Type == typeof(bool)) { VarType = Lumina.EUIVarType.Bool; return true; }
+        if (Type == typeof(string)) { VarType = Lumina.EUIVarType.String; return true; }
+        if (Type == typeof(float)) { VarType = Lumina.EUIVarType.Float; return true; }
+        if (Type == typeof(double)) { VarType = Lumina.EUIVarType.Double; return true; }
         if (Type == typeof(int) || Type == typeof(short) || Type == typeof(sbyte) || Type == typeof(byte)
             || Type == typeof(uint) || Type == typeof(ushort) || Type == typeof(long) || Type == typeof(ulong))
         {
-            VarType = UIVarType.Int;
+            VarType = Lumina.EUIVarType.Int;
             return true;
         }
         VarType = default;
@@ -475,13 +466,13 @@ public sealed unsafe class UIDataModel : IDisposable
         return Members.ToArray();
     }
 
-    private static double ToNumber(object? Value, UIVarType Type)
+    private static double ToNumber(object? Value, Lumina.EUIVarType Type)
     {
         if (Value == null)
         {
             return 0.0;
         }
-        return Type == UIVarType.Bool ? ((bool)Value ? 1.0 : 0.0) : Convert.ToDouble(Value, CultureInfo.InvariantCulture);
+        return Type == Lumina.EUIVarType.Bool ? ((bool)Value ? 1.0 : 0.0) : Convert.ToDouble(Value, CultureInfo.InvariantCulture);
     }
 
     private static string ToCell(object? Value)

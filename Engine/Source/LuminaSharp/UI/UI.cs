@@ -20,19 +20,21 @@ public readonly unsafe partial struct UI
 
     public bool IsValid => Handle != 0;
 
-    private Lumina.CWorld World => Wrapper<Lumina.CWorld>.ForObject((IntPtr)Handle)!;
+    private Lumina.CWorld World => WorldOf(Handle);
+
+    internal static Lumina.CWorld WorldOf(ulong Handle) => Wrapper<Lumina.CWorld>.ForObject((IntPtr)Handle)!;
 
     /// <summary>
     /// Loads the RML document at <paramref name="Path"/> (a virtual path, e.g.
     /// "/Game/UI/HUD.rml") into this world's screen context. The document starts hidden -- call
     /// <see cref="UIDocument.Show"/>. Returns an invalid <see cref="UIDocument"/> on load/parse failure.
     /// </summary>
-    public UIDocument LoadDocument(string Path) => new(Handle, Native.UI_LoadDocument(Handle, Path));
+    public UIDocument LoadDocument(string Path) => new(Handle, Lumina.CUILibrary.LoadDocument(World, Path));
 
     /// <summary>Loads a document from an in-memory RML string. <paramref name="SourceUrl"/> resolves relative
     /// includes (stylesheets, images). Useful for procedurally built UI.</summary>
     public UIDocument LoadDocumentFromMemory(string Rml, string SourceUrl = "[inline]")
-        => new(Handle, Native.UI_LoadDocumentFromMemory(Handle, Rml, SourceUrl));
+        => new(Handle, Lumina.CUILibrary.LoadDocumentFromMemory(World, Rml, SourceUrl));
 
     /// <summary>
     /// Registers an MVVM <see cref="ViewModel"/> as a named data model on this world's UI context, so RML can

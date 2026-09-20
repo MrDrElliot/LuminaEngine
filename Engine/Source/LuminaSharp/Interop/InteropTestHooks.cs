@@ -320,6 +320,49 @@ internal static unsafe class InteropTestHooks
         return Values.Length;
     }
 
+    // An out container of objects crosses as raw pointers and is rebuilt through the wrapper cache, so every
+    // element has to come back as the same managed instance rather than a fresh one per element.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ObjectArrayBinding(int Count, int* OutIdentical)
+    {
+        Lumina.CInteropTestLibrary[] Values = CInteropTestLibrary.MakeObjectRange(Count);
+
+        bool Identical = true;
+        for (int Index = 1; Index < Values.Length; ++Index)
+        {
+            Identical &= ReferenceEquals(Values[Index], Values[0]);
+        }
+        *OutIdentical = (Values.Length > 0 && Identical) ? 1 : 0;
+        return Values.Length;
+    }
+
+    // A class handle resolved from the C# type has to name the same class on the native side.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ClassHandleRoundTrip()
+    {
+        Lumina.TSubclassOf<Lumina.CInteropTestLibrary> Class = CInteropTestLibrary.StaticClass();
+        if (!Class.IsValid)
+        {
+            return 0;
+        }
+        return CInteropTestLibrary.ReadClassName(Class) == "CInteropTestLibrary" ? 1 : 0;
+    }
+
+    // A handle struct is how a non-reflectable native pointer crosses, so all 64 bits have to survive both ways.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static ulong Test_HandleStructRoundTrip(ulong Value)
+    {
+        Lumina.FUIElement Handle = CInteropTestLibrary.MakeHandle(Value);
+        if (Handle.Handle != Value || Handle.IsValid != (Value != 0))
+        {
+            return 0;
+        }
+        return CInteropTestLibrary.ReadHandle(Handle);
+    }
+
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static int Test_VectorBindingStructs(int Count, float* OutLastY)

@@ -13,14 +13,14 @@ public sealed class UIEventSubscription : IDisposable
     internal static readonly UIEventSubscription Empty = new();
 
     private readonly ulong World;
-    private IntPtr Listener;
+    private Lumina.FUIEventListener Listener;
     private DelegateBinding Binding;
 
     private UIEventSubscription()
     {
     }
 
-    internal UIEventSubscription(ulong World, IntPtr Listener, DelegateBinding Binding)
+    internal UIEventSubscription(ulong World, Lumina.FUIEventListener Listener, DelegateBinding Binding)
     {
         this.World = World;
         this.Listener = Listener;
@@ -28,11 +28,11 @@ public sealed class UIEventSubscription : IDisposable
     }
 
     /// <summary>True while connected; false for an inert subscription or after <see cref="Dispose"/>.</summary>
-    public bool IsActive => Listener != IntPtr.Zero;
+    public bool IsActive => Listener.IsValid;
 
     public void Dispose()
     {
-        if (Listener == IntPtr.Zero)
+        if (!Listener.IsValid)
         {
             return;
         }
@@ -41,7 +41,7 @@ public sealed class UIEventSubscription : IDisposable
         Binding.Dispose();
         Binding = default;
 
-        Native.UI_RemoveEventListener(World, Listener);
-        Listener = IntPtr.Zero;
+        Lumina.CUILibrary.RemoveEventListener(UI.WorldOf(World), Listener);
+        Listener = default;
     }
 }
