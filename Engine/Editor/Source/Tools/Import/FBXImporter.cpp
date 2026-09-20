@@ -926,6 +926,37 @@ namespace Lumina
                 }
             }
 
+            // Cape joints, twist helpers and attachment nulls skin to nothing, so only this reaches them.
+            if (Options.bImportUnskinnedBones)
+            {
+                TVector<const ufbx_node*> Pending;
+                for (const ufbx_node* Node : Scene->nodes)
+                {
+                    const bool bSkeletonRoot = IsBone[Node->typed_id] != 0
+                        && (Node->parent == nullptr || IsBone[Node->parent->typed_id] == 0);
+                    if (bSkeletonRoot)
+                    {
+                        Pending.push_back(Node);
+                    }
+                }
+
+                while (!Pending.empty())
+                {
+                    const ufbx_node* Node = Pending.back();
+                    Pending.pop_back();
+                    for (const ufbx_node* Child : Node->children)
+                    {
+                        // Descending past a skipped node would orphan whatever hangs below it.
+                        if (Child->mesh != nullptr || Child->camera != nullptr || Child->light != nullptr)
+                        {
+                            continue;
+                        }
+                        IsBone[Child->typed_id] = 1;
+                        Pending.push_back(Child);
+                    }
+                }
+            }
+
             // Emitted parents-before-children, which BuildBindPoseCache and every FK pass assume.
             for (uint32 TypedId : NodeVisitOrder)
             {

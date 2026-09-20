@@ -922,6 +922,7 @@ namespace Lumina
         Options.bImportMeshes     = bImportMeshes;
         Options.bImportAnimations = bImportAnimations;
         Options.bImportSkeleton   = bImportSkeleton;
+        Options.bImportUnskinnedBones = bImportUnskinnedBones;
         Options.bFlipNormals      = bFlipNormals;
         Options.bFlipUVs          = bFlipUVs;
         Options.bFlipU            = bFlipU;

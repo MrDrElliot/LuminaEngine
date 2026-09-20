@@ -44,6 +44,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Import")
         bool bImportSkeleton = true;
 
+        /** Keep skeleton nodes nothing skins to, such as cape joints, twist helpers and attachment nulls. */
+        PROPERTY(Editable, Category = "Skeleton")
+        bool bImportUnskinnedBones = false;
+
         /** Import skeletal animation clips. */
         PROPERTY(Editable, Category = "Import")
         bool bImportAnimations = true;
