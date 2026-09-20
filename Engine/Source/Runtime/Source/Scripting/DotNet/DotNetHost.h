@@ -8,7 +8,6 @@
 
 namespace Lumina
 {
-    struct FInputActionState;
     class CObject;
     class CScriptStruct;
     class CWorld;
@@ -226,11 +225,6 @@ namespace Lumina::DotNet
     /** Runs a script type's declared [Property] initializers into its class default object. Once per type at
      *  mint, after the CDO exists; every instance is then copied from it. */
     RUNTIME_API void ApplyScriptableDefaults(FStringView TypeName, void* DefaultObject);
-
-    // Feeds a script's InputAction / InputAxis bindings this frame's evaluated action states. No-op for a
-    // C++ script, which has no managed instance. States points into the owning FInputContext.
-    RUNTIME_API void PollScriptInput(CObject* Script, const FInputActionState* States, int32 Count, uint32 Serial,
-        float DeltaTime);
 
     //~ Exported [Property] schema bridge (editor inspector + serialization). Game thread only.
 
