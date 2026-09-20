@@ -6,6 +6,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Input/InputAction.h"
 #include "Input/InputEvent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Entity/Events/PerceptionEvent.h"
@@ -13,8 +14,6 @@
 
 namespace Lumina
 {
-    struct FInputActionState;
-
     class CWorld;
 
     // Which side of the physics step a script's OnUpdate runs on. Mirrors LuminaSharp.EScriptPhase.
@@ -53,6 +52,11 @@ namespace Lumina
          *  SInputComponent, and only while their viewport has game input focus -- see SInputSystem. */
         FUNCTION()
         virtual void OnInput(SInputEvent Event) {}
+
+        /** An authored action that changed this frame: pressed, released, or an axis off zero. A C# script
+         *  overriding this must call base, which is what feeds its SInputAction / SInputAxis bindings. */
+        FUNCTION()
+        virtual void OnAction(FName Action, FInputActionState State) {}
 
         //~ Physics callbacks. Delivered by the physics scene's contact drain to every script on the entity,
         //~ so a C++ and a C# script receive them through the same virtual. The event is oriented per-entity
@@ -192,8 +196,9 @@ namespace Lumina
         /** Delivers one input event to every script on Entity. */
         RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);
 
-        // Hands every script on Entity this frame's action states so C# InputAction / InputAxis bindings raise their events. Native scripts have no bindings and cost one null check.
-        RUNTIME_API void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States, int32 Count, uint32 Serial, float DeltaTime);
+        /** Delivers OnAction for each of ChangedActionIndices to every script on Entity. */
+        RUNTIME_API void DispatchActions(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
+            int32 Count, TSpan<const int32> ChangedActionIndices);
 
         /** Delivers a perception event to every script on the PERCEIVER entity. bSensed picks
          *  OnTargetPerceived vs OnTargetLost. */
