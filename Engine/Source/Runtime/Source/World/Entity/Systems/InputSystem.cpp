@@ -34,8 +34,6 @@ namespace Lumina
 
         const TVector<FInputActionState>& States = Ctx->GetActionStates();
         const TVector<SInputEvent>& Events = Ctx->GetFrameEvents();
-        const uint32 Serial = Ctx->GetActionsSerial();
-        const float DeltaSeconds = (float)Context.GetDeltaTime();
 
         static thread_local TVector<int32> ChangedActionIndices;
         ChangedActionIndices.clear();
@@ -78,7 +76,7 @@ namespace Lumina
                 EntityScripts::DispatchInput(Registry, Entity, Event);
             }
 
-            EntityScripts::PollInputBindings(Registry, Entity, States.data(), (int32)States.size(), ChangedActionIndices, Serial, DeltaSeconds);
+            EntityScripts::DispatchActions(Registry, Entity, States.data(), (int32)States.size(), ChangedActionIndices);
         }
     }
 }

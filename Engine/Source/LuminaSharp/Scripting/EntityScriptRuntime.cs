@@ -15,7 +15,7 @@ internal sealed class EntityScriptRuntime
         this.Library = Library;
     }
 
-    // Registers an instance created by ScriptableRuntime, so PollInput can liveness-test its handle.
+    // Registers an instance created by ScriptableRuntime, so FreeAll can detach it.
     internal void Adopt(GCHandle Handle)
     {
         LiveHandles.Add(Handle);
@@ -31,27 +31,6 @@ internal sealed class EntityScriptRuntime
     }
 
     public IReadOnlyCollection<string> TypeNames => Library.EntityScriptTypeNames;
-
-    /// <summary>Applies this frame's action states to a script's input bindings, raising their events. One
-    /// crossing per script per frame, and only for scripts that declare a binding (callback flag) whose
-    /// entity is receiving input.</summary>
-    public unsafe void PollInput(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
-    {
-        if (Resolve(Handle) is not EntityScript Script || !Script.Description.HasInputBindings)
-        {
-            return;
-        }
-
-        try
-        {
-            using var Scope = Game.Push(Script.World, Script.Entity, Script);
-            Script.Description.PollInputBindings(Script, States, Count, Serial, DeltaTime);
-        }
-        catch (Exception Exception)
-        {
-            Native.Log(ELogLevel.Error, $"EntityScript input binding threw: {Exception}");
-        }
-    }
 
     public byte[]? Schema(string TypeName)
     {
@@ -97,16 +76,5 @@ internal sealed class EntityScriptRuntime
             LiveHandles.Remove(Handle);
         }
         LiveHandles.Clear();
-    }
-
-    // Membership is the liveness test, which holds only because Forget runs before every free.
-    private EntityScript? Resolve(IntPtr Pointer)
-    {
-        if (Pointer == IntPtr.Zero)
-        {
-            return null;
-        }
-        GCHandle Handle = GCHandle.FromIntPtr(Pointer);
-        return LiveHandles.Contains(Handle) ? Handle.Target as EntityScript : null;
     }
 }

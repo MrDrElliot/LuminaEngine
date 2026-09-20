@@ -1480,32 +1480,6 @@ namespace Lumina::DotNet
         return GCachedGeneration; // native mirror; refreshed on (re)load, see ReloadScripts
     }
 
-    void PollScriptInput(CObject* Script, const FInputActionState* States, int32 Count, uint32 Serial,
-        float DeltaTime)
-    {
-        if (!bInitialized || Script == nullptr || States == nullptr)
-        {
-            return;
-        }
-
-        // Find, never create, since minting per frame is exactly the cost this lookup avoids.
-        void* Handle = ManagedInstances::Find(Script);
-        if (Handle == nullptr)
-        {
-            return;
-        }
-
-        // An engine export lives in the non-collectible assembly, so its pointer survives hot reloads.
-        using FThunk = void (CORECLR_DELEGATE_CALLTYPE*)(void*, const FInputActionState*, int32, uint32, float);
-        static FThunk Thunk = (FThunk)ResolveManagedExport("PollScriptInputBindings");
-        if (Thunk == nullptr)
-        {
-            return;
-        }
-
-        Thunk(Handle, States, Count, Serial, DeltaTime);
-    }
-
     void* ResolveManagedExport(FStringView Name)
     {
         if (!bInitialized || GResolveManagedExport == nullptr)

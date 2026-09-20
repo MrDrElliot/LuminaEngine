@@ -792,16 +792,16 @@ internal sealed class TypeDescription
         }
     }
 
-    /// <summary>Feeds this frame's action states to each of the instance's input bindings.</summary>
-    public unsafe void PollInputBindings(EntityScript Script, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
+    /// <summary>Hands one action's state to each of the instance's bindings that listens to it.</summary>
+    public void DispatchAction(EntityScript Script, Lumina.FName Action, in Lumina.FInputActionState State)
     {
         foreach (ScriptProperty Property in InputBindings)
         {
             // A binding the script nulled out is skipped rather than recreated: the field is the script's
             // to own, and silently handing it a new object would lose whatever it meant by clearing it.
-            if (Property.Get(Script) is SInputBinding Binding)
+            if (Property.Get(Script) is SInputBinding Binding && Binding.Listens(Action))
             {
-                Binding.Poll(States, Count, Serial, DeltaTime);
+                Binding.Apply(State);
             }
         }
     }

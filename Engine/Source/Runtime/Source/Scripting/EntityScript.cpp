@@ -519,8 +519,8 @@ namespace Lumina
             }
         }
 
-        void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
-            int32 Count, TSpan<const int32> ChangedActionIndices, uint32 Serial, float DeltaTime)
+        void DispatchActions(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
+            int32 Count, TSpan<const int32> ChangedActionIndices)
         {
             FScriptSnapshot Scripts;
             SnapshotScripts(Registry, Entity, Scripts);
@@ -541,8 +541,6 @@ namespace Lumina
                         Script->OnAction(Actions[i].Name, States[i]);
                     }
                 }
-
-                DotNet::PollScriptInput(Script, States, Count, Serial, DeltaTime);
             }
         }
 
