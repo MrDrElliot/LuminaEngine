@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Containers/Name.h"
+#include "Containers/Vector.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectArray.h"
 #include "Core/Object/ObjectCore.h"
@@ -24,6 +25,47 @@ namespace
         Parent->Child = OutChild;
         return Parent;
     }
+}
+
+// The shape before the fix, kept so the pinned test above cannot pass vacuously.
+TEST(CObjectLifetime, DestroyingAnUnpinnedListFreesAnEntryBeforeItsTurn)
+{
+    FScopedStaleReferenceTolerance Tolerance;
+
+    CObject* Child = nullptr;
+    CObjectRefTest* Parent = NewParentOwningChild(Child);
+    ASSERT_NE(Child, nullptr);
+
+    TWeakObjectPtr<CObject> WeakChild = Child;
+
+    EXPECT_TRUE(GObjectArray.ConditionalDestroy(Parent));
+    EXPECT_FALSE(WeakChild.IsValid()) << "releasing the parent already freed the child";
+    EXPECT_FALSE(GObjectArray.ConditionalDestroy(Child)) << "the child's own turn lands on a freed slot";
+}
+
+// The import teardown shape, where a later entry holds the only other reference to an earlier one.
+TEST(CObjectLifetime, PoppingAPinnedListDestroysEachEntryExactlyOnce)
+{
+    CObject* Child = nullptr;
+    CObjectRefTest* Parent = NewParentOwningChild(Child);
+    ASSERT_NE(Child, nullptr);
+
+    TWeakObjectPtr<CObject> WeakChild = Child;
+    TWeakObjectPtr<CObject> WeakParent = Parent;
+
+    TVector<TObjectPtr<CObject>> Created;
+    Created.push_back(Child);
+    Created.push_back(Parent);
+
+    Created.pop_back();
+    EXPECT_FALSE(WeakParent.IsValid());
+    ASSERT_EQ(Created.size(), 1u);
+    EXPECT_TRUE(Created.back().IsValid())
+        << "the child's own pin must outlive the parent that held the other reference to it";
+    EXPECT_EQ(Created.back().Get(), Child);
+
+    Created.pop_back();
+    EXPECT_FALSE(WeakChild.IsValid());
 }
 
 // Assigning out of the object being released has to adopt before it drops, or the source is freed mid-read.

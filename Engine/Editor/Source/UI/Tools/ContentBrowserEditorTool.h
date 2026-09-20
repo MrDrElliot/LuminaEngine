@@ -215,8 +215,6 @@ namespace Lumina
 
         // Destinations handed out for imports that have not finished yet. Every import runs on its own
         // task, so none of them have created their package by the time the batch is queued; without this
-        // two sources in one batch happily claim the same name and the second create fails.
-        THashSet<FFixedString> ReservedImportPaths;
 
         // Takes ownership of Importer: runs the build stage off-thread, then destroys it.
         void StartImport(CImporter* Importer, const FImportRequest& Request);

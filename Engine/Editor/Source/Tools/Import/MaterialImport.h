@@ -2,6 +2,7 @@
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Tools/Import/ImportHelpers.h"
 
 namespace Lumina
@@ -62,7 +63,7 @@ namespace Lumina
             TSpan<CTexture* const>                          ImageAssets,
             const FFixedString&                             MaterialsDir,
             const FFixedString&                             BaseName,
-            TVector<CObject*>&                              OutCreated,
+            TVector<TObjectPtr<CObject>>&                   OutCreated,
             bool                                            bSourceHasVertexColors);
     }
 }

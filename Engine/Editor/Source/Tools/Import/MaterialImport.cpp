@@ -23,6 +23,7 @@
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_TextureSample.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialOutputNode.h"
 #include "Log/Log.h"
+#include "Tools/Import/ImportPaths.h"
 #include "Containers/StringFormat.h"
 
 namespace Lumina
@@ -469,23 +470,11 @@ namespace Lumina
             FinalizeGraph(Graph);
         }
 
-        FFixedString EnsureUniquePath(FFixedString Path)
+        // Reserved rather than merely probed, so a concurrent import cannot pick the same generated name.
+        FFixedString EnsureUniquePath(const FFixedString& Path)
         {
-            if (FindObject<CPackage>(Path) == nullptr)
-            {
-                return Path;
-            }
-            for (uint32 N = 1; N < 10000; ++N)
-            {
-                FFixedString Candidate = Path;
-                Candidate.append("_");
-                Candidate.append(Format("{}", N));
-                if (FindObject<CPackage>(Candidate) == nullptr)
-                {
-                    return Candidate;
-                }
-            }
-            return Path;
+            FFixedString Reserved = Import::Paths::Reserve(Path);
+            return Reserved.empty() ? Path : Reserved;
         }
     }
 
@@ -498,7 +487,7 @@ namespace Lumina
             TSpan<CTexture* const>              ImageAssets,
             const FFixedString&                 MaterialsDir,
             const FFixedString&                 BaseName,
-            TVector<CObject*>&                  OutCreated,
+            TVector<TObjectPtr<CObject>>&       OutCreated,
             bool                                bSourceHasVertexColors)
         {
             TVector<CMaterialInstance*> Instances;

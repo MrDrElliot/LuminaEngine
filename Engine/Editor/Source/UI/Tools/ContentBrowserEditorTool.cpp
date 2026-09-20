@@ -12,6 +12,7 @@
 #include "Assets/Factories/Factory.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Package/Package.h"
+#include "Tools/Import/ImportPaths.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Progress/SlowTask.h"
 #include "Tools/Import/Importer.h"
@@ -2359,44 +2360,7 @@ namespace Lumina
         const FFixedString Base = Paths::Combine(SelectedPath, VFS::FileName(SourcePath, true));
 
         // Testing only the source path tests a name that can never exist, since the asset lands as .lasset.
-        auto IsFree = [this](const FFixedString& Candidate) -> bool
-        {
-            // What CreatePackage actually refuses on.
-            if (FindObject<CPackage>(Candidate) != nullptr)
-            {
-                return false;
-            }
-
-            // An asset already on disk that nothing has loaded this session.
-            FFixedString OnDisk = Candidate;
-            CPackage::AddPackageExt(OnDisk);
-            if (VFS::Exists(OnDisk))
-            {
-                return false;
-            }
-
-            return ReservedImportPaths.find(Candidate) == ReservedImportPaths.end();
-        };
-
-        if (IsFree(Base))
-        {
-            ReservedImportPaths.insert(Base);
-            return Base;
-        }
-
-        for (uint32 N = 1; N < 10000; ++N)
-        {
-            FFixedString Candidate = Base;
-            Candidate.append("_").append(Format("{}", N).c_str());
-
-            if (IsFree(Candidate))
-            {
-                ReservedImportPaths.insert(Candidate);
-                return Candidate;
-            }
-        }
-
-        return {};
+        return Import::Paths::Reserve(Base);
     }
 
     void FContentBrowserEditorTool::StartImport(CImporter* Importer, const FImportRequest& Request)
@@ -2411,9 +2375,11 @@ namespace Lumina
             Importer->BuildAssets(Request, Result, &SlowTask);
 
             // Reverse order, since a generated graph must die before the material it back-references.
-            for (auto It = Result.CreatedObjects.rbegin(); It != Result.CreatedObjects.rend(); ++It)
+            // Popping releases the last pin, so each object dies on its own turn rather than when a
+            // neighbor's destructor drops the last reference to it.
+            while (!Result.CreatedObjects.empty())
             {
-                (*It)->ConditionalBeginDestroy();
+                Result.CreatedObjects.pop_back();
             }
 
             const bool bSucceeded = Result.Succeeded();
@@ -2424,7 +2390,7 @@ namespace Lumina
                 CImporterRegistry::DestroyImporter(Importer);
 
                 // Released only now, since on success the package is registered and on failure the name frees up.
-                ReservedImportPaths.erase(Request.DestinationPath);
+                Import::Paths::Release(Request.DestinationPath);
 
                 RefreshContentBrowser();
                 if (bSucceeded)
@@ -2532,7 +2498,7 @@ namespace Lumina
                     ImGuiX::Notifications::NotifyError("Failed to import \"{0}\": {1}", Request.SourcePath, Error);
                     CImporterRegistry::DestroyImporter(Importer);
                     // Nothing will be created at the reserved name, so hand it back.
-                    ReservedImportPaths.erase(Request.DestinationPath);
+                    Import::Paths::Release(Request.DestinationPath);
                     bImportWindowOpen = false;
                     ProcessNextImport();
                     return;
@@ -2580,7 +2546,7 @@ namespace Lumina
                             if (!SharedState->bStarted)
                             {
                                 CImporterRegistry::DestroyImporter(Importer);
-                                ReservedImportPaths.erase(Request.DestinationPath);
+                                Import::Paths::Release(Request.DestinationPath);
                             }
 
                             // Advanced here, not from the confirm branch, so canceling one file skips only it.

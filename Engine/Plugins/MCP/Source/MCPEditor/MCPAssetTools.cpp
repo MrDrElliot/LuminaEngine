@@ -345,9 +345,11 @@ namespace Lumina::MCP
             FImportResult Result;
             Importer->BuildAssets(FImportRequest{ FFixedString(SourcePath.c_str()), Destination }, Result, nullptr);
 
-            for (auto It = Result.CreatedObjects.rbegin(); It != Result.CreatedObjects.rend(); ++It)
+            // Popping releases the last pin, so each object dies on its own turn rather than when a
+            // neighbor's destructor drops the last reference to it.
+            while (!Result.CreatedObjects.empty())
             {
-                (*It)->ConditionalBeginDestroy();
+                Result.CreatedObjects.pop_back();
             }
             CImporterRegistry::DestroyImporter(Importer);
 

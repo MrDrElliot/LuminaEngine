@@ -1,5 +1,7 @@
 ﻿#include "EditorPCH.h"
 #include "MeshImporter.h"
+
+#include "Tools/Import/ImportPaths.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -494,24 +496,6 @@ namespace Lumina
             return true;
         }
 
-        // Flush uses an atomic_wait that would stall a worker fiber, so this must land on the main thread.
-        void RunOnMainThread(const TFunction<void()>& Work)
-        {
-            if (Threading::IsMainThread())
-            {
-                Work();
-                return;
-            }
-
-            TPromise<void> Promise;
-            TFuture<void> Future = Promise.GetFuture();
-            MainThread::Enqueue([&Work, Promise = Move(Promise)]() mutable
-            {
-                Work();
-                Promise.SetValue();
-            });
-            Future.Wait();
-        }
     }
 
     namespace
@@ -1103,7 +1087,7 @@ namespace Lumina
             Progress->EnterProgressFrame(kCreateBudget, "Creating assets...");
         }
 
-        TVector<CObject*>& CreatedObjects = OutResult.CreatedObjects;
+        TVector<TObjectPtr<CObject>>& CreatedObjects = OutResult.CreatedObjects;
         CreatedObjects.reserve(SourceData.Skeletons.size() + SourceData.Resources.size()
                              + SourceData.Animations.size() + SourceData.Images.size());
 
@@ -1333,7 +1317,6 @@ namespace Lumina
                 Progress->UpdateMessage("Generating materials...");
             }
 
-            RunOnMainThread([&]()
             {
                 const TVector<CMaterialInstance*> Instances = Import::Materials::GenerateMaterials(
                     TSpan<const FMeshImportMaterial>(SourceData.Materials.data(), SourceData.Materials.size()),
@@ -1412,7 +1395,7 @@ namespace Lumina
                     LOG_INFO("[Import] {}/{} surfaces have no material because the source assigned none.",
                              Unresolved, SurfacesTotal);
                 }
-            });
+            }
         }
         else if (bImportMeshes)
         {
@@ -1483,8 +1466,13 @@ namespace Lumina
         }
 
         const float SaveStep = kSaveBudget / (float)std::max<size_t>((size_t)1, CreatedObjects.size());
-        for (CObject* Object : CreatedObjects)
+        for (const TObjectPtr<CObject>& Created : CreatedObjects)
         {
+            CObject* Object = Created.Get();
+            if (Object == nullptr)
+            {
+                continue;
+            }
             CPackage* Package = Object->GetPackage();
             if (CPackage::SavePackage(Package, Package->GetPackagePath()))
             {
@@ -1498,6 +1486,9 @@ namespace Lumina
             {
                 LOG_ERROR("[Import] failed to save {}; asset will not be registered", Package->GetPackagePath());
             }
+
+            // Saved means the file now owns the name, and a failure should free it for the next attempt.
+            Import::Paths::Release(Package->GetPackagePath());
 
             if (Progress)
             {
