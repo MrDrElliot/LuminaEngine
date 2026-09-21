@@ -62,6 +62,29 @@ namespace LuminaSequenceTests
         SUCCEED();
     }
 
+    // The accessors are one deducing-this template each, so constness is deduced rather than declared.
+    TEST(StaticArray, ConstAccessorsStayConst)
+    {
+        using FMutable = TArray<int, 4>&;
+        using FConst   = const TArray<int, 4>&;
+
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>()[0]), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>()[0]), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().at(0)), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().at(0)), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().front()), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().front()), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().back()), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().back()), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().data()), int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().data()), const int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().begin()), int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().begin()), const int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().end()), int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().end()), const int*>);
+        SUCCEED();
+    }
+
     TEST(StaticArray, AccessorsAndIteration)
     {
         TArray<int, 4> Values{ 10, 20, 30, 40 };

@@ -10,6 +10,12 @@ using namespace Lumina;
 
 namespace
 {
+    // FPose's stream accessors are deducing-this templates that read their constness from Stream.
+    static_assert(std::is_same_v<decltype(std::declval<FPose&>().Tx()), float*>);
+    static_assert(std::is_same_v<decltype(std::declval<const FPose&>().Tx()), const float*>);
+    static_assert(std::is_same_v<decltype(std::declval<FPose&>().Rw()), float*>);
+    static_assert(std::is_same_v<decltype(std::declval<const FPose&>().Rw()), const float*>);
+
     constexpr float AdditivePositionTolerance = 1e-4f;
     constexpr float AdditiveScaleTolerance    = 1e-4f;
     constexpr float AdditiveAngleTolerance    = 0.05f;

@@ -24,7 +24,7 @@ namespace Lumina
         requires std::is_convertible_v<U*, T*>
         smart_ptr_deleter(const smart_ptr_deleter<U>&) noexcept {}
 
-        void operator()(T* Ptr) const
+        static void operator()(T* Ptr)
         {
             Memory::Delete(Ptr);
         }

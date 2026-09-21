@@ -292,7 +292,7 @@ namespace Lumina::Physics
 
         struct FHullKeyHash
         {
-            size_t operator()(const FHullKey& Key) const
+            static size_t operator()(const FHullKey& Key)
             {
                 size_t Hash = Key.Kind;
                 auto Mix = [&Hash](uint32 Bits) { Hash = (Hash * 1099511628211ull) ^ Bits; };
