@@ -115,4 +115,9 @@ namespace Lumina
     {
         GMakeNameCalls = 0;
     }
+
+    float CInteropTestLibrary::ReadOpaqueValue(const FInteropOpaqueStruct& Opaque)
+    {
+        return Opaque.Value + (float)Opaque.Label.length();
+    }
 }

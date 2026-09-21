@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using LuminaSharp.ScriptProperties;
 
 namespace LuminaSharp.Generators;
 
@@ -51,12 +52,20 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
                 return null;
             }
 
+            bool bMarshalled = IsMarshalledType(Parameter.Type);
+
             string Local = "__a" + Index;
             string Slot = "(void*)(__frame + __offsets[" + Index + "])";
+            string Address = "__frame + __offsets[" + Index + "]";
 
             if (Parameter.RefKind == RefKind.Out)
             {
-                Reads.Add(TypeName + " " + Local + " = default;");
+                Reads.Add(TypeName + " " + Local + " = default" + (bMarshalled ? "!" : string.Empty) + ";");
+            }
+            else if (bMarshalled)
+            {
+                Reads.Add(TypeName + " " + Local + " = global::LuminaSharp.ElementMarshal.Read<" + TypeName + ">("
+                    + Address + ");");
             }
             else if (bIsBool)
             {
@@ -71,7 +80,9 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
 
             if (Parameter.RefKind is RefKind.Out or RefKind.Ref)
             {
-                WriteBacks.Add(WriteStatement(Slot, Local, TypeName, bIsBool));
+                WriteBacks.Add(bMarshalled
+                    ? "global::LuminaSharp.ElementMarshal.Write<" + TypeName + ">(" + Address + ", " + Local + ");"
+                    : WriteStatement(Slot, Local, TypeName, bIsBool));
             }
 
             CallArguments.Add(RefPrefix(Parameter.RefKind) + Local);
@@ -88,8 +99,11 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
             }
 
             string ReturnSlot = "(void*)(__frame + __offsets[" + Method.Parameters.Length + "])";
+            string ReturnAddress = "__frame + __offsets[" + Method.Parameters.Length + "]";
             Invocation = ReturnType + " __result = __target." + Method.Name + "(" + Arguments + ");";
-            ReturnWrite = WriteStatement(ReturnSlot, "__result", ReturnType, bReturnIsBool);
+            ReturnWrite = IsMarshalledType(Method.ReturnType)
+                ? "global::LuminaSharp.ElementMarshal.Write<" + ReturnType + ">(" + ReturnAddress + ", __result);"
+                : WriteStatement(ReturnSlot, "__result", ReturnType, bReturnIsBool);
         }
 
         var Builder = new StringBuilder();
@@ -137,29 +151,49 @@ public sealed class ScriptFunctionInvokerGenerator : IIncrementalGenerator
                 + Value + ");";
     }
 
-    // Refusing every generic keeps Nullable, an optional slot, and the container views out without naming them.
+    // The shared classifier decides the kind, and this narrows it to the slots a frame binds without a token.
     private static bool TryFrameType(ITypeSymbol Type, SymbolDisplayFormat Qualified, out string Name, out bool bIsBool)
     {
         Name = string.Empty;
-        bIsBool = false;
+        bIsBool = Type.SpecialType == SpecialType.System_Boolean;
 
-        if (Type is INamedTypeSymbol { IsGenericType: true } or IPointerTypeSymbol)
-        {
-            return false;
-        }
-        if (Type.SpecialType == SpecialType.System_Boolean)
-        {
-            Name = "bool";
-            bIsBool = true;
-            return true;
-        }
-        if (!Type.IsUnmanagedType)
+        if (Type is IPointerTypeSymbol || IsStringHandle(Type))
         {
             return false;
         }
 
-        Name = Type.ToDisplayString(Qualified);
-        return true;
+        switch (ScriptPropertyClassifier.Classify(Type).Access)
+        {
+            case EScriptAccess.Blittable:
+            case EScriptAccess.Enum:
+            case EScriptAccess.String:
+            case EScriptAccess.Object:
+                Name = bIsBool ? "bool"
+                    : Type.SpecialType == SpecialType.System_String ? "string"
+                    : Type.ToDisplayString(Qualified);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    // A blittable slot folds back to the same unaligned read, so every kind can go through one call.
+    private static bool IsMarshalledType(ITypeSymbol Type)
+    {
+        if (IsStringHandle(Type))
+        {
+            return false;
+        }
+
+        EScriptAccess Access = ScriptPropertyClassifier.Classify(Type).Access;
+        return Access is EScriptAccess.String or EScriptAccess.Object;
+    }
+
+    // A frame binds a managed string but not the FString handle, which the property classifier calls one kind.
+    private static bool IsStringHandle(ITypeSymbol Type)
+    {
+        return Type.ToDisplayString() == ScriptPropertyTypeNames.FString;
     }
 
     private static void Emit(SourceProductionContext Output, ImmutableArray<Model?> All)

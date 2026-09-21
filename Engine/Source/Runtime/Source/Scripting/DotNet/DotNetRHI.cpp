@@ -6,6 +6,7 @@
 #include "Renderer/RHI.h"
 #include "Renderer/RHICore.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ExportSignature.h"
 #include "Scripting/DotNet/LayoutRegistry.h"
 
 // The C# layouts are byte-for-byte mirrors, so span and struct pointers cast straight through.
@@ -507,3 +508,70 @@ LE_REGISTER_LAYOUT("RHI::FGPUMemoryHeapStats",          RHI::FGPUMemoryHeapStats
 // Wire structs with no public native counterpart, mirrored on the C# side.
 LE_REGISTER_LAYOUT("RHI::FRasterDesc",                  FRasterWire);
 LE_REGISTER_LAYOUT("RHI::FGPUMemoryTotals",             FMemoryTotalsWire);
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(RHI_WaitSemaphore),
+    LUMINA_DOTNET_SIG(RHI_Malloc),
+    LUMINA_DOTNET_SIG(RHI_Retire),
+    LUMINA_DOTNET_SIG(RHI_RetireSemaphore),
+    LUMINA_DOTNET_SIG(RHI_RetirePipeline),
+    LUMINA_DOTNET_SIG(RHI_RetireTexture),
+    LUMINA_DOTNET_SIG(RHI_RetireTextureHeap),
+    LUMINA_DOTNET_SIG(RHI_CreateSemaphore),
+    LUMINA_DOTNET_SIG(RHI_CreateTexture),
+    LUMINA_DOTNET_SIG(RHI_CreateTextureHeap),
+    LUMINA_DOTNET_SIG(RHI_GetTextureDesc),
+    LUMINA_DOTNET_SIG(RHI_CreateGraphicsPipeline),
+    LUMINA_DOTNET_SIG(RHI_CreateComputePipeline),
+    LUMINA_DOTNET_SIG(RHI_HeapWriteTexture),
+    LUMINA_DOTNET_SIG(RHI_HeapWriteRWTexture),
+    LUMINA_DOTNET_SIG(RHI_HeapWriteSampler),
+    LUMINA_DOTNET_SIG(RHI_HeapFreeTexture),
+    LUMINA_DOTNET_SIG(RHI_HeapFreeRWTexture),
+    LUMINA_DOTNET_SIG(RHI_HeapFreeSampler),
+    LUMINA_DOTNET_SIG(RHI_HeapTextureCount),
+    LUMINA_DOTNET_SIG(RHI_HeapTextureAt),
+    LUMINA_DOTNET_SIG(RHI_OpenCommandList),
+    LUMINA_DOTNET_SIG(RHI_ResetCommandList),
+    LUMINA_DOTNET_SIG(RHI_SubmitLists),
+    LUMINA_DOTNET_SIG(RHI_GetDeviceName),
+    LUMINA_DOTNET_SIG(RHI_GetDeviceAPIName),
+    LUMINA_DOTNET_SIG(RHI_GetDeviceIsDiscrete),
+    LUMINA_DOTNET_SIG(RHI_GetMemoryTotals),
+    LUMINA_DOTNET_SIG(RHI_GetMemoryHeap),
+    LUMINA_DOTNET_SIG(RHI_CoreGetGlobalHeap),
+    LUMINA_DOTNET_SIG(RHI_CoreAllocTransient),
+    LUMINA_DOTNET_SIG(RHI_CoreDeferredFree),
+    LUMINA_DOTNET_SIG(RHI_CoreCreateGraphicsPipeline),
+    LUMINA_DOTNET_SIG(RHI_CoreCreateComputePipeline),
+    LUMINA_DOTNET_SIG(RHI_CmdMemcpy),
+    LUMINA_DOTNET_SIG(RHI_CmdMemset),
+    LUMINA_DOTNET_SIG(RHI_CmdMemzero),
+    LUMINA_DOTNET_SIG(RHI_CmdWriteMemory),
+    LUMINA_DOTNET_SIG(RHI_CmdCopyTexture),
+    LUMINA_DOTNET_SIG(RHI_CmdCopyMemoryToTexture),
+    LUMINA_DOTNET_SIG(RHI_CmdCopyTextureToMemory),
+    LUMINA_DOTNET_SIG(RHI_CmdBlitTexture),
+    LUMINA_DOTNET_SIG(RHI_CmdResolveTexture),
+    LUMINA_DOTNET_SIG(RHI_CmdClearTexture),
+    LUMINA_DOTNET_SIG(RHI_CmdClearTextureUInt),
+    LUMINA_DOTNET_SIG(RHI_CmdBarrier),
+    LUMINA_DOTNET_SIG(RHI_CmdBeginRenderPass),
+    LUMINA_DOTNET_SIG(RHI_CmdEndRenderPass),
+    LUMINA_DOTNET_SIG(RHI_CmdSetTextureHeap),
+    LUMINA_DOTNET_SIG(RHI_CmdSetDepthStencil),
+    LUMINA_DOTNET_SIG(RHI_CmdSetFrontFace),
+    LUMINA_DOTNET_SIG(RHI_CmdSetCullMode),
+    LUMINA_DOTNET_SIG(RHI_CmdSetLineWidth),
+    LUMINA_DOTNET_SIG(RHI_CmdSetPipeline),
+    LUMINA_DOTNET_SIG(RHI_CmdSetScissor),
+    LUMINA_DOTNET_SIG(RHI_CmdSetViewport),
+    LUMINA_DOTNET_SIG(RHI_CmdDispatch),
+    LUMINA_DOTNET_SIG(RHI_CmdDispatchIndirect),
+    LUMINA_DOTNET_SIG(RHI_CmdDraw),
+    LUMINA_DOTNET_SIG(RHI_CmdDrawIndexed),
+    LUMINA_DOTNET_SIG(RHI_CmdDrawIndirect),
+    LUMINA_DOTNET_SIG(RHI_CmdDrawIndexedIndirect),
+    LUMINA_DOTNET_SIG(RHI_CmdBeginMarker),
+    LUMINA_DOTNET_SIG(RHI_CmdEndMarker)
+);

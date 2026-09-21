@@ -302,11 +302,88 @@ namespace LuminaInteropBench
             DirectOnly = WithDirect - FrameOnly;
         }
 
+        // A string argument, which had no generated invoker until the marshaller covered every slot kind.
+        Lumina::Scripting::FScriptExportSchema TextParams;
+        Lumina::Scripting::FScriptExportField Text;
+        Text.Name = Lumina::FName("In");
+        Text.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
+        Text.Type->Kind = Lumina::EPropertyTypeFlags::String;
+        TextParams.Fields.push_back(Text);
+        Lumina::Scripting::FScriptExportField Length;
+        Length.Name = Lumina::FName("Length");
+        Length.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
+        Length.Type->Kind = Lumina::EPropertyTypeFlags::Int32;
+        Length.Flags = (Lumina::uint32)Lumina::EPropertyFlags::OutParam;
+        TextParams.Fields.push_back(Length);
+
+        Lumina::FFunction* TextFunction = Lumina::Scripting::MintScriptFunction(*Class, *Record,
+            Lumina::FName("MarshalText"), TextParams, -1, nullptr);
+        ASSERT_NE(TextFunction, nullptr);
+
+        const double TextDispatch = BestNanosOf(kRepeats, DispatchIterations, [&]
+        {
+            for (int32 i = 0; i < DispatchIterations; ++i)
+            {
+                Lumina::FFunctionFrame Frame(*TextFunction);
+                *TextFunction->GetParams()[0]->GetValuePtr<Lumina::FString>(Frame.GetMemory()) = "abcdefg";
+                Invoke(Target, TextFunction, Frame.GetMemory());
+            }
+        });
+
+        const double TextFrameOnly = BestNanosOf(kRepeats, DispatchIterations, [&]
+        {
+            for (int32 i = 0; i < DispatchIterations; ++i)
+            {
+                Lumina::FFunctionFrame Frame(*TextFunction);
+                *TextFunction->GetParams()[0]->GetValuePtr<Lumina::FString>(Frame.GetMemory()) = "abcdefg";
+                GInteropBenchSink += (uint64)(uintptr_t)Frame.GetMemory();
+            }
+        });
+
+        // An opaque struct stays on the reflection path, so this is what that path costs per call.
+        Lumina::Scripting::FScriptExportSchema ViewParams;
+        Lumina::Scripting::FScriptExportField Bone;
+        Bone.Name = Lumina::FName("Bone");
+        Bone.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
+        Bone.Type->Kind = Lumina::EPropertyTypeFlags::Struct;
+        Bone.Type->NativeName = Lumina::FName("FAnimGraphBoneMaskBone");
+        ViewParams.Fields.push_back(Bone);
+        Lumina::Scripting::FScriptExportField Weight;
+        Weight.Name = Lumina::FName("Weight");
+        Weight.Type = Lumina::MakeShared<Lumina::Scripting::FScriptExportType>();
+        Weight.Type->Kind = Lumina::EPropertyTypeFlags::Float;
+        Weight.Flags = (Lumina::uint32)Lumina::EPropertyFlags::OutParam;
+        ViewParams.Fields.push_back(Weight);
+
+        Lumina::FFunction* ViewFunction = Lumina::Scripting::MintScriptFunction(*Class, *Record,
+            Lumina::FName("MarshalStructView"), ViewParams, -1, nullptr);
+        ASSERT_NE(ViewFunction, nullptr);
+
+        const double ViewDispatch = BestNanosOf(kRepeats, DispatchIterations, [&]
+        {
+            for (int32 i = 0; i < DispatchIterations; ++i)
+            {
+                Lumina::FFunctionFrame Frame(*ViewFunction);
+                Invoke(Target, ViewFunction, Frame.GetMemory());
+            }
+        });
+
+        const double ViewFrameOnly = BestNanosOf(kRepeats, DispatchIterations, [&]
+        {
+            for (int32 i = 0; i < DispatchIterations; ++i)
+            {
+                Lumina::FFunctionFrame Frame(*ViewFunction);
+                GInteropBenchSink += (uint64)(uintptr_t)Frame.GetMemory();
+            }
+        });
+
         ReportHeader("script function dispatch, per call");
         ReportRow("native frame setup alone", FrameOnly, 0.0);
         ReportRow("plus InvokeScriptFunction, 2 args", Dispatch, FrameOnly);
         ReportRow("the managed dispatch itself", Dispatch - FrameOnly, 0.0);
         ReportRow("direct to the published invoker", DirectOnly, 0.0);
+        ReportRow("the managed dispatch, a string arg", TextDispatch - TextFrameOnly, 0.0);
+        ReportRow("the managed dispatch, a struct view", ViewDispatch - ViewFrameOnly, 0.0);
 
         FreeTarget(Target);
 

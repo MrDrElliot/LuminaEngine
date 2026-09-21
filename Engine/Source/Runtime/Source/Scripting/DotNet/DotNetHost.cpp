@@ -33,6 +33,7 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/Component.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ExportSignature.h"
 #include "Scripting/DotNet/ScriptReferences.h"
 #include "Scripting/ScriptExports.h"
 #include "Core/Object/Object.h"
@@ -1802,6 +1803,14 @@ LUMINA_DOTNET_EXPORT(void, SetObjectPtr)(void* Member, void* Value)
     }
 }
 
+// Through TObjectPtr::Get, so a slot that has moved on reads as null rather than as reclaimed memory.
+LUMINA_DOTNET_EXPORT(void*, GetObjectPtr)(const void* Member)
+{
+    return Member != nullptr
+        ? static_cast<void*>(reinterpret_cast<const Lumina::TObjectPtr<Lumina::CObject>*>(Member)->Get())
+        : nullptr;
+}
+
 // A wrapper to a since-freed object throws on access rather than reading reclaimed memory.
 LUMINA_DOTNET_EXPORT(int64, ObjectGetHandle)(void* Object)
 {
@@ -2029,3 +2038,30 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
 
 // Bootstrap size check against the C# FScriptDiagnostics mirror (Diagnostics.cs).
 LE_REGISTER_LAYOUT("FScriptDiagnostics", Lumina::DotNet::FScriptDiagnostics);
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(NativeSelfTest),
+    LUMINA_DOTNET_SIG(FindComponentOps),
+    LUMINA_DOTNET_SIG(GetComponent),
+    LUMINA_DOTNET_SIG(HasComponent),
+    LUMINA_DOTNET_SIG(EmplaceComponent),
+    LUMINA_DOTNET_SIG(RemoveComponent),
+    LUMINA_DOTNET_SIG(RegistryConnect),
+    LUMINA_DOTNET_SIG(RegistryGetSignalDelegate),
+    LUMINA_DOTNET_SIG(RegistryDisconnect),
+    LUMINA_DOTNET_SIG(RegistryPatch),
+    LUMINA_DOTNET_SIG(SetObjectPtr),
+    LUMINA_DOTNET_SIG(GetObjectPtr),
+    LUMINA_DOTNET_SIG(ObjectGetHandle),
+    LUMINA_DOTNET_SIG(ObjectResolve),
+    LUMINA_DOTNET_SIG(ObjectGetEntry),
+    LUMINA_DOTNET_SIG(ObjectLayoutOffset),
+    LUMINA_DOTNET_SIG(ObjectGetManagedInstance),
+    LUMINA_DOTNET_SIG(ObjectSetManagedInstance),
+    LUMINA_DOTNET_SIG(ReleaseAllManagedInstances),
+    LUMINA_DOTNET_SIG(LoadObject),
+    LUMINA_DOTNET_SIG(AssetExists),
+    LUMINA_DOTNET_SIG(LoadObjectAsync),
+    LUMINA_DOTNET_SIG(GetObjectPath),
+    LUMINA_DOTNET_SIG(ResolveModuleHandle)
+);

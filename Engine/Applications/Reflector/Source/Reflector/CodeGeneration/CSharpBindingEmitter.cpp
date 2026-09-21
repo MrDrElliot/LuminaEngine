@@ -354,7 +354,7 @@ namespace Lumina::Reflection
             return Root;
         }
 
-        // Drives BOTH the managed member and the native thunk, so classify once and emit from one result.
+        // Narrowed from EPropertyTypeFlags by Classify, then drives the managed member and the native thunk together.
         enum class EBind { None, Number, Bool, Enum, Str, Object, SoftObject, ClassRef, SubStructRef, StructValue, StructOpaque, InstancedStruct, Array, Map, Optional, Span, Delegate };
 
         struct FBinding
@@ -1496,7 +1496,12 @@ namespace Lumina::Reflection
                     {
                         B.Kind = EBind::StructValue; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
                     }
-                    return false; // opaque struct by value isn't supported as a function param/return yet
+                    // An opaque struct binds for args only; a return has no storage for the wrapper to view.
+                    if (bIsArg && IsOpaqueWrapperType(Db, F.TypeName))
+                    {
+                        B.Kind = EBind::StructOpaque; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
+                    }
+                    return false;
                 }
                 case EPropertyTypeFlags::Name:
                 case EPropertyTypeFlags::String:
@@ -1781,6 +1786,12 @@ namespace Lumina::Reflection
                     case EBind::Enum:        Params += "int " + An;                 CallArgs += "(" + A.TargetCpp + ")" + An;  break;
                     case EBind::StructValue: Params += A.TargetCpp + " " + An;      CallArgs += An;                            break;
                     case EBind::Object:      Params += "void* " + An;               CallArgs += "static_cast<" + A.TargetCpp + "*>(" + An + ")"; break;
+                    // The wrapper hands over the address it views, and a null one stands in as a default value.
+                    case EBind::StructOpaque:
+                        Params += "void* " + An;
+                        CallArgs += "(" + An + " ? *static_cast<" + A.TargetCpp + "*>(" + An + ") : "
+                            + A.TargetCpp + "{})";
+                        break;
                     case EBind::ClassRef:
                         Params += "void* " + An;
                         CallArgs += "Lumina::TSubclassOf<" + A.TargetCpp + ">(static_cast<Lumina::CClass*>(" + An + "))";

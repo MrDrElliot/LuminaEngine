@@ -15,6 +15,19 @@
 
 namespace Lumina
 {
+    /** Holds an FName so it cannot blit, which is what makes it bind as an opaque wrapper. */
+    REFLECT()
+    struct FInteropOpaqueStruct
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FName Label;
+
+        PROPERTY()
+        float Value = 0.0f;
+    };
+
     /** Gives the interop tests reflected statics whose shapes the Reflector had to bind, nothing more. */
     REFLECT()
     class RUNTIME_API CInteropTestLibrary : public CFunctionLibrary
@@ -82,5 +95,9 @@ namespace Lumina
 
         FUNCTION()
         static void ResetMakeNameCallCount();
+
+        /** An opaque struct argument, which crosses as the address its managed wrapper views. */
+        FUNCTION()
+        static float ReadOpaqueValue(const FInteropOpaqueStruct& Opaque);
     };
 }

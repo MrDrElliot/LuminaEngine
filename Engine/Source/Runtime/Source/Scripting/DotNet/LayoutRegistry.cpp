@@ -3,6 +3,7 @@
 #include "LayoutRegistry.h"
 #include "Core/Object/ObjectCore.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ExportSignature.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -79,12 +80,14 @@ LUMINA_DOTNET_EXPORT(int32, PropertyFlag_Value)(const char* Name, int32 Len)
     return -1;
 }
 
-LUMINA_DOTNET_EXPORT(int32, PropertyFlag_Count)()
-{
-    return (int32)std::size(::Lumina::PropertyFlagNames);
-}
-
 LUMINA_DOTNET_EXPORT(int32, PropertyType_Count)()
 {
     return (int32)::Lumina::EPropertyTypeFlags::Count;
 }
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(Layout_GetSize),
+    LUMINA_DOTNET_SIG(PropertyType_Value),
+    LUMINA_DOTNET_SIG(PropertyFlag_Value),
+    LUMINA_DOTNET_SIG(PropertyType_Count)
+);

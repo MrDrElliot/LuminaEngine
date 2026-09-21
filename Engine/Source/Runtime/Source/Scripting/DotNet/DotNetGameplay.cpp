@@ -1,4 +1,4 @@
-#include "Platform/GenericPlatform.h"
+﻿#include "Platform/GenericPlatform.h"
 #include "World/ECS/Registry.h"
 #include "Scripting/DotNet/LayoutRegistry.h"
 #include "Containers/String.h"
@@ -18,6 +18,7 @@
 #include "Core/Engine/EngineURL.h"
 #include "Core/Profiler/GameplayProfiler.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ExportSignature.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Input/InputActionMap.h"
 #include "Input/InputQuery.h"
@@ -91,3 +92,13 @@ LUMINA_DOTNET_EXPORT(void, SystemContext_DrawDebugLine)(const FSystemContext* Ct
 // IsEnabled lets the managed side skip per-script scope calls when nobody is recording.
 
 // A binding resolves its name once per settings generation, so it costs no crossing per frame.
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(World_GetSystemContext),
+    LUMINA_DOTNET_SIG(SystemContext_GetDeltaTime),
+    LUMINA_DOTNET_SIG(SystemContext_GetTime),
+    LUMINA_DOTNET_SIG(SystemContext_Create),
+    LUMINA_DOTNET_SIG(SystemContext_Destroy),
+    LUMINA_DOTNET_SIG(SystemContext_SetEntityLocation),
+    LUMINA_DOTNET_SIG(SystemContext_DrawDebugLine)
+);

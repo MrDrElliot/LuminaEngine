@@ -24,6 +24,22 @@ internal enum EElementKind
 
     /// <summary>An asset reference. Stored natively as one FSoftObjectPath, so the path is the whole value.</summary>
     SoftRef,
+
+    // Native writes any nonzero byte, so the read normalizes rather than reinterpreting the slot.
+    Bool,
+
+    // A managed string over the same FString storage FString names, decoded rather than handled.
+    ManagedString,
+
+    // A CObject wrapper over a TObjectPtr slot, resolved through the managed-instance cache so identity holds.
+    ObjectWrapper,
+
+    // The three below alias their slot and need the token their position resolves, so no address-only form works.
+    Optional,
+
+    Vector,
+
+    Map,
 }
 
 /// <summary>
@@ -41,36 +57,76 @@ internal enum EElementKind
 /// </summary>
 internal static class ElementKind<T>
 {
-    public static readonly EElementKind Kind = Resolve();
+    public static readonly EElementKind Kind = ElementKinds.Of(typeof(T));
 
     /// <summary>True for the kinds whose managed value is not the native bytes, so a <c>ref</c> into storage
     /// would be wrong -- either the wrong layout, or a write that skips the bookkeeping.</summary>
-    public static readonly bool IsMarshalled = Kind != EElementKind.Blittable;
+    public static readonly bool IsMarshalled = Kind is not (EElementKind.Blittable or EElementKind.Bool);
 
-    private static EElementKind Resolve()
+    public static readonly Func<IntPtr, T>? MakeObject = BindObject();
+
+    public static readonly Func<nint, T>? MakeOptional = BindOptional<Func<nint, T>>(nameof(OptionalMarshal.Read));
+
+    public static readonly Func<T, nint, bool>? StageOptional =
+        BindOptional<Func<T, nint, bool>>(nameof(OptionalMarshal.Stage));
+
+    public static readonly int OptionalPayloadSize = MeasureOptionalPayload();
+
+    private static TDelegate? BindOptional<TDelegate>(string Method) where TDelegate : Delegate
     {
-        Type Element = typeof(T);
-        if (Element == typeof(FString))
+        if (Kind != EElementKind.Optional)
         {
-            return EElementKind.String;
+            return null;
         }
-        // A TObjectPtr<X> element is pointer-sized and READS like a blittable one, but assigning it by bytes
-        // would store the pointer without taking a reference and without releasing the one it replaced.
-        if (Element.IsGenericType && Element.GetGenericTypeDefinition() == typeof(TObjectPtr<>))
+
+        return (TDelegate)typeof(OptionalMarshal).GetMethod(Method)!
+            .MakeGenericMethod(Nullable.GetUnderlyingType(typeof(T))!)
+            .CreateDelegate(typeof(TDelegate));
+    }
+
+    private static int MeasureOptionalPayload()
+    {
+        if (Kind != EElementKind.Optional)
         {
-            return EElementKind.ObjectRef;
+            return 0;
         }
-        // Recognised by the interface rather than by name, so a new asset-reference type needs no change here.
-        if (typeof(IAssetRef).IsAssignableFrom(Element))
+
+        return (int)typeof(OptionalMarshal).GetMethod(nameof(OptionalMarshal.SizeOf))!
+            .MakeGenericMethod(Nullable.GetUnderlyingType(typeof(T))!)
+            .Invoke(null, null)!;
+    }
+
+    public static readonly Func<nint, nint, T>? MakeContainerView = BuildContainerView();
+
+    private static Func<IntPtr, T>? BindObject()
+    {
+        if (Kind != EElementKind.ObjectWrapper)
         {
-            return EElementKind.SoftRef;
+            return null;
         }
-        // A generated wrapper views native memory rather than holding it, so both ends go through a real copy.
-        if (typeof(NativeStruct).IsAssignableFrom(Element))
+
+        return (Func<IntPtr, T>)typeof(NativeObjectMarshal).GetMethod(nameof(NativeObjectMarshal.FromHandle))!
+            .MakeGenericMethod(typeof(T))
+            .CreateDelegate(typeof(Func<IntPtr, T>));
+    }
+
+    // Two words, the instance and its ops table, which is the shape every closed view constructor takes.
+    private static Func<nint, nint, T>? BuildContainerView()
+    {
+        if (Kind is not (EElementKind.Vector or EElementKind.Map))
         {
-            return EElementKind.StructView;
+            return null;
         }
-        return EElementKind.Blittable;
+
+        ConstructorInfo? Ctor = typeof(T).GetConstructor(new[] { typeof(nint), typeof(nint) });
+        if (Ctor == null)
+        {
+            return null;
+        }
+
+        ParameterExpression Instance = Expression.Parameter(typeof(nint), "Instance");
+        ParameterExpression Ops = Expression.Parameter(typeof(nint), "Ops");
+        return Expression.Lambda<Func<nint, nint, T>>(Expression.New(Ctor, Instance, Ops), Instance, Ops).Compile();
     }
 
     /// <summary>Builds the slot view once per T, from the same (IntPtr) ctor Wrapper uses.</summary>
@@ -78,6 +134,23 @@ internal static class ElementKind<T>
 
     /// <summary>The reflected struct name StructAssign resolves; empty for every other kind.</summary>
     public static readonly string NativeName = Kind == EElementKind.StructView ? NativeTypeName.Of<T>() : string.Empty;
+
+    public static readonly Func<string, T>? MakeAssetRef = BindAssetRef<Func<string, T>>(nameof(AssetRefMarshal.Read));
+
+    public static readonly Func<T, string>? AssetRefPath = BindAssetRef<Func<T, string>>(nameof(AssetRefMarshal.Write));
+
+    // Only AssetRefMarshal carries the struct constraint that makes the interface calls constrained ones.
+    private static TDelegate? BindAssetRef<TDelegate>(string Method) where TDelegate : Delegate
+    {
+        if (Kind != EElementKind.SoftRef || !typeof(T).IsValueType)
+        {
+            return null;
+        }
+
+        return (TDelegate)typeof(AssetRefMarshal).GetMethod(Method)!
+            .MakeGenericMethod(typeof(T))
+            .CreateDelegate(typeof(TDelegate));
+    }
 
     private static Func<nint, T>? BuildView()
     {
@@ -100,7 +173,7 @@ internal static class ElementKind<T>
 }
 
 /// <summary>Reads and writes one element at a native address, according to its <see cref="ElementKind{T}"/>.</summary>
-internal static unsafe class ElementMarshal
+public static unsafe class ElementMarshal
 {
     /// <summary>The element at <paramref name="Address"/>.</summary>
     public static T Read<T>(nint Address)
@@ -124,14 +197,82 @@ internal static unsafe class ElementMarshal
                 return ElementKind<T>.MakeView!(Address);
 
             case EElementKind.SoftRef:
+                // Casting the local to IAssetRef would mutate a box this then throws away, leaving the default.
+                return ElementKind<T>.MakeAssetRef!(Native.SoftPathGet(Address));
+
+            case EElementKind.ManagedString:
             {
-                T Value = default!;
-                ((IAssetRef)Value!).SetFromPath(Native.SoftPathGet(Address));
-                return Value;
+                string Text = NativeMarshal.ReadString(Address);
+                return Unsafe.As<string, T>(ref Text);
             }
+
+            case EElementKind.Bool:
+            {
+                bool Value = Unsafe.ReadUnaligned<byte>((void*)Address) != 0;
+                return Unsafe.As<bool, T>(ref Value);
+            }
+
+            // Through the native Get rather than the raw first word, or a slot that moved on reads as live.
+            case EElementKind.ObjectWrapper:
+                return ElementKind<T>.MakeObject!(Native.GetObjectPtr(Address));
+
+            case EElementKind.Optional:
+            case EElementKind.Vector:
+            case EElementKind.Map:
+                Debug.LogError($"A {typeof(T).Name} slot needs the token its position resolves, so reading it "
+                    + "from an address alone is refused.");
+                return default!;
 
             default:
                 return Unsafe.ReadUnaligned<T>((void*)Address);
+        }
+    }
+
+    // The token is an ops table for a container view and the FProperty for an optional, resolved once at bind.
+    public static T Read<T>(nint Address, nint Token)
+    {
+        switch (ElementKind<T>.Kind)
+        {
+            case EElementKind.Vector:
+            case EElementKind.Map:
+                return ElementKind<T>.MakeContainerView!(Address, Token);
+
+            // Native hands back a null payload for an unset optional, which is the null a nullable wants.
+            case EElementKind.Optional:
+                return ElementKind<T>.MakeOptional!(Native.OptionalValueAt(Address, Token));
+
+            default:
+                return Read<T>(Address);
+        }
+    }
+
+    public static void Write<T>(nint Address, nint Token, T Value)
+    {
+        switch (ElementKind<T>.Kind)
+        {
+            // A view aliases the slot, so the callee's edits are already there and there is nothing to assign.
+            case EElementKind.Vector:
+            case EElementKind.Map:
+                return;
+
+            case EElementKind.Optional:
+            {
+                // Long-aligned, since the setter reads the payload back through its own type.
+                long* Scratch = stackalloc long[(ElementKind<T>.OptionalPayloadSize + 7) / 8];
+                if (ElementKind<T>.StageOptional!(Value, (nint)Scratch))
+                {
+                    Native.OptionalSetValueAt(Address, Token, (IntPtr)Scratch);
+                }
+                else
+                {
+                    Native.OptionalResetAt(Address, Token);
+                }
+                return;
+            }
+
+            default:
+                Write(Address, Value);
+                return;
         }
     }
 
@@ -165,10 +306,28 @@ internal static unsafe class ElementMarshal
                 break;
             }
             case EElementKind.SoftRef:
-            {
-                Native.SoftPathSet(Address, ((IAssetRef)Value!).GetPath() ?? "");
+                Native.SoftPathSet(Address, ElementKind<T>.AssetRefPath!(Value));
                 break;
-            }
+
+            case EElementKind.ManagedString:
+                Native.StringAssign(Address, Unsafe.As<T, string>(ref Value) ?? string.Empty);
+                break;
+
+            case EElementKind.Bool:
+                Unsafe.WriteUnaligned((void*)Address, (byte)(Unsafe.As<T, bool>(ref Value) ? 1 : 0));
+                break;
+
+            case EElementKind.ObjectWrapper:
+                Native.SetObjectPtr(Address, (Value as NativeObject)?.Handle ?? IntPtr.Zero);
+                break;
+
+            case EElementKind.Optional:
+            case EElementKind.Vector:
+            case EElementKind.Map:
+                Debug.LogError($"A {typeof(T).Name} slot needs the token its position resolves, so writing it "
+                    + "to an address alone is refused.");
+                break;
+
             default:
                 Unsafe.WriteUnaligned((void*)Address, Value);
                 break;

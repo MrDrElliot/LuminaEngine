@@ -270,7 +270,8 @@ namespace LuminaSharp
         var sb = new StringBuilder();
         sb.Append("        private static readonly ").Append(delegateType).Append(' ').Append(field).Append(" =\n");
         sb.Append("            (").Append(delegateType).Append(")global::LuminaSharp.NativeBindings.Resolve(\"")
-          .Append(module).Append("\", \"").Append(entry).Append("\");\n");
+          .Append(module).Append("\", \"").Append(entry).Append("\", ").Append(SignatureSum(nativeTypes))
+          .Append(");\n");
         sb.Append("        ").Append(sig).Append('\n');
 
         static string Pad(int n) => new string(' ', n);
@@ -508,6 +509,20 @@ namespace LuminaSharp
             }
         }
         return null;
+    }
+
+    // The same sum the native side computes from its own declaration, so a drifted export fails at bind.
+    private static string SignatureSum(List<string> nativeTypes)
+    {
+        var Widths = new List<string>();
+        foreach (string Type in nativeTypes)
+        {
+            if (Type != "void")
+            {
+                Widths.Add("sizeof(" + Type + ")");
+            }
+        }
+        return Widths.Count == 0 ? "0" : string.Join(" + ", Widths);
     }
 
     // A C# wrapper over a native handle: a class deriving LuminaSharp.NativeObject / NativeStruct (the
