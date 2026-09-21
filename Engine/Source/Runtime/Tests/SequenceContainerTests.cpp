@@ -339,6 +339,41 @@ namespace LuminaSequenceTests
         }
     }
 
+    TEST(List, InsertsAtPositionAndReturnsTheNewElement)
+    {
+        TList<int> Values;
+        for (int Index = 0; Index < 3; ++Index)
+        {
+            Values.push_back(Index * 10);
+        }
+
+        TList<int>::iterator Second = Values.begin();
+        ++Second;
+
+        TList<int>::iterator Inserted = Values.insert(Second, 5);
+        EXPECT_EQ(*Inserted, 5);
+
+        TList<int>::iterator Expected = Values.begin();
+        ++Expected;
+        EXPECT_EQ(&*Inserted, &*Expected);
+
+        TList<int>::iterator Front = Values.insert(Values.begin(), -1);
+        EXPECT_EQ(*Front, -1);
+        EXPECT_EQ(&*Front, &Values.front());
+
+        TList<int>::iterator Back = Values.emplace(Values.end(), 99);
+        EXPECT_EQ(*Back, 99);
+        EXPECT_EQ(&*Back, &Values.back());
+
+        std::vector<int> Seen;
+        for (int Element : Values)
+        {
+            Seen.push_back(Element);
+        }
+        EXPECT_EQ(Seen, (std::vector<int>{ -1, 0, 5, 10, 20, 99 }));
+        EXPECT_EQ(Values.size(), 6u);
+    }
+
     TEST(List, ErasesAndPops)
     {
         TList<int> Values;

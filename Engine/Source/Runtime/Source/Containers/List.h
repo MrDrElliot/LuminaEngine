@@ -159,13 +159,13 @@ namespace Lumina::Containers
         template <typename... TArgs>
         T& emplace_back(TArgs&&... Args)
         {
-            return *InsertBefore(&Sentinel, std::forward<TArgs>(Args)...);
+            return InsertBefore(&Sentinel, std::forward<TArgs>(Args)...)->Value;
         }
 
         template <typename... TArgs>
         T& emplace_front(TArgs&&... Args)
         {
-            return *InsertBefore(Sentinel.Next, std::forward<TArgs>(Args)...);
+            return InsertBefore(Sentinel.Next, std::forward<TArgs>(Args)...)->Value;
         }
 
         FORCEINLINE T& push_back(const T& Value) { return emplace_back(Value); }
@@ -176,8 +176,7 @@ namespace Lumina::Containers
         template <typename... TArgs>
         iterator emplace(const_iterator Position, TArgs&&... Args)
         {
-            T* Value = InsertBefore(Position.Node, std::forward<TArgs>(Args)...);
-            return iterator(NodeOf(Value));
+            return iterator(InsertBefore(Position.Node, std::forward<TArgs>(Args)...));
         }
 
         FORCEINLINE iterator insert(const_iterator Position, const T& Value) { return emplace(Position, Value); }
@@ -244,13 +243,8 @@ namespace Lumina::Containers
 
     private:
 
-        NODISCARD static FNodeBase* NodeOf(T* Value) noexcept
-        {
-            return static_cast<FNodeBase*>(reinterpret_cast<FNode*>(reinterpret_cast<uint8*>(Value) - offsetof(FNode, Value)));
-        }
-
         template <typename... TArgs>
-        T* InsertBefore(FNodeBase* Position, TArgs&&... Args)
+        FNode* InsertBefore(FNodeBase* Position, TArgs&&... Args)
         {
             void* Block = TAllocator::Allocate(sizeof(FNode), alignof(FNode));
             FNode* Node = Memory::ConstructAt(static_cast<FNode*>(Block), std::forward<TArgs>(Args)...);
@@ -260,7 +254,7 @@ namespace Lumina::Containers
             Position->Prev->Next = Node;
             Position->Prev = Node;
             ++Count;
-            return &Node->Value;
+            return Node;
         }
 
         void Unlink(FNodeBase* Node) noexcept
