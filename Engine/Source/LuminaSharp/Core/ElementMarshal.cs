@@ -34,6 +34,15 @@ internal enum EElementKind
     // A CObject wrapper over a TObjectPtr slot, resolved through the managed-instance cache so identity holds.
     ObjectWrapper,
 
+    // The managed value is the slot address, so the slot is viewed in place and never copied over it.
+    SlotView,
+
+    // A managed list or array over a vector slot, copied rather than aliased, so a frame can return one.
+    VectorCopy,
+
+    // A view over an optional slot, for a payload a Nullable cannot spell.
+    OptionalView,
+
     // The three below alias their slot and need the token their position resolves, so no address-only form works.
     Optional,
 
@@ -154,7 +163,7 @@ internal static class ElementKind<T>
 
     private static Func<nint, T>? BuildView()
     {
-        if (Kind != EElementKind.StructView)
+        if (Kind is not (EElementKind.StructView or EElementKind.SlotView))
         {
             return null;
         }
@@ -193,6 +202,7 @@ public static unsafe class ElementMarshal
                 return Unsafe.ReadUnaligned<T>((void*)Address);
 
             case EElementKind.StructView:
+            case EElementKind.SlotView:
                 // The wrapper points at the slot, so a mutation through it edits the array in place.
                 return ElementKind<T>.MakeView!(Address);
 
@@ -319,6 +329,11 @@ public static unsafe class ElementMarshal
 
             case EElementKind.ObjectWrapper:
                 Native.SetObjectPtr(Address, (Value as NativeObject)?.Handle ?? IntPtr.Zero);
+                break;
+
+            case EElementKind.SlotView:
+                Debug.LogError($"A {typeof(T).Name} names the slot it views, so there is no value to assign "
+                    + "back over it.");
                 break;
 
             case EElementKind.Optional:

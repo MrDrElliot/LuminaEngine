@@ -27,6 +27,7 @@ public struct DelegateBinding : IDisposable
 }
 
 // Transient handle to a no-payload multicast event; do not store it, re-fetch the accessor.
+[NativeSlotView]
 public readonly unsafe struct ScriptDelegate
 {
     private readonly void* Address;
@@ -34,6 +35,12 @@ public readonly unsafe struct ScriptDelegate
     public ScriptDelegate(void* Address)
     {
         this.Address = Address;
+    }
+
+    // The slot address as an integer, which is the shape a binder building this view by reflection has.
+    public ScriptDelegate(nint Address)
+    {
+        this.Address = (void*)Address;
     }
 
     public bool IsValid => Address != null;
@@ -52,6 +59,7 @@ public readonly unsafe struct ScriptDelegate
 }
 
 // Transient handle to a multicast event carrying one blittable payload by value.
+[NativeSlotView]
 public readonly unsafe struct ScriptDelegate<T> where T : unmanaged
 {
     private readonly void* Address;
@@ -59,6 +67,12 @@ public readonly unsafe struct ScriptDelegate<T> where T : unmanaged
     public ScriptDelegate(void* Address)
     {
         this.Address = Address;
+    }
+
+    // The slot address as an integer, which is the shape a binder building this view by reflection has.
+    public ScriptDelegate(nint Address)
+    {
+        this.Address = (void*)Address;
     }
 
     public bool IsValid => Address != null;

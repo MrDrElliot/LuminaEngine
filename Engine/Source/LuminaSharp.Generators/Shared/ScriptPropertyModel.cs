@@ -215,13 +215,11 @@ internal static class ScriptPropertyClassifier
             : FScriptPropertyClassification.List(Access, Element);
     }
 
-    // A map's key and value are still plain values only. TVector gained marshalled elements because its view
-    // routes every slot through ElementMarshal; THashMap's does not yet, and claiming support the view cannot
-    // honour would corrupt rather than fail.
+    // Both sides route through ElementMarshal now, so a map carries the same element kinds a vector does.
     private static FScriptPropertyClassification ClassifyMap(ITypeSymbol Key, ITypeSymbol Value)
     {
-        string? Why = ElementRejection(Key, "key", bMarshalled: false)
-                   ?? ElementRejection(Value, "value", bMarshalled: false);
+        string? Why = ElementRejection(Key, "key", bMarshalled: true)
+                   ?? ElementRejection(Value, "value", bMarshalled: true);
         return Why != null
             ? FScriptPropertyClassification.Reject(Why)
             : FScriptPropertyClassification.Map(Key, Value);

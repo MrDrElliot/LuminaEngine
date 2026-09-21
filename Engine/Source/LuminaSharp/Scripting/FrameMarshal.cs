@@ -33,18 +33,26 @@ internal static unsafe class FrameMarshal
     // A container view is two words, the instance and its ops table, so one factory serves every closed form.
     internal sealed class FViewFactory
     {
-        internal FViewFactory(Func<nint, nint, object> Make, IntPtr Ops)
+        internal FViewFactory(Func<nint, nint, object> Make, IntPtr Ops,
+            Action<nint, nint, object?>? Fill = null)
         {
             this.Make = Make;
             this.Ops = Ops;
+            this.Fill = Fill;
         }
 
-        private readonly Func<nint, nint, object> Make;
-        private readonly IntPtr                   Ops;
+        private readonly Func<nint, nint, object>    Make;
+        private readonly IntPtr                      Ops;
+        private readonly Action<nint, nint, object?>? Fill;
 
         internal object Create(nint Address)
         {
             return Make(Address, (nint)Ops);
+        }
+
+        internal void Write(nint Address, object? Value)
+        {
+            Fill!(Address, (nint)Ops, Value);
         }
     }
 
@@ -139,6 +147,7 @@ internal static unsafe class FrameMarshal
                     out Slot);
 
             case EElementKind.StructView:
+            case EElementKind.SlotView:
             {
                 Func<nint, nint, object>? MakeStruct = ResolveViewFactory(Declared);
                 if (MakeStruct == null)
@@ -155,6 +164,25 @@ internal static unsafe class FrameMarshal
             case EElementKind.Vector:
             case EElementKind.Map:
                 return TryBindView(Property, Declared, Kind, Offset, Where, out Slot);
+
+            case EElementKind.VectorCopy:
+                return TryBindCopy(Property, Declared, Offset, Where, out Slot);
+
+            // The second word is the property, since the optional ops hang off it rather than an ops table.
+            case EElementKind.OptionalView:
+            {
+                Func<nint, nint, object>? MakeOptional = ResolveViewFactory(Declared);
+                if (MakeOptional == null || Native.PropOptionalInner(Property) == IntPtr.Zero)
+                {
+                    Debug.LogError($"{Where}. {Declared.Name} needs an optional frame slot with a view "
+                        + "constructor, so the call is dropped.");
+                    return false;
+                }
+
+                Slot = new FSlot(Kind, Offset, Property, Declared, null,
+                    new FViewFactory(MakeOptional, Property));
+                return true;
+            }
 
             // Kinds the element marshaller carries for a container slot that a frame has never bound.
             case EElementKind.String:
@@ -209,6 +237,9 @@ internal static unsafe class FrameMarshal
 
             // The frame outlives the call, which is the whole window this view over its slot is valid for.
             case EElementKind.StructView:
+            case EElementKind.SlotView:
+            case EElementKind.VectorCopy:
+            case EElementKind.OptionalView:
                 return Slot.View!.Create(Address);
 
             // Native hands back a null payload for an unset optional, which is the null a nullable wants.
@@ -269,6 +300,11 @@ internal static unsafe class FrameMarshal
                 return;
             }
 
+            // The frame owns its container, so a copy is emptied and refilled rather than aliased.
+            case EElementKind.VectorCopy:
+                Slot.View!.Write(Address, Value);
+                return;
+
             // IsViewOnly keeps a view out of the write-back set, so reaching this means that gate was bypassed.
             case EElementKind.Vector:
             case EElementKind.Map:
@@ -281,7 +317,8 @@ internal static unsafe class FrameMarshal
     // A container view aliases the slot rather than copying it, so the callee's edits are already in the frame.
     internal static bool IsViewOnly(in FSlot Slot)
     {
-        return Slot.Access is EElementKind.Vector or EElementKind.Map;
+        return Slot.Access is EElementKind.Vector or EElementKind.Map or EElementKind.SlotView
+            or EElementKind.OptionalView;
     }
 
     // A copier closes over a user type, so leaving one cached would pin the generation being unloaded.
@@ -296,6 +333,32 @@ internal static unsafe class FrameMarshal
         {
             ViewFactoryByType.Clear();
         }
+    }
+
+    // A list or array over a vector slot, bound to the copy helpers rather than to a view over the storage.
+    private static bool TryBindCopy(IntPtr Property, Type Declared, int Offset, string Where, out FSlot Slot)
+    {
+        Slot = default;
+
+        IntPtr Ops = Native.PropVectorOps(Property);
+        if (Ops == IntPtr.Zero)
+        {
+            Debug.LogError($"{Where}. {Declared.Name} needs a vector frame slot and this one is not, so the "
+                + "call is dropped.");
+            return false;
+        }
+
+        Type Element = Declared.IsArray ? Declared.GetElementType()! : Declared.GetGenericArguments()[0];
+        string Reader = Declared.IsArray ? nameof(VectorCopy.ToArray) : nameof(VectorCopy.ToList);
+
+        var Make = (Func<nint, nint, object>)typeof(VectorCopy).GetMethod(Reader)!
+            .MakeGenericMethod(Element).CreateDelegate(typeof(Func<nint, nint, object>));
+        var Fill = (Action<nint, nint, object?>)typeof(VectorCopy).GetMethod(nameof(VectorCopy.Fill))!
+            .MakeGenericMethod(Element).CreateDelegate(typeof(Action<nint, nint, object?>));
+
+        Slot = new FSlot(EElementKind.VectorCopy, Offset, Property, Declared, null,
+            new FViewFactory(Make, Ops, Fill));
+        return true;
     }
 
     private static bool TryBindView(IntPtr Property, Type Declared, EElementKind Kind, int Offset, string Where,

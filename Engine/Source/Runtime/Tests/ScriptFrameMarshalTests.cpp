@@ -27,6 +27,8 @@
 #include "Scripting/ScriptableTest.h"
 #include "Scripting/InteropTestLibrary.h"
 #include "Scripting/DotNet/ExportSignature.h"
+#include "Core/Delegates/ScriptDelegate.h"
+#include "Core/Object/InstancedStruct.h"
 
 using namespace Lumina;
 
@@ -70,6 +72,13 @@ namespace
     using FKindsAgreeFn      = int32(*)();
     using FOpaqueArgFn       = float(*)(void*);
     using FSignatureCheckFn  = int32(*)(int32*);
+    using FSlotViewFn        = int32(*)(const void*, void*, int32);
+    using FMapRoundTripFn    = int32(*)(void*);
+    using FOptRoundTripFn    = int32(*)(void*);
+    using FContinuationFn    = int32(*)(int32*, int32*);
+    using FPendingAwaitFn    = int32(*)(int32*);
+    using FAsyncStateFn      = int32(*)(uint64, int32);
+    using FAsyncGateFn       = int32(*)();
 
     Scripting::FScriptExportField ParamField(const char* Name, EPropertyTypeFlags Kind, EPropertyFlags Direction)
     {
@@ -1351,4 +1360,164 @@ TEST_F(FFrameMarshalTest, ABindingThatDeclaresTheWrongWidthIsDropped)
     EXPECT_EQ(Result & 1, 1) << "an agreeing width has to resolve";
     EXPECT_EQ(Result & 2, 2) << "a drifted width has to be dropped rather than called";
     EXPECT_EQ(Result & 4, 4) << "a caller that declares nothing stays unchecked";
+}
+
+// A delegate and an instanced struct hold the address of their slot, so the frame views them in place
+// instead of refusing them against a much wider native slot.
+TEST_F(FFrameMarshalTest, ASlotViewBindsInPlaceRatherThanByWidth)
+{
+    auto* Probe = (FSlotViewFn)DotNet::ResolveManagedExport("Test_SlotViewBinds");
+    ASSERT_NE(Probe, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    struct FCase { const char* Struct; const char* Property; int32 bDelegate; };
+    const FCase Cases[] =
+    {
+        { "SAnimationGraphComponent", "Parameters",        0 },
+        { "SPerceptionComponent",     "OnTargetPerceived", 1 },
+    };
+
+    for (const FCase& Case : Cases)
+    {
+        CStruct* Owner = FindObject<CStruct>(FName(Case.Struct));
+        ASSERT_NE(Owner, nullptr) << Case.Struct;
+        FProperty* Slot = Owner->GetProperty(FName(Case.Property));
+        ASSERT_NE(Slot, nullptr) << Case.Property;
+
+        TVector<uint8> Storage(Owner->GetAlignedSize(), (uint8)0);
+        EXPECT_EQ(Probe(Slot, Storage.data(), Case.bDelegate), 2)
+            << Case.Struct << "." << Case.Property << " did not bind as a view over its slot";
+    }
+}
+
+// A map key and a map value whose managed form is not their native bytes, which the view used to refuse.
+TEST_F(FFrameMarshalTest, AMapCarriesAMarshalledKeyAndValue)
+{
+    auto* RoundTrip = (FMapRoundTripFn)DotNet::ResolveManagedExport("Test_MarshalledMapRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    FInteropOpaqueStruct Opaque;
+    EXPECT_EQ(RoundTrip(&Opaque), 63) << "a map operation did not survive the round trip";
+
+    EXPECT_EQ(Opaque.Weights.size(), 1u) << "native does not see what managed left behind";
+    EXPECT_TRUE(Opaque.Weights.contains(FString("beta")));
+    EXPECT_EQ(Opaque.Labels.size(), 1u);
+}
+
+// A view borrows storage it cannot hand back, but a copy fills the return slot the frame already owns.
+TEST_F(FFrameMarshalTest, AContainerIsReturnedByValueWhenTheCalleeHandsBackAList)
+{
+    auto* MakeTarget = (FMakeTargetFn)DotNet::ResolveManagedExport("Test_MakeMarshalTarget");
+    auto* FreeTarget = (FFreeTargetFn)DotNet::ResolveManagedExport("Test_FreeMarshalTarget");
+    auto* Invoke     = (FInvokeFn)DotNet::ResolveManagedExport("InvokeScriptFunction");
+    ASSERT_NE(MakeTarget, nullptr);
+    ASSERT_NE(Invoke, nullptr);
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(ParamField("Count", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.push_back(VectorField("ReturnValue", EPropertyTypeFlags::Int32));
+
+    FFunction* Function = MintFrame("FrameMarshal_ListReturn", Params, "OnBuildRange", 1);
+    ASSERT_NE(Function, nullptr);
+
+    void* Target = MakeTarget();
+    ASSERT_NE(Target, nullptr);
+
+    FFunctionFrame Frame(*Function);
+    Frame.At<int32>(0) = 4;
+    Invoke(Target, Function, Frame.GetMemory());
+
+    // A minted array keeps its elements in a byte vector, so the native size is the element count times stride.
+    const TVector<uint8>& Returned = *Function->GetParams()[1]->GetValuePtr<TVector<uint8>>(Frame.GetMemory());
+    ASSERT_EQ(Returned.size(), 4u * sizeof(int32)) << "the callee's list never reached the frame's return slot";
+
+    const int32* Values = reinterpret_cast<const int32*>(Returned.data());
+    EXPECT_EQ(Values[0], 0);
+    EXPECT_EQ(Values[3], 9);
+
+    FreeTarget(Target);
+}
+
+// A Nullable cannot spell a string payload, so the optional is viewed through its slot and property instead.
+TEST_F(FFrameMarshalTest, AnOptionalCarriesAMarshalledPayload)
+{
+    auto* RoundTrip = (FOptRoundTripFn)DotNet::ResolveManagedExport("Test_MarshalledOptionalRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    FInteropOpaqueStruct Opaque;
+    EXPECT_EQ(RoundTrip(&Opaque), 15) << "an optional operation did not survive the round trip";
+    EXPECT_FALSE(Opaque.Note.IsSet()) << "native still sees a payload managed reset";
+}
+
+// A worker posting a continuation must not run it there, because a job fiber can migrate between threads.
+TEST_F(FFrameMarshalTest, AContinuationRunsOnTheGameThreadAtTheNextTick)
+{
+    auto* Probe = (FContinuationFn)DotNet::ResolveManagedExport("Test_ContinuationResumesOnTheGameThread");
+    ASSERT_NE(Probe, nullptr);
+
+    int32 RanBeforeTick = -1;
+    int32 OnGameThread = -1;
+    const int32 Ran = Probe(&RanBeforeTick, &OnGameThread);
+
+    EXPECT_EQ(RanBeforeTick, 0) << "the continuation ran on the worker instead of waiting for the tick";
+    EXPECT_EQ(Ran, 1) << "the tick never ran the queued continuation";
+    EXPECT_EQ(OnGameThread, 1) << "the continuation resumed somewhere other than the game thread";
+}
+
+// An unload that leaves an await pending leaves its site never resuming and its finally blocks never running.
+TEST_F(FFrameMarshalTest, APendingAwaitIsCanceledWhenTheGenerationUnloads)
+{
+    auto* Probe = (FPendingAwaitFn)DotNet::ResolveManagedExport("Test_PendingAwaitIsCanceledOnUnload");
+    ASSERT_NE(Probe, nullptr);
+
+    int32 TrackedBefore = -1;
+    const int32 Result = Probe(&TrackedBefore);
+
+    EXPECT_GT(TrackedBefore, 0) << "the pending await was never tracked";
+    EXPECT_EQ(Result & 1, 1) << "the unload did not cancel the pending await";
+    EXPECT_EQ(Result & 2, 2) << "the registry still holds it after the unload";
+}
+
+// A frame cannot wait for an async body, so native gets a token and polls it instead of a result.
+TEST_F(FFrameMarshalTest, AnAsyncScriptFunctionHandsBackATokenNativeCanPoll)
+{
+    auto* MakeTarget = (FMakeTargetFn)DotNet::ResolveManagedExport("Test_MakeMarshalTarget");
+    auto* FreeTarget = (FFreeTargetFn)DotNet::ResolveManagedExport("Test_FreeMarshalTarget");
+    auto* Invoke     = (FInvokeFn)DotNet::ResolveManagedExport("InvokeScriptFunction");
+    auto* State      = (FAsyncStateFn)DotNet::ResolveManagedExport("Test_AsyncScriptFunctionState");
+    auto* Gate       = (FAsyncGateFn)DotNet::ResolveManagedExport("Test_ReleaseAsyncGate");
+    ASSERT_NE(MakeTarget, nullptr);
+    ASSERT_NE(State, nullptr);
+    ASSERT_NE(Gate, nullptr);
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(ParamField("Value", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.push_back(ScalarField("ReturnValue", EPropertyTypeFlags::UInt64));
+
+    FFunction* Function = MintFrame("FrameMarshal_Async", Params, "MarshalAsync", 1);
+    ASSERT_NE(Function, nullptr);
+
+    void* Target = MakeTarget();
+    ASSERT_NE(Target, nullptr);
+
+    FFunctionFrame Frame(*Function);
+    Frame.At<int32>(0) = 41;
+    Invoke(Target, Function, Frame.GetMemory());
+
+    const uint64 Token = Frame.At<uint64>(1);
+    ASSERT_NE(Token, 0u) << "the async function handed back no token";
+    EXPECT_EQ(State(Token, 0), 1) << "the body should still be running while it waits on its gate";
+
+    EXPECT_EQ(Gate(), 41) << "the continuation never ran the rest of the body";
+    EXPECT_EQ(State(Token, 0), 2) << "the token should read completed once the body finished";
+
+    State(Token, 1);
+    EXPECT_EQ(State(Token, 0), 0) << "a released token should no longer be known";
+
+    FreeTarget(Target);
 }

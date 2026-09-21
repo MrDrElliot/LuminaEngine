@@ -14,6 +14,7 @@
 #include "Core/Reflection/Type/Function.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Scripting/InteropTestLibrary.h"
+#include "Core/Object/ObjectArray.h"
 #include "Scripting/ScriptCallback.h"
 #include "Scripting/ScriptFunctionMint.h"
 #include "Scripting/ScriptStruct.h"
@@ -191,9 +192,23 @@ namespace LuminaInteropBench
             BestAccessor = Accessor < BestAccessor ? Accessor : BestAccessor;
         }
 
+        auto* MapLookup = (FPropLoopFn)DotNet::ResolveManagedExport("Bench_BlittableMapLookup");
+        double BestMap = -1.0;
+        if (MapLookup != nullptr)
+        {
+            Lumina::FInteropOpaqueStruct Opaque;
+            BestMap = 1e30;
+            for (int32 Attempt = 0; Attempt < kRepeats; ++Attempt)
+            {
+                const double Nanos = MapLookup(&Opaque, kIterations);
+                BestMap = Nanos < BestMap ? Nanos : BestMap;
+            }
+        }
+
         ReportHeader("component property read, per read");
         ReportRow("offset load, no crossing", BestOffset, 0.0);
         ReportRow("reflected accessor, SuppressGCTransition", BestAccessor, BestOffset);
+        ReportRow("blittable map lookup, through the ops table", BestMap, BestOffset);
 
         // A CObject wrapper validates liveness on every access, which a component view does not.
         auto* HandleLoop = (FPropLoopFn)DotNet::ResolveManagedExport("Bench_CObjectHandleResolve");

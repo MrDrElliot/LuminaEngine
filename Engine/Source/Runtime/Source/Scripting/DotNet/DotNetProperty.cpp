@@ -600,9 +600,10 @@ LUMINA_DOTNET_EXPORT(void*, OptionalValueAt)(void* Member, const void* Prop)
         : nullptr;
 }
 
+// A null value engages the optional with a default payload, which is the contract every setter implements.
 LUMINA_DOTNET_EXPORT(void, OptionalSetValueAt)(void* Member, const void* Prop, const void* Value)
 {
-    if (Member != nullptr && Prop != nullptr && Value != nullptr)
+    if (Member != nullptr && Prop != nullptr)
     {
         static_cast<const FOptionalProperty*>(Prop)->SetValue(Member, Value);
     }

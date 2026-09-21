@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Lumina;
 using LuminaSharp.ScriptProperties;
 
@@ -31,10 +32,23 @@ internal static class ElementKinds
         {
             return EElementKind.ObjectRef;
         }
+        if (Slot.IsGenericType && Slot.GetGenericTypeDefinition() == typeof(TOptional<>))
+        {
+            return EElementKind.OptionalView;
+        }
         // The view table is the one place a container view is declared, and Validate holds it to the classifier.
         if (ScriptPropertyViews.TryGetAccess(Slot, out EScriptAccess Access))
         {
             return Access == EScriptAccess.MapView ? EElementKind.Map : EElementKind.Vector;
+        }
+        // A copy, not a view, so it is the one container shape a frame can hand back by value.
+        if (Slot.IsArray || (Slot.IsGenericType && Slot.GetGenericTypeDefinition() == typeof(List<>)))
+        {
+            return EElementKind.VectorCopy;
+        }
+        if (Slot.IsDefined(typeof(NativeSlotViewAttribute), false))
+        {
+            return EElementKind.SlotView;
         }
         // Matched by the interface rather than by name, so a new asset-reference type needs no change here.
         if (typeof(IAssetRef).IsAssignableFrom(Slot))

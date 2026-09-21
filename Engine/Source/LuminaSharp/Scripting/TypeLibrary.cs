@@ -719,6 +719,12 @@ internal sealed class TypeDescription
                 });
             }
 
+            if (ScriptAsync.WhyUnsupported(Method.ReturnType) is string Why)
+            {
+                Debug.LogError($"Script function '{Method.Name}' returns {Method.ReturnType.Name}, and {Why}");
+                continue;
+            }
+
             int ReturnIndex = -1;
             if (Method.ReturnType != typeof(void))
             {
@@ -726,7 +732,10 @@ internal sealed class TypeDescription
                 Params.Add(new ScriptProperty
                 {
                     Name = "ReturnValue",
-                    Type = Library.ResolveType(Method.ReturnType, 0, new HashSet<Type>()),
+                    // An async function hands back a token native polls, since a frame cannot wait for it.
+                    Type = ScriptAsync.IsFireAndForget(Method.ReturnType)
+                        ? Library.ResolveType(typeof(ulong), 0, new HashSet<Type>())
+                        : Library.ResolveType(Method.ReturnType, 0, new HashSet<Type>()),
                 });
             }
 

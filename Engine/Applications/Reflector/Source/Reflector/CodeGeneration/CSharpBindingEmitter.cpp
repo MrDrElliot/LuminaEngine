@@ -531,9 +531,9 @@ namespace Lumina::Reflection
             {
                 auto Key = std::make_unique<FBinding>();
                 auto Val = std::make_unique<FBinding>();
-                // THashMap addresses both sides as raw memory, so a marshalled key or value has no binding here.
-                if (!ClassifyElement(Map->KeyTypeName, OwnerNs, Db, *Key) || !IsBlittableElementKind(Key->Kind)
-                 || !ClassifyElement(Map->ValueTypeName, OwnerNs, Db, *Val) || !IsBlittableElementKind(Val->Kind))
+                // The view routes each slot through the element marshaller, as the vector view already did.
+                if (!ClassifyElement(Map->KeyTypeName, OwnerNs, Db, *Key)
+                 || !ClassifyElement(Map->ValueTypeName, OwnerNs, Db, *Val))
                 {
                     return false;
                 }
@@ -547,9 +547,9 @@ namespace Lumina::Reflection
             if (auto* Opt = dynamic_cast<FReflectedOptionalProperty*>(&Prop))
             {
                 auto Elem = std::make_unique<FBinding>();
-                if (!ClassifyElement(Opt->ElementTypeName, OwnerNs, Db, *Elem) || !IsBlittableElementKind(Elem->Kind))
+                // A payload that is not a plain value is viewed rather than copied, so it binds too.
+                if (!ClassifyElement(Opt->ElementTypeName, OwnerNs, Db, *Elem))
                 {
-                    // A payload that is not a plain value has no Nullable spelling; skip rather than guess.
                     return false;
                 }
                 B.Kind = EBind::Optional;
@@ -960,6 +960,16 @@ namespace Lumina::Reflection
                 }
                 case EBind::Optional:
                 {
+                    // A payload a Nullable cannot spell is viewed through the slot and its property instead.
+                    if (B.Elem != nullptr && !IsBlittableElementKind(B.Elem->Kind))
+                    {
+                        Writer.Linef("public global::Lumina.TOptional<%s> %s =>", CS, PropName.c_str());
+                        Writer.Linef("    new global::Lumina.TOptional<%s>((nint)Handle + %s, %s);", CS,
+                            OffName.c_str(), PropFieldName.c_str());
+                        EmitOffsetField(Writer, OffName, TypeName, Member);
+                        EmitTokenField(Writer, PropFieldName, TypeName, Member);
+                        break;
+                    }
                     // Nullable mirrors TOptional exactly, and the payload is blittable so it reads in place.
                     Writer.Linef("public %s? %s", CS, PropName.c_str());
                     Writer.BeginBlock();

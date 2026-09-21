@@ -44,6 +44,36 @@ internal sealed class FrameMarshalTarget
         Weight = Bone == null ? -1.0f : Bone.Weight;
     }
 
+    // An async body that yields once, so the token is observably running before the tick completes it.
+    [ScriptFunction]
+    public async System.Threading.Tasks.Task MarshalAsync(int Value)
+    {
+        AsyncGate = new System.Threading.Tasks.TaskCompletionSource();
+        await AsyncGate.Task;
+        AsyncSeen = Value;
+    }
+
+    internal static System.Threading.Tasks.TaskCompletionSource? AsyncGate;
+    internal static int AsyncSeen;
+
+    // A delegate and an instanced struct name the slot they view, which the frame binder used to refuse.
+    [ScriptFunction]
+    public void MarshalSlotViews(ScriptDelegate Event, Lumina.FInstancedStruct Instanced, out int Seen)
+    {
+        Seen = (Event.IsValid ? 1 : 0) | (Instanced.IsBound ? 2 : 0);
+    }
+
+    // A container by value, which the frame can hand back because it owns the slot the copy fills.
+    public System.Collections.Generic.List<int> OnBuildRange(int Count)
+    {
+        var Built = new System.Collections.Generic.List<int>();
+        for (int Index = 0; Index < Count; ++Index)
+        {
+            Built.Add(Index * 3);
+        }
+        return Built;
+    }
+
     // Named for the reflected function it stands in for, which is how the dispatcher resolves it.
     public float? OnEchoOptional(float? In)
     {
@@ -580,9 +610,15 @@ internal static unsafe class InteropTestHooks
             (typeof(Lumina.TSubclassOf<Lumina.CWorld>), EElementKind.Blittable),
             (typeof(Lumina.TSubStructOf<Lumina.FInstancedStruct>), EElementKind.Blittable),
 
-            // Views holding a slot address, which the frame binder refuses on width rather than misreading.
-            (typeof(Lumina.FInstancedStruct), EElementKind.Blittable),
-            (typeof(ScriptDelegate), EElementKind.Blittable),
+            // Views holding a slot address, bound in place rather than copied over.
+            (typeof(Lumina.FInstancedStruct), EElementKind.SlotView),
+            (typeof(ScriptDelegate), EElementKind.SlotView),
+
+            // A copy a frame can hand back, and the view spelling for a payload Nullable cannot carry.
+            (typeof(System.Collections.Generic.List<int>), EElementKind.VectorCopy),
+            (typeof(int[]), EElementKind.VectorCopy),
+            (typeof(Lumina.TOptional<string>), EElementKind.OptionalView),
+            (typeof(ScriptDelegate<float>), EElementKind.SlotView),
         };
 
         for (int Index = 0; Index < Cases.Length; ++Index)
@@ -594,6 +630,180 @@ internal static unsafe class InteropTestHooks
         }
 
         return -1;
+    }
+
+    // A marshalled key and a marshalled value, both of which the map view used to refuse outright.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_MarshalledMapRoundTrip(IntPtr Storage)
+    {
+        var Opaque = new Lumina.FInteropOpaqueStruct(Storage);
+
+        Opaque.Weights.Set("alpha", 1.5f);
+        Opaque.Weights.Set("beta", 2.5f);
+        Opaque.Labels.Set(7, "seven");
+
+        int Result = 0;
+        if (Opaque.Weights.Count == 2)
+        {
+            Result |= 1;
+        }
+        if (Opaque.Weights.TryGetValue("beta", out float Weight) && Weight == 2.5f)
+        {
+            Result |= 2;
+        }
+        if (Opaque.Labels.TryGetValue(7, out string Label) && Label == "seven")
+        {
+            Result |= 4;
+        }
+        if (Opaque.Weights.Remove("alpha") && Opaque.Weights.Count == 1)
+        {
+            Result |= 8;
+        }
+        if (!Opaque.Weights.ContainsKey("alpha"))
+        {
+            Result |= 16;
+        }
+
+        foreach (System.Collections.Generic.KeyValuePair<string, float> Pair in Opaque.Weights)
+        {
+            if (Pair.Key == "beta" && Pair.Value == 2.5f)
+            {
+                Result |= 32;
+            }
+        }
+
+        return Result;
+    }
+
+    // A payload a Nullable cannot spell, which the optional binder used to refuse outright.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_MarshalledOptionalRoundTrip(IntPtr Storage)
+    {
+        var Opaque = new Lumina.FInteropOpaqueStruct(Storage);
+
+        int Result = Opaque.Note.HasValue ? 0 : 1;
+
+        Opaque.Note.Set("engaged");
+        if (Opaque.Note.HasValue && Opaque.Note.Value == "engaged")
+        {
+            Result |= 2;
+        }
+        if (Opaque.Note.TryGetValue(out string Stored) && Stored == "engaged")
+        {
+            Result |= 4;
+        }
+
+        Opaque.Note.Reset();
+        if (!Opaque.Note.HasValue)
+        {
+            Result |= 8;
+        }
+
+        return Result;
+    }
+
+    // A continuation posted from a worker must wait for the tick rather than running on that worker.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ContinuationResumesOnTheGameThread(int* OutRanBeforeTick, int* OutOnGameThread)
+    {
+        int GameThreadId = System.Environment.CurrentManagedThreadId;
+        int Ran = 0;
+        int ResumedOn = 0;
+
+        System.Threading.SynchronizationContext Context = System.Threading.SynchronizationContext.Current!;
+        if (Context == null)
+        {
+            return 0;
+        }
+
+        var Worker = new System.Threading.Thread(() =>
+            Context.Post(_ =>
+            {
+                Ran = 1;
+                ResumedOn = System.Environment.CurrentManagedThreadId;
+            }, null));
+
+        Worker.Start();
+        Worker.Join();
+
+        *OutRanBeforeTick = Ran;
+        GameThreadContext.Drain();
+        *OutOnGameThread = ResumedOn == GameThreadId ? 1 : 0;
+
+        return Ran;
+    }
+
+    // A pending await has to be completed by an unload, or its await site never resumes and never unwinds.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_PendingAwaitIsCanceledOnUnload(int* OutTrackedBefore)
+    {
+        var Source = new FTestPending();
+        *OutTrackedBefore = GameTaskRegistry.PendingCount;
+
+        GameTaskRegistry.CancelAll();
+
+        return (Source.Canceled ? 1 : 0) | (GameTaskRegistry.PendingCount == 0 ? 2 : 0);
+    }
+
+    private sealed class FTestPending : GameTaskRegistry.ICancelPending
+    {
+        internal bool Canceled;
+
+        internal FTestPending()
+        {
+            GameTaskRegistry.Track(this);
+        }
+
+        public void Cancel()
+        {
+            Canceled = true;
+        }
+    }
+
+    // Native gets a token for an async script function, polls it, and sees it finish on the tick.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_AsyncScriptFunctionState(ulong Token, int bRelease)
+    {
+        if (bRelease != 0)
+        {
+            ScriptAsync.Release(Token);
+            return 0;
+        }
+        return (int)ScriptAsync.StateOf(Token);
+    }
+
+    // Completes the gate the async body is parked on, then drains so its continuation runs.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ReleaseAsyncGate()
+    {
+        FrameMarshalTarget.AsyncGate?.TrySetResult();
+        GameThreadContext.Drain();
+        return FrameMarshalTarget.AsyncSeen;
+    }
+
+    // Returns 0 when the bind was refused, 1 when the view came back unbound, and 2 when it names its slot.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_SlotViewBinds(IntPtr Property, IntPtr Container, int bDelegate)
+    {
+        Type Declared = bDelegate != 0 ? typeof(ScriptDelegate) : typeof(Lumina.FInstancedStruct);
+        if (!FrameMarshal.TryBind(Property, Declared, "SlotViewProbe", out FrameMarshal.FSlot Slot))
+        {
+            return 0;
+        }
+
+        object? View = FrameMarshal.Read(Container, Slot);
+        bool bNamesItsSlot = View is Lumina.FInstancedStruct Instanced
+            ? Instanced.IsBound
+            : View is ScriptDelegate Delegate && Delegate.IsValid;
+
+        return bNamesItsSlot ? 2 : 1;
     }
 
     // An opaque struct argument crosses as the address its wrapper views, which the binder used to refuse.
