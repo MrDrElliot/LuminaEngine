@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "AudioGraph.h"
 
 #include "AudioStream.h"
@@ -50,7 +50,7 @@ namespace Lumina
 
         for (size_t Index = 0; Index < ReferencedWaves.size(); ++Index)
         {
-            CAudioStream* Stream = ReferencedWaves[Index];
+            CAudioStream* Stream = ReferencedWaves[Index].Get();
             if (Stream == nullptr || !Stream->IsValid())
             {
                 continue;

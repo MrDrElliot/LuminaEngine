@@ -1,4 +1,4 @@
-#include "AnimGraphNode_StateMachine.h"
+﻿#include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_State.h"
 #include "AnimGraphNode_StateRouting.h"
 #include "Core/Object/Cast.h"
@@ -120,8 +120,9 @@ namespace Lumina
         // Machine-relative, since a nested machine's entries belong to its own owner.
         const uint16 MachineClockFirst = (uint16)Compiler.GetClockSlots().size();
 
-        for (CEdGraphNode* Node : SMGraph->Nodes)
+        for (const auto& NodeRef : SMGraph->Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (Node->IsA<CAnimGraphNode_StateAny>())
             {
                 AnyStateNodeIDs.insert(Node->GetNodeID());
@@ -189,8 +190,9 @@ namespace Lumina
 
         // The entry state follows the Entry node's single outgoing wire.
         StateMachine.EntryState = 0;
-        for (CEdGraphNode* Node : SMGraph->Nodes)
+        for (const auto& NodeRef : SMGraph->Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             CAnimGraphNode_StateEntry* EntryNode = Cast<CAnimGraphNode_StateEntry>(Node);
             if (EntryNode == nullptr || EntryNode->OutPin == nullptr)
             {

@@ -2042,6 +2042,11 @@ namespace Lumina::Reflection
             if (A.bEntity) { return "(uint32)" + N; }
             switch (A.Kind) { case EBind::Bool: return "(unsigned char)(" + N + " ? 1 : 0)"; case EBind::Enum: return "(int)" + N; case EBind::Object: return "(void*)" + N; default: return N; }
         }
+        // A parms field for an object is a TObjectPtr, where the shim's own parameter is already a raw pointer.
+        std::string SeParmsField(const FArg& A, const std::string& N)
+        {
+            return A.Kind == EBind::Object ? N + ".Get()" : N;
+        }
         std::string SeRetCpp(const FFnBinding& FB)
         {
             if (FB.bVoid) { return "void"; }
@@ -2260,7 +2265,8 @@ namespace Lumina::Reflection
                 std::string AbiArgs;
                 for (size_t i = 0; i < FB.Args.size(); ++i)
                 {
-                    AbiArgs += ", " + SeArgCppToAbi(FB.Args[i], "__p." + E.Fn->Arguments[i].Name);
+                    AbiArgs += ", " + SeArgCppToAbi(FB.Args[i],
+                        SeParmsField(FB.Args[i], "__p." + E.Fn->Arguments[i].Name));
                 }
                 const std::string Call = "__ScriptCall_" + Friendly + "_" + Name + "(__h" + AbiArgs + ")";
 

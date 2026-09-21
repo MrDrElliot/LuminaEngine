@@ -171,7 +171,7 @@ namespace Lumina
     {
         if (Slot < MaterialOverrides.size())
         {
-            return MaterialOverrides[Slot];
+            return MaterialOverrides[Slot].Get();
         }
         return nullptr;
     }

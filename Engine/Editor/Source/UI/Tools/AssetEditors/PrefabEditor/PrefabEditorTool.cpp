@@ -1,4 +1,4 @@
-#include "PrefabEditorTool.h"
+﻿#include "PrefabEditorTool.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -189,7 +189,7 @@ namespace Lumina
         OutlinerContext.SetDragDropFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
-            DragDrop::SetEntityPayload(World, Data.Entity);
+            DragDrop::SetEntityPayload(World.Get(), Data.Entity);
         };
 
         OutlinerContext.DragDropFunction = [this](FTreeListView& Tree, FTreeNodeID Item)

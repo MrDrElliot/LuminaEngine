@@ -151,7 +151,7 @@ namespace Lumina
         }
 
         // Null once the slot has moved on, which means this reference outlived what it pointed at.
-        T* Get() const
+        T* Get() const noexcept
         {
             if (Entry == nullptr)
             {
@@ -160,13 +160,15 @@ namespace Lumina
             return (Entry->GetObj() == (const CObjectBase*)Object) ? Object : nullptr;
         }
 
-        T* operator->() const { return Get(); }
-        T& operator*() const { return *Get(); }
+        // True while the target has no array entry, so nothing refcounts it and Get cannot check it.
+        bool IsUnregistered() const noexcept { return Object != nullptr && Entry == nullptr; }
 
-        explicit operator bool() const { return Get() != nullptr; }
-        operator T*() const { return Get(); }
+        T* operator->() const noexcept { return Get(); }
+        T& operator*() const noexcept { return *Get(); }
 
-        bool IsValid() const { return Get() != nullptr; }
+        explicit operator bool() const noexcept { return Get() != nullptr; }
+
+        bool IsValid() const noexcept { return Get() != nullptr; }
 
         FObjectHandle GetHandle() const
         {
@@ -179,13 +181,10 @@ namespace Lumina
             ReleaseInternal();
         }
 
-        bool operator==(const TObjectPtr& Other) const { return Object == Other.Object; }
-        bool operator!=(const TObjectPtr& Other) const { return Object != Other.Object; }
-        bool operator==(T* Other) const { return Object == Other; }
-        bool operator!=(T* Other) const { return Object != Other; }
-        // Routed through Get, so a null test and a later deref of the same handle cannot disagree.
-        bool operator==(std::nullptr_t) const { return Get() == nullptr; }
-        bool operator!=(std::nullptr_t) const { return Get() != nullptr; }
+        // All routed through Get, so equality agrees with what a dereference gives, stale slot or not.
+        bool operator==(const TObjectPtr& Other) const noexcept { return Get() == Other.Get(); }
+        bool operator==(T* Other) const noexcept { return Get() == Other; }
+        bool operator==(std::nullptr_t) const noexcept { return Get() == nullptr; }
 
         template<typename U> friend class TObjectPtr;
         template<typename U> friend class TWeakObjectPtr;

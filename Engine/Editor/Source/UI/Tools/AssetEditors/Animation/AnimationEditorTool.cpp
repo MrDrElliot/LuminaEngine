@@ -110,7 +110,7 @@ namespace Lumina
         CameraState.Speed = 5.0f;
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SetSkeletalMesh(Animation->Skeleton->PreviewMesh);
+        World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SetSkeletalMesh(Animation->Skeleton->PreviewMesh.Get());
         SSimpleAnimationComponent& AnimComp = World->EmplaceComponent<SSimpleAnimationComponent>(MeshEntity);
         AnimComp.Animation = Animation;
         AnimComp.bPlaying  = false;

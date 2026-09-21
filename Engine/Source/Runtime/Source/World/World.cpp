@@ -1458,7 +1458,7 @@ namespace Lumina
             {
                 if (Priorities.IsStageEnabled((EUpdateStage)i))
                 {
-                    SystemUpdateList[i].push_back(FStageSlot{ System, Priorities.GetPriorityForStage((EUpdateStage)i) });
+                    SystemUpdateList[i].push_back(FStageSlot{ System.Get(), Priorities.GetPriorityForStage((EUpdateStage)i) });
                 }
             }
         }

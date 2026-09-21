@@ -1,4 +1,4 @@
-#include "Core/Threading/Thread.h"
+﻿#include "Core/Threading/Thread.h"
 #include "World/ECS/Registry.h"
 #include "ThumbnailManager.h"
 #include "Memory/MemoryTracking.h"
@@ -161,7 +161,7 @@ namespace Lumina
 
                 ECS::FEntity MeshEntity = Scene.SpawnEntity("PreviewSphere");
                 SStaticMeshComponent& MeshComp = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
-                MeshComp.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+                MeshComp.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
                 if (!bIsPostProcess)
                 {
                     MeshComp.MaterialOverrides.push_back(Material);

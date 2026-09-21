@@ -239,7 +239,7 @@ namespace Lumina
 
         // Duplicating a state used to hand the copy the original's sub-graph; this splits those apart.
         THashSet<CEdNodeGraph*> VisitedGraphs;
-        VisitedGraphs.insert(NodeGraph);
+        VisitedGraphs.insert(NodeGraph.Get());
         if (const uint32 Repaired = NodeGraph->UnaliasSubGraphs(VisitedGraphs))
         {
             Asset->GetPackage()->MarkDirty();
@@ -261,7 +261,7 @@ namespace Lumina
         });
 
         // EnterGraph creates its context, wires callbacks and pushes it.
-        EnterGraph(NodeGraph, "Animation Graph");
+        EnterGraph(NodeGraph.Get(), "Animation Graph");
 
         // Seeds the runtime asset so the preview viewport has something to evaluate on the first frame.
         Compile(false);
@@ -305,7 +305,7 @@ namespace Lumina
                 // A transition may be reselected later this frame by the link callback, so only then fall back.
                 if (SelectedTransition == nullptr)
                 {
-                    GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                    GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
                 }
             }
         });
@@ -320,7 +320,7 @@ namespace Lumina
             {
                 SelectedNode = nullptr;
                 SelectedTransition = nullptr;
-                GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
             }
         });
 
@@ -344,7 +344,7 @@ namespace Lumina
                 if (SelectedTransition != nullptr)
                 {
                     SelectedTransition = nullptr;
-                    GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                    GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
                 }
                 return;
             }
@@ -465,7 +465,7 @@ namespace Lumina
         SelectedNode = nullptr;
         SelectedTransition = nullptr;
         TransitionTables.clear();
-        GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+        GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
     }
 
     void FAnimationGraphEditorTool::SetupWorldForTool()
@@ -510,7 +510,7 @@ namespace Lumina
             return;
         }
 
-        CSkeletalMesh* PreviewMesh = Graph->Skeleton->PreviewMesh;
+        CSkeletalMesh* PreviewMesh = Graph->Skeleton->PreviewMesh.Get();
 
         if (!bMeshEntityValid)
         {

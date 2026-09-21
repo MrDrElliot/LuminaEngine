@@ -1,4 +1,4 @@
-#include "AnimGraphNode_CachedPose.h"
+﻿#include "AnimGraphNode_CachedPose.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "Core/Object/Cast.h"
@@ -34,8 +34,9 @@ namespace Lumina
             return nullptr;
         }
 
-        for (CEdGraphNode* Node : Graph->Nodes)
+        for (const auto& NodeRef : Graph->Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             CAnimGraphNode_SaveCachedPose* Save = Cast<CAnimGraphNode_SaveCachedPose>(Node);
             if (Save != nullptr && Save->CacheName == CacheName)
             {

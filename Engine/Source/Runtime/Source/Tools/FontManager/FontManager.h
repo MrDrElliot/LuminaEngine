@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -23,7 +23,7 @@ namespace Lumina
 
         static CFontManager& Get();
 
-        CFont* GetDefaultFont() const { return DefaultFont; }
+        CFont* GetDefaultFont() const { return DefaultFont.Get(); }
 
         /** Default engine font (Lexend), MSDF-baked at startup. */
         PROPERTY(NoSerialize)

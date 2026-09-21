@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Containers/Queue.h"
 #include "EdGraphNode.h"
@@ -13,8 +13,9 @@ namespace Lumina::GraphAlgorithms
     inline CEdGraphNode* TopologicalSortReachable(const TVector<TObjectPtr<CEdGraphNode>>& Nodes, const THashSet<CEdGraphNode*>& ReachableNodes, TVector<CEdGraphNode*>& SortedNodes)
     {
         THashMap<CEdGraphNode*, uint32> InDegree;
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (ReachableNodes.find(Node) != ReachableNodes.end())
             {
                 InDegree[Node] = 0;
@@ -26,8 +27,9 @@ namespace Lumina::GraphAlgorithms
         // special-casing the emit order also means a usage placed above its own declaration is
         // reported as an ordinary cycle instead of silently emitting in the wrong order.
         THashMap<CEdGraphNode*, TVector<CEdGraphNode*>> ImplicitDependents;
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (ReachableNodes.find(Node) == ReachableNodes.end())
             {
                 continue;
@@ -41,15 +43,17 @@ namespace Lumina::GraphAlgorithms
             }
         }
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (ReachableNodes.find(Node) == ReachableNodes.end())
             {
                 continue;
             }
 
-            for (CEdNodeGraphPin* OutputPin : Node->GetOutputPins())
+            for (const auto& OutputPinRef : Node->GetOutputPins())
             {
+                CEdNodeGraphPin* OutputPin = OutputPinRef.Get();
                 for (CEdNodeGraphPin* ConnectedPin : OutputPin->GetConnections())
                 {
                     CEdGraphNode* ConnectedNode = ConnectedPin->GetOwningNode();
@@ -78,8 +82,9 @@ namespace Lumina::GraphAlgorithms
             SortedNodes.push_back(Node);
             ProcessedNodeCount++;
 
-            for (CEdNodeGraphPin* OutputPin : Node->GetOutputPins())
+            for (const auto& OutputPinRef : Node->GetOutputPins())
             {
+                CEdNodeGraphPin* OutputPin = OutputPinRef.Get();
                 for (CEdNodeGraphPin* ConnectedPin : OutputPin->GetConnections())
                 {
                     CEdGraphNode* ConnectedNode = ConnectedPin->GetOwningNode();
@@ -156,8 +161,9 @@ namespace Lumina::GraphAlgorithms
             }
             else
             {
-                for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+                for (const auto& InputPinRef : Node->GetInputPins())
                 {
+                    CEdNodeGraphPin* InputPin = InputPinRef.Get();
                     Descend(InputPin);
                 }
             }
@@ -201,8 +207,9 @@ namespace Lumina::GraphAlgorithms
     CEdGraphNode* TopologicalSortFromRoots(const TVector<TObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
     {
         THashSet<CEdGraphNode*> ReachableNodes;
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (IsRoot(Node))
             {
                 CollectReachableFromRoot(Node, ReachableNodes);

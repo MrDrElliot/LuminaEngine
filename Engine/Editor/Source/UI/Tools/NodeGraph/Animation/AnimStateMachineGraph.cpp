@@ -1,4 +1,4 @@
-#include "AnimStateMachineGraph.h"
+﻿#include "AnimStateMachineGraph.h"
 #include "AnimGraphSchema.h"
 #include "AnimStateTransition.h"
 #include "Nodes/AnimGraphNode_State.h"
@@ -277,8 +277,9 @@ namespace Lumina
 
     CAnimGraphNode_State* CAnimStateMachineGraph::GetEntryState() const
     {
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             CAnimGraphNode_StateEntry* Entry = Cast<CAnimGraphNode_StateEntry>(Node);
             if (Entry == nullptr || Entry->OutPin == nullptr || !Entry->OutPin->HasConnection())
             {
@@ -308,8 +309,9 @@ namespace Lumina
 
     FString CAnimStateMachineGraph::GetEndpointLabel(int64 NodeID) const
     {
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (Node->GetNodeID() != NodeID)
             {
                 continue;
@@ -336,10 +338,12 @@ namespace Lumina
         Connections.clear();
         Connections.reserve(16);
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            CEdGraphNode* Node = NodeRef.Get();
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
                     Connections.push_back(InputPin->PinID);
@@ -351,8 +355,9 @@ namespace Lumina
         // Entry wires carry no transition data, while Any State wires compile to a from-anywhere edge.
         THashSet<uint64> LiveKeys;
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             // A conduit is an endpoint like a state; the compiler folds it away afterwards.
             const bool bTransitionTarget = Node->IsA<CAnimGraphNode_State>() || Node->IsA<CAnimGraphNode_StateConduit>();
             if (!bTransitionTarget)
@@ -360,8 +365,9 @@ namespace Lumina
                 continue;
             }
 
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
                     CEdGraphNode* FromNode = Connection->GetOwningNode();

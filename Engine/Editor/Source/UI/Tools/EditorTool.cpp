@@ -140,9 +140,9 @@ namespace Lumina
         if (HasWorld())
         {
             // Use world context as "is initialized", editor worlds don't have a physics scene.
-            if (GWorldManager->FindContext(World) == nullptr)
+            if (GWorldManager->FindContext(World.Get()) == nullptr)
             {
-                GWorldManager->CreateWorldContext(World, EWorldType::Editor);
+                GWorldManager->CreateWorldContext(World.Get(), EWorldType::Editor);
             }
 
             SetupWorldForTool();
@@ -150,7 +150,7 @@ namespace Lumina
             Internal_CreateViewportTool();
 
             InputViewport = MakeUnique<FInputViewport>();
-            InputViewport->SetWorld(World);
+            InputViewport->SetWorld(World.Get());
             InputViewport->GetContext().SetInputMode(EInputMode::Game);
             FInputViewportRegistry::Get().Register(InputViewport.get());
 
@@ -180,7 +180,7 @@ namespace Lumina
         if (HasWorld())
         {
             // Do NOT ForceDestroyNow, since this TObjectPtr still holds the world and would then dangle.
-            GWorldManager->DestroyWorldContext(World);
+            GWorldManager->DestroyWorldContext(World.Get());
             World.Reset();
         }
 
@@ -226,7 +226,7 @@ namespace Lumina
         Options.ShapeDistance  = CVarSkeletonShapeDist.GetValue();
 
         // CWorld implements IPrimitiveDrawInterface, so it is the draw target.
-        SkeletonDebugDraw::DrawWorldSkeletons(World, World, Options);
+        SkeletonDebugDraw::DrawWorldSkeletons(World.Get(), World.Get(), Options);
     }
 
     void FEditorTool::DrawSkeletonNameLabels(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
@@ -251,7 +251,7 @@ namespace Lumina
         const float MaxDist = CVarSkeletonNameDist.GetValue();
 
         TVector<SkeletonDebugDraw::FBoneLabel> Labels;
-        SkeletonDebugDraw::GatherWorldBoneLabels(World, CameraPos, MaxDist, Labels);
+        SkeletonDebugDraw::GatherWorldBoneLabels(World.Get(), CameraPos, MaxDist, Labels);
         if (Labels.empty())
         {
             return;
@@ -467,21 +467,21 @@ namespace Lumina
         if (World.IsValid())
         {
             // Released after the teardown rather than force-freed while still held, which would dangle.
-            GWorldManager->DestroyWorldContext(World);
+            GWorldManager->DestroyWorldContext(World.Get());
             World.Reset();
         }
 
         World = InWorld;
 
         // Keyed on the world context, since editor worlds intentionally have no physics scene.
-        if (GWorldManager->FindContext(World) == nullptr)
+        if (GWorldManager->FindContext(World.Get()) == nullptr)
         {
-            GWorldManager->CreateWorldContext(World, EWorldType::Editor);
+            GWorldManager->CreateWorldContext(World.Get(), EWorldType::Editor);
         }
 
         if (InputViewport)
         {
-            InputViewport->SetWorld(World);
+            InputViewport->SetWorld(World.Get());
         }
 
         SetupWorldForTool();
@@ -531,7 +531,7 @@ namespace Lumina
         ECS::FEntity FloorEntity = World->ConstructEntity("FloorPlane", Transform);
         World->EmplaceComponent<FHideInSceneOutliner>(FloorEntity);
         SStaticMeshComponent& MeshComponent = World->EmplaceComponent<SStaticMeshComponent>(FloorEntity);
-        MeshComponent.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh);
+        MeshComponent.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh.Get());
         
         return FloorEntity;
     }
@@ -898,7 +898,7 @@ namespace Lumina
 
         if (World != nullptr)
         {
-            RmlUi::SetWorldDisplaySize(World, FUIntVector2(uint32(Math::Max(ViewportSize.x, 1.0f)), uint32(Math::Max(ViewportSize.y, 1.0f))));
+            RmlUi::SetWorldDisplaySize(World.Get(), FUIntVector2(uint32(Math::Max(ViewportSize.x, 1.0f)), uint32(Math::Max(ViewportSize.y, 1.0f))));
         }
 
         InputViewport->SetHovered(bViewportHovered);
@@ -2001,8 +2001,8 @@ namespace Lumina
         const float Reach = Step * (float)HalfCount;
 
         // Axis lines keep their own thickness, which is raster state, so they stay on the batched path.
-        const FDebugDrawState*  DrawState = DebugDraw::GetState(World);
-        FImmediateLineRenderer* Lines     = DebugDraw::GetLines(World);
+        const FDebugDrawState*  DrawState = DebugDraw::GetState(World.Get());
+        FImmediateLineRenderer* Lines     = DebugDraw::GetLines(World.Get());
         const uint32            GridColor = PackColor(Settings->LineColor);
 
         for (int32 i = -HalfCount; i <= HalfCount; ++i)
@@ -2188,7 +2188,7 @@ namespace Lumina
 
         // World/prefab editors record a whole-registry snapshot as one command (migrated to fine-grained in Phase 3).
         TransactionManager.BeginTransaction(FName());
-        TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World));
+        TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World.Get()));
     }
 
     void FEditorTool::BeginTransformTransaction(const TVector<ECS::FEntity>& Entities)
@@ -2199,7 +2199,7 @@ namespace Lumina
         }
 
         TransactionManager.BeginTransaction(FName());
-        TransactionManager.Record(MakeUnique<FEntityTransformCommand>(World, Entities));
+        TransactionManager.Record(MakeUnique<FEntityTransformCommand>(World.Get(), Entities));
     }
 
     void FEditorTool::BeginCreationTransaction()
@@ -2210,7 +2210,7 @@ namespace Lumina
         }
 
         TransactionManager.BeginTransaction(FName());
-        TransactionManager.Record(MakeUnique<FEntityCreationCommand>(World));
+        TransactionManager.Record(MakeUnique<FEntityCreationCommand>(World.Get()));
     }
 
     void FEditorTool::BeginComponentTransaction(const TVector<ECS::FEntity>& Entities, CStruct* ComponentType)
@@ -2227,7 +2227,7 @@ namespace Lumina
         }
 
         TransactionManager.BeginTransaction(FName());
-        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Entities, ComponentType));
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World.Get(), Entities, ComponentType));
     }
 
     void FEditorTool::RecordComponentSnapshot(const TVector<ECS::FEntity>& Entities, CStruct* ComponentType)
@@ -2242,7 +2242,7 @@ namespace Lumina
             return;
         }
 
-        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Entities, ComponentType));
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World.Get(), Entities, ComponentType));
     }
 
     void FEditorTool::BeginRelationshipTransaction(const TVector<ECS::FEntity>& Seeds, ECS::FEntity NewParent)
@@ -2260,12 +2260,12 @@ namespace Lumina
         TransactionManager.BeginTransaction(FName());
 
         // Order between these is free, since each only writes and re-tags; the resolve runs after both.
-        TransactionManager.Record(MakeUnique<FEntityRelationshipCommand>(World, Affected));
-        TransactionManager.Record(MakeUnique<FEntityTransformCommand>(World, Affected));
+        TransactionManager.Record(MakeUnique<FEntityRelationshipCommand>(World.Get(), Affected));
+        TransactionManager.Record(MakeUnique<FEntityTransformCommand>(World.Get(), Affected));
 
         // Reparenting under a disabled entity propagates the tag, which is a presence change.
-        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Affected, SDisabledTag::StaticStruct()));
-        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World, Affected, SSocketAttachmentComponent::StaticStruct()));
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World.Get(), Affected, SDisabledTag::StaticStruct()));
+        TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World.Get(), Affected, SSocketAttachmentComponent::StaticStruct()));
     }
 
     void FEditorTool::BeginDestroyTransaction(const TVector<ECS::FEntity>& Doomed)
@@ -2287,8 +2287,8 @@ namespace Lumina
         TransactionManager.BeginTransaction(FName());
 
         // Recorded before the destroy so undo runs it after, once the entities are back to link to.
-        TransactionManager.Record(MakeUnique<FEntityRelationshipCommand>(World, Neighbors));
-        TransactionManager.Record(MakeUnique<FEntityDestroyCommand>(World, Candidates));
+        TransactionManager.Record(MakeUnique<FEntityRelationshipCommand>(World.Get(), Neighbors));
+        TransactionManager.Record(MakeUnique<FEntityDestroyCommand>(World.Get(), Candidates));
     }
 
     void FEditorTool::EndTransaction(FName Name)
@@ -2622,6 +2622,6 @@ namespace Lumina
             SpawnTransform.SetLocation(TracedLocation);
         }
 
-        return (*Handler)(World, Loaded, SpawnTransform, DropTarget, bAttachToTarget);
+        return (*Handler)(World.Get(), Loaded, SpawnTransform, DropTarget, bAttachToTarget);
     }
 }

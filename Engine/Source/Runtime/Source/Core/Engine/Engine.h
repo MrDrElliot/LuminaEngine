@@ -95,7 +95,7 @@ namespace Lumina
         // to a single root when no explicit roots exist. Cooker iterates this for BFS seeds.
         RUNTIME_API TVector<FCookRoot> GetCookRoots() const;
 
-        RUNTIME_API CGameInstance* GetGameInstance() const { return GameInstance; }
+        RUNTIME_API CGameInstance* GetGameInstance() const { return GameInstance.Get(); }
 
         //~ IObjectReferenceProvider: the engine holds the one live object no registry owns.
 

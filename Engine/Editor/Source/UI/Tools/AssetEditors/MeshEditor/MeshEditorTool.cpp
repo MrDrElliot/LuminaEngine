@@ -1,4 +1,4 @@
-#include "MeshEditorTool.h"
+﻿#include "MeshEditorTool.h"
 
 #include "ImGuiDrawUtils.h"
 #include "Core/Object/Cast.h"
@@ -609,7 +609,7 @@ namespace Lumina
         }
 
         // Derive overlay AABB from the currently rendered LOD's meshlet range; LOD 0 bounds look stale after a forced LOD change.
-        if (SelectedSurfaceIndex >= 0 && IsValid(StaticMeshComponent.StaticMesh))
+        if (SelectedSurfaceIndex >= 0 && IsValid(StaticMeshComponent.StaticMesh.Get()))
         {
             const FMeshResource& Resource = StaticMeshComponent.StaticMesh->GetMeshResource();
             if (SelectedSurfaceIndex < (int32)Resource.GeometrySurfaces.size())
@@ -648,7 +648,7 @@ namespace Lumina
             }
         }
 
-        if (IsValid(StaticMeshComponent.StaticMesh) && !StaticMeshComponent.StaticMesh->Sockets.empty())
+        if (IsValid(StaticMeshComponent.StaticMesh.Get()) && !StaticMeshComponent.StaticMesh->Sockets.empty())
         {
             const FMatrix4 EntityMatrix = Transform.GetWorldMatrix();
             constexpr float AxisLength = 0.18f;
