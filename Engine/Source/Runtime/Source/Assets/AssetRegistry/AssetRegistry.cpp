@@ -205,6 +205,9 @@ namespace Lumina
             return true; // not yet in registry
         }
 
+        // A classless entry was cached before its header was read; the UI font resolver keys on the class.
+        if ((*It)->AssetClass.IsNone()) return true;
+
         // Mtime is the cheap predicate and the content hash is the truth, with 0 forcing a re-extract.
         if (MTimeNs == 0 || ContentHash == 0) return true;
         return (*It)->SourceMTimeNs != MTimeNs || (*It)->ContentHash != ContentHash;
