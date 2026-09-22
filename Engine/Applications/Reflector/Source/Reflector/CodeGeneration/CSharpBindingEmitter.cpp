@@ -354,7 +354,7 @@ namespace Lumina::Reflection
             return Root;
         }
 
-        // Drives BOTH the managed member and the native thunk, so classify once and emit from one result.
+        // Narrowed from EPropertyTypeFlags by Classify, then drives the managed member and the native thunk together.
         enum class EBind { None, Number, Bool, Enum, Str, Object, SoftObject, ClassRef, SubStructRef, StructValue, StructOpaque, InstancedStruct, Array, Map, Optional, Span, Delegate };
 
         struct FBinding
@@ -531,9 +531,9 @@ namespace Lumina::Reflection
             {
                 auto Key = std::make_unique<FBinding>();
                 auto Val = std::make_unique<FBinding>();
-                // THashMap addresses both sides as raw memory, so a marshalled key or value has no binding here.
-                if (!ClassifyElement(Map->KeyTypeName, OwnerNs, Db, *Key) || !IsBlittableElementKind(Key->Kind)
-                 || !ClassifyElement(Map->ValueTypeName, OwnerNs, Db, *Val) || !IsBlittableElementKind(Val->Kind))
+                // The view routes each slot through the element marshaller, as the vector view already did.
+                if (!ClassifyElement(Map->KeyTypeName, OwnerNs, Db, *Key)
+                 || !ClassifyElement(Map->ValueTypeName, OwnerNs, Db, *Val))
                 {
                     return false;
                 }
@@ -547,9 +547,9 @@ namespace Lumina::Reflection
             if (auto* Opt = dynamic_cast<FReflectedOptionalProperty*>(&Prop))
             {
                 auto Elem = std::make_unique<FBinding>();
-                if (!ClassifyElement(Opt->ElementTypeName, OwnerNs, Db, *Elem) || !IsBlittableElementKind(Elem->Kind))
+                // A payload that is not a plain value is viewed rather than copied, so it binds too.
+                if (!ClassifyElement(Opt->ElementTypeName, OwnerNs, Db, *Elem))
                 {
-                    // A payload that is not a plain value has no Nullable spelling; skip rather than guess.
                     return false;
                 }
                 B.Kind = EBind::Optional;
@@ -960,6 +960,16 @@ namespace Lumina::Reflection
                 }
                 case EBind::Optional:
                 {
+                    // A payload a Nullable cannot spell is viewed through the slot and its property instead.
+                    if (B.Elem != nullptr && !IsBlittableElementKind(B.Elem->Kind))
+                    {
+                        Writer.Linef("public global::Lumina.TOptional<%s> %s =>", CS, PropName.c_str());
+                        Writer.Linef("    new global::Lumina.TOptional<%s>((nint)Handle + %s, %s);", CS,
+                            OffName.c_str(), PropFieldName.c_str());
+                        EmitOffsetField(Writer, OffName, TypeName, Member);
+                        EmitTokenField(Writer, PropFieldName, TypeName, Member);
+                        break;
+                    }
                     // Nullable mirrors TOptional exactly, and the payload is blittable so it reads in place.
                     Writer.Linef("public %s? %s", CS, PropName.c_str());
                     Writer.BeginBlock();
@@ -1496,7 +1506,12 @@ namespace Lumina::Reflection
                     {
                         B.Kind = EBind::StructValue; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
                     }
-                    return false; // opaque struct by value isn't supported as a function param/return yet
+                    // An opaque struct binds for args only; a return has no storage for the wrapper to view.
+                    if (bIsArg && IsOpaqueWrapperType(Db, F.TypeName))
+                    {
+                        B.Kind = EBind::StructOpaque; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
+                    }
+                    return false;
                 }
                 case EPropertyTypeFlags::Name:
                 case EPropertyTypeFlags::String:
@@ -1781,6 +1796,12 @@ namespace Lumina::Reflection
                     case EBind::Enum:        Params += "int " + An;                 CallArgs += "(" + A.TargetCpp + ")" + An;  break;
                     case EBind::StructValue: Params += A.TargetCpp + " " + An;      CallArgs += An;                            break;
                     case EBind::Object:      Params += "void* " + An;               CallArgs += "static_cast<" + A.TargetCpp + "*>(" + An + ")"; break;
+                    // The wrapper hands over the address it views, and a null one stands in as a default value.
+                    case EBind::StructOpaque:
+                        Params += "void* " + An;
+                        CallArgs += "(" + An + " ? *static_cast<" + A.TargetCpp + "*>(" + An + ") : "
+                            + A.TargetCpp + "{})";
+                        break;
                     case EBind::ClassRef:
                         Params += "void* " + An;
                         CallArgs += "Lumina::TSubclassOf<" + A.TargetCpp + ">(static_cast<Lumina::CClass*>(" + An + "))";
@@ -2021,6 +2042,11 @@ namespace Lumina::Reflection
             if (A.bEntity) { return "(uint32)" + N; }
             switch (A.Kind) { case EBind::Bool: return "(unsigned char)(" + N + " ? 1 : 0)"; case EBind::Enum: return "(int)" + N; case EBind::Object: return "(void*)" + N; default: return N; }
         }
+        // A parms field for an object is a TObjectPtr, where the shim's own parameter is already a raw pointer.
+        std::string SeParmsField(const FArg& A, const std::string& N)
+        {
+            return A.Kind == EBind::Object ? N + ".Get()" : N;
+        }
         std::string SeRetCpp(const FFnBinding& FB)
         {
             if (FB.bVoid) { return "void"; }
@@ -2239,7 +2265,8 @@ namespace Lumina::Reflection
                 std::string AbiArgs;
                 for (size_t i = 0; i < FB.Args.size(); ++i)
                 {
-                    AbiArgs += ", " + SeArgCppToAbi(FB.Args[i], "__p." + E.Fn->Arguments[i].Name);
+                    AbiArgs += ", " + SeArgCppToAbi(FB.Args[i],
+                        SeParmsField(FB.Args[i], "__p." + E.Fn->Arguments[i].Name));
                 }
                 const std::string Call = "__ScriptCall_" + Friendly + "_" + Name + "(__h" + AbiArgs + ")";
 

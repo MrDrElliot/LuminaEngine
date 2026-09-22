@@ -1,4 +1,4 @@
-#include "EditorPCH.h"
+﻿#include "EditorPCH.h"
 #include "InputActionCustomization.h"
 #include "UI/Properties/NamePicker.h"
 #include "UI/Properties/PropertyEditContexts.h"
@@ -395,8 +395,9 @@ namespace Lumina
                     return;
                 }
 
-                for (CEdGraphNode* Node : Machine->Graph->Nodes)
+                for (const auto& NodeRef : Machine->Graph->Nodes)
                 {
+                    CEdGraphNode* Node = NodeRef.Get();
                     CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(Node);
                     if (State != nullptr && !State->StateName.IsNone())
                     {

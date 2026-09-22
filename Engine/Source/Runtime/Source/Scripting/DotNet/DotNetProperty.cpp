@@ -2,6 +2,7 @@
 #include "Scripting/ScriptFunctionMint.h"
 
 #include "DotNetExport.h"
+#include "ExportSignature.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Delegates/ScriptDelegate.h"
@@ -568,12 +569,6 @@ LUMINA_DOTNET_EXPORT(const void*, PropOptionalInner)(const void* Prop)
         : nullptr;
 }
 
-LUMINA_DOTNET_EXPORT(int32, PropOptionalHasValue)(void* C, const void* Prop)
-{
-    void* Member = OptionalMember(C, Prop);
-    return Member != nullptr && static_cast<const FOptionalProperty*>(Prop)->HasValue(Member) ? 1 : 0;
-}
-
 // Null when unset, which is what the managed side turns into a null Nullable.
 LUMINA_DOTNET_EXPORT(void*, PropOptionalGetValue)(void* C, const void* Prop)
 {
@@ -592,6 +587,31 @@ LUMINA_DOTNET_EXPORT(void, PropOptionalSetValue)(void* C, const void* Prop, cons
 LUMINA_DOTNET_EXPORT(void, PropOptionalReset)(void* C, const void* Prop)
 {
     if (void* Member = OptionalMember(C, Prop))
+    {
+        static_cast<const FOptionalProperty*>(Prop)->Reset(Member);
+    }
+}
+
+// The same three against the member itself, since a frame slot's address already is the optional.
+LUMINA_DOTNET_EXPORT(void*, OptionalValueAt)(void* Member, const void* Prop)
+{
+    return (Member != nullptr && Prop != nullptr)
+        ? static_cast<const FOptionalProperty*>(Prop)->GetValue(Member)
+        : nullptr;
+}
+
+// A null value engages the optional with a default payload, which is the contract every setter implements.
+LUMINA_DOTNET_EXPORT(void, OptionalSetValueAt)(void* Member, const void* Prop, const void* Value)
+{
+    if (Member != nullptr && Prop != nullptr)
+    {
+        static_cast<const FOptionalProperty*>(Prop)->SetValue(Member, Value);
+    }
+}
+
+LUMINA_DOTNET_EXPORT(void, OptionalResetAt)(void* Member, const void* Prop)
+{
+    if (Member != nullptr && Prop != nullptr)
     {
         static_cast<const FOptionalProperty*>(Prop)->Reset(Member);
     }
@@ -694,3 +714,57 @@ LUMINA_DOTNET_EXPORT(void, DelegateUnbind)(void* DelegatePtr, uint64 Handle)
         static_cast<FScriptDelegateBase*>(DelegatePtr)->UnbindManaged(Handle);
     }
 }
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(FindProperty),
+    LUMINA_DOTNET_SIG(PropertyOffset),
+    LUMINA_DOTNET_SIG(PropertySize),
+    LUMINA_DOTNET_SIG(PropertyOffsetByName),
+    LUMINA_DOTNET_SIG(PropSetString),
+    LUMINA_DOTNET_SIG(PropGetName),
+    LUMINA_DOTNET_SIG(PropSetName),
+    LUMINA_DOTNET_SIG(SetObjectPtr),
+    LUMINA_DOTNET_SIG(PropGetObject),
+    LUMINA_DOTNET_SIG(PropSetObject),
+    LUMINA_DOTNET_SIG(PropGetAssetPath),
+    LUMINA_DOTNET_SIG(PropSetAssetPath),
+    LUMINA_DOTNET_SIG(PropGetClass),
+    LUMINA_DOTNET_SIG(PropSetClass),
+    LUMINA_DOTNET_SIG(FindClassByName),
+    LUMINA_DOTNET_SIG(NewObject),
+    LUMINA_DOTNET_SIG(FunctionParamCount),
+    LUMINA_DOTNET_SIG(FunctionParamAt),
+    LUMINA_DOTNET_SIG(FunctionReturnParam),
+    LUMINA_DOTNET_SIG(FunctionPublishInvoker),
+    LUMINA_DOTNET_SIG(FunctionClearInvokers),
+    LUMINA_DOTNET_SIG(FunctionGetName),
+    LUMINA_DOTNET_SIG(ClassGetName),
+    LUMINA_DOTNET_SIG(ClassGetDefaultObject),
+    LUMINA_DOTNET_SIG(PropCopyStruct),
+    LUMINA_DOTNET_SIG(PropGetSubStruct),
+    LUMINA_DOTNET_SIG(PropSetSubStruct),
+    LUMINA_DOTNET_SIG(FindStructByName),
+    LUMINA_DOTNET_SIG(StructGetName),
+    LUMINA_DOTNET_SIG(InstancedStructGetType),
+    LUMINA_DOTNET_SIG(InstancedStructGetMemory),
+    LUMINA_DOTNET_SIG(InstancedStructIsA),
+    LUMINA_DOTNET_SIG(InstancedStructInitializeAs),
+    LUMINA_DOTNET_SIG(InstancedStructReset),
+    LUMINA_DOTNET_SIG(SoftPathGet),
+    LUMINA_DOTNET_SIG(SoftPathSet),
+    LUMINA_DOTNET_SIG(StructAssign),
+    LUMINA_DOTNET_SIG(PropOptionalInner),
+    LUMINA_DOTNET_SIG(PropOptionalGetValue),
+    LUMINA_DOTNET_SIG(PropOptionalSetValue),
+    LUMINA_DOTNET_SIG(PropOptionalReset),
+    LUMINA_DOTNET_SIG(OptionalValueAt),
+    LUMINA_DOTNET_SIG(OptionalSetValueAt),
+    LUMINA_DOTNET_SIG(OptionalResetAt),
+    LUMINA_DOTNET_SIG(PropVectorOps),
+    LUMINA_DOTNET_SIG(StringAssign),
+    LUMINA_DOTNET_SIG(NameFromString),
+    LUMINA_DOTNET_SIG(NameToString),
+    LUMINA_DOTNET_SIG(PropMapOps),
+    LUMINA_DOTNET_SIG(DelegateBind),
+    LUMINA_DOTNET_SIG(DelegateUnbind)
+);

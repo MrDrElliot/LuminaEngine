@@ -31,7 +31,7 @@ namespace Lumina::Containers
 
         // Never re-mixed: a heterogeneous lookup only finds a key when both spellings hash identically.
         template <typename T>
-        NODISCARD FORCEINLINE uint64 operator()(const T& Key) const noexcept
+        NODISCARD FORCEINLINE static uint64 operator()(const T& Key) noexcept
         {
             static_assert(requires { GetTypeHash(Key); },
                 "No GetTypeHash for this key type. Declare one beside the type so ADL finds it.");
@@ -44,7 +44,7 @@ namespace Lumina::Containers
         using is_transparent = void;
 
         template <typename TLeft, typename TRight>
-        NODISCARD FORCEINLINE bool operator()(const TLeft& Left, const TRight& Right) const noexcept
+        NODISCARD FORCEINLINE static bool operator()(const TLeft& Left, const TRight& Right) noexcept
         {
             if constexpr (ValueComparableInteger<TLeft> && ValueComparableInteger<TRight>)
             {

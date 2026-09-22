@@ -27,45 +27,33 @@ namespace Lumina::Containers
 
         T Elements[N];
 
-        NODISCARD FORCEINLINE constexpr T* data() noexcept { return Elements; }
-        NODISCARD FORCEINLINE constexpr const T* data() const noexcept { return Elements; }
+        // Elements is an array member, so a const object deduces const T* and const T& on its own.
+        template <typename Self> NODISCARD FORCEINLINE constexpr auto* data(this Self&& S) noexcept { return S.Elements; }
 
         NODISCARD static constexpr size_t size() noexcept { return N; }
         NODISCARD static constexpr size_t max_size() noexcept { return N; }
         NODISCARD static constexpr bool empty() noexcept { return N == 0; }
         NODISCARD static constexpr size_t Num() noexcept { return N; }
 
-        NODISCARD FORCEINLINE constexpr T* begin() noexcept { return Elements; }
-        NODISCARD FORCEINLINE constexpr const T* begin() const noexcept { return Elements; }
+        template <typename Self> NODISCARD FORCEINLINE constexpr auto* begin(this Self&& S) noexcept { return S.Elements; }
+        template <typename Self> NODISCARD FORCEINLINE constexpr auto* end(this Self&& S) noexcept { return S.Elements + N; }
         NODISCARD FORCEINLINE constexpr const T* cbegin() const noexcept { return Elements; }
-        NODISCARD FORCEINLINE constexpr T* end() noexcept { return Elements + N; }
-        NODISCARD FORCEINLINE constexpr const T* end() const noexcept { return Elements + N; }
         NODISCARD FORCEINLINE constexpr const T* cend() const noexcept { return Elements + N; }
 
-        NODISCARD constexpr reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
-        NODISCARD constexpr const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
-        NODISCARD constexpr reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
-        NODISCARD constexpr const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
+        template <typename Self> NODISCARD constexpr auto rbegin(this Self&& S) noexcept { return std::reverse_iterator(S.end()); }
+        template <typename Self> NODISCARD constexpr auto rend(this Self&& S) noexcept { return std::reverse_iterator(S.begin()); }
 
-        NODISCARD FORCEINLINE constexpr T& operator[](size_t Index) noexcept
+        template <typename Self>
+        NODISCARD FORCEINLINE constexpr auto& operator[](this Self&& S, size_t Index) noexcept
         {
             LUMINA_CONTAINER_CHECK_INDEX(Index, N);
-            return Elements[Index];
+            return S.Elements[Index];
         }
 
-        NODISCARD FORCEINLINE constexpr const T& operator[](size_t Index) const noexcept
-        {
-            LUMINA_CONTAINER_CHECK_INDEX(Index, N);
-            return Elements[Index];
-        }
+        template <typename Self> NODISCARD FORCEINLINE constexpr auto& at(this Self&& S, size_t Index) noexcept { return S[Index]; }
 
-        NODISCARD FORCEINLINE constexpr T& at(size_t Index) noexcept { return (*this)[Index]; }
-        NODISCARD FORCEINLINE constexpr const T& at(size_t Index) const noexcept { return (*this)[Index]; }
-
-        NODISCARD FORCEINLINE constexpr T& front() noexcept { return (*this)[0]; }
-        NODISCARD FORCEINLINE constexpr const T& front() const noexcept { return (*this)[0]; }
-        NODISCARD FORCEINLINE constexpr T& back() noexcept { return (*this)[N - 1]; }
-        NODISCARD FORCEINLINE constexpr const T& back() const noexcept { return (*this)[N - 1]; }
+        template <typename Self> NODISCARD FORCEINLINE constexpr auto& front(this Self&& S) noexcept { return S[0]; }
+        template <typename Self> NODISCARD FORCEINLINE constexpr auto& back(this Self&& S) noexcept { return S[N - 1]; }
 
         constexpr void fill(const T& Value)
         {

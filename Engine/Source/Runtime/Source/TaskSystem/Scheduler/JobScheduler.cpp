@@ -1,4 +1,4 @@
-#include "Platform/Time/PlatformTime.h"
+﻿#include "Platform/Time/PlatformTime.h"
 #include "Memory/Construct.h"
 #include "RuntimePCH.h"
 #include "JobScheduler.h"
@@ -54,6 +54,16 @@ namespace Lumina::Jobs
 #if USING(WITH_EDITOR)
             const char*  Name     = nullptr; // label for the editor profiler; absent otherwise to shrink the queue element
 #endif
+            // Null outside an editor build, where the label is not stored at all.
+            FORCEINLINE const char* GetName() const
+            {
+#if USING(WITH_EDITOR)
+                return Name;
+#else
+                return nullptr;
+#endif
+            }
+
             FORCEINLINE void SetCounter(FCounter* Counter, bool bMayPark)
             {
                 CounterAndPark = reinterpret_cast<uintptr_t>(Counter) | (bMayPark ? 1ull : 0ull);
@@ -700,7 +710,7 @@ namespace Lumina::Jobs
         FORCEINLINE void RunAdoptedJob(const FQueuedJob& Job, uint32 Slot)
         {
             LUMINA_PROFILE_SECTION_COLORED("Assist: Adopted Job", tracy::Color::Orange);
-            const char* Label = Job.Name;
+            const char* Label = Job.GetName();
             if (Label != nullptr)
             {
                 LUMINA_PROFILE_TAG(Label);
@@ -885,7 +895,7 @@ namespace Lumina::Jobs
             FJobProfiler& P = FJobProfiler::Get();
             if (P.IsEnabled())
             {
-                P.SliceBegin(Worker, F->Index, F->Job.Name, FJobProfiler::NowMs());
+                P.SliceBegin(Worker, F->Index, F->Job.GetName(), FJobProfiler::NowMs());
             }
         }
         void ProfResume(FWorkFiber* F, uint32 Worker) // parked fiber resumed â†’ Running (counts migration)
@@ -901,7 +911,7 @@ namespace Lumina::Jobs
             NoteWorkerCore(Worker, true);
             if (P.IsEnabled())
             {
-                P.SliceBegin(Worker, F->Index, F->Job.Name, FJobProfiler::NowMs());
+                P.SliceBegin(Worker, F->Index, F->Job.GetName(), FJobProfiler::NowMs());
             }
         }
         void ProfEnd(uint32 Worker, bool Parked)      // the fiber that just switched back stopped running
@@ -1130,9 +1140,9 @@ namespace Lumina::Jobs
         void RunJobNative(const FQueuedJob& Job, uint32 Slot)
         {
             LUMINA_PROFILE_SECTION_COLORED("Job", tracy::Color::SteelBlue);
-            if (Job.Name != nullptr)
+            if (const char* Label = Job.GetName())
             {
-                LUMINA_PROFILE_NAME(Job.Name);
+                LUMINA_PROFILE_NAME(Label);
             }
             FWorkFiber* SavedFiber  = TLS.CurrentFiber;
             const char* SavedGuard  = GNoParkGuardName;
@@ -1167,7 +1177,7 @@ namespace Lumina::Jobs
                 {
                     continue;
                 }
-                const char* Name = F.Job.Name ? F.Job.Name : "<unnamed>";
+                const char* Name = F.Job.GetName() ? F.Job.GetName() : "<unnamed>";
                 bool bFound = false;
                 for (uint32 t = 0; t < NumTallies; ++t)
                 {
@@ -1351,9 +1361,9 @@ namespace Lumina::Jobs
                 {
                     // Scoped so it closes before the switch back, which is a different fiber's timeline.
                     LUMINA_PROFILE_SECTION_COLORED("Fiber Job", tracy::Color::CadetBlue);
-                    if (Job.Name != nullptr)
+                    if (const char* Label = Job.GetName())
                     {
-                        LUMINA_PROFILE_NAME(Job.Name);
+                        LUMINA_PROFILE_NAME(Label);
                     }
                     Job.Function(Job.Argument, TLS.WorkerIndex);
                 }

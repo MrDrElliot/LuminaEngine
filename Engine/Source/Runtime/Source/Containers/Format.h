@@ -317,7 +317,7 @@ namespace Lumina::Fmt
         }
         else if constexpr (std::is_enum_v<FValue> && !CustomFormattable<FValue>)
         {
-            Arg.Int64Value = static_cast<int64>(static_cast<std::underlying_type_t<FValue>>(Value));
+            Arg.Int64Value = static_cast<int64>(std::to_underlying(Value));
             Arg.Type = EFormatArgType::Int64;
         }
         else if constexpr (std::is_integral_v<FValue> && std::is_signed_v<FValue>)

@@ -30,6 +30,50 @@ internal sealed class FrameMarshalTarget
         Value += 5;
     }
 
+    // A string parameter, which used to have no generated invoker and fell to the boxing reflection path.
+    [ScriptFunction]
+    public void MarshalText(string In, out int Length)
+    {
+        Length = In == null ? -1 : In.Length;
+    }
+
+    // An opaque struct wrapper, which stays on the reflection path and is read through a view over the slot.
+    [ScriptFunction]
+    public void MarshalStructView(Lumina.FAnimGraphBoneMaskBone Bone, out float Weight)
+    {
+        Weight = Bone == null ? -1.0f : Bone.Weight;
+    }
+
+    // An async body that yields once, so the token is observably running before the tick completes it.
+    [ScriptFunction]
+    public async System.Threading.Tasks.Task MarshalAsync(int Value)
+    {
+        AsyncGate = new System.Threading.Tasks.TaskCompletionSource();
+        await AsyncGate.Task;
+        AsyncSeen = Value;
+    }
+
+    internal static System.Threading.Tasks.TaskCompletionSource? AsyncGate;
+    internal static int AsyncSeen;
+
+    // A delegate and an instanced struct name the slot they view, which the frame binder used to refuse.
+    [ScriptFunction]
+    public void MarshalSlotViews(ScriptDelegate Event, Lumina.FInstancedStruct Instanced, out int Seen)
+    {
+        Seen = (Event.IsValid ? 1 : 0) | (Instanced.IsBound ? 2 : 0);
+    }
+
+    // A container by value, which the frame can hand back because it owns the slot the copy fills.
+    public System.Collections.Generic.List<int> OnBuildRange(int Count)
+    {
+        var Built = new System.Collections.Generic.List<int>();
+        for (int Index = 0; Index < Count; ++Index)
+        {
+            Built.Add(Index * 3);
+        }
+        return Built;
+    }
+
     // Named for the reflected function it stands in for, which is how the dispatcher resolves it.
     public float? OnEchoOptional(float? In)
     {
@@ -453,6 +497,7 @@ internal static unsafe class InteropTestHooks
         {
             0 => nameof(FrameMarshalTarget.MarshalOut),
             1 => nameof(FrameMarshalTarget.MarshalRef),
+            2 => nameof(FrameMarshalTarget.MarshalText),
             _ => nameof(FrameMarshalTarget.OnAppendSum),
         };
         return ScriptInvokerRegistry.Find(typeof(FrameMarshalTarget), Name) != 0 ? 1 : 0;
@@ -478,5 +523,311 @@ internal static unsafe class InteropTestHooks
 
         *OutAmbiguousDescribed = Ambiguous;
         return Description.Functions.Count;
+    }
+
+    // Reads and rewrites a bare native FSoftObjectPath through the element marshaller, the container shape.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_SoftPathElementRoundTrip(IntPtr Slot, int* OutWrittenLength)
+    {
+        Lumina.FSoftObjectPath Read = ElementMarshal.Read<Lumina.FSoftObjectPath>(Slot);
+
+        ElementMarshal.Write(Slot, new Lumina.FSoftObjectPath("/Game/Written"));
+        *OutWrittenLength = Native.SoftPathGet(Slot).Length;
+
+        return Read.Path != null ? Read.Path.Length : 0;
+    }
+
+    // The managed-string and bool slots the frame and property lanes need, through the one marshaller.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_SlotMarshalRoundTrip(IntPtr StringSlot, IntPtr BoolSlot, int* OutBoolRead,
+        int* OutBoolIsMarshalled)
+    {
+        string Read = ElementMarshal.Read<string>(StringSlot);
+        ElementMarshal.Write(StringSlot, "written");
+
+        *OutBoolRead = ElementMarshal.Read<bool>(BoolSlot) ? 1 : 0;
+        ElementMarshal.Write(BoolSlot, false);
+        *OutBoolIsMarshalled = ElementKind<bool>.IsMarshalled ? 1 : 0;
+
+        return Read.Length;
+    }
+
+    // The same optional slot the frame lane binds, reached by address and token instead of container and property.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_OptionalSlotRoundTrip(IntPtr Slot, IntPtr Property, float Written, float* OutRead)
+    {
+        float? Read = ElementMarshal.Read<float?>(Slot, Property);
+
+        ElementMarshal.Write<float?>(Slot, Property, Written);
+        float? Back = ElementMarshal.Read<float?>(Slot, Property);
+        *OutRead = Back ?? -1.0f;
+
+        ElementMarshal.Write<float?>(Slot, Property, null);
+        bool Cleared = !ElementMarshal.Read<float?>(Slot, Property).HasValue;
+
+        return (Read.HasValue ? 1 : 0) | (Cleared ? 2 : 0);
+    }
+
+    // A compiled factory closes over a user type, so a Reset that misses its cache pins the unloading generation.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_FrameMarshalCachesClear(IntPtr StructProperty, IntPtr VectorProperty, int* OutBefore)
+    {
+        FrameMarshal.Reset();
+
+        FrameMarshal.TryBind(StructProperty, typeof(Lumina.FAnimGraphBoneMaskBone), "CacheProbe", out _);
+        FrameMarshal.TryBind(VectorProperty, typeof(Lumina.TVector<float>), "CacheProbe", out _);
+
+        *OutBefore = FrameMarshal.CachedTypeCount;
+        FrameMarshal.Reset();
+        return FrameMarshal.CachedTypeCount;
+    }
+
+    // One classifier answers for both the container element cache and the call-frame binder, so pin what it says.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ElementKindsAgree()
+    {
+        (Type Slot, EElementKind Expected)[] Cases =
+        {
+            (typeof(int), EElementKind.Blittable),
+            (typeof(FVector3), EElementKind.Blittable),
+            (typeof(bool), EElementKind.Bool),
+            (typeof(string), EElementKind.ManagedString),
+            (typeof(Lumina.FString), EElementKind.String),
+            (typeof(float?), EElementKind.Optional),
+            (typeof(Lumina.TVector<float>), EElementKind.Vector),
+            (typeof(Lumina.THashMap<int, float>), EElementKind.Map),
+            (typeof(Lumina.FSoftObjectPath), EElementKind.SoftRef),
+            (typeof(Lumina.FAnimGraphBoneMaskBone), EElementKind.StructView),
+            (typeof(Lumina.CWorld), EElementKind.ObjectWrapper),
+            (typeof(Lumina.TObjectPtr<Lumina.CWorld>), EElementKind.ObjectRef),
+
+            // A class handle is its own value, so copying the pointer is the whole of it.
+            (typeof(Lumina.TSubclassOf<Lumina.CWorld>), EElementKind.Blittable),
+            (typeof(Lumina.TSubStructOf<Lumina.FInstancedStruct>), EElementKind.Blittable),
+
+            // Views holding a slot address, bound in place rather than copied over.
+            (typeof(Lumina.FInstancedStruct), EElementKind.SlotView),
+            (typeof(ScriptDelegate), EElementKind.SlotView),
+
+            // A copy a frame can hand back, and the view spelling for a payload Nullable cannot carry.
+            (typeof(System.Collections.Generic.List<int>), EElementKind.VectorCopy),
+            (typeof(int[]), EElementKind.VectorCopy),
+            (typeof(Lumina.TOptional<string>), EElementKind.OptionalView),
+            (typeof(ScriptDelegate<float>), EElementKind.SlotView),
+        };
+
+        for (int Index = 0; Index < Cases.Length; ++Index)
+        {
+            if (ElementKinds.Of(Cases[Index].Slot) != Cases[Index].Expected)
+            {
+                return Index;
+            }
+        }
+
+        return -1;
+    }
+
+    // A marshalled key and a marshalled value, both of which the map view used to refuse outright.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_MarshalledMapRoundTrip(IntPtr Storage)
+    {
+        var Opaque = new Lumina.FInteropOpaqueStruct(Storage);
+
+        Opaque.Weights.Set("alpha", 1.5f);
+        Opaque.Weights.Set("beta", 2.5f);
+        Opaque.Labels.Set(7, "seven");
+
+        int Result = 0;
+        if (Opaque.Weights.Count == 2)
+        {
+            Result |= 1;
+        }
+        if (Opaque.Weights.TryGetValue("beta", out float Weight) && Weight == 2.5f)
+        {
+            Result |= 2;
+        }
+        if (Opaque.Labels.TryGetValue(7, out string Label) && Label == "seven")
+        {
+            Result |= 4;
+        }
+        if (Opaque.Weights.Remove("alpha") && Opaque.Weights.Count == 1)
+        {
+            Result |= 8;
+        }
+        if (!Opaque.Weights.ContainsKey("alpha"))
+        {
+            Result |= 16;
+        }
+
+        foreach (System.Collections.Generic.KeyValuePair<string, float> Pair in Opaque.Weights)
+        {
+            if (Pair.Key == "beta" && Pair.Value == 2.5f)
+            {
+                Result |= 32;
+            }
+        }
+
+        return Result;
+    }
+
+    // A payload a Nullable cannot spell, which the optional binder used to refuse outright.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_MarshalledOptionalRoundTrip(IntPtr Storage)
+    {
+        var Opaque = new Lumina.FInteropOpaqueStruct(Storage);
+
+        int Result = Opaque.Note.HasValue ? 0 : 1;
+
+        Opaque.Note.Set("engaged");
+        if (Opaque.Note.HasValue && Opaque.Note.Value == "engaged")
+        {
+            Result |= 2;
+        }
+        if (Opaque.Note.TryGetValue(out string Stored) && Stored == "engaged")
+        {
+            Result |= 4;
+        }
+
+        Opaque.Note.Reset();
+        if (!Opaque.Note.HasValue)
+        {
+            Result |= 8;
+        }
+
+        return Result;
+    }
+
+    // A continuation posted from a worker must wait for the tick rather than running on that worker.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ContinuationResumesOnTheGameThread(int* OutRanBeforeTick, int* OutOnGameThread)
+    {
+        int GameThreadId = System.Environment.CurrentManagedThreadId;
+        int Ran = 0;
+        int ResumedOn = 0;
+
+        System.Threading.SynchronizationContext Context = System.Threading.SynchronizationContext.Current!;
+        if (Context == null)
+        {
+            return 0;
+        }
+
+        var Worker = new System.Threading.Thread(() =>
+            Context.Post(_ =>
+            {
+                Ran = 1;
+                ResumedOn = System.Environment.CurrentManagedThreadId;
+            }, null));
+
+        Worker.Start();
+        Worker.Join();
+
+        *OutRanBeforeTick = Ran;
+        GameThreadContext.Drain();
+        *OutOnGameThread = ResumedOn == GameThreadId ? 1 : 0;
+
+        return Ran;
+    }
+
+    // A pending await has to be completed by an unload, or its await site never resumes and never unwinds.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_PendingAwaitIsCanceledOnUnload(int* OutTrackedBefore)
+    {
+        var Source = new FTestPending();
+        *OutTrackedBefore = GameTaskRegistry.PendingCount;
+
+        GameTaskRegistry.CancelAll();
+
+        return (Source.Canceled ? 1 : 0) | (GameTaskRegistry.PendingCount == 0 ? 2 : 0);
+    }
+
+    private sealed class FTestPending : GameTaskRegistry.ICancelPending
+    {
+        internal bool Canceled;
+
+        internal FTestPending()
+        {
+            GameTaskRegistry.Track(this);
+        }
+
+        public void Cancel()
+        {
+            Canceled = true;
+        }
+    }
+
+    // Native gets a token for an async script function, polls it, and sees it finish on the tick.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_AsyncScriptFunctionState(ulong Token, int bRelease)
+    {
+        if (bRelease != 0)
+        {
+            ScriptAsync.Release(Token);
+            return 0;
+        }
+        return (int)ScriptAsync.StateOf(Token);
+    }
+
+    // Completes the gate the async body is parked on, then drains so its continuation runs.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ReleaseAsyncGate()
+    {
+        FrameMarshalTarget.AsyncGate?.TrySetResult();
+        GameThreadContext.Drain();
+        return FrameMarshalTarget.AsyncSeen;
+    }
+
+    // Returns 0 when the bind was refused, 1 when the view came back unbound, and 2 when it names its slot.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_SlotViewBinds(IntPtr Property, IntPtr Container, int bDelegate)
+    {
+        Type Declared = bDelegate != 0 ? typeof(ScriptDelegate) : typeof(Lumina.FInstancedStruct);
+        if (!FrameMarshal.TryBind(Property, Declared, "SlotViewProbe", out FrameMarshal.FSlot Slot))
+        {
+            return 0;
+        }
+
+        object? View = FrameMarshal.Read(Container, Slot);
+        bool bNamesItsSlot = View is Lumina.FInstancedStruct Instanced
+            ? Instanced.IsBound
+            : View is ScriptDelegate Delegate && Delegate.IsValid;
+
+        return bNamesItsSlot ? 2 : 1;
+    }
+
+    // An opaque struct argument crosses as the address its wrapper views, which the binder used to refuse.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static float Test_OpaqueStructArgument(IntPtr Storage)
+    {
+        Lumina.FInteropOpaqueStruct Opaque = Storage == IntPtr.Zero
+            ? null!
+            : new Lumina.FInteropOpaqueStruct(Storage);
+
+        return CInteropTestLibrary.ReadOpaqueValue(Opaque);
+    }
+
+    // PropertyOffset returns an int32 and takes one pointer, so twelve is its width and anything else is drift.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_SignatureCheckRefusesDrift(int* OutNativeWidth)
+    {
+        void* Agreeing = NativeBindings.Resolve(Host.NativeLibrary, "LuminaSharp_PropertyOffset", 12);
+        void* Drifted = NativeBindings.Resolve(Host.NativeLibrary, "LuminaSharp_PropertyOffset", 16);
+        void* Unchecked = NativeBindings.Resolve(Host.NativeLibrary, "LuminaSharp_PropertyOffset");
+
+        *OutNativeWidth = 12;
+        return (Agreeing != null ? 1 : 0) | (Drifted == null ? 2 : 0) | (Unchecked != null ? 4 : 0);
     }
 }

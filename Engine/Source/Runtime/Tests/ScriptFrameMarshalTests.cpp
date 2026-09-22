@@ -8,6 +8,8 @@
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectBase.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/SoftObjectPtr.h"
+#include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Core/Object/ScriptClass.h"
 #include "Containers/ContainerOps.h"
 #include "Containers/Vector.h"
@@ -23,6 +25,10 @@
 #include "Scripting/ScriptStruct.h"
 #include "Scripting/ScriptableObject.h"
 #include "Scripting/ScriptableTest.h"
+#include "Scripting/InteropTestLibrary.h"
+#include "Scripting/DotNet/ExportSignature.h"
+#include "Core/Delegates/ScriptDelegate.h"
+#include "Core/Object/InstancedStruct.h"
 
 using namespace Lumina;
 
@@ -59,6 +65,20 @@ namespace
     using FProbeWrapperFn  = int32(*)(void*, int32*);
     using FFreeWrapperFn   = void(*)(void*);
     using FHasInvokerFn    = int32(*)(int32);
+    using FSoftPathElementFn = int32(*)(void*, int32*);
+    using FSlotMarshalFn     = int32(*)(void*, void*, int32*, int32*);
+    using FOptionalSlotFn    = int32(*)(void*, const void*, float, float*);
+    using FCacheClearFn      = int32(*)(const void*, const void*, int32*);
+    using FKindsAgreeFn      = int32(*)();
+    using FOpaqueArgFn       = float(*)(void*);
+    using FSignatureCheckFn  = int32(*)(int32*);
+    using FSlotViewFn        = int32(*)(const void*, void*, int32);
+    using FMapRoundTripFn    = int32(*)(void*);
+    using FOptRoundTripFn    = int32(*)(void*);
+    using FContinuationFn    = int32(*)(int32*, int32*);
+    using FPendingAwaitFn    = int32(*)(int32*);
+    using FAsyncStateFn      = int32(*)(uint64, int32);
+    using FAsyncGateFn       = int32(*)();
 
     Scripting::FScriptExportField ParamField(const char* Name, EPropertyTypeFlags Kind, EPropertyFlags Direction)
     {
@@ -1071,7 +1091,8 @@ TEST_F(FFrameMarshalTest, AGeneratedInvokerCoversABlittableSignatureAndDeclinesT
 
     EXPECT_EQ(Has(0), 1) << "an (int, out int) signature is exactly what the generator is for";
     EXPECT_EQ(Has(1), 1) << "a ref parameter writes back through the same generated path";
-    EXPECT_EQ(Has(2), 0) << "a container view is not a blittable slot, so reflection has to keep it";
+    EXPECT_EQ(Has(2), 1) << "a string slot crosses through the element marshaller rather than reflection";
+    EXPECT_EQ(Has(3), 0) << "a container view needs a token the invoker has no argument for";
 }
 
 // Dispatch answers a repeat call off a direct-mapped line rather than hashing, and a line holds one entry.
@@ -1155,6 +1176,348 @@ TEST_F(FFrameMarshalTest, ADispatchedFunctionPublishesAnInvokerNativeCanCallDire
     Direct.At<int32>(0) = 50;
     reinterpret_cast<FDirect>(Published)(Target, Direct.GetMemory(), Function->GetManagedOffsets());
     EXPECT_EQ(Direct.At<int32>(1), 100) << "the direct call disagreed with the dispatcher";
+
+    FreeTarget(Target);
+}
+
+// A read that boxes the struct discards the mutation, so the path length is what tells the two apart.
+TEST_F(FFrameMarshalTest, ASoftReferenceElementRoundTripsItsPath)
+{
+    auto* RoundTrip = (FSoftPathElementFn)DotNet::ResolveManagedExport("Test_SoftPathElementRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    FSoftObjectPath Slot(FStringView("/Game/Read"));
+
+    int32 WrittenLength = -1;
+    const int32 ReadLength = RoundTrip(&Slot, &WrittenLength);
+
+    EXPECT_EQ(ReadLength, 10) << "the managed read handed back an empty path instead of /Game/Read";
+    EXPECT_EQ(WrittenLength, 13);
+    EXPECT_EQ(FString(Slot.GetPath().data(), Slot.GetPath().size()), FString("/Game/Written"));
+}
+
+// The kinds the frame lane needs beyond a blittable copy, driven through the one element marshaller.
+TEST_F(FFrameMarshalTest, AStringAndABoolSlotCrossThroughTheElementMarshaller)
+{
+    auto* RoundTrip = (FSlotMarshalFn)DotNet::ResolveManagedExport("Test_SlotMarshalRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    FString Text("hello");
+    uint8 Flag = 2;
+
+    int32 BoolRead = -1;
+    int32 BoolIsMarshalled = -1;
+    const int32 Length = RoundTrip(&Text, &Flag, &BoolRead, &BoolIsMarshalled);
+
+    EXPECT_EQ(Length, 5);
+    EXPECT_EQ(Text, FString("written"));
+    EXPECT_EQ(BoolRead, 1) << "a nonzero byte that is not one has to normalize to true";
+    EXPECT_EQ(Flag, 0);
+    EXPECT_EQ(BoolIsMarshalled, 0) << "a bool is the native byte, so a span over storage stays sound";
+}
+
+// The marshaller reaches an optional by the slot address the generated invoker has, not by container plus offset.
+TEST_F(FFrameMarshalTest, AnOptionalSlotCrossesByAddressAndToken)
+{
+    auto* RoundTrip = (FOptionalSlotFn)DotNet::ResolveManagedExport("Test_OptionalSlotRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    FFunction* Function = FindOptionalEcho();
+    ASSERT_NE(Function, nullptr);
+
+    FProperty* Slot = Function->GetParams()[0];
+    ASSERT_EQ(Slot->GetType(), EPropertyTypeFlags::Optional);
+
+    FFunctionFrame Frame(*Function);
+    Frame.At<TOptional<float>>(0) = 7.5f;
+
+    void* Address = (uint8*)Frame.GetMemory() + Slot->Offset;
+
+    float Back = 0.0f;
+    const int32 Result = RoundTrip(Address, Slot, 3.25f, &Back);
+
+    EXPECT_EQ(Result & 1, 1) << "the engaged payload did not come back";
+    EXPECT_FLOAT_EQ(Back, 3.25f);
+    EXPECT_EQ(Result & 2, 2) << "writing null did not reset the slot";
+    EXPECT_FALSE(Frame.At<TOptional<float>>(0).IsSet());
+}
+
+// A string parameter is the common non-blittable gameplay shape, and it used to have no generated invoker.
+TEST_F(FFrameMarshalTest, AStringParameterDispatchesThroughTheGeneratedInvoker)
+{
+    auto* MakeTarget = (FMakeTargetFn)DotNet::ResolveManagedExport("Test_MakeMarshalTarget");
+    auto* FreeTarget = (FFreeTargetFn)DotNet::ResolveManagedExport("Test_FreeMarshalTarget");
+    auto* Invoke     = (FInvokeFn)DotNet::ResolveManagedExport("InvokeScriptFunction");
+    ASSERT_NE(MakeTarget, nullptr);
+    ASSERT_NE(Invoke, nullptr);
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(ParamField("In", EPropertyTypeFlags::String, EPropertyFlags::None));
+    Params.Fields.push_back(ParamField("Length", EPropertyTypeFlags::Int32, EPropertyFlags::OutParam));
+
+    FFunction* Function = MintFrame("FrameMarshal_Text", Params, "MarshalText");
+    ASSERT_NE(Function, nullptr);
+
+    void* Target = MakeTarget();
+    ASSERT_NE(Target, nullptr);
+
+    {
+        FFunctionFrame Frame(*Function);
+        Frame.At<FString>(0) = "abcdefg";
+        Invoke(Target, Function, Frame.GetMemory());
+        EXPECT_EQ(Frame.At<int32>(1), 7) << "the string never reached the managed method";
+    }
+
+    EXPECT_NE(Function->GetManagedInvoker(), nullptr)
+        << "a string signature should now publish a generated invoker rather than stay on reflection";
+
+    FreeTarget(Target);
+}
+
+// The opaque struct slot had no coverage at all, and it is the one the compiled view factory replaced.
+TEST_F(FFrameMarshalTest, AnOpaqueStructParameterIsReadThroughAViewOverItsSlot)
+{
+    auto* MakeTarget = (FMakeTargetFn)DotNet::ResolveManagedExport("Test_MakeMarshalTarget");
+    auto* FreeTarget = (FFreeTargetFn)DotNet::ResolveManagedExport("Test_FreeMarshalTarget");
+    auto* Invoke     = (FInvokeFn)DotNet::ResolveManagedExport("InvokeScriptFunction");
+    ASSERT_NE(MakeTarget, nullptr);
+    ASSERT_NE(Invoke, nullptr);
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(NativeStructField("Bone", "FAnimGraphBoneMaskBone"));
+    Params.Fields.push_back(ParamField("Weight", EPropertyTypeFlags::Float, EPropertyFlags::OutParam));
+
+    FFunction* Function = MintFrame("FrameMarshal_StructView", Params, "MarshalStructView");
+    ASSERT_NE(Function, nullptr);
+
+    void* Target = MakeTarget();
+    ASSERT_NE(Target, nullptr);
+
+    FFunctionFrame Frame(*Function);
+    Frame.At<FAnimGraphBoneMaskBone>(0).Weight = 0.75f;
+    Invoke(Target, Function, Frame.GetMemory());
+
+    EXPECT_FLOAT_EQ(Frame.At<float>(1), 0.75f) << "the struct view never reached the managed method";
+
+    FreeTarget(Target);
+}
+
+// A compiled factory closes over a user type, so a cache Reset misses would pin the unloading generation.
+TEST_F(FFrameMarshalTest, ResetClearsEveryCacheKeyedByAUserType)
+{
+    auto* Probe = (FCacheClearFn)DotNet::ResolveManagedExport("Test_FrameMarshalCachesClear");
+    ASSERT_NE(Probe, nullptr);
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(NativeStructField("Bone", "FAnimGraphBoneMaskBone"));
+    Params.Fields.push_back(VectorField("Values", EPropertyTypeFlags::Float));
+
+    FFunction* Function = MintFrame("FrameMarshal_CacheProbe", Params, "MarshalStructView");
+    ASSERT_NE(Function, nullptr);
+
+    int32 Before = -1;
+    const int32 After = Probe(Function->GetParams()[0], Function->GetParams()[1], &Before);
+
+    EXPECT_GT(Before, 0) << "binding a struct view and a container view should have cached both factories";
+    EXPECT_EQ(After, 0) << "Reset left a cache holding a user type";
+}
+
+// The element cache and the call-frame binder ask the same function, so a wrong answer breaks both at once.
+TEST_F(FFrameMarshalTest, OneClassifierAnswersForEverySlotKind)
+{
+    auto* Agree = (FKindsAgreeFn)DotNet::ResolveManagedExport("Test_ElementKindsAgree");
+    ASSERT_NE(Agree, nullptr);
+
+    EXPECT_EQ(Agree(), -1) << "the classifier disagreed on the case at this index";
+}
+
+// An opaque struct was refused as a function argument outright, so this is the capability itself.
+TEST_F(FFrameMarshalTest, AnOpaqueStructCrossesAsAFunctionArgument)
+{
+    auto* Read = (FOpaqueArgFn)DotNet::ResolveManagedExport("Test_OpaqueStructArgument");
+    ASSERT_NE(Read, nullptr);
+
+    FInteropOpaqueStruct Opaque;
+    Opaque.Label = FName("abcd");
+    Opaque.Value = 2.5f;
+
+    EXPECT_FLOAT_EQ(Read(&Opaque), 6.5f) << "the callee did not see the struct the wrapper views";
+    const float Default = CInteropTestLibrary::ReadOpaqueValue(FInteropOpaqueStruct{});
+    EXPECT_FLOAT_EQ(Read(nullptr), Default) << "a null wrapper has to stand in as a default, not crash";
+}
+
+// The whole point of the check, so it has to refuse a declared width the export does not actually have.
+TEST_F(FFrameMarshalTest, ABindingThatDeclaresTheWrongWidthIsDropped)
+{
+    auto* Probe = (FSignatureCheckFn)DotNet::ResolveManagedExport("Test_SignatureCheckRefusesDrift");
+    ASSERT_NE(Probe, nullptr);
+
+    int32 NativeWidth = -1;
+    const int32 Result = Probe(&NativeWidth);
+
+    EXPECT_EQ(NativeWidth, (int32)DotNet::GetExportSignature("LuminaSharp_PropertyOffset", 26))
+        << "the export did not register the width the managed side checks against";
+    EXPECT_EQ(Result & 1, 1) << "an agreeing width has to resolve";
+    EXPECT_EQ(Result & 2, 2) << "a drifted width has to be dropped rather than called";
+    EXPECT_EQ(Result & 4, 4) << "a caller that declares nothing stays unchecked";
+}
+
+// A delegate and an instanced struct hold the address of their slot, so the frame views them in place
+// instead of refusing them against a much wider native slot.
+TEST_F(FFrameMarshalTest, ASlotViewBindsInPlaceRatherThanByWidth)
+{
+    auto* Probe = (FSlotViewFn)DotNet::ResolveManagedExport("Test_SlotViewBinds");
+    ASSERT_NE(Probe, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    struct FCase { const char* Struct; const char* Property; int32 bDelegate; };
+    const FCase Cases[] =
+    {
+        { "SAnimationGraphComponent", "Parameters",        0 },
+        { "SPerceptionComponent",     "OnTargetPerceived", 1 },
+    };
+
+    for (const FCase& Case : Cases)
+    {
+        CStruct* Owner = FindObject<CStruct>(FName(Case.Struct));
+        ASSERT_NE(Owner, nullptr) << Case.Struct;
+        FProperty* Slot = Owner->GetProperty(FName(Case.Property));
+        ASSERT_NE(Slot, nullptr) << Case.Property;
+
+        TVector<uint8> Storage(Owner->GetAlignedSize(), (uint8)0);
+        EXPECT_EQ(Probe(Slot, Storage.data(), Case.bDelegate), 2)
+            << Case.Struct << "." << Case.Property << " did not bind as a view over its slot";
+    }
+}
+
+// A map key and a map value whose managed form is not their native bytes, which the view used to refuse.
+TEST_F(FFrameMarshalTest, AMapCarriesAMarshalledKeyAndValue)
+{
+    auto* RoundTrip = (FMapRoundTripFn)DotNet::ResolveManagedExport("Test_MarshalledMapRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    FInteropOpaqueStruct Opaque;
+    EXPECT_EQ(RoundTrip(&Opaque), 63) << "a map operation did not survive the round trip";
+
+    EXPECT_EQ(Opaque.Weights.size(), 1u) << "native does not see what managed left behind";
+    EXPECT_TRUE(Opaque.Weights.contains(FString("beta")));
+    EXPECT_EQ(Opaque.Labels.size(), 1u);
+}
+
+// A view borrows storage it cannot hand back, but a copy fills the return slot the frame already owns.
+TEST_F(FFrameMarshalTest, AContainerIsReturnedByValueWhenTheCalleeHandsBackAList)
+{
+    auto* MakeTarget = (FMakeTargetFn)DotNet::ResolveManagedExport("Test_MakeMarshalTarget");
+    auto* FreeTarget = (FFreeTargetFn)DotNet::ResolveManagedExport("Test_FreeMarshalTarget");
+    auto* Invoke     = (FInvokeFn)DotNet::ResolveManagedExport("InvokeScriptFunction");
+    ASSERT_NE(MakeTarget, nullptr);
+    ASSERT_NE(Invoke, nullptr);
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(ParamField("Count", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.push_back(VectorField("ReturnValue", EPropertyTypeFlags::Int32));
+
+    FFunction* Function = MintFrame("FrameMarshal_ListReturn", Params, "OnBuildRange", 1);
+    ASSERT_NE(Function, nullptr);
+
+    void* Target = MakeTarget();
+    ASSERT_NE(Target, nullptr);
+
+    FFunctionFrame Frame(*Function);
+    Frame.At<int32>(0) = 4;
+    Invoke(Target, Function, Frame.GetMemory());
+
+    // A minted array keeps its elements in a byte vector, so the native size is the element count times stride.
+    const TVector<uint8>& Returned = *Function->GetParams()[1]->GetValuePtr<TVector<uint8>>(Frame.GetMemory());
+    ASSERT_EQ(Returned.size(), 4u * sizeof(int32)) << "the callee's list never reached the frame's return slot";
+
+    const int32* Values = reinterpret_cast<const int32*>(Returned.data());
+    EXPECT_EQ(Values[0], 0);
+    EXPECT_EQ(Values[3], 9);
+
+    FreeTarget(Target);
+}
+
+// A Nullable cannot spell a string payload, so the optional is viewed through its slot and property instead.
+TEST_F(FFrameMarshalTest, AnOptionalCarriesAMarshalledPayload)
+{
+    auto* RoundTrip = (FOptRoundTripFn)DotNet::ResolveManagedExport("Test_MarshalledOptionalRoundTrip");
+    ASSERT_NE(RoundTrip, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    FInteropOpaqueStruct Opaque;
+    EXPECT_EQ(RoundTrip(&Opaque), 15) << "an optional operation did not survive the round trip";
+    EXPECT_FALSE(Opaque.Note.IsSet()) << "native still sees a payload managed reset";
+}
+
+// A worker posting a continuation must not run it there, because a job fiber can migrate between threads.
+TEST_F(FFrameMarshalTest, AContinuationRunsOnTheGameThreadAtTheNextTick)
+{
+    auto* Probe = (FContinuationFn)DotNet::ResolveManagedExport("Test_ContinuationResumesOnTheGameThread");
+    ASSERT_NE(Probe, nullptr);
+
+    int32 RanBeforeTick = -1;
+    int32 OnGameThread = -1;
+    const int32 Ran = Probe(&RanBeforeTick, &OnGameThread);
+
+    EXPECT_EQ(RanBeforeTick, 0) << "the continuation ran on the worker instead of waiting for the tick";
+    EXPECT_EQ(Ran, 1) << "the tick never ran the queued continuation";
+    EXPECT_EQ(OnGameThread, 1) << "the continuation resumed somewhere other than the game thread";
+}
+
+// An unload that leaves an await pending leaves its site never resuming and its finally blocks never running.
+TEST_F(FFrameMarshalTest, APendingAwaitIsCanceledWhenTheGenerationUnloads)
+{
+    auto* Probe = (FPendingAwaitFn)DotNet::ResolveManagedExport("Test_PendingAwaitIsCanceledOnUnload");
+    ASSERT_NE(Probe, nullptr);
+
+    int32 TrackedBefore = -1;
+    const int32 Result = Probe(&TrackedBefore);
+
+    EXPECT_GT(TrackedBefore, 0) << "the pending await was never tracked";
+    EXPECT_EQ(Result & 1, 1) << "the unload did not cancel the pending await";
+    EXPECT_EQ(Result & 2, 2) << "the registry still holds it after the unload";
+}
+
+// A frame cannot wait for an async body, so native gets a token and polls it instead of a result.
+TEST_F(FFrameMarshalTest, AnAsyncScriptFunctionHandsBackATokenNativeCanPoll)
+{
+    auto* MakeTarget = (FMakeTargetFn)DotNet::ResolveManagedExport("Test_MakeMarshalTarget");
+    auto* FreeTarget = (FFreeTargetFn)DotNet::ResolveManagedExport("Test_FreeMarshalTarget");
+    auto* Invoke     = (FInvokeFn)DotNet::ResolveManagedExport("InvokeScriptFunction");
+    auto* State      = (FAsyncStateFn)DotNet::ResolveManagedExport("Test_AsyncScriptFunctionState");
+    auto* Gate       = (FAsyncGateFn)DotNet::ResolveManagedExport("Test_ReleaseAsyncGate");
+    ASSERT_NE(MakeTarget, nullptr);
+    ASSERT_NE(State, nullptr);
+    ASSERT_NE(Gate, nullptr);
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(ParamField("Value", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.push_back(ScalarField("ReturnValue", EPropertyTypeFlags::UInt64));
+
+    FFunction* Function = MintFrame("FrameMarshal_Async", Params, "MarshalAsync", 1);
+    ASSERT_NE(Function, nullptr);
+
+    void* Target = MakeTarget();
+    ASSERT_NE(Target, nullptr);
+
+    FFunctionFrame Frame(*Function);
+    Frame.At<int32>(0) = 41;
+    Invoke(Target, Function, Frame.GetMemory());
+
+    const uint64 Token = Frame.At<uint64>(1);
+    ASSERT_NE(Token, 0u) << "the async function handed back no token";
+    EXPECT_EQ(State(Token, 0), 1) << "the body should still be running while it waits on its gate";
+
+    EXPECT_EQ(Gate(), 41) << "the continuation never ran the rest of the body";
+    EXPECT_EQ(State(Token, 0), 2) << "the token should read completed once the body finished";
+
+    State(Token, 1);
+    EXPECT_EQ(State(Token, 0), 0) << "a released token should no longer be known";
 
     FreeTarget(Target);
 }

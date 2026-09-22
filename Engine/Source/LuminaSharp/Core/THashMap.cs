@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 using LuminaSharp;
 
@@ -17,8 +18,6 @@ namespace Lumina;
 /// Iteration order is the native map's, stable between mutations but not otherwise meaningful.
 /// </summary>
 public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
-    where K : unmanaged
-    where V : unmanaged
 {
     private readonly nint Map;   // the map instance (FScriptDynamicMap, or a THashMap<K,V>)
     private readonly nint Ops;   // FMapOps for (K,V)
@@ -58,34 +57,93 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
     /// property; see the indexer.</summary>
     public void Set(K key, V value)
     {
-        if (IsValid)
+        if (!IsValid)
         {
-            OpsPtr->Insert((void*)Map, &key, &value);
+            return;
         }
+
+        if (!ElementKind<V>.IsMarshalled)
+        {
+            InsertKey(key, Unsafe.AsPointer(ref value));
+            return;
+        }
+
+        // A null value makes native default-construct the slot, which is then assigned through its accessor.
+        void* Slot = InsertKey(key, null);
+        if (Slot != null)
+        {
+            ElementMarshal.Write<V>((nint)Slot, value);
+        }
+    }
+
+    // A marshalled key reaches native as a constructed value of its own native width, torn down after the call.
+    private void* InsertKey(K key, void* value)
+    {
+        if (!ElementKind<K>.IsMarshalled)
+        {
+            return OpsPtr->Insert((void*)Map, Unsafe.AsPointer(ref key), value);
+        }
+
+        byte* Scratch = stackalloc byte[(int)OpsPtr->KeySize];
+        OpsPtr->ConstructKey((void*)Map, Scratch);
+        ElementMarshal.Write<K>((nint)Scratch, key);
+        void* Slot = OpsPtr->Insert((void*)Map, Scratch, value);
+        OpsPtr->DestructKey((void*)Map, Scratch);
+        return Slot;
+    }
+
+    private void* FindKey(K key)
+    {
+        if (!ElementKind<K>.IsMarshalled)
+        {
+            return OpsPtr->Find((void*)Map, Unsafe.AsPointer(ref key));
+        }
+
+        byte* Scratch = stackalloc byte[(int)OpsPtr->KeySize];
+        OpsPtr->ConstructKey((void*)Map, Scratch);
+        ElementMarshal.Write<K>((nint)Scratch, key);
+        void* Slot = OpsPtr->Find((void*)Map, Scratch);
+        OpsPtr->DestructKey((void*)Map, Scratch);
+        return Slot;
+    }
+
+    private bool RemoveKey(K key)
+    {
+        if (!ElementKind<K>.IsMarshalled)
+        {
+            return OpsPtr->RemoveByKey((void*)Map, Unsafe.AsPointer(ref key)) != 0;
+        }
+
+        byte* Scratch = stackalloc byte[(int)OpsPtr->KeySize];
+        OpsPtr->ConstructKey((void*)Map, Scratch);
+        ElementMarshal.Write<K>((nint)Scratch, key);
+        bool bRemoved = OpsPtr->RemoveByKey((void*)Map, Scratch) != 0;
+        OpsPtr->DestructKey((void*)Map, Scratch);
+        return bRemoved;
     }
 
     public bool TryGetValue(K key, out V value)
     {
         if (IsValid)
         {
-            void* Slot = OpsPtr->Find((void*)Map, &key);
+            void* Slot = FindKey(key);
             if (Slot != null)
             {
-                value = *(V*)Slot;
+                value = ElementMarshal.Read<V>((nint)Slot);
                 return true;
             }
         }
-        value = default;
+        value = default!;
         return false;
     }
 
-    public bool ContainsKey(K key) => IsValid && OpsPtr->Find((void*)Map, &key) != null;
+    public bool ContainsKey(K key) => IsValid && FindKey(key) != null;
 
     /// <summary>Adds a pair. Unlike <see cref="Dictionary{K,V}.Add"/> this overwrites an existing key rather
     /// than throwing, matching the native map's insert-or-assign.</summary>
     public void Add(K key, V value) => Set(key, value);
 
-    public bool Remove(K key) => IsValid && OpsPtr->RemoveByKey((void*)Map, &key) != 0;
+    public bool Remove(K key) => IsValid && RemoveKey(key);
 
     public void Clear()
     {
@@ -195,7 +253,7 @@ public readonly unsafe struct THashMap<K, V> : IDictionary<K, V>
                 return false;
             }
 
-            Current = new KeyValuePair<K, V>(*(K*)Key, *(V*)Value);
+            Current = new KeyValuePair<K, V>(ElementMarshal.Read<K>((nint)Key), ElementMarshal.Read<V>((nint)Value));
             return true;
         }
 

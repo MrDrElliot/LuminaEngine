@@ -1,4 +1,4 @@
-#include "EditorPCH.h"
+﻿#include "EditorPCH.h"
 #include "AudioGraphCompiler.h"
 
 #include "AudioGraphNode.h"
@@ -85,8 +85,9 @@ namespace Lumina
 
             OnStack.insert(Node);
 
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 CEdNodeGraphPin* Source = ResolveSourcePin(InputPin);
                 if (Source == nullptr || Source->GetOwningNode() == nullptr)
                 {
@@ -256,7 +257,7 @@ namespace Lumina
                 }
 
                 const uint16 Slot = Context.Allocate(InputNode->Type);
-                Context.PinSlots[OutputPins[0]] = Slot;
+                Context.PinSlots[OutputPins[0].Get()] = Slot;
 
                 if (Result.Program.FindInput(InputNode->ParameterName) != nullptr)
                 {
@@ -294,7 +295,7 @@ namespace Lumina
                 FAudioGraphParameterDecl Decl;
                 Decl.Name = NamedOutput->ParameterName;
                 Decl.Type = EAudioGraphType::Float;
-                Decl.Slot = ResolveInputSlot(InputPins[0], Context);
+                Decl.Slot = ResolveInputSlot(InputPins[0].Get(), Context);
                 Result.Program.Outputs.push_back(Decl);
                 continue;
             }
@@ -310,7 +311,7 @@ namespace Lumina
                 FAudioGraphParameterDecl Decl;
                 Decl.Name = TriggerOutput->ParameterName;
                 Decl.Type = EAudioGraphType::Trigger;
-                Decl.Slot = ResolveInputSlot(InputPins[0], Context);
+                Decl.Slot = ResolveInputSlot(InputPins[0].Get(), Context);
                 Result.Program.Outputs.push_back(Decl);
                 continue;
             }
@@ -321,12 +322,12 @@ namespace Lumina
 
                 if (InputPins.size() >= 3)
                 {
-                    Result.Program.OutputLeftSlot  = ResolveInputSlot(InputPins[0], Context);
-                    Result.Program.OutputRightSlot = ResolveInputSlot(InputPins[1], Context);
+                    Result.Program.OutputLeftSlot  = ResolveInputSlot(InputPins[0].Get(), Context);
+                    Result.Program.OutputRightSlot = ResolveInputSlot(InputPins[1].Get(), Context);
 
                     // Only a wired finish pin can retire the voice; an unwired one would never fire.
                     Result.Program.FinishedSlot = InputPins[2]->HasConnection()
-                        ? ResolveInputSlot(InputPins[2], Context)
+                        ? ResolveInputSlot(InputPins[2].Get(), Context)
                         : kAudioGraphInvalidSlot;
                 }
                 continue;

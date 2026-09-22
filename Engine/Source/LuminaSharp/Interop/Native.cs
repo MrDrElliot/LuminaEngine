@@ -99,9 +99,14 @@ public static unsafe partial class Native
 
     // The payload property, whose width the managed side copies through.
     [NativeCall] public static partial IntPtr PropOptionalInner(IntPtr Prop);
-    [NativeCall] public static partial int PropOptionalHasValue(IntPtr Container, IntPtr Prop);
     [NativeCall] public static partial void PropOptionalSetValue(IntPtr Container, IntPtr Prop, IntPtr Value);
     [NativeCall] public static partial void PropOptionalReset(IntPtr Container, IntPtr Prop);
+
+    [NativeCall] public static partial IntPtr OptionalValueAt(IntPtr Member, IntPtr Prop);
+
+    [NativeCall] public static partial void OptionalSetValueAt(IntPtr Member, IntPtr Prop, IntPtr Value);
+
+    [NativeCall] public static partial void OptionalResetAt(IntPtr Member, IntPtr Prop);
 
     // Component op-table access. The token returned by FindComponentOps is resolved once per type and
     // reused; the get/has/emplace/remove calls take it plus the world + entity.
@@ -213,6 +218,8 @@ public static unsafe partial class Native
     // Assigns a TObjectPtr at a raw address, releasing the old reference and adding one to the new. The write
     // half of an object container element: a raw pointer store would skip the refcount. See ElementMarshal (EElementKind.ObjectRef).
     [NativeCall] public static partial void SetObjectPtr(IntPtr Slot, IntPtr Object);
+
+    [NativeCall] public static partial IntPtr GetObjectPtr(IntPtr Slot);
 
     // FName interning. Address-based, not property-based, so the same pair serves a member and an element of
     // a TVector<FName>. FName itself is POD, so nothing else about it crosses -- reads and writes of the

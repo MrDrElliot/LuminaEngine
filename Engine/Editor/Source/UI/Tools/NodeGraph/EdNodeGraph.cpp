@@ -173,8 +173,9 @@ namespace Lumina
             CEdNodeGraphPin* InputPin = nullptr;
             CEdNodeGraphPin* OutputPin = nullptr;
 
-            for (CEdGraphNode* Node : Nodes)
+            for (const auto& NodeRef : Nodes)
             {
+                CEdGraphNode* Node = NodeRef.Get();
                 if (!InputPin)
                 {
                     InputPin = Node->GetPin(InputID, ENodePinDirection::Input);
@@ -714,8 +715,9 @@ namespace Lumina
 
     void CEdNodeGraph::CollectContributingNodes(THashSet<CEdGraphNode*>& OutContributing) const
     {
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (Node != nullptr && IsGraphRootNode(Node))
             {
                 GraphAlgorithms::CollectReachableFromRoot(Node, OutContributing);
@@ -736,8 +738,9 @@ namespace Lumina
             return;
         }
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (Node != nullptr && Contributing.find(Node) == Contributing.end())
             {
                 OutDead.push_back(Node);
@@ -801,8 +804,9 @@ namespace Lumina
         for (int32 i = (int32)Sorted.size() - 1; i >= 0; --i)
         {
             CEdGraphNode* Node = Sorted[i];
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connected : InputPin->GetConnections())
                 {
                     CEdGraphNode* Producer = Connected->GetOwningNode();
@@ -844,8 +848,9 @@ namespace Lumina
                 {
                     float Sum = 0.0f;
                     int32 Count = 0;
-                    for (CEdNodeGraphPin* OutputPin : Node->GetOutputPins())
+                    for (const auto& OutputPinRef : Node->GetOutputPins())
                     {
+                        CEdNodeGraphPin* OutputPin = OutputPinRef.Get();
                         for (CEdNodeGraphPin* Connected : OutputPin->GetConnections())
                         {
                             auto It = PlacedY.find(Connected->GetOwningNode());
@@ -1018,8 +1023,9 @@ namespace Lumina
         // A procedurally-built graph carries positions but no saved layout, so seed from them once.
         if (bFirstDraw && GraphSaveData.empty())
         {
-            for (CEdGraphNode* Node : Nodes)
+            for (const auto& NodeRef : Nodes)
             {
+                CEdGraphNode* Node = NodeRef.Get();
                 NodeEditor::SetNodePosition(Node->GetNodeID(), ImVec2(Node->GridX, Node->GridY));
             }
         }
@@ -1061,10 +1067,12 @@ namespace Lumina
         }
 
         // Collected before submission so a graph drawing its own wires can lay them under the nodes.
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            CEdGraphNode* Node = NodeRef.Get();
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
                     Links.emplace_back(InputPin, Connection);
@@ -1092,8 +1100,9 @@ namespace Lumina
 
         DrawGraphOverlay(Links);
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             ImVec2 Position = NodeEditor::GetNodePosition(Node->GetNodeID());
             Node->GridX = Position.x;
             Node->GridY = Position.y;
@@ -1170,8 +1179,9 @@ namespace Lumina
                 ImGui::EndVertical();
             }
             
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 NodeBuilder.Input(InputPin->GetPinGUID());
     
                 ImGui::PushID(InputPin);
@@ -1223,8 +1233,9 @@ namespace Lumina
             NodeBuilder.Middle();
             Node->DrawNodeBody();
             
-            for (CEdNodeGraphPin* OutputPin : Node->GetOutputPins())
+            for (const auto& OutputPinRef : Node->GetOutputPins())
             {
+                CEdNodeGraphPin* OutputPin = OutputPinRef.Get();
                 NodeBuilder.Output(OutputPin->GetPinGUID());
                 
                 ImGui::PushID(OutputPin);
@@ -1472,8 +1483,9 @@ namespace Lumina
         CEdGraphNode* SoleSelectedNode = nullptr;
         int32 SelectedNodeCount = 0;
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (NodeEditor::IsNodeSelected(Node->GetNodeID()))
             {
                 ++SelectedNodeCount;
@@ -1522,8 +1534,9 @@ namespace Lumina
         {
             if (NodeEditor::NodeId DoubleClickedNode = NodeEditor::GetDoubleClickedNode())
             {
-                for (CEdGraphNode* Node : Nodes)
+                for (const auto& NodeRef : Nodes)
                 {
+                    CEdGraphNode* Node = NodeRef.Get();
                     if (Cmp::Equal(Node->GetNodeID(), DoubleClickedNode.Get()))
                     {
                         NodeDoubleClickedCallback(Node);
@@ -1581,8 +1594,9 @@ namespace Lumina
                     const uint32 StartGUID = static_cast<uint32>(StartPinID.Get());
                     const uint32 EndGUID   = static_cast<uint32>(EndPinID.Get());
 
-                    for (CEdGraphNode* Node : Nodes)
+                    for (const auto& NodeRef : Nodes)
                     {
+                        CEdGraphNode* Node = NodeRef.Get();
                         if (!StartPin)
                         {
                             StartPin = Node->GetPin(StartGUID, ENodePinDirection::Output);
@@ -1646,8 +1660,9 @@ namespace Lumina
                 {
                     CEdNodeGraphPin* SourcePin = nullptr;
                     const uint32 PinGUID = static_cast<uint32>(NewNodeFromPinId.Get());
-                    for (CEdGraphNode* Node : Nodes)
+                    for (const auto& NodeRef : Nodes)
                     {
+                        CEdGraphNode* Node = NodeRef.Get();
                         SourcePin = Node->GetPin(PinGUID, ENodePinDirection::Output);
                         if (SourcePin) break;
                         SourcePin = Node->GetPin(PinGUID, ENodePinDirection::Input);
@@ -1678,7 +1693,7 @@ namespace Lumina
 
                 if (NodeItr != Nodes.end())
                 {
-                    CEdGraphNode* Node = *NodeItr;
+                    CEdGraphNode* Node = NodeItr->Get();
                     if (!NodeEditor::AcceptDeletedItem())
                     {
                         continue;
@@ -1689,8 +1704,9 @@ namespace Lumina
                         PreNodeDeletedCallback(Node);
                     }
                     
-                    for (CEdNodeGraphPin* Pin : Node->GetInputPins())
+                    for (const auto& PinRef : Node->GetInputPins())
                     {
+                        CEdNodeGraphPin* Pin = PinRef.Get();
                         if (Pin->HasConnection())
                         {
                             TVector<CEdNodeGraphPin*> PinConnections = Pin->GetConnections();
@@ -1702,8 +1718,9 @@ namespace Lumina
                         }
                     }
         
-                    for (CEdNodeGraphPin* Pin : Node->GetOutputPins())
+                    for (const auto& PinRef : Node->GetOutputPins())
                     {
+                        CEdNodeGraphPin* Pin = PinRef.Get();
                         if (Pin->HasConnection())
                         {
                             TVector<CEdNodeGraphPin*> PinConnections = Pin->GetConnections();

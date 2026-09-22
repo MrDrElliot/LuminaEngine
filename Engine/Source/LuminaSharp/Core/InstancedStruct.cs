@@ -4,6 +4,7 @@ using LuminaSharp;
 namespace Lumina;
 
 /// A view over a native FInstancedStruct, which owns a reflected struct value whose type is chosen at runtime.
+[global::LuminaSharp.NativeSlotView]
 public readonly unsafe struct FInstancedStruct
 {
     private readonly nint Address;

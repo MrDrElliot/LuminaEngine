@@ -2,6 +2,8 @@
 
 #include "Platform/GenericPlatform.h"
 
+#include <utility>
+
 #define BIT(x) (1 << (x))
 #define BIT64(x) (1ULL << (x))
 
@@ -58,40 +60,36 @@
     X& operator = (X&&) = default \
 
 #define ENUM_CLASS_FLAGS(Enum) \
-inline           Enum& operator|=(Enum& Lhs, Enum Rhs) { return Lhs = (Enum)((__underlying_type(Enum))Lhs | (__underlying_type(Enum))Rhs); } \
-inline           Enum& operator&=(Enum& Lhs, Enum Rhs) { return Lhs = (Enum)((__underlying_type(Enum))Lhs & (__underlying_type(Enum))Rhs); } \
-inline           Enum& operator^=(Enum& Lhs, Enum Rhs) { return Lhs = (Enum)((__underlying_type(Enum))Lhs ^ (__underlying_type(Enum))Rhs); } \
-inline constexpr Enum  operator| (Enum  Lhs, Enum Rhs) { return (Enum)((__underlying_type(Enum))Lhs | (__underlying_type(Enum))Rhs); } \
-inline constexpr Enum  operator& (Enum  Lhs, Enum Rhs) { return (Enum)((__underlying_type(Enum))Lhs & (__underlying_type(Enum))Rhs); } \
-inline constexpr Enum  operator^ (Enum  Lhs, Enum Rhs) { return (Enum)((__underlying_type(Enum))Lhs ^ (__underlying_type(Enum))Rhs); } \
-inline constexpr bool  operator! (Enum  E)             { return !(__underlying_type(Enum))E; } \
-inline constexpr Enum  operator~ (Enum  E)             { return (Enum)~(__underlying_type(Enum))E; } \
+inline           Enum& operator|=(Enum& Lhs, Enum Rhs) { return Lhs = (Enum)(std::to_underlying(Lhs) | std::to_underlying(Rhs)); } \
+inline           Enum& operator&=(Enum& Lhs, Enum Rhs) { return Lhs = (Enum)(std::to_underlying(Lhs) & std::to_underlying(Rhs)); } \
+inline           Enum& operator^=(Enum& Lhs, Enum Rhs) { return Lhs = (Enum)(std::to_underlying(Lhs) ^ std::to_underlying(Rhs)); } \
+inline constexpr Enum  operator| (Enum  Lhs, Enum Rhs) { return (Enum)(std::to_underlying(Lhs) | std::to_underlying(Rhs)); } \
+inline constexpr Enum  operator& (Enum  Lhs, Enum Rhs) { return (Enum)(std::to_underlying(Lhs) & std::to_underlying(Rhs)); } \
+inline constexpr Enum  operator^ (Enum  Lhs, Enum Rhs) { return (Enum)(std::to_underlying(Lhs) ^ std::to_underlying(Rhs)); } \
+inline constexpr bool  operator! (Enum  E)             { return !std::to_underlying(E); } \
+inline constexpr Enum  operator~ (Enum  E)             { return (Enum)~std::to_underlying(E); } \
 static_assert(true, "ENUM_CLASS_FLAGS consumes the semicolon at the call site")
 
 template<typename Enum>
 [[nodiscard]] constexpr bool EnumHasAllFlags(Enum Flags, Enum Contains)
 {
-    using UnderlyingType = __underlying_type(Enum);
-    return ((UnderlyingType)Flags & (UnderlyingType)Contains) == (UnderlyingType)Contains;
+    return (std::to_underlying(Flags) & std::to_underlying(Contains)) == std::to_underlying(Contains);
 }
 
 template<typename Enum>
 [[nodiscard]] constexpr bool EnumHasAnyFlags(Enum Flags, Enum Contains)
 {
-    using UnderlyingType = __underlying_type(Enum);
-    return ((UnderlyingType)Flags & (UnderlyingType)Contains) != 0;
+    return (std::to_underlying(Flags) & std::to_underlying(Contains)) != 0;
 }
 
 template<typename Enum>
 constexpr void EnumAddFlags(Enum& Flags, Enum FlagsToAdd)
 {
-    using UnderlyingType = __underlying_type(Enum);
-    Flags = (Enum)((UnderlyingType)Flags | (UnderlyingType)FlagsToAdd);
+    Flags = (Enum)(std::to_underlying(Flags) | std::to_underlying(FlagsToAdd));
 }
 
 template<typename Enum>
 constexpr void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
 {
-    using UnderlyingType = __underlying_type(Enum);
-    Flags = (Enum)((UnderlyingType)Flags & ~(UnderlyingType)FlagsToRemove);
+    Flags = (Enum)(std::to_underlying(Flags) & ~std::to_underlying(FlagsToRemove));
 }

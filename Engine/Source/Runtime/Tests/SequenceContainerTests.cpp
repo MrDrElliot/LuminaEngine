@@ -62,6 +62,29 @@ namespace LuminaSequenceTests
         SUCCEED();
     }
 
+    // The accessors are one deducing-this template each, so constness is deduced rather than declared.
+    TEST(StaticArray, ConstAccessorsStayConst)
+    {
+        using FMutable = TArray<int, 4>&;
+        using FConst   = const TArray<int, 4>&;
+
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>()[0]), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>()[0]), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().at(0)), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().at(0)), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().front()), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().front()), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().back()), int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().back()), const int&>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().data()), int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().data()), const int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().begin()), int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().begin()), const int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FMutable>().end()), int*>);
+        static_assert(std::is_same_v<decltype(std::declval<FConst>().end()), const int*>);
+        SUCCEED();
+    }
+
     TEST(StaticArray, AccessorsAndIteration)
     {
         TArray<int, 4> Values{ 10, 20, 30, 40 };
@@ -337,6 +360,41 @@ namespace LuminaSequenceTests
             EXPECT_EQ(Addresses[static_cast<size_t>(Index)], &*It) << "moved at " << Index;
             EXPECT_EQ(*It, Index);
         }
+    }
+
+    TEST(List, InsertsAtPositionAndReturnsTheNewElement)
+    {
+        TList<int> Values;
+        for (int Index = 0; Index < 3; ++Index)
+        {
+            Values.push_back(Index * 10);
+        }
+
+        TList<int>::iterator Second = Values.begin();
+        ++Second;
+
+        TList<int>::iterator Inserted = Values.insert(Second, 5);
+        EXPECT_EQ(*Inserted, 5);
+
+        TList<int>::iterator Expected = Values.begin();
+        ++Expected;
+        EXPECT_EQ(&*Inserted, &*Expected);
+
+        TList<int>::iterator Front = Values.insert(Values.begin(), -1);
+        EXPECT_EQ(*Front, -1);
+        EXPECT_EQ(&*Front, &Values.front());
+
+        TList<int>::iterator Back = Values.emplace(Values.end(), 99);
+        EXPECT_EQ(*Back, 99);
+        EXPECT_EQ(&*Back, &Values.back());
+
+        std::vector<int> Seen;
+        for (int Element : Values)
+        {
+            Seen.push_back(Element);
+        }
+        EXPECT_EQ(Seen, (std::vector<int>{ -1, 0, 5, 10, 20, 99 }));
+        EXPECT_EQ(Values.size(), 6u);
     }
 
     TEST(List, ErasesAndPops)

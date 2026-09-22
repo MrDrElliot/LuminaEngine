@@ -409,6 +409,7 @@ internal sealed class ScriptManager
     // Global per-frame pump, empty because SEntityScriptSystem drives per-world ticking natively.
     public void Tick()
     {
+        GameThreadContext.Drain();
     }
 
     public void Shutdown()
@@ -433,6 +434,8 @@ internal sealed class ScriptManager
         CTimerLibrary.ClearAllManaged();      // world timers whose Action captures a script instance
         UIDataModel.DisposeAll();             // MVVM bindings (user ViewModel + native data model)
         Asset.PurgePending();                 // in-flight async asset-load callbacks
+        ScriptAsync.Clear();                  // tokens for async functions still running in the old generation
+        GameTaskRegistry.CancelAll();         // pending awaits, whose continuations close over unloading code
         ScriptCallback.PurgeAll();            // in-flight one-shot callbacks handed to native
         PropertyAccessor.ClearScriptCaches(); // cached get/set delegates over user property types
         ScriptFunctionDispatch.Reset();        // [ScriptFunction] bindings, which root user MethodInfos

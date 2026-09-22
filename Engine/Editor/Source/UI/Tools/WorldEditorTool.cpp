@@ -376,11 +376,11 @@ namespace Lumina
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
             if (Data.FolderID != 0)
             {
-                DragDrop::SetSceneFolderPayload(World, Data.FolderID);
+                DragDrop::SetSceneFolderPayload(World.Get(), Data.FolderID);
                 return;
             }
 
-            DragDrop::SetEntityPayload(World, Data.Entity);
+            DragDrop::SetEntityPayload(World.Get(), Data.Entity);
         };
 
         OutlinerContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
@@ -486,7 +486,7 @@ namespace Lumina
                         {
                             const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Data.Entity);
                             BeginRelationshipTransaction({ Data.Entity }, Relationship->Parent);
-                            CSkeletalMeshLibrary::AttachEntityToSocket(World, Data.Entity, Relationship->Parent, Socket);
+                            CSkeletalMeshLibrary::AttachEntityToSocket(World.Get(), Data.Entity, Relationship->Parent, Socket);
                             EndTransaction("Attach to Socket");
                             if (Data.Entity == DetailsEntity)
                             {
@@ -658,7 +658,7 @@ namespace Lumina
             // Tooltip building (component scan) is deferred from tree-build to first hover.
             BuildEntityTooltip(Data.Entity, Tree.Get<FTreeNodeDisplay>(Item));
 
-            EditorEntityUtils::DrawEntityBounds(World, Data.Entity, FColor::White, 3.0f);
+            EditorEntityUtils::DrawEntityBounds(World.Get(), Data.Entity, FColor::White, 3.0f);
         };
 
         OutlinerContext.RebuildTreeFunction = [this](FTreeListView& Tree)
@@ -808,7 +808,7 @@ namespace Lumina
         if (bGamePreviewRunning)
         {
             // Closing the tool mid-play ends PIE too, so subscribers must not be left holding the world.
-            FCoreEditorDelegates::OnPIEEnd.Broadcast(World);
+            FCoreEditorDelegates::OnPIEEnd.Broadcast(World.Get());
             OnGamePreviewStopRequested.Broadcast();
         }
         
@@ -1032,7 +1032,7 @@ namespace Lumina
                 }
 
                 // Every selectable type gets the same box, with a unit-box fallback resolved by the shared helper.
-                EditorEntityUtils::DrawEntitySelectionBox(World, Entity, FColor::Green, 0.2f, 5.0f);
+                EditorEntityUtils::DrawEntitySelectionBox(World.Get(), Entity, FColor::Green, 0.2f, 5.0f);
             }
         }
 
@@ -1305,7 +1305,7 @@ namespace Lumina
         ActiveModeIndex = 0;
         if (IWorldEditorMode* Active = GetActiveMode())
         {
-            Active->OnEnter(World);
+            Active->OnEnter(World.Get());
         }
     }
 
@@ -1447,12 +1447,12 @@ namespace Lumina
 
         if (IWorldEditorMode* Old = EditorModes[ActiveModeIndex].get())
         {
-            Old->OnExit(World);
+            Old->OnExit(World.Get());
         }
         ActiveModeIndex = NewIndex;
         if (IWorldEditorMode* New = EditorModes[ActiveModeIndex].get())
         {
-            New->OnEnter(World);
+            New->OnEnter(World.Get());
         }
     }
 
@@ -1605,8 +1605,8 @@ namespace Lumina
 
         if (IWorldEditorMode* ActiveMode = GetActiveMode())
         {
-            ActiveMode->Tick(World, CameraComponent, bViewportHovered, ViewportOrigin, ViewportSize);
-            ActiveMode->DrawOverlay(World, ViewportOrigin, ViewportSize, CameraComponent);
+            ActiveMode->Tick(World.Get(), CameraComponent, bViewportHovered, ViewportOrigin, ViewportSize);
+            ActiveMode->DrawOverlay(World.Get(), ViewportOrigin, ViewportSize, CameraComponent);
         }
 
         UpdateSimulationGrab(ViewportOrigin, ViewportSize, bViewportHovered);
@@ -2062,7 +2062,7 @@ namespace Lumina
         }
 
         // The camera-preview grip flag is set by the overlay below, so it lags one frame.
-        if (!bModeOwnsInput && !bCameraOwnsInput && !bCameraPreviewMouseOver && !AreVisualizersCapturingInput() && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
+        if (!bModeOwnsInput && !bCameraOwnsInput && !bCameraPreviewMouseOver && !AreVisualizersCapturingInput() && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World.Get()))
         {
             uint32 PickerWidth = World->GetRenderer()->GetRenderExtent().x;
             uint32 PickerHeight = World->GetRenderer()->GetRenderExtent().y;
@@ -2599,7 +2599,7 @@ namespace Lumina
 
         if (IWorldEditorMode* ActiveMode = GetActiveMode())
         {
-            ActiveMode->DrawToolbar(World, ButtonSize);
+            ActiveMode->DrawToolbar(World.Get(), ButtonSize);
         }
     }
 
@@ -2927,12 +2927,12 @@ namespace Lumina
             GenerateThumbnail(World->GetPackage());
         }
 
-        FCoreEditorDelegates::OnAssetPreSave.Broadcast(World);
+        FCoreEditorDelegates::OnAssetPreSave.Broadcast(World.Get());
 
         if (CPackage::SavePackage(World->GetPackage(), World->GetPackage()->GetPackagePath()))
         {
-            FAssetRegistry::Get().AssetSaved(World);
-            FCoreEditorDelegates::OnAssetSaved.Broadcast(World);
+            FAssetRegistry::Get().AssetSaved(World.Get());
+            FCoreEditorDelegates::OnAssetSaved.Broadcast(World.Get());
             ImGuiX::Notifications::NotifySuccess("Successfully saved world: \"{0}\"", World->GetName().c_str());
         }
         else
@@ -3054,7 +3054,7 @@ namespace Lumina
 
             if (CPackage::SavePackage(NewPackage, Path))
             {
-                FAssetRegistry::Get().AssetCreated(World);
+                FAssetRegistry::Get().AssetCreated(World.Get());
                 ImGuiX::Notifications::NotifySuccess("Saved world: \"{0}\"", Path);
                 return true;
             }
@@ -3281,7 +3281,7 @@ namespace Lumina
                 CaptureRoot = ScratchRoot;
             }
 
-            Prefab->CaptureFromWorld(World, CaptureRoot);
+            Prefab->CaptureFromWorld(World.Get(), CaptureRoot);
 
             // Anchor the captured root at origin so the prefab opens centered in its editor.
             Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
@@ -3383,7 +3383,7 @@ namespace Lumina
 
         // The refresh adds, destroys and reparents, so this needs the whole-registry snapshot.
         BeginTransaction();
-        Source->RefreshInstance(World, InstanceRoot);
+        Source->RefreshInstance(World.Get(), InstanceRoot);
         EndTransaction("Resync Prefab");
 
         // A pruned node may have been selected, and every details-panel component pointer is stale.
@@ -3397,7 +3397,7 @@ namespace Lumina
     void FWorldEditorTool::DetachPrefabInstance(ECS::FEntity InstanceRoot)
     {
         BeginTransaction();
-        if (CPrefab::DetachInstance(World, InstanceRoot))
+        if (CPrefab::DetachInstance(World.Get(), InstanceRoot))
         {
             EndTransaction("Detach from Prefab");
             OutlinerListView.MarkTreeDirty();
@@ -4186,7 +4186,7 @@ namespace Lumina
             // Its net mode makes CreateRenderer a no-op, so it stays invisible and listens on loopback.
             if (PlaySettings.NetMode == ENetMode::DedicatedServer)
             {
-                PIEDedicatedServerWorld = GWorldManager->StartPIE(ProxyWorld, EWorldType::Game, ENetMode::DedicatedServer);
+                PIEDedicatedServerWorld = GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Game, ENetMode::DedicatedServer);
                 if (PIEDedicatedServerWorld == nullptr)
                 {
                     LOG_WARN("Failed to start the dedicated-server world for PIE.");
@@ -4194,7 +4194,7 @@ namespace Lumina
             }
 
             // StartPIE returns null when the world cannot be duplicated, so bail before rebinding to null.
-            CWorld* PIEWorld = GWorldManager->StartPIE(ProxyWorld, EWorldType::Game, ResolvePlayerNetMode(0));
+            CWorld* PIEWorld = GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Game, ResolvePlayerNetMode(0));
             if (PIEWorld == nullptr)
             {
                 LOG_WARN("Cannot Play '{0}': world has no package (save the world before playing).", World->GetName().c_str());
@@ -4230,7 +4230,7 @@ namespace Lumina
         else
         {
             // Broadcast while the PIE world is still live; the teardown below invalidates it.
-            FCoreEditorDelegates::OnPIEEnd.Broadcast(World);
+            FCoreEditorDelegates::OnPIEEnd.Broadcast(World.Get());
 
             // Tear down extra player preview worlds (FEditorUI) before the primary teardown below.
             OnGamePreviewStopRequested.Broadcast();
@@ -4274,7 +4274,7 @@ namespace Lumina
             ProxyEditorEntity = ECS::NullEntity;
             EditorEntity = ECS::NullEntity;
 
-            SetWorld(ProxyWorld);
+            SetWorld(ProxyWorld.Get());
             ProxyWorld->SetActive(true);
 
             if (bHasSavedCamera && ECS::GetWorldRegistry(*World).IsValid(EditorEntity))
@@ -4342,7 +4342,7 @@ namespace Lumina
             ProxyEditorEntity = EditorEntity;
 
             // StartPIE returns null when the world cannot be duplicated, so bail before dereferencing it.
-            CWorld* SimWorld = GWorldManager->StartPIE(ProxyWorld, EWorldType::Simulation, ENetMode::Standalone);
+            CWorld* SimWorld = GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Simulation, ENetMode::Standalone);
             if (SimWorld == nullptr)
             {
                 LOG_WARN("Cannot Simulate '{0}': world has no package (save the world before simulating).", World->GetName().c_str());
@@ -4397,7 +4397,7 @@ namespace Lumina
             EditorEntity = ECS::NullEntity;
             ProxyEditorEntity = ECS::NullEntity;
 
-            SetWorld(ProxyWorld);
+            SetWorld(ProxyWorld.Get());
             ProxyWorld->SetActive(true);
             ASSERT(ECS::GetWorldRegistry(*World).IsValid(EditorEntity));
 

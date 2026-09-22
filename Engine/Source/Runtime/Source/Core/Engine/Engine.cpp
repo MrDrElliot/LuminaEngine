@@ -1046,7 +1046,7 @@ namespace Lumina
             return;
         }
         Context->SourceWorld  = SourceWorld;
-        Context->GameInstance = GameInstance;
+        Context->GameInstance = GameInstance.Get();
 
         if (FInputViewport* Primary = GApp ? GApp->GetPrimaryViewport() : nullptr)
         {
@@ -1140,7 +1140,7 @@ namespace Lumina
             FWorldContext* NewContext = GWorldManager->CreateWorldContext(ColdWorld, EWorldType::Game, ColdNetMode);
             if (NewContext != nullptr)
             {
-                NewContext->GameInstance = GameInstance;
+                NewContext->GameInstance = GameInstance.Get();
                 NewContext->SourceWorld  = WorldAsset;
                 NewContext->MapPath      = FString(MapName.c_str());
                 if (bPendingHostOverride)

@@ -1,4 +1,4 @@
-#include "Containers/Queue.h"
+﻿#include "Containers/Queue.h"
 #include "MaterialNodeGraph.h"
 #include "MaterialCompiler.h"
 #include "MaterialGraphSchema.h"
@@ -127,8 +127,9 @@ namespace Lumina
                 continue;
             }
 
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Conn : InputPin->GetConnections())
                 {
                     Enqueue(Conn->GetOwningNode());
@@ -177,8 +178,9 @@ namespace Lumina
             return;
         }
 
-        for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+        for (const auto& InputPinRef : Node->GetInputPins())
         {
+            CEdNodeGraphPin* InputPin = InputPinRef.Get();
             for (CEdNodeGraphPin* Conn : InputPin->GetConnections())
             {
                 CollectEmitOrderDepthFirst(Conn->GetOwningNode(), StageSet, Emitted, InProgress, OutOrder, Depth + 1);
@@ -371,15 +373,17 @@ namespace Lumina
             return;
         }
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             Node->ClearError();
             Node->ClearWarning();
         }
 
         // Every walk below resolves a switch through whichever branch is stamped here, so this runs first.
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (CMaterialExpression_StaticSwitch* Switch = Cast<CMaterialExpression_StaticSwitch>(Node))
             {
                 const FName Param = Switch->bDynamic ? Switch->ParameterName : NAME_None;
@@ -598,10 +602,12 @@ namespace Lumina
         Connections.clear();
         Connections.reserve(16);
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            CEdGraphNode* Node = NodeRef.Get();
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
                     Connections.push_back(InputPin->PinID);

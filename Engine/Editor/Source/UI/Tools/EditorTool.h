@@ -160,7 +160,7 @@ namespace Lumina
         NODISCARD EEditorToolFlags GetToolFlags() const { return ToolFlags; }
         NODISCARD bool HasFlag(EEditorToolFlags Flag) const {  return (ToolFlags & Flag) == Flag; }
 
-        NODISCARD CWorld* GetWorld() const { return World; }
+        NODISCARD CWorld* GetWorld() const { return World.Get(); }
         NODISCARD bool HasWorld() const { return World != nullptr; }
         NODISCARD ImGuiID GetCurrentDockspaceID() const { return CurrDockspaceID; }
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <iterator>
 #include <new>
@@ -16,7 +16,7 @@ namespace Lumina::Algo
     struct FLess
     {
         template <typename TLeft, typename TRight>
-        NODISCARD constexpr bool operator()(const TLeft& Left, const TRight& Right) const
+        NODISCARD constexpr static bool operator()(const TLeft& Left, const TRight& Right)
         {
             return Left < Right;
         }
@@ -26,7 +26,7 @@ namespace Lumina::Algo
     struct FIdentity
     {
         template <typename T>
-        NODISCARD constexpr T&& operator()(T&& Value) const
+        NODISCARD constexpr static T&& operator()(T&& Value)
         {
             return static_cast<T&&>(Value);
         }

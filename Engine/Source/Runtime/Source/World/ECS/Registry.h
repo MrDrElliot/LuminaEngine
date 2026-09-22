@@ -281,8 +281,7 @@ namespace Lumina::ECS
 
         //~ Context
 
-        NODISCARD FORCEINLINE FRegistryContext& Ctx() { return Context; }
-        NODISCARD FORCEINLINE const FRegistryContext& Ctx() const { return Context; }
+        template<typename Self> NODISCARD FORCEINLINE auto& Ctx(this Self&& S) { return S.Context; }
 
         template<typename T, typename... TArgs>
         T& EmplaceSingleton(TArgs&&... Args) { return Context.Emplace<T>(std::forward<TArgs>(Args)...); }

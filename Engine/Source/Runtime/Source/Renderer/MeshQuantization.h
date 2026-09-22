@@ -6,6 +6,8 @@
 #include "Shared/SharedConstants.h"
 #include "meshoptimizer.h"
 
+#include <bit>
+
 namespace Lumina
 {
     constexpr int32 MeshletPositionBits = 16;
@@ -20,11 +22,9 @@ namespace Lumina
         int32 Exponent = 0;
     };
 
-    FORCEINLINE float MeshletExponentScale(int32 Exponent)
+    FORCEINLINE constexpr float MeshletExponentScale(int32 Exponent)
     {
-        union { uint32 U; float F; } Bits;
-        Bits.U = (uint32)(Math::Clamp(Exponent, -126, 127) + 127) << 23;
-        return Bits.F;
+        return std::bit_cast<float>((uint32)(Math::Clamp(Exponent, -126, 127) + 127) << 23);
     }
 
     FORCEINLINE int32 UnpackMeshletAnchor(uint32 Packed)

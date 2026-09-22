@@ -1,4 +1,4 @@
-#include "PhysicsAssetEditorTool.h"
+﻿#include "PhysicsAssetEditorTool.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
@@ -494,7 +494,7 @@ namespace Lumina
 
         MeshEntity = World->ConstructEntity("PreviewMesh");
         SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
-        MeshComponent.SetSkeletalMesh(Skeleton->PreviewMesh);
+        MeshComponent.SetSkeletalMesh(Skeleton->PreviewMesh.Get());
         Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
         MeshComponent.bRenderBonesDirty = true;
 

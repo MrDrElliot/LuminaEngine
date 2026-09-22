@@ -1,8 +1,9 @@
-#include "Platform/GenericPlatform.h"
+﻿#include "Platform/GenericPlatform.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ExportSignature.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Core/Object/Class.h"
 
@@ -28,3 +29,7 @@ LUMINA_DOTNET_EXPORT(void*, AnimGraph_GetParameterMemory)(void* Component, const
 
     return Comp->GetParameterMemory();
 }
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(AnimGraph_GetParameterMemory)
+);

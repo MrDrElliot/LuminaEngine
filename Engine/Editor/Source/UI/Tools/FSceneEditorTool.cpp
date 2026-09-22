@@ -463,7 +463,7 @@ namespace Lumina
             // Makes the world resolvable to an entity picker, and the parent's sockets to a socket picker.
             SocketCtx = FSocketEditContext();
             BuildSocketPickerData(Entity, SocketCtx);
-            WorldCtx.World = World;
+            WorldCtx.World = World.Get();
 
             // Lets a parameter picker on a component list the graph that entity actually runs.
             const SAnimationGraphComponent* AnimGraph = GetSceneRegistry().TryGet<SAnimationGraphComponent>(Entity);
@@ -3127,7 +3127,7 @@ namespace Lumina
             {
                 if (Binding.Storage->Contains(Entity))
                 {
-                    Binding.Visualizer->Draw(World, Registry, Entity);
+                    Binding.Visualizer->Draw(World.Get(), Registry, Entity);
                 }
             }
         };
@@ -3768,12 +3768,12 @@ namespace Lumina
 
                     static const FPrimitiveEntry PrimitiveEntries[] =
                     {
-                        { LE_ICON_CUBE,         "Cube",     []() -> CStaticMesh* { return CPrimitiveManager::Get().CubeMesh; } },
-                        { LE_ICON_CIRCLE,       "Sphere",   []() -> CStaticMesh* { return CPrimitiveManager::Get().SphereMesh; } },
-                        { LE_ICON_SQUARE,       "Plane",    []() -> CStaticMesh* { return CPrimitiveManager::Get().PlaneMesh; } },
-                        { LE_ICON_CYLINDER,     "Cylinder", []() -> CStaticMesh* { return CPrimitiveManager::Get().CylinderMesh; } },
-                        { LE_ICON_CONE,         "Cone",     []() -> CStaticMesh* { return CPrimitiveManager::Get().ConeMesh; } },
-                        { LE_ICON_GAS_CYLINDER, "Capsule",  []() -> CStaticMesh* { return CPrimitiveManager::Get().CapsuleMesh; } },
+                        { LE_ICON_CUBE,         "Cube",     []() -> CStaticMesh* { return CPrimitiveManager::Get().CubeMesh.Get(); } },
+                        { LE_ICON_CIRCLE,       "Sphere",   []() -> CStaticMesh* { return CPrimitiveManager::Get().SphereMesh.Get(); } },
+                        { LE_ICON_SQUARE,       "Plane",    []() -> CStaticMesh* { return CPrimitiveManager::Get().PlaneMesh.Get(); } },
+                        { LE_ICON_CYLINDER,     "Cylinder", []() -> CStaticMesh* { return CPrimitiveManager::Get().CylinderMesh.Get(); } },
+                        { LE_ICON_CONE,         "Cone",     []() -> CStaticMesh* { return CPrimitiveManager::Get().ConeMesh.Get(); } },
+                        { LE_ICON_GAS_CYLINDER, "Capsule",  []() -> CStaticMesh* { return CPrimitiveManager::Get().CapsuleMesh.Get(); } },
                     };
 
                     TVector<const FPrimitiveEntry*> FilteredPrimitives;

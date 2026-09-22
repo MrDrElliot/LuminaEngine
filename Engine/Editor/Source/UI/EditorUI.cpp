@@ -573,7 +573,7 @@ namespace Lumina
         // Held through a TObjectPtr, since a project load can hand the tool a different world and free this.
         TObjectPtr<CWorld> World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
 
-        WorldEditorTool = CreateTool<FWorldEditorTool>(this, World);
+        WorldEditorTool = CreateTool<FWorldEditorTool>(this, World.Get());
         ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);
         ContentBrowser = CreateTool<FContentBrowserEditorTool>(this);
 
@@ -611,7 +611,7 @@ namespace Lumina
         // The default scene references engine content by path, so it waits until a project load populates the registry.
         if (WorldEditorTool->GetWorld() == World)
         {
-            EditorEntityUtils::PopulateDefaultScene(World);
+            EditorEntityUtils::PopulateDefaultScene(World.Get());
         }
     }
 

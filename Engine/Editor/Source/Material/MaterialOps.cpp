@@ -1,4 +1,4 @@
-#include "EditorPCH.h"
+﻿#include "EditorPCH.h"
 #include "Material/MaterialOps.h"
 
 #include "Assets/AssetTypes/Material/Material.h"
@@ -241,13 +241,15 @@ namespace Lumina::MaterialOps
             return false;
         }
 
-        for (CEdNodeGraphPin* Pin : Node->GetInputPins())
+        for (const auto& PinRef : Node->GetInputPins())
         {
+            CEdNodeGraphPin* Pin = PinRef.Get();
             DisconnectEverything(Pin);
         }
 
-        for (CEdNodeGraphPin* Pin : Node->GetOutputPins())
+        for (const auto& PinRef : Node->GetOutputPins())
         {
+            CEdNodeGraphPin* Pin = PinRef.Get();
             DisconnectEverything(Pin);
         }
 

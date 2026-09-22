@@ -77,7 +77,7 @@ namespace Lumina
         void SetSkeletalMesh(CSkeletalMesh* InMesh) { SkeletalMesh = InMesh; InvalidateRenderResolve(); }
 
         FUNCTION()
-        CSkeletalMesh* GetSkeletalMesh() const { return SkeletalMesh; }
+        CSkeletalMesh* GetSkeletalMesh() const { return SkeletalMesh.Get(); }
 
         /** The skeletal mesh asset to render and animate for this component. */
         PROPERTY(Editable, Replicated, Category = "Mesh")

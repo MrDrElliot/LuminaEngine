@@ -3,6 +3,8 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
+#include "Containers/HashTable.h"
+#include "Core/Templates/Optional.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/FunctionLibrary.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -15,6 +17,35 @@
 
 namespace Lumina
 {
+    /** Holds an FName so it cannot blit, which is what makes it bind as an opaque wrapper. */
+    REFLECT()
+    struct FInteropOpaqueStruct
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FName Label;
+
+        PROPERTY()
+        float Value = 0.0f;
+
+        /** A key whose managed form is not its native bytes, which the map binder used to refuse. */
+        PROPERTY()
+        THashMap<FString, float> Weights;
+
+        /** The same on the value side. */
+        PROPERTY()
+        THashMap<int32, FString> Labels;
+
+        /** Both sides plain values, so a benchmark can show the marshalled branch folding away. */
+        PROPERTY()
+        THashMap<int32, float> Scores;
+
+        /** A payload a Nullable cannot spell, which the optional binder used to refuse. */
+        PROPERTY()
+        TOptional<FString> Note;
+    };
+
     /** Gives the interop tests reflected statics whose shapes the Reflector had to bind, nothing more. */
     REFLECT()
     class RUNTIME_API CInteropTestLibrary : public CFunctionLibrary
@@ -82,5 +113,9 @@ namespace Lumina
 
         FUNCTION()
         static void ResetMakeNameCallCount();
+
+        /** An opaque struct argument, which crosses as the address its managed wrapper views. */
+        FUNCTION()
+        static float ReadOpaqueValue(const FInteropOpaqueStruct& Opaque);
     };
 }

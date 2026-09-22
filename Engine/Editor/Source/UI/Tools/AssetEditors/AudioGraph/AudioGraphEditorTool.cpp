@@ -1,4 +1,4 @@
-#include "EditorPCH.h"
+﻿#include "EditorPCH.h"
 #include "AudioGraphEditorTool.h"
 
 #include "imgui.h"
@@ -53,7 +53,7 @@ namespace Lumina
 
             if (SelectedNode == nullptr)
             {
-                GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
             }
             else
             {
@@ -245,7 +245,7 @@ namespace Lumina
             return false;
         }
 
-        FAudioGraphCompileResult Result = FAudioGraphCompiler::Compile(NodeGraph);
+        FAudioGraphCompileResult Result = FAudioGraphCompiler::Compile(NodeGraph.Get());
 
         CompileMessages.clear();
         for (const FString& Error : Result.Errors)

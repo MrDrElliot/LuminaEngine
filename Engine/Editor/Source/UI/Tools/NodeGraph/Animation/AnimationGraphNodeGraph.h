@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -46,7 +46,7 @@ namespace Lumina
         void CollectAllParameters(FAnimationGraphCompiler& Compiler);
 
         void SetAnimationGraph(CAnimationGraph* InGraph) { AnimationGraph = InGraph; }
-        CAnimationGraph* GetAnimationGraph() const { return AnimationGraph; }
+        CAnimationGraph* GetAnimationGraph() const { return AnimationGraph.Get(); }
 
     private:
 

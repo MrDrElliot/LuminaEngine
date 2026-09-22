@@ -1,4 +1,4 @@
-#include "MaterialFunctionGraph.h"
+﻿#include "MaterialFunctionGraph.h"
 
 #include "MaterialCompiler.h"
 #include "Core/Object/Cast.h"
@@ -20,8 +20,9 @@ namespace Lumina
             return;
         }
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             Node->ClearError();
             Node->ClearWarning();
         }

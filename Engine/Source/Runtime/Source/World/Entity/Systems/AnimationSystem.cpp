@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "AnimationSystem.h"
 #include "World/ECS/Registry.h"
 
@@ -310,7 +310,7 @@ namespace Lumina
             {
                 return nullptr;
             }
-            CSkeletalMesh* SkelMesh = Mesh.SkeletalMesh;
+            CSkeletalMesh* SkelMesh = Mesh.SkeletalMesh.Get();
             if (!SkelMesh->Skeleton.IsValid())
             {
                 return nullptr;

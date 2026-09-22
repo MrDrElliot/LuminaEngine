@@ -21,7 +21,7 @@ namespace Lumina
 
 	struct FAssetDataPtrHash
 	{
-		size_t operator() (const TUniquePtr<FAssetData>& Asset) const noexcept
+		static size_t operator() (const TUniquePtr<FAssetData>& Asset) noexcept
 		{
 			return Hash::GetHash(Asset->AssetGUID);
 		}
@@ -29,7 +29,7 @@ namespace Lumina
 
 	struct FAssetDataPtrEqual
 	{
-		bool operator()(const TUniquePtr<FAssetData>& A, const TUniquePtr<FAssetData>& B) const noexcept
+		static bool operator()(const TUniquePtr<FAssetData>& A, const TUniquePtr<FAssetData>& B) noexcept
 		{
 			return A->AssetGUID == B->AssetGUID;
 		}
@@ -37,7 +37,7 @@ namespace Lumina
 
 	struct FGuidHash
 	{
-		size_t operator()(const FGuid& GUID) const noexcept
+		static size_t operator()(const FGuid& GUID) noexcept
 		{
 			return Hash::GetHash(GUID);
 		}
@@ -45,7 +45,7 @@ namespace Lumina
 
 	struct FAssetDataGuidEqual
 	{
-		bool operator()(const TUniquePtr<FAssetData>& Asset, const FGuid& GUID) const noexcept
+		static bool operator()(const TUniquePtr<FAssetData>& Asset, const FGuid& GUID) noexcept
 		{
 			return Asset->AssetGUID == GUID;
 		}
@@ -67,15 +67,15 @@ namespace Lumina
 
 	struct FTextAssetPtrHash
 	{
-		size_t operator()(const TUniquePtr<FTextAssetData>& A) const noexcept { return Hash::GetHash(A->Guid); }
+		static size_t operator()(const TUniquePtr<FTextAssetData>& A) noexcept { return Hash::GetHash(A->Guid); }
 	};
 	struct FTextAssetPtrEqual
 	{
-		bool operator()(const TUniquePtr<FTextAssetData>& A, const TUniquePtr<FTextAssetData>& B) const noexcept { return A->Guid == B->Guid; }
+		static bool operator()(const TUniquePtr<FTextAssetData>& A, const TUniquePtr<FTextAssetData>& B) noexcept { return A->Guid == B->Guid; }
 	};
 	struct FTextAssetGuidEqual
 	{
-		bool operator()(const TUniquePtr<FTextAssetData>& A, const FGuid& G) const noexcept { return A->Guid == G; }
+		static bool operator()(const TUniquePtr<FTextAssetData>& A, const FGuid& G) noexcept { return A->Guid == G; }
 	};
 
 	using FTextAssetMap = THashSet<TUniquePtr<FTextAssetData>, FTextAssetPtrHash, FTextAssetPtrEqual>;

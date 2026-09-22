@@ -917,7 +917,7 @@ namespace Lumina
 
         THashMap<ECS::FEntity, ECS::FEntity> SourceToDuplicate;
 
-        auto DuplicateRecursive = [&](auto& Self, ECS::FEntity Source, ECS::FEntity NewParent) -> ECS::FEntity
+        auto DuplicateRecursive = [&](this auto const& Self, ECS::FEntity Source, ECS::FEntity NewParent) -> ECS::FEntity
         {
             ECS::FEntity NewEntity = EntityRegistry.Create();
             SourceToDuplicate[Source] = NewEntity;
@@ -989,13 +989,13 @@ namespace Lumina
 
             ECS::Utils::ForEachChild(EntityRegistry, Source, [&](ECS::FEntity Child)
             {
-                Self(Self, Child, NewEntity);
+                Self(Child, NewEntity);
             });
 
             return NewEntity;
         };
 
-        To = DuplicateRecursive(DuplicateRecursive, From, ECS::NullEntity);
+        To = DuplicateRecursive(From, ECS::NullEntity);
 
         for (auto& [Source, Dup] : SourceToDuplicate)
         {
@@ -1322,16 +1322,16 @@ namespace Lumina
 
         TVector<ECS::FEntity> SubTree;
     
-        auto CollectRecursive = [&](auto& Self, ECS::FEntity Current) -> void
+        auto CollectRecursive = [&](this auto const& Self, ECS::FEntity Current) -> void
         {
             ECS::Utils::ForEachChild(Registry, Current, [&](ECS::FEntity Child)
             {
-                Self(Self, Child);
+                Self(Child);
                 SubTree.push_back(Child);
             });
         };
     
-        CollectRecursive(CollectRecursive, Entity);
+        CollectRecursive(Entity);
 
         for (int32 i = (int32)SubTree.size() - 1; i >= 0; i--)
         {
@@ -1458,7 +1458,7 @@ namespace Lumina
             {
                 if (Priorities.IsStageEnabled((EUpdateStage)i))
                 {
-                    SystemUpdateList[i].push_back(FStageSlot{ System, Priorities.GetPriorityForStage((EUpdateStage)i) });
+                    SystemUpdateList[i].push_back(FStageSlot{ System.Get(), Priorities.GetPriorityForStage((EUpdateStage)i) });
                 }
             }
         }

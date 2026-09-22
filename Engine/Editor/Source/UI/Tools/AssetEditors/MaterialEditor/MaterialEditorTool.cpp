@@ -100,7 +100,7 @@ namespace Lumina
 
                 if (SelectedNode == nullptr)
                 {
-                    GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                    GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
                 }
                 else
                 {
@@ -170,7 +170,7 @@ namespace Lumina
 
         MeshEntity = World->ConstructEntity("MeshEntity");
         SStaticMeshComponent& StaticMeshComponent = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
-        StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+        StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
 
         // Kept alongside the mesh rather than created on demand, so switching domains never rebuilds it.
         ParticleEntity = World->ConstructEntity("ParticlePreview");
@@ -203,11 +203,11 @@ namespace Lumina
 
         if (MaterialType != EMaterialType::UI)
         {
-            RmlUi::SetWorldInlineDocument(World, FStringView(), FStringView());
+            RmlUi::SetWorldInlineDocument(World.Get(), FStringView(), FStringView());
         }
         if (!bHidesPreviewMesh && StaticMeshComponent.GetStaticMesh() == nullptr)
         {
-            StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+            StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
         }
 
         // Null leaves the emitter out of the extract entirely, so no other domain pays for this entity.
@@ -241,7 +241,7 @@ namespace Lumina
                 Body.append("<body><img src=\"material:");
                 Body.append(Data->Path.c_str());
                 Body.append("\"/></body></rml>");
-                RmlUi::SetWorldInlineDocument(World, FStringView(Body.c_str(), Body.size()), FStringView("material_preview.rml"));
+                RmlUi::SetWorldInlineDocument(World.Get(), FStringView(Body.c_str(), Body.size()), FStringView("material_preview.rml"));
             }
             else
             {
@@ -282,7 +282,7 @@ namespace Lumina
 
         // Re-pointed every call, since the tool can outlive a recompile that swapped the material object.
         PreviewParticleSystem->Emitters[0]->Material = PreviewMaterial;
-        return PreviewParticleSystem;
+        return PreviewParticleSystem.Get();
     }
 
     void FMaterialEditorTool::DrawHelpMenu()
@@ -312,11 +312,11 @@ namespace Lumina
         SStaticMeshComponent& Component = World->GetComponent<SStaticMeshComponent>(MeshEntity);
         switch (Mesh)
         {
-        case EDebugMesh::Sphere:    Component.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);   break;
-        case EDebugMesh::Cube:      Component.SetStaticMesh(CPrimitiveManager::Get().CubeMesh);     break;
-        case EDebugMesh::Plane:     Component.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh);    break;
-        case EDebugMesh::Cylinder:  Component.SetStaticMesh(CPrimitiveManager::Get().CylinderMesh); break;
-        case EDebugMesh::Cone:      Component.SetStaticMesh(CPrimitiveManager::Get().ConeMesh);     break;
+        case EDebugMesh::Sphere:    Component.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());   break;
+        case EDebugMesh::Cube:      Component.SetStaticMesh(CPrimitiveManager::Get().CubeMesh.Get());     break;
+        case EDebugMesh::Plane:     Component.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh.Get());    break;
+        case EDebugMesh::Cylinder:  Component.SetStaticMesh(CPrimitiveManager::Get().CylinderMesh.Get()); break;
+        case EDebugMesh::Cone:      Component.SetStaticMesh(CPrimitiveManager::Get().ConeMesh.Get());     break;
         }
     }
 
@@ -1210,7 +1210,7 @@ namespace Lumina
         CMaterial* Material = Cast<CMaterial>(Asset.Get());
 
         // Shared with CompileMaterialGraph so the importer's procedural materials compile identically.
-        const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Material, NodeGraph);
+        const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Material, NodeGraph.Get());
 
         ShaderStats       = CompileResult.Stats;
         bGLSLPreviewDirty = true;

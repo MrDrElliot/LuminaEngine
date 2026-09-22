@@ -59,6 +59,9 @@ public static unsafe partial class Host
                 return 4;
             }
 
+            // Installed from the game thread, so every await in script code resumes back on it.
+            GameThreadContext.Install();
+
             Scripts = new ScriptManager();
             Native.Log(ELogLevel.Info, $"LuminaSharp online (runtime {RuntimeInformation.FrameworkDescription}).");
             return 0;
