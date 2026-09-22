@@ -1,4 +1,4 @@
-﻿#include "EditorPCH.h"
+#include "EditorPCH.h"
 #include "MeshImporter.h"
 
 #include "Tools/Import/ImportPaths.h"
@@ -1245,7 +1245,7 @@ namespace Lumina
                     ? FStringView(Image.Key.c_str(), Image.Key.size())
                     : VFS::FileName(Image.ResolvedPath, true);
 
-                FFixedString PackagePath = Paths::Combine(TexturesDir, TextureAssetName(NameSource).c_str());
+                FFixedString PackagePath = Lumina::Paths::Combine(TexturesDir, TextureAssetName(NameSource).c_str());
 
                 const bool bAlreadyExists = (FindObject<CPackage>(PackagePath) != nullptr);
 
