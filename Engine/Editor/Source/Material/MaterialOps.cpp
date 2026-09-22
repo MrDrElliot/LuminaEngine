@@ -71,7 +71,7 @@ namespace Lumina::MaterialOps
         return It != Types.end() ? *It : nullptr;
     }
 
-    void NotifyNodeValuesChanged(CMaterialNodeGraph* Graph)
+    void NotifyNodeValuesChanged(CEdNodeGraph* Graph)
     {
         if (Graph != nullptr)
         {
@@ -79,7 +79,7 @@ namespace Lumina::MaterialOps
         }
     }
 
-    CEdGraphNode* FindNode(CMaterialNodeGraph* Graph, int64 NodeId)
+    CEdGraphNode* FindNode(CEdNodeGraph* Graph, int64 NodeId)
     {
         return Graph != nullptr ? Graph->FindNode(NodeId) : nullptr;
     }
@@ -136,7 +136,7 @@ namespace Lumina::MaterialOps
         return Names.empty() ? FString("none") : Names;
     }
 
-    bool ConnectPins(CMaterialNodeGraph* Graph, CEdNodeGraphPin* Output, CEdNodeGraphPin* Input, FString& OutError)
+    bool ConnectPins(CEdNodeGraph* Graph, CEdNodeGraphPin* Output, CEdNodeGraphPin* Input, FString& OutError)
     {
         if (Graph == nullptr || Output == nullptr || Input == nullptr)
         {
@@ -173,7 +173,7 @@ namespace Lumina::MaterialOps
         return true;
     }
 
-    bool DisconnectPin(CMaterialNodeGraph* Graph, CEdNodeGraphPin* Pin, FString& OutError)
+    bool DisconnectPin(CEdNodeGraph* Graph, CEdNodeGraphPin* Pin, FString& OutError)
     {
         if (Graph == nullptr || Pin == nullptr)
         {
@@ -194,7 +194,7 @@ namespace Lumina::MaterialOps
         return true;
     }
 
-    CEdGraphNode* AddNode(CMaterialNodeGraph* Graph, CClass* NodeClass, float X, float Y)
+    CEdGraphNode* AddNode(CEdNodeGraph* Graph, CClass* NodeClass, float X, float Y)
     {
         if (Graph == nullptr || NodeClass == nullptr)
         {
@@ -211,7 +211,7 @@ namespace Lumina::MaterialOps
         return Node;
     }
 
-    bool RemoveNode(CMaterialNodeGraph* Graph, CEdGraphNode* Node, FString& OutError)
+    bool RemoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, FString& OutError)
     {
         if (Graph == nullptr || Node == nullptr)
         {
@@ -219,9 +219,10 @@ namespace Lumina::MaterialOps
             return false;
         }
 
-        if (Node->IsA<CMaterialOutputNode>())
+        if (!Node->IsDeletable())
         {
-            OutError = "The output node is what the graph compiles from, so it cannot be removed.";
+            OutError = Lumina::Format("{} belongs to the graph itself, so it cannot be removed.",
+                Node->GetNodeDisplayName());
             return false;
         }
 

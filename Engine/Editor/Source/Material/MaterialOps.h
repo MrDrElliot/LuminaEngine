@@ -8,6 +8,7 @@
 namespace Lumina
 {
     class CClass;
+    class CEdNodeGraph;
     class CEdNodeGraphPin;
     class CMaterial;
     class CMaterialNodeGraph;
@@ -21,10 +22,10 @@ namespace Lumina::MaterialOps
     NODISCARD EDITOR_API CClass* ResolveNodeType(FStringView TypeName);
 
     // Never calls BuildNode, which appends pins rather than rebuilding them.
-    EDITOR_API void NotifyNodeValuesChanged(CMaterialNodeGraph* Graph);
+    EDITOR_API void NotifyNodeValuesChanged(CEdNodeGraph* Graph);
 
     // Every mutation here leaves the serialized connection list rebuilt, which a raw pin edit does not.
-    NODISCARD EDITOR_API CEdGraphNode* FindNode(CMaterialNodeGraph* Graph, int64 NodeId);
+    NODISCARD EDITOR_API CEdGraphNode* FindNode(CEdNodeGraph* Graph, int64 NodeId);
 
     NODISCARD EDITOR_API CEdNodeGraphPin* FindPin(CEdGraphNode* Node, FStringView PinName,
         ENodePinDirection Direction);
@@ -33,15 +34,15 @@ namespace Lumina::MaterialOps
     NODISCARD EDITOR_API FString DescribePinNames(CEdGraphNode* Node, ENodePinDirection Direction);
 
     // Applies the schema and the single-link input rule the interactive editor applies.
-    NODISCARD EDITOR_API bool ConnectPins(CMaterialNodeGraph* Graph, CEdNodeGraphPin* Output,
+    NODISCARD EDITOR_API bool ConnectPins(CEdNodeGraph* Graph, CEdNodeGraphPin* Output,
         CEdNodeGraphPin* Input, FString& OutError);
 
-    NODISCARD EDITOR_API bool DisconnectPin(CMaterialNodeGraph* Graph, CEdNodeGraphPin* Pin, FString& OutError);
+    NODISCARD EDITOR_API bool DisconnectPin(CEdNodeGraph* Graph, CEdNodeGraphPin* Pin, FString& OutError);
 
-    NODISCARD EDITOR_API CEdGraphNode* AddNode(CMaterialNodeGraph* Graph, CClass* NodeClass, float X, float Y);
+    NODISCARD EDITOR_API CEdGraphNode* AddNode(CEdNodeGraph* Graph, CClass* NodeClass, float X, float Y);
 
-    // Refuses the output node, since a material graph with no root compiles to nothing.
-    NODISCARD EDITOR_API bool RemoveNode(CMaterialNodeGraph* Graph, CEdGraphNode* Node, FString& OutError);
+    // Refuses a node the graph keeps for itself, such as the output node a graph compiles from.
+    NODISCARD EDITOR_API bool RemoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, FString& OutError);
 
     NODISCARD EDITOR_API CEdGraphNode* FindOutputNode(CMaterialNodeGraph* Graph);
 
