@@ -74,39 +74,6 @@ namespace Lumina::MCP
             }
         }
 
-        void CollectPins(CEdGraphNode* Node, TVector<SMaterialPinInfo>& Out)
-        {
-            const auto Append = [&](const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins, const char* Direction)
-            {
-                for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
-                {
-                    if (!Pin.IsValid())
-                    {
-                        continue;
-                    }
-
-                    SMaterialPinInfo Info;
-                    Info.Name      = Pin->GetPinName();
-                    Info.Direction = Direction;
-
-                    if (Pin->HasConnection())
-                    {
-                        CEdNodeGraphPin* Other = Pin->GetConnection(0);
-                        if (Other != nullptr && Other->GetOwningNode() != nullptr)
-                        {
-                            Info.ConnectedNode = Other->GetOwningNode()->GetNodeID();
-                            Info.ConnectedPin  = Other->GetPinName();
-                        }
-                    }
-
-                    Out.push_back(Move(Info));
-                }
-            };
-
-            Append(Node->GetInputPins(), "Input");
-            Append(Node->GetOutputPins(), "Output");
-        }
-
         void RegisterListNodeTypes(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SListMaterialNodeTypesParams, SListMaterialNodeTypesResult>(
@@ -544,6 +511,39 @@ namespace Lumina::MCP
                         Out.Warnings.size()));
                 });
         }
+    }
+
+    void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out)
+    {
+        const auto Append = [&](const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins, const char* Direction)
+        {
+            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            {
+                if (!Pin.IsValid())
+                {
+                    continue;
+                }
+
+                SGraphPinInfo Info;
+                Info.Name      = Pin->GetPinName();
+                Info.Direction = Direction;
+
+                if (Pin->HasConnection())
+                {
+                    CEdNodeGraphPin* Other = Pin->GetConnection(0);
+                    if (Other != nullptr && Other->GetOwningNode() != nullptr)
+                    {
+                        Info.ConnectedNode = Other->GetOwningNode()->GetNodeID();
+                        Info.ConnectedPin  = Other->GetPinName();
+                    }
+                }
+
+                Out.push_back(Move(Info));
+            }
+        };
+
+        Append(Node->GetInputPins(), "Input");
+        Append(Node->GetOutputPins(), "Output");
     }
 
     void RegisterMaterialTools(FStringView Owner)

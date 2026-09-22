@@ -2,6 +2,7 @@
 
 #include <cfloat>
 #include "World/ECS/Registry.h"
+#include "Animation/AnimGraphOps.h"
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -226,16 +227,7 @@ namespace Lumina
             DrawClipBrowserWindow();
         });
 
-        // A sibling sub-object in the asset's package, created on first open and reloaded thereafter.
-        FString GraphName = "AssetAnimationGraph";
-        NodeGraph = Cast<CAnimationGraphNodeGraph>(Asset->GetPackage()->LoadObjectByName(GraphName));
-
-        if (NodeGraph == nullptr)
-        {
-            NodeGraph = NewObject<CAnimationGraphNodeGraph>(Asset->GetPackage(), GraphName);
-        }
-
-        NodeGraph->SetAnimationGraph(Cast<CAnimationGraph>(Asset.Get()));
+        NodeGraph = AnimGraphOps::FindOrCreateGraph(Cast<CAnimationGraph>(Asset.Get()));
 
         // Duplicating a state used to hand the copy the original's sub-graph; this splits those apart.
         THashSet<CEdNodeGraph*> VisitedGraphs;
@@ -966,23 +958,7 @@ namespace Lumina
         NodeGraph->MarkCompiled();
 
         FAnimationGraphCompiler Compiler;
-
-        // Resolved up front so Layered Blend Per Bone nodes can look them up during GenerateBytecode.
-        if (Graph->Skeleton.IsValid())
-        {
-            Compiler.ResolveBoneMasks(Graph->BoneMaskDefs, Graph->Skeleton->GetSkeletonResource());
-        }
-
-        // Registered before the node walk so a runtime-chosen clip has slots to write into.
-        for (const FName& CurveName : Graph->DeclaredCurves)
-        {
-            Compiler.AddCurve(CurveName);
-        }
-
-        // Give the compiler the parameter struct so it can warn about renamed or retyped fields.
-        Compiler.SetDataStruct(Graph->GetParameterStruct());
-
-        NodeGraph->CompileGraph(Compiler);
+        AnimGraphOps::Compile(Graph, NodeGraph.Get(), Compiler);
 
         // Non-fatal diagnostics first, so they show whether or not the compile also produced errors.
         for (const EdNodeGraph::FError& Warning : Compiler.GetWarnings())
@@ -999,8 +975,6 @@ namespace Lumina
             }
             return;
         }
-
-        Compiler.BuildGraph(Graph);
 
         // Lets the debug overlay read live VM values back onto the graph, re-run every frame.
         DebugPinRegisters = Compiler.GetPinRegisters();
