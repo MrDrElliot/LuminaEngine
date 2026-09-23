@@ -9,6 +9,7 @@
 #include "MCPTextMatch.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
 #include "Assets/Factories/Factory.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
@@ -17,6 +18,7 @@
 #include "Material/MaterialOps.h"
 #include "Paths/Paths.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
+#include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "UI/Tools/NodeGraph/Material/MaterialNodeGraph.h"
 
@@ -26,7 +28,8 @@ namespace Lumina::MCP
     {
         struct FMaterialTarget
         {
-            CMaterial*          Material = nullptr;
+            CObject*            Asset    = nullptr;
+            CMaterial*          Material = nullptr;   // null when Asset is a material function
             CMaterialNodeGraph* Graph    = nullptr;
         };
 
@@ -39,24 +42,35 @@ namespace Lumina::MCP
 
         bool ResolveMaterial(const FString& Guid, EMaterialAccess Access, FMaterialTarget& Out, FString& OutError)
         {
-            if (!Agent::ResolveAsset<CMaterial>(FStringView(Guid), Out.Material, OutError))
+            if (!Agent::ResolveAssetObject(FStringView(Guid), Out.Asset, OutError))
             {
+                return false;
+            }
+
+            Out.Material = Cast<CMaterial>(Out.Asset);
+            CMaterialFunction* Function = Cast<CMaterialFunction>(Out.Asset);
+            if (Out.Material == nullptr && Function == nullptr)
+            {
+                OutError = Lumina::Format("'{}' is a {}, not a material or material function.", Guid, Out.Asset->GetClass()->GetName());
                 return false;
             }
 
             if (Access == EMaterialAccess::Write)
             {
-                const FString OpenIn = MaterialOps::FindOpenEditorName(Out.Material);
+                const FString OpenIn = MaterialOps::FindOpenEditorName(Out.Asset);
                 if (!OpenIn.empty())
                 {
                     OutError = Lumina::Format(
                         "'{}' is open in {}, which would not see this change. Close it and try again.",
-                        Out.Material->GetName(), OpenIn);
+                        Out.Asset->GetName(), OpenIn);
                     return false;
                 }
             }
 
-            Out.Graph = MaterialOps::FindOrCreateGraph(Out.Material);
+            Out.Graph = Out.Material != nullptr
+                ? MaterialOps::FindOrCreateGraph(Out.Material)
+                // static_cast: CMaterialNodeGraph's class is not exported, and that name only ever holds a function graph.
+                : static_cast<CMaterialNodeGraph*>(Function->GetPackage()->LoadObjectByName(FName(GMaterialFunctionGraphObjectName)));
             if (Out.Graph == nullptr)
             {
                 OutError = "That material has no graph and one could not be created.";
@@ -68,7 +82,7 @@ namespace Lumina::MCP
 
         void MarkMaterialDirty(const FMaterialTarget& Target)
         {
-            if (CPackage* Package = Target.Material->GetPackage())
+            if (CPackage* Package = Target.Asset->GetPackage())
             {
                 Package->MarkDirty();
             }
@@ -133,7 +147,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.Name = FString(Target.Material->GetName().ToString().c_str());
+                    Out.Name = FString(Target.Asset->GetName().ToString().c_str());
 
                     for (const TObjectPtr<CEdGraphNode>& Node : Target.Graph->Nodes)
                     {
@@ -482,6 +496,11 @@ namespace Lumina::MCP
                     if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
+                    }
+
+                    if (Target.Material == nullptr)
+                    {
+                        return Agent::FToolResult::Error("A material function compiles inline; compile a material that calls it.");
                     }
 
                     const FMaterialGraphCompileResult Result =

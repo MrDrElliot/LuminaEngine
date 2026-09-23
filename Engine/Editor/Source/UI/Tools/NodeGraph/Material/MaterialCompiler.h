@@ -497,6 +497,9 @@ namespace Lumina
         // True when an error already names Node, so a vaguer follow-up error can stand down.
         NODISCARD bool HasErrorForNode(const CEdGraphNode* Node) const;
 
+        // Moves diagnostics raised since the given counts from nodes outside CallNode's graph onto CallNode.
+        void RetargetDiagnosticsToCallNode(size_t FirstError, size_t FirstWarning, CEdGraphNode* CallNode, const FString& FunctionName);
+
         // Warnings: the graph compiled, but something about it will cost quality or performance at runtime.
         //
         // A SEPARATE vector rather than a severity flag on FError, because HasErrors() is what decides

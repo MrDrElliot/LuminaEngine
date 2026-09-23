@@ -919,7 +919,7 @@ namespace Lumina
 
     bool CMeshImporter::ParseSource(const FImportRequest& Request, FString& OutError, FScopedSlowTask* Progress)
     {
-        // User transforms and heavy passes are deferred to BuildAssets, so a setting change never re-parses.
+        // User transforms and heavy passes are deferred to BuildAssets; only the skeleton's bone set re-parses.
         FMeshImportOptions PreviewOptions;
         PreviewOptions.bOptimize         = false;
         PreviewOptions.bMergeMeshes      = false;
@@ -927,6 +927,10 @@ namespace Lumina
         PreviewOptions.bFlipUVs          = false;
         PreviewOptions.Scale             = 1.0f;
         PreviewOptions.bSkipFinalization = true;
+        PreviewOptions.bImportUnskinnedBones = bImportUnskinnedBones;
+
+        ParsedRequest = Request;
+        bParsedWithUnskinnedBones = bImportUnskinnedBones;
 
         SourceData = FMeshImportData();
         return ParseMeshSource(Request, PreviewOptions, SourceData, OutError, Progress);
@@ -1634,6 +1638,18 @@ namespace Lumina
 
     void CMeshImporter::DrawSourcePreview()
     {
+        // The skeleton and every mesh's bone indices come out of the parse, so this flag cannot apply later.
+        if (bImportUnskinnedBones != bParsedWithUnskinnedBones)
+        {
+            FString Error;
+            if (!ParseSource(ParsedRequest, Error, nullptr))
+            {
+                LOG_ERROR("[Import] Re-parse of '{}' failed, nothing will be imported: {}",
+                          ParsedRequest.SourcePath.c_str(), Error.c_str());
+            }
+            PrepareSettingsPreview();
+        }
+
         auto Section = [](auto&& Draw)
         {
             Draw();
