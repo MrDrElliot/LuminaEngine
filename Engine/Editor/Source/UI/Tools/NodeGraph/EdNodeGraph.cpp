@@ -1040,13 +1040,6 @@ namespace Lumina
         }
         PendingPlacements.clear();
 
-        if (PendingFocusNode.IsValid())
-        {
-            NodeEditor::SelectNode(PendingFocusNode->GetNodeID(), false);
-            NodeEditor::NavigateToSelection(false, 0.25f);
-        }
-        PendingFocusNode = nullptr;
-
         if (bHasPendingAlignment)
         {
             bHasPendingAlignment = false;
@@ -1764,6 +1757,14 @@ namespace Lumina
         }
         
         NodeEditor::EndDelete();
+
+        // After the nodes are drawn: selection bounds count only nodes submitted this frame.
+        if (PendingFocusNode.IsValid())
+        {
+            NodeEditor::SelectNode(PendingFocusNode->GetNodeID(), false);
+            NodeEditor::NavigateToSelection(true, 0.25f);
+        }
+        PendingFocusNode = nullptr;
 
         PopGraphStyle();
 

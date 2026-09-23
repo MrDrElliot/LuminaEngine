@@ -294,6 +294,8 @@ namespace Lumina
         // Per-call variable prefix, composed with any enclosing call's prefix so nesting never collides.
         const FString CallPrefix = Compiler.GetCurrentInlinePrefix() + "MF" + Format("{}", GetNodeID()) + "_";
         Compiler.PushInlinePrefix(CallPrefix);
+        const size_t FirstBodyError   = Compiler.GetErrors().size();
+        const size_t FirstBodyWarning = Compiler.GetWarnings().size();
 
         // Gather the function's I/O nodes.
         TVector<CMaterialExpression_FunctionInput*> InputNodes;
@@ -444,6 +446,7 @@ namespace Lumina
             Bound->ResolvedVar.clear();
         }
 
+        Compiler.RetargetDiagnosticsToCallNode(FirstBodyError, FirstBodyWarning, this, FString(Fn->GetName().c_str()));
         Compiler.PopInlinePrefix();
         Compiler.EndInlineFunction(Fn);
     }
