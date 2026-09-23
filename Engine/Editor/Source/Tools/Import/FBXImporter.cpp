@@ -975,6 +975,17 @@ namespace Lumina
             Skeleton->Name = FName((FString(SourceName.data(), SourceName.size()) + "_Skeleton").c_str());
             Skeleton->Bones.resize(BoneNodes.size());
 
+            // A clustered bone's FK times InvBind is the skin's geometry-to-world, so every other bone must match it.
+            FMatrix4 SkinGeometryToWorld = FMatrix4(1.0f);
+            for (const ufbx_skin_deformer* Skin : Scene->skin_deformers)
+            {
+                if (Skin->clusters.count > 0)
+                {
+                    SkinGeometryToWorld = ToMatrix4(Skin->clusters.data[0]->geometry_to_world);
+                    break;
+                }
+            }
+
             for (size_t BoneIndex = 0; BoneIndex < BoneNodes.size(); ++BoneIndex)
             {
                 const ufbx_node& Node = *BoneNodes[BoneIndex];
@@ -982,10 +993,10 @@ namespace Lumina
                 FSkeletonResource::FBoneInfo& Bone = Skeleton->Bones[BoneIndex];
                 Bone.Name           = !ToView(Node.name).empty() ? FName(ToFixed(Node.name).c_str())
                                                                  : FName("Bone", (uint32)Node.typed_id);
-                Bone.LocalTransform = ToMatrix4(Node.node_to_parent);
-                // A pure ancestor keeps its rest inverse, which makes FK times InvBind identity at bind pose.
-                Bone.InvBindMatrix  = ToMatrix4(Node.node_to_world);
-                Bone.InvBindMatrix  = Math::Inverse(Bone.InvBindMatrix);
+                // The import Scale converts units, so ufbx's unit scale on a top-level bone would apply twice.
+                const float UnitScale = Node.adjust_pre_scale > 0.0 ? (float)Node.adjust_pre_scale : 1.0f;
+                Bone.LocalTransform = Math::Scale(FMatrix4(1.0f), FVector3(1.0f / UnitScale)) * ToMatrix4(Node.node_to_parent);
+                Bone.InvBindMatrix  = Math::Inverse(ToMatrix4(Node.node_to_world)) * SkinGeometryToWorld;
 
                 Bone.ParentIndex = INDEX_NONE;
                 if (Node.parent != nullptr)
@@ -1371,6 +1382,9 @@ namespace Lumina
                     const FName TargetBone = !ToView(Node.name).empty()
                         ? FName(ToFixed(Node.name).c_str()) : FName("Bone", (uint32)Node.typed_id);
 
+                    // Matches the skeleton, which drops ufbx's unit scale so the import Scale converts once.
+                    const float InvUnitScale = Node.adjust_pre_scale > 0.0 ? 1.0f / (float)Node.adjust_pre_scale : 1.0f;
+
                     if (BakedNode.translation_keys.count > 0)
                     {
                         FAnimationChannel Channel;
@@ -1381,7 +1395,7 @@ namespace Lumina
                         for (const ufbx_baked_vec3& Key : BakedNode.translation_keys)
                         {
                             Channel.Timestamps.push_back((float)Key.time);
-                            Channel.Translations.push_back(ToVector3(Key.value));
+                            Channel.Translations.push_back(ToVector3(Key.value) * InvUnitScale);
                         }
                         Clip->Channels.push_back(Move(Channel));
                     }
@@ -1411,7 +1425,7 @@ namespace Lumina
                         for (const ufbx_baked_vec3& Key : BakedNode.scale_keys)
                         {
                             Channel.Timestamps.push_back((float)Key.time);
-                            Channel.Scales.push_back(ToVector3(Key.value));
+                            Channel.Scales.push_back(ToVector3(Key.value) * InvUnitScale);
                         }
                         Clip->Channels.push_back(Move(Channel));
                     }

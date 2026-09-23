@@ -826,15 +826,7 @@ namespace Lumina
 
         CameraState.Speed = 5.0f;
 
-        MeshEntity = World->ConstructEntity("MeshEntity");
-        SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
-        MeshComponent.SetSkeletalMesh(SkeletalMesh);
-
-        if (SkeletalMesh->Skeleton.IsValid())
-        {
-            SkeletalMesh->Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
-            MeshComponent.bRenderBonesDirty = true;
-        }
+        CreatePreviewMeshEntity();
 
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
 
@@ -846,6 +838,21 @@ namespace Lumina
         const float Radius = Math::Max(Math::Length(Bounds.GetSize() * 0.5f), 0.5f);
         SetOrbitTarget(Center, Radius * 3.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
+    }
+
+    void FSkeletalMeshEditorTool::CreatePreviewMeshEntity()
+    {
+        CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
+
+        MeshEntity = World->ConstructEntity("MeshEntity");
+        SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
+        MeshComponent.SetSkeletalMesh(SkeletalMesh);
+
+        if (SkeletalMesh->Skeleton.IsValid())
+        {
+            SkeletalMesh->Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
+            MeshComponent.bRenderBonesDirty = true;
+        }
     }
 
     void FSkeletalMeshEditorTool::Update(const FUpdateContext& UpdateContext)
@@ -1024,6 +1031,25 @@ namespace Lumina
         SelectedBonePoints.clear();
         SelectedSurfaceIndex = -1;
         PreviewLODIndex = -1;
+    }
+
+    void FSkeletalMeshEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
+    {
+        CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
+        if (SkeletalMesh == nullptr)
+        {
+            return;
+        }
+
+        // The property table never calls PostPropertyChange, so a Skeleton swap would leave the indices behind.
+        SkeletalMesh->RemapJointIndicesToSkeleton();
+
+        // The scene claims a primitive's bone range only when it is new, so a reused preview keeps the old skeleton.
+        if (Event.PropertyName == "Skeleton" && MeshEntity != ECS::NullEntity)
+        {
+            World->DestroyEntity(MeshEntity);
+            CreatePreviewMeshEntity();
+        }
     }
 
     void FSkeletalMeshEditorTool::DrawHelpMenu()
