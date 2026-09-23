@@ -116,6 +116,62 @@ namespace Lumina
             return nullptr;
         }
 
+        FORCEINLINE FQuat InverseAdjustRotation(const ufbx_node& Node)
+        {
+            return Node.has_adjust_transform ? Math::Inverse(ToQuat(Node.adjust_pre_rotation)) : FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+        }
+
+        /** Turns the file's up axis onto +Y, ignoring its front axis, which can disagree with how the model was authored. */
+        struct FEngineBasis
+        {
+            FQuat    Rotation        = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+            FQuat    InverseRotation = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+            FMatrix4 Matrix          = FMatrix4(1.0f);
+            FMatrix4 InverseMatrix   = FMatrix4(1.0f);
+            FMatrix3 Matrix3         = FMatrix3(1.0f);
+
+            // Undoes ufbx's axis rotation on a world-space matrix, where it sits at the top-level ancestor.
+            FMatrix4 InverseRootAdjust = FMatrix4(1.0f);
+
+            explicit FEngineBasis(const ufbx_scene& Scene)
+            {
+                FVector3 Up(0.0f, 1.0f, 0.0f);
+                switch (Scene.settings.original_axis_up)
+                {
+                case UFBX_COORDINATE_AXIS_POSITIVE_X: Up = FVector3( 1.0f,  0.0f,  0.0f); break;
+                case UFBX_COORDINATE_AXIS_NEGATIVE_X: Up = FVector3(-1.0f,  0.0f,  0.0f); break;
+                case UFBX_COORDINATE_AXIS_NEGATIVE_Y: Up = FVector3( 0.0f, -1.0f,  0.0f); break;
+                case UFBX_COORDINATE_AXIS_POSITIVE_Z: Up = FVector3( 0.0f,  0.0f,  1.0f); break;
+                case UFBX_COORDINATE_AXIS_NEGATIVE_Z: Up = FVector3( 0.0f,  0.0f, -1.0f); break;
+                default: break;
+                }
+
+                // ponytail: an X-up file is also mirrored on X by the handedness conversion, which this ignores.
+                Rotation          = Math::RotationBetween(Up, FVector3(0.0f, 1.0f, 0.0f));
+                InverseRotation   = Math::Inverse(Rotation);
+                Matrix            = Math::ToMatrix4(Rotation);
+                InverseMatrix     = Math::ToMatrix4(InverseRotation);
+                Matrix3           = Math::ToMatrix3(Rotation);
+                InverseRootAdjust = Math::ToMatrix4(Math::Inverse(ToQuat(Scene.metadata.root_rotation)));
+            }
+
+            FMatrix4 ToEngine(const FMatrix4& M) const { return Matrix * M * InverseMatrix; }
+            FMatrix4 WorldToEngine(const ufbx_matrix& M) const { return ToEngine(InverseRootAdjust * ToMatrix4(M)); }
+
+            // Bone transforms are parent-relative and shared across files, so only root-level nodes take the basis.
+            FMatrix4 BoneToEngine(const ufbx_node& Node, const FMatrix4& Local) const { return IsRootLevel(Node) ? Matrix * Local : Local; }
+            FMatrix4 InvBindToEngine(const FMatrix4& InvBind) const { return InvBind * InverseMatrix; }
+            FVector3 KeyTranslation(const ufbx_node& Node, const FVector3& T) const { return IsRootLevel(Node) ? Rotation * (InverseAdjustRotation(Node) * T) : T; }
+            FQuat    KeyRotation(const ufbx_node& Node, const FQuat& Q) const { return IsRootLevel(Node) ? Rotation * InverseAdjustRotation(Node) * Q : Q; }
+
+            static bool IsRootLevel(const ufbx_node& Node) { return Node.parent == nullptr || Node.parent->is_root; }
+
+            FVector3 Direction(const FVector3& V) const { return Rotation * V; }
+            FVector3 Translation(const ufbx_node& Node, const FVector3& T) const { return Rotation * (InverseAdjustRotation(Node) * T); }
+            FQuat    Orientation(const ufbx_node& Node, const FQuat& Q) const { return Rotation * InverseAdjustRotation(Node) * Q * InverseRotation; }
+            FVector3 Scale(const FVector3& S) const { return Math::Abs(Matrix3 * S); }
+        };
+
         /** Lowercased leaf of a path, used to key an image and to match a texture against a file on disk. */
         FFixedString PathLeaf(FStringView Path)
         {
@@ -672,7 +728,9 @@ namespace Lumina
         // Light props are still in the file's own units; ufbx only converts transforms and geometry.
         const float SourceUnitMeters = (float)Scene->settings.original_unit_meters;
 
-        auto FillLight = [SourceUnitMeters](FSourceSceneNode& SceneNode, const ufbx_light& Light)
+        const FEngineBasis Basis(*Scene);
+
+        auto FillLight = [SourceUnitMeters, &Basis](FSourceSceneNode& SceneNode, const ufbx_light& Light)
         {
             if (!Light.cast_light)
             {
@@ -701,9 +759,9 @@ namespace Lumina
             SceneNode.Light.OuterConeAngle = Math::Radians((float)Light.outer_angle * 0.5f);
 
             const FVector3 Aim = ToVector3(Light.local_direction);
-            SceneNode.Light.LocalDirection = (Math::LengthSquared(Aim) > Math::Epsilon<float>())
+            SceneNode.Light.LocalDirection = Basis.Direction((Math::LengthSquared(Aim) > Math::Epsilon<float>())
                 ? Math::Normalize(Aim)
-                : FVector3(0.0f, -1.0f, 0.0f);
+                : FVector3(0.0f, -1.0f, 0.0f));
 
             // The cutoff distance is only meaningful when the file opted into it.
             static constexpr const char* EnableFarProp = "EnableFarAttenuation";
@@ -752,9 +810,9 @@ namespace Lumina
                 ? FName(ToFixed(Node.name).c_str())
                 : FName("Node", (uint32)Node.typed_id);
 
-            SceneNode.Translation = ToVector3(Node.local_transform.translation);
-            SceneNode.Rotation    = ToQuat(Node.local_transform.rotation);
-            SceneNode.Scale       = ToVector3(Node.local_transform.scale);
+            SceneNode.Translation = Basis.Translation(Node, ToVector3(Node.local_transform.translation));
+            SceneNode.Rotation    = Basis.Orientation(Node, ToQuat(Node.local_transform.rotation));
+            SceneNode.Scale       = Basis.Scale(ToVector3(Node.local_transform.scale));
 
             if (Node.mesh != nullptr)
             {
@@ -766,7 +824,7 @@ namespace Lumina
 
                 // geometry_to_world, since helper nodes carry the mesh offset the merge path bakes in.
                 OutData.MeshInstances.push_back(FSourceMeshInstance{
-                    MeshIndex, (uint32)Node.typed_id, ToMatrix4(Node.geometry_to_world) });
+                    MeshIndex, (uint32)Node.typed_id, Basis.WorldToEngine(Node.geometry_to_world) });
 
                 if (Node.light != nullptr)
                 {
@@ -993,10 +1051,16 @@ namespace Lumina
                 FSkeletonResource::FBoneInfo& Bone = Skeleton->Bones[BoneIndex];
                 Bone.Name           = !ToView(Node.name).empty() ? FName(ToFixed(Node.name).c_str())
                                                                  : FName("Bone", (uint32)Node.typed_id);
-                // The import Scale converts units, so ufbx's unit scale on a top-level bone would apply twice.
-                const float UnitScale = Node.adjust_pre_scale > 0.0 ? (float)Node.adjust_pre_scale : 1.0f;
-                Bone.LocalTransform = Math::Scale(FMatrix4(1.0f), FVector3(1.0f / UnitScale)) * ToMatrix4(Node.node_to_parent);
-                Bone.InvBindMatrix  = Math::Inverse(ToMatrix4(Node.node_to_world)) * SkinGeometryToWorld;
+                // The import Scale converts units, so ufbx's unit scale left on a top-level bone would apply twice.
+                FMatrix4 LocalTransform = Math::ToMatrix4(InverseAdjustRotation(Node)) * ToMatrix4(Node.node_to_parent);
+                if (Node.has_adjust_transform && Node.adjust_pre_scale > 0.0)
+                {
+                    LocalTransform = Math::Scale(FMatrix4(1.0f), FVector3(1.0f / (float)Node.adjust_pre_scale)) * LocalTransform;
+                }
+                Bone.LocalTransform = Basis.BoneToEngine(Node, LocalTransform);
+
+                // Both sides carry ufbx's adjust, so it cancels and only the engine basis is left to apply.
+                Bone.InvBindMatrix  = Basis.InvBindToEngine(Math::Inverse(ToMatrix4(Node.node_to_world)) * SkinGeometryToWorld);
 
                 Bone.ParentIndex = INDEX_NONE;
                 if (Node.parent != nullptr)
@@ -1025,7 +1089,7 @@ namespace Lumina
                     {
                         continue;
                     }
-                    Skeleton->Bones[It->second].InvBindMatrix = ToMatrix4(Cluster->geometry_to_bone);
+                    Skeleton->Bones[It->second].InvBindMatrix = Basis.InvBindToEngine(ToMatrix4(Cluster->geometry_to_bone));
                 }
             }
 
@@ -1157,9 +1221,9 @@ namespace Lumina
                         FSourceSkinnedVertex& Vertex = Corners[CornerCursor];
                         Vertex = FSourceSkinnedVertex{};
 
-                        Vertex.Position = ToVector3(ufbx_get_vertex_vec3(&Mesh.vertex_position, Corner));
+                        Vertex.Position = Basis.Direction(ToVector3(ufbx_get_vertex_vec3(&Mesh.vertex_position, Corner)));
                         Vertex.Normal   = PackNormal(Math::Normalize(
-                            ToVector3(ufbx_get_vertex_vec3(&Mesh.vertex_normal, Corner))));
+                            Basis.Direction(ToVector3(ufbx_get_vertex_vec3(&Mesh.vertex_normal, Corner)))));
 
                         // FBX authors UVs bottom-left and the engine samples top-left, so only this importer flips.
                         FVector2 UV(0.0f, 0.0f);
@@ -1382,8 +1446,9 @@ namespace Lumina
                     const FName TargetBone = !ToView(Node.name).empty()
                         ? FName(ToFixed(Node.name).c_str()) : FName("Bone", (uint32)Node.typed_id);
 
-                    // Matches the skeleton, which drops ufbx's unit scale so the import Scale converts once.
-                    const float InvUnitScale = Node.adjust_pre_scale > 0.0 ? 1.0f / (float)Node.adjust_pre_scale : 1.0f;
+                    // Matches the skeleton: ufbx's unit scale dropped, its axis rotation replaced by the engine basis.
+                    const float InvUnitScale = Node.has_adjust_transform && Node.adjust_pre_scale > 0.0
+                        ? 1.0f / (float)Node.adjust_pre_scale : 1.0f;
 
                     if (BakedNode.translation_keys.count > 0)
                     {
@@ -1395,7 +1460,7 @@ namespace Lumina
                         for (const ufbx_baked_vec3& Key : BakedNode.translation_keys)
                         {
                             Channel.Timestamps.push_back((float)Key.time);
-                            Channel.Translations.push_back(ToVector3(Key.value) * InvUnitScale);
+                            Channel.Translations.push_back(Basis.KeyTranslation(Node, ToVector3(Key.value)) * InvUnitScale);
                         }
                         Clip->Channels.push_back(Move(Channel));
                     }
@@ -1410,7 +1475,7 @@ namespace Lumina
                         for (const ufbx_baked_quat& Key : BakedNode.rotation_keys)
                         {
                             Channel.Timestamps.push_back((float)Key.time);
-                            Channel.Rotations.push_back(ToQuat(Key.value));
+                            Channel.Rotations.push_back(Basis.KeyRotation(Node, ToQuat(Key.value)));
                         }
                         Clip->Channels.push_back(Move(Channel));
                     }
