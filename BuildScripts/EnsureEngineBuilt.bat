@@ -11,10 +11,11 @@ if "%CONFIG%"=="" (
     exit /b 1
 )
 
-set "TARGETTYPE=%~2"
-if "%TARGETTYPE%"=="" set "TARGETTYPE=Editor"
-if /I not "%TARGETTYPE%"=="Editor" if /I not "%TARGETTYPE%"=="Game" (
-    echo [EnsureEngineBuilt] Unknown target type "%TARGETTYPE%". Must be Editor or Game.
+rem Not TARGETTYPE: MSBuild reads env vars as properties, and TargetType becomes csc /target, failing CS2019.
+set "ENGINE_TARGET_TYPE=%~2"
+if "%ENGINE_TARGET_TYPE%"=="" set "ENGINE_TARGET_TYPE=Editor"
+if /I not "%ENGINE_TARGET_TYPE%"=="Editor" if /I not "%ENGINE_TARGET_TYPE%"=="Game" (
+    echo [EnsureEngineBuilt] Unknown target type "%ENGINE_TARGET_TYPE%". Must be Editor or Game.
     exit /b 1
 )
 
@@ -27,7 +28,7 @@ set "ENGINE_BIN=%LUMINA_DIR%\Binaries\Windows64"
 set "RUNTIME_DLL=%ENGINE_BIN%\Runtime-%CONFIG%.dll"
 
 rem The Editor module only exists in Editor builds; checking for it under Game would rebuild forever.
-if /I "%TARGETTYPE%"=="Editor" (
+if /I "%ENGINE_TARGET_TYPE%"=="Editor" (
     if exist "%RUNTIME_DLL%" if exist "%ENGINE_BIN%\Editor-%CONFIG%.dll" exit /b 0
 ) else (
     if exist "%RUNTIME_DLL%" exit /b 0
@@ -35,19 +36,19 @@ if /I "%TARGETTYPE%"=="Editor" (
 
 echo.
 echo ===============================================================================
-echo  [EnsureEngineBuilt] Engine binaries for "%CONFIG% ^| %TARGETTYPE%" are missing.
+echo  [EnsureEngineBuilt] Engine binaries for "%CONFIG% ^| %ENGINE_TARGET_TYPE%" are missing.
 echo  Building the engine once; later builds reuse the cached output.
 echo ===============================================================================
 echo.
 
-call "%LUMINA_DIR%\LuminaBuild.bat" Build Lumina -Configuration=%CONFIG% -TargetType=%TARGETTYPE%
+call "%LUMINA_DIR%\LuminaBuild.bat" Build Lumina -Configuration=%CONFIG% -TargetType=%ENGINE_TARGET_TYPE%
 if errorlevel 1 (
     echo.
-    echo [EnsureEngineBuilt] Engine build failed for "%CONFIG% ^| %TARGETTYPE%". Fix the errors above and retry.
+    echo [EnsureEngineBuilt] Engine build failed for "%CONFIG% ^| %ENGINE_TARGET_TYPE%". Fix the errors above and retry.
     exit /b 1
 )
 
 echo.
-echo [EnsureEngineBuilt] Engine "%CONFIG% ^| %TARGETTYPE%" build complete.
+echo [EnsureEngineBuilt] Engine "%CONFIG% ^| %ENGINE_TARGET_TYPE%" build complete.
 endlocal
 exit /b 0
