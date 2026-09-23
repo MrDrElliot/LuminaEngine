@@ -36,6 +36,7 @@
 #include "TaskSystem/Future.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
+#include "Assets/AssetEvents.h"
 #include "Tools/Import/MaterialImport.h"
 #include "Tools/Import/TextureImporter.h"
 #include "Tools/UI/ImGui/EditorColors.h"
@@ -62,6 +63,60 @@ namespace Lumina
             return FFixedString(Import::MakeAssetName("T_", Stem).c_str());
         }
 
+        // Importing over an existing asset replaces it in place, so its GUID and every reference to it survive.
+        CAnimation* FindAnimationToOverwrite(const FFixedString& Path)
+        {
+            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path);
+            return Data != nullptr ? Cast<CAnimation>(LoadObject<CObject>(Data->AssetGUID)) : nullptr;
+        }
+
+    }
+
+    // On the main thread, since an animation system may be sampling the old clip mid-frame.
+    void CMeshImporter::ReplaceAnimationInPlace(CAnimation* Existing, TUniquePtr<FAnimationResource>&& NewClip,
+                                                CSkeleton* NewSkeleton)
+    {
+        MainThread::Enqueue([Existing = TObjectPtr<CAnimation>(Existing), NewClip = Move(NewClip),
+                             NewSkeleton = TObjectPtr<CSkeleton>(NewSkeleton)]() mutable
+        {
+            if (!Existing.IsValid())
+            {
+                return;
+            }
+
+            // Notifies, curves and the sync lane are authored in the editor, and no source file carries them.
+            if (const FAnimationResource* OldClip = Existing->GetAnimationResource())
+            {
+                NewClip->Notifies      = OldClip->Notifies;
+                NewClip->NotifyStates  = OldClip->NotifyStates;
+                NewClip->NotifyTracks  = OldClip->NotifyTracks;
+                NewClip->SyncTrackName = OldClip->SyncTrackName;
+                if (NewClip->Curves.empty())
+                {
+                    NewClip->Curves = OldClip->Curves;
+                }
+            }
+
+            Existing->AnimationResource = Move(NewClip);
+            Existing->AnimationResource->RebuildSyncTrack();
+            if (NewSkeleton != nullptr)
+            {
+                Existing->Skeleton = NewSkeleton;
+            }
+
+            CPackage* Package = Existing->GetPackage();
+            if (Package == nullptr || !CPackage::SavePackage(Package, Package->GetPackagePath()))
+            {
+                LOG_ERROR("[Import] Overwrote '{}' in memory but could not save it.", Existing->GetName());
+            }
+
+            // An open animation editor holds pointers into the clip that was just replaced.
+            AssetEvents::BroadcastAssetDataChanged(Existing.Get());
+        });
+    }
+
+    namespace
+    {
         // FindObject only sees loaded objects, so a multi-asset run needs its own claim set.
         class FUniquePathAllocator
         {
@@ -1070,7 +1125,7 @@ namespace Lumina
         FFixedString MaterialsDir = DestinationDir; MaterialsDir.append("Materials/");
 
         FUniquePathAllocator Paths;
-        auto BuildPath = [&](FStringView Suffix) -> FFixedString
+        auto DesiredPath = [&](FStringView Suffix) -> FFixedString
         {
             FFixedString Path = DestinationDir;
             Path.append(BaseName);
@@ -1079,7 +1134,11 @@ namespace Lumina
                 Path.append("_");
                 Path.append(Suffix.data(), Suffix.length());
             }
-            return Paths.Claim(Path);
+            return Path;
+        };
+        auto BuildPath = [&](FStringView Suffix) -> FFixedString
+        {
+            return Paths.Claim(DesiredPath(Suffix));
         };
 
         if (Progress)
@@ -1204,12 +1263,20 @@ namespace Lumina
 
             AnimCompression::Build(*Clip);
 
-            const FFixedString AnimPath = bMultipleAnims ? BuildPath(Clip->Name.ToString()) : BuildPath("Animation");
+            const FString AnimSuffix = bMultipleAnims ? Clip->Name.ToString() : FString("Animation");
+            CSkeleton* AnimSkeleton = TargetSkeleton != nullptr ? TargetSkeleton.Get() : PrimarySkeleton.Get();
 
-            CAnimation* NewAnimation = CFactory::CreateNewOf<CAnimation>(AnimPath);
+            if (CAnimation* Existing = FindAnimationToOverwrite(DesiredPath(AnimSuffix)))
+            {
+                // Only an explicit target replaces the skeleton, never one this file just minted.
+                ReplaceAnimationInPlace(Existing, Move(Clip), TargetSkeleton.Get());
+                continue;
+            }
+
+            CAnimation* NewAnimation = CFactory::CreateNewOf<CAnimation>(BuildPath(AnimSuffix));
             NewAnimation->SetFlag(OF_NeedsPostLoad);
             NewAnimation->AnimationResource = Move(Clip);
-            NewAnimation->Skeleton          = TargetSkeleton != nullptr ? TargetSkeleton : PrimarySkeleton;
+            NewAnimation->Skeleton          = AnimSkeleton;
 
             CreatedObjects.push_back(NewAnimation);
         }
