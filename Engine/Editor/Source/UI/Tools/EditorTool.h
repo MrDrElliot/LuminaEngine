@@ -377,6 +377,9 @@ namespace Lumina
         /** Is this editor tool for editing assets? */
         NODISCARD virtual bool IsAssetEditorTool() const { return false; }
 
+        /** True once the asset this tool was opened on is gone, e.g. destroyed by deleting an asset it referenced. */
+        NODISCARD virtual bool HasLostAsset() const { return false; }
+
         /** VFS path of the asset this tool edits, or empty when the tool is not backed by one. */
         NODISCARD virtual FFixedString GetAssetVirtualPath() const { return {}; }
         

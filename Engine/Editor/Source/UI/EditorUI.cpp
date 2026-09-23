@@ -873,6 +873,13 @@ namespace Lumina
                 continue;
             }
 
+            // Every panel draws off the asset, so a tool whose asset was destroyed closes instead.
+            if (Tool->HasLostAsset())
+            {
+                ToolsPendingDestroy.push(Tool);
+                continue;
+            }
+
             DrawToolContents(UpdateContext, Tool);
         }
 
@@ -896,6 +903,12 @@ namespace Lumina
         {
             FEditorTool* Tool = ToolsPendingDestroy.front();
             ToolsPendingDestroy.pop();
+
+            // Deleting an asset queues its tool and the lost-asset check can queue it again the same frame.
+            if (Algo::Find(EditorTools, Tool) == EditorTools.end())
+            {
+                continue;
+            }
 
             DestroyTool(UpdateContext, Tool);
         }
