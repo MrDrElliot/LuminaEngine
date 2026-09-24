@@ -17,7 +17,8 @@
 
 namespace Lumina::MCP
 {
-    namespace
+    // Named because MCPMaterialTools.cpp shares its Register* names and the two can land in one unity blob.
+    namespace AnimGraphTools
     {
         struct FAnimGraphTarget
         {
@@ -556,14 +557,14 @@ namespace Lumina::MCP
 
     void RegisterAnimGraphTools(FStringView Owner)
     {
-        RegisterListNodeTypes(Owner);
-        RegisterDescribe(Owner);
-        RegisterAddNode(Owner);
-        RegisterRemoveNode(Owner);
-        RegisterConnect(Owner);
-        RegisterDisconnect(Owner);
-        RegisterSetNodeProperty(Owner);
-        RegisterSetTransitionProperty(Owner);
-        RegisterCompile(Owner);
+        AnimGraphTools::RegisterListNodeTypes(Owner);
+        AnimGraphTools::RegisterDescribe(Owner);
+        AnimGraphTools::RegisterAddNode(Owner);
+        AnimGraphTools::RegisterRemoveNode(Owner);
+        AnimGraphTools::RegisterConnect(Owner);
+        AnimGraphTools::RegisterDisconnect(Owner);
+        AnimGraphTools::RegisterSetNodeProperty(Owner);
+        AnimGraphTools::RegisterSetTransitionProperty(Owner);
+        AnimGraphTools::RegisterCompile(Owner);
     }
 }
