@@ -85,6 +85,40 @@ namespace
 }
 
 // Run with --gtest_also_run_disabled_tests.
+TEST(TransformBench, DISABLED_RandomAccessComponentGet)
+{
+    constexpr uint32 kEntities = 200'000;
+    constexpr int    kPasses   = 40;
+
+    ECS::FRegistry Registry;
+    TVector<ECS::FEntity> Entities;
+    MakeFlat(Registry, Entities, kEntities);
+
+    // Shuffled, so the lookup pays a real cache miss rather than walking the dense order.
+    TVector<ECS::FEntity> Order = Entities;
+    uint64 Seed = 0x9E3779B97F4A7C15ull;
+    for (size_t Index = Order.size(); Index > 1; --Index)
+    {
+        Seed ^= Seed << 13; Seed ^= Seed >> 7; Seed ^= Seed << 17;
+        const size_t Pick = static_cast<size_t>(Seed % Index);
+        std::swap(Order[Index - 1], Order[Pick]);
+    }
+
+    const uint64 Start = PlatformTime::Cycles();
+    double Sink = 0.0;
+    for (int Pass = 0; Pass < kPasses; ++Pass)
+    {
+        for (const ECS::FEntity E : Order)
+        {
+            Sink += Registry.Get<STransformComponent>(E).LastPublishEpoch;
+        }
+    }
+    const uint64 End = PlatformTime::Cycles();
+
+    std::printf("\n  random Get<STransformComponent> %u entities x %d passes: %6.3f ns/op (sink %.0f)\n",
+        kEntities, kPasses, Nanos(Start, End, static_cast<size_t>(kEntities) * kPasses), Sink);
+}
+
 TEST(TransformBench, DISABLED_FlatSetterFrameCost)
 {
     constexpr uint32 Count  = 100000;

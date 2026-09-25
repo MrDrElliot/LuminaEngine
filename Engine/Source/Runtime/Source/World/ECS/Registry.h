@@ -154,13 +154,16 @@ namespace Lumina::ECS
         template<CDataComponent T>
         NODISCARD FORCEINLINE T& Get(FEntity Entity)
         {
-            return GetStorage<T>().Get(Entity);
+            // FindStorage rather than AssureStorage, so a read never creates a pool and never needs a call.
+            const TComponentStorage<T> Storage = FindStorage<T>();
+            DEBUG_ASSERT(Storage.IsValid(), "Get on a component type this registry has no pool for");
+            return Storage.Get(Entity);
         }
 
         template<CDataComponent T>
         NODISCARD FORCEINLINE const T& Get(FEntity Entity) const
         {
-            return const_cast<FRegistry*>(this)->GetStorage<T>().Get(Entity);
+            return const_cast<FRegistry*>(this)->Get<T>(Entity);
         }
 
         template<CDataComponent T>
