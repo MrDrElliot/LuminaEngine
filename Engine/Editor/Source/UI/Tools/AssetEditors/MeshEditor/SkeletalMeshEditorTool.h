@@ -82,6 +82,8 @@ namespace Lumina
         void DrawHelpMenu() override;
         void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;
         void OnAssetDataChangedExternally() override;
+        void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
+        void CreatePreviewMeshEntity();
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
         bool ShouldGenerateThumbnailOnSave() const override { return true; }
 

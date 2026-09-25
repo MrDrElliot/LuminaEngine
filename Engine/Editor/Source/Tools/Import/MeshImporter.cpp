@@ -1228,6 +1228,7 @@ namespace Lumina
                 if (MeshSkeleton != nullptr)
                 {
                     NewSkeletalMesh->Skeleton = MeshSkeleton;
+                    NewSkeletalMesh->SkeletonJointIndicesAddress = MeshSkeleton;
 
                     // Only ever on a skeleton this import owns; the target belongs to another asset.
                     if (MeshSkeleton == PrimarySkeleton.Get() && !PrimarySkeleton->PreviewMesh)
