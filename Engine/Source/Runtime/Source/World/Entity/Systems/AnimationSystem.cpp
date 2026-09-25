@@ -618,8 +618,10 @@ namespace Lumina
                 static const char* TaskTypeNames[] =
                 {
                     "RefPose", "SampleClip", "Blend", "BlendMasked", "MakeAdditive",
-                    "ApplyAdditive", "SMOutput", "BoneTransform", "TwoBoneIK",
+                    "ApplyAdditive", "Inertialize", "DeadBlend", "SaveSnapshot", "LoadSnapshot",
+                    "BoneTransform", "TwoBoneIK", "FABRIK", "LookAt", "FootIK", "TranslateBone",
                 };
+                static_assert(std::size(TaskTypeNames) == (SIZE_T)EAnimTaskType::TranslateBone + 1);
 
                 FString Dump;
                 AppendFormat(Dump, "[AnimTasks] entity {} output={}",
