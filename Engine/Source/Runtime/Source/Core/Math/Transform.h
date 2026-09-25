@@ -72,12 +72,12 @@ namespace Lumina
             QuatToColumns(Rotation, C0, C1, C2);
 
             FMatrix4 M;
-            (C0 * SplatX(Scale)).Store(&M.Cols[0][0]);
-            (C1 * SplatY(Scale)).Store(&M.Cols[1][0]);
-            (C2 * SplatZ(Scale)).Store(&M.Cols[2][0]);
+            (C0 * SplatX(Scale)).StoreAligned(&M.Cols[0][0]);
+            (C1 * SplatY(Scale)).StoreAligned(&M.Cols[1][0]);
+            (C2 * SplatZ(Scale)).StoreAligned(&M.Cols[2][0]);
 
             const VFloat4 LaneW = _mm_castsi128_ps(_mm_setr_epi32(0, 0, 0, -1));
-            Select(LaneW, VFloat4(1.0f), Location).Store(&M.Cols[3][0]);   // (Lx, Ly, Lz, 1)
+            Select(LaneW, VFloat4(1.0f), Location).StoreAligned(&M.Cols[3][0]);   // (Lx, Ly, Lz, 1)
             return M;
         }
 
