@@ -79,23 +79,28 @@ namespace Lumina
         return static_cast<CClass*>(GetSuperStruct());
     }
 
+    // One recursive lock for every class, since building a CDO runs constructors that ask for others.
+    static FRecursiveMutex GDefaultObjectMutex;
+
     CObject* CClass::GetDefaultObject() const
     {
-        if (ClassDefaultObject == nullptr)
+        if (CObject* Existing = ClassDefaultObject.load(std::memory_order_acquire))
         {
-            // A bare StaticClass() call hands back a class whose properties the deferred pass has not
-            // attached yet, and CreateDefaultObject links it, so the empty layout would latch for good.
-            SettleDeferredRegistrations();
+            return Existing;
         }
 
-        // Re-checked, since settling the pass builds this class's own default object on the way past.
-        if (ClassDefaultObject == nullptr)
+        FRecursiveScopeLock Lock(GDefaultObjectMutex);
+
+        // Inside the lock because the pass is not thread safe either, and it can build this very CDO.
+        SettleDeferredRegistrations();
+
+        // Re-read, since settling builds this one on the way past and another thread may have too.
+        if (ClassDefaultObject.load(std::memory_order_relaxed) == nullptr)
         {
-            CClass* MutableThis = const_cast<CClass*>(this);
-            MutableThis->CreateDefaultObject();
+            const_cast<CClass*>(this)->CreateDefaultObject();
         }
 
-        return ClassDefaultObject;
+        return ClassDefaultObject.load(std::memory_order_acquire);
     }
 
     void* CStruct::GetDefaultInstance()
@@ -127,37 +132,50 @@ namespace Lumina
 
     CObject* CClass::CreateDefaultObject()
     {
-        DEBUG_ASSERT(ClassDefaultObject == nullptr);
+        DEBUG_ASSERT(ClassDefaultObject.load(std::memory_order_relaxed) == nullptr);
+
+        // Only a constructor of this very class can land here, and handing it a half-built CDO is worse.
+        if (bCreatingDefaultObject)
+        {
+            LOG_ERROR("'{}' asked for its own default object while that object was still being built.", GetName());
+            return nullptr;
+        }
+
+        const TGuardValue<bool> Building(bCreatingDefaultObject, true);
 
         Link();
-        
+
         FString DefaultObjectName = GetName().c_str();
         DefaultObjectName += "_CDO";
-        
+
         FConstructCObjectParams Params(this);
         Params.Flags    |= OF_DefaultObject;
         Params.Name     = FName(DefaultObjectName);
         Params.Package  = GetPackage();
         Params.Guid     = FGuid::New();
-        
-        // It used to need a re-stamp here because construction dropped the flag.
-        ClassDefaultObject = StaticAllocateObject(Params);
-        ClassDefaultObject->AddToRoot();
 
-        ClassDefaultObject->PostCreateCDO();
-        
-        return ClassDefaultObject;
+        CObject* Created = StaticAllocateObject(Params);
+        Created->AddToRoot();
+
+        // Published before PostCreateCDO, which registers the CDO in tables that may ask for it back.
+        ClassDefaultObject.store(Created, std::memory_order_release);
+
+        Created->PostCreateCDO();
+
+        return Created;
     }
-    
+
     void CClass::DiscardDefaultObject()
     {
-        if (ClassDefaultObject == nullptr)
+        FRecursiveScopeLock Lock(GDefaultObjectMutex);
+
+        CObject* Discarded = ClassDefaultObject.exchange(nullptr, std::memory_order_acq_rel);
+        if (Discarded == nullptr)
         {
             return;
         }
-        // That root reference is the only strong one a CDO has, so un-rooting IS the destruction.
-        CObject* Discarded = ClassDefaultObject;
-        ClassDefaultObject = nullptr;
+
+        // That root reference is the only strong one a CDO has, so un-rooting is the destruction.
         Discarded->RemoveFromRoot();
     }
 

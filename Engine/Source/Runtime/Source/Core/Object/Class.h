@@ -320,7 +320,7 @@ namespace Lumina
         RUNTIME_API CObject* GetDefaultObject() const;
 
         /** The CDO if one has been created; never creates it (unlike GetDefaultObject). */
-        RUNTIME_API CObject* GetDefaultObjectIfCreated() const { return ClassDefaultObject; }
+        RUNTIME_API CObject* GetDefaultObjectIfCreated() const { return ClassDefaultObject.load(std::memory_order_acquire); }
 
         /**
          * Destroys the CDO and forgets it, so the next GetDefaultObject builds a fresh one.
@@ -351,7 +351,11 @@ namespace Lumina
 
     private:
 
-        CObject*        ClassDefaultObject = nullptr;
+        // Atomic, since GetDefaultObject reads it unlocked before deciding whether to take the build lock.
+        std::atomic<CObject*> ClassDefaultObject { nullptr };
+
+        // Set while this class's own CDO is being built, so a re-entrant request fails loudly.
+        bool                  bCreatingDefaultObject = false;
 
     };
 

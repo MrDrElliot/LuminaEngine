@@ -64,8 +64,7 @@ namespace Lumina
 
         if (Template == nullptr)
         {
-            // An uncreated CDO holds exactly what the constructor just wrote, so forcing one would copy nothing.
-            Template = Params.Class->GetDefaultObjectIfCreated();
+            Template = Params.Class->GetDefaultObject();
         }
         // Class's properties sit at the same offsets in a subclass, so only a narrower template reads in bounds.
         else if (Template->GetClass() == nullptr || !Template->GetClass()->IsChildOf(Params.Class))

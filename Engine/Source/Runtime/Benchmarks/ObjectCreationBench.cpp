@@ -18,6 +18,7 @@ namespace LuminaObjectCreationBench
     using Lumina::CScriptableTest;
     using Lumina::CEntityScriptTest;
     using Lumina::CGrassType;
+    using Lumina::CObjectRefTest;
     using Lumina::FGuid;
     using Lumina::GObjectArray;
     using Lumina::int32;
@@ -94,6 +95,7 @@ namespace LuminaObjectCreationBench
         CScriptableTest::StaticClass()->GetDefaultObject();
         CEntityScriptTest::StaticClass()->GetDefaultObject();
         CGrassType::StaticClass()->GetDefaultObject();
+        CObjectRefTest::StaticClass()->GetDefaultObject();
 
         ReportRow(Label(CScriptableTest::StaticClass()), MeasureConstruction([]
         {
@@ -110,19 +112,10 @@ namespace LuminaObjectCreationBench
             return Lumina::NewObject<CGrassType>(nullptr, NAME_None, FGuid::New(), OF_Transient);
         }));
 
-        CGrassType::StaticClass()->DiscardDefaultObject();
-        ReportRow("CGrassType, no CDO to copy", MeasureConstruction([]
+        // No reflected properties, so the template pass short-circuits and this is the floor.
+        ReportRow(Label(CObjectRefTest::StaticClass()), MeasureConstruction([]
         {
-            return Lumina::NewObject<CGrassType>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            return Lumina::NewObject<CObjectRefTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
         }));
-        CGrassType::StaticClass()->GetDefaultObject();
-
-        // With no CDO there is nothing to copy from, so this row is construction without the template pass.
-        CScriptableTest::StaticClass()->DiscardDefaultObject();
-        ReportRow("CScriptableTest, no CDO to copy", MeasureConstruction([]
-        {
-            return Lumina::NewObject<CScriptableTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
-        }));
-        CScriptableTest::StaticClass()->GetDefaultObject();
     }
 }

@@ -3,6 +3,7 @@
 #include "Containers/Name.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
 #include "Scripting/ScriptableTest.h"
 
@@ -108,4 +109,42 @@ TEST(ObjectConstruction, AConstructorSeesItsOwnClassNameAndPackage)
     EXPECT_EQ(Object->SeenClass, CConstructorIdentityTest::StaticClass()) << "GetClass was null inside the constructor";
     EXPECT_EQ(Object->SeenName, FName("IdentityProbe")) << "GetName was unset inside the constructor";
     EXPECT_EQ(Object->SeenPackage, Package) << "GetPackage was null inside the constructor";
+}
+
+int32 CountDefaultObjectsOf(const CClass* Class)
+{
+    int32 Found = 0;
+    for (TObjectIterator<CObject> It; It; ++It)
+    {
+        const CObject* Candidate = *It;
+        if (Candidate->HasAnyFlag(OF_DefaultObject) && Candidate->GetClass() == Class)
+        {
+            ++Found;
+        }
+    }
+    return Found;
+}
+
+// Without the in-progress guard this recurses into CreateDefaultObject until the stack runs out.
+TEST(ObjectDefaults, AConstructorAskingForItsOwnDefaultObjectGetsNothingRatherThanASecondOne)
+{
+    CClass* Class = CSelfDefaultTest::StaticClass();
+
+    CSelfDefaultTest::bAskForOwnDefault = true;
+    Class->DiscardDefaultObject();
+
+    CObject* Cdo = Class->GetDefaultObject();
+    ASSERT_NE(Cdo, nullptr) << "the default object was never built";
+    EXPECT_EQ(CountDefaultObjectsOf(Class), 1) << "building one default object left more than one rooted";
+
+    EXPECT_EQ(static_cast<CSelfDefaultTest*>(Cdo)->OwnDefault, nullptr)
+        << "the default object's own constructor was handed one mid-build";
+
+    // An ordinary instance runs the same constructor, and by then the default object is finished.
+    CSelfDefaultTest* Fresh = NewObject<CSelfDefaultTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Fresh, nullptr);
+    EXPECT_EQ(Fresh->OwnDefault, Cdo) << "an instance's constructor could not see the finished default object";
+    EXPECT_EQ(CountDefaultObjectsOf(Class), 1) << "constructing an instance built a second default object";
+
+    CSelfDefaultTest::bAskForOwnDefault = false;
 }
