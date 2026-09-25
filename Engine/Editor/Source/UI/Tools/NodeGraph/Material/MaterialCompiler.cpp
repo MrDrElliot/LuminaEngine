@@ -1391,6 +1391,28 @@ namespace Lumina
 		return Algo::AnyOf(Errors, [Node](const EdNodeGraph::FError& Error) { return Error.Node == Node; });
 	}
 
+	// A node inside an inlined function is not in the open graph, so it can neither turn red nor be focused.
+	void FMaterialCompiler::RetargetDiagnosticsToCallNode(size_t FirstError, size_t FirstWarning, CEdGraphNode* CallNode, const FString& FunctionName)
+	{
+		auto Retarget = [&](TVector<EdNodeGraph::FError>& Diagnostics, size_t First)
+		{
+			for (size_t i = First; i < Diagnostics.size(); ++i)
+			{
+				EdNodeGraph::FError& Diag = Diagnostics[i];
+				if (Diag.Node == nullptr || Diag.Node->GetOwningGraph() == CallNode->GetOwningGraph())
+				{
+					continue;
+				}
+
+				Diag.Description = "In function '" + FunctionName + "', node '" + Diag.Node->GetNodeTitleText() + "': " + Diag.Description;
+				Diag.Node = CallNode;
+			}
+		};
+
+		Retarget(Errors, FirstError);
+		Retarget(Warnings, FirstWarning);
+	}
+
 	bool FMaterialCompiler::ClaimUniformSlot(uint32 Used, uint32 Capacity, FStringView SlotKind, const FName& Subject, CEdGraphNode* Node)
 	{
 		if (Used < Capacity)

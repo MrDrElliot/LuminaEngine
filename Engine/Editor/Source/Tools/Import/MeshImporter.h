@@ -221,5 +221,7 @@ namespace Lumina
         float ConvertPunctualIntensity(const Import::Mesh::FSourceLight& Light, float BrightestOfKind) const;
 
         Import::Mesh::FMeshImportData SourceData;
+        FImportRequest ParsedRequest;
+        bool bParsedWithUnskinnedBones = false;
     };
 }
