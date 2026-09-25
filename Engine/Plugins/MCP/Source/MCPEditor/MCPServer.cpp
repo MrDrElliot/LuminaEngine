@@ -6,6 +6,7 @@
 #include "Agent/AgentToolSchema.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Log/Log.h"
+#include "MCPAnimGraphTools.h"
 #include "MCPAssetObjectTools.h"
 #include "MCPAssetTools.h"
 #include "MCPBuiltinTools.h"
@@ -103,6 +104,7 @@ namespace Lumina::MCP
         RegisterAssetTools(GOwner);
         RegisterAssetObjectTools(GOwner);
         RegisterMaterialTools(GOwner);
+        RegisterAnimGraphTools(GOwner);
         RegisterDataTableTools(GOwner);
         RegisterPrefabTools(GOwner);
         RegisterEditorSessionTools(GOwner);
