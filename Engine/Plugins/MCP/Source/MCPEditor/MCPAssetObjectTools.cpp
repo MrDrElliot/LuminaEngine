@@ -41,11 +41,12 @@ namespace Lumina::MCP
         }
 
         // A class is creatable when a factory claims it; there is no abstract flag to ask instead.
+        /** The factory for Class or its nearest ancestor: a CDataAsset subclass is minted through CDataAsset's. */
         CFactory* FindFactoryFor(CClass* Class)
         {
             for (CFactory* Factory : CFactoryRegistry::Get().GetFactories())
             {
-                if (Factory != nullptr && Factory->GetAssetClass() == Class)
+                if (Factory != nullptr && Factory->GetAssetClass() != nullptr && Class->IsChildOf(Factory->GetAssetClass()))
                 {
                     return Factory;
                 }
