@@ -9,7 +9,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
 #include "MCPTextMatch.h"
-#include "Material/MaterialOps.h"
+#include "UI/Tools/NodeGraph/NodeGraphOps.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
@@ -43,7 +43,7 @@ namespace Lumina::MCP
 
             if (Access == EAnimGraphAccess::Write)
             {
-                const FString OpenIn = MaterialOps::FindOpenEditorName(Out.Asset);
+                const FString OpenIn = NodeGraphOps::FindOpenEditorName(Out.Asset);
                 if (!OpenIn.empty())
                 {
                     OutError = Lumina::Format(
@@ -62,7 +62,7 @@ namespace Lumina::MCP
 
             for (const int64 NodeId : GraphPath)
             {
-                CEdGraphNode* Node = MaterialOps::FindNode(Canvas, NodeId);
+                CEdGraphNode* Node = NodeGraphOps::FindNode(Canvas, NodeId);
                 if (Node == nullptr)
                 {
                     OutError = Lumina::Format("GraphPath names node {}, which is not on that canvas.", NodeId);
@@ -168,7 +168,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    for (CClass* Class : AnimGraphOps::GetPlaceableNodeTypes(Target.Canvas))
+                    for (CClass* Class : NodeGraphOps::GetPlaceableNodeTypes(Target.Canvas->GetClass()))
                     {
                         CEdGraphNode* CDO = Class->GetDefaultObject<CEdGraphNode>();
                         if (CDO == nullptr)
@@ -273,7 +273,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CClass* NodeClass = AnimGraphOps::ResolveNodeType(Target.Canvas, FStringView(In.NodeType));
+                    CClass* NodeClass = NodeGraphOps::ResolveNodeType(Target.Canvas->GetClass(), FStringView(In.NodeType));
                     if (NodeClass == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
@@ -281,7 +281,7 @@ namespace Lumina::MCP
                             In.NodeType));
                     }
 
-                    CEdGraphNode* Node = MaterialOps::AddNode(Target.Canvas, NodeClass, In.X, In.Y);
+                    CEdGraphNode* Node = NodeGraphOps::AddNode(Target.Canvas, NodeClass, In.X, In.Y);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error("The graph refused to create that node.");
@@ -311,13 +311,13 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Canvas, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Canvas, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is on this canvas.", In.Node));
                     }
 
-                    if (!MaterialOps::RemoveNode(Target.Canvas, Node, Error))
+                    if (!NodeGraphOps::RemoveNode(Target.Canvas, Node, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -345,8 +345,8 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* From = MaterialOps::FindNode(Target.Canvas, In.FromNode);
-                    CEdGraphNode* To   = MaterialOps::FindNode(Target.Canvas, In.ToNode);
+                    CEdGraphNode* From = NodeGraphOps::FindNode(Target.Canvas, In.FromNode);
+                    CEdGraphNode* To   = NodeGraphOps::FindNode(Target.Canvas, In.ToNode);
 
                     if (From == nullptr || To == nullptr)
                     {
@@ -355,26 +355,26 @@ namespace Lumina::MCP
                     }
 
                     CEdNodeGraphPin* OutputPin =
-                        MaterialOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
+                        NodeGraphOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
 
                     if (OutputPin == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Node {} has no output pin '{}'. It has {}.",
                             In.FromNode, In.FromPin,
-                            MaterialOps::DescribePinNames(From, ENodePinDirection::Output)));
+                            NodeGraphOps::DescribePinNames(From, ENodePinDirection::Output)));
                     }
 
                     CEdNodeGraphPin* InputPin =
-                        MaterialOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
+                        NodeGraphOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
 
                     if (InputPin == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Node {} has no input pin '{}'. It has {}.",
                             In.ToNode, In.ToPin,
-                            MaterialOps::DescribePinNames(To, ENodePinDirection::Input)));
+                            NodeGraphOps::DescribePinNames(To, ENodePinDirection::Input)));
                     }
 
-                    if (!MaterialOps::ConnectPins(Target.Canvas, OutputPin, InputPin, Error))
+                    if (!NodeGraphOps::ConnectPins(Target.Canvas, OutputPin, InputPin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -402,16 +402,16 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Canvas, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Canvas, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is on this canvas.", In.Node));
                     }
 
-                    CEdNodeGraphPin* Pin = MaterialOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
+                    CEdNodeGraphPin* Pin = NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
                     if (Pin == nullptr)
                     {
-                        Pin = MaterialOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
+                        Pin = NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
                     }
 
                     if (Pin == nullptr)
@@ -419,7 +419,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("Node {} has no pin '{}'.", In.Node, In.Pin));
                     }
 
-                    if (!MaterialOps::DisconnectPin(Target.Canvas, Pin, Error))
+                    if (!NodeGraphOps::DisconnectPin(Target.Canvas, Pin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -447,7 +447,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Canvas, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Canvas, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is on this canvas.", In.Node));
@@ -458,7 +458,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    MaterialOps::NotifyNodeValuesChanged(Target.Canvas);
+                    NodeGraphOps::NotifyNodeValuesChanged(Target.Canvas);
                     MarkAnimGraphDirty(Target);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Node {} {} is now {}.",

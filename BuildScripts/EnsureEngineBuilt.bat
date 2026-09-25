@@ -11,7 +11,7 @@ if "%CONFIG%"=="" (
     exit /b 1
 )
 
-rem Not TARGETTYPE: MSBuild reads env vars as properties, and TargetType becomes csc /target, failing CS2019.
+rem MSBuild reads env vars as properties, so a TARGETTYPE here becomes csc /target and fails CS2019.
 set "ENGINE_TARGET_TYPE=%~2"
 if "%ENGINE_TARGET_TYPE%"=="" set "ENGINE_TARGET_TYPE=Editor"
 if /I not "%ENGINE_TARGET_TYPE%"=="Editor" if /I not "%ENGINE_TARGET_TYPE%"=="Game" (

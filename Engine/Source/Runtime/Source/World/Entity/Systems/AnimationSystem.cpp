@@ -602,8 +602,10 @@ namespace Lumina
 
                 // A mesh parented under its character has no body; the capsule it must not trace is the parent's.
                 const FRelationshipComponent* Relationship = SystemContext.TryGet<FRelationshipComponent>(Entity);
-                if (SceneContext.SelfBodyID == ~0u && Relationship && Relationship->Parent != ECS::NullEntity)
+                if (SceneContext.SelfBodyID == ~0u && Relationship != nullptr && Relationship->Parent != ECS::NullEntity)
+                {
                     SceneContext.SelfBodyID = SystemContext.GetEntityBodyID(Relationship->Parent);
+                }
 
                 SceneContext.Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
             }

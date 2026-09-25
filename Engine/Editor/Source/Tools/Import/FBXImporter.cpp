@@ -121,7 +121,7 @@ namespace Lumina
             return Node.has_adjust_transform ? Math::Inverse(ToQuat(Node.adjust_pre_rotation)) : FQuat(1.0f, 0.0f, 0.0f, 0.0f);
         }
 
-        /** Turns the file's up axis onto +Y, ignoring its front axis, which can disagree with how the model was authored. */
+        // Turns the file's up axis onto +Y, ignoring its front axis, which can disagree with the authored model.
         struct FEngineBasis
         {
             FQuat    Rotation        = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
@@ -146,7 +146,7 @@ namespace Lumina
                 default: break;
                 }
 
-                // ponytail: an X-up file is also mirrored on X by the handedness conversion, which this ignores.
+                // An X-up file is also mirrored on X by the handedness conversion, which this ignores.
                 Rotation          = Math::RotationBetween(Up, FVector3(0.0f, 1.0f, 0.0f));
                 InverseRotation   = Math::Inverse(Rotation);
                 Matrix            = Math::ToMatrix4(Rotation);

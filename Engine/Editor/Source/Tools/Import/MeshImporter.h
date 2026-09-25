@@ -209,7 +209,7 @@ namespace Lumina
         /** Rewrites the parsed skinning into the index space of the skeleton the asset already answers to. */
         void RebindReimportSkinning(CMesh* Mesh);
 
-        /** Swaps a freshly imported clip into an existing animation asset, keeping its GUID and authored notifies. */
+        // Swaps a freshly imported clip into an existing animation asset, keeping its GUID and authored notifies.
         static void ReplaceAnimationInPlace(CAnimation* Existing, TUniquePtr<FAnimationResource>&& NewClip,
                                             CSkeleton* NewSkeleton);
 

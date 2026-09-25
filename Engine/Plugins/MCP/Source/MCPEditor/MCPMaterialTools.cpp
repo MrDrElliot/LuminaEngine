@@ -16,6 +16,7 @@
 #include "Core/Object/Package/Package.h"
 #include "FileSystem/FileSystem.h"
 #include "Material/MaterialOps.h"
+#include "UI/Tools/NodeGraph/NodeGraphOps.h"
 #include "Paths/Paths.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
@@ -57,7 +58,7 @@ namespace Lumina::MCP
 
             if (Access == EMaterialAccess::Write)
             {
-                const FString OpenIn = MaterialOps::FindOpenEditorName(Out.Asset);
+                const FString OpenIn = NodeGraphOps::FindOpenEditorName(Out.Asset);
                 if (!OpenIn.empty())
                 {
                     OutError = Lumina::Format(
@@ -69,7 +70,7 @@ namespace Lumina::MCP
 
             Out.Graph = Out.Material != nullptr
                 ? MaterialOps::FindOrCreateGraph(Out.Material)
-                // static_cast: CMaterialNodeGraph's class is not exported, and that name only ever holds a function graph.
+                // Cast is unavailable with CMaterialNodeGraph's class unexported, and that name only holds a function graph.
                 : static_cast<CMaterialNodeGraph*>(Function->GetPackage()->LoadObjectByName(FName(GMaterialFunctionGraphObjectName)));
             if (Out.Graph == nullptr)
             {
@@ -263,7 +264,7 @@ namespace Lumina::MCP
                             "No material node type is named '{}'. Use material.list_node_types.", In.NodeType));
                     }
 
-                    CEdGraphNode* Node = MaterialOps::AddNode(Target.Graph, NodeClass, In.X, In.Y);
+                    CEdGraphNode* Node = NodeGraphOps::AddNode(Target.Graph, NodeClass, In.X, In.Y);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error("The graph refused to create that node.");
@@ -293,13 +294,13 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Graph, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
                     }
 
-                    if (!MaterialOps::RemoveNode(Target.Graph, Node, Error))
+                    if (!NodeGraphOps::RemoveNode(Target.Graph, Node, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -326,8 +327,8 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* From = MaterialOps::FindNode(Target.Graph, In.FromNode);
-                    CEdGraphNode* To   = MaterialOps::FindNode(Target.Graph, In.ToNode);
+                    CEdGraphNode* From = NodeGraphOps::FindNode(Target.Graph, In.FromNode);
+                    CEdGraphNode* To   = NodeGraphOps::FindNode(Target.Graph, In.ToNode);
 
                     if (From == nullptr || To == nullptr)
                     {
@@ -336,26 +337,26 @@ namespace Lumina::MCP
                     }
 
                     CEdNodeGraphPin* OutputPin =
-                        MaterialOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
+                        NodeGraphOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
 
                     if (OutputPin == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Node {} has no output pin '{}'. It has {}.",
                             In.FromNode, In.FromPin,
-                            MaterialOps::DescribePinNames(From, ENodePinDirection::Output)));
+                            NodeGraphOps::DescribePinNames(From, ENodePinDirection::Output)));
                     }
 
                     CEdNodeGraphPin* InputPin =
-                        MaterialOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
+                        NodeGraphOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
 
                     if (InputPin == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Node {} has no input pin '{}'. It has {}.",
                             In.ToNode, In.ToPin,
-                            MaterialOps::DescribePinNames(To, ENodePinDirection::Input)));
+                            NodeGraphOps::DescribePinNames(To, ENodePinDirection::Input)));
                     }
 
-                    if (!MaterialOps::ConnectPins(Target.Graph, OutputPin, InputPin, Error))
+                    if (!NodeGraphOps::ConnectPins(Target.Graph, OutputPin, InputPin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -383,18 +384,18 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Graph, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
                     }
 
                     CEdNodeGraphPin* Pin =
-                        MaterialOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
+                        NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
 
                     if (Pin == nullptr)
                     {
-                        Pin = MaterialOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
+                        Pin = NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
                     }
 
                     if (Pin == nullptr)
@@ -403,7 +404,7 @@ namespace Lumina::MCP
                             In.Node, In.Pin));
                     }
 
-                    if (!MaterialOps::DisconnectPin(Target.Graph, Pin, Error))
+                    if (!NodeGraphOps::DisconnectPin(Target.Graph, Pin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -430,7 +431,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Graph, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
@@ -470,7 +471,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Applied.Error);
                     }
 
-                    MaterialOps::NotifyNodeValuesChanged(Target.Graph);
+                    NodeGraphOps::NotifyNodeValuesChanged(Target.Graph);
 
                     nlohmann::json After;
                     Agent::WriteProperty(Property.Property, Property.ValuePtr, After);

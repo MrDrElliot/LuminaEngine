@@ -22,7 +22,7 @@ namespace Lumina
         bool IsAsset() const override { return true; }
         bool IsSkinned() const override { return true; }
 
-        /** Rewrites the joint indices into Skeleton's bone order, matching by name, after Skeleton is reassigned. */
+        // Rewrites the joint indices into Skeleton's bone order, matching by name, after Skeleton is reassigned.
         void RemapJointIndicesToSkeleton();
 
         PROPERTY(Editable, Category = "Skeleton")

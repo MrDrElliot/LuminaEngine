@@ -7,7 +7,6 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
-#include "UI/Tools/NodeGraph/GraphNodeRegistry.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
@@ -51,35 +50,6 @@ namespace Lumina::AnimGraphOps
         Graph->EnsureSetup();
 
         return Graph;
-    }
-
-    TVector<CClass*> GetPlaceableNodeTypes(CEdNodeGraph* Graph)
-    {
-        TVector<CClass*> Types;
-        if (Graph == nullptr)
-        {
-            return Types;
-        }
-
-        for (CClass* Class : FGraphNodeRegistry::Get().GetNodesForGraphClass(Graph->GetClass()))
-        {
-            if (Class != nullptr)
-            {
-                Types.push_back(Class);
-            }
-        }
-
-        return Types;
-    }
-
-    CClass* ResolveNodeType(CEdNodeGraph* Graph, FStringView TypeName)
-    {
-        // Bound to a local because the getter returns by value, so end() must come from the same vector.
-        const TVector<CClass*> Types = GetPlaceableNodeTypes(Graph);
-        const auto It = Algo::FindIf(Types,
-            [TypeName](CClass* Class) { return FStringView(Class->GetName().ToString()) == TypeName; });
-
-        return It != Types.end() ? *It : nullptr;
     }
 
     TVector<CAnimStateTransition*> GetTransitions(CEdNodeGraph* Graph)

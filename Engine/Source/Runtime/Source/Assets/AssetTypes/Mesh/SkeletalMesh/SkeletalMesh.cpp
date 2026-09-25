@@ -113,7 +113,8 @@ namespace Lumina
         {
             LOG_WARN("[SkeletalMesh] '{}': bind pose of '{}' differs from '{}' by up to {} at bone '{}'; the mesh will deform. Import both from the same file at the same scale.",
                      GetName(), Skeleton->GetName(), SkeletonJointIndicesAddress->GetName(), WorstBindPoseDelta,
-                     From->GetBone((int32)WorstBone).Name);        }
+                     From->GetBone((int32)WorstBone).Name);
+        }
 
         SkeletonJointIndicesAddress = Skeleton;
         GenerateGPUBuffers();

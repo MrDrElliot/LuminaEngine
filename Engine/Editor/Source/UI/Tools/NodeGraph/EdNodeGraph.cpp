@@ -1758,7 +1758,7 @@ namespace Lumina
         
         NodeEditor::EndDelete();
 
-        // After the nodes are drawn: selection bounds count only nodes submitted this frame.
+        // Drawn first, since selection bounds count only nodes submitted this frame.
         if (PendingFocusNode.IsValid())
         {
             NodeEditor::SelectNode(PendingFocusNode->GetNodeID(), false);

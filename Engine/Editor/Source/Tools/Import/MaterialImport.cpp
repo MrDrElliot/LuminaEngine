@@ -11,7 +11,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
-#include "Material/MaterialOps.h"
+#include "UI/Tools/NodeGraph/NodeGraphOps.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
@@ -74,7 +74,7 @@ namespace Lumina
                 : nullptr;
 
             FString Error;
-            if (!MaterialOps::ConnectPins(Graph, OutputPin, InputPin, Error))
+            if (!NodeGraphOps::ConnectPins(Graph, OutputPin, InputPin, Error))
             {
                 LOG_WARN("Material import: refused to wire {} to {}. {}",
                     OutputPin->GetPinName(), InputPin->GetPinName(), Error);

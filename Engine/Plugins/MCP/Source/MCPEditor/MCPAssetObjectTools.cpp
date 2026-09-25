@@ -40,19 +40,14 @@ namespace Lumina::MCP
             }
         }
 
-        // A class is creatable when a factory claims it; there is no abstract flag to ask instead.
-        /** The factory for Class or its nearest ancestor: a CDataAsset subclass is minted through CDataAsset's. */
-        CFactory* FindFactoryFor(CClass* Class)
+        // A class is creatable when a factory claims it or an ancestor of it; there is no abstract flag to ask.
+        bool IsCreatableClass(CClass* Class)
         {
-            for (CFactory* Factory : CFactoryRegistry::Get().GetFactories())
+            return Algo::AnyOf(CFactoryRegistry::Get().GetFactories(), [Class](CFactory* Factory)
             {
-                if (Factory != nullptr && Factory->GetAssetClass() != nullptr && Class->IsChildOf(Factory->GetAssetClass()))
-                {
-                    return Factory;
-                }
-            }
-
-            return nullptr;
+                return Factory != nullptr && Factory->GetAssetClass() != nullptr
+                    && Class->IsChildOf(Factory->GetAssetClass());
+            });
         }
 
         void RegisterListClasses(FStringView Owner)
@@ -109,7 +104,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error + " Call assets.list_classes.");
                     }
 
-                    if (FindFactoryFor(Class) == nullptr)
+                    if (!IsCreatableClass(Class))
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
                             "{} is not a creatable asset class. Call assets.list_classes.", In.ClassName));
