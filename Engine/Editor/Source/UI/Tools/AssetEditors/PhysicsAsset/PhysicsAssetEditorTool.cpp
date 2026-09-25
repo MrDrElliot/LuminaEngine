@@ -203,52 +203,6 @@ namespace Lumina
         return true;
     }
 
-    static bool PhysicsAssetRayHitsBox(const FVector3& Origin, const FVector3& Direction, const FMatrix4& BodyMatrix,
-                           const FVector3& HalfExtent, float& OutT)
-    {
-        const FMatrix4 InverseBody = Math::Inverse(BodyMatrix);
-        const FVector3 LocalOrigin = FVector3(InverseBody * FVector4(Origin, 1.0f));
-        const FVector3 LocalDirection = FVector3(InverseBody * FVector4(Direction, 0.0f));
-
-        const float OriginAxis[3]    = { LocalOrigin.x, LocalOrigin.y, LocalOrigin.z };
-        const float DirectionAxis[3] = { LocalDirection.x, LocalDirection.y, LocalDirection.z };
-        const float ExtentAxis[3]    = { HalfExtent.x, HalfExtent.y, HalfExtent.z };
-
-        float TMin = 0.0f;
-        float TMax = 1e30f;
-
-        for (int32 Axis = 0; Axis < 3; ++Axis)
-        {
-            if (Math::Abs(DirectionAxis[Axis]) < 1e-6f)
-            {
-                if (OriginAxis[Axis] < -ExtentAxis[Axis] || OriginAxis[Axis] > ExtentAxis[Axis])
-                {
-                    return false;
-                }
-                continue;
-            }
-
-            float TNear = (-ExtentAxis[Axis] - OriginAxis[Axis]) / DirectionAxis[Axis];
-            float TFar  = ( ExtentAxis[Axis] - OriginAxis[Axis]) / DirectionAxis[Axis];
-            if (TNear > TFar)
-            {
-                std::swap(TNear, TFar);
-            }
-
-            TMin = Math::Max(TMin, TNear);
-            TMax = Math::Min(TMax, TFar);
-            if (TMin > TMax)
-            {
-                return false;
-            }
-        }
-
-        // Back to a world distance so overlapping bodies of different shapes sort against each other.
-        const FVector3 WorldHit = FVector3(BodyMatrix * FVector4(LocalOrigin + LocalDirection * TMin, 1.0f));
-        OutT = Math::Length(WorldHit - Origin);
-        return true;
-    }
-
     static FTreeNodeID FindTreeNodeForBone(FTreeListView& Tree, FTreeNodeID Parent, int32 BoneIndex)
     {
         const int32 ChildCount = Tree.NumChildNodes(Parent);
@@ -745,56 +699,6 @@ namespace Lumina
         }
     }
 
-    bool FPhysicsAssetEditorTool::BuildViewportRay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
-                                                   const ImVec2& ScreenPos, FVector3& OutOrigin, FVector3& OutDirection)
-    {
-        SCameraComponent* Camera = World->GetActiveCamera();
-        if (Camera == nullptr)
-        {
-            return false;
-        }
-
-        const float LocalX = ScreenPos.x - ViewportOrigin.x;
-        const float LocalY = ScreenPos.y - ViewportOrigin.y;
-        if (LocalX < 0.0f || LocalY < 0.0f || LocalX >= ViewportSize.x || LocalY >= ViewportSize.y)
-        {
-            return false;
-        }
-
-        // The camera projection bakes Vulkan's +Y-down NDC; flip it back before unprojecting.
-        FMatrix4 Projection = Camera->GetProjectionMatrix();
-        Projection[1][1] *= -1.0f;
-        const FMatrix4 InverseViewProjection = Math::Inverse(Projection * Camera->GetViewMatrix());
-
-        const float NdcX = (LocalX / ViewportSize.x) * 2.0f - 1.0f;
-        const float NdcY = 1.0f - (LocalY / ViewportSize.y) * 2.0f;
-
-        const FVector4 FarPoint = InverseViewProjection * FVector4(NdcX, NdcY, 1.0f, 1.0f);
-        if (Math::Abs(FarPoint.w) < 1e-6f)
-        {
-            return false;
-        }
-
-        OutOrigin = Camera->GetPosition();
-        OutDirection = Math::Normalize(FVector3(FarPoint) / FarPoint.w - OutOrigin);
-        return true;
-    }
-
-    bool FPhysicsAssetEditorTool::ProjectToScreen(const FMatrix4& ViewProj, const ImVec2& ViewportOrigin,
-                                                  const ImVec2& ViewportSize, const FVector3& WorldPosition, ImVec2& OutScreen)
-    {
-        const FVector4 Clip = ViewProj * FVector4(WorldPosition, 1.0f);
-        if (Clip.w <= 1e-6f)
-        {
-            return false;
-        }
-
-        const FVector3 Ndc = FVector3(Clip) / Clip.w;
-        OutScreen = ImVec2(ViewportOrigin.x + (Ndc.x * 0.5f + 0.5f) * ViewportSize.x,
-                           ViewportOrigin.y + (0.5f - Ndc.y * 0.5f) * ViewportSize.y);
-        return true;
-    }
-
     int32 FPhysicsAssetEditorTool::PickBody(const FVector3& RayOrigin, const FVector3& RayDirection)
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
@@ -826,7 +730,7 @@ namespace Lumina
                 break;
 
             case ERagdollBodyShape::Box:
-                bHit = PhysicsAssetRayHitsBox(RayOrigin, RayDirection, BodyMatrix, Body.HalfExtent, Distance);
+                bHit = ShapeHandles::RayHitsBox(RayOrigin, RayDirection, BodyMatrix, Body.HalfExtent, Distance);
                 break;
             }
 
@@ -840,7 +744,7 @@ namespace Lumina
         return BestBody;
     }
 
-    void FPhysicsAssetEditorTool::GatherBodyHandles(TVector<FPhysicsHandle>& OutHandles)
+    void FPhysicsAssetEditorTool::GatherShapeHandles(TVector<FShapeHandle>& OutHandles)
     {
         OutHandles.clear();
 
@@ -862,23 +766,23 @@ namespace Lumina
         switch (Body.Shape)
         {
         case ERagdollBodyShape::Capsule:
-            OutHandles.push_back({ EPhysicsBodyHandle::Radius,     Center + AxisX * Body.Radius,     AxisX, Center });
-            OutHandles.push_back({ EPhysicsBodyHandle::HalfHeight, Center + AxisY * Body.HalfHeight, AxisY, Center });
+            OutHandles.push_back({ EShapeHandle::Radius,     Center + AxisX * Body.Radius,     AxisX, Center });
+            OutHandles.push_back({ EShapeHandle::HalfHeight, Center + AxisY * Body.HalfHeight, AxisY, Center });
             break;
 
         case ERagdollBodyShape::Sphere:
-            OutHandles.push_back({ EPhysicsBodyHandle::Radius, Center + AxisX * Body.Radius, AxisX, Center });
+            OutHandles.push_back({ EShapeHandle::Radius, Center + AxisX * Body.Radius, AxisX, Center });
             break;
 
         case ERagdollBodyShape::Box:
-            OutHandles.push_back({ EPhysicsBodyHandle::ExtentX, Center + AxisX * Body.HalfExtent.x, AxisX, Center });
-            OutHandles.push_back({ EPhysicsBodyHandle::ExtentY, Center + AxisY * Body.HalfExtent.y, AxisY, Center });
-            OutHandles.push_back({ EPhysicsBodyHandle::ExtentZ, Center + AxisZ * Body.HalfExtent.z, AxisZ, Center });
+            OutHandles.push_back({ EShapeHandle::ExtentX, Center + AxisX * Body.HalfExtent.x, AxisX, Center });
+            OutHandles.push_back({ EShapeHandle::ExtentY, Center + AxisY * Body.HalfExtent.y, AxisY, Center });
+            OutHandles.push_back({ EShapeHandle::ExtentZ, Center + AxisZ * Body.HalfExtent.z, AxisZ, Center });
             break;
         }
     }
 
-    void FPhysicsAssetEditorTool::ApplyHandleDrag(const FPhysicsHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection)
+    void FPhysicsAssetEditorTool::ApplyShapeHandleDrag(const FShapeHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection)
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
         if (SelectedBodyIndex < 0 || SelectedBodyIndex >= (int32)PhysicsAsset->Bodies.size())
@@ -899,11 +803,11 @@ namespace Lumina
 
         switch (Handle.Type)
         {
-        case EPhysicsBodyHandle::Radius:     Body.Radius = Positive; break;
-        case EPhysicsBodyHandle::HalfHeight: Body.HalfHeight = Math::Max(AxisDistance, 0.0f); break;
-        case EPhysicsBodyHandle::ExtentX:    Body.HalfExtent.x = Positive; break;
-        case EPhysicsBodyHandle::ExtentY:    Body.HalfExtent.y = Positive; break;
-        case EPhysicsBodyHandle::ExtentZ:    Body.HalfExtent.z = Positive; break;
+        case EShapeHandle::Radius:     Body.Radius = Positive; break;
+        case EShapeHandle::HalfHeight: Body.HalfHeight = Math::Max(AxisDistance, 0.0f); break;
+        case EShapeHandle::ExtentX:    Body.HalfExtent.x = Positive; break;
+        case EShapeHandle::ExtentY:    Body.HalfExtent.y = Positive; break;
+        case EShapeHandle::ExtentZ:    Body.HalfExtent.z = Positive; break;
         default: return;
         }
 
@@ -926,15 +830,15 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::CloseOpenDragTransaction()
     {
-        if (bHandleTransactionOpen || bGizmoTransactionOpen)
+        if (HandleState.bHandleTransactionOpen || HandleState.bGizmoTransactionOpen)
         {
-            bHandleTransactionOpen = false;
-            bGizmoTransactionOpen = false;
+            HandleState.bHandleTransactionOpen = false;
+            HandleState.bGizmoTransactionOpen = false;
             EndAssetTransaction();
         }
     }
 
-    void FPhysicsAssetEditorTool::ApplyBodyGizmo(const FMatrix4& NewBodyMatrix)
+    void FPhysicsAssetEditorTool::ApplyGizmoMatrix(const FMatrix4& NewBodyMatrix)
     {
         FSkeletonResource* Resource = GetSkeletonResource();
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
@@ -1011,7 +915,7 @@ namespace Lumina
 
         const ImVec2 MousePos = ImGui::GetMousePos();
         FVector3 RayOrigin, RayDirection;
-        if (!BuildViewportRay(ViewportOrigin, ViewportSize, MousePos, RayOrigin, RayDirection))
+        if (!ShapeHandles::BuildViewportRay(World.Get(), ViewportOrigin, ViewportSize, MousePos, RayOrigin, RayDirection))
         {
             return;
         }
@@ -1060,6 +964,22 @@ namespace Lumina
         World->DrawSphere(Target, 0.035f, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 10, 2.0f, false);
     }
 
+    FMatrix4 FPhysicsAssetEditorTool::GetGizmoMatrix()
+    {
+        CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
+        return GetBodyWorldMatrix(PhysicsAsset->Bodies[SelectedBodyIndex]);
+    }
+
+    void FPhysicsAssetEditorTool::PickShapeAtRay(const FVector3& RayOrigin, const FVector3& RayDirection)
+    {
+        const int32 Picked = PickBody(RayOrigin, RayDirection);
+        SelectBody(Picked);
+        if (Picked != INDEX_NONE)
+        {
+            SyncTreeSelectionToBody(Picked);
+        }
+    }
+
     void FPhysicsAssetEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
     {
         const ImVec2 ViewportOrigin = ViewportScreenMin;
@@ -1069,7 +989,7 @@ namespace Lumina
         SCameraComponent* Camera = World.IsValid() ? World->GetActiveCamera() : nullptr;
         if (Camera == nullptr)
         {
-            ActiveHandle = EPhysicsBodyHandle::None;
+            HandleState.ActiveHandle = EShapeHandle::None;
             return;
         }
 
@@ -1082,7 +1002,7 @@ namespace Lumina
                 return;
             }
 
-            ActiveHandle = EPhysicsBodyHandle::None;
+            HandleState.ActiveHandle = EShapeHandle::None;
             CloseOpenDragTransaction();
             UpdateSimulationGrab(ViewportOrigin, ViewportSize);
             return;
@@ -1098,160 +1018,24 @@ namespace Lumina
             BodyGizmoOp = (BodyGizmoOp == ImGuizmo::TRANSLATE) ? ImGuizmo::ROTATE : ImGuizmo::TRANSLATE;
         }
 
-        FMatrix4 ViewMatrix = Camera->GetViewMatrix();
         FMatrix4 Projection = Camera->GetProjectionMatrix();
         Projection[1][1] *= -1.0f;
-        const FMatrix4 ViewProj = Projection * ViewMatrix;
 
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
-        const bool bBodySelected = SelectionMode == EPhysicsAssetSelection::Body
-                                && SelectedBodyIndex >= 0 && SelectedBodyIndex < (int32)PhysicsAsset->Bodies.size();
 
-        // Frame gizmo first, so it owns the cursor before the resize dots or picking see it.
-        bool bGizmoOwnsInput = false;
-        if (bBodySelected)
-        {
-            ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-            ImGuizmo::SetRect(ViewportOrigin.x, ViewportOrigin.y, ViewportSize.x, ViewportSize.y);
+        FShapeHandleFrame Frame;
+        Frame.World            = World.Get();
+        Frame.ViewMatrix       = Camera->GetViewMatrix();
+        Frame.Projection       = Projection;
+        Frame.ViewportOrigin   = ViewportOrigin;
+        Frame.ViewportSize     = ViewportSize;
+        Frame.GizmoOp          = BodyGizmoOp;
+        Frame.bViewportHovered = bViewportHovered;
+        Frame.bSuppressClicks  = ShouldSuppressViewportClickInput();
+        Frame.bHasGizmoTarget  = SelectionMode == EPhysicsAssetSelection::Body
+                              && SelectedBodyIndex >= 0 && SelectedBodyIndex < (int32)PhysicsAsset->Bodies.size();
 
-            FMatrix4 BodyMatrix = GetBodyWorldMatrix(PhysicsAsset->Bodies[SelectedBodyIndex]);
-
-            const bool bGizmoInert = ShouldSuppressViewportClickInput() && !ImGuizmo::IsUsing();
-            if (bGizmoInert)
-            {
-                ImGuizmo::Enable(false);
-            }
-
-            ImGuizmo::Manipulate(Math::ValuePtr(ViewMatrix), Math::ValuePtr(Projection),
-                BodyGizmoOp, ImGuizmo::LOCAL, Math::ValuePtr(BodyMatrix));
-
-            if (bGizmoInert)
-            {
-                ImGuizmo::Enable(true);
-            }
-
-            if (ImGuizmo::IsUsing())
-            {
-                if (!bGizmoTransactionOpen)
-                {
-                    BeginAssetTransaction(BodyGizmoOp == ImGuizmo::ROTATE ? "Rotate Body Frame" : "Move Body Frame");
-                    bGizmoTransactionOpen = true;
-                }
-
-                ApplyBodyGizmo(BodyMatrix);
-            }
-            else if (bGizmoTransactionOpen)
-            {
-                bGizmoTransactionOpen = false;
-                EndAssetTransaction();
-            }
-
-            bGizmoOwnsInput = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
-        }
-
-        if (bGizmoOwnsInput && ActiveHandle == EPhysicsBodyHandle::None)
-        {
-            return;
-        }
-
-        TVector<FPhysicsHandle> Handles;
-        GatherBodyHandles(Handles);
-
-        ImDrawList* DrawList = ImGui::GetWindowDrawList();
-        const ImVec2 MousePos = ImGui::GetMousePos();
-
-        constexpr float HandleRadius = 6.0f;
-        constexpr float GrabRadius = 10.0f;
-
-        int32 HoveredHandle = INDEX_NONE;
-
-        for (int32 i = 0; i < (int32)Handles.size(); ++i)
-        {
-            ImVec2 Screen;
-            if (!ProjectToScreen(ViewProj, ViewportOrigin, ViewportSize, Handles[i].Position, Screen))
-            {
-                continue;
-            }
-
-            const float DX = MousePos.x - Screen.x;
-            const float DY = MousePos.y - Screen.y;
-            const bool bHot = (ActiveHandle == Handles[i].Type)
-                           || (ActiveHandle == EPhysicsBodyHandle::None && (DX * DX + DY * DY) <= GrabRadius * GrabRadius);
-
-            if (bHot && ActiveHandle == EPhysicsBodyHandle::None)
-            {
-                HoveredHandle = i;
-            }
-
-            DrawList->AddCircleFilled(Screen, bHot ? HandleRadius + 1.5f : HandleRadius,
-                bHot ? IM_COL32(255, 200, 60, 255) : IM_COL32(90, 180, 255, 235));
-            DrawList->AddCircle(Screen, bHot ? HandleRadius + 1.5f : HandleRadius, IM_COL32(15, 15, 20, 220), 0, 1.5f);
-        }
-
-        const bool bCanInteract = bViewportHovered && !ShouldSuppressViewportClickInput();
-
-        if (ActiveHandle != EPhysicsBodyHandle::None)
-        {
-            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            {
-                ActiveHandle = EPhysicsBodyHandle::None;
-                if (bHandleTransactionOpen)
-                {
-                    bHandleTransactionOpen = false;
-                    EndAssetTransaction();
-                }
-            }
-            else
-            {
-                for (const FPhysicsHandle& Handle : Handles)
-                {
-                    if (Handle.Type != ActiveHandle)
-                    {
-                        continue;
-                    }
-
-                    FVector3 RayOrigin, RayDirection;
-                    if (BuildViewportRay(ViewportOrigin, ViewportSize, MousePos, RayOrigin, RayDirection))
-                    {
-                        ApplyHandleDrag(Handle, RayOrigin, RayDirection);
-                    }
-                    break;
-                }
-            }
-            return;
-        }
-
-        if (!bCanInteract)
-        {
-            return;
-        }
-
-        if (HoveredHandle != INDEX_NONE && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-        {
-            ActiveHandle = Handles[HoveredHandle].Type;
-            BeginAssetTransaction("Resize Body");
-            bHandleTransactionOpen = true;
-            return;
-        }
-
-        // Picks on release with a movement threshold, so a click that became a drag does not reselect.
-        if (HoveredHandle == INDEX_NONE && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
-        {
-            const ImVec2 Drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-            if (Drag.x * Drag.x + Drag.y * Drag.y <= 16.0f)
-            {
-                FVector3 RayOrigin, RayDirection;
-                if (BuildViewportRay(ViewportOrigin, ViewportSize, MousePos, RayOrigin, RayDirection))
-                {
-                    const int32 Picked = PickBody(RayOrigin, RayDirection);
-                    SelectBody(Picked);
-                    if (Picked != INDEX_NONE)
-                    {
-                        SyncTreeSelectionToBody(Picked);
-                    }
-                }
-            }
-        }
+        TickShapeHandles(*this, HandleState, Frame);
     }
 
     int32 FPhysicsAssetEditorTool::AddBodyForBone(const FName& BoneName)

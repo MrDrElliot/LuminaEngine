@@ -189,6 +189,33 @@ namespace Lumina
         constexpr ImVec4 kProjDialogAccentSoft  = ImVec4(0.45f, 0.48f, 0.55f, 1.00f);
         constexpr ImVec4 kProjDialogDanger      = ImVec4(0.96f, 0.36f, 0.38f, 1.00f);
 
+        /** A button's three states. Hover lightens and press darkens, unlike ImGuiX::ButtonEx. */
+        struct FButtonColors
+        {
+            ImVec4 Normal;
+            ImVec4 Hovered;
+            ImVec4 Active;
+        };
+
+        constexpr FButtonColors kButtonNeutral = {
+            ImVec4(0.22f, 0.22f, 0.26f, 1.00f), ImVec4(0.30f, 0.30f, 0.34f, 1.00f), ImVec4(0.18f, 0.18f, 0.20f, 1.00f) };
+        constexpr FButtonColors kButtonNeutralDim = {
+            ImVec4(0.20f, 0.20f, 0.22f, 1.00f), ImVec4(0.26f, 0.26f, 0.29f, 1.00f), ImVec4(0.16f, 0.16f, 0.18f, 1.00f) };
+        constexpr FButtonColors kButtonPrimary = {
+            ImVec4(0.20f, 0.50f, 0.95f, 1.00f), ImVec4(0.30f, 0.60f, 1.00f, 1.00f), ImVec4(0.15f, 0.45f, 0.90f, 1.00f) };
+        constexpr FButtonColors kButtonDanger = {
+            ImVec4(0.52f, 0.20f, 0.21f, 1.00f), ImVec4(0.66f, 0.26f, 0.27f, 1.00f), ImVec4(0.44f, 0.16f, 0.17f, 1.00f) };
+
+        bool SchemeButton(const char* Label, const ImVec2& Size, const FButtonColors& Colors)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button,        Colors.Normal);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Colors.Hovered);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  Colors.Active);
+            const bool bPressed = ImGui::Button(Label, Size);
+            ImGui::PopStyleColor(3);
+            return bPressed;
+        }
+
         // Small uppercase section label in the section-text color.
         void DrawSectionHeader(const char* Label)
         {
@@ -1678,21 +1705,14 @@ namespace Lumina
 
             bool bShouldClose = false;
 
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.22f, 0.22f, 0.26f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.30f, 0.34f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.18f, 0.18f, 0.20f, 1.00f));
-            if (ImGui::Button("Cancel", ImVec2(BtnW, BtnH)))
+            if (SchemeButton("Cancel", ImVec2(BtnW, BtnH), kButtonNeutral))
             {
                 bShouldClose = true;
             }
-            ImGui::PopStyleColor(3);
 
             ImGui::SameLine(0.0f, Gap);
 
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.52f, 0.20f, 0.21f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.66f, 0.26f, 0.27f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.44f, 0.16f, 0.17f, 1.00f));
-            if (ImGui::Button(LE_ICON_STOP "  Stop && Open", ImVec2(BtnW, BtnH)))
+            if (SchemeButton(LE_ICON_STOP "  Stop && Open", ImVec2(BtnW, BtnH), kButtonDanger))
             {
                 // Stopping play can destroy tools, and tearing them down inside BeginPopupModal frees live windows.
                 MainThread::Enqueue([this, AssetGUID]()
@@ -1710,7 +1730,6 @@ namespace Lumina
 
                 bShouldClose = true;
             }
-            ImGui::PopStyleColor(3);
 
             ImGui::PopStyleVar();
 
@@ -3792,18 +3811,14 @@ namespace Lumina
             ImGui::Spacing();
 
             // The primary action, Create New Project.
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.50f, 0.95f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.60f, 1.00f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.90f, 1.00f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14, 12));
-            if (ImGui::Button(LE_ICON_FOLDER_PLUS "  Create New Project", ImVec2(-1, 0)))
+            if (SchemeButton(LE_ICON_FOLDER_PLUS "  Create New Project", ImVec2(-1, 0), kButtonPrimary))
             {
                 DeferShowDialog([this] { NewProjectDialog(); });
                 bShouldClose = true;
             }
             ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor(3);
 
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
             ImGui::BeginChild("##ProjectListBody", ImVec2(0, -52), false);
@@ -3891,14 +3906,10 @@ namespace Lumina
 
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 116);
 
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.20f, 0.22f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.26f, 0.29f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.16f, 0.16f, 0.18f, 1.00f));
-            if (ImGui::Button("Cancel", ImVec2(120, 30)))
+            if (SchemeButton("Cancel", ImVec2(120, 30), kButtonNeutralDim))
             {
                 bShouldClose = true;
             }
-            ImGui::PopStyleColor(3);
 
             ImGui::PopStyleVar();
 
@@ -3999,19 +4010,11 @@ namespace Lumina
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
 
             // Deferred so the modal closes cleanly before the next CreateDialogue.
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.20f, 0.22f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.26f, 0.29f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.16f, 0.16f, 0.18f, 1.00f));
-            const bool bBack = ImGui::Button(LE_ICON_ARROW_LEFT "  Back", ImVec2(110, 30));
-            ImGui::PopStyleColor(3);
+            const bool bBack = SchemeButton(LE_ICON_ARROW_LEFT "  Back", ImVec2(110, 30), kButtonNeutralDim);
 
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 156);
 
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.50f, 0.95f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.60f, 1.00f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.90f, 1.00f));
-            const bool bCreateClicked = ImGui::Button(LE_ICON_CHECK "  Create Project", ImVec2(160, 30));
-            ImGui::PopStyleColor(3);
+            const bool bCreateClicked = SchemeButton(LE_ICON_CHECK "  Create Project", ImVec2(160, 30), kButtonPrimary);
 
             ImGui::PopStyleVar();
 
@@ -4136,41 +4139,29 @@ namespace Lumina
             const float BtnW  = (Avail - Gap * 2.0f) / 3.0f;
 
             // Reveal in Explorer, always available.
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.22f, 0.22f, 0.26f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.30f, 0.34f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.18f, 0.18f, 0.20f, 1.00f));
-            if (ImGui::Button(LE_ICON_FOLDER_OPEN "  Reveal in Explorer", ImVec2(BtnW, BtnH)))
+            if (SchemeButton(LE_ICON_FOLDER_OPEN "  Reveal in Explorer", ImVec2(BtnW, BtnH), kButtonNeutral))
             {
                 Platform::ShowFileInExplorer(UTF8_TO_TCHAR(ProjectFileCopy.c_str()));
             }
-            ImGui::PopStyleColor(3);
 
             ImGui::SameLine(0.0f, Gap);
 
             // Close Editor, secondary.
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.22f, 0.22f, 0.26f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.30f, 0.34f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.18f, 0.18f, 0.20f, 1.00f));
             bool bCloseEditor = false;
-            if (ImGui::Button(LE_ICON_POWER "  Close Editor", ImVec2(BtnW, BtnH)))
+            if (SchemeButton(LE_ICON_POWER "  Close Editor", ImVec2(BtnW, BtnH), kButtonNeutral))
             {
                 bCloseEditor = true;
             }
-            ImGui::PopStyleColor(3);
 
             ImGui::SameLine(0.0f, Gap);
 
             // Open Solution, primary blue, disabled until premake finishes.
             ImGui::BeginDisabled(!bSlnReady);
-            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.50f, 0.95f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.60f, 1.00f, 1.00f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.90f, 1.00f));
             bool bOpenSln = false;
-            if (ImGui::Button(LE_ICON_PLAY "  Open Solution", ImVec2(BtnW, BtnH)))
+            if (SchemeButton(LE_ICON_PLAY "  Open Solution", ImVec2(BtnW, BtnH), kButtonPrimary))
             {
                 bOpenSln = true;
             }
-            ImGui::PopStyleColor(3);
             ImGui::EndDisabled();
 
             ImGui::PopStyleVar();
