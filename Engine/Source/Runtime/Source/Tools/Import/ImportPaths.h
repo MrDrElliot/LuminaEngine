@@ -3,7 +3,7 @@
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
 
-namespace Lumina::Import::Paths
+namespace Lumina::Import::PathReservations
 {
     // The one owner of import destination names, so two importers cannot hand out the same path.
 

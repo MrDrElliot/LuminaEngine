@@ -1,0 +1,53 @@
+name: Build
+
+# Unity blobs and non-unity compiles fail in opposite ways, so both run or neither catches anything.
+# A blob supplies declarations its members forgot to include, which only -NoUnity finds. A blob also
+# merges file-scope names, macros and using-directives, which only a unity build finds. Which files
+# share a blob is a function of the whole file set, so -MaxUnity puts each module in one blob and
+# asks the compiler for the worst case rather than whatever today's packing happens to produce.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Requires Visual Studio 18.0 (2026) and the .NET 10 SDK, which GitHub-hosted Windows images do not
+  # carry. Register a self-hosted runner on a machine that already builds the engine and label it
+  # "lumina-windows".
+  compile:
+    runs-on: [self-hosted, windows, lumina-windows]
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: unity
+            flags: ""
+          - name: no-unity
+            flags: "-NoUnity"
+          - name: max-unity
+            flags: "-MaxUnity"
+
+    name: Editor Development (${{ matrix.name }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup
+        shell: cmd
+        run: |
+          set SKIP_PREREQ_CHECKS=1
+          call Setup.bat -Yes
+
+      # Adaptive unity is off so every source is judged inside a blob, the way a clean checkout builds it.
+      - name: Build
+        shell: cmd
+        run: call LuminaBuild.bat Build Lumina -TargetType=Editor -Configuration=Development -NoAdaptiveUnity ${{ matrix.flags }}

@@ -27,6 +27,7 @@ public sealed class BuildOptions
         {
             bDisableUnityBuild = bDisableUnityBuild,
             bDisableAdaptiveUnity = bDisableAdaptiveUnity,
+            bMaximalUnityBuild = bMaximalUnityBuild,
         };
 
         foreach (KeyValuePair<string, FeatureMode> Mode in Modes)
@@ -47,6 +48,9 @@ public sealed class BuildOptions
 
     /// <summary>Merge every source into its blob, even one edited a moment ago.</summary>
     public bool bDisableAdaptiveUnity { get; set; }
+
+    /// <summary>Put every first-party module in one blob, which is the worst case for file-scope collisions.</summary>
+    public bool bMaximalUnityBuild { get; set; }
 
     /// <summary>Which half of a PGO cycle was asked for, or null to leave the target rules alone.</summary>
     public PgoMode? Pgo { get; set; }
@@ -122,6 +126,7 @@ public sealed class BuildOptions
         {
             Options.bDisableUnityBuild = Arguments.HasFlag("NoUnity");
             Options.bDisableAdaptiveUnity = Arguments.HasFlag("NoAdaptiveUnity");
+            Options.bMaximalUnityBuild = Arguments.HasFlag("MaxUnity");
 
             if (Arguments.GetString("Pgo") is { Length: > 0 } PgoArgument)
             {

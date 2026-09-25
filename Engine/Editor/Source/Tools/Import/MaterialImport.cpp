@@ -473,7 +473,7 @@ namespace Lumina
         // Reserved rather than merely probed, so a concurrent import cannot pick the same generated name.
         FFixedString EnsureUniquePath(const FFixedString& Path)
         {
-            FFixedString Reserved = Import::Paths::Reserve(Path);
+            FFixedString Reserved = Import::PathReservations::Reserve(Path);
             return Reserved.empty() ? Path : Reserved;
         }
     }

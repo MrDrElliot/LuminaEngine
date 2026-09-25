@@ -16,70 +16,70 @@ namespace
 TEST(ImportPaths, AFreeNameIsHandedBackUnchanged)
 {
     const FFixedString Path = TestPath("Unclaimed");
-    Import::Paths::Release(Path);
+    Import::PathReservations::Release(Path);
 
-    EXPECT_TRUE(Import::Paths::IsFree(Path));
-    EXPECT_EQ(Import::Paths::Reserve(Path), Path);
+    EXPECT_TRUE(Import::PathReservations::IsFree(Path));
+    EXPECT_EQ(Import::PathReservations::Reserve(Path), Path);
 
-    Import::Paths::Release(Path);
+    Import::PathReservations::Release(Path);
 }
 
 // The whole point of the service: a second caller cannot be handed a name the first one holds.
 TEST(ImportPaths, AReservedNameIsNotHandedOutTwice)
 {
     const FFixedString Path = TestPath("Contested");
-    Import::Paths::Release(Path);
+    Import::PathReservations::Release(Path);
 
-    const FFixedString First = Import::Paths::Reserve(Path);
+    const FFixedString First = Import::PathReservations::Reserve(Path);
     ASSERT_EQ(First, Path);
-    EXPECT_FALSE(Import::Paths::IsFree(Path));
+    EXPECT_FALSE(Import::PathReservations::IsFree(Path));
 
-    const FFixedString Second = Import::Paths::Reserve(Path);
+    const FFixedString Second = Import::PathReservations::Reserve(Path);
     EXPECT_NE(Second, First);
     EXPECT_EQ(Second, FFixedString(Path).append("_1"));
 
-    Import::Paths::Release(First);
-    Import::Paths::Release(Second);
+    Import::PathReservations::Release(First);
+    Import::PathReservations::Release(Second);
 }
 
 TEST(ImportPaths, ReleasingANameLetsTheNextCallerTakeIt)
 {
     const FFixedString Path = TestPath("Recycled");
-    Import::Paths::Release(Path);
+    Import::PathReservations::Release(Path);
 
-    ASSERT_EQ(Import::Paths::Reserve(Path), Path);
-    Import::Paths::Release(Path);
+    ASSERT_EQ(Import::PathReservations::Reserve(Path), Path);
+    Import::PathReservations::Release(Path);
 
-    EXPECT_TRUE(Import::Paths::IsFree(Path));
-    EXPECT_EQ(Import::Paths::Reserve(Path), Path);
+    EXPECT_TRUE(Import::PathReservations::IsFree(Path));
+    EXPECT_EQ(Import::PathReservations::Reserve(Path), Path);
 
-    Import::Paths::Release(Path);
+    Import::PathReservations::Release(Path);
 }
 
 TEST(ImportPaths, AnEmptyPathIsNeverFreeAndNeverReserves)
 {
-    EXPECT_FALSE(Import::Paths::IsFree(FStringView()));
-    EXPECT_TRUE(Import::Paths::Reserve(FStringView()).empty());
+    EXPECT_FALSE(Import::PathReservations::IsFree(FStringView()));
+    EXPECT_TRUE(Import::PathReservations::Reserve(FStringView()).empty());
 }
 
 TEST(ImportPaths, AScopedReservationReleasesUnlessCommitted)
 {
     const FFixedString Path = TestPath("Scoped");
-    Import::Paths::Release(Path);
+    Import::PathReservations::Release(Path);
 
     {
-        Import::Paths::FScopedReservation Reservation(Path);
+        Import::PathReservations::FScopedReservation Reservation(Path);
         ASSERT_TRUE(Reservation.IsValid());
         EXPECT_EQ(Reservation.Get(), Path);
-        EXPECT_FALSE(Import::Paths::IsFree(Path));
+        EXPECT_FALSE(Import::PathReservations::IsFree(Path));
     }
-    EXPECT_TRUE(Import::Paths::IsFree(Path)) << "an uncommitted scope must not burn the name";
+    EXPECT_TRUE(Import::PathReservations::IsFree(Path)) << "an uncommitted scope must not burn the name";
 
     {
-        Import::Paths::FScopedReservation Reservation(Path);
+        Import::PathReservations::FScopedReservation Reservation(Path);
         Reservation.Commit();
     }
-    EXPECT_FALSE(Import::Paths::IsFree(Path)) << "a committed scope keeps the name";
+    EXPECT_FALSE(Import::PathReservations::IsFree(Path)) << "a committed scope keeps the name";
 
-    Import::Paths::Release(Path);
+    Import::PathReservations::Release(Path);
 }

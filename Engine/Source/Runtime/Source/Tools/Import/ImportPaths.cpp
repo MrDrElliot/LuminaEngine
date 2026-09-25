@@ -9,7 +9,7 @@
 #include "Core/Threading/Thread.h"
 #include "Core/Threading/Sync.h"
 
-namespace Lumina::Import::Paths
+namespace Lumina::Import::PathReservations
 {
     namespace
     {

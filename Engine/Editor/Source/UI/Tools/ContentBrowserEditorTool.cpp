@@ -2360,7 +2360,7 @@ namespace Lumina
         const FFixedString Base = Paths::Combine(SelectedPath, VFS::FileName(SourcePath, true));
 
         // Testing only the source path tests a name that can never exist, since the asset lands as .lasset.
-        return Import::Paths::Reserve(Base);
+        return Import::PathReservations::Reserve(Base);
     }
 
     void FContentBrowserEditorTool::StartImport(CImporter* Importer, const FImportRequest& Request)
@@ -2390,7 +2390,7 @@ namespace Lumina
                 CImporterRegistry::DestroyImporter(Importer);
 
                 // Released only now, since on success the package is registered and on failure the name frees up.
-                Import::Paths::Release(Request.DestinationPath);
+                Import::PathReservations::Release(Request.DestinationPath);
 
                 RefreshContentBrowser();
                 if (bSucceeded)
@@ -2498,7 +2498,7 @@ namespace Lumina
                     ImGuiX::Notifications::NotifyError("Failed to import \"{0}\": {1}", Request.SourcePath, Error);
                     CImporterRegistry::DestroyImporter(Importer);
                     // Nothing will be created at the reserved name, so hand it back.
-                    Import::Paths::Release(Request.DestinationPath);
+                    Import::PathReservations::Release(Request.DestinationPath);
                     bImportWindowOpen = false;
                     ProcessNextImport();
                     return;
@@ -2546,7 +2546,7 @@ namespace Lumina
                             if (!SharedState->bStarted)
                             {
                                 CImporterRegistry::DestroyImporter(Importer);
-                                Import::Paths::Release(Request.DestinationPath);
+                                Import::PathReservations::Release(Request.DestinationPath);
                             }
 
                             // Advanced here, not from the confirm branch, so canceling one file skips only it.

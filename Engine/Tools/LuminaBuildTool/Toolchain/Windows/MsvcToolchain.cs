@@ -180,6 +180,10 @@ public sealed class MsvcToolchain : IToolchain
             "/Zc:throwingNew",
             "/Zc:checkGwOdr",
 
+            // Without it cl reads a source with no byte order mark as codepage 1252, so what a file
+            // means would depend on whether it carries one and on the machine's locale.
+            "/utf-8",
+
             // Third-party code is not ours to fix, so it compiles quietly.
             Module.Rules.bIsThirdParty ? "/W0" : $"/W{Target.Rules.WarningLevel}",
             $"/Fo{PathUtils.Quote(ObjectFile)}",

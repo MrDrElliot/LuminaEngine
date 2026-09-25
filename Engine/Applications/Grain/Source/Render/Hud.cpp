@@ -64,10 +64,6 @@ namespace Grain
             return Spirv;
         }
 
-        FString Integer(int32 Value)
-        {
-            return Format("{}", Value);
-        }
     }
 
     bool FHud::Initialize(EFormat InSwapchainFormat)
@@ -284,11 +280,11 @@ namespace Grain
             Bar(BarX, Y + Unit * 18.0f, BarWidth, BarHeight * 0.7f,
                 Player.Focus / Math::Max(Player.MaxFocus, 1.0f), kFocus, kTrack);
 
-            const FString Vitals = FString("HP ").append(Integer(int32(Player.Health)))
-                .append("/").append(Integer(int32(Player.MaxHealth)));
+            const FString Vitals = FString("HP ").append(Format("{}", int32(Player.Health)))
+                .append("/").append(Format("{}", int32(Player.MaxHealth)));
             Text(Vitals.c_str(), BarX, Y + Unit * 25.0f, Unit * 0.9f, kInk);
 
-            const FString LevelText = FString("LV ").append(Integer(Player.Level));
+            const FString LevelText = FString("LV ").append(Format("{}", Player.Level));
             Text(LevelText.c_str(), X + PanelWidth - Unit * 22.0f, Y + Unit * 25.0f, Unit * 0.9f, kGoldInk);
         }
 
@@ -312,10 +308,10 @@ namespace Grain
             Quad(X, Y, PanelWidth, PanelHeight, kPanel);
             Frame(X, Y, PanelWidth, PanelHeight, 1.0f, kEdge);
 
-            const FString Shards = FString("SHARDS  ").append(Integer(Player.Shards));
+            const FString Shards = FString("SHARDS  ").append(Format("{}", Player.Shards));
             Text(Shards.c_str(), X + Unit * 4.0f, Y + Unit * 4.0f, Unit * 1.1f, kShard);
 
-            const FString Kills = FString("FELLED  ").append(Integer(Player.Kills));
+            const FString Kills = FString("FELLED  ").append(Format("{}", Player.Kills));
             Text(Kills.c_str(), X + Unit * 4.0f, Y + Unit * 13.0f, Unit * 1.1f, kDim);
         }
 
@@ -341,8 +337,8 @@ namespace Grain
 
                 FString Row = Objective.bComplete ? FString("x ") : FString("- ");
                 Row.append(Objective.Text);
-                Row.append(" ").append(Integer(Objective.Progress));
-                Row.append("/").append(Integer(Objective.Target));
+                Row.append(" ").append(Format("{}", Objective.Progress));
+                Row.append("/").append(Format("{}", Objective.Target));
 
                 Text(Row.c_str(), X + Unit * 4.0f, Line, Unit * 0.8f, Color);
                 Line += Unit * 9.0f;
@@ -355,7 +351,7 @@ namespace Grain
             const float Phase = Game.GetTimeOfDay();
             const float Shifted = Phase + 0.25f;
             const int32 Hour = int32((Shifted - Math::Floor(Shifted)) * 24.0f);
-            const FString Clock = FString(Hour < 10 ? "0" : "").append(Integer(Hour)).append("00");
+            const FString Clock = FString(Hour < 10 ? "0" : "").append(Format("{}", Hour)).append("00");
 
             const bool bDay = Game.GetSky().DayFactor > 0.4f;
             TextCentered(Clock.c_str(), Width * 0.5f, Unit * 6.0f, Unit * 1.1f, bDay ? kGoldInk : kShard);

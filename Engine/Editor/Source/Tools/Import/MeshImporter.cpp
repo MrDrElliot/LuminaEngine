@@ -1556,7 +1556,7 @@ namespace Lumina
             }
 
             // Saved means the file now owns the name, and a failure should free it for the next attempt.
-            Import::Paths::Release(Package->GetPackagePath());
+            Import::PathReservations::Release(Package->GetPackagePath());
 
             if (Progress)
             {
