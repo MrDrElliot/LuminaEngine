@@ -453,7 +453,7 @@ namespace Lumina
                 MergedSkinned->Indices.reserve(TotalSkinnedIndices);
             }
 
-            THashMap<int16, int16> SlotRemap;
+            TVector<int16> SlotToSource;
 
             auto AppendInstance = [&](const FMeshResource& Source, FMeshResource& Target, const FMatrix4& World)
             {
@@ -489,19 +489,21 @@ namespace Lumina
                     Target.Indices[BaseIndex + i] = Source.Indices[i] + (uint32)BaseVertex;
                 }
 
+                // Keyed per piece, so each merged piece keeps its own slot even where pieces share a material.
+                THashMap<int16, int16> PieceSlots;
                 for (const FGeometrySurface& SourceSurface : Source.GeometrySurfaces)
                 {
                     FGeometrySurface Surface = SourceSurface;
                     Surface.StartIndex += (uint32)BaseIndex;
 
-                    // Without this every instance would add its own duplicate of the same source material.
                     if (SourceSurface.MaterialIndex >= 0)
                     {
-                        auto It = SlotRemap.find(SourceSurface.MaterialIndex);
-                        if (It == SlotRemap.end())
+                        auto It = PieceSlots.find(SourceSurface.MaterialIndex);
+                        if (It == PieceSlots.end())
                         {
-                            const int16 NewSlot = (int16)SlotRemap.size();
-                            SlotRemap.emplace(SourceSurface.MaterialIndex, NewSlot);
+                            const int16 NewSlot = (int16)SlotToSource.size();
+                            SlotToSource.push_back(SourceSurface.MaterialIndex);
+                            PieceSlots.emplace(SourceSurface.MaterialIndex, NewSlot);
                             Surface.MaterialIndex = NewSlot;
                         }
                         else
@@ -526,20 +528,14 @@ namespace Lumina
                 {
                     AppendInstance(*Static, *MergedStatic, Instance.WorldTransform);
                 }
+                // The inverse binds already carry the node transform, so baking it too would apply it twice.
                 if (const FMeshResource* Skinned = ResourceAt(Slot.SkinnedResource))
                 {
-                    AppendInstance(*Skinned, *MergedSkinned, Instance.WorldTransform);
+                    AppendInstance(*Skinned, *MergedSkinned, FMatrix4(1.0f));
                 }
             }
 
-            Data.MergedMaterialSlotToSource.assign(SlotRemap.size(), 0);
-            for (const auto& Pair : SlotRemap)
-            {
-                if (Pair.second >= 0 && (size_t)Pair.second < Data.MergedMaterialSlotToSource.size())
-                {
-                    Data.MergedMaterialSlotToSource[Pair.second] = Pair.first;
-                }
-            }
+            Data.MergedMaterialSlotToSource = Move(SlotToSource);
 
             Data.Resources.clear();
             Data.MeshSlots.clear();
