@@ -110,7 +110,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Leg", Picker = "Bone")
         FName FootBone;
 
-        /** Axis of the foot bone that points away from the ground, in the foot's own space. */
+        /** Component-space up of flat ground. The foot tilts off its animated angle by the normal's lean from it. */
         PROPERTY(Editable, Category = "Leg")
         FVector3 FootUpAxis = FVector3(0.0f, 1.0f, 0.0f);
 

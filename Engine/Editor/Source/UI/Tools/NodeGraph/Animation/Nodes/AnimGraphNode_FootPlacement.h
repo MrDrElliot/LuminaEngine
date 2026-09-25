@@ -24,8 +24,8 @@ namespace Lumina
         PROPERTY(Editable, Category = "Leg", Picker = "Bone")
         FName FootBone;
 
-        /** Height the foot bone sits above the sole in the bind pose, kept out of the ground. */
-        PROPERTY(Editable, Category = "Leg", ClampMin = 0.0f, Units = "Centimeters")
+        /** Extra lift above the traced ground, for a sole that sinks into it. The animation's own clearance is kept. */
+        PROPERTY(Editable, Category = "Leg", ClampMin = 0.0f, Units = "m")
         float SoleHeight = 0.0f;
     };
 
@@ -56,25 +56,25 @@ namespace Lumina
         PROPERTY(Editable, Category = "Foot Placement")
         FVector3 UpAxis = FVector3(0.0f, 1.0f, 0.0f);
 
-        /** Axis of the foot bones that points away from the ground, in a foot's own space. */
+        /** Component-space up of flat ground. Each foot tilts off its animated angle by the slope's lean from it. */
         PROPERTY(Editable, Category = "Foot Placement")
         FVector3 FootUpAxis = FVector3(0.0f, 1.0f, 0.0f);
 
-        /** How much of the ground normal the feet roll onto. 0 keeps them level with the animation. */
+        /** How much of the slope the feet tilt by. 0 keeps the animated foot angle. */
         PROPERTY(Editable, Category = "Foot Placement", ClampMin = 0.0f, ClampMax = 1.0f)
         float GroundAlignment = 1.0f;
 
         /** How far above the foot each trace starts, covering ground that rises ahead of the step. */
-        PROPERTY(Editable, Category = "Trace", ClampMin = 0.0f, Units = "Centimeters")
-        float TraceUpDistance = 50.0f;
+        PROPERTY(Editable, Category = "Trace", ClampMin = 0.0f, Units = "m")
+        float TraceUpDistance = 0.5f;
 
         /** How far below the foot a trace reaches before the foot is treated as airborne. */
-        PROPERTY(Editable, Category = "Trace", ClampMin = 0.0f, Units = "Centimeters")
-        float TraceDownDistance = 100.0f;
+        PROPERTY(Editable, Category = "Trace", ClampMin = 0.0f, Units = "m")
+        float TraceDownDistance = 0.75f;
 
         /** Largest displacement any foot may take, so a bad trace cannot tear the leg apart. */
-        PROPERTY(Editable, Category = "Trace", ClampMin = 0.0f, Units = "Centimeters")
-        float MaxOffset = 60.0f;
+        PROPERTY(Editable, Category = "Trace", ClampMin = 0.0f, Units = "m")
+        float MaxOffset = 0.5f;
 
         /** Ground the traces collide with. */
         PROPERTY(Editable, Category = "Trace")
