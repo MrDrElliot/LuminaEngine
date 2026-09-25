@@ -188,4 +188,22 @@ namespace Lumina
 
         void Configure() override { RequireUpdate(EUpdateStage::FrameStart); }
     };
+
+    /** Records what its own constructor could see, so a test can prove identity lands before the body runs. */
+    REFLECT()
+    class RUNTIME_API CConstructorIdentityTest : public CObject
+    {
+        GENERATED_BODY()
+    public:
+
+        CConstructorIdentityTest()
+            : SeenClass(GetClass())
+            , SeenName(GetName())
+            , SeenPackage(GetPackage())
+        {}
+
+        CClass*   SeenClass;
+        FName     SeenName;
+        CPackage* SeenPackage;
+    };
 }

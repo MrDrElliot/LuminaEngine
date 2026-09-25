@@ -24,5 +24,8 @@ namespace Lumina
         CPackage*       Package;
         FName           Name;
         EObjectFlags    Flags;
+
+        // Object whose reflected property values the new one starts from, defaulting to the class CDO.
+        const CObject*  Template = nullptr;
     };
 }

@@ -46,10 +46,38 @@ namespace Lumina
     static FPendingRegistrant* GLastPendingRegistrant = nullptr;
 
 
+    // Thread local, so two threads constructing at once never read each other's object.
+    static thread_local const FConstructCObjectParams* GConstructing = nullptr;
+
+    FScopedObjectConstruction::FScopedObjectConstruction(const FConstructCObjectParams& Params)
+        : Previous(GConstructing)
+    {
+        GConstructing = &Params;
+    }
+
+    FScopedObjectConstruction::~FScopedObjectConstruction()
+    {
+        GConstructing = Previous;
+    }
+
+    const FConstructCObjectParams* FScopedObjectConstruction::Current()
+    {
+        return GConstructing;
+    }
+
+    // Identity lands here rather than after the constructor, so a constructor body can read GetClass and GetName.
     CObjectBase::CObjectBase()
         : ObjectFlags()
         , InternalIndex(INDEX_NONE)
     {
+        if (const FConstructCObjectParams* Params = FScopedObjectConstruction::Current())
+        {
+            ObjectFlags    = Params->Flags;
+            ClassPrivate   = const_cast<CClass*>(Params->Class);
+            PackagePrivate = Params->Package;
+            NamePrivate    = Params->Name;
+            GUIDPrivate    = Params->Guid;
+        }
     }
 
     CObjectBase::~CObjectBase()
@@ -75,19 +103,6 @@ namespace Lumina
             GObjectArray.DeallocateObject(InternalIndex);
             InternalIndex = INDEX_NONE;
         }
-    }
-
-    void CObjectBase::ConstructInternal(const FObjectInitializer& OI)
-    {
-        NamePrivate = OI.Params.Name;
-        GUIDPrivate = OI.Params.Guid;
-        ClassPrivate = const_cast<CClass*>(OI.Params.Class);
-        PackagePrivate = OI.Package;
-
-        // Applied before AddObject so the object is registered as the caller declared it.
-        EnumAddFlags(ObjectFlags, OI.Params.Flags);
-
-        AddObject();
     }
 
     CObjectBase::CObjectBase(EObjectFlags InFlags)

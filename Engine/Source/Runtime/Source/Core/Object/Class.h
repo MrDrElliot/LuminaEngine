@@ -9,7 +9,6 @@
 #include "Core/Math/TransformFwd.h"
 #include "Core/Reflection/Type/Metadata/PropertyMetadata.h"
 #include "Core/Templates/Align.h"
-#include "Initializer/ObjectInitializer.h"
 #include "PropertyArena.h"
 #include "Memory/SmartPtr.h"
 
@@ -355,18 +354,6 @@ namespace Lumina
         CObject*        ClassDefaultObject = nullptr;
 
     };
-
-    template<class T>
-    void InternalConstructor(const FObjectInitializer& IO)
-    { 
-        T::__DefaultConstructor(IO);
-    }
-
-    template<class T>
-    void InternalAllocator(const FObjectInitializer& IO)
-    { 
-        T::__DefaultAllocator(IO);
-    }
 
     RUNTIME_API void AllocateStaticClass(const TCHAR* Package, const TCHAR* Name, CClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc);
 

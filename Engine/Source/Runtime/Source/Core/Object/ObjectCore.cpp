@@ -45,16 +45,62 @@ namespace Lumina
         return GCObjectAllocator.AllocateCObject(InClass->GetSize(), Alignment);
     }
 
+    /** Seeds a new object's reflected properties from its archetype, which is the class CDO unless one was named. */
+    static void InitPropertiesFromTemplate(CObject* Object, const FConstructCObjectParams& Params)
+    {
+        // A default object is where defaults come from, so it keeps what its own constructor wrote.
+        if (EnumHasAnyFlags(Params.Flags, OF_DefaultObject))
+        {
+            return;
+        }
+
+        const TSpan<FProperty* const> Properties = Params.Class->GetProperties();
+        if (Properties.empty())
+        {
+            return;
+        }
+
+        const CObject* Template = Params.Template;
+
+        if (Template == nullptr)
+        {
+            // An uncreated CDO holds exactly what the constructor just wrote, so forcing one would copy nothing.
+            Template = Params.Class->GetDefaultObjectIfCreated();
+        }
+        // Class's properties sit at the same offsets in a subclass, so only a narrower template reads in bounds.
+        else if (Template->GetClass() == nullptr || !Template->GetClass()->IsChildOf(Params.Class))
+        {
+            LOG_ERROR("Template '{}' is not a '{}', so it cannot seed one; the new object keeps its constructor values.",
+                Template->GetName(), Params.Class->GetName());
+            return;
+        }
+
+        if (Template == nullptr || Template == Object)
+        {
+            return;
+        }
+
+        for (FProperty* Property : Properties)
+        {
+            Property->CopyCompleteValue_InContainer(Object, Template);
+        }
+    }
+
     CObject* StaticAllocateObject(const FConstructCObjectParams& Params)
     {
         LUMINA_PROFILE_SCOPE();
-        
+
         void* ObjectMemory = AllocateCObjectMemory(Params.Class, Params.Flags);
         Memory::Memzero(ObjectMemory, Params.Class->GetSize());
-        
-        CObject* NewObject = Params.Class->EmplaceInstance(ObjectMemory);
 
-        NewObject->ConstructInternal(FObjectInitializer(Params.Package, Params));
+        CObject* NewObject = nullptr;
+        {
+            // Scoped around the constructor alone, which is the only thing that reads it.
+            FScopedObjectConstruction Constructing(Params);
+            NewObject = Params.Class->EmplaceInstance(ObjectMemory);
+        }
+
+        NewObject->AddObject();
 
         // Only a runtime-minted class has a trailing block, so the cast is the test. The flag is what lets
         // the destructor skip its class unless there is trailing storage.
@@ -64,8 +110,11 @@ namespace Lumina
             NewObject->SetFlag(OF_ScriptProperties);
         }
 
+        // After the script block, whose properties are raw storage until ConstructScriptProperties builds them.
+        InitPropertiesFromTemplate(NewObject, Params);
+
         NewObject->PostInitProperties();
-        
+
         return NewObject;
     }
 
@@ -243,7 +292,35 @@ namespace Lumina
 
         return StaticAllocateObject(Params);
     }
-    
+
+    CObject* NewObjectFromTemplate(const CObject* Template, CPackage* Package, const FName& Name, const FGuid& GUID, EObjectFlags Flags)
+    {
+        if (Template == nullptr || Template->GetClass() == nullptr)
+        {
+            return nullptr;
+        }
+
+        FConstructCObjectParams Params(Template->GetClass());
+
+        if (Name == NAME_None)
+        {
+            CClass* Class = Template->GetClass();
+            int32 Unique = std::atomic_ref<int32>(Class->ClassUnique).fetch_add(1, std::memory_order_relaxed) + 1;
+            Params.Name = FName(Class->GetName().c_str(), Unique);
+        }
+        else
+        {
+            Params.Name = Name;
+        }
+
+        Params.Guid     = GUID;
+        Params.Flags    = Flags;
+        Params.Package  = Package;
+        Params.Template = Template;
+
+        return StaticAllocateObject(Params);
+    }
+
     void GetObjectsWithPackage(const CPackage* Package, TVector<CObject*>& OutObjects)
     {
         ASSERT(Package != nullptr);
