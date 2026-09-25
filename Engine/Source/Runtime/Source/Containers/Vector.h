@@ -481,10 +481,19 @@ namespace Lumina::Containers
 
                 OpenGap(Index, Extra);
                 T* Write = Data + Index;
-                for (; First != Last; ++First, ++Write)
+
+                if constexpr (std::contiguous_iterator<TIter> && std::is_same_v<std::iter_value_t<TIter>, T>)
                 {
-                    Memory::ConstructAt(Write, *First);
+                    ElementOps::CopyConstructRange(Write, std::to_address(First), Extra);
                 }
+                else
+                {
+                    for (; First != Last; ++First, ++Write)
+                    {
+                        Memory::ConstructAt(Write, *First);
+                    }
+                }
+
                 Count += static_cast<uint32>(Extra);
                 return Data + Index;
             }
@@ -837,8 +846,9 @@ namespace Lumina::Containers
         }
 
         // Constructs into the new block before relocating, so an argument aliasing our own buffer stays live.
+        // Never inlined, so the allocation path stays out of every emplace_back call site.
         template <typename... TArgs>
-        T& EmplaceBackGrowing(TArgs&&... Args)
+        FORCENOINLINE T& EmplaceBackGrowing(TArgs&&... Args)
         {
             const uint32 NewCapacity = CalculateGrowth(Cap, static_cast<size_t>(Cap) + 1);
             const size_t NewBytes    = static_cast<size_t>(NewCapacity) * sizeof(T);

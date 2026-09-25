@@ -368,6 +368,48 @@ namespace LuminaVectorBench
         SUCCEED();
     }
 
+    TEST(VectorBench, AppendContiguousRange)
+    {
+        constexpr int kChunk  = 256;
+        constexpr int kRounds = 20'000;
+
+        Lumina::Containers::TVector<int> Source;
+        Source.reserve(kChunk);
+        for (int Index = 0; Index < kChunk; ++Index)
+        {
+            Source.push_back(Index);
+        }
+
+        std::vector<int> BaselineSource(Source.begin(), Source.end());
+
+        const double Baseline = BestMillisOf(kRepeats, [&]
+        {
+            std::vector<int> Values;
+            Values.reserve(static_cast<size_t>(kChunk) * kRounds);
+            for (int Round = 0; Round < kRounds; ++Round)
+            {
+                Values.insert(Values.end(), BaselineSource.begin(), BaselineSource.end());
+            }
+            GBenchSink += Values.back();
+        });
+
+        const double Lumina = BestMillisOf(kRepeats, [&]
+        {
+            Lumina::Containers::TVector<int> Values;
+            Values.reserve(static_cast<size_t>(kChunk) * kRounds);
+            for (int Round = 0; Round < kRounds; ++Round)
+            {
+                Values.Append(Source);
+            }
+            GBenchSink += Values.back();
+        });
+
+        ReportHeader("Append 20,000 x 256 int from a contiguous range, reserved");
+        ReportRow("std::vector insert", Baseline, 0.0);
+        ReportRow("Lumina TVector Append", Lumina, Baseline);
+        SUCCEED();
+    }
+
     TEST(VectorBench, SequentialRead)
     {
         TVector<int> EastlValues;
