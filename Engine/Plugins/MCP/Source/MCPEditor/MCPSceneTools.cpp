@@ -538,7 +538,26 @@ namespace Lumina::MCP
                     CStruct* Type = SceneOps::ResolveComponentType(FStringView(In.Component));
                     if (Type == nullptr || !ECS::Utils::HasComponent(Registry, Entity, Type))
                     {
-                        return Agent::FToolResult::Error(Lumina::Format("'{}' has no component named '{}'.",
+                        // A script is not a component, so removing one detaches it rather than the holder.
+                        if (CEntityScript* Script =
+                                FindEntityScriptByName(Registry, Entity, FStringView(In.Component)))
+                        {
+                            bool bDetached = false;
+                            SessionOps::RunTransacted("Remove Script (agent)", [&]()
+                            {
+                                bDetached = EntityScripts::Remove(Registry, Entity, Script);
+                            }, SceneError);
+
+                            Out.bRemoved = bDetached;
+                            return bDetached
+                                ? Agent::FToolResult::Ok(Lumina::Format("Removed script {} from '{}'.",
+                                    In.Component, NameOf(Registry, Entity)))
+                                : Agent::FToolResult::Error(Lumina::Format("{} could not be detached from '{}'.",
+                                    In.Component, NameOf(Registry, Entity)));
+                        }
+
+                        return Agent::FToolResult::Error(Lumina::Format(
+                            "'{}' has no component or script named '{}'.",
                             NameOf(Registry, Entity), In.Component));
                     }
 
