@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq.Expressions;
 using System.Reflection;
 using Lumina;
 
@@ -848,20 +847,6 @@ internal sealed class TypeDescription
         }
 
         return (IReadOnlyList<ScriptButton>?)Result ?? Array.Empty<ScriptButton>();
-    }
-
-    private static Func<IntPtr, object?> BuildWrapperFactory(Type WrapperType)
-    {
-        ConstructorInfo? Constructor = WrapperType.GetConstructor(
-            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-            null, new[] { typeof(IntPtr) }, null);
-        if (Constructor == null)
-        {
-            return static _ => null;
-        }
-        ParameterExpression Parameter = Expression.Parameter(typeof(IntPtr), "handle");
-        return Expression.Lambda<Func<IntPtr, object?>>(
-            Expression.Convert(Expression.New(Constructor, Parameter), typeof(object)), Parameter).Compile();
     }
 
     public object? Create()

@@ -68,15 +68,6 @@ public static partial class Game
         return Prior;
     }
 
-    internal static Scope PushWorld(Lumina.CWorld World)
-    {
-        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField);
-        ActiveWorld = World;
-        ActiveHasEntity = false;
-        ActiveScriptField = null;
-        return Prior;
-    }
-
     internal readonly struct Scope : IDisposable
     {
         private readonly Lumina.CWorld? World;

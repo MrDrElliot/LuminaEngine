@@ -76,12 +76,6 @@ public readonly unsafe partial struct EntityRegistry
     /// The component of type T, adding a default one first if absent.
     public T? GetOrAdd<T>(Entity Entity) where T : NativeStruct => TryGet<T>(Entity) ?? Emplace<T>(Entity);
 
-    /// Get-or-emplace by a pre-resolved op-table token (zero on failure); for the non-generic script paths.
-    internal IntPtr EmplaceRaw(Entity Entity, IntPtr Token)
-    {
-        return Token == IntPtr.Zero ? IntPtr.Zero : Native.EmplaceComponent(WorldHandle, Entity.Id, Token);
-    }
-
     // Registry signals (OnConstruct/OnDestroy/OnUpdate); Dispose the returned subscription to unsubscribe.
     // Build your own events by treating a component as a signal channel (Emplace/Remove/Patch it).
 
