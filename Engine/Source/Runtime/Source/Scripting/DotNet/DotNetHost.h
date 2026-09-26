@@ -46,6 +46,10 @@ namespace Lumina::DotNet
     // Latches a reload for the next frame start, since a reload destroys objects the frame may be using.
     RUNTIME_API void RequestScriptReload();
 
+    /** Disk path of the .cs file declaring TypeName, matched on the file stem against the script roots.
+     *  Empty when nothing matches, which is the case for a C++ script or a type sharing a file. */
+    RUNTIME_API FString FindScriptSourceFile(FStringView TypeName);
+
     /**
      * Reports that a file under a watched source tree changed, and latches a reload if it was one of ours.
      *

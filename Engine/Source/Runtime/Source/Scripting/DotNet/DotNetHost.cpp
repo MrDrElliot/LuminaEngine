@@ -1362,6 +1362,52 @@ namespace Lumina::DotNet
         GManaged.OnWorldTeardown(reinterpret_cast<uint64>(World));
     }
 
+    FString FindScriptSourceFile(FStringView TypeName)
+    {
+        if (TypeName.empty())
+        {
+            return FString();
+        }
+
+        // The stem, since a script is declared in a file named after it by every convention the templates set.
+        const size_t Dot = TypeName.find_last_of('.');
+        const FStringView Short = Dot == FStringView::npos ? TypeName : TypeName.substr(Dot + 1);
+
+        FString Wanted(Short.data(), Short.size());
+        Wanted += ".cs";
+
+        FString Found;
+        for (const FScriptUnit& Unit : BuildScriptUnits())
+        {
+            if (Unit.DiskDir.empty() || !Filesystem::Exists(Unit.DiskDir))
+            {
+                continue;
+            }
+
+            Filesystem::IterateDirectoryRecursive(Unit.DiskDir, [&](const Filesystem::FDirectoryEntry& Entry)
+            {
+                if (Entry.IsDirectory() || !Found.empty())
+                {
+                    return true;
+                }
+                if (Entry.Name.size() == Wanted.size()
+                    && EqualsIgnoreCase(Entry.Name, FStringView(Wanted)))
+                {
+                    Found.assign(Entry.FullPath.data(), Entry.FullPath.size());
+                    return false;
+                }
+                return true;
+            });
+
+            if (!Found.empty())
+            {
+                break;
+            }
+        }
+
+        return Found;
+    }
+
     void RequestScriptReload()
     {
         GScriptReloadRequested.store(true, Atomic::MemoryOrderRelease);
