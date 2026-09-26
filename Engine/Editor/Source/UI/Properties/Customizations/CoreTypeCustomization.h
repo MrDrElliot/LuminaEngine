@@ -3,6 +3,8 @@
 #include "imgui.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Core/Delegates/ScriptDelegate.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Core/Object/SoftObjectPtr.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
@@ -272,6 +274,44 @@ namespace Lumina
         bool bValue;
     };
     
+    class FDelegatePropertyCustomization : public IPropertyTypeCustomization
+    {
+    public:
+
+        static TSharedPtr<FDelegatePropertyCustomization> MakeInstance()
+        {
+            return MakeShared<FDelegatePropertyCustomization>();
+        }
+
+        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) override
+        {
+            const auto* Delegate = static_cast<const FScriptDelegateBase*>(Property->GetValuePtr());
+            if (Delegate == nullptr)
+            {
+                ImGui::TextUnformatted("--");
+                return EPropertyChangeOp::None;
+            }
+
+            const size_t Managed = Delegate->GetManagedBindingCount();
+            const size_t Total = Delegate->GetBindingCount();
+
+            if (Total == 0)
+            {
+                ImGui::TextDisabled("Unbound");
+            }
+            else
+            {
+                ImGui::Text(LE_ICON_FLASH " %llu bound (%llu native, %llu script)",
+                    (uint64)Total, (uint64)(Total - Managed), (uint64)Managed);
+            }
+            return EPropertyChangeOp::None;
+        }
+
+        void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>&) override {}
+
+        void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>&) override {}
+    };
+
     class FCObjectPropertyCustomization : public IPropertyTypeCustomization
     {
     public:

@@ -867,6 +867,7 @@ namespace Lumina
         case EPropertyTypeFlags::Name:   return FNamePropertyCustomization::MakeInstance();
         case EPropertyTypeFlags::String: return FStringPropertyCustomization::MakeInstance();
         case EPropertyTypeFlags::Enum:   return FEnumPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Delegate: return FDelegatePropertyCustomization::MakeInstance();
         default: return nullptr;
         }
     }

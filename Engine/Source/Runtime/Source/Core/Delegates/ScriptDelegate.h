@@ -46,6 +46,9 @@ namespace Lumina
         RUNTIME_API bool   HasManagedBindings() const;
         RUNTIME_API size_t GetManagedBindingCount() const;
 
+        // Native and managed together, which the details panel subtracts to show the two separately.
+        RUNTIME_API size_t GetBindingCount() const;
+
         NODISCARD bool IsBound() const { return LiveCount != 0; }
 
     protected:
@@ -198,7 +201,7 @@ namespace Lumina
         };
     }
 
-    // A reflectable multicast event native C++ and C# scripts can bind to, carrying blittable arguments.
+    // A reflectable multicast event native C++ and C# scripts can bind to, carrying reflected arguments.
     template<typename... TArgs>
     class TScriptDelegate : public FScriptDelegateBase
     {

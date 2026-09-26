@@ -177,6 +177,11 @@ namespace Lumina
         return false;
     }
 
+    size_t FScriptDelegateBase::GetBindingCount() const
+    {
+        return LiveCount;
+    }
+
     size_t FScriptDelegateBase::GetManagedBindingCount() const
     {
         size_t Count = 0;

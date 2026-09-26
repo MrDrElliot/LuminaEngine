@@ -165,3 +165,27 @@ TEST(ScriptDelegateReflection, CoreDelegateSlotsMatchTheSingletonLayout)
     }
 }
 
+// The details panel only builds a row for a visible property, and a binding list is never typed into.
+TEST(ScriptDelegateReflection, DelegatePropertiesAreVisibleAndReadOnly)
+{
+    const FDelegateProperty* Slot = FindDelegate("OnTwo");
+    EXPECT_TRUE(Slot->IsVisible());
+    EXPECT_TRUE(EnumHasAnyFlags(Slot->Flags, EPropertyFlags::ReadOnly));
+    EXPECT_FALSE(EnumHasAnyFlags(Slot->Flags, EPropertyFlags::Editable));
+}
+
+// The row shows natives and scripts apart, which it derives by subtracting one count from the other.
+TEST(ScriptDelegateReflection, BindingCountsSeparateNativeFromManaged)
+{
+    SDelegateTestHost Host;
+    EXPECT_EQ(Host.OnOne.GetBindingCount(), 0u);
+
+    const FDelegateHandle First = Host.OnOne.AddLambda([](const SDelegateTestPayload&) {});
+    Host.OnOne.AddLambda([](const SDelegateTestPayload&) {});
+
+    EXPECT_EQ(Host.OnOne.GetBindingCount(), 2u);
+    EXPECT_EQ(Host.OnOne.GetManagedBindingCount(), 0u);
+
+    Host.OnOne.Remove(First);
+    EXPECT_EQ(Host.OnOne.GetBindingCount(), 1u);
+}

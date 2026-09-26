@@ -7,8 +7,8 @@ namespace Lumina
 {
     void FReflectedDelegateProperty::AppendDefinition(Reflection::FCodeWriter& Writer) const
     {
-        // Bindings are runtime-only; force NoSerialize regardless of declared specifiers.
-        const EPropertyFlags Flags = PropertyFlags | EPropertyFlags::NoSerialize;
+        // Bindings are runtime-only; force NoSerialize, and ReadOnly so the row shows without being editable.
+        const EPropertyFlags Flags = PropertyFlags | EPropertyFlags::NoSerialize | EPropertyFlags::ReadOnly;
         const std::string PropertyFlagStr = PropertyFlagsToString(Flags);
 
         // NumArgs; the argument params the emitter wrote ahead of this one.
