@@ -8,8 +8,6 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Input/InputAction.h"
 #include "Input/InputEvent.h"
-#include "World/Entity/Events/CollisionEvent.h"
-#include "World/Entity/Events/PerceptionEvent.h"
 #include "EntityScript.generated.h"
 
 namespace Lumina
@@ -57,31 +55,6 @@ namespace Lumina
          *  overriding this must call base, which is what feeds its SInputAction / SInputAxis bindings. */
         FUNCTION()
         virtual void OnAction(FName Action, FInputActionState State) {}
-
-        //~ Physics callbacks. Delivered by the physics scene's contact drain to every script on the entity,
-        //~ so a C++ and a C# script receive them through the same virtual. The event is oriented per-entity
-        //~ (Normal points away from self); both bodies get a callback with the roles swapped.
-
-        FUNCTION()
-        virtual void OnContactBegin(SCollisionEvent Event) {}
-
-        FUNCTION()
-        virtual void OnContactEnd(SCollisionEvent Event) {}
-
-        FUNCTION()
-        virtual void OnOverlapBegin(SCollisionEvent Event) {}
-
-        FUNCTION()
-        virtual void OnOverlapEnd(SCollisionEvent Event) {}
-
-        //~ AI perception. Delivered to the PERCEIVER's scripts when one of its senses acquires or loses a
-        //~ target, alongside the component delegate.
-
-        FUNCTION()
-        virtual void OnTargetPerceived(SPerceptionEvent Event) {}
-
-        FUNCTION()
-        virtual void OnTargetLost(SPerceptionEvent Event) {}
 
         /** The entity this script is attached to. Valid from OnAttach onwards.
          *  FUNCTION() so the C# base reads its entity from here rather than being handed one separately --
@@ -179,20 +152,6 @@ namespace Lumina
         /** Runs OnDetach on Script and removes it from its entity. Returns false if it was not attached. */
         RUNTIME_API bool Remove(ECS::FRegistry& Registry, ECS::FEntity Entity, CEntityScript* Script);
 
-        /** Which physics callback a DispatchCollision call delivers. */
-        enum class ECollisionCallback : uint8
-        {
-            ContactBegin,
-            ContactEnd,
-            OverlapBegin,
-            OverlapEnd,
-        };
-
-        /** Delivers a collision event to every script on Entity. No-op when the entity has none, so the
-         *  physics drain pays one lookup rather than knowing anything about scripts. */
-        RUNTIME_API void DispatchCollision(ECS::FRegistry& Registry, ECS::FEntity Entity,
-            ECollisionCallback Callback, const SCollisionEvent& Event);
-
         /** Delivers one input event to every script on Entity. */
         RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);
 
@@ -200,9 +159,5 @@ namespace Lumina
         RUNTIME_API void DispatchActions(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
             int32 Count, TSpan<const int32> ChangedActionIndices);
 
-        /** Delivers a perception event to every script on the PERCEIVER entity. bSensed picks
-         *  OnTargetPerceived vs OnTargetLost. */
-        RUNTIME_API void DispatchPerception(ECS::FRegistry& Registry, ECS::FEntity Perceiver,
-            bool bSensed, const SPerceptionEvent& Event);
     }
 }

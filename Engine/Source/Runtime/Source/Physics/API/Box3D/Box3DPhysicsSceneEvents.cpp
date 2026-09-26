@@ -9,7 +9,6 @@
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "Log/Log.h"
-#include "Scripting/EntityScript.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
@@ -58,11 +57,6 @@ namespace Lumina::Physics
             if (Entity == ECS::NullEntity || !RigidStorage.Contains(Entity))
             {
                 return false;
-            }
-
-            if (Registry.HasAll<SEntityScriptComponent>(Entity))
-            {
-                return true;
             }
 
             const SRigidBodyComponent& Body = RigidStorage.Get(Entity);
@@ -247,28 +241,12 @@ namespace Lumina::Physics
                 ? (bIsAdded ? Body->OnOverlapBegin : Body->OnOverlapEnd)
                 : (bIsAdded ? Body->OnContactBegin : Body->OnContactEnd);
 
-            const bool bHasScripts = Registry.HasAll<SEntityScriptComponent>(Self);
-            if (!Delegate.IsBound() && !bHasScripts)
+            if (!Delegate.IsBound())
             {
                 return;
             }
 
-            const SCollisionEvent Event = BuildCollisionEvent(Self, Other, SelfBody, OtherBody, Record, bFlipNormal);
-
-            if (Delegate.IsBound())
-            {
-                Delegate.Broadcast(Event);
-            }
-
-            // Re-checked, since a handler above is free to have destroyed the entity it fired for.
-            if (bHasScripts && Registry.IsValid(Self))
-            {
-                using ECallback = EntityScripts::ECollisionCallback;
-                const ECallback Callback = bIsOverlap
-                    ? (bIsAdded ? ECallback::OverlapBegin : ECallback::OverlapEnd)
-                    : (bIsAdded ? ECallback::ContactBegin : ECallback::ContactEnd);
-                EntityScripts::DispatchCollision(Registry, Self, Callback, Event);
-            }
+            Delegate.Broadcast(BuildCollisionEvent(Self, Other, SelfBody, OtherBody, Record, bFlipNormal));
         };
 
         for (const FContactRecord& Record : ContactDrainScratch)

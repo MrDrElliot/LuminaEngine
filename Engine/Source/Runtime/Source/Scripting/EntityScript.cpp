@@ -481,29 +481,6 @@ namespace Lumina
             return true;
         }
 
-        void DispatchCollision(ECS::FRegistry& Registry, ECS::FEntity Entity,
-            ECollisionCallback Callback, const SCollisionEvent& Event)
-        {
-            FScriptSnapshot Scripts;
-            SnapshotScripts(Registry, Entity, Scripts);
-
-            for (TObjectPtr<CEntityScript>& Held : Scripts)
-            {
-                CEntityScript* Script = Held.Get();
-                if (!IsStillAttached(Registry, Entity, Script))
-                {
-                    continue;
-                }
-                switch (Callback)
-                {
-                case ECollisionCallback::ContactBegin:  Script->OnContactBegin(Event);  break;
-                case ECollisionCallback::ContactEnd:    Script->OnContactEnd(Event);    break;
-                case ECollisionCallback::OverlapBegin:  Script->OnOverlapBegin(Event);  break;
-                case ECollisionCallback::OverlapEnd:    Script->OnOverlapEnd(Event);    break;
-                }
-            }
-        }
-
         void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event)
         {
             FScriptSnapshot Scripts;
@@ -544,22 +521,6 @@ namespace Lumina
             }
         }
 
-        void DispatchPerception(ECS::FRegistry& Registry, ECS::FEntity Perceiver,
-            bool bSensed, const SPerceptionEvent& Event)
-        {
-            FScriptSnapshot Scripts;
-            SnapshotScripts(Registry, Perceiver, Scripts);
-
-            for (TObjectPtr<CEntityScript>& Held : Scripts)
-            {
-                CEntityScript* Script = Held.Get();
-                if (!IsStillAttached(Registry, Perceiver, Script))
-                {
-                    continue;
-                }
-                bSensed ? Script->OnTargetPerceived(Event) : Script->OnTargetLost(Event);
-            }
-        }
 
 
         void DetachAll(ECS::FRegistry& Registry, ECS::FEntity Entity)
