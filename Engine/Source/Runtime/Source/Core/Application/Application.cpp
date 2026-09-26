@@ -79,7 +79,7 @@ namespace Lumina
                 }
 
                 MainWindow->ProcessMessages();
-                FCoreDelegates::OnInputPumped.Broadcast();
+                FCoreDelegates::Get().OnInputPumped.Broadcast();
             }
 
             bool bApplicationWantsExit = ShouldExit();

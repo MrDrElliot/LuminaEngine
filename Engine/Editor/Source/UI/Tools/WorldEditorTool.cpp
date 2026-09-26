@@ -790,14 +790,14 @@ namespace Lumina
         RebindRegistryObservers();
 
         WorldTraveledHandle = FCoreDelegates::OnWorldTraveled.AddMember(this, &FWorldEditorTool::OnWorldTraveled);
-        GameQuitHandle = FCoreDelegates::OnGameQuitRequested.AddMember(this, &FWorldEditorTool::OnGameQuitRequested);
+        GameQuitHandle = FCoreDelegates::Get().OnGameQuitRequested.AddMember(this, &FWorldEditorTool::OnGameQuitRequested);
     }
 
     void FWorldEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
         FCoreDelegates::OnWorldTraveled.Remove(WorldTraveledHandle);
         WorldTraveledHandle = FDelegateHandle{};
-        FCoreDelegates::OnGameQuitRequested.Remove(GameQuitHandle);
+        FCoreDelegates::Get().OnGameQuitRequested.Remove(GameQuitHandle);
         GameQuitHandle = FDelegateHandle{};
 
         if (bSimulatingWorld)

@@ -447,7 +447,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        FCoreDelegates::OnPreEngineShutdown.BroadcastAndClear();
+        FCoreDelegates::Get().OnPreEngineShutdown.BroadcastAndClear();
         
         Jobs::WaitForAll();
 
@@ -1068,9 +1068,9 @@ namespace Lumina
     void FEngine::RequestExitGame()
     {
         // With no subscriber this is a packaged game, where quitting the game means exiting the process.
-        if (FCoreDelegates::OnGameQuitRequested.IsBound())
+        if (FCoreDelegates::Get().OnGameQuitRequested.IsBound())
         {
-            FCoreDelegates::OnGameQuitRequested.Broadcast();
+            FCoreDelegates::Get().OnGameQuitRequested.Broadcast();
             return;
         }
         FApplication::RequestExit();

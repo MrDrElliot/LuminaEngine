@@ -7,16 +7,16 @@ namespace LuminaSharp;
 public static class CoreEvents
 {
     /** Fires after a world is torn down, before the next one exists. */
-    public static ScriptDelegate PostWorldUnload => View(CCoreDelegateLibrary.GetPostWorldUnloadEvent());
+    public static ScriptDelegate PostWorldUnload => Events.PostWorldUnload;
 
     /** Fires once as the engine begins shutting down, after which listeners are dropped. */
-    public static ScriptDelegate PreEngineShutdown => View(CCoreDelegateLibrary.GetPreEngineShutdownEvent());
+    public static ScriptDelegate PreEngineShutdown => Events.OnPreEngineShutdown;
 
     /** Fires when gameplay asks to quit; under the editor this ends PIE rather than the process. */
-    public static ScriptDelegate GameQuitRequested => View(CCoreDelegateLibrary.GetGameQuitRequestedEvent());
+    public static ScriptDelegate GameQuitRequested => Events.OnGameQuitRequested;
 
     /** Fires each frame after the OS event pump, before input actions are evaluated. */
-    public static ScriptDelegate InputPumped => View(CCoreDelegateLibrary.GetInputPumpedEvent());
+    public static ScriptDelegate InputPumped => Events.OnInputPumped;
 
-    private static unsafe ScriptDelegate View(long Address) => new ScriptDelegate((void*)(nint)Address);
+    private static SCoreDelegates Events => new SCoreDelegates((nint)CCoreDelegateLibrary.GetCoreDelegates());
 }

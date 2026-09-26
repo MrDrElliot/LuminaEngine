@@ -106,7 +106,7 @@ namespace Lumina
         /** Queues world travel; swap runs at next FrameStart. Prefers PIE Game world; preserves editor proxy on PIE exit. */
         RUNTIME_API void Travel(FStringView WorldPath);
 
-        /** Gameplay quit: ends the PIE session in the editor (via FCoreDelegates::OnGameQuitRequested),
+        /** Gameplay quit: ends the PIE session in the editor (via FCoreDelegates::Get().OnGameQuitRequested),
          *  exits the process in a packaged game. Safe to call from inside a world tick. */
         RUNTIME_API void RequestExitGame();
         

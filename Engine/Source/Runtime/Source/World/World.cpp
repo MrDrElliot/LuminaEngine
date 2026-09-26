@@ -516,7 +516,7 @@ namespace Lumina
         PhysicsScene.reset();
         DestroyRenderer();
 
-        FCoreDelegates::PostWorldUnload.Broadcast();
+        FCoreDelegates::Get().PostWorldUnload.Broadcast();
     }
 
     void CWorld::Update(const FUpdateContext& Context)

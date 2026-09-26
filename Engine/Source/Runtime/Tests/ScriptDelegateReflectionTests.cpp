@@ -6,6 +6,7 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/DelegateProperty.h"
+#include "Core/Delegates/CoreDelegates.h"
 #include "ScriptDelegateTestTypes.h"
 
 using namespace Lumina;
@@ -136,3 +137,31 @@ TEST(ScriptDelegateReflection, AnAliasedDelegateBroadcastsThroughItsAliasType)
     EXPECT_EQ(Seen.Count, 3);
     EXPECT_FLOAT_EQ(SeenFloat, 1.5f);
 }
+
+// The managed wrapper reads each event at its reflected offset over the one live singleton.
+TEST(ScriptDelegateReflection, CoreDelegateSlotsMatchTheSingletonLayout)
+{
+    CStruct* Events = SCoreDelegates::StaticStruct();
+    ASSERT_NE(Events, nullptr);
+
+    SCoreDelegates& Live = FCoreDelegates::Get();
+    const uint8* Base = reinterpret_cast<const uint8*>(&Live);
+
+    struct FCase { const char* Name; const FScriptDelegateBase* Member; };
+    const FCase Cases[] =
+    {
+        { "PostWorldUnload",     &Live.PostWorldUnload },
+        { "OnPreEngineShutdown", &Live.OnPreEngineShutdown },
+        { "OnGameQuitRequested", &Live.OnGameQuitRequested },
+        { "OnInputPumped",       &Live.OnInputPumped },
+    };
+
+    for (const FCase& Case : Cases)
+    {
+        FProperty* Slot = Events->GetProperty(FName(Case.Name));
+        ASSERT_NE(Slot, nullptr) << Case.Name;
+        EXPECT_EQ(Base + Slot->Offset, reinterpret_cast<const uint8*>(Case.Member)) << Case.Name;
+        EXPECT_EQ(static_cast<const FDelegateProperty*>(Slot)->GetNumArgs(), 0u) << Case.Name;
+    }
+}
+

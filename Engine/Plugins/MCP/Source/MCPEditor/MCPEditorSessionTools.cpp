@@ -470,7 +470,7 @@ namespace Lumina::MCP
         // Runs on the transport thread on purpose: a tap needs the release to land a frame after the press.
         void RegisterSendKey(FStringView Owner)
         {
-            InputPumpedHandle = FCoreDelegates::OnInputPumped.AddStatic(&ForwardInjectedKeys);
+            InputPumpedHandle = FCoreDelegates::Get().OnInputPumped.AddStatic(&ForwardInjectedKeys);
 
             Agent::FToolRegistry::Get().Register<SSendKeyParams, SSendKeyResult>(
                 Owner, "editor.send_key",
@@ -563,7 +563,7 @@ namespace Lumina::MCP
     void UnregisterEditorSessionTools()
     {
         // The pump delegate outlives this DLL, so a stale entry would be destroyed after unload.
-        FCoreDelegates::OnInputPumped.Remove(InputPumpedHandle);
+        FCoreDelegates::Get().OnInputPumped.Remove(InputPumpedHandle);
         InputPumpedHandle = {};
     }
 }
