@@ -168,6 +168,9 @@ namespace Lumina::ECS::Utils
 
 	// Drops the entity from its tag storage and removes the component. No-op when it carries no tag.
 	RUNTIME_API void ClearEntityTag(ECS::FRegistry& Registry, ECS::FEntity Entity);
+
+	// Refills the per-tag storages from the serialized components, which is what a loaded world has.
+	RUNTIME_API void RebuildTagStorages(ECS::FRegistry& Registry);
 	RUNTIME_API bool HasComponent(ECS::FRegistry& Registry, ECS::FEntity Entity, const CStruct* Type);
 
 	// Remap every reflected "Entity"-tagged uint32 field (nested structs too) through Map. FRelationshipComponent

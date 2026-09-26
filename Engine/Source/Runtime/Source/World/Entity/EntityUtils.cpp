@@ -528,6 +528,17 @@ namespace Lumina::ECS::Utils
         Registry.NamedStorage<STagComponent>(Existing->Tag).RemoveEntity(Entity);
         Registry.Remove<STagComponent>(Entity);
     }
+
+    void RebuildTagStorages(ECS::FRegistry& Registry)
+    {
+        Registry.View<STagComponent>().ForEach([&](ECS::FEntity Entity, STagComponent& Component)
+        {
+            if (!Component.Tag.IsNone())
+            {
+                Registry.NamedStorage<STagComponent>(Component.Tag).EmplaceOrReplace(Entity, Component);
+            }
+        });
+    }
     
     // --- Hierarchy ---
 

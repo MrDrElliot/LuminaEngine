@@ -313,7 +313,10 @@ namespace Lumina
         EntityRegistry.Ctx().Emplace<FSceneRenderSettings>(CarriedRenderSettings);
 
         CPrefab::RefreshAllInstancesInWorld(this);
-        
+
+        // A tag serializes as its component, but FindByTag reads the per-tag storage, so refill it here.
+        ECS::Utils::RebuildTagStorages(EntityRegistry);
+
         EntityRegistry.Compact();
         
         // Which entities a client may hold is a netcode question, so it is reported not decided.
