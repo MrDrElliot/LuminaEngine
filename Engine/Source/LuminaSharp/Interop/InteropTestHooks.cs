@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -776,6 +776,15 @@ internal static unsafe class InteropTestHooks
         }
         return (int)ScriptAsync.StateOf(Token);
     }
+
+    // The reaper is what retires a fire-and-forget token, since native never asks about one again.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_AsyncRunningCount() => ScriptAsync.RunningCount;
+
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void Test_ReapCompletedAsync() => ScriptAsync.ReapCompleted();
 
     // Completes the gate the async body is parked on, then drains so its continuation runs.
     [ManagedExport]

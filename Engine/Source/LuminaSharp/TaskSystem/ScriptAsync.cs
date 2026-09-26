@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -86,38 +85,27 @@ internal static class ScriptAsync
         }
     }
 
+    /** Drops every finished task, reporting the ones that threw. Called once a frame on the game thread,
+     *  because a fire-and-forget Task has no caller left to hand its exception to. */
+    internal static void ReapCompleted()
+    {
+        if (Running.IsEmpty)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<ulong, System.Threading.Tasks.Task> Pair in Running)
+        {
+            if (Pair.Value.IsCompleted)
+            {
+                Release(Pair.Key);
+            }
+        }
+    }
+
     // The bodies keep running, but their continuations post to a queue the unload clears, so none resume.
     internal static void Clear()
     {
         Running.Clear();
-    }
-
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static int ScriptAsyncState(ulong Token)
-    {
-        try
-        {
-            return (int)StateOf(Token);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-            return (int)EScriptAsyncState.Unknown;
-        }
-    }
-
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void ScriptAsyncRelease(ulong Token)
-    {
-        try
-        {
-            Release(Token);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
     }
 }

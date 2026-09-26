@@ -1,4 +1,4 @@
-﻿#include <gtest/gtest.h>
+#include <gtest/gtest.h>
 
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
@@ -1519,6 +1519,53 @@ TEST_F(FFrameMarshalTest, AnAsyncScriptFunctionHandsBackATokenNativeCanPoll)
 
     State(Token, 1);
     EXPECT_EQ(State(Token, 0), 0) << "a released token should no longer be known";
+
+    FreeTarget(Target);
+}
+
+// Nothing native ever released a token, so a finished fire-and-forget body used to sit in the table until
+// the next reload and its exception was never reported.
+TEST_F(FFrameMarshalTest, AFinishedAsyncScriptFunctionIsReapedOnTheTick)
+{
+    using FCountFn = int32(*)();
+    using FReapFn  = void(*)();
+
+    auto* MakeTarget = (FMakeTargetFn)DotNet::ResolveManagedExport("Test_MakeMarshalTarget");
+    auto* FreeTarget = (FFreeTargetFn)DotNet::ResolveManagedExport("Test_FreeMarshalTarget");
+    auto* Invoke     = (FInvokeFn)DotNet::ResolveManagedExport("InvokeScriptFunction");
+    auto* Gate       = (FAsyncGateFn)DotNet::ResolveManagedExport("Test_ReleaseAsyncGate");
+    auto* Count      = (FCountFn)DotNet::ResolveManagedExport("Test_AsyncRunningCount");
+    auto* Reap       = (FReapFn)DotNet::ResolveManagedExport("Test_ReapCompletedAsync");
+    ASSERT_NE(Count, nullptr);
+    ASSERT_NE(Reap, nullptr);
+
+    Reap();
+    const int32 Before = Count();
+
+    Scripting::FScriptExportSchema Params;
+    Params.Fields.push_back(ParamField("Value", EPropertyTypeFlags::Int32, EPropertyFlags::None));
+    Params.Fields.push_back(ScalarField("ReturnValue", EPropertyTypeFlags::UInt64));
+
+    FFunction* Function = MintFrame("FrameMarshal_AsyncReap", Params, "MarshalAsync", 1);
+    ASSERT_NE(Function, nullptr);
+
+    void* Target = MakeTarget();
+    ASSERT_NE(Target, nullptr);
+
+    FFunctionFrame Frame(*Function);
+    Frame.At<int32>(0) = 41;
+    Invoke(Target, Function, Frame.GetMemory());
+    ASSERT_NE(Frame.At<uint64>(1), 0u);
+
+    EXPECT_EQ(Count(), Before + 1) << "a running body has to stay tracked";
+
+    // Still running, so the reaper must leave it alone.
+    Reap();
+    EXPECT_EQ(Count(), Before + 1) << "the reaper retired a body that had not finished";
+
+    EXPECT_EQ(Gate(), 41);
+    Reap();
+    EXPECT_EQ(Count(), Before) << "a finished body was left in the table";
 
     FreeTarget(Target);
 }

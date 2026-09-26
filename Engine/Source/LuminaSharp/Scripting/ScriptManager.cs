@@ -410,6 +410,10 @@ internal sealed class ScriptManager
     public void Tick()
     {
         GameThreadContext.Drain();
+
+        // A fire-and-forget async script function hands its token to native and is never asked about again,
+        // so this is what retires the finished ones and surfaces the exceptions they threw.
+        ScriptAsync.ReapCompleted();
     }
 
     public void Shutdown()
