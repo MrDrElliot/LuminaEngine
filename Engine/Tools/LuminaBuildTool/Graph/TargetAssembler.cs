@@ -675,6 +675,13 @@ public sealed class TargetAssembler
                 ? $"{Macro}="
                 : $"{Macro}={(Visible == Module ? "DLL_EXPORT" : "DLL_IMPORT")}");
         }
+
+        // A reflected module that is not a shared library still gets <NAME>_API in its generated code,
+        // with nothing to export; a test suite with reflection enabled is the case that needs this.
+        if (Module.DeclaredBinaryType != ModuleBinaryType.SharedLibrary && Module.Rules.bEnableReflection)
+        {
+            Definitions.Add(Module.Name.ToUpperInvariant() + "_API=");
+        }
     }
 
     /// <summary>Only modules that actually link resolve symbols.</summary>
