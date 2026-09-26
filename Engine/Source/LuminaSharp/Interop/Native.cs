@@ -229,4 +229,6 @@ public static unsafe partial class Native
 
     [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, IntPtr Thunk, IntPtr Context);
     [NativeCall] public static partial void DelegateUnbind(IntPtr Delegate, ulong Handle);
+    [NativeCall] public static partial int DelegateArgCount(IntPtr DelegateProperty);
+    [NativeCall] public static partial IntPtr DelegateArgProperty(IntPtr DelegateProperty, int Index);
 }

@@ -6,6 +6,7 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/Delegates/ScriptDelegate.h"
+#include "Core/Reflection/Type/Properties/DelegateProperty.h"
 #include "Core/Object/Class.h"
 #include "Core/Reflection/Type/Function.h"
 #include "Core/Templates/IntegerCompare.h"
@@ -707,6 +708,24 @@ LUMINA_DOTNET_EXPORT(uint64, DelegateBind)(void* DelegatePtr, void* Thunk, void*
         reinterpret_cast<FScriptDelegateBase::FManagedThunk>(Thunk), Context);
 }
 
+// A delegate's argument properties, so the managed side can bind frame slots the way a function does.
+
+LUMINA_DOTNET_EXPORT(int32, DelegateArgCount)(void* PropertyPtr)
+{
+    const FDelegateProperty* Delegate = static_cast<const FDelegateProperty*>(PropertyPtr);
+    return Delegate != nullptr ? (int32)Delegate->GetNumArgs() : 0;
+}
+
+LUMINA_DOTNET_EXPORT(void*, DelegateArgProperty)(void* PropertyPtr, int32 Index)
+{
+    const FDelegateProperty* Delegate = static_cast<const FDelegateProperty*>(PropertyPtr);
+    if (Delegate == nullptr || Index < 0 || (size_t)Index >= Delegate->GetNumArgs())
+    {
+        return nullptr;
+    }
+    return Delegate->GetArgs()[Index];
+}
+
 LUMINA_DOTNET_EXPORT(void, DelegateUnbind)(void* DelegatePtr, uint64 Handle)
 {
     if (DelegatePtr != nullptr)
@@ -766,5 +785,7 @@ LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(NameToString),
     LUMINA_DOTNET_SIG(PropMapOps),
     LUMINA_DOTNET_SIG(DelegateBind),
-    LUMINA_DOTNET_SIG(DelegateUnbind)
+    LUMINA_DOTNET_SIG(DelegateUnbind),
+    LUMINA_DOTNET_SIG(DelegateArgCount),
+    LUMINA_DOTNET_SIG(DelegateArgProperty)
 );
