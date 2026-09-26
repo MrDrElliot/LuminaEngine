@@ -8,6 +8,7 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Input/InputAction.h"
 #include "Input/InputEvent.h"
+#include "ScriptReloadContext.h"
 #include "EntityScript.generated.h"
 
 namespace Lumina
@@ -46,6 +47,12 @@ namespace Lumina
         FUNCTION()
         virtual void OnDetach() {}
 
+        /** The script load context was replaced. Nothing that lived in the old one survived, so anything
+         *  bound in OnAttach is unbound here and has to be bound again. OnAttach, OnReady and OnDetach do
+         *  not run for a reload; this is the whole of it. */
+        FUNCTION()
+        virtual void OnReloaded(SScriptReloadContext Context) {}
+
         /** One discrete input event (key/mouse press, move, scroll). Delivered only to entities carrying an
          *  SInputComponent, and only while their viewport has game input focus -- see SInputSystem. */
         FUNCTION()
@@ -81,6 +88,7 @@ namespace Lumina
 
         bool IsReady() const { return bReady; }
         void MarkReady() { bReady = true; }
+
 
     private:
 
@@ -151,6 +159,10 @@ namespace Lumina
 
         /** Runs OnDetach on Script and removes it from its entity. Returns false if it was not attached. */
         RUNTIME_API bool Remove(ECS::FRegistry& Registry, ECS::FEntity Entity, CEntityScript* Script);
+
+        /** Delivers OnReloaded to every C#-backed script in every world. A C++ script is not reloaded, so
+         *  it is skipped rather than told about someone else's reload. */
+        RUNTIME_API void NotifyScriptsReloaded(EScriptReloadReason Reason, int32 Generation);
 
         /** Delivers one input event to every script on Entity. */
         RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);

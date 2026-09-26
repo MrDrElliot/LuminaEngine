@@ -24,7 +24,8 @@ namespace Lumina::DotNet
     // v6: managed system-descriptor sink carries declared read/write component-ops tokens (parallel C# systems).
     // v7: delegate properties replace hardcoded collision/perception dispatch; adds OnNativeDelegateDestroyed.
     // v13 dropped the C# entity system bridge, since a C# system is now a CEntitySystem subclass.
-    inline constexpr int32 GAbiVersion = 14;
+    // v15 drops OnNativeDelegateDestroyed; a delegate owns its managed bindings and frees them itself.
+    inline constexpr int32 GAbiVersion = 15;
 
     // Boots the embedded runtime and runs the managed handshake.
     RUNTIME_API void Initialize();

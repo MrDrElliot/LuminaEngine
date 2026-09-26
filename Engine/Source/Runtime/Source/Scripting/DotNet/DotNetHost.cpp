@@ -1,5 +1,6 @@
 ﻿#include "LayoutRegistry.h"
 #include "DotNetHost.h"
+#include "Scripting/EntityScript.h"
 #include "Scripting/ManagedTypeRegistry.h"
 #include "Scripting/ScriptSchemaCodec.h"
 #include "World/ECS/Registry.h"
@@ -196,7 +197,6 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ApplyScriptableDefaultsFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptStructsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptStructSchemaFn)(const char*, int32, void*, void*);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* OnNativeDelegateDestroyedFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptSchemaFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptButtonsFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* InvokeAssetCallbackFn)(void*, void*);
@@ -208,7 +208,6 @@ namespace Lumina::DotNet
         // where it uses them (TManagedExport) rather than adding a field, a typedef and a resolve line here.
         struct FManagedExports
         {
-            OnNativeDelegateDestroyedFn OnNativeDelegateDestroyed;
             EnumerateEntityScriptsFn    EnumerateEntityScripts;
             CreateScriptableFn          CreateScriptable;
             EnumerateScriptablesFn      EnumerateScriptables;
@@ -253,15 +252,6 @@ namespace Lumina::DotNet
         FManagedExports                             GManaged{};
 
         // Reflection layouts for each C# script type, cleared on reload/shutdown.
-
-        // On native delegate destruction, ask the managed registry to free the matching GCHandles.
-        void NotifyManagedDelegateDestroyed(void* DelegateAddress)
-        {
-            if (bInitialized && GManaged.OnNativeDelegateDestroyed != nullptr)
-            {
-                GManaged.OnNativeDelegateDestroyed(DelegateAddress);
-            }
-        }
 
         // Sink the managed EnumerateEntityScripts calls once per script type; Ctx is the out vector.
         void LmScriptNameSink(void* Ctx, const char* Name, int Len)
@@ -866,7 +856,7 @@ namespace Lumina::DotNet
         }
 
         // Core owns the cache but knows nothing about the managed runtime, so it calls back through here.
-        void FreeManagedInstanceHandle(void* Handle)
+        void FreeManagedGCHandle(void* Handle)
         {
             if (Handle != nullptr && GManaged.FreeHandle != nullptr)
             {
@@ -1061,7 +1051,6 @@ namespace Lumina::DotNet
         LM_RESOLVE(InvokeAssetCallback,    InvokeAssetCallbackFn);
         LM_RESOLVE(LoadScripts,            LoadScriptsFn);
         LM_RESOLVE(SetScriptCompileOptimization, SetScriptCompileOptimizationFn);   // optional, packaging only
-        LM_RESOLVE(OnNativeDelegateDestroyed, OnNativeDelegateDestroyedFn);
         LM_RESOLVE(Shutdown,               ShutdownFn);
         LM_RESOLVE(Tick,                   TickFn);
         #undef LM_RESOLVE
@@ -1075,10 +1064,11 @@ namespace Lumina::DotNet
         }
 
         bInitialized = true;
-        GOnScriptDelegateDestroyed = &NotifyManagedDelegateDestroyed;
 
         // Core must not know about GC handles, so hand it the free function once managed can service one.
-        Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedInstanceHandle);
+        // A managed delegate binding hands its handle to the delegate, which frees it through the same call.
+        Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedGCHandle);
+        GFreeManagedDelegateContext = &FreeManagedGCHandle;
 
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled);
     }
@@ -1101,7 +1091,7 @@ namespace Lumina::DotNet
         Lumina::ManagedInstances::SetFreeHandleFn(nullptr);
 
         bInitialized = false;
-        GOnScriptDelegateDestroyed = nullptr;
+        GFreeManagedDelegateContext = nullptr;
         GExports = FExporterTable{};
         GCachedGeneration = 0;
         GManaged = FManagedExports{};   // clears the whole native->managed table in one go
@@ -1235,6 +1225,13 @@ namespace Lumina::DotNet
         Scripting::RegisterBuiltInManagedTypeStages();
         Scripting::FManagedTypeRegistry::Get().PreUnloadAll();
 
+        // A managed handler lives in the load context about to be dropped, so no binding can outlive this.
+        // Releasing them here is what frees the GCHandles holding that context alive.
+        ClearAllManagedDelegateBindings();
+
+        // Zero until the first load completes, which is what tells a fresh start from a replacement.
+        const int32 PreviousGeneration = GCachedGeneration;
+
         const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
 
         // The compile is synchronous, so the outcome is reported as a toast rather than a progress modal.
@@ -1281,6 +1278,12 @@ namespace Lumina::DotNet
         GatherManagedTypeDefinitions(Definitions);
 
         Scripting::FManagedTypeRegistry::Get().CompileAll(Definitions);
+
+        // Last, so a handler runs against the generation that is now live. On a first load no world holds
+        // a script yet, so this reaches nobody rather than needing a guard.
+        EntityScripts::NotifyScriptsReloaded(
+            PreviousGeneration == 0 ? EScriptReloadReason::InitialLoad : EScriptReloadReason::Requested,
+            GCachedGeneration);
 
         // Idempotent and editor-only, so an absent project self-heals on any reload.
         if (bEditorFollowups)

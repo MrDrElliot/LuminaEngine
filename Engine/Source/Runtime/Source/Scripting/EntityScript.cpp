@@ -547,6 +547,55 @@ namespace Lumina
             }
         }
 
+        void NotifyScriptsReloaded(EScriptReloadReason Reason, int32 Generation)
+        {
+            if (GWorldManager == nullptr)
+            {
+                return;
+            }
+
+            GWorldManager->ForEachWorld([&](CWorld& World)
+            {
+                ECS::FRegistry& Registry = ECS::GetWorldRegistry(World);
+
+                TVector<ECS::FEntity> Entities;
+                auto View = Registry.View<SEntityScriptComponent>();
+                Entities.reserve(View.Num());
+                for (ECS::FEntity Entity : View)
+                {
+                    Entities.push_back(Entity);
+                }
+
+                SScriptReloadContext Context;
+                Context.Reason     = Reason;
+                Context.WorldType  = World.GetWorldType();
+                Context.Generation = Generation;
+
+                for (ECS::FEntity Entity : Entities)
+                {
+                    FScriptSnapshot Scripts;
+                    SnapshotScripts(Registry, Entity, Scripts);
+
+                    Context.Entity = Entity.GetPacked();
+                    for (TObjectPtr<CEntityScript>& Held : Scripts)
+                    {
+                        CEntityScript* Script = Held.Get();
+
+                        // A C++ script's instance never went anywhere, so it has nothing to rebuild.
+                        if (Script == nullptr || !Script->IsAttached() || ToScriptClass(Script->GetClass()) == nullptr)
+                        {
+                            continue;
+                        }
+                        if (!IsStillAttached(Registry, Entity, Script))
+                        {
+                            continue;
+                        }
+                        Script->OnReloaded(Context);
+                    }
+                }
+            });
+        }
+
         void DetachAllInRegistry(ECS::FRegistry& Registry)
         {
             // Disabled entities are included, since a disabled script still ran OnAttach and is owed its OnDetach.

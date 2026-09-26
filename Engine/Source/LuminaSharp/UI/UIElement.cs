@@ -184,8 +184,8 @@ public readonly unsafe struct UIElement
             return UIEventSubscription.Empty;
         }
 
-        // Binding through the listener's own delegate is what lets its destructor release this handle,
-        // whether the element, the world or the script generation is what goes away first.
+        // Bound through the listener's own delegate, so its destructor releases this handle whether the
+        // element, the world or the script generation is what goes away first.
         ulong Event = Lumina.CUILibrary.GetEventListenerDelegate(Listener);
         DelegateBinding Binding = DelegateBindings.Bind((void*)Event,
             new PayloadInvoker<UIEventData> { Handler = Data => Handler(new UIEvent(WorldId, Data)) });

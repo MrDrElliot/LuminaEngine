@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -114,8 +114,8 @@ public readonly unsafe partial struct EntityRegistry
             return RegistrySubscription.Empty;
         }
 
-        // Binding through the listener's own delegate is what lets its destructor release this handle,
-        // whether the subscription, the world or the script generation goes away first.
+        // Bound through the listener's own delegate, so its destructor releases this handle whether the
+        // subscription, the world or the script generation goes away first.
         IntPtr Signal = Native.RegistryGetSignalDelegate(Listener);
         DelegateBinding Binding;
         unsafe

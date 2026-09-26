@@ -37,7 +37,7 @@ public sealed class UIEventSubscription : IDisposable
             return;
         }
 
-        // Unbind first, so the listener's destructor has nothing left to report to the managed registry.
+        // Unbind first: the listener owns the delegate, so after it goes the binding has nothing to name.
         Binding.Dispose();
         Binding = default;
 

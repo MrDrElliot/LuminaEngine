@@ -53,18 +53,10 @@ internal sealed class PayloadInvoker<T> : IDelegateInvoker where T : unmanaged
     }
 }
 
-// Per-process registry owning every managed delegate binding's GCHandle. Game thread only.
+// The bridge from a native broadcast into a managed handler. Holds no state: a binding's GCHandle belongs
+// to the native delegate from the moment Bind hands it over, so nothing here has to be tracked or drained.
 internal static unsafe class DelegateBindings
 {
-    private struct Record
-    {
-        public IntPtr   Address;
-        public ulong    Id;
-        public GCHandle Handle;
-    }
-
-    private static readonly Dictionary<ulong, Record> ById = new();
-
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
     private static void Thunk(IntPtr Context, IntPtr Payload)
     {
@@ -91,6 +83,7 @@ internal static unsafe class DelegateBindings
             return default;
         }
 
+        // Handed to the delegate, which frees it when the binding is unbound or the delegate dies.
         GCHandle Handle = GCHandle.Alloc(Invoker);
         ulong Id = Native.DelegateBind((IntPtr)Address, ThunkPtr, GCHandle.ToIntPtr(Handle));
         if (Id == 0)
@@ -99,65 +92,6 @@ internal static unsafe class DelegateBindings
             return default;
         }
 
-        ById[Id] = new Record { Address = (IntPtr)Address, Id = Id, Handle = Handle };
-        return new DelegateBinding(Id);
-    }
-
-    internal static void Unbind(ulong Id)
-    {
-        if (Id == 0 || !ById.Remove(Id, out Record Rec))
-        {
-            return;
-        }
-        Native.DelegateUnbind(Rec.Address, Rec.Id);
-        if (Rec.Handle.IsAllocated)
-        {
-            Rec.Handle.Free();
-        }
-    }
-
-    // Native delegate at Address was destroyed; free our handles without a native unbind.
-    internal static void ForgetByAddress(IntPtr Address)
-    {
-        if (ById.Count == 0)
-        {
-            return;
-        }
-
-        List<ulong>? Dead = null;
-        foreach (KeyValuePair<ulong, Record> Pair in ById)
-        {
-            if (Pair.Value.Address == Address)
-            {
-                (Dead ??= new List<ulong>()).Add(Pair.Key);
-            }
-        }
-        if (Dead == null)
-        {
-            return;
-        }
-
-        foreach (ulong Id in Dead)
-        {
-            if (ById.Remove(Id, out Record Rec) && Rec.Handle.IsAllocated)
-            {
-                Rec.Handle.Free();
-            }
-        }
-    }
-
-    // Hot-reload or shutdown; unbind every binding and free all handles.
-    internal static void PurgeAll()
-    {
-        foreach (KeyValuePair<ulong, Record> Pair in ById)
-        {
-            Record Rec = Pair.Value;
-            Native.DelegateUnbind(Rec.Address, Rec.Id);
-            if (Rec.Handle.IsAllocated)
-            {
-                Rec.Handle.Free();
-            }
-        }
-        ById.Clear();
+        return new DelegateBinding((IntPtr)Address, Id);
     }
 }

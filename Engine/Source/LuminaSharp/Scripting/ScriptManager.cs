@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Lumina;
 using System.Collections.Generic;
 using System.IO;
@@ -453,8 +453,8 @@ internal sealed class ScriptManager
         Native.ReleaseAllManagedInstances();
         Scriptables = null;
 
-        // Last, because an OnDetach above can bind one and an earlier purge would leave it rooting this ALC.
-        DelegateBindings.PurgeAll();
+        // Cached argument slots are keyed by the handler's declared types, which are types from this ALC.
+        ScriptDelegateArgs.PurgeAll();
 
         // Holds no handles of its own, but it holds the TypeLibrary, which holds user Types. Cleared here
         // so the teardown table stays complete rather than depending on this runtime being harmless.

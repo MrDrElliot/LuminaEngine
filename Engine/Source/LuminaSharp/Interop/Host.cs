@@ -10,7 +10,7 @@ namespace LuminaSharp;
 public static unsafe partial class Host
 {
     // Must equal Lumina::DotNet::GAbiVersion. Bump on ABI breaks.
-    private const int AbiVersion = 14;
+    private const int AbiVersion = 15;
 
     // Logical name for the engine module hosting this assembly (Runtime); resolved to a native handle via ModuleHandle.
     public const string NativeLibrary = "LuminaNative";
@@ -242,21 +242,6 @@ public static unsafe partial class Host
         }
     }
 
-
-    /// A native script delegate with live managed bindings was destroyed; free the matching GCHandles.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void OnNativeDelegateDestroyed(IntPtr Delegate)
-    {
-        try
-        {
-            DelegateBindings.ForgetByAddress(Delegate);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
 
     /// Writes a script type's [Property] schema + defaults to a recursive blob and hands it to a native sink (called once).
     [ManagedExport]

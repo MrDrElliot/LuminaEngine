@@ -9,8 +9,16 @@
 
 namespace Lumina
 {
-    // Installed by the .NET host; called to free GCHandles when a delegate with live managed bindings is destroyed.
-    RUNTIME_API extern void (*GOnScriptDelegateDestroyed)(void* DelegateAddress);
+    // Installed by the .NET host; releases the GCHandle behind one managed listener. A managed bind hands
+    // its handle to the delegate, so retiring the listener is what frees it, here or in the destructor.
+    RUNTIME_API extern void (*GFreeManagedDelegateContext)(void* Context);
+
+    /** Managed bindings alive process-wide. */
+    RUNTIME_API size_t GetLiveManagedBindingCount();
+
+    /** Drops every managed listener on every delegate, releasing the GCHandles behind them. A handler lives
+     *  in the script load context, so it cannot outlive a reload; this is what lets that context unload. */
+    RUNTIME_API void ClearAllManagedDelegateBindings();
 
     // Non-templated base of every reflectable script delegate; sits at offset 0 of TScriptDelegate<T>.
     class FScriptDelegateBase

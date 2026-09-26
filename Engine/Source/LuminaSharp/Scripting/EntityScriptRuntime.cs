@@ -47,28 +47,19 @@ internal sealed class EntityScriptRuntime
     // Detaches every live script and drops the index, ahead of the collectible ALC unload.
     public void FreeAll()
     {
-        // Snapshot, because an OnDetach that destroys a sibling mutates LiveHandles mid-iteration.
+        // Snapshot, because cancelling a token can run a continuation that mutates LiveHandles.
         foreach (GCHandle Handle in new List<GCHandle>(LiveHandles))
         {
-            // Already destroyed (and OnDetach'd) by an earlier sibling's OnDetach; don't repeat either.
+            // Already dropped by an earlier entry's continuation; don't touch it twice.
             if (!LiveHandles.Contains(Handle))
             {
                 continue;
             }
 
+            // No OnDetach: the script is not detaching, its load context is being replaced. The native
+            // driver delivers OnReloaded once the next generation is live.
             if (Handle.Target is EntityScript Script)
             {
-                try
-                {
-                    using (Game.Push(Script.World, Script.Entity, Script))
-                    {
-                        Script.OnDetach();
-                    }
-                }
-                catch (Exception Exception)
-                {
-                    Native.Log(ELogLevel.Error, $"EntityScript.OnDetach threw during unload: {Exception}");
-                }
                 Script.CancelDestroyToken();
             }
 

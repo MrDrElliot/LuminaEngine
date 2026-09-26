@@ -393,6 +393,9 @@ namespace Lumina
         EntityRegistry.GetSignals<STransformComponent>().OnConstruct         .Connect<&ThisClass::OnTransformComponentConstruct>(this);
         EntityRegistry.GetSignals<FRelationshipComponent>().OnConstruct      .Connect<&ThisClass::OnRelationshipComponentConstruct>(this);
         EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy      .Connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        // Also per entity, which fires before any storage drops its component, so OnDetach can still reach
+        // the sibling components it bound to. Storage order decides the component signal, so it cannot.
+        EntityRegistry.OnEntityDestroyed()                                .Connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.GetSignals<SWidgetComponent>().OnDestroy            .Connect<&ThisClass::OnWidgetComponentDestroyed>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .Connect<&ThisClass::OnChangeCameraEvent>(this);
 
@@ -504,6 +507,7 @@ namespace Lumina
 
         // Detached up front, since OnDestroy publishes while iterating the pool it is about to empty.
         EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy.Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityRegistry.OnEntityDestroyed().Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityScripts::DetachAllInRegistry(EntityRegistry);
 
         RegistryPending.Clear();
