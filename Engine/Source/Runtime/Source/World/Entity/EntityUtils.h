@@ -162,6 +162,12 @@ namespace Lumina::ECS::Utils
 	//-------------------------------------------------------------------------
 
 	RUNTIME_API bool EntityHasTag(const FName& Tag, ECS::FRegistry& Registry, ECS::FEntity Entity);
+
+	// Moves the entity between per-tag storages, which is what a lookup reads; assigning Tag by hand does not.
+	RUNTIME_API void SetEntityTag(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& Tag);
+
+	// Drops the entity from its tag storage and removes the component. No-op when it carries no tag.
+	RUNTIME_API void ClearEntityTag(ECS::FRegistry& Registry, ECS::FEntity Entity);
 	RUNTIME_API bool HasComponent(ECS::FRegistry& Registry, ECS::FEntity Entity, const CStruct* Type);
 
 	// Remap every reflected "Entity"-tagged uint32 field (nested structs too) through Map. FRelationshipComponent

@@ -488,6 +488,46 @@ namespace Lumina::ECS::Utils
     {
         return Registry.NamedStorage<STagComponent>(Tag).Contains(Entity);
     }
+
+    void SetEntityTag(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& Tag)
+    {
+        if (!Registry.IsValid(Entity))
+        {
+            return;
+        }
+
+        // Out of the old storage first, or the entity answers to both names.
+        ClearEntityTag(Registry, Entity);
+
+        if (Tag.IsNone())
+        {
+            return;
+        }
+
+        STagComponent Component;
+        Component.Tag = Tag;
+        Registry.NamedStorage<STagComponent>(Tag).EmplaceOrReplace(Entity, Component);
+
+        // A lookup by type alone cannot see into a named storage, so the unnamed copy records which one.
+        Registry.GetOrEmplace<STagComponent>(Entity).Tag = Tag;
+    }
+
+    void ClearEntityTag(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        if (!Registry.IsValid(Entity))
+        {
+            return;
+        }
+
+        const STagComponent* Existing = Registry.TryGet<STagComponent>(Entity);
+        if (Existing == nullptr)
+        {
+            return;
+        }
+
+        Registry.NamedStorage<STagComponent>(Existing->Tag).RemoveEntity(Entity);
+        Registry.Remove<STagComponent>(Entity);
+    }
     
     // --- Hierarchy ---
 
