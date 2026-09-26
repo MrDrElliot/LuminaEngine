@@ -177,8 +177,14 @@ namespace Lumina
 
 		FAssetRegistryUpdatedDelegate	OnAssetRegistryUpdated;
 
+		// Path lookups are hot over a read mostly set, so they index rather than scan every entry.
+		void InvalidatePathIndex() const { bPathIndexValid = false; }
+		void RebuildPathIndex() const;
+
 		mutable FSharedMutex			AssetsMutex;
 		FAssetDataMap 					Assets;
+		mutable THashMap<FString, FAssetData*> PathIndex;
+		mutable bool					bPathIndexValid = false;
 
 		mutable FSharedMutex			TextAssetsMutex;
 		FTextAssetMap					TextAssets;

@@ -282,6 +282,7 @@ namespace Lumina
 
         {
             FWriteScopeLock Lock(AssetsMutex);
+            InvalidatePathIndex();
             Assets.emplace(Move(AssetData));
         }
 
@@ -297,6 +298,7 @@ namespace Lumina
     {
         {
             FWriteScopeLock Lock(AssetsMutex);
+            InvalidatePathIndex();
 
             auto It = Assets.find_as(GUID, FGuidHash(), FAssetDataGuidEqual());
             if (It == Assets.end())
@@ -320,6 +322,7 @@ namespace Lumina
     {
         {
             FWriteScopeLock Lock(AssetsMutex);
+            InvalidatePathIndex();
 
             auto It = Algo::FindIf(Assets, [&OldPath](const TUniquePtr<FAssetData>& Asset)
             {
@@ -377,25 +380,43 @@ namespace Lumina
     {
         FReadScopeLock Lock(AssetsMutex);
 
-        auto It = Algo::FindIf(Assets, [&](const auto& Data)
-        {
-            return Data->AssetGUID == GUID;
-        });
-
+        auto It = Assets.find_as(GUID, FGuidHash(), FAssetDataGuidEqual());
         return It == Assets.end() ? nullptr : It->get();
+    }
+
+    void FAssetRegistry::RebuildPathIndex() const
+    {
+        PathIndex.clear();
+        PathIndex.reserve(Assets.size());
+
+        for (const TUniquePtr<FAssetData>& Data : Assets)
+        {
+            PathIndex.emplace(FString(VFS::RemoveExtension(Data->Path)), Data.get());
+        }
+        bPathIndexValid = true;
     }
 
     FAssetData* FAssetRegistry::GetAssetByPath(FStringView Path) const
     {
-        FReadScopeLock Lock(AssetsMutex);
+        const FString Key(VFS::RemoveExtension(Path));
 
-        FStringView PathNoExt = VFS::RemoveExtension(Path);
-        auto It = Algo::FindIf(Assets, [&](const TUniquePtr<FAssetData>& Data)
         {
-            return VFS::RemoveExtension(Data->Path) == PathNoExt;
-        });
+            FReadScopeLock Lock(AssetsMutex);
+            if (bPathIndexValid)
+            {
+                auto Found = PathIndex.find(Key);
+                return Found == PathIndex.end() ? nullptr : Found->second;
+            }
+        }
 
-        return It == Assets.end() ? nullptr : It->get();
+        FWriteScopeLock Lock(AssetsMutex);
+        if (!bPathIndexValid)
+        {
+            RebuildPathIndex();
+        }
+
+        auto It = PathIndex.find(Key);
+        return It == PathIndex.end() ? nullptr : It->second;
     }
 
     TVector<FAssetData*> FAssetRegistry::FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate)
@@ -647,6 +668,7 @@ namespace Lumina
         }
 
         FWriteScopeLock Lock(AssetsMutex);
+        InvalidatePathIndex();
 
         size_t Reaped = 0;
         for (auto It = Assets.begin(); It != Assets.end(); )
@@ -864,6 +886,7 @@ namespace Lumina
         AssetData->OwningPlugin   = ExtractOwningPlugin(Path);
 
         FWriteScopeLock Lock(AssetsMutex);
+        InvalidatePathIndex();
         // An external move keeps the GUID, so a stale entry would otherwise leave a dangling old path.
         auto ExistingByGuid = Assets.find_as(AssetData->AssetGUID, FGuidHash(), FAssetDataGuidEqual());
         if (ExistingByGuid != Assets.end())
@@ -894,6 +917,7 @@ namespace Lumina
         // Listeners read the registry straight back, and AssetsMutex is not recursive.
         {
             FWriteScopeLock Lock(AssetsMutex);
+            InvalidatePathIndex();
             Assets.clear();
 
             {
@@ -974,6 +998,7 @@ namespace Lumina
         Ar << Count;
 
         FWriteScopeLock Lock(AssetsMutex);
+        InvalidatePathIndex();
         Assets.clear();
         Assets.reserve(Count);
 
@@ -1218,6 +1243,7 @@ namespace Lumina
 
         {
             FWriteScopeLock Lock(AssetsMutex);
+            InvalidatePathIndex();
             Assets.clear();
 
             FArchiveSlot AssetsSlot = RootRecord.EnterField("assets");
