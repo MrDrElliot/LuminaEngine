@@ -57,34 +57,3 @@ public readonly unsafe struct ScriptDelegate
         return DelegateBindings.Bind(Address, new VoidInvoker { Handler = Handler, Owner = Owner });
     }
 }
-
-// Transient handle to a multicast event carrying one blittable payload by value.
-[NativeSlotView]
-public readonly unsafe struct ScriptDelegate<T> where T : unmanaged
-{
-    private readonly void* Address;
-
-    public ScriptDelegate(void* Address)
-    {
-        this.Address = Address;
-    }
-
-    // The slot address as an integer, which is the shape a binder building this view by reflection has.
-    public ScriptDelegate(nint Address)
-    {
-        this.Address = (void*)Address;
-    }
-
-    public bool IsValid => Address != null;
-
-    public DelegateBinding Bind(Action<T> Handler)
-    {
-        if (Address == null || Handler == null)
-        {
-            return default;
-        }
-
-        EntityScript? Owner = Game.ActiveScript;
-        return DelegateBindings.Bind(Address, new PayloadInvoker<T> { Handler = Handler, Owner = Owner });
-    }
-}

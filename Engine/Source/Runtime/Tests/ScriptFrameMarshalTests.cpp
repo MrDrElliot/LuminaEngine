@@ -29,6 +29,7 @@
 #include "Scripting/DotNet/ExportSignature.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/InstancedStruct.h"
+#include "ScriptDelegateTestTypes.h"
 
 using namespace Lumina;
 
@@ -1520,4 +1521,72 @@ TEST_F(FFrameMarshalTest, AnAsyncScriptFunctionHandsBackATokenNativeCanPoll)
     EXPECT_EQ(State(Token, 0), 0) << "a released token should no longer be known";
 
     FreeTarget(Target);
+}
+
+// The managed half of a multi-argument delegate: real generated accessors over a real native host.
+TEST_F(FFrameMarshalTest, AManagedHandlerReceivesEveryDelegateArgument)
+{
+    using FBindFn    = int32(*)(void*);
+    using FFlagsFn   = int32(*)();
+    using FReleaseFn = void(*)();
+
+    auto* Bind    = (FBindFn)DotNet::ResolveManagedExport("Test_DelegateArgsBind");
+    auto* Flags   = (FFlagsFn)DotNet::ResolveManagedExport("Test_DelegateArgsFlags");
+    auto* Release = (FReleaseFn)DotNet::ResolveManagedExport("Test_DelegateArgsRelease");
+    ASSERT_NE(Bind, nullptr);
+    ASSERT_NE(Flags, nullptr);
+    ASSERT_NE(Release, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    SDelegateTestHost Host;
+    ASSERT_EQ(Bind(&Host), 1) << "one of the generated accessors refused to bind";
+
+    Host.OnOneString.Broadcast(FString("solo"));
+    Host.OnTwo.Broadcast(SDelegateTestPayload{ 2.0f, 5 }, 0.25f);
+    Host.OnThree.Broadcast(SDelegateTestPayload{ 7.0f, 3 }, 1.5f, FString("hello"));
+
+    const int32 Seen = Flags();
+    Release();
+
+    EXPECT_EQ(Seen & 1,  1)  << "the one-argument handler never ran";
+    EXPECT_EQ(Seen & 2,  2)  << "the lone string argument did not arrive";
+    EXPECT_EQ(Seen & 4,  4)  << "the two-argument handler never ran";
+    EXPECT_EQ(Seen & 8,  8)  << "a two-argument value did not arrive";
+    EXPECT_EQ(Seen & 16, 16) << "the three-argument handler never ran";
+    EXPECT_EQ(Seen & 32, 32) << "a three-argument value did not arrive";
+}
+
+// Reading a blittable argument in place is the whole point; going through object would box one per argument.
+TEST_F(FFrameMarshalTest, ABlittableBroadcastReachesManagedWithoutAllocating)
+{
+    using FBindFn      = int32(*)(void*);
+    using FReleaseFn   = void(*)();
+    using FAllocatedFn = int64(*)();
+
+    auto* Bind      = (FBindFn)DotNet::ResolveManagedExport("Test_DelegateArgsBind");
+    auto* Release   = (FReleaseFn)DotNet::ResolveManagedExport("Test_DelegateArgsRelease");
+    auto* Allocated = (FAllocatedFn)DotNet::ResolveManagedExport("Test_DelegateArgsAllocated");
+    ASSERT_NE(Bind, nullptr);
+    ASSERT_NE(Release, nullptr);
+    ASSERT_NE(Allocated, nullptr);
+
+    ProcessNewlyLoadedCObjects();
+
+    SDelegateTestHost Host;
+    ASSERT_EQ(Bind(&Host), 1);
+
+    // Warmed first, so the slot resolve and the JIT are not charged to the measured run.
+    Host.OnTwo.Broadcast(SDelegateTestPayload{ 2.0f, 5 }, 0.25f);
+
+    const int64 Before = Allocated();
+    for (int32 Index = 0; Index < 256; ++Index)
+    {
+        Host.OnTwo.Broadcast(SDelegateTestPayload{ 2.0f, 5 }, 0.25f);
+    }
+    const int64 After = Allocated();
+
+    Release();
+
+    EXPECT_EQ(After - Before, 0) << "256 broadcasts allocated " << (After - Before) << " managed bytes";
 }

@@ -35,6 +35,10 @@ namespace Lumina
         PROPERTY()
         TScriptDelegate<SDelegateTestPayload> OnOne;
 
+        // A lone non-blittable argument, which the arity-one binding path used to skip silently.
+        PROPERTY()
+        TScriptDelegate<FString> OnOneString;
+
         PROPERTY()
         TScriptDelegate<SDelegateTestPayload, float> OnTwo;
 
