@@ -1,5 +1,6 @@
 #pragma once
 #include "Delegate.h"
+#include "ScriptDelegate.h"
 #include "Containers/String.h"
 
 
@@ -15,8 +16,8 @@ namespace Lumina
         // can register handlers across DLL boundaries.
         RUNTIME_API static TMulticastDelegate<void>		            OnPreEngineInit;
         RUNTIME_API static TMulticastDelegate<void>		            OnPostEngineInit;
-        RUNTIME_API static TMulticastDelegate<void>                 PostWorldUnload;
-        RUNTIME_API static TMulticastDelegate<void>		            OnPreEngineShutdown;
+        RUNTIME_API static FScriptDelegate                         PostWorldUnload;
+        RUNTIME_API static FScriptDelegate		                    OnPreEngineShutdown;
         RUNTIME_API static TMulticastDelegate<void, FModuleInfo*>   OnModuleLoaded;
         RUNTIME_API static TMulticastDelegate<void>                 OnModuleUnloaded;
 
@@ -38,10 +39,10 @@ namespace Lumina
 
         // Fired by FEngine::RequestExitGame when gameplay asks to quit. The editor binds this to end the
         // PIE session instead; when unbound (packaged game) the engine exits the process.
-        RUNTIME_API static TMulticastDelegate<void>                  OnGameQuitRequested;
+        RUNTIME_API static FScriptDelegate                          OnGameQuitRequested;
 
         // Fired each frame right after the OS event pump, before input actions are evaluated. Synthetic input
         // delivered here takes the same path and the same frame as a real key.
-        RUNTIME_API static TMulticastDelegate<void>                  OnInputPumped;
+        RUNTIME_API static FScriptDelegate                          OnInputPumped;
     };
 }
