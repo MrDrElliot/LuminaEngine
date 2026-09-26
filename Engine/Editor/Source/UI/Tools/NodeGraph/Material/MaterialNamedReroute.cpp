@@ -1,4 +1,4 @@
-#include "MaterialNamedReroute.h"
+﻿#include "MaterialNamedReroute.h"
 
 #include "MaterialInput.h"
 #include "MaterialOutput.h"
@@ -61,8 +61,9 @@ namespace Lumina
         if (CEdNodeGraph* Graph = GetOwningGraph())
         {
             int32 MatchCount = 0;
-            for (CEdGraphNode* Node : Graph->Nodes)
+            for (const auto& NodeRef : Graph->Nodes)
             {
+                CEdGraphNode* Node = NodeRef.Get();
                 CMaterialNamedRerouteDeclaration* Other = Cast<CMaterialNamedRerouteDeclaration>(Node);
                 if (Other != nullptr && Other->Name == Name)
                 {
@@ -91,8 +92,9 @@ namespace Lumina
             return nullptr;
         }
 
-        for (CEdGraphNode* Node : Graph->Nodes)
+        for (const auto& NodeRef : Graph->Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             CMaterialNamedRerouteDeclaration* Declaration = Cast<CMaterialNamedRerouteDeclaration>(Node);
             if (Declaration != nullptr && Declaration->Name == Name)
             {
@@ -131,8 +133,9 @@ namespace Lumina
         {
             if (Graph != nullptr)
             {
-                for (CEdGraphNode* Node : Graph->Nodes)
+                for (const auto& NodeRef : Graph->Nodes)
                 {
+                    CEdGraphNode* Node = NodeRef.Get();
                     CMaterialNamedRerouteDeclaration* Declaration = Cast<CMaterialNamedRerouteDeclaration>(Node);
                     if (Declaration == nullptr || Declaration->Name.empty())
                     {

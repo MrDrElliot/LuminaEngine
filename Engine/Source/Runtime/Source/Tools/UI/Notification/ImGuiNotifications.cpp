@@ -8,7 +8,7 @@
 #ifdef _WIN32
     #include <Windows.h>
 #endif
-#include "GLFW/glfw3.h"
+#include "Core/Windows/GLFWInclude.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 
 namespace Lumina::ImGuiX::Notifications

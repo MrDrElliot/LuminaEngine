@@ -138,6 +138,46 @@ namespace Lumina::Reflection
             return static_cast<int>(Wanted < kUnityShardCount ? Wanted : kUnityShardCount);
         }
 
+        uint64_t StableHash(const std::string& Text)
+        {
+            uint64_t Hash = 14695981039346656037ULL;
+            for (const char Character : Text)
+            {
+                Hash = (Hash ^ static_cast<unsigned char>(Character)) * 1099511628211ULL;
+            }
+            return Hash;
+        }
+
+        uint64_t Scramble(uint64_t Value)
+        {
+            Value ^= Value >> 33;
+            Value *= 0xFF51AFD7ED558CCDULL;
+            Value ^= Value >> 33;
+            Value *= 0xC4CEB9FE1A85EC53ULL;
+            return Value ^ (Value >> 33);
+        }
+
+        // Highest-weight shard, so adding a reflected type restripes one shard rather than all of them.
+        int ShardFor(const std::string& SourceName, int ActiveShards)
+        {
+            const uint64_t Seed = StableHash(SourceName);
+
+            int Best = 0;
+            uint64_t BestWeight = 0;
+
+            for (int Shard = 0; Shard < ActiveShards; ++Shard)
+            {
+                const uint64_t Weight = Scramble(Seed ^ (static_cast<uint64_t>(Shard + 1) * 0x9E3779B97F4A7C15ULL));
+                if (Weight > BestWeight)
+                {
+                    BestWeight = Weight;
+                    Best = Shard;
+                }
+            }
+
+            return Best;
+        }
+
         std::string MakeUnityPath(const std::string& WorkspacePath, const FReflectedProject& Project, int Shard)
         {
             return ProjectGeneratedDir(WorkspacePath, Project)
@@ -829,10 +869,9 @@ namespace Lumina::Reflection
         const int ActiveShards = ShardCountFor(Sorted.size());
 
         std::vector<std::string> Shards(kUnityShardCount);
-        for (size_t Index = 0; Index < Sorted.size(); ++Index)
+        for (const std::string& Source : Sorted)
         {
-            // Adjacent generated files pull the same heavy headers, so striping balances the shards.
-            Shards[Index % ActiveShards] += "#include \"" + Sorted[Index] + "\"\n";
+            Shards[ShardFor(Source, ActiveShards)] += "#include \"" + Source + "\"\n";
         }
 
         for (int Shard = 0; Shard < kUnityShardCount; ++Shard)

@@ -11,18 +11,16 @@ namespace LuminaSharp;
 /// </summary>
 /// <remarks>
 /// The owning entity needs an <c>SInputComponent</c> (call <c>EnableInput()</c> in <c>OnReady</c>) and must
-/// be receiving input, exactly like the polling queries and <c>OnInput</c>. Bindings are polled once per
-/// frame before OnUpdate, so an event handler sees the same state a poll in OnUpdate would.
+/// be receiving input, exactly like the polling queries and <c>OnInput</c>. Bindings are fed from
+/// <c>OnAction</c> before OnUpdate, so an event handler sees the same state a poll in OnUpdate would.
 /// </remarks>
 public abstract partial class SInputBinding
 {
-    private int Index = -1;
+    // The interned form of ActionName, so a dispatch compares ids instead of crossing to resolve text.
+    private Lumina.FName ActionId;
+    private bool bIdResolved;
 
-    // The action-table serial Index was resolved against. Native serials start at 1, so 0 means "never
-    // resolved"; a settings change bumps the serial and forces exactly one re-resolve per binding.
-    private uint ResolvedSerial;
-
-    // False until the first Poll, so the first frame has no prior state to raise edges against.
+    // False until the first Apply, so the first delivery has no prior state to compare against.
     private bool bPrimed;
 
     protected SInputBinding()
@@ -45,10 +43,9 @@ public abstract partial class SInputBinding
                 return;
             }
             ActionName = value ?? string.Empty;
-            // Re-resolve on the next poll, and drop the old action's state so a rename can't leave a
-            // press latched (which would fire a release for an action this binding no longer watches).
-            ResolvedSerial = 0;
-            Index = -1;
+            // Drop the old action's state so a rename can't leave a press latched (which would fire a
+            // release for an action this binding no longer watches).
+            bIdResolved = false;
             State = default;
             bPrimed = false;
         }
@@ -59,8 +56,8 @@ public abstract partial class SInputBinding
     /// <summary>This frame's raw state, for anything the typed members don't expose.</summary>
     public Lumina.FInputActionState State { get; private set; }
 
-    /// <summary>True once the name has resolved to an action that exists in the project's input settings.</summary>
-    public bool IsBound => Index >= 0;
+    /// <summary>True when the name is an action that exists in the project's input settings.</summary>
+    public bool IsBound => !string.IsNullOrEmpty(ActionName) && Lumina.CInputLibrary.FindActionIndex(ActionName) >= 0;
 
     /// <summary>The action's value this frame (X channel for an Axis2D action).</summary>
     public float Value => State.X;
@@ -70,31 +67,31 @@ public abstract partial class SInputBinding
 
     public override string ToString() => $"{GetType().Name}('{ActionName}')";
 
-    // Applies this frame's state and raises whatever the concrete binding raises. Called by the runtime
-    // for every binding on a script whose entity is receiving input; never call it from game code.
-    internal unsafe void Poll(Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
+    internal bool Listens(Lumina.FName Action)
     {
-        if (ResolvedSerial != Serial)
+        if (!bIdResolved)
         {
-            Index = string.IsNullOrEmpty(ActionName) ? -1 : Lumina.CInputLibrary.FindActionIndex(ActionName);
-            ResolvedSerial = Serial;
+            ActionId = string.IsNullOrEmpty(ActionName) ? Lumina.FName.None : new Lumina.FName(ActionName);
+            bIdResolved = true;
         }
+        return !ActionId.IsNone && ActionId == Action;
+    }
 
-        // An unresolved or out-of-range index reads as a zeroed state rather than skipping the update, so
-        // an action deleted from the settings mid-session still delivers its release edge.
-        Lumina.FInputActionState Next = (Index >= 0 && Index < Count) ? States[Index] : default;
-
-        // The first poll has no previous frame to compare against: hand Raise the incoming state as the
+    // Applies the action's state and raises whatever the concrete binding raises. Called from
+    // EntityScript.OnAction every frame the bound action changes; never call it from game code.
+    internal void Apply(in Lumina.FInputActionState Next)
+    {
+        // The first delivery has no previous frame to compare against: hand Raise the incoming state as the
         // previous one so a key already held at bind time doesn't read as a press that just happened.
         Lumina.FInputActionState Previous = bPrimed ? State : Next;
         bPrimed = true;
         State = Next;
 
-        Raise(in Previous, DeltaTime);
+        Raise(in Previous);
     }
 
     // Fires this binding's events for the transition from Previous to the state just applied.
-    private protected abstract void Raise(in Lumina.FInputActionState Previous, float DeltaTime);
+    private protected abstract void Raise(in Lumina.FInputActionState Previous);
 
 }
 
@@ -151,13 +148,12 @@ public sealed class SInputAction : SInputBinding
     /// <summary>Seconds the current press has lasted; 0 while up.</summary>
     public float HeldTime => State.HeldTime;
 
-    private protected override void Raise(in Lumina.FInputActionState Previous, float DeltaTime)
+    private protected override void Raise(in Lumina.FInputActionState Previous)
     {
         Lumina.FInputActionState Current = State;
 
-        // Edges come from the transition as well as from the engine's own flag. They agree frame to frame;
-        // the transition is what covers a frame the script was NOT polled on (the entity stopped receiving
-        // input mid-press), which would otherwise swallow the release and leave the game latched.
+        // Compared against the last delivered state as well as the engine's flag: a release the entity was
+        // not receiving input for would otherwise be missed and leave the press latched.
         bool bDown = Current.IsDown;
         bool bWasDown = Previous.IsDown;
 
@@ -210,7 +206,7 @@ public sealed class SInputAxis : SInputBinding
     /// <summary>True while the axis is off zero.</summary>
     public bool IsMoving => State.X != 0.0f || State.Y != 0.0f;
 
-    private protected override void Raise(in Lumina.FInputActionState Previous, float DeltaTime)
+    private protected override void Raise(in Lumina.FInputActionState Previous)
     {
         Lumina.FInputActionState Current = State;
         if (Current.X != Previous.X)

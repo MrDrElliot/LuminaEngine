@@ -9,6 +9,9 @@ public class Runtime : LuminaModuleRules
 
         PrecompiledHeader = new PrecompiledHeaderRules("RuntimePCH.h", "Source/RuntimePCH.cpp");
 
+        // The test suite declares reflected types of its own, which is how delegate reflection is covered.
+        bEnableTestReflection = true;
+
         PublicIncludePaths.Add("Source");
 
         PrivateDefinitions.AddRange(new[]

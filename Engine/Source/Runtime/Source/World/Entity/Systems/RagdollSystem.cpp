@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "RagdollSystem.h"
 #include "World/ECS/Registry.h"
 #include "Physics/PhysicsScene.h"
@@ -86,7 +86,7 @@ namespace Lumina
 
                     Physics::FRagdollDesc Desc;
                     Desc.Entity = Entity;
-                    Desc.Asset = Ragdoll.PhysicsAsset;
+                    Desc.Asset = Ragdoll.PhysicsAsset.Get();
                     Desc.Skeleton = Skeleton;
                     Desc.ComponentBoneGlobals = &Globals;
                     Desc.EntityToWorld = Transform.GetWorldMatrix();

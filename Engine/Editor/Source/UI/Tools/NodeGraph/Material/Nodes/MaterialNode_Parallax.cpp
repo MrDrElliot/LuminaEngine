@@ -1,4 +1,4 @@
-#include "MaterialNode_Parallax.h"
+﻿#include "MaterialNode_Parallax.h"
 
 #include "Core/Object/Cast.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -61,8 +61,8 @@ namespace Lumina
         if (HeightMap.IsValid() && HeightMap->GetResourceID() >= 0)
         {
             TextureIndex = bDynamic && !ParameterName.IsNone()
-                         ? Compiler.BindTextureParameter(ParameterName, HeightMap, this)
-                         : Compiler.BindTexture(HeightMap, this);
+                         ? Compiler.BindTextureParameter(ParameterName, HeightMap.Get(), this)
+                         : Compiler.BindTexture(HeightMap.Get(), this);
         }
 
         FMaterialCompiler::FParallaxInputs Inputs;

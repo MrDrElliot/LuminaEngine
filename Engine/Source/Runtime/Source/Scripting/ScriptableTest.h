@@ -188,4 +188,39 @@ namespace Lumina
 
         void Configure() override { RequireUpdate(EUpdateStage::FrameStart); }
     };
+
+    /** Records what its own constructor could see, so a test can prove identity lands before the body runs. */
+    REFLECT()
+    class RUNTIME_API CConstructorIdentityTest : public CObject
+    {
+        GENERATED_BODY()
+    public:
+
+        CConstructorIdentityTest()
+            : SeenClass(GetClass())
+            , SeenName(GetName())
+            , SeenPackage(GetPackage())
+        {}
+
+        CClass*   SeenClass;
+        FName     SeenName;
+        CPackage* SeenPackage;
+    };
+
+    // Asks for its own default object from its constructor, which without a guard recurses forever.
+    REFLECT()
+    class RUNTIME_API CSelfDefaultTest : public CObject
+    {
+        GENERATED_BODY()
+    public:
+
+        CSelfDefaultTest()
+            : OwnDefault(bAskForOwnDefault ? StaticClass()->GetDefaultObject() : nullptr)
+        {}
+
+        // Off by default, so the startup default object build does not log the guard every run.
+        static inline bool bAskForOwnDefault = false;
+
+        CObject* OwnDefault;
+    };
 }

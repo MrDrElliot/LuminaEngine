@@ -64,7 +64,7 @@ public static class UnityBuildStep
 
         if (Target.Rules.bAdaptiveUnityBuild && !Target.Info.Options.bDisableAdaptiveUnity)
         {
-            Adaptive.Observe(Mergeable, Target.Rules.AdaptiveUnityMaxFiles);
+            Adaptive.Observe(Mergeable, Target.Rules.AdaptiveUnityMaxFiles, SourceWorkingSet.For(Module.Rules.ModuleDirectory));
         }
         else
         {
@@ -81,8 +81,13 @@ public static class UnityBuildStep
                 Adaptive.WorkingSet.Count);
         }
 
-        // Packed before the working set applies, so holding a file out punches a hole rather than shifting every later file.
-        List<List<FileItem>> Groups = GroupByByteBudget(Mergeable, Math.Max(1024, Target.Rules.UnityBuildBytesPerFile));
+        // One blob per module puts every source in one translation unit, which is where a file-scope
+        // name collision has to show up. Third party keeps its budget, since its collisions are not ours to fix.
+        int BytesPerBlob = Target.Info.Options.bMaximalUnityBuild && !Module.Rules.bIsThirdParty
+            ? int.MaxValue
+            : Math.Max(1024, Target.Rules.UnityBuildBytesPerFile);
+
+        List<List<FileItem>> Groups = GroupByStableBucket(Module, Mergeable, BytesPerBlob);
 
         for (int Index = 0; Index < Groups.Count; Index++)
         {
@@ -186,33 +191,109 @@ public static class UnityBuildStep
         return false;
     }
 
-    /// <summary>Packs sources into groups of roughly equal source size.</summary>
-    private static List<List<FileItem>> GroupByByteBudget(IReadOnlyList<FileItem> Sources, int BytesPerBlob)
+    /// <summary>Packs sources into blobs by a hash of each path, so a file's blob does not depend on what sorts before it.</summary>
+    private static List<List<FileItem>> GroupByStableBucket(BuildModule Module, IReadOnlyList<FileItem> Sources, int BytesPerBlob)
     {
-        List<List<FileItem>> Groups = new();
-        List<FileItem> Current = new();
-        long CurrentBytes = 0;
+        long TotalBytes = Sources.Sum(Source => Source.Length);
 
-        foreach (FileItem Source in Sources)
+        // Aimed below the budget so a blob has room to absorb a new file without spilling one of its own elsewhere.
+        long TargetBytes = Math.Max(1024, BytesPerBlob * 9 / 10);
+        int BlobCount = (int)Math.Max(1, (TotalBytes + TargetBytes - 1) / TargetBytes);
+
+        // An empty blob still parses the PCH, so a module of few large files never gets more blobs than sources.
+        BlobCount = Math.Min(BlobCount, Sources.Count);
+
+        List<List<FileItem>> Groups = new(BlobCount);
+        long[] Bytes = new long[BlobCount];
+
+        for (int Index = 0; Index < BlobCount; Index++)
         {
-            // A file larger than the whole budget still lands somewhere, simply getting a blob of its own rather than split.
-            if (Current.Count > 0 && CurrentBytes + Source.Length > BytesPerBlob)
-            {
-                Groups.Add(Current);
-                Current = new List<FileItem>();
-                CurrentBytes = 0;
-            }
-
-            Current.Add(Source);
-            CurrentBytes += Source.Length;
+            Groups.Add(new List<FileItem>());
         }
 
-        if (Current.Count > 0)
+        // Largest first, so a big file claims its preferred blob before the small ones fill it.
+        List<FileItem> Ordered = Sources
+            .OrderByDescending(Source => Source.Length)
+            .ThenBy(Source => Source.Location, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (FileItem Source in Ordered)
         {
-            Groups.Add(Current);
+            int[] Preference = PreferenceFor(Module, Source, BlobCount);
+            int Chosen = -1;
+
+            foreach (int Bucket in Preference)
+            {
+                if (Groups[Bucket].Count == 0 || Bytes[Bucket] + Source.Length <= BytesPerBlob)
+                {
+                    Chosen = Bucket;
+                    break;
+                }
+            }
+
+            // Every blob is already full, so the lightest takes it and the budget is treated as a target.
+            if (Chosen < 0)
+            {
+                Chosen = Array.IndexOf(Bytes, Bytes.Min());
+            }
+
+            Groups[Chosen].Add(Source);
+            Bytes[Chosen] += Source.Length;
+        }
+
+        // Sorted inside the blob so its text depends only on which files landed there.
+        foreach (List<FileItem> Group in Groups)
+        {
+            Group.Sort((Left, Right) => string.Compare(Left.Location, Right.Location, StringComparison.OrdinalIgnoreCase));
         }
 
         return Groups;
+    }
+
+    /// <summary>Blobs in descending preference for a source, so raising the blob count moves one blob's worth of files rather than all of them.</summary>
+    private static int[] PreferenceFor(BuildModule Module, FileItem Source, int BlobCount)
+    {
+        ulong Seed = StableHash(BucketKeyFor(Module, Source));
+
+        return Enumerable.Range(0, BlobCount)
+            .OrderByDescending(Bucket => Scramble(Seed ^ ((ulong)(Bucket + 1) * 0x9E3779B97F4A7C15UL)))
+            .ToArray();
+    }
+
+    /// <summary>Module-relative, lowercased and slash-normalized, so two checkouts of one commit bucket alike.</summary>
+    private static string BucketKeyFor(BuildModule Module, FileItem Source)
+    {
+        string Key = Path.GetRelativePath(Module.Rules.ModuleDirectory, Source.Location);
+
+        // A source reached from outside the module keeps its file name, which is still checkout independent.
+        if (Key.StartsWith("..", StringComparison.Ordinal))
+        {
+            Key = Source.Name;
+        }
+
+        return Key.Replace('\\', '/').ToLowerInvariant();
+    }
+
+    // FNV-1a, because string.GetHashCode is randomized per process and would repack every build.
+    private static ulong StableHash(string Text)
+    {
+        ulong Hash = 14695981039346656037UL;
+
+        foreach (char Character in Text)
+        {
+            Hash = (Hash ^ Character) * 1099511628211UL;
+        }
+
+        return Hash;
+    }
+
+    private static ulong Scramble(ulong Value)
+    {
+        Value ^= Value >> 33;
+        Value *= 0xFF51AFD7ED558CCDUL;
+        Value ^= Value >> 33;
+        Value *= 0xC4CEB9FE1A85EC53UL;
+        return Value ^ (Value >> 33);
     }
 
     private static string BuildBlobContents(BuildModule Module, IReadOnlyList<FileItem> Members)

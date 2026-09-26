@@ -8,9 +8,16 @@
 
 namespace Lumina
 {
+    namespace Detail
+    {
+        // Only the 4x4 float matrix, the one whose columns the SIMD kernels load 16 bytes at a time.
+        template<typename T, int C, int R>
+        inline constexpr size_t MatrixAlignment = (std::is_same_v<T, float> && C == 4 && R == 4) ? 16 : alignof(T);
+    }
+
     // C columns, R rows -> mathematically an R-by-C matrix. m[c] is column c.
     template<typename T, int C, int R>
-    struct TMat
+    struct alignas(Detail::MatrixAlignment<T, C, R>) TMat
     {
         static_assert(C > 0 && R > 0, "TMat requires positive dimensions");
 
@@ -117,10 +124,10 @@ namespace Lumina
     [[nodiscard]] inline TVec<float, 4> operator*(const TMat<float, 4, 4>& M, const TVec<float, 4>& V)
     {
         using namespace SIMD;
-        const VFloat4 C0 = VFloat4::Load(&M.Cols[0][0]);
-        const VFloat4 C1 = VFloat4::Load(&M.Cols[1][0]);
-        const VFloat4 C2 = VFloat4::Load(&M.Cols[2][0]);
-        const VFloat4 C3 = VFloat4::Load(&M.Cols[3][0]);
+        const VFloat4 C0 = VFloat4::LoadAligned(&M.Cols[0][0]);
+        const VFloat4 C1 = VFloat4::LoadAligned(&M.Cols[1][0]);
+        const VFloat4 C2 = VFloat4::LoadAligned(&M.Cols[2][0]);
+        const VFloat4 C3 = VFloat4::LoadAligned(&M.Cols[3][0]);
         const VFloat4 Vv = VFloat4::Load(&V[0]);
 
         const VFloat4 R = MulAdd(SplatW(Vv), C3, MulAdd(SplatZ(Vv), C2, MulAdd(SplatY(Vv), C1, SplatX(Vv) * C0)));
@@ -133,17 +140,17 @@ namespace Lumina
     [[nodiscard]] inline TMat<float, 4, 4> operator*(const TMat<float, 4, 4>& A, const TMat<float, 4, 4>& B)
     {
         using namespace SIMD;
-        const VFloat4 A0 = VFloat4::Load(&A.Cols[0][0]);
-        const VFloat4 A1 = VFloat4::Load(&A.Cols[1][0]);
-        const VFloat4 A2 = VFloat4::Load(&A.Cols[2][0]);
-        const VFloat4 A3 = VFloat4::Load(&A.Cols[3][0]);
+        const VFloat4 A0 = VFloat4::LoadAligned(&A.Cols[0][0]);
+        const VFloat4 A1 = VFloat4::LoadAligned(&A.Cols[1][0]);
+        const VFloat4 A2 = VFloat4::LoadAligned(&A.Cols[2][0]);
+        const VFloat4 A3 = VFloat4::LoadAligned(&A.Cols[3][0]);
 
         TMat<float, 4, 4> Out;
         for (int j = 0; j < 4; ++j)
         {
-            const VFloat4 Bc = VFloat4::Load(&B.Cols[j][0]);
+            const VFloat4 Bc = VFloat4::LoadAligned(&B.Cols[j][0]);
             const VFloat4 R  = MulAdd(SplatW(Bc), A3, MulAdd(SplatZ(Bc), A2, MulAdd(SplatY(Bc), A1, SplatX(Bc) * A0)));
-            R.Store(&Out.Cols[j][0]);
+            R.StoreAligned(&Out.Cols[j][0]);
         }
         return Out;
     }

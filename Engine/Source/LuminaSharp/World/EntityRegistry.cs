@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -76,12 +76,6 @@ public readonly unsafe partial struct EntityRegistry
     /// The component of type T, adding a default one first if absent.
     public T? GetOrAdd<T>(Entity Entity) where T : NativeStruct => TryGet<T>(Entity) ?? Emplace<T>(Entity);
 
-    /// Get-or-emplace by a pre-resolved op-table token (zero on failure); for the non-generic script paths.
-    internal IntPtr EmplaceRaw(Entity Entity, IntPtr Token)
-    {
-        return Token == IntPtr.Zero ? IntPtr.Zero : Native.EmplaceComponent(WorldHandle, Entity.Id, Token);
-    }
-
     // Registry signals (OnConstruct/OnDestroy/OnUpdate); Dispose the returned subscription to unsubscribe.
     // Build your own events by treating a component as a signal channel (Emplace/Remove/Patch it).
 
@@ -114,8 +108,8 @@ public readonly unsafe partial struct EntityRegistry
             return RegistrySubscription.Empty;
         }
 
-        // Binding through the listener's own delegate is what lets its destructor release this handle,
-        // whether the subscription, the world or the script generation goes away first.
+        // Bound through the listener's own delegate, so its destructor releases this handle whether the
+        // subscription, the world or the script generation goes away first.
         IntPtr Signal = Native.RegistryGetSignalDelegate(Listener);
         DelegateBinding Binding;
         unsafe
@@ -137,38 +131,28 @@ public readonly unsafe partial struct EntityRegistry
     // finds a C++ script (which no managed-side index could ever have known about). Wrapper<T>.ForObject hands
     // back the canonical managed instance for the object, so a C# script comes back as itself.
 
+    private Lumina.CWorld World => Wrapper<Lumina.CWorld>.ForObject((IntPtr)WorldHandle)!;
+
+    /// The class handle for a script type, resolved once per type rather than marshalled as a name per call.
+    private static Lumina.TSubclassOf<Lumina.CEntityScript> ClassOf<T>() where T : EntityScript
+        => NativeClass<T>.Of.AsBase<Lumina.CEntityScript>();
+
     /// The first live script of type T on the entity, or null. Re-fetch per use; do not cache across frames (a stored ref outlives a destroyed script).
     public T? GetScript<T>(Entity Entity) where T : EntityScript
     {
-        IntPtr Script = Native.FindEntityScript(WorldHandle, Entity.Id, typeof(T).FullName!);
-        return Script == IntPtr.Zero ? null : Wrapper<T>.ForObject(Script);
+        return Lumina.CEntityScriptLibrary.FindScript(World, Entity, ClassOf<T>()) as T;
     }
 
     /// Every live script of type T on the entity (empty if none). A fresh list per call.
-    public unsafe System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : EntityScript
+    public System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : EntityScript
     {
-        string ClassName = typeof(T).FullName!;
-
-        // Size first, then fill: the count is the return value either way, so an entity with more scripts than
-        // the stack buffer holds is handled rather than silently truncated.
-        int Count = Native.FindEntityScripts(WorldHandle, Entity.Id, ClassName, null, 0);
-        var Result = new System.Collections.Generic.List<T>(Count);
-        if (Count <= 0)
+        Lumina.CEntityScript[] Scripts = Lumina.CEntityScriptLibrary.FindScripts(World, Entity, ClassOf<T>());
+        var Result = new System.Collections.Generic.List<T>(Scripts.Length);
+        foreach (Lumina.CEntityScript Script in Scripts)
         {
-            return Result;
-        }
-
-        IntPtr[] Scripts = new IntPtr[Count];
-        fixed (IntPtr* Buffer = Scripts)
-        {
-            Count = Native.FindEntityScripts(WorldHandle, Entity.Id, ClassName, (void**)Buffer, Count);
-        }
-
-        for (int Index = 0; Index < Count && Index < Scripts.Length; ++Index)
-        {
-            if (Wrapper<T>.ForObject(Scripts[Index]) is { } Script)
+            if (Script is T Typed)
             {
-                Result.Add(Script);
+                Result.Add(Typed);
             }
         }
         return Result;
@@ -177,26 +161,26 @@ public readonly unsafe partial struct EntityRegistry
     /// Attach a new script of type T to the entity and return the live instance (null on failure).
     public T? AddScript<T>(Entity Entity) where T : EntityScript
     {
-        return AddScript(Entity, typeof(T).FullName!) as T;
+        return Lumina.CEntityScriptLibrary.AddScript(World, Entity, ClassOf<T>()) as T;
+    }
+
+    /// Attach a script of the given class to the entity and return the live instance (null on failure).
+    public EntityScript? AddScript(Entity Entity, Lumina.TSubclassOf<Lumina.CEntityScript> ScriptClass)
+    {
+        return Lumina.CEntityScriptLibrary.AddScript(World, Entity, ScriptClass) as EntityScript;
     }
 
     /// Attach a script of the named class to the entity and return the live instance (null on failure).
     public EntityScript? AddScript(Entity Entity, string ClassName)
     {
-        IntPtr Script = Native.AddEntityScript(WorldHandle, Entity.Id, ClassName);
-        return Script == IntPtr.Zero ? null : Wrapper<EntityScript>.ForObject(Script);
+        return AddScript(Entity, Lumina.TSubclassOf<Lumina.CEntityScript>.FromName(ClassName));
     }
 
     /// Remove the first script of type T from the entity. Returns true if one was removed.
     public bool RemoveScript<T>(Entity Entity) where T : EntityScript
     {
-        IntPtr Script = Native.FindEntityScript(WorldHandle, Entity.Id, typeof(T).FullName!);
-        if (Script == IntPtr.Zero)
-        {
-            return false;
-        }
-        Native.RemoveEntityScript(WorldHandle, Entity.Id, Script);
-        return true;
+        Lumina.CEntityScript? Script = Lumina.CEntityScriptLibrary.FindScript(World, Entity, ClassOf<T>());
+        return Script is not null && Lumina.CEntityScriptLibrary.RemoveScript(World, Entity, Script);
     }
 
     /// True if the entity has a C# script assignable to T.

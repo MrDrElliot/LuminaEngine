@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "StaticMeshComponent.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
@@ -21,7 +21,7 @@ namespace Lumina
     {
         if (Slot < MaterialOverrides.size())
         {
-            if (CMaterialInterface* Interface = MaterialOverrides[Slot])
+            if (CMaterialInterface* Interface = MaterialOverrides[Slot].Get())
             {
                 return Interface;
             }

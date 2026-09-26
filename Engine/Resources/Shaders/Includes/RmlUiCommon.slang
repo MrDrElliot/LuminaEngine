@@ -8,10 +8,11 @@
 
 // Draw kinds. TEXTURED is the ordinary path; the gradients are RmlUi's shader decorators, where UV
 // carries the element-local pixel position rather than a texture coordinate.
-#define UI_SHADER_TEXTURED 0u
+#define kUIShaderTextured 0u
 #define UI_SHADER_LINEAR   1u
 #define UI_SHADER_RADIAL   2u
 #define UI_SHADER_CONIC    3u
+#define kUIShaderTexturedStraight 4u // asset texture with straight alpha; premultiplied at sample time
 
 struct FUiDraw
 {

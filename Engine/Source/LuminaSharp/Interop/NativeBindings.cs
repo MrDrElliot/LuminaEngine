@@ -15,13 +15,51 @@ public static unsafe class NativeBindings
     /// <summary>Resolves an export from a module (by name) to a function pointer; null on miss.</summary>
     public static void* Resolve(string Module, string EntryPoint)
     {
+        return Resolve(Module, EntryPoint, 0);
+    }
+
+    public static void* Resolve(string Module, string EntryPoint, int ExpectedSignature)
+    {
         IntPtr Handle = Host.ModuleHandle(Module);
         if (Handle == IntPtr.Zero)
         {
             Native.Log(ELogLevel.Error, $"NativeBindings: module '{Module}' not loaded for '{EntryPoint}'.");
             return null;
         }
-        return ResolveFrom(Handle, EntryPoint);
+
+        void* Export = ResolveFrom(Handle, EntryPoint);
+        return Export != null && !SignatureAgrees(EntryPoint, ExpectedSignature) ? null : Export;
+    }
+
+    // An export that registered no width is left unchecked, so only a real disagreement drops the binding.
+    private static bool SignatureAgrees(string EntryPoint, int Expected)
+    {
+        if (Expected <= 0 || ExportSignatureExport == null)
+        {
+            return true;
+        }
+
+        Span<byte> Scratch = stackalloc byte[256];
+        Interop.FInteropString Utf8 = new(EntryPoint, Scratch);
+        int Declared;
+        try
+        {
+            Declared = ExportSignatureExport(Utf8.Pointer, Utf8.Length);
+        }
+        finally
+        {
+            Utf8.Free();
+        }
+
+        if (Declared < 0 || Declared == Expected)
+        {
+            return true;
+        }
+
+        Native.Log(ELogLevel.Error,
+            $"NativeBindings: export '{EntryPoint}' takes {Declared} bytes of arguments natively but the managed "
+            + $"binding declares {Expected}. The two sides have drifted, so the binding is dropped.");
+        return false;
     }
 
     /// <summary>Resolves an export from a known module handle (the bootstrap binds).</summary>
@@ -107,6 +145,10 @@ public static unsafe class NativeBindings
 
     private static readonly delegate* unmanaged[Cdecl]<void*, byte*, int, IntPtr> AnimGraphParameterMemoryExport =
         (delegate* unmanaged[Cdecl]<void*, byte*, int, IntPtr>)Resolve(Host.NativeLibrary, "LuminaSharp_AnimGraph_GetParameterMemory");
+
+    // Resolved without a check of its own, since it is what every other check asks.
+    private static readonly delegate* unmanaged[Cdecl]<byte*, int, int> ExportSignatureExport =
+        (delegate* unmanaged[Cdecl]<byte*, int, int>)Resolve(Host.NativeLibrary, "LuminaSharp_ExportSignature");
 
     private static readonly delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> PropertyOffsetByName =
         (delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int>)Resolve(Host.NativeLibrary, "LuminaSharp_PropertyOffsetByName");

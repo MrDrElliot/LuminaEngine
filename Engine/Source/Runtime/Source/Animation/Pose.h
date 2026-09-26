@@ -53,27 +53,17 @@ namespace Lumina
         FORCEINLINE float* Stream(int32 Index) { return Data + (SIZE_T)Index * Stride; }
         FORCEINLINE const float* Stream(int32 Index) const { return Data + (SIZE_T)Index * Stride; }
 
-        FORCEINLINE float* Tx() { return Stream(StreamTx); }
-        FORCEINLINE float* Ty() { return Stream(StreamTy); }
-        FORCEINLINE float* Tz() { return Stream(StreamTz); }
-        FORCEINLINE float* Sx() { return Stream(StreamSx); }
-        FORCEINLINE float* Sy() { return Stream(StreamSy); }
-        FORCEINLINE float* Sz() { return Stream(StreamSz); }
-        FORCEINLINE float* Rx() { return Stream(StreamRx); }
-        FORCEINLINE float* Ry() { return Stream(StreamRy); }
-        FORCEINLINE float* Rz() { return Stream(StreamRz); }
-        FORCEINLINE float* Rw() { return Stream(StreamRw); }
-
-        FORCEINLINE const float* Tx() const { return Stream(StreamTx); }
-        FORCEINLINE const float* Ty() const { return Stream(StreamTy); }
-        FORCEINLINE const float* Tz() const { return Stream(StreamTz); }
-        FORCEINLINE const float* Sx() const { return Stream(StreamSx); }
-        FORCEINLINE const float* Sy() const { return Stream(StreamSy); }
-        FORCEINLINE const float* Sz() const { return Stream(StreamSz); }
-        FORCEINLINE const float* Rx() const { return Stream(StreamRx); }
-        FORCEINLINE const float* Ry() const { return Stream(StreamRy); }
-        FORCEINLINE const float* Rz() const { return Stream(StreamRz); }
-        FORCEINLINE const float* Rw() const { return Stream(StreamRw); }
+        // Constness rides through Stream's own overload pair, so a const pose still hands out const float*.
+        template <typename Self> FORCEINLINE auto Tx(this Self&& S) { return S.Stream(StreamTx); }
+        template <typename Self> FORCEINLINE auto Ty(this Self&& S) { return S.Stream(StreamTy); }
+        template <typename Self> FORCEINLINE auto Tz(this Self&& S) { return S.Stream(StreamTz); }
+        template <typename Self> FORCEINLINE auto Sx(this Self&& S) { return S.Stream(StreamSx); }
+        template <typename Self> FORCEINLINE auto Sy(this Self&& S) { return S.Stream(StreamSy); }
+        template <typename Self> FORCEINLINE auto Sz(this Self&& S) { return S.Stream(StreamSz); }
+        template <typename Self> FORCEINLINE auto Rx(this Self&& S) { return S.Stream(StreamRx); }
+        template <typename Self> FORCEINLINE auto Ry(this Self&& S) { return S.Stream(StreamRy); }
+        template <typename Self> FORCEINLINE auto Rz(this Self&& S) { return S.Stream(StreamRz); }
+        template <typename Self> FORCEINLINE auto Rw(this Self&& S) { return S.Stream(StreamRw); }
 
         FORCEINLINE SIMD::FQuatStreams Rotations() { return { Rx(), Ry(), Rz(), Rw() }; }
         FORCEINLINE SIMD::FConstQuatStreams Rotations() const { return { Rx(), Ry(), Rz(), Rw() }; }

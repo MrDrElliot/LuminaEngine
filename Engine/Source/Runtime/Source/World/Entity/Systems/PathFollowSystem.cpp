@@ -5,9 +5,11 @@
 #include "AI/Navigation/NavMesh.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/EntityUtils.h"
+#include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Entity/Components/NavMeshComponent.h"
 #include "World/Entity/Components/PathFollowComponent.h"
+#include "World/Entity/Components/RVOAgentComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/NavMeshSystem.h"
@@ -19,8 +21,9 @@ namespace Lumina
     void SPathFollowSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        Writes<SPathFollowComponent, SCharacterControllerComponent>();
-        Reads<STransformComponent, FRelationshipComponent, SNavMeshComponent, SystemResource::Significance>();
+        Writes<SPathFollowComponent, SCharacterControllerComponent, SRVOAgentComponent>();
+        Reads<STransformComponent, FRelationshipComponent, SNavMeshComponent,
+              SCharacterMovementComponent, SystemResource::Significance>();
     }
 
     namespace
@@ -83,6 +86,8 @@ namespace Lumina
         FNavMesh* const NavMesh = Nav::GetReadyNavMesh(Context);
 
         auto TransformStorage = Context.GetRegistry().GetStorage<STransformComponent>();
+        auto AvoidanceStorage = Context.GetRegistry().GetStorage<SRVOAgentComponent>();
+        auto MovementStorage  = Context.GetRegistry().GetStorage<SCharacterMovementComponent>();
         const FSignificanceState* SignificanceState = Significance::GetState(Context);
         // Chunked, so the scheduler is not asked to dispatch one job per follower.
         Task::ParallelFor((uint32)View.NumDenseSlots(), [&](const Task::FParallelRange& Range)
@@ -92,6 +97,13 @@ namespace Lumina
                 STransformComponent&  Xform = TransformStorage.Get(Entity);
 
                 Comp.TimeSinceLastPath += DeltaTime;
+
+                // Cleared up front so every early return below leaves the agent stopped, not coasting.
+                SRVOAgentComponent* Avoidance = AvoidanceStorage.TryGet(Entity);
+                if (Avoidance != nullptr)
+                {
+                    Avoidance->PreferredVelocity = FVector3(0.0f);
+                }
 
                 if (!Comp.bHasTarget)
                 {
@@ -216,7 +228,17 @@ namespace Lumina
 
                 if (Comp.bDriveCharacterController)
                 {
-                    if (auto* CC = Context.TryGet<SCharacterControllerComponent>(Entity))
+                    // An avoidance agent consumes the desired velocity instead, and drives the controller itself.
+                    if (Avoidance != nullptr)
+                    {
+                        const SCharacterMovementComponent* Movement = MovementStorage.TryGet(Entity);
+                        const float Speed = Avoidance->MaxSpeed > 0.0f
+                            ? Avoidance->MaxSpeed
+                            : (Movement != nullptr ? Movement->MoveSpeed : 1.0f);
+
+                        Avoidance->PreferredVelocity = Move * Speed;
+                    }
+                    else if (auto* CC = Context.TryGet<SCharacterControllerComponent>(Entity))
                     {
                         CC->AddMovementInput(Move);
                     }

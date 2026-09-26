@@ -1,4 +1,4 @@
-#include "EditorEntityUtils.h"
+﻿#include "EditorEntityUtils.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -368,7 +368,7 @@ namespace Lumina::EditorEntityUtils
             FVector3(0.0f, -kFloorHalfDepth, 0.0f),
             FVector3(0.0f, 0.0f, 0.0f),
             FVector3(kFloorHalfSize, kFloorHalfDepth, kFloorHalfSize)));
-        World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(CPrimitiveManager::Get().CubeMesh);
+        World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(CPrimitiveManager::Get().CubeMesh.Get());
         World->EmplaceComponent<SBoxColliderComponent>(Entity).HalfExtent = FVector3(1.0f);
         World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
 
@@ -378,7 +378,7 @@ namespace Lumina::EditorEntityUtils
             FVector3(1.0f, 1.0f, 1.0f)));
         {
             SStaticMeshComponent& Mesh = World->EmplaceComponent<SStaticMeshComponent>(Entity);
-            Mesh.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+            Mesh.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
 
             // The two failure modes are reported apart, since an undiscovered path needs a different fix.
             if (const FAssetData* PreviewData = FAssetRegistry::Get().GetAssetByPath(kPreviewMaterialPath))

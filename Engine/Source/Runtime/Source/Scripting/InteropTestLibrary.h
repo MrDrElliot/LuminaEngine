@@ -3,14 +3,49 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
+#include "Containers/HashTable.h"
+#include "Core/Templates/Optional.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/FunctionLibrary.h"
+#include "Core/Object/ObjectHandleTyped.h"
+#include "Core/Object/SubclassOf.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Vector/VectorTypes.h"
+#include "UI/UITypes.h"
 #include "World/ECS/Entity.h"
 #include "InteropTestLibrary.generated.h"
 
 namespace Lumina
 {
+    /** Holds an FName so it cannot blit, which is what makes it bind as an opaque wrapper. */
+    REFLECT()
+    struct FInteropOpaqueStruct
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FName Label;
+
+        PROPERTY()
+        float Value = 0.0f;
+
+        /** A key whose managed form is not its native bytes, which the map binder used to refuse. */
+        PROPERTY()
+        THashMap<FString, float> Weights;
+
+        /** The same on the value side. */
+        PROPERTY()
+        THashMap<int32, FString> Labels;
+
+        /** Both sides plain values, so a benchmark can show the marshalled branch folding away. */
+        PROPERTY()
+        THashMap<int32, float> Scores;
+
+        /** A payload a Nullable cannot spell, which the optional binder used to refuse. */
+        PROPERTY()
+        TOptional<FString> Note;
+    };
+
     /** Gives the interop tests reflected statics whose shapes the Reflector had to bind, nothing more. */
     REFLECT()
     class RUNTIME_API CInteropTestLibrary : public CFunctionLibrary
@@ -30,6 +65,14 @@ namespace Lumina
         /** A blittable struct element, wider than its managed handle would be. */
         FUNCTION()
         static void MakeVectorRange(int32 Count, TVector<FVector3>& Out);
+
+        /** An object element, which crosses as a raw pointer and is rebuilt through the wrapper cache. */
+        FUNCTION()
+        static void MakeObjectRange(int32 Count, TVector<TObjectPtr<CInteropTestLibrary>>& Out);
+
+        /** Reads a class handle back, so a test can pin that a TSubclassOf argument arrives intact. */
+        FUNCTION()
+        static FName ReadClassName(TSubclassOf<CInteropTestLibrary> Class);
 
         /** Counts calls into MakeRange, so a test can pin how many crossings one binding costs. */
         FUNCTION()
@@ -53,6 +96,13 @@ namespace Lumina
         FUNCTION()
         static FName BenchGetName();
 
+        /** The one-uint64 handle shape a non-reflectable native pointer crosses in. */
+        FUNCTION()
+        static FUIElement MakeHandle(uint64 Value);
+
+        FUNCTION()
+        static uint64 ReadHandle(FUIElement Handle);
+
         /** Returns a name of exactly Length characters, so a test can straddle the managed scratch buffer. */
         FUNCTION()
         static FString MakeName(int32 Length);
@@ -63,5 +113,9 @@ namespace Lumina
 
         FUNCTION()
         static void ResetMakeNameCallCount();
+
+        /** An opaque struct argument, which crosses as the address its managed wrapper views. */
+        FUNCTION()
+        static float ReadOpaqueValue(const FInteropOpaqueStruct& Opaque);
     };
 }

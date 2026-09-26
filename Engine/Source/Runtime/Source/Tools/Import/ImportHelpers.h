@@ -154,6 +154,8 @@ namespace Lumina::Import
             bool bImportMeshes      = true;
             bool bImportAnimations  = true;
             bool bImportSkeleton    = true;
+            /** Also take skeleton-hierarchy nodes nothing skins to, such as cape joints and attach nulls. */
+            bool bImportUnskinnedBones = false;
             bool bFlipNormals       = false;
             bool bFlipUVs           = false;   // flips V (1 - V)
             bool bFlipU             = false;   // flips U (1 - U); for sources whose UVs are horizontally mirrored

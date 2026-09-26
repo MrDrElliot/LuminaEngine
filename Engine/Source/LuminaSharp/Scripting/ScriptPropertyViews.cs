@@ -78,6 +78,18 @@ internal static class ScriptPropertyViews
     /// get-only member of it is still a real property.</summary>
     public static bool IsView(Type Type) => Find(Type) != null;
 
+    public static bool TryGetAccess(Type Type, out EScriptAccess Access)
+    {
+        if (Find(Type) is not { } View)
+        {
+            Access = default;
+            return false;
+        }
+
+        Access = View.Access;
+        return true;
+    }
+
     /// <summary>The element type of a list view, or false if <paramref name="Type"/> is not one (a map is
     /// not; ask <see cref="TryGetKeyValue"/>).</summary>
     public static bool TryGetElementType(Type Type, out Type? ElementType)

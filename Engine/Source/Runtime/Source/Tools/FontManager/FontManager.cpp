@@ -37,7 +37,7 @@ namespace Lumina
         DefaultFont->SourcePath = Path;
 
         // Uploading at engine init is too early, so the atlas would take an invalid resource id.
-        if (!BakeFontAtlas(DefaultFont))
+        if (!BakeFontAtlas(DefaultFont.Get()))
         {
             LOG_ERROR("FontManager: failed to bake default font atlas from '{0}'", Path);
         }

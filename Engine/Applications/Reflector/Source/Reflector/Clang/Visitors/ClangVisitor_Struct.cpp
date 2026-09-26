@@ -195,6 +195,21 @@ namespace Lumina::Reflection::Visitor
 
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling);
 
+		// An alias or typedef spells its own name, so the core template only shows once canonicalized.
+		if (PropFlags == EPropertyTypeFlags::None)
+		{
+			std::string CanonicalSpelling;
+			if (ClangUtils::GetQualifiedNameForCXType(clang_getCanonicalType(FieldType), CanonicalSpelling))
+			{
+				const EPropertyTypeFlags CanonicalFlags = GetCoreTypeFromName(CanonicalSpelling);
+				if (CanonicalFlags != EPropertyTypeFlags::None)
+				{
+					PropFlags = CanonicalFlags;
+					TypeSpelling = CanonicalSpelling;
+				}
+			}
+		}
+
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
 		{
@@ -261,6 +276,21 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling);
+
+		// An alias or typedef spells its own name, so the core template only shows once canonicalized.
+		if (PropFlags == EPropertyTypeFlags::None)
+		{
+			std::string CanonicalSpelling;
+			if (ClangUtils::GetQualifiedNameForCXType(clang_getCanonicalType(FieldType), CanonicalSpelling))
+			{
+				const EPropertyTypeFlags CanonicalFlags = GetCoreTypeFromName(CanonicalSpelling);
+				if (CanonicalFlags != EPropertyTypeFlags::None)
+				{
+					PropFlags = CanonicalFlags;
+					TypeSpelling = CanonicalSpelling;
+				}
+			}
+		}
 
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
@@ -708,27 +738,66 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::Delegate:
 		{
-			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
-			if (ArgType.kind != CXType_Invalid && ArgType.kind != CXType_Void)
+			// Canonical, so an alias or typedef exposes the same arguments a direct spelling does.
+			const CXType DelegateType = clang_getCanonicalType(FieldInfo.Type);
+			const int NumTemplateArgs = clang_Type_getNumTemplateArguments(DelegateType);
+
+			std::vector<FFieldInfo> ArgFields;
+			for (int ArgIndex = 0; ArgIndex < NumTemplateArgs; ++ArgIndex)
 			{
-				std::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
-				if (!ParamFieldInfo.has_value())
+				const CXType ArgType = clang_Type_getTemplateArgumentAsType(DelegateType, ArgIndex);
+				if (ArgType.kind == CXType_Invalid || ArgType.kind == CXType_Void)
+				{
+					continue;
+				}
+
+				std::optional<FFieldInfo> ArgFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
+				if (!ArgFieldInfo.has_value())
 				{
 					return false;
 				}
 
-				ParamFieldInfo->Name = FieldInfo.Name;
+				ArgFieldInfo->Name = FieldInfo.Name + "_Arg" + std::to_string(ArgFields.size());
+				ArgFieldInfo->PropertyFlags |= EPropertyFlags::SubField;
+				ArgFields.push_back(std::move(ArgFieldInfo.value()));
+			}
 
-				auto DelegateProperty = CreateProperty<FReflectedDelegateProperty>(ParamFieldInfo.value());
-				DelegateProperty->bHasPayload = true;
-				NewProperty = std::move(DelegateProperty);
-			}
-			else
+			// Spelled from the resolved field types, so the generated file sees fully qualified names.
+			std::string PackType = "Lumina::TArgPack<";
+			for (size_t Index = 0; Index < ArgFields.size(); ++Index)
 			{
-				auto DelegateProperty = CreateProperty<FReflectedDelegateProperty>(FieldInfo);
-				DelegateProperty->bHasPayload = false;
-				NewProperty = std::move(DelegateProperty);
+				PackType += (Index == 0 ? "" : ", ") + ArgFields[Index].TypeName;
 			}
+			PackType += ">";
+
+			auto DelegateProperty = CreateProperty<FReflectedDelegateProperty>(FieldInfo);
+			DelegateProperty->NumArgs = (uint16_t)ArgFields.size();
+			for (const FFieldInfo& Arg : ArgFields)
+			{
+				DelegateProperty->ArgTypeNames.push_back(Arg.TypeName);
+			}
+
+			// Pushed in reverse, because ConstructProperties walks the emitted array backwards from the
+			// delegate and must reach the arguments in declaration order.
+			for (size_t Reverse = ArgFields.size(); Reverse > 0; --Reverse)
+			{
+				const size_t ArgIndex = Reverse - 1;
+
+				FReflectedProperty* ArgProperty;
+				if (!CreatePropertyForType(Context, Struct, ArgProperty, ArgFields[ArgIndex]) || ArgProperty == nullptr)
+				{
+					LRT_ERROR(FieldInfo.OwningCursor, Reflection::EDiagId::UnknownPropertyType,
+						"Delegate '%s' argument %d has type '%s' which is not reflectable.",
+						FieldInfo.Name.c_str(), (int)ArgIndex, ArgFields[ArgIndex].TypeName.c_str());
+					return false;
+				}
+
+				ArgProperty->bInner = true;
+				// A constant on the pack, because offsetof is a macro and the pack spelling contains commas.
+				ArgProperty->OffsetExpr = "(Lumina::uint16)" + PackType + "::Off" + std::to_string(ArgIndex) + "()";
+			}
+
+			NewProperty = std::move(DelegateProperty);
 		}
 		break;
 		default:

@@ -1166,31 +1166,31 @@ namespace Lumina
         const FVector3 Target = Foot + Offset;
         const FVector3 Pole   = Knee + (Knee - Hip);
 
+        FVector3 FT, FS; FQuat AnimatedFootR;
+        DecomposeTRS(FootG, FT, AnimatedFootR, FS);
+
         TwoBoneIK(Pose, Skeleton, ThighIdx, CalfIdx, FootIdx, Target, Pole, Alpha);
 
+        // Tilts the animated foot by the slope instead of snapping the sole flat, so heel lift and toe-off survive.
         const float NormalLen = Math::Length(GroundNormal);
         const float UpLen = Math::Length(FootUpAxis);
-        const float AlignAlpha = Math::Clamp(NormalAlpha, 0.0f, 1.0f) * Alpha;
-        if (NormalLen < 1e-5f || UpLen < 1e-5f || AlignAlpha <= 0.0f)
+        const float AlignAlpha = Math::Clamp(NormalAlpha, 0.0f, 1.0f);
+        FQuat Align = FQuat::Identity();
+        if (NormalLen > 1e-5f && UpLen > 1e-5f && AlignAlpha > 0.0f)
         {
-            return;
+            const FQuat FullAlign = Detail::QuatFromTo(FootUpAxis / UpLen, GroundNormal / NormalLen);
+            Align = Math::Normalize(Math::Slerp(FQuat::Identity(), FullAlign, AlignAlpha));
         }
 
         // Recomposed rather than re-walked, since only the thigh and calf rotations moved.
         const FMatrix4 SolvedThighG = ThighParentG * Detail::ComposeLocal(Pose, ThighIdx);
         const FMatrix4 SolvedCalfG  = SolvedThighG * Detail::ComposeLocal(Pose, CalfIdx);
-        const FMatrix4 SolvedFootG  = SolvedCalfG * Detail::ComposeLocal(Pose, FootIdx);
-
-        FVector3 FT, FS; FQuat FR;
-        DecomposeTRS(SolvedFootG, FT, FR, FS);
 
         FVector3 PT, PS; FQuat PR;
         DecomposeTRS(SolvedCalfG, PT, PR, PS);
 
-        const FVector3 CurrentUp = Math::Normalize(FR * (FootUpAxis / UpLen));
-        const FQuat Align = Detail::QuatFromTo(CurrentUp, GroundNormal / NormalLen);
-
-        Detail::BlendBoneRotation(Pose, FootIdx, Math::Conjugate(PR) * (Align * FR), AlignAlpha);
+        // The foot keeps its animated component-space angle, or it would pitch with the shin as the knee bends.
+        Detail::BlendBoneRotation(Pose, FootIdx, Math::Conjugate(PR) * (Align * AnimatedFootR), Alpha);
     }
 
     void AnimPose::TranslateBoneComponentSpace(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
@@ -1287,7 +1287,8 @@ namespace Lumina
         const float CosUpper = Math::Clamp((L1 * L1 + ClampedDist * ClampedDist - L2 * L2) / (2.0f * L1 * ClampedDist), -1.0f, 1.0f);
         const float UpperAngle = Math::Acos(CosUpper);
 
-        const FQuat RotUpper = Math::AngleAxis(-UpperAngle, BendAxis);
+        // Positive about ToTarget x Pole swings the knee toward the pole; negative bent every joint backward.
+        const FQuat RotUpper = Math::AngleAxis(UpperAngle, BendAxis);
         const FVector3 NewDirRoot = Math::Normalize(RotUpper * ToTarget);
         const FVector3 NewM = R + NewDirRoot * L1;
         const FVector3 NewE = R + ToTarget * ClampedDist;

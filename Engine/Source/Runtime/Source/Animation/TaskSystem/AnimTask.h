@@ -65,19 +65,13 @@ namespace Lumina
         FORCEINLINE float* Stream(int32 Index) { return Data.data() + (SIZE_T)Index * Stride; }
         FORCEINLINE const float* Stream(int32 Index) const { return Data.data() + (SIZE_T)Index * Stride; }
 
-        FORCEINLINE float* DirX() { return Stream(StreamDirX); }
-        FORCEINLINE float* DirY() { return Stream(StreamDirY); }
-        FORCEINLINE float* DirZ() { return Stream(StreamDirZ); }
-        FORCEINLINE float* X0()   { return Stream(StreamX0); }
-        FORCEINLINE float* V0()   { return Stream(StreamV0); }
-        FORCEINLINE float* Eval() { return Stream(StreamEval); }
-
-        FORCEINLINE const float* DirX() const { return Stream(StreamDirX); }
-        FORCEINLINE const float* DirY() const { return Stream(StreamDirY); }
-        FORCEINLINE const float* DirZ() const { return Stream(StreamDirZ); }
-        FORCEINLINE const float* X0()   const { return Stream(StreamX0); }
-        FORCEINLINE const float* V0()   const { return Stream(StreamV0); }
-        FORCEINLINE const float* Eval() const { return Stream(StreamEval); }
+        // Constness rides through Stream's own overload pair, so a const task still hands out const float*.
+        template <typename Self> FORCEINLINE auto DirX(this Self&& S) { return S.Stream(StreamDirX); }
+        template <typename Self> FORCEINLINE auto DirY(this Self&& S) { return S.Stream(StreamDirY); }
+        template <typename Self> FORCEINLINE auto DirZ(this Self&& S) { return S.Stream(StreamDirZ); }
+        template <typename Self> FORCEINLINE auto X0(this Self&& S)   { return S.Stream(StreamX0); }
+        template <typename Self> FORCEINLINE auto V0(this Self&& S)   { return S.Stream(StreamV0); }
+        template <typename Self> FORCEINLINE auto Eval(this Self&& S) { return S.Stream(StreamEval); }
 
         int32 Num() const { return Count; }
         int32 NumLanes() const { return Stride; }

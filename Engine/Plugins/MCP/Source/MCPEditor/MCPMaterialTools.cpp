@@ -9,14 +9,17 @@
 #include "MCPTextMatch.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
 #include "Assets/Factories/Factory.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "FileSystem/FileSystem.h"
 #include "Material/MaterialOps.h"
+#include "UI/Tools/NodeGraph/NodeGraphOps.h"
 #include "Paths/Paths.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
+#include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "UI/Tools/NodeGraph/Material/MaterialNodeGraph.h"
 
@@ -26,7 +29,8 @@ namespace Lumina::MCP
     {
         struct FMaterialTarget
         {
-            CMaterial*          Material = nullptr;
+            CObject*            Asset    = nullptr;
+            CMaterial*          Material = nullptr;   // null when Asset is a material function
             CMaterialNodeGraph* Graph    = nullptr;
         };
 
@@ -39,24 +43,35 @@ namespace Lumina::MCP
 
         bool ResolveMaterial(const FString& Guid, EMaterialAccess Access, FMaterialTarget& Out, FString& OutError)
         {
-            if (!Agent::ResolveAsset<CMaterial>(FStringView(Guid), Out.Material, OutError))
+            if (!Agent::ResolveAssetObject(FStringView(Guid), Out.Asset, OutError))
             {
+                return false;
+            }
+
+            Out.Material = Cast<CMaterial>(Out.Asset);
+            CMaterialFunction* Function = Cast<CMaterialFunction>(Out.Asset);
+            if (Out.Material == nullptr && Function == nullptr)
+            {
+                OutError = Lumina::Format("'{}' is a {}, not a material or material function.", Guid, Out.Asset->GetClass()->GetName());
                 return false;
             }
 
             if (Access == EMaterialAccess::Write)
             {
-                const FString OpenIn = MaterialOps::FindOpenEditorName(Out.Material);
+                const FString OpenIn = NodeGraphOps::FindOpenEditorName(Out.Asset);
                 if (!OpenIn.empty())
                 {
                     OutError = Lumina::Format(
                         "'{}' is open in {}, which would not see this change. Close it and try again.",
-                        Out.Material->GetName(), OpenIn);
+                        Out.Asset->GetName(), OpenIn);
                     return false;
                 }
             }
 
-            Out.Graph = MaterialOps::FindOrCreateGraph(Out.Material);
+            Out.Graph = Out.Material != nullptr
+                ? MaterialOps::FindOrCreateGraph(Out.Material)
+                // Cast is unavailable with CMaterialNodeGraph's class unexported, and that name only holds a function graph.
+                : static_cast<CMaterialNodeGraph*>(Function->GetPackage()->LoadObjectByName(FName(GMaterialFunctionGraphObjectName)));
             if (Out.Graph == nullptr)
             {
                 OutError = "That material has no graph and one could not be created.";
@@ -68,43 +83,10 @@ namespace Lumina::MCP
 
         void MarkMaterialDirty(const FMaterialTarget& Target)
         {
-            if (CPackage* Package = Target.Material->GetPackage())
+            if (CPackage* Package = Target.Asset->GetPackage())
             {
                 Package->MarkDirty();
             }
-        }
-
-        void CollectPins(CEdGraphNode* Node, TVector<SMaterialPinInfo>& Out)
-        {
-            const auto Append = [&](const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins, const char* Direction)
-            {
-                for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
-                {
-                    if (!Pin.IsValid())
-                    {
-                        continue;
-                    }
-
-                    SMaterialPinInfo Info;
-                    Info.Name      = Pin->GetPinName();
-                    Info.Direction = Direction;
-
-                    if (Pin->HasConnection())
-                    {
-                        CEdNodeGraphPin* Other = Pin->GetConnection(0);
-                        if (Other != nullptr && Other->GetOwningNode() != nullptr)
-                        {
-                            Info.ConnectedNode = Other->GetOwningNode()->GetNodeID();
-                            Info.ConnectedPin  = Other->GetPinName();
-                        }
-                    }
-
-                    Out.push_back(Move(Info));
-                }
-            };
-
-            Append(Node->GetInputPins(), "Input");
-            Append(Node->GetOutputPins(), "Output");
         }
 
         void RegisterListNodeTypes(FStringView Owner)
@@ -166,7 +148,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Out.Name = FString(Target.Material->GetName().ToString().c_str());
+                    Out.Name = FString(Target.Asset->GetName().ToString().c_str());
 
                     for (const TObjectPtr<CEdGraphNode>& Node : Target.Graph->Nodes)
                     {
@@ -282,7 +264,7 @@ namespace Lumina::MCP
                             "No material node type is named '{}'. Use material.list_node_types.", In.NodeType));
                     }
 
-                    CEdGraphNode* Node = MaterialOps::AddNode(Target.Graph, NodeClass, In.X, In.Y);
+                    CEdGraphNode* Node = NodeGraphOps::AddNode(Target.Graph, NodeClass, In.X, In.Y);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error("The graph refused to create that node.");
@@ -312,13 +294,13 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Graph, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
                     }
 
-                    if (!MaterialOps::RemoveNode(Target.Graph, Node, Error))
+                    if (!NodeGraphOps::RemoveNode(Target.Graph, Node, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -345,8 +327,8 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* From = MaterialOps::FindNode(Target.Graph, In.FromNode);
-                    CEdGraphNode* To   = MaterialOps::FindNode(Target.Graph, In.ToNode);
+                    CEdGraphNode* From = NodeGraphOps::FindNode(Target.Graph, In.FromNode);
+                    CEdGraphNode* To   = NodeGraphOps::FindNode(Target.Graph, In.ToNode);
 
                     if (From == nullptr || To == nullptr)
                     {
@@ -355,26 +337,26 @@ namespace Lumina::MCP
                     }
 
                     CEdNodeGraphPin* OutputPin =
-                        MaterialOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
+                        NodeGraphOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
 
                     if (OutputPin == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Node {} has no output pin '{}'. It has {}.",
                             In.FromNode, In.FromPin,
-                            MaterialOps::DescribePinNames(From, ENodePinDirection::Output)));
+                            NodeGraphOps::DescribePinNames(From, ENodePinDirection::Output)));
                     }
 
                     CEdNodeGraphPin* InputPin =
-                        MaterialOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
+                        NodeGraphOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
 
                     if (InputPin == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Node {} has no input pin '{}'. It has {}.",
                             In.ToNode, In.ToPin,
-                            MaterialOps::DescribePinNames(To, ENodePinDirection::Input)));
+                            NodeGraphOps::DescribePinNames(To, ENodePinDirection::Input)));
                     }
 
-                    if (!MaterialOps::ConnectPins(Target.Graph, OutputPin, InputPin, Error))
+                    if (!NodeGraphOps::ConnectPins(Target.Graph, OutputPin, InputPin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -402,18 +384,18 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Graph, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
                     }
 
                     CEdNodeGraphPin* Pin =
-                        MaterialOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
+                        NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Input);
 
                     if (Pin == nullptr)
                     {
-                        Pin = MaterialOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
+                        Pin = NodeGraphOps::FindPin(Node, FStringView(In.Pin), ENodePinDirection::Output);
                     }
 
                     if (Pin == nullptr)
@@ -422,7 +404,7 @@ namespace Lumina::MCP
                             In.Node, In.Pin));
                     }
 
-                    if (!MaterialOps::DisconnectPin(Target.Graph, Pin, Error))
+                    if (!NodeGraphOps::DisconnectPin(Target.Graph, Pin, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -449,7 +431,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CEdGraphNode* Node = MaterialOps::FindNode(Target.Graph, In.Node);
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Target.Graph, In.Node);
                     if (Node == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
@@ -489,7 +471,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Applied.Error);
                     }
 
-                    MaterialOps::NotifyNodeValuesChanged(Target.Graph);
+                    NodeGraphOps::NotifyNodeValuesChanged(Target.Graph);
 
                     nlohmann::json After;
                     Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
@@ -515,6 +497,11 @@ namespace Lumina::MCP
                     if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
+                    }
+
+                    if (Target.Material == nullptr)
+                    {
+                        return Agent::FToolResult::Error("A material function compiles inline; compile a material that calls it.");
                     }
 
                     const FMaterialGraphCompileResult Result =
@@ -544,6 +531,39 @@ namespace Lumina::MCP
                         Out.Warnings.size()));
                 });
         }
+    }
+
+    void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out)
+    {
+        const auto Append = [&](const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins, const char* Direction)
+        {
+            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            {
+                if (!Pin.IsValid())
+                {
+                    continue;
+                }
+
+                SGraphPinInfo Info;
+                Info.Name      = Pin->GetPinName();
+                Info.Direction = Direction;
+
+                if (Pin->HasConnection())
+                {
+                    CEdNodeGraphPin* Other = Pin->GetConnection(0);
+                    if (Other != nullptr && Other->GetOwningNode() != nullptr)
+                    {
+                        Info.ConnectedNode = Other->GetOwningNode()->GetNodeID();
+                        Info.ConnectedPin  = Other->GetPinName();
+                    }
+                }
+
+                Out.push_back(Move(Info));
+            }
+        };
+
+        Append(Node->GetInputPins(), "Input");
+        Append(Node->GetOutputPins(), "Output");
     }
 
     void RegisterMaterialTools(FStringView Owner)

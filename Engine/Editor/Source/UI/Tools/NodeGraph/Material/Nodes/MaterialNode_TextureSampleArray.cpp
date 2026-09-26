@@ -1,4 +1,4 @@
-#include "MaterialNode_TextureSampleArray.h"
+﻿#include "MaterialNode_TextureSampleArray.h"
 
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
@@ -43,8 +43,8 @@ namespace Lumina
         if (TextureArray.IsValid() && TextureArray->GetResourceID() >= 0)
         {
             TextureIndex = bDynamic && !ParameterName.IsNone()
-                         ? Compiler.BindTextureParameter(ParameterName, TextureArray, this)
-                         : Compiler.BindTexture(TextureArray, this);
+                         ? Compiler.BindTextureParameter(ParameterName, TextureArray.Get(), this)
+                         : Compiler.BindTexture(TextureArray.Get(), this);
         }
 
         const uint32 NumLayers = TextureArray.IsValid() ? TextureArray->GetNumLayers() : 0u;

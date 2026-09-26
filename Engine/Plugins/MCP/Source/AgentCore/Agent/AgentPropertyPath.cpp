@@ -3,6 +3,7 @@
 
 #include "Agent/AgentReflectionUtils.h"
 #include "Containers/StringFormat.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
 
@@ -206,6 +207,18 @@ namespace Lumina::Agent
             else if (Property->GetType() == EPropertyTypeFlags::Vector)
             {
                 Struct = nullptr;
+            }
+            else if (Property->GetType() == EPropertyTypeFlags::Object)
+            {
+                // Entity scripts hang off SEntityScriptComponent::Scripts, so a path has to reach into objects.
+                CObject* Object = static_cast<TObjectPtr<CObject>*>(ValuePtr)->Get();
+                if (Object == nullptr)
+                {
+                    OutError = Lumina::Format("'{}' is null, so nothing can follow it in the path.", Segment.Name);
+                    return false;
+                }
+                Struct = Object->GetClass();
+                Data   = Object;
             }
             else
             {

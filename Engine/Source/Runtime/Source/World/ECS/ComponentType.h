@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "Containers/ContainerTraits.h"
 #include "Memory/Construct.h"
 #include "Containers/Name.h"
@@ -344,7 +346,16 @@ namespace Lumina::ECS
     template<typename T>
     NODISCARD FORCEINLINE FComponentTypeID GetComponentTypeID()
     {
-        static const FComponentTypeID TypeID = FComponentTypeRegistry::Get().Acquire(MakeComponentTypeInfo<T>());
+        // Constant-initialized, so unlike a lazy static this carries no thread-safe-init guard on every read.
+        static std::atomic<FComponentTypeID> Cached{ InvalidComponentTypeID };
+
+        FComponentTypeID TypeID = Cached.load(std::memory_order_relaxed);
+        if (TypeID == InvalidComponentTypeID) [[unlikely]]
+        {
+            // Acquire is idempotent per name, so two threads racing here resolve the same id.
+            TypeID = FComponentTypeRegistry::Get().Acquire(MakeComponentTypeInfo<T>());
+            Cached.store(TypeID, std::memory_order_relaxed);
+        }
         return TypeID;
     }
 }

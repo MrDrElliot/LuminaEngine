@@ -1501,15 +1501,11 @@ namespace Lumina
 
                     if (const TOptional<SRayResult> Hit = SceneContext->Scene->CastRay(Ray))
                     {
-                        FVector3 WorldOffset = (Hit->Location + WorldUp * SoleHeight) - FootWorld;
+                        // Measured from the root plane, not the foot, so a swinging foot keeps its animated lift.
+                        const float GroundHeight = Math::Dot(Hit->Location - SceneContext->WorldLocation, WorldUp) + SoleHeight;
+                        const FVector3 WorldOffset = WorldUp * Math::Clamp(GroundHeight, -MaxOffset, MaxOffset);
 
-                        const float OffsetLength = Math::Length(WorldOffset);
-                        if (OffsetLength > MaxOffset && OffsetLength > 1e-5f)
-                        {
-                            WorldOffset = WorldOffset * (MaxOffset / OffsetLength);
-                        }
-
-                        Offset = InverseRotation * WorldOffset;
+                        Offset = (InverseRotation * WorldOffset) / SceneContext->WorldScale;
                         Normal = Math::Normalize(InverseRotation * Hit->Normal);
                     }
                 }

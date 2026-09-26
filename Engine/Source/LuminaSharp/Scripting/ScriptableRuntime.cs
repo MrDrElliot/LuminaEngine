@@ -143,7 +143,7 @@ internal sealed class ScriptableRuntime
         return GCHandle.ToIntPtr(Allocated);
     }
 
-    // Description must be set before any dispatch: PollInput and the profiler labels both read it.
+    // Description must be set before any dispatch: OnAction and the profiler labels both read it.
     private void PrepareEntityScript(EntityScript Script, string TypeName, Type Type)
     {
         Script.Description = Library.GetEntityScript(TypeName) ?? Library.Describe(Type);
@@ -210,6 +210,12 @@ internal sealed class ScriptableRuntime
             {
                 Names.Add(Method.Name);
             }
+        }
+
+        if (typeof(EntityScript).IsAssignableFrom(Type) && Library.Describe(Type).HasInputBindings
+            && !Names.Contains(nameof(EntityScript.OnAction)))
+        {
+            Names.Add(nameof(EntityScript.OnAction));
         }
 
         string Joined = string.Join(';', Names);

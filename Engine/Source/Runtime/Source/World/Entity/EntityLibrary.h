@@ -18,6 +18,14 @@ namespace Lumina
 
     public:
 
+        /** Tags the entity so CWorld::FindByTag finds it. An empty tag clears whatever it had. */
+        FUNCTION()
+        static void SetTag(CWorld* World, ECS::FEntity Entity, const FName& Tag);
+
+        /** The tag the entity answers to, or None. */
+        FUNCTION()
+        static FName GetTag(CWorld* World, ECS::FEntity Entity);
+
         FUNCTION()
         static ECS::FEntity GetFirstChild(CWorld* World, ECS::FEntity Entity);
 

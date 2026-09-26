@@ -129,7 +129,7 @@ internal static class ScriptPropertyRewriter
                         continue;
                     }
 
-                    // Rewriting it would hand PollInputBindings a string instead of the live binding.
+                    // Rewriting it would hand DispatchAction a string instead of the live binding.
                     if (Classification.KeepsManagedField)
                     {
                         continue;

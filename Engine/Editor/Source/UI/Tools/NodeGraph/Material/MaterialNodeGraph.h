@@ -62,7 +62,7 @@ namespace Lumina
         bool IsGraphRootNode(CEdGraphNode* Node) const override;
 
         void SetMaterial(CMaterial* InMaterial);
-        CMaterial* GetMaterial() const { return Material; }
+        CMaterial* GetMaterial() const { return Material.Get(); }
 
     protected:
 

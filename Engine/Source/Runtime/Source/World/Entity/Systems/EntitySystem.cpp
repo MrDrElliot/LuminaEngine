@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "EntitySystem.h"
 
 #include "Core/Object/Class.h"
@@ -148,7 +148,7 @@ namespace Lumina
                 // Back to front, so a system created later can still reach an earlier one while it tears down.
                 for (size_t Index = Systems.size(); Index > 0; --Index)
                 {
-                    CEntitySystem* System = Systems[Index - 1];
+                    CEntitySystem* System = Systems[Index - 1].Get();
                     if (System == nullptr || !Predicate(*System))
                     {
                         continue;
@@ -204,7 +204,7 @@ namespace Lumina
             {
                 if (System != nullptr && System->GetClass()->IsChildOf(Class))
                 {
-                    return System;
+                    return System.Get();
                 }
             }
 
@@ -216,7 +216,7 @@ namespace Lumina
             // Back to front, so a system created later can still reach an earlier one while it tears down.
             for (size_t Index = Systems.size(); Index > 0; --Index)
             {
-                if (CEntitySystem* System = Systems[Index - 1])
+                if (CEntitySystem* System = Systems[Index - 1].Get())
                 {
                     if (System->HasStarted())
                     {

@@ -1,5 +1,7 @@
-﻿#include "EditorPCH.h"
+#include "EditorPCH.h"
 #include "MeshImporter.h"
+
+#include "Tools/Import/ImportPaths.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -34,6 +36,7 @@
 #include "TaskSystem/Future.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
+#include "Assets/AssetEvents.h"
 #include "Tools/Import/MaterialImport.h"
 #include "Tools/Import/TextureImporter.h"
 #include "Tools/UI/ImGui/EditorColors.h"
@@ -60,6 +63,60 @@ namespace Lumina
             return FFixedString(Import::MakeAssetName("T_", Stem).c_str());
         }
 
+        // Importing over an existing asset replaces it in place, so its GUID and every reference to it survive.
+        CAnimation* FindAnimationToOverwrite(const FFixedString& Path)
+        {
+            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path);
+            return Data != nullptr ? Cast<CAnimation>(LoadObject<CObject>(Data->AssetGUID)) : nullptr;
+        }
+
+    }
+
+    // On the main thread, since an animation system may be sampling the old clip mid-frame.
+    void CMeshImporter::ReplaceAnimationInPlace(CAnimation* Existing, TUniquePtr<FAnimationResource>&& NewClip,
+                                                CSkeleton* NewSkeleton)
+    {
+        MainThread::Enqueue([Existing = TObjectPtr<CAnimation>(Existing), NewClip = Move(NewClip),
+                             NewSkeleton = TObjectPtr<CSkeleton>(NewSkeleton)]() mutable
+        {
+            if (!Existing.IsValid())
+            {
+                return;
+            }
+
+            // Notifies, curves and the sync lane are authored in the editor, and no source file carries them.
+            if (const FAnimationResource* OldClip = Existing->GetAnimationResource())
+            {
+                NewClip->Notifies      = OldClip->Notifies;
+                NewClip->NotifyStates  = OldClip->NotifyStates;
+                NewClip->NotifyTracks  = OldClip->NotifyTracks;
+                NewClip->SyncTrackName = OldClip->SyncTrackName;
+                if (NewClip->Curves.empty())
+                {
+                    NewClip->Curves = OldClip->Curves;
+                }
+            }
+
+            Existing->AnimationResource = Move(NewClip);
+            Existing->AnimationResource->RebuildSyncTrack();
+            if (NewSkeleton != nullptr)
+            {
+                Existing->Skeleton = NewSkeleton;
+            }
+
+            CPackage* Package = Existing->GetPackage();
+            if (Package == nullptr || !CPackage::SavePackage(Package, Package->GetPackagePath()))
+            {
+                LOG_ERROR("[Import] Overwrote '{}' in memory but could not save it.", Existing->GetName());
+            }
+
+            // An open animation editor holds pointers into the clip that was just replaced.
+            AssetEvents::BroadcastAssetDataChanged(Existing.Get());
+        });
+    }
+
+    namespace
+    {
         // FindObject only sees loaded objects, so a multi-asset run needs its own claim set.
         class FUniquePathAllocator
         {
@@ -396,7 +453,7 @@ namespace Lumina
                 MergedSkinned->Indices.reserve(TotalSkinnedIndices);
             }
 
-            THashMap<int16, int16> SlotRemap;
+            TVector<int16> SlotToSource;
 
             auto AppendInstance = [&](const FMeshResource& Source, FMeshResource& Target, const FMatrix4& World)
             {
@@ -432,19 +489,21 @@ namespace Lumina
                     Target.Indices[BaseIndex + i] = Source.Indices[i] + (uint32)BaseVertex;
                 }
 
+                // Keyed per piece, so each merged piece keeps its own slot even where pieces share a material.
+                THashMap<int16, int16> PieceSlots;
                 for (const FGeometrySurface& SourceSurface : Source.GeometrySurfaces)
                 {
                     FGeometrySurface Surface = SourceSurface;
                     Surface.StartIndex += (uint32)BaseIndex;
 
-                    // Without this every instance would add its own duplicate of the same source material.
                     if (SourceSurface.MaterialIndex >= 0)
                     {
-                        auto It = SlotRemap.find(SourceSurface.MaterialIndex);
-                        if (It == SlotRemap.end())
+                        auto It = PieceSlots.find(SourceSurface.MaterialIndex);
+                        if (It == PieceSlots.end())
                         {
-                            const int16 NewSlot = (int16)SlotRemap.size();
-                            SlotRemap.emplace(SourceSurface.MaterialIndex, NewSlot);
+                            const int16 NewSlot = (int16)SlotToSource.size();
+                            SlotToSource.push_back(SourceSurface.MaterialIndex);
+                            PieceSlots.emplace(SourceSurface.MaterialIndex, NewSlot);
                             Surface.MaterialIndex = NewSlot;
                         }
                         else
@@ -469,20 +528,14 @@ namespace Lumina
                 {
                     AppendInstance(*Static, *MergedStatic, Instance.WorldTransform);
                 }
+                // The inverse binds already carry the node transform, so baking it too would apply it twice.
                 if (const FMeshResource* Skinned = ResourceAt(Slot.SkinnedResource))
                 {
-                    AppendInstance(*Skinned, *MergedSkinned, Instance.WorldTransform);
+                    AppendInstance(*Skinned, *MergedSkinned, FMatrix4(1.0f));
                 }
             }
 
-            Data.MergedMaterialSlotToSource.assign(SlotRemap.size(), 0);
-            for (const auto& Pair : SlotRemap)
-            {
-                if (Pair.second >= 0 && (size_t)Pair.second < Data.MergedMaterialSlotToSource.size())
-                {
-                    Data.MergedMaterialSlotToSource[Pair.second] = Pair.first;
-                }
-            }
+            Data.MergedMaterialSlotToSource = Move(SlotToSource);
 
             Data.Resources.clear();
             Data.MeshSlots.clear();
@@ -494,24 +547,6 @@ namespace Lumina
             return true;
         }
 
-        // Flush uses an atomic_wait that would stall a worker fiber, so this must land on the main thread.
-        void RunOnMainThread(const TFunction<void()>& Work)
-        {
-            if (Threading::IsMainThread())
-            {
-                Work();
-                return;
-            }
-
-            TPromise<void> Promise;
-            TFuture<void> Future = Promise.GetFuture();
-            MainThread::Enqueue([&Work, Promise = Move(Promise)]() mutable
-            {
-                Work();
-                Promise.SetValue();
-            });
-            Future.Wait();
-        }
     }
 
     namespace
@@ -922,6 +957,7 @@ namespace Lumina
         Options.bImportMeshes     = bImportMeshes;
         Options.bImportAnimations = bImportAnimations;
         Options.bImportSkeleton   = bImportSkeleton;
+        Options.bImportUnskinnedBones = bImportUnskinnedBones;
         Options.bFlipNormals      = bFlipNormals;
         Options.bFlipUVs          = bFlipUVs;
         Options.bFlipU            = bFlipU;
@@ -934,7 +970,7 @@ namespace Lumina
 
     bool CMeshImporter::ParseSource(const FImportRequest& Request, FString& OutError, FScopedSlowTask* Progress)
     {
-        // User transforms and heavy passes are deferred to BuildAssets, so a setting change never re-parses.
+        // User transforms and heavy passes are deferred to BuildAssets; only the skeleton's bone set re-parses.
         FMeshImportOptions PreviewOptions;
         PreviewOptions.bOptimize         = false;
         PreviewOptions.bMergeMeshes      = false;
@@ -942,6 +978,10 @@ namespace Lumina
         PreviewOptions.bFlipUVs          = false;
         PreviewOptions.Scale             = 1.0f;
         PreviewOptions.bSkipFinalization = true;
+        PreviewOptions.bImportUnskinnedBones = bImportUnskinnedBones;
+
+        ParsedRequest = Request;
+        bParsedWithUnskinnedBones = bImportUnskinnedBones;
 
         SourceData = FMeshImportData();
         return ParseMeshSource(Request, PreviewOptions, SourceData, OutError, Progress);
@@ -1085,7 +1125,7 @@ namespace Lumina
         FFixedString MaterialsDir = DestinationDir; MaterialsDir.append("Materials/");
 
         FUniquePathAllocator Paths;
-        auto BuildPath = [&](FStringView Suffix) -> FFixedString
+        auto DesiredPath = [&](FStringView Suffix) -> FFixedString
         {
             FFixedString Path = DestinationDir;
             Path.append(BaseName);
@@ -1094,7 +1134,11 @@ namespace Lumina
                 Path.append("_");
                 Path.append(Suffix.data(), Suffix.length());
             }
-            return Paths.Claim(Path);
+            return Path;
+        };
+        auto BuildPath = [&](FStringView Suffix) -> FFixedString
+        {
+            return Paths.Claim(DesiredPath(Suffix));
         };
 
         if (Progress)
@@ -1102,7 +1146,7 @@ namespace Lumina
             Progress->EnterProgressFrame(kCreateBudget, "Creating assets...");
         }
 
-        TVector<CObject*>& CreatedObjects = OutResult.CreatedObjects;
+        TVector<TObjectPtr<CObject>>& CreatedObjects = OutResult.CreatedObjects;
         CreatedObjects.reserve(SourceData.Skeletons.size() + SourceData.Resources.size()
                              + SourceData.Animations.size() + SourceData.Images.size());
 
@@ -1184,6 +1228,7 @@ namespace Lumina
                 if (MeshSkeleton != nullptr)
                 {
                     NewSkeletalMesh->Skeleton = MeshSkeleton;
+                    NewSkeletalMesh->SkeletonJointIndicesAddress = MeshSkeleton;
 
                     // Only ever on a skeleton this import owns; the target belongs to another asset.
                     if (MeshSkeleton == PrimarySkeleton.Get() && !PrimarySkeleton->PreviewMesh)
@@ -1219,12 +1264,20 @@ namespace Lumina
 
             AnimCompression::Build(*Clip);
 
-            const FFixedString AnimPath = bMultipleAnims ? BuildPath(Clip->Name.ToString()) : BuildPath("Animation");
+            const FString AnimSuffix = bMultipleAnims ? Clip->Name.ToString() : FString("Animation");
+            CSkeleton* AnimSkeleton = TargetSkeleton != nullptr ? TargetSkeleton.Get() : PrimarySkeleton.Get();
 
-            CAnimation* NewAnimation = CFactory::CreateNewOf<CAnimation>(AnimPath);
+            if (CAnimation* Existing = FindAnimationToOverwrite(DesiredPath(AnimSuffix)))
+            {
+                // Only an explicit target replaces the skeleton, never one this file just minted.
+                ReplaceAnimationInPlace(Existing, Move(Clip), TargetSkeleton.Get());
+                continue;
+            }
+
+            CAnimation* NewAnimation = CFactory::CreateNewOf<CAnimation>(BuildPath(AnimSuffix));
             NewAnimation->SetFlag(OF_NeedsPostLoad);
             NewAnimation->AnimationResource = Move(Clip);
-            NewAnimation->Skeleton          = TargetSkeleton != nullptr ? TargetSkeleton : PrimarySkeleton;
+            NewAnimation->Skeleton          = AnimSkeleton;
 
             CreatedObjects.push_back(NewAnimation);
         }
@@ -1260,7 +1313,7 @@ namespace Lumina
                     ? FStringView(Image.Key.c_str(), Image.Key.size())
                     : VFS::FileName(Image.ResolvedPath, true);
 
-                FFixedString PackagePath = Paths::Combine(TexturesDir, TextureAssetName(NameSource).c_str());
+                FFixedString PackagePath = Lumina::Paths::Combine(TexturesDir, TextureAssetName(NameSource).c_str());
 
                 const bool bAlreadyExists = (FindObject<CPackage>(PackagePath) != nullptr);
 
@@ -1332,7 +1385,6 @@ namespace Lumina
                 Progress->UpdateMessage("Generating materials...");
             }
 
-            RunOnMainThread([&]()
             {
                 const TVector<CMaterialInstance*> Instances = Import::Materials::GenerateMaterials(
                     TSpan<const FMeshImportMaterial>(SourceData.Materials.data(), SourceData.Materials.size()),
@@ -1411,7 +1463,7 @@ namespace Lumina
                     LOG_INFO("[Import] {}/{} surfaces have no material because the source assigned none.",
                              Unresolved, SurfacesTotal);
                 }
-            });
+            }
         }
         else if (bImportMeshes)
         {
@@ -1482,8 +1534,13 @@ namespace Lumina
         }
 
         const float SaveStep = kSaveBudget / (float)std::max<size_t>((size_t)1, CreatedObjects.size());
-        for (CObject* Object : CreatedObjects)
+        for (const TObjectPtr<CObject>& Created : CreatedObjects)
         {
+            CObject* Object = Created.Get();
+            if (Object == nullptr)
+            {
+                continue;
+            }
             CPackage* Package = Object->GetPackage();
             if (CPackage::SavePackage(Package, Package->GetPackagePath()))
             {
@@ -1497,6 +1554,9 @@ namespace Lumina
             {
                 LOG_ERROR("[Import] failed to save {}; asset will not be registered", Package->GetPackagePath());
             }
+
+            // Saved means the file now owns the name, and a failure should free it for the next attempt.
+            Import::PathReservations::Release(Package->GetPackagePath());
 
             if (Progress)
             {
@@ -1642,6 +1702,18 @@ namespace Lumina
 
     void CMeshImporter::DrawSourcePreview()
     {
+        // The skeleton and every mesh's bone indices come out of the parse, so this flag cannot apply later.
+        if (bImportUnskinnedBones != bParsedWithUnskinnedBones)
+        {
+            FString Error;
+            if (!ParseSource(ParsedRequest, Error, nullptr))
+            {
+                LOG_ERROR("[Import] Re-parse of '{}' failed, nothing will be imported: {}",
+                          ParsedRequest.SourcePath.c_str(), Error.c_str());
+            }
+            PrepareSettingsPreview();
+        }
+
         auto Section = [](auto&& Draw)
         {
             Draw();

@@ -7,7 +7,7 @@ namespace Lumina
 {
     class CStruct;
 
-    // Reflects a TScriptDelegate<T> member; stores the payload struct type, null for a no-payload delegate.
+    // Reflects a TScriptDelegate<Args...> member; the arguments are reflected properties over the arg pack.
     class FDelegateProperty : public FProperty
     {
     public:
@@ -16,9 +16,16 @@ namespace Lumina
         explicit FDelegateProperty(const FDelegatePropertyParams* Params)
             : FProperty(Params)
         {
-            PayloadStruct = Params->PayloadStructFunc ? Params->PayloadStructFunc() : nullptr;
             SetElementSize(sizeof(FScriptDelegate));
         }
+
+        // Each argument arrives as a SubField whose offset is into the broadcast arg pack.
+        void AddProperty(FProperty* Property) override { Args.push_back(Property); }
+
+        /** Arguments in declaration order; offsets are into the arg pack a broadcast fills. */
+        NODISCARD TSpan<FProperty* const> GetArgs() const { return TSpan<FProperty* const>(Args.data(), Args.size()); }
+
+        NODISCARD size_t GetNumArgs() const { return Args.size(); }
 
         // Bindings are transient; every instance compares equal, a copy starts unbound, nothing to stringify.
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
@@ -30,10 +37,8 @@ namespace Lumina
         void DestructValue(void* Value) const override  { static_cast<FScriptDelegate*>(Value)->~FScriptDelegate(); }
         bool OwnsStorage() const override { return true; }
 
-        CStruct* GetPayloadStruct() const { return PayloadStruct; }
-
     private:
 
-        CStruct* PayloadStruct = nullptr;
+        TVector<FProperty*> Args;
     };
 }

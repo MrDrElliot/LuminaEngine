@@ -66,7 +66,7 @@ namespace Lumina
 
             FSourceImage Image;
             Image.Key                = Key;
-            Image.ResolvedPath       = Paths::Combine(SourceDir, Key);
+            Image.ResolvedPath       = Lumina::Paths::Combine(SourceDir, Key);
             Image.IntendedColorSpace = Role;
 
             const int32 Index = (int32)OutData.Images.size();

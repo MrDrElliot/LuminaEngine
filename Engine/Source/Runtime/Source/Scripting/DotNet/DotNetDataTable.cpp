@@ -1,8 +1,9 @@
-#include "Platform/GenericPlatform.h"
+﻿#include "Platform/GenericPlatform.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ExportSignature.h"
 
 // Rows come back as raw pointers since the row type is only known at runtime; managed gates every read.
 
@@ -33,3 +34,9 @@ LUMINA_DOTNET_EXPORT(void*, DataTableHandle_GetRowMemory)(void* Handle)
     const SDataTableRowHandle* RowHandle = static_cast<const SDataTableRowHandle*>(Handle);
     return RowHandle ? const_cast<void*>(RowHandle->GetRowMemory()) : nullptr;
 }
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(DataTable_FindRow),
+    LUMINA_DOTNET_SIG(DataTable_GetRowAt),
+    LUMINA_DOTNET_SIG(DataTableHandle_GetRowMemory)
+);

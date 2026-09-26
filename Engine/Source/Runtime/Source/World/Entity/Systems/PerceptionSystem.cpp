@@ -13,7 +13,6 @@
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/AIStimuliSourceComponent.h"
-#include "Scripting/EntityScript.h"
 #include "World/Entity/Components/PerceptionComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/PerceptionEvent.h"
@@ -175,10 +174,7 @@ namespace Lumina
             }
             TScriptDelegate<SPerceptionEvent>& Delegate = bSensed ? Comp->OnTargetPerceived : Comp->OnTargetLost;
 
-            // A script override must fire whether or not anything bound the component's delegate.
-            ECS::FRegistry& Registry = Context.GetRegistry();
-            const bool bHasScripts = Registry.HasAll<SEntityScriptComponent>(Perceiver);
-            if (!Delegate.IsBound() && !bHasScripts)
+            if (!Delegate.IsBound())
             {
                 return;
             }
@@ -190,14 +186,7 @@ namespace Lumina
             Payload.Sense     = (EAISenseChannel)Target.ActiveSenses;
             Payload.Strength  = Target.LastStrength;
 
-            if (Delegate.IsBound())
-            {
-                Delegate.Broadcast(Payload);
-            }
-            if (bHasScripts)
-            {
-                EntityScripts::DispatchPerception(Registry, Perceiver, bSensed, Payload);
-            }
+            Delegate.Broadcast(Payload);
         }
 
         void DrawPerceptionDebug(const FSystemContext& Context, const SPerceptionComponent& Comp,

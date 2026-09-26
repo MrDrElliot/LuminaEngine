@@ -22,7 +22,7 @@ public static class NativeObjectMarshal
 
     // The same wrapper for a type only known at runtime, which is what a reflective call has. The generic
     // instantiation is cached, since resolving it per call would cost more than the call.
-    private static readonly global::System.Collections.Generic.Dictionary<Type, global::System.Reflection.MethodInfo> FromHandleByType = new();
+    private static readonly global::System.Collections.Generic.Dictionary<Type, Func<IntPtr, NativeObject?>> FromHandleByType = new();
 
     /// <summary>
     /// Drops the cached instantiations on hot reload. A script function's parameter can be a user type, and
@@ -44,19 +44,21 @@ public static class NativeObjectMarshal
             return null;
         }
 
-        global::System.Reflection.MethodInfo? Made;
+        Func<IntPtr, NativeObject?>? Make;
         lock (FromHandleByType)
         {
-            if (!FromHandleByType.TryGetValue(Wanted, out Made))
+            if (!FromHandleByType.TryGetValue(Wanted, out Make))
             {
-                Made = typeof(NativeObjectMarshal)
+                // A delegate rather than the MethodInfo, since invoking one cost an object[] and a box per call.
+                Make = (Func<IntPtr, NativeObject?>)typeof(NativeObjectMarshal)
                     .GetMethod(nameof(FromHandle))!
-                    .MakeGenericMethod(Wanted);
-                FromHandleByType[Wanted] = Made;
+                    .MakeGenericMethod(Wanted)
+                    .CreateDelegate(typeof(Func<IntPtr, NativeObject?>));
+                FromHandleByType[Wanted] = Make;
             }
         }
 
-        return Made.Invoke(null, new object[] { Object }) as NativeObject;
+        return Make(Object);
     }
 
     /// <summary>The native pointer behind a wrapper, or zero for null.</summary>

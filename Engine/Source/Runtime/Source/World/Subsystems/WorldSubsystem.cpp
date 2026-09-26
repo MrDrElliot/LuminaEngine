@@ -1,4 +1,4 @@
-#include "WorldSubsystem.h"
+﻿#include "WorldSubsystem.h"
 
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectArray.h"
@@ -90,7 +90,7 @@ namespace Lumina::WorldSubsystems
         // Back to front, so a subsystem created later can still reach an earlier one while it tears down.
         for (size_t Index = Subsystems.size(); Index > 0; --Index)
         {
-            CWorldSubsystem* Subsystem = Subsystems[Index - 1];
+            CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
             if (Subsystem == nullptr || Cast<CScriptClass>(Subsystem->GetClass()) == nullptr)
             {
                 continue;
@@ -117,7 +117,7 @@ namespace Lumina::WorldSubsystems
     {
         for (size_t Index = Subsystems.size(); Index > 0; --Index)
         {
-            if (CWorldSubsystem* Subsystem = Subsystems[Index - 1])
+            if (CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get())
             {
                 Subsystem->OnTeardown();
                 Subsystem->SetOwningWorld(nullptr);
@@ -139,7 +139,7 @@ namespace Lumina::WorldSubsystems
         {
             if (Subsystem != nullptr && Subsystem->GetClass()->IsChildOf(Class))
             {
-                return Subsystem;
+                return Subsystem.Get();
             }
         }
 

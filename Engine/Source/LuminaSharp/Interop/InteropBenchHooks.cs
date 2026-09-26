@@ -158,6 +158,26 @@ internal static unsafe partial class InteropBenchHooks
         return PerIterationNanos(Elapsed, Iterations);
     }
 
+    // A map whose key and value are plain values, so the marshalled branch has to fold away entirely.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static double Bench_BlittableMapLookup(IntPtr Storage, int Iterations)
+    {
+        var Opaque = new Lumina.FInteropOpaqueStruct(Storage);
+        Opaque.Scores.Set(1, 1.0f);
+
+        float Total = 0.0f;
+        long Start = Stopwatch.GetTimestamp();
+        for (int i = 0; i < Iterations; ++i)
+        {
+            Opaque.Scores.TryGetValue(1, out float Value);
+            Total += Value;
+        }
+        long Elapsed = Stopwatch.GetTimestamp() - Start;
+        Sink = (int)Total;
+        return PerIterationNanos(Elapsed, Iterations);
+    }
+
     // The same value through a reflected accessor, which is a real crossing even with the transition off.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

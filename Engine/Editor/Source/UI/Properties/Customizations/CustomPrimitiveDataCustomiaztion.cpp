@@ -20,7 +20,7 @@ namespace Lumina
         if (ImGui::Combo("##Type", &CurrentType, TypeNames, IM_ARRAYSIZE(TypeNames)))
         {
             Value.Type = (ECustomPrimitiveDataType)CurrentType;
-            Value.Data.UInt = 0;
+            Value.Data = ECustomPrimitiveDataUnion::FromUInt(0);
             bWasChanged = true;
         }
         ImGui::PopItemWidth();
@@ -32,62 +32,58 @@ namespace Lumina
         {
             case ECustomPrimitiveDataType::Float:
             {
-                float V = Value.Data.Float;
+                float V = Value.Data.AsFloat();
                 if (ImGui::DragFloat("##Value", &V, 0.01f))
                 {
-                    Value.Data.Float = V;
+                    Value.Data = ECustomPrimitiveDataUnion::FromFloat(V);
                     bWasChanged = true;
                 }
                 break;
             }
-    
+
             case ECustomPrimitiveDataType::Int:
             {
-                int32 V = Value.Data.Int;
+                int32 V = Value.Data.AsInt();
                 if (ImGui::DragInt("##Value", &V))
                 {
-                    Value.Data.Int = V;
+                    Value.Data = ECustomPrimitiveDataUnion::FromInt(V);
                     bWasChanged = true;
                 }
                 break;
             }
-    
+
             case ECustomPrimitiveDataType::UInt:
             {
-                int32 V = (int32)Value.Data.UInt;
+                int32 V = (int32)Value.Data.AsUInt();
                 if (ImGui::DragInt("##Value", &V, 1.0f, 0, INT_MAX))
                 {
-                    Value.Data.UInt = (uint32)Math::Max(0, V);
+                    Value.Data = ECustomPrimitiveDataUnion::FromUInt((uint32)Math::Max(0, V));
                     bWasChanged = true;
                 }
                 break;
             }
-    
+
             case ECustomPrimitiveDataType::Color:
             {
-                int32 R = Value.Data.Bytes.r;
-                int32 G = Value.Data.Bytes.g;
-                int32 B = Value.Data.Bytes.b;
-                int32 A = Value.Data.Bytes.a;
+                const FU8Vector4 Bytes = Value.Data.AsBytes();
 
-                float Col[4] = { R / 255.0f, G / 255.0f, B / 255.0f, A / 255.0f };
+                float Col[4] = { Bytes.r / 255.0f, Bytes.g / 255.0f, Bytes.b / 255.0f, Bytes.a / 255.0f };
                 if (ImGui::ColorEdit4("##Color", Col, ImGuiColorEditFlags_Uint8 | ImGuiColorEditFlags_AlphaBar))
                 {
-                    Value.Data.Bytes.r = (uint8)(Col[0] * 255);
-                    Value.Data.Bytes.g = (uint8)(Col[1] * 255);
-                    Value.Data.Bytes.b = (uint8)(Col[2] * 255);
-                    Value.Data.Bytes.a = (uint8)(Col[3] * 255);
+                    Value.Data = ECustomPrimitiveDataUnion::FromColor(
+                        FU8Vector4((uint8)(Col[0] * 255), (uint8)(Col[1] * 255),
+                                   (uint8)(Col[2] * 255), (uint8)(Col[3] * 255)));
                     bWasChanged = true;
                 }
                 break;
             }
-    
+
             case ECustomPrimitiveDataType::Bool:
             {
-                bool V = Value.Data.UInt != 0;
+                bool V = Value.Data.AsBool();
                 if (ImGui::Checkbox("##Value", &V))
                 {
-                    Value.Data.UInt = V ? 1u : 0u;
+                    Value.Data = ECustomPrimitiveDataUnion::FromBool(V);
                     bWasChanged = true;
                 }
                 break;

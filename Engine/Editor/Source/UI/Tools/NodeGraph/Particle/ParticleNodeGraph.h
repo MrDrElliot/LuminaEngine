@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "ParticleNodeGraph.generated.h"
@@ -26,7 +26,7 @@ namespace Lumina
         void ValidateGraph() override;
 
         void SetParticleSystem(CParticleSystem* InSystem) { ParticleSystem = InSystem; }
-        CParticleSystem* GetParticleSystem() const { return ParticleSystem; }
+        CParticleSystem* GetParticleSystem() const { return ParticleSystem.Get(); }
 
     private:
 

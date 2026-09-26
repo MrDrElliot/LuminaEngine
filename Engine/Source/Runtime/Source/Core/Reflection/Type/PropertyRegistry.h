@@ -45,6 +45,15 @@ namespace Lumina
          *  underlying integer, an optional's payload. */
         uint8 NumInnerParams = 0;
 
+        /** Set by a kind whose inner count varies per property, such as a delegate's argument list. */
+        uint8 (*GetNumInnerParams)(const FPropertyParams* Params) = nullptr;
+
+        /** Inner params to read after this one, asking the kind when the count is not fixed. */
+        NODISCARD uint8 CountInnerParams(const FPropertyParams* Params) const
+        {
+            return GetNumInnerParams != nullptr ? GetNumInnerParams(Params) : NumInnerParams;
+        }
+
         /** An arithmetic kind, which is what a script schema can lay out from its footprint alone. */
         bool bArithmetic = false;
 

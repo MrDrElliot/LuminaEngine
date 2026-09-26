@@ -354,7 +354,7 @@ namespace Lumina::Reflection
             return Root;
         }
 
-        // Drives BOTH the managed member and the native thunk, so classify once and emit from one result.
+        // Narrowed from EPropertyTypeFlags by Classify, then drives the managed member and the native thunk together.
         enum class EBind { None, Number, Bool, Enum, Str, Object, SoftObject, ClassRef, SubStructRef, StructValue, StructOpaque, InstancedStruct, Array, Map, Optional, Span, Delegate };
 
         struct FBinding
@@ -512,17 +512,20 @@ namespace Lumina::Reflection
             {
                 B.Kind = EBind::Delegate;
                 B.bReadOnly = true;
-                if (Del->bHasPayload)
+
+                // Arguments bind through the frame marshaller, so each only has to classify as an element.
+                for (const std::string& ArgType : Del->ArgTypeNames)
                 {
-                    const FReflectedStruct* S = Db.GetReflectedType<FReflectedStruct>(FStringHash(Prop.TypeName));
-                    int Size = 0;
-                    int Align = 0;
-                    if (S == nullptr || !(HasMetadata(*S, "CSharpValueMirror") || IsBlittableValueStruct(*S, Db, Size, Align)))
+                    auto Arg = std::make_unique<FBinding>();
+                    if (!ClassifyElement(ArgType, OwnerNs, Db, *Arg))
                     {
-                        return false; // skip non-blittable delegate payloads
+                        return false;
                     }
-                    B.CSharp = GlobalCSharp(Prop.TypeName);
-                    B.TargetCpp = Prop.TypeName;
+                    if (!B.CSharp.empty())
+                    {
+                        B.CSharp += ", ";
+                    }
+                    B.CSharp += Arg->CSharp;
                 }
                 return true;
             }
@@ -531,9 +534,9 @@ namespace Lumina::Reflection
             {
                 auto Key = std::make_unique<FBinding>();
                 auto Val = std::make_unique<FBinding>();
-                // THashMap addresses both sides as raw memory, so a marshalled key or value has no binding here.
-                if (!ClassifyElement(Map->KeyTypeName, OwnerNs, Db, *Key) || !IsBlittableElementKind(Key->Kind)
-                 || !ClassifyElement(Map->ValueTypeName, OwnerNs, Db, *Val) || !IsBlittableElementKind(Val->Kind))
+                // The view routes each slot through the element marshaller, as the vector view already did.
+                if (!ClassifyElement(Map->KeyTypeName, OwnerNs, Db, *Key)
+                 || !ClassifyElement(Map->ValueTypeName, OwnerNs, Db, *Val))
                 {
                     return false;
                 }
@@ -547,9 +550,9 @@ namespace Lumina::Reflection
             if (auto* Opt = dynamic_cast<FReflectedOptionalProperty*>(&Prop))
             {
                 auto Elem = std::make_unique<FBinding>();
-                if (!ClassifyElement(Opt->ElementTypeName, OwnerNs, Db, *Elem) || !IsBlittableElementKind(Elem->Kind))
+                // A payload that is not a plain value is viewed rather than copied, so it binds too.
+                if (!ClassifyElement(Opt->ElementTypeName, OwnerNs, Db, *Elem))
                 {
-                    // A payload that is not a plain value has no Nullable spelling; skip rather than guess.
                     return false;
                 }
                 B.Kind = EBind::Optional;
@@ -960,6 +963,16 @@ namespace Lumina::Reflection
                 }
                 case EBind::Optional:
                 {
+                    // A payload a Nullable cannot spell is viewed through the slot and its property instead.
+                    if (B.Elem != nullptr && !IsBlittableElementKind(B.Elem->Kind))
+                    {
+                        Writer.Linef("public global::Lumina.TOptional<%s> %s =>", CS, PropName.c_str());
+                        Writer.Linef("    new global::Lumina.TOptional<%s>((nint)Handle + %s, %s);", CS,
+                            OffName.c_str(), PropFieldName.c_str());
+                        EmitOffsetField(Writer, OffName, TypeName, Member);
+                        EmitTokenField(Writer, PropFieldName, TypeName, Member);
+                        break;
+                    }
                     // Nullable mirrors TOptional exactly, and the payload is blittable so it reads in place.
                     Writer.Linef("public %s? %s", CS, PropName.c_str());
                     Writer.BeginBlock();
@@ -1068,8 +1081,10 @@ namespace Lumina::Reflection
                     }
                     else
                     {
-                        Writer.Linef("public global::LuminaSharp.ScriptDelegate<%s> %s => new global::LuminaSharp.ScriptDelegate<%s>((void*)((nint)Handle + %s));",
-                            CS, PropName.c_str(), CS, OffName.c_str());
+                        // The property token is what the argument slots are resolved from, once per signature.
+                        Writer.Linef("public global::LuminaSharp.ScriptDelegate<%s> %s => new global::LuminaSharp.ScriptDelegate<%s>((void*)((nint)Handle + %s), %s);",
+                            CS, PropName.c_str(), CS, OffName.c_str(), PropFieldName.c_str());
+                        EmitTokenField(Writer, PropFieldName, TypeName, Member);
                     }
                     EmitOffsetField(Writer, OffName, TypeName, Member);
                     break;
@@ -1161,6 +1176,8 @@ namespace Lumina::Reflection
             // A mutable TVector<T>& the callee fills, surfaced as the C# return over the two-pass buffer ABI.
             bool          bVectorOut = false;
             std::string VectorElemCpp;
+            // Set only for an object element, where the caller buffer is a raw pointer array.
+            std::string VectorElemBufferCpp;
             // TObjectPtr<T> by value, which marshals as the handle but has to be re-wrapped at the call.
             bool          bObjectPtrValue = false;
             // The C++ parameter's own name, so the C# signature reads like the declaration it came from.
@@ -1316,9 +1333,12 @@ namespace Lumina::Reflection
         }
 
         // The C# and fully-qualified C++ spellings for an element the two-pass buffer can carry by value.
+        // OutBufferCpp is set only for an object element, whose caller buffer holds raw pointers rather
+        // than the refcounted TObjectPtr the callee fills.
         bool VectorElementCSharp(const FReflectionDatabase& Db, const std::string& Elem,
-            std::string& OutCSharp, std::string& OutCpp)
+            std::string& OutCSharp, std::string& OutCpp, std::string& OutBufferCpp)
         {
+            OutBufferCpp.clear();
             if (Elem.empty())
             {
                 return false;
@@ -1332,6 +1352,21 @@ namespace Lumina::Reflection
             if (NumericCSharp(Elem, OutCSharp))
             {
                 OutCpp = Elem;
+                return true;
+            }
+            // A reflected container of objects holds TObjectPtr, since LRT1001 refuses a raw pointer there.
+            if (Elem.rfind("TObjectPtr<", 0) == 0 || Elem.rfind("Lumina::TObjectPtr<", 0) == 0)
+            {
+                const std::string Target = ResolveTargetType(Db, FirstTemplateArgument(Elem));
+                const bool bRoot = IsObjectRootType(Target);
+                if (!bRoot && !IsOpaqueWrapperType(Db, Target))
+                {
+                    return false;
+                }
+                const std::string Qualified = bRoot ? std::string("Lumina::CObject") : Target;
+                OutCSharp = bRoot ? "global::LuminaSharp.NativeObject" : GlobalCSharp(Target);
+                OutCpp = "Lumina::TObjectPtr<" + Qualified + ">";
+                OutBufferCpp = Qualified + "*";
                 return true;
             }
 
@@ -1391,13 +1426,15 @@ namespace Lumina::Reflection
                 const std::string Elem = FirstTemplateArgument(F.RawFieldType);
                 std::string ElemCS;
                 std::string ElemCpp;
-                if (!VectorElementCSharp(Db, Elem, ElemCS, ElemCpp))
+                std::string ElemBufferCpp;
+                if (!VectorElementCSharp(Db, Elem, ElemCS, ElemCpp, ElemBufferCpp))
                 {
                     return false;
                 }
                 B.Kind = EBind::Span;
                 B.bVectorOut = true;
                 B.VectorElemCpp = ElemCpp;
+                B.VectorElemBufferCpp = ElemBufferCpp;
                 B.CSharp = ElemCS;
                 return true;
             }
@@ -1474,7 +1511,12 @@ namespace Lumina::Reflection
                     {
                         B.Kind = EBind::StructValue; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
                     }
-                    return false; // opaque struct by value isn't supported as a function param/return yet
+                    // An opaque struct binds for args only; a return has no storage for the wrapper to view.
+                    if (bIsArg && IsOpaqueWrapperType(Db, F.TypeName))
+                    {
+                        B.Kind = EBind::StructOpaque; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
+                    }
+                    return false;
                 }
                 case EPropertyTypeFlags::Name:
                 case EPropertyTypeFlags::String:
@@ -1521,8 +1563,23 @@ namespace Lumina::Reflection
                     B.CSharp = "global::System.ReadOnlySpan<" + ElemCS + ">";
                     return true;
                 }
+                case EPropertyTypeFlags::Class:
+                {
+                    // TSubclassOf is one CClass* at offset zero, so it crosses as that pointer.
+                    const std::string Target = ResolveTargetType(Db, FirstTemplateArgument(F.RawFieldType));
+                    const bool bRoot = IsObjectRootType(Target);
+                    if (!bRoot && !IsOpaqueWrapperType(Db, Target))
+                    {
+                        return false;
+                    }
+                    B.Kind = EBind::ClassRef;
+                    B.TargetCpp = bRoot ? "Lumina::CObject" : Target;
+                    B.CSharp = "global::Lumina.TSubclassOf<"
+                        + (bRoot ? std::string("global::LuminaSharp.NativeObject") : GlobalCSharp(Target)) + ">";
+                    return true;
+                }
                 default:
-                    return false; // SoftObject, Optional, Class, SubStruct and Map are not in functions yet
+                    return false; // SoftObject, Optional, SubStruct and Map are not in functions yet
             }
         }
 
@@ -1551,7 +1608,9 @@ namespace Lumina::Reflection
 
             std::string ElemCS;
             std::string ElemCpp;
-            if (!VectorElementCSharp(Db, StripQualifiers(Arg.RawFieldType), ElemCS, ElemCpp))
+            std::string ElemBufferCpp;
+            if (!VectorElementCSharp(Db, StripQualifiers(Arg.RawFieldType), ElemCS, ElemCpp, ElemBufferCpp)
+                || !ElemBufferCpp.empty())
             {
                 return false;
             }
@@ -1686,6 +1745,7 @@ namespace Lumina::Reflection
             std::string Params;
             std::string CallArgs;
             std::string VectorOutElem;
+            std::string VectorOutBuffer;
             for (size_t i = 0; i < FB.Args.size(); ++i)
             {
                 const FArg& A = FB.Args[i];
@@ -1699,6 +1759,7 @@ namespace Lumina::Reflection
                 if (A.bVectorOut)
                 {
                     VectorOutElem = A.VectorElemCpp;
+                    VectorOutBuffer = A.VectorElemBufferCpp;
                     CallArgs += "__vec";
                     continue;
                 }
@@ -1740,6 +1801,16 @@ namespace Lumina::Reflection
                     case EBind::Enum:        Params += "int " + An;                 CallArgs += "(" + A.TargetCpp + ")" + An;  break;
                     case EBind::StructValue: Params += A.TargetCpp + " " + An;      CallArgs += An;                            break;
                     case EBind::Object:      Params += "void* " + An;               CallArgs += "static_cast<" + A.TargetCpp + "*>(" + An + ")"; break;
+                    // The wrapper hands over the address it views, and a null one stands in as a default value.
+                    case EBind::StructOpaque:
+                        Params += "void* " + An;
+                        CallArgs += "(" + An + " ? *static_cast<" + A.TargetCpp + "*>(" + An + ") : "
+                            + A.TargetCpp + "{})";
+                        break;
+                    case EBind::ClassRef:
+                        Params += "void* " + An;
+                        CallArgs += "Lumina::TSubclassOf<" + A.TargetCpp + ">(static_cast<Lumina::CClass*>(" + An + "))";
+                        break;
                     default: break;
                     }
                 }
@@ -1775,6 +1846,10 @@ namespace Lumina::Reflection
                             ? ("return (void*)(" + CallExpr + ").Get();")
                             : ("return (void*)(" + CallExpr + ");");
                         break;
+                    case EBind::ClassRef:
+                        RetCpp = "void*";
+                        Body = "return (void*)(" + CallExpr + ").Get();";
+                        break;
                     case EBind::Str:
                         // Always returns the full byte length, so C# can size an exact buffer on its first call.
                         bStringReturn = true;
@@ -1789,13 +1864,16 @@ namespace Lumina::Reflection
 
             if (!VectorOutElem.empty())
             {
+                const bool bObjectElem = !VectorOutBuffer.empty();
+                const std::string Read = bObjectElem ? "__vec[(size_t)__i].Get()" : "__vec[(size_t)__i]";
                 RetCpp = "int";
                 Body = "Lumina::TVector<" + VectorOutElem + "> __vec; " + CallExpr + "; "
                      + "const int __n = (int)__vec.size(); "
                      + "if (Buffer && Capacity > 0) { const int __c = __n < Capacity ? __n : Capacity; "
-                     + "for (int __i = 0; __i < __c; ++__i) { Buffer[__i] = __vec[(size_t)__i]; } } "
+                     + "for (int __i = 0; __i < __c; ++__i) { Buffer[__i] = " + Read + "; } } "
                      + "return __n;";
-                Params += (Params.empty() ? std::string() : std::string(", ")) + VectorOutElem + "* Buffer, int Capacity";
+                Params += (Params.empty() ? std::string() : std::string(", "))
+                     + (bObjectElem ? VectorOutBuffer : VectorOutElem) + "* Buffer, int Capacity";
             }
             else if (bStringReturn)
             {
@@ -1886,6 +1964,16 @@ namespace Lumina::Reflection
         {
             if (!ClassifyFunction(Fn, Type, Db, Out)) { return false; }
             if (!Out.bVoid && !ScriptEventArgSupported(Out.Ret)) { return false; }
+            for (FArg& A : Out.Args)
+            {
+                if (A.Kind == EBind::Str && A.bIsName)
+                {
+                    A.Kind      = EBind::StructValue; 
+                    A.CSharp    = "global::Lumina.FName"; 
+                    A.TargetCpp = "Lumina::FName"; 
+                    A.bIsName   = false;
+                }
+            }
             for (const FArg& A : Out.Args) { if (!ScriptEventArgSupported(A)) { return false; } }
             return true;
         }
@@ -1958,6 +2046,11 @@ namespace Lumina::Reflection
         {
             if (A.bEntity) { return "(uint32)" + N; }
             switch (A.Kind) { case EBind::Bool: return "(unsigned char)(" + N + " ? 1 : 0)"; case EBind::Enum: return "(int)" + N; case EBind::Object: return "(void*)" + N; default: return N; }
+        }
+        // A parms field for an object is a TObjectPtr, where the shim's own parameter is already a raw pointer.
+        std::string SeParmsField(const FArg& A, const std::string& N)
+        {
+            return A.Kind == EBind::Object ? N + ".Get()" : N;
         }
         std::string SeRetCpp(const FFnBinding& FB)
         {
@@ -2177,7 +2270,8 @@ namespace Lumina::Reflection
                 std::string AbiArgs;
                 for (size_t i = 0; i < FB.Args.size(); ++i)
                 {
-                    AbiArgs += ", " + SeArgCppToAbi(FB.Args[i], "__p." + E.Fn->Arguments[i].Name);
+                    AbiArgs += ", " + SeArgCppToAbi(FB.Args[i],
+                        SeParmsField(FB.Args[i], "__p." + E.Fn->Arguments[i].Name));
                 }
                 const std::string Call = "__ScriptCall_" + Friendly + "_" + Name + "(__h" + AbiArgs + ")";
 
@@ -2585,6 +2679,12 @@ namespace Lumina::Reflection
         Writer.Linef("public %s(System.IntPtr handle) : base(handle) { }", Class.DisplayName.c_str());
         // The subclass is Activator-created first, then bound, chaining to the base parameterless ctor.
         Writer.Linef("protected %s() : base() { }", Class.DisplayName.c_str());
+        // Hides the base's, so the name resolves to the class it is written on rather than an inherited one.
+        const bool bHidesBaseStaticClass = Base != "global::LuminaSharp.NativeObject";
+        Writer.Linef("public %sstatic global::Lumina.TSubclassOf<%s> StaticClass()"
+            " => global::LuminaSharp.NativeClass<%s>.Of;",
+            bHidesBaseStaticClass ? "new " : "",
+            GlobalCSharp(Class.QualifiedName).c_str(), GlobalCSharp(Class.QualifiedName).c_str());
         if (bScriptable)
         {
             const std::string Module = ModuleOf(Class);

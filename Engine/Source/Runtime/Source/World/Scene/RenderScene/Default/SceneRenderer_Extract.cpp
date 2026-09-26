@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
 
 namespace Lumina
@@ -985,12 +985,12 @@ namespace Lumina
         FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
 
         uint32 Refreshed = ResolveMeshPool(Registry.GetStorage<SStaticMeshComponent>(), EInstanceFlags::None, Scratch,
-            [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh; },
+            [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh.Get(); },
             Tracker, EPrimitiveSource::StaticMesh);
 
         // Skeletal assets always carry FMeshletSkinnedVertex, so Skinned is unconditional here.
         Refreshed += ResolveMeshPool(Registry.GetStorage<SSkeletalMeshComponent>(), EInstanceFlags::Skinned, Scratch,
-            [](const SSkeletalMeshComponent& C) -> CMesh* { return C.SkeletalMesh; },
+            [](const SSkeletalMeshComponent& C) -> CMesh* { return C.SkeletalMesh.Get(); },
             Tracker, EPrimitiveSource::SkeletalMesh);
 
         // Foliage types carry no material overrides.
@@ -3850,7 +3850,7 @@ namespace Lumina
                 return;
             }
 
-            CMaterialInterface* MaterialInterface = Terrain.Material;
+            CMaterialInterface* MaterialInterface = Terrain.Material.Get();
             CMaterial* Material = MaterialInterface != nullptr ? MaterialInterface->GetMaterial() : nullptr;
             if (Material == nullptr || Material->GrassOutputs.empty())
             {
@@ -3862,7 +3862,7 @@ namespace Lumina
 
             for (const FGrassOutput& Output : Material->GrassOutputs)
             {
-                const CGrassType* Type = Output.GrassType;
+                const CGrassType* Type = Output.GrassType.Get();
                 if (Type == nullptr || Type->Mesh == nullptr)
                 {
                     continue;
@@ -3881,7 +3881,7 @@ namespace Lumina
                 }
 
                 FDefaultSceneRenderer::FFrameData::FGrassSpeciesExtract Species;
-                Species.Mesh       = Type->Mesh;
+                Species.Mesh       = Type->Mesh.Get();
                 Species.LayerIndex = Output.LayerIndex;
 
                 // Density is instances per square metre, so the candidate grid spacing is its inverse root.

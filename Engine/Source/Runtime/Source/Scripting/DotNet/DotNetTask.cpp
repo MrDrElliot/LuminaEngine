@@ -1,4 +1,5 @@
-#include "DotNetExport.h"
+﻿#include "DotNetExport.h"
+#include "ExportSignature.h"
 #include "Platform/GenericPlatform.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/TaskTypes.h"
@@ -27,3 +28,7 @@ LUMINA_DOTNET_EXPORT(void, Task_ParallelFor)(uint32 Num, uint32 MinRange, void* 
         T(Ctx, R.Start, R.End, R.Thread);
     }, MinRange, static_cast<ETaskPriority>(Priority));
 }
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(Task_ParallelFor)
+);

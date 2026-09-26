@@ -99,9 +99,14 @@ public static unsafe partial class Native
 
     // The payload property, whose width the managed side copies through.
     [NativeCall] public static partial IntPtr PropOptionalInner(IntPtr Prop);
-    [NativeCall] public static partial int PropOptionalHasValue(IntPtr Container, IntPtr Prop);
     [NativeCall] public static partial void PropOptionalSetValue(IntPtr Container, IntPtr Prop, IntPtr Value);
     [NativeCall] public static partial void PropOptionalReset(IntPtr Container, IntPtr Prop);
+
+    [NativeCall] public static partial IntPtr OptionalValueAt(IntPtr Member, IntPtr Prop);
+
+    [NativeCall] public static partial void OptionalSetValueAt(IntPtr Member, IntPtr Prop, IntPtr Value);
+
+    [NativeCall] public static partial void OptionalResetAt(IntPtr Member, IntPtr Prop);
 
     // Component op-table access. The token returned by FindComponentOps is resolved once per type and
     // reused; the get/has/emplace/remove calls take it plus the world + entity.
@@ -122,19 +127,6 @@ public static unsafe partial class Native
     [NativeCall] public static partial IntPtr RegistryGetSignalDelegate(IntPtr Listener);
     [NativeCall] public static partial void RegistryDisconnect(ulong World, IntPtr Ops, int Kind, IntPtr Handle);
     [NativeCall] public static partial void RegistryPatch(ulong World, uint Entity, IntPtr Ops);
-
-
-    // Appends a script of the named class to an entity and binds it; returns the new instance's handle.
-    [NativeCall] public static partial IntPtr AddEntityScript(ulong World, uint Entity, string ClassName);
-
-    // Lookup over the native CEntityScript component. Class-keyed, so these find a C++ script too. The
-    // FindEntityScripts buffer may be null/0 to just ask for the count (the return value is the true total
-    // either way, so an under-sized buffer is retried rather than silently truncating).
-    [NativeCall] public static partial IntPtr FindEntityScript(ulong World, uint Entity, string ClassName);
-    [NativeCall] public static partial int FindEntityScripts(ulong World, uint Entity, string ClassName, void** OutScripts, int Capacity);
-
-    // Removes the slot holding the given instance handle, destroying the managed instance.
-    [NativeCall] public static partial void RemoveEntityScript(ulong World, uint Entity, IntPtr Instance);
 
     // runtime view iteration for the C# View<...>. Native gathers a CHUNK of entities + parallel
     // component pointers per call (one crossing per chunk). Hand-written delegate* binds: the chunk
@@ -227,6 +219,8 @@ public static unsafe partial class Native
     // half of an object container element: a raw pointer store would skip the refcount. See ElementMarshal (EElementKind.ObjectRef).
     [NativeCall] public static partial void SetObjectPtr(IntPtr Slot, IntPtr Object);
 
+    [NativeCall] public static partial IntPtr GetObjectPtr(IntPtr Slot);
+
     // FName interning. Address-based, not property-based, so the same pair serves a member and an element of
     // a TVector<FName>. FName itself is POD, so nothing else about it crosses -- reads and writes of the
     // value are plain in-place memory access, like any other blittable mirror.
@@ -235,4 +229,6 @@ public static unsafe partial class Native
 
     [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, IntPtr Thunk, IntPtr Context);
     [NativeCall] public static partial void DelegateUnbind(IntPtr Delegate, ulong Handle);
+    [NativeCall] public static partial int DelegateArgCount(IntPtr DelegateProperty);
+    [NativeCall] public static partial IntPtr DelegateArgProperty(IntPtr DelegateProperty, int Index);
 }

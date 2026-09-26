@@ -15,7 +15,7 @@ namespace Lumina
 
         if ((size_t)EmitterIndex < MaterialOverrides.size())
         {
-            if (CMaterialInterface* Override = MaterialOverrides[(size_t)EmitterIndex])
+            if (CMaterialInterface* Override = MaterialOverrides[(size_t)EmitterIndex].Get())
             {
                 return Override;
             }

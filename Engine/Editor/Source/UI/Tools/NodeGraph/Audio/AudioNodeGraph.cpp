@@ -1,4 +1,4 @@
-#include "EditorPCH.h"
+﻿#include "EditorPCH.h"
 #include "AudioNodeGraph.h"
 
 #include "AudioGraphNode.h"
@@ -88,10 +88,12 @@ namespace Lumina
     {
         Connections.clear();
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            CEdGraphNode* Node = NodeRef.Get();
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
                     Connections.push_back(InputPin->PinID);

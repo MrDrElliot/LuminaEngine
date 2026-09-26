@@ -1,4 +1,5 @@
 ﻿#include "DotNetExport.h"
+#include "ExportSignature.h"
 #include "Memory/Construct.h"
 #include "World/ECS/Registry.h"
 #include "Containers/Vector.h"
@@ -153,3 +154,10 @@ LUMINA_DOTNET_EXPORT(uint64, SystemContext_GetWorld)(const FSystemContext* Ctx)
     CWorld* W = Ctx->GetRegistry().Ctx().Get<CWorld*>();
     return reinterpret_cast<uint64>(W);
 }
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(ViewBegin),
+    LUMINA_DOTNET_SIG(ViewNextChunk),
+    LUMINA_DOTNET_SIG(ViewEnd),
+    LUMINA_DOTNET_SIG(SystemContext_GetWorld)
+);

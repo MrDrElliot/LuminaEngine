@@ -6,6 +6,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
 {
@@ -52,7 +53,7 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
 
         FFixedString PathString(ResolvedPath.c_str(), ResolvedPath.size());
-        ImGui::InputText("##AssetRefText", PathString.data(), PathString.max_size(), ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_ReadOnly);
+        ImGuiX::InputText("##AssetRefText", PathString, ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_ReadOnly);
 
         // Drop a file of an allowed kind from the content browser.
         if (ImGui::BeginDragDropTarget())

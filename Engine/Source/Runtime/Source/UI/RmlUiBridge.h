@@ -8,6 +8,7 @@
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
 #include "Renderer/RHI.h"
+#include "UI/UITypes.h"
 
 namespace Rml
 {
@@ -38,6 +39,9 @@ namespace Lumina::RmlUi
 
     RUNTIME_API bool            Initialize();
     RUNTIME_API void            Shutdown();
+
+    // Registers a font asset or .ttf under Family, for documents to select by name. Call after Initialize.
+    RUNTIME_API bool            LoadFontFace(FStringView Path, FStringView Family, bool bBold = false, bool bItalic = false);
 
     // Per-world context lifecycle. CWorld owns the returned wrapper; CreateWorldUI
     // builds the Rml::Context, DestroyWorldUI removes it. No external bookkeeping.
@@ -91,6 +95,12 @@ namespace Lumina::RmlUi
 
     // Lay UI out at this size instead of the RT image size; {0,0} reverts. Used by the editor viewport.
     RUNTIME_API void            SetWorldDisplaySize(CWorld* World, const FUIntVector2& Size);
+
+    // The size the world's context currently lays out in, which is what a UI pixel is measured against.
+    RUNTIME_API FUIntVector2    GetWorldLayoutSize(CWorld* World);
+
+    // True while the cursor sits on an interface element rather than the empty page behind it.
+    RUNTIME_API bool            IsCursorOverWorldUI(CWorld* World);
 
     // Replace a world context's documents with one parsed from in-memory RML; SourceUrl resolves relative includes.
     RUNTIME_API bool            SetWorldInlineDocument(CWorld* World, FStringView Body, FStringView SourceUrl);
@@ -213,10 +223,6 @@ namespace Lumina::RmlUi
     // The listener's FScriptDelegateBase, which script binds to and whose destructor releases those binds.
     RUNTIME_API void* GetElementEventListenerDelegate(void* Listener);
     
-    // Scalar wire type for a bound variable. Mirrors LuminaSharp's EUIVarType. Numbers cross as double and
-    // are coerced to the registered type in the cache (so {{ Health }} formats as int, not "100.000000").
-    enum class EUIVarType : int32 { Bool = 0, Int = 1, Float = 2, Double = 3, String = 4 };
-
     // Native -> managed writeback for two-way bound variables. For String, Number is 0 and (Str,StrLen) is
     // the UTF-8 value (valid only for the call); otherwise Str is null and Number carries the value.
     using FManagedDataSetThunk   = void (*)(void* Context, int32 Field, int32 Type, double Number, const char* Str, int32 StrLen);

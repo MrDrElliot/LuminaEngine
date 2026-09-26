@@ -1,4 +1,4 @@
-#include "MaterialFunctionEditorTool.h"
+﻿#include "MaterialFunctionEditorTool.h"
 
 #include "imgui.h"
 #include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
@@ -57,7 +57,7 @@ namespace Lumina
                 SelectedNode = Node;
                 if (SelectedNode == nullptr)
                 {
-                    GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                    GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
                 }
                 else
                 {

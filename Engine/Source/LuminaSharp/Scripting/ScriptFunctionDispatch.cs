@@ -44,13 +44,14 @@ public static unsafe class ScriptFunctionDispatch
     private readonly struct FBound
     {
         public FBound(MethodInfo Method, FrameMarshal.FSlot[] Parameters, bool[]? WriteBack,
-            FrameMarshal.FSlot Return, bool bHasReturn, nint Invoker, int* Offsets)
+            FrameMarshal.FSlot Return, bool bHasReturn, bool bAsync, nint Invoker, int* Offsets)
         {
             this.Method = Method;
             this.Parameters = Parameters;
             this.WriteBack = WriteBack;
             this.Return = Return;
             this.bHasReturn = bHasReturn;
+            this.bAsync = bAsync;
             this.Invoker = Invoker;
             this.Offsets = Offsets;
         }
@@ -62,6 +63,7 @@ public static unsafe class ScriptFunctionDispatch
         public readonly bool[]?               WriteBack;
         public readonly FrameMarshal.FSlot    Return;
         public readonly bool                  bHasReturn;
+        public readonly bool                  bAsync;
 
         // A managed function pointer to the generated entry point, zero when the generator declined.
         public readonly nint                  Invoker;
@@ -116,6 +118,10 @@ public static unsafe class ScriptFunctionDispatch
             }
 
             object? Result = Bound.Method.Invoke(Target, Arguments);
+            if (Bound.bAsync)
+            {
+                Result = ScriptAsync.Track(Result);
+            }
 
             // Invoke assigns an out or ref argument back into the array, which the caller reads off the frame.
             if (Bound.WriteBack != null)
@@ -187,6 +193,7 @@ public static unsafe class ScriptFunctionDispatch
             return false;
         }
 
+        bool bAsync = ScriptAsync.IsFireAndForget(Method.ReturnType);
         bool bMethodReturns = Method.ReturnType != typeof(void);
         if (bHasReturn != bMethodReturns)
         {
@@ -217,8 +224,11 @@ public static unsafe class ScriptFunctionDispatch
             }
         }
 
+        // An async function's slot holds the token it is tracked under, not the Task it declared.
+        Type ReturnDeclared = bAsync ? typeof(ulong) : Method.ReturnType;
+
         FrameMarshal.FSlot Return = default;
-        if (bHasReturn && !FrameMarshal.TryBind(ReturnParam, Method.ReturnType,
+        if (bHasReturn && !FrameMarshal.TryBind(ReturnParam, ReturnDeclared,
                 $"Script function '{Name}' on {Type.Name}, return value", out Return))
         {
             BoundByFunction[Key] = default;
@@ -256,7 +266,7 @@ public static unsafe class ScriptFunctionDispatch
             Native.FunctionPublishInvoker(Function, Invoker, (IntPtr)Offsets);
         }
 
-        Bound = new FBound(Method, Parameters, WriteBack, Return, bHasReturn, Invoker, Offsets);
+        Bound = new FBound(Method, Parameters, WriteBack, Return, bHasReturn, bAsync, Invoker, Offsets);
         BoundByFunction[Key] = Bound;
         Line = ref Cache[LineOf(Function)];
         Line.Function = Function;

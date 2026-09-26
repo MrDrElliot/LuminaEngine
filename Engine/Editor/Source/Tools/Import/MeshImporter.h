@@ -13,6 +13,8 @@ namespace Lumina
     class CSkeleton;
     class CMaterialInstance;
     class CPrefab;
+    class CAnimation;
+    struct FAnimationResource;
 
     /** How a source file's light intensities are interpreted when they become light components. */
     REFLECT()
@@ -43,6 +45,10 @@ namespace Lumina
         /** Import skeleton hierarchies and bone data. */
         PROPERTY(Editable, Category = "Import")
         bool bImportSkeleton = true;
+
+        /** Keep skeleton nodes nothing skins to, such as cape joints, twist helpers and attachment nulls. */
+        PROPERTY(Editable, Category = "Skeleton")
+        bool bImportUnskinnedBones = false;
 
         /** Import skeletal animation clips. */
         PROPERTY(Editable, Category = "Import")
@@ -203,6 +209,10 @@ namespace Lumina
         /** Rewrites the parsed skinning into the index space of the skeleton the asset already answers to. */
         void RebindReimportSkinning(CMesh* Mesh);
 
+        // Swaps a freshly imported clip into an existing animation asset, keeping its GUID and authored notifies.
+        static void ReplaceAnimationInPlace(CAnimation* Existing, TUniquePtr<FAnimationResource>&& NewClip,
+                                            CSkeleton* NewSkeleton);
+
         /**
          * Builds the scene prefab from SourceData.SceneNodes and the meshes just created. ResourceToMesh is
          * indexed by FMeshImportData::Resources index. Returns null when the source has no usable hierarchy.
@@ -217,5 +227,7 @@ namespace Lumina
         float ConvertPunctualIntensity(const Import::Mesh::FSourceLight& Light, float BrightestOfKind) const;
 
         Import::Mesh::FMeshImportData SourceData;
+        FImportRequest ParsedRequest;
+        bool bParsedWithUnskinnedBones = false;
     };
 }

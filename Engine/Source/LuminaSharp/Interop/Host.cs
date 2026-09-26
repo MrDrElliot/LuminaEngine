@@ -10,7 +10,7 @@ namespace LuminaSharp;
 public static unsafe partial class Host
 {
     // Must equal Lumina::DotNet::GAbiVersion. Bump on ABI breaks.
-    private const int AbiVersion = 13;
+    private const int AbiVersion = 15;
 
     // Logical name for the engine module hosting this assembly (Runtime); resolved to a native handle via ModuleHandle.
     public const string NativeLibrary = "LuminaNative";
@@ -58,6 +58,9 @@ public static unsafe partial class Host
             {
                 return 4;
             }
+
+            // Installed from the game thread, so every await in script code resumes back on it.
+            GameThreadContext.Install();
 
             Scripts = new ScriptManager();
             Native.Log(ELogLevel.Info, $"LuminaSharp online (runtime {RuntimeInformation.FrameworkDescription}).");
@@ -126,24 +129,6 @@ public static unsafe partial class Host
         finally
         {
             Encoded.Free();
-        }
-    }
-
-    /// Current script generation; native rebinds entity scripts when it changes (hot reload).
-    // Feeds one script's InputAction / InputAxis bindings this frame's evaluated action states so they can
-    // raise Pressed / Released / Held / Changed. States points into the owning FInputContext and is only
-    // valid for the duration of this call.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void PollScriptInputBindings(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.PollInput(Handle, States, Count, Serial, DeltaTime);
-        }
-        catch (Exception Exception)
-        {
-            Native.Log(ELogLevel.Error, $"PollScriptInputBindings threw: {Exception}");
         }
     }
 
@@ -257,21 +242,6 @@ public static unsafe partial class Host
         }
     }
 
-
-    /// A native script delegate with live managed bindings was destroyed; free the matching GCHandles.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void OnNativeDelegateDestroyed(IntPtr Delegate)
-    {
-        try
-        {
-            DelegateBindings.ForgetByAddress(Delegate);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
 
     /// Writes a script type's [Property] schema + defaults to a recursive blob and hands it to a native sink (called once).
     [ManagedExport]

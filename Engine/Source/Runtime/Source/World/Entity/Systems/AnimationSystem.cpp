@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "AnimationSystem.h"
 #include "World/ECS/Registry.h"
 
@@ -19,6 +19,7 @@
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/FollowerPoseComponent.h"
+#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -112,7 +113,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
         Writes<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent, SFollowerPoseComponent>();
-        Reads<SCharacterMovementComponent, SystemResource::PhysicsQuery, SystemResource::Kinematics>();
+        Reads<SCharacterMovementComponent, FRelationshipComponent, SystemResource::PhysicsQuery, SystemResource::Kinematics>();
     }
 
     // Slack so brief occlusion or culling flicker does not stutter the pose.
@@ -310,7 +311,7 @@ namespace Lumina
             {
                 return nullptr;
             }
-            CSkeletalMesh* SkelMesh = Mesh.SkeletalMesh;
+            CSkeletalMesh* SkelMesh = Mesh.SkeletalMesh.Get();
             if (!SkelMesh->Skeleton.IsValid())
             {
                 return nullptr;
@@ -599,6 +600,13 @@ namespace Lumina
                 SceneContext.WorldRotation  = World.GetRotation();
                 SceneContext.SelfBodyID     = SystemContext.GetEntityBodyID(Entity);
 
+                // A mesh parented under its character has no body; the capsule it must not trace is the parent's.
+                const FRelationshipComponent* Relationship = SystemContext.TryGet<FRelationshipComponent>(Entity);
+                if (SceneContext.SelfBodyID == ~0u && Relationship != nullptr && Relationship->Parent != ECS::NullEntity)
+                {
+                    SceneContext.SelfBodyID = SystemContext.GetEntityBodyID(Relationship->Parent);
+                }
+
                 SceneContext.Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
             }
 
@@ -612,8 +620,10 @@ namespace Lumina
                 static const char* TaskTypeNames[] =
                 {
                     "RefPose", "SampleClip", "Blend", "BlendMasked", "MakeAdditive",
-                    "ApplyAdditive", "SMOutput", "BoneTransform", "TwoBoneIK",
+                    "ApplyAdditive", "Inertialize", "DeadBlend", "SaveSnapshot", "LoadSnapshot",
+                    "BoneTransform", "TwoBoneIK", "FABRIK", "LookAt", "FootIK", "TranslateBone",
                 };
+                static_assert(std::size(TaskTypeNames) == (SIZE_T)EAnimTaskType::TranslateBone + 1);
 
                 FString Dump;
                 AppendFormat(Dump, "[AnimTasks] entity {} output={}",

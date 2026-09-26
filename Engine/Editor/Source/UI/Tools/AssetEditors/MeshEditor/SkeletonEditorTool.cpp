@@ -1,4 +1,4 @@
-#include "SkeletonEditorTool.h"
+﻿#include "SkeletonEditorTool.h"
 #include "World/ECS/Registry.h"
 #include "ImGuiDrawUtils.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
@@ -205,7 +205,7 @@ namespace Lumina
 
         MeshEntity = World->ConstructEntity("MeshEntity");
         SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
-        MeshComponent.SetSkeletalMesh(Skeleton->PreviewMesh);
+        MeshComponent.SetSkeletalMesh(Skeleton->PreviewMesh.Get());
         Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
         MeshComponent.bRenderBonesDirty = true;
         
@@ -263,7 +263,7 @@ namespace Lumina
 
         if (SelectedIndex != INDEX_NONE)
         {
-            DrawBoneHierarchy(World, SkeletonResource, WorldTransforms, SelectedIndex);
+            DrawBoneHierarchy(World.Get(), SkeletonResource, WorldTransforms, SelectedIndex);
         }
 
         for (const FMeshSocket& Socket : Skeleton->Sockets)

@@ -1,4 +1,4 @@
-#include "CollisionShapeEditorTool.h"
+﻿#include "CollisionShapeEditorTool.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
@@ -80,51 +80,6 @@ namespace Lumina
         }
 
         OutT = Math::Max(0.0f, -B - Math::Sqrt(Discriminant));
-        return true;
-    }
-
-    static bool RayHitsBox(const FVector3& Origin, const FVector3& Direction, const FMatrix4& Matrix,
-                           const FVector3& HalfExtent, float& OutT)
-    {
-        const FMatrix4 Inverse = Math::Inverse(Matrix);
-        const FVector3 LocalOrigin = FVector3(Inverse * FVector4(Origin, 1.0f));
-        const FVector3 LocalDirection = FVector3(Inverse * FVector4(Direction, 0.0f));
-
-        const float OriginAxis[3]    = { LocalOrigin.x, LocalOrigin.y, LocalOrigin.z };
-        const float DirectionAxis[3] = { LocalDirection.x, LocalDirection.y, LocalDirection.z };
-        const float ExtentAxis[3]    = { HalfExtent.x, HalfExtent.y, HalfExtent.z };
-
-        float TMin = 0.0f;
-        float TMax = 1e30f;
-
-        for (int32 Axis = 0; Axis < 3; ++Axis)
-        {
-            if (Math::Abs(DirectionAxis[Axis]) < 1e-6f)
-            {
-                if (OriginAxis[Axis] < -ExtentAxis[Axis] || OriginAxis[Axis] > ExtentAxis[Axis])
-                {
-                    return false;
-                }
-                continue;
-            }
-
-            float TNear = (-ExtentAxis[Axis] - OriginAxis[Axis]) / DirectionAxis[Axis];
-            float TFar  = ( ExtentAxis[Axis] - OriginAxis[Axis]) / DirectionAxis[Axis];
-            if (TNear > TFar)
-            {
-                std::swap(TNear, TFar);
-            }
-
-            TMin = Math::Max(TMin, TNear);
-            TMax = Math::Min(TMax, TFar);
-            if (TMin > TMax)
-            {
-                return false;
-            }
-        }
-
-        const FVector3 WorldHit = FVector3(Matrix * FVector4(LocalOrigin + LocalDirection * TMin, 1.0f));
-        OutT = Math::Length(WorldHit - Origin);
         return true;
     }
 
@@ -455,10 +410,10 @@ namespace Lumina
 
     void FCollisionShapeEditorTool::CloseOpenDragTransaction()
     {
-        if (bHandleTransactionOpen || bGizmoTransactionOpen)
+        if (HandleState.bHandleTransactionOpen || HandleState.bGizmoTransactionOpen)
         {
-            bHandleTransactionOpen = false;
-            bGizmoTransactionOpen = false;
+            HandleState.bHandleTransactionOpen = false;
+            HandleState.bGizmoTransactionOpen = false;
             EndAssetTransaction();
         }
     }
@@ -579,55 +534,6 @@ namespace Lumina
         PropertyTable.DrawTree();
     }
 
-    bool FCollisionShapeEditorTool::BuildViewportRay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
-                                                     const ImVec2& ScreenPos, FVector3& OutOrigin, FVector3& OutDirection)
-    {
-        SCameraComponent* Camera = World->GetActiveCamera();
-        if (Camera == nullptr)
-        {
-            return false;
-        }
-
-        const float LocalX = ScreenPos.x - ViewportOrigin.x;
-        const float LocalY = ScreenPos.y - ViewportOrigin.y;
-        if (LocalX < 0.0f || LocalY < 0.0f || LocalX >= ViewportSize.x || LocalY >= ViewportSize.y)
-        {
-            return false;
-        }
-
-        FMatrix4 Projection = Camera->GetProjectionMatrix();
-        Projection[1][1] *= -1.0f;
-        const FMatrix4 InverseViewProjection = Math::Inverse(Projection * Camera->GetViewMatrix());
-
-        const float NdcX = (LocalX / ViewportSize.x) * 2.0f - 1.0f;
-        const float NdcY = 1.0f - (LocalY / ViewportSize.y) * 2.0f;
-
-        const FVector4 FarPoint = InverseViewProjection * FVector4(NdcX, NdcY, 1.0f, 1.0f);
-        if (Math::Abs(FarPoint.w) < 1e-6f)
-        {
-            return false;
-        }
-
-        OutOrigin = Camera->GetPosition();
-        OutDirection = Math::Normalize(FVector3(FarPoint) / FarPoint.w - OutOrigin);
-        return true;
-    }
-
-    bool FCollisionShapeEditorTool::ProjectToScreen(const FMatrix4& ViewProj, const ImVec2& ViewportOrigin,
-                                                    const ImVec2& ViewportSize, const FVector3& WorldPosition, ImVec2& OutScreen)
-    {
-        const FVector4 Clip = ViewProj * FVector4(WorldPosition, 1.0f);
-        if (Clip.w <= 1e-6f)
-        {
-            return false;
-        }
-
-        const FVector3 Ndc = FVector3(Clip) / Clip.w;
-        OutScreen = ImVec2(ViewportOrigin.x + (Ndc.x * 0.5f + 0.5f) * ViewportSize.x,
-                           ViewportOrigin.y + (0.5f - Ndc.y * 0.5f) * ViewportSize.y);
-        return true;
-    }
-
     int32 FCollisionShapeEditorTool::PickPrimitive(const FVector3& RayOrigin, const FVector3& RayDirection)
     {
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
@@ -651,7 +557,7 @@ namespace Lumina
 
             case ECollisionPrimitiveType::Capsule:
                 // Approximated by its bounding box, which is exact enough for the only user, picking.
-                bHit = RayHitsBox(RayOrigin, RayDirection, Matrix,
+                bHit = ShapeHandles::RayHitsBox(RayOrigin, RayDirection, Matrix,
                     FVector3(Primitive.Radius, Primitive.HalfHeight + Primitive.Radius, Primitive.Radius), Distance);
                 break;
 
@@ -671,12 +577,12 @@ namespace Lumina
                     }
 
                     const FMatrix4 HullMatrix = Matrix * Math::Translate(FMatrix4(1.0f), (Min + Max) * 0.5f);
-                    bHit = RayHitsBox(RayOrigin, RayDirection, HullMatrix, (Max - Min) * 0.5f, Distance);
+                    bHit = ShapeHandles::RayHitsBox(RayOrigin, RayDirection, HullMatrix, (Max - Min) * 0.5f, Distance);
                 }
                 break;
 
             default:
-                bHit = RayHitsBox(RayOrigin, RayDirection, Matrix, Primitive.HalfExtent, Distance);
+                bHit = ShapeHandles::RayHitsBox(RayOrigin, RayDirection, Matrix, Primitive.HalfExtent, Distance);
                 break;
             }
 
@@ -690,7 +596,7 @@ namespace Lumina
         return Best;
     }
 
-    void FCollisionShapeEditorTool::GatherHandles(TVector<FCollisionHandle>& OutHandles)
+    void FCollisionShapeEditorTool::GatherShapeHandles(TVector<FShapeHandle>& OutHandles)
     {
         OutHandles.clear();
 
@@ -711,18 +617,18 @@ namespace Lumina
         switch (Primitive.Type)
         {
         case ECollisionPrimitiveType::Sphere:
-            OutHandles.push_back({ ECollisionHandle::Radius, Center + AxisX * Primitive.Radius, AxisX, Center });
+            OutHandles.push_back({ EShapeHandle::Radius, Center + AxisX * Primitive.Radius, AxisX, Center });
             break;
 
         case ECollisionPrimitiveType::Capsule:
-            OutHandles.push_back({ ECollisionHandle::Radius,     Center + AxisX * Primitive.Radius,     AxisX, Center });
-            OutHandles.push_back({ ECollisionHandle::HalfHeight, Center + AxisY * Primitive.HalfHeight, AxisY, Center });
+            OutHandles.push_back({ EShapeHandle::Radius,     Center + AxisX * Primitive.Radius,     AxisX, Center });
+            OutHandles.push_back({ EShapeHandle::HalfHeight, Center + AxisY * Primitive.HalfHeight, AxisY, Center });
             break;
 
         case ECollisionPrimitiveType::Box:
-            OutHandles.push_back({ ECollisionHandle::ExtentX, Center + AxisX * Primitive.HalfExtent.x, AxisX, Center });
-            OutHandles.push_back({ ECollisionHandle::ExtentY, Center + AxisY * Primitive.HalfExtent.y, AxisY, Center });
-            OutHandles.push_back({ ECollisionHandle::ExtentZ, Center + AxisZ * Primitive.HalfExtent.z, AxisZ, Center });
+            OutHandles.push_back({ EShapeHandle::ExtentX, Center + AxisX * Primitive.HalfExtent.x, AxisX, Center });
+            OutHandles.push_back({ EShapeHandle::ExtentY, Center + AxisY * Primitive.HalfExtent.y, AxisY, Center });
+            OutHandles.push_back({ EShapeHandle::ExtentZ, Center + AxisZ * Primitive.HalfExtent.z, AxisZ, Center });
             break;
 
         default:
@@ -731,7 +637,7 @@ namespace Lumina
         }
     }
 
-    void FCollisionShapeEditorTool::ApplyHandleDrag(const FCollisionHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection)
+    void FCollisionShapeEditorTool::ApplyShapeHandleDrag(const FShapeHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection)
     {
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
         if (SelectedPrimitive < 0 || SelectedPrimitive >= (int32)Shape->Primitives.size())
@@ -750,18 +656,18 @@ namespace Lumina
 
         switch (Handle.Type)
         {
-        case ECollisionHandle::Radius:     Primitive.Radius = Positive; break;
-        case ECollisionHandle::HalfHeight: Primitive.HalfHeight = Math::Max(AxisDistance, 0.0f); break;
-        case ECollisionHandle::ExtentX:    Primitive.HalfExtent.x = Positive; break;
-        case ECollisionHandle::ExtentY:    Primitive.HalfExtent.y = Positive; break;
-        case ECollisionHandle::ExtentZ:    Primitive.HalfExtent.z = Positive; break;
+        case EShapeHandle::Radius:     Primitive.Radius = Positive; break;
+        case EShapeHandle::HalfHeight: Primitive.HalfHeight = Math::Max(AxisDistance, 0.0f); break;
+        case EShapeHandle::ExtentX:    Primitive.HalfExtent.x = Positive; break;
+        case EShapeHandle::ExtentY:    Primitive.HalfExtent.y = Positive; break;
+        case EShapeHandle::ExtentZ:    Primitive.HalfExtent.z = Positive; break;
         default: return;
         }
 
         NotifyAssetDataChanged();
     }
 
-    void FCollisionShapeEditorTool::ApplyGizmo(const FMatrix4& NewMatrix)
+    void FCollisionShapeEditorTool::ApplyGizmoMatrix(const FMatrix4& NewMatrix)
     {
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
         if (SelectedPrimitive < 0 || SelectedPrimitive >= (int32)Shape->Primitives.size())
@@ -777,6 +683,17 @@ namespace Lumina
         NotifyAssetDataChanged();
     }
 
+    FMatrix4 FCollisionShapeEditorTool::GetGizmoMatrix()
+    {
+        const CCollisionShape* Shape = GetAsset<CCollisionShape>();
+        return GetPrimitiveMatrix(Shape->Primitives[SelectedPrimitive]);
+    }
+
+    void FCollisionShapeEditorTool::PickShapeAtRay(const FVector3& RayOrigin, const FVector3& RayDirection)
+    {
+        SelectPrimitive(PickPrimitive(RayOrigin, RayDirection));
+    }
+
     void FCollisionShapeEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
     {
         const ImVec2 ViewportOrigin = ViewportScreenMin;
@@ -786,7 +703,7 @@ namespace Lumina
         SCameraComponent* Camera = World.IsValid() ? World->GetActiveCamera() : nullptr;
         if (Camera == nullptr)
         {
-            ActiveHandle = ECollisionHandle::None;
+            HandleState.ActiveHandle = EShapeHandle::None;
             return;
         }
 
@@ -795,153 +712,23 @@ namespace Lumina
             GizmoOp = (GizmoOp == ImGuizmo::TRANSLATE) ? ImGuizmo::ROTATE : ImGuizmo::TRANSLATE;
         }
 
-        FMatrix4 ViewMatrix = Camera->GetViewMatrix();
         FMatrix4 Projection = Camera->GetProjectionMatrix();
         Projection[1][1] *= -1.0f;
-        const FMatrix4 ViewProj = Projection * ViewMatrix;
 
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
-        const bool bSelected = SelectedPrimitive >= 0 && SelectedPrimitive < (int32)Shape->Primitives.size();
 
-        bool bGizmoOwnsInput = false;
-        if (bSelected)
-        {
-            ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-            ImGuizmo::SetRect(ViewportOrigin.x, ViewportOrigin.y, ViewportSize.x, ViewportSize.y);
+        FShapeHandleFrame Frame;
+        Frame.World           = World.Get();
+        Frame.ViewMatrix      = Camera->GetViewMatrix();
+        Frame.Projection      = Projection;
+        Frame.ViewportOrigin  = ViewportOrigin;
+        Frame.ViewportSize    = ViewportSize;
+        Frame.GizmoOp         = GizmoOp;
+        Frame.bViewportHovered = bViewportHovered;
+        Frame.bSuppressClicks = ShouldSuppressViewportClickInput();
+        Frame.bHasGizmoTarget = SelectedPrimitive >= 0 && SelectedPrimitive < (int32)Shape->Primitives.size();
 
-            FMatrix4 Matrix = GetPrimitiveMatrix(Shape->Primitives[SelectedPrimitive]);
-
-            const bool bGizmoInert = ShouldSuppressViewportClickInput() && !ImGuizmo::IsUsing();
-            if (bGizmoInert)
-            {
-                ImGuizmo::Enable(false);
-            }
-
-            ImGuizmo::Manipulate(Math::ValuePtr(ViewMatrix), Math::ValuePtr(Projection),
-                GizmoOp, ImGuizmo::LOCAL, Math::ValuePtr(Matrix));
-
-            if (bGizmoInert)
-            {
-                ImGuizmo::Enable(true);
-            }
-
-            if (ImGuizmo::IsUsing())
-            {
-                if (!bGizmoTransactionOpen)
-                {
-                    BeginAssetTransaction(GizmoOp == ImGuizmo::ROTATE ? "Rotate Collision Shape" : "Move Collision Shape");
-                    bGizmoTransactionOpen = true;
-                }
-
-                ApplyGizmo(Matrix);
-            }
-            else if (bGizmoTransactionOpen)
-            {
-                bGizmoTransactionOpen = false;
-                EndAssetTransaction();
-            }
-
-            bGizmoOwnsInput = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
-        }
-
-        if (bGizmoOwnsInput && ActiveHandle == ECollisionHandle::None)
-        {
-            return;
-        }
-
-        TVector<FCollisionHandle> Handles;
-        GatherHandles(Handles);
-
-        ImDrawList* DrawList = ImGui::GetWindowDrawList();
-        const ImVec2 MousePos = ImGui::GetMousePos();
-
-        constexpr float HandleRadius = 6.0f;
-        constexpr float HandleGrabRadius = 10.0f;
-
-        int32 HoveredHandle = INDEX_NONE;
-
-        for (int32 i = 0; i < (int32)Handles.size(); ++i)
-        {
-            ImVec2 Screen;
-            if (!ProjectToScreen(ViewProj, ViewportOrigin, ViewportSize, Handles[i].Position, Screen))
-            {
-                continue;
-            }
-
-            const float DX = MousePos.x - Screen.x;
-            const float DY = MousePos.y - Screen.y;
-            const bool bHot = (ActiveHandle == Handles[i].Type)
-                           || (ActiveHandle == ECollisionHandle::None && (DX * DX + DY * DY) <= HandleGrabRadius * HandleGrabRadius);
-
-            if (bHot && ActiveHandle == ECollisionHandle::None)
-            {
-                HoveredHandle = i;
-            }
-
-            DrawList->AddCircleFilled(Screen, bHot ? HandleRadius + 1.5f : HandleRadius,
-                bHot ? IM_COL32(255, 200, 60, 255) : IM_COL32(90, 180, 255, 235));
-            DrawList->AddCircle(Screen, bHot ? HandleRadius + 1.5f : HandleRadius, IM_COL32(15, 15, 20, 220), 0, 1.5f);
-        }
-
-        const bool bCanInteract = bViewportHovered && !ShouldSuppressViewportClickInput();
-
-        if (ActiveHandle != ECollisionHandle::None)
-        {
-            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            {
-                ActiveHandle = ECollisionHandle::None;
-                if (bHandleTransactionOpen)
-                {
-                    bHandleTransactionOpen = false;
-                    EndAssetTransaction();
-                }
-            }
-            else
-            {
-                for (const FCollisionHandle& Handle : Handles)
-                {
-                    if (Handle.Type != ActiveHandle)
-                    {
-                        continue;
-                    }
-
-                    FVector3 RayOrigin, RayDirection;
-                    if (BuildViewportRay(ViewportOrigin, ViewportSize, MousePos, RayOrigin, RayDirection))
-                    {
-                        ApplyHandleDrag(Handle, RayOrigin, RayDirection);
-                    }
-                    break;
-                }
-            }
-            return;
-        }
-
-        if (!bCanInteract)
-        {
-            return;
-        }
-
-        if (HoveredHandle != INDEX_NONE && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-        {
-            ActiveHandle = Handles[HoveredHandle].Type;
-            BeginAssetTransaction("Resize Collision Shape");
-            bHandleTransactionOpen = true;
-            return;
-        }
-
-        // Picks on release with a drag threshold, so a click that became a camera move does not reselect.
-        if (HoveredHandle == INDEX_NONE && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
-        {
-            const ImVec2 Drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-            if (Drag.x * Drag.x + Drag.y * Drag.y <= 16.0f)
-            {
-                FVector3 RayOrigin, RayDirection;
-                if (BuildViewportRay(ViewportOrigin, ViewportSize, MousePos, RayOrigin, RayDirection))
-                {
-                    SelectPrimitive(PickPrimitive(RayOrigin, RayDirection));
-                }
-            }
-        }
+        TickShapeHandles(*this, HandleState, Frame);
     }
 
     void FCollisionShapeEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)

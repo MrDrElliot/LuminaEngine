@@ -1,4 +1,4 @@
-#include "MaterialNode_Function.h"
+﻿#include "MaterialNode_Function.h"
 
 #include "imgui.h"
 #include "Core/Object/Cast.h"
@@ -174,7 +174,7 @@ namespace Lumina
         FunctionInputPins.clear();
         FunctionOutputPins.clear();
 
-        if (CMaterialFunction* Fn = Function)
+        if (CMaterialFunction* Fn = Function.Get())
         {
             for (const FMaterialFunctionInput& In : Fn->GetInputs())
             {
@@ -217,7 +217,7 @@ namespace Lumina
             }
         }
 
-        CachedFunction = Function;
+        CachedFunction = Function.Get();
         bPinsBuilt = true;
 
         if (CEdNodeGraph* Graph = GetOwningGraph())
@@ -267,7 +267,7 @@ namespace Lumina
             }
         };
 
-        CMaterialFunction* Fn = Function;
+        CMaterialFunction* Fn = Function.Get();
         if (Fn == nullptr)
         {
             EmitError("Material Function", "No material function is assigned to this node.");
@@ -294,6 +294,8 @@ namespace Lumina
         // Per-call variable prefix, composed with any enclosing call's prefix so nesting never collides.
         const FString CallPrefix = Compiler.GetCurrentInlinePrefix() + "MF" + Format("{}", GetNodeID()) + "_";
         Compiler.PushInlinePrefix(CallPrefix);
+        const size_t FirstBodyError   = Compiler.GetErrors().size();
+        const size_t FirstBodyWarning = Compiler.GetWarnings().size();
 
         // Gather the function's I/O nodes.
         TVector<CMaterialExpression_FunctionInput*> InputNodes;
@@ -357,8 +359,9 @@ namespace Lumina
         }
 
         // A function body's switches answer to the calling material's permutation, before the sort below.
-        for (CEdGraphNode* BodyNode : FnGraph->Nodes)
+        for (const auto& BodyNodeRef : FnGraph->Nodes)
         {
+            CEdGraphNode* BodyNode = BodyNodeRef.Get();
             if (CMaterialExpression_StaticSwitch* Switch = Cast<CMaterialExpression_StaticSwitch>(BodyNode))
             {
                 const FName Param = Switch->bDynamic ? Switch->ParameterName : NAME_None;
@@ -443,6 +446,7 @@ namespace Lumina
             Bound->ResolvedVar.clear();
         }
 
+        Compiler.RetargetDiagnosticsToCallNode(FirstBodyError, FirstBodyWarning, this, FString(Fn->GetName().c_str()));
         Compiler.PopInlinePrefix();
         Compiler.EndInlineFunction(Fn);
     }

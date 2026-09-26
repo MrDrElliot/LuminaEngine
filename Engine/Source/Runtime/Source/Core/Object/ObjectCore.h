@@ -94,6 +94,10 @@ namespace Lumina
     }
 
     RUNTIME_API CObject* NewObject(CClass* InClass, CPackage* Package = nullptr, const FName& Name = NAME_None, const FGuid& GUID = FGuid::New(), EObjectFlags Flags = OF_None);
+
+    // Seeds the new object's reflected properties from Template rather than from the class CDO.
+    RUNTIME_API CObject* NewObjectFromTemplate(const CObject* Template, CPackage* Package = nullptr, const FName& Name = NAME_None, const FGuid& GUID = FGuid::New(), EObjectFlags Flags = OF_None);
+
     RUNTIME_API void GetObjectsWithPackage(const CPackage* Package, TVector<CObject*>& OutObjects);
 
 
@@ -113,6 +117,12 @@ namespace Lumina
     T* NewObject(CClass* InClass, CPackage* Package = nullptr, const FName& Name = NAME_None, const FGuid& GUID = FGuid::New(), EObjectFlags Flags = OF_None)
     {
         return static_cast<T*>(NewObject(InClass, Package, Name, GUID, Flags));
+    }
+
+    template<Concept::IsACObject T>
+    T* NewObjectFromTemplate(const T* Template, CPackage* Package = nullptr, const FName& Name = NAME_None, const FGuid& GUID = FGuid::New(), EObjectFlags Flags = OF_None)
+    {
+        return static_cast<T*>(NewObjectFromTemplate(static_cast<const CObject*>(Template), Package, Name, GUID, Flags));
     }
 
     template<Concept::IsACObject T>
@@ -330,7 +340,8 @@ namespace Lumina
     // TScriptDelegate<T> event; PayloadStructFunc returns the payload struct (null when no payload).
     struct FDelegatePropertyParams : FPropertyParams
     {
-        CStruct*            (*PayloadStructFunc)();
+        // Argument params follow this one, one per delegate argument, in declaration order.
+        uint16 NumArgs;
 
         uint16 NumMetaData;
         const FMetaDataPairParam* MetaDataArray;

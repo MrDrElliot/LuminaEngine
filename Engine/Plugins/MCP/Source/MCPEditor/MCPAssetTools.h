@@ -3,6 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Assets/AssetTypes/Textures/Texture.h"
 
 #include "MCPAssetTools.generated.h"
 
@@ -169,6 +170,46 @@ namespace Lumina
 
         PROPERTY()
         FString Path;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SImportAssetsParams
+    {
+        GENERATED_BODY()
+
+        /** OS path of a source file, or a directory whose importable files are all imported. */
+        PROPERTY()
+        FString Source;
+
+        /** Content folder to import into, such as /Game/Content/UI. Created if missing. */
+        PROPERTY()
+        FString DestinationFolder;
+
+        /** Whether a directory Source also imports its subdirectories, mirrored under DestinationFolder. */
+        PROPERTY()
+        bool Recursive = true;
+
+        /** Mip policy for imported textures. UI skips the mip chain, since the UI pass never minifies. */
+        PROPERTY()
+        ETextureGroup TextureGroup = ETextureGroup::World;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SImportAssetsResult
+    {
+        GENERATED_BODY()
+
+        /** Content paths of the assets this call created. */
+        PROPERTY()
+        TVector<FString> Imported;
+
+        /** Files left alone because an asset with that name already existed, so a rerun resumes. */
+        PROPERTY()
+        int32 Skipped = 0;
+
+        /** Source files that failed, each with the importer's reason. */
+        PROPERTY()
+        TVector<FString> Failed;
     };
 
     namespace MCP

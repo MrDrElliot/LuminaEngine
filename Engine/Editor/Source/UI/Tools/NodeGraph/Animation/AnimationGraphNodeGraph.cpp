@@ -1,4 +1,4 @@
-#include "AnimationGraphNodeGraph.h"
+﻿#include "AnimationGraphNodeGraph.h"
 #include "AnimGraphSchema.h"
 #include "AnimationGraphCompiler.h"
 #include "AnimGraphNode.h"
@@ -72,10 +72,12 @@ namespace Lumina
         Connections.clear();
         Connections.reserve(16);
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            CEdGraphNode* Node = NodeRef.Get();
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
                     Connections.push_back(InputPin->PinID);
@@ -94,8 +96,9 @@ namespace Lumina
     {
         OutPoseReg = 0;
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             Node->ClearError();
         }
 
@@ -138,8 +141,9 @@ namespace Lumina
         // A Save branch can read another cache from inside a nested state graph, which the pin-level
         // sort cannot see. So order the Save nodes by that dependency and emit one branch at a time.
         TVector<CAnimGraphNode_SaveCachedPose*> PendingSaves;
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (CAnimGraphNode_SaveCachedPose* Save = Cast<CAnimGraphNode_SaveCachedPose>(Node))
             {
                 PendingSaves.push_back(Save);
@@ -281,8 +285,9 @@ namespace Lumina
                 continue;
             }
 
-            for (CEdGraphNode* SubNode : SMGraph->Nodes)
+            for (const auto& SubNodeRef : SMGraph->Nodes)
             {
+                CEdGraphNode* SubNode = SubNodeRef.Get();
                 if (CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(SubNode))
                 {
                     CollectReadCacheNamesInGraph(State->BlendTree.Get(), OutNames);
@@ -299,8 +304,9 @@ namespace Lumina
         }
 
         THashSet<CEdGraphNode*> GraphNodes;
-        for (CEdGraphNode* Node : Graph->Nodes)
+        for (const auto& NodeRef : Graph->Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             GraphNodes.insert(Node);
         }
 
@@ -309,8 +315,9 @@ namespace Lumina
 
     void CAnimationGraphNodeGraph::CollectAllParameters(FAnimationGraphCompiler& Compiler)
     {
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             if (CAnimGraphNode_GetParameter* GetParam = Cast<CAnimGraphNode_GetParameter>(Node))
             {
                 // Registered even when unwired, or the Parameters panel never sees the name.
@@ -343,8 +350,9 @@ namespace Lumina
                 }
 
                 // Recurse into each state's blend tree.
-                for (CEdGraphNode* SubNode : SMGraph->Nodes)
+                for (const auto& SubNodeRef : SMGraph->Nodes)
                 {
+                    CEdGraphNode* SubNode = SubNodeRef.Get();
                     if (CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(SubNode))
                     {
                         if (CAnimationGraphNodeGraph* BlendTree = State->BlendTree.Get())

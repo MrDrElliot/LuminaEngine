@@ -11,7 +11,8 @@ namespace Lumina
     {
         const std::string GetterFunctionName = GetterFunc.empty() ? "nullptr" : (AccessorScope + GetterFunc + "_WrapperImpl");
         const std::string SetterFunctionName = SetterFunc.empty() ? "nullptr" : (AccessorScope + SetterFunc + "_WrapperImpl");
-        const std::string Offset = bInner ? std::string("0") : ("offsetof(" + Outer + ", " + Name + ")");
+        const std::string Offset = !OffsetExpr.empty() ? OffsetExpr
+                                 : (bInner ? std::string("0") : ("offsetof(" + Outer + ", " + Name + ")"));
 
         Writer.Appendf("{ \"%s\", %s, %s, %s, %s, %s",
             Name.c_str(),

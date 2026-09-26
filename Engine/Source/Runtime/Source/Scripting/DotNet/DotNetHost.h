@@ -8,7 +8,6 @@
 
 namespace Lumina
 {
-    struct FInputActionState;
     class CObject;
     class CScriptStruct;
     class CWorld;
@@ -25,7 +24,8 @@ namespace Lumina::DotNet
     // v6: managed system-descriptor sink carries declared read/write component-ops tokens (parallel C# systems).
     // v7: delegate properties replace hardcoded collision/perception dispatch; adds OnNativeDelegateDestroyed.
     // v13 dropped the C# entity system bridge, since a C# system is now a CEntitySystem subclass.
-    inline constexpr int32 GAbiVersion = 13;
+    // v15 drops OnNativeDelegateDestroyed; a delegate owns its managed bindings and frees them itself.
+    inline constexpr int32 GAbiVersion = 15;
 
     // Boots the embedded runtime and runs the managed handshake.
     RUNTIME_API void Initialize();
@@ -45,6 +45,10 @@ namespace Lumina::DotNet
 
     // Latches a reload for the next frame start, since a reload destroys objects the frame may be using.
     RUNTIME_API void RequestScriptReload();
+
+    /** Disk path of the .cs file declaring TypeName, matched on the file stem against the script roots.
+     *  Empty when nothing matches, which is the case for a C++ script or a type sharing a file. */
+    RUNTIME_API FString FindScriptSourceFile(FStringView TypeName);
 
     /**
      * Reports that a file under a watched source tree changed, and latches a reload if it was one of ours.
@@ -226,11 +230,6 @@ namespace Lumina::DotNet
     /** Runs a script type's declared [Property] initializers into its class default object. Once per type at
      *  mint, after the CDO exists; every instance is then copied from it. */
     RUNTIME_API void ApplyScriptableDefaults(FStringView TypeName, void* DefaultObject);
-
-    // Feeds a script's InputAction / InputAxis bindings this frame's evaluated action states. No-op for a
-    // C++ script, which has no managed instance. States points into the owning FInputContext.
-    RUNTIME_API void PollScriptInput(CObject* Script, const FInputActionState* States, int32 Count, uint32 Serial,
-        float DeltaTime);
 
     //~ Exported [Property] schema bridge (editor inspector + serialization). Game thread only.
 

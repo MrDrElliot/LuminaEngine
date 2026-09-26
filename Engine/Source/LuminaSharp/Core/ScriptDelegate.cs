@@ -2,13 +2,18 @@ using System;
 
 namespace LuminaSharp;
 
-// Live subscription to a script delegate, owned by whoever called Bind: as in C++, nothing detaches it for you, so Unbind (or Dispose) it before the handler's script goes away.
+/** A live subscription to a script delegate. Unbind it before the handler's script goes away, in OnDetach
+ *  if you bound in OnAttach: nothing detaches it for you, and a binding left alive at a hot reload pins the
+ *  script load context so the reload cannot unload it. Unbinding twice is safe, but unbinding after the
+ *  object owning the delegate has been destroyed is not, because the delegate is gone with it. */
 public struct DelegateBinding : IDisposable
 {
-    private ulong Id;
+    private IntPtr Address;
+    private ulong  Id;
 
-    internal DelegateBinding(ulong Id)
+    internal DelegateBinding(IntPtr Address, ulong Id)
     {
+        this.Address = Address;
         this.Id = Id;
     }
 
@@ -18,7 +23,8 @@ public struct DelegateBinding : IDisposable
     {
         if (Id != 0)
         {
-            DelegateBindings.Unbind(Id);
+            Native.DelegateUnbind(Address, Id);
+            Address = IntPtr.Zero;
             Id = 0;
         }
     }
@@ -27,6 +33,7 @@ public struct DelegateBinding : IDisposable
 }
 
 // Transient handle to a no-payload multicast event; do not store it, re-fetch the accessor.
+[NativeSlotView]
 public readonly unsafe struct ScriptDelegate
 {
     private readonly void* Address;
@@ -34,6 +41,12 @@ public readonly unsafe struct ScriptDelegate
     public ScriptDelegate(void* Address)
     {
         this.Address = Address;
+    }
+
+    // The slot address as an integer, which is the shape a binder building this view by reflection has.
+    public ScriptDelegate(nint Address)
+    {
+        this.Address = (void*)Address;
     }
 
     public bool IsValid => Address != null;
@@ -48,29 +61,5 @@ public readonly unsafe struct ScriptDelegate
         // Owner is carried so the handler runs with this script's Game context, NOT to auto-unbind it.
         EntityScript? Owner = Game.ActiveScript;
         return DelegateBindings.Bind(Address, new VoidInvoker { Handler = Handler, Owner = Owner });
-    }
-}
-
-// Transient handle to a multicast event carrying one blittable payload by value.
-public readonly unsafe struct ScriptDelegate<T> where T : unmanaged
-{
-    private readonly void* Address;
-
-    public ScriptDelegate(void* Address)
-    {
-        this.Address = Address;
-    }
-
-    public bool IsValid => Address != null;
-
-    public DelegateBinding Bind(Action<T> Handler)
-    {
-        if (Address == null || Handler == null)
-        {
-            return default;
-        }
-
-        EntityScript? Owner = Game.ActiveScript;
-        return DelegateBindings.Bind(Address, new PayloadInvoker<T> { Handler = Handler, Owner = Owner });
     }
 }

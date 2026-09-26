@@ -1,8 +1,9 @@
-﻿#pragma once
+#pragma once
 
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
+#include "Containers/String.h"
 #include "Memory/SmartPtr.h"
 #include "Scripting/ScriptExports.h"
 
@@ -45,6 +46,9 @@ namespace Lumina
 
             // Gathered with the table rather than per frame: it is a marshalled crossing per script type.
             TVector<Scripting::FScriptButton> Buttons;
+
+            // Resolved with the rest of the binding, since it walks the script directories off disk.
+            FString SourceFile;
         };
 
         // What the nested tables reported this frame, translated into this customization's own return value so

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "World/ECS/Registry.h"
 
@@ -12,34 +12,15 @@
 #include "Core/Math/Math.h"
 #include "Memory/SmartPtr.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
+#include "UI/Tools/AssetEditors/ShapeHandles.h"
 
 namespace Lumina
 {
     class CStaticMesh;
 
-    enum class ECollisionHandle : uint8
-    {
-        None,
-        Radius,
-        HalfHeight,
-        ExtentX,
-        ExtentY,
-        ExtentZ,
-    };
-
-    // One draggable dot. Dragging measures along Axis from Anchor, and that distance becomes the
-    // dimension the handle owns.
-    struct FCollisionHandle
-    {
-        ECollisionHandle Type = ECollisionHandle::None;
-        FVector3         Position;
-        FVector3         Axis;
-        FVector3         Anchor;
-    };
-
     // Editor for CCollisionShape: the source mesh in the viewport with its authored collision drawn over
     // it, so how badly a hull or box fits is visible rather than inferred from numbers.
-    class FCollisionShapeEditorTool : public FAssetEditorTool
+    class FCollisionShapeEditorTool : public FAssetEditorTool, public IShapeHandleHost
     {
     public:
 
@@ -84,17 +65,19 @@ namespace Lumina
         void SelectPrimitive(int32 Index);
         void SyncDetailsTable();
 
-        // Viewport manipulation, mirroring the physics asset editor: analytic picking against the authored
-        // shapes, dots for size, gizmo for the frame.
-        bool BuildViewportRay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, const ImVec2& ScreenPos,
-                              FVector3& OutOrigin, FVector3& OutDirection);
-        static bool ProjectToScreen(const FMatrix4& ViewProj, const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
-                                    const FVector3& WorldPosition, ImVec2& OutScreen);
-
         int32 PickPrimitive(const FVector3& RayOrigin, const FVector3& RayDirection);
-        void GatherHandles(TVector<FCollisionHandle>& OutHandles);
-        void ApplyHandleDrag(const FCollisionHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection);
-        void ApplyGizmo(const FMatrix4& NewMatrix);
+
+        //~ IShapeHandleHost
+        FMatrix4 GetGizmoMatrix() override;
+        void  ApplyGizmoMatrix(const FMatrix4& Matrix) override;
+        void  GatherShapeHandles(TVector<FShapeHandle>& OutHandles) override;
+        void  ApplyShapeHandleDrag(const FShapeHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection) override;
+        void  PickShapeAtRay(const FVector3& RayOrigin, const FVector3& RayDirection) override;
+        FName GetMoveTransactionName() const override   { return "Move Collision Shape"; }
+        FName GetRotateTransactionName() const override { return "Rotate Collision Shape"; }
+        FName GetResizeTransactionName() const override { return "Resize Collision Shape"; }
+        void  BeginShapeTransaction(FName Name) override { BeginAssetTransaction(Name); }
+        void  EndShapeTransaction() override             { EndAssetTransaction(); }
 
         void BeginAssetTransaction(FName Name);
         void EndAssetTransaction();
@@ -115,14 +98,12 @@ namespace Lumina
         ECS::FEntity                LightEntity = ECS::NullEntity;
 
         int32                       SelectedPrimitive = INDEX_NONE;
-        ECollisionHandle            ActiveHandle = ECollisionHandle::None;
+        FShapeHandleState           HandleState;
         ImGuizmo::OPERATION         GizmoOp = ImGuizmo::TRANSLATE;
 
         TObjectPtr<CStaticMesh>     CachedSourceMesh;
 
         uint8                       bDrawShapes:1 = true;
         uint8                       bDrawMesh:1 = true;
-        uint8                       bHandleTransactionOpen:1 = false;
-        uint8                       bGizmoTransactionOpen:1 = false;
     };
 }

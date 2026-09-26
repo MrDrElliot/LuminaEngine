@@ -61,7 +61,7 @@ namespace Lumina
 
         MeshEntity = World->ConstructEntity("MeshEntity");
         SStaticMeshComponent& StaticMeshComponent = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
-        StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+        StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
 
         const STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         SetOrbitTarget(MeshTransform.GetLocation(), 4.0f);
@@ -94,11 +94,11 @@ namespace Lumina
         SStaticMeshComponent& Component = World->GetComponent<SStaticMeshComponent>(MeshEntity);
         switch (Mesh)
         {
-        case EDebugMesh::Sphere:    Component.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);   break;
-        case EDebugMesh::Cube:      Component.SetStaticMesh(CPrimitiveManager::Get().CubeMesh);     break;
-        case EDebugMesh::Plane:     Component.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh);    break;
-        case EDebugMesh::Cylinder:  Component.SetStaticMesh(CPrimitiveManager::Get().CylinderMesh); break;
-        case EDebugMesh::Cone:      Component.SetStaticMesh(CPrimitiveManager::Get().ConeMesh);     break;
+        case EDebugMesh::Sphere:    Component.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());   break;
+        case EDebugMesh::Cube:      Component.SetStaticMesh(CPrimitiveManager::Get().CubeMesh.Get());     break;
+        case EDebugMesh::Plane:     Component.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh.Get());    break;
+        case EDebugMesh::Cylinder:  Component.SetStaticMesh(CPrimitiveManager::Get().CylinderMesh.Get()); break;
+        case EDebugMesh::Cone:      Component.SetStaticMesh(CPrimitiveManager::Get().ConeMesh.Get());     break;
         }
     }
 

@@ -102,6 +102,26 @@ public abstract class EntityScript : Lumina.CEntityScript
     // [ScriptEvent] virtuals, and overriding one sets its slot bit on the minted class so the native shim
     // only crosses the boundary for the callbacks a script actually implements.
 
+    /// <summary>An authored action that changed this frame. The base feeds the script's SInputAction /
+    /// SInputAxis bindings, so an override must call <c>base.OnAction</c> for those to keep firing.</summary>
+    public override void OnAction(Lumina.FName Action, Lumina.FInputActionState State)
+    {
+        if (!Description.HasInputBindings)
+        {
+            return;
+        }
+
+        try
+        {
+            using var Scope = Game.Push(World, Entity, this);
+            Description.DispatchAction(this, Action, in State);
+        }
+        catch (System.Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"EntityScript input binding threw: {Exception}");
+        }
+    }
+
     /// <summary>Add (idempotent) and return this entity's SInputComponent so it can receive input. Call in OnReady.</summary>
     protected Lumina.SInputComponent EnableInput()
     {

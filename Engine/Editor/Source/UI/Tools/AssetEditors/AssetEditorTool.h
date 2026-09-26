@@ -27,6 +27,7 @@ namespace Lumina
         FAssetEditorTool(IEditorToolContext* Context, const FString& AssetName, CObject* InAsset, CWorld* InWorld = nullptr)
             : FEditorTool(Context, AssetName, InWorld)
             , bAssetLoadBroadcasted(false)
+            , bOpenedOnAsset(InAsset != nullptr)
         {
             Asset = InAsset;
             if (InAsset != nullptr)
@@ -93,6 +94,7 @@ namespace Lumina
         FPropertyTable* GetPropertyTable() { return &PropertyTable; }
 
         bool HasAsset() const { return Asset.IsValid(); }
+        bool HasLostAsset() const override { return bOpenedOnAsset && !Asset.IsValid(); }
 
         /** Every asset editor reports its package's dirty state. Without this the base returned false for
          *  all of them, so MarkDirty was doing its job and nothing ever showed it -- no tab dot, no prompt
@@ -145,6 +147,7 @@ namespace Lumina
         TObjectPtr<CObject>         Asset;
         FPropertyTable              PropertyTable;
         uint8                       bAssetLoadBroadcasted:1;
+        uint8                       bOpenedOnAsset:1;
 
         // Subscription to AssetEvents::OnAssetDataChanged, dropped in Deinitialize. Held per tool rather
         // than polled, because the swap happens on a worker and there is no frame the tool could notice it.

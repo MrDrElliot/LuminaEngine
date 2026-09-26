@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "World/ECS/Registry.h"
 
@@ -41,7 +41,7 @@ namespace Lumina
         // scene can be repopulated for the next asset instead of rebuilding the whole world each time.
         void ResetContents();
 
-        CWorld* GetWorld() const { return World; }
+        CWorld* GetWorld() const { return World.Get(); }
         ECS::FEntity GetCameraEntity() const { return CameraEntity; }
 
         // Place the thumbnail camera. Recomputes the view matrix immediately

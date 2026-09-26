@@ -1,6 +1,8 @@
 ﻿#include "RuntimePCH.h"
 
 #include "EntityLibrary.h"
+#include "World/Entity/Components/TagComponent.h"
+#include "World/Entity/EntityUtils.h"
 
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/World.h"
@@ -13,6 +15,25 @@ namespace Lumina
         {
             return World != nullptr ? World->TryGetComponent<FRelationshipComponent>(Entity) : nullptr;
         }
+    }
+
+    void CEntityLibrary::SetTag(CWorld* World, ECS::FEntity Entity, const FName& Tag)
+    {
+        if (World != nullptr)
+        {
+            ECS::Utils::SetEntityTag(ECS::GetWorldRegistry(*World), Entity, Tag);
+        }
+    }
+
+    FName CEntityLibrary::GetTag(CWorld* World, ECS::FEntity Entity)
+    {
+        if (World == nullptr)
+        {
+            return NAME_None;
+        }
+
+        const STagComponent* Component = World->TryGetComponent<STagComponent>(Entity);
+        return Component != nullptr ? Component->Tag : NAME_None;
     }
 
     ECS::FEntity CEntityLibrary::GetFirstChild(CWorld* World, ECS::FEntity Entity)

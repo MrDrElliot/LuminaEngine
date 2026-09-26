@@ -9,16 +9,16 @@ namespace LuminaSharp;
 public readonly struct UIDocument
 {
     internal readonly ulong World;
-    internal readonly IntPtr Ptr;
+    internal readonly Lumina.FUIDocument Handle;
 
-    internal UIDocument(ulong World, IntPtr Ptr)
+    internal UIDocument(ulong World, Lumina.FUIDocument Handle)
     {
         this.World = World;
-        this.Ptr = Ptr;
+        this.Handle = Handle;
     }
 
     /// <summary>False if the load failed or the document has been closed.</summary>
-    public bool IsValid => Ptr != IntPtr.Zero;
+    public bool IsValid => Handle.IsValid;
 
     /// <summary>Make the document visible. <paramref name="Modal"/> blocks focus to other documents;
     /// <paramref name="AutoFocus"/> focuses the document's first autofocus element.</summary>
@@ -26,7 +26,7 @@ public readonly struct UIDocument
     {
         if (IsValid)
         {
-            Native.UI_ShowDocument(Ptr, Modal ? 1 : 0, AutoFocus ? 1 : 0);
+            Lumina.CUILibrary.ShowDocument(Handle, Modal, AutoFocus);
         }
     }
 
@@ -35,7 +35,7 @@ public readonly struct UIDocument
     {
         if (IsValid)
         {
-            Native.UI_HideDocument(Ptr);
+            Lumina.CUILibrary.HideDocument(Handle);
         }
     }
 
@@ -45,7 +45,7 @@ public readonly struct UIDocument
     {
         if (IsValid)
         {
-            Native.UI_UnloadDocument(World, Ptr);
+            Lumina.CUILibrary.UnloadDocument(UI.WorldOf(World), Handle);
         }
     }
 
@@ -54,19 +54,19 @@ public readonly struct UIDocument
     {
         if (IsValid)
         {
-            Native.UI_PullDocumentToFront(Ptr);
+            Lumina.CUILibrary.BringDocumentToFront(Handle);
         }
     }
 
     /// <summary>The document's root element (the body), e.g. to attach a document-wide event listener.</summary>
-    public UIElement Root => new(World, IsValid ? Native.UI_GetDocumentRoot(Ptr) : IntPtr.Zero);
+    public UIElement Root => new(World, IsValid ? Lumina.CUILibrary.GetDocumentRoot(Handle) : default);
 
     /// <summary>The element with the given <c>id</c>, or an invalid element if absent.</summary>
-    public UIElement GetElementById(string Id) => new(World, IsValid ? Native.UI_GetElementById(Ptr, Id) : IntPtr.Zero);
+    public UIElement GetElementById(string Id) => new(World, IsValid ? Lumina.CUILibrary.GetElementById(Handle, Id) : default);
 
     /// <summary>Shorthand for <see cref="GetElementById"/>: <c>document["score"]</c>.</summary>
     public UIElement this[string Id] => GetElementById(Id);
 
     /// <summary>First element matching a CSS selector (e.g. ".health-bar > .fill"), or an invalid element.</summary>
-    public UIElement Query(string Selector) => new(World, IsValid ? Native.UI_QuerySelector(Ptr, Selector) : IntPtr.Zero);
+    public UIElement Query(string Selector) => new(World, IsValid ? Lumina.CUILibrary.QuerySelector(Root.Handle, Selector) : default);
 }

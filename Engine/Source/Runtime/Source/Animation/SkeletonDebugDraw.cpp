@@ -369,7 +369,7 @@ namespace Lumina::SkeletonDebugDraw
                     continue;
                 }
 
-                CSkeletalMesh* SkeletalMesh = Mesh.SkeletalMesh;
+                CSkeletalMesh* SkeletalMesh = Mesh.SkeletalMesh.Get();
                 if (!SkeletalMesh->Skeleton.IsValid())
                 {
                     continue;

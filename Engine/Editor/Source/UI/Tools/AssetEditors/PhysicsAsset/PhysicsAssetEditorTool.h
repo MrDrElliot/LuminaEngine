@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "World/ECS/Registry.h"
 
@@ -13,6 +13,7 @@
 #include "Memory/SmartPtr.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
+#include "UI/Tools/AssetEditors/ShapeHandles.h"
 #include "Renderer/SkeletonResource.h"
 
 namespace Lumina
@@ -27,29 +28,9 @@ namespace Lumina
         Constraint,
     };
 
-    enum class EPhysicsBodyHandle : uint8
-    {
-        None,
-        Radius,
-        HalfHeight,
-        ExtentX,
-        ExtentY,
-        ExtentZ,
-    };
-
-    // One draggable dot. Position is where it draws; dragging measures along Axis from Anchor (the body
-    // center) and that distance becomes the dimension the handle owns.
-    struct FPhysicsHandle
-    {
-        EPhysicsBodyHandle  Type = EPhysicsBodyHandle::None;
-        FVector3            Position;
-        FVector3            Axis;
-        FVector3            Anchor;
-    };
-
     // Editor for CPhysicsAsset: skeleton tree on the left, bodies and constraint limits drawn over a
     // bind-pose preview mesh, details for whichever body/constraint is selected.
-    class FPhysicsAssetEditorTool : public FAssetEditorTool
+    class FPhysicsAssetEditorTool : public FAssetEditorTool, public IShapeHandleHost
     {
     public:
 
@@ -125,13 +106,8 @@ namespace Lumina
 
         // Viewport manipulation. Rays are built from the editor camera; picking is analytic against the
         // authored shapes rather than a GPU readback, which keeps it exact and off the render path.
-        bool BuildViewportRay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, const ImVec2& ScreenPos,
-                              FVector3& OutOrigin, FVector3& OutDirection);
-        static bool ProjectToScreen(const FMatrix4& ViewProj, const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
-                                    const FVector3& WorldPosition, ImVec2& OutScreen);
 
         // Writes a gizmo-edited world frame back into the bone-relative offsets the asset stores.
-        void ApplyBodyGizmo(const FMatrix4& NewBodyMatrix);
 
         // A viewport drag is one undo step: the snapshot is taken when the drag starts, not per frame,
         // so scrubbing a handle across the viewport collapses to a single entry.
@@ -143,8 +119,17 @@ namespace Lumina
         void CloseOpenDragTransaction();
 
         int32 PickBody(const FVector3& RayOrigin, const FVector3& RayDirection);
-        void GatherBodyHandles(TVector<FPhysicsHandle>& OutHandles);
-        void ApplyHandleDrag(const FPhysicsHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection);
+        //~ IShapeHandleHost
+        FMatrix4 GetGizmoMatrix() override;
+        void  ApplyGizmoMatrix(const FMatrix4& NewBodyMatrix) override;
+        void  GatherShapeHandles(TVector<FShapeHandle>& OutHandles) override;
+        void  ApplyShapeHandleDrag(const FShapeHandle& Handle, const FVector3& RayOrigin, const FVector3& RayDirection) override;
+        void  PickShapeAtRay(const FVector3& RayOrigin, const FVector3& RayDirection) override;
+        FName GetMoveTransactionName() const override   { return "Move Body Frame"; }
+        FName GetRotateTransactionName() const override { return "Rotate Body Frame"; }
+        FName GetResizeTransactionName() const override { return "Resize Body"; }
+        void  BeginShapeTransaction(FName Name) override { BeginAssetTransaction(Name); }
+        void  EndShapeTransaction() override             { EndAssetTransaction(); }
 
         // Mirrors a viewport pick into the bone tree so both panels agree on the selection.
         void SyncTreeSelectionToBody(int32 BodyIndex);
@@ -178,7 +163,7 @@ namespace Lumina
 
         float                       GenerateMinBoneLength = 0.05f;
         int32                       SimulationFrames = 0;
-        EPhysicsBodyHandle          ActiveHandle = EPhysicsBodyHandle::None;
+        FShapeHandleState           HandleState;
 
         // Size is owned by the dots, so the gizmo only ever moves or rotates the body frame.
         ImGuizmo::OPERATION         BodyGizmoOp = ImGuizmo::TRANSLATE;
@@ -191,8 +176,6 @@ namespace Lumina
         uint8                       bFloorBodyReported:1 = false;
 
         // Tracked separately so a gizmo drag can never close a handle drag's transaction or the reverse.
-        uint8                       bHandleTransactionOpen:1 = false;
-        uint8                       bGizmoTransactionOpen:1 = false;
 
         uint8                       bDrawBodies:1 = true;
         uint8                       bDrawConstraints:1 = true;

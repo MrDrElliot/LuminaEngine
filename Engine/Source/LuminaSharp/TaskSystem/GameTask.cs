@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,29 +14,59 @@ namespace LuminaSharp;
 /// </summary>
 public static class GameTask
 {
+    // Registered so a generation unload completes it, rather than leaving the await site never to resume.
+    private sealed class FPending<T> : GameTaskRegistry.ICancelPending
+    {
+        internal readonly TaskCompletionSource<T> Source = new();
+
+        internal FPending()
+        {
+            GameTaskRegistry.Track(this);
+        }
+
+        internal void Settle(T Value)
+        {
+            GameTaskRegistry.Forget(this);
+            Source.TrySetResult(Value);
+        }
+
+        public void Cancel()
+        {
+            GameTaskRegistry.Forget(this);
+            Source.TrySetCanceled();
+        }
+
+        internal void CancelOn(CancellationToken Token)
+        {
+            if (Token.CanBeCanceled)
+            {
+                Token.Register(Cancel);
+            }
+        }
+    }
+
     /// <summary>Resume after <paramref name="Seconds"/> of world time.</summary>
     public static System.Threading.Tasks.Task DelaySeconds(float Seconds, CancellationToken Token = default)
     {
-        TaskCompletionSource Source = new();
+        FPending<bool> Pending = new();
         if (!Game.InWorld)
         {
-            Source.SetCanceled();
-            return Source.Task;
+            Pending.Cancel();
+            return Pending.Source.Task;
         }
+
         Lumina.CWorld World = Game.World;
         Entity Self = Game.CurrentEntity;
         CTimerLibrary.SetTimer(World, Seconds, ScriptCallback.OfRepeating(() =>
         {
             using (Game.Push(World, Self))
             {
-                Source.TrySetResult();
+                Pending.Settle(true);
             }
         }));
-        if (Token.CanBeCanceled)
-        {
-            Token.Register(() => Source.TrySetCanceled());
-        }
-        return Source.Task;
+
+        Pending.CancelOn(Token);
+        return Pending.Source.Task;
     }
 
     /// <summary>Resume on the next world tick.</summary>
@@ -45,27 +75,26 @@ public static class GameTask
     /// <summary>Load an asset without blocking; resume with the result (or null) on the game thread.</summary>
     public static System.Threading.Tasks.Task<T?> LoadAsync<T>(string Path, CancellationToken Token = default) where T : NativeObject
     {
-        TaskCompletionSource<T?> Source = new();
+        FPending<T?> Pending = new();
         Lumina.CWorld? World = Game.InWorld ? Game.World : null;
         Entity Self = Game.CurrentEntity;
+
         Asset.LoadAsync<T>(Path, Result =>
         {
             if (World != null)
             {
                 using (Game.Push(World, Self))
                 {
-                    Source.TrySetResult(Result);
+                    Pending.Settle(Result);
                 }
             }
             else
             {
-                Source.TrySetResult(Result);
+                Pending.Settle(Result);
             }
         });
-        if (Token.CanBeCanceled)
-        {
-            Token.Register(() => Source.TrySetCanceled());
-        }
-        return Source.Task;
+
+        Pending.CancelOn(Token);
+        return Pending.Source.Task;
     }
 }

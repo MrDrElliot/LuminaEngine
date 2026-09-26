@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <type_traits>
+#include <utility>
 
 #include "Memory/Memcpy.h"
 #include "Platform/GenericPlatform.h"
@@ -64,7 +65,7 @@ namespace Lumina::Containers
     requires std::is_enum_v<T>
     NODISCARD FORCEINLINE constexpr uint64 GetTypeHash(T Value) noexcept
     {
-        return MixHash64(static_cast<uint64>(static_cast<std::underlying_type_t<T>>(Value)));
+        return MixHash64(static_cast<uint64>(std::to_underlying(Value)));
     }
 
     template <typename T>

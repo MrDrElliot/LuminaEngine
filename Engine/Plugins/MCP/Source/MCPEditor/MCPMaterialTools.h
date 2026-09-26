@@ -55,7 +55,7 @@ namespace Lumina
     };
 
     REFLECT()
-    struct MCPEDITOR_API SMaterialPinInfo
+    struct MCPEDITOR_API SGraphPinInfo
     {
         GENERATED_BODY()
 
@@ -90,7 +90,7 @@ namespace Lumina
         FString DisplayName;
 
         PROPERTY()
-        TVector<SMaterialPinInfo> Pins;
+        TVector<SGraphPinInfo> Pins;
 
         /** Current values of this node's settable fields, as JSON. */
         PROPERTY()
@@ -177,7 +177,7 @@ namespace Lumina
         int64 Id = 0;
 
         PROPERTY()
-        TVector<SMaterialPinInfo> Pins;
+        TVector<SGraphPinInfo> Pins;
     };
 
     REFLECT()
@@ -288,8 +288,13 @@ namespace Lumina
         TVector<FString> Warnings;
     };
 
+    class CEdGraphNode;
+
     namespace MCP
     {
+        // Shared with the anim graph tools, which describe pins the same way.
+        void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out);
+
         void RegisterMaterialTools(FStringView Owner);
     }
 }

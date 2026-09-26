@@ -1,4 +1,4 @@
-#include "MaterialNode_TextureHandle.h"
+﻿#include "MaterialNode_TextureHandle.h"
 
 #include "Assets/AssetTypes/Textures/TextureArray.h"
 #include "Core/Object/Cast.h"
@@ -41,8 +41,8 @@ namespace Lumina
 
         // Deduped against the sample path, so a texture used by both still occupies one slot.
         const int32 Index = (bDynamic && !ParameterName.IsNone())
-                          ? Compiler.BindTextureParameter(ParameterName, Texture, this)
-                          : Compiler.BindTexture(Texture, this);
+                          ? Compiler.BindTextureParameter(ParameterName, Texture.Get(), this)
+                          : Compiler.BindTexture(Texture.Get(), this);
 
         if (Index == INDEX_NONE)
         {

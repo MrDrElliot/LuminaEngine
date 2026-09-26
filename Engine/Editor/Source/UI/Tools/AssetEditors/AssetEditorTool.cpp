@@ -1,4 +1,4 @@
-#include "Containers/StringFormat.h"
+﻿#include "Containers/StringFormat.h"
 #include "AssetEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
 #include "Assets/AssetEvents.h"
@@ -126,18 +126,18 @@ namespace Lumina
 
         if (ShouldGenerateThumbnailOnSave() && Asset->GetPackage())
         {
-            if (!CThumbnailManager::Get().GenerateThumbnail(Asset, Asset->GetPackage()))
+            if (!CThumbnailManager::Get().GenerateThumbnail(Asset.Get(), Asset->GetPackage()))
             {
                 GenerateThumbnail(Asset->GetPackage());
             }
         }
 
-        FCoreEditorDelegates::OnAssetPreSave.Broadcast(Asset);
+        FCoreEditorDelegates::OnAssetPreSave.Broadcast(Asset.Get());
 
         if (CPackage::SavePackage(Asset->GetPackage(), Asset->GetPackage()->GetPackagePath()))
         {
-            FAssetRegistry::Get().AssetSaved(Asset);
-            FCoreEditorDelegates::OnAssetSaved.Broadcast(Asset);
+            FAssetRegistry::Get().AssetSaved(Asset.Get());
+            FCoreEditorDelegates::OnAssetSaved.Broadcast(Asset.Get());
             ImGuiX::Notifications::NotifySuccess("Successfully saved package: \"{0}\"", Asset->GetName().c_str());
         }
         else

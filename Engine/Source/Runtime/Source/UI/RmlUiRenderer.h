@@ -102,6 +102,7 @@ namespace Lumina
             FString                    BrushSourcePath;            // resolved asset path; re-validated so a rename/delete breaks the brush
             bool                       bBrushStale = false;        // source path no longer resolves -> cleared + not rendered (material stays rooted so a rename-back can resume)
             bool                       bBrushCleared = false;      // RT has defined contents; until then a not-yet-ready material would leave the UI sampling garbage
+            bool                       bStraightAlpha = false;     // asset textures are not premultiplied like RmlUi's own; the shader premultiplies them
         };
 
         struct FPendingTexture
@@ -148,6 +149,10 @@ namespace Lumina
         };
 
         // Matches RmlUiCommon.slang::FUiDraw, read in-shader through a device address with std430 layout.
+        // Matches RmlUiCommon.slang UI_SHADER_*.
+        static constexpr uint32 kUIShaderTextured          = 0;
+        static constexpr uint32 kUIShaderTexturedStraight = 4;
+
         struct FUiDraw
         {
             FMatrix4 MVP;

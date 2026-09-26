@@ -15,7 +15,7 @@ internal sealed class EntityScriptRuntime
         this.Library = Library;
     }
 
-    // Registers an instance created by ScriptableRuntime, so PollInput can liveness-test its handle.
+    // Registers an instance created by ScriptableRuntime, so FreeAll can detach it.
     internal void Adopt(GCHandle Handle)
     {
         LiveHandles.Add(Handle);
@@ -32,27 +32,6 @@ internal sealed class EntityScriptRuntime
 
     public IReadOnlyCollection<string> TypeNames => Library.EntityScriptTypeNames;
 
-    /// <summary>Applies this frame's action states to a script's input bindings, raising their events. One
-    /// crossing per script per frame, and only for scripts that declare a binding (callback flag) whose
-    /// entity is receiving input.</summary>
-    public unsafe void PollInput(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
-    {
-        if (Resolve(Handle) is not EntityScript Script || !Script.Description.HasInputBindings)
-        {
-            return;
-        }
-
-        try
-        {
-            using var Scope = Game.Push(Script.World, Script.Entity, Script);
-            Script.Description.PollInputBindings(Script, States, Count, Serial, DeltaTime);
-        }
-        catch (Exception Exception)
-        {
-            Native.Log(ELogLevel.Error, $"EntityScript input binding threw: {Exception}");
-        }
-    }
-
     public byte[]? Schema(string TypeName)
     {
         TypeDescription? Description = Library.GetEntityScript(TypeName);
@@ -68,28 +47,19 @@ internal sealed class EntityScriptRuntime
     // Detaches every live script and drops the index, ahead of the collectible ALC unload.
     public void FreeAll()
     {
-        // Snapshot, because an OnDetach that destroys a sibling mutates LiveHandles mid-iteration.
+        // Snapshot, because cancelling a token can run a continuation that mutates LiveHandles.
         foreach (GCHandle Handle in new List<GCHandle>(LiveHandles))
         {
-            // Already destroyed (and OnDetach'd) by an earlier sibling's OnDetach; don't repeat either.
+            // Already dropped by an earlier entry's continuation; don't touch it twice.
             if (!LiveHandles.Contains(Handle))
             {
                 continue;
             }
 
+            // No OnDetach: the script is not detaching, its load context is being replaced. The native
+            // driver delivers OnReloaded once the next generation is live.
             if (Handle.Target is EntityScript Script)
             {
-                try
-                {
-                    using (Game.Push(Script.World, Script.Entity, Script))
-                    {
-                        Script.OnDetach();
-                    }
-                }
-                catch (Exception Exception)
-                {
-                    Native.Log(ELogLevel.Error, $"EntityScript.OnDetach threw during unload: {Exception}");
-                }
                 Script.CancelDestroyToken();
             }
 
@@ -97,16 +67,5 @@ internal sealed class EntityScriptRuntime
             LiveHandles.Remove(Handle);
         }
         LiveHandles.Clear();
-    }
-
-    // Membership is the liveness test, which holds only because Forget runs before every free.
-    private EntityScript? Resolve(IntPtr Pointer)
-    {
-        if (Pointer == IntPtr.Zero)
-        {
-            return null;
-        }
-        GCHandle Handle = GCHandle.FromIntPtr(Pointer);
-        return LiveHandles.Contains(Handle) ? Handle.Target as EntityScript : null;
     }
 }

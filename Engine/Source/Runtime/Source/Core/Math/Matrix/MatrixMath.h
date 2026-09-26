@@ -27,17 +27,17 @@ namespace Lumina::Math
     [[nodiscard]] inline TMat<float, 4, 4> Transpose(const TMat<float, 4, 4>& M)
     {
         using namespace SIMD;
-        __m128 R0 = VFloat4::Load(&M.Cols[0][0]);
-        __m128 R1 = VFloat4::Load(&M.Cols[1][0]);
-        __m128 R2 = VFloat4::Load(&M.Cols[2][0]);
-        __m128 R3 = VFloat4::Load(&M.Cols[3][0]);
+        __m128 R0 = VFloat4::LoadAligned(&M.Cols[0][0]);
+        __m128 R1 = VFloat4::LoadAligned(&M.Cols[1][0]);
+        __m128 R2 = VFloat4::LoadAligned(&M.Cols[2][0]);
+        __m128 R3 = VFloat4::LoadAligned(&M.Cols[3][0]);
         _MM_TRANSPOSE4_PS(R0, R1, R2, R3);
 
         TMat<float, 4, 4> Out;
-        VFloat4(R0).Store(&Out.Cols[0][0]);
-        VFloat4(R1).Store(&Out.Cols[1][0]);
-        VFloat4(R2).Store(&Out.Cols[2][0]);
-        VFloat4(R3).Store(&Out.Cols[3][0]);
+        VFloat4(R0).StoreAligned(&Out.Cols[0][0]);
+        VFloat4(R1).StoreAligned(&Out.Cols[1][0]);
+        VFloat4(R2).StoreAligned(&Out.Cols[2][0]);
+        VFloat4(R3).StoreAligned(&Out.Cols[3][0]);
         return Out;
     }
 
@@ -154,10 +154,10 @@ namespace Lumina::Math
     {
         using namespace SIMD;
 
-        const VFloat4 In0 = VFloat4::Load(&M.Cols[0][0]);
-        const VFloat4 In1 = VFloat4::Load(&M.Cols[1][0]);
-        const VFloat4 In2 = VFloat4::Load(&M.Cols[2][0]);
-        const VFloat4 In3 = VFloat4::Load(&M.Cols[3][0]);
+        const VFloat4 In0 = VFloat4::LoadAligned(&M.Cols[0][0]);
+        const VFloat4 In1 = VFloat4::LoadAligned(&M.Cols[1][0]);
+        const VFloat4 In2 = VFloat4::LoadAligned(&M.Cols[2][0]);
+        const VFloat4 In3 = VFloat4::LoadAligned(&M.Cols[3][0]);
 
         // Each cofactor vector is C*A' - B'*D, where A',B' broadcast lane 2 into 0..2.
         auto Fac = [](VFloat4 A, VFloat4 B, VFloat4 C, VFloat4 D)
@@ -191,10 +191,10 @@ namespace Lumina::Math
         const VFloat4 Rcp = VFloat4::Broadcast(1.0f / Dot(In0, Row));
 
         TMat<float, 4, 4> Out;
-        (Inv0 * Rcp).Store(&Out.Cols[0][0]);
-        (Inv1 * Rcp).Store(&Out.Cols[1][0]);
-        (Inv2 * Rcp).Store(&Out.Cols[2][0]);
-        (Inv3 * Rcp).Store(&Out.Cols[3][0]);
+        (Inv0 * Rcp).StoreAligned(&Out.Cols[0][0]);
+        (Inv1 * Rcp).StoreAligned(&Out.Cols[1][0]);
+        (Inv2 * Rcp).StoreAligned(&Out.Cols[2][0]);
+        (Inv3 * Rcp).StoreAligned(&Out.Cols[3][0]);
         return Out;
     }
 
@@ -222,19 +222,19 @@ namespace Lumina::Math
     [[nodiscard]] inline TMat<float, 4, 4> Translate(const TMat<float, 4, 4>& M, const TVec<float, 3>& V)
     {
         using namespace SIMD;
-        const VFloat4 C0 = VFloat4::Load(&M.Cols[0][0]);
-        const VFloat4 C1 = VFloat4::Load(&M.Cols[1][0]);
-        const VFloat4 C2 = VFloat4::Load(&M.Cols[2][0]);
-        const VFloat4 C3 = VFloat4::Load(&M.Cols[3][0]);
+        const VFloat4 C0 = VFloat4::LoadAligned(&M.Cols[0][0]);
+        const VFloat4 C1 = VFloat4::LoadAligned(&M.Cols[1][0]);
+        const VFloat4 C2 = VFloat4::LoadAligned(&M.Cols[2][0]);
+        const VFloat4 C3 = VFloat4::LoadAligned(&M.Cols[3][0]);
 
         TMat<float, 4, 4> Out;
-        C0.Store(&Out.Cols[0][0]);
-        C1.Store(&Out.Cols[1][0]);
-        C2.Store(&Out.Cols[2][0]);
+        C0.StoreAligned(&Out.Cols[0][0]);
+        C1.StoreAligned(&Out.Cols[1][0]);
+        C2.StoreAligned(&Out.Cols[2][0]);
         // Column 3 += M[0]*x + M[1]*y + M[2]*z; columns 0..2 pass through.
         MulAdd(C2, VFloat4::Broadcast(V.z),
         MulAdd(C1, VFloat4::Broadcast(V.y),
-        MulAdd(C0, VFloat4::Broadcast(V.x), C3))).Store(&Out.Cols[3][0]);
+        MulAdd(C0, VFloat4::Broadcast(V.x), C3))).StoreAligned(&Out.Cols[3][0]);
         return Out;
     }
 
@@ -242,10 +242,10 @@ namespace Lumina::Math
     {
         using namespace SIMD;
         TMat<float, 4, 4> Out;
-        (VFloat4::Load(&M.Cols[0][0]) * VFloat4::Broadcast(V.x)).Store(&Out.Cols[0][0]);
-        (VFloat4::Load(&M.Cols[1][0]) * VFloat4::Broadcast(V.y)).Store(&Out.Cols[1][0]);
-        (VFloat4::Load(&M.Cols[2][0]) * VFloat4::Broadcast(V.z)).Store(&Out.Cols[2][0]);
-        VFloat4::Load(&M.Cols[3][0]).Store(&Out.Cols[3][0]);
+        (VFloat4::LoadAligned(&M.Cols[0][0]) * VFloat4::Broadcast(V.x)).StoreAligned(&Out.Cols[0][0]);
+        (VFloat4::LoadAligned(&M.Cols[1][0]) * VFloat4::Broadcast(V.y)).StoreAligned(&Out.Cols[1][0]);
+        (VFloat4::LoadAligned(&M.Cols[2][0]) * VFloat4::Broadcast(V.z)).StoreAligned(&Out.Cols[2][0]);
+        VFloat4::LoadAligned(&M.Cols[3][0]).StoreAligned(&Out.Cols[3][0]);
         return Out;
     }
 

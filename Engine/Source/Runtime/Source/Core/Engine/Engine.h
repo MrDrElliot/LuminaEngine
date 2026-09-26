@@ -8,6 +8,7 @@
 #include "Core/Object/ObjectReinstancer.h"
 #include "Networking/INetworkTransport.h"
 #include "Assets/AssetRegistry/CookRoot.h"
+#include "Tools/UI/DevelopmentToolUI.h"
 
 
 namespace Lumina
@@ -16,7 +17,6 @@ namespace Lumina
     class FAssetRegistry;
     class FRenderManager;
     class IImGuiRenderer;
-    class IDevelopmentToolUI;
     class FAssetManager;
     class FApplication;
     class FWindow;
@@ -68,7 +68,7 @@ namespace Lumina
 
         #if WITH_EDITOR
         RUNTIME_API virtual IDevelopmentToolUI* CreateDevelopmentTools() = 0;
-        RUNTIME_API IDevelopmentToolUI* GetDevelopmentToolsUI() const { return DeveloperToolUI; }
+        RUNTIME_API IDevelopmentToolUI* GetDevelopmentToolsUI() const { return DeveloperToolUI.Get(); }
         #endif
 
 
@@ -95,7 +95,7 @@ namespace Lumina
         // to a single root when no explicit roots exist. Cooker iterates this for BFS seeds.
         RUNTIME_API TVector<FCookRoot> GetCookRoots() const;
 
-        RUNTIME_API CGameInstance* GetGameInstance() const { return GameInstance; }
+        RUNTIME_API CGameInstance* GetGameInstance() const { return GameInstance.Get(); }
 
         //~ IObjectReferenceProvider: the engine holds the one live object no registry owns.
 
@@ -106,7 +106,7 @@ namespace Lumina
         /** Queues world travel; swap runs at next FrameStart. Prefers PIE Game world; preserves editor proxy on PIE exit. */
         RUNTIME_API void Travel(FStringView WorldPath);
 
-        /** Gameplay quit: ends the PIE session in the editor (via FCoreDelegates::OnGameQuitRequested),
+        /** Gameplay quit: ends the PIE session in the editor (via FCoreDelegates::Get().OnGameQuitRequested),
          *  exits the process in a packaged game. Safe to call from inside a world tick. */
         RUNTIME_API void RequestExitGame();
         
@@ -173,7 +173,7 @@ namespace Lumina
         bool                          bHasCarriedConnection = false;
 
         #if WITH_EDITOR
-        IDevelopmentToolUI*     DeveloperToolUI =       nullptr;
+        TUniquePtr<IDevelopmentToolUI> DeveloperToolUI;
         #endif
         
         FString                     ProjectName;

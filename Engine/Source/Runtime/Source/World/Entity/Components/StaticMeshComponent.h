@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 
 #include "MeshComponent.h"
@@ -27,7 +27,7 @@ namespace Lumina
         void SetStaticMesh(CStaticMesh* InMesh) { StaticMesh = InMesh; InvalidateRenderResolve(); }
         
         FUNCTION()
-        CStaticMesh* GetStaticMesh() const { return StaticMesh; }
+        CStaticMesh* GetStaticMesh() const { return StaticMesh.Get(); }
         
         /** The static mesh asset to render for this component. */
         PROPERTY(Editable, Replicated, Category = "Rendering")

@@ -75,5 +75,8 @@ namespace Lumina
         std::string                   SetterFunc;
 
         bool                            bInner = false;
+
+        // Set when the slot is not a member of Outer, such as a delegate argument inside its arg pack.
+        std::string                     OffsetExpr;
     };
 }

@@ -7,11 +7,28 @@
 #include <Platform/GenericPlatform.h>
 #include "ObjectFlags.h"
 #include "GUID/GUID.h"
-#include "Initializer/ObjectInitializer.h"
+#include "ConstructObjectParams.h"
 
 namespace Lumina
 {
     struct FMetaDataPairParam;
+
+    /** Publishes what is being constructed, so an object's own constructor can read its class, name and package. */
+    class RUNTIME_API FScopedObjectConstruction
+    {
+    public:
+
+        explicit FScopedObjectConstruction(const FConstructCObjectParams& Params);
+        ~FScopedObjectConstruction();
+
+        LE_NO_COPYMOVE(FScopedObjectConstruction);
+
+        static const FConstructCObjectParams* Current();
+
+    private:
+
+        const FConstructCObjectParams* Previous;
+    };
     class CObjectBase;
     class CClass;
     
@@ -31,8 +48,6 @@ namespace Lumina
 
         CObjectBase& operator=(const CObjectBase&) = delete;
         CObjectBase& operator=(CObjectBase&&) = delete;
-        
-        RUNTIME_API virtual void ConstructInternal(const FObjectInitializer& OI);
         
         RUNTIME_API CObjectBase(EObjectFlags InFlags);
         RUNTIME_API CObjectBase(CClass* InClass, EObjectFlags InFlags, CPackage* Package, FName InName, const FGuid& GUID);
@@ -72,10 +87,12 @@ namespace Lumina
         /** Strips common CObject prefixes. */
         RUNTIME_API virtual FFixedString MakeDisplayName() const;
 
+        /** Claims an object array slot and enters the hash tables, once the constructor has run. */
+        RUNTIME_API void AddObject();
+
     private:
 
-        RUNTIME_API void AddObject();
-        
+
         RUNTIME_API void RunOnDestroyOnce();
 
         RUNTIME_API void DestroyInternal();

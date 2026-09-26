@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq.Expressions;
 using System.Reflection;
 using Lumina;
 
@@ -719,6 +718,12 @@ internal sealed class TypeDescription
                 });
             }
 
+            if (ScriptAsync.WhyUnsupported(Method.ReturnType) is string Why)
+            {
+                Debug.LogError($"Script function '{Method.Name}' returns {Method.ReturnType.Name}, and {Why}");
+                continue;
+            }
+
             int ReturnIndex = -1;
             if (Method.ReturnType != typeof(void))
             {
@@ -726,7 +731,10 @@ internal sealed class TypeDescription
                 Params.Add(new ScriptProperty
                 {
                     Name = "ReturnValue",
-                    Type = Library.ResolveType(Method.ReturnType, 0, new HashSet<Type>()),
+                    // An async function hands back a token native polls, since a frame cannot wait for it.
+                    Type = ScriptAsync.IsFireAndForget(Method.ReturnType)
+                        ? Library.ResolveType(typeof(ulong), 0, new HashSet<Type>())
+                        : Library.ResolveType(Method.ReturnType, 0, new HashSet<Type>()),
                 });
             }
 
@@ -792,16 +800,16 @@ internal sealed class TypeDescription
         }
     }
 
-    /// <summary>Feeds this frame's action states to each of the instance's input bindings.</summary>
-    public unsafe void PollInputBindings(EntityScript Script, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
+    /// <summary>Hands one action's state to each of the instance's bindings that listens to it.</summary>
+    public void DispatchAction(EntityScript Script, Lumina.FName Action, in Lumina.FInputActionState State)
     {
         foreach (ScriptProperty Property in InputBindings)
         {
             // A binding the script nulled out is skipped rather than recreated: the field is the script's
             // to own, and silently handing it a new object would lose whatever it meant by clearing it.
-            if (Property.Get(Script) is SInputBinding Binding)
+            if (Property.Get(Script) is SInputBinding Binding && Binding.Listens(Action))
             {
-                Binding.Poll(States, Count, Serial, DeltaTime);
+                Binding.Apply(State);
             }
         }
     }
@@ -839,20 +847,6 @@ internal sealed class TypeDescription
         }
 
         return (IReadOnlyList<ScriptButton>?)Result ?? Array.Empty<ScriptButton>();
-    }
-
-    private static Func<IntPtr, object?> BuildWrapperFactory(Type WrapperType)
-    {
-        ConstructorInfo? Constructor = WrapperType.GetConstructor(
-            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-            null, new[] { typeof(IntPtr) }, null);
-        if (Constructor == null)
-        {
-            return static _ => null;
-        }
-        ParameterExpression Parameter = Expression.Parameter(typeof(IntPtr), "handle");
-        return Expression.Lambda<Func<IntPtr, object?>>(
-            Expression.Convert(Expression.New(Constructor, Parameter), typeof(object)), Parameter).Compile();
     }
 
     public object? Create()

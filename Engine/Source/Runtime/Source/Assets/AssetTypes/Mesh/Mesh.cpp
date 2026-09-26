@@ -1,4 +1,4 @@
-#include "RuntimePCH.h"
+﻿#include "RuntimePCH.h"
 #include "Mesh.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
@@ -109,7 +109,7 @@ namespace Lumina
             return false;
         }
 
-        const bool bMaterialsReady = Algo::AllOf(Materials, [](const CMaterialInterface* Material)
+        const bool bMaterialsReady = Algo::AllOf(Materials, [](const TObjectPtr<CMaterialInterface>& Material)
         {
             return Material != nullptr && Material->IsReadyForRender();
         });

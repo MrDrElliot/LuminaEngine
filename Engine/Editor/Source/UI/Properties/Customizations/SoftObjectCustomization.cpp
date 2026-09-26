@@ -95,7 +95,7 @@ namespace Lumina
 
             FFixedString PathString = bHasPath ? FFixedString(PathView.data(), PathView.size()) : FFixedString("<None>");
             ImGui::PushStyleColor(ImGuiCol_Text, bHasPath ? ImVec4(0.6f, 0.6f, 0.6f, 1.0f) : ImVec4(1.0f, 0.19f, 0.19f, 1.0f));
-            ImGui::InputText("##SoftObjectPathText", PathString.data(), PathString.max_size(), ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_ReadOnly);
+            ImGuiX::InputText("##SoftObjectPathText", PathString, ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_ReadOnly);
             ImGuiX::TextTooltip("{}", PathString);
             ImGui::PopStyleColor();
 

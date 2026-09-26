@@ -45,10 +45,6 @@ namespace Grain
             return Length({ A.x - B.x, A.y - B.y, A.z - B.z });
         }
 
-        FString Integer(int32 Value)
-        {
-            return Format("{}", Value);
-        }
     }
 
     float FGame::RandomUnit()
@@ -1145,7 +1141,7 @@ namespace Grain
         Player.Health -= Amount;
         Player.HurtTimer = 0.45f;
 
-        Floater(GetEyePosition(), Integer(int32(Amount)), { 2.2f, 0.35f, 0.25f });
+        Floater(GetEyePosition(), Format("{}", int32(Amount)), { 2.2f, 0.35f, 0.25f });
 
         if (Player.Health <= 0.0f)
         {
@@ -1167,7 +1163,7 @@ namespace Grain
         Target.Body.Velocity.z += Knock.z * 5.2f;
 
         Floater({ Target.Body.Position.x, Target.Body.Position.y + Target.Body.HalfExtent.y, Target.Body.Position.z },
-                Integer(int32(Amount)), { 2.4f, 1.9f, 0.9f });
+                Format("{}", int32(Amount)), { 2.4f, 1.9f, 0.9f });
 
         if (Target.Health > 0.0f)
         {
@@ -1221,7 +1217,7 @@ namespace Grain
             Player.Health = Player.MaxHealth;
             Player.Focus = Player.MaxFocus;
 
-            Say(FString("Level ") .append(Integer(Player.Level)).c_str(), 3.0f);
+            Say(FString("Level ") .append(Format("{}", Player.Level)).c_str(), 3.0f);
             SpawnSpark(Player.Body.Position, { 2.2f, 1.9f, 0.7f }, 22);
         }
     }

@@ -10,12 +10,8 @@
 
 namespace Lumina
 {
-    // CPU-side frustum. Carries the 6 AoS planes PLUS a SoA mirror (SoaN*/SoaD, 8 lanes: 6 used +
-    // 2 inert) so the per-object tests evaluate all planes at once, branchless. This is NOT the
-    // GPU upload type -- the shader's `struct FFrustum { float4 Planes[6]; }` is mirrored by the
-    // 96-byte FGPUFrustum (SceneRenderTypes.h); convert via AsGPU/FromGPU. Never embed FFrustum
-    // (with its SoA tail) in a GPU-uploaded struct.
-    struct FFrustum
+    // Never embed this in a GPU-uploaded struct; FGPUFrustum below is the upload mirror, via AsGPU/FromGPU.
+    struct alignas(SIMD::kAlignment) FFrustum
     {
         enum ESide { LEFT = 0, RIGHT = 1, TOP = 2, BOTTOM = 3, BACK = 4, FRONT = 5, NUM = 6};
 
@@ -55,17 +51,17 @@ namespace Lumina
             const VFloat8 Cx = _mm256_insertf128_ps(_mm256_castps128_ps256(Cx4), Cx4, 1);
             const VFloat8 Cy = _mm256_insertf128_ps(_mm256_castps128_ps256(Cy4), Cy4, 1);
             const VFloat8 Cz = _mm256_insertf128_ps(_mm256_castps128_ps256(Cz4), Cz4, 1);
-            return MulAdd(VFloat8::Load(SoaNx), Cx,
-                   MulAdd(VFloat8::Load(SoaNy), Cy,
-                   MulAdd(VFloat8::Load(SoaNz), Cz, VFloat8::Load(SoaD))));
+            return MulAdd(VFloat8::LoadAligned(SoaNx), Cx,
+                   MulAdd(VFloat8::LoadAligned(SoaNy), Cy,
+                   MulAdd(VFloat8::LoadAligned(SoaNz), Cz, VFloat8::LoadAligned(SoaD))));
         }
 
         FORCEINLINE SIMD::VFloat8 SignedDistances(const FVector3& Point) const
         {
             using namespace SIMD;
-            return MulAdd(VFloat8::Load(SoaNx), VFloat8::Broadcast(Point.x),
-                   MulAdd(VFloat8::Load(SoaNy), VFloat8::Broadcast(Point.y),
-                   MulAdd(VFloat8::Load(SoaNz), VFloat8::Broadcast(Point.z), VFloat8::Load(SoaD))));
+            return MulAdd(VFloat8::LoadAligned(SoaNx), VFloat8::Broadcast(Point.x),
+                   MulAdd(VFloat8::LoadAligned(SoaNy), VFloat8::Broadcast(Point.y),
+                   MulAdd(VFloat8::LoadAligned(SoaNz), VFloat8::Broadcast(Point.z), VFloat8::LoadAligned(SoaD))));
         }
 
         /** Conservative sphere-vs-frustum; false positives near corners are acceptable for broad-phase. */
@@ -88,16 +84,16 @@ namespace Lumina
         NODISCARD bool IsInside(const FAABB& aabb) const
         {
             using namespace SIMD;
-            const VFloat8 Nx = VFloat8::Load(SoaNx);
-            const VFloat8 Ny = VFloat8::Load(SoaNy);
-            const VFloat8 Nz = VFloat8::Load(SoaNz);
+            const VFloat8 Nx = VFloat8::LoadAligned(SoaNx);
+            const VFloat8 Ny = VFloat8::LoadAligned(SoaNy);
+            const VFloat8 Nz = VFloat8::LoadAligned(SoaNz);
 
             // Positive vertex per plane: pick Max where the normal component is >= 0, else Min.
             const VFloat8 Px = Select(CmpGe(Nx, VFloat8::Zero()), VFloat8::Broadcast(aabb.Max.x), VFloat8::Broadcast(aabb.Min.x));
             const VFloat8 Py = Select(CmpGe(Ny, VFloat8::Zero()), VFloat8::Broadcast(aabb.Max.y), VFloat8::Broadcast(aabb.Min.y));
             const VFloat8 Pz = Select(CmpGe(Nz, VFloat8::Zero()), VFloat8::Broadcast(aabb.Max.z), VFloat8::Broadcast(aabb.Min.z));
 
-            const VFloat8 Dist = MulAdd(Nx, Px, MulAdd(Ny, Py, MulAdd(Nz, Pz, VFloat8::Load(SoaD))));
+            const VFloat8 Dist = MulAdd(Nx, Px, MulAdd(Ny, Py, MulAdd(Nz, Pz, VFloat8::LoadAligned(SoaD))));
             return (MoveMask(CmpLt(Dist, VFloat8::Zero())) & PlaneMask) == 0;
         }
 
@@ -149,10 +145,10 @@ namespace Lumina
 
             // Columns of the inverse VP, loaded once. NDC corner coords are all +/-1, so
             // each corner is C3 +/- C0 +/- C1 +/- C2.
-            const VFloat4 C0 = VFloat4::Load(&InverseVP.Cols[0][0]);
-            const VFloat4 C1 = VFloat4::Load(&InverseVP.Cols[1][0]);
-            const VFloat4 C2 = VFloat4::Load(&InverseVP.Cols[2][0]);
-            const VFloat4 C3 = VFloat4::Load(&InverseVP.Cols[3][0]);
+            const VFloat4 C0 = VFloat4::LoadAligned(&InverseVP.Cols[0][0]);
+            const VFloat4 C1 = VFloat4::LoadAligned(&InverseVP.Cols[1][0]);
+            const VFloat4 C2 = VFloat4::LoadAligned(&InverseVP.Cols[2][0]);
+            const VFloat4 C3 = VFloat4::LoadAligned(&InverseVP.Cols[3][0]);
 
             for (int z = 0; z < 2; ++z)
             {
@@ -175,6 +171,12 @@ namespace Lumina
             }
         }
     };
+
+    static_assert(alignof(FFrustum) == SIMD::kAlignment, "FFrustum SoA loads are aligned; see LoadAligned above");
+    static_assert(offsetof(FFrustum, SoaNx) % SIMD::kAlignment == 0, "SoaNx must stay 32-byte aligned");
+    static_assert(offsetof(FFrustum, SoaNy) % SIMD::kAlignment == 0, "SoaNy must stay 32-byte aligned");
+    static_assert(offsetof(FFrustum, SoaNz) % SIMD::kAlignment == 0, "SoaNz must stay 32-byte aligned");
+    static_assert(offsetof(FFrustum, SoaD)  % SIMD::kAlignment == 0, "SoaD must stay 32-byte aligned");
 
     // 96-byte GPU upload mirror of the shader's `struct FFrustum { float4 Planes[6]; }`. The rich
     // CPU FFrustum (above) carries a SoA tail and must NEVER be embedded in a GPU struct; embed

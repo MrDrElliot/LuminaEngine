@@ -1,5 +1,6 @@
 ﻿#include "LayoutRegistry.h"
 #include "DotNetHost.h"
+#include "Scripting/EntityScript.h"
 #include "Scripting/ManagedTypeRegistry.h"
 #include "Scripting/ScriptSchemaCodec.h"
 #include "World/ECS/Registry.h"
@@ -33,6 +34,7 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/Component.h"
 #include "Scripting/DotNet/DotNetExport.h"
+#include "Scripting/DotNet/ExportSignature.h"
 #include "Scripting/DotNet/ScriptReferences.h"
 #include "Scripting/ScriptExports.h"
 #include "Core/Object/Object.h"
@@ -195,7 +197,6 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ApplyScriptableDefaultsFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptStructsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptStructSchemaFn)(const char*, int32, void*, void*);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* OnNativeDelegateDestroyedFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptSchemaFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptButtonsFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* InvokeAssetCallbackFn)(void*, void*);
@@ -207,7 +208,6 @@ namespace Lumina::DotNet
         // where it uses them (TManagedExport) rather than adding a field, a typedef and a resolve line here.
         struct FManagedExports
         {
-            OnNativeDelegateDestroyedFn OnNativeDelegateDestroyed;
             EnumerateEntityScriptsFn    EnumerateEntityScripts;
             CreateScriptableFn          CreateScriptable;
             EnumerateScriptablesFn      EnumerateScriptables;
@@ -252,15 +252,6 @@ namespace Lumina::DotNet
         FManagedExports                             GManaged{};
 
         // Reflection layouts for each C# script type, cleared on reload/shutdown.
-
-        // On native delegate destruction, ask the managed registry to free the matching GCHandles.
-        void NotifyManagedDelegateDestroyed(void* DelegateAddress)
-        {
-            if (bInitialized && GManaged.OnNativeDelegateDestroyed != nullptr)
-            {
-                GManaged.OnNativeDelegateDestroyed(DelegateAddress);
-            }
-        }
 
         // Sink the managed EnumerateEntityScripts calls once per script type; Ctx is the out vector.
         void LmScriptNameSink(void* Ctx, const char* Name, int Len)
@@ -865,7 +856,7 @@ namespace Lumina::DotNet
         }
 
         // Core owns the cache but knows nothing about the managed runtime, so it calls back through here.
-        void FreeManagedInstanceHandle(void* Handle)
+        void FreeManagedGCHandle(void* Handle)
         {
             if (Handle != nullptr && GManaged.FreeHandle != nullptr)
             {
@@ -1060,7 +1051,6 @@ namespace Lumina::DotNet
         LM_RESOLVE(InvokeAssetCallback,    InvokeAssetCallbackFn);
         LM_RESOLVE(LoadScripts,            LoadScriptsFn);
         LM_RESOLVE(SetScriptCompileOptimization, SetScriptCompileOptimizationFn);   // optional, packaging only
-        LM_RESOLVE(OnNativeDelegateDestroyed, OnNativeDelegateDestroyedFn);
         LM_RESOLVE(Shutdown,               ShutdownFn);
         LM_RESOLVE(Tick,                   TickFn);
         #undef LM_RESOLVE
@@ -1074,10 +1064,11 @@ namespace Lumina::DotNet
         }
 
         bInitialized = true;
-        GOnScriptDelegateDestroyed = &NotifyManagedDelegateDestroyed;
 
         // Core must not know about GC handles, so hand it the free function once managed can service one.
-        Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedInstanceHandle);
+        // A managed delegate binding hands its handle to the delegate, which frees it through the same call.
+        Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedGCHandle);
+        GFreeManagedDelegateContext = &FreeManagedGCHandle;
 
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled);
     }
@@ -1100,7 +1091,7 @@ namespace Lumina::DotNet
         Lumina::ManagedInstances::SetFreeHandleFn(nullptr);
 
         bInitialized = false;
-        GOnScriptDelegateDestroyed = nullptr;
+        GFreeManagedDelegateContext = nullptr;
         GExports = FExporterTable{};
         GCachedGeneration = 0;
         GManaged = FManagedExports{};   // clears the whole native->managed table in one go
@@ -1234,6 +1225,13 @@ namespace Lumina::DotNet
         Scripting::RegisterBuiltInManagedTypeStages();
         Scripting::FManagedTypeRegistry::Get().PreUnloadAll();
 
+        // A managed handler lives in the load context about to be dropped, so no binding can outlive this.
+        // Releasing them here is what frees the GCHandles holding that context alive.
+        ClearAllManagedDelegateBindings();
+
+        // Zero until the first load completes, which is what tells a fresh start from a replacement.
+        const int32 PreviousGeneration = GCachedGeneration;
+
         const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
 
         // The compile is synchronous, so the outcome is reported as a toast rather than a progress modal.
@@ -1280,6 +1278,12 @@ namespace Lumina::DotNet
         GatherManagedTypeDefinitions(Definitions);
 
         Scripting::FManagedTypeRegistry::Get().CompileAll(Definitions);
+
+        // Last, so a handler runs against the generation that is now live. On a first load no world holds
+        // a script yet, so this reaches nobody rather than needing a guard.
+        EntityScripts::NotifyScriptsReloaded(
+            PreviousGeneration == 0 ? EScriptReloadReason::InitialLoad : EScriptReloadReason::Requested,
+            GCachedGeneration);
 
         // Idempotent and editor-only, so an absent project self-heals on any reload.
         if (bEditorFollowups)
@@ -1356,6 +1360,52 @@ namespace Lumina::DotNet
         }
 
         GManaged.OnWorldTeardown(reinterpret_cast<uint64>(World));
+    }
+
+    FString FindScriptSourceFile(FStringView TypeName)
+    {
+        if (TypeName.empty())
+        {
+            return FString();
+        }
+
+        // The stem, since a script is declared in a file named after it by every convention the templates set.
+        const size_t Dot = TypeName.find_last_of('.');
+        const FStringView Short = Dot == FStringView::npos ? TypeName : TypeName.substr(Dot + 1);
+
+        FString Wanted(Short.data(), Short.size());
+        Wanted += ".cs";
+
+        FString Found;
+        for (const FScriptUnit& Unit : BuildScriptUnits())
+        {
+            if (Unit.DiskDir.empty() || !Filesystem::Exists(Unit.DiskDir))
+            {
+                continue;
+            }
+
+            Filesystem::IterateDirectoryRecursive(Unit.DiskDir, [&](const Filesystem::FDirectoryEntry& Entry)
+            {
+                if (Entry.IsDirectory() || !Found.empty())
+                {
+                    return true;
+                }
+                if (Entry.Name.size() == Wanted.size()
+                    && EqualsIgnoreCase(Entry.Name, FStringView(Wanted)))
+                {
+                    Found.assign(Entry.FullPath.data(), Entry.FullPath.size());
+                    return false;
+                }
+                return true;
+            });
+
+            if (!Found.empty())
+            {
+                break;
+            }
+        }
+
+        return Found;
     }
 
     void RequestScriptReload()
@@ -1478,32 +1528,6 @@ namespace Lumina::DotNet
     int32 GetScriptGeneration()
     {
         return GCachedGeneration; // native mirror; refreshed on (re)load, see ReloadScripts
-    }
-
-    void PollScriptInput(CObject* Script, const FInputActionState* States, int32 Count, uint32 Serial,
-        float DeltaTime)
-    {
-        if (!bInitialized || Script == nullptr || States == nullptr)
-        {
-            return;
-        }
-
-        // Find, never create, since minting per frame is exactly the cost this lookup avoids.
-        void* Handle = ManagedInstances::Find(Script);
-        if (Handle == nullptr)
-        {
-            return;
-        }
-
-        // An engine export lives in the non-collectible assembly, so its pointer survives hot reloads.
-        using FThunk = void (CORECLR_DELEGATE_CALLTYPE*)(void*, const FInputActionState*, int32, uint32, float);
-        static FThunk Thunk = (FThunk)ResolveManagedExport("PollScriptInputBindings");
-        if (Thunk == nullptr)
-        {
-            return;
-        }
-
-        Thunk(Handle, States, Count, Serial, DeltaTime);
     }
 
     void* ResolveManagedExport(FStringView Name)
@@ -1828,6 +1852,14 @@ LUMINA_DOTNET_EXPORT(void, SetObjectPtr)(void* Member, void* Value)
     }
 }
 
+// Through TObjectPtr::Get, so a slot that has moved on reads as null rather than as reclaimed memory.
+LUMINA_DOTNET_EXPORT(void*, GetObjectPtr)(const void* Member)
+{
+    return Member != nullptr
+        ? static_cast<void*>(reinterpret_cast<const Lumina::TObjectPtr<Lumina::CObject>*>(Member)->Get())
+        : nullptr;
+}
+
 // A wrapper to a since-freed object throws on access rather than reading reclaimed memory.
 LUMINA_DOTNET_EXPORT(int64, ObjectGetHandle)(void* Object)
 {
@@ -2055,3 +2087,30 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
 
 // Bootstrap size check against the C# FScriptDiagnostics mirror (Diagnostics.cs).
 LE_REGISTER_LAYOUT("FScriptDiagnostics", Lumina::DotNet::FScriptDiagnostics);
+
+LUMINA_DOTNET_SIGNATURES(
+    LUMINA_DOTNET_SIG(NativeSelfTest),
+    LUMINA_DOTNET_SIG(FindComponentOps),
+    LUMINA_DOTNET_SIG(GetComponent),
+    LUMINA_DOTNET_SIG(HasComponent),
+    LUMINA_DOTNET_SIG(EmplaceComponent),
+    LUMINA_DOTNET_SIG(RemoveComponent),
+    LUMINA_DOTNET_SIG(RegistryConnect),
+    LUMINA_DOTNET_SIG(RegistryGetSignalDelegate),
+    LUMINA_DOTNET_SIG(RegistryDisconnect),
+    LUMINA_DOTNET_SIG(RegistryPatch),
+    LUMINA_DOTNET_SIG(SetObjectPtr),
+    LUMINA_DOTNET_SIG(GetObjectPtr),
+    LUMINA_DOTNET_SIG(ObjectGetHandle),
+    LUMINA_DOTNET_SIG(ObjectResolve),
+    LUMINA_DOTNET_SIG(ObjectGetEntry),
+    LUMINA_DOTNET_SIG(ObjectLayoutOffset),
+    LUMINA_DOTNET_SIG(ObjectGetManagedInstance),
+    LUMINA_DOTNET_SIG(ObjectSetManagedInstance),
+    LUMINA_DOTNET_SIG(ReleaseAllManagedInstances),
+    LUMINA_DOTNET_SIG(LoadObject),
+    LUMINA_DOTNET_SIG(AssetExists),
+    LUMINA_DOTNET_SIG(LoadObjectAsync),
+    LUMINA_DOTNET_SIG(GetObjectPath),
+    LUMINA_DOTNET_SIG(ResolveModuleHandle)
+);

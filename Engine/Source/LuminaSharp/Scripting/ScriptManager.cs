@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Lumina;
 using System.Collections.Generic;
 using System.IO;
@@ -409,6 +409,11 @@ internal sealed class ScriptManager
     // Global per-frame pump, empty because SEntityScriptSystem drives per-world ticking natively.
     public void Tick()
     {
+        GameThreadContext.Drain();
+
+        // A fire-and-forget async script function hands its token to native and is never asked about again,
+        // so this is what retires the finished ones and surfaces the exceptions they threw.
+        ScriptAsync.ReapCompleted();
     }
 
     public void Shutdown()
@@ -433,6 +438,8 @@ internal sealed class ScriptManager
         CTimerLibrary.ClearAllManaged();      // world timers whose Action captures a script instance
         UIDataModel.DisposeAll();             // MVVM bindings (user ViewModel + native data model)
         Asset.PurgePending();                 // in-flight async asset-load callbacks
+        ScriptAsync.Clear();                  // tokens for async functions still running in the old generation
+        GameTaskRegistry.CancelAll();         // pending awaits, whose continuations close over unloading code
         ScriptCallback.PurgeAll();            // in-flight one-shot callbacks handed to native
         PropertyAccessor.ClearScriptCaches(); // cached get/set delegates over user property types
         ScriptFunctionDispatch.Reset();        // [ScriptFunction] bindings, which root user MethodInfos
@@ -450,8 +457,8 @@ internal sealed class ScriptManager
         Native.ReleaseAllManagedInstances();
         Scriptables = null;
 
-        // Last, because an OnDetach above can bind one and an earlier purge would leave it rooting this ALC.
-        DelegateBindings.PurgeAll();
+        // Cached argument slots are keyed by the handler's declared types, which are types from this ALC.
+        ScriptDelegateArgs.PurgeAll();
 
         // Holds no handles of its own, but it holds the TypeLibrary, which holds user Types. Cleared here
         // so the teardown table stays complete rather than depending on this runtime being harmless.

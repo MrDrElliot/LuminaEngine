@@ -1,4 +1,4 @@
-#include "ParticleNodeGraph.h"
+﻿#include "ParticleNodeGraph.h"
 #include "ParticleCompiler.h"
 #include "Core/Object/Cast.h"
 #include "Nodes/ParticleOutputNode.h"
@@ -36,8 +36,9 @@ namespace Lumina
             return;
         }
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
+            CEdGraphNode* Node = NodeRef.Get();
             Node->ClearError();
         }
 
@@ -95,10 +96,12 @@ namespace Lumina
         Connections.clear();
         Connections.reserve(16);
 
-        for (CEdGraphNode* Node : Nodes)
+        for (const auto& NodeRef : Nodes)
         {
-            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            CEdGraphNode* Node = NodeRef.Get();
+            for (const auto& InputPinRef : Node->GetInputPins())
             {
+                CEdNodeGraphPin* InputPin = InputPinRef.Get();
                 for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
                 {
                     Connections.push_back(InputPin->PinID);

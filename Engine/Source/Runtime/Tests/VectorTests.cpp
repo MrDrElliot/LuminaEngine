@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <list>
 #include <memory>
 #include <numeric>
 #include <span>
@@ -310,6 +311,32 @@ TEST(VectorInsertErase, InsertRangeAndInitializerList)
     Values.insert(Values.end(), {6, 7});
     EXPECT_EQ(Values.size(), 7u);
     EXPECT_EQ(Values.back(), 7);
+}
+
+TEST(VectorInsertErase, InsertRangeTakesTheContiguousFastPathAndTheGenericOne)
+{
+    // Contiguous, same value type, so this goes through the memcpy path for a trivial element.
+    TVector<int> Trivial{1, 6};
+    const TVector<int> Source{2, 3, 4, 5};
+    Trivial.insert(Trivial.begin() + 1, Source.begin(), Source.end());
+    EXPECT_EQ(Trivial, (TVector<int>{1, 2, 3, 4, 5, 6}));
+
+    // Appending at the end is the Append path, which is where the gap is empty.
+    Trivial.insert(Trivial.end(), Source.begin(), Source.end());
+    EXPECT_EQ(Trivial.size(), 10u);
+    EXPECT_EQ(Trivial.back(), 5);
+
+    // A differing value type must fall back to the element loop rather than memcpy.
+    TVector<double> Widened{0.0};
+    Widened.insert(Widened.end(), Source.begin(), Source.end());
+    EXPECT_EQ(Widened.size(), 5u);
+    EXPECT_DOUBLE_EQ(Widened[4], 5.0);
+
+    // A non-contiguous iterator must also take the element loop.
+    const std::list<int> Listed{7, 8, 9};
+    TVector<int> FromList;
+    FromList.insert(FromList.end(), Listed.begin(), Listed.end());
+    EXPECT_EQ(FromList, (TVector<int>{7, 8, 9}));
 }
 
 TEST(VectorInsertErase, InsertRepeatedValue)

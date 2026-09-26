@@ -3,6 +3,7 @@
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Core/Object/Object.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Importer.generated.h"
 
@@ -21,8 +22,9 @@ namespace Lumina
 
     struct FImportResult
     {
+        // Pinned, since destroying one entry can release the last reference to another and free it early.
         /** Everything the import minted, in creation order; the caller saves and tears down in reverse. */
-        TVector<CObject*> CreatedObjects;
+        TVector<TObjectPtr<CObject>> CreatedObjects;
 
         FString Error;
 

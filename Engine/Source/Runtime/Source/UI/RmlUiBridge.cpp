@@ -768,6 +768,13 @@ namespace Lumina::RmlUi
         return true;
     }
 
+    bool LoadFontFace(FStringView Path, FStringView Family, bool bBold, bool bItalic)
+    {
+        return Rml::LoadFontFace(Rml::String(Path.data(), Path.size()), Rml::String(Family.data(), Family.size()),
+            bItalic ? Rml::Style::FontStyle::Italic : Rml::Style::FontStyle::Normal,
+            bBold ? Rml::Style::FontWeight::Bold : Rml::Style::FontWeight::Normal);
+    }
+
     void Shutdown()
     {
         FState& State = S();
@@ -1321,6 +1328,44 @@ namespace Lumina::RmlUi
         {
             S().StateMutex.unlock();
         }
+    }
+
+    FUIntVector2 GetWorldLayoutSize(CWorld* World)
+    {
+        FLockedWorldContext Context(World);
+        if (!Context)
+        {
+            return FUIntVector2(0u, 0u);
+        }
+
+        const Rml::Vector2i Size = Context->GetDimensions();
+        return FUIntVector2((uint32)Math::Max(Size.x, 0), (uint32)Math::Max(Size.y, 0));
+    }
+
+    bool IsCursorOverWorldUI(CWorld* World)
+    {
+        FLockedWorldContext Context(World);
+        if (!Context)
+        {
+            return false;
+        }
+
+        Rml::Element* Hovered = Context->GetHoverElement();
+
+        // The context reports the document itself when the cursor is over nothing the page drew.
+        while (Hovered != nullptr)
+        {
+            if (Hovered->GetOwnerDocument() == Hovered)
+            {
+                return false;
+            }
+            if (Hovered->GetComputedValues().pointer_events() != Rml::Style::PointerEvents::None)
+            {
+                return true;
+            }
+            Hovered = Hovered->GetParentNode();
+        }
+        return false;
     }
 
     void SetWorldDisplaySize(CWorld* World, const FUIntVector2& Size)

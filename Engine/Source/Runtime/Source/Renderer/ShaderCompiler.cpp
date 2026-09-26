@@ -610,12 +610,11 @@ namespace Lumina
 
     void FSpirVShaderCompiler::Flush() const
     {
-        uint32 Expected = PendingTasks.load(std::memory_order_acquire);
-        while (Expected != 0) 
+        FFiberScopeLock Lock(PendingMutex);
+        PendingSignal.Wait(PendingMutex, [this]
         {
-            std::atomic_wait(&PendingTasks, Expected);
-            Expected = PendingTasks.load(std::memory_order_acquire);
-        }
+            return PendingTasks.load(std::memory_order_acquire) == 0;
+        });
     }
 
     bool FSpirVShaderCompiler::CompileShaderPath(FString ShaderPath, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted)
@@ -679,7 +678,10 @@ namespace Lumina
             return true;
         }
 
-        PendingTasks.fetch_add(NumShaders, std::memory_order_relaxed);
+        {
+            FFiberScopeLock Lock(PendingMutex);
+            PendingTasks.fetch_add(NumShaders, std::memory_order_relaxed);
+        }
 
         LOG_INFO("Starting Shader Task Swarm - Num: {}", NumShaders);
 
@@ -698,8 +700,12 @@ namespace Lumina
 
             DEFER
             {
-                const bool bLastChunk = PendingTasks.fetch_sub(Num, std::memory_order_acq_rel) == Num;
-                std::atomic_notify_all(&PendingTasks);
+                bool bLastChunk;
+                {
+                    FFiberScopeLock Lock(PendingMutex);
+                    bLastChunk = PendingTasks.fetch_sub(Num, std::memory_order_acq_rel) == Num;
+                }
+                PendingSignal.NotifyAll();
 
                 if (bLastChunk)
                 {
@@ -826,7 +832,10 @@ namespace Lumina
             ShaderString.erase(Pos, LineEnd - Pos);
         }
 
-        PendingTasks.fetch_add(1, std::memory_order_relaxed);
+        {
+            FFiberScopeLock Lock(PendingMutex);
+            PendingTasks.fetch_add(1, std::memory_order_relaxed);
+        }
         
         Task::AsyncTask(1, 1, [this,
             ShaderString = Move(ShaderString),
@@ -837,8 +846,12 @@ namespace Lumina
             // Declared before the cache probe, so a hit still releases the slot after its callback ran.
             DEFER
             {
-                const bool bLast = PendingTasks.fetch_sub(1, std::memory_order_acq_rel) == 1;
-                std::atomic_notify_all(&PendingTasks);
+                bool bLast;
+                {
+                    FFiberScopeLock Lock(PendingMutex);
+                    bLast = PendingTasks.fetch_sub(1, std::memory_order_acq_rel) == 1;
+                }
+                PendingSignal.NotifyAll();
 
                 if (bLast)
                 {

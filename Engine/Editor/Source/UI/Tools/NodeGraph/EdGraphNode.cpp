@@ -105,12 +105,12 @@ namespace Lumina
         auto& Pins = NodePins[uint32(Direction)];
         const auto PinItr = Algo::Find(Pins, ID, &CEdNodeGraphPin::PinID);
 
-        return PinItr != Pins.end() ? *PinItr : nullptr;
+        return PinItr != Pins.end() ? PinItr->Get() : nullptr;
     }
 
     CEdNodeGraphPin* CEdGraphNode::GetPinByIndex(uint32 Index, ENodePinDirection Direction)
     {
-        return NodePins[uint32(Direction)][Index];
+        return NodePins[uint32(Direction)][Index].Get();
     }
 
     // Two live pins sharing an id self-link the editor's chain, so the id is salted until unique.

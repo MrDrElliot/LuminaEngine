@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/Object/ObjectHandleTyped.h"
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
@@ -30,7 +30,7 @@ namespace Lumina
         void DrawCanvasDropTarget() override;
 
         void SetAudioGraph(CAudioGraph* InGraph) { AudioGraph = InGraph; }
-        CAudioGraph* GetAudioGraph() const { return AudioGraph; }
+        CAudioGraph* GetAudioGraph() const { return AudioGraph.Get(); }
 
         CAudioGraphOutputNode* FindOutputNode() const;
 

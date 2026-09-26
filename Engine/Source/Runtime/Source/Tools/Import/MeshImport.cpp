@@ -1154,7 +1154,7 @@ namespace Lumina::Import::Mesh
         }
 
         // Concatenate Src into Dst with index/material rebase; bakes Src.ImportTransform into positions/normals.
-        void MergeResourceInto(FMeshResource& Src, FMeshResource& Dst, THashMap<int16, int16>& MaterialRemap)
+        void MergeResourceInto(FMeshResource& Src, FMeshResource& Dst, TVector<int16>& SlotToSource)
         {
             const uint32 BaseVert = (uint32)Dst.GetNumVertices();
             const uint32 BaseIdx  = (uint32)Dst.Indices.size();
@@ -1195,17 +1195,20 @@ namespace Lumina::Import::Mesh
                 Dst.Indices.push_back(Idx + BaseVert);
             }
 
+            // Keyed per piece, so each merged piece keeps its own slot even where pieces share a material.
+            THashMap<int16, int16> PieceSlots;
             Dst.GeometrySurfaces.reserve(Dst.GeometrySurfaces.size() + Src.GeometrySurfaces.size());
             for (FGeometrySurface S : Src.GeometrySurfaces)
             {
                 S.StartIndex += BaseIdx;
                 if (S.MaterialIndex >= 0)
                 {
-                    auto It = MaterialRemap.find(S.MaterialIndex);
-                    if (It == MaterialRemap.end())
+                    auto It = PieceSlots.find(S.MaterialIndex);
+                    if (It == PieceSlots.end())
                     {
-                        const int16 NewSlot = (int16)MaterialRemap.size();
-                        MaterialRemap.emplace(S.MaterialIndex, NewSlot);
+                        const int16 NewSlot = (int16)SlotToSource.size();
+                        SlotToSource.push_back(S.MaterialIndex);
+                        PieceSlots.emplace(S.MaterialIndex, NewSlot);
                         S.MaterialIndex = NewSlot;
                     }
                     else
@@ -1331,8 +1334,8 @@ namespace Lumina::Import::Mesh
                 }
             }
 
-            // Two independent remaps would give slot 0 a different meaning in each half.
-            THashMap<int16, int16> MatRemap;
+            // Shared by both halves, since two lists would give slot 0 a different meaning in each.
+            TVector<int16> SlotToSource;
 
             for (TUniquePtr<FMeshResource>& Res : Data.Resources)
             {
@@ -1342,23 +1345,16 @@ namespace Lumina::Import::Mesh
                 }
                 if (Res->bSkinnedMesh)
                 {
-                    MergeResourceInto(*Res, *MergedSkinned, MatRemap);
+                    MergeResourceInto(*Res, *MergedSkinned, SlotToSource);
                 }
                 else
                 {
-                    MergeResourceInto(*Res, *MergedStatic, MatRemap);
+                    MergeResourceInto(*Res, *MergedStatic, SlotToSource);
                 }
             }
 
             // Without it the importer falls back to treating the slot as the source index.
-            Data.MergedMaterialSlotToSource.assign(MatRemap.size(), 0);
-            for (const auto& Pair : MatRemap)
-            {
-                if (Pair.second >= 0 && (size_t)Pair.second < Data.MergedMaterialSlotToSource.size())
-                {
-                    Data.MergedMaterialSlotToSource[Pair.second] = Pair.first;
-                }
-            }
+            Data.MergedMaterialSlotToSource = Move(SlotToSource);
 
             TVector<TUniquePtr<FMeshResource>> NewResources;
             if (MergedStatic->GetNumVertices() > 0)

@@ -5,7 +5,7 @@
 #include "implot.h"
 #include "backends/imgui_impl_glfw.h"
 
-#include <GLFW/glfw3.h>
+#include "Core/Windows/GLFWInclude.h"
 #include <algorithm>
 
 #include "Core/Engine/Engine.h"

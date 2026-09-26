@@ -11,6 +11,7 @@
 #include "World/WorldManager.h"
 #include "ScriptableObject.h"
 #include "DotNet/DotNetHost.h"
+#include "Input/InputActionMap.h"
 #include "ScriptStruct.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
@@ -55,6 +56,7 @@ namespace Lumina
     SEntityScriptComponent::SEntityScriptComponent(const SEntityScriptComponent& Other)
     {
         CloneScripts(Other.Scripts, Scripts);
+        Pending = Other.Pending;
     }
 
     SEntityScriptComponent& SEntityScriptComponent::operator=(const SEntityScriptComponent& Other)
@@ -62,6 +64,7 @@ namespace Lumina
         if (this != &Other)
         {
             CloneScripts(Other.Scripts, Scripts);
+            Pending = Other.Pending;
         }
         return *this;
     }
@@ -70,7 +73,7 @@ namespace Lumina
     {
         if (Ar.IsWriting())
         {
-            int32 Count = 0;
+            int32 Count = (int32)Pending.size();
             for (const TObjectPtr<CEntityScript>& Held : Scripts)
             {
                 if (Held.Get() != nullptr && Held.Get()->GetClass() != nullptr)
@@ -79,6 +82,19 @@ namespace Lumina
                 }
             }
             Ar << Count;
+
+            // Written back byte for byte, so a world saved while a script failed to compile keeps it.
+            for (FPendingScript& Held : Pending)
+            {
+                Ar << Held.ClassName;
+
+                int64 ScriptSize = (int64)Held.Bytes.size();
+                Ar << ScriptSize;
+                if (ScriptSize > 0)
+                {
+                    Ar.Serialize(Held.Bytes.data(), ScriptSize);
+                }
+            }
 
             for (const TObjectPtr<CEntityScript>& Held : Scripts)
             {
@@ -117,6 +133,7 @@ namespace Lumina
                 Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ENTITY_SCRIPT_LENGTH_PREFIX;
 
             Scripts.clear();
+            Pending.clear();
             for (int32 Index = 0; Index < Count; ++Index)
             {
                 FName ClassName;
@@ -143,13 +160,24 @@ namespace Lumina
                 {
                     if (!bLengthPrefixed)
                     {
-                        LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; the rest of this "
-                                 "component's scripts were dropped.", ClassName.c_str());
+                        LOG_WARN("SEntityScriptComponent: script class '{}' could not be resolved and this "
+                                 "file has no per-script length, so the rest were dropped.", ClassName.c_str());
                         break;
                     }
 
-                    LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; skipping it and "
-                             "keeping this entity's other scripts.", ClassName.c_str());
+                    // Held verbatim rather than discarded, since the class is usually just not loaded yet.
+                    FPendingScript Held;
+                    Held.ClassName   = ClassName;
+                    Held.FileVersion = Ar.GetFileVersion();
+                    Held.Bytes.resize((size_t)Math::Max<int64>(ScriptSize, 0));
+                    if (ScriptSize > 0)
+                    {
+                        Ar.Serialize(Held.Bytes.data(), ScriptSize);
+                    }
+                    Pending.push_back(Move(Held));
+
+                    LOG_WARN("SEntityScriptComponent: script class '{}' is not loaded; holding it until a "
+                             "script reload can restore it.", ClassName.c_str());
                     Ar.Seek(DataStart + ScriptSize);
                     continue;
                 }
@@ -480,29 +508,6 @@ namespace Lumina
             return true;
         }
 
-        void DispatchCollision(ECS::FRegistry& Registry, ECS::FEntity Entity,
-            ECollisionCallback Callback, const SCollisionEvent& Event)
-        {
-            FScriptSnapshot Scripts;
-            SnapshotScripts(Registry, Entity, Scripts);
-
-            for (TObjectPtr<CEntityScript>& Held : Scripts)
-            {
-                CEntityScript* Script = Held.Get();
-                if (!IsStillAttached(Registry, Entity, Script))
-                {
-                    continue;
-                }
-                switch (Callback)
-                {
-                case ECollisionCallback::ContactBegin:  Script->OnContactBegin(Event);  break;
-                case ECollisionCallback::ContactEnd:    Script->OnContactEnd(Event);    break;
-                case ECollisionCallback::OverlapBegin:  Script->OnOverlapBegin(Event);  break;
-                case ECollisionCallback::OverlapEnd:    Script->OnOverlapEnd(Event);    break;
-                }
-            }
-        }
-
         void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event)
         {
             FScriptSnapshot Scripts;
@@ -518,8 +523,8 @@ namespace Lumina
             }
         }
 
-        void PollInputBindings(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
-            int32 Count, uint32 Serial, float DeltaTime)
+        void DispatchActions(ECS::FRegistry& Registry, ECS::FEntity Entity, const FInputActionState* States,
+            int32 Count, TSpan<const int32> ChangedActionIndices)
         {
             FScriptSnapshot Scripts;
             SnapshotScripts(Registry, Entity, Scripts);
@@ -527,29 +532,22 @@ namespace Lumina
             for (TObjectPtr<CEntityScript>& Held : Scripts)
             {
                 CEntityScript* Script = Held.Get();
-                if (IsStillAttached(Registry, Entity, Script))
-                {
-                    DotNet::PollScriptInput(Script, States, Count, Serial, DeltaTime);
-                }
-            }
-        }
-
-        void DispatchPerception(ECS::FRegistry& Registry, ECS::FEntity Perceiver,
-            bool bSensed, const SPerceptionEvent& Event)
-        {
-            FScriptSnapshot Scripts;
-            SnapshotScripts(Registry, Perceiver, Scripts);
-
-            for (TObjectPtr<CEntityScript>& Held : Scripts)
-            {
-                CEntityScript* Script = Held.Get();
-                if (!IsStillAttached(Registry, Perceiver, Script))
+                if (!IsStillAttached(Registry, Entity, Script))
                 {
                     continue;
                 }
-                bSensed ? Script->OnTargetPerceived(Event) : Script->OnTargetLost(Event);
+
+                const TVector<SInputAction>& Actions = FInputActionMap::Get().GetAllActions();
+                for (int32 i : ChangedActionIndices)
+                {
+                    if (i < Count && i < (int32)Actions.size())
+                    {
+                        Script->OnAction(Actions[i].Name, States[i]);
+                    }
+                }
             }
         }
+
 
 
         void DetachAll(ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -574,6 +572,117 @@ namespace Lumina
             {
                 Component->Scripts.clear();
             }
+        }
+
+        int32 ResolvePendingScripts(ECS::FRegistry& Registry)
+        {
+            TVector<ECS::FEntity> Entities;
+            auto View = Registry.View<SEntityScriptComponent>();
+            Entities.reserve(View.Num());
+            for (ECS::FEntity Entity : View)
+            {
+                Entities.push_back(Entity);
+            }
+
+            int32 Restored = 0;
+            for (ECS::FEntity Entity : Entities)
+            {
+                SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
+                if (Component == nullptr || Component->Pending.empty())
+                {
+                    continue;
+                }
+
+                TVector<FPendingScript> StillPending;
+                TVector<FPendingScript> Holding = Move(Component->Pending);
+                Component->Pending.clear();
+
+                for (FPendingScript& Held : Holding)
+                {
+                    CClass* ScriptClass = FScriptableRegistry::ResolveClass(Held.ClassName);
+                    if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
+                    {
+                        StillPending.push_back(Move(Held));
+                        continue;
+                    }
+
+                    CEntityScript* Script = static_cast<CEntityScript*>(
+                        NewObject(ScriptClass, nullptr, NAME_None, FGuid::New(), OF_Transient));
+                    if (Script == nullptr)
+                    {
+                        StillPending.push_back(Move(Held));
+                        continue;
+                    }
+
+                    if (!Held.Bytes.empty())
+                    {
+                        FMemoryReader Reader(Held.Bytes);
+                        Reader.SetFileVersion(Held.FileVersion);
+                        ScriptClass->SerializeTaggedProperties(Reader, Script);
+                    }
+
+                    Component->Scripts.push_back(Script);
+                    ++Restored;
+
+                    LOG_INFO("SEntityScriptComponent: restored held script '{}' now that its class is loaded.",
+                        Held.ClassName.c_str());
+                }
+
+                Component->Pending = Move(StillPending);
+            }
+            return Restored;
+        }
+
+        void NotifyScriptsReloaded(EScriptReloadReason Reason, int32 Generation)
+        {
+            if (GWorldManager == nullptr)
+            {
+                return;
+            }
+
+            GWorldManager->ForEachWorld([&](CWorld& World)
+            {
+                ECS::FRegistry& Registry = ECS::GetWorldRegistry(World);
+
+                // Anything held back by a failed or late load comes in first, so it sees this reload too.
+                ResolvePendingScripts(Registry);
+
+                TVector<ECS::FEntity> Entities;
+                auto View = Registry.View<SEntityScriptComponent>();
+                Entities.reserve(View.Num());
+                for (ECS::FEntity Entity : View)
+                {
+                    Entities.push_back(Entity);
+                }
+
+                SScriptReloadContext Context;
+                Context.Reason     = Reason;
+                Context.WorldType  = World.GetWorldType();
+                Context.Generation = Generation;
+
+                for (ECS::FEntity Entity : Entities)
+                {
+                    FScriptSnapshot Scripts;
+                    SnapshotScripts(Registry, Entity, Scripts);
+
+                    Context.Entity = Entity.GetPacked();
+                    for (TObjectPtr<CEntityScript>& Held : Scripts)
+                    {
+                        CEntityScript* Script = Held.Get();
+
+                        // A C++ script's instance never went anywhere, so it has nothing to rebuild.
+                        if (Script == nullptr || !Script->IsAttached() || ToScriptClass(Script->GetClass()) == nullptr)
+                        {
+                            continue;
+                        }
+                        if (!IsStillAttached(Registry, Entity, Script))
+                        {
+                            continue;
+                        }
+                        Script->OnReloaded(Context);
+                    }
+                }
+            });
         }
 
         void DetachAllInRegistry(ECS::FRegistry& Registry)

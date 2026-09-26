@@ -2,6 +2,7 @@
 
 #include <cfloat>
 #include "World/ECS/Registry.h"
+#include "Animation/AnimGraphOps.h"
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -226,20 +227,11 @@ namespace Lumina
             DrawClipBrowserWindow();
         });
 
-        // A sibling sub-object in the asset's package, created on first open and reloaded thereafter.
-        FString GraphName = "AssetAnimationGraph";
-        NodeGraph = Cast<CAnimationGraphNodeGraph>(Asset->GetPackage()->LoadObjectByName(GraphName));
-
-        if (NodeGraph == nullptr)
-        {
-            NodeGraph = NewObject<CAnimationGraphNodeGraph>(Asset->GetPackage(), GraphName);
-        }
-
-        NodeGraph->SetAnimationGraph(Cast<CAnimationGraph>(Asset.Get()));
+        NodeGraph = AnimGraphOps::FindOrCreateGraph(Cast<CAnimationGraph>(Asset.Get()));
 
         // Duplicating a state used to hand the copy the original's sub-graph; this splits those apart.
         THashSet<CEdNodeGraph*> VisitedGraphs;
-        VisitedGraphs.insert(NodeGraph);
+        VisitedGraphs.insert(NodeGraph.Get());
         if (const uint32 Repaired = NodeGraph->UnaliasSubGraphs(VisitedGraphs))
         {
             Asset->GetPackage()->MarkDirty();
@@ -261,7 +253,7 @@ namespace Lumina
         });
 
         // EnterGraph creates its context, wires callbacks and pushes it.
-        EnterGraph(NodeGraph, "Animation Graph");
+        EnterGraph(NodeGraph.Get(), "Animation Graph");
 
         // Seeds the runtime asset so the preview viewport has something to evaluate on the first frame.
         Compile(false);
@@ -305,7 +297,7 @@ namespace Lumina
                 // A transition may be reselected later this frame by the link callback, so only then fall back.
                 if (SelectedTransition == nullptr)
                 {
-                    GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                    GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
                 }
             }
         });
@@ -320,7 +312,7 @@ namespace Lumina
             {
                 SelectedNode = nullptr;
                 SelectedTransition = nullptr;
-                GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
             }
         });
 
@@ -344,7 +336,7 @@ namespace Lumina
                 if (SelectedTransition != nullptr)
                 {
                     SelectedTransition = nullptr;
-                    GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+                    GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
                 }
                 return;
             }
@@ -465,7 +457,7 @@ namespace Lumina
         SelectedNode = nullptr;
         SelectedTransition = nullptr;
         TransitionTables.clear();
-        GetPropertyTable()->SetObject(Asset, Asset->GetClass());
+        GetPropertyTable()->SetObject(Asset.Get(), Asset->GetClass());
     }
 
     void FAnimationGraphEditorTool::SetupWorldForTool()
@@ -510,7 +502,7 @@ namespace Lumina
             return;
         }
 
-        CSkeletalMesh* PreviewMesh = Graph->Skeleton->PreviewMesh;
+        CSkeletalMesh* PreviewMesh = Graph->Skeleton->PreviewMesh.Get();
 
         if (!bMeshEntityValid)
         {
@@ -966,23 +958,7 @@ namespace Lumina
         NodeGraph->MarkCompiled();
 
         FAnimationGraphCompiler Compiler;
-
-        // Resolved up front so Layered Blend Per Bone nodes can look them up during GenerateBytecode.
-        if (Graph->Skeleton.IsValid())
-        {
-            Compiler.ResolveBoneMasks(Graph->BoneMaskDefs, Graph->Skeleton->GetSkeletonResource());
-        }
-
-        // Registered before the node walk so a runtime-chosen clip has slots to write into.
-        for (const FName& CurveName : Graph->DeclaredCurves)
-        {
-            Compiler.AddCurve(CurveName);
-        }
-
-        // Give the compiler the parameter struct so it can warn about renamed or retyped fields.
-        Compiler.SetDataStruct(Graph->GetParameterStruct());
-
-        NodeGraph->CompileGraph(Compiler);
+        AnimGraphOps::Compile(Graph, NodeGraph.Get(), Compiler);
 
         // Non-fatal diagnostics first, so they show whether or not the compile also produced errors.
         for (const EdNodeGraph::FError& Warning : Compiler.GetWarnings())
@@ -999,8 +975,6 @@ namespace Lumina
             }
             return;
         }
-
-        Compiler.BuildGraph(Graph);
 
         // Lets the debug overlay read live VM values back onto the graph, re-run every frame.
         DebugPinRegisters = Compiler.GetPinRegisters();

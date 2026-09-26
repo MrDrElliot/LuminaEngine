@@ -414,9 +414,9 @@ namespace Lumina
             CrashReporting::SetUser("", EditorSettings->CrashReportContactEmail);
         }
 
-        DeveloperToolUI = CreateDevelopmentTools();
+        DeveloperToolUI.Reset(CreateDevelopmentTools());
         DeveloperToolUI->Initialize(UpdateContext);
-        GApp->GetEventProcessor().RegisterEventHandler(DeveloperToolUI, (int32)EInputLayer::EditorChrome);
+        GApp->GetEventProcessor().RegisterEventHandler(DeveloperToolUI.Get(), (int32)EInputLayer::EditorChrome);
         BootMark("DeveloperToolUI");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::EditorInit);
@@ -447,7 +447,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        FCoreDelegates::OnPreEngineShutdown.BroadcastAndClear();
+        FCoreDelegates::Get().OnPreEngineShutdown.BroadcastAndClear();
         
         Jobs::WaitForAll();
 
@@ -459,7 +459,7 @@ namespace Lumina
 
         #if USING(WITH_EDITOR)
         DeveloperToolUI->Deinitialize(UpdateContext);
-        delete DeveloperToolUI;
+        DeveloperToolUI.Reset();
         #endif
 
         DestroyGameInstance();
@@ -1046,7 +1046,7 @@ namespace Lumina
             return;
         }
         Context->SourceWorld  = SourceWorld;
-        Context->GameInstance = GameInstance;
+        Context->GameInstance = GameInstance.Get();
 
         if (FInputViewport* Primary = GApp ? GApp->GetPrimaryViewport() : nullptr)
         {
@@ -1068,9 +1068,9 @@ namespace Lumina
     void FEngine::RequestExitGame()
     {
         // With no subscriber this is a packaged game, where quitting the game means exiting the process.
-        if (FCoreDelegates::OnGameQuitRequested.IsBound())
+        if (FCoreDelegates::Get().OnGameQuitRequested.IsBound())
         {
-            FCoreDelegates::OnGameQuitRequested.Broadcast();
+            FCoreDelegates::Get().OnGameQuitRequested.Broadcast();
             return;
         }
         FApplication::RequestExit();
@@ -1140,7 +1140,7 @@ namespace Lumina
             FWorldContext* NewContext = GWorldManager->CreateWorldContext(ColdWorld, EWorldType::Game, ColdNetMode);
             if (NewContext != nullptr)
             {
-                NewContext->GameInstance = GameInstance;
+                NewContext->GameInstance = GameInstance.Get();
                 NewContext->SourceWorld  = WorldAsset;
                 NewContext->MapPath      = FString(MapName.c_str());
                 if (bPendingHostOverride)

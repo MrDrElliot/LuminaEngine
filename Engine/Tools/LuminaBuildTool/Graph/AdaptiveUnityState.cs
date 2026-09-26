@@ -64,9 +64,44 @@ public sealed class AdaptiveUnityState
         return new AdaptiveUnityState(Path_, new Payload());
     }
 
-    /// <summary>Admits sources edited since the last build and evicts the least recently edited past the cap.</summary>
-    /// <returns>The paths that entered or left, which is what forces a blob to be rewritten.</returns>
-    public void Observe(IEnumerable<FileItem> Sources, int MaxFiles)
+    /// <summary>Holds out the sources git reports as changed, falling back to file timestamps where git cannot answer.</summary>
+    public void Observe(IEnumerable<FileItem> Sources, int MaxFiles, IReadOnlySet<string>? Changed)
+    {
+        if (Changed is not null)
+        {
+            ObserveWorkingSet(Sources, MaxFiles, Changed);
+            return;
+        }
+
+        ObserveTimestamps(Sources, MaxFiles);
+    }
+
+    // Derived fresh from the commit rather than accumulated, so a clean checkout holds nothing out anywhere.
+    private void ObserveWorkingSet(IEnumerable<FileItem> Sources, int MaxFiles, IReadOnlySet<string> Changed)
+    {
+        List<FileItem> Held = Sources.Where(Source => Changed.Contains(Source.Location)).ToList();
+
+        // Holding out more than the cap costs more than the blobs save, so the least recently touched stay merged.
+        if (Held.Count > Math.Max(0, MaxFiles))
+        {
+            Held = Held.OrderByDescending(Source => Source.Timestamp).Take(Math.Max(0, MaxFiles)).ToList();
+        }
+
+        Dictionary<string, long> Next = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (FileItem Source in Held)
+        {
+            Next[Source.Location] = Data.Build + 1;
+        }
+
+        bDirty |= Next.Count != Data.Files.Count || Next.Keys.Any(Path_ => !Data.Files.ContainsKey(Path_));
+
+        Data.Files = Next;
+        Data.Build++;
+        Data.SeenUtc = DateTime.UtcNow;
+    }
+
+    private void ObserveTimestamps(IEnumerable<FileItem> Sources, int MaxFiles)
     {
         long Build = Data.Build + 1;
 
