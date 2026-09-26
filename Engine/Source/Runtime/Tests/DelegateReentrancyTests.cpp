@@ -132,3 +132,60 @@ TEST(DelegateReentrancy, AssignmentLeavesBothHalvesOfTheListenerSetAlone)
     EXPECT_EQ(ManagedCalls, 1) << "assignment must not drop the managed listeners";
     EXPECT_EQ(NativeCalls, 1) << "assignment must not drop the native listeners either";
 }
+
+// Multi-argument script delegates, and the arg pack layout the marshalling side reads.
+namespace
+{
+    struct FBlittablePayload { float X; float Y; };
+}
+
+TEST(ScriptDelegateMultiArg, CarriesSeveralArgumentsToNativeListeners)
+{
+    TScriptDelegate<int32, float, FBlittablePayload> Event;
+
+    int32              SeenInt = 0;
+    float              SeenFloat = 0.0f;
+    FBlittablePayload  SeenPayload{};
+    int32              Calls = 0;
+
+    Event.AddLambda([&](const int32& A, const float& B, const FBlittablePayload& C)
+    {
+        SeenInt = A;
+        SeenFloat = B;
+        SeenPayload = C;
+        ++Calls;
+    });
+
+    Event.Broadcast(7, 2.5f, FBlittablePayload{ 1.0f, 3.0f });
+
+    EXPECT_EQ(Calls, 1);
+    EXPECT_EQ(SeenInt, 7);
+    EXPECT_FLOAT_EQ(SeenFloat, 2.5f);
+    EXPECT_FLOAT_EQ(SeenPayload.X, 1.0f);
+    EXPECT_FLOAT_EQ(SeenPayload.Y, 3.0f);
+}
+
+TEST(ScriptDelegateMultiArg, NoArgumentDelegateStillBroadcasts)
+{
+    FScriptDelegate Event;
+    int32 Calls = 0;
+    Event.AddLambda([&]() { ++Calls; });
+    Event.Broadcast();
+    EXPECT_EQ(Calls, 1);
+}
+
+// The managed side reads arguments out of this layout, so it has to be plain C struct order.
+TEST(ScriptDelegateMultiArg, ArgPackIsDeclarationOrderedCStructLayout)
+{
+    using FPack = TArgPack<int32, float, FBlittablePayload>;
+
+    EXPECT_EQ(offsetof(FPack, V0), 0u);
+    EXPECT_EQ(offsetof(FPack, V1), sizeof(int32));
+    EXPECT_EQ(offsetof(FPack, V2), sizeof(int32) + sizeof(float));
+    EXPECT_EQ(sizeof(FPack), sizeof(int32) + sizeof(float) + sizeof(FBlittablePayload));
+
+    // A single-argument pack must stay byte-identical to the bare payload, which is what keeps the
+    // existing generated C# accessors reading the right bytes.
+    EXPECT_EQ(sizeof(TArgPack<FBlittablePayload>), sizeof(FBlittablePayload));
+    EXPECT_EQ(offsetof(TArgPack<FBlittablePayload>, V0), 0u);
+}
