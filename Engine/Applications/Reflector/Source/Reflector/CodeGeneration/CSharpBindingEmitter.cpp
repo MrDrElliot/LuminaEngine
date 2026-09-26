@@ -512,17 +512,35 @@ namespace Lumina::Reflection
             {
                 B.Kind = EBind::Delegate;
                 B.bReadOnly = true;
-                if (Del->bHasPayload)
+                if (Del->NumArgs == 1)
                 {
-                    const FReflectedStruct* S = Db.GetReflectedType<FReflectedStruct>(FStringHash(Prop.TypeName));
+                    const std::string& ArgType = Del->ArgTypeNames[0];
+                    const FReflectedStruct* S = Db.GetReflectedType<FReflectedStruct>(FStringHash(ArgType));
                     int Size = 0;
                     int Align = 0;
                     if (S == nullptr || !(HasMetadata(*S, "CSharpValueMirror") || IsBlittableValueStruct(*S, Db, Size, Align)))
                     {
                         return false; // skip non-blittable delegate payloads
                     }
-                    B.CSharp = GlobalCSharp(Prop.TypeName);
-                    B.TargetCpp = Prop.TypeName;
+                    B.CSharp = GlobalCSharp(ArgType);
+                    B.TargetCpp = ArgType;
+                }
+                else if (Del->NumArgs >= 2)
+                {
+                    // Arguments bind through the frame marshaller, so each only has to classify as an element.
+                    for (const std::string& ArgType : Del->ArgTypeNames)
+                    {
+                        auto Arg = std::make_unique<FBinding>();
+                        if (!ClassifyElement(ArgType, OwnerNs, Db, *Arg))
+                        {
+                            return false;
+                        }
+                        if (!B.CSharp.empty())
+                        {
+                            B.CSharp += ", ";
+                        }
+                        B.CSharp += Arg->CSharp;
+                    }
                 }
                 return true;
             }
@@ -1071,10 +1089,18 @@ namespace Lumina::Reflection
                 }
                 case EBind::Delegate:
                 {
+                    const bool bMultiArg = B.CSharp.find(',') != std::string::npos;
                     if (B.CSharp.empty())
                     {
                         Writer.Linef("public global::LuminaSharp.ScriptDelegate %s => new global::LuminaSharp.ScriptDelegate((void*)((nint)Handle + %s));",
                             PropName.c_str(), OffName.c_str());
+                    }
+                    else if (bMultiArg)
+                    {
+                        // The property token is what the argument slots are resolved from, once per signature.
+                        Writer.Linef("public global::LuminaSharp.ScriptDelegate<%s> %s => new global::LuminaSharp.ScriptDelegate<%s>((void*)((nint)Handle + %s), %s);",
+                            CS, PropName.c_str(), CS, OffName.c_str(), PropFieldName.c_str());
+                        EmitTokenField(Writer, PropFieldName, TypeName, Member);
                     }
                     else
                     {

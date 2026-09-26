@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "Containers/Vector.h"
 #include "Core/Delegates/Delegate.h"
 #include "Core/LuminaMacros.h"
@@ -84,11 +86,127 @@ namespace Lumina
         bool               bCompactionPending = false;
     };
 
-    // A reflectable multicast event native C++ and C# scripts can bind to, carrying one blittable payload struct.
-    template<typename TPayload = void>
+    /** One broadcast's arguments, laid out as a plain C struct in declaration order. */
+    template<typename... TArgs>
+    struct TArgPack;
+
+    template<>
+    struct TArgPack<> {};
+
+    template<typename A0>
+    struct TArgPack<A0>
+    {
+        A0 V0;
+        static constexpr size_t Off0() { return offsetof(TArgPack, V0); }
+    };
+
+    template<typename A0, typename A1>
+    struct TArgPack<A0, A1>
+    {
+        A0 V0; A1 V1;
+        static constexpr size_t Off0() { return offsetof(TArgPack, V0); }
+        static constexpr size_t Off1() { return offsetof(TArgPack, V1); }
+    };
+
+    template<typename A0, typename A1, typename A2>
+    struct TArgPack<A0, A1, A2>
+    {
+        A0 V0; A1 V1; A2 V2;
+        static constexpr size_t Off0() { return offsetof(TArgPack, V0); }
+        static constexpr size_t Off1() { return offsetof(TArgPack, V1); }
+        static constexpr size_t Off2() { return offsetof(TArgPack, V2); }
+    };
+
+    template<typename A0, typename A1, typename A2, typename A3>
+    struct TArgPack<A0, A1, A2, A3>
+    {
+        A0 V0; A1 V1; A2 V2; A3 V3;
+        static constexpr size_t Off0() { return offsetof(TArgPack, V0); }
+        static constexpr size_t Off1() { return offsetof(TArgPack, V1); }
+        static constexpr size_t Off2() { return offsetof(TArgPack, V2); }
+        static constexpr size_t Off3() { return offsetof(TArgPack, V3); }
+    };
+
+    template<typename A0, typename A1, typename A2, typename A3, typename A4>
+    struct TArgPack<A0, A1, A2, A3, A4>
+    {
+        A0 V0; A1 V1; A2 V2; A3 V3; A4 V4;
+        static constexpr size_t Off0() { return offsetof(TArgPack, V0); }
+        static constexpr size_t Off1() { return offsetof(TArgPack, V1); }
+        static constexpr size_t Off2() { return offsetof(TArgPack, V2); }
+        static constexpr size_t Off3() { return offsetof(TArgPack, V3); }
+        static constexpr size_t Off4() { return offsetof(TArgPack, V4); }
+    };
+
+    template<typename A0, typename A1, typename A2, typename A3, typename A4, typename A5>
+    struct TArgPack<A0, A1, A2, A3, A4, A5>
+    {
+        A0 V0; A1 V1; A2 V2; A3 V3; A4 V4; A5 V5;
+        static constexpr size_t Off0() { return offsetof(TArgPack, V0); }
+        static constexpr size_t Off1() { return offsetof(TArgPack, V1); }
+        static constexpr size_t Off2() { return offsetof(TArgPack, V2); }
+        static constexpr size_t Off3() { return offsetof(TArgPack, V3); }
+        static constexpr size_t Off4() { return offsetof(TArgPack, V4); }
+        static constexpr size_t Off5() { return offsetof(TArgPack, V5); }
+    };
+
+    namespace Delegates
+    {
+        template<typename TCallable, typename TPack, typename... TArgs>
+        struct TPackInvoker;
+
+        template<typename TCallable, typename TPack>
+        struct TPackInvoker<TCallable, TPack>
+        {
+            static void Invoke(TCallable& Callable, const TPack&) { Callable(); }
+        };
+
+        template<typename TCallable, typename TPack, typename A0>
+        struct TPackInvoker<TCallable, TPack, A0>
+        {
+            static void Invoke(TCallable& Callable, const TPack& Pack) { Callable(Pack.V0); }
+        };
+
+        template<typename TCallable, typename TPack, typename A0, typename A1>
+        struct TPackInvoker<TCallable, TPack, A0, A1>
+        {
+            static void Invoke(TCallable& Callable, const TPack& Pack) { Callable(Pack.V0, Pack.V1); }
+        };
+
+        template<typename TCallable, typename TPack, typename A0, typename A1, typename A2>
+        struct TPackInvoker<TCallable, TPack, A0, A1, A2>
+        {
+            static void Invoke(TCallable& Callable, const TPack& Pack) { Callable(Pack.V0, Pack.V1, Pack.V2); }
+        };
+
+        template<typename TCallable, typename TPack, typename A0, typename A1, typename A2, typename A3>
+        struct TPackInvoker<TCallable, TPack, A0, A1, A2, A3>
+        {
+            static void Invoke(TCallable& Callable, const TPack& Pack) { Callable(Pack.V0, Pack.V1, Pack.V2, Pack.V3); }
+        };
+
+        template<typename TCallable, typename TPack, typename A0, typename A1, typename A2, typename A3, typename A4>
+        struct TPackInvoker<TCallable, TPack, A0, A1, A2, A3, A4>
+        {
+            static void Invoke(TCallable& Callable, const TPack& Pack) { Callable(Pack.V0, Pack.V1, Pack.V2, Pack.V3, Pack.V4); }
+        };
+
+        template<typename TCallable, typename TPack, typename A0, typename A1, typename A2, typename A3, typename A4, typename A5>
+        struct TPackInvoker<TCallable, TPack, A0, A1, A2, A3, A4, A5>
+        {
+            static void Invoke(TCallable& Callable, const TPack& Pack) { Callable(Pack.V0, Pack.V1, Pack.V2, Pack.V3, Pack.V4, Pack.V5); }
+        };
+    }
+
+    // A reflectable multicast event native C++ and C# scripts can bind to, carrying blittable arguments.
+    template<typename... TArgs>
     class TScriptDelegate : public FScriptDelegateBase
     {
     public:
+
+        using FPack = TArgPack<TArgs...>;
+
+        static_assert(sizeof...(TArgs) <= 6, "A script delegate carries at most six arguments.");
 
         TScriptDelegate() = default;
 
@@ -107,12 +225,28 @@ namespace Lumina
         template<typename TObject, typename TMemFunc>
         FDelegateHandle AddMember(TObject* Object, TMemFunc Method)
         {
-            return AddCallable([Object, Method](const TPayload& Payload) { (Object->*Method)(Payload); });
+            return AddCallable([Object, Method](const TArgs&... Args) { (Object->*Method)(Args...); });
         }
 
         bool Remove(FDelegateHandle Handle) { return RemoveListener(Handle.ID); }
 
-        void Broadcast(const TPayload& Payload) { BroadcastAll(&Payload); }
+        void Broadcast(const TArgs&... Args)
+        {
+            if (!IsBound())
+            {
+                return;
+            }
+
+            const FPack Pack{ Args... };
+            BroadcastAll(&Pack);
+        }
+
+        /** Broadcasts then drops every listener, for a one-shot event such as engine startup. */
+        void BroadcastAndClear(const TArgs&... Args)
+        {
+            Broadcast(Args...);
+            RemoveAll();
+        }
 
     private:
 
@@ -125,7 +259,8 @@ namespace Lumina
             const uint64 Id = AddListener(
                 [](void* Context, const void* Payload)
                 {
-                    (*static_cast<FOwned*>(Context))(*static_cast<const TPayload*>(Payload));
+                    Delegates::TPackInvoker<FOwned, FPack, TArgs...>::Invoke(
+                        *static_cast<FOwned*>(Context), *static_cast<const FPack*>(Payload));
                 },
                 Owned,
                 [](void* Context) { delete static_cast<FOwned*>(Context); });
@@ -134,53 +269,7 @@ namespace Lumina
         }
     };
 
-    // No-payload specialization.
-    template<>
-    class TScriptDelegate<void> : public FScriptDelegateBase
-    {
-    public:
-
-        TScriptDelegate() = default;
-
-        TScriptDelegate(const TScriptDelegate&) {}
-        TScriptDelegate(TScriptDelegate&&) noexcept {}
-        TScriptDelegate& operator=(const TScriptDelegate&) { return *this; }
-        TScriptDelegate& operator=(TScriptDelegate&&) noexcept { return *this; }
-
-        template<typename TFunc>
-        FDelegateHandle AddStatic(TFunc&& Func) { return AddCallable(std::forward<TFunc>(Func)); }
-
-        template<typename TLambda>
-        FDelegateHandle AddLambda(TLambda&& Lambda) { return AddCallable(std::forward<TLambda>(Lambda)); }
-
-        template<typename TObject, typename TMemFunc>
-        FDelegateHandle AddMember(TObject* Object, TMemFunc Method)
-        {
-            return AddCallable([Object, Method]() { (Object->*Method)(); });
-        }
-
-        bool Remove(FDelegateHandle Handle) { return RemoveListener(Handle.ID); }
-
-        void Broadcast() { BroadcastAll(nullptr); }
-
-    private:
-
-        template<typename TCallable>
-        FDelegateHandle AddCallable(TCallable&& Callable)
-        {
-            using FOwned = std::decay_t<TCallable>;
-
-            FOwned* Owned = new FOwned(std::forward<TCallable>(Callable));
-            const uint64 Id = AddListener(
-                [](void* Context, const void*) { (*static_cast<FOwned*>(Context))(); },
-                Owned,
-                [](void* Context) { delete static_cast<FOwned*>(Context); });
-
-            return FDelegateHandle{ Id };
-        }
-    };
-
-    using FScriptDelegate = TScriptDelegate<void>;
+    using FScriptDelegate = TScriptDelegate<>;
 
     static_assert(sizeof(TScriptDelegate<int>) == sizeof(FScriptDelegate),
         "TScriptDelegate size must be payload-independent (no payload is stored).");

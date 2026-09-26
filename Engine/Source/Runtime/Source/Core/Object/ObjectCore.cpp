@@ -439,7 +439,7 @@ namespace Lumina
         --NumProperties;
 
         // An inner is the next params entry, and the kind is what says how many of them to expect.
-        for (uint8 Remaining = Ops.NumInnerParams; Remaining != 0 && NewProperty != nullptr; --Remaining)
+        for (uint8 Remaining = Ops.CountInnerParams(Param); Remaining != 0 && NewProperty != nullptr; --Remaining)
         {
             ConstructProperties(Owner.Inner(NewProperty), Properties, NumProperties);
         }

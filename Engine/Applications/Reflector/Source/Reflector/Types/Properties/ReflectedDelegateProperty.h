@@ -1,4 +1,7 @@
 #pragma once
+#include <cstdint>
+#include <string>
+#include <vector>
 #include "ReflectedProperty.h"
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/CodeGeneration/CodeWriter.h"
@@ -6,7 +9,7 @@
 
 namespace Lumina
 {
-    // A TScriptDelegate<T> event member; bHasPayload distinguishes a payload delegate from a no-payload one.
+    // A TScriptDelegate<Args...> event member; the arguments follow it as reflected sub-properties.
     class FReflectedDelegateProperty : public FReflectedProperty
     {
     public:
@@ -17,17 +20,9 @@ namespace Lumina
 
         void AppendDefinition(Reflection::FCodeWriter& Writer) const override;
 
-        bool CanDeclareCrossModuleReferences() const override { return bHasPayload; }
-        void DeclareCrossModuleReference(const std::string& API, Reflection::FCodeWriter& Writer) override
-        {
-            if (!bHasPayload)
-            {
-                return;
-            }
-            const std::string Friendly = ClangUtils::MakeCodeFriendlyNamespace(TypeName);
-            Reflection::Names::EmitGuardedCrossModuleDecl(Writer, API, "CStruct", "Construct_CStruct_" + Friendly);
-        }
+        uint16_t NumArgs = 0;
 
-        bool bHasPayload = false;
+        // Argument type spellings in declaration order, for the C# accessor.
+        std::vector<std::string> ArgTypeNames;
     };
 }

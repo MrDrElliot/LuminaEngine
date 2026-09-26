@@ -340,7 +340,8 @@ namespace Lumina
     // TScriptDelegate<T> event; PayloadStructFunc returns the payload struct (null when no payload).
     struct FDelegatePropertyParams : FPropertyParams
     {
-        CStruct*            (*PayloadStructFunc)();
+        // Argument params follow this one, one per delegate argument, in declaration order.
+        uint16 NumArgs;
 
         uint16 NumMetaData;
         const FMetaDataPairParam* MetaDataArray;

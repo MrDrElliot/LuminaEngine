@@ -98,6 +98,13 @@ namespace Lumina
                 Add<FClassProperty,      FClassPropertyParams,      void*>               (EPropertyTypeFlags::Class);
                 Add<FSubStructProperty,  FSubStructPropertyParams,  void*>               (EPropertyTypeFlags::SubStruct);
                 Add<FDelegateProperty,   FDelegatePropertyParams,   FScriptDelegate>     (EPropertyTypeFlags::Delegate);
+
+                // A delegate's inner count is its argument count, which varies per property.
+                Entries[(size_t)EPropertyTypeFlags::Delegate].GetNumInnerParams =
+                    [](const FPropertyParams* Params) -> uint8
+                    {
+                        return (uint8)static_cast<const FDelegatePropertyParams*>(Params)->NumArgs;
+                    };
                 Add<FInstancedStructProperty, FInstancedStructPropertyParams, FInstancedStruct>(EPropertyTypeFlags::InstancedStruct);
 
                 // A struct is as wide as the struct it names, which is only known once that is resolved.
