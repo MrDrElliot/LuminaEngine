@@ -199,7 +199,8 @@ namespace Lumina
         PROPERTY()
         FString Entity;
 
-        /** Component type name, as entity.describe reports it. */
+        /** Component type name as entity.describe reports it, or an attached script's class name. Either
+         *  the full name or the part after the last dot is accepted, so "Game.Rpg.Enemy" or "Enemy". */
         PROPERTY()
         FString Component;
 
@@ -257,7 +258,8 @@ namespace Lumina
         PROPERTY()
         FString Entity;
 
-        /** Component type name, as entity.describe reports it. */
+        /** Component type name as entity.describe reports it, or an attached script's class name. Either
+         *  the full name or the part after the last dot is accepted, so "Game.Rpg.Enemy" or "Enemy". */
         PROPERTY()
         FString Component;
     };

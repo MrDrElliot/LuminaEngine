@@ -308,6 +308,38 @@ namespace Lumina::MCP
                 });
         }
 
+        /** The script attached to Entity whose class matches Name, full or short. Null when none does. */
+        CEntityScript* FindEntityScriptByName(ECS::FRegistry& Registry, ECS::FEntity Entity, FStringView Name)
+        {
+            const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
+            if (Component == nullptr || Name.empty())
+            {
+                return nullptr;
+            }
+
+            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            {
+                CEntityScript* Script = Held.Get();
+                if (Script == nullptr || Script->GetClass() == nullptr)
+                {
+                    continue;
+                }
+
+                const FString Full = Script->GetClass()->GetName().ToString();
+                if (EqualsTextFold(FStringView(Full), Name))
+                {
+                    return Script;
+                }
+
+                const size_t Dot = FStringView(Full).find_last_of('.');
+                if (Dot != FStringView::npos && EqualsTextFold(FStringView(Full).substr(Dot + 1), Name))
+                {
+                    return Script;
+                }
+            }
+            return nullptr;
+        }
+
         // Scripts are subobjects, not assets, so entity.set_property cannot put one in SEntityScriptComponent.
         void RegisterAddScript(FStringView Owner)
         {
@@ -381,20 +413,31 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
+                    CStruct* Reflected = nullptr;
+                    const FComponentOps* Ops = nullptr;
+                    void* Data = nullptr;
+
                     CStruct* Type = SceneOps::ResolveComponentType(FStringView(In.Component));
-                    if (!Type || !ECS::Utils::HasComponent(Registry, Entity, Type))
+                    if (Type != nullptr && ECS::Utils::HasComponent(Registry, Entity, Type))
+                    {
+                        Reflected = Type;
+                        Ops = FindComponentOps(FStringView(Reflected->GetName().ToString()));
+                        Data = Ops != nullptr && Ops->Get != nullptr ? Ops->Get(Registry, Entity) : nullptr;
+                    }
+                    else if (CEntityScript* Script =
+                                 FindEntityScriptByName(Registry, Entity, FStringView(In.Component)))
+                    {
+                        // A script is a CObject whose minted class carries real FPropertys, so the same path
+                        // resolve and marshal work over it once the instance stands in for the component data.
+                        Reflected = Script->GetClass();
+                        Data = Script;
+                    }
+                    else
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
-                            "'{}' has no component named '{}'.", NameOf(Registry, Entity), In.Component));
+                            "'{}' has no component or script named '{}'.", NameOf(Registry, Entity), In.Component));
                     }
 
-                    CStruct* Reflected = Type;
-
-                    const FComponentOps* Ops = Reflected != nullptr
-                        ? FindComponentOps(FStringView(Reflected->GetName().ToString()))
-                        : nullptr;
-
-                    void* Data = Ops != nullptr && Ops->Get != nullptr ? Ops->Get(Registry, Entity) : nullptr;
                     if (Data == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
@@ -429,13 +472,24 @@ namespace Lumina::MCP
                     Out.Previous = FString(Before.dump().c_str());
 
                     Agent::FMarshalResult Applied;
+                    auto Apply = [&]()
+                    {
+                        Applied = Agent::ReadProperty(Value, Target.Property, Target.ValuePtr, FStringView(In.Path));
+                    };
+
                     SessionOps::RunTransacted("Set Property (agent)", [&]()
                     {
+                        // A script owns its own state, so there is no component record to rebake.
+                        if (Ops == nullptr)
+                        {
+                            Apply();
+                            return;
+                        }
+
                         // A bare store reaches no hook, so the renderer keeps serving the old baked record.
                         SceneOps::FPropertyEditScope Edit(Registry, Entity, Reflected, Data,
                             Target.Property, Target.ValuePtr);
-
-                        Applied = Agent::ReadProperty(Value, Target.Property, Target.ValuePtr, FStringView(In.Path));
+                        Apply();
                     }, SceneError);
 
                     if (!Applied.IsValid())
