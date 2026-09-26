@@ -19,6 +19,10 @@ namespace Lumina
 
     public:
 
+        /** UI pixel size of the world's screen context, which in the editor is the panel, not the target. */
+        FUNCTION()
+        static FVector2 GetLayoutSize(CWorld* World);
+
         //~ Documents
 
         /** Loads a virtual path into the world's screen context. The document starts hidden. */

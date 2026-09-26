@@ -1330,6 +1330,18 @@ namespace Lumina::RmlUi
         }
     }
 
+    FUIntVector2 GetWorldLayoutSize(CWorld* World)
+    {
+        FLockedWorldContext Context(World);
+        if (!Context)
+        {
+            return FUIntVector2(0u, 0u);
+        }
+
+        const Rml::Vector2i Size = Context->GetDimensions();
+        return FUIntVector2((uint32)Math::Max(Size.x, 0), (uint32)Math::Max(Size.y, 0));
+    }
+
     void SetWorldDisplaySize(CWorld* World, const FUIntVector2& Size)
     {
         if (World == nullptr)

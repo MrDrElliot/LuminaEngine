@@ -96,6 +96,9 @@ namespace Lumina::RmlUi
     // Lay UI out at this size instead of the RT image size; {0,0} reverts. Used by the editor viewport.
     RUNTIME_API void            SetWorldDisplaySize(CWorld* World, const FUIntVector2& Size);
 
+    // The size the world's context currently lays out in, which is what a UI pixel is measured against.
+    RUNTIME_API FUIntVector2    GetWorldLayoutSize(CWorld* World);
+
     // Replace a world context's documents with one parsed from in-memory RML; SourceUrl resolves relative includes.
     RUNTIME_API bool            SetWorldInlineDocument(CWorld* World, FStringView Body, FStringView SourceUrl);
 

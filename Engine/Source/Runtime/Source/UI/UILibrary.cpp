@@ -22,6 +22,12 @@ namespace Lumina
         }
     }
 
+    FVector2 CUILibrary::GetLayoutSize(CWorld* World)
+    {
+        const FUIntVector2 Size = RmlUi::GetWorldLayoutSize(World);
+        return FVector2((float)Size.x, (float)Size.y);
+    }
+
     FUIDocument CUILibrary::LoadDocument(CWorld* World, const FString& Path)
     {
         return FromPtr<FUIDocument>(RmlUi::LoadScreenDocument(World, Path));
