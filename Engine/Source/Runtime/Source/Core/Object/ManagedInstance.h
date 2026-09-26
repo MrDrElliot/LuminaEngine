@@ -7,14 +7,17 @@ namespace Lumina
     class CObjectBase;
 
     /**
-     * One managed (C#) wrapper instance per CObject, so repeated wrapping of the same object returns the SAME
+     * One managed (C#) wrapper instance per CObject, so repeated wrapping of the same object returns the same
      * managed object and reference identity holds (`==`, `is`, dictionary keys). Replaces the previous model
      * where every Asset.Load / object-property read allocated a fresh wrapper.
      *
-     * Handles stored here are WEAK on the managed side: this table never keeps a wrapper alive, it only
-     * remembers the one that currently exists. That is what makes the cache safe across a script hot reload --
-     * a weak handle cannot pin the collectible script ALC, and once the target is collected the slot simply
-     * reports "no instance" and the next access re-creates it.
+     * Two kinds of entry share this table and their handles differ in strength. A plain wrapper from
+     * Wrapper<T>.ForObject is weak, so the table never keeps one alive and a collected target leaves a slot
+     * that reports no instance until the next access re-creates it. A C# subclass of a REFLECT(Scriptable)
+     * class is strong, because its native object is the only owner it has.
+     *
+     * So this table can pin the collectible script load context, and what stops it is ReleaseAll running in
+     * the unload sequence before that context is dropped. Draining it is required, not hygiene.
      *
      * Layering: storage and lifetime live in Core (CObjectBase owns a slot index); actually freeing the GC
      * handle is the scripting layer's job and is installed via SetFreeHandleFn. With no host, the table still
@@ -38,9 +41,9 @@ namespace Lumina
         /** Frees Object's handle and reclaims its slot. Called from ~CObjectBase; safe when there is none. */
         RUNTIME_API void Release(CObjectBase* Object);
 
-        /** Frees every cached handle and reclaims every slot. Called on script hot reload (the handles may
-         *  point into the ALC being unloaded) and at host shutdown. Objects are untouched -- the next access
-         *  re-creates the wrapper. */
+        /** Frees every cached handle and reclaims every slot. A strong entry points into the load context
+         *  being unloaded, so a reload has to call this before it drops that context; shutdown calls it for
+         *  the same reason. Objects are untouched and the next access re-creates the wrapper. */
         RUNTIME_API void ReleaseAll();
 
         /** Number of objects currently holding a cached handle. */
