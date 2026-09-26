@@ -14,6 +14,8 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Log/Log.h"
+#include "Platform/Time/PlatformTime.h"
+#include "Scripting/DotNet/DotNetHost.h"
 #include "Session/SessionOps.h"
 #include "MCPTextMatch.h"
 #include "Tools/Screenshot/ScreenshotCapture.h"
@@ -312,6 +314,93 @@ namespace Lumina::MCP
                 });
         }
 
+        void RegisterScriptReload(FStringView Owner)
+        {
+            // Any, not GameThread: the reload is serviced at a fixed point in the frame, so this has to let
+            // the game thread run between polls rather than occupy it.
+            Agent::FToolRegistry::Get().Register<SScriptReloadParams, SScriptReloadResult>(
+                Owner, "scripts.reload",
+                "Recompile and reload the project's C# scripts, waiting for the new generation to come up. "
+                "Reports the generation before and after, so a caller can tell a reload from a no-op, and "
+                "how many script types the new generation registered (zero means compilation failed; read "
+                "editor.log_tail for the errors).",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
+                [](const SScriptReloadParams& Params, SScriptReloadResult& Out)
+                {
+                    if (!DotNet::IsInitialized())
+                    {
+                        return Agent::FToolResult::Error("The .NET host is not running, so there is nothing to reload.");
+                    }
+
+                    const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
+
+                    int32 Before = 0;
+                    if (Agent::FGameThreadGate::Run([&Before]()
+                        {
+                            Before = DotNet::GetScriptGeneration();
+                            DotNet::RequestScriptReload();
+                        }, GateTimeout) != Agent::EGameThreadResult::Ran)
+                    {
+                        return Agent::FToolResult::Error("The game thread did not pick up the reload request.");
+                    }
+
+                    Out.PreviousGeneration = Before;
+                    Out.Generation = Before;
+
+                    const double Deadline = PlatformTime::Seconds() + Math::Max(0.0f, Params.TimeoutSeconds);
+                    while (PlatformTime::Seconds() < Deadline)
+                    {
+                        Threading::Sleep(50);
+
+                        int32 Now = Before;
+                        if (Agent::FGameThreadGate::Run([&Now]() { Now = DotNet::GetScriptGeneration(); },
+                            GateTimeout) != Agent::EGameThreadResult::Ran)
+                        {
+                            break;
+                        }
+                        if (Now != Before)
+                        {
+                            Out.Generation = Now;
+                            Out.bReloaded = true;
+                            break;
+                        }
+                    }
+
+                    DotNet::FScriptDiagnostics Diagnostics{};
+                    bool bHaveDiagnostics = false;
+                    (void)Agent::FGameThreadGate::Run([&Diagnostics, &bHaveDiagnostics]()
+                        {
+                            bHaveDiagnostics = DotNet::GetRuntimeDiagnostics(Diagnostics);
+                        }, GateTimeout);
+
+                    if (bHaveDiagnostics)
+                    {
+                        Out.AliveContexts = Diagnostics.AliveScriptAlcCount;
+                        Out.LoadedTypes = Diagnostics.LoadedTypeCount;
+                    }
+
+                    if (!Out.bReloaded)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format(
+                            "The reload is still queued after {} seconds; generation is still {}.",
+                            Params.TimeoutSeconds, Out.Generation));
+                    }
+
+                    LOG_INFO("[MCP] An agent reloaded scripts; generation {} -> {}.", Before, Out.Generation);
+
+                    if (Out.LoadedTypes == 0)
+                    {
+                        return Agent::FToolResult::Ok(Lumina::Format(
+                            "Reloaded to generation {}, but no script types registered. Compilation most "
+                            "likely failed; read editor.log_tail for the errors.", Out.Generation));
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format(
+                        "Reloaded to generation {}: {} script type(s), {} script context(s) resident.",
+                        Out.Generation, Out.LoadedTypes, Out.AliveContexts));
+                });
+        }
+
         void RegisterScreenshot(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SScreenshotParams, SScreenshotResult>(
@@ -455,6 +544,8 @@ namespace Lumina::MCP
 
         // Drained at the event pump so a key takes a real key's path and frame; anything later is already Held.
         TConcurrentQueue<FKeyInput> InjectedKeys;
+        TConcurrentQueue<FMouseButtonInput> InjectedButtons;
+        TConcurrentQueue<FMouseMoveInput> InjectedMoves;
         FDelegateHandle InputPumpedHandle;
 
         void ForwardInjectedKeys()
@@ -465,6 +556,107 @@ namespace Lumina::MCP
             {
                 Window->OnKey.Broadcast(Window, Input);
             }
+
+            // Moves before buttons, so a click is evaluated at the position it was aimed at.
+            FMouseMoveInput Move;
+            while (InjectedMoves.TryDequeue(Move))
+            {
+                Window->OnMouseMove.Broadcast(Window, Move);
+            }
+
+            FMouseButtonInput Button;
+            while (InjectedButtons.TryDequeue(Button))
+            {
+                Window->OnMouseButton.Broadcast(Window, Button);
+            }
+        }
+
+        // Shared by send_key and send_mouse: input only reaches a viewport the editor considers focused.
+        bool FocusGameViewport(bool& bOutFocused)
+        {
+            return Agent::FGameThreadGate::Run([&bOutFocused]()
+            {
+                FInputViewportRegistry& Viewports = FInputViewportRegistry::Get();
+                Viewports.SetGameInputFocused(true);
+
+                FString SceneError;
+                if (CWorld* World = SessionOps::GetSceneWorld(SceneError))
+                {
+                    if (FInputViewport* Viewport = Viewports.FindViewportForWorld(World))
+                    {
+                        Viewports.SetActiveViewport(Viewport);
+                        Viewports.SetFocusedViewport(Viewport);
+                    }
+                }
+                bOutFocused = Viewports.GetFocusedViewport() != nullptr;
+            }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds()) == Agent::EGameThreadResult::Ran;
+        }
+
+        void RegisterSendMouse(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSendMouseParams, SSendMouseResult>(
+                Owner, "editor.send_mouse",
+                "Move the mouse to a viewport pixel and optionally click there, as a real cursor would. "
+                "Use it to drive play-in-editor pointing: click-to-move, selecting, dragging a look around.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
+                [](const SSendMouseParams& In, SSendMouseResult& Out)
+                {
+                    const bool bPress   = In.Action == "Tap" || In.Action == "Press";
+                    const bool bRelease = In.Action == "Tap" || In.Action == "Release";
+                    const bool bMove    = In.Action == "Move" || bPress || bRelease;
+                    if (!bMove)
+                    {
+                        return Agent::FToolResult::Error("Action has to be Tap, Press, Release or Move.");
+                    }
+                    if (In.Button < 0 || In.Button > 7)
+                    {
+                        return Agent::FToolResult::Error("Button has to be 0 to 7, where 0 is left.");
+                    }
+
+                    if (!FocusGameViewport(Out.bGameInputFocused))
+                    {
+                        return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
+                    }
+
+                    Out.X = In.X;
+                    Out.Y = In.Y;
+
+                    FMouseMoveInput Move;
+                    Move.X = In.X;
+                    Move.Y = In.Y;
+                    InjectedMoves.Enqueue(Move);
+
+                    // The move has to land before the button, or the click resolves against the old position.
+                    Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
+
+                    auto Send = [&](bool bPressed)
+                    {
+                        FMouseButtonInput Button;
+                        Button.Button   = static_cast<EMouseKey>(In.Button);
+                        Button.bPressed = bPressed;
+                        Button.X        = In.X;
+                        Button.Y        = In.Y;
+                        InjectedButtons.Enqueue(Button);
+                    };
+
+                    if (bPress)
+                    {
+                        Send(true);
+                    }
+
+                    // Both halves in one pump would leave the button Held before any press edge is evaluated.
+                    if (bPress && bRelease)
+                    {
+                        Threading::Sleep(Math::Max(In.HoldMilliseconds, 1));
+                    }
+
+                    if (bRelease)
+                    {
+                        Send(false);
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format("Sent {} at ({}, {}).", In.Action, In.X, In.Y));
+                });
         }
 
         // Runs on the transport thread on purpose: a tap needs the release to land a frame after the press.
@@ -558,6 +750,8 @@ namespace Lumina::MCP
         RegisterScreenshot(Owner);
         RegisterLogTail(Owner);
         RegisterConsoleExec(Owner);
+        RegisterScriptReload(Owner);
+        RegisterSendMouse(Owner);
     }
 
     void UnregisterEditorSessionTools()

@@ -70,6 +70,83 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SSendMouseParams
+    {
+        GENERATED_BODY()
+
+        /** Viewport pixel to move to before the button is sent. */
+        PROPERTY()
+        float X = 0.0f;
+
+        PROPERTY()
+        float Y = 0.0f;
+
+        /** Tap presses and releases across two frames; Press, Release or Move send only that part. */
+        PROPERTY()
+        FString Action = "Tap";
+
+        /** 0 is left, 1 is right, 2 is middle, matching EMouseKey. */
+        PROPERTY()
+        int32 Button = 0;
+
+        /** How long a Tap stays down, so a game polling button state sees at least one frame of it. */
+        PROPERTY()
+        int32 HoldMilliseconds = 40;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSendMouseResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bGameInputFocused = false;
+
+        /** Where the cursor was left, in viewport pixels. */
+        PROPERTY()
+        float X = 0.0f;
+
+        PROPERTY()
+        float Y = 0.0f;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SScriptReloadParams
+    {
+        GENERATED_BODY()
+
+        /** Seconds to wait for the reload to land before reporting back. Zero queues it and returns. */
+        PROPERTY()
+        float TimeoutSeconds = 30.0f;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SScriptReloadResult
+    {
+        GENERATED_BODY()
+
+        /** True once a new generation is live; false when the wait ran out with the reload still queued. */
+        PROPERTY()
+        bool bReloaded = false;
+
+        /** Script generation before the request, so a caller can tell a reload from a no-op. */
+        PROPERTY()
+        int32 PreviousGeneration = 0;
+
+        /** Generation now live. It advances once per completed reload. */
+        PROPERTY()
+        int32 Generation = 0;
+
+        /** Collectible script contexts still loaded. One is healthy; more means an old one has not unloaded. */
+        PROPERTY()
+        int32 AliveContexts = 0;
+
+        /** Entity script types the new generation registered, zero when compilation failed. */
+        PROPERTY()
+        int32 LoadedTypes = 0;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SScreenshotParams
     {
         GENERATED_BODY()
