@@ -85,6 +85,32 @@ namespace
 }
 
 // Run with --gtest_also_run_disabled_tests.
+TEST(TransformBench, DISABLED_ComponentEmplaceAndDestroy)
+{
+    constexpr uint32 kEntities = 100'000;
+    constexpr int    kPasses   = 20;
+
+    const uint64 Start = PlatformTime::Cycles();
+    size_t Sink = 0;
+    for (int Pass = 0; Pass < kPasses; ++Pass)
+    {
+        ECS::FRegistry Registry;
+        TVector<ECS::FEntity> Entities;
+        Entities.reserve(kEntities);
+        for (uint32 Index = 0; Index < kEntities; ++Index)
+        {
+            const ECS::FEntity E = Registry.Create();
+            Registry.Emplace<STransformComponent>(E);
+            Entities.push_back(E);
+        }
+        Sink += Registry.NumEntities();
+    }
+    const uint64 End = PlatformTime::Cycles();
+
+    std::printf("\n  Create + Emplace<STransformComponent> %u entities x %d passes: %6.3f ns/op (sink %zu)\n",
+        kEntities, kPasses, Nanos(Start, End, static_cast<size_t>(kEntities) * kPasses), Sink);
+}
+
 TEST(TransformBench, DISABLED_RandomAccessComponentGet)
 {
     constexpr uint32 kEntities = 200'000;

@@ -174,7 +174,8 @@ namespace Lumina::ECS
         }
 
         // Out of line so an empty signal costs the caller nothing but the branch above.
-        void BroadcastSlow(FRegistry& Registry, FEntity Entity) const
+        // Never inlined, so a pool with no listeners costs the empty check and nothing else.
+        FORCENOINLINE void BroadcastSlow(FRegistry& Registry, FEntity Entity) const
         {
             for (const FComponentListener& Listener : Listeners)
             {

@@ -236,7 +236,7 @@ namespace Lumina::ECS
         //~ Storages
 
         template<CComponent T>
-        NODISCARD TComponentStorage<T> AssureStorage()
+        NODISCARD FORCEINLINE TComponentStorage<T> AssureStorage()
         {
             const FComponentTypeID TypeID = GetComponentTypeID<T>();
             if (TypeID >= StoragesByTypeID.size() || StoragesByTypeID[TypeID] == nullptr)
