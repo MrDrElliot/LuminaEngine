@@ -1342,6 +1342,32 @@ namespace Lumina::RmlUi
         return FUIntVector2((uint32)Math::Max(Size.x, 0), (uint32)Math::Max(Size.y, 0));
     }
 
+    bool IsCursorOverWorldUI(CWorld* World)
+    {
+        FLockedWorldContext Context(World);
+        if (!Context)
+        {
+            return false;
+        }
+
+        Rml::Element* Hovered = Context->GetHoverElement();
+
+        // The context reports the document itself when the cursor is over nothing the page drew.
+        while (Hovered != nullptr)
+        {
+            if (Hovered->GetOwnerDocument() == Hovered)
+            {
+                return false;
+            }
+            if (Hovered->GetComputedValues().pointer_events() != Rml::Style::PointerEvents::None)
+            {
+                return true;
+            }
+            Hovered = Hovered->GetParentNode();
+        }
+        return false;
+    }
+
     void SetWorldDisplaySize(CWorld* World, const FUIntVector2& Size)
     {
         if (World == nullptr)

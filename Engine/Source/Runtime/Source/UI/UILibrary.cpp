@@ -28,6 +28,11 @@ namespace Lumina
         return FVector2((float)Size.x, (float)Size.y);
     }
 
+    bool CUILibrary::IsCursorOverUI(CWorld* World)
+    {
+        return RmlUi::IsCursorOverWorldUI(World);
+    }
+
     FUIDocument CUILibrary::LoadDocument(CWorld* World, const FString& Path)
     {
         return FromPtr<FUIDocument>(RmlUi::LoadScreenDocument(World, Path));

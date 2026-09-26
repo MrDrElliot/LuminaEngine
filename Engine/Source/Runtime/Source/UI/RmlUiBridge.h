@@ -99,6 +99,9 @@ namespace Lumina::RmlUi
     // The size the world's context currently lays out in, which is what a UI pixel is measured against.
     RUNTIME_API FUIntVector2    GetWorldLayoutSize(CWorld* World);
 
+    // True while the cursor sits on an interface element rather than the empty page behind it.
+    RUNTIME_API bool            IsCursorOverWorldUI(CWorld* World);
+
     // Replace a world context's documents with one parsed from in-memory RML; SourceUrl resolves relative includes.
     RUNTIME_API bool            SetWorldInlineDocument(CWorld* World, FStringView Body, FStringView SourceUrl);
 

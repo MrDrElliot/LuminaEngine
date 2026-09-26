@@ -23,6 +23,10 @@ namespace Lumina
         FUNCTION()
         static FVector2 GetLayoutSize(CWorld* World);
 
+        /** True while the cursor is on an interface element, so a click to move can ignore that click. */
+        FUNCTION()
+        static bool IsCursorOverUI(CWorld* World);
+
         //~ Documents
 
         /** Loads a virtual path into the world's screen context. The document starts hidden. */
