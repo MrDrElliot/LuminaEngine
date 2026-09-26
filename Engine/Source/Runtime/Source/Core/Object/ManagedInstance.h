@@ -35,8 +35,13 @@ namespace Lumina
         /** The cached managed handle for Object, or null if it has none. */
         RUNTIME_API void* Find(const CObjectBase* Object);
 
-        /** Caches Handle on Object. Frees any handle it replaces. A null Handle clears (and frees) the slot. */
-        RUNTIME_API void Set(CObjectBase* Object, void* Handle);
+        /** Caches Handle on Object. Frees any handle it replaces. A null Handle clears (and frees) the slot.
+         *  A weak wrapper (bScriptTwin false) is dropped rather than allowed to displace a script's own
+         *  instance, because the script would then never receive another dispatch. */
+        RUNTIME_API void Set(CObjectBase* Object, void* Handle, bool bScriptTwin = false);
+
+        /** True when Object's cached handle is the script's own instance rather than a weak wrapper. */
+        RUNTIME_API bool IsScriptTwin(const CObjectBase* Object);
 
         /** Frees Object's handle and reclaims its slot. Called from ~CObjectBase; safe when there is none. */
         RUNTIME_API void Release(CObjectBase* Object);

@@ -37,10 +37,14 @@ namespace Lumina
                 return nullptr;
             }
 
-            // A hot reload drains the table, so an empty slot IS the rebind signal with no per-instance stamp.
-            if (void* Existing = ManagedInstances::Find(Object))
+            // A hot reload drains the table, so a missing twin is the rebind signal with no per-instance stamp.
+            // Only the script's own instance short-circuits; a weak wrapper here would silence the script.
+            if (ManagedInstances::IsScriptTwin(Object))
             {
-                return Existing;
+                if (void* Existing = ManagedInstances::Find(Object))
+                {
+                    return Existing;
+                }
             }
 
             // The class default object is never dispatched to, so this is belt and braces rather than hot.
@@ -53,7 +57,7 @@ namespace Lumina
             if (Handle != nullptr)
             {
                 // The teardown contract drains the whole table before the collectible load context unloads.
-                ManagedInstances::Set(Object, Handle);
+                ManagedInstances::Set(Object, Handle, /*bScriptTwin*/ true);
             }
             return Handle;
         }

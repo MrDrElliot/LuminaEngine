@@ -66,7 +66,20 @@ namespace Lumina
             return Slots[Slot];
         }
 
-        void Set(CObjectBase* Object, void* Handle)
+        bool IsScriptTwin(const CObjectBase* Object) const
+        {
+            if (Object == nullptr || Object->ManagedInstanceSlot == INDEX_NONE)
+            {
+                return false;
+            }
+
+            FScopeLock Lock(Mutex);
+
+            const int32 Slot = Object->ManagedInstanceSlot;
+            return IsValidSlot(Slot) && Slot < (int32)ScriptTwin.size() && ScriptTwin[Slot];
+        }
+
+        void Set(CObjectBase* Object, void* Handle, bool bScriptTwin)
         {
             if (Object == nullptr)
             {
@@ -76,6 +89,13 @@ namespace Lumina
             if (Handle == nullptr)
             {
                 Release(Object);
+                return;
+            }
+
+            // A weak wrapper must never take the slot from a script's own instance, or the script goes dark.
+            if (!bScriptTwin && IsScriptTwin(Object))
+            {
+                FreeHandle(Handle);
                 return;
             }
 
@@ -98,11 +118,13 @@ namespace Lumina
                     // Replacing an instance (the previous wrapper was collected, or was the wrong type).
                     Replaced = Slots[Object->ManagedInstanceSlot];
                     Slots[Object->ManagedInstanceSlot] = Handle;
+                    ScriptTwin[Object->ManagedInstanceSlot] = bScriptTwin;
                 }
                 else
                 {
                     Object->ManagedInstanceSlot = AcquireSlot();
                     Slots[Object->ManagedInstanceSlot] = Handle;
+                    ScriptTwin[Object->ManagedInstanceSlot] = bScriptTwin;
                     Owners[Object->ManagedInstanceSlot] = Object;
                     ++LiveCount;
                 }
@@ -136,6 +158,7 @@ namespace Lumina
 
                 Released = Slots[Slot];
                 Slots[Slot] = nullptr;
+                ScriptTwin[Slot] = false;
                 Owners[Slot] = nullptr;
                 FreeSlots.push_back(Slot);
                 --LiveCount;
@@ -167,6 +190,7 @@ namespace Lumina
                         Released.push_back(Slots[Slot]);
                         Slots[Slot] = nullptr;
                     }
+                    ScriptTwin[Slot] = false;
                 }
 
                 FreeSlots.clear();
@@ -228,6 +252,7 @@ namespace Lumina
                 return Slot;
             }
             Slots.push_back(nullptr);
+            ScriptTwin.push_back(false);
             Owners.push_back(nullptr);
             return (int32)Slots.size() - 1;
         }
@@ -243,6 +268,7 @@ namespace Lumina
         // The render thread reaches this through the managed RenderScene bridge, so it is not game-thread only.
         mutable FMutex                    Mutex;
         TVector<void*>                    Slots;
+        TVector<bool>                     ScriptTwin;  // a script's own instance, which a weak wrapper may not displace
         TVector<CObjectBase*>             Owners;   // back-reference, so ReleaseAll can clear slot indices
         TVector<int32>                    FreeSlots;
         int32                             LiveCount = 0;
@@ -263,9 +289,14 @@ namespace Lumina
             return FManagedInstanceTable::Get().Find(Object);
         }
 
-        void Set(CObjectBase* Object, void* Handle)
+        bool IsScriptTwin(const CObjectBase* Object)
         {
-            FManagedInstanceTable::Get().Set(Object, Handle);
+            return FManagedInstanceTable::Get().IsScriptTwin(Object);
+        }
+
+        void Set(CObjectBase* Object, void* Handle, bool bScriptTwin)
+        {
+            FManagedInstanceTable::Get().Set(Object, Handle, bScriptTwin);
         }
 
         void Release(CObjectBase* Object)
