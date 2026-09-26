@@ -99,6 +99,16 @@ namespace Lumina
         bool bReady = false;
     };
 
+    /** One script kept verbatim because its class was not loadable when the world was read. */
+    struct FPendingScript
+    {
+        FName          ClassName;
+        TVector<uint8> Bytes;
+
+        /** Replayed on restore so the held bytes are read exactly as the file wrote them. */
+        int32          FileVersion = 0;
+    };
+
     /** Holds the scripts attached to one entity. Language-agnostic: each element is a CEntityScript of
      *  whatever CClass, native or minted-from-C#. */
     REFLECT(Component, Category = "Gameplay")
@@ -119,7 +129,10 @@ namespace Lumina
         // carries its own Serialize and a second, per-property path would fight it.
         PROPERTY(NoSerialize)
         TVector<TObjectPtr<CEntityScript>> Scripts;
-        
+
+        /** Unresolved at load, written back out untouched, retried on the next script reload. */
+        TVector<FPendingScript> Pending;
+
         bool Serialize(FArchive& Ar);
     };
 
@@ -163,6 +176,9 @@ namespace Lumina
         /** Delivers OnReloaded to every C#-backed script in every world. A C++ script is not reloaded, so
          *  it is skipped rather than told about someone else's reload. */
         RUNTIME_API void NotifyScriptsReloaded(EScriptReloadReason Reason, int32 Generation);
+
+        /** Materializes scripts held back at load because their class was missing, returning the count. */
+        RUNTIME_API int32 ResolvePendingScripts(ECS::FRegistry& Registry);
 
         /** Delivers one input event to every script on Entity. */
         RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);

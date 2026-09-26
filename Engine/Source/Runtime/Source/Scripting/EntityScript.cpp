@@ -56,6 +56,7 @@ namespace Lumina
     SEntityScriptComponent::SEntityScriptComponent(const SEntityScriptComponent& Other)
     {
         CloneScripts(Other.Scripts, Scripts);
+        Pending = Other.Pending;
     }
 
     SEntityScriptComponent& SEntityScriptComponent::operator=(const SEntityScriptComponent& Other)
@@ -63,6 +64,7 @@ namespace Lumina
         if (this != &Other)
         {
             CloneScripts(Other.Scripts, Scripts);
+            Pending = Other.Pending;
         }
         return *this;
     }
@@ -71,7 +73,7 @@ namespace Lumina
     {
         if (Ar.IsWriting())
         {
-            int32 Count = 0;
+            int32 Count = (int32)Pending.size();
             for (const TObjectPtr<CEntityScript>& Held : Scripts)
             {
                 if (Held.Get() != nullptr && Held.Get()->GetClass() != nullptr)
@@ -80,6 +82,19 @@ namespace Lumina
                 }
             }
             Ar << Count;
+
+            // Written back byte for byte, so a world saved while a script failed to compile keeps it.
+            for (FPendingScript& Held : Pending)
+            {
+                Ar << Held.ClassName;
+
+                int64 ScriptSize = (int64)Held.Bytes.size();
+                Ar << ScriptSize;
+                if (ScriptSize > 0)
+                {
+                    Ar.Serialize(Held.Bytes.data(), ScriptSize);
+                }
+            }
 
             for (const TObjectPtr<CEntityScript>& Held : Scripts)
             {
@@ -118,6 +133,7 @@ namespace Lumina
                 Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ENTITY_SCRIPT_LENGTH_PREFIX;
 
             Scripts.clear();
+            Pending.clear();
             for (int32 Index = 0; Index < Count; ++Index)
             {
                 FName ClassName;
@@ -144,13 +160,24 @@ namespace Lumina
                 {
                     if (!bLengthPrefixed)
                     {
-                        LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; the rest of this "
-                                 "component's scripts were dropped.", ClassName.c_str());
+                        LOG_WARN("SEntityScriptComponent: script class '{}' could not be resolved and this "
+                                 "file has no per-script length, so the rest were dropped.", ClassName.c_str());
                         break;
                     }
 
-                    LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; skipping it and "
-                             "keeping this entity's other scripts.", ClassName.c_str());
+                    // Held verbatim rather than discarded, since the class is usually just not loaded yet.
+                    FPendingScript Held;
+                    Held.ClassName   = ClassName;
+                    Held.FileVersion = Ar.GetFileVersion();
+                    Held.Bytes.resize((size_t)Math::Max<int64>(ScriptSize, 0));
+                    if (ScriptSize > 0)
+                    {
+                        Ar.Serialize(Held.Bytes.data(), ScriptSize);
+                    }
+                    Pending.push_back(Move(Held));
+
+                    LOG_WARN("SEntityScriptComponent: script class '{}' is not loaded; holding it until a "
+                             "script reload can restore it.", ClassName.c_str());
                     Ar.Seek(DataStart + ScriptSize);
                     continue;
                 }
@@ -547,6 +574,65 @@ namespace Lumina
             }
         }
 
+        int32 ResolvePendingScripts(ECS::FRegistry& Registry)
+        {
+            TVector<ECS::FEntity> Entities;
+            auto View = Registry.View<SEntityScriptComponent>();
+            Entities.reserve(View.Num());
+            for (ECS::FEntity Entity : View)
+            {
+                Entities.push_back(Entity);
+            }
+
+            int32 Restored = 0;
+            for (ECS::FEntity Entity : Entities)
+            {
+                SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
+                if (Component == nullptr || Component->Pending.empty())
+                {
+                    continue;
+                }
+
+                TVector<FPendingScript> StillPending;
+                TVector<FPendingScript> Holding = Move(Component->Pending);
+                Component->Pending.clear();
+
+                for (FPendingScript& Held : Holding)
+                {
+                    CClass* ScriptClass = FScriptableRegistry::ResolveClass(Held.ClassName);
+                    if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
+                    {
+                        StillPending.push_back(Move(Held));
+                        continue;
+                    }
+
+                    CEntityScript* Script = static_cast<CEntityScript*>(
+                        NewObject(ScriptClass, nullptr, NAME_None, FGuid::New(), OF_Transient));
+                    if (Script == nullptr)
+                    {
+                        StillPending.push_back(Move(Held));
+                        continue;
+                    }
+
+                    if (!Held.Bytes.empty())
+                    {
+                        FMemoryReader Reader(Held.Bytes);
+                        Reader.SetFileVersion(Held.FileVersion);
+                        ScriptClass->SerializeTaggedProperties(Reader, Script);
+                    }
+
+                    Component->Scripts.push_back(Script);
+                    ++Restored;
+
+                    LOG_INFO("SEntityScriptComponent: restored held script '{}' now that its class is loaded.",
+                        Held.ClassName.c_str());
+                }
+
+                Component->Pending = Move(StillPending);
+            }
+            return Restored;
+        }
+
         void NotifyScriptsReloaded(EScriptReloadReason Reason, int32 Generation)
         {
             if (GWorldManager == nullptr)
@@ -557,6 +643,9 @@ namespace Lumina
             GWorldManager->ForEachWorld([&](CWorld& World)
             {
                 ECS::FRegistry& Registry = ECS::GetWorldRegistry(World);
+
+                // Anything held back by a failed or late load comes in first, so it sees this reload too.
+                ResolvePendingScripts(Registry);
 
                 TVector<ECS::FEntity> Entities;
                 auto View = Registry.View<SEntityScriptComponent>();
