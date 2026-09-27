@@ -118,6 +118,16 @@ namespace Lumina::Physics
 
         auto BodySyncView = Registry.View<SRigidBodyComponent, FNeedsPhysicsBodyUpdate>();
 
+        for (uint32 Handle : AuthoredKinematicHandles)
+        {
+            BodyAuthoredKinematic[Handle] = 0;
+        }
+        PreviousAuthoredKinematicHandles.swap(AuthoredKinematicHandles);
+        AuthoredKinematicHandles.clear();
+
+        // Spread over every step this update runs, so a second step does not carry the body past its target.
+        const float KinematicSpan = FixedDt * (float)Math::Max(CollisionSteps, 1u);
+
         // Box3D body writes touch shared world arrays, so this stays serial rather than a ParallelFor.
         for (auto [Entity, BodyComponent, Update] : BodySyncView.Each())
         {
@@ -151,7 +161,8 @@ namespace Lumina::Physics
                 case b3_kinematicBody:
                 {
                     // Target-transform drive keeps the swept motion the contact solver needs.
-                    b3Body_SetTargetTransform(BodyId, b3WorldTransform{ Position, Rotation }, FixedDt, Update.bActivate);
+                    b3Body_SetTargetTransform(BodyId, b3WorldTransform{ Position, Rotation }, KinematicSpan, Update.bActivate);
+                    MarkAuthoredKinematic(BodyComponent.BodyID);
                     break;
                 }
                 case b3_bodyTypeCount:
@@ -188,6 +199,17 @@ namespace Lumina::Physics
             }
         }
 
+        // The drive velocity outlives its target, so a body nobody placed again would keep drifting.
+        for (uint32 Handle : PreviousAuthoredKinematicHandles)
+        {
+            const b3BodyId BodyId = ResolveBody(Handle);
+            if (BodyAuthoredKinematic[Handle] == 0 && b3Body_IsValid(BodyId) && b3Body_GetType(BodyId) == b3_kinematicBody)
+            {
+                b3Body_SetLinearVelocity(BodyId, b3Vec3{ 0.0f, 0.0f, 0.0f });
+                b3Body_SetAngularVelocity(BodyId, b3Vec3{ 0.0f, 0.0f, 0.0f });
+            }
+        }
+
         // Carried forward with the payload intact, since a blanket clear lost a spawn-then-SetLocation.
         RetryBodyUpdates.clear();
         for (auto [Entity, BodyComponent, Update] : BodySyncView.Each())
@@ -206,6 +228,20 @@ namespace Lumina::Physics
             {
                 Registry.Emplace<FNeedsPhysicsBodyUpdate>(Retry.Entity, Retry.Update);
             }
+        }
+    }
+
+    void FBox3DPhysicsScene::MarkAuthoredKinematic(uint32 Handle)
+    {
+        if (Handle >= BodyAuthoredKinematic.size())
+        {
+            BodyAuthoredKinematic.resize(Handle + 1, 0);
+        }
+
+        if (BodyAuthoredKinematic[Handle] == 0)
+        {
+            BodyAuthoredKinematic[Handle] = 1;
+            AuthoredKinematicHandles.push_back(Handle);
         }
     }
 
@@ -279,6 +315,14 @@ namespace Lumina::Physics
                     BodyAwake[Handle] = 0;
                     ActivationDrainScratch.push_back({ Entity, false });
                 }
+            }
+
+            // Gameplay already put its transform where it should draw, and the step only chased that placement.
+            if (Handle < BodyAuthoredKinematic.size() && BodyAuthoredKinematic[Handle] != 0)
+            {
+                BodyComponent.LastBodyPosition = NewPosition;
+                BodyComponent.LastBodyRotation = NewRotation;
+                continue;
             }
 
             const uint32 Slot = StageInterpSlot(Handle, BodyComponent.LastBodyPosition, BodyComponent.LastBodyRotation);
