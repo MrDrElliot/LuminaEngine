@@ -258,6 +258,7 @@ namespace Lumina::Physics
 
         // Interpolation is driven by Box3D's move events, so a sleeping or static body costs nothing here.
         void DrainMoveEvents(bool bStageForInterp);
+        void MarkAuthoredKinematic(uint32 Handle);
         uint32 StageInterpSlot(uint32 BodyHandle, const FVector3& Position, const FQuat& Rotation);
         void ResetInterpStaging();
 
@@ -461,5 +462,10 @@ namespace Lumina::Physics
 
         // Dense wake state per body handle, diffed against the move events to raise OnWake / OnSleep.
         TVector<uint8>                          BodyAwake;
+
+        // Kinematic bodies gameplay placed this update, which draw at that placement rather than the stepped pose.
+        TVector<uint8>                          BodyAuthoredKinematic;
+        TVector<uint32>                         AuthoredKinematicHandles;
+        TVector<uint32>                         PreviousAuthoredKinematicHandles;
     };
 }
