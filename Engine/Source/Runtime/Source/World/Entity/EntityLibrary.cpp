@@ -63,6 +63,16 @@ namespace Lumina
         }
     }
 
+    FVector3 CEntityLibrary::GetRenderLocation(CWorld* World, ECS::FEntity Entity)
+    {
+        if (World == nullptr || !World->IsValidEntity(Entity))
+        {
+            return FVector3(0.0f);
+        }
+
+        return ECS::Utils::GetRenderLocation(ECS::GetWorldRegistry(*World), Entity);
+    }
+
     void CEntityLibrary::GetSubtree(CWorld* World, ECS::FEntity Entity, TVector<ECS::FEntity>& Out)
     {
         if (World == nullptr)

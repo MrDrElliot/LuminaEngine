@@ -150,6 +150,8 @@ namespace Lumina::Physics
         void LatchCharacterInput();
         void BuildInterpolatedTransforms(float Alpha);
         void ApplyInterpolatedTransforms();
+        void PropagateRenderPosesToDescendants(ECS::FRegistry& Registry);
+        void RetireStaleRenderOverrides(ECS::FRegistry& Registry);
 
         uint32 GetEntityBodyID(ECS::FEntity Entity) override;
 
@@ -446,6 +448,12 @@ namespace Lumina::Physics
         };
         FInterpStaging                          InterpStaging;
         TVector<uint32>                         InterpApplied;
+
+        // Entities holding an FRenderTransform after the last apply, so one the next apply skips can be retired.
+        TVector<ECS::FEntity>                   RenderOverrides;
+        TVector<ECS::FEntity>                   RenderOverridesNext;
+        TVector<ECS::FEntity>                   RenderDescendantStack;
+        uint32                                  RenderOverrideStamp = 0;
 
         // Body handle to staging slot for this frame, reset through StagedBodyHandles so it stays O(moved).
         TVector<uint32>                         BodyStagingSlot;

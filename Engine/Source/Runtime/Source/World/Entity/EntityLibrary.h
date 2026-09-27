@@ -26,6 +26,10 @@ namespace Lumina
         FUNCTION()
         static FName GetTag(CWorld* World, ECS::FEntity Entity);
 
+        // Where the entity is drawn this frame, which follow cameras want over the simulated pose.
+        FUNCTION()
+        static FVector3 GetRenderLocation(CWorld* World, ECS::FEntity Entity);
+
         FUNCTION()
         static ECS::FEntity GetFirstChild(CWorld* World, ECS::FEntity Entity);
 
