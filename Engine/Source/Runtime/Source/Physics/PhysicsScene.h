@@ -5,6 +5,7 @@
 
 #include "PhysicsTypes.h"
 #include "Core/Templates/Optional.h"
+#include "Containers/Function.h"
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Memory/SmartPtr.h"
@@ -130,6 +131,10 @@ namespace Lumina::Physics
         virtual ~IPhysicsScene() { }
         virtual void PreUpdate() = 0;
         virtual void Update(double DeltaTime) = 0;
+
+        // Runs before each solver step, the only place a force survives the accumulator reset.
+        void SetPreStepCallback(TFunction<void(float)> Callback) { PreStepCallback = Move(Callback); }
+
         virtual void PostUpdate() = 0;
         virtual void Simulate() = 0;
         virtual void StopSimulate() = 0;
@@ -259,5 +264,9 @@ namespace Lumina::Physics
         FVector3 GetCenterOfMass(ECS::FEntity E)                           { return GetCenterOfMass(GetEntityBodyID(E)); }
         FVector3 GetBodyPosition(ECS::FEntity E)                           { return GetBodyPosition(GetEntityBodyID(E)); }
         FQuat    GetBodyRotation(ECS::FEntity E)                           { return GetBodyRotation(GetEntityBodyID(E)); }
+
+    protected:
+
+        TFunction<void(float)> PreStepCallback;
     };
 }

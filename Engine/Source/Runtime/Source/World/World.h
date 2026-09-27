@@ -545,6 +545,9 @@ namespace Lumina
         // reserves hundreds of MB up front, so a tool that wants to actually simulate asks for one here.
         Physics::IPhysicsScene* EnsurePhysicsScene();
 
+        // Fixed script updates ride the solver's step loop, since a force applied elsewhere is zeroed.
+        void InstallPhysicsScriptHook();
+
         TOptional<SRayResult> CastRay(const SRayCastSettings& Settings);
 
         // OutHits is cleared and refilled near-to-far; reuse one buffer to keep repeated sweeps alloc-free.

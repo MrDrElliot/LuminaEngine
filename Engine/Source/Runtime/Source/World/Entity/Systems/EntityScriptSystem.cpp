@@ -14,7 +14,7 @@ namespace Lumina
 {
     namespace
     {
-        // OnFixedUpdate is a fixed 1/PhysicsHz step, dispatched 0..MaxPhysicsSteps times per frame.
+        // Fixed 1/PhysicsHz steps for worlds without a physics scene, as a simulating one dispatches from its pre-step hook.
         void DispatchFixedUpdates(ECS::FRegistry& Registry, float DeltaSeconds)
         {
             float FixedDt  = 1.0f / 60.0f;
@@ -78,8 +78,15 @@ namespace Lumina
         }
         else
         {
-            // The frame delta feeds the accumulator, so each frame is counted exactly once.
-            DispatchFixedUpdates(Registry, (float)Context.GetDeltaTime());
+            CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
+            const bool bPhysicsDriven = WorldPtr != nullptr && *WorldPtr != nullptr
+                && (*WorldPtr)->GetPhysicsScene() != nullptr;
+
+            if (!bPhysicsDriven)
+            {
+                // The frame delta feeds the accumulator, so each frame is counted exactly once.
+                DispatchFixedUpdates(Registry, (float)Context.GetDeltaTime());
+            }
 
             // After the step, so an [UpdatePhase(PostPhysics)] script reads settled transforms.
             EntityScripts::Tick(Registry, (float)Context.GetDeltaTime(), EScriptUpdatePhase::PostPhysics);

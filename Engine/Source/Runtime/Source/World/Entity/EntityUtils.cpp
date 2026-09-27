@@ -1128,6 +1128,26 @@ namespace Lumina::ECS::Utils
         EnsureTransformDirtyState(Registry)->bPublishMoved.store(bEnable, std::memory_order_release);
     }
 
+    void PublishMovedTransform(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        TUniquePtr<FTransformDirtyState>* Holder = Registry.Ctx().Find<TUniquePtr<FTransformDirtyState>>();
+        if (Holder != nullptr && Holder->get() != nullptr)
+        {
+            (*Holder)->PublishMoved(Entity);
+        }
+    }
+
+    FVector3 GetRenderLocation(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        if (const FRenderTransform* Render = Registry.TryGet<FRenderTransform>(Entity))
+        {
+            return FVector3(Render->Matrix[3]);
+        }
+
+        const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
+        return Transform != nullptr ? Transform->GetWorldLocation() : FVector3(0.0f);
+    }
+
     bool DrainMovedTransforms(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Out)
     {
         TUniquePtr<FTransformDirtyState>* Holder = Registry.Ctx().Find<TUniquePtr<FTransformDirtyState>>();

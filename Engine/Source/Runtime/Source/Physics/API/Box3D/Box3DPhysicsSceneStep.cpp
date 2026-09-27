@@ -14,9 +14,11 @@
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Subsystems/WorldSettings.h"
+#include "World/Entity/EntityUtils.h"
 #include "World/World.h"
 
 namespace Lumina::Physics
@@ -427,13 +429,17 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ++RenderOverrideStamp;
+        RenderOverridesNext.clear();
+
         const uint32 Count = (uint32)InterpStaging.Entities.size();
         if (Count == 0)
         {
+            RetireStaleRenderOverrides(Registry);
             return;
         }
 
-        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         auto TransformStorage = Registry.GetStorage<STransformComponent>();
         auto RenderStorage = Registry.GetStorage<FRenderTransform>();
 
@@ -512,7 +518,9 @@ namespace Lumina::Physics
             RenderPose.SetRotation(FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i],
                                          InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
 
-            RenderStorage.Get(Entity).Matrix = RenderPose.GetMatrix();
+            FRenderTransform& Render = RenderStorage.Get(Entity);
+            Render.Matrix = RenderPose.GetMatrix();
+            Render.Stamp = RenderOverrideStamp;
         };
 
         const uint32 AppliedCount = (uint32)InterpApplied.size();
@@ -527,6 +535,100 @@ namespace Lumina::Physics
                 WriteRenderPose(Index);
             }
         }
+
+        for (uint32 i : InterpApplied)
+        {
+            RenderOverridesNext.push_back(InterpStaging.Entities[i]);
+        }
+
+        if (bAnyParented)
+        {
+            PropagateRenderPosesToDescendants(Registry);
+        }
+
+        RetireStaleRenderOverrides(Registry);
+    }
+
+    // A mesh parented under a body would otherwise draw at the stepped pose while the body draws interpolated.
+    void FBox3DPhysicsScene::PropagateRenderPosesToDescendants(ECS::FRegistry& Registry)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        auto TransformStorage = Registry.GetStorage<STransformComponent>();
+        auto RenderStorage = Registry.GetStorage<FRenderTransform>();
+        auto RelationshipStorage = Registry.GetStorage<FRelationshipComponent>();
+        const size_t BodyCount = RenderOverridesNext.size();
+
+        for (size_t BodyIndex = 0; BodyIndex < BodyCount; ++BodyIndex)
+        {
+            const ECS::FEntity Body = RenderOverridesNext[BodyIndex];
+            if (!RelationshipStorage.Contains(Body) || RelationshipStorage.Get(Body).First == ECS::NullEntity)
+            {
+                continue;
+            }
+
+            const FMatrix4 BodyRender = RenderStorage.Get(Body).Matrix;
+            const FMatrix4 WorldToRender = BodyRender * Math::Inverse(TransformStorage.Get(Body).GetWorldMatrixCached());
+
+            RenderDescendantStack.clear();
+            RenderDescendantStack.push_back(RelationshipStorage.Get(Body).First);
+            while (!RenderDescendantStack.empty())
+            {
+                const ECS::FEntity Node = RenderDescendantStack.back();
+                RenderDescendantStack.pop_back();
+
+                const FRelationshipComponent* Relationship = RelationshipStorage.Contains(Node) ? &RelationshipStorage.Get(Node) : nullptr;
+                if (Relationship != nullptr && Relationship->Next != ECS::NullEntity)
+                {
+                    RenderDescendantStack.push_back(Relationship->Next);
+                }
+
+                // A nested body interpolates itself, and its own subtree follows it.
+                if (RenderStorage.Contains(Node) && RenderStorage.Get(Node).Stamp == RenderOverrideStamp)
+                {
+                    continue;
+                }
+
+                if (Relationship != nullptr && Relationship->First != ECS::NullEntity)
+                {
+                    RenderDescendantStack.push_back(Relationship->First);
+                }
+
+                if (!TransformStorage.Contains(Node))
+                {
+                    continue;
+                }
+
+                if (!RenderStorage.Contains(Node))
+                {
+                    RenderStorage.Emplace(Node, FRenderTransform{});
+                }
+
+                FRenderTransform& Render = RenderStorage.Get(Node);
+                Render.Matrix = WorldToRender * TransformStorage.Get(Node).GetWorldMatrixCached();
+                Render.Stamp = RenderOverrideStamp;
+                RenderOverridesNext.push_back(Node);
+                ECS::Utils::PublishMovedTransform(Registry, Node);
+            }
+        }
+    }
+
+    // An entity that stops being simulated keeps drawing wherever its last override put it unless it is dropped.
+    void FBox3DPhysicsScene::RetireStaleRenderOverrides(ECS::FRegistry& Registry)
+    {
+        auto RenderStorage = Registry.GetStorage<FRenderTransform>();
+        for (ECS::FEntity Entity : RenderOverrides)
+        {
+            if (!Registry.IsValid(Entity) || !RenderStorage.Contains(Entity) || RenderStorage.Get(Entity).Stamp == RenderOverrideStamp)
+            {
+                continue;
+            }
+
+            RenderStorage.RemoveEntity(Entity);
+            ECS::Utils::PublishMovedTransform(Registry, Entity);
+        }
+
+        RenderOverrides.swap(RenderOverridesNext);
     }
 
     void FBox3DPhysicsScene::Update(double DeltaTime)
@@ -590,6 +692,18 @@ namespace Lumina::Physics
 
             for (uint32 Step = 0; Step < CollisionSteps; ++Step)
             {
+                if (PreStepCallback)
+                {
+                    // Later steps read the pose the previous one produced, so it is written through at alpha 1.
+                    if (Step > 0)
+                    {
+                        BuildInterpolatedTransforms(1.0f);
+                        ApplyInterpolatedTransforms();
+                    }
+
+                    PreStepCallback(FixedTimestep);
+                }
+
                 b3World_Step(WorldId, FixedTimestep, SubStepCount);
 
                 // Box3D clears its event arrays each step, so they are drained before the next one runs.

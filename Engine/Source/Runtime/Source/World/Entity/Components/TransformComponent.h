@@ -457,6 +457,9 @@ namespace Lumina
     struct FRenderTransform
     {
         FMatrix4 Matrix = FMatrix4(1.0f);
+
+        // The physics apply that last wrote it, so an override nobody refreshes can be retired.
+        uint32 Stamp = 0;
     };
     
 }

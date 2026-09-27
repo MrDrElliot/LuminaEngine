@@ -110,11 +110,13 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
         return 1.0;
     }
 
-    const float4x4 InvProj = GetInverseCameraProjection();
-    const float3   Step    = ViewL * (Reach / float(Steps));
+    const float4x4 InvProj    = GetInverseCameraProjection();
+    const float2   ScreenSize = float2(GetScreenSize());
+    const float3   Step       = ViewL * (Reach / float(Steps));
+    const float    Lift    = Reach / float(Steps);
 
     // Half-step jittered start plus a normal offset, or a grazing surface reports its own ray as occluding.
-    float3 RayPos = ViewPos + ViewN * (Reach / float(Steps)) + Step * (0.5 + Jitter);
+    float3 RayPos = ViewPos + ViewN * Lift + Step * (0.5 + Jitter);
 
     // A hit farther behind the ray than this is a separate surface, not an occluder in contact.
     const float Thickness = Reach;
@@ -137,10 +139,16 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
         const float Raw = SampleTexture2DLevel(DepthIndex, SAMPLER_POINT_CLAMP, UV, 0.0).r;
         if (Raw > 0.0)
         {
-            const float SceneZ = ReconstructViewPos(UV, Raw, InvProj).z;
-            const float Delta  = RayPos.z - SceneZ;   // positive = the ray is behind the depth buffer
+            // Rebuilt where the depth was measured, since the ray's own UV would lift a grazing receiver off its plane.
+            const float2 TexelUV = (floor(UV * ScreenSize) + 0.5) / ScreenSize;
+            const float3 SceneP  = ReconstructViewPos(TexelUV, Raw, InvProj);
+            const float  Delta  = RayPos.z - SceneP.z;   // positive = the ray is behind the depth buffer
 
-            if (Delta > 0.0 && Delta < Thickness)
+            // A real occluder in front of the ray stands higher off the receiver plane than the ray does.
+            const float RayHeight   = dot(RayPos - ViewPos, ViewN);
+            const float SceneHeight = dot(SceneP - ViewPos, ViewN);
+
+            if (Delta > 0.0 && Delta < Thickness && SceneHeight > 0.5 * RayHeight)
             {
                 // Fade out along the ray so the far end of the reach does not cut a hard line.
                 return saturate(float(i) / float(Steps));
