@@ -357,6 +357,7 @@ namespace Lumina
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
         {
             PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
+            InstallPhysicsScriptHook();
         }
         // Emplaced even when null so ctx().get consumers find the key and null-check it.
         EntityRegistry.Ctx().Emplace<Physics::IPhysicsScene*>(PhysicsScene.get());
@@ -580,9 +581,18 @@ namespace Lumina
 
             // Simulate() connects the hook that turns SRigidBodyComponent into an actual body.
             PhysicsScene->Simulate();
+            InstallPhysicsScriptHook();
         }
 
         return PhysicsScene.get();
+    }
+
+    void CWorld::InstallPhysicsScriptHook()
+    {
+        PhysicsScene->SetPreStepCallback([this](float FixedDeltaTime)
+        {
+            EntityScripts::TickFixed(EntityRegistry, FixedDeltaTime);
+        });
     }
 
     void CWorld::TickPhysics()

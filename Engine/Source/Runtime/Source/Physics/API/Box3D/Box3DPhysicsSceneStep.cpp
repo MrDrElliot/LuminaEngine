@@ -692,6 +692,18 @@ namespace Lumina::Physics
 
             for (uint32 Step = 0; Step < CollisionSteps; ++Step)
             {
+                if (PreStepCallback)
+                {
+                    // Later steps read the pose the previous one produced, so it is written through at alpha 1.
+                    if (Step > 0)
+                    {
+                        BuildInterpolatedTransforms(1.0f);
+                        ApplyInterpolatedTransforms();
+                    }
+
+                    PreStepCallback(FixedTimestep);
+                }
+
                 b3World_Step(WorldId, FixedTimestep, SubStepCount);
 
                 // Box3D clears its event arrays each step, so they are drained before the next one runs.
