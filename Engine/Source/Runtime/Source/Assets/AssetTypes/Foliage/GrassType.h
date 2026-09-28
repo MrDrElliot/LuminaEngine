@@ -62,11 +62,19 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering", ClampMin = 1.0f, NoDrag, Delta = 1.0f)
         float CullDistance = 60.0f;
 
+        // Past this, blades thin with the square of distance and the survivors grow, so far grass costs little and still reads as a field. Zero keeps full density everywhere.
+        PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
+        float FullDensityDistance = 0.0f;
+
         PROPERTY(Editable, Category = "Rendering")
         bool bCastShadow = false;
 
         PROPERTY(Editable, Category = "Rendering")
         bool bReceiveShadow = true;
+
+        // Off by default, since blades are thinner than a pixel and the screen-space march reads them as flicker.
+        PROPERTY(Editable, Category = "Rendering")
+        bool bContactShadows = false;
 
         /** Deterministic per-type seed, so two types on one layer do not land on identical points. */
         PROPERTY(Editable, Category = "Scatter")

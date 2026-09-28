@@ -270,6 +270,104 @@ namespace Lumina::Screenshot
         return Out;
     }
 
+    IRenderScene* FindActiveRenderScene()
+    {
+        if (GWorldManager == nullptr)
+        {
+            return nullptr;
+        }
+
+        FWorldContext* Fallback = nullptr;
+        for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
+        {
+            if (!Ctx || !Ctx->World.IsValid())
+            {
+                continue;
+            }
+
+            if ((Ctx->Type == EWorldType::Game || Ctx->Type == EWorldType::Simulation) && Ctx->World->GetRenderer() != nullptr)
+            {
+                return Ctx->World->GetRenderer();
+            }
+            // A hidden tab's world has its renderer reclaimed, so the one still rendering is the one on screen.
+            if (Ctx->Type == EWorldType::Editor && Fallback == nullptr && Ctx->World->GetRenderer() != nullptr)
+            {
+                Fallback = Ctx.get();
+            }
+        }
+
+        return Fallback != nullptr && Fallback->World.IsValid() ? Fallback->World->GetRenderer() : nullptr;
+    }
+
+    bool ReadDisplayPixels(IRenderScene* Scene, TVector<uint8>& OutRGBA, uint32& OutWidth, uint32& OutHeight, FString& OutError)
+    {
+        const FSceneImage SrcImage = PickSourceImage(Scene, ECaptureSource::FinalLDR);
+        if (!SrcImage.IsValid())
+        {
+            OutError = "No picture is available to read back.";
+            return false;
+        }
+
+        const EFormat Format = SrcImage.Desc.Format;
+        const bool bIsBGRA = (Format == EFormat::BGRA8_UNORM) || (Format == EFormat::SBGRA8_UNORM);
+        const bool bIsRGBA = (Format == EFormat::RGBA8_UNORM) || (Format == EFormat::SRGBA8_UNORM);
+        if (!bIsBGRA && !bIsRGBA)
+        {
+            OutError = "The display image is not an 8-bit color format.";
+            return false;
+        }
+
+        OutWidth = SrcImage.GetSizeX();
+        OutHeight = SrcImage.GetSizeY();
+        const uint64 ReadbackSize = (uint64)OutWidth * OutHeight * 4u;
+        const RHI::FGPUAllocation Readback = RHI::Malloc(ReadbackSize, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+        if (Readback.Gpu == 0)
+        {
+            OutError = "Failed to allocate a readback buffer.";
+            return false;
+        }
+
+        RHI::FCmdListH CL = RHI::OpenCommandList();
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+        RHI::CmdCopyTextureToMemory(CL, SrcImage.Texture, RHI::FTextureSlice{}, Readback, OutWidth);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Host,
+            RHI::EAccessFlags::HostRead);
+        const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
+
+        const uint8* Mapped = Readback.CpuAs<const uint8>();
+        if (Mapped == nullptr)
+        {
+            RHI::Retire(Readback);
+            OutError = "Failed to map the readback buffer.";
+            return false;
+        }
+
+        OutRGBA.resize((size_t)ReadbackSize);
+        if (bIsBGRA)
+        {
+            for (size_t Pixel = 0; Pixel < (size_t)OutWidth * OutHeight; ++Pixel)
+            {
+                OutRGBA[Pixel * 4 + 0] = Mapped[Pixel * 4 + 2];
+                OutRGBA[Pixel * 4 + 1] = Mapped[Pixel * 4 + 1];
+                OutRGBA[Pixel * 4 + 2] = Mapped[Pixel * 4 + 0];
+                OutRGBA[Pixel * 4 + 3] = Mapped[Pixel * 4 + 3];
+            }
+        }
+        else
+        {
+            std::memcpy(OutRGBA.data(), Mapped, (size_t)ReadbackSize);
+        }
+
+        RHI::Retire(Readback);
+        return true;
+    }
+
     FCaptureResult CaptureActiveWorld(ECaptureSource Source, const FString& OutputPath)
     {
         FCaptureResult Out;
@@ -280,35 +378,7 @@ namespace Lumina::Screenshot
             return Out;
         }
 
-        // Prefer an active Game/Simulation world (PIE), fall back to the Editor world.
-        IRenderScene* Scene = nullptr;
-        FWorldContext* Fallback = nullptr;
-        for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
-        {
-            if (!Ctx || !Ctx->World.IsValid())
-            {
-                continue;
-            }
-
-            if (Ctx->Type == EWorldType::Game || Ctx->Type == EWorldType::Simulation)
-            {
-                Scene = Ctx->World->GetRenderer();
-                if (Scene)
-                {
-                    break;
-                }
-            }
-            // A hidden tab's world has its renderer reclaimed, so the one still rendering is the one on screen.
-            else if (Ctx->Type == EWorldType::Editor && Fallback == nullptr && Ctx->World->GetRenderer() != nullptr)
-            {
-                Fallback = Ctx.get();
-            }
-        }
-
-        if (Scene == nullptr && Fallback != nullptr && Fallback->World.IsValid())
-        {
-            Scene = Fallback->World->GetRenderer();
-        }
+        IRenderScene* Scene = FindActiveRenderScene();
 
         if (Scene == nullptr)
         {

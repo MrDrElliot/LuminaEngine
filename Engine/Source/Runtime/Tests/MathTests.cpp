@@ -203,3 +203,28 @@ TEST(MathTests, RandomStream_BoundedDrawCoversWholeRange)
         EXPECT_TRUE(bValue);
     }
 }
+
+// Headings along and past a world axis are where the pitch-first Euler pair flips a camera upside down.
+TEST(MathTests, YawFirstEuler_RoundTripsEveryHeading)
+{
+    const float Headings[] = { 0.0f, 45.0f, 89.9f, 90.0f, 90.1f, 135.0f, 179.0f, 180.0f, -90.0f, -135.0f };
+    const float Pitches[]  = { -60.0f, -10.0f, 0.0f, 25.0f, 80.0f };
+    for (float Yaw : Headings)
+    {
+        for (float Pitch : Pitches)
+        {
+            const Lumina::FVector3 Euler(Radians(Pitch), Radians(Yaw), Radians(15.0f));
+            const Lumina::FQuat    Q    = FromYawFirstEuler(Euler);
+            const Lumina::FQuat    Back = FromYawFirstEuler(YawFirstEulerAngles(Q));
+            EXPECT_TRUE(IsSameRotation(Q, Back, 1e-5f)) << "yaw " << Yaw << " pitch " << Pitch;
+        }
+    }
+}
+
+TEST(MathTests, YawFirstEuler_KeepsTheHeadingOutOfPitchAndRoll)
+{
+    const Lumina::FVector3 Euler = YawFirstEulerAngles(FromYawFirstEuler(Lumina::FVector3(Radians(10.0f), Radians(150.0f), 0.0f)));
+    EXPECT_NEAR(Degrees(Euler.x), 10.0f, 1e-3f);
+    EXPECT_NEAR(Degrees(Euler.y), 150.0f, 1e-3f);
+    EXPECT_NEAR(Degrees(Euler.z), 0.0f, 1e-3f);
+}

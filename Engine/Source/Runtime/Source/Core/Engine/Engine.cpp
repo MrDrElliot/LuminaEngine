@@ -78,6 +78,9 @@ namespace Lumina
     static FUIntVector2 EngineViewportSize = FUIntVector2(0, 0);
 
     static TConsoleVar CVarMaxFrameRate("Core.MaxFPS", 165, "Changes the maximum frame-rate of your engine");
+
+    // Offline rendering steps the game a fixed amount per frame however long each frame takes to draw.
+    static TConsoleVar CVarFixedDeltaTime("Core.FixedDeltaTime", 0.0f, "Seconds every frame advances the game by, whatever it took to draw; 0 uses the real frame time");
     
     static FString ReadStartupProjectFromDisk()
     {
@@ -504,6 +507,12 @@ namespace Lumina
     void FEngine::MarkLoopStart()
     {
         UpdateContext.MarkFrameStart(PlatformTime::Seconds());
+
+        const float FixedDeltaTime = CVarFixedDeltaTime.GetValue();
+        if (FixedDeltaTime > 0.0f)
+        {
+            UpdateContext.DeltaTime = FixedDeltaTime;
+        }
     }
 
     bool FEngine::Update(bool bApplicationWantsExit)

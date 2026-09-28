@@ -57,6 +57,9 @@ namespace Lumina
         /** Switch the active camera. BlendTime > 0 eases from the current view; 0 snaps. */
         static void SetActiveCamera(ECS::FRegistry& Registry, ECS::FEntity Entity, float BlendTime = 0.0f, ECameraBlendFunction Function = ECameraBlendFunction::EaseInOut);
         static ECS::FEntity GetActiveCameraEntity(ECS::FRegistry& Registry);
+
+        // A fade and letterbox laid over the live camera, which zero clears.
+        RUNTIME_API static void SetCinematicOverlay(ECS::FRegistry& Registry, float Fade, FVector3 FadeColor, float LetterboxAspect);
         static SCameraComponent* GetActiveCamera(ECS::FRegistry& Registry);
 
         //~ Camera shake on the FCameraGlobalState singleton. Additive on the rendered view; multiple shakes sum.

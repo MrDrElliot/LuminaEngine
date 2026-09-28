@@ -8,6 +8,7 @@
 #include "Containers/Function.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/WorldEditorMode.h"
 
 namespace Lumina
@@ -65,11 +66,6 @@ namespace Lumina
 
         void EvaluateAt(CWorld* World, float NewTime, bool bJumped);
 
-        // Scrubbing writes straight into world entities, so the pre-scrub transforms are snapshotted on
-        // bind and put back on exit. Without this, authoring a cutscene permanently moves the level.
-        void CaptureRestoreState(CWorld* World);
-        void ApplyRestoreState(CWorld* World);
-
         int32 AddBindingFromSelection(CWorld* World);
         ECS::FEntity FindSelectedEntity(CWorld* World) const;
 
@@ -97,11 +93,28 @@ namespace Lumina
         float DrawCameraCutRow(CWorld* World, ImDrawList* DrawList, const ImVec2& Origin,
                                float TrackLeft, float TrackWidth, float Duration);
 
+        // Rows for tracks other than transforms and cuts, which draw their own keys, clips or events.
+        void DrawTrackRow(CWorld* World, ImDrawList* DrawList, int32 TrackIndex, int32 RowIndex, float RowY,
+                          float Left, float PanelWidth, float TrackLeft, float TrackWidth, bool bTimelineHovered);
+        void DrawTrackPopups(CWorld* World);
+        void DrawDetails(CWorld* World);
+        void DrawAddTrackMenu(CWorld* World);
+
+        CSequenceTrack* AddTrackOfClass(CWorld* World, CClass* Class, int32 BindingIndex);
+        void KeyTrackAtPlayhead(CWorld* World, CSequenceTrack* Track);
+        void RemoveTrack(CWorld* World, int32 TrackIndex);
+
+        // Adds a camera binding posed where the editor camera is, so a shot starts from what is on screen.
+        void AddCameraFromView(CWorld* World);
+        void KeyFromView(CWorld* World, int32 BindingIndex);
+        bool GetEditorView(CWorld* World, FVector3& OutLocation, FVector3& OutRotation) const;
+
+        void SetPreviewCameras(CWorld* World, bool bPreview);
+
         TObjectPtr<CSequence>    Sequence;
 
-        // Parallel to Sequence->Bindings.
-        TVector<ECS::FEntity>    BoundEntities;
-        TVector<ECS::FEntity>    SpawnedEntities;
+        // The same binding and evaluation the game's player uses, so a preview is what ships.
+        FSequenceInstance        Instance;
 
         struct FRestoreEntry
         {
@@ -110,7 +123,6 @@ namespace Lumina
             FVector3     Rotation;
             FVector3     Scale = FVector3(1.0f);
         };
-        TVector<FRestoreEntry>   RestoreState;
 
         // Last transform seen per binding. Auto-key diffs against this, and it is refreshed immediately
         // after every evaluation so the sequence's own writes never read as a user edit.
@@ -145,6 +157,19 @@ namespace Lumina
 
         void DrawTimeRuler(ImDrawList* DrawList, const ImVec2& Origin, float TrackLeft, float TrackWidth);
 
+        // A generic track's selection, a key by index into whatever it holds, which a drag re-finds after a re-sort.
+        int32                    SelectedTrack = INDEX_NONE;
+        int32                    SelectedTrackKey = INDEX_NONE;
+        int32                    PendingRemoveTrack = INDEX_NONE;
+        uint8                    bDraggingTrackKey:1 = false;
+
+        TUniquePtr<FPropertyTable> Details;
+        CObject*                   DetailsTarget = nullptr;
+
+        // The last event the preview fired, shown briefly so an author sees the beat land.
+        FString                  LastFiredEvent;
+        double                   LastFiredEventTime = 0.0;
+
         // Time<->pixel mapping for the current zoom and scroll, rebuilt each frame by DrawTimeline so the
         // cut row and the key rows cannot disagree about where a given time sits.
         TFunction<float(float)>  VisibleTimeToX;
@@ -154,5 +179,6 @@ namespace Lumina
         uint8                    bPlaying:1 = false;
         uint8                    bLoop:1 = true;
         uint8                    bAutoKey:1 = false;
+        uint8                    bPreviewCameras:1 = true;
     };
 }

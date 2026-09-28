@@ -243,7 +243,9 @@ namespace Lumina::ParticleOps
 
         bool bCompiled = false;
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
-        ShaderCompiler->CompilerShaderRaw(Source, {}, [Emitter, &bCompiled](const FShaderHeader& Header) mutable
+        FShaderCompileOptions Options;
+        Options.DebugName = FString(System->GetName().c_str()) + "_" + Emitter->EmitterName + "_Sim";
+        ShaderCompiler->CompilerShaderRaw(Source, Options, [Emitter, &bCompiled](const FShaderHeader& Header) mutable
         {
             Emitter->ComputeShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
             bCompiled = !Header.Binaries.empty();

@@ -130,11 +130,7 @@ namespace Lumina
                     }
 
                     ++Count;
-                    if (LogFunc)
-                    {
-                        LogFunc(Format("  + {}/{}",
-                            Root.Top, Relative).c_str());
-                    }
+                    LogPackager(LogFunc, Format("  + {}/{}", Root.Top, Relative).c_str());
                 });
             }
             return Count;
@@ -471,11 +467,11 @@ namespace Lumina
             UTF8_TO_TCHAR(BuildTool.c_str()), UTF8_TO_TCHAR(Args.c_str()), UTF8_TO_TCHAR(EngineDir.c_str()),
             [&LogFunc](FStringView Line)
             {
-                if (LogFunc && !Line.empty())
+                if (!Line.empty())
                 {
                     FString Prefixed = FString("  | ");
                     Prefixed.append(Line.data(), Line.size());
-                    LogFunc(Prefixed);
+                    LogPackager(LogFunc, Prefixed);
                 }
             });
 

@@ -311,6 +311,7 @@ namespace Lumina::RHI
     {
         TSpan<const std::byte>  Source;
         FStringView             EntryPoint;
+        FStringView             DebugName;
     };
     
     struct FSpecializationConstant

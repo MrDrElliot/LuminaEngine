@@ -1,5 +1,6 @@
 #pragma once
 #include "Containers/String.h"
+#include "Containers/Vector.h"
 #include "Platform/GenericPlatform.h"
 
 
@@ -38,4 +39,10 @@ namespace Lumina::Screenshot
 
     // Picks the best available world's render scene (Game > Editor) and captures it.
     EDITOR_API FCaptureResult CaptureActiveWorld(ECaptureSource Source, const FString& OutputPath = {});
+
+    // The render scene the capture functions pick, a playing world's before the editor's.
+    EDITOR_API IRenderScene* FindActiveRenderScene();
+
+    // Reads Scene's final picture back as tightly packed RGBA8, top row first, waiting on the GPU to do it.
+    EDITOR_API bool ReadDisplayPixels(IRenderScene* Scene, TVector<uint8>& OutRGBA, uint32& OutWidth, uint32& OutHeight, FString& OutError);
 }

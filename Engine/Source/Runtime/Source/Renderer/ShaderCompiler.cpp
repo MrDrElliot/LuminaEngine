@@ -2,6 +2,7 @@
 #include "RuntimePCH.h"
 #include "ShaderCompiler.h"
 #include "ShaderCache.h"
+#include "Core/Math/Hash/Hash.h"
 #include "ShaderLibrary.h"
 #include "ShaderPaths.h"
 #include "RenderResource.h"
@@ -142,6 +143,35 @@ namespace Lumina
             LOG_ERROR("Shader '{}' compiled to INVALID SPIR-V (spirv-val --target-env {}):\n{}",
                       Name.c_str(), kSpirvValTargetEnv, Diagnostic.c_str());
         }
+    }
+
+    static TConsoleVar<int32> CVarDumpShaders(
+        "r.Shaders.Dump",
+        0,
+        "Write every compiled shader's SPIR-V to the shader cache's Dump folder, named after the shader, for offline driver compilers.");
+
+    static void DumpSpirv(TSpan<const uint32> Spirv, FStringView DebugName)
+    {
+        if (CVarDumpShaders.GetValue() == 0 || Spirv.empty())
+        {
+            return;
+        }
+
+        FString Name(DebugName.data(), DebugName.size());
+        for (char& c : Name)
+        {
+            const bool bSafe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+            c = bSafe ? c : '_';
+        }
+
+        const FString Directory = FString(FShaderCache::kCacheDirectory) + "/Dump";
+        VFS::CreateDir(Directory);
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Spirv.data()), Spirv.size() * sizeof(uint32));
+        // Hashed too, since generated shaders often share one debug name.
+        const uint64 ContentHash = Hash::XXHash::GetHash64(Bytes.data(), Bytes.size());
+        char Suffix[24];
+        snprintf(Suffix, sizeof(Suffix), "_%016llx.spv", (unsigned long long)ContentHash);
+        VFS::WriteFile(Directory + "/" + Name + Suffix, Bytes);
     }
 
     static void ValidateMaterialTemplates(IShaderCompiler& Compiler)
@@ -377,10 +407,13 @@ namespace Lumina
         TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
         // Declaring the capability silences warning 41012, and the emitted SPIR-V is identical.
-        const char* const WaveCapabilities[] = { "spvGroupNonUniformShuffle", "spvGroupNonUniformVote",
-                                                 "spvGroupNonUniformBallot", "spvGroupNonUniformArithmetic" };
+        const char* const DeclaredCapabilities[] = { "spvGroupNonUniformShuffle", "spvGroupNonUniformVote",
+                                                     "spvGroupNonUniformBallot", "spvGroupNonUniformArithmetic",
+                                                     "SPV_GOOGLE_user_type", "spvDerivativeControl", "spvImageQuery",
+                                                     "spvImageGatherExtended", "spvSparseResidency", "spvMinLod",
+                                                     "spvFragmentFullyCoveredEXT" };
 
-        slang::CompilerOptionEntry TargetOptions[2 + std::size(WaveCapabilities)] = {};
+        slang::CompilerOptionEntry TargetOptions[2 + std::size(DeclaredCapabilities)] = {};
         TargetOptions[0].name = slang::CompilerOptionName::DebugInformation;
         TargetOptions[0].value.kind = slang::CompilerOptionValueKind::Int;
         TargetOptions[0].value.intValue0 = GetShaderDebugInfoLevel();
@@ -389,7 +422,7 @@ namespace Lumina
         TargetOptions[1].value.intValue0 = GetShaderOptimizationLevel();
         uint32 TargetOptionCount = 2;
 
-        for (const char* CapabilityName : WaveCapabilities)
+        for (const char* CapabilityName : DeclaredCapabilities)
         {
             const SlangCapabilityID Capability = GlobalSession->findCapability(CapabilityName);
             if (Capability != SLANG_CAPABILITY_UNKNOWN)
@@ -580,6 +613,7 @@ namespace Lumina
 
         #if USING(WITH_EDITOR)
         ValidateSpirv(TSpan<const uint32>(SpirvData, SpirvSize), DebugName);
+        DumpSpirv(TSpan<const uint32>(SpirvData, SpirvSize), DebugName);
         #endif
 
         TVector<uint32> Binaries(SpirvData, SpirvData + SpirvSize);

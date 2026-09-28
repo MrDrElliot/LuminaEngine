@@ -586,6 +586,11 @@ namespace Lumina
                 }
 
                 {
+                    SCENE_GPU_SCOPE(CL, "Cloud Shadow Map");
+                    CloudShadowMapPass(CL);
+                }
+
+                {
                     SCENE_GPU_SCOPE(CL, "Shadow Mask");
                     ShadowMaskPass(CL);
                 }
@@ -636,11 +641,6 @@ namespace Lumina
                 }
 
                 {
-                    SCENE_GPU_SCOPE(CL, "Water");
-                    WaterPass(CL);
-                }
-                
-                {
                     SCENE_GPU_SCOPE(CL, "Aerial Perspective");
                     AerialPerspectivePass(CL);
                 }
@@ -648,11 +648,6 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
                     VolumetricCloudPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Cloud Shadow Map");
-                    CloudShadowMapPass(CL);
                 }
 
                 {
@@ -669,6 +664,12 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Atmosphere Composite");
                     AtmosphereCompositePass(CL);
+                }
+
+                // After the composite, which would take water with nothing beneath it for sky; the water hazes itself.
+                {
+                    SCENE_GPU_SCOPE(CL, "Water");
+                    WaterPass(CL);
                 }
 
                 {
@@ -747,6 +748,11 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Underwater");
                     UnderwaterPass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Depth Of Field");
+                    DepthOfFieldPass(CL);
                 }
 
                 {
@@ -903,6 +909,7 @@ namespace Lumina
         LightCullPass(CL);
         EnvironmentPass(CL);
         DecalPass(CL);
+        CloudShadowMapPass(CL);
         // Resolves this view's sun shadows; the lighting dispatch reads nothing else for the sun.
         ShadowMaskPass(CL);
         VisBufferClassifyPass(CL);
@@ -910,17 +917,17 @@ namespace Lumina
         DeferredLightingPass(CL);
         TerrainRenderPass(CL);
         ScreenSpaceReflectionsPass(CL);
-        WaterPass(CL);
         AerialPerspectivePass(CL);
         VolumetricCloudPass(CL);
-        CloudShadowMapPass(CL);
         FroxelInjectPass(CL);
         FroxelIntegratePass(CL);
         AtmosphereCompositePass(CL);
+        WaterPass(CL);
         MomentGenerationPass(CL);
         TransparentPass(CL);
         OITResolvePass(CL);
         UnorderedTranslucentPass(CL);
+        DepthOfFieldPass(CL);
         BloomPass(CL);
         AutoExposurePass(CL);
         ToneMappingPass(CL);
@@ -1199,6 +1206,7 @@ namespace Lumina
         case ENamedImage::MomentZeroth:       return "Scene.MomentZeroth";
         case ENamedImage::Moments:            return "Scene.Moments";
         case ENamedImage::WaterRefraction:    return "Scene.WaterRefraction";
+        case ENamedImage::SceneDepthCopy:     return "Scene.SceneDepthCopy";
         case ENamedImage::DBufferA:           return "Scene.DBufferA";
         case ENamedImage::DBufferB:           return "Scene.DBufferB";
         case ENamedImage::DBufferC:           return "Scene.DBufferC";
@@ -1258,6 +1266,7 @@ namespace Lumina
         case ENamedImage::MomentZeroth:
         case ENamedImage::Moments:
         case ENamedImage::WaterRefraction:
+        case ENamedImage::SceneDepthCopy:
         case ENamedImage::DBufferA:
         case ENamedImage::DBufferB:
         case ENamedImage::DBufferC:
@@ -1301,6 +1310,12 @@ namespace Lumina
         // Never rendered into, since WaterPass copies HDR here and samples it.
         case ENamedImage::WaterRefraction:
             OutDesc.Format = EFormat::RGBA16_FLOAT;
+            OutDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
+            return true;
+
+        // Opaque depth as it stood before the water, which the water samples while it writes the real buffer.
+        case ENamedImage::SceneDepthCopy:
+            OutDesc.Format = EFormat::D32;
             OutDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
             return true;
 
@@ -1396,6 +1411,7 @@ namespace Lumina
         const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>();
         const bool bSSR = RendererSettings != nullptr && RendererSettings->bScreenSpaceReflections;
         Want(ENamedImage::WaterRefraction, bWater || bSSR);
+        Want(ENamedImage::SceneDepthCopy,  bWater);
         Want(ENamedImage::DBufferA,        bDecals);
         Want(ENamedImage::DBufferB,        bDecals);
         Want(ENamedImage::DBufferC,        bDecals);
@@ -1503,14 +1519,15 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::SMAABlend] = CreateSceneImage(Desc);
 
-        Desc.Format = EFormat::R8_UNORM;
+        // Cascade and contact shadow in separate channels, so a surface can opt out of the contact march.
+        Desc.Format = EFormat::RG8_UNORM;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
         View.Images[(int)ENamedImage::ShadowMask]  = CreateSceneImage(Desc);
 
-        // Scene depth; transfer-dst for the no-occluder clear.
+        // Scene depth; transfer-dst for the no-occluder clear, transfer-src for the copy the water samples.
         Desc.Format = EFormat::D32;
         Desc.Usage  = RHI::EImageUsageFlags::DepthAttachment | RHI::EImageUsageFlags::Sampled |
-                      RHI::EImageUsageFlags::TransferDst;
+                      RHI::EImageUsageFlags::TransferDst | RHI::EImageUsageFlags::TransferSrc;
         View.Images[(int)ENamedImage::DepthAttachment] = CreateSceneImage(Desc);
 
         {

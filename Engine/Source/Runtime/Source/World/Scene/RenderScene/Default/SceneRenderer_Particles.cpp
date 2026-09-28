@@ -22,9 +22,9 @@ namespace Lumina
     struct FParticlePushConstants
     {
         RHI::TGPUSpan<FGPUParticle> Particles;
+        FVector4 Tint;
         uint32   TextureIndex;
         uint32   FacingMode;
-        FVector4 Tint;
         float    VelocityStretch;
         uint32   SubUVColumns;
         uint32   SubUVRows;
@@ -55,8 +55,11 @@ namespace Lumina
         uint32   bShadowPass;
         int32    ShadowDataIndex;
         uint32   ShadowCascade;
+        float    CameraFadeDistance;
+        float    Pad0;
     };
-    static_assert(sizeof(FParticlePushConstants) == 200, "FParticlePushConstants must match ParticleSpriteCommon.slang.");
+    static_assert(sizeof(FParticlePushConstants) == 208, "FParticlePushConstants must match ParticleSpriteCommon.slang.");
+    static_assert(offsetof(FParticlePushConstants, Tint) % 16 == 0, "A vector read through a device address must not straddle 16 bytes.");
 
     static float EmitterUniformScale(const FMatrix4& WorldMat)
     {
@@ -1106,6 +1109,7 @@ namespace Lumina
             PC.bSorted          = bSorted ? 1u : 0u;
             PC.SortedIndices    = { State.SortIndexBuffer };
             PC.SoftFadeDistance = (bWriteDepth || bClearsDepth) ? 0.0f : Resolved.SoftFadeDistance;
+            PC.CameraFadeDistance = Resolved.CameraFadeDistance;
 
             if (bSorted)
             {

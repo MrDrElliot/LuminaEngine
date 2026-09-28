@@ -174,6 +174,9 @@ namespace Lumina
             detectable after template edits. */
         static uint64 GetShaderTemplateHash();
 
+        // Where a cook writes the template hash, so the shipped game compares against what its materials were built with.
+        static constexpr const char* CookedShaderTemplateHashPath = "/Engine/ShaderTemplateHash.txt";
+
 #if USING(WITH_EDITOR)
         /** Next asset material whose serialized stages predate the current shader templates (queued during
             PostLoad); null when none remain. The editor drains this and recompiles from the saved graph. */

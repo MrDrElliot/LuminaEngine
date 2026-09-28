@@ -40,7 +40,7 @@ namespace Lumina
 
     // Reachability-driven cooker, seeded from FEngine::GetCookRoots(); only .lasset reachable via FAssetData::Dependencies enters a PAK.
     // Chunked output: "Main" uses OutputPakPath verbatim + holds shared content; other chunks land at <stem>-<chunk>.pak.
-    class FAssetCooker
+    class EDITOR_API FAssetCooker
     {
     public:
         // LogFunc gets one line per stage/file; {} to suppress.

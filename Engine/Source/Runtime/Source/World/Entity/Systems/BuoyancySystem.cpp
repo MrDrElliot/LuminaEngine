@@ -31,33 +31,31 @@ namespace Lumina
             ? FVector2(W.WindDirection.x / WindLen, W.WindDirection.y / WindLen)
             : FVector2(1.0f, 0.0f);
 
-        float Amplitude  = W.WaveAmplitude;
-        int   Count      = Math::Clamp(W.WaveCount, 1, 8);
-        float Wavelength = Math::Max(W.WaveLength, 0.5f);
-        float SpeedScale = 1.0f;
-
-        // Must match kMaxSteepness in Includes/Water.slang or floating bodies drift off the visual surface.
+        // The geometry waves of GetWaterWave in Includes/Water.slang, or floating bodies drift off the drawn surface.
         constexpr float MaxSteepness = 0.42f;
+        constexpr float LengthRatio    = 0.86f;
+        constexpr float AmplitudePower = 1.25f;
+        const int       Count          = Math::Clamp(W.WaveCount, 1, 8) * 3;
+        const float     WindFactor   = 0.5f + 0.5f * Math::Clamp(W.WindSpeed * 0.1f, 0.0f, 1.0f);
 
         float Y = 0.0f;
         for (int i = 0; i < Count; ++i)
         {
-            constexpr float AngleStep = 0.45f;
-            float Angle = AngleStep * ((float)i - 0.5f * (float)(Count - 1));
-            float ca = Math::Cos(Angle);
-            float sa = Math::Sin(Angle);
-            float Dx = Wind.x * ca - Wind.y * sa;
-            float Dz = Wind.x * sa + Wind.y * ca;
+            const float Ratio  = Math::Pow(LengthRatio, (float)i);
+            const float Spread = 1.0f + 1.6f * Math::Clamp((float)i / 15.0f, 0.0f, 1.0f);
+            const float Hashed = (float)i * 0.6180339887f + 0.13f;
+            const float Angle  = (Hashed - Math::Floor(Hashed) - 0.5f) * Spread;
+            const float ca = Math::Cos(Angle);
+            const float sa = Math::Sin(Angle);
+            const float Dx = Wind.x * ca - Wind.y * sa;
+            const float Dz = Wind.x * sa + Wind.y * ca;
 
-            float k     = 2.0f * LE_PI_F / Wavelength;
-            float Speed = Math::Sqrt(9.81f / Math::Max(k, 1e-3f))
-                        * (0.5f + 0.5f * Math::Clamp(W.WindSpeed * 0.1f, 0.0f, 1.0f)) * SpeedScale;
-            float Phi   = k * (Dx * WorldX + Dz * WorldZ) + Time * Speed;
-            Y += Math::Min(Amplitude, MaxSteepness / k) * Math::Sin(Phi);
-
-            Wavelength *= 0.62f;
-            Amplitude  *= 0.62f;
-            SpeedScale *= 1.16f;
+            const float k       = 2.0f * LE_PI_F / (Math::Max(W.WaveLength, 0.5f) * Ratio);
+            const float Omega   = Math::Sqrt(9.81f * k) * WindFactor;
+            const float PhaseH  = (float)i * 0.7548776662f + 0.31f;
+            const float Phase   = (PhaseH - Math::Floor(PhaseH)) * 2.0f * LE_PI_F;
+            const float Phi     = k * (Dx * WorldX + Dz * WorldZ) - Omega * Time + Phase;
+            Y += Math::Min(W.WaveAmplitude * Math::Pow(Ratio, AmplitudePower), MaxSteepness / k) * Math::Sin(Phi);
         }
         return Y;
     }

@@ -2,7 +2,7 @@
 #include "Includes/GlobalRHIStorage.slang"
 #include "Includes/CloudCommon.slang"
 
-// Top-down sun transmittance through the cloud layer, so fog below it is shaded by the weather overhead.
+// Sun transmittance through the cloud layer, so surfaces and fog below are shaded by the weather overhead.
 
 struct FPushConstants
 {
@@ -46,8 +46,9 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         return;
     }
 
-    // March the slab from where the ray enters it to where it leaves, both along the sun ray.
-    float3 Origin = float3(WorldXZ.x, M.LayerBottom, WorldXZ.y);
+    // Texels are sea-level receivers, so the march starts where their sun ray reaches the layer, not straight above.
+    float2 EntryXZ = WorldXZ + SunDir.xz * (M.LayerBottom / SunDir.y);
+    float3 Origin  = float3(EntryXZ.x, M.LayerBottom, EntryXZ.y);
     float  Span   = (M.LayerTop - M.LayerBottom) / SunDir.y;
 
     uint  Steps = max(Pass().MarchSteps, 1u);

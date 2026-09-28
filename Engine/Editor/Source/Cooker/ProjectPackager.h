@@ -44,7 +44,7 @@ namespace Lumina
      *  The build runs through LuminaBuildTool, the same tool the IDE and the command line use, so a
      *  packaged game is produced by the path everything else is produced by. It needs no Visual
      *  Studio installation to locate and no solution file to have been generated first. */
-    class FProjectPackager
+    class EDITOR_API FProjectPackager
     {
     public:
 

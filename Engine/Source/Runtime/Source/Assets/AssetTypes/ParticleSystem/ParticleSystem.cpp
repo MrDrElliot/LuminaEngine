@@ -2,6 +2,7 @@
 #include "Memory/MemoryTracking.h"
 #include "ParticleSystem.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Core/Object/Package/Package.h"
 #include "Renderer/ShaderLibrary.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
 #include "Containers/StringFormat.h"
@@ -48,7 +49,10 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Particles");
         if (!ComputeShaderBinaries.empty())
         {
-            ComputeShader = FShaderLibrary::Commit(FName((GetGUID().ToString() + "_CS").c_str()), ERHIShaderType::Compute,
+            // The GUID keeps the key unique, and the readable prefix is what pipeline and crash logs print.
+            FString ShaderKey = GetPackage() != nullptr ? GetPackage()->GetName().ToString() + "." : FString();
+            ShaderKey += EmitterName + "_" + GetGUID().ToString() + "_CS";
+            ComputeShader = FShaderLibrary::Commit(FName(ShaderKey), ERHIShaderType::Compute,
                 TSpan<const uint32>(ComputeShaderBinaries.data(), ComputeShaderBinaries.size()));
         }
     }
@@ -367,6 +371,7 @@ namespace Lumina
         R.SubUVRows               = Math::Max(Emitter.SubUVRows, 1);
         R.bWriteDepth             = ResolveBoundBool (Asset, Component, "bWriteDepth",            Emitter.bWriteDepth);
         R.SoftFadeDistance        = Emitter.SoftFadeDistance;
+        R.CameraFadeDistance      = Emitter.CameraFadeDistance;
         R.bLit                    = Emitter.bLit;
 
         R.bLocalSpace             = Emitter.bLocalSpace;

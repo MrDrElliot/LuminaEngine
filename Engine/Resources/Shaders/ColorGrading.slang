@@ -44,6 +44,9 @@ struct FColorGradingConstants
     float AutoExposureMinMul;  // clamp on the auto-exposure multiplier (2^MinEV)
     float AutoExposureMaxMul;  // clamp on the auto-exposure multiplier (2^MaxEV)
     float _PadAE;
+
+    float4 Fade;               // .rgb display color, .a amount
+    float4 Letterbox;          // .x picture aspect or 0, .y output aspect
 };
 
 // Per-pass block: grading constants by device address + bindless indices for the three inputs.
@@ -250,6 +253,19 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
     Color = EncodeDisplayGamma(Color);
 
     Color += ScreenSpaceDither(Input.Position.xy, Grading.Time);
+
+    Color = lerp(Color, Grading.Fade.rgb, saturate(Grading.Fade.a));
+
+    // Bars top and bottom when the picture is wider than the output, and at the sides when it is narrower.
+    if (Grading.Letterbox.x > 0.0 && Grading.Letterbox.y > 0.0)
+    {
+        const float Ratio = Grading.Letterbox.y / Grading.Letterbox.x;
+        const float2 FromCenter = abs(Input.UV - 0.5) * 2.0;
+        if ((Ratio < 1.0 && FromCenter.y > Ratio) || (Ratio > 1.0 && FromCenter.x > 1.0 / Ratio))
+        {
+            Color = float3(0.0, 0.0, 0.0);
+        }
+    }
 
     return float4(Color, 1.0);
 }

@@ -62,10 +62,18 @@ namespace Lumina::MCP
             return Paths::GetEngineInstallDirectory() + "/External/Tracy/" + Name + ".exe";
         }
 
-        bool RunTool(const FString& Executable, const FString& Arguments, const TFunction<void(FStringView)>& OnLine)
+        // Bounded, since a tracy-capture left connected by an earlier run would otherwise hold the tool call forever.
+        constexpr uint32 ExportTimeoutMilliseconds = 120000;
+
+        bool RunTool(const FString& Executable, const FString& Arguments, const TFunction<void(FStringView)>& OnLine,
+                     uint32 TimeoutMilliseconds = ExportTimeoutMilliseconds)
         {
             const int ExitCode = Platform::RunProcessAndWaitCapture(UTF8_TO_TCHAR(Executable.c_str()), UTF8_TO_TCHAR(Arguments.c_str()),
-                                                                    nullptr, OnLine);
+                                                                    nullptr, OnLine, TimeoutMilliseconds);
+            if (ExitCode == Platform::ProcessTimedOutExitCode)
+            {
+                OnLine(FStringView("error: timed out, so it was stopped"));
+            }
             return ExitCode == 0;
         }
 
@@ -185,7 +193,8 @@ namespace Lumina::MCP
                         {
                             Running->Failure.append(Line.data(), Line.size());
                         }
-                    });
+                    },
+                    (uint32)CaptureSeconds * 1000u + 30000u);
                 Running->bCaptured = bRan && Paths::Exists(Running->File);
 
                 if (!PreviousCap.empty())

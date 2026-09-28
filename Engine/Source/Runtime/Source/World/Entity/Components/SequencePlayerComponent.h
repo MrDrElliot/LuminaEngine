@@ -49,6 +49,53 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sequence")
         float Time = 0.0f;
 
+        // Holds the playhead with the cast still bound, where stopping would release it.
+        PROPERTY(Editable, Category = "Sequence")
+        bool bPaused = false;
+
+        FUNCTION()
+        void Play(bool bFromStart = true)
+        {
+            if (bFromStart)
+            {
+                Time = 0.0f;
+            }
+            bPlaying = true;
+            bPaused = false;
+        }
+
+        FUNCTION()
+        void Pause() { bPaused = true; }
+
+        FUNCTION()
+        void Resume() { bPaused = false; }
+
+        FUNCTION()
+        void Stop()
+        {
+            bPlaying = false;
+            bPaused = false;
+        }
+
+        // Moves the playhead and shows that frame on the next update, playing or paused, without firing the events skipped over.
+        FUNCTION()
+        void Seek(float Seconds)
+        {
+            Time = Seconds > 0.0f ? Seconds : 0.0f;
+            PreviousTime = Time;
+            bJumped = true;
+            bNeedsEvaluate = true;
+        }
+
+        FUNCTION()
+        bool IsPlaying() const { return bPlaying && !bPaused; }
+
+        FUNCTION()
+        float GetPlaybackTime() const { return Time; }
+
+        /** A seek is waiting to be shown even though the playhead is held. */
+        bool bNeedsEvaluate = false;
+
         /** Live bindings, spawned entities and the restore snapshot. Rebuilt on play; never serialized. */
         FSequenceInstance Instance;
 

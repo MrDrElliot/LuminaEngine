@@ -197,6 +197,9 @@ namespace Lumina
                 float   CullDistance   = 0.0f;
                 uint32  Seed           = 0;
                 bool    bRandomYaw     = true;
+                bool    bReceiveShadow = true;
+                bool    bContactShadows = false;
+                float   FullDensityDistance = 0.0f;
             };
 
             struct FTerrainExtract
@@ -508,6 +511,7 @@ namespace Lumina
             MomentZeroth,
             Moments,
             WaterRefraction,
+            SceneDepthCopy,
             DBufferA,
             DBufferB,
             DBufferC,
@@ -785,6 +789,7 @@ namespace Lumina
         // Single source of truth for every fog consumer, including the translucent material pass.
         void PublishFogGlobals(FSceneGlobalData& Globals) const;
         void CloudShadowMapPass(RHI::FCmdListH CL);
+        bool BakeCloudNoiseIfNeeded(RHI::FCmdListH CL);
         void FroxelInjectPass(RHI::FCmdListH CL);
         void FroxelIntegratePass(RHI::FCmdListH CL);
         void AerialPerspectivePass(RHI::FCmdListH CL);
@@ -800,6 +805,7 @@ namespace Lumina
         void PrefilterEnvMapPass(RHI::FCmdListH CL);
         void BatchedLineDraw(RHI::FCmdListH CL);
         void BatchedTriangleDraw(RHI::FCmdListH CL);
+        void DepthOfFieldPass(RHI::FCmdListH CL);
         void BloomPass(RHI::FCmdListH CL);
         void AutoExposurePass(RHI::FCmdListH CL);
         void ToneMappingPass(RHI::FCmdListH CL);

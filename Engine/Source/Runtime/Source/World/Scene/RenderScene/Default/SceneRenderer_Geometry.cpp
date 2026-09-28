@@ -983,7 +983,7 @@ namespace Lumina
         float   MaxHeight       = 0.0f;
         float   TerrainBaseY    = 0.0f;
         uint32  Resolution      = 0;
-        uint32  _Pad1 = 0;
+        float   FullDensityDistance = 0.0f;
         uint32  _Pad2 = 0;
     };
     static_assert(sizeof(FGrassScatterPushConstants) == 200,
@@ -1130,7 +1130,13 @@ namespace Lumina
                 Push.Seed               = Species.Seed;
                 Push.GridSide           = GridSide;
 
-                Push.DrawIDAndFlags     = Binding.DrawIDAndFlags;
+                // The block is shared by every species on this mesh, so per-type shading flags join here, not in the binding.
+                EInstanceFlags SpeciesFlags = Species.bReceiveShadow ? EInstanceFlags::ReceiveShadow : EInstanceFlags::None;
+                if (!Species.bContactShadows)
+                {
+                    SpeciesFlags |= EInstanceFlags::NoContactShadows;
+                }
+                Push.DrawIDAndFlags     = Binding.DrawIDAndFlags | PackDrawIDAndFlags(0u, SpeciesFlags);
                 Push.SurfaceDescIndex   = Binding.SurfaceDescIndex;
                 Push.MeshletHeaderSlot  = Binding.MeshletHeaderSlot;
                 Push.MaterialIndex      = Binding.MaterialIndex;
@@ -1143,6 +1149,7 @@ namespace Lumina
                 Push.MaxHeight          = TerrainItem.MaxHeight;
                 Push.TerrainBaseY       = Origin.y;
                 Push.Resolution         = (uint32)TerrainItem.Resolution;
+                Push.FullDensityDistance = Species.FullDensityDistance;
 
                 const uint32 Groups = (GridSide + 7u) / 8u;
                 RHI::CmdDispatch(CL, MakeArgs(Push), Groups, Groups, 1u);

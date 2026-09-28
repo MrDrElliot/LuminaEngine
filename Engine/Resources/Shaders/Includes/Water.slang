@@ -17,7 +17,7 @@ struct FGPUWater
     float4   RefractReflect;   // x = refraction, y = reflection, z = roughness, w = fresnel power
     float4   FoamAbsorb;       // x = shoreline foam width, y = crest foam amount, z = depth fade, w = absorption
     float4   SSRSpecOpacity;   // x = ssr max dist, y = ssr step count, z = specular intensity, w = opacity
-    float4   DetailParams;     // x = detail tiling, y = detail scroll speed, z = foam tiling, w = unused
+    float4   DetailParams;     // x = detail tile size in meters, y = detail scroll speed, z = foam tiling, w = foam intensity
     uint     DetailNormalIndex;
     uint     FoamTextureIndex;
     uint     GridResolution;
@@ -42,85 +42,132 @@ FWaterPushConstants* Pass() { return GetPassArgs<FWaterPushConstants>(); }
 
 static const uint  WATER_INVALID_TEX = 0xFFFFFFFFu;
 
-struct FGerstnerResult
+// BuoyancySystem.cpp evaluates the same geometry waves on the CPU, so a change to the series must be made there too.
+static const int   WATER_MAX_WAVES        = 40;
+static const float WATER_LENGTH_RATIO     = 0.86;
+
+// Amplitude falls a little faster than wavelength, so fine ripples are gentler than the swell as on a real sea.
+static const float WATER_AMPLITUDE_POWER  = 1.25;
+static const float WATER_MAX_STEEPNESS    = 0.42;
+
+struct FWaterWave
 {
-    float3 Displacement;   // world-space offset added to the flat grid position
-    float3 Normal;         // analytic surface normal (GPU Gems closed form)
-    float  Jacobian;       // horizontal displacement determinant; < 1 compressing, < 0 folded over
+    float2 Direction;
+    float  K;          // wavenumber
+    float  Amplitude;
+    float  Omega;      // angular frequency, deep-water dispersion
+    float  Phase;
+    float  Chop;       // Gerstner Q, zero for the detail waves that only shade
 };
 
-// Sum up to WaveCount Gerstner waves fanned around the wind direction, each octave shorter / lower / faster.
-// Returns the world displacement and the exact surface normal so the silhouette and shading agree.
-FGerstnerResult EvaluateGerstner(float2 WorldXZ, FGPUWater W, float Time)
+// The waves the mesh carries; the ones after these only add ripples to the shading normal.
+int WaterGeometryWaveCount(FGPUWater W)
 {
-    float2 WindDir   = normalize(W.WindAndWave.xy + float2(1e-5, 0.0));
-    float  WindSpeed = W.WindAndWave.z;
-    float  BaseAmp   = W.WindAndWave.w;
-    float  Choppy    = W.WaveParams.x;
-    float  BaseLength = max(W.WaveParams.y, 0.5);
-    int    Count     = (int)clamp(W.WaveParams.z, 1.0, 8.0);
+    return (int)clamp(W.WaveParams.z, 1.0, 8.0) * 3;
+}
 
-    // Stokes limit: past ~1/7 height to length a real wave breaks and a Gerstner one turns inside out.
-    const float kMaxSteepness = 0.42;
+FWaterWave GetWaterWave(FGPUWater W, int Index, int GeometryCount)
+{
+    float2 Wind  = normalize(W.WindAndWave.xy + float2(1e-5, 0.0));
+    float  Ratio = pow(WATER_LENGTH_RATIO, float(Index));
 
+    // Hashed directions and phases, since a regular fan of waves interferes into visible stripes.
+    float Spread = 1.0 + 1.6 * saturate(float(Index) / 15.0);
+    float Angle  = (frac(float(Index) * 0.6180339887 + 0.13) - 0.5) * Spread;
+    float ca = cos(Angle);
+    float sa = sin(Angle);
+
+    FWaterWave Wave;
+    Wave.Direction = float2(Wind.x * ca - Wind.y * sa, Wind.x * sa + Wind.y * ca);
+    Wave.K         = 2.0 * PI / (max(W.WaveParams.y, 0.5) * Ratio);
+    Wave.Amplitude = min(W.WindAndWave.w * pow(Ratio, WATER_AMPLITUDE_POWER), WATER_MAX_STEEPNESS / Wave.K);
+    Wave.Omega     = sqrt(9.81 * Wave.K) * (0.5 + 0.5 * saturate(W.WindAndWave.z * 0.1));
+    Wave.Phase     = frac(float(Index) * 0.7548776662 + 0.31) * 2.0 * PI;
+
+    // Normalized over the geometry waves so their summed crests never loop back on themselves.
+    Wave.Chop = Index < GeometryCount ? W.WaveParams.x / max(Wave.K * Wave.Amplitude * float(GeometryCount), 1e-3) : 0.0;
+    return Wave;
+}
+
+float WaterWavePhase(FWaterWave Wave, float2 WorldXZ, float Time)
+{
+    return Wave.K * dot(Wave.Direction, WorldXZ) - Wave.Omega * Time + Wave.Phase;
+}
+
+// Waves shorter than a few grid cells are left to the pixel shader, since a grid that cannot hold one aliases it into false swells.
+float3 WaterDisplacement(float2 WorldXZ, FGPUWater W, float Time, float CellSize)
+{
+    int    Count = WaterGeometryWaveCount(W);
     float3 Disp  = float3(0.0, 0.0, 0.0);
-    float  SumNx = 0.0;
-    float  SumNy = 0.0;
-    float  SumNz = 0.0;
-
-    float  Jxx = 0.0;
-    float  Jzz = 0.0;
-    float  Jxz = 0.0;
-
-    float Wavelength = BaseLength;
-    float Amplitude  = BaseAmp;
-    float SpeedScale = 1.0;
-    const float AngleStep = 0.45;
 
     [loop]
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < Count; ++i)
     {
-        if (i >= Count)
+        FWaterWave Wave = GetWaterWave(W, i, Count);
+        float Fade = smoothstep(2.0, 4.0, (2.0 * PI / Wave.K) / max(CellSize, 1e-3));
+        if (Fade <= 0.0)
         {
             break;
         }
 
-        float  Angle = AngleStep * (float(i) - 0.5 * float(Count - 1));
-        float  ca = cos(Angle);
-        float  sa = sin(Angle);
-        float2 D  = float2(WindDir.x * ca - WindDir.y * sa, WindDir.x * sa + WindDir.y * ca);
+        float Phi = WaterWavePhase(Wave, WorldXZ, Time);
+        float S = sin(Phi);
+        float C = cos(Phi);
+        Disp += Fade * float3(Wave.Chop * Wave.Amplitude * Wave.Direction.x * C,
+                              Wave.Amplitude * S,
+                              Wave.Chop * Wave.Amplitude * Wave.Direction.y * C);
+    }
+    return Disp;
+}
 
-        float k     = 2.0 * PI / Wavelength;
-        float Speed = sqrt(9.81 / max(k, 1e-3)) * (0.5 + 0.5 * saturate(WindSpeed * 0.1)) * SpeedScale;
-        float Phi   = k * dot(D, WorldXZ) + Time * Speed;
-        float S     = sin(Phi);
-        float C     = cos(Phi);
+struct FWaterSurface
+{
+    float3 Normal;
+    float  Jacobian;         // horizontal displacement determinant; < 1 compressing, < 0 folded over
+    float  FilteredVariance; // slope variance of the waves too fine for this pixel, which widens the specular lobe
+};
 
-        float A = min(Amplitude, kMaxSteepness / k);
+// Filtered to the pixel footprint, so a wave smaller than a pixel becomes roughness rather than noise.
+FWaterSurface EvaluateWaterSurface(float2 WorldXZ, FGPUWater W, float Time, float Footprint)
+{
+    int   GeometryCount = WaterGeometryWaveCount(W);
+    float SumNx = 0.0;
+    float SumNy = 0.0;
+    float SumNz = 0.0;
+    float Jxx = 0.0;
+    float Jzz = 0.0;
+    float Jxz = 0.0;
+    float Variance = 0.0;
 
-        // Steepness normalized by (k*A*waveCount) so summed peaks never loop back on themselves.
-        float Q  = Choppy / max(k * A * float(Count), 1e-3);
-        float WA = k * A;
+    [loop]
+    for (int i = 0; i < WATER_MAX_WAVES; ++i)
+    {
+        FWaterWave Wave  = GetWaterWave(W, i, GeometryCount);
+        float      Slope = Wave.K * Wave.Amplitude;
+        float      Fade  = smoothstep(1.5, 3.0, (2.0 * PI / Wave.K) / max(Footprint, 1e-4));
+        Variance += 0.5 * Slope * Slope * (1.0 - Fade);
+        if (Fade <= 0.0)
+        {
+            continue;
+        }
 
-        Disp  += float3(Q * A * D.x * C, A * S, Q * A * D.y * C);
-        SumNx += D.x * WA * C;
-        SumNz += D.y * WA * C;
-        SumNy += Q * WA * S;
+        float Phi = WaterWavePhase(Wave, WorldXZ, Time);
+        float S = sin(Phi);
+        float C = cos(Phi);
+        float WA = Slope * Fade;
+        SumNx += Wave.Direction.x * WA * C;
+        SumNz += Wave.Direction.y * WA * C;
+        SumNy += Wave.Chop * WA * S;
 
-        // d(horizontal displacement)/d(grid position); the identity part is folded in after the loop.
-        float QAk = Q * A * k * S;
-        Jxx += QAk * D.x * D.x;
-        Jzz += QAk * D.y * D.y;
-        Jxz += QAk * D.x * D.y;
-
-        Wavelength *= 0.62;
-        Amplitude  *= 0.62;
-        SpeedScale *= 1.16;
+        float QAk = Wave.Chop * WA * S;
+        Jxx += QAk * Wave.Direction.x * Wave.Direction.x;
+        Jzz += QAk * Wave.Direction.y * Wave.Direction.y;
+        Jxz += QAk * Wave.Direction.x * Wave.Direction.y;
     }
 
-    FGerstnerResult R;
-    R.Displacement = Disp;
-    R.Normal = normalize(float3(-SumNx, 1.0 - SumNy, -SumNz));
-    R.Jacobian = (1.0 - Jxx) * (1.0 - Jzz) - Jxz * Jxz;
-    return R;
+    FWaterSurface Surface;
+    Surface.Normal = normalize(float3(-SumNx, 1.0 - SumNy, -SumNz));
+    Surface.Jacobian = (1.0 - Jxx) * (1.0 - Jzz) - Jxz * Jxz;
+    Surface.FilteredVariance = Variance;
+    return Surface;
 }

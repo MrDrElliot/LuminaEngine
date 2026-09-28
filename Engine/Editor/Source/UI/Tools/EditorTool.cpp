@@ -840,7 +840,12 @@ namespace Lumina
         if (SCameraComponent* CameraComponent = World->GetActiveCamera())
         {
             CameraComponent->SetAspectRatio(AspectRatio);
-            CameraComponent->SetFOV(NewFOV);
+
+            // Only the editor's own camera takes the width-derived FOV, since a game or cinematic camera authors its own lens.
+            if (World->GetActiveCameraEntity() == EditorEntity)
+            {
+                CameraComponent->SetFOV(NewFOV);
+            }
 
             if (CameraState.bOrthographic && HasEditorCameraControl())
             {

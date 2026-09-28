@@ -419,7 +419,7 @@ namespace Lumina
         return It == PathIndex.end() ? nullptr : It->second;
     }
 
-    TVector<FAssetData*> FAssetRegistry::FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate)
+    TVector<FAssetData*> FAssetRegistry::FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate) const
     {
         FReadScopeLock Lock(AssetsMutex);
 

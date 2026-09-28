@@ -2,6 +2,7 @@
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetRegistry/CookRoot.h"
+#include "Containers/Algorithm.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 
@@ -9,6 +10,16 @@ namespace Lumina
 {
     void FCookGraph::AddRoot(const FCookRoot& Root)
     {
+        const FName Chunk = Root.Chunk.IsNone() ? FName("Main") : Root.Chunk;
+
+        // A trailing slash or an existing folder cooks everything inside it.
+        const FStringView AssetView(Root.Asset.c_str(), Root.Asset.size());
+        if (AssetView.ends_with("/") || VFS::IsDirectory(AssetView))
+        {
+            AddFolderRoot(AssetView, Chunk);
+            return;
+        }
+
         // Accept either bare "/Game/Maps/X" or full "/Game/Maps/X.lasset".
         const FFixedString Resolved = VFS::ResolveToVirtualPath(Root.Asset);
         const FStringView View(Resolved.c_str(), Resolved.size());
@@ -25,8 +36,38 @@ namespace Lumina
             return;
         }
 
-        const FName Chunk = Root.Chunk.IsNone() ? FName("Main") : Root.Chunk;
         VisitTarget(Data->AssetGUID, Chunk, EDependencyType::Hard);
+    }
+
+    void FCookGraph::AddFolderRoot(FStringView Folder, const FName& Chunk)
+    {
+        FString Prefix(Folder.data(), Folder.size());
+        while (!Prefix.empty() && Prefix.back() == '/')
+        {
+            Prefix.pop_back();
+        }
+        Prefix.push_back('/');
+
+        TVector<FAssetData*> Contained = Registry->FindByPredicate([&Prefix](const FAssetData& Data)
+        {
+            return FStringView(Data.Path.c_str(), Data.Path.size()).starts_with(FStringView(Prefix.c_str(), Prefix.size()));
+        });
+
+        if (Contained.empty())
+        {
+            FCookGraphIssue Issue;
+            Issue.Source = "<root>";
+            Issue.Detail = FString("Cook folder '") + Prefix + "' holds no registered assets.";
+            Issues.emplace_back(Move(Issue));
+            return;
+        }
+
+        // Registry order is hash order, so sort to keep the cook reproducible.
+        Algo::Sort(Contained, [](const FAssetData* A, const FAssetData* B) { return A->AssetGUID < B->AssetGUID; });
+        for (const FAssetData* Data : Contained)
+        {
+            VisitTarget(Data->AssetGUID, Chunk, EDependencyType::Hard);
+        }
     }
 
     void FCookGraph::AddRoots(const TVector<FCookRoot>& Roots)

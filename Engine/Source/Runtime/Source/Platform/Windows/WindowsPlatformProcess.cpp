@@ -6,6 +6,7 @@
 #include "Containers/String.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Core/Threading/Thread.h"
 // The lean-and-mean macro is already defined workspace-wide, so guarding on it would skip the include.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -373,7 +374,81 @@ namespace Lumina::Platform
         ShellExecuteW(nullptr, TEXT("open"), URL, nullptr, nullptr, SW_SHOWNORMAL);
     }
 
-    int RunProcessAndWaitCapture(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory, const TFunction<void(FStringView)>& LineCallback)
+    FProcessHandle SpawnProcess(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory)
+    {
+        FProcessHandle Result;
+        if (Executable == nullptr)
+        {
+            return Result;
+        }
+
+        FWString CmdLine = TEXT("\"");
+        CmdLine += Executable;
+        CmdLine += TEXT("\"");
+        if (Params != nullptr && Params[0] != 0)
+        {
+            CmdLine += TEXT(" ");
+            CmdLine += Params;
+        }
+
+        TVector<wchar_t> CmdBuffer(CmdLine.begin(), CmdLine.end());
+        CmdBuffer.push_back(L'\0');
+
+        STARTUPINFOW StartupInfo{};
+        StartupInfo.cb = sizeof(StartupInfo);
+        PROCESS_INFORMATION ProcessInfo{};
+
+        if (!CreateProcessW(nullptr, CmdBuffer.data(), nullptr, nullptr, FALSE, 0, nullptr, WorkingDirectory, &StartupInfo, &ProcessInfo))
+        {
+            return Result;
+        }
+
+        CloseHandle(ProcessInfo.hThread);
+        Result.Handle    = ProcessInfo.hProcess;
+        Result.ProcessId = (uint32)ProcessInfo.dwProcessId;
+        return Result;
+    }
+
+    bool IsProcessRunning(FProcessHandle& Process)
+    {
+        if (Process.bExited || Process.Handle == nullptr)
+        {
+            return false;
+        }
+
+        if (WaitForSingleObject((HANDLE)Process.Handle, 0) == WAIT_TIMEOUT)
+        {
+            return true;
+        }
+
+        DWORD Code = 0;
+        GetExitCodeProcess((HANDLE)Process.Handle, &Code);
+        Process.ExitCode = (int32)Code;
+        Process.bExited  = true;
+        return false;
+    }
+
+    void KillProcess(FProcessHandle& Process, int32 ExitCode)
+    {
+        if (IsProcessRunning(Process))
+        {
+            ::TerminateProcess((HANDLE)Process.Handle, (UINT)ExitCode);
+            WaitForSingleObject((HANDLE)Process.Handle, 5000);
+            IsProcessRunning(Process);
+        }
+    }
+
+    void CloseProcess(FProcessHandle& Process)
+    {
+        if (Process.Handle != nullptr)
+        {
+            CloseHandle((HANDLE)Process.Handle);
+        }
+        Process = FProcessHandle();
+    }
+
+    int RunProcessAndWaitCapture(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory, const TFunction<void(FStringView)>& LineCallback,
+                                 uint32 TimeoutMilliseconds)
     {
         if (!Executable)
         {
@@ -441,12 +516,46 @@ namespace Lumina::Platform
             return -1;
         }
 
+        // Killing a stuck child closes its end of the pipe, which is what lets the blocking read below return.
+        FThread Watchdog;
+        if (TimeoutMilliseconds > 0)
+        {
+            const HANDLE Process = pi.hProcess;
+            Watchdog = FThread([Process, TimeoutMilliseconds]()
+            {
+                if (WaitForSingleObject(Process, TimeoutMilliseconds) == WAIT_TIMEOUT)
+                {
+                    TerminateProcess(Process, (UINT)ProcessTimedOutExitCode);
+                }
+            });
+        }
+
         FString Pending;
         char ReadBuf[4096];
         DWORD BytesRead = 0;
 
-        while (ReadFile(ReadEnd, ReadBuf, sizeof(ReadBuf), &BytesRead, nullptr) && BytesRead > 0)
+        // Done once the child exits and the pipe drains, since a grandchild like mspdbsrv can hold the write end open for minutes.
+        for (;;)
         {
+            DWORD Available = 0;
+            if (!PeekNamedPipe(ReadEnd, nullptr, 0, nullptr, &Available, nullptr))
+            {
+                break;
+            }
+            if (Available == 0)
+            {
+                if (WaitForSingleObject(pi.hProcess, 20) == WAIT_OBJECT_0
+                    && PeekNamedPipe(ReadEnd, nullptr, 0, nullptr, &Available, nullptr) && Available == 0)
+                {
+                    break;
+                }
+                continue;
+            }
+            const DWORD ToRead = Available < (DWORD)sizeof(ReadBuf) ? Available : (DWORD)sizeof(ReadBuf);
+            if (!ReadFile(ReadEnd, ReadBuf, ToRead, &BytesRead, nullptr) || BytesRead == 0)
+            {
+                break;
+            }
             Pending.append(ReadBuf, BytesRead);
 
             size_t Cursor = 0;
@@ -487,6 +596,10 @@ namespace Lumina::Platform
         CloseHandle(ReadEnd);
 
         WaitForSingleObject(pi.hProcess, INFINITE);
+        if (Watchdog.Joinable())
+        {
+            Watchdog.Join();
+        }
         DWORD ExitCode = 1;
         GetExitCodeProcess(pi.hProcess, &ExitCode);
 

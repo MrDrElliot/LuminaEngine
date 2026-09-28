@@ -210,7 +210,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         [loop]
         for (uint l = 0u; l < LSteps; ++l)
         {
-            LT += LStepLen;
+            float SegmentLen = LStepLen;
+            LT += SegmentLen;
             LStepLen *= 1.5;
 
             float3 LP  = SamplePos + Pass().SunDirection * LT;
@@ -224,7 +225,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             float3 LWorld = WorldSample + Pass().SunDirection * LT;
             LWorld.y = LAl;
 
-            SunDepth += Cloud_SampleDensity(LWorld, LHF, true) * LT;
+            SunDepth += Cloud_SampleDensity(LWorld, LHF, true) * SegmentLen;
         }
 
         float SunTransmittance = exp(-SunDepth);

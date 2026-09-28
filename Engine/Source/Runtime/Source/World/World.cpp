@@ -553,7 +553,8 @@ namespace Lumina
 
         if (Stage == EUpdateStage::FrameStart)
         {
-            DeltaTime = Context.GetDeltaTime() * GetDefaultWorldSettings().DeltaTimeScale;
+            RealDeltaTime = Context.GetDeltaTime();
+            DeltaTime = RealDeltaTime * GetDefaultWorldSettings().DeltaTimeScale;
             TimeSinceCreation += DeltaTime;
         }
 

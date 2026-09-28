@@ -97,13 +97,11 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     FLight Sun  = GetLightAt(0);
     float  Mask = ComputeDirectionalShadow(Sun, WorldPos, NWorld, P, Input.Position.xy, dWdx, dWdy);
 
-    // min rather than a multiply, which would darken a PCSS penumbra twice for the one occluder.
     const float3 ViewL  = normalize(NormalWorldToView(normalize(Sun.Direction.xyz)));
     const float  Jitter = InterleavedGradientNoise(Input.Position.xy);
-    Mask = min(Mask, ContactShadow(P, NView, ViewL, Jitter,
-                                   LightData().ShadowParams2.z, (uint)LightData().ShadowParams2.w));
+    const float  Contact = ContactShadow(P, NView, ViewL, Jitter, LightData().ShadowParams2.z, (uint)LightData().ShadowParams2.w);
 
     // Per-instance ReceiveShadow and the material's parallax SelfShadow are NOT folded in: this pass
     // cannot see them from depth, and both stay a cheap multiply in ShadeSurface where they are live.
-    return float4(Mask, Mask, Mask, 1.0);
+    return float4(Mask, Contact, 1.0, 1.0);
 }

@@ -188,6 +188,26 @@ namespace Lumina::Math
         return TVec<T, 3>(Pitch, Yaw, Roll);
     }
 
+    // Yaw about world up, then pitch, then roll, as (pitch=x, yaw=y, roll=z) radians, so a heading spans the full circle.
+    template<typename T>
+    [[nodiscard]] TQuat<T> FromYawFirstEuler(const TVec<T, 3>& EulerRadians)
+    {
+        return FromAxisAngle(TVec<T, 3>(T(0), T(1), T(0)), EulerRadians.y)
+             * FromAxisAngle(TVec<T, 3>(T(1), T(0), T(0)), EulerRadians.x)
+             * FromAxisAngle(TVec<T, 3>(T(0), T(0), T(1)), EulerRadians.z);
+    }
+
+    // The inverse of FromYawFirstEuler, singular only looking straight up or down rather than along a world axis.
+    template<typename T>
+    [[nodiscard]] TVec<T, 3> YawFirstEulerAngles(const TQuat<T>& Q)
+    {
+        const T SinPitch = T(2) * (Q.w * Q.x - Q.y * Q.z);
+        const T Pitch = static_cast<T>(std::asin(SinPitch < T(-1) ? T(-1) : (SinPitch > T(1) ? T(1) : SinPitch)));
+        const T Yaw   = static_cast<T>(std::atan2(T(2) * (Q.x * Q.z + Q.w * Q.y), T(1) - T(2) * (Q.x * Q.x + Q.y * Q.y)));
+        const T Roll  = static_cast<T>(std::atan2(T(2) * (Q.x * Q.y + Q.w * Q.z), T(1) - T(2) * (Q.x * Q.x + Q.z * Q.z)));
+        return TVec<T, 3>(Pitch, Yaw, Roll);
+    }
+
     // Double cover means -Q is the same orientation, so the sign of the dot carries no information.
     template<typename T>
     [[nodiscard]] bool IsSameRotation(const TQuat<T>& A, const TQuat<T>& B, T Epsilon = T(1e-6))

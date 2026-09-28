@@ -9,6 +9,9 @@
 #include "ProceduralAudioStream.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 
+#include <cstring>
+#include <thread>
+
 namespace Lumina
 {
 	namespace
@@ -73,7 +76,7 @@ namespace Lumina
 			return false;
 		}
 
-		Device = Audio::CreateDevice(DeviceConfig, &Mixer);
+		Device = Audio::CreateDevice(DeviceConfig, &Router);
 		if (!Device)
 		{
 			LOG_WARN("[Audio] no output device; the mixer will run silent");
@@ -843,6 +846,51 @@ namespace Lumina
 	void FLuminaAudioContext::SetListenerEnabled(uint32 ListenerIndex, bool bEnabled)
 	{
 		Mixer.SetListenerEnabled(ListenerIndex, bEnabled);
+	}
+
+	void FLuminaAudioContext::FDeviceRouter::RenderAudio(float* OutInterleaved, uint32 FrameCount)
+	{
+		// Counted before the flag is read, so BeginOfflineRender can wait out a call already inside the mixer.
+		InsideRender.fetch_add(1);
+		if (bOffline.load())
+		{
+			std::memset(OutInterleaved, 0, (size_t)FrameCount * Mixer.GetChannelCount() * sizeof(float));
+		}
+		else
+		{
+			Mixer.RenderAudio(OutInterleaved, FrameCount);
+		}
+		InsideRender.fetch_sub(1);
+	}
+
+	bool FLuminaAudioContext::BeginOfflineRender(uint32& OutSampleRate, uint32& OutChannels)
+	{
+		if (!Mixer.IsInitialized() || Router.bOffline.exchange(true))
+		{
+			return false;
+		}
+		while (Router.InsideRender.load() != 0)
+		{
+			std::this_thread::yield();
+		}
+		OutSampleRate = Mixer.GetSampleRate();
+		OutChannels = Mixer.GetChannelCount();
+		return true;
+	}
+
+	uint32 FLuminaAudioContext::RenderOffline(float* OutInterleaved, uint32 FrameCount)
+	{
+		if (!Router.bOffline.load() || FrameCount == 0)
+		{
+			return 0;
+		}
+		Mixer.RenderAudio(OutInterleaved, FrameCount);
+		return FrameCount;
+	}
+
+	void FLuminaAudioContext::EndOfflineRender()
+	{
+		Router.bOffline.store(false);
 	}
 
 	void FLuminaAudioContext::SetSuspended(bool bInSuspended)

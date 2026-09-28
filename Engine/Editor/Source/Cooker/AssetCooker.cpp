@@ -14,9 +14,13 @@
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
 #include "Core/Serialization/Package/PackageSaver.h"
+#include "Cooker/Analyzers/CSharpAssetScan.h"
 #include "Cooker/Analyzers/RmlUiAssetScan.h"
 #include "Cooker/CookDDC.h"
 #include "Cooker/Graph/CookGraph.h"
+#include "Assets/AssetTypes/Material/Material.h"
+#include "Core/Object/Cast.h"
+#include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Pak/PakWriter.h"
@@ -36,10 +40,34 @@ namespace Lumina
             LOG_INFO("[Cooker] {}", FString(Msg.data(), Msg.size()).c_str());
         }
 
+        // IDE state, build output, project files and source-control markers, none of which a game reads.
+        bool IsDevelopmentOnlyFile(FStringView VirtualPath)
+        {
+            constexpr FStringView Folders[] = { "/obj/", "/bin/", "/.idea/", "/.vs/", "/.git/" };
+            for (const FStringView Folder : Folders)
+            {
+                if (VirtualPath.find(Folder) != FStringView::npos)
+                {
+                    return true;
+                }
+            }
+
+            constexpr FStringView Suffixes[] = { ".csproj", ".sln", ".user", ".DotSettings", "/.gitkeep", "/.gitignore", "/.hidden",
+                                                 "/Config/EditorSession.json" };
+            for (const FStringView Suffix : Suffixes)
+            {
+                if (VirtualPath.ends_with(Suffix))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         bool BundleVfsFile(FPakWriter& Writer, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
         {
             // Sidecars are editor-only, since the cooked AssetRegistry.bin already carries the GUID table.
-            if (TextAssetSidecar::IsSidecarPath(VirtualPath))
+            if (TextAssetSidecar::IsSidecarPath(VirtualPath) || IsDevelopmentOnlyFile(VirtualPath))
             {
                 return false;
             }
@@ -64,7 +92,10 @@ namespace Lumina
         bool BundleAssetCooked(FPakWriter& Writer, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
         {
             FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
-            const uint64 SourceHash = Data ? Data->ContentHash : 0;
+            const bool bMaterial = Data != nullptr && Data->AssetClass == CMaterial::StaticClass()->GetName();
+
+            // A material's cooked bytes carry shaders built from the templates, so a template edit must miss the cache too.
+            const uint64 SourceHash = Data ? Data->ContentHash ^ (bMaterial ? CMaterial::GetShaderTemplateHash() : 0) : 0;
             const FCookInputHash Key = FCookDDC::ComputeKey(SourceHash);
 
             TVector<uint8> CookedBytes;
@@ -83,6 +114,22 @@ namespace Lumina
                 LogCooker(LogFunc, Format("  [warn] failed to load for cook, falling back to verbatim: {}",
                     VirtualPath).c_str());
                 return BundleVfsFile(Writer, VirtualPath, LogFunc);
+            }
+
+            if (bMaterial)
+            {
+                CMaterial* Material = Cast<CMaterial>(Package->LoadObjectByName(Data->AssetName));
+                const bool bStale = Material != nullptr && Material->CompiledTemplateHash != CMaterial::GetShaderTemplateHash();
+                FString Error;
+                if (!RecompileMaterialIfStale(Material, Error))
+                {
+                    LogCooker(LogFunc, Format("  [warn] {} predates the current shader templates and could not be recompiled, since {}",
+                        VirtualPath, Error).c_str());
+                }
+                else if (bStale)
+                {
+                    LogCooker(LogFunc, Format("  recompiled {} against the current shader templates", VirtualPath).c_str());
+                }
             }
 
             if (!CPackage::SavePackageForCook(Package, CookedBytes))
@@ -340,7 +387,8 @@ namespace Lumina
             return Result;
         }
 
-        LogCooker(LogFunc, Format("Building cook graph from {} root(s)...", Roots.size()).c_str());
+        LogCooker(LogFunc, Format("Building cook graph from {} root(s), shader templates {:016x}...", Roots.size(),
+            CMaterial::GetShaderTemplateHash()).c_str());
 
         FCookGraph Graph(FAssetRegistry::Get());
         Graph.AddRoots(Roots);
@@ -391,6 +439,25 @@ namespace Lumina
                 Root.Asset = Path;
                 Root.Chunk = FName("UI");
                 Graph.AddRoot(Root);
+            }
+        }
+
+        {
+            FCSharpAssetScan::FResult ScriptScan = FCSharpAssetScan::ScanRoots(ContentRoots, FAssetRegistry::Get(), LogFunc);
+            Algo::Sort(ScriptScan.AssetPaths);
+            Algo::Sort(ScriptScan.FolderPaths);
+            if (ScriptScan.FilesScanned > 0)
+            {
+                LogCooker(LogFunc, Format("  Script scan: {} file(s), {} asset ref(s), {} folder ref(s) -> implicit cook roots",
+                    ScriptScan.FilesScanned, ScriptScan.AssetPaths.size(), ScriptScan.FolderPaths.size()).c_str());
+            }
+            for (const FString& Path : ScriptScan.AssetPaths)
+            {
+                Graph.AddRoot(FCookRoot{ Path, FName("Script") });
+            }
+            for (const FString& Folder : ScriptScan.FolderPaths)
+            {
+                Graph.AddFolderRoot(FStringView(Folder.c_str(), Folder.size()), FName("Script"));
             }
         }
 
@@ -494,6 +561,16 @@ namespace Lumina
                 {
                     LogCooker(LogFunc, "Bundling extras...");
                     ChunkExtras += BundleExtras(Writer, Options, LogFunc);
+                }
+
+                {
+                    const FString Stamp = Format("{:016x}", CMaterial::GetShaderTemplateHash());
+                    if (Writer.AddEntry(CMaterial::CookedShaderTemplateHashPath,
+                        TSpan<const uint8>(reinterpret_cast<const uint8*>(Stamp.data()), Stamp.size())))
+                    {
+                        ++ChunkExtras;
+                        LogCooker(LogFunc, Format("  + {} ({})", CMaterial::CookedShaderTemplateHashPath, Stamp).c_str());
+                    }
                 }
 
                 // A near-empty registry usually means stale editor discovery, so warn loudly in the cook log.

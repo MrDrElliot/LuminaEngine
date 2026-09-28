@@ -22,6 +22,13 @@ struct FCloudMedium
     float2 _Pad1;
 };
 
+// Extinction per meter at full density, near real cumulus, so thin wisps stay translucent over a long march.
+static const float kCloudExtinctionPerMeter = 0.04;
+
+// The remapped base shape sits almost entirely in this band, so Coverage spans it rather than all of 0 to 1.
+static const float kCoverageClearFloor    = 0.88;
+static const float kCoverageOvercastFloor = 0.6;
+
 float Cloud_Remap(float V, float InMin, float InMax, float OutMin, float OutMax)
 {
     return OutMin + (V - InMin) * (OutMax - OutMin) / max(InMax - InMin, 1e-5);
@@ -58,11 +65,11 @@ float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bo
     Base *= Cloud_HeightGradient(HeightFrac, M.Billow);
 
     // Coverage as the remap floor erodes inward, so puffs shrink rather than uniformly fading out.
-    float Cov     = saturate(M.Coverage);
-    float Density = saturate(Cloud_Remap(Base, 1.0 - Cov, 1.0, 0.0, 1.0));
+    float Floor   = lerp(kCoverageClearFloor, kCoverageOvercastFloor, saturate(M.Coverage));
+    float Density = saturate(Cloud_Remap(Base, Floor, 1.0, 0.0, 1.0));
     if (Density <= 0.0 || bCheap)
     {
-        return Density * M.Density;
+        return Density * M.Density * kCloudExtinctionPerMeter;
     }
 
     float3 DetailUVW = (WorldPos + float3(M.DetailWindOffset.x, 0.0, M.DetailWindOffset.y))
@@ -75,7 +82,7 @@ float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bo
     float Erosion = lerp(1.0 - DetailFBM, DetailFBM, saturate(HeightFrac * 2.0));
     Density = saturate(Cloud_Remap(Density, Erosion * M.DetailStrength, 1.0, 0.0, 1.0));
 
-    return Density * M.Density;
+    return Density * M.Density * kCloudExtinctionPerMeter;
 }
 
 // World XZ to cloud-shadow UV. Center is the snapped camera position, HalfExtent the map's reach.

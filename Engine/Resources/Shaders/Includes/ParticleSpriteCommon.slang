@@ -32,9 +32,9 @@ static const uint PARTICLE_RENDER_LIT = 1u << 8u;
 struct FParticlePushConstants
 {
     GPUSpan<FGPUParticle> Particles;   // the simulated particle array
+    float4 Tint;                   // xyz tint rgb, w intensity multiplier, kept 16-byte aligned since a vector must not straddle one
     uint   TextureIndex;           // bindless 2D SRV (0 = default sprite)
     uint   FacingMode;             // EParticleFacingMode
-    float4 Tint;                   // xyz tint rgb, w intensity multiplier
     float  VelocityStretch;        // extra length along velocity, in seconds of travel
     uint   SubUVColumns;           // sprite-sheet subdivisions; 1x1 = whole texture
     uint   SubUVRows;
@@ -65,6 +65,8 @@ struct FParticlePushConstants
     uint   bShadowPass;            // drawing into the sun cascade ShadowCascade instead of the camera
     int    ShadowDataIndex;
     uint   ShadowCascade;
+    float  CameraFadeDistance;     // meters from the camera inside which a sprite fades away; 0 disables it
+    float  Pad0;
 };
 FParticlePushConstants* Pass() { return GetPassArgs<FParticlePushConstants>(); }
 
@@ -162,19 +164,23 @@ float2 ParticleFlipbookUV(FGPUParticle P, float2 UV)
 uint ParticleBlendMode() { return Pass().RenderFlags & 0xFFu; }
 bool IsParticleLit()     { return (Pass().RenderFlags & PARTICLE_RENDER_LIT) != 0u; }
 
-// 1 in open air, falling to 0 where the sprite meets the opaque surface behind it.
+// 1 in open air, falling to 0 where the sprite meets the opaque surface behind it or comes right up to the lens.
 float ParticleSoftFade(float4 SvPosition)
 {
+    const float SpriteDepth = LinearizeSceneDepth(SvPosition.z);
+    const float CameraFade  = Pass().CameraFadeDistance;
+    float       Fade        = CameraFade > 0.0 ? smoothstep(CameraFade * 0.3, CameraFade, SpriteDepth) : 1.0;
+
     const float FadeDistance = Pass().SoftFadeDistance;
     const uint  DepthIndex   = Scene().SceneDepthIndex;
     if (FadeDistance <= 0.0 || DepthIndex == 0xFFFFFFFFu)
     {
-        return 1.0;
+        return Fade;
     }
 
     const float2 UV       = SvPosition.xy / float2(GetScreenSize());
     const float  SceneRaw = SampleTexture2DLevel(DepthIndex, SAMPLER_POINT_CLAMP, UV, 0.0).r;
-    return saturate((LinearizeSceneDepth(SceneRaw) - LinearizeSceneDepth(SvPosition.z)) / FadeDistance);
+    return Fade * saturate((LinearizeSceneDepth(SceneRaw) - SpriteDepth) / FadeDistance);
 }
 
 // FParticleCompiler resolves Slot, which is how this non-generated shader reads a layout it cannot know.

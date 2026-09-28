@@ -46,6 +46,7 @@ struct FGBufferData
     float  Specular;
     float3 Emissive;
     bool   bReceiveShadow;
+    bool   bContactShadows;
     uint   ShadingModel;
 
     // Clearcoat model only; unread by every other model. See the channel-borrowing note above.
@@ -71,6 +72,7 @@ FGBufferData DefaultGBufferData()
     G.Specular         = 0.5;
     G.Emissive           = float3(0.0, 0.0, 0.0);
     G.bReceiveShadow     = false;
+    G.bContactShadows    = true;
     G.ShadingModel       = ShadingModel_Default;
     G.Clearcoat          = 0.0;
     G.ClearcoatRoughness = 0.03;
@@ -104,7 +106,8 @@ FGBufferPacked PackGBuffer(FGBufferData G)
 
     FGBufferPacked P;
     P.A = float4(saturate(G.BaseColor), saturate(G.AmbientOcclusion));
-    P.B = float4(OctEncode01(G.WorldNormal), ChannelBB, 0.0);
+    // Stored inverted, so a writer that leaves the alpha at zero keeps contact shadows on.
+    P.B = float4(OctEncode01(G.WorldNormal), ChannelBB, G.bContactShadows ? 0.0 : 1.0);
     P.C = float4(saturate(G.Roughness), saturate(G.Metallic), ChannelCB, (float)Flags / 255.0);
     P.D = float4(ChannelD, 0.0);
     return P;
@@ -121,6 +124,7 @@ FGBufferData UnpackGBuffer(float4 A, float4 B, float4 C, float4 D)
     G.Roughness        = C.r;
     G.Metallic         = C.g;
     G.bReceiveShadow   = (Flags & GBUFFER_FLAG_RECEIVE_SHADOW) != 0u;
+    G.bContactShadows  = B.a < 0.5;
     G.ShadingModel     = (Flags >> GBUFFER_SHADING_MODEL_SHIFT) & GBUFFER_SHADING_MODEL_MASK;
 
     // Undo the per-model borrow. The channels a model did NOT write get the value the lighting pass

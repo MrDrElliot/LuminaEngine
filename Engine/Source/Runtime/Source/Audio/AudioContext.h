@@ -138,6 +138,14 @@ namespace Lumina
 		virtual void ApplyDeviceConfig(uint32 SampleRate, uint32 Channels, uint32 PeriodFrames) = 0;
 		NODISCARD virtual FAudioDeviceInfo GetDeviceInfo() const = 0;
 
+		// Hands the mix to the caller while the device plays silence, so a recording advances audio exactly in step with its frames.
+		virtual bool BeginOfflineRender(uint32& OutSampleRate, uint32& OutChannels) { return false; }
+
+		// Mixes the next FrameCount frames into OutInterleaved; valid only between Begin and EndOfflineRender.
+		virtual uint32 RenderOffline(float* OutInterleaved, uint32 FrameCount) { return 0; }
+
+		virtual void EndOfflineRender() {}
+
 		// Allocates a streaming PCM buffer (float32). Caller pushes samples via the returned stream;
 		// playback is started by passing the stream to PlayProceduralStream.
 		NODISCARD virtual TSharedPtr<FProceduralAudioStream> CreateProceduralStream(

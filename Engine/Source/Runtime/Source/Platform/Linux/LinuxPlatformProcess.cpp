@@ -20,6 +20,9 @@
 #include "Log/Log.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Core/Threading/Thread.h"
+#include <atomic>
+#include <signal.h>
 
 extern char** environ;
 
@@ -255,7 +258,8 @@ namespace Lumina::Platform
             const FString& Program,
             const TVector<FString>& Arguments,
             const TCHAR* WorkingDirectory,
-            const TFunction<void(FStringView)>* LineCallback)
+            const TFunction<void(FStringView)>* LineCallback,
+            uint32 TimeoutMilliseconds = 0)
         {
             int Pipe[2] = { -1, -1 };
 
@@ -299,6 +303,26 @@ namespace Lumina::Platform
                 }
 
                 return -1;
+            }
+
+            // Killing a stuck child closes its end of the pipe, which is what lets the blocking read below return.
+            std::atomic<bool> bReaped = false;
+            std::atomic<bool> bTimedOut = false;
+            FThread Watchdog;
+            if (TimeoutMilliseconds > 0)
+            {
+                Watchdog = FThread([Child, TimeoutMilliseconds, &bReaped, &bTimedOut]()
+                {
+                    for (uint32 Waited = 0; Waited < TimeoutMilliseconds && !bReaped.load(); Waited += 20)
+                    {
+                        ::usleep(20 * 1000);
+                    }
+                    if (!bReaped.load())
+                    {
+                        bTimedOut = true;
+                        ::kill(Child, SIGKILL);
+                    }
+                });
             }
 
             if (LineCallback != nullptr)
@@ -357,8 +381,23 @@ namespace Lumina::Platform
             {
                 if (errno != EINTR)
                 {
+                    bReaped = true;
+                    if (Watchdog.Joinable())
+                    {
+                        Watchdog.Join();
+                    }
                     return -1;
                 }
+            }
+
+            bReaped = true;
+            if (Watchdog.Joinable())
+            {
+                Watchdog.Join();
+            }
+            if (bTimedOut.load())
+            {
+                return ProcessTimedOutExitCode;
             }
 
             if (WIFEXITED(Status))
@@ -660,6 +699,77 @@ namespace Lumina::Platform
 
 
 
+    FProcessHandle SpawnProcess(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory)
+    {
+        FProcessHandle Result;
+        if (Executable == nullptr)
+        {
+            return Result;
+        }
+
+        posix_spawn_file_actions_t Actions;
+        posix_spawn_file_actions_init(&Actions);
+        if (WorkingDirectory != nullptr && WorkingDirectory[0] != '\0')
+        {
+            posix_spawn_file_actions_addchdir_np(&Actions, WorkingDirectory);
+        }
+
+        const TVector<FString> Arguments = TokenizeArguments(Params);
+        TVector<FString> Storage;
+        TVector<char*> Argv = BuildArgv(FString(Executable), Arguments, Storage);
+
+        pid_t Child = -1;
+        const int SpawnResult = ::posix_spawn(&Child, Executable, &Actions, nullptr, Argv.data(), environ);
+        posix_spawn_file_actions_destroy(&Actions);
+
+        if (SpawnResult == 0)
+        {
+            Result.ProcessId = (uint32)Child;
+        }
+        return Result;
+    }
+
+    bool IsProcessRunning(FProcessHandle& Process)
+    {
+        if (Process.bExited || Process.ProcessId == 0)
+        {
+            return false;
+        }
+
+        int Status = 0;
+        const pid_t Reaped = ::waitpid((pid_t)Process.ProcessId, &Status, WNOHANG);
+        if (Reaped == 0)
+        {
+            return true;
+        }
+
+        Process.ExitCode = (Reaped > 0 && WIFEXITED(Status)) ? WEXITSTATUS(Status) : -1;
+        Process.bExited  = true;
+        return false;
+    }
+
+    void KillProcess(FProcessHandle& Process, int32 ExitCode)
+    {
+        if (!IsProcessRunning(Process))
+        {
+            return;
+        }
+
+        ::kill((pid_t)Process.ProcessId, SIGKILL);
+
+        int Status = 0;
+        while (::waitpid((pid_t)Process.ProcessId, &Status, 0) < 0 && errno == EINTR)
+        {
+        }
+        Process.ExitCode = ExitCode;
+        Process.bExited  = true;
+    }
+
+    void CloseProcess(FProcessHandle& Process)
+    {
+        Process = FProcessHandle();
+    }
+
     int LaunchProcess(const TCHAR* URL, const TCHAR* Params, bool bLaunchDetached)
     {
         if (URL == nullptr)
@@ -710,14 +820,15 @@ namespace Lumina::Platform
         const TCHAR* Executable,
         const TCHAR* Params,
         const TCHAR* WorkingDirectory,
-        const TFunction<void(FStringView)>& LineCallback)
+        const TFunction<void(FStringView)>& LineCallback,
+        uint32 TimeoutMilliseconds)
     {
         if (Executable == nullptr)
         {
             return -1;
         }
 
-        return SpawnAndWait(FString(Executable), TokenizeArguments(Params), WorkingDirectory, &LineCallback);
+        return SpawnAndWait(FString(Executable), TokenizeArguments(Params), WorkingDirectory, &LineCallback, TimeoutMilliseconds);
     }
 
 

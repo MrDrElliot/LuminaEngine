@@ -257,6 +257,15 @@ namespace Lumina
             BlendPostProcessSettings(ResolvedPostProcess, *Contribution.Settings, Contribution.Weight);
         }
 
+        // Depth of field belongs to the lens, so a camera that sets an aperture keeps it inside any volume.
+        if (Camera.PostProcess.DepthOfFieldFStop > 0.0f)
+        {
+            ResolvedPostProcess.DepthOfFieldFStop         = Camera.PostProcess.DepthOfFieldFStop;
+            ResolvedPostProcess.DepthOfFieldFocusDistance = Camera.PostProcess.DepthOfFieldFocusDistance;
+            ResolvedPostProcess.DepthOfFieldSensorHeight  = Camera.PostProcess.DepthOfFieldSensorHeight;
+            ResolvedPostProcess.DepthOfFieldMaxBlur       = Camera.PostProcess.DepthOfFieldMaxBlur;
+        }
+
         TVector<CMaterialInterface*>& PostProcessMaterials = Resolved.PostProcessMaterials;
         for (const TObjectPtr<CMaterialInterface>& M : Camera.PostProcessMaterials)
         {
@@ -337,6 +346,16 @@ namespace Lumina
             return;
         }
 
+        if (CameraState.OverlayFade > FinalPostProcess.FadeAmount)
+        {
+            FinalPostProcess.FadeAmount = CameraState.OverlayFade;
+            FinalPostProcess.FadeColor  = CameraState.OverlayFadeColor;
+        }
+        if (CameraState.OverlayLetterbox > 0.0f)
+        {
+            FinalPostProcess.LetterboxAspect = CameraState.OverlayLetterbox;
+        }
+
         Resolved.ViewVolume      = Camera.GetViewVolume();
         Resolved.PostProcess     = FinalPostProcess;
         Resolved.bHasView        = true;
@@ -399,6 +418,14 @@ namespace Lumina
         }
 
         State.ActiveCameraEntity = Entity;
+    }
+
+    void SCameraSystem::SetCinematicOverlay(ECS::FRegistry& Registry, float Fade, FVector3 FadeColor, float LetterboxAspect)
+    {
+        FCameraGlobalState& State = Registry.Ctx().Get<FCameraGlobalState>();
+        State.OverlayFade      = Math::Clamp(Fade, 0.0f, 1.0f);
+        State.OverlayFadeColor = FadeColor;
+        State.OverlayLetterbox = Math::Max(LetterboxAspect, 0.0f);
     }
 
     ECS::FEntity SCameraSystem::GetActiveCameraEntity(ECS::FRegistry& Registry)

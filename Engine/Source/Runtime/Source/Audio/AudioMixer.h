@@ -169,6 +169,12 @@ namespace Lumina
 
 		FVoice Voices[MaxVoices];
 
+		// A stereo-linked peak limiter on the master, so a pile of explosions ducks the mix instead of hard clipping it.
+		static constexpr float LimiterCeiling = 0.89f;
+		static constexpr float LimiterReleaseSeconds = 0.12f;
+		float LimiterGain = 1.0f;
+		float LimiterRelease = 0.0f;
+
 		TVector<float> BusAccum;
 		TVector<float> MasterAccum;
 		TVector<float> ReverbInput;

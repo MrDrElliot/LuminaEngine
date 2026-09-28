@@ -182,6 +182,7 @@ namespace Lumina
 
         ShadowOnly              = BIT(10),  // survives shadow views only; every camera view rejects it
         NoDecals                = BIT(11),  // decals pass over it, for things that move through them
+        NoContactShadows        = BIT(12),  // thin geometry whose screen-space contact march only returns noise
     };
 
     ENUM_CLASS_FLAGS(EInstanceFlags);

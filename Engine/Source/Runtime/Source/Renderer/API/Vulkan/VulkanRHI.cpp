@@ -2244,6 +2244,15 @@ namespace Lumina::RHI
         LOG_DISPLAY("Selected GPU '{}' with {} MiB of graphics memory.",
             GDevice->Properties.deviceName, Chosen.DeviceLocalMemoryBytes >> 20);
 
+        VkPhysicalDeviceDriverProperties DriverProperties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
+        VkPhysicalDeviceProperties2 DriverQuery{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &DriverProperties };
+        vkGetPhysicalDeviceProperties2(Best, &DriverQuery);
+
+        // driverVersion is packed differently by each vendor, so the raw value goes out beside the vendor's own string.
+        LOG_DISPLAY("GPU driver: {} {} (driverVersion 0x{:08X}, vendor 0x{:04X}, device 0x{:04X}).",
+            DriverProperties.driverName, DriverProperties.driverInfo, GDevice->Properties.driverVersion,
+            GDevice->Properties.vendorID, GDevice->Properties.deviceID);
+
         GDevice->bMeshShaderSupported     = Chosen.bMeshCapable;
         GDevice->MeshRequiredSubgroupSize = Chosen.MeshRequiredSubgroupSize;
 
@@ -3619,35 +3628,136 @@ namespace Lumina::RHI
         }
     }
 
-    FPipelineH CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
+    namespace
     {
-        LUMINA_MEMORY_SCOPE("RHI");
-        VkShaderModuleCreateInfo VertInfo
+        constexpr uint32 SpvOpExtInstImport = 11u;
+        constexpr uint32 SpvOpExtInst       = 12u;
+        constexpr uint32 SpvHeaderWords     = 5u;
+        constexpr uint32 NvidiaVendorId     = 0x10DEu;
+
+        bool IsShaderDebugInfoImport(const uint32* Instruction, uint32 WordCount)
         {
-            .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .pNext    = nullptr,
-            .flags    = 0,
-            .codeSize = Vertex.Source.size(),
-            .pCode    = reinterpret_cast<const uint32*>(Vertex.Source.data()),
-        };
-        
-        VkShaderModule VertModule;
-        VK_CHECK(vkCreateShaderModule(*GDevice, &VertInfo, nullptr, &VertModule));
-        
-        // Fragment stage is optional.
-        VkShaderModule FragModule = VK_NULL_HANDLE;
-        if (!Fragment.Source.empty())
+            constexpr FStringView Name = "NonSemantic.Shader.DebugInfo.100";
+            const char* Literal = reinterpret_cast<const char*>(Instruction + 2);
+            const size_t MaxBytes = (WordCount - 2u) * sizeof(uint32);
+            return MaxBytes > Name.size() && FStringView(Literal, Name.size()) == Name && Literal[Name.size()] == '\0';
+        }
+
+        // Instructions that name or decorate another id, and must go with it when that id is removed.
+        bool TargetsAnotherId(uint32 Opcode)
         {
-            VkShaderModuleCreateInfo FragInfo
+            constexpr uint32 Targeting[] = { 5u, 6u, 71u, 72u, 332u, 5632u, 5633u };
+            for (const uint32 Op : Targeting)
+            {
+                if (Op == Opcode)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Drops NonSemantic.Shader.DebugInfo, which AMD's pipeline compiler has crashed on while only Aftermath on NVIDIA reads it.
+        bool StripShaderDebugInfo(TSpan<const uint32> Words, TVector<uint32>& Out)
+        {
+            // -stripshaderdebug forces it on any GPU, so the path can be exercised where it would otherwise be skipped.
+            static const bool bForced = GCommandLine != nullptr && GCommandLine->Has("stripshaderdebug");
+            if (Words.size() <= SpvHeaderWords || (GDevice->Properties.vendorID == NvidiaVendorId && !bForced))
+            {
+                return false;
+            }
+
+            // Imports precede every use, so one pass can mark both the sets and the ids their instructions define.
+            const uint32 Bound = Words[3];
+            TVector<uint8> DebugSet(Bound, 0u);
+            TVector<uint8> Removed(Bound, 0u);
+            bool bFound = false;
+            for (size_t At = SpvHeaderWords; At < Words.size();)
+            {
+                const uint32 WordCount = Words[At] >> 16;
+                const uint32 Opcode    = Words[At] & 0xFFFFu;
+                if (WordCount == 0u || At + WordCount > Words.size())
+                {
+                    return false;
+                }
+                if (Opcode == SpvOpExtInstImport && WordCount > 2u && Words[At + 1] < Bound && IsShaderDebugInfoImport(&Words[At], WordCount))
+                {
+                    DebugSet[Words[At + 1]] = 1u;
+                    bFound = true;
+                }
+                else if (Opcode == SpvOpExtInst && WordCount > 3u && Words[At + 3] < Bound && DebugSet[Words[At + 3]] && Words[At + 2] < Bound)
+                {
+                    Removed[Words[At + 2]] = 1u;
+                }
+                At += WordCount;
+            }
+            if (!bFound)
+            {
+                return false;
+            }
+
+            Out.clear();
+            Out.reserve(Words.size());
+            Out.insert(Out.end(), Words.begin(), Words.begin() + SpvHeaderWords);
+            for (size_t At = SpvHeaderWords; At < Words.size();)
+            {
+                const uint32 WordCount = Words[At] >> 16;
+                const uint32 Opcode    = Words[At] & 0xFFFFu;
+                const uint32 First     = WordCount > 1u ? Words[At + 1] : 0u;
+                const bool bDebugImport = Opcode == SpvOpExtInstImport && First < Bound && DebugSet[First];
+                const bool bDebugInst   = Opcode == SpvOpExtInst && WordCount > 3u && Words[At + 3] < Bound && DebugSet[Words[At + 3]];
+                const bool bOrphanName  = TargetsAnotherId(Opcode) && First < Bound && Removed[First];
+                if (!bDebugImport && !bDebugInst && !bOrphanName)
+                {
+                    Out.insert(Out.end(), Words.begin() + At, Words.begin() + At + WordCount);
+                }
+                At += WordCount;
+            }
+            return true;
+        }
+
+        VkShaderModule CreateShaderModule(const FShaderSource& Shader)
+        {
+            const TSpan<const uint32> Words(reinterpret_cast<const uint32*>(Shader.Source.data()), Shader.Source.size() / sizeof(uint32));
+            TVector<uint32> Stripped;
+            const bool bStripped = StripShaderDebugInfo(Words, Stripped);
+
+            VkShaderModuleCreateInfo Info
             {
                 .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
                 .pNext    = nullptr,
                 .flags    = 0,
-                .codeSize = Fragment.Source.size(),
-                .pCode    = reinterpret_cast<const uint32*>(Fragment.Source.data()),
+                .codeSize = bStripped ? Stripped.size() * sizeof(uint32) : Shader.Source.size(),
+                .pCode    = bStripped ? Stripped.data() : Words.data(),
             };
 
-            VK_CHECK(vkCreateShaderModule(*GDevice, &FragInfo, nullptr, &FragModule));
+            VkShaderModule Module = VK_NULL_HANDLE;
+            VK_CHECK(vkCreateShaderModule(*GDevice, &Info, nullptr, &Module));
+            return Module;
+        }
+    }
+
+    static FStringView ShaderLabel(const FShaderSource& Shader)
+    {
+        if (Shader.Source.empty())
+        {
+            return "<none>";
+        }
+        return Shader.DebugName.empty() ? FStringView("<unnamed>") : Shader.DebugName;
+    }
+
+    FPipelineH CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
+    {
+        LUMINA_MEMORY_SCOPE("RHI");
+        // Logged before the driver compiles, so a crash inside the driver still names the shader.
+        LOG_TRACE("Creating graphics pipeline for '{}' + '{}'.", ShaderLabel(Vertex), ShaderLabel(Fragment));
+        VkShaderModule VertModule = CreateShaderModule(Vertex);
+
+        // Fragment stage is optional.
+        VkShaderModule FragModule = VK_NULL_HANDLE;
+        if (!Fragment.Source.empty())
+        {
+            FragModule = CreateShaderModule(Fragment);
         }
 
         FMemMark Mark;
@@ -4214,18 +4324,8 @@ namespace Lumina::RHI
     FPipelineH CreateComputePipeline(const FShaderSource& Compute, TSpan<const FSpecializationConstant> Constants)
     {
         LUMINA_MEMORY_SCOPE("RHI");
-        // @TODO Decide if we should load this and keep a shader handle instead.
-        VkShaderModuleCreateInfo ModuleInfo
-        {
-            .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .pNext    = nullptr,
-            .flags    = 0,
-            .codeSize = Compute.Source.size(),
-            .pCode    = reinterpret_cast<const uint32*>(Compute.Source.data()),
-        };
-        
-        VkShaderModule ShaderModule{};
-        VK_CHECK(vkCreateShaderModule(*GDevice, &ModuleInfo, nullptr, &ShaderModule));
+        LOG_TRACE("Creating compute pipeline for '{}'.", ShaderLabel(Compute));
+        VkShaderModule ShaderModule = CreateShaderModule(Compute);
      
         FMemMark Mark{};
         VkSpecializationInfo SpecializationInfo = ConstructSpecializationInfo(Mark, Constants);
@@ -4284,6 +4384,8 @@ namespace Lumina::RHI
             return {};
         }
 
+        LOG_TRACE("Creating mesh pipeline for '{}' + '{}' + '{}'.", ShaderLabel(Task), ShaderLabel(Mesh), ShaderLabel(Fragment));
+
         auto MakeModule = [](const FShaderSource& Src) -> VkShaderModule
         {
             if (Src.Source.empty())
@@ -4291,18 +4393,7 @@ namespace Lumina::RHI
                 return VK_NULL_HANDLE;
             }
 
-            VkShaderModuleCreateInfo Info
-            {
-                .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-                .pNext    = nullptr,
-                .flags    = 0,
-                .codeSize = Src.Source.size(),
-                .pCode    = reinterpret_cast<const uint32*>(Src.Source.data()),
-            };
-
-            VkShaderModule Module;
-            VK_CHECK(vkCreateShaderModule(*GDevice, &Info, nullptr, &Module));
-            return Module;
+            return CreateShaderModule(Src);
         };
 
         ASSERT(!Mesh.Source.empty(), "Mesh shader pipeline created without a mesh stage.");

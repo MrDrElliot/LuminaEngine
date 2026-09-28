@@ -36,8 +36,13 @@ namespace Lumina
             float    AutoExposureMinMul; // 2^MinEV clamp on the adapted multiplier.
             float    AutoExposureMaxMul; // 2^MaxEV clamp on the adapted multiplier.
             float    _PadAE;
+
+            // .rgb = fade color, .a = fade amount.
+            FVector4 Fade;
+            // .x = letterbox aspect (0 = none), .y = output aspect.
+            FVector4 Letterbox;
         };
-        static_assert(sizeof(FColorGradingConstants) == 160, "FColorGradingConstants layout must match ColorGrading.slang::FColorGradingConstants.");
+        static_assert(sizeof(FColorGradingConstants) == 192, "FColorGradingConstants layout must match ColorGrading.slang::FColorGradingConstants.");
         
         FColorGradingConstants MakeDefaultColorGrading(float Time)
         {
@@ -96,6 +101,8 @@ namespace Lumina
             PC.AutoExposureKey    = Settings->bAutoExposure ? 0.18f : 0.0f;
             PC.AutoExposureMinMul = std::exp2(Settings->AutoExposureMinEV);
             PC.AutoExposureMaxMul = std::exp2(Math::Max(Settings->AutoExposureMaxEV, Settings->AutoExposureMinEV));
+            PC.Fade               = FVector4(Settings->FadeColor, Settings->FadeAmount);
+            PC.Letterbox          = FVector4(Settings->LetterboxAspect, 0.0f, 0.0f, 0.0f);
             return PC;
         }
     }
@@ -417,6 +424,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         FColorGradingConstants Constants = BuildColorGradingConstants(ActivePostProcess, SceneGlobalData.Time);
+        Constants.Letterbox.y = (float)Output.GetExtent().x / (float)Math::Max(Output.GetExtent().y, 1u);
 
         struct FComposePushConstants
         {
@@ -433,6 +441,84 @@ namespace Lumina
         PC.HDRIndex        = (uint32)HDRTex.GetResourceID();
         PC.BloomIndex      = (uint32)BloomTex.GetResourceID();
         PC.AdaptedLumIndex = (uint32)AdaptedTex.GetResourceID();
+
+        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+
+    void FDefaultSceneRenderer::DepthOfFieldPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const SPostProcessSettings* Settings = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
+        if (Settings == nullptr || !Settings->bEnabled || Settings->DepthOfFieldFStop <= 0.0f)
+        {
+            return;
+        }
+
+        static const FShaderH VS = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH PS = FShaderLibrary::Get("DepthOfField.slang");
+        if (!VS || !PS)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Depth Of Field", tracy::Color::Orchid);
+
+        // The water refraction copy is free again by now, and a gather cannot read the image it writes.
+        const FSceneImage& HDR        = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& SceneColor = GetNamedImage(ENamedImage::WaterRefraction);
+        const FSceneImage& SceneDepth = GetNamedImage(ENamedImage::DepthAttachment);
+
+        Barriers::SceneToTransfer(CL);
+        RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
+        Barriers::TransferToShaders(CL);
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = HDR.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Load;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = HDR.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, HDR.GetExtent());
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VS;
+        Key.PS = PS;
+        Key.ColorTargets.push_back({ HDR.Desc.Format, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FDepthOfFieldPushConstants
+        {
+            uint32 SceneColorIndex;
+            uint32 SceneDepthIndex;
+            float  FStop;
+            float  FocusDistance;
+            float  SensorHeight;
+            float  MaxRadius;
+            float  RadiusStep;
+            float  _Pad;
+        };
+        static_assert(sizeof(FDepthOfFieldPushConstants) == 32, "FDepthOfFieldPushConstants must match DepthOfField.slang.");
+
+        // Bounds the spiral to roughly this many taps however large the blur is allowed to grow.
+        constexpr float MaxTaps = 160.0f;
+        const float MaxRadius = Math::Max(Settings->DepthOfFieldMaxBlur * (float)HDR.GetExtent().y, 1.0f);
+
+        FDepthOfFieldPushConstants PC = {};
+        PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
+        PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
+        PC.FStop           = Settings->DepthOfFieldFStop;
+        PC.FocusDistance   = Math::Max(Settings->DepthOfFieldFocusDistance, 0.1f);
+        PC.SensorHeight    = Math::Max(Settings->DepthOfFieldSensorHeight, 1.0f);
+        PC.MaxRadius       = MaxRadius;
+        PC.RadiusStep      = Math::Max(0.5f, MaxRadius * MaxRadius / (2.0f * MaxTaps));
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);

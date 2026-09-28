@@ -7,6 +7,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Assets/AssetTypes/Audio/SoundBase.h"
 #include "World/World.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
@@ -32,6 +33,111 @@ namespace Lumina
     static const ImU32 SeqKey         = IM_COL32(255, 205, 90, 255);
     static const ImU32 SeqKeyOutline  = IM_COL32(20, 18, 12, 220);
     static const ImU32 SeqPlayhead    = IM_COL32(120, 255, 150, 235);
+
+    // Uniform access to what each kind of track keys, so rows, drags and jump-to-key treat them alike.
+    namespace SequencerTracks
+    {
+        static SKeyedCurve* Curve(CSequenceTrack* Track)
+        {
+            if (CSequenceTrack_Property* Property = Cast<CSequenceTrack_Property>(Track))        { return &Property->Curve.Curve; }
+            if (CSequenceTrack_Fade* Fade = Cast<CSequenceTrack_Fade>(Track))                    { return &Fade->Amount.Curve; }
+            if (CSequenceTrack_TimeDilation* Dilation = Cast<CSequenceTrack_TimeDilation>(Track)) { return &Dilation->Scale.Curve; }
+            if (CSequenceTrack_LookAt* LookAt = Cast<CSequenceTrack_LookAt>(Track))              { return &LookAt->Weight.Curve; }
+            if (CSequenceTrack_CameraShake* Shake = Cast<CSequenceTrack_CameraShake>(Track))     { return &Shake->Intensity.Curve; }
+            return nullptr;
+        }
+
+        // What an unkeyed curve means to its track, and so what a first key should hold.
+        static float RestingValue(const CSequenceTrack* Track)
+        {
+            return Track->IsA<CSequenceTrack_Fade>() ? 0.0f : 1.0f;
+        }
+
+        static int32 KeyCount(CSequenceTrack* Track)
+        {
+            if (SKeyedCurve* Keys = Curve(Track))                                  { return Keys->NumKeys(); }
+            if (CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track)) { return (int32)Events->Keys.size(); }
+            if (CSequenceTrack_Audio* Audio = Cast<CSequenceTrack_Audio>(Track))  { return (int32)Audio->Clips.size(); }
+            return 0;
+        }
+
+        static float* KeyTime(CSequenceTrack* Track, int32 Index)
+        {
+            if (Index < 0 || Index >= KeyCount(Track))
+            {
+                return nullptr;
+            }
+            if (SKeyedCurve* Keys = Curve(Track))                                  { return &Keys->Keys[Index].Time; }
+            if (CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track)) { return &Events->Keys[Index].Time; }
+            if (CSequenceTrack_Audio* Audio = Cast<CSequenceTrack_Audio>(Track))  { return &Audio->Clips[Index].StartTime; }
+            return nullptr;
+        }
+
+        // Re-sorts after a retime and returns where the moved key landed.
+        static int32 SortKeys(CSequenceTrack* Track, int32 Index)
+        {
+            float* Moved = KeyTime(Track, Index);
+            if (Moved == nullptr)
+            {
+                return INDEX_NONE;
+            }
+            const float Time = *Moved;
+
+            if (SKeyedCurve* Keys = Curve(Track))
+            {
+                const SCurveKey Key = Keys->Keys[Index];
+                Keys->Keys.erase(Keys->Keys.begin() + Index);
+                auto Where = std::upper_bound(Keys->Keys.begin(), Keys->Keys.end(), Time,
+                    [](float Value, const SCurveKey& Other) { return Value < Other.Time; });
+                const int32 Landed = (int32)(Where - Keys->Keys.begin());
+                Keys->Keys.insert(Where, Key);
+                Keys->ComputeAutoTangents();
+                return Landed;
+            }
+            if (CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track))
+            {
+                const SSequenceEventKey Key = Events->Keys[Index];
+                Events->Keys.erase(Events->Keys.begin() + Index);
+                auto Where = std::upper_bound(Events->Keys.begin(), Events->Keys.end(), Time,
+                    [](float Value, const SSequenceEventKey& Other) { return Value < Other.Time; });
+                const int32 Landed = (int32)(Where - Events->Keys.begin());
+                Events->Keys.insert(Where, Key);
+                return Landed;
+            }
+            return Index;
+        }
+
+        static void RemoveKey(CSequenceTrack* Track, int32 Index)
+        {
+            if (Index < 0 || Index >= KeyCount(Track))
+            {
+                return;
+            }
+            if (SKeyedCurve* Keys = Curve(Track))
+            {
+                Keys->RemoveKey(Index);
+                Keys->ComputeAutoTangents();
+            }
+            else if (CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track))
+            {
+                Events->Keys.erase(Events->Keys.begin() + Index);
+            }
+            else if (CSequenceTrack_Audio* Audio = Cast<CSequenceTrack_Audio>(Track))
+            {
+                Audio->Clips.erase(Audio->Clips.begin() + Index);
+            }
+        }
+
+        static FString RowLabel(const CSequenceTrack* Track)
+        {
+            FString Label(Track->GetTrackDisplayName().data(), Track->GetTrackDisplayName().size());
+            if (const CSequenceTrack_Property* Property = Cast<CSequenceTrack_Property>(Track))
+            {
+                Label = Property->PropertyPath.empty() ? FString("Property (unset)") : Property->PropertyPath;
+            }
+            return Label;
+        }
+    }
 
     // Steps of 1, 2 and 5 per decade, so labels never land on awkward fractions.
     static float ChooseRulerStep(float VisibleSeconds, float TrackWidth)
@@ -76,134 +182,17 @@ namespace Lumina
             return;
         }
 
-        BoundEntities.assign(Sequence->Bindings.size(), ECS::NullEntity);
-
-        for (int32 i = 0; i < (int32)Sequence->Bindings.size(); ++i)
-        {
-            const SSequenceBinding& Binding = Sequence->Bindings[i];
-
-            if (Binding.Kind == ESequenceBindingKind::Spawn)
-            {
-                if (!Binding.SpawnPrefab.IsValid())
-                {
-                    continue;
-                }
-
-                const ECS::FEntity Spawned = Binding.SpawnPrefab->Instantiate(World);
-                if (Spawned != ECS::NullEntity)
-                {
-                    BoundEntities[i] = Spawned;
-                    SpawnedEntities.push_back(Spawned);
-                }
-                continue;
-            }
-
-            // Possess matches on the entity's name, which is what the binding stores.
-            auto View = World->View<SNameComponent>();
-            for (ECS::FEntity Entity : View)
-            {
-                if (View.Get<SNameComponent>(Entity).Name == Binding.Name)
-                {
-                    BoundEntities[i] = Entity;
-                    break;
-                }
-            }
-        }
-
-        CaptureRestoreState(World);
+        Instance.bDriveCamera = bPreviewCameras;
+        Instance.Bind(Sequence.Get(), World);
         RefreshAutoKeyWatch(World);
-        bBound = true;
+        bBound = Instance.bBound;
     }
 
     void FSequencerEditMode::ReleaseBindings(CWorld* World)
     {
-        if (bBound)
-        {
-            ApplyRestoreState(World);
-        }
-
-        if (World != nullptr)
-        {
-            for (ECS::FEntity Spawned : SpawnedEntities)
-            {
-                if (World->IsValidEntity(Spawned))
-                {
-                    World->DestroyEntity(Spawned);
-                }
-            }
-        }
-
-        SpawnedEntities.clear();
-        BoundEntities.clear();
-        RestoreState.clear();
+        Instance.Release(World, true);
+        Instance.FiredEvents.clear();
         bBound = false;
-    }
-
-    void FSequencerEditMode::CaptureRestoreState(CWorld* World)
-    {
-        RestoreState.clear();
-
-        if (World == nullptr)
-        {
-            return;
-        }
-
-        for (ECS::FEntity Entity : BoundEntities)
-        {
-            // Spawned entities are destroyed on exit, so there is nothing to put back for them.
-            if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
-            {
-                continue;
-            }
-
-            bool bSpawned = false;
-            for (ECS::FEntity Other : SpawnedEntities)
-            {
-                if (Other == Entity)
-                {
-                    bSpawned = true;
-                    break;
-                }
-            }
-
-            if (bSpawned)
-            {
-                continue;
-            }
-
-            if (STransformComponent* Transform = World->TryGetComponent<STransformComponent>(Entity))
-            {
-                FRestoreEntry Entry;
-                Entry.Entity = Entity;
-                Entry.Location = Transform->GetLocation();
-                Entry.Rotation = Math::Degrees(Math::EulerAngles(Transform->GetRotation()));
-                Entry.Scale = Transform->GetScale();
-                RestoreState.push_back(Entry);
-            }
-        }
-    }
-
-    void FSequencerEditMode::ApplyRestoreState(CWorld* World)
-    {
-        if (World == nullptr)
-        {
-            return;
-        }
-
-        for (const FRestoreEntry& Entry : RestoreState)
-        {
-            if (!World->IsValidEntity(Entry.Entity))
-            {
-                continue;
-            }
-
-            if (STransformComponent* Transform = World->TryGetComponent<STransformComponent>(Entry.Entity))
-            {
-                Transform->SetLocation(Entry.Location);
-                Transform->SetRotationFromEuler(Entry.Rotation);
-                Transform->SetScale(Entry.Scale);
-            }
-        }
     }
 
     void FSequencerEditMode::EvaluateAt(CWorld* World, float NewTime, bool bJumped)
@@ -213,17 +202,17 @@ namespace Lumina
             return;
         }
 
-        FSequenceEvalContext EvalContext;
-        EvalContext.World = World;
-        EvalContext.Sequence = Sequence.Get();
-        EvalContext.PreviousTime = PlayTime;
-        EvalContext.Time = NewTime;
-        EvalContext.BoundEntities = &BoundEntities;
-        EvalContext.bJumped = bJumped;
-
-        Sequence->Evaluate(EvalContext);
-
+        // Stopped means scrubbing, which should not set the score off.
+        Instance.Evaluate(Sequence.Get(), World, NewTime, PlayTime, bJumped, false, false, !bPlaying);
         PlayTime = NewTime;
+
+        // Nothing consumes events in the editor, so the latest is shown and the rest dropped.
+        if (!Instance.FiredEvents.empty())
+        {
+            LastFiredEvent = FString(Instance.FiredEvents.back().Name.ToString().c_str());
+            LastFiredEventTime = ImGui::GetTime();
+            Instance.FiredEvents.clear();
+        }
 
         // Rebasing stops auto-key treating the sequence's own output as an edit on every scrubbed frame.
         RefreshAutoKeyWatch(World);
@@ -231,16 +220,16 @@ namespace Lumina
 
     void FSequencerEditMode::RefreshAutoKeyWatch(CWorld* World)
     {
-        AutoKeyWatch.assign(BoundEntities.size(), FRestoreEntry());
+        AutoKeyWatch.assign(Instance.BoundEntities.size(), FRestoreEntry());
 
         if (World == nullptr)
         {
             return;
         }
 
-        for (int32 i = 0; i < (int32)BoundEntities.size(); ++i)
+        for (int32 i = 0; i < (int32)Instance.BoundEntities.size(); ++i)
         {
-            const ECS::FEntity Entity = BoundEntities[i];
+            const ECS::FEntity Entity = Instance.BoundEntities[i];
             if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
             {
                 continue;
@@ -251,7 +240,7 @@ namespace Lumina
                 FRestoreEntry& Entry = AutoKeyWatch[i];
                 Entry.Entity = Entity;
                 Entry.Location = Transform->GetLocation();
-                Entry.Rotation = Math::Degrees(Math::EulerAngles(Transform->GetRotation()));
+                Entry.Rotation = Math::Degrees(Math::YawFirstEulerAngles(Transform->GetRotation()));
                 Entry.Scale = Transform->GetScale();
             }
         }
@@ -259,7 +248,7 @@ namespace Lumina
 
     void FSequencerEditMode::ProcessAutoKey(CWorld* World)
     {
-        if (World == nullptr || !bBound || AutoKeyWatch.size() != BoundEntities.size())
+        if (World == nullptr || !bBound || AutoKeyWatch.size() != Instance.BoundEntities.size())
         {
             return;
         }
@@ -268,9 +257,9 @@ namespace Lumina
         constexpr float PositionEpsilonSq = 1e-6f;
         constexpr float AngleEpsilonSq    = 1e-4f;
 
-        for (int32 i = 0; i < (int32)BoundEntities.size(); ++i)
+        for (int32 i = 0; i < (int32)Instance.BoundEntities.size(); ++i)
         {
-            const ECS::FEntity Entity = BoundEntities[i];
+            const ECS::FEntity Entity = Instance.BoundEntities[i];
             if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity) || AutoKeyWatch[i].Entity != Entity)
             {
                 continue;
@@ -284,7 +273,7 @@ namespace Lumina
 
             const FRestoreEntry& Watched = AutoKeyWatch[i];
             const FVector3 Location = Transform->GetLocation();
-            const FVector3 Rotation = Math::Degrees(Math::EulerAngles(Transform->GetRotation()));
+            const FVector3 Rotation = Math::Degrees(Math::YawFirstEulerAngles(Transform->GetRotation()));
             const FVector3 Scale = Transform->GetScale();
 
             const bool bMoved = Math::LengthSquared(Location - Watched.Location) > PositionEpsilonSq
@@ -378,12 +367,12 @@ namespace Lumina
     void FSequencerEditMode::KeyTransform(CWorld* World, int32 BindingIndex)
     {
         if (World == nullptr || !Sequence.IsValid()
-            || BindingIndex < 0 || BindingIndex >= (int32)BoundEntities.size())
+            || BindingIndex < 0 || BindingIndex >= (int32)Instance.BoundEntities.size())
         {
             return;
         }
 
-        const ECS::FEntity Entity = BoundEntities[BindingIndex];
+        const ECS::FEntity Entity = Instance.BoundEntities[BindingIndex];
         if (Entity == ECS::NullEntity || !World->IsValidEntity(Entity))
         {
             ImGuiX::Notifications::NotifyWarning("That binding did not resolve to an entity in this world.");
@@ -400,7 +389,7 @@ namespace Lumina
 
         const float Time = Sequence->SnapToFrame(PlayTime);
         const FVector3 Location = Transform->GetLocation();
-        const FVector3 Rotation = Math::Degrees(Math::EulerAngles(Transform->GetRotation()));
+        const FVector3 Rotation = Math::Degrees(Math::YawFirstEulerAngles(Transform->GetRotation()));
         const FVector3 Scale = Transform->GetScale();
 
         // A duplicate key at an identical time makes a zero-width segment, which reads as a hard step.
@@ -414,6 +403,7 @@ namespace Lumina
         KeyChannel(Track->Location, Location);
         KeyChannel(Track->Rotation, Rotation);
         KeyChannel(Track->Scale, Scale);
+        Track->Rotation.UnwindAngles();
 
         Sequence->GetPackage()->MarkDirty();
     }
@@ -606,9 +596,9 @@ namespace Lumina
         }
 
         // A binding with no camera would produce a cut that silently does nothing at runtime.
-        if (SelectedBinding < (int32)BoundEntities.size())
+        if (SelectedBinding < (int32)Instance.BoundEntities.size())
         {
-            const ECS::FEntity Entity = BoundEntities[SelectedBinding];
+            const ECS::FEntity Entity = Instance.BoundEntities[SelectedBinding];
             if (Entity != ECS::NullEntity && World->IsValidEntity(Entity)
                 && World->TryGetComponent<SCameraComponent>(Entity) == nullptr)
             {
@@ -928,12 +918,19 @@ namespace Lumina
         DrawBindingList(World);
         ImGui::Separator();
         DrawTimeline(World);
+        DrawDetails(World);
 
         // The request comes from a popup, and the row loop above iterates the arrays this resizes.
         if (PendingRemoveBinding != INDEX_NONE)
         {
             RemoveBinding(World, PendingRemoveBinding);
             PendingRemoveBinding = INDEX_NONE;
+        }
+
+        if (PendingRemoveTrack != INDEX_NONE)
+        {
+            RemoveTrack(World, PendingRemoveTrack);
+            PendingRemoveTrack = INDEX_NONE;
         }
 
         ImGui::End();
@@ -1056,6 +1053,32 @@ namespace Lumina
             Sequence->GetPackage()->MarkDirty();
         }
         ImGuiX::TextTooltip("Display and snapping rate. Evaluation stays continuous, so this never quantizes playback.");
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110.0f);
+        float LetterboxEntry = Sequence->LetterboxAspect;
+        const char* LetterboxFormat = LetterboxEntry > 0.0f ? "Bars %.2f" : "No bars";
+        if (ImGui::DragFloat("##Letterbox", &LetterboxEntry, 0.01f, 0.0f, 4.0f, LetterboxFormat))
+        {
+            Sequence->LetterboxAspect = Math::Clamp(LetterboxEntry, 0.0f, 4.0f);
+            Sequence->GetPackage()->MarkDirty();
+            EvaluateAt(World, PlayTime, true);
+        }
+        ImGuiX::TextTooltip("Black bars at this width over height for the whole sequence, such as 2.39. Zero shows none.");
+
+        ImGui::SameLine();
+        bool bPreview = bPreviewCameras;
+        if (ImGui::Checkbox(LE_ICON_MOVIE_OPEN " Preview Cuts", &bPreview))
+        {
+            SetPreviewCameras(World, bPreview);
+        }
+        ImGuiX::TextTooltip("Look through the camera each cut makes live. Off keeps your own camera so you can fly through a shot.");
+
+        if (!LastFiredEvent.empty() && ImGui::GetTime() - LastFiredEventTime < 1.5)
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), LE_ICON_FLAG " %s", LastFiredEvent.c_str());
+        }
     }
 
     void FSequencerEditMode::CollectKeyTimes(TVector<float>& OutTimes) const
@@ -1088,6 +1111,14 @@ namespace Lumina
                 {
                     OutTimes.push_back(Cut.StartTime);
                     OutTimes.push_back(Cut.EndTime);
+                }
+            }
+            else
+            {
+                CSequenceTrack* Mutable = const_cast<CSequenceTrack*>(Track.Get());
+                for (int32 Key = 0; Key < SequencerTracks::KeyCount(Mutable); ++Key)
+                {
+                    OutTimes.push_back(*SequencerTracks::KeyTime(Mutable, Key));
                 }
             }
         }
@@ -1191,17 +1222,26 @@ namespace Lumina
                 continue;
             }
 
-            if (CSequenceTrack_Transform* Transform = Cast<CSequenceTrack_Transform>(Track.Get()))
+            if (Track->BindingIndex == BindingIndex)
             {
-                if (Transform->BindingIndex == BindingIndex)
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                // Indices above the hole all shift down by one.
-                if (Transform->BindingIndex > BindingIndex)
+            // Indices above the hole all shift down by one.
+            if (Track->BindingIndex > BindingIndex)
+            {
+                --Track->BindingIndex;
+            }
+
+            if (CSequenceTrack_LookAt* LookAt = Cast<CSequenceTrack_LookAt>(Track.Get()))
+            {
+                if (LookAt->TargetBindingIndex == BindingIndex)
                 {
-                    --Transform->BindingIndex;
+                    LookAt->TargetBindingIndex = INDEX_NONE;
+                }
+                else if (LookAt->TargetBindingIndex > BindingIndex)
+                {
+                    --LookAt->TargetBindingIndex;
                 }
             }
             else if (CSequenceTrack_CameraCut* Cuts = Cast<CSequenceTrack_CameraCut>(Track.Get()))
@@ -1238,6 +1278,8 @@ namespace Lumina
         SelectedBinding = INDEX_NONE;
         SelectedKeyBinding = INDEX_NONE;
         SelectedCut = INDEX_NONE;
+        SelectedTrack = INDEX_NONE;
+        SelectedTrackKey = INDEX_NONE;
 
         BindToWorld(World);
     }
@@ -1269,6 +1311,30 @@ namespace Lumina
         ImGui::EndDisabled();
 
         ImGui::SameLine();
+        if (ImGui::Button(LE_ICON_CAMERA " New Camera"))
+        {
+            AddCameraFromView(World);
+        }
+        ImGuiX::TextTooltip("Add a cinematic camera where the editor camera is, keyed at the playhead and cut to from here.");
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(SelectedBinding == INDEX_NONE);
+        if (ImGui::Button(LE_ICON_CAMERA_IRIS " Key From View"))
+        {
+            KeyFromView(World, SelectedBinding);
+        }
+        ImGuiX::TextTooltip("Key the selected binding to where the editor camera is. Turn off Preview Cuts, fly to the next pose, key again.");
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button(LE_ICON_PLUS " Track"))
+        {
+            ImGui::OpenPopup("##AddTrack");
+        }
+        ImGuiX::TextTooltip("Add a track. Tracks that drive something go on the selected binding, the rest on the whole sequence.");
+        DrawAddTrackMenu(World);
+
+        ImGui::SameLine();
         bool bAuto = bAutoKey;
         if (ImGui::Checkbox("Auto Key", &bAuto))
         {
@@ -1298,7 +1364,35 @@ namespace Lumina
         const float TrackWidth = Math::Max(PanelWidth - SequencerLabelWidth, 64.0f);
         const float TrackLeft = Origin.x + SequencerLabelWidth;
 
-        const int32 RowCount = (int32)Sequence->Bindings.size() + 1;
+        // Each binding's row is followed by its other tracks, then the tracks that act on the whole sequence.
+        struct FTimelineRow { int32 Binding = INDEX_NONE; int32 Track = INDEX_NONE; };
+        TVector<FTimelineRow> Rows;
+        const auto IsRowTrack = [](const CSequenceTrack* Track)
+        {
+            return Track != nullptr && !Track->IsA<CSequenceTrack_Transform>() && !Track->IsA<CSequenceTrack_CameraCut>();
+        };
+        for (int32 BindingIndex = 0; BindingIndex < (int32)Sequence->Bindings.size(); ++BindingIndex)
+        {
+            Rows.push_back({ BindingIndex, INDEX_NONE });
+            for (int32 TrackIndex = 0; TrackIndex < (int32)Sequence->Tracks.size(); ++TrackIndex)
+            {
+                const CSequenceTrack* Track = Sequence->Tracks[TrackIndex].Get();
+                if (IsRowTrack(Track) && Track->BindingIndex == BindingIndex)
+                {
+                    Rows.push_back({ BindingIndex, TrackIndex });
+                }
+            }
+        }
+        for (int32 TrackIndex = 0; TrackIndex < (int32)Sequence->Tracks.size(); ++TrackIndex)
+        {
+            const CSequenceTrack* Track = Sequence->Tracks[TrackIndex].Get();
+            if (IsRowTrack(Track) && (Track->BindingIndex < 0 || Track->BindingIndex >= (int32)Sequence->Bindings.size()))
+            {
+                Rows.push_back({ INDEX_NONE, TrackIndex });
+            }
+        }
+
+        const int32 RowCount = (int32)Rows.size() + 1;
         const float BodyTop = Origin.y + SequencerRulerHeight;
         const float BodyHeight = (float)RowCount * SequencerTrackHeight;
         const float TotalHeight = SequencerRulerHeight + BodyHeight;
@@ -1348,9 +1442,15 @@ namespace Lumina
 
         const float CutRowHeight = DrawCameraCutRow(World, DrawList, ImVec2(Origin.x, BodyTop), TrackLeft, TrackWidth, Duration);
 
-        for (int32 i = 0; i < (int32)Sequence->Bindings.size(); ++i)
+        for (int32 RowIndex = 0; RowIndex < (int32)Rows.size(); ++RowIndex)
         {
-            const float RowY = BodyTop + CutRowHeight + (float)i * SequencerTrackHeight;
+            const float RowY = BodyTop + CutRowHeight + (float)RowIndex * SequencerTrackHeight;
+            if (Rows[RowIndex].Track != INDEX_NONE)
+            {
+                DrawTrackRow(World, DrawList, Rows[RowIndex].Track, RowIndex, RowY, Origin.x, PanelWidth, TrackLeft, TrackWidth, bTimelineHovered);
+                continue;
+            }
+            const int32 i = Rows[RowIndex].Binding;
 
             const ImVec2 RowMin(Origin.x, RowY);
             const ImVec2 RowMax(Origin.x + PanelWidth, RowY + SequencerTrackHeight);
@@ -1359,7 +1459,7 @@ namespace Lumina
             const bool bHovered = bTimelineHovered && ImGui::IsMouseHoveringRect(RowMin, RowMax);
 
             const ImU32 RowColor = bSelected ? SeqRowSelBg
-                                 : (bHovered ? SeqRowHoverBg : ((i & 1) ? SeqRowAltBg : SeqRowBg));
+                                 : (bHovered ? SeqRowHoverBg : ((RowIndex & 1) ? SeqRowAltBg : SeqRowBg));
             DrawList->AddRectFilled(RowMin, RowMax, RowColor);
 
             // So a long name reads as clipped rather than as running into the keys.
@@ -1376,6 +1476,8 @@ namespace Lumina
             if (bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 SelectedBinding = i;
+                SelectedTrack = INDEX_NONE;
+                SelectedTrackKey = INDEX_NONE;
             }
 
             if (bOnLabel && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
@@ -1502,6 +1604,29 @@ namespace Lumina
             }
         }
 
+        if (bDraggingTrackKey)
+        {
+            CSequenceTrack* Track = SelectedTrack >= 0 && SelectedTrack < (int32)Sequence->Tracks.size() ? Sequence->Tracks[SelectedTrack].Get() : nullptr;
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || Track == nullptr || SelectedTrackKey == INDEX_NONE)
+            {
+                bDraggingTrackKey = false;
+            }
+            else
+            {
+                const float NewTime = Sequence->SnapToFrame(Math::Clamp(VisibleXToTime(ImGui::GetMousePos().x), 0.0f, Duration));
+                float* KeyTime = SequencerTracks::KeyTime(Track, SelectedTrackKey);
+                if (KeyTime != nullptr && Math::Abs(NewTime - *KeyTime) > 1e-4f)
+                {
+                    *KeyTime = NewTime;
+                    SelectedTrackKey = SequencerTracks::SortKeys(Track, SelectedTrackKey);
+                    Sequence->GetPackage()->MarkDirty();
+                    EvaluateAt(World, PlayTime, true);
+                }
+            }
+        }
+
+        DrawTrackPopups(World);
+
         if (ImGui::BeginPopup("##BindingContext"))
         {
             ImGui::BeginDisabled(SelectedBinding == INDEX_NONE);
@@ -1589,6 +1714,537 @@ namespace Lumina
         {
             bPlaying = false;
             EvaluateAt(World, Sequence->SnapToFrame(Math::Clamp(VisibleXToTime(ImGui::GetMousePos().x), 0.0f, Duration)), true);
+        }
+    }
+
+    void FSequencerEditMode::DrawTrackRow(CWorld* World, ImDrawList* DrawList, int32 TrackIndex, int32 RowIndex, float RowY,
+                                          float Left, float PanelWidth, float TrackLeft, float TrackWidth, bool bTimelineHovered)
+    {
+        CSequenceTrack* Track = Sequence->Tracks[TrackIndex].Get();
+
+        const ImVec2 RowMin(Left, RowY);
+        const ImVec2 RowMax(Left + PanelWidth, RowY + SequencerTrackHeight);
+        const bool bSelected = TrackIndex == SelectedTrack;
+        const bool bHovered = bTimelineHovered && ImGui::IsMouseHoveringRect(RowMin, RowMax);
+        DrawList->AddRectFilled(RowMin, RowMax, bSelected ? SeqRowSelBg : (bHovered ? SeqRowHoverBg : ((RowIndex & 1) ? SeqRowAltBg : SeqRowBg)));
+        DrawList->AddLine(ImVec2(TrackLeft, RowY), ImVec2(TrackLeft, RowMax.y), SeqGridMajor);
+
+        const FVector4 Tint = Track->GetTrackColor();
+        const float Alpha = Track->bEnabled ? 1.0f : 0.35f;
+        const ImU32 TintColor = ImGui::ColorConvertFloat4ToU32(ImVec4(Tint.x, Tint.y, Tint.z, Alpha));
+        const ImU32 TintFaint = ImGui::ColorConvertFloat4ToU32(ImVec4(Tint.x, Tint.y, Tint.z, 0.28f * Alpha));
+
+        // Indented under its binding, so the row reads as belonging to the entity above it.
+        const float Indent = Track->BindingIndex != INDEX_NONE ? 24.0f : 10.0f;
+        DrawList->AddRectFilled(ImVec2(Left + Indent - 7.0f, RowY + 6.0f), ImVec2(Left + Indent - 3.0f, RowMax.y - 6.0f), TintColor, 1.0f);
+
+        const FString Label = SequencerTracks::RowLabel(Track);
+        DrawList->PushClipRect(RowMin, ImVec2(TrackLeft - 4.0f, RowMax.y), true);
+        DrawList->AddText(ImVec2(Left + Indent, RowY + 5.0f), Track->bEnabled ? (bSelected ? SeqText : SeqTextDim) : IM_COL32(110, 114, 124, 255), Label.c_str());
+        DrawList->PopClipRect();
+
+        const bool bOnLabel = bHovered && ImGui::GetMousePos().x < TrackLeft;
+        if (bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !bDraggingTrackKey)
+        {
+            SelectedTrack = TrackIndex;
+            SelectedTrackKey = INDEX_NONE;
+            SelectedKeyBinding = INDEX_NONE;
+        }
+        if (bOnLabel && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+        {
+            SelectedTrack = TrackIndex;
+            ImGui::OpenPopup("##TrackContext");
+        }
+
+        DrawList->PushClipRect(ImVec2(TrackLeft, RowY), RowMax, true);
+        const float MidY = RowY + SequencerTrackHeight * 0.5f;
+
+        // The curve's shape behind its keys, so a fade or a speed ramp reads without opening an editor.
+        if (SKeyedCurve* Keys = SequencerTracks::Curve(Track); Keys != nullptr && Keys->NumKeys() > 0)
+        {
+            float MinValue = 0.0f;
+            float MaxValue = 1.0f;
+            Keys->GetValueRange(MinValue, MaxValue);
+            MinValue = Math::Min(MinValue, 0.0f);
+            MaxValue = Math::Max(MaxValue, MinValue + 1e-3f);
+
+            const float Top = RowY + 4.0f;
+            const float Height = SequencerTrackHeight - 8.0f;
+            ImVec2 Previous;
+            for (float X = TrackLeft; X <= TrackLeft + TrackWidth; X += 3.0f)
+            {
+                const float Value = Keys->Evaluate(VisibleXToTime(X));
+                const ImVec2 Point(X, Top + Height * (1.0f - (Value - MinValue) / (MaxValue - MinValue)));
+                if (X > TrackLeft)
+                {
+                    DrawList->AddQuadFilled(ImVec2(Previous.x, RowMax.y - 4.0f), Previous, Point, ImVec2(Point.x, RowMax.y - 4.0f), TintFaint);
+                    DrawList->AddLine(Previous, Point, TintColor, 1.5f);
+                }
+                Previous = Point;
+            }
+        }
+
+        const int32 KeyCount = SequencerTracks::KeyCount(Track);
+        for (int32 KeyIndex = 0; KeyIndex < KeyCount; ++KeyIndex)
+        {
+            const float Time = *SequencerTracks::KeyTime(Track, KeyIndex);
+            const float X = VisibleTimeToX(Time);
+            const bool bKeySelected = bSelected && KeyIndex == SelectedTrackKey;
+            const ImU32 Fill = bKeySelected ? IM_COL32(255, 255, 255, 255) : TintColor;
+            float HitRight = X + 6.0f;
+
+            if (const CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track))
+            {
+                // A flag on a pole, named, since an event's name is the whole point of it.
+                DrawList->AddLine(ImVec2(X, RowY + 3.0f), ImVec2(X, RowMax.y - 3.0f), Fill, 2.0f);
+                DrawList->AddTriangleFilled(ImVec2(X, RowY + 3.0f), ImVec2(X + 9.0f, RowY + 7.0f), ImVec2(X, RowY + 11.0f), Fill);
+                const char* Name = Events->Keys[KeyIndex].Name.c_str();
+                DrawList->AddText(ImVec2(X + 11.0f, RowY + 5.0f), SeqText, Name);
+                HitRight = X + 11.0f + ImGui::CalcTextSize(Name).x;
+            }
+            else if (const CSequenceTrack_Audio* Audio = Cast<CSequenceTrack_Audio>(Track))
+            {
+                const SSequenceAudioClip& Clip = Audio->Clips[KeyIndex];
+                const char* Name = Clip.Sound.IsValid() ? Clip.Sound->GetName().c_str() : "<no sound>";
+                const float Width = Math::Max(ImGui::CalcTextSize(Name).x + 24.0f, 60.0f);
+                DrawList->AddRectFilled(ImVec2(X, RowY + 3.0f), ImVec2(X + Width, RowMax.y - 3.0f), bKeySelected ? Fill : TintFaint, 3.0f);
+                DrawList->AddRect(ImVec2(X, RowY + 3.0f), ImVec2(X + Width, RowMax.y - 3.0f), TintColor, 3.0f);
+                DrawList->AddText(ImVec2(X + 5.0f, RowY + 5.0f), SeqText, LE_ICON_MUSIC);
+                DrawList->AddText(ImVec2(X + 20.0f, RowY + 5.0f), SeqText, Name);
+                HitRight = X + Width;
+            }
+            else
+            {
+                const float R = bKeySelected ? 6.5f : 5.0f;
+                DrawList->AddQuadFilled(ImVec2(X, MidY - R), ImVec2(X + R, MidY), ImVec2(X, MidY + R), ImVec2(X - R, MidY), Fill);
+                DrawList->AddQuad(ImVec2(X, MidY - R), ImVec2(X + R, MidY), ImVec2(X, MidY + R), ImVec2(X - R, MidY), SeqKeyOutline, 1.5f);
+            }
+
+            const bool bKeyHovered = bTimelineHovered && ImGui::IsMouseHoveringRect(ImVec2(X - 7.0f, RowY), ImVec2(HitRight, RowMax.y));
+            if (bKeyHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !bDraggingTrackKey)
+            {
+                SelectedTrack = TrackIndex;
+                SelectedTrackKey = KeyIndex;
+                bDraggingTrackKey = true;
+                bPlaying = false;
+            }
+            if (bKeyHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                SelectedTrack = TrackIndex;
+                SelectedTrackKey = KeyIndex;
+                ImGui::OpenPopup("##TrackKeyContext");
+            }
+        }
+
+        DrawList->PopClipRect();
+        (void)World;
+    }
+
+    void FSequencerEditMode::DrawTrackPopups(CWorld* World)
+    {
+        CSequenceTrack* Track = SelectedTrack >= 0 && SelectedTrack < (int32)Sequence->Tracks.size() ? Sequence->Tracks[SelectedTrack].Get() : nullptr;
+
+        if (ImGui::BeginPopup("##TrackContext"))
+        {
+            if (Track != nullptr)
+            {
+                if (ImGui::MenuItem(Track->bEnabled ? LE_ICON_EYE_OFF " Disable" : LE_ICON_EYE " Enable"))
+                {
+                    Track->bEnabled = !Track->bEnabled;
+                    Sequence->GetPackage()->MarkDirty();
+                    EvaluateAt(World, PlayTime, true);
+                }
+
+                if (SequencerTracks::Curve(Track) != nullptr && ImGui::MenuItem(LE_ICON_KEY_PLUS " Key At Playhead"))
+                {
+                    KeyTrackAtPlayhead(World, Track);
+                }
+
+                if (CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track); Events != nullptr && ImGui::MenuItem(LE_ICON_FLAG " Add Event At Playhead"))
+                {
+                    SSequenceEventKey Key;
+                    Key.Time = Sequence->SnapToFrame(PlayTime);
+                    Key.Name = FName("Event");
+                    Events->Keys.push_back(Key);
+                    SelectedTrackKey = SequencerTracks::SortKeys(Track, (int32)Events->Keys.size() - 1);
+                    Sequence->GetPackage()->MarkDirty();
+                }
+
+                if (CSequenceTrack_Audio* Audio = Cast<CSequenceTrack_Audio>(Track); Audio != nullptr && ImGui::MenuItem(LE_ICON_MUSIC " Add Clip At Playhead"))
+                {
+                    SSequenceAudioClip& Clip = Audio->Clips.emplace_back();
+                    Clip.StartTime = Sequence->SnapToFrame(PlayTime);
+                    SelectedTrackKey = (int32)Audio->Clips.size() - 1;
+                    Sequence->GetPackage()->MarkDirty();
+                }
+
+                ImGui::Separator();
+                if (ImGui::MenuItem(LE_ICON_DELETE " Delete Track"))
+                {
+                    PendingRemoveTrack = SelectedTrack;
+                }
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopup("##TrackKeyContext"))
+        {
+            SKeyedCurve* Keys = Track != nullptr ? SequencerTracks::Curve(Track) : nullptr;
+            if (Keys != nullptr && SelectedTrackKey >= 0 && SelectedTrackKey < Keys->NumKeys() && ImGui::BeginMenu(LE_ICON_VECTOR_CURVE " Interpolation"))
+            {
+                struct FInterpChoice { const char* Label; ECurveInterpMode Mode; };
+                const FInterpChoice Choices[] =
+                {
+                    { LE_ICON_STAIRS " Constant",        ECurveInterpMode::Constant },
+                    { LE_ICON_VECTOR_LINE " Linear",     ECurveInterpMode::Linear   },
+                    { LE_ICON_CHART_BELL_CURVE " Cubic", ECurveInterpMode::Cubic    },
+                };
+                for (const FInterpChoice& Choice : Choices)
+                {
+                    if (ImGui::MenuItem(Choice.Label, nullptr, Keys->Keys[SelectedTrackKey].InterpMode == Choice.Mode))
+                    {
+                        Keys->Keys[SelectedTrackKey].InterpMode = Choice.Mode;
+                        Keys->ComputeAutoTangents();
+                        Sequence->GetPackage()->MarkDirty();
+                        EvaluateAt(World, PlayTime, true);
+                    }
+                }
+                ImGui::EndMenu();
+            }
+
+            if (ImGui::MenuItem(LE_ICON_DELETE " Delete Key") && Track != nullptr)
+            {
+                SequencerTracks::RemoveKey(Track, SelectedTrackKey);
+                SelectedTrackKey = INDEX_NONE;
+                Sequence->GetPackage()->MarkDirty();
+                EvaluateAt(World, PlayTime, true);
+            }
+            ImGui::EndPopup();
+        }
+
+        if (Track != nullptr && SelectedTrackKey != INDEX_NONE && !bDraggingTrackKey
+            && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput
+            && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        {
+            SequencerTracks::RemoveKey(Track, SelectedTrackKey);
+            SelectedTrackKey = INDEX_NONE;
+            Sequence->GetPackage()->MarkDirty();
+            EvaluateAt(World, PlayTime, true);
+        }
+    }
+
+    void FSequencerEditMode::DrawDetails(CWorld* World)
+    {
+        CSequenceTrack* Track = SelectedTrack >= 0 && SelectedTrack < (int32)Sequence->Tracks.size() ? Sequence->Tracks[SelectedTrack].Get() : nullptr;
+        if (Track == nullptr)
+        {
+            Details.reset();
+            DetailsTarget = nullptr;
+            return;
+        }
+
+        ImGui::Spacing();
+        ImGui::SeparatorText(SequencerTracks::RowLabel(Track).c_str());
+
+        // The selected key first, since it is what an author just clicked and wants to change.
+        bool bChanged = false;
+        if (SKeyedCurve* Keys = SequencerTracks::Curve(Track); Keys != nullptr && SelectedTrackKey >= 0 && SelectedTrackKey < Keys->NumKeys())
+        {
+            SCurveKey& Key = Keys->Keys[SelectedTrackKey];
+            ImGui::SetNextItemWidth(140.0f);
+            bChanged |= ImGui::DragFloat("Value", &Key.Value, 0.01f);
+            ImGui::SameLine();
+            ImGui::TextDisabled("at %.2fs", Key.Time);
+            if (bChanged)
+            {
+                Keys->ComputeAutoTangents();
+            }
+        }
+        else if (CSequenceTrack_Event* Events = Cast<CSequenceTrack_Event>(Track); Events != nullptr && SelectedTrackKey >= 0 && SelectedTrackKey < (int32)Events->Keys.size())
+        {
+            SSequenceEventKey& Key = Events->Keys[SelectedTrackKey];
+            char NameBuffer[128];
+            std::snprintf(NameBuffer, sizeof(NameBuffer), "%s", Key.Name.c_str());
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::InputText("Name", NameBuffer, sizeof(NameBuffer)))
+            {
+                Key.Name = FName(NameBuffer);
+                bChanged = true;
+            }
+            ImGui::SameLine();
+            char PayloadBuffer[256];
+            std::snprintf(PayloadBuffer, sizeof(PayloadBuffer), "%s", Key.Payload.c_str());
+            ImGui::SetNextItemWidth(220.0f);
+            if (ImGui::InputText("Payload", PayloadBuffer, sizeof(PayloadBuffer)))
+            {
+                Key.Payload = PayloadBuffer;
+                bChanged = true;
+            }
+        }
+        else if (CSequenceTrack_Audio* Audio = Cast<CSequenceTrack_Audio>(Track); Audio != nullptr && SelectedTrackKey >= 0 && SelectedTrackKey < (int32)Audio->Clips.size())
+        {
+            SSequenceAudioClip& Clip = Audio->Clips[SelectedTrackKey];
+            FGuid SoundGUID = Clip.Sound.IsValid() ? Clip.Sound->GetGUID() : FGuid();
+            ImGui::SetNextItemWidth(220.0f);
+            if (ImGuiX::AssetReferenceCombo("##ClipSound", CSoundBase::StaticClass(), SoundGUID, LE_ICON_MUSIC))
+            {
+                Clip.Sound = Cast<CSoundBase>(LoadObject<CObject>(SoundGUID));
+                bChanged = true;
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110.0f);
+            bChanged |= ImGui::DragFloat("Volume", &Clip.Volume, 0.01f, 0.0f, 4.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110.0f);
+            bChanged |= ImGui::DragFloat("Pitch", &Clip.Pitch, 0.01f, 0.01f, 4.0f);
+        }
+
+        if (bChanged)
+        {
+            Sequence->GetPackage()->MarkDirty();
+            EvaluateAt(World, PlayTime, true);
+        }
+
+        if (DetailsTarget != Track || !Details)
+        {
+            Details = MakeUnique<FPropertyTable>(static_cast<CObject*>(Track));
+            Details->SetShowSearchBar(false);
+            Details->SetPostEditCallback([this, World](const FPropertyChangedEvent&)
+            {
+                if (Sequence.IsValid())
+                {
+                    Sequence->GetPackage()->MarkDirty();
+                    EvaluateAt(World, PlayTime, true);
+                }
+            });
+            DetailsTarget = Track;
+        }
+        Details->DrawTree();
+    }
+
+    void FSequencerEditMode::DrawAddTrackMenu(CWorld* World)
+    {
+        if (!ImGui::BeginPopup("##AddTrack"))
+        {
+            return;
+        }
+
+        struct FTrackChoice { const char* Label; CClass* Class; bool bNeedsBinding; const char* Tooltip; };
+        const FTrackChoice Choices[] =
+        {
+            { LE_ICON_AXIS_ARROW " Transform",        CSequenceTrack_Transform::StaticClass(),    true,  "Keys the binding's location, rotation and scale." },
+            { LE_ICON_TUNE " Property",               CSequenceTrack_Property::StaticClass(),     true,  "A curve on one number of one component, such as a camera's FOV or a light's intensity." },
+            { LE_ICON_EYE " Look At",                 CSequenceTrack_LookAt::StaticClass(),       true,  "Aims the binding at another binding or a fixed point, and can pull focus onto it." },
+            { LE_ICON_FLAG " Events",                 CSequenceTrack_Event::StaticClass(),        false, "Named moments gameplay reacts to." },
+            { LE_ICON_MUSIC " Audio",                 CSequenceTrack_Audio::StaticClass(),        false, "Music and sounds started on cue." },
+            { LE_ICON_CIRCLE_HALF_FULL " Fade",       CSequenceTrack_Fade::StaticClass(),         false, "Fades the whole picture to a color." },
+            { LE_ICON_TIMER " Time Dilation",         CSequenceTrack_TimeDilation::StaticClass(), false, "Slow motion while the edit keeps real time." },
+            { LE_ICON_VIBRATE " Camera Shake",        CSequenceTrack_CameraShake::StaticClass(),  false, "A handheld drift over whichever camera is live." },
+        };
+
+        for (const FTrackChoice& Choice : Choices)
+        {
+            const bool bDisabled = Choice.bNeedsBinding && SelectedBinding == INDEX_NONE;
+            if (ImGui::MenuItem(Choice.Label, nullptr, false, !bDisabled))
+            {
+                AddTrackOfClass(World, Choice.Class, Choice.bNeedsBinding ? SelectedBinding : INDEX_NONE);
+            }
+            ImGuiX::TextTooltip("{}", bDisabled ? "Select a binding first." : Choice.Tooltip);
+        }
+        ImGui::EndPopup();
+    }
+
+    CSequenceTrack* FSequencerEditMode::AddTrackOfClass(CWorld* World, CClass* Class, int32 BindingIndex)
+    {
+        if (!Sequence.IsValid())
+        {
+            return nullptr;
+        }
+
+        if (Class == CSequenceTrack_Transform::StaticClass())
+        {
+            CSequenceTrack_Transform* Transform = FindOrCreateTransformTrack(BindingIndex);
+            Sequence->GetPackage()->MarkDirty();
+            return Transform;
+        }
+
+        // Outered to the sequence's package so the track is an export and survives a save.
+        CSequenceTrack* Track = NewObject<CSequenceTrack>(Class, Sequence->GetPackage());
+        Track->BindingIndex = BindingIndex;
+
+        const ECS::FEntity Entity = BindingIndex >= 0 && BindingIndex < (int32)Instance.BoundEntities.size() ? Instance.BoundEntities[BindingIndex] : ECS::NullEntity;
+        if (CSequenceTrack_Property* Property = Cast<CSequenceTrack_Property>(Track))
+        {
+            // A camera's lens is what a property track drives most, so a camera binding starts on its FOV.
+            if (Entity != ECS::NullEntity && World != nullptr && World->IsValidEntity(Entity) && World->TryGetComponent<SCameraComponent>(Entity) != nullptr)
+            {
+                Property->ComponentType = FName("SCameraComponent");
+                Property->PropertyPath = "FOV";
+            }
+        }
+
+        Sequence->Tracks.push_back(Track);
+        SelectedTrack = (int32)Sequence->Tracks.size() - 1;
+        SelectedTrackKey = INDEX_NONE;
+        Sequence->GetPackage()->MarkDirty();
+
+        if (SequencerTracks::Curve(Track) != nullptr)
+        {
+            KeyTrackAtPlayhead(World, Track);
+        }
+        return Track;
+    }
+
+    void FSequencerEditMode::KeyTrackAtPlayhead(CWorld* World, CSequenceTrack* Track)
+    {
+        SKeyedCurve* Keys = SequencerTracks::Curve(Track);
+        if (Keys == nullptr)
+        {
+            return;
+        }
+
+        const float Time = Sequence->SnapToFrame(PlayTime);
+        float Value = Keys->NumKeys() > 0 ? Keys->Evaluate(Time) : SequencerTracks::RestingValue(Track);
+
+        // A property keys what the entity holds now, so posing it in the details panel and keying is the workflow.
+        if (const CSequenceTrack_Property* Property = Cast<CSequenceTrack_Property>(Track))
+        {
+            const int32 Binding = Property->BindingIndex;
+            if (Binding >= 0 && Binding < (int32)Instance.BoundEntities.size())
+            {
+                Property->SampleValue(World, Instance.BoundEntities[Binding], Value);
+            }
+        }
+
+        const int32 Index = Keys->UpdateOrAddKey(Time, Value);
+        Keys->Keys[Index].InterpMode = ECurveInterpMode::Cubic;
+        Keys->ComputeAutoTangents();
+        SelectedTrack = Algo::IndexOfIf(Sequence->Tracks, [Track](const TObjectPtr<CSequenceTrack>& Other) { return Other.Get() == Track; });
+        SelectedTrackKey = Index;
+        Sequence->GetPackage()->MarkDirty();
+        EvaluateAt(World, PlayTime, true);
+    }
+
+    void FSequencerEditMode::RemoveTrack(CWorld* World, int32 TrackIndex)
+    {
+        if (!Sequence.IsValid() || TrackIndex < 0 || TrackIndex >= (int32)Sequence->Tracks.size())
+        {
+            return;
+        }
+
+        // Released first, so a shake, sound or time scale the track left running is undone before it goes.
+        ReleaseBindings(World);
+        Sequence->Tracks.erase(Sequence->Tracks.begin() + TrackIndex);
+        Sequence->GetPackage()->MarkDirty();
+        SelectedTrack = INDEX_NONE;
+        SelectedTrackKey = INDEX_NONE;
+        BindToWorld(World);
+        EvaluateAt(World, PlayTime, true);
+    }
+
+    bool FSequencerEditMode::GetEditorView(CWorld* World, FVector3& OutLocation, FVector3& OutRotation) const
+    {
+        if (World == nullptr)
+        {
+            return false;
+        }
+
+        auto View = World->View<FEditorComponent, STransformComponent>();
+        for (ECS::FEntity Entity : View)
+        {
+            const STransformComponent& Transform = View.Get<STransformComponent>(Entity);
+            OutLocation = Transform.GetWorldLocation();
+            OutRotation = Math::Degrees(Math::YawFirstEulerAngles(Transform.GetWorldRotation()));
+            return true;
+        }
+        return false;
+    }
+
+    void FSequencerEditMode::KeyFromView(CWorld* World, int32 BindingIndex)
+    {
+        FVector3 Location;
+        FVector3 Rotation;
+        if (!Sequence.IsValid() || BindingIndex < 0 || BindingIndex >= (int32)Sequence->Bindings.size() || !GetEditorView(World, Location, Rotation))
+        {
+            return;
+        }
+
+        CSequenceTrack_Transform* Track = FindOrCreateTransformTrack(BindingIndex);
+        const float Time = Sequence->SnapToFrame(PlayTime);
+        const auto KeyChannel = [Time](SSequenceVectorCurve& Channel, const FVector3& Value)
+        {
+            Channel.bEnabled = true;
+            for (int32 Axis = 0; Axis < 3; ++Axis)
+            {
+                SKeyedCurve& Curve = (Axis == 0 ? Channel.X : (Axis == 1 ? Channel.Y : Channel.Z)).Curve;
+                const int32 Index = Curve.UpdateOrAddKey(Time, Value[Axis]);
+                Curve.Keys[Index].InterpMode = ECurveInterpMode::Cubic;
+            }
+        };
+        KeyChannel(Track->Location, Location);
+        KeyChannel(Track->Rotation, Rotation);
+        Track->Rotation.UnwindAngles();
+        for (SSequenceVectorCurve* Channel : { &Track->Location, &Track->Rotation })
+        {
+            Channel->X.Curve.ComputeAutoTangents();
+            Channel->Y.Curve.ComputeAutoTangents();
+            Channel->Z.Curve.ComputeAutoTangents();
+        }
+
+        // Scale stays unkeyed so a camera never inherits a stray scale from the editor entity.
+        Track->Scale.bEnabled = false;
+        Sequence->GetPackage()->MarkDirty();
+        EvaluateAt(World, PlayTime, true);
+    }
+
+    void FSequencerEditMode::AddCameraFromView(CWorld* World)
+    {
+        if (!Sequence.IsValid())
+        {
+            return;
+        }
+
+        int32 Number = 1;
+        FName Name;
+        do
+        {
+            Name = FName(Lumina::Format("Camera{}", Number++).c_str());
+        }
+        while (Algo::IndexOf(Sequence->Bindings, Name, &SSequenceBinding::Name) != INDEX_NONE);
+
+        SSequenceBinding& Binding = Sequence->Bindings.emplace_back();
+        Binding.Name = Name;
+        Binding.Kind = ESequenceBindingKind::Camera;
+        const int32 BindingIndex = (int32)Sequence->Bindings.size() - 1;
+        Sequence->GetPackage()->MarkDirty();
+
+        BindToWorld(World);
+        SelectedBinding = BindingIndex;
+        KeyFromView(World, BindingIndex);
+        AddCameraCutAtPlayhead(World);
+        EvaluateAt(World, PlayTime, true);
+    }
+
+    void FSequencerEditMode::SetPreviewCameras(CWorld* World, bool bPreview)
+    {
+        bPreviewCameras = bPreview;
+        Instance.bDriveCamera = bPreview;
+
+        if (World == nullptr)
+        {
+            return;
+        }
+
+        if (bPreview)
+        {
+            EvaluateAt(World, PlayTime, true);
+            return;
+        }
+
+        // Hands the viewport back to the editor camera, which the cuts had taken.
+        if (Instance.PreviousCamera != ECS::NullEntity && World->IsValidEntity(Instance.PreviousCamera))
+        {
+            World->SetActiveCamera(Instance.PreviousCamera);
         }
     }
 }

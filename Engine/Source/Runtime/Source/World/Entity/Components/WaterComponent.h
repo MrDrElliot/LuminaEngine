@@ -47,11 +47,11 @@ namespace Lumina
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f, ClampMax = 1.0f)
         float Choppiness = 0.65f;
 
-        /** Wavelength of the dominant wave; each successive wave is 0.62x shorter. */
+        // Wavelength of the dominant wave, each successive wave 0.86x shorter.
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.5f, Units = "m")
         float WaveLength = 24.0f;
 
-        /** Number of summed Gerstner waves (fanned around the wind direction). */
+        // Swell octaves the surface geometry carries, doubled into the series; finer ripples are shaded on top regardless.
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 1, ClampMax = 8)
         int32 WaveCount = 6;
 
@@ -63,9 +63,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f, ClampMax = 1.0f)
         float DetailStrength = 0.3f;
 
-        /** Detail normal tiling across the surface. */
-        PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.01f)
-        float DetailTiling = 64.0f;
+        // World size of one detail normal tile, faded out with distance so it never reads as a repeating pattern.
+        PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.01f, Units = "m")
+        float DetailTileSize = 6.0f;
 
         /** Detail normal scroll speed (world units / s along the wind). */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f)

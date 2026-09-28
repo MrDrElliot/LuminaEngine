@@ -4,6 +4,7 @@
 #include "Assets/AssetTypes/Material/MaterialParameterCollection.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Object/ObjectIterator.h"
+#include "Core/Object/Package/Package.h"
 #include "FileSystem/FileSystem.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Object/Cast.h"
@@ -17,6 +18,7 @@
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Types/Byte.h"
 #include "Log/Log.h"
+#include <cstdlib>
 
 namespace Lumina
 {
@@ -521,9 +523,10 @@ namespace Lumina
                 #if USING(WITH_EDITOR)
                 QueueStaleTemplateMaterial(this);
                 #else
-                LOG_ERROR("Material '{}' was compiled against different shader templates or an older shader "
-                          "cache version and cannot be used by this build. Recook the content.",
-                          GetPackage()->GetPackagePath().c_str());
+                LOG_ERROR("Material '{}' was compiled against shader templates {:016x} but this build has {:016x}{}, so it cannot be "
+                          "used. Recook the content.",
+                          GetPackage()->GetPackagePath().c_str(), CompiledTemplateHash, GetShaderTemplateHash(),
+                          bHasCompiledStage ? "" : " and no compiled stage");
                 #endif
             }
             else
@@ -1112,7 +1115,7 @@ namespace Lumina
         // Commit returns a counted reference, while caches hold deliberately uncounted weak handles.
         FShaderH&      Entry     = StageEntries[(size_t)Stage];
         const FShaderH Previous  = Entry;
-        const FShaderH Committed = FShaderLibrary::Commit(FName((GetGUID().ToString() + Desc.Suffix).c_str()),
+        const FShaderH Committed = FShaderLibrary::Commit(FName(GetName().ToString() + "_" + GetGUID().ToString() + Desc.Suffix),
             Desc.Type, Spirv);
         Entry = Committed;
 
@@ -1340,6 +1343,19 @@ namespace Lumina
         // Computed once per run, deterministic from per-file content hashes folded in path order.
         static const uint64 CachedHash = []() -> uint64
         {
+            #if !USING(WITH_EDITOR)
+            // A cooked game never recompiles, so it trusts the hash the cooker built its materials against.
+            FString Stamped;
+            if (VFS::ReadFile(Stamped, CookedShaderTemplateHashPath))
+            {
+                const uint64 Value = std::strtoull(Stamped.c_str(), nullptr, 16);
+                if (Value != 0)
+                {
+                    return Value;
+                }
+            }
+            #endif
+
             struct FEntry
             {
                 FString Path;
@@ -1358,6 +1374,8 @@ namespace Lumina
                     FString Source;
                     if (VFS::ReadFile(Source, Info.VirtualPath.c_str()))
                     {
+                        // Checkout line endings differ per machine, and must not change the hash.
+                        Source.erase(Algo::Remove(Source, '\r'), Source.end());
                         Files.push_back({ FString(Info.VirtualPath.c_str()), Hash::XXHash::GetHash64(Source) });
                     }
                 });

@@ -92,6 +92,9 @@ namespace Lumina
 
 		void ApplyDeviceConfig(uint32 SampleRate, uint32 Channels, uint32 PeriodFrames) override;
 		FAudioDeviceInfo GetDeviceInfo() const override;
+		bool BeginOfflineRender(uint32& OutSampleRate, uint32& OutChannels) override;
+		uint32 RenderOffline(float* OutInterleaved, uint32 FrameCount) override;
+		void EndOfflineRender() override;
 
 		TSharedPtr<FProceduralAudioStream> CreateProceduralStream(uint32 SampleRate, uint32 ChannelCount, uint32 BufferFrames) override;
 
@@ -145,7 +148,20 @@ namespace Lumina
 
 		static uint64 MakeGraphKey(FAudioHandle Handle) { return ((uint64)Handle.Generation << 32) | Handle.Index; }
 
+		// Sits between the device and the mixer, so an offline render can take the mixer from the realtime thread.
+		class FDeviceRouter final : public IAudioRenderCallback
+		{
+		public:
+			explicit FDeviceRouter(FAudioMixer& InMixer) : Mixer(InMixer) {}
+			void RenderAudio(float* OutInterleaved, uint32 FrameCount) override;
+
+			FAudioMixer&    Mixer;
+			TAtomic<bool>   bOffline{false};
+			TAtomic<uint32> InsideRender{0};
+		};
+
 		FAudioMixer Mixer;
+		FDeviceRouter Router{Mixer};
 		TUniquePtr<IAudioDevice> Device;
 
 		// The pump owns every source; the mixer only ever sees the raw pointer.

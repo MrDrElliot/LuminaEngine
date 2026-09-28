@@ -11,9 +11,7 @@ struct PSInput
 {
     float4 Position : SV_Position;
     float3 WorldPos : WATER_WORLDPOS;
-    float3 Normal   : WATER_NORMAL;
-    float2 PlanarUV : WATER_UV;
-    float  Jacobian : WATER_JACOBIAN;
+    float2 BaseXZ   : WATER_BASEXZ;
     nointerpolation uint WaterIndex : WATER_INDEX;
 };
 
@@ -28,6 +26,12 @@ float SampleSceneDepthRaw(float2 UV)
     return gTextures2D[Pass().SceneDepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, 0.0).r;
 }
 
+// Compared as linear distance, since a fixed tolerance on raw reverse-Z depth grows with distance squared and let far water swallow low land.
+bool IsSceneInFrontOfWater(float2 UV, float SceneRaw, float WaterDist)
+{
+    return SceneRaw > 0.0 && SceneDistFromRaw(UV, SceneRaw) < WaterDist - (0.01 + WaterDist * 1e-4);
+}
+
 float3 SampleSceneColor(float2 UV)
 {
     return gTextures2D[Pass().SceneColorIndex].SampleLevel(gSamplers[SAMPLER_LINEAR_CLAMP], UV, 0.0).rgb;
@@ -36,7 +40,18 @@ float3 SampleSceneColor(float2 UV)
 // Cheap value-noise fbm used to break up procedural foam so it reads as wispy foam, not a solid white fill.
 float WaterFbm(float2 P)
 {
-    return 0.5 * FBM2D(P, 3, 0.5, 2.0);
+    // Each octave turned against the last, since axis-aligned value noise shows its lattice as a grid of blobs.
+    const float2x2 Turn = float2x2(0.8, -0.6, 0.6, 0.8);
+    float Sum = 0.0;
+    float Amp = 0.5;
+    [unroll]
+    for (int i = 0; i < 3; ++i)
+    {
+        Sum += Amp * ValueNoise2D(P);
+        P    = mul(Turn, P) * 2.03 + 17.0;
+        Amp *= 0.5;
+    }
+    return Sum;
 }
 
 [shader("fragment")]
@@ -47,26 +62,28 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     uint2  ScreenSize = Scene().ScreenSize.xy;
     float2 ScreenUV   = Input.Position.xy / float2(ScreenSize);
 
-    float SceneRawDepth = SampleSceneDepthRaw(ScreenUV);
-    float WaterRawDepth = Input.Position.z;
-    if (SceneRawDepth > WaterRawDepth + 1e-6)
-    {
-        discard;
-    }
+    float  Footprint = max(length(ddx(Input.BaseXZ)), length(ddy(Input.BaseXZ)));
+    FWaterSurface Surface = EvaluateWaterSurface(Input.BaseXZ, W, GetTime(), Footprint);
 
-    // --- Surface normal: Gerstner + optional scrolling detail normal map ---
-    float3 N = normalize(Input.Normal);
+    // Opaque geometry in front is rejected by the depth test, so the copy is read only for what lies behind.
+    float SceneRawDepth = SampleSceneDepthRaw(ScreenUV);
+    float WaterDist     = SceneDistFromRaw(ScreenUV, Input.Position.z);
+
+    // Surface normal from the filtered wave sum, plus the optional scrolling detail normal map.
+    float3 N = Surface.Normal;
     if (W.DetailNormalIndex != WATER_INVALID_TEX)
     {
-        float  Tiling = W.DetailParams.x;
-        float  Speed  = W.DetailParams.y;
-        float2 Wind   = normalize(W.WindAndWave.xy + float2(1e-5, 0.0));
+        float  TileSize = max(W.DetailParams.x, 0.01);
+        float  Speed    = W.DetailParams.y;
+        float2 Wind     = normalize(W.WindAndWave.xy + float2(1e-5, 0.0));
 
-        float2 UV0 = Input.PlanarUV * Tiling + Wind * (GetTime() * Speed);
-        float2 UV1 = Input.PlanarUV * Tiling * 1.7 - Wind * (GetTime() * Speed * 0.7);
+        // Two scales at an angle to each other so the tiling never lines up, faded out once a tile shrinks below a few pixels.
+        float2 UV0 = Input.BaseXZ / TileSize + Wind * (GetTime() * Speed);
+        float2 UV1 = float2(Input.BaseXZ.x * 0.8 - Input.BaseXZ.y * 0.6, Input.BaseXZ.x * 0.6 + Input.BaseXZ.y * 0.8) / (TileSize * 0.37) - Wind * (GetTime() * Speed * 1.3);
         float2 n0  = gTextures2D[W.DetailNormalIndex].Sample(gSamplers[SAMPLER_LINEAR_WRAP], UV0).rg * 2.0 - 1.0;
         float2 n1  = gTextures2D[W.DetailNormalIndex].Sample(gSamplers[SAMPLER_LINEAR_WRAP], UV1).rg * 2.0 - 1.0;
-        float2 dn  = (n0 + n1) * W.WaveParams.w;
+        float  DetailFade = smoothstep(4.0, 16.0, TileSize * 0.37 / max(Footprint, 1e-4));
+        float2 dn  = (n0 + n1) * W.WaveParams.w * DetailFade;
 
         // Perturb the world normal in its tangent plane (world X projected onto the surface as tangent).
         float3 T = normalize(float3(1.0, 0.0, 0.0) - N * N.x);
@@ -80,8 +97,10 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float  SlopeVariance   = 0.5 * (dot(dNdx, dNdx) + dot(dNdy, dNdy));
     float  KernelRoughness = min(2.0 * SlopeVariance, 0.25);
 
+    // Waves too fine for the pixel return as slope variance, widening the lobe the way a distant sea glitters.
     float  Roughness  = W.RefractReflect.z;
-    float  SpecAlpha  = saturate(max(Roughness * Roughness, 1e-4) + KernelRoughness);
+    float  BaseAlpha  = max(Roughness * Roughness, 1e-4) + KernelRoughness;
+    float  SpecAlpha  = saturate(sqrt(BaseAlpha * BaseAlpha + 2.0 * Surface.FilteredVariance));
     float  EffRough   = sqrt(SpecAlpha);
 
     float3 CameraPos = GetCameraPosition();
@@ -90,7 +109,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
 
     // Reconstruct the scene behind the water for both its distance (absorption) and its position
     bool   HasScene      = (SceneRawDepth > 0.0);
-    float3 SceneViewPos  = ReconstructViewPos(ScreenUV, max(SceneRawDepth, 1e-5), GetInverseCameraProjection());
+    float3 SceneViewPos  = ReconstructViewPos(ScreenUV, HasScene ? SceneRawDepth : 1e-5, GetInverseCameraProjection());
     float3 SceneWorldPos = mul(GetInverseCameraView(), float4(SceneViewPos, 1.0)).xyz;
     float  WaterViewDist = WorldToView(Input.WorldPos).z;
     float  SceneViewDist = HasScene ? SceneViewPos.z : GetFarPlane();
@@ -107,7 +126,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float2 RefractOffset = N.xz * W.RefractReflect.x * (0.25 + 0.75 * DepthFade);
     float2 RefractUV     = ScreenUV + RefractOffset;
     float  RefrRaw       = SampleSceneDepthRaw(RefractUV);
-    if (RefrRaw > WaterRawDepth + 1e-6 || any(saturate(RefractUV) != RefractUV))
+    if (IsSceneInFrontOfWater(RefractUV, RefrRaw, WaterDist) || any(saturate(RefractUV) != RefractUV))
     {
         RefractUV = ScreenUV;   // refracted sample is in front of the water (or off-screen) -> don't bend
     }
@@ -133,7 +152,10 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     Refracted = lerp(WaterColor * BodyLight, Refracted, SubmergeMask);
 
     // --- Reflection: SSR ray-march against opaque depth, prefiltered-sky fallback ---
+    // Kept above the horizon, since a steep facet would otherwise reflect the dark lower sky as black streaks.
+    float  WaterPlaneY = mul(W.WaterToWorld, float4(0.0, 0.0, 0.0, 1.0)).y;
     float3 R         = reflect(-V, N);
+    R = normalize(float3(R.x, max(R.y, 0.03), R.z));
     float3 SkyRefl   = SamplePrefilter(R, EffRough);
     float3 Reflection = SkyRefl;
     {
@@ -171,6 +193,12 @@ float4 FragmentMain(PSInput Input) : SV_Target0
                 float RayDist    = Pv.z;
                 if (RayDist > SampleDist && (RayDist - SampleDist) < StepLen * 3.0)
                 {
+                    // Geometry under the surface is hidden from a reflection off it, so a hit down there is a miss.
+                    float3 HitWorld = mul(GetInverseCameraView(), float4(ReconstructViewPos(Suv, SampleRaw, GetInverseCameraProjection()), 1.0)).xyz;
+                    if (HitWorld.y < WaterPlaneY - 0.25)
+                    {
+                        break;
+                    }
                     Hit   = true;
                     HitUV = Suv;
                     break;
@@ -220,8 +248,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         Color += SunRad * Spec * NdotL * Shadow * W.SSRSpecOpacity.z;
 
         // Subsurface scattering
-        float  MeanY      = mul(W.WaterToWorld, float4(0.0, 0.0, 0.0, 1.0)).y;
-        float  WaveHeight = saturate((Input.WorldPos.y - MeanY) / max(W.WindAndWave.w, 0.05));
+        float  WaveHeight = saturate((Input.WorldPos.y - WaterPlaneY) / max(W.WindAndWave.w, 0.05));
         float  BackLit    = pow(saturate(dot(V, -normalize(L + N * 0.5))), 4.0);
         Color += W.ShallowColor.rgb * SunRad * (BackLit * WaveHeight * Shadow * W.SSRSpecOpacity.z);
     }
@@ -272,8 +299,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         // Whitecaps where the surface pinches, since a height band would put foam in horizontal stripes.
         const float kFoamGain = 1.6;
         float CrestAmount = saturate(W.FoamAbsorb.y);
-        float FoamBias    = lerp(0.55, 1.0, CrestAmount);
-        float Crest       = saturate((FoamBias - Input.Jacobian) * kFoamGain);
+        float FoamBias    = lerp(0.25, 0.8, CrestAmount);
+        float Crest       = saturate((FoamBias - Surface.Jacobian) * kFoamGain * 2.0);
         Foam += (f3 + f4 * 0.5) * Crest;
 
         Foam = saturate(Foam * W.DetailParams.w);   // FoamIntensity

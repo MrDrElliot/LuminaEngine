@@ -154,6 +154,33 @@ namespace Lumina
         /** Shadow bias; 0 = uniform, 1 = grain in dark regions only. */
         PROPERTY(Editable, Category = "Post Process|Film Grain", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
         float FilmGrainResponse = 0.6f;
+
+        // Aperture in f-stops, where zero turns depth of field off, f/1.4 to f/2.8 is shallow and f/8 keeps most of a scene sharp.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.0f, ClampMax = 32.0f, Delta = 0.05f)
+        float DepthOfFieldFStop = 0.0f;
+
+        // Distance from the camera that is perfectly sharp.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.1f, Delta = 0.1f, Units = "m")
+        float DepthOfFieldFocusDistance = 10.0f;
+
+        // Film back height in millimeters, which with the field of view sets the lens focal length.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 1.0f, ClampMax = 70.0f, Delta = 0.1f)
+        float DepthOfFieldSensorHeight = 24.0f;
+
+        // Largest blur radius as a fraction of the screen height, which also bounds the cost.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.001f, ClampMax = 0.05f, Delta = 0.0005f)
+        float DepthOfFieldMaxBlur = 0.012f;
+
+        // Fades the picture toward FadeColor, from zero untouched to one solid.
+        PROPERTY(Editable, Category = "Post Process|Cinematic", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
+        float FadeAmount = 0.0f;
+
+        PROPERTY(Editable, Color, Category = "Post Process|Cinematic")
+        FVector3 FadeColor = FVector3(0.0f);
+
+        // Width over height of the picture between black bars, where zero shows no bars and 2.39 is anamorphic scope.
+        PROPERTY(Editable, Category = "Post Process|Cinematic", ClampMin = 0.0f, ClampMax = 4.0f, Delta = 0.01f)
+        float LetterboxAspect = 0.0f;
     };
 
     // Blend In onto InOut by Weight; ToneMapper snaps at Weight >= 0.5. bEnabled untouched (not blendable).
@@ -197,6 +224,13 @@ namespace Lumina
         InOut.FilmGrainIntensity   = LerpF (InOut.FilmGrainIntensity,   In.FilmGrainIntensity);
         InOut.FilmGrainSize        = LerpF (InOut.FilmGrainSize,        In.FilmGrainSize);
         InOut.FilmGrainResponse    = LerpF (InOut.FilmGrainResponse,    In.FilmGrainResponse);
+        InOut.DepthOfFieldFStop         = LerpF (InOut.DepthOfFieldFStop,         In.DepthOfFieldFStop);
+        InOut.DepthOfFieldFocusDistance = LerpF (InOut.DepthOfFieldFocusDistance, In.DepthOfFieldFocusDistance);
+        InOut.DepthOfFieldSensorHeight  = LerpF (InOut.DepthOfFieldSensorHeight,  In.DepthOfFieldSensorHeight);
+        InOut.DepthOfFieldMaxBlur       = LerpF (InOut.DepthOfFieldMaxBlur,       In.DepthOfFieldMaxBlur);
+        InOut.FadeAmount           = LerpF (InOut.FadeAmount,           In.FadeAmount);
+        InOut.FadeColor            = LerpV3(InOut.FadeColor,            In.FadeColor);
+        InOut.LetterboxAspect      = LerpF (InOut.LetterboxAspect,      In.LetterboxAspect);
 
         if (Weight >= 0.5f)
         {

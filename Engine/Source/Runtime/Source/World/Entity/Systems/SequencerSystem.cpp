@@ -24,7 +24,8 @@ namespace Lumina
             return;
         }
 
-        const float DeltaTime = (float)SystemContext.GetDeltaTime();
+        // Real time, so a time dilation track slows the action on screen without stretching the edit.
+        const float DeltaTime = (float)World->GetRealDeltaTime();
 
         auto View = SystemContext.CreateView<SSequencePlayerComponent>();
         for (ECS::FEntity Entity : View)
@@ -32,6 +33,7 @@ namespace Lumina
             SSequencePlayerComponent& Player = View.Get<SSequencePlayerComponent>(Entity);
 
             CSequence* Sequence = Player.Sequence.Get();
+            const bool bRestore = Player.FinishAction == ESequenceFinishAction::Restore;
 
             if (Player.bAutoPlay && !Player.bPlaying && !Player.Instance.bBound && Sequence != nullptr)
             {
@@ -43,7 +45,7 @@ namespace Lumina
             // A swapped asset would leave bindings pointing at the old sequence's table.
             if (Player.Instance.bBound && Player.BoundSequence != Sequence)
             {
-                Player.Instance.Release(World, Player.FinishAction == ESequenceFinishAction::Restore);
+                Player.Instance.Release(World, bRestore);
                 Player.BoundSequence = nullptr;
             }
 
@@ -51,9 +53,10 @@ namespace Lumina
             {
                 if (Player.Instance.bBound)
                 {
-                    Player.Instance.Release(World, Player.FinishAction == ESequenceFinishAction::Restore);
+                    Player.Instance.Release(World, bRestore);
                     Player.BoundSequence = nullptr;
                 }
+                Player.bPaused = false;
                 continue;
             }
 
@@ -63,18 +66,30 @@ namespace Lumina
                 continue;
             }
 
+            bool bFirstFrame = false;
             if (!Player.Instance.bBound)
             {
                 Player.Instance.Bind(Sequence, World);
                 Player.BoundSequence = Sequence;
                 Player.PreviousTime = Player.Time;
-                Player.bJumped = true;
+                bFirstFrame = true;
+            }
+
+            if (Player.bPaused)
+            {
+                // Evaluated every paused frame, so sounds the sequence started hold with it instead of running on.
+                const bool bRefresh = bFirstFrame || Player.bNeedsEvaluate;
+                Player.Instance.Evaluate(Sequence, World, Player.Time, Player.Time, bRefresh, bFirstFrame, false, true);
+                Player.bNeedsEvaluate = false;
+                Player.bJumped = false;
+                continue;
             }
 
             const float PreviousTime = Player.PreviousTime;
 
             float NewTime = Player.Time + DeltaTime * Player.PlayRate;
-            bool bJumped = Player.bJumped;
+            const bool bJumped = Player.bJumped;
+            bool bWrapped = false;
             bool bFinished = false;
 
             if (NewTime >= Sequence->Duration)
@@ -82,7 +97,7 @@ namespace Lumina
                 if (Player.bLoop)
                 {
                     NewTime = Sequence->Duration > 0.0f ? fmodf(NewTime, Sequence->Duration) : 0.0f;
-                    bJumped = true;
+                    bWrapped = true;
                 }
                 else
                 {
@@ -91,17 +106,18 @@ namespace Lumina
                 }
             }
 
-            Player.Instance.Evaluate(Sequence, World, NewTime, PreviousTime, bJumped);
+            Player.Instance.Evaluate(Sequence, World, NewTime, PreviousTime, bJumped, bFirstFrame, bWrapped);
 
             Player.PreviousTime = NewTime;
             Player.Time = NewTime;
             Player.bJumped = false;
+            Player.bNeedsEvaluate = false;
 
             // Evaluate the final frame before tearing down, or the shot ends one frame short.
             if (bFinished)
             {
                 Player.bPlaying = false;
-                Player.Instance.Release(World, Player.FinishAction == ESequenceFinishAction::Restore);
+                Player.Instance.Release(World, bRestore);
                 Player.BoundSequence = nullptr;
             }
         }

@@ -76,6 +76,9 @@ namespace Lumina
     // than the whole compile. Marks the package dirty and toasts on the finishing call.
     EDITOR_API void ProcessStaleMaterialRecompiles();
 
+    // Blocking recompile of a material saved against older shader templates, so a cook never ships stages the game cannot use.
+    EDITOR_API bool RecompileMaterialIfStale(CMaterial* Material, FString& OutError);
+
     // Editor-tick drain for CMaterial's permutation queue, one dispatch-then-poll compile at a time.
     EDITOR_API void ProcessMaterialPermutationRequests();
 }

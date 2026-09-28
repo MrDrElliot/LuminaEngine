@@ -626,6 +626,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "!bWriteDepth")
         float SoftFadeDistance = 0.3f;
 
+        // Meters from the camera inside which a sprite fades away, so a burst at the lens never fills the screen. Zero disables it.
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, Units = "m")
+        float CameraFadeDistance = 0.0f;
+
         // Shades the sprite with the sun and sky like a surface, for smoke and dust. Additive sprites are light and stay unlit.
         PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
         bool bLit = false;
@@ -831,6 +835,7 @@ namespace Lumina
         int32                   SubUVRows               = 1;
         bool                    bWriteDepth             = false;
         float                   SoftFadeDistance        = 0.0f;
+        float                   CameraFadeDistance      = 0.0f;
         bool                    bLit                    = false;
 
         bool                    bLocalSpace             = false;

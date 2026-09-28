@@ -347,8 +347,9 @@ namespace Lumina::CrashHandler
             char StackBuffer[8192] = {};
             if (ExceptionInfo && ExceptionInfo->ContextRecord)
             {
-                CaptureStackTraceFromContext(ExceptionInfo->ContextRecord,
-                    StackBuffer, sizeof(StackBuffer));
+                // StackWalk64 unwinds the context it is given, so walking the original would hand the dump a dead frame.
+                CONTEXT WalkContext = *ExceptionInfo->ContextRecord;
+                CaptureStackTraceFromContext(&WalkContext, StackBuffer, sizeof(StackBuffer));
             }
 
             // Guarded, since the logger sits on top of a heap that may itself be corrupted.

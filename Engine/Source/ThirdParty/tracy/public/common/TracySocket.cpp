@@ -472,6 +472,16 @@ static int addrinfo_and_socket_for_family( uint16_t port, int ai_family, struct 
     return sock;
 }
 
+// Kept out of child processes, since a crash monitor that outlives the editor would otherwise hold the port.
+static void MakeNonInheritable( int sock )
+{
+#ifdef _WIN32
+    SetHandleInformation( (HANDLE)(uintptr_t)sock, HANDLE_FLAG_INHERIT, 0 );
+#else
+    fcntl( sock, F_SETFD, FD_CLOEXEC );
+#endif
+}
+
 bool ListenSocket::Listen( uint16_t port, int backlog )
 {
     assert( m_sock == -1 );
@@ -492,6 +502,7 @@ bool ListenSocket::Listen( uint16_t port, int backlog )
         m_sock = addrinfo_and_socket_for_family( port, AF_INET, &res );
         if( m_sock == -1 ) return false;
     }
+    MakeNonInheritable( m_sock );
 #if defined _WIN32
     unsigned long val = 0;
     setsockopt( m_sock, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&val, sizeof( val ) );
@@ -523,6 +534,7 @@ Socket* ListenSocket::Accept()
     {
         int sock = accept( m_sock, (sockaddr*)&remote, &sz);
         if( sock == -1 ) return nullptr;
+        MakeNonInheritable( sock );
 
 #if defined __APPLE__
         int val = 1;

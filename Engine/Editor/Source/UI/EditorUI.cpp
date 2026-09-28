@@ -1,6 +1,7 @@
 ﻿#include "EditorUI.h"
 #include <string>
 #include "Core/CoreEditorDelegates.h"
+#include "Tools/Screenshot/MovieCapture.h"
 #include "Play/StandaloneLauncher.h"
 #include <cfloat>
 #include <cstdlib>
@@ -1008,6 +1009,8 @@ namespace Lumina
     void FEditorUI::OnEndFrame(const FUpdateContext& UpdateContext)
     {
         LUMINA_PROFILE_SCOPE();
+
+        MovieCapture::Tick();
 
         for (FEditorTool* Tool : EditorTools)
         {

@@ -87,7 +87,7 @@ float ApplyGeometricSpecularAA(float Roughness, float3 dNdx, float3 dNdy)
     return sqrt(saturate(Alpha + Kernel));
 }
 
-float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, bool ReceiveShadow)
+float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, bool ReceiveShadow, bool bContactShadows)
 {
     if (!ReceiveShadow)
     {
@@ -102,11 +102,11 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
         // Mandatory in a compute lane: the inline path's receiver-plane bias needs ddx/ddy. SampleShadowMask
         // returns 1.0 when no mask was resolved, so an unshadowed sun stays unshadowed.
 #ifdef SHADING_COMPUTE
-        return SampleShadowMask(ScreenPos);
+        return SampleShadowMask(ScreenPos, bContactShadows);
 #else
         if (SPEC_SHADOW_MASK != 0)
         {
-            return SampleShadowMask(ScreenPos);
+            return SampleShadowMask(ScreenPos, bContactShadows);
         }
         return ComputeDirectionalShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos);
 #endif
@@ -584,6 +584,7 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     G.Specular         = Material.Specular;
     G.Emissive         = Material.Emissive;
     G.bReceiveShadow   = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
+    G.bContactShadows  = (Input.InstanceFlags & (uint)EInstanceFlags::NoContactShadows) == 0u;
 
     G.Clearcoat          = Material.Clearcoat;
     G.ClearcoatRoughness = Material.ClearcoatRoughness;
@@ -641,6 +642,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     float  Metallic       = G.Metallic;
     float  AO             = G.AmbientOcclusion;
     bool   bReceiveShadow = G.bReceiveShadow;
+    bool   bContactShadows = G.bContactShadows;
 
     // Under ortho every ray is parallel, so the eye vector is constant rather than radiating from
     // the camera position; using the position would skew specular toward the viewport center.
@@ -718,7 +720,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         {
             // Cascade shadow, then the material's own height-field self-occlusion. Applied here and not
             // to the whole light loop because the parallax trace only ever ran against the sun.
-            float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
+            float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow, bContactShadows);
             Shadow *= G.SelfShadow;
 
             // A leaf lit from the front still passes some light forward at grazing view angles.
@@ -820,11 +822,11 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             float Shadow = 1.0;
             if (Light.ShadowDataIndex != INDEX_NONE)
             {
-                Shadow = ComputeShadowFactor(Light, WorldPosition, bBackFacing ? -N : N, ViewPosition, ScreenPos, bReceiveShadow);
+                Shadow = ComputeShadowFactor(Light, WorldPosition, bBackFacing ? -N : N, ViewPosition, ScreenPos, bReceiveShadow, bContactShadows);
             }
 
             // Independent of the shadow map, so a light with no atlas tile can still ground what sits under it.
-            if (bReceiveShadow && HasFlag(Light.Flags, ELightFlags::ContactShadow))
+            if (bReceiveShadow && bContactShadows && HasFlag(Light.Flags, ELightFlags::ContactShadow))
             {
                 Shadow = min(Shadow, LocalContactShadow(Light, WorldPosition, bBackFacing ? -N : N, ScreenPos));
             }

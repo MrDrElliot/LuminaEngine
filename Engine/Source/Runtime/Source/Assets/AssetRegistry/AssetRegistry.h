@@ -99,7 +99,7 @@ namespace Lumina
 
 		FAssetData* GetAssetByGUID(const FGuid& GUID) const;
 		FAssetData* GetAssetByPath(FStringView Path) const;
-		TVector<FAssetData*> FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate);
+		TVector<FAssetData*> FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate) const;
 
 		// --- Text assets (.luau/.rml/.rcss): GUID identity sourced from hidden .lmeta sidecars. ---
 

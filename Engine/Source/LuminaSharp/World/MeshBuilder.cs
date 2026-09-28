@@ -224,6 +224,244 @@ public class MeshBuilder
         }
     }
 
+    // A convex side profile of (Z, Y) points extruded across X about Offset, narrowing toward TopHalfWidth at its highest point; for hulls, cabs and roofs.
+    public void Prism(ReadOnlySpan<FVector2> Profile, float HalfWidth, FVector4 Color, FVector3 Offset = default, float TopHalfWidth = -1.0f)
+    {
+        int Count = Profile.Length;
+        if (Count < 3)
+        {
+            return;
+        }
+
+        float MinY = float.MaxValue;
+        float MaxY = float.MinValue;
+        FVector2 Centroid = default;
+        foreach (FVector2 Point in Profile)
+        {
+            MinY = MathF.Min(MinY, Point.Y);
+            MaxY = MathF.Max(MaxY, Point.Y);
+            Centroid += Point;
+        }
+        Centroid /= Count;
+        float Top = TopHalfWidth < 0.0f ? HalfWidth : TopHalfWidth;
+        float Span = MathF.Max(MaxY - MinY, 1e-4f);
+
+        FVector3[] Left = new FVector3[Count];
+        FVector3[] Right = new FVector3[Count];
+        for (int Index = 0; Index < Count; ++Index)
+        {
+            FVector2 Point = Profile[Index];
+            float Width = HalfWidth + (Top - HalfWidth) * ((Point.Y - MinY) / Span);
+            Left[Index] = Offset + new FVector3(-Width, Point.Y, Point.X);
+            Right[Index] = Offset + new FVector3(Width, Point.Y, Point.X);
+        }
+
+        for (int Index = 0; Index < Count; ++Index)
+        {
+            int Next = (Index + 1) % Count;
+            FVector2 Mid = (Profile[Index] + Profile[Next]) * 0.5f - Centroid;
+            FVector3 Outward = new(0.0f, Mid.Y, Mid.X);
+            float Up = Outward.NormalizedOr(FVector3.Up).Y;
+            FVector4 Face = Shade(Color, Up > 0.6f ? 1.0f : Up < -0.6f ? 0.7f : 0.92f);
+            Quad(Left[Index], Left[Next], Right[Next], Right[Index], Outward, Face);
+        }
+
+        FVector4 Side = Shade(Color, 0.9f);
+        for (int Index = 1; Index + 1 < Count; ++Index)
+        {
+            Triangle(Left[0], Left[Index], Left[Index + 1], -FVector3.Right, Side);
+            Triangle(Right[0], Right[Index], Right[Index + 1], FVector3.Right, Side);
+        }
+    }
+
+    // A vertex other triangles may share, so its normal can be smooth across them rather than one face's own.
+    public int AddVertex(FVector3 Position, FVector3 Normal, FVector4 Color)
+    {
+        Positions.Add(Position);
+        Normals.Add(Normal.NormalizedOr(FVector3.Up));
+        Colors.Add(Color);
+        return Positions.Count - 1;
+    }
+
+    // Counter-clockwise seen from the front, which is the side cross(B - A, C - A) points to.
+    public void AddTriangle(int A, int B, int C)
+    {
+        Indices.Add(A);
+        Indices.Add(B);
+        Indices.Add(C);
+    }
+
+    // A closed smooth lump, an icosphere scaled by Radii and pushed out by Displace, colored by Paint from its direction and position.
+    public void Blob(FVector3 Center, FVector3 Radii, int Subdivisions, Func<FVector3, float>? Displace, Func<FVector3, FVector3, FVector4> Paint)
+    {
+        List<FVector3> Directions = new();
+        List<(int, int, int)> Faces = new();
+        BuildIcosphere(Math.Clamp(Subdivisions, 0, 4), Directions, Faces);
+
+        FVector3[] Points = new FVector3[Directions.Count];
+        for (int Index = 0; Index < Directions.Count; ++Index)
+        {
+            FVector3 Direction = Directions[Index];
+            float Push = 1.0f + (Displace?.Invoke(Direction) ?? 0.0f);
+            Points[Index] = Center + new FVector3(Direction.X * Radii.X, Direction.Y * Radii.Y, Direction.Z * Radii.Z) * Push;
+        }
+
+        // Area-weighted face normals summed per vertex, so displacement shades as the surface it made.
+        FVector3[] Smooth = new FVector3[Points.Length];
+        foreach ((int A, int B, int C) in Faces)
+        {
+            FVector3 Face = FVector3.Cross(Points[B] - Points[A], Points[C] - Points[A]);
+            Smooth[A] += Face;
+            Smooth[B] += Face;
+            Smooth[C] += Face;
+        }
+
+        int Base = Positions.Count;
+        for (int Index = 0; Index < Points.Length; ++Index)
+        {
+            AddVertex(Points[Index], Smooth[Index].NormalizedOr(Directions[Index]), Paint(Directions[Index], Points[Index]));
+        }
+
+        foreach ((int A, int B, int C) in Faces)
+        {
+            AddTriangle(Base + A, Base + B, Base + C);
+        }
+    }
+
+    // A smooth tube through Path, Radii[i] across at Path[i], colored by Paint from how far along it is; a zero last radius ends in a point.
+    public void Sweep(ReadOnlySpan<FVector3> Path, ReadOnlySpan<float> Radii, int Sides, Func<float, FVector4> Paint, bool bCapStart = false, bool bCapEnd = true)
+    {
+        int Rings = Math.Min(Path.Length, Radii.Length);
+        if (Rings < 2 || Sides < 3)
+        {
+            return;
+        }
+
+        // Parallel transport, so the rings do not twist where the path bends.
+        FVector3 Tangent = (Path[1] - Path[0]).NormalizedOr(FVector3.Up);
+        FVector3 U = FVector3.Cross(Tangent, MathF.Abs(Tangent.Y) > 0.9f ? FVector3.Right : FVector3.Up).Normalized();
+
+        int Base = Positions.Count;
+        for (int Ring = 0; Ring < Rings; ++Ring)
+        {
+            FVector3 Next = Ring + 1 < Rings ? Path[Ring + 1] - Path[Ring] : Path[Ring] - Path[Ring - 1];
+            FVector3 Previous = Ring > 0 ? Path[Ring] - Path[Ring - 1] : Next;
+            FVector3 NewTangent = (Next.NormalizedOr(Tangent) + Previous.NormalizedOr(Tangent)).NormalizedOr(Tangent);
+            U = (U - NewTangent * FVector3.Dot(U, NewTangent)).NormalizedOr(U);
+            Tangent = NewTangent;
+            FVector3 V = FVector3.Cross(Tangent, U);
+
+            float Along = Ring / (float)(Rings - 1);
+            FVector4 Color = Paint(Along);
+            for (int Side = 0; Side <= Sides; ++Side)
+            {
+                float Angle = Mathf.TwoPi * Side / Sides;
+                FVector3 Out = U * MathF.Cos(Angle) + V * MathF.Sin(Angle);
+                AddVertex(Path[Ring] + Out * Radii[Ring], Out, Color);
+            }
+        }
+
+        int Stride = Sides + 1;
+        for (int Ring = 0; Ring + 1 < Rings; ++Ring)
+        {
+            for (int Side = 0; Side < Sides; ++Side)
+            {
+                int A = Base + Ring * Stride + Side;
+                int B = A + 1;
+                int C = A + Stride;
+                int D = C + 1;
+                AddTriangle(A, D, C);
+                AddTriangle(A, B, D);
+            }
+        }
+
+        if (bCapStart && Radii[0] > 0.001f)
+        {
+            Cap(Base, Sides, Path[0], -(Path[1] - Path[0]).NormalizedOr(FVector3.Up), Paint(0.0f));
+        }
+        if (bCapEnd && Radii[Rings - 1] > 0.001f)
+        {
+            Cap(Base + (Rings - 1) * Stride, Sides, Path[Rings - 1], (Path[Rings - 1] - Path[Rings - 2]).NormalizedOr(FVector3.Up), Paint(1.0f));
+        }
+    }
+
+    private void Cap(int Ring, int Sides, FVector3 Center, FVector3 Facing, FVector4 Color)
+    {
+        int Hub = AddVertex(Center, Facing, Color);
+        int First = Positions.Count;
+        for (int Side = 0; Side <= Sides; ++Side)
+        {
+            AddVertex(Positions[Ring + Side], Facing, Color);
+        }
+        for (int Side = 0; Side < Sides; ++Side)
+        {
+            int A = First + Side;
+            int B = A + 1;
+            FVector3 Normal = FVector3.Cross(Positions[A] - Center, Positions[B] - Center);
+            if (FVector3.Dot(Normal, Facing) >= 0.0f)
+            {
+                AddTriangle(Hub, A, B);
+            }
+            else
+            {
+                AddTriangle(Hub, B, A);
+            }
+        }
+    }
+
+    private static void BuildIcosphere(int Subdivisions, List<FVector3> Directions, List<(int, int, int)> Faces)
+    {
+        float T = (1.0f + MathF.Sqrt(5.0f)) * 0.5f;
+        FVector3[] Corners =
+        {
+            new(-1, T, 0), new(1, T, 0), new(-1, -T, 0), new(1, -T, 0),
+            new(0, -1, T), new(0, 1, T), new(0, -1, -T), new(0, 1, -T),
+            new(T, 0, -1), new(T, 0, 1), new(-T, 0, -1), new(-T, 0, 1),
+        };
+        foreach (FVector3 Corner in Corners)
+        {
+            Directions.Add(Corner.Normalized());
+        }
+
+        Faces.AddRange(new (int, int, int)[]
+        {
+            (0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11),
+            (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
+            (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9),
+            (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1),
+        });
+
+        for (int Level = 0; Level < Subdivisions; ++Level)
+        {
+            Dictionary<long, int> Midpoints = new();
+            int Midpoint(int A, int B)
+            {
+                long Key = A < B ? ((long)A << 32) | (uint)B : ((long)B << 32) | (uint)A;
+                if (!Midpoints.TryGetValue(Key, out int Index))
+                {
+                    Index = Directions.Count;
+                    Directions.Add((Directions[A] + Directions[B]).Normalized());
+                    Midpoints[Key] = Index;
+                }
+                return Index;
+            }
+
+            List<(int, int, int)> Finer = new(Faces.Count * 4);
+            foreach ((int A, int B, int C) in Faces)
+            {
+                int AB = Midpoint(A, B);
+                int BC = Midpoint(B, C);
+                int CA = Midpoint(C, A);
+                Finer.Add((A, AB, CA));
+                Finer.Add((B, BC, AB));
+                Finer.Add((C, CA, BC));
+                Finer.Add((AB, BC, CA));
+            }
+            Faces.Clear();
+            Faces.AddRange(Finer);
+        }
+    }
+
     /// Builds the geometry once as a static mesh that many entities or foliage instances can share. The world keeps it alive.
     public CStaticMesh? BuildStaticMesh(CWorld World, CMaterialInterface? Material = null, int MaxLODs = 1)
     {

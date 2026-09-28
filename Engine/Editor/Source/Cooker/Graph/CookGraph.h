@@ -40,6 +40,9 @@ namespace Lumina
         // Add a seed; resolved paths get a node with the supplied chunk, otherwise an issue is recorded and the root skipped.
         void AddRoot(const FCookRoot& Root);
 
+        // Seeds every registered asset under a content folder, for code that builds asset paths at runtime.
+        void AddFolderRoot(FStringView Folder, const FName& Chunk);
+
         // Convenience: bulk add.
         void AddRoots(const TVector<FCookRoot>& Roots);
 

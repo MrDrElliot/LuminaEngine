@@ -1466,7 +1466,7 @@ namespace Lumina
             bCloudShadows = RS->bCloudShadows;
             Extent        = Math::Max(RS->CloudShadowExtent, 100.0f);
         }
-        if (!bCloudShadows || !bHasFog || !Frame.Volumetrics.bClouds)
+        if (!bCloudShadows || !Frame.Volumetrics.bClouds)
         {
             return;
         }
@@ -1503,7 +1503,7 @@ namespace Lumina
 
         const FSceneImage& Noise  = GetNamedImage(ENamedImage::CloudNoise);
         const FSceneImage& Shadow = GetNamedImage(ENamedImage::CloudShadow);
-        if (!Noise.IsValid() || !Shadow.IsValid() || !CurrentView->bCloudNoiseBaked)
+        if (!Noise.IsValid() || !Shadow.IsValid() || !BakeCloudNoiseIfNeeded(CL))
         {
             return;
         }
@@ -1564,9 +1564,10 @@ namespace Lumina
 
         const uint32 Groups = RenderUtils::GetGroupCount(Shadow.GetSizeX(), 8);
         RHI::CmdDispatch(CL, MakeArgs(PC), Groups, Groups, 1u);
+        // Particles light in the vertex stage, surfaces and water in the pixel stage, fog in compute.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+            RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
@@ -1776,22 +1777,35 @@ namespace Lumina
         const FSceneImage& SceneColor = GetNamedImage(ENamedImage::WaterRefraction);
         const FSceneImage& SceneDepth = GetNamedImage(ENamedImage::DepthAttachment);
 
+        // The water writes scene depth, so what it samples for refraction and its shoreline is a copy taken first.
+        const FSceneImage& SceneDepthCopy = GetNamedImage(ENamedImage::SceneDepthCopy);
+
         Barriers::SceneToTransfer(CL);
         RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
+        RHI::CmdCopyTexture(CL, SceneDepth.Texture, RHI::FTextureSlice{}, SceneDepthCopy.Texture, RHI::FTextureSlice{});
         Barriers::TransferToShaders(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead,
+            RHI::EStageFlags::FragmentTests, RHI::EAccessFlags::DepthStencilRead | RHI::EAccessFlags::DepthStencilWrite);
 
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;
         Color.LoadOp  = RHI::ELoadOp::Load;
         Color.StoreOp = RHI::EStoreOp::Store;
 
+        // Tested and written against the real depth, so the water hides itself and what lies beneath it from every later pass.
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-        Pass.RenderArea       = HDR.GetExtent();
+        Pass.ColorAttachments          = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.DepthAttachment.Texture   = SceneDepth.Texture;
+        Pass.DepthAttachment.LoadOp    = RHI::ELoadOp::Load;
+        Pass.DepthAttachment.StoreOp   = RHI::EStoreOp::Store;
+        Pass.RenderArea                = HDR.GetExtent();
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, HDR.GetExtent());
-        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
+        RHI::FDepthStencilDesc WaterDepthTest;
+        WaterDepthTest.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
+        WaterDepthTest.DepthTest = RHI::EOp::Greater;
+        RHI::CmdSetDepthStencil(CL, WaterDepthTest);
         // Double-sided so the surface is visible from below (camera submerged) too.
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
@@ -1807,6 +1821,7 @@ namespace Lumina
         Key.VS = VS;
         Key.PS = PS;
         Key.ColorTargets.push_back({ HDR.Desc.Format, WaterBlend });
+        Key.DepthFormat = EFormat::D32;
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         struct FWaterPushConstants
@@ -1828,7 +1843,7 @@ namespace Lumina
         PC.AerialTransmittanceIndex = AtmosphereTerms.AerialTransmittanceIndex;
         PC.AerialRange              = AtmosphereTerms.AerialRange;
         PC.AerialIntensity          = AtmosphereTerms.AerialIntensity;
-        PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
+        PC.SceneDepthIndex = (uint32)SceneDepthCopy.GetResourceID();
 
         const RHI::GPUPtr Args = MakeArgs(PC);
 
@@ -2297,6 +2312,37 @@ namespace Lumina
         constexpr uint32 CloudNoiseTileSize = 4;
     }
 
+    bool FDefaultSceneRenderer::BakeCloudNoiseIfNeeded(RHI::FCmdListH CL)
+    {
+        if (CurrentView->bCloudNoiseBaked)
+        {
+            return true;
+        }
+
+        static const FShaderH BakeCS = FShaderLibrary::Get("CloudNoiseBake.slang");
+        const FSceneImage& Noise     = GetNamedImage(ENamedImage::CloudNoise);
+        if (!BakeCS || !Noise.IsValid())
+        {
+            return false;
+        }
+
+        // The volume is view-independent and static, so it is generated once and kept.
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BakeCS));
+
+        FCloudNoisePushConstants BakePC = {};
+        BakePC.NoiseUAV = (uint32)Noise.GetMipUAVIndex(0);
+
+        const uint32 BakeGroups = RenderUtils::GetGroupCount(kCloudNoiseSize, CloudNoiseTileSize);
+        RHI::CmdDispatch(CL, MakeArgs(BakePC), BakeGroups, BakeGroups, BakeGroups);
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        CurrentView->bCloudNoiseBaked = true;
+        return true;
+    }
+
     void FDefaultSceneRenderer::VolumetricCloudPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
@@ -2309,9 +2355,8 @@ namespace Lumina
             return;
         }
 
-        static const FShaderH BakeCS  = FShaderLibrary::Get("CloudNoiseBake.slang");
         static const FShaderH CloudCS = FShaderLibrary::Get("VolumetricClouds.slang");
-        if (!BakeCS || !CloudCS)
+        if (!CloudCS)
         {
             return;
         }
@@ -2327,22 +2372,9 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("Volumetric Clouds", tracy::Color::White);
 
-        // The volume is view-independent and static, so it is generated once and kept.
-        if (!CurrentView->bCloudNoiseBaked)
+        if (!BakeCloudNoiseIfNeeded(CL))
         {
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BakeCS));
-
-            FCloudNoisePushConstants BakePC = {};
-            BakePC.NoiseUAV = (uint32)Noise.GetMipUAVIndex(0);
-
-            const uint32 BakeGroups = RenderUtils::GetGroupCount(kCloudNoiseSize, CloudNoiseTileSize);
-            RHI::CmdDispatch(CL, MakeArgs(BakePC), BakeGroups, BakeGroups, BakeGroups);
-
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                RHI::EStageFlags::Compute,
-                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-            CurrentView->bCloudNoiseBaked = true;
+            return;
         }
 
         const SCloudComponent& C = Frame.Volumetrics.Clouds;

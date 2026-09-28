@@ -208,6 +208,9 @@ namespace Lumina
         FUNCTION()
         double GetWorldDeltaTime() const { return DeltaTime; }
 
+        // The frame's time before time dilation, for things such as cinematics that must keep pace with the clock.
+        double GetRealDeltaTime() const { return RealDeltaTime; }
+
         FUNCTION()
         double GetTimeSinceWorldCreation() const { return TimeSinceCreation; }
 
@@ -735,6 +738,7 @@ namespace Lumina
         // C#-facing debug-draw facade bound under World.Debug; .World points back at this world.
         FWorldDebugInterface                                DebugInterface;
         double                                              DeltaTime = 0.0;
+        double                                              RealDeltaTime = 0.0;
         double                                              TimeSinceCreation = 0.0;
 
         // Engine-clock time this world last went suspended; -1 while active. Drives idle-reclaim grace.

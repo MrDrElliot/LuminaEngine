@@ -68,6 +68,7 @@ enum EInstanceFlags
 
     ShadowOnly      = BIT(10),  // survives shadow views only; every camera view rejects it
     NoDecals        = BIT(11),  // decals pass over it
+    NoContactShadows = BIT(12), // thin geometry whose screen-space contact march only returns noise
 }
 
 // Mirror of Lumina::FMeshletVertex. Position is three 16-bit offsets from the meshlet anchor -- decode

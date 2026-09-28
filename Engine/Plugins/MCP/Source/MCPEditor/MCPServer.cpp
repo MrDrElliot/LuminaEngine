@@ -13,10 +13,12 @@
 #include "MCPDataTableTools.h"
 #include "MCPEditorSessionTools.h"
 #include "MCPMaterialTools.h"
+#include "MCPPackageTools.h"
 #include "MCPParticleTools.h"
 #include "MCPPrefabTools.h"
 #include "MCPProfilerTools.h"
 #include "MCPSceneTools.h"
+#include "MCPSequenceTools.h"
 
 namespace Lumina::MCP
 {
@@ -112,6 +114,8 @@ namespace Lumina::MCP
         RegisterPrefabTools(GOwner);
         RegisterEditorSessionTools(GOwner);
         RegisterProfilerTools(GOwner);
+        RegisterSequenceTools(GOwner);
+        RegisterPackageTools(GOwner);
 
         Http::FServerParams Params;
         Params.Port = Settings.Port;

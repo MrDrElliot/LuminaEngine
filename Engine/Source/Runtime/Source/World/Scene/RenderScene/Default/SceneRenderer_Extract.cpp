@@ -4018,6 +4018,9 @@ namespace Lumina
                 Species.MaxSlopeCos   = Math::Cos(Type->MaxSlopeDegrees * (3.14159265358979f / 180.0f));
                 Species.CullDistance  = Type->CullDistance;
                 Species.Seed          = Type->Seed;
+                Species.bReceiveShadow = Type->bReceiveShadow;
+                Species.bContactShadows = Type->bContactShadows;
+                Species.FullDensityDistance = Type->FullDensityDistance;
                 Species.bRandomYaw    = Type->bRandomYaw;
 
                 Out.Grass.push_back(Species);

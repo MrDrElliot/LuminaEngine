@@ -76,6 +76,11 @@ namespace Lumina
         float                   LastViewFOV = 90.0f;
         SPostProcessSettings    LastPostProcess;
         bool                    bHasResolvedView = false;
+
+        // Laid over whichever camera is live, so a sequence's fade and bars hold across its cuts.
+        float                   OverlayFade = 0.0f;
+        FVector3                OverlayFadeColor = FVector3(0.0f);
+        float                   OverlayLetterbox = 0.0f;
     };
 
     // Game-thread accumulator driving EntityScript OnFixedUpdate at the physics fixed rate (1/PhysicsHz).

@@ -761,7 +761,7 @@ namespace Lumina
                                            (float)Math::Clamp(Water.SSRStepCount, 8, 128),
                                            Math::Max(Water.SpecularIntensity, 0.0f),
                                            Math::Clamp(Water.Opacity, 0.0f, 1.0f));
-            Item.DetailParams   = FVector4(Math::Max(Water.DetailTiling, 0.01f),
+            Item.DetailParams   = FVector4(Math::Max(Water.DetailTileSize, 0.01f),
                                            Math::Max(Water.DetailScrollSpeed, 0.0f),
                                            Math::Max(Water.FoamTiling, 0.01f),
                                            Math::Max(Water.FoamIntensity, 0.0f));

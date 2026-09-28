@@ -59,7 +59,33 @@ namespace Lumina::Platform
 
     // Like RunProcessAndWait but no console; merged stdout+stderr stream back via LineCallback, one line per call.
     // Callback runs on the calling thread (safe for lockless UI updates); returns the exit code (-1 if spawn failed).
-    RUNTIME_API int RunProcessAndWaitCapture(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory, const TFunction<void(FStringView)>& LineCallback);
+    // A process still running after TimeoutMilliseconds is killed and reports ProcessTimedOutExitCode; zero waits as long as it takes.
+    RUNTIME_API int RunProcessAndWaitCapture(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory, const TFunction<void(FStringView)>& LineCallback,
+                                             uint32 TimeoutMilliseconds = 0);
+
+    inline constexpr int ProcessTimedOutExitCode = 124;
+
+    // A child the caller keeps watching, unlike LaunchProcess, which forgets it once started.
+    struct FProcessHandle
+    {
+        void*  Handle    = nullptr;
+        uint32 ProcessId = 0;
+        int32  ExitCode  = 0;
+        bool   bExited   = false;
+
+        bool IsValid() const { return ProcessId != 0; }
+    };
+
+    // Starts Executable in WorkingDirectory, or the caller's when null. Returns an invalid handle when it cannot start.
+    RUNTIME_API FProcessHandle SpawnProcess(const TCHAR* Executable, const TCHAR* Params, const TCHAR* WorkingDirectory = nullptr);
+
+    // False once the child has exited, after which ExitCode holds its status.
+    RUNTIME_API bool IsProcessRunning(FProcessHandle& Process);
+
+    RUNTIME_API void KillProcess(FProcessHandle& Process, int32 ExitCode = 1);
+
+    // Releases the handle without touching the child, which keeps running if it still is.
+    RUNTIME_API void CloseProcess(FProcessHandle& Process);
 
     RUNTIME_API const TCHAR* ExecutableName(bool bRemoveExtension = true);
 

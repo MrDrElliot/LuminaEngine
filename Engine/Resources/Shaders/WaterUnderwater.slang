@@ -34,9 +34,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float  RawDepth = gTextures2D[Pass().SceneDepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, 0.0).r;
 
     float3 CameraPos = GetCameraPosition();
-    // Reverse-Z: 0 = far/sky. Reconstructing at a tiny depth gives a far point along the view ray, so the
-    // sky case still produces a valid ray that exits the water somewhere above the camera.
-    float  D        = max(RawDepth, 1e-4);
+    // Sky reconstructs at a tiny depth for a far point on its ray, while real geometry keeps its true distance.
+    float  D        = RawDepth > 0.0 ? RawDepth : 1e-4;
     float3 WorldPos = ReconstructWorldPos(UV, D, GetInverseCameraProjection(), GetInverseCameraView());
 
     float PlaneY = P.PlaneNormalAndHeight.w;

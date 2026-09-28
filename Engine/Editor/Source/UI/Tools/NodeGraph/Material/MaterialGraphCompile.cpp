@@ -1,4 +1,5 @@
 #include "MaterialGraphCompile.h"
+#include "Containers/StringFormat.h"
 #include "MaterialNodeGraph.h"
 #include "Nodes/MaterialNode_Grass.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -518,6 +519,29 @@ namespace Lumina
         }
     }
 
+    bool RecompileMaterialIfStale(CMaterial* Material, FString& OutError)
+    {
+        if (Material == nullptr || Material->CompiledTemplateHash == CMaterial::GetShaderTemplateHash())
+        {
+            return true;
+        }
+
+        CMaterialNodeGraph* Graph = LoadMaterialGraph(Material);
+        if (Graph == nullptr)
+        {
+            OutError = "it has no saved graph to recompile from";
+            return false;
+        }
+
+        const FMaterialGraphCompileResult Result = CompileMaterialGraph(Material, Graph);
+        if (!Result.bSuccess)
+        {
+            OutError = Lumina::Format("its graph failed to compile with {} error(s)", Result.Errors.size());
+            return false;
+        }
+        return true;
+    }
+
     void ProcessMaterialPermutationRequests()
     {
         // One at a time, since a permutation is a full multi-stage compile like any other.
@@ -633,7 +657,7 @@ namespace Lumina
 
         // Spread out, or a template edit that staled many materials becomes one long hitch.
         TObjectPtr<CMaterial> Material = CMaterial::PopStaleTemplateMaterial();
-        if (!Material.IsValid())
+        if (!Material.IsValid() || Material->CompiledTemplateHash == CMaterial::GetShaderTemplateHash())
         {
             return;
         }

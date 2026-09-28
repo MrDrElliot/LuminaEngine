@@ -1,5 +1,6 @@
 #pragma once
 #include "SceneGlobals.slang"
+#include "CloudCommon.slang"
 
 // The directional/cascade PCSS lives here, not in SurfaceShading.slang, because two consumers must not
 // drift: the inline path in ShadeSurface and ShadowMaskPixel.slang's full-screen resolve.
@@ -63,8 +64,13 @@ FCubemapCoord DirectionToCubemapCoord(float3 Dir)
     return Result;
 }
 
-// Cascades are nested by distance, so a ray marching away from the camera never falls back to a nearer
-// one. FirstCascade carries the last hit forward and skips the transforms that cannot match.
+// Only the shadowed directional light exists, and the cloud map is built along its direction.
+float SampleDirectionalCloudShadow(float3 FragmentPos)
+{
+    return CloudShadow_Sample(Scene().FogCloudShadowIndex, FragmentPos, Scene().FogCloudShadowCenter, Scene().FogCloudShadowExtent);
+}
+
+// Cascades nest by distance, so FirstCascade carries a receding march's last hit and skips impossible ones.
 float SampleSunCascadeFrom(FLight Light, float3 WorldPos, inout int FirstCascade)
 {
     if (Light.ShadowDataIndex == INDEX_NONE)
@@ -195,14 +201,16 @@ float SunOccluderDepthWS(FLight Light, float3 WorldPos)
 
 // Load, not Sample: the mask is full-res and screen-aligned, so the fetch is an exact 1:1 texel read.
 // Guarded on the sentinel so a specialized view whose pass did not run reads fully lit, not texture 0.
-float SampleShadowMask(float2 PixelPos)
+float SampleShadowMask(float2 PixelPos, bool bContactShadows)
 {
     uint Index = Scene().ShadowMaskIndex;
     if (Index == 0xFFFFFFFFu)
     {
         return 1.0;
     }
-    return gTextures2D[NonUniformResourceIndex(Index)].Load(int3(int2(PixelPos), 0)).r;
+    // Red is cascade and cloud, green the contact march, kept apart so a surface can refuse it; min avoids a double penumbra.
+    const float2 Mask = gTextures2D[NonUniformResourceIndex(Index)].Load(int3(int2(PixelPos), 0)).rg;
+    return bContactShadows ? min(Mask.r, Mask.g) : Mask.r;
 }
 
 // ToLight is the TO-LIGHT vector, matching FLight::Direction. Passing the travel direction instead
@@ -448,7 +456,7 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
 
 // Factored out so the sun and any other directional light share the exact same cascade PCSS. Normal
 // feeds only the slope bias and normal-offset push, so the mask pass can pass a geometric normal.
-float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, float3 dWdx, float3 dWdy)
+float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, float3 dWdx, float3 dWdy)
 {
     // Sun with bCastShadows = false leaves ShadowDataIndex at INDEX_NONE;
     // skip the cascade work and treat as fully lit.
@@ -512,6 +520,12 @@ float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, 
     }
 
     return ShadowA;
+}
+
+float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, float3 dWdx, float3 dWdy)
+{
+    return ComputeDirectionalCascadeShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos, dWdx, dWdy)
+         * SampleDirectionalCloudShadow(FragmentPos);
 }
 
 // Forward shading keeps hardware derivatives, which a rasterized surface has for every lane of the quad.

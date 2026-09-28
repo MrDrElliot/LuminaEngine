@@ -140,6 +140,8 @@ namespace Lumina
 
 		SampleRate  = InSampleRate;
 		NumChannels = Math::Min(InChannels, MaxChannels);
+		LimiterGain = 1.0f;
+		LimiterRelease = 1.0f - std::exp(-1.0f / (LimiterReleaseSeconds * (float)SampleRate));
 
 		const size_t BlockSamples = (size_t)BlockFrames * NumChannels;
 
@@ -954,9 +956,23 @@ namespace Lumina
 			? 0.0f
 			: BusVolumes[(uint32)EAudioBus::Master].load(Atomic::MemoryOrderRelaxed);
 
-		for (size_t s = 0; s < BlockSamples; ++s)
+		// Instant attack and a smooth release, with the clamp left only as a guard against a single sample overshooting.
+		for (uint32 Frame = 0; Frame < Frames; ++Frame)
 		{
-			Out[s] = Math::Clamp(MasterAccum[s] * MasterGain, -1.0f, 1.0f);
+			const size_t First = (size_t)Frame * NumChannels;
+			float Peak = 0.0f;
+			for (uint32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				Peak = Math::Max(Peak, Math::Abs(MasterAccum[First + Channel] * MasterGain));
+			}
+
+			const float Target = Peak > LimiterCeiling ? LimiterCeiling / Peak : 1.0f;
+			LimiterGain = Target < LimiterGain ? Target : LimiterGain + (Target - LimiterGain) * LimiterRelease;
+
+			for (uint32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				Out[First + Channel] = Math::Clamp(MasterAccum[First + Channel] * MasterGain * LimiterGain, -1.0f, 1.0f);
+			}
 		}
 	}
 

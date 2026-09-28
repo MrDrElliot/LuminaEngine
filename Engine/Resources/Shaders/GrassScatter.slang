@@ -62,11 +62,14 @@ struct FGrassScatterPushConstants
     float  MaxHeight;
     float  TerrainBaseY;
     uint   Resolution;          // heightmap samples per side
-    uint   _Pad1;
+    float  FullDensityDistance; // blades thin past this with the square of distance; 0 keeps full density
     uint   _Pad2;
 };
 
 FGrassScatterPushConstants* Pass() { return GetPassArgs<FGrassScatterPushConstants>(); }
+
+static const float kMaxThinnedScale = 2.5;
+static const float kEdgeFadeStart = 0.85;
 
 // PCG-style integer hash. Deterministic in the cell index, so a blade keeps its place as the camera
 // moves and the same cell is regenerated -- without that, grass crawls whenever the region shifts.
@@ -117,9 +120,22 @@ void main(uint3 Tid : SV_DispatchThreadID)
     WorldXZ.y = GridOrigin.y + (float(Tid.y) + 0.5 + JitterZ) * P->CellSize;
 
     // Round region, so grass does not pop in at the corners of the dispatch square.
-    if (distance(WorldXZ, P->CameraXZ) > P->Radius)
+    const float CameraDistance = distance(WorldXZ, P->CameraXZ);
+    if (CameraDistance > P->Radius)
     {
         return;
+    }
+
+    // Keeping (F/d)^2 of the blades holds their density on screen roughly constant, since a patch's projected area falls the same way.
+    float Keep = 1.0;
+    if (P->FullDensityDistance > 0.0 && CameraDistance > P->FullDensityDistance)
+    {
+        const float Ratio = P->FullDensityDistance / CameraDistance;
+        Keep = Ratio * Ratio;
+        if (Hash01(CellHash ^ 0x27D4EB2Fu) > Keep)
+        {
+            return;
+        }
     }
 
     // World -> heightmap UV. Outside the tile there is nothing to sample.
@@ -159,7 +175,14 @@ void main(uint3 Tid : SV_DispatchThreadID)
                                    P->TerrainBaseY + Height * P->MaxHeight + P->ZOffset,
                                    WorldXZ.y);
 
-    const float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u));
+    // Survivors grow to cover for the thinned ones, and everything shrinks away over the last stretch so the edge never pops.
+    const float Coverage = min(rsqrt(Keep), kMaxThinnedScale);
+    const float EdgeFade = 1.0 - smoothstep(P->Radius * kEdgeFadeStart, P->Radius, CameraDistance);
+    const float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u)) * Coverage * EdgeFade;
+    if (Scale <= 0.001)
+    {
+        return;
+    }
 
     // Yaw about world up, then tilted toward the surface normal by AlignToNormal.
     const float Yaw = P->bRandomYaw != 0u ? Hash01(CellHash ^ 0x85EBCA6Bu) * 6.2831853 : 0.0;
