@@ -84,6 +84,9 @@ namespace Lumina
         // Clears the preview's live particles and fires every burst again.
         void ReplayPreview();
 
+        // Outlines the selected emitter's spawn shape and visibility bounds in the preview.
+        void DrawEmitterGizmos();
+
     private:
 
         ECS::FEntity            ParticleEntity;
@@ -107,6 +110,7 @@ namespace Lumina
 
         // A one-shot burst plays once and then shows nothing, so the preview re-fires it when this is on.
         bool                    bLoopPreview = true;
+        bool                    bShowGizmos = true;
         float                   PreviewAge = 0.0f;
 
         // Emitter the delete button asked to remove; applied after the column loop. Removing mid-loop
