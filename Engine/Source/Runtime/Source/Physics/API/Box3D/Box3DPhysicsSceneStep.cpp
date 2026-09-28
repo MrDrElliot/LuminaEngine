@@ -283,6 +283,8 @@ namespace Lumina::Physics
             return;
         }
 
+        DropCharacterInterpSlots();
+
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         auto RigidStorage = Registry.GetStorage<SRigidBodyComponent>();
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
@@ -360,6 +362,16 @@ namespace Lumina::Physics
         }
         StagedBodyHandles.clear();
         InterpStaging.Clear();
+        bInterpCharacterTail = false;
+    }
+
+    void FBox3DPhysicsScene::DropCharacterInterpSlots()
+    {
+        if (bInterpCharacterTail)
+        {
+            InterpStaging.Truncate(InterpBodySlots);
+            bInterpCharacterTail = false;
+        }
     }
 
     // nlerp not slerp, since the per-frame alpha is tiny and it drops the per-body trig.
@@ -415,6 +427,10 @@ namespace Lumina::Physics
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
+
+        DropCharacterInterpSlots();
+        InterpBodySlots = (uint32)InterpStaging.Entities.size();
+        bInterpCharacterTail = true;
 
         // Characters are driven by the mover rather than the solver, so they never raise move events.
         Registry.View<SCharacterPhysicsComponent>().ForEach([&](ECS::FEntity Entity, SCharacterPhysicsComponent& Component)
@@ -726,7 +742,11 @@ namespace Lumina::Physics
             ? Math::Min((uint32)WorldSettings.MaxPhysicsSteps, (uint32)(Accumulator / FixedTimestep))
             : 0;
 
-        ResetInterpStaging();
+        // Move events only come from a step, so a frame without one blends the last step's bodies again at its own alpha.
+        if (CollisionSteps > 0)
+        {
+            ResetInterpStaging();
+        }
         ContactDrainScratch.clear();
         ActivationDrainScratch.clear();
 
@@ -748,6 +768,9 @@ namespace Lumina::Physics
 
                     PreStepCallback(FixedTimestep);
                 }
+
+                // After the fixed script tick, so input a script sets this step drives this step.
+                UpdateVehicles(FixedTimestep);
 
                 b3World_Step(WorldId, FixedTimestep, SubStepCount);
 
@@ -781,6 +804,7 @@ namespace Lumina::Physics
 
         // Written before contact callbacks so scripts read fresh transforms.
         ApplyInterpolatedTransforms();
+        PoseVehicleWheels();
         DispatchContactEvents();
         DispatchActivationEvents();
     }

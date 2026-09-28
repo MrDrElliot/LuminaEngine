@@ -166,6 +166,8 @@ public sealed class ActionExecutor
                         Index = ++Started;
                     }
 
+                    RefreshLatePrerequisites(Action);
+
                     // Inputs are final now; catches a dependency that ran but rewrote nothing.
                     if (!ActionGraph.IsOutdated(Action, History, Dependencies, out string Reason))
                     {
@@ -370,6 +372,23 @@ public sealed class ActionExecutor
 
             Log.Error("{0} failed: {1}", DescribeAction(Action), Ex.Message);
             return false;
+        }
+    }
+
+    private static void RefreshLatePrerequisites(BuildAction Action)
+    {
+        if (Action.DiscoverLatePrerequisites is null)
+        {
+            return;
+        }
+
+        HashSet<FileItem> Known = new(Action.PrerequisiteItems);
+        foreach (FileItem Discovered in Action.DiscoverLatePrerequisites())
+        {
+            if (Known.Add(Discovered))
+            {
+                Action.PrerequisiteItems.Add(Discovered);
+            }
         }
     }
 

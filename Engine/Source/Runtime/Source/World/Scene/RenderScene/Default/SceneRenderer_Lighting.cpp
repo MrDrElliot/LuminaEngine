@@ -1410,7 +1410,7 @@ namespace Lumina
             float  CloudShadowCenterX;
 
             float  CloudShadowCenterY;
-            float  _Pad0;
+            uint32 CloudDepthIndex;  // bindless 2D SRV of the depth each cloud texel was marched against
             float  _Pad1;
             float  _Pad2;
         };
@@ -1711,6 +1711,7 @@ namespace Lumina
         PC.AerialIntensity          = AtmosphereTerms.AerialIntensity;
 
         PC.CloudScatterIndex     = AtmosphereTerms.CloudScatterIndex;
+        PC.CloudDepthIndex       = AtmosphereTerms.CloudDepthIndex;
         PC.bFog                  = bFog ? 1u : 0u;
         PC.FroxelIntegratedIndex = (uint32)Integrated.GetResourceID();
         PC.GridZ                 = FroxelGridSize.z;
@@ -1985,7 +1986,7 @@ namespace Lumina
 
         if (LightData.bHasSun)
         {
-            PC.SunDirection = Math::Normalize(LightData.SunDirection);
+            PC.SunDirection = Math::Normalize(LightData.SkySunDirection);
         }
         else
         {
@@ -2257,8 +2258,13 @@ namespace Lumina
 
             FVector2 WindOffset;
             FVector2 DetailWindOffset;
+
+            uint32   CloudDepthUAV;
+            uint32   _Pad0;
+            uint32   _Pad1;
+            uint32   _Pad2;
         };
-        static_assert(sizeof(FCloudPushConstants) == 128,
+        static_assert(sizeof(FCloudPushConstants) == 144,
             "FCloudPushConstants must match VolumetricClouds.slang::FPushConstants.");
 
         constexpr uint32 CloudTileSize      = 8;
@@ -2270,6 +2276,7 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
 
         AtmosphereTerms.CloudScatterIndex = ~0u;
+        AtmosphereTerms.CloudDepthIndex   = ~0u;
 
         if (!Frame.Volumetrics.bClouds)
         {
@@ -2284,9 +2291,10 @@ namespace Lumina
         }
 
         const FSceneImage& Noise   = GetNamedImage(ENamedImage::CloudNoise);
-        const FSceneImage& Scatter = GetNamedImage(ENamedImage::CloudScatter);
-        const FSceneImage& Depth   = GetNamedImage(ENamedImage::DepthAttachment);
-        if (!Noise.IsValid() || !Scatter.IsValid())
+        const FSceneImage& Scatter    = GetNamedImage(ENamedImage::CloudScatter);
+        const FSceneImage& CloudDepth = GetNamedImage(ENamedImage::CloudDepth);
+        const FSceneImage& Depth      = GetNamedImage(ENamedImage::DepthAttachment);
+        if (!Noise.IsValid() || !Scatter.IsValid() || !CloudDepth.IsValid())
         {
             return;
         }
@@ -2333,8 +2341,9 @@ namespace Lumina
 
         const float Drift = C.WindSpeed * Time;
 
-        const int32 ScatterUAV = Scatter.GetMipUAVIndex(0);
-        if (ScatterUAV < 0)
+        const int32 ScatterUAV    = Scatter.GetMipUAVIndex(0);
+        const int32 CloudDepthUAV = CloudDepth.GetMipUAVIndex(0);
+        if (ScatterUAV < 0 || CloudDepthUAV < 0)
         {
             return;
         }
@@ -2366,6 +2375,7 @@ namespace Lumina
         PC.WindOffset        = FVector2(Wind.x * Drift, Wind.y * Drift);
         PC.DetailWindOffset  = FVector2(PC.WindOffset.x * C.DetailWindFactor,
                                         PC.WindOffset.y * C.DetailWindFactor);
+        PC.CloudDepthUAV     = (uint32)CloudDepthUAV;
 
         DispatchCompute(CL, CloudCS, PC, 
                          RenderUtils::GetGroupCount(PC.ScreenW, CloudTileSize),
@@ -2378,6 +2388,7 @@ namespace Lumina
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         AtmosphereTerms.CloudScatterIndex = (uint32)Scatter.GetResourceID();
+        AtmosphereTerms.CloudDepthIndex   = (uint32)CloudDepth.GetResourceID();
     }
 
     void FDefaultSceneRenderer::ScreenSpaceReflectionsPass(RHI::FCmdListH CL)
@@ -2522,7 +2533,7 @@ namespace Lumina
 
         if (Frame.Lighting.LightData.bHasSun)
         {
-            LutPC.SunDirection = Math::Normalize(Frame.Lighting.LightData.SunDirection);
+            LutPC.SunDirection = Math::Normalize(Frame.Lighting.LightData.SkySunDirection);
         }
         else
         {

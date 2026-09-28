@@ -624,7 +624,6 @@ namespace Lumina
         Frame.Primitives.DecalExtracts.clear();
         Frame.Primitives.DecalBatches.clear();
         DecalSortScratch.clear();
-        DecalGroupMinSort.clear();
 
         const float WorldTime = (float)World->GetTimeSinceWorldCreation();
 
@@ -643,6 +642,11 @@ namespace Lumina
             {
                 return;
             }
+            // Textures load on demand, and a decal drawn on the placeholder would stamp the missing-texture color onto the world.
+            if (!Material->RequestTexturesResolved())
+            {
+                return;
+            }
             CMaterial* ShaderOwner = Material->GetMaterial();
             const int32 MaterialIndex = Material->GetMaterialIndex();
             if (MaterialIndex < 0)
@@ -654,35 +658,26 @@ namespace Lumina
             Item.DecalToWorld  = Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Decal.Size);
             Item.WorldToDecal  = Math::Inverse(Item.DecalToWorld);
             Item.FadeAngleCos  = Math::Cos(Math::Radians(Math::Clamp(Decal.FadeAngle, 0.0f, 89.9f)));
-            Item.Opacity       = Math::Clamp(Decal.Opacity, 0.0f, 1.0f) * LifetimeFade;
-            Item.MaterialIndex = (uint32)MaterialIndex;
-            Item.Flags         = 0;
-            Item.UVTransform   = DecalAtlasTransform(Decal);
+            Item.Opacity        = Math::Clamp(Decal.Opacity * Decal.Modulate.w, 0.0f, 1.0f) * LifetimeFade;
+            Item.MaterialIndex  = (uint32)MaterialIndex;
+            Item.EmissionEnergy = Math::Max(Decal.EmissionEnergy, 0.0f);
+            Item.UVTransform    = DecalAtlasTransform(Decal);
+            Item.Modulate       = FVector4(Decal.Modulate.x, Decal.Modulate.y, Decal.Modulate.z, Math::Clamp(Decal.AlbedoMix, 0.0f, 1.0f));
+            Item.Fades          = FVector4(Decal.bDistanceFade ? Math::Max(Decal.DistanceFadeBegin, 0.0f) : -1.0f,
+                                           Math::Max(Decal.DistanceFadeLength, 0.0f),
+                                           Math::Clamp(Decal.UpperFade, 0.0f, 1.0f), Math::Clamp(Decal.LowerFade, 0.0f, 1.0f));
 
             DecalSortScratch.push_back({ ShaderOwner, Decal.SortOrder, Item });
         });
 
-        for (const FDecalSortEntry& E : DecalSortScratch)
+        // Sort order decides first, so materials interleave exactly, and runs of one material within an order still batch.
+        Algo::StableSort(DecalSortScratch, [](const FDecalSortEntry& A, const FDecalSortEntry& B)
         {
-            auto It = DecalGroupMinSort.find(E.ShaderOwner);
-            if (It == DecalGroupMinSort.end() || E.SortOrder < It->second)
+            if (A.SortOrder != B.SortOrder)
             {
-                DecalGroupMinSort[E.ShaderOwner] = E.SortOrder;
+                return A.SortOrder < B.SortOrder;
             }
-        }
-        Algo::StableSort(DecalSortScratch, [&](const FDecalSortEntry& A, const FDecalSortEntry& B)
-        {
-            const int32 GA = DecalGroupMinSort[A.ShaderOwner];
-            const int32 GB = DecalGroupMinSort[B.ShaderOwner];
-            if (GA != GB)
-            {
-                return GA < GB;
-            }
-            if (A.ShaderOwner != B.ShaderOwner)
-            {
-                return A.ShaderOwner < B.ShaderOwner;
-            }
-            return A.SortOrder < B.SortOrder;
+            return A.ShaderOwner < B.ShaderOwner;
         });
 
         Frame.Primitives.DecalExtracts.reserve(DecalSortScratch.size());

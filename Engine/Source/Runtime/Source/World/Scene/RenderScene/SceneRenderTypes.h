@@ -531,13 +531,12 @@ namespace Lumina
     // Header only; the arrays hang off it by address so a frame uploads the live prefix, not the cap.
     struct FSceneLightData
     {
-        uint32              _PadNumLights{};    // the live counts are the spans' own
         // 1 when the environment IBL cubes are valid; 0 means skylight-only -> shader adds a flat ambient.
         uint32              bHasIBL{};
-        uint32              _PadNumShadows{};
-        uint32              Padding0{};
+        // The true sun for the sky and atmosphere, which differs from SunDirection once moonlight takes over at night.
+        FVector3           SkySunDirection{};
 
-        FVector3           SunDirection{};   // to-light: FROM surface TOWARD the sun (== Lights[0].Direction)
+        FVector3           SunDirection{};   // to-light for surface lighting and shadows (== Lights[0].Direction)
         uint32              bHasSun{};
 
         FVector4           CascadeSplits{};
@@ -559,6 +558,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FSceneLightData) == 176, "FSceneLightData layout must match FLightData in Common.slang");
+    static_assert(offsetof(FSceneLightData, SunDirection) == 16, "SunDirection must sit at 16, matching the scalar layout in Common.slang");
     VERIFY_SSBO_ALIGNMENT(FSceneLightData);
     // Relaxed block layout rejects a vector straddling 16, so the spans must follow the last one.
     static_assert(offsetof(FSceneLightData, Lights) == 144, "Lights must sit at 144");
@@ -657,11 +657,13 @@ namespace Lumina
         float       FadeAngleCos;       // cos(max angle) of surface normal vs decal forward; below => fades out
         float       Opacity;            // master coverage multiplier
         uint32      MaterialIndex;      // slot into the material uniform buffer
-        uint32      Flags;              // reserved
+        float       EmissionEnergy;
         FVector4    UVTransform;        // xy scale and zw offset of the atlas cell shown
+        FVector4    Modulate;           // rgb tint, a albedo mix
+        FVector4    Fades;              // x distance fade begin (negative disables), y its length, z upper fade, w lower fade
     };
 
-    static_assert(sizeof(FGPUDecal) == 160, "FGPUDecal layout must match DecalCommon.slang");
+    static_assert(sizeof(FGPUDecal) == 192, "FGPUDecal layout must match DecalCommon.slang");
     VERIFY_SSBO_ALIGNMENT(FGPUDecal);
 
     struct alignas(16) FGPUReflectionProbe
@@ -1313,7 +1315,8 @@ namespace Lumina
 
         FVector2        FogCloudShadowCenter = FVector2(0.0f, 0.0f);
         float           FogCloudShadowExtent = 0.0f;
-        float           _FogPad0             = 0.0f;
+        // The additive emission layer decals write, ~0u when no decal rendered.
+        uint32          DBufferDIndex        = ~0u;
     };
     // alignas(16) here but 4-byte aligned in scalar layout, so they agree only with no C++ padding.
     static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0,

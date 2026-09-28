@@ -294,7 +294,7 @@ namespace Lumina
                         {
                             Input /= Magnitude;
                         }
-                        Controller->AddMovementInput(Input);
+                        Controller->AddWorldMovementInput(Input);
                     }
                 }
             }

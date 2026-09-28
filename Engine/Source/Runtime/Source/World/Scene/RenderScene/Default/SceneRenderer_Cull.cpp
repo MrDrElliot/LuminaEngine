@@ -433,7 +433,10 @@ namespace Lumina
                 bEnvironmentParamsUploaded   = true;
             }
 
-            const bool bSunChanged = LastIBLSunDirection != LightData.SunDirection || bLastIBLHasSun != (LightData.bHasSun != 0);
+            // A day cycle moves the sun every frame, and a sub-quarter-degree step is invisible in reflections but costs a whole cube bake.
+            constexpr float SkyCubeSunCosThreshold = 0.99999f;
+            const bool bSunChanged = bLastIBLHasSun != (LightData.bHasSun != 0)
+                || Math::Dot(LastIBLSunDirection, LightData.SkySunDirection) < SkyCubeSunCosThreshold;
             const bool bMapChanged = LastIBLEnvironmentMapID != EnvironmentMapID;
 
             const bool bResChanged = Frame.Volumetrics.IBLResolution != LastExtractedIBLResolution;
@@ -445,7 +448,7 @@ namespace Lumina
                 bIBLDirty                  = true;
                 LastIBLEnvironmentParams   = EnvironmentParams;
                 LastIBLEnvironmentMapID    = EnvironmentMapID;
-                LastIBLSunDirection        = LightData.SunDirection;
+                LastIBLSunDirection        = LightData.SkySunDirection;
                 bLastIBLHasSun             = (LightData.bHasSun != 0);
                 bIBLValid                  = true;
             }
@@ -455,7 +458,7 @@ namespace Lumina
             float SunCos = 1.0f;
             if (bLastConvolvedHasSun && LightData.bHasSun)
             {
-                SunCos = Math::Dot(LastConvolvedSunDirection, LightData.SunDirection);
+                SunCos = Math::Dot(LastConvolvedSunDirection, LightData.SkySunDirection);
             }
             const bool bConvSunChanged = bConvHasSunChanged || (SunCos < SunCosThreshold);
             const bool bConvParamsChanged = std::memcmp(&LastConvolvedEnvironmentParams, &EnvironmentParams, sizeof(FEnvironmentParams)) != 0;
@@ -468,7 +471,7 @@ namespace Lumina
                 bIBLConvolutionDirty           = true;
                 LastConvolvedEnvironmentParams = EnvironmentParams;
                 LastConvolvedEnvironmentMapID  = EnvironmentMapID;
-                LastConvolvedSunDirection      = LightData.SunDirection;
+                LastConvolvedSunDirection      = LightData.SkySunDirection;
                 bLastConvolvedHasSun           = (LightData.bHasSun != 0);
                 bIBLConvolutionValid           = true;
             }
@@ -565,6 +568,7 @@ namespace Lumina
             SceneGlobalData.DBufferAIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferA].GetResourceID() : ~0u;
             SceneGlobalData.DBufferBIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferB].GetResourceID() : ~0u;
             SceneGlobalData.DBufferCIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferC].GetResourceID() : ~0u;
+            SceneGlobalData.DBufferDIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferD].GetResourceID() : ~0u;
 
             FrameFlags.bShadowMaskValid = (LightData.bHasSun != 0) &&
                                               (Frame.Lighting.Lights[0].ShadowDataIndex != INDEX_NONE);

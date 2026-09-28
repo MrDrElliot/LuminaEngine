@@ -81,7 +81,7 @@ FragmentOutput FragmentMain(FragmentInput Input)
         // so they run here. Each early-outs cheaply when off-screen.
         if (SkyMode == SKY_MODE_DYNAMIC)
         {
-            float3 SunDir      = GetSunDirection();
+            float3 SunDir      = GetSkySunDirection();
             float  SunHeight   = SunDir.y;
             float  NightFactor = smoothstep(0.05, -0.15, SunHeight);
             float  UpMask      = smoothstep(-0.05, 0.1, RayDir.y);

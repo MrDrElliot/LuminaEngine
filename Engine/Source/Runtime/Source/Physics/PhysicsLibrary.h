@@ -101,6 +101,10 @@ namespace Lumina
         FUNCTION()
         static FVector3 GetCenterOfMass(CWorld* World, ECS::FEntity Entity);
 
+        // Zero for a body that cannot move, since static and kinematic bodies have no finite mass.
+        FUNCTION()
+        static float GetMass(CWorld* World, ECS::FEntity Entity);
+
         FUNCTION()
         static void SetGravityFactor(CWorld* World, ECS::FEntity Entity, float Factor);
 

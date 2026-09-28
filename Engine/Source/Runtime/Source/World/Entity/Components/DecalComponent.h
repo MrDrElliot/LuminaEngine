@@ -36,6 +36,34 @@ namespace Lumina
         PROPERTY(Editable, Category = "Decal")
         int32 SortOrder = 0;
 
+        // Multiplies the material's color and emission, and its alpha scales the whole decal.
+        PROPERTY(Editable, Color, Category = "Decal|Appearance")
+        FVector4 Modulate = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
+
+        // How much of the material's color is laid down, leaving normal and surface channels at full strength.
+        PROPERTY(Editable, Category = "Decal|Appearance", ClampMin = 0.0f, ClampMax = 1.0f)
+        float AlbedoMix = 1.0f;
+
+        PROPERTY(Editable, Category = "Decal|Appearance", ClampMin = 0.0f)
+        float EmissionEnergy = 1.0f;
+
+        // Share of the box depth over which the decal fades toward its +Z face.
+        PROPERTY(Editable, Category = "Decal|Fade", ClampMin = 0.0f, ClampMax = 1.0f)
+        float UpperFade = 0.3f;
+
+        // Share of the box depth over which the decal fades toward its -Z face.
+        PROPERTY(Editable, Category = "Decal|Fade", ClampMin = 0.0f, ClampMax = 1.0f)
+        float LowerFade = 0.3f;
+
+        PROPERTY(Editable, Category = "Decal|Fade")
+        bool bDistanceFade = false;
+
+        PROPERTY(Editable, Category = "Decal|Fade", EditCondition = "bDistanceFade", ClampMin = 0.0f, Units = "m")
+        float DistanceFadeBegin = 40.0f;
+
+        PROPERTY(Editable, Category = "Decal|Fade", EditCondition = "bDistanceFade", ClampMin = 0.0f, Units = "m")
+        float DistanceFadeLength = 10.0f;
+
         // Cells across and down a sprite sheet, so one material carries several variants.
         PROPERTY(Editable, Category = "Decal|Atlas", ClampMin = 1)
         int32 AtlasColumns = 1;

@@ -40,7 +40,7 @@ struct FPushConstants
     float CloudShadowCenterX;
 
     float CloudShadowCenterY;
-    float _Pad0;
+    uint  CloudDepthIndex;           // raw depth each half-res cloud texel was marched against
     float _Pad1;
     float _Pad2;
 };
@@ -64,6 +64,74 @@ float3 ApplyAerialPerspective(float3 Color, float2 UV, float Depth)
 }
 
 // Returns in-scatter in rgb and the clamped fog opacity in a, the pair the old blend state consumed.
+// A texel marched against a nearer surface stopped short, so blending it into a pixel behind that surface leaves a clear halo.
+static const float kCloudDepthMismatch  = 1.0e6;
+static const float kCloudDepthSharpness = 32.0;
+
+// How far a cloud texel's marched depth is from this pixel's, relative to the pixel's own distance.
+float CloudDepthError(float PixelRaw, float PixelLinear, float TexelRaw)
+{
+    bool bPixelSky = PixelRaw <= 0.0;
+    bool bTexelSky = TexelRaw <= 0.0;
+    if (bPixelSky && bTexelSky)
+    {
+        return 0.0;
+    }
+    if (bPixelSky)
+    {
+        // Among texels that all stopped at geometry, the farthest carries the most of the sky's cloud.
+        return kCloudDepthMismatch + 1.0 / max(LinearizeSceneDepth(TexelRaw), 1e-3);
+    }
+    if (bTexelSky)
+    {
+        return kCloudDepthMismatch;
+    }
+    return abs(LinearizeSceneDepth(TexelRaw) - PixelLinear) / PixelLinear;
+}
+
+// Bilinear over the four nearest half-res texels, weighted toward those marched against this pixel's depth.
+float4 UpsampleClouds(float2 UV, float Depth)
+{
+    uint Width;
+    uint Height;
+    gTextures2D[Pass().CloudScatterIndex].GetDimensions(Width, Height);
+    int2 MaxTexel = int2(Width, Height) - 1;
+
+    float2 Coord = UV * float2(Width, Height) - 0.5;
+    int2   Base  = int2(floor(Coord));
+    float2 Frac  = Coord - float2(Base);
+
+    float PixelLinear = Depth > 0.0 ? LinearizeSceneDepth(Depth) : 0.0;
+
+    float4 Sum        = float4(0.0, 0.0, 0.0, 0.0);
+    float  WeightSum  = 0.0;
+    float4 Closest    = float4(0.0, 0.0, 0.0, 1.0);
+    float  ClosestErr = 3.0e38;
+
+    [unroll]
+    for (int i = 0; i < 4; ++i)
+    {
+        int2   Offset = int2(i & 1, i >> 1);
+        int2   Texel  = clamp(Base + Offset, int2(0, 0), MaxTexel);
+        float4 Cloud  = gTextures2D[Pass().CloudScatterIndex].Load(int3(Texel, 0));
+        float  Err    = CloudDepthError(Depth, PixelLinear, gTextures2D[Pass().CloudDepthIndex].Load(int3(Texel, 0)).r);
+
+        float2 Axis   = lerp(1.0 - Frac, Frac, float2(Offset));
+        float  Weight = Axis.x * Axis.y / (1.0 + Err * kCloudDepthSharpness);
+        Sum          += Cloud * Weight;
+        WeightSum    += Weight;
+
+        if (Err < ClosestErr)
+        {
+            ClosestErr = Err;
+            Closest    = Cloud;
+        }
+    }
+
+    // No texel matched, as in a sky gap narrower than a texel, so the best match is taken alone.
+    return WeightSum > 1.0e-4 ? Sum / WeightSum : Closest;
+}
+
 float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
 {
     FExponentialHeightFogParams uFog = Scene().FogParams;
@@ -230,10 +298,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         bWrote = true;
     }
 
-    // Clouds are low frequency, so a bilinear tap off the half-res march suffices.
     if (Pass().CloudScatterIndex != kAtmosphereTermOff)
     {
-        float4 Cloud = SampleTexture2DLevel(Pass().CloudScatterIndex, SAMPLER_LINEAR_CLAMP, UV, 0.0);
+        float4 Cloud = UpsampleClouds(UV, Depth);
         if (Cloud.a <= 0.999)
         {
             Result = Result * Cloud.a + Cloud.rgb;

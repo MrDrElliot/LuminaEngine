@@ -1,29 +1,33 @@
 #include "Includes/DecalCommon.slang"
 
-// Decal box vertex stage. Emits the unit cube transformed by the decal's world matrix. Back faces are
-// rasterized (the pipeline culls front faces) so the box still covers the screen when the camera is
-// inside it; the pixel shader reconstructs the shaded surface from depth and rejects out-of-box pixels.
-//
-// The decal index comes from SV_VulkanInstanceID (the draw's FirstInstance), NOT the push constant --
-// a per-draw index in the push range laid out unpredictably across stages and fed the VS garbage. The
-// push constant carries only the decal array's device address (shared identically with the PS).
+// Back faces are rasterized (the pipeline culls front faces), so the box still covers the screen with the camera inside it.
 
 struct VSOutput
 {
     nointerpolation uint DecalIndex : DECAL_INDEX;
+    nointerpolation float DistanceFade : DECAL_FADE;
     float4 Position : SV_Position;
 };
 
+// The decal index is the draw's FirstInstance, since a per-draw push value lays out differently across stages.
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint DecalIndex : SV_VulkanInstanceID)
 {
     FGPUDecal Decal = SpanGet(&Pass().Decals, DecalIndex);
 
+    VSOutput Output;
+    Output.DecalIndex   = DecalIndex;
+    Output.DistanceFade = DecalDistanceFade(Decal, GetCameraPosition());
+
+    // A decal faded out by distance collapses to a point, so it costs no pixels at all.
+    if (Output.DistanceFade <= 0.0)
+    {
+        Output.Position = float4(0.0, 0.0, 0.0, 1.0);
+        return Output;
+    }
+
     float3 LocalPos = kDecalCubeVerts[VertexID];
     float4 WorldPos = mul(Decal.DecalToWorld, float4(LocalPos, 1.0));
-
-    VSOutput Output;
-    Output.DecalIndex = DecalIndex;
-    Output.Position   = WorldToClip(WorldPos.xyz);
+    Output.Position = WorldToClip(WorldPos.xyz);
     return Output;
 }

@@ -222,13 +222,14 @@ namespace Lumina::Physics
         Registry.View<SCharacterControllerComponent, SCharacterMovementComponent>().ForEach(
             [&](SCharacterControllerComponent& Controller, SCharacterMovementComponent& Movement)
         {
-            if (Math::LengthSquared(Controller.MoveInput) > LE_SMALL_NUMBER)
+            if (Math::LengthSquared(Controller.MoveInput) > LE_SMALL_NUMBER || Math::LengthSquared(Controller.WorldMoveInput) > LE_SMALL_NUMBER)
             {
                 const FVector3 Forward = RenderUtils::GetForwardVector(Controller.LookInput.x, 0.0f);
                 const FVector3 Right = RenderUtils::GetRightVector(Controller.LookInput.x);
                 const FVector3 Up = Math::Cross(Right, Forward);
 
-                FVector3 Direction = Right * Controller.MoveInput.x + Up * Controller.MoveInput.y + Forward * Controller.MoveInput.z;
+                FVector3 Direction = Right * Controller.MoveInput.x + Up * Controller.MoveInput.y + Forward * Controller.MoveInput.z
+                                   + Controller.WorldMoveInput;
                 const float Magnitude = Math::Length(Direction);
                 if (Magnitude > LE_SMALL_NUMBER)
                 {
@@ -250,6 +251,7 @@ namespace Lumina::Physics
 
             Movement.PendingLookYaw = Controller.LookInput.x;
             Controller.MoveInput = {};
+            Controller.WorldMoveInput = {};
 
             if (Controller.bJumpPressed)
             {

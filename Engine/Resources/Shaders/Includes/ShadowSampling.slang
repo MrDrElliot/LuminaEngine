@@ -260,6 +260,36 @@ static const float PCSS_MaxFilterTexels     = 4.0;     // ~sqrt(SHADOW_MAX_SAMPL
 static const float PCSS_BlockerDepthBias    = 0.0004;  // Bias for blocker classification
 static const float PCSS_MaxPlaneDepthBias   = 0.01;    // Cap on the receiver-plane prediction (silhouette-edge guard)
 
+// The tent kernel's reach in shadow texels, past which PCSS widens the penumbra with the disk instead.
+static const float PCSS_TentFilterTexels    = 2.5;
+
+// The Witness 5x5 tent PCF from MJP's Shadows sample, weighted by sub-texel position so edges glide across texels.
+float SampleCascadeTentPCF(float2 AtlasUV, float RefDepth, float2 AtlasTexel, float2 TileMin, float2 TileMax)
+{
+    float2 TexelPos = AtlasUV / AtlasTexel;
+    float2 Center   = floor(TexelPos + 0.5);
+    float2 Frac     = TexelPos + 0.5 - Center;
+    float2 Base     = (Center - 0.5) * AtlasTexel;
+
+    float3 WeightU = float3(4.0 - 3.0 * Frac.x, 7.0, 1.0 + 3.0 * Frac.x);
+    float3 WeightV = float3(4.0 - 3.0 * Frac.y, 7.0, 1.0 + 3.0 * Frac.y);
+    float3 OffsetU = float3((3.0 - 2.0 * Frac.x) / WeightU.x - 2.0, (3.0 + Frac.x) / WeightU.y, Frac.x / WeightU.z + 2.0);
+    float3 OffsetV = float3((3.0 - 2.0 * Frac.y) / WeightV.x - 2.0, (3.0 + Frac.y) / WeightV.y, Frac.y / WeightV.z + 2.0);
+
+    float Sum = 0.0;
+    [unroll]
+    for (int y = 0; y < 3; ++y)
+    {
+        [unroll]
+        for (int x = 0; x < 3; ++x)
+        {
+            float2 UV = clamp(Base + float2(OffsetU[x], OffsetV[y]) * AtlasTexel, TileMin, TileMax);
+            Sum += WeightU[x] * WeightV[y] * ShadowCascade().SampleCmpLevelZero(UV, RefDepth);
+        }
+    }
+    return Sum * (1.0 / 144.0);
+}
+
 // PIXEL-ONLY: the receiver-plane bias differentiates with ddx/ddy. Guarded rather than left to dead
 // code elimination -- an OpDPdx surviving into a compute entry point is invalid SPIR-V.
 #ifndef SHADING_COMPUTE
@@ -376,8 +406,17 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
         FilterRadius = max(FilterRadius * lerp(0.75, 1.0, BlockerCoverage), MinRadius);
     }
 
-    // Stage 3: scale tap count with penumbra width so sample density (and thus smoothness) stays roughly
-    // constant; at MaxRadius this reaches SHADOW_MAX_SAMPLE_COUNT -> ~1-texel Vogel spacing, gap-free.
+    // The tent kernel covers every penumbra up to its own reach, which is all a hard contact shadow needs.
+    float2 AtlasTexel = CascadeTexelUV * Tile.AtlasUVScale;
+    float  Tent       = SampleCascadeTentPCF(BaseAtlasUV, RefDepth, AtlasTexel, TileMin, TileMax);
+    float  TentRadius = PCSS_TentFilterTexels * CascadeTexelUV;
+    float  DiskBlend  = saturate((FilterRadius - TentRadius) / max(MaxRadius - TentRadius, 1e-6));
+    if (DiskBlend <= 0.0)
+    {
+        return Tent;
+    }
+
+    // A wider penumbra blends toward the disk, whose tap count grows with its width to keep sample density even.
     int   BaseTaps    = clamp(int(LightData().ShadowParams2.y), 1, SHADOW_MAX_SAMPLE_COUNT);
     float RadiusFrac  = saturate(FilterRadius / max(MaxRadius, 1e-6));
     int   SampleCount = clamp(int(lerp(float(BaseTaps), float(SHADOW_MAX_SAMPLE_COUNT), RadiusFrac)),
@@ -395,7 +434,7 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
         float2 AtlasUV = clamp(BaseAtlasUV + float2(VOffset) * AtlasFilterRadius, TileMin, TileMax);
         Shadow        += half(ShadowCascade().SampleCmp(AtlasUV, RefDepth));
     }
-    return float(Shadow) * rcp(float(SampleCount));
+    return lerp(Tent, float(Shadow) * rcp(float(SampleCount)), DiskBlend);
 }
 
 // Factored out so the sun and any other directional light share the exact same cascade PCSS. Normal

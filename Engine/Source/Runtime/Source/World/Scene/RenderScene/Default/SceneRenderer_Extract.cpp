@@ -75,6 +75,11 @@ namespace Lumina
             {
                 continue;
             }
+            // Held back until its textures land, since the placeholder would tint the whole frame.
+            if (!PPInterface->RequestTexturesResolved())
+            {
+                continue;
+            }
             // VS/PS from the concrete material; index from the interface (instances own their param slot).
             FFrameData::FPostProcessMaterial& Out = Frame.PostProcess.ActivePostProcessMaterials.emplace_back();
             Out.Shaders.VertexShader = VS;
@@ -1676,6 +1681,13 @@ namespace Lumina
                 }
                 // Dynamic and HDRI always have the baked irradiance cube, which every consumer prefers.
             }
+            // The irradiance cube darkens with the sun, but this flat term, which clouds read, would otherwise hold noon brightness all night.
+            if (ActiveEnv && ActiveEnv->SkyMode == ESkyMode::Dynamic && LightData.bHasSun)
+            {
+                constexpr float NightAmbient = 0.04f;
+                const float SunElevation = Math::Normalize(LightData.SkySunDirection).y;
+                AmbientRGB *= Math::Lerp(NightAmbient, 1.0f, Math::SmoothStep(-0.15f, 0.1f, SunElevation));
+            }
             LightData.AmbientLight = FVector4(AmbientRGB, Sky.Intensity);
         });
 
@@ -2612,7 +2624,7 @@ namespace Lumina
             const float DirLenSq = Math::Dot(Light.Direction, Light.Direction);
             if (DirLenSq > 0.0001f)
             {
-                SceneCullContext.SunDirection = Math::Normalize(Light.Direction);
+                SceneCullContext.SunDirection = Light.GetLightingDirection();
                 SceneCullContext.bHasSun      = true;
                 break;
             }
@@ -3283,14 +3295,19 @@ namespace Lumina
         {
             LightColor *= ColorTemperatureToRGB(DirectionalLight.Temperature);
         }
+        if (DirectionalLight.IsMoonLit())
+        {
+            LightColor = DirectionalLight.MoonColor;
+        }
 
         FLight Light            = {};
         Light.Flags             = ELightFlags::Directional;
         Light.Color             = PackColor(FVector4(LightColor, 1.0));
-        Light.Intensity         = DirectionalLight.Intensity;
-        Light.Direction         = Math::Normalize(DirectionalLight.Direction);
+        Light.Intensity         = DirectionalLight.GetLightingIntensity();
+        Light.Direction         = DirectionalLight.GetLightingDirection();
         Light.ShadowDataIndex   = INDEX_NONE;
         LightData.SunDirection  = Light.Direction;
+        LightData.SkySunDirection = Math::Normalize(DirectionalLight.Direction);
         if (DirectionalLight.bVolumetric)
         {
             Light.Flags             |= ELightFlags::Volumetric;
@@ -3354,6 +3371,11 @@ namespace Lumina
         const float      CamAspect = ViewVolume.GetAspectRatio();
         const FVector3  LightDir  = Light.Direction; // Toward the sun.
 
+        // LookAt degenerates when the light runs along the up axis, as a noon sun overhead does.
+        const FVector3 ShadowUp = Math::Abs(Math::Dot(Math::Normalize(LightDir), FViewVolume::UpAxis)) > 0.9f
+            ? FVector3(1.0f, 0.0f, 0.0f)
+            : FViewVolume::UpAxis;
+
         if (bCascadeHZBTransformsValid)
         {
             for (int i = 0; i < NumCascades; ++i)
@@ -3406,7 +3428,7 @@ namespace Lumina
             const FMatrix4 LightRotation = Math::LookAt(
                 LightDir * (Radius + BackDistance),
                 FVector3(0.0f),
-                FViewVolume::UpAxis);
+                ShadowUp);
 
             FVector4 CenterLS = LightRotation * FVector4(SphereCenter, 1.0f);
             CenterLS.x = std::round(CenterLS.x / TexelSize) * TexelSize;
@@ -3416,7 +3438,7 @@ namespace Lumina
             const FMatrix4 LightView = Math::LookAt(
                 SnappedCenter + LightDir * (Radius + BackDistance),
                 SnappedCenter,
-                FViewVolume::UpAxis);
+                ShadowUp);
             
             FMatrix4 LightProjection = Math::Ortho(
                 -Radius, +Radius,
@@ -4029,6 +4051,9 @@ namespace Lumina
                 Out.Shaders.VertexShader = TerrainVS;
                 Out.Shaders.PixelShader  = TerrainPS;
                 Out.MaterialIndex        = (uint32)Math::Max(TerrainMaterial->GetMaterialIndex(), 0);
+
+                // Demand only, like particles, since terrain cannot simply disappear while its textures load.
+                TerrainMaterial->RequestTexturesResolved();
             }
 
             Out.HeightUpload      = 0;

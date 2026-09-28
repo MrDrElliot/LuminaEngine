@@ -41,6 +41,7 @@ namespace Lumina
             Status         = EPathFollowStatus::Searching;
             ConsecutiveFailures = 0;
             LastPathResult = ENavPathResult::NotQueried;
+            ResetStuck();
         }
 
         /** Track an entity. The system re-projects the entity's current location each tick. */
@@ -53,6 +54,7 @@ namespace Lumina
             Status       = bHasTarget ? EPathFollowStatus::Searching : EPathFollowStatus::None;
             ConsecutiveFailures = 0;
             LastPathResult = ENavPathResult::NotQueried;
+            ResetStuck();
         }
 
         /** Clear the goal and any cached path. */
@@ -70,6 +72,14 @@ namespace Lumina
             Status = EPathFollowStatus::None;
             ConsecutiveFailures = 0;
             LastPathResult = ENavPathResult::NotQueried;
+            ResetStuck();
+        }
+
+        void ResetStuck()
+        {
+            StuckTime = 0.0f;
+            SidestepTime = 0.0f;
+            StuckAttempts = 0;
         }
 
         FUNCTION()
@@ -86,6 +96,14 @@ namespace Lumina
         /** True if the most recent path query failed. Stays true until a subsequent query succeeds or the target is cleared. */
         FUNCTION()
         bool DidPathFindingFail() const { return Status == EPathFollowStatus::Failed; }
+
+        // Something the navmesh does not know about kept the agent from moving, and sidestepping did not free it.
+        FUNCTION()
+        bool IsStuck() const { return StuckAttempts >= MaxStuckAttempts; }
+
+        // Sidesteps tried since the agent last made headway.
+        FUNCTION()
+        int32 GetStuckAttempts() const { return StuckAttempts; }
 
         /** Number of consecutive failed queries since the last success. Useful for script-side give-up logic. */
         FUNCTION()
@@ -131,6 +149,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "PathFollow", ClampMin = 0.0f)
         float RepathDistance = 1.5f;
 
+        // How long a walking agent may make almost no headway before it repaths and sidesteps.
+        PROPERTY(Editable, Category = "PathFollow|Stuck", ClampMin = 0.0f, Units = "s")
+        float StuckTimeout = 0.8f;
+
         /** Hard repath interval as a backstop, in seconds. */
         PROPERTY(Editable, Category = "PathFollow", ClampMin = 0.0f)
         float RepathInterval = 1.0f;
@@ -138,6 +160,14 @@ namespace Lumina
         /** When true the system writes movement input each tick. Can be toggled by gameplay. */
         PROPERTY(Editable, Category = "PathFollow")
         bool bDriveCharacterController = true;
+
+        // The navmesh volume whose Agent matches, left empty for the infantry default.
+        PROPERTY(Editable, Category = "PathFollow")
+        FName NavAgent;
+
+        // Within this of the goal a driven vehicle eases off, so it stops at the goal instead of sailing past it.
+        PROPERTY(Editable, Category = "PathFollow|Vehicle", ClampMin = 0.0f, Units = "m")
+        float VehicleBrakingDistance = 12.0f;
 
         /** When true, the system emits debug lines along the cached path each tick. */
         PROPERTY(Editable, Category = "PathFollow|Debug")
@@ -180,5 +210,17 @@ namespace Lumina
 
         // Latched reason from the most recent path query, whether it succeeded or not.
         ENavPathResult LastPathResult = ENavPathResult::NotQueried;
+
+        static constexpr int32 MaxStuckAttempts = 3;
+        float StuckTime = 0.0f;
+        FVector3 StuckAnchor = FVector3(0.0f);
+        float SidestepTime = 0.0f;
+        int32 StuckAttempts = 0;
+
+        float VehicleStuckTime = 0.0f;
+        float VehicleReverseTime = 0.0f;
+
+        // Set while this follower is steering a vehicle, so stopping hands the controls back released rather than held.
+        bool bDrivingVehicle = false;
     };
 }

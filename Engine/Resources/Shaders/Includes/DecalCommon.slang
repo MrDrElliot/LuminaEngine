@@ -17,9 +17,23 @@ struct FGPUDecal
     float    FadeAngleCos;   // cos(max angle) between surface normal and decal forward; below => fade
     float    Opacity;        // master coverage multiplier
     uint     MaterialIndex;  // index into Materials()
-    uint     Flags;          // reserved
+    float    EmissionEnergy;
     float4   UVTransform;    // xy scale and zw offset of the atlas cell shown
+    float4   Modulate;       // rgb tint, a albedo mix
+    float4   Fades;          // x distance fade begin (negative disables), y its length, z upper fade, w lower fade
 };
+
+// Measured to the box center, so a decal fades as one piece rather than across its own footprint.
+float DecalDistanceFade(FGPUDecal Decal, float3 CameraPosition)
+{
+    if (Decal.Fades.x < 0.0)
+    {
+        return 1.0;
+    }
+    float3 Center   = mul(Decal.DecalToWorld, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    float  Distance = length(CameraPosition - Center);
+    return saturate((Decal.Fades.x + Decal.Fades.y - Distance) / max(Decal.Fades.y, 1e-4));
+}
 
 // Per-pass constants, identical in VS and PS so they share one push range. The decal *index* still
 // arrives via SV_VulkanInstanceID (the draw's FirstInstance) -- only the array base + depth slot live

@@ -11,7 +11,7 @@
 // Blend the accumulated decal layer at ScreenUV into the surface material attributes, in place.
 // Call after the material is resolved and BEFORE lighting so decals receive lights/shadows/IBL.
 void ApplyDBuffer(inout float3 Albedo, inout float3 WorldNormal, inout float Roughness,
-                  inout float Metallic, inout float AO, float2 ScreenUV)
+                  inout float Metallic, inout float AO, inout float3 Emissive, float2 ScreenUV)
 {
     // Sentinel index (no decals this frame) -> skip the three DBuffer samples; the composite is a no-op.
     if (Scene().DBufferAIndex == 0xFFFFFFFFu)
@@ -23,6 +23,7 @@ void ApplyDBuffer(inout float3 Albedo, inout float3 WorldNormal, inout float Rou
     float4 A = gTextures2D[Scene().DBufferAIndex].SampleLevel(Smp, ScreenUV, 0.0);
     float4 B = gTextures2D[Scene().DBufferBIndex].SampleLevel(Smp, ScreenUV, 0.0);
     float4 C = gTextures2D[Scene().DBufferCIndex].SampleLevel(Smp, ScreenUV, 0.0);
+    Emissive += gTextures2D[Scene().DBufferDIndex].SampleLevel(Smp, ScreenUV, 0.0).rgb;
 
     // BaseColor: standard "over" composite of the decal layer (rgb premultiplied over black) on top of
     // the surface attenuated by the layer transmittance.

@@ -510,6 +510,7 @@ namespace Lumina
             DBufferA,
             DBufferB,
             DBufferC,
+            DBufferD,
             AdaptedLuminance,
             FroxelScatter,
             FroxelIntegrated,
@@ -517,6 +518,7 @@ namespace Lumina
             AerialTransmittance,
             CloudNoise,
             CloudScatter,
+            CloudDepth,
             CloudShadow,
             BRDFLut,
             SkyCube,
@@ -1201,6 +1203,7 @@ namespace Lumina
             float  AerialRange              = 0.0f;
             float  AerialIntensity          = 0.0f;
             uint32 CloudScatterIndex        = ~0u;
+            uint32 CloudDepthIndex          = ~0u;
         };
         FAtmosphereTerms                        AtmosphereTerms = {};
         
@@ -1456,7 +1459,6 @@ namespace Lumina
             FGPUSprite Gpu;
         };
         TVector<FSpriteSortEntry>               SpriteSortScratch;
-        THashMap<CMaterial*, int32>             DecalGroupMinSort;
         
         TVector<FThreadLocalDrawData>           ThreadLocalStorage;
         uint32                                  CurrentReservePerThread = 0;

@@ -1192,6 +1192,7 @@ namespace Lumina
         case ENamedImage::DBufferA:           return "Scene.DBufferA";
         case ENamedImage::DBufferB:           return "Scene.DBufferB";
         case ENamedImage::DBufferC:           return "Scene.DBufferC";
+        case ENamedImage::DBufferD:           return "Scene.DBufferD";
         case ENamedImage::AdaptedLuminance:   return "Scene.AdaptedLuminance";
         case ENamedImage::FroxelScatter:      return "Scene.FroxelScatter";
         case ENamedImage::FroxelIntegrated:   return "Scene.FroxelIntegrated";
@@ -1199,6 +1200,7 @@ namespace Lumina
         case ENamedImage::AerialTransmittance: return "Scene.AerialTransmittance";
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
         case ENamedImage::CloudScatter:       return "Scene.CloudScatter";
+        case ENamedImage::CloudDepth:         return "Scene.CloudDepth";
         case ENamedImage::CloudShadow:        return "Scene.CloudShadow";
         case ENamedImage::BRDFLut:            return "Scene.BRDFLut";
         case ENamedImage::SkyCube:            return "Scene.SkyCube";
@@ -1249,6 +1251,7 @@ namespace Lumina
         case ENamedImage::DBufferA:
         case ENamedImage::DBufferB:
         case ENamedImage::DBufferC:
+        case ENamedImage::DBufferD:
         case ENamedImage::Velocity:
         case ENamedImage::TemporalHistoryA:
         case ENamedImage::TemporalHistoryB:
@@ -1295,6 +1298,11 @@ namespace Lumina
         case ENamedImage::DBufferB:
         case ENamedImage::DBufferC:
             OutDesc.Format = EFormat::RGBA8_UNORM;
+            return true;
+
+        // Emission only ever adds, so it needs HDR range and no transmittance channel.
+        case ENamedImage::DBufferD:
+            OutDesc.Format = EFormat::R11G11B10_FLOAT;
             return true;
 
         // Signed screen-space offset in UV units, so it needs float rather than the usual unorm.
@@ -1381,6 +1389,7 @@ namespace Lumina
         Want(ENamedImage::DBufferA,        bDecals);
         Want(ENamedImage::DBufferB,        bDecals);
         Want(ENamedImage::DBufferC,        bDecals);
+        Want(ENamedImage::DBufferD,        bDecals);
 
         const bool bTemporal = IsTemporalAAEnabledFor(View);
         const bool bHadTemporalTargets = View.Images[(int)ENamedImage::TemporalHistoryA].IsValid()
@@ -1577,6 +1586,11 @@ namespace Lumina
             ScatterDesc.Format    = EFormat::RGBA16_FLOAT;
             ScatterDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::CloudScatter] = CreateSceneImage(ScatterDesc, true, true);
+
+            // The scene depth each half-res texel was marched against, so the composite can upsample by depth.
+            RHI::FTextureDesc CloudDepthDesc = ScatterDesc;
+            CloudDepthDesc.Format = EFormat::R32_FLOAT;
+            View.Images[(int)ENamedImage::CloudDepth] = CreateSceneImage(CloudDepthDesc, true, true);
 
             int32 CloudShadowRes = 512;
             if (const CRendererSettings* RS = GetDefault<CRendererSettings>())
@@ -1850,10 +1864,12 @@ namespace Lumina
         // Zero AFTER the copy, so the next frame's mask is what it sampled, not a growing union.
         RHI::Barriers::TransferToTransfer(CL);
         RHI::CmdMemzero(CL, StreamingFeedbackBuffer);
+
+        // Host too, since the CPU reads the readback copy once this slot's timeline value lands.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute | RHI::EStageFlags::Host,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::HostRead);
 
         StreamingFeedbackStamp[Slot] = ++StreamingFeedbackFrame;
     }

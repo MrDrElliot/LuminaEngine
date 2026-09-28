@@ -224,6 +224,12 @@ namespace Lumina
         return Scene ? Scene->GetCenterOfMass(Entity) : FVector3(0.0f);
     }
 
+    float CPhysicsLibrary::GetMass(CWorld* World, ECS::FEntity Entity)
+    {
+        Physics::IPhysicsScene* Scene = SceneOf(World);
+        return Scene ? Scene->GetBodyMass(Scene->GetEntityBodyID(Entity)) : 0.0f;
+    }
+
     void CPhysicsLibrary::SetGravityFactor(CWorld* World, ECS::FEntity Entity, float Factor)
     {
         if (Physics::IPhysicsScene* Scene = SceneOf(World)) { Scene->SetGravityFactor(Entity, Factor); }

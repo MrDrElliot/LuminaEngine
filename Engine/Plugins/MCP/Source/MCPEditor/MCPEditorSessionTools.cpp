@@ -336,9 +336,11 @@ namespace Lumina::MCP
                     const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
 
                     int32 Before = 0;
-                    if (Agent::FGameThreadGate::Run([&Before]()
+                    int32 FinishedBefore = 0;
+                    if (Agent::FGameThreadGate::Run([&Before, &FinishedBefore]()
                         {
                             Before = DotNet::GetScriptGeneration();
+                            FinishedBefore = DotNet::GetFinishedScriptReloads();
                             DotNet::RequestScriptReload();
                         }, GateTimeout) != Agent::EGameThreadResult::Ran)
                     {
@@ -349,13 +351,20 @@ namespace Lumina::MCP
                     Out.Generation = Before;
 
                     const double Deadline = PlatformTime::Seconds() + Math::Max(0.0f, Params.TimeoutSeconds);
+                    int32 FailedResult = 0;
                     while (PlatformTime::Seconds() < Deadline)
                     {
                         Threading::Sleep(50);
 
                         int32 Now = Before;
-                        if (Agent::FGameThreadGate::Run([&Now]() { Now = DotNet::GetScriptGeneration(); },
-                            GateTimeout) != Agent::EGameThreadResult::Ran)
+                        int32 Finished = FinishedBefore;
+                        int32 LastResult = 0;
+                        if (Agent::FGameThreadGate::Run([&Now, &Finished, &LastResult]()
+                            {
+                                Now = DotNet::GetScriptGeneration();
+                                Finished = DotNet::GetFinishedScriptReloads();
+                                LastResult = DotNet::GetLastScriptReloadResult();
+                            }, GateTimeout) != Agent::EGameThreadResult::Ran)
                         {
                             break;
                         }
@@ -365,6 +374,19 @@ namespace Lumina::MCP
                             Out.bReloaded = true;
                             break;
                         }
+                        // A failed compile never changes the generation, so the finished count is what ends the wait.
+                        if (Finished != FinishedBefore && LastResult != 0)
+                        {
+                            FailedResult = LastResult;
+                            break;
+                        }
+                    }
+
+                    if (FailedResult != 0)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format(
+                            "The reload failed with host error {} and the previous scripts stay loaded; editor.log_tail has the compiler output.",
+                            FailedResult));
                     }
 
                     DotNet::FScriptDiagnostics Diagnostics{};

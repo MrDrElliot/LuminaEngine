@@ -144,6 +144,41 @@ namespace Lumina
         PROPERTY(Editable, Category = "Light|Temperature", ClampMin = 1000.0f, ClampMax = 15000.0f, Units = "K")
         float Temperature = 6500.0f;
 
+        // Below the horizon the light turns to the moon opposite the sun, while the sky keeps the true sun for its night.
+        PROPERTY(Editable, Category = "Light|Moon")
+        bool bMoonlight = false;
+
+        PROPERTY(Editable, Category = "Light|Moon", ClampMin = 0.0f)
+        float MoonIntensity = 0.3f;
+
+        PROPERTY(Editable, Color, Category = "Light|Moon")
+        FVector3 MoonColor = FVector3(0.55f, 0.65f, 1.0f);
+
+        bool IsMoonLit() const
+        {
+            return bMoonlight && Math::Normalize(Direction).y < 0.0f;
+        }
+
+        // The direction surfaces are lit and shadowed from, which is the moon once the sun has set.
+        FVector3 GetLightingDirection() const
+        {
+            const FVector3 Sun = Math::Normalize(Direction);
+            return IsMoonLit() ? -Sun : Sun;
+        }
+
+        // Fades to nothing at the horizon from either side, so the swap between sun and moon never pops.
+        float GetLightingIntensity() const
+        {
+            if (!bMoonlight)
+            {
+                return Intensity;
+            }
+            const float Elevation = Math::Normalize(Direction).y;
+            return Elevation >= 0.0f
+                ? Intensity * Math::SmoothStep(0.0f, 0.1f, Elevation)
+                : MoonIntensity * Math::SmoothStep(0.0f, 0.1f, -Elevation);
+        }
+
         /** When true, this light contributes to the shadow pass. */
         PROPERTY(Editable, Category = "Cascaded Shadows")
         bool bCastShadows = true;
