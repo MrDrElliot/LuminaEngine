@@ -321,6 +321,7 @@ namespace Lumina::Physics
 
     uint32 FBox3DPhysicsScene::GetEntityBodyID(ECS::FEntity Entity)
     {
+        FlushDeferredBodyCreations();
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         if (const SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Entity))
