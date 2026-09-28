@@ -86,9 +86,35 @@ namespace Lumina
                 T.LastKnownLocation = Location;
                 T.LastStrength = Strength;
             }
-            else if (Comp.PerceivedCount < SPerceptionComponent::MaxPerceivedTargets)
+            else
             {
-                FPerceivedTarget& T = Comp.PerceivedTargets[Comp.PerceivedCount++];
+                int32 Slot = Comp.PerceivedCount;
+                if (Slot >= SPerceptionComponent::MaxPerceivedTargets)
+                {
+                    // A full list gives up its stalest entry, or its weakest one, so a crowd of allies cannot hide a newcomer.
+                    Slot = 0;
+                    for (int32 i = 1; i < Comp.PerceivedCount; ++i)
+                    {
+                        const FPerceivedTarget& Candidate = Comp.PerceivedTargets[i];
+                        const FPerceivedTarget& Current = Comp.PerceivedTargets[Slot];
+                        if (Candidate.TimeSinceLastSensed > Current.TimeSinceLastSensed
+                            || (Candidate.TimeSinceLastSensed == Current.TimeSinceLastSensed && Candidate.LastStrength < Current.LastStrength))
+                        {
+                            Slot = i;
+                        }
+                    }
+                    const FPerceivedTarget& Victim = Comp.PerceivedTargets[Slot];
+                    if (Victim.TimeSinceLastSensed <= 0.0f && Victim.LastStrength >= Strength)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    ++Comp.PerceivedCount;
+                }
+
+                FPerceivedTarget& T = Comp.PerceivedTargets[Slot];
                 T.Target = Target;
                 T.LastKnownLocation = Location;
                 T.ActiveSenses = SenseBit;
@@ -370,7 +396,8 @@ namespace Lumina
                     return;
                 }
 
-                MarkSensed(Comp, Src.Entity, SightBit, Src.AimPoint, 0.0f);
+                // Nearer reads stronger, which decides who keeps a slot when more are in view than the list holds.
+                MarkSensed(Comp, Src.Entity, SightBit, Src.AimPoint, 1.0f - Dist / Math::Max(Range, 1e-3f));
             });
         });
 

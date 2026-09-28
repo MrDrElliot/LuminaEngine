@@ -146,6 +146,8 @@ namespace Lumina::Physics
 
         void ApplyDirtyTransforms(float FixedDt);
         void UpdateCharacters(float FixedDt);
+        void UpdateVehicles(float FixedDt);
+        void PoseVehicleWheels();
         void StepCharacter(const FCharacterWork& Work, float FixedDt, uint32 ThreadSlot);
         void LatchCharacterInput();
         void BuildInterpolatedTransforms(float Alpha);
@@ -262,6 +264,7 @@ namespace Lumina::Physics
         void MarkAuthoredKinematic(uint32 Handle);
         uint32 StageInterpSlot(uint32 BodyHandle, const FVector3& Position, const FQuat& Rotation);
         void ResetInterpStaging();
+        void DropCharacterInterpSlots();
 
         void BulkCreateRigidBodies(ECS::FRegistry& Registry);
         void CreateRigidBodiesBatched(const TVector<ECS::FEntity>& Entities);
@@ -438,6 +441,14 @@ namespace Lumina::Physics
                 LerpQx.resize(N); LerpQy.resize(N); LerpQz.resize(N); LerpQw.resize(N);
             }
 
+            void Truncate(size_t Count)
+            {
+                Entities.resize(Count); Flags.resize(Count);
+                PrevPos.resize(Count);  CurrPos.resize(Count);
+                PrevQx.resize(Count); PrevQy.resize(Count); PrevQz.resize(Count); PrevQw.resize(Count);
+                CurrQx.resize(Count); CurrQy.resize(Count); CurrQz.resize(Count); CurrQw.resize(Count);
+            }
+
             void Clear()
             {
                 Entities.clear(); Flags.clear();
@@ -448,6 +459,10 @@ namespace Lumina::Physics
             }
         };
         FInterpStaging                          InterpStaging;
+
+        // Characters are restaged on every blend, so their slots trail the bodies and are dropped before the next one.
+        uint32                                  InterpBodySlots = 0;
+        bool                                    bInterpCharacterTail = false;
         TVector<uint32>                         InterpApplied;
 
         // Entities holding an FRenderTransform after the last apply, so one the next apply skips can be retired.

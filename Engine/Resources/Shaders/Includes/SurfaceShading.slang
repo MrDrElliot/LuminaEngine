@@ -602,7 +602,7 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     if (SPEC_ENABLE_DECALS != 0 && bReceivesDecals && !IsUnlit(G))
     {
         float2 DBufferUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
-        ApplyDBuffer(G.BaseColor, G.WorldNormal, G.Roughness, G.Metallic, G.AmbientOcclusion, DBufferUV);
+        ApplyDBuffer(G.BaseColor, G.WorldNormal, G.Roughness, G.Metallic, G.AmbientOcclusion, G.Emissive, DBufferUV);
     }
 #endif
 

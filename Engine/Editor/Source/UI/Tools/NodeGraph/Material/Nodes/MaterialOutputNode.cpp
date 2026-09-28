@@ -6,6 +6,7 @@
 #include "UI/Tools/NodeGraph/Material/MaterialNodeGraph.h"
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Containers/StringFormat.h"
 #include "Core/Object/Cast.h"
 
 namespace Lumina
@@ -217,8 +218,21 @@ namespace Lumina
         PixelOut += EmitMaterialAssignment("Thickness",        ThicknessPin,  "0.0",                    1);
 
         // Must match what EmitMaterialAssignment wrote, or a dead-end reroute default gets corrupted.
-        if (NormalPin->HasConnection()
-            && FMaterialCompiler::ResolveThroughReroutes(NormalPin->GetConnection<CMaterialOutput>(0)) != nullptr)
+        auto IsDriven = [](CEdNodeGraphPin* Pin)
+        {
+            return Pin->HasConnection() && FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0)) != nullptr;
+        };
+
+        // A decal leaves every channel its graph does not drive to the surface underneath.
+        if (Compiler.GetMaterialType() == EMaterialType::Decal)
+        {
+            const bool bSurface = IsDriven(RoughnessPin) || IsDriven(MetallicPin) || IsDriven(AOPin);
+            PixelOut += Lumina::Format("\n#define DECAL_CHANNEL_MASK float4({}, {}, {}, {})\n",
+                IsDriven(BaseColorPin) ? "1.0" : "0.0", IsDriven(NormalPin) ? "1.0" : "0.0",
+                bSurface ? "1.0" : "0.0", IsDriven(EmissivePin) ? "1.0" : "0.0");
+        }
+
+        if (IsDriven(NormalPin))
         {
             PixelOut += "\tMaterial.Normal.xy = Material.Normal.xy * 2.0 - 1.0;\n";
             PixelOut += "\tMaterial.Normal.z  = sqrt(saturate(1.0 - dot(Material.Normal.xy, Material.Normal.xy)));\n";

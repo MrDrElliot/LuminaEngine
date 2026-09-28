@@ -881,11 +881,9 @@ struct FLightShadowData
 
 struct FLightData
 {
-    uint   _PadNumLights;   // the live counts are the spans' own
     uint   bHasIBL;       // 1 = environment IBL cubes valid; 0 = skylight-only flat ambient fallback
-    uint   _PadNumShadows;
-    uint   Padding;
-    float3 SunDirection;   // to-light: FROM surface TOWARD the sun (== Lights[0].Direction)
+    float3 SkySunDirection; // the true sun for the sky, which moonlight leaves behind at night
+    float3 SunDirection;   // to-light for surface lighting and shadows (== Lights[0].Direction)
     uint   bHasSun;
     float4 CascadeSplits;
     float4 CascadeRadii;
@@ -1129,7 +1127,8 @@ struct FSceneGlobalData
 
     float2            FogCloudShadowCenter;
     float             FogCloudShadowExtent;
-    float             _FogPad0;
+    // The additive emission layer decals write, ~0u when no decal rendered.
+    uint              DBufferDIndex;
 };
 
 // Octahedral 15-15 tangent direction + 1-bit handedness sign, matching Lumina::PackTangent. Returns

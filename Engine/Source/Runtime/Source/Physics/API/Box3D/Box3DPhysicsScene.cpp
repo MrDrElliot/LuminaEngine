@@ -24,6 +24,7 @@
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Components/VehicleComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Entity/Systems/DebugDrawSystem.h"
 #include "World/Subsystems/WorldSettings.h"
@@ -136,6 +137,7 @@ namespace Lumina::Physics
         Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
         Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
         Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SVehicleComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
     }
 
     FBox3DPhysicsScene::~FBox3DPhysicsScene()
@@ -156,6 +158,7 @@ namespace Lumina::Physics
         Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
         Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
         Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
+        Registry.GetSignals<SVehicleComponent>().OnConstruct.Disconnect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
 
         if (b3World_IsValid(WorldId))
         {
@@ -307,6 +310,12 @@ namespace Lumina::Physics
         // The handle can be reused this same frame, so it must not inherit the dead body's staging slot.
         if (BodyID < BodyStagingSlot.size())
         {
+            // Staged poses outlive a frame without a step, so the dead body's entry must stop drawing.
+            const uint32 Slot = BodyStagingSlot[BodyID];
+            if (Slot < InterpStaging.Flags.size())
+            {
+                InterpStaging.Flags[Slot] = EInterpFlag::Skip;
+            }
             BodyStagingSlot[BodyID] = InvalidBodyHandle;
         }
     }

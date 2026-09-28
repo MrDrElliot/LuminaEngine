@@ -159,22 +159,35 @@ void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, 
 {
     // Range, not just the ~0u sentinel: a stale or corrupt slot is simply out of range, and both index the
     // same buffer, so both have to be rejected before the write. Getting this wrong is an MMU fault, which
-    // is how it was found. Uniform across the wave, so this branch costs no divergence.
+    // is how it was found.
     if (!SpanContains(&GetSceneRoot().StreamingFeedback, MaterialSlot))
     {
         return;
     }
 
+#ifndef SHADING_COMPUTE
+    // A helper lane's atomic is discarded, so one must never be the lane elected to publish the mask.
+    if (IsHelperLane())
+    {
+        return;
+    }
+#endif
+
     const uint Mask = StreamingResolutionBit(UV0Ddx, UV0Ddy) | StreamingResolutionBit(UV1Ddx, UV1Ddy);
 
-    // Unconditional wave collapse: MaterialSlot is wave-uniform in every lane that calls this. The
-    // deferred pass is dispatched PER MATERIAL over that material's own pixel list, and a pixel-shader
-    // wave is filled from one draw -- and the material is what selects the pipeline, so one draw is one
-    // material. One atomic per wave, not per lane.
-    const uint WaveMask = WaveActiveBitOr(Mask);
-    if (WaveIsFirstLane())
+    // One pass per distinct slot, since the material varies per instance within a draw and a deferred bin.
+    while (true)
     {
-        InterlockedOr(SpanAt(&GetSceneRoot().StreamingFeedback, MaterialSlot)[0], WaveMask);
+        const uint Candidate = WaveReadLaneFirst(MaterialSlot);
+        if (Candidate == MaterialSlot)
+        {
+            const uint WaveMask = WaveActiveBitOr(Mask);
+            if (WaveIsFirstLane())
+            {
+                InterlockedOr(SpanAt(&GetSceneRoot().StreamingFeedback, Candidate)[0], WaveMask);
+            }
+            break;
+        }
     }
 }
 
@@ -495,6 +508,7 @@ uint GetInstanceEntityID(uint InstanceID)      { return Instances()[InstanceID].
 FLight GetLightAt(uint Index)       { return SpanGetAligned(&LightData().Lights, Index); }
 uint   GetNumLights()               { return LightData().Lights.Count;  }
 float3 GetSunDirection()            { return LightData().SunDirection;  }
+float3 GetSkySunDirection()         { return LightData().SkySunDirection; }
 float3 GetAmbientLightColor()       { return LightData().AmbientLight.xyz; }
 float  GetAmbientLightIntensity()   { return LightData().AmbientLight.w;   }
 bool   HasIBL()                     { return LightData().bHasIBL != 0u;     }

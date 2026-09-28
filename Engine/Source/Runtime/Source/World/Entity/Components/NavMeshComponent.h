@@ -143,6 +143,10 @@ namespace Lumina
         SNavMeshComponent(SNavMeshComponent&&) noexcept            = default;
         SNavMeshComponent& operator=(SNavMeshComponent&&) noexcept = default;
 
+        // Which agents path on this volume, so a vehicle mesh baked wider sits beside the infantry one and queries naming it find it.
+        PROPERTY(Editable, Category = "NavMesh")
+        FName Agent;
+
         /** Voxelization, agent, and tiling parameters fed to Recast. */
         PROPERTY(Editable, Category = "NavMesh|Build")
         FNavBuildSettings Settings;

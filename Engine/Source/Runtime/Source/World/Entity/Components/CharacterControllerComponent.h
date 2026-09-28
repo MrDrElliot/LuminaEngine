@@ -16,6 +16,13 @@ namespace Lumina
         {
             MoveInput += Move;
         }
+
+        // In world axes rather than relative to the controller's yaw, for AI steering toward a point in the world.
+        FUNCTION()
+        void AddWorldMovementInput(const FVector3& Move)
+        {
+            WorldMoveInput += Move;
+        }
         
         FUNCTION()
         void AddLookInput(const FVector2& Look)
@@ -87,6 +94,9 @@ namespace Lumina
         /** Accumulated movement input vector, consumed each physics frame. */
         PROPERTY(ReadOnly)
         FVector3 MoveInput;
+
+        PROPERTY(ReadOnly)
+        FVector3 WorldMoveInput;
 
         /** Accumulated look input (X = yaw degrees, Y = pitch degrees). */
         PROPERTY(ReadOnly)

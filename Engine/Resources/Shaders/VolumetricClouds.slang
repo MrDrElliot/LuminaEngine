@@ -39,6 +39,11 @@ struct FPushConstants
 
     float2 WindOffset;      // baked from direction * speed * time
     float2 DetailWindOffset;
+
+    uint   CloudDepthUAV;   // bindless 2D UAV of the raw depth the march was clamped to, 0 where it saw sky
+    uint   _Pad0;
+    uint   _Pad1;
+    uint   _Pad2;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -93,6 +98,17 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     gRWTextures2D[Pass().ScatterUAV][P] = float4(0.0, 0.0, 0.0, 1.0);
 
+    // Sampled by UV, not Load, since P indexes the half-res target while depth is full-res.
+    float2 Off = 0.5 / float2(Size);
+    float  D0  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2(-Off.x, -Off.y), 0.0).r;
+    float  D1  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2( Off.x, -Off.y), 0.0).r;
+    float  D2  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2(-Off.x,  Off.y), 0.0).r;
+    float  D3  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2( Off.x,  Off.y), 0.0).r;
+
+    // Reverse-Z, so max is the closest surface in the footprint, and the composite rejects this texel for pixels behind it.
+    float RawDepth = max(max(D0, D1), max(D2, D3));
+    gRWTextures2D[Pass().CloudDepthUAV][P] = float4(RawDepth, 0.0, 0.0, 0.0);
+
     float2 NDC     = UV * 2.0 - 1.0;
     float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
     float3 ViewRay = ViewH.xyz / ViewH.w;
@@ -131,15 +147,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         End   = Outer.y;
     }
 
-    // Sampled by UV, not Load: P indexes the half-res target while depth is full-res.
-    float2 Off = 0.5 / float2(Size);
-    float  D0  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2(-Off.x, -Off.y), 0.0).r;
-    float  D1  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2( Off.x, -Off.y), 0.0).r;
-    float  D2  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2(-Off.x,  Off.y), 0.0).r;
-    float  D3  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2( Off.x,  Off.y), 0.0).r;
-
-    // Reverse-Z, so max is the CLOSEST surface in the footprint; occluding is the safer error at half res.
-    float RawDepth = max(max(D0, D1), max(D2, D3));
     if (RawDepth > 0.0)
     {
         float3 SceneView  = ReconstructViewPos(UV, RawDepth, GetInverseCameraProjection());

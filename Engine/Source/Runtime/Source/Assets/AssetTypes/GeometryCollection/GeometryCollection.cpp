@@ -140,8 +140,65 @@ namespace Lumina
             return N;
         }
 
+        // The source surface a piece is cut from, so its faces keep the colors of the mesh they came out of.
+        struct FSurfaceColors
+        {
+            const TVector<FVector3>&     Positions;
+            const TVector<FUIntVector3>& Triangles;
+            const TVector<uint32>&       Colors;
+            float                        Tolerance = 0.0f;
+        };
+
+        // An outer face lies in a source triangle's plane and takes its color; a fresh cut takes the nearest color, darkened like broken material.
+        uint32 ColorForFace(const FSurfaceColors& Source, const FVector3& FaceCenter, const FVector3& Normal)
+        {
+            constexpr float CutShade = 0.55f;
+            float BestSurface = FLT_MAX;
+            float BestAny = FLT_MAX;
+            uint32 SurfaceColor = 0u;
+            uint32 AnyColor = PackColor(FVector4(1.0f));
+            bool bOnSurface = false;
+
+            for (const FUIntVector3& Tri : Source.Triangles)
+            {
+                const FVector3& A = Source.Positions[Tri.x];
+                const FVector3& B = Source.Positions[Tri.y];
+                const FVector3& C = Source.Positions[Tri.z];
+                const FVector3 Centroid = (A + B + C) / 3.0f;
+                const float Distance = Math::Length(Centroid - FaceCenter);
+                if (Distance < BestAny)
+                {
+                    BestAny = Distance;
+                    AnyColor = Source.Colors[Tri.x];
+                }
+
+                FVector3 TriNormal = Math::Cross(B - A, C - A);
+                const float Length = Math::Length(TriNormal);
+                if (Length < 1e-12f)
+                {
+                    continue;
+                }
+                TriNormal /= Length;
+                const bool bCoplanar = Math::Dot(TriNormal, Normal) > 0.9f
+                    && Math::Abs(Math::Dot(FaceCenter - A, TriNormal)) <= Source.Tolerance;
+                if (bCoplanar && Distance < BestSurface)
+                {
+                    BestSurface = Distance;
+                    SurfaceColor = Source.Colors[Tri.x];
+                    bOnSurface = true;
+                }
+            }
+
+            if (bOnSurface)
+            {
+                return SurfaceColor;
+            }
+            const FVector4 Cut = UnpackColor(AnyColor);
+            return PackColor(FVector4(FVector3(Cut) * CutShade, Cut.w));
+        }
+
         // Triangulate the convex polyhedron into a flat-shaded piece (hard edges, outward winding).
-        bool BuildPieceFromPoly(const FConvexPoly& Poly, FFracturePiece& Out)
+        bool BuildPieceFromPoly(const FConvexPoly& Poly, FFracturePiece& Out, const FSurfaceColors* Source = nullptr)
         {
             if (Poly.Faces.size() < 4)
             {
@@ -198,7 +255,7 @@ namespace Lumina
 
                 const uint32 PackedNormal  = PackNormal(Normal);
                 const uint32 PackedTangent = PackTangent(Tangent, 1.0f);
-                const uint32 PackedColor   = PackColor(FVector4(1.0f));
+                const uint32 PackedColor   = Source != nullptr ? ColorForFace(*Source, FaceCenter, Normal) : PackColor(FVector4(1.0f));
 
                 const uint32 Base = static_cast<uint32>(Out.Vertices.size());
                 for (const FVector3& P : Face)
@@ -236,7 +293,7 @@ namespace Lumina
         }
 
         // The scratch vertex streams are dropped after upload, so dequantize from the meshlets.
-        void GatherMeshGeometry(const CMesh* Mesh, TVector<FVector3>& OutPositions, TVector<FUIntVector3>& OutTriangles)
+        void GatherMeshGeometry(const CMesh* Mesh, TVector<FVector3>& OutPositions, TVector<FUIntVector3>& OutTriangles, TVector<uint32>* OutColors = nullptr)
         {
             const FMeshResource& Resource = Mesh->GetMeshResource();
             const FMeshletData&  MD       = Resource.MeshletData;
@@ -256,7 +313,12 @@ namespace Lumina
 
                     for (uint32 v = 0; v < M.VertexCount; ++v)
                     {
-                        OutPositions.push_back(DecodeMeshletPosition(M, MD.MeshletVertices[M.VertexOffset + v]));
+                        const FMeshletVertex& Vertex = MD.MeshletVertices[M.VertexOffset + v];
+                        OutPositions.push_back(DecodeMeshletPosition(M, Vertex));
+                        if (OutColors != nullptr)
+                        {
+                            OutColors->push_back(Vertex.Color);
+                        }
                     }
 
                     for (uint32 t = 0; t < M.TriangleCount; ++t)
@@ -334,19 +396,18 @@ namespace Lumina
 
         // Hull supporting planes from the mesh triangles.
         TVector<FVector4> HullPlanes;
-        size_t NumPos = 0;
-        size_t NumTri = 0;
+        TVector<FVector3>  Positions;
+        TVector<FUIntVector3> Triangles;
+        TVector<uint32> Colors;
+        GatherMeshGeometry(SourceMesh, Positions, Triangles, &Colors);
+        const size_t NumPos = Positions.size();
+        const size_t NumTri = Triangles.size();
+        if (Positions.size() >= 4 && !Triangles.empty())
         {
-            TVector<FVector3>  Positions;
-            TVector<FUIntVector3> Triangles;
-            GatherMeshGeometry(SourceMesh, Positions, Triangles);
-            NumPos = Positions.size();
-            NumTri = Triangles.size();
-            if (Positions.size() >= 4 && !Triangles.empty())
-            {
-                ComputeHullPlanes(Positions, Triangles, HullTol, HullPlanes);
-            }
+            ComputeHullPlanes(Positions, Triangles, HullTol, HullPlanes);
         }
+        const FSurfaceColors SurfaceColors{ Positions, Triangles, Colors, HullTol * 4.0f };
+        const FSurfaceColors* ColorSource = Colors.size() == Positions.size() && !Triangles.empty() ? &SurfaceColors : nullptr;
 
         // Clip the bounds box down to the hull once; every cell starts from this shape.
         FConvexPoly Hull = MakeBox(Mn, Mx);
@@ -412,7 +473,7 @@ namespace Lumina
             }
 
             FFracturePiece Piece;
-            if (BuildPieceFromPoly(Poly, Piece))
+            if (BuildPieceFromPoly(Poly, Piece, ColorSource))
             {
                 OutPieces.push_back(Move(Piece));
             }

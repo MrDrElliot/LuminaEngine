@@ -531,11 +531,12 @@ namespace Lumina
         const FSceneImage& DBufferA = GetNamedImage(ENamedImage::DBufferA);
         const FSceneImage& DBufferB = GetNamedImage(ENamedImage::DBufferB);
         const FSceneImage& DBufferC = GetNamedImage(ENamedImage::DBufferC);
+        const FSceneImage& DBufferD = GetNamedImage(ENamedImage::DBufferD);
 
         // Cleared to transmittance = 1 (alpha) / zero color, so the base pass reads a no-op where no decal lands.
-        RHI::FRenderAttachment Colors[3];
-        const RHI::FTextureH Targets[3] = { DBufferA.Texture, DBufferB.Texture, DBufferC.Texture };
-        for (int i = 0; i < 3; ++i)
+        RHI::FRenderAttachment Colors[4];
+        const RHI::FTextureH Targets[4] = { DBufferA.Texture, DBufferB.Texture, DBufferC.Texture, DBufferD.Texture };
+        for (int i = 0; i < 4; ++i)
         {
             Colors[i].Texture  = Targets[i];
             Colors[i].LoadOp   = RHI::ELoadOp::Clear;
@@ -545,7 +546,7 @@ namespace Lumina
         }
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(Colors, 3);
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(Colors, 4);
         Pass.RenderArea       = DBufferA.GetExtent();
 
         LUMINA_PROFILE_SECTION_COLORED("Decal Pass", tracy::Color::Orange);
@@ -565,6 +566,15 @@ namespace Lumina
         DecalBlend.SrcAlphaFactor = RHI::EFactor::Zero;
         DecalBlend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
         DecalBlend.AlphaOp        = RHI::EBlend::Add;
+
+        RHI::FBlendDesc EmissionBlend;
+        EmissionBlend.bBlendEnable   = true;
+        EmissionBlend.SrcColorFactor = RHI::EFactor::One;
+        EmissionBlend.DstColorFactor = RHI::EFactor::One;
+        EmissionBlend.ColorOp        = RHI::EBlend::Add;
+        EmissionBlend.SrcAlphaFactor = RHI::EFactor::Zero;
+        EmissionBlend.DstAlphaFactor = RHI::EFactor::One;
+        EmissionBlend.AlphaOp        = RHI::EBlend::Add;
 
         const FSceneImage& SceneDepth = GetNamedImage(ENamedImage::DepthAttachment);
 
@@ -596,6 +606,7 @@ namespace Lumina
             Key.ColorTargets.push_back({ DBufferA.Desc.Format, DecalBlend });
             Key.ColorTargets.push_back({ DBufferB.Desc.Format, DecalBlend });
             Key.ColorTargets.push_back({ DBufferC.Desc.Format, DecalBlend });
+            Key.ColorTargets.push_back({ DBufferD.Desc.Format, EmissionBlend });
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             RHI::CmdDraw(CL, MakeArgs(PC), 36, Batch.Count, 0, Batch.FirstInstance);

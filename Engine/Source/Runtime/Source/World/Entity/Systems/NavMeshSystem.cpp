@@ -39,7 +39,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
         Writes<SNavMeshComponent>();
-        Reads<SBoxColliderComponent, SSphereColliderComponent, SMeshColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent, SCharacterPhysicsComponent, STerrainColliderComponent, STerrainComponent, STransformComponent, SStaticMeshComponent, SDynamicMeshColliderComponent, SDynamicMeshComponent, SCompoundColliderComponent, SNavModifierComponent, SNavLinkComponent>();
+        Reads<SRigidBodyComponent, SBoxColliderComponent, SSphereColliderComponent, SMeshColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent, SCharacterPhysicsComponent, STerrainColliderComponent, STerrainComponent, STransformComponent, SStaticMeshComponent, SDynamicMeshColliderComponent, SDynamicMeshComponent, SCompoundColliderComponent, SNavModifierComponent, SNavLinkComponent>();
     }
 
     // NOLINTBEGIN(bugprone-throwing-static-initialization)
@@ -766,11 +766,19 @@ namespace Lumina
                 return Radius * Math::Max(Sx, Math::Max(Sy, Sz));
             };
 
+            // A simulated body is loose debris rather than level geometry, and baking it would rebuild tiles every time it settles.
+            auto RigidBodies = Context.GetRegistry().GetStorage<SRigidBodyComponent>();
+            auto IsSimulated = [&RigidBodies](ECS::FEntity Entity)
+            {
+                const SRigidBodyComponent* Body = RigidBodies.TryGet(Entity);
+                return Body != nullptr && Body->BodyType == EBodyType::Dynamic;
+            };
+
             auto BoxView = Context.CreateView<SBoxColliderComponent, STransformComponent>();
             for (ECS::FEntity E : BoxView)
             {
                 SBoxColliderComponent& Box = BoxView.Get<SBoxColliderComponent>(E);
-                if (!Box.bAffectsNavigation) continue;
+                if (!Box.bAffectsNavigation || IsSimulated(E)) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Box);
                 Entry.Prim.Type = ENavColliderType::Box;
@@ -789,7 +797,7 @@ namespace Lumina
             for (ECS::FEntity E : SphereView)
             {
                 SSphereColliderComponent& Sphere = SphereView.Get<SSphereColliderComponent>(E);
-                if (!Sphere.bAffectsNavigation) continue;
+                if (!Sphere.bAffectsNavigation || IsSimulated(E)) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Sphere);
                 Entry.Prim.Type = ENavColliderType::Sphere;
@@ -807,7 +815,7 @@ namespace Lumina
             for (ECS::FEntity E : ShapeAssetView)
             {
                 SCollisionShapeComponent& CSC = ShapeAssetView.Get<SCollisionShapeComponent>(E);
-                if (!CSC.bAffectsNavigation)
+                if (!CSC.bAffectsNavigation || IsSimulated(E))
                 {
                     continue;
                 }
@@ -930,7 +938,7 @@ namespace Lumina
             for (ECS::FEntity E : MeshView)
             {
                 SMeshColliderComponent& MC = MeshView.Get<SMeshColliderComponent>(E);
-                if (!MC.bAffectsNavigation) continue;
+                if (!MC.bAffectsNavigation || IsSimulated(E)) continue;
                 const SStaticMeshComponent* Fallback = Context.GetRegistry().TryGet<SStaticMeshComponent>(E);
                 CStaticMesh* Mesh = ResolveMeshColliderAsset(MC, Fallback);
                 if (!Mesh || Mesh->GetMeshResource().bSkinnedMesh) continue;
@@ -956,7 +964,7 @@ namespace Lumina
             auto DynamicMeshView = Context.CreateView<SDynamicMeshColliderComponent, SDynamicMeshComponent, STransformComponent>();
             for (ECS::FEntity E : DynamicMeshView)
             {
-                if (!DynamicMeshView.Get<SDynamicMeshColliderComponent>(E).bAffectsNavigation) continue;
+                if (!DynamicMeshView.Get<SDynamicMeshColliderComponent>(E).bAffectsNavigation || IsSimulated(E)) continue;
                 const SDynamicMeshComponent& DM = DynamicMeshView.Get<SDynamicMeshComponent>(E);
                 TSharedPtr<FDynamicMeshRenderData> MeshData = DM.LoadRenderData();
                 if (!MeshData || MeshData->Resource.MeshletData.IsEmpty()) continue;
@@ -998,7 +1006,7 @@ namespace Lumina
             for (ECS::FEntity E : CylinderView)
             {
                 SCylinderColliderComponent& Cyl = CylinderView.Get<SCylinderColliderComponent>(E);
-                if (!Cyl.bAffectsNavigation) continue;
+                if (!Cyl.bAffectsNavigation || IsSimulated(E)) continue;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Cylinder);
                 Entry.Prim.Type = ENavColliderType::Cylinder;
@@ -1038,7 +1046,7 @@ namespace Lumina
             for (ECS::FEntity E : CompoundView)
             {
                 const SCompoundColliderComponent& Compound = CompoundView.Get<SCompoundColliderComponent>(E);
-                if (!Compound.bAffectsNavigation) continue;
+                if (!Compound.bAffectsNavigation || IsSimulated(E)) continue;
 
                 const FMatrix4 BodyWorld = CompoundView.Get<STransformComponent>(E).GetWorldMatrix();
                 for (uint32 i = 0; i < (uint32)Compound.Shapes.size(); ++i)
@@ -1782,18 +1790,30 @@ namespace Lumina
             (void)Entity;
         }
 
-        FNavMesh* FirstReadyNavMesh(const FSystemContext& Context)
+        template<typename TView>
+        FNavMesh* FindReadyNavMesh(TView& View, FName Agent)
         {
-            auto View = Context.CreateView<SNavMeshComponent>();
+            FNavMesh* Fallback = nullptr;
             for (ECS::FEntity Entity : View)
             {
-                SNavMeshComponent& Comp = View.Get<SNavMeshComponent>(Entity);
-                if (Comp.Runtime.Mesh && Comp.Runtime.Mesh->IsReady())
+                SNavMeshComponent& Comp = View.template Get<SNavMeshComponent>(Entity);
+                if (!Comp.Runtime.Mesh || !Comp.Runtime.Mesh->IsReady())
+                {
+                    continue;
+                }
+                if (Comp.Agent == Agent)
                 {
                     return Comp.Runtime.Mesh.get();
                 }
+                Fallback = Fallback != nullptr ? Fallback : Comp.Runtime.Mesh.get();
             }
-            return nullptr;
+            return Agent.IsNone() ? Fallback : nullptr;
+        }
+
+        FNavMesh* FirstReadyNavMesh(const FSystemContext& Context, FName Agent = FName())
+        {
+            auto View = Context.CreateView<SNavMeshComponent>();
+            return FindReadyNavMesh(View, Agent);
         }
     }
 
@@ -1910,14 +1930,14 @@ namespace Lumina
 
     namespace Nav
     {
-        FNavMesh* GetReadyNavMesh(const FSystemContext& Context)
+        FNavMesh* GetReadyNavMesh(const FSystemContext& Context, FName Agent)
         {
-            return FirstReadyNavMesh(Context);
+            return FirstReadyNavMesh(Context, Agent);
         }
 
-        bool FindPath(const FSystemContext& Context, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, FNavPath& Out)
+        bool FindPath(const FSystemContext& Context, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, FNavPath& Out, FName Agent)
         {
-            FNavMesh* Mesh = FirstReadyNavMesh(Context);
+            FNavMesh* Mesh = FirstReadyNavMesh(Context, Agent);
             if (!Mesh)
             {
                 // Reset rather than leave a caller's reused path reading as its previous outcome.
@@ -1928,39 +1948,31 @@ namespace Lumina
             return Mesh->FindPath(Start, End, Filter, Out);
         }
 
-        bool ProjectPoint(const FSystemContext& Context, const FVector3& World, const FVector3& Extents, const FNavQueryFilter& Filter, FVector3& Out)
+        bool ProjectPoint(const FSystemContext& Context, const FVector3& World, const FVector3& Extents, const FNavQueryFilter& Filter, FVector3& Out, FName Agent)
         {
-            FNavMesh* Mesh = FirstReadyNavMesh(Context);
+            FNavMesh* Mesh = FirstReadyNavMesh(Context, Agent);
             return Mesh && Mesh->ProjectPoint(World, Extents, Filter, Out);
         }
 
-        bool Raycast(const FSystemContext& Context, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, FNavRaycastResult& Out)
+        bool Raycast(const FSystemContext& Context, const FVector3& Start, const FVector3& End, const FNavQueryFilter& Filter, FNavRaycastResult& Out, FName Agent)
         {
-            FNavMesh* Mesh = FirstReadyNavMesh(Context);
+            FNavMesh* Mesh = FirstReadyNavMesh(Context, Agent);
             return Mesh && Mesh->Raycast(Start, End, Filter, Out);
         }
 
         namespace
         {
-            FNavMesh* FirstReadyNavMeshFromWorld(CWorld* World)
+            FNavMesh* FirstReadyNavMeshFromWorld(CWorld* World, FName Agent = FName())
             {
                 if (!World) return nullptr;
                 auto View = World->View<SNavMeshComponent>();
-                for (ECS::FEntity E : View)
-                {
-                    SNavMeshComponent& Comp = View.Get<SNavMeshComponent>(E);
-                    if (Comp.Runtime.Mesh && Comp.Runtime.Mesh->IsReady())
-                    {
-                        return Comp.Runtime.Mesh.get();
-                    }
-                }
-                return nullptr;
+                return FindReadyNavMesh(View, Agent);
             }
         }
 
-        bool IsReady(CWorld* World)
+        bool IsReady(CWorld* World, FName Agent)
         {
-            return FirstReadyNavMeshFromWorld(World) != nullptr;
+            return FirstReadyNavMeshFromWorld(World, Agent) != nullptr;
         }
 
         int32 RequestRebuild(CWorld* World)
@@ -1979,14 +1991,14 @@ namespace Lumina
             return Count;
         }
 
-        bool FindPath(CWorld* World, const FVector3& Start, const FVector3& End, FNavPath& Out)
+        bool FindPath(CWorld* World, const FVector3& Start, const FVector3& End, FNavPath& Out, FName Agent)
         {
-            return FindPath(World, Start, End, 0, Out);
+            return FindPath(World, Start, End, 0, Out, Agent);
         }
 
-        bool FindPath(CWorld* World, const FVector3& Start, const FVector3& End, int32 MaxCorners, FNavPath& Out)
+        bool FindPath(CWorld* World, const FVector3& Start, const FVector3& End, int32 MaxCorners, FNavPath& Out, FName Agent)
         {
-            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World);
+            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World, Agent);
             if (!Mesh)
             {
                 Out = {};
@@ -1998,43 +2010,43 @@ namespace Lumina
             return Mesh->FindPath(Start, End, Filter, Out);
         }
 
-        bool ProjectPoint(CWorld* World, const FVector3& Point, const FVector3& Extents, FVector3& Out)
+        bool ProjectPoint(CWorld* World, const FVector3& Point, const FVector3& Extents, FVector3& Out, FName Agent)
         {
-            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World);
+            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World, Agent);
             FNavQueryFilter Filter;
             return Mesh && Mesh->ProjectPoint(Point, Extents, Filter, Out);
         }
 
-        bool Raycast(CWorld* World, const FVector3& Start, const FVector3& End, FNavRaycastResult& Out)
+        bool Raycast(CWorld* World, const FVector3& Start, const FVector3& End, FNavRaycastResult& Out, FName Agent)
         {
-            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World);
+            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World, Agent);
             FNavQueryFilter Filter;
             return Mesh && Mesh->Raycast(Start, End, Filter, Out);
         }
 
-        bool IsWalkableLine(CWorld* World, const FVector3& From, const FVector3& To)
+        bool IsWalkableLine(CWorld* World, const FVector3& From, const FVector3& To, FName Agent)
         {
             FNavRaycastResult Result;
-            return Raycast(World, From, To, Result) && !Result.bHit;
+            return Raycast(World, From, To, Result, Agent) && !Result.bHit;
         }
 
-        bool FindRandomReachablePoint(CWorld* World, const FVector3& Origin, float Radius, FVector3& Out)
+        bool FindRandomReachablePoint(CWorld* World, const FVector3& Origin, float Radius, FVector3& Out, FName Agent)
         {
-            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World);
+            FNavMesh* Mesh = FirstReadyNavMeshFromWorld(World, Agent);
             FNavQueryFilter Filter;
             return Mesh && Mesh->FindRandomPoint(Origin, Radius, Filter, Out);
         }
 
-        bool IsReachable(CWorld* World, const FVector3& From, const FVector3& To)
+        bool IsReachable(CWorld* World, const FVector3& From, const FVector3& To, FName Agent)
         {
             FNavPath Path;
-            return FindPath(World, From, To, Path) && Path.bValid && !Path.bPartial;
+            return FindPath(World, From, To, Path, Agent) && Path.bValid && !Path.bPartial;
         }
 
-        float PathLength(CWorld* World, const FVector3& From, const FVector3& To)
+        float PathLength(CWorld* World, const FVector3& From, const FVector3& To, FName Agent)
         {
             FNavPath Path;
-            if (!FindPath(World, From, To, Path) || !Path.bValid) return -1.0f;
+            if (!FindPath(World, From, To, Path, Agent) || !Path.bValid) return -1.0f;
             float Len = 0.0f;
             for (size_t i = 1; i < Path.Corners.size(); ++i)
             {
@@ -2067,10 +2079,10 @@ namespace Lumina
             }
         }
 
-        bool DrawDebugPath(CWorld* World, const FVector3& From, const FVector3& To, const FVector4& Color, float Duration)
+        bool DrawDebugPath(CWorld* World, const FVector3& From, const FVector3& To, const FVector4& Color, float Duration, FName Agent)
         {
             FNavPath Path;
-            if (!FindPath(World, From, To, Path) || !Path.bValid) return false;
+            if (!FindPath(World, From, To, Path, Agent) || !Path.bValid) return false;
             DrawPath(World, Path, Color, 3.0f, 0.15f, Duration);
             return true;
         }

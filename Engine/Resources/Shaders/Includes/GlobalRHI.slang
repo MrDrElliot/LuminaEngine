@@ -88,7 +88,7 @@ float4 SampleTexture2DGrad(uint TextureIndex, uint SamplerIndex, float2 UV, floa
 // dispatch count of X and Y to each be a multiple of 2"), pointing at this file rather than at the
 // template that actually made the choice. Keyed off SHADING_COMPUTE, the same switch SurfaceShading
 // and ShadowSampling use, a new template cannot forget it.
-#ifdef SHADING_COMPUTE
+#if defined(SHADING_COMPUTE) || defined(SHADING_EXPLICIT_GRADIENTS)
 float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
 {
     return SampleTexture2DGrad(TextureIndex, SamplerIndex, UV, Ddx, Ddy);
@@ -127,7 +127,7 @@ float4 SampleTexture2DArrayGrad(uint TextureIndex, uint SamplerIndex, float2 UV,
 // Array counterpart of SampleTexture2DAuto, split on the same switch and for the same reason. Without
 // it an array sample reaches the deferred lane as implicit-derivative Sample(), which does not compile
 // in a compute entry point.
-#ifdef SHADING_COMPUTE
+#if defined(SHADING_COMPUTE) || defined(SHADING_EXPLICIT_GRADIENTS)
 float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
 {
     return SampleTexture2DArrayGrad(TextureIndex, SamplerIndex, UV, Slice, Ddx, Ddy);

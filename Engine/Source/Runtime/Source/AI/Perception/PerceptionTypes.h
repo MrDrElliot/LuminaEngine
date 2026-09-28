@@ -29,7 +29,7 @@ namespace Lumina
         FVector3        LastKnownLocation   = FVector3(0.0f);
         uint8           ActiveSenses        = 0;       // EAISenseChannel bits sensing it (Sight sticky; Hearing/Damage momentary).
         float           TimeSinceLastSensed = 0.0f;    // 0 while sensed; counts up after; > ForgetTime => dropped.
-        float           LastStrength        = 0.0f;    // damage amount / noise loudness of the last stimulus (0 for sight).
+        float           LastStrength        = 0.0f;    // damage amount, noise loudness, or for sight how near the target stood (1 at the eye).
         bool            bIsNew              = false;   // set the tick it crossed the perceive threshold.
     };
 
