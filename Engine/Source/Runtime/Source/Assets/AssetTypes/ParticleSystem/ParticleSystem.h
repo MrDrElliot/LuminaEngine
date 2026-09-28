@@ -23,6 +23,8 @@ namespace Lumina
         Cone,
         Ring,
         Disk,
+        // The half of a sphere above the emitter, so a ground burst never spawns underground.
+        Hemisphere,
     };
 
     REFLECT()
@@ -469,6 +471,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
         bool bWriteDepth = false;
 
+        // Meters over which a sprite fades out as it nears the surface behind it, hiding the seam. Zero disables it.
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "!bWriteDepth")
+        float SoftFadeDistance = 0.3f;
+
+        // Shades the sprite with the sun and sky like a surface, for smoke and dust. Additive sprites are light and stay unlit.
+        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
+        bool bLit = false;
+
         FShaderH ComputeShader = {};
     };
 
@@ -512,6 +522,10 @@ namespace Lumina
         TVector<FParticlePropertyBinding> PropertyBindings;
 
         const FParticleParameter* FindUserParameter(const FName& InName) const;
+
+        // Seconds from activation until the last burst particle dies, or zero when an emitter streams forever.
+        FUNCTION()
+        float GetOneShotLength() const;
 
         /** Returns NAME_None if no binding exists. */
         FName GetPropertyBinding(const FName& PropertyName) const;
@@ -603,6 +617,8 @@ namespace Lumina
         int32                   SubUVColumns            = 1;
         int32                   SubUVRows               = 1;
         bool                    bWriteDepth             = false;
+        float                   SoftFadeDistance        = 0.0f;
+        bool                    bLit                    = false;
     };
 
     /** Bound properties read through component overrides, falling back to the emitter's authored value.

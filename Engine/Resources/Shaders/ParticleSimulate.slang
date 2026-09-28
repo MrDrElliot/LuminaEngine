@@ -34,7 +34,7 @@ float3 ComputeInitialVelocity(inout uint state, uint mode, uint shape, float3 sp
 
     // Explicit: independent per-axis lerp.
     float3 r = float3(RandUnit(state), RandUnit(state), RandUnit(state));
-    return lerp(velMin.xyz, velMax.xyz, r);
+    return EmitterToWorld(lerp(velMin.xyz, velMax.xyz, r));
 }
 
 void SpawnParticle(uint Index, inout FGPUParticle P)
@@ -52,13 +52,13 @@ void SpawnParticle(uint Index, inout FGPUParticle P)
                                             SimParams().ShapeSize.xyz, SimParams().ShapeSize.w,
                                             fwd, rgt, up_);
 
-    float3 spawnPos = SimParams().EmitterPosition.xyz + spawnOffset;
+    float3 spawnPos = SimParams().EmitterPosition.xyz + spawnOffset * EmitterScale();
 
     float3 vel = ComputeInitialVelocity(seed, velMode, shape, spawnOffset,
                                         SimParams().VelocityMin, SimParams().VelocityMax,
                                         SimParams().SpeedAndLifetime.xy,
                                         SimParams().ShapeSize.w,
-                                        fwd, rgt, up_);
+                                        fwd, rgt, up_) * EmitterScale();
 
     float lifetime = lerp(SimParams().SpeedAndLifetime.z, SimParams().SpeedAndLifetime.w, RandUnit(seed));
     float size     = lerp(SimParams().SizeRange.x,        SimParams().SizeRange.y,        RandUnit(seed));
@@ -78,7 +78,7 @@ void SpawnParticle(uint Index, inout FGPUParticle P)
     P.Velocity      = vel;
     P.Lifetime      = max(lifetime, 0.01);
     P.Color         = SimParams().StartColor;
-    P.Size          = size;
+    P.Size          = size * EmitterScale();
     P.Rotation      = radians(rotation);
     P.RotationSpeed = radians(rotSpeed);
     P.Seed          = particleSeed;
@@ -86,16 +86,16 @@ void SpawnParticle(uint Index, inout FGPUParticle P)
 
 void SimulateParticle(inout FGPUParticle P, float DeltaTime, float TotalTime)
 {
-    P.Velocity += SimParams().Gravity.xyz * DeltaTime;
+    P.Velocity += SimParams().Gravity.xyz * EmitterScale() * DeltaTime;
 
     float3 noiseStrength = SimParams().NoiseStrength.xyz;
     if (any(noiseStrength > 0.0))
     {
         float3 turbulence = CurlishNoise(P.Position,
                                          TotalTime,
-                                         SimParams().NoiseStrength.w,
+                                         SimParams().NoiseStrength.w / EmitterScale(),
                                          SimParams().NoiseParams.x);
-        P.Velocity += turbulence * noiseStrength * DeltaTime;
+        P.Velocity += turbulence * noiseStrength * EmitterScale() * DeltaTime;
     }
 
     // Exponential drag (1st order). Keeps behavior framerate-independent.
@@ -115,7 +115,7 @@ void SimulateParticle(inout FGPUParticle P, float DeltaTime, float TotalTime)
     // Size over life (random end per-particle but deterministic via Seed)
     float endSize = lerp(SimParams().SizeRange.z, SimParams().SizeRange.w, P.Seed);
     float startSize = lerp(SimParams().SizeRange.x, SimParams().SizeRange.y, P.Seed);
-    P.Size = lerp(startSize, endSize, lifeT);
+    P.Size = lerp(startSize, endSize, lifeT) * EmitterScale();
 }
 
 // 64 threads per group matches wavefront widths on AMD/NVIDIA.

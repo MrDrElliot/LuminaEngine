@@ -13,11 +13,11 @@ namespace Lumina
     REFLECT()
     enum class EParticleInitVelocityMode : uint8
     {
-        /** Independent per-axis random between Min and Max. */
+        // Independent per-axis random between Min and Max, in the emitter's frame with y along its up.
         Explicit,
         /** Outward from the emitter origin (uses the spawn location offset). */
         Radial,
-        /** Random direction inside a cone around the emitter forward. */
+        // Random direction inside a cone around the emitter up.
         Cone,
     };
 
@@ -39,7 +39,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shape")
         EParticleEmitterShape Shape = EParticleEmitterShape::Point;
 
-        /** Sphere: x=radius. Box: xyz=half extents. Cone: x=base radius, y=height. Ring/Disk: x=outer, y=inner. */
+        /** Sphere and Hemisphere: x=radius. Box: xyz=half extents. Cone: x=base radius, y=height. Ring/Disk: x=outer, y=inner. */
         PROPERTY(Editable, Category = "Shape")
         SParticleParam ShapeSize { FVector3(1.0f) };
 
@@ -227,6 +227,36 @@ namespace Lumina
         bool bScaleByMass = false;
     };
 
+    // Bounces particles off whatever the camera sees, read from the depth buffer, so off-screen surfaces do not collide.
+    REFLECT()
+    class CParticleModule_SceneCollision : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
+        FString GetDisplayName() const override { return "Collide With Scene"; }
+        FString GetCategory() const override { return "Forces"; }
+        FString GetTooltip() const override { return "Bounce off visible surfaces using the depth buffer. Place it before Solve Forces and Velocity."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 120, 190, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        // Fraction of the speed into the surface kept after the bounce.
+        PROPERTY(Editable, Category = "Collision", ClampMin = 0.0f, ClampMax = 1.0f)
+        SParticleParam Restitution { 0.35f };
+
+        // Fraction of the speed along the surface lost on each contact.
+        PROPERTY(Editable, Category = "Collision", ClampMin = 0.0f, ClampMax = 1.0f)
+        SParticleParam Friction { 0.3f };
+
+        // Meters behind a surface that still count as touching it, past which the particle is taken to be behind a separate object.
+        PROPERTY(Editable, Category = "Collision", ClampMin = 0.0f)
+        SParticleParam Thickness { 0.5f };
+
+        // Ends the particle on its first contact, for sparks that should not skid.
+        PROPERTY(Editable, Category = "Collision")
+        bool bKillOnHit = false;
+    };
+
     /** Adds turbulence via a cheap curl-noise field. */
     REFLECT()
     class CParticleModule_CurlNoiseForce : public CParticleModule
@@ -269,6 +299,10 @@ namespace Lumina
          *  this replaced could not express a flash, a mid-life peak, or a hold-then-fade. */
         PROPERTY(Editable, Category = "Color")
         SGradient Gradient;
+
+        // Multiplies the ramp by the spawn color instead of replacing it, so a bound Set Color tints one asset per use.
+        PROPERTY(Editable, Category = "Color")
+        bool bScaleSpawnColor = false;
     };
 
     /** Interpolates size from Start to End over the particle's life. */
