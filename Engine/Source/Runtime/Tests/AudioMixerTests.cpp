@@ -413,3 +413,54 @@ TEST(AudioMixer, RenderCountAdvancesPerCallback)
 
     EXPECT_EQ(Mixer.GetRenderCount(), Before + 2);
 }
+
+TEST(AudioMixer, FadeToRaisesAVoiceStartedSilent)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    Mixer.SetVolumeSmoothing(0.0f);
+
+    FMixerConstantSource Source(1, 0.5f);
+    ASSERT_TRUE(Mixer.StartVoice(MakeDesc(0, &Source, 0.0f)));
+
+    TVector<float> Out(512, 0.0f);
+    Mixer.RenderAudio(Out.data(), 32);
+    EXPECT_FLOAT_EQ(Out[0], 0.0f);
+
+    Mixer.PostCommand(FAudioCommand::MakeFloat2(EAudioCommandType::FadeTo, FAudioHandle{ 1, 0 }, 1.0f, 256.0f / (float)kMixRate));
+    Mixer.RenderAudio(Out.data(), 256);
+    Mixer.RenderAudio(Out.data(), 32);
+    EXPECT_NEAR(Out[0], 0.5f, 1.0e-4f);
+}
+
+TEST(AudioMixer, SetVolumeOverridesAFadeInFlight)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    Mixer.SetVolumeSmoothing(0.0f);
+
+    FMixerConstantSource Source(1, 0.5f);
+    ASSERT_TRUE(Mixer.StartVoice(MakeDesc(0, &Source, 0.0f)));
+
+    TVector<float> Out(64, 0.0f);
+    Mixer.PostCommand(FAudioCommand::MakeFloat2(EAudioCommandType::FadeTo, FAudioHandle{ 1, 0 }, 1.0f, 10.0f));
+    Mixer.PostCommand(FAudioCommand::MakeFloat(EAudioCommandType::SetVolume, FAudioHandle{ 1, 0 }, 0.5f));
+    Mixer.RenderAudio(Out.data(), 32);
+    Mixer.RenderAudio(Out.data(), 32);
+    EXPECT_NEAR(Out[0], 0.25f, 1.0e-4f);
+}
+
+TEST(AudioMixer, LimitsTheMasterBelowFullScale)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    Mixer.SetVolumeSmoothing(0.0f);
+
+    FMixerConstantSource Source(1, 1.0f);
+    ASSERT_TRUE(Mixer.StartVoice(MakeDesc(0, &Source, 3.0f)));
+
+    TVector<float> Out(1024, 0.0f);
+    Mixer.RenderAudio(Out.data(), 512);
+    EXPECT_LE(MixerPeak(Out), 0.8901f);
+    EXPECT_GT(MixerPeak(Out), 0.8f);
+}

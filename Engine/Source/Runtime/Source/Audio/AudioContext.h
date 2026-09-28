@@ -90,6 +90,7 @@ namespace Lumina
 		// Pass 0 to bypass the filter.
 		virtual void SetLowPassCutoff(FAudioHandle Handle, float CutoffHz) = 0;
 
+		// Ramps the voice's volume to Volume over Seconds, the same volume SetVolume sets, which a later SetVolume overrides.
 		virtual void FadeTo(FAudioHandle Handle, float Volume, float Seconds) = 0;
 
 		// Seeks a playing (non-procedural) sound to the given PCM frame.

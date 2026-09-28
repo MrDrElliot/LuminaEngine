@@ -1067,24 +1067,43 @@ namespace Lumina
         return EntityRegistry.Get<STransformComponent>(Entity);
     }
 
+    // Scripts reach these by handle and can race teardown, so a missing transform is a no-op rather than a fatal assert.
+    STransformComponent* CWorld::FindScriptTransform(ECS::FEntity Entity, const char* Caller)
+    {
+        STransformComponent* Transform = EntityRegistry.IsValid(Entity) ? EntityRegistry.TryGet<STransformComponent>(Entity) : nullptr;
+        if (Transform == nullptr)
+        {
+            LOG_WARN("CWorld::{} on entity {} with no transform, which was likely destroyed already.", Caller, (uint32)Entity.GetPacked());
+        }
+        return Transform;
+    }
+
     FVector3 CWorld::GetEntityLocation(ECS::FEntity Entity)
     {
-        return GetEntityTransform(Entity).GetWorldLocation();
+        const STransformComponent* Transform = FindScriptTransform(Entity, "GetEntityLocation");
+        return Transform != nullptr ? Transform->GetWorldLocation() : FVector3(0.0f);
     }
 
     void CWorld::SetEntityLocation(ECS::FEntity Entity, FVector3 Location)
     {
-        GetEntityTransform(Entity).SetLocation(Location);
+        if (STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityLocation"))
+        {
+            Transform->SetLocation(Location);
+        }
     }
 
     void CWorld::SetEntityRotation(ECS::FEntity Entity, FQuat Rotation)
     {
-        GetEntityTransform(Entity).SetRotation(Rotation);
+        if (STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityRotation"))
+        {
+            Transform->SetRotation(Rotation);
+        }
     }
 
     FVector3 CWorld::TranslateEntity(ECS::FEntity Entity, FVector3 Translation)
     {
-        return GetEntityTransform(Entity).Translate(Translation);
+        STransformComponent* Transform = FindScriptTransform(Entity, "TranslateEntity");
+        return Transform != nullptr ? Transform->Translate(Translation) : FVector3(0.0f);
     }
 
     uint32 CWorld::GetNumEntities() const

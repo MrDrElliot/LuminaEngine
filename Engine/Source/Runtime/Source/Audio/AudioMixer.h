@@ -117,6 +117,9 @@ namespace Lumina
 			EAudioBus Bus = EAudioBus::SFX;
 
 			float BaseVolume = 1.0f;
+			// FadeTo ramps BaseVolume here, per frame, leaving FadeGain to the start and stop envelopes.
+			float VolumeTarget = 1.0f;
+			float VolumeRamp = 0.0f;
 			float Pitch = 1.0f;
 			float OcclusionGain = 1.0f;
 

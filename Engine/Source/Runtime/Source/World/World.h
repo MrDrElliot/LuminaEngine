@@ -295,6 +295,7 @@ namespace Lumina
         //~ Entity transforms.
 
         STransformComponent& GetEntityTransform(ECS::FEntity Entity);
+        STransformComponent* FindScriptTransform(ECS::FEntity Entity, const char* Caller);
 
         void SetEntityTransform(ECS::FEntity Entity, const FTransform& NewTransform);
 

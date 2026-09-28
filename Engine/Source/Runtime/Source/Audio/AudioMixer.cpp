@@ -420,6 +420,8 @@ namespace Lumina
 			Voice.bSpatialized = Desc.Params.bSpatialized;
 			Voice.Bus          = Desc.Params.Bus;
 			Voice.BaseVolume   = Desc.Params.Volume;
+			Voice.VolumeTarget = Desc.Params.Volume;
+			Voice.VolumeRamp   = 0.0f;
 			Voice.Pitch        = Desc.Params.Pitch;
 			Voice.Position     = Desc.Params.Position;
 			Voice.Velocity     = Desc.Params.Velocity;
@@ -524,7 +526,11 @@ namespace Lumina
 			}
 			break;
 
-		case EAudioCommandType::SetVolume:     Voice.BaseVolume = Math::Max(Cmd.ValueA, 0.0f); break;
+		case EAudioCommandType::SetVolume:
+			Voice.BaseVolume   = Math::Max(Cmd.ValueA, 0.0f);
+			Voice.VolumeTarget = Voice.BaseVolume;
+			Voice.VolumeRamp   = 0.0f;
+			break;
 		case EAudioCommandType::SetPitch:      Voice.Pitch = Math::Clamp(Cmd.ValueA, MinRatio, MaxRatio); break;
 		case EAudioCommandType::SetPosition:   Voice.Position = Cmd.Vector; break;
 		case EAudioCommandType::SetVelocity:   Voice.Velocity = Cmd.Vector; break;
@@ -564,9 +570,13 @@ namespace Lumina
 			break;
 
 		case EAudioCommandType::FadeTo:
-			Voice.FadeTarget     = Math::Max(Cmd.ValueA, 0.0f);
-			Voice.FadeStep       = 1.0f / Math::Max(Cmd.ValueB * (float)SampleRate, 1.0f);
-			Voice.bStopAfterFade = false;
+			// Reaches Volume itself, so a voice started silent can fade up rather than scaling a zero.
+			Voice.VolumeTarget = Math::Max(Cmd.ValueA, 0.0f);
+			Voice.VolumeRamp   = Math::Abs(Voice.VolumeTarget - Voice.BaseVolume) / Math::Max(Cmd.ValueB * (float)SampleRate, 1.0f);
+			if (Voice.VolumeRamp <= 0.0f)
+			{
+				Voice.BaseVolume = Voice.VolumeTarget;
+			}
 			break;
 
 		case EAudioCommandType::SeekToFrame:
@@ -770,6 +780,17 @@ namespace Lumina
 
 	void FAudioMixer::RenderVoice(FVoice& Voice, uint32 Frames)
 	{
+		if (Voice.VolumeRamp > 0.0f)
+		{
+			const float Delta = Voice.VolumeTarget - Voice.BaseVolume;
+			const float Step  = Voice.VolumeRamp * (float)Frames;
+			Voice.BaseVolume += Delta > 0.0f ? Math::Min(Step, Delta) : Math::Max(-Step, Delta);
+			if (Voice.BaseVolume == Voice.VolumeTarget)
+			{
+				Voice.VolumeRamp = 0.0f;
+			}
+		}
+
 		const uint32 SourceRate = Voice.Source->GetSampleRate();
 		if (SourceRate == 0)
 		{

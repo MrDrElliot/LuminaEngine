@@ -11,6 +11,7 @@
 #include "KinematicsSystem.h"
 #include "SignificanceSystem.h"
 #include "SystemResources.h"
+#include "World/World.h"
 
 namespace Lumina
 {
@@ -94,15 +95,20 @@ namespace Lumina
 		bool bHasListener = false;
 		uint32 DrivenListenerMask = 0;
 
+		CWorld* World = SystemContext.GetWorld();
+		const ECS::FEntity ActiveCamera = World != nullptr ? World->GetActiveCameraEntity() : ECS::NullEntity;
+		const bool bCameraHasTransform = ActiveCamera != ECS::NullEntity && !ActiveCamera.IsTombstone() && XFormStorage.Contains(ActiveCamera);
+
 		{
 			auto ListenerView = SystemContext.CreateView<SAudioListenerComponent>();
 			ListenerView.ForEach([&](ECS::FEntity Entity, SAudioListenerComponent& Listener)
 			{
 				const uint32 Index = (uint32)Math::Clamp(Listener.ListenerIndex, 0, 3);
-				const STransformComponent& Transform = XFormStorage.Get(Entity);
+				const ECS::FEntity Ears = (Listener.bFollowActiveCamera && Index == 0 && bCameraHasTransform) ? ActiveCamera : Entity;
+				const STransformComponent& Transform = XFormStorage.Get(Ears);
 				const FVector3 Position = Transform.GetWorldLocation();
 
-				const FVector3 Velocity = Kinematics::GetVelocity(KinematicsState, Entity);
+				const FVector3 Velocity = Kinematics::GetVelocity(KinematicsState, Ears);
 
 				Audio::Context().UpdateListener(Index, Position, Transform.GetWorldRotation(),
 					Listener.bApplyDoppler ? Velocity : FVector3(0.0f));

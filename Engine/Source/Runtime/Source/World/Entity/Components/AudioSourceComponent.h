@@ -170,5 +170,9 @@ namespace Lumina
 		PROPERTY(Editable)
 		bool bApplyDoppler = true;
 
+		// Hears from whichever camera the world is viewing through, so a cinematic or spectator camera takes the ears with the eyes. Slot 0 only.
+		PROPERTY(Editable)
+		bool bFollowActiveCamera = true;
+
 	};
 }
