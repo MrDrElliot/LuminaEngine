@@ -1,6 +1,7 @@
 #include "AgentCorePCH.h"
 #include "Agent/AgentToolMarshal.h"
 
+#include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentReflectionUtils.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/StringFormat.h"
@@ -396,7 +397,7 @@ namespace Lumina::Agent
 
             case EPropertyTypeFlags::Object:
                 {
-                    if (!Expect(Value.is_string(), "an asset GUID, as a string"))
+                    if (!Expect(Value.is_string(), "an asset GUID or content path, as a string"))
                     {
                         return false;
                     }
@@ -407,9 +408,9 @@ namespace Lumina::Agent
                         return true;
                     }
 
-                    if (!FGuid::TryParse(FStringView(Given.c_str())).IsSet())
+                    if (!ParseAssetGuid(FStringView(Given.c_str())).IsSet())
                     {
-                        OutError = Lumina::Format("'{}' is not a GUID.", Path);
+                        OutError = Lumina::Format("'{}' is neither a GUID nor an asset path.", Path);
                         return false;
                     }
 
@@ -707,12 +708,11 @@ namespace Lumina::Agent
                         return true;
                     }
 
-                    const TOptional<FGuid> Guid = FGuid::TryParse(FStringView(Given.c_str()));
-                    CObject* Resolved = Guid.IsSet() ? StaticLoadObject(*Guid) : nullptr;
-
-                    if (Resolved == nullptr)
+                    CObject* Resolved = nullptr;
+                    FString ResolveError;
+                    if (!ResolveAssetObject(FStringView(Given.c_str()), Resolved, ResolveError))
                     {
-                        OutError = Lumina::Format("'{}' names no asset that could be loaded.", Path);
+                        OutError = Lumina::Format("'{}' names no asset that could be loaded. {}", Path, ResolveError);
                         return false;
                     }
 

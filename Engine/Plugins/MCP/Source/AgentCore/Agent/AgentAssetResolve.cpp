@@ -1,25 +1,39 @@
 #include "AgentCorePCH.h"
 #include "Agent/AgentAssetResolve.h"
 
+#include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/StringFormat.h"
 #include "Core/Object/ObjectCore.h"
 #include "GUID/GUID.h"
 
 namespace Lumina::Agent
 {
-    bool ResolveAssetObject(FStringView Guid, CObject*& OutObject, FString& OutError)
+    TOptional<FGuid> ParseAssetGuid(FStringView GuidOrPath)
     {
-        const TOptional<FGuid> Parsed = FGuid::TryParse(Guid);
+        TOptional<FGuid> Parsed = FGuid::TryParse(GuidOrPath);
         if (!Parsed.IsSet())
         {
-            OutError = Lumina::Format("'{}' is not a GUID.", Guid);
+            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(GuidOrPath))
+            {
+                Parsed = Data->AssetGUID;
+            }
+        }
+        return Parsed;
+    }
+
+    bool ResolveAssetObject(FStringView GuidOrPath, CObject*& OutObject, FString& OutError)
+    {
+        const TOptional<FGuid> Parsed = ParseAssetGuid(GuidOrPath);
+        if (!Parsed.IsSet())
+        {
+            OutError = Lumina::Format("'{}' is neither a GUID nor the content path of an asset.", GuidOrPath);
             return false;
         }
 
         OutObject = StaticLoadObject(*Parsed);
         if (OutObject == nullptr)
         {
-            OutError = Lumina::Format("No asset with GUID {} could be loaded.", Guid);
+            OutError = Lumina::Format("No asset {} could be loaded.", GuidOrPath);
             return false;
         }
 
