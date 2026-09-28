@@ -2,7 +2,9 @@
 
 #include "EntityScriptLibrary.h"
 
+#include "Core/Object/ScriptClass.h"
 #include "Scripting/EntityScript.h"
+#include "Scripting/ScriptableObject.h"
 #include "World/World.h"
 
 namespace Lumina
@@ -14,7 +16,15 @@ namespace Lumina
         {
             return nullptr;
         }
-        return EntityScripts::Attach(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get());
+        CEntityScript* Script = EntityScripts::Attach(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get());
+
+        // A C# script's instance is otherwise made by its first event, so a script with none came back untyped.
+        if (Script != nullptr && Cast<CScriptClass>(Script->GetClass()) != nullptr)
+        {
+            Scriptable::GetOrCreateInstance(Script);
+        }
+
+        return Script;
     }
 
     CEntityScript* CEntityScriptLibrary::FindScript(CWorld* World, ECS::FEntity Entity,
