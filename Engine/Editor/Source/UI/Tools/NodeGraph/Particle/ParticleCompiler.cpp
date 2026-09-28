@@ -12,6 +12,12 @@ namespace Lumina
     static constexpr const char* AttrCountToken     = "$PARTICLE_ATTR_COUNT";
     static constexpr const char* AttrDefaultsToken  = "$PARTICLE_ATTR_DEFAULTS";
 
+    // An lvalue, and in bounds because the buffer holds PARTICLE_ATTR_FLOATS per slot of MaxParticles.
+    static FString AttributeSlotExpr(int32 Slot)
+    {
+        return FString("SpanAt(PAttr(), Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", Slot).c_str() + "u)[0]";
+    }
+
     // A single pass, so inserted text is not rescanned.
     static void ReplaceAll(FString& Source, const char* Token, const FString& Replacement)
     {
@@ -37,8 +43,7 @@ namespace Lumina
         FString AttrDefaults;
         for (int32 i = 0; i < (int32)Attributes.size(); ++i)
         {
-            AttrDefaults += FString("\tPAttr()[Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", i).c_str()
-                          + "u] = " + Attributes[i].DefaultExpr + ";\n";
+            AttrDefaults += "\t" + AttributeSlotExpr(i) + " = " + Attributes[i].DefaultExpr + ";\n";
         }
 
         ReplaceAll(Source, AttrCountToken,    Format("{}", GetAttributeFloatCount()).c_str());
@@ -90,7 +95,7 @@ namespace Lumina
         }
 
         // CONTRACT, both graph functions in the template must take the particle index named Index.
-        return FString("PAttr()[Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", Index).c_str() + "u]";
+        return AttributeSlotExpr(Index);
     }
 
     int32 FParticleCompiler::FindAttributeSlot(const char* Name) const
