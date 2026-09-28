@@ -4,6 +4,8 @@
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "World/Entity/Components/MeshComponent.h"
 
+#include <bit>
+
 namespace Lumina
 {
     CMaterialInterface* SParticleSystemComponent::GetMaterialForEmitter(int32 EmitterIndex) const
@@ -159,6 +161,21 @@ namespace Lumina
     {
         const FParticleParameter* Param = FindParameter(Name);
         return (Param && Param->Type == EParticleParameterType::Color) ? Param->Vector : FVector4(0.0f);
+    }
+
+    void SParticleSystemComponent::EmitParticle(int32 EmitterIndex, FVector3 Position, FVector3 Velocity, FVector4 Color, float Size, int32 Flags)
+    {
+        constexpr SIZE_T MaxPendingEmits = 4096;
+        if (EmitterIndex < 0 || PendingEmits.size() >= MaxPendingEmits)
+        {
+            return;
+        }
+
+        FParticleScriptEmit& Emit = PendingEmits.emplace_back();
+        Emit.EmitterIndex  = EmitterIndex;
+        Emit.PositionSize  = FVector4(Position, Size);
+        Emit.VelocityFlags = FVector4(Velocity, std::bit_cast<float>((uint32)Flags | EParticleEmitFlags::Position));
+        Emit.Color         = Color;
     }
 
     void SParticleSystemComponent::SetFloat(const FName& Name, float Value)

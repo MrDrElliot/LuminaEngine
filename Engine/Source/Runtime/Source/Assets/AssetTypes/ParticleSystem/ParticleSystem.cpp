@@ -160,6 +160,18 @@ namespace Lumina
 
     float CParticleSystem::GetOneShotLength() const
     {
+        auto FindEmitter = [this](const FString& Name) -> const CParticleEmitter*
+        {
+            for (const TObjectPtr<CParticleEmitter>& Candidate : Emitters)
+            {
+                if (Candidate != nullptr && Candidate->EmitterName == Name)
+                {
+                    return Candidate.Get();
+                }
+            }
+            return nullptr;
+        };
+
         float Length = 0.0f;
         for (const TObjectPtr<CParticleEmitter>& Emitter : Emitters)
         {
@@ -174,7 +186,14 @@ namespace Lumina
                 return 0.0f;
             }
 
-            Length = Math::Max(Length, Emitter->Duration + Emitter->LifetimeRange.y);
+            // A sub-emitter's last particle can be born as late as its parent's last one dies.
+            float Start = Emitter->Duration;
+            if (const CParticleEmitter* Parent = Emitter->SpawnFromEmitter.empty() ? nullptr : FindEmitter(Emitter->SpawnFromEmitter))
+            {
+                Start = Math::Max(Start, Parent->Duration + Parent->LifetimeRange.y);
+            }
+
+            Length = Math::Max(Length, Start + Emitter->LifetimeRange.y);
         }
 
         return Length;
@@ -349,6 +368,32 @@ namespace Lumina
         R.bWriteDepth             = ResolveBoundBool (Asset, Component, "bWriteDepth",            Emitter.bWriteDepth);
         R.SoftFadeDistance        = Emitter.SoftFadeDistance;
         R.bLit                    = Emitter.bLit;
+
+        R.bLocalSpace             = Emitter.bLocalSpace;
+        R.PrewarmTime             = Emitter.PrewarmTime;
+        R.Explosiveness           = Math::Clamp(Emitter.Explosiveness, 0.0f, 1.0f);
+        R.FixedFPS                = Emitter.FixedFPS;
+        R.bInterpolate            = Emitter.bInterpolate;
+        R.bUseFixedSeed           = Emitter.bUseFixedSeed;
+        R.Seed                    = Emitter.Seed;
+        R.VisibilityRadius        = Emitter.VisibilityRadius;
+        R.CullDistance            = Emitter.CullDistance;
+
+        R.RenderMode              = Emitter.RenderMode;
+        R.bAlignMeshToVelocity    = Emitter.bAlignMeshToVelocity;
+        R.RibbonSegments          = Math::Clamp(Emitter.RibbonSegments, 2, 64);
+        R.RibbonLength            = Math::Max(Emitter.RibbonLength, 0.01f);
+        R.RibbonTailWidth         = Math::Max(Emitter.RibbonTailWidth, 0.0f);
+        R.bCastShadows            = Emitter.bCastShadows;
+        R.SortMode                = Emitter.SortMode;
+        R.FlipbookMode            = Emitter.FlipbookMode;
+        R.FlipbookFPS             = Emitter.FlipbookFPS;
+        R.bRandomStartFrame       = Emitter.bRandomStartFrame;
+
+        R.SpawnEvent              = Emitter.SpawnEvent;
+        R.ParticlesPerEvent       = Math::Max(Emitter.ParticlesPerEvent, 1);
+        R.EventRate               = Math::Max(Emitter.EventRate, 0.0f);
+        R.InheritParentVelocity   = Emitter.InheritParentVelocity;
 
         return R;
     }

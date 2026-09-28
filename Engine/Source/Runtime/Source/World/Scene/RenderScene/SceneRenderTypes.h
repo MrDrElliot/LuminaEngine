@@ -1126,6 +1126,10 @@ namespace Lumina
     // Sim flag bitmask, must match constants in ParticleSimulate(.Template).slang
     static constexpr uint32 PARTICLE_SIM_FLAG_LOOP          = 1u << 0;
     static constexpr uint32 PARTICLE_SIM_FLAG_BURST_PENDING = 1u << 1;
+    static constexpr uint32 PARTICLE_SIM_FLAG_LOCAL_SPACE   = 1u << 2;
+
+    // Sentinel for "consumes no event list", must match ParticleSimCommon.slang.
+    static constexpr uint32 PARTICLE_NO_EVENT_LIST = ~0u;
 
     // Above the EParticleBlendMode byte of the sprite pass RenderFlags, must match ParticleSpriteCommon.slang.
     static constexpr uint32 PARTICLE_RENDER_FLAG_LIT = 1u << 8;
@@ -1151,8 +1155,41 @@ namespace Lumina
         FVector4  NoiseStrength;       // xyz=strength; w=scale
         FVector4  NoiseParams;         // x=speed
         FVector4  Timing;              // x=DeltaTime, y=TotalTime, z=SystemAge, w=EmitterScale
+        FMatrix4  EmitterDelta;        // last frame's emitter transform to this frame's, for local space
+        FVector4  EventParams;         // x=continuous events per second raised, y=parent velocity inherited
+        FUIntVector4 EventInfo;        // x=event lists raised, y=list consumed, z=emission mesh slot, w=particles per event
+        FUIntVector4 RibbonInfo;       // x=segments, y=head sample, z=head advanced this step
     };
-    static_assert(sizeof(FParticleSimParamsGPU) == 288, "FParticleSimParamsGPU layout must match shader");
+    static_assert(sizeof(FParticleSimParamsGPU) == 400, "FParticleSimParamsGPU layout must match shader");
+
+    // Mirrors FParticleEvent in ParticleSimCommon.slang, and doubles as an EmitParticle call from script.
+    struct alignas(16) FParticleEventGPU
+    {
+        FVector4  PositionSize;        // xyz position, w size
+        FVector4  VelocityFlags;       // xyz velocity, w EParticleEmitFlags as float bits
+        FVector4  Color;
+    };
+    static_assert(sizeof(FParticleEventGPU) == 48, "FParticleEventGPU layout must match shader");
+
+    // An attractor or collider volume, rigid so its axes are unit length and Extent carries the scale.
+    struct alignas(16) FParticleShapeGPU
+    {
+        FVector4  Center;              // xyz world center, w EParticleShapeType
+        FVector4  AxisX;
+        FVector4  AxisY;
+        FVector4  AxisZ;
+        FVector4  Extent;              // xyz half extents, x alone for a sphere's radius
+        FVector4  Params;              // x strength, y attenuation, z directionality
+    };
+    static_assert(sizeof(FParticleShapeGPU) == 96, "FParticleShapeGPU layout must match shader");
+
+    struct alignas(16) FParticleTerrainGPU
+    {
+        FVector4  OriginSize;          // x origin X, y origin Z, z tile world size, w base height
+        FVector4  HeightParams;        // x max height
+        FUIntVector4 Textures;         // x heightmap, y normal map
+    };
+    static_assert(sizeof(FParticleTerrainGPU) == 48, "FParticleTerrainGPU layout must match shader");
 
     // 48 byte layout. must match FParticleRenderParams in ParticleVertex.slang.
     struct alignas(16) FParticleRenderParamsGPU

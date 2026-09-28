@@ -10,6 +10,15 @@ namespace Lumina
     class CMaterialInterface;
     class CMaterialInstance;
 
+    // One EmitParticle call waiting for the next render extract, already in the GPU event layout.
+    struct FParticleScriptEmit
+    {
+        int32    EmitterIndex = 0;
+        FVector4 PositionSize = FVector4(0.0f);
+        FVector4 VelocityFlags = FVector4(0.0f);
+        FVector4 Color = FVector4(1.0f);
+    };
+
     REFLECT(Component, Category = "Effects")
     struct RUNTIME_API SParticleSystemComponent
     {
@@ -122,6 +131,13 @@ namespace Lumina
         /** True while the emitter is spawning new particles. */
         FUNCTION()
         bool IsActive() const { return bEmit; }
+
+        // Spawns one particle in EmitterIndex on the next frame, taking the fields Flags names (EParticleEmitFlags) from here and the rest from the spawn stack.
+        FUNCTION()
+        void EmitParticle(int32 EmitterIndex, FVector3 Position, FVector3 Velocity, FVector4 Color, float Size, int32 Flags = 15);
+
+        // Calls queued since the last extract. A world nothing renders caps this instead of growing it.
+        TVector<FParticleScriptEmit> PendingEmits;
 
         //~ Begin User Parameters
         /** True if this component or its asset declares a parameter with the given name. */

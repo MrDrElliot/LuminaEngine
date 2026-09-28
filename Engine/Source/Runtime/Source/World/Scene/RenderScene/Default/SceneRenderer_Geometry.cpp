@@ -511,6 +511,8 @@ namespace Lumina
             }
         }
 
+        ParticleShadowCasters(CL, SunShadowDataIndex);
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }

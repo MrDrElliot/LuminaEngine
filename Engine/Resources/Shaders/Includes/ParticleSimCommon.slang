@@ -16,6 +16,7 @@ static const uint EMITTER_SHAPE_CONE   = 3u;
 static const uint EMITTER_SHAPE_RING   = 4u;
 static const uint EMITTER_SHAPE_DISK   = 5u;
 static const uint EMITTER_SHAPE_HEMISPHERE = 6u;
+static const uint EMITTER_SHAPE_MESH       = 7u;
 
 // Velocity mode enums (must match EParticleVelocityMode)
 static const uint VELOCITY_MODE_EXPLICIT = 0u;
@@ -24,6 +25,23 @@ static const uint VELOCITY_MODE_RADIAL   = 1u;
 // Sim flags (bitmask in Counts.w)
 static const uint SIM_FLAG_LOOP          = (1u << 0);
 static const uint SIM_FLAG_BURST_PENDING = (1u << 1);
+static const uint SIM_FLAG_LOCAL_SPACE   = (1u << 2);
+
+// Event lists, must match EParticleEventType.
+static const uint PARTICLE_EVENT_DEATH      = 0u;
+static const uint PARTICLE_EVENT_COLLISION  = 1u;
+static const uint PARTICLE_EVENT_CONTINUOUS = 2u;
+static const uint PARTICLE_NO_EVENT_LIST    = 0xFFFFFFFFu;
+
+// Must match EParticleEmitFlags.
+static const uint PARTICLE_EMIT_POSITION = 1u << 0;
+static const uint PARTICLE_EMIT_VELOCITY = 1u << 1;
+static const uint PARTICLE_EMIT_COLOR    = 1u << 2;
+static const uint PARTICLE_EMIT_SIZE     = 1u << 3;
+
+// Must match EParticleShapeType.
+static const uint PARTICLE_SHAPE_SPHERE = 0u;
+static const uint PARTICLE_SHAPE_BOX    = 1u;
 
 // 64-byte particle. Do not change stride without updating DefaultSceneRenderer.
 struct FGPUParticle
@@ -71,6 +89,37 @@ struct FParticleSimParams
     float4  NoiseParams;         // x=speed, y=InheritEmitterVelocity; zw reserved
 
     float4  Timing;              // x=DeltaTime, y=TotalTime, z=SystemAge, w=EmitterScale
+
+    float4x4 EmitterDelta;       // last frame's emitter transform to this frame's, for local space
+    float4  EventParams;         // x=continuous events per second raised, y=parent velocity inherited
+    uint4   EventInfo;           // x=event lists raised, y=list consumed, z=emission mesh slot, w=particles per event
+    uint4   RibbonInfo;          // x=segments, y=head sample, z=head advanced this step
+};
+
+// A parent particle's death, contact or tick for a sub-emitter, and the payload of a script EmitParticle.
+struct FParticleEvent
+{
+    float4  PositionSize;        // xyz position, w size
+    float4  VelocityFlags;       // xyz velocity, w PARTICLE_EMIT flags as float bits
+    float4  Color;
+};
+
+// Attractor or collider volume with unit axes, its scale folded into Extent.
+struct FParticleShape
+{
+    float4  Center;              // xyz world center, w PARTICLE_SHAPE type
+    float4  AxisX;
+    float4  AxisY;
+    float4  AxisZ;
+    float4  Extent;              // xyz half extents, x alone for a sphere's radius
+    float4  Params;              // x strength, y attenuation, z directionality
+};
+
+struct FParticleTerrain
+{
+    float4  OriginSize;          // x origin X, y origin Z, z tile world size, w base height
+    float4  HeightParams;        // x max height
+    uint4   Textures;            // x heightmap, y normal map
 };
 
 // Everything by device address; matches FParticleSimArgs in DefaultSceneRenderer.cpp.
@@ -86,6 +135,19 @@ struct FParticleSimArgs
     // particle buffer and indexed by the same particle index. A plain float span rather than a generated
     // struct because this header is parsed before any generated code and cannot name a generated type.
     GPUSpan<float>        Attributes;
+    // Lists this emitter raises for its sub-emitters, PARTICLE_EVENT_CAPACITY per list, and their counts.
+    GPUSpan<FParticleEvent> OwnEvents;
+    GPUSpan<uint>           OwnEventCounts;
+    // The parent's lists when this emitter is a sub-emitter.
+    GPUSpan<FParticleEvent> SourceEvents;
+    GPUSpan<uint>           SourceEventCounts;
+    // EmitParticle calls queued from script this frame.
+    GPUSpan<FParticleEvent> ScriptEvents;
+    // RibbonInfo.x past positions per particle.
+    GPUSpan<float4>         RibbonHistory;
+    GPUSpan<FParticleShape> Attractors;
+    GPUSpan<FParticleShape> Colliders;
+    GPUSpan<FParticleTerrain> Terrains;
 };
 
 FParticleSimArgs*      SimArgs()      { return GetPassArgs<FParticleSimArgs>(); }
@@ -96,6 +158,221 @@ GPUSpan<float>*        PAttr()        { return &SimArgs().Attributes; }
 
 // Uniform scale of the emitter's transform, so a scaled effect keeps its shape at a different size.
 float EmitterScale() { return SimParams().Timing.w; }
+
+// Must match EParticleSortMode.
+static const uint PARTICLE_SORT_BY_DISTANCE    = 0u;
+static const uint PARTICLE_SORT_OLDEST_FIRST   = 1u;
+static const uint PARTICLE_SORT_YOUNGEST_FIRST = 2u;
+
+// Zero to one, where an ascending sort draws the smallest first.
+float ParticleSortValue(FGPUParticle P, float3 CameraPos, uint SortMode)
+{
+    const float LifeRatio = saturate(P.Age / max(P.Lifetime, 1e-4));
+    if (SortMode == PARTICLE_SORT_OLDEST_FIRST)
+    {
+        return 1.0 - LifeRatio;
+    }
+    if (SortMode == PARTICLE_SORT_YOUNGEST_FIRST)
+    {
+        return LifeRatio;
+    }
+    // Reciprocal distance, so far particles take the small keys and draw first.
+    return 1.0 / (1.0 + length(P.Position - CameraPos));
+}
+
+// Appends to one of this emitter's event lists when a sub-emitter consumes it, and is a no-op otherwise.
+void RaiseParticleEvent(uint List, FGPUParticle P)
+{
+    if ((SimParams().EventInfo.x & (1u << List)) == 0u)
+    {
+        return;
+    }
+
+    uint Slot;
+    InterlockedAdd(SpanAt(&SimArgs().OwnEventCounts, List)[0], 1u, Slot);
+    if (Slot < PARTICLE_EVENT_CAPACITY)
+    {
+        FParticleEvent Event;
+        Event.PositionSize  = float4(P.Position, P.Size);
+        Event.VelocityFlags = float4(P.Velocity, 0.0);
+        Event.Color         = P.Color;
+        SpanSet(&SimArgs().OwnEvents, List * PARTICLE_EVENT_CAPACITY + Slot, Event);
+    }
+}
+
+// Carries a live particle, and its ribbon history, along with the emitter's motion since last frame.
+void ApplyLocalSpace(uint Index, inout FGPUParticle P)
+{
+    if ((SimParams().Counts.w & SIM_FLAG_LOCAL_SPACE) == 0u)
+    {
+        return;
+    }
+
+    const float4x4 Delta = SimParams().EmitterDelta;
+    P.Position = mul(Delta, float4(P.Position, 1.0)).xyz;
+    P.Velocity = mul(Delta, float4(P.Velocity, 0.0)).xyz;
+
+    const uint Segments = SimParams().RibbonInfo.x;
+    for (uint Sample = 0u; Sample < Segments; ++Sample)
+    {
+        const uint Slot = Index * Segments + Sample;
+        const float4 Old = SpanGet(&SimArgs().RibbonHistory, Slot);
+        SpanSet(&SimArgs().RibbonHistory, Slot, float4(mul(Delta, float4(Old.xyz, 1.0)).xyz, Old.w));
+    }
+}
+
+void InitializeRibbon(uint Index, float3 Position)
+{
+    const uint Segments = SimParams().RibbonInfo.x;
+    for (uint Sample = 0u; Sample < Segments; ++Sample)
+    {
+        SpanSet(&SimArgs().RibbonHistory, Index * Segments + Sample, float4(Position, 0.0));
+    }
+}
+
+void RecordRibbon(uint Index, float3 Position)
+{
+    const uint Segments = SimParams().RibbonInfo.x;
+    if (Segments != 0u && SimParams().RibbonInfo.z != 0u)
+    {
+        SpanSet(&SimArgs().RibbonHistory, Index * Segments + SimParams().RibbonInfo.y, float4(Position, 0.0));
+    }
+}
+
+float3 ShapeToLocal(FParticleShape Shape, float3 WorldPos)
+{
+    const float3 Offset = WorldPos - Shape.Center.xyz;
+    return float3(dot(Offset, Shape.AxisX.xyz), dot(Offset, Shape.AxisY.xyz), dot(Offset, Shape.AxisZ.xyz));
+}
+
+float3 ShapeToWorldDir(FParticleShape Shape, float3 LocalDir)
+{
+    return Shape.AxisX.xyz * LocalDir.x + Shape.AxisY.xyz * LocalDir.y + Shape.AxisZ.xyz * LocalDir.z;
+}
+
+// Sums every attractor's pull on a particle at Position into Velocity.
+void ApplyAttractors(float3 Position, inout float3 Velocity, float DeltaTime, float StrengthScale)
+{
+    const uint Count = SimArgs().Attractors.Count;
+    for (uint Index = 0u; Index < Count; ++Index)
+    {
+        const FParticleShape Shape = SpanGet(&SimArgs().Attractors, Index);
+        const float3 Local = ShapeToLocal(Shape, Position);
+
+        // Zero at the edge and one at the center, whichever shape the volume is.
+        float Closeness;
+        if ((uint)Shape.Center.w == PARTICLE_SHAPE_BOX)
+        {
+            Closeness = 1.0 - max(max(abs(Local.x) / max(Shape.Extent.x, 1e-4), abs(Local.y) / max(Shape.Extent.y, 1e-4)), abs(Local.z) / max(Shape.Extent.z, 1e-4));
+        }
+        else
+        {
+            Closeness = 1.0 - length(Local) / max(Shape.Extent.x, 1e-4);
+        }
+
+        if (Closeness <= 0.0)
+        {
+            continue;
+        }
+
+        const float3 ToCenter = Shape.Center.xyz - Position;
+        const float3 Pull     = normalize(lerp(ToCenter / max(length(ToCenter), 1e-4), Shape.AxisZ.xyz, Shape.Params.z) + 1e-6);
+        const float  Falloff  = pow(saturate(Closeness), max(Shape.Params.y, 0.0));
+        Velocity += Pull * (Shape.Params.x * StrengthScale * Falloff * DeltaTime);
+    }
+}
+
+void ReflectOffSurface(inout float3 Velocity, float3 Normal, float Restitution, float Friction)
+{
+    const float Into = dot(Velocity, Normal);
+    if (Into < 0.0)
+    {
+        const float3 Along = Velocity - Normal * Into;
+        Velocity = Along * (1.0 - Friction) - Normal * (Into * Restitution);
+    }
+}
+
+// Pushes a particle of the given Radius out of every collider volume and terrain. Returns true on contact.
+bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Restitution, float Friction, float Radius, bool bTerrain)
+{
+    bool bHit = false;
+
+    const uint ColliderCount = SimArgs().Colliders.Count;
+    for (uint Index = 0u; Index < ColliderCount; ++Index)
+    {
+        const FParticleShape Shape = SpanGet(&SimArgs().Colliders, Index);
+        float3 Local = ShapeToLocal(Shape, Position);
+        float3 LocalNormal;
+
+        if ((uint)Shape.Center.w == PARTICLE_SHAPE_BOX)
+        {
+            const float3 Reach = Shape.Extent.xyz + Radius;
+            const float3 Depth = Reach - abs(Local);
+            if (any(Depth <= 0.0))
+            {
+                continue;
+            }
+
+            // Out through the face the particle is least far inside.
+            if (Depth.x <= Depth.y && Depth.x <= Depth.z)
+            {
+                LocalNormal = float3(sign(Local.x), 0.0, 0.0);
+                Local.x = LocalNormal.x * Reach.x;
+            }
+            else if (Depth.y <= Depth.z)
+            {
+                LocalNormal = float3(0.0, sign(Local.y), 0.0);
+                Local.y = LocalNormal.y * Reach.y;
+            }
+            else
+            {
+                LocalNormal = float3(0.0, 0.0, sign(Local.z));
+                Local.z = LocalNormal.z * Reach.z;
+            }
+        }
+        else
+        {
+            const float Reach    = Shape.Extent.x + Radius;
+            const float Distance = length(Local);
+            if (Distance >= Reach)
+            {
+                continue;
+            }
+
+            LocalNormal = Distance > 1e-5 ? Local / Distance : float3(0.0, 1.0, 0.0);
+            Local = LocalNormal * Reach;
+        }
+
+        const float3 Normal = ShapeToWorldDir(Shape, LocalNormal);
+        Position = Shape.Center.xyz + ShapeToWorldDir(Shape, Local);
+        ReflectOffSurface(Velocity, Normal, Restitution, Friction);
+        bHit = true;
+    }
+
+    const uint TerrainCount = bTerrain ? SimArgs().Terrains.Count : 0u;
+    for (uint Index = 0u; Index < TerrainCount; ++Index)
+    {
+        const FParticleTerrain Terrain = SpanGet(&SimArgs().Terrains, Index);
+        const float2 UV = (Position.xz - Terrain.OriginSize.xy) / Terrain.OriginSize.z + 0.5;
+        if (any(saturate(UV) != UV))
+        {
+            continue;
+        }
+
+        const float Ground = Terrain.OriginSize.w + SampleTexture2DLevel(Terrain.Textures.x, SAMPLER_LINEAR_CLAMP, UV, 0.0).r * Terrain.HeightParams.x;
+        if (Position.y >= Ground + Radius)
+        {
+            continue;
+        }
+
+        const float3 Normal = normalize(SampleTexture2DLevel(Terrain.Textures.y, SAMPLER_LINEAR_CLAMP, UV, 0.0).xyz * 2.0 - 1.0);
+        Position.y = Ground + Radius;
+        ReflectOffSurface(Velocity, Normal, Restitution, Friction);
+        bHit = true;
+    }
+
+    return bHit;
+}
 
 // Module parameter slot accessor. Generated module code indexes this instead of embedding literals, so
 // the compiled shader is invariant to the values and only a structural stack edit needs a rebuild.
@@ -187,6 +464,14 @@ float3 RandOnUnitSphere(inout uint state)
     float phi   = acos(2.0 * v - 1.0);
     float sinPhi = sin(phi);
     return float3(sinPhi * cos(theta), sinPhi * sin(theta), cos(phi));
+}
+
+// Turns a color about the gray axis, which shifts its hue while keeping its brightness.
+float3 RotateHue(float3 Color, float Angle)
+{
+    const float3 Gray = float3(0.57735027, 0.57735027, 0.57735027);
+    const float  C    = cos(Angle);
+    return max(Color * C + cross(Gray, Color) * sin(Angle) + Gray * dot(Gray, Color) * (1.0 - C), 0.0);
 }
 
 // Direction within a cone around 'up' with the given half-angle (radians), the axis rings and disks face.
@@ -285,6 +570,56 @@ float3 CurlishNoise(float3 p, float time, float scale, float speed)
     return d * (1.0 / (2.0 * e));
 }
 
+// A random point on the emission mesh's finest LOD in its own space, or the origin when it is not resident.
+float3 SampleEmissionMesh(inout uint state)
+{
+    const uint Slot = SimParams().EventInfo.z;
+    if (Slot == 0u || Slot >= MeshletHeaders().Count)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    FMeshletHeader* Header = SpanAt(MeshletHeaders(), Slot);
+    const uint MeshletCount = Header.MeshletCount;
+    if (MeshletCount == 0u)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    // Coarser LODs overlap the finest one, so a draw from them would bias toward simplified surfaces.
+    FMeshlet M = Header.Meshlets[min((uint)(RandUnit(state) * (float)MeshletCount), MeshletCount - 1u)];
+    for (uint Retry = 0u; Retry < 4u && M.LODIndex != 0u; ++Retry)
+    {
+        M = Header.Meshlets[min((uint)(RandUnit(state) * (float)MeshletCount), MeshletCount - 1u)];
+    }
+
+    if (M.TriangleCount == 0u)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    const uint Triangle = min((uint)(RandUnit(state) * (float)M.TriangleCount), M.TriangleCount - 1u);
+    const uint3 Corners = unpack_u8u32(Header.Triangles[M.TriangleOffset + Triangle]).xyz;
+    if (any(Corners >= M.VertexCount))
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    // Folding the square keeps the barycentric sample uniform over the triangle.
+    float U = RandUnit(state);
+    float V = RandUnit(state);
+    if (U + V > 1.0)
+    {
+        U = 1.0 - U;
+        V = 1.0 - V;
+    }
+
+    const float3 A = LoadStaticPosition(Header, M, Corners.x);
+    const float3 B = LoadStaticPosition(Header, M, Corners.y);
+    const float3 C = LoadStaticPosition(Header, M, Corners.z);
+    return A + (B - A) * U + (C - A) * V;
+}
+
 float3 SampleEmitterShape(inout uint state, uint shape, float3 shapeSize, float coneAngle,
                           float3 forward, float3 right, float3 up)
 {
@@ -295,6 +630,11 @@ float3 SampleEmitterShape(inout uint state, uint shape, float3 shapeSize, float 
     else if (shape == EMITTER_SHAPE_SPHERE)
     {
         return RandInUnitSphere(state) * shapeSize.x;
+    }
+    else if (shape == EMITTER_SHAPE_MESH)
+    {
+        const float3 p = SampleEmissionMesh(state) * shapeSize.x;
+        return right * p.x + up * p.y + forward * p.z;
     }
     else if (shape == EMITTER_SHAPE_HEMISPHERE)
     {
