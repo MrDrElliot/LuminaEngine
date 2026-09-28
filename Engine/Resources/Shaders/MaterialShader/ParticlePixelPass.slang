@@ -38,7 +38,7 @@ float4 FragmentMain(FParticleMaterialVertexOutput Input) : SV_Target0
     RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
     $MATERIAL_INPUTS
 
-    float  Alpha = saturate(Material.Opacity);
+    float  Alpha = saturate(Material.Opacity) * ParticleSoftFade(Input.Position);
     float3 Color = Material.Emissive;
 
 #ifdef MASKED

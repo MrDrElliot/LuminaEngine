@@ -8,6 +8,15 @@ static const uint PARTICLE_FACING_CAMERA   = 0u;
 static const uint PARTICLE_FACING_WORLD_XZ = 1u;
 static const uint PARTICLE_FACING_VELOCITY = 2u;
 
+// Must match EParticleBlendMode in ParticleSystem.h.
+static const uint PARTICLE_BLEND_ALPHA          = 0u;
+static const uint PARTICLE_BLEND_ADDITIVE       = 1u;
+static const uint PARTICLE_BLEND_PREMULTIPLIED  = 2u;
+static const uint PARTICLE_BLEND_MULTIPLY       = 3u;
+
+// Must match PARTICLE_RENDER_FLAG_LIT in SceneRenderTypes.h.
+static const uint PARTICLE_RENDER_LIT = 1u << 8u;
+
 // Mirrors FParticlePushConstants in DefaultSceneRenderer.cpp; every particle pipeline pushes this block.
 struct FParticlePushConstants
 {
@@ -28,8 +37,28 @@ struct FParticlePushConstants
     uint   MaterialIndex;          // Materials() slot, read only by the Particle material domain
     uint   bSorted;                // 0 draws unsorted at full capacity, and SortedIndices is not read
     GPUSpan<uint> SortedIndices;   // live particles back-to-front
+    float  SoftFadeDistance;       // meters of depth fade against the scene; 0 disables it
+    uint   RenderFlags;            // EParticleBlendMode in the low byte, PARTICLE_RENDER_LIT above it
 };
 FParticlePushConstants* Pass() { return GetPassArgs<FParticlePushConstants>(); }
+
+uint ParticleBlendMode() { return Pass().RenderFlags & 0xFFu; }
+bool IsParticleLit()     { return (Pass().RenderFlags & PARTICLE_RENDER_LIT) != 0u; }
+
+// 1 in open air, falling to 0 where the sprite meets the opaque surface behind it.
+float ParticleSoftFade(float4 SvPosition)
+{
+    const float FadeDistance = Pass().SoftFadeDistance;
+    const uint  DepthIndex   = Scene().SceneDepthIndex;
+    if (FadeDistance <= 0.0 || DepthIndex == 0xFFFFFFFFu)
+    {
+        return 1.0;
+    }
+
+    const float2 UV       = SvPosition.xy / float2(GetScreenSize());
+    const float  SceneRaw = SampleTexture2DLevel(DepthIndex, SAMPLER_POINT_CLAMP, UV, 0.0).r;
+    return saturate((LinearizeSceneDepth(SceneRaw) - LinearizeSceneDepth(SvPosition.z)) / FadeDistance);
+}
 
 // FParticleCompiler resolves Slot, which is how this non-generated shader reads a layout it cannot know.
 float ReadParticleAttr(uint ParticleIndex, int Slot, float Fallback)

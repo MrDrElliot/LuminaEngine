@@ -9,6 +9,11 @@
 
 namespace Lumina
 {
+    static float ResolveLifetime(const CParticleSystem* ParticleSystem, float Lifetime)
+    {
+        return Lifetime < 0.0f ? ParticleSystem->GetOneShotLength() : Lifetime;
+    }
+
     ECS::FEntity CParticleSystemLibrary::SpawnParticleSystem(CWorld* World, CParticleSystem* ParticleSystem,
         const FTransform& SpawnTransform, float Lifetime)
     {
@@ -23,7 +28,7 @@ namespace Lumina
         Effect.bBurstOnSpawn = true;
         Effect.Activate(true);
 
-        World->SetEntityLifetime(Spawned, Lifetime);
+        World->SetEntityLifetime(Spawned, ResolveLifetime(ParticleSystem, Lifetime));
         return Spawned;
     }
 
@@ -53,7 +58,7 @@ namespace Lumina
             CSkeletalMeshLibrary::AttachEntityToSocket(World, Spawned, Parent, Socket);
         }
 
-        World->SetEntityLifetime(Spawned, Lifetime);
+        World->SetEntityLifetime(Spawned, ResolveLifetime(ParticleSystem, Lifetime));
         return Spawned;
     }
 }

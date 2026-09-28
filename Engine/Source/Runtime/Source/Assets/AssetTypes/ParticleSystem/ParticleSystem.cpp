@@ -158,6 +158,28 @@ namespace Lumina
         }
     }
 
+    float CParticleSystem::GetOneShotLength() const
+    {
+        float Length = 0.0f;
+        for (const TObjectPtr<CParticleEmitter>& Emitter : Emitters)
+        {
+            if (Emitter == nullptr || !Emitter->bEnabled)
+            {
+                continue;
+            }
+
+            const bool bStreamsForever = Emitter->bLooping || (Emitter->SpawnRate > 0.0f && Emitter->Duration <= 0.0f);
+            if (bStreamsForever)
+            {
+                return 0.0f;
+            }
+
+            Length = Math::Max(Length, Emitter->Duration + Emitter->LifetimeRange.y);
+        }
+
+        return Length;
+    }
+
     const FParticleParameter* CParticleSystem::FindUserParameter(const FName& InName) const
     {
         if (InName.IsNone())
@@ -325,6 +347,8 @@ namespace Lumina
         R.SubUVColumns            = Math::Max(Emitter.SubUVColumns, 1);
         R.SubUVRows               = Math::Max(Emitter.SubUVRows, 1);
         R.bWriteDepth             = ResolveBoundBool (Asset, Component, "bWriteDepth",            Emitter.bWriteDepth);
+        R.SoftFadeDistance        = Emitter.SoftFadeDistance;
+        R.bLit                    = Emitter.bLit;
 
         return R;
     }

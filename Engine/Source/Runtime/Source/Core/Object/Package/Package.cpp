@@ -5,6 +5,7 @@
 #include <utility>
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/ObjectHash.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/ObjectReferenceReplacer.h"
 #include "Core/Profiler/Profile.h"
@@ -1849,6 +1850,13 @@ namespace Lumina
 
     CObject* CPackage::LoadObjectByName(const FName& Name)
     {
+        // An object created since the last save has no export yet, and a loaded one needs no second read.
+        CObjectBase* Live = FObjectHashTables::Get().FindObject(Name, this);
+        if (Live != nullptr && !Live->HasAnyFlag(OF_NeedsLoad))
+        {
+            return static_cast<CObject*>(Live);
+        }
+
         for (size_t i = 0; i < ExportTable.size(); ++i)
         {
             FObjectExport& Export = ExportTable[i];

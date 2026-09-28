@@ -1,10 +1,13 @@
-#include "Includes/SceneGlobals.slang"
+#include "Includes/ParticleSpriteCommon.slang"
 
 struct PSInput
 {
     float4                  Color        : PARTICLE_COLOR;
     float2                  UV           : TEXCOORD0;
     nointerpolation uint    TextureIndex : TEXTURE_INDEX;
+    float3                  Normal       : PARTICLE_NORMAL;
+    float3                  Ambient      : PARTICLE_AMBIENT;
+    float3                  SunLight     : PARTICLE_SUN;
     float4                  Position     : SV_Position;
 };
 
@@ -37,6 +40,24 @@ PSOutput PixelMain(PSInput In)
     }
 
     float4 outColor = texel * In.Color;
+
+    if (IsParticleLit())
+    {
+        // Half-Lambert wraps light around the puff, which reads as scattering through smoke rather than a hard terminator.
+        const float Wrap = saturate(dot(normalize(In.Normal), GetSunDirection()) * 0.5 + 0.5);
+        outColor.rgb *= In.Ambient + In.SunLight * (Wrap * INV_PI);
+    }
+
+    const float Fade = ParticleSoftFade(In.Position);
+    outColor.a *= Fade;
+    if (ParticleBlendMode() == PARTICLE_BLEND_PREMULTIPLIED)
+    {
+        outColor.rgb *= Fade;
+    }
+    else if (ParticleBlendMode() == PARTICLE_BLEND_MULTIPLY)
+    {
+        outColor.rgb = lerp(float3(1.0, 1.0, 1.0), outColor.rgb, Fade);
+    }
 
     if (outColor.a <= 0.001)
     {

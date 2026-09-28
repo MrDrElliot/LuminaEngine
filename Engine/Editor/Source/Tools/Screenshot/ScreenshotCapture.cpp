@@ -298,7 +298,8 @@ namespace Lumina::Screenshot
                     break;
                 }
             }
-            else if (Ctx->Type == EWorldType::Editor && Fallback == nullptr)
+            // A hidden tab's world has its renderer reclaimed, so the one still rendering is the one on screen.
+            else if (Ctx->Type == EWorldType::Editor && Fallback == nullptr && Ctx->World->GetRenderer() != nullptr)
             {
                 Fallback = Ctx.get();
             }

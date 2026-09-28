@@ -18,7 +18,7 @@ namespace Lumina
         Compiler.EmitSpawn("float3 " + Off + " = SampleEmitterShape(Seed, " + ShapeId(Shape) + ", "
             + Compiler.Param("ShapeSize", ShapeSize) + ", radians(" + Compiler.Param("ConeAngle", ConeAngle) + "), "
             + "SimParams().EmitterForward.xyz, SimParams().EmitterRight.xyz, SimParams().EmitterUp.xyz);");
-        Compiler.EmitSpawn("P.Position = SimParams().EmitterPosition.xyz + " + Off + ";");
+        Compiler.EmitSpawn("P.Position = SimParams().EmitterPosition.xyz + " + Off + " * EmitterScale();");
     }
 
     void CParticleModule_InitialVelocity::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
@@ -29,7 +29,7 @@ namespace Lumina
         {
             const FString R = LocalVar(ModuleIndex, "r");
             Compiler.EmitSpawn("float3 " + R + " = float3(RandUnit(Seed), RandUnit(Seed), RandUnit(Seed));");
-            Compiler.EmitSpawn("P.Velocity = lerp(" + Compiler.Param("VelocityMin", VelocityMin) + ", " + Compiler.Param("VelocityMax", VelocityMax) + ", " + R + ");");
+            Compiler.EmitSpawn("P.Velocity = EmitterToWorld(lerp(" + Compiler.Param("VelocityMin", VelocityMin) + ", " + Compiler.Param("VelocityMax", VelocityMax) + ", " + R + ")) * EmitterScale();");
             break;
         }
         case EParticleInitVelocityMode::Radial:
@@ -41,7 +41,7 @@ namespace Lumina
             Compiler.EmitSpawn("float " + L + " = length(" + D + ");");
             Compiler.EmitSpawn(D + " = (" + L + " > 1e-5) ? (" + D + " / " + L + ") : RandOnUnitSphere(Seed);");
             Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("SpeedRange", SpeedRange) + ";");
-            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + S + ".x, " + S + ".y, RandUnit(Seed));");
+            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + S + ".x, " + S + ".y, RandUnit(Seed)) * EmitterScale();");
             break;
         }
         case EParticleInitVelocityMode::Cone:
@@ -51,7 +51,7 @@ namespace Lumina
             Compiler.EmitSpawn("float3 " + D + " = RandDirectionInCone(Seed, SimParams().EmitterForward.xyz, "
                 + "SimParams().EmitterRight.xyz, SimParams().EmitterUp.xyz, radians(" + Compiler.Param("ConeAngle", ConeAngle) + "));");
             Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("SpeedRange", SpeedRange) + ";");
-            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + S + ".x, " + S + ".y, RandUnit(Seed));");
+            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + S + ".x, " + S + ".y, RandUnit(Seed)) * EmitterScale();");
             break;
         }
         }
@@ -67,7 +67,7 @@ namespace Lumina
         // A range is ONE bindable input, so it registers as a single float2 slot rather than two scalars.
         const FString S = LocalVar(ModuleIndex, "size");
         Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("SizeRange", SizeRange) + ";");
-        Compiler.EmitSpawn("P.Size = lerp(" + S + ".x, " + S + ".y, RandUnit(Seed));");
+        Compiler.EmitSpawn("P.Size = lerp(" + S + ".x, " + S + ".y, RandUnit(Seed)) * EmitterScale();");
     }
 
     void CParticleModule_Lifetime::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
@@ -91,7 +91,7 @@ namespace Lumina
 
     void CParticleModule_GravityForce::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        Compiler.EmitUpdate("P.Velocity += " + Compiler.Param("Gravity", Gravity) + " * DeltaTime;");
+        Compiler.EmitUpdate("P.Velocity += " + Compiler.Param("Gravity", Gravity) + " * EmitterScale() * DeltaTime;");
     }
 
     void CParticleModule_NonUniformSize::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
@@ -129,8 +129,15 @@ namespace Lumina
     void CParticleModule_CurlNoiseForce::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
         const FString N = LocalVar(ModuleIndex, "turb");
-        Compiler.EmitUpdate("float3 " + N + " = CurlishNoise(P.Position, TotalTime, " + Compiler.Param("NoiseScale", Scale) + ", " + Compiler.Param("NoiseSpeed", Speed) + ");");
-        Compiler.EmitUpdate("P.Velocity += " + N + " * " + Compiler.Param("NoiseStrength", Strength) + " * DeltaTime;");
+        Compiler.EmitUpdate("float3 " + N + " = CurlishNoise(P.Position, TotalTime, " + Compiler.Param("NoiseScale", Scale) + " / EmitterScale(), " + Compiler.Param("NoiseSpeed", Speed) + ");");
+        Compiler.EmitUpdate("P.Velocity += " + N + " * " + Compiler.Param("NoiseStrength", Strength) + " * EmitterScale() * DeltaTime;");
+    }
+
+    void CParticleModule_SceneCollision::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
+    {
+        const FString Hit = "CollideWithSceneDepth(P.Position, P.Velocity, DeltaTime, " + Compiler.Param("Restitution", Restitution)
+            + ", " + Compiler.Param("Friction", Friction) + ", " + Compiler.Param("Thickness", Thickness) + ")";
+        Compiler.EmitUpdate(bKillOnHit ? "if (" + Hit + ") { P.Age = P.Lifetime; }" : Hit + ";");
     }
 
     // Seeded so a freshly added module reproduces the old default instead of an empty white ramp.
@@ -142,7 +149,23 @@ namespace Lumina
 
     void CParticleModule_ColorOverLife::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        Compiler.EmitUpdate("P.Color = SampleGradientLUT(" + Compiler.ParamGradient("Gradient", Gradient) + ", LifeRatio);");
+        const FString Ramp = "SampleGradientLUT(" + Compiler.ParamGradient("Gradient", Gradient) + ", LifeRatio)";
+        if (!bScaleSpawnColor)
+        {
+            Compiler.EmitUpdate("P.Color = " + Ramp + ";");
+            return;
+        }
+
+        // Update modules generate after the whole Spawn stack, so this captures the color it settled on.
+        const FString R = Compiler.Attribute("SpawnColorR", "1.0");
+        const FString G = Compiler.Attribute("SpawnColorG", "1.0");
+        const FString B = Compiler.Attribute("SpawnColorB", "1.0");
+        const FString A = Compiler.Attribute("SpawnColorA", "1.0");
+        Compiler.EmitSpawn(R + " = P.Color.r;");
+        Compiler.EmitSpawn(G + " = P.Color.g;");
+        Compiler.EmitSpawn(B + " = P.Color.b;");
+        Compiler.EmitSpawn(A + " = P.Color.a;");
+        Compiler.EmitUpdate("P.Color = " + Ramp + " * float4(" + R + ", " + G + ", " + B + ", " + A + ");");
     }
 
     CParticleModule_SizeOverLife::CParticleModule_SizeOverLife()
@@ -154,8 +177,10 @@ namespace Lumina
 
     void CParticleModule_SizeOverLife::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        // Scales rather than replaces, since the Spawn stack owns the base size and this owns the shape.
-        Compiler.EmitUpdate("P.Size *= SampleCurveLUT(" + Compiler.ParamCurve("Curve", Curve) + ", LifeRatio);");
+        // Update modules generate after the whole Spawn stack, so this captures the size it settled on.
+        const FString BaseSize = Compiler.Attribute("BaseSize", "0.1");
+        Compiler.EmitSpawn(BaseSize + " = P.Size;");
+        Compiler.EmitUpdate("P.Size = " + BaseSize + " * SampleCurveLUT(" + Compiler.ParamCurve("Curve", Curve) + ", LifeRatio);");
     }
 
     void CParticleModule_Trail::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)

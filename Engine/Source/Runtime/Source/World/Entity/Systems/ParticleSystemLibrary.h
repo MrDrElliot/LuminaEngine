@@ -20,7 +20,7 @@ namespace Lumina
 
     public:
 
-        /** Bursts at SpawnTransform and despawns after Lifetime seconds, where zero leaves it to the caller. */
+        // Bursts at SpawnTransform and despawns after Lifetime seconds, where zero leaves it to the caller and negative means the one-shot length.
         FUNCTION()
         static ECS::FEntity SpawnParticleSystem(CWorld* World, CParticleSystem* ParticleSystem,
             const FTransform& SpawnTransform, float Lifetime);

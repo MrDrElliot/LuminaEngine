@@ -34,53 +34,88 @@ public static partial class Game
     [ThreadStatic] private static Entity ActiveEntity;
     [ThreadStatic] private static bool ActiveHasEntity;
     [ThreadStatic] private static EntityScript? ActiveScriptField;
+    [ThreadStatic] private static object? EventTarget;
+    [ThreadStatic] private static Lumina.CWorld? EventWorldCache;
 
     /// <summary>The world the current callback runs in. Throws if accessed outside a gameplay callback.</summary>
-    public static Lumina.CWorld World => ActiveWorld ?? throw new InvalidOperationException(
+    public static Lumina.CWorld World => ActiveWorld ?? EventWorld() ?? throw new InvalidOperationException(
         "No active world: Game.World / Time / Sound / Trace / Gizmo are only valid inside a script or system callback.");
 
     /// <summary>True while a gameplay callback is running (so <see cref="World"/> is available).</summary>
-    public static bool InWorld => ActiveWorld != null;
+    public static bool InWorld => ActiveWorld != null || EventWorld() != null;
 
     // The entity whose script callback is running (Entity.Null in a system tick). Used by Trace.IgnoreSelf.
-    internal static Entity CurrentEntity => ActiveHasEntity ? ActiveEntity : Entity.Null;
+    internal static Entity CurrentEntity => ActiveHasEntity ? ActiveEntity : (EventTarget as EntityScript)?.Entity ?? Entity.Null;
 
     // The script whose callback is currently running, or null.
-    internal static EntityScript? ActiveScript => ActiveScriptField;
+    internal static EntityScript? ActiveScript => ActiveScriptField ?? EventTarget as EntityScript;
+
+    // Resolved on first use, so an event that never touches the ambient world costs no native call.
+    private static Lumina.CWorld? EventWorld()
+    {
+        return EventWorldCache ??= EventTarget switch
+        {
+            EntityScript Script => Script.World,
+            WorldSubsystem Subsystem => Subsystem.World,
+            _ => null,
+        };
+    }
+
+    // Generated [ScriptEvent] thunks wrap every native-to-managed event call in this, so lifecycle callbacks see their world.
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public static Scope EnterScriptEvent(object Target)
+    {
+        Scope Prior = Capture();
+        ActiveWorld = null;
+        ActiveHasEntity = false;
+        ActiveScriptField = null;
+        EventTarget = Target;
+        EventWorldCache = null;
+        return Prior;
+    }
 
     internal static Scope Push(Lumina.CWorld World, Entity Entity)
     {
-        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField);
+        Scope Prior = Capture();
         ActiveWorld = World;
         ActiveEntity = Entity;
         ActiveHasEntity = true;
         ActiveScriptField = null;
+        EventTarget = null;
         return Prior;
     }
 
     internal static Scope Push(Lumina.CWorld World, Entity Entity, EntityScript Script)
     {
-        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField);
+        Scope Prior = Capture();
         ActiveWorld = World;
         ActiveEntity = Entity;
         ActiveHasEntity = true;
         ActiveScriptField = Script;
+        EventTarget = null;
         return Prior;
     }
 
-    internal readonly struct Scope : IDisposable
+    private static Scope Capture() => new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField, EventTarget, EventWorldCache);
+
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public readonly struct Scope : IDisposable
     {
         private readonly Lumina.CWorld? World;
         private readonly Entity Entity;
         private readonly bool HasEntity;
         private readonly EntityScript? Script;
+        private readonly object? Target;
+        private readonly Lumina.CWorld? TargetWorld;
 
-        internal Scope(Lumina.CWorld? World, Entity Entity, bool HasEntity, EntityScript? Script)
+        internal Scope(Lumina.CWorld? World, Entity Entity, bool HasEntity, EntityScript? Script, object? Target, Lumina.CWorld? TargetWorld)
         {
             this.World = World;
             this.Entity = Entity;
             this.HasEntity = HasEntity;
             this.Script = Script;
+            this.Target = Target;
+            this.TargetWorld = TargetWorld;
         }
 
         public void Dispose()
@@ -89,6 +124,8 @@ public static partial class Game
             ActiveEntity = Entity;
             ActiveHasEntity = HasEntity;
             ActiveScriptField = Script;
+            EventTarget = Target;
+            EventWorldCache = TargetWorld;
         }
     }
 }

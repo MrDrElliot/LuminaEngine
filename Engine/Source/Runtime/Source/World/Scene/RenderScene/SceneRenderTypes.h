@@ -1127,6 +1127,9 @@ namespace Lumina
     static constexpr uint32 PARTICLE_SIM_FLAG_LOOP          = 1u << 0;
     static constexpr uint32 PARTICLE_SIM_FLAG_BURST_PENDING = 1u << 1;
 
+    // Above the EParticleBlendMode byte of the sprite pass RenderFlags, must match ParticleSpriteCommon.slang.
+    static constexpr uint32 PARTICLE_RENDER_FLAG_LIT = 1u << 8;
+
     // 288 byte layout, must match FParticleSimParams in ParticleSimulate.slang / ParticleSimulateTemplate.slang.
     struct alignas(16) FParticleSimParamsGPU
     {
@@ -1147,7 +1150,7 @@ namespace Lumina
         FVector4  RotationRange;       // xy=rot(min,max); zw=rotSpeed(min,max)
         FVector4  NoiseStrength;       // xyz=strength; w=scale
         FVector4  NoiseParams;         // x=speed
-        FVector4  Timing;              // x=DeltaTime, y=TotalTime, z=SystemAge
+        FVector4  Timing;              // x=DeltaTime, y=TotalTime, z=SystemAge, w=EmitterScale
     };
     static_assert(sizeof(FParticleSimParamsGPU) == 288, "FParticleSimParamsGPU layout must match shader");
 

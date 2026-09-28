@@ -13,6 +13,7 @@
 #include "MCPDataTableTools.h"
 #include "MCPEditorSessionTools.h"
 #include "MCPMaterialTools.h"
+#include "MCPParticleTools.h"
 #include "MCPPrefabTools.h"
 #include "MCPSceneTools.h"
 
@@ -104,6 +105,7 @@ namespace Lumina::MCP
         RegisterAssetTools(GOwner);
         RegisterAssetObjectTools(GOwner);
         RegisterMaterialTools(GOwner);
+        RegisterParticleTools(GOwner);
         RegisterAnimGraphTools(GOwner);
         RegisterDataTableTools(GOwner);
         RegisterPrefabTools(GOwner);

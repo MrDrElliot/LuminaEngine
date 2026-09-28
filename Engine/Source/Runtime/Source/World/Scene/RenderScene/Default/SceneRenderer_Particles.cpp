@@ -197,6 +197,7 @@ namespace Lumina
             const FVector3 EmitterRight   = Math::Normalize(FVector3(WorldMat[0]));
             const FVector3 EmitterUp      = Math::Normalize(FVector3(WorldMat[1]));
             const FVector3 EmitterForward = Math::Normalize(FVector3(WorldMat[2]));
+            const float EmitterScale = Math::Max((Math::Length(FVector3(WorldMat[0])) + Math::Length(FVector3(WorldMat[1])) + Math::Length(FVector3(WorldMat[2]))) / 3.0f, 1e-4f);
             
             FVector3 EmitterVelocity(0.0f);
             if (State.bHasPrevPosition && DeltaTime > 0.0f)
@@ -238,7 +239,7 @@ namespace Lumina
             SimParams.RotationRange     = FVector4(Resolved.RotationRange.x, Resolved.RotationRange.y, Resolved.RotationSpeedRange.x, Resolved.RotationSpeedRange.y);
             SimParams.NoiseStrength     = FVector4(Resolved.NoiseStrength, Resolved.NoiseScale);
             SimParams.NoiseParams       = FVector4(Resolved.NoiseSpeed, InheritFactor, 0.0f, 0.0f);
-            SimParams.Timing            = FVector4(ScaledDelta, State.TotalTime, State.SystemAge, 0.0f);
+            SimParams.Timing            = FVector4(ScaledDelta, State.TotalTime, State.SystemAge, EmitterScale);
 
             static const FShaderH DefaultSimShader = FShaderLibrary::Get("ParticleSimulate.slang");
             FShaderH ComputeShader = Item.bUsesCustomShader ? Item.CustomComputeShader : DefaultSimShader;
@@ -457,7 +458,8 @@ namespace Lumina
         RHI::FRenderPassDesc Pass;
         Pass.ColorAttachments         = TSpan<const RHI::FRenderAttachment>(&Color, 1);
         Pass.DepthAttachment.Texture  = Depth.Texture;
-        Pass.DepthAttachment.LoadOp   = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
+        const bool bClearsDepth = DrawCommands.empty();
+        Pass.DepthAttachment.LoadOp   = bClearsDepth ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
         Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
         Pass.DepthAttachment.Color[0] = 0.0f;
         Pass.RenderArea               = HDR.GetExtent();
@@ -485,8 +487,10 @@ namespace Lumina
             uint32   MaterialIndex;      // Materials() slot; read only by the Particle material stages
             uint32   bSorted;            // 0 draws unsorted at full capacity, and SortedIndices is not read
             RHI::TGPUSpan<uint32> SortedIndices;
+            float    SoftFadeDistance;   // 0 whenever this pass writes the depth the fade samples
+            uint32   RenderFlags;        // EParticleBlendMode in the low byte, PARTICLE_RENDER_FLAG_LIT above it
         };
-        static_assert(sizeof(FParticlePushConstants) == 120, "FParticlePushConstants must match the slang pass block.");
+        static_assert(sizeof(FParticlePushConstants) == 128, "FParticlePushConstants must match the slang pass block.");
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
@@ -548,6 +552,8 @@ namespace Lumina
             PC.MaterialIndex      = bMaterial ? (uint32)Item.MaterialIndex : 0u;
             PC.bSorted            = bSorted ? 1u : 0u;
             PC.SortedIndices      = { State.SortIndexBuffer };
+            PC.SoftFadeDistance   = (bWriteDepth || bClearsDepth) ? 0.0f : Resolved.SoftFadeDistance;
+            PC.RenderFlags        = (uint32)Resolved.BlendMode | (Resolved.bLit ? PARTICLE_RENDER_FLAG_LIT : 0u);
 
             if (bSorted)
             {

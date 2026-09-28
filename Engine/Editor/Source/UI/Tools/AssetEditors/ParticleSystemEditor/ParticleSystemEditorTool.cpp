@@ -7,6 +7,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Reflection/PropertyChangedEvent.h"
 #include "Particles/ParticleEmitterStack.h"
+#include "Particles/ParticleOps.h"
 #include "Particles/ParticleStockModules.h"
 #include "UI/Tools/NodeGraph/Particle/ParticleCompiler.h"
 #include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
@@ -34,6 +35,9 @@ namespace Lumina
         , DirectionalLightEntity()
     {
     }
+
+    // Idle time between a one-shot's last particle dying and the looped preview firing it again.
+    static constexpr float PreviewReplayPause = 0.6f;
 
     void FParticleSystemEditorTool::SetupWorldForTool()
     {
@@ -110,6 +114,17 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
+        PreviewAge += (float)UpdateContext.GetDeltaTime();
+        if (bLoopPreview)
+        {
+            const CParticleSystem* PS = Cast<CParticleSystem>(Asset.Get());
+            const float OneShotLength = PS != nullptr ? PS->GetOneShotLength() : 0.0f;
+            if (OneShotLength > 0.0f && PreviewAge >= OneShotLength + PreviewReplayPause)
+            {
+                ReplayPreview();
+            }
+        }
+
         // Re-applied every frame, since idle reclaim can rebuild the render scene and its settings.
         if (World.IsValid() && World->GetRenderer() != nullptr)
         {
@@ -137,27 +152,7 @@ namespace Lumina
 
         for (int32 i = 0; i < (int32)PS->Emitters.size(); ++i)
         {
-            CParticleEmitter* Emitter = PS->Emitters[i].Get();
-            if (Emitter == nullptr)
-            {
-                EmitterStacks.push_back(nullptr);
-                continue;
-            }
-
-            // Persisted on the emitter, so reordering or renaming never re-points a stack.
-            if (Emitter->AuthoringStackName.empty())
-            {
-                Emitter->AuthoringStackName = FString("ParticleStack_") + Format("{}", i).c_str();
-            }
-
-            CParticleEmitterStack* Stack = Cast<CParticleEmitterStack>(
-                Asset->GetPackage()->LoadObjectByName(Emitter->AuthoringStackName));
-            if (Stack == nullptr)
-            {
-                Stack = NewObject<CParticleEmitterStack>(Asset->GetPackage(), Emitter->AuthoringStackName);
-                Stack->EnsureDefaultStack();
-            }
-            EmitterStacks.push_back(Stack);
+            EmitterStacks.push_back(ParticleOps::FindOrCreateStack(PS, i));
         }
 
         if (SelectedEmitter >= (int32)EmitterStacks.size())
@@ -168,33 +163,7 @@ namespace Lumina
 
     void FParticleSystemEditorTool::RefreshModulePalette()
     {
-        ModulePalette.clear();
-
-        CClass* BaseClass = CParticleModule::StaticClass();
-
-        // Reflection is the registry, so a plugin or game module lands in the palette once it loads.
-        GObjectArray.ForEachObject([&](CObjectBase* Object, int32)
-        {
-            if (Object == nullptr || !Object->IsA<CClass>())
-            {
-                return;
-            }
-
-            CClass* Class = static_cast<CClass*>(Object);
-            if (Class == BaseClass || !Class->IsChildOf(BaseClass))
-            {
-                return;
-            }
-
-            // The CDO carries every label and is the only way to ask whether the class wants listing.
-            CParticleModule* CDO = Class->GetDefaultObject<CParticleModule>();
-            if (CDO == nullptr || !CDO->IsPaletteVisible())
-            {
-                return;
-            }
-
-            ModulePalette.push_back(Class);
-        });
+        ModulePalette = ParticleOps::GetModuleTypes();
     }
 
     CParticleEmitterStack* FParticleSystemEditorTool::GetStackFor(int32 EmitterIndex) const
@@ -231,6 +200,26 @@ namespace Lumina
         if (ImGui::MenuItem(LE_ICON_RECEIPT_TEXT" Compile"))
         {
             Compile();
+        }
+
+        if (ImGui::MenuItem(LE_ICON_REPLAY" Replay"))
+        {
+            ReplayPreview();
+        }
+
+        ImGui::MenuItem(LE_ICON_REPEAT" Loop Preview", nullptr, &bLoopPreview);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Re-fire a one-shot system once its particles have expired. Streaming emitters are left alone.");
+        }
+    }
+
+    void FParticleSystemEditorTool::ReplayPreview()
+    {
+        PreviewAge = 0.0f;
+        if (World.IsValid() && World->IsValidEntity(ParticleEntity))
+        {
+            World->GetComponent<SParticleSystemComponent>(ParticleEntity).Activate(true);
         }
     }
 
@@ -648,112 +637,38 @@ namespace Lumina
     bool FParticleSystemEditorTool::CompileEmitter(int32 EmitterIndex)
     {
         CParticleSystem* PS = Cast<CParticleSystem>(Asset.Get());
-        CParticleEmitterStack* Stack = GetStackFor(EmitterIndex);
-        if (PS == nullptr || Stack == nullptr || EmitterIndex >= (int32)PS->Emitters.size())
+        if (PS == nullptr || EmitterIndex < 0 || EmitterIndex >= (int32)PS->Emitters.size() || PS->Emitters[EmitterIndex] == nullptr)
         {
             return false;
         }
 
-        CParticleEmitter* Emitter = PS->Emitters[EmitterIndex].Get();
-        if (Emitter == nullptr)
+        const FString Prefix = PS->Emitters[EmitterIndex]->EmitterName + ": ";
+
+        FParticleEmitterCompileOutput Output;
+        ParticleOps::CompileEmitter(PS, EmitterIndex, Output);
+
+        for (const FString& Error : Output.Errors)
         {
-            return false;
+            CompilationResult.CompilationLog += Prefix + "ERROR - " + Error + "\n";
         }
 
-        const FString Prefix = Emitter->EmitterName + ": ";
-
-        FParticleCompiler Compiler;
-        Stack->CompileStacks(Compiler);
-
-        if (Compiler.HasErrors())
+        for (const FString& Note : Output.Notes)
         {
-            for (const EdNodeGraph::FError& Error : Compiler.GetErrors())
-            {
-                CompilationResult.CompilationLog += Prefix + "ERROR - [" + Error.Name + "]: " + Error.Description + "\n";
-            }
-            CompilationResult.bIsError = true;
-            return false;
+            CompilationResult.CompilationLog += Prefix + Note + "\n";
         }
 
-        const FString Source = Compiler.BuildShader();
-        if (Source.empty())
-        {
-            CompilationResult.CompilationLog += Prefix + "Failed to build shader source.\n";
-            CompilationResult.bIsError = true;
-            return false;
-        }
-
-        IShaderCompiler* ShaderCompiler = GShaderCompiler;
-        ShaderCompiler->CompilerShaderRaw(Source, {}, [Emitter](const FShaderHeader& Header) mutable
-        {
-            Emitter->ComputeShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-        });
-        ShaderCompiler->Flush();
-
-        // RefreshModuleParams checks against this before doing a value-only update.
-        Emitter->ModuleParamValues   = Compiler.GetParamValues();
-        Emitter->ParamBindings       = Compiler.GetParamBindings();
-        Emitter->CompiledCodeHash    = Compiler.GetGeneratedCodeHash();
-        // Structural, so it only moves with a rebuild, which is when the renderer resizes its buffer.
-        Emitter->AttributeFloatCount = Compiler.GetAttributeFloatCount();
-
-        // The shared vertex shader cannot know the generated layout, so it receives these as uniforms.
-        Emitter->RenderAttributeSlots.resize((size_t)ParticleRenderAttribute::Count);
-        for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
-        {
-            Emitter->RenderAttributeSlots[A] = Compiler.FindAttributeSlot(ParticleRenderAttribute::Names[A]);
-        }
-
-        // Nothing on screen says whether the trail wiring resolved, so the log has to say it.
-        if (Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosX] >= 0)
-        {
-            CompilationResult.CompilationLog += Prefix + "Trail active - previous position in attribute slots "
-                + Format("{}", Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosX]).c_str()
-                + "/" + Format("{}", Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosY]).c_str()
-                + "/" + Format("{}", Emitter->RenderAttributeSlots[ParticleRenderAttribute::PrevPosZ]).c_str()
-                + " of " + Format("{}", Emitter->AttributeFloatCount).c_str() + " floats per particle.\n";
-        }
-
-        // Route the renderer to the generated module-stack shader.
-        Emitter->ShaderMode = EParticleShaderMode::Custom;
-        Emitter->PostLoad();
-        return true;
+        CompilationResult.bIsError |= !Output.bSucceeded;
+        return Output.bSucceeded;
     }
 
     bool FParticleSystemEditorTool::RefreshModuleParams()
     {
         CParticleSystem* PS = Cast<CParticleSystem>(Asset.Get());
-        CParticleEmitterStack* Stack = GetStackFor(SelectedEmitter);
-        if (PS == nullptr || Stack == nullptr || SelectedEmitter >= (int32)PS->Emitters.size())
+        if (!ParticleOps::RefreshModuleParams(PS, SelectedEmitter))
         {
             return false;
         }
 
-        // The other emitters' slot values did not change, so re-running their stacks is pure work.
-        CParticleEmitter* Emitter = PS->Emitters[SelectedEmitter].Get();
-        if (Emitter == nullptr || Emitter->ComputeShaderBinaries.empty())
-        {
-            return false;
-        }
-
-        // The emitted HLSL is discarded, so there is no pipeline swap and no preview restart.
-        FParticleCompiler Compiler;
-        Stack->CompileStacks(Compiler);
-
-        if (Compiler.HasErrors())
-        {
-            return false;
-        }
-
-        // Layout drift means the running shader indexes slots this value set no longer describes.
-        if (Compiler.GetGeneratedCodeHash() != Emitter->CompiledCodeHash)
-        {
-            return false;
-        }
-
-        // Binding an input leaves the code identical, so this is the ONLY path that ever writes them.
-        Emitter->ModuleParamValues = Compiler.GetParamValues();
-        Emitter->ParamBindings     = Compiler.GetParamBindings();
         PS->GetPackage()->MarkDirty();
         return true;
     }
