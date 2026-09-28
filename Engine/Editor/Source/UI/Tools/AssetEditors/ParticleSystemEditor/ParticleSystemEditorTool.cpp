@@ -36,6 +36,9 @@ namespace Lumina
     {
     }
 
+    // Idle time between a one-shot's last particle dying and the looped preview firing it again.
+    static constexpr float PreviewReplayPause = 0.6f;
+
     void FParticleSystemEditorTool::SetupWorldForTool()
     {
         FAssetEditorTool::SetupWorldForTool();
@@ -110,6 +113,17 @@ namespace Lumina
     void FParticleSystemEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::Update(UpdateContext);
+
+        PreviewAge += (float)UpdateContext.GetDeltaTime();
+        if (bLoopPreview)
+        {
+            const CParticleSystem* PS = Cast<CParticleSystem>(Asset.Get());
+            const float OneShotLength = PS != nullptr ? PS->GetOneShotLength() : 0.0f;
+            if (OneShotLength > 0.0f && PreviewAge >= OneShotLength + PreviewReplayPause)
+            {
+                ReplayPreview();
+            }
+        }
 
         // Re-applied every frame, since idle reclaim can rebuild the render scene and its settings.
         if (World.IsValid() && World->GetRenderer() != nullptr)
@@ -186,6 +200,26 @@ namespace Lumina
         if (ImGui::MenuItem(LE_ICON_RECEIPT_TEXT" Compile"))
         {
             Compile();
+        }
+
+        if (ImGui::MenuItem(LE_ICON_REPLAY" Replay"))
+        {
+            ReplayPreview();
+        }
+
+        ImGui::MenuItem(LE_ICON_REPEAT" Loop Preview", nullptr, &bLoopPreview);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Re-fire a one-shot system once its particles have expired. Streaming emitters are left alone.");
+        }
+    }
+
+    void FParticleSystemEditorTool::ReplayPreview()
+    {
+        PreviewAge = 0.0f;
+        if (World.IsValid() && World->IsValidEntity(ParticleEntity))
+        {
+            World->GetComponent<SParticleSystemComponent>(ParticleEntity).Activate(true);
         }
     }
 

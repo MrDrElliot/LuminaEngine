@@ -81,6 +81,9 @@ namespace Lumina
          *  appended the reason to CompilationResult. */
         bool CompileEmitter(int32 EmitterIndex);
 
+        // Clears the preview's live particles and fires every burst again.
+        void ReplayPreview();
+
     private:
 
         ECS::FEntity            ParticleEntity;
@@ -101,6 +104,10 @@ namespace Lumina
         // FShaderEntry the dispatch binds, which restarts that emitter's particles -- recompiling all of
         // them would make editing one column visibly reset every other column.
         int32                   DirtyEmitter = INDEX_NONE;
+
+        // A one-shot burst plays once and then shows nothing, so the preview re-fires it when this is on.
+        bool                    bLoopPreview = true;
+        float                   PreviewAge = 0.0f;
 
         // Emitter the delete button asked to remove; applied after the column loop. Removing mid-loop
         // would shift every later column's index out from under the emitter it is drawing.
