@@ -105,6 +105,8 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         FRecursiveScopeLock Lock(Mutex);
 
+        bool bUploaded = false;
+
         // So the atlas texture id is a new-heap resource id the ImGui shaders sample directly.
         for (ImTextureData* Tex : ImGui::GetPlatformIO().Textures)
         {
@@ -127,7 +129,7 @@ namespace Lumina
                 if (Tex->GetPixels() != nullptr)
                 {
                     const uint64 Bytes = (uint64)Tex->Width * (uint64)Tex->Height * 4;
-                    RHI::Textures::Upload(It->second, 0, Tex->GetPixels(), Bytes, (uint32)Tex->Width);
+                    bUploaded |= RHI::Textures::Upload(It->second, 0, Tex->GetPixels(), Bytes, (uint32)Tex->Width);
                 }
 
                 Tex->SetStatus(ImTextureStatus_OK);
@@ -143,6 +145,12 @@ namespace Lumina
                 Tex->SetTexID(ImTextureID_Invalid);
                 Tex->SetStatus(ImTextureStatus_Destroyed);
             }
+        }
+
+        // This frame's upload flush already ran, and the atlas is sampled before the next one.
+        if (bUploaded)
+        {
+            RHI::FlushUploads();
         }
     }
 

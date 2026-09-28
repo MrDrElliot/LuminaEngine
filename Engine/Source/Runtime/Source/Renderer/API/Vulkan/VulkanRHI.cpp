@@ -619,6 +619,7 @@ namespace Lumina::RHI
         bool                            bSwapchainMaintenance1 = false;
         // The CPU can write straight into an optimally-tiled image, with no staging buffer and no copy pass.
         bool                            bHostImageCopy = false;
+        bool                            bHostQueryReset = false;
 #if USING(WITH_EDITOR)
         bool                            bPipelineStats = false;
         // Capture the driver's internal representations too, which costs pipeline creation time.
@@ -1173,8 +1174,10 @@ namespace Lumina::RHI
             }
 
             // Core since Vulkan 1.3, and callers only offer devices that already reported 1.4.
+            VkPhysicalDeviceSubgroupProperties SubgroupOps
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES };
             VkPhysicalDeviceSubgroupSizeControlProperties SubgroupProps
-                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES };
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES, .pNext = &SubgroupOps };
             VkPhysicalDeviceMeshShaderPropertiesEXT MeshProps
                 { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT, .pNext = &SubgroupProps };
             VkPhysicalDeviceProperties2 MeshPropQuery
@@ -1203,6 +1206,14 @@ namespace Lumina::RHI
                         + Lumina::Format("{}", Limit.Actual).c_str() + ", the geometry path needs at least "
                         + Lumina::Format("{}", Limit.Required).c_str();
                 }
+            }
+
+            // The meshlet clip test shuffles vertex results across the subgroup inside the mesh stage.
+            constexpr VkSubgroupFeatureFlags MeshSubgroupOps = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT;
+            if ((SubgroupOps.supportedStages & VK_SHADER_STAGE_MESH_BIT_EXT) == 0
+                || (SubgroupOps.supportedOperations & MeshSubgroupOps) != MeshSubgroupOps)
+            {
+                return FString("does not support subgroup shuffles in the mesh stage");
             }
 
             if (SubgroupProps.minSubgroupSize < kMeshWorkGroupSize)
@@ -2325,6 +2336,17 @@ namespace Lumina::RHI
             { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &HostCopyProps };
         vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &HostCopyQuery);
 
+        // Both the host transition and every host copy name GENERAL, so the driver has to list it.
+        TVector<VkImageLayout> CopyDstLayouts(HostCopyProps.copyDstLayoutCount);
+        HostCopyProps.pCopyDstLayouts = CopyDstLayouts.data();
+        vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &HostCopyQuery);
+
+        if (!Algo::Contains(CopyDstLayouts, VK_IMAGE_LAYOUT_GENERAL))
+        {
+            LOG_DISPLAY("Host image copy declined; the driver cannot host-copy into GENERAL.");
+            return false;
+        }
+
         if (HostCopyProps.identicalMemoryTypeRequirements)
         {
             LOG_DISPLAY("Host image copy enabled; the usage bit does not change image memory requirements.");
@@ -2424,6 +2446,7 @@ namespace Lumina::RHI
         bool bNvDiagnostics  = false;
         bool bBufferMarker   = false;
         bool bMemoryPriority = false;
+        bool bPageableMemory = false;
         bool bMemoryBudget   = false;
         bool bUnifiedImageLayouts = false;
         bool bSwapchainMaintenance1 = false;
@@ -2484,7 +2507,7 @@ namespace Lumina::RHI
             bMemoryPriority = EnableIfPresent(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
             if (bMemoryPriority)
             {
-                EnableIfPresent(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
+                bPageableMemory = EnableIfPresent(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
             }
 
             // Aerial perspective and the cloud march take ddx/ddy from compute, which needs quad groups.
@@ -2579,12 +2602,17 @@ namespace Lumina::RHI
         Features12.descriptorBindingUpdateUnusedWhilePending    = VK_TRUE;
         Features12.samplerFilterMinmax                          = VK_TRUE;
         Features12.runtimeDescriptorArray                       = VK_TRUE;
+        Features12.hostQueryReset                               = Supported12.hostQueryReset;
+        GDevice->bHostQueryReset                                = Supported12.hostQueryReset == VK_TRUE;
+        // Heap indices vary per lane in batched draws, and AMD otherwise samples the first lane's descriptor for the wave.
+        Features12.shaderSampledImageArrayNonUniformIndexing    = Supported12.shaderSampledImageArrayNonUniformIndexing;
         Features12.shaderInt8                                   = VK_TRUE;
         Features12.shaderFloat16                                = VK_TRUE;
 
         VkPhysicalDeviceVulkan13Features Features13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         Features13.dynamicRendering = VK_TRUE;
         Features13.synchronization2 = VK_TRUE;
+        Features13.shaderDemoteToHelperInvocation = VK_TRUE;
         Features13.subgroupSizeControl = GDevice->MeshRequiredSubgroupSize != 0;
 
         VkPhysicalDeviceVulkan14Features Features14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
@@ -2644,6 +2672,11 @@ namespace Lumina::RHI
         {
             MemoryPriorityFeatures.memoryPriority = VK_TRUE;
             Chain(MemoryPriorityFeatures);
+        }
+
+        // Chaining a feature struct for an extension that was never enabled is invalid device creation.
+        if (bPageableMemory)
+        {
             PageableFeatures.pageableDeviceLocalMemory = VK_TRUE;
             Chain(PageableFeatures);
         }
@@ -3898,6 +3931,27 @@ namespace Lumina::RHI
         GDevice->QueryPools.Erase(Pool);
     }
 
+    bool ResetTimestamps(FQueryPoolH Pool, uint32 First, uint32 Count)
+    {
+        if (!GDevice->bHostQueryReset || !IsValid(Pool))
+        {
+            return false;
+        }
+
+        const FQueryPool& Query = GDevice->QueryPools[Pool];
+        if (Query.Pool == VK_NULL_HANDLE || First >= Query.Capacity)
+        {
+            return false;
+        }
+
+        const uint32 Clamped = Math::Min(Count, Query.Capacity - First);
+        if (Clamped > 0)
+        {
+            vkResetQueryPool(GDevice->Device, Query.Pool, First, Clamped);
+        }
+        return true;
+    }
+
     // Clamped rather than asserted, so a profiler that outgrows its pool loses tail samples instead of the frame.
     void CmdResetTimestamps(FCmdListH CL, FQueryPoolH Pool, uint32 First, uint32 Count)
     {
@@ -4502,6 +4556,37 @@ namespace Lumina::RHI
         return GDevice->Semaphores.Emplace(Semaphore);
     }
 
+    // Host copies land before any GPU work, so the deferred UNDEFINED transition would be free to discard them.
+    static bool HostTransitionToGeneral(VkImage Image, EFormat Format)
+    {
+        const VkHostImageLayoutTransitionInfo Transition
+        {
+            .sType            = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO,
+            .image            = Image,
+            .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout        = VK_IMAGE_LAYOUT_GENERAL,
+            .subresourceRange = FullSubresourceRange(AspectsForFormat(Format)),
+        };
+
+        const VkResult Result = vkTransitionImageLayout(GDevice->Device, 1, &Transition);
+        if (Result != VK_SUCCESS)
+        {
+            LOG_ERROR("RHI: host layout transition failed ({}); the image falls back to the deferred GPU init.",
+                      Vulkan::VkResultToString(Result));
+            return false;
+        }
+        return true;
+    }
+
+    // The startup probe only covers BC7, and the usage bit on an unsupported format makes image creation invalid.
+    static bool FormatSupportsHostImageCopy(VkFormat Format)
+    {
+        VkFormatProperties3 Props3 { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
+        VkFormatProperties2 Props2 { .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &Props3 };
+        vkGetPhysicalDeviceFormatProperties2(GDevice->PhysicsDevice, Format, &Props2);
+        return (Props3.optimalTilingFeatures & VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT) != 0;
+    }
+
     FTextureH CreateTexture(const FTextureDesc& Desc, GPUPtr Location)
     {
         LUMINA_MEMORY_SCOPE("RHI");
@@ -4523,7 +4608,8 @@ namespace Lumina::RHI
         Usage |= EnumHasAnyFlags(Desc.Usage, EImageUsageFlags::TransferSrc)     ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0;
         Usage |= EnumHasAnyFlags(Desc.Usage, EImageUsageFlags::TransferDst)     ? VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0;
         Usage |= EnumHasAnyFlags(Desc.Usage, EImageUsageFlags::HostTransfer)
-              && GDevice->bHostImageCopy                                       ? VK_IMAGE_USAGE_HOST_TRANSFER_BIT : 0;
+              && GDevice->bHostImageCopy
+              && FormatSupportsHostImageCopy(Format)                           ? VK_IMAGE_USAGE_HOST_TRANSFER_BIT : 0;
 
         const uint32 Depth = Desc.Type == ETextureType::Tex3D ? Math::Max(Desc.Dimension.z, 1u) : 1u;
 
@@ -4572,14 +4658,24 @@ namespace Lumina::RHI
 
         const VkImageView View = CreateImageView(Image, ViewType, Format, FullSubresourceRange(Aspect));
 
+        const bool bHostInitialized = (Usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT) != 0 && HostTransitionToGeneral(Image, Desc.Format);
+
+        // Host copies check this flag, so it has to say whether one can actually land in this image.
+        FTextureDesc StoredDesc = Desc;
+        if (!bHostInitialized)
+        {
+            StoredDesc.Usage &= ~EImageUsageFlags::HostTransfer;
+        }
+
         FTextureH Handle = GDevice->Textures.Emplace(FTexture
         {
             .Image              = Image,
             .DefaultImageView   = View,
             .Allocation         = Allocation,
-            .Desc               = Desc,
+            .Desc               = StoredDesc,
         });
 
+        if (!bHostInitialized)
         {
             FScopeLock Lock(GDevice->InitMutex);
             GDevice->UninitializedTextures.push_back(Handle);
@@ -5384,8 +5480,9 @@ namespace Lumina::RHI
     // Caller holds the queue lock, which is what guards the ring.
     static VkCommandBuffer DrainPendingImageInits(EQueueType Queue)
     {
-        // Images are EXCLUSIVE; a layout transition is a write, so transfer must never claim them.
-        if (Queue == EQueueType::Transfer || GDevice->PendingImageInits.load(std::memory_order_acquire) == 0)
+        // Images are EXCLUSIVE and a layout transition is a write, so only the graphics family may claim them.
+        const bool bOwnFamily = Queue == EQueueType::Transfer || (Queue == EQueueType::Compute && HasDedicatedQueue(EQueueType::Compute));
+        if (bOwnFamily || GDevice->PendingImageInits.load(std::memory_order_acquire) == 0)
         {
             return VK_NULL_HANDLE;
         }
@@ -5485,22 +5582,27 @@ namespace Lumina::RHI
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
         const FTexture& Image = GDevice->Textures[SC.Images[SC.CurrentImageIndex]];
         
+        // Chained to the acquire wait's stages, which include transfer for the game build's blit.
         SwapchainImageBarrier(GDevice->CommandLists[CL].CommandBuffer, Image.Image,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
     }
 
-    bool PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue)
+    bool PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue,
+                          FSemaphoreH ExtraWait, uint64 ExtraWaitValue)
     {
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
         FCommandList& CL = GDevice->CommandLists[FinalCommandList];
 
         const FTexture& Image = GDevice->Textures[SC.Images[SC.CurrentImageIndex]];
 
+        // The game build fills the image with a blit, which is a transfer write rather than an attachment write.
         SwapchainImageBarrier(CL.CommandBuffer, Image.Image,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
 
 #if defined(TRACY_ENABLE)
@@ -5527,13 +5629,29 @@ namespace Lumina::RHI
 
         VkCommandBuffer TransitionBuffer = DrainPendingImageInits(EQueueType::Graphics);
 
-        VkSemaphoreSubmitInfo WaitInfo
+        VkSemaphoreSubmitInfo WaitInfos[2] {};
+        uint32 WaitCount = 0;
+        if (SC.CurrentAcquire != VK_NULL_HANDLE)
         {
-            .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-            .pNext     = nullptr,
-            .semaphore = SC.CurrentAcquire,
-            .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        };
+            WaitInfos[WaitCount++] =
+            {
+                .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext     = nullptr,
+                .semaphore = SC.CurrentAcquire,
+                .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            };
+        }
+        if (IsValid(ExtraWait) && ExtraWaitValue != 0)
+        {
+            WaitInfos[WaitCount++] =
+            {
+                .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext     = nullptr,
+                .semaphore = GDevice->Semaphores[ExtraWait].Semaphore,
+                .value     = ExtraWaitValue,
+                .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            };
+        }
 
         VkSemaphoreSubmitInfo SignalInfos[2]
         {
@@ -5554,8 +5672,8 @@ namespace Lumina::RHI
             .sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
             .pNext                    = nullptr,
             .flags                    = 0, 
-            .waitSemaphoreInfoCount   = SC.CurrentAcquire != VK_NULL_HANDLE ? 1u : 0u,
-            .pWaitSemaphoreInfos      = &WaitInfo,
+            .waitSemaphoreInfoCount   = WaitCount,
+            .pWaitSemaphoreInfos      = WaitInfos,
             .commandBufferInfoCount   = 1 + TransitionCount,
             .pCommandBufferInfos      = TransitionCount != 0 ? CmdInfos : &CmdInfos[1],
             .signalSemaphoreInfoCount = 2,

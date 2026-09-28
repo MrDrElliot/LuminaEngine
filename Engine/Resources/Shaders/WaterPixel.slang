@@ -2,6 +2,8 @@
 #include "Includes/Noise.slang"
 #include "Includes/IBLRuntime.slang"
 #include "Includes/ShadowSampling.slang"
+#include "Includes/Fog.slang"
+#include "Includes/AerialPerspective.slang"
 
 // Water surface shading
 
@@ -112,11 +114,23 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float3 BehindColor = SampleSceneColor(RefractUV);
 
 
+    // The water and foam colors are what the surface scatters back, so they take the light a flat diffuse surface would.
+    float3 BodyLight = (HasIBL() ? SampleIrradiance(float3(0.0, 1.0, 0.0)) : GetAmbientLightColor()) * GetAmbientLightIntensity();
+    float  SunShadow = 1.0;
+    if (LightData().bHasSun != 0)
+    {
+        FLight Sun = GetLightAt(0);
+        float3 L   = normalize(GetSunDirection());
+        SunShadow  = ComputeDirectionalShadow(Sun, Input.WorldPos, N, WorldToView(Input.WorldPos), Input.Position.xy);
+        BodyLight += GetLightColor(Sun).rgb * Sun.Intensity * saturate(L.y) * SunShadow * INV_PI;
+    }
+
+    // WaterColor tints what is seen through the water, while the lit colors are light the volume itself sends back.
     float3 WaterColor = lerp(W.ShallowColor.rgb, W.DeepColor.rgb, DepthFade);
     float  Murk       = max(W.FoamAbsorb.w, 0.0);
     float  BedVis     = exp(-(2.0 + ColumnDepth) * Murk * (3.0 / max(W.FoamAbsorb.z, 0.1)));
-    float3 Refracted  = lerp(W.DeepColor.rgb, BehindColor * WaterColor, BedVis);
-    Refracted = lerp(WaterColor, Refracted, SubmergeMask);
+    float3 Refracted  = lerp(W.DeepColor.rgb * BodyLight, BehindColor * WaterColor, BedVis);
+    Refracted = lerp(WaterColor * BodyLight, Refracted, SubmergeMask);
 
     // --- Reflection: SSR ray-march against opaque depth, prefiltered-sky fallback ---
     float3 R         = reflect(-V, N);
@@ -186,8 +200,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         float3 L      = normalize(GetSunDirection());    // surface -> sun (to-light)
         float3 SunRad = GetLightColor(Sun).rgb * Sun.Intensity;
 
-        float Shadow = ComputeDirectionalShadow(Sun, Input.WorldPos, N,
-                                                WorldToView(Input.WorldPos), Input.Position.xy);
+        float Shadow = SunShadow;
 
         // GGX against the variance-widened alpha, so distant water sparkles instead of going mirror flat.
         float3 H     = normalize(L + V);
@@ -231,10 +244,10 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         if (W.FoamTextureIndex != WATER_INVALID_TEX)
         {
             SamplerState FS = gSamplers[SAMPLER_LINEAR_WRAP];
-            f1 = gTextures2D[W.FoamTextureIndex].Sample(FS, UV1).r;
-            f2 = gTextures2D[W.FoamTextureIndex].Sample(FS, UV2).r;
-            f3 = gTextures2D[W.FoamTextureIndex].Sample(FS, UV3).r;
-            f4 = gTextures2D[W.FoamTextureIndex].Sample(FS, UV4).r;
+            f1 = gTextures2D[NonUniformResourceIndex(W.FoamTextureIndex)].Sample(FS, UV1).r;
+            f2 = gTextures2D[NonUniformResourceIndex(W.FoamTextureIndex)].Sample(FS, UV2).r;
+            f3 = gTextures2D[NonUniformResourceIndex(W.FoamTextureIndex)].Sample(FS, UV3).r;
+            f4 = gTextures2D[NonUniformResourceIndex(W.FoamTextureIndex)].Sample(FS, UV4).r;
         }
         else
         {
@@ -265,7 +278,16 @@ float4 FragmentMain(PSInput Input) : SV_Target0
 
         Foam = saturate(Foam * W.DetailParams.w);   // FoamIntensity
     }
-    Color = lerp(Color, W.FoamColor.rgb, Foam);
+    Color = lerp(Color, W.FoamColor.rgb * BodyLight, Foam);
+
+    // Drawn after the atmosphere composite, so the haze and fog the ground already carries are applied here.
+    if (Pass().AerialInScatterIndex != WATER_INVALID_TEX)
+    {
+        Color = AerialPerspective_Apply(Color, ScreenUV, Input.WorldPos, Pass().AerialInScatterIndex, Pass().AerialTransmittanceIndex,
+                                        Pass().AerialRange, Pass().AerialIntensity);
+    }
+    float4 FogTerm = Fog_EvaluateForTranslucent(WorldToView(Input.WorldPos), Input.Position.xy);
+    Color = Color * FogTerm.a + FogTerm.rgb;
 
     float Alpha = saturate(W.SSRSpecOpacity.w);
     return float4(Color, Alpha);

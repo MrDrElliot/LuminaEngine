@@ -521,10 +521,18 @@ namespace Lumina::RHI
         UploadStaging.clear();
 
         {
-            GCore.PendingTransferWait = 0;
-            for (bool& bTook : GCore.bQueueTookTransferWait)
             {
-                bTook = false;
+                FScopeLock Lock(GCore.SubmitMutex);
+
+                // Kept when graphics never submitted, so a frame with no submit and no present cannot drop the wait.
+                if (GCore.bQueueTookTransferWait[(uint32)EQueueType::Graphics])
+                {
+                    GCore.PendingTransferWait = 0;
+                }
+                for (bool& bTook : GCore.bQueueTookTransferWait)
+                {
+                    bTook = false;
+                }
             }
 
             const bool bAsyncTransfer = SupportsAsyncTransfer();
@@ -544,9 +552,23 @@ namespace Lumina::RHI
                 FScopeLock Lock(GCore.SubmitMutex);
                 const uint64 Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
                 const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value };
-                Internal::Submit(Queue, TSpan<const FCmdListH>{&CL, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
+
+                // Buffer uploads rewrite live tables in place, so the copy engine must not start while graphics still reads them.
+                constexpr uint32 GraphicsIndex = (uint32)EQueueType::Graphics;
+                const uint64 GraphicsSubmitted = GCore.QueueCounter[GraphicsIndex].load(std::memory_order_acquire);
+                const FSemaphoreInfo GraphicsWait { GCore.QueueTimeline[GraphicsIndex], GraphicsSubmitted };
+                const bool bWaitGraphics = Queue == EQueueType::Transfer && GraphicsSubmitted != 0;
+
+                Internal::Submit(Queue, TSpan<const FCmdListH>{&CL, 1},
+                                 bWaitGraphics ? TSpan<const FSemaphoreInfo>{&GraphicsWait, 1} : TSpan<const FSemaphoreInfo>{},
+                                 TSpan<const FSemaphoreInfo>{&Signal, 1});
                 GCore.SlotWaitValue[Slot][QueueIndex] = Value;
                 GCore.SlotCommandLists[Slot].push_back(CL);
+
+                if (Queue == EQueueType::Transfer)
+                {
+                    GCore.PendingTransferWait = Value;
+                }
 
                 Upload::NoteFlushSubmitted(Batch, SliceMask, Queue, GCore.QueueTimeline[QueueIndex], Value);
                 return Value;
@@ -554,7 +576,7 @@ namespace Lumina::RHI
 
             if (bAsyncTransfer && (Used & 1u) != 0u)
             {
-                GCore.PendingTransferWait = SubmitUpload(EQueueType::Transfer, BufferCL, BufferSlices);
+                SubmitUpload(EQueueType::Transfer, BufferCL, BufferSlices);
             }
             else if (bAsyncTransfer)
             {
@@ -675,8 +697,17 @@ namespace Lumina::RHI
 
         const uint64 Value = GCore.QueueCounter[GraphicsIndex].fetch_add(1, std::memory_order_release) + 1;
 
+        // A frame that renders no world never reaches RHI::Submit, so this is the only place its uploads get waited on.
+        uint64 TransferWait = 0;
+        if (GCore.PendingTransferWait != 0 && !GCore.bQueueTookTransferWait[GraphicsIndex])
+        {
+            TransferWait = GCore.PendingTransferWait;
+            GCore.bQueueTookTransferWait[GraphicsIndex] = true;
+        }
+
         // PresentSwapchain submits CommandList (wait acquire, signal present + this frame value), presents.
-        const bool bOk = PresentSwapchain(Swapchain, CommandList, GCore.QueueTimeline[GraphicsIndex], Value);
+        const bool bOk = PresentSwapchain(Swapchain, CommandList, GCore.QueueTimeline[GraphicsIndex], Value,
+                                          GCore.QueueTimeline[(uint32)EQueueType::Transfer], TransferWait);
 
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
         GCore.SlotWaitValue[Slot][GraphicsIndex] = Value;

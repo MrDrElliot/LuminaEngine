@@ -158,9 +158,9 @@ void DownsampleMipN2_N5(int StartMip, uint2 Tile, uint2 TileThread, int MipIndex
     const int2  DstP    = int2(TileThread + Tile * RemainingTile);
     const int2  SrcP    = int2(TileThread) * 2;
     const uint2 DstSize = max(Pass().PyramidSize >> uint(DstMip), uint2(1, 1));
-    const bool  Active  = all(TileThread < RemainingTile) && all(uint2(DstP) < DstSize);
 
-    if (Active)
+    // Lanes past the mip edge still write LDS, or the next level reduces a slot left over from two levels ago.
+    if (all(TileThread < RemainingTile))
     {
         const float A = SpdLDS[PingSrc * TILE_THREAD_COUNT + (SrcP.y + 0) * TILE_THREAD_WIDTH + (SrcP.x + 0)];
         const float B = SpdLDS[PingSrc * TILE_THREAD_COUNT + (SrcP.y + 0) * TILE_THREAD_WIDTH + (SrcP.x + 1)];
@@ -169,7 +169,10 @@ void DownsampleMipN2_N5(int StartMip, uint2 Tile, uint2 TileThread, int MipIndex
         const float V = Reduce4(A, B, C, D);
 
         SpdLDS[PingDst * TILE_THREAD_COUNT + TileThread.y * TILE_THREAD_WIDTH + TileThread.x] = V;
-        StoreMip(uint(DstMip), DstP, V);
+        if (all(uint2(DstP) < DstSize))
+        {
+            StoreMip(uint(DstMip), DstP, V);
+        }
     }
 }
 
@@ -218,8 +221,9 @@ void ComputeMain(
 
     if (Pass().NumMips <= 6) return;
 
-    // Cross-WG hand-off: the atomic on the BDA counter is the only Device-scope
-    // memory event; the bool broadcasts the result through a workgroup barrier.
+    // Mip-5 stores must reach device scope before the counter publishes them, and be acquired after it.
+    DeviceMemoryBarrierWithGroupSync();
+
     if (all(TT == uint2(0, 0)))
     {
         uint OldCount;
@@ -227,7 +231,7 @@ void ComputeMain(
         SpdIsLastWorkgroup = ((OldCount + 1u) == Pass().NumWorkGroups);
     }
 
-    GroupMemoryBarrierWithGroupSync();
+    AllMemoryBarrierWithGroupSync();
 
     if (!SpdIsLastWorkgroup) return;
 

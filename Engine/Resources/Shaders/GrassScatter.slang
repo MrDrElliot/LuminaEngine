@@ -61,7 +61,7 @@ struct FGrassScatterPushConstants
     float  TileWorldSize;
     float  MaxHeight;
     float  TerrainBaseY;
-    uint   _Pad0;
+    uint   Resolution;          // heightmap samples per side
     uint   _Pad1;
     uint   _Pad2;
 };
@@ -103,8 +103,10 @@ void main(uint3 Tid : SV_DispatchThreadID)
     const uint CellId = Tid.y * P->GridSide + Tid.x;
 
     // Two independent streams per cell, so jitter does not correlate with the accept test.
-    const uint LatticeX = (uint)(GridOrigin.x / P->CellSize) + Tid.x;
-    const uint LatticeY = (uint)(GridOrigin.y / P->CellSize) + Tid.y;
+    // Signed first, since a negative float cast straight to uint clamps to zero and the pattern then follows the camera.
+    const int2 LatticeOrigin = int2(floor(GridOrigin / P->CellSize + 0.5));
+    const uint LatticeX = (uint)(LatticeOrigin.x + (int)Tid.x);
+    const uint LatticeY = (uint)(LatticeOrigin.y + (int)Tid.y);
     const uint CellHash = HashUint(LatticeX * 73856093u ^ LatticeY * 19349663u ^ P->Seed);
 
     const float JitterX = Hash01(CellHash * 3u + 0u) - 0.5;
@@ -127,8 +129,11 @@ void main(uint3 Tid : SV_DispatchThreadID)
         return;
     }
 
+    // Terrain vertex i sits on texel center i, so the lattice maps onto centers exactly as the terrain draws it.
+    const float2 HeightUV = (Local * float(P->Resolution - 1u) + 0.5) / float(P->Resolution);
+
     // The painted layer is the whole point: weight gates where this species may grow at all.
-    const float Weight = SampleTexture2DArrayLevel(P->LayerWeightsIndex, SAMPLER_LINEAR_CLAMP, Local, P->LayerIndex, 0).r;
+    const float Weight = SampleTexture2DArrayLevel(P->LayerWeightsIndex, SAMPLER_LINEAR_CLAMP, HeightUV, P->LayerIndex, 0).r;
     if (Weight < P->MinWeight)
     {
         return;
@@ -140,13 +145,15 @@ void main(uint3 Tid : SV_DispatchThreadID)
         return;
     }
 
-    const float3 Normal = normalize(SampleTexture2DLevel(P->NormalIndex, SAMPLER_LINEAR_CLAMP, Local, 0).xyz * 2.0 - 1.0);
+    // Packed as world X and Z like the terrain vertex shader reads it, with Y rebuilt from unit length.
+    const float2 PackedXZ = SampleTexture2DLevel(P->NormalIndex, SAMPLER_LINEAR_CLAMP, HeightUV, 0).rg * 2.0 - 1.0;
+    const float3 Normal = float3(PackedXZ.x, sqrt(saturate(1.0 - dot(PackedXZ, PackedXZ))), PackedXZ.y);
     if (Normal.y < P->MaxSlopeCos)
     {
         return;
     }
 
-    const float Height = SampleTexture2DLevel(P->HeightmapIndex, SAMPLER_LINEAR_CLAMP, Local, 0).r;
+    const float Height = SampleTexture2DLevel(P->HeightmapIndex, SAMPLER_LINEAR_CLAMP, HeightUV, 0).r;
 
     const float3 Position = float3(WorldXZ.x,
                                    P->TerrainBaseY + Height * P->MaxHeight + P->ZOffset,

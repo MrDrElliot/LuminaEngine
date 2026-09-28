@@ -64,18 +64,18 @@ static const uint SAMPLER_ANISO_MIRROR  = 11;
 
 // Heap access helpers.
 
-SamplerState GetSampler(uint SamplerIndex) { return gSamplers[SamplerIndex]; }
+SamplerState GetSampler(uint SamplerIndex) { return gSamplers[NonUniformResourceIndex(SamplerIndex)]; }
 
 float4 SampleTexture2D(uint TextureIndex, uint SamplerIndex, float2 UV)
 {
-    return gTextures2D[TextureIndex].Sample(gSamplers[SamplerIndex], UV);
+    return gTextures2D[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], UV);
 }
 
 // Explicit-gradient sample. The deferred VisBuffer lane has no rasterizer quad, so implicit ddx/ddy
 // are garbage -- DeferredMaterial.slang feeds analytic perspective-correct gradients here instead.
 float4 SampleTexture2DGrad(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
 {
-    return gTextures2D[TextureIndex].SampleGrad(gSamplers[SamplerIndex], UV, Ddx, Ddy);
+    return gTextures2D[NonUniformResourceIndex(TextureIndex)].SampleGrad(gSamplers[NonUniformResourceIndex(SamplerIndex)], UV, Ddx, Ddy);
 }
 
 // Which sampling mode is right depends on the LANE, not the material: forward quads cover one
@@ -102,26 +102,26 @@ float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, floa
 
 float4 SampleTexture2DLevel(uint TextureIndex, uint SamplerIndex, float2 UV, float Lod)
 {
-    return gTextures2D[TextureIndex].SampleLevel(gSamplers[SamplerIndex], UV, Lod);
+    return gTextures2D[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], UV, Lod);
 }
 
 // Slice is NOT filtered between layers -- the hardware treats the array index as discrete, which is
 // the point. TextureIndex is the same ResourceID a Texture2D uses, but must name a Tex2DArray.
 float4 SampleTexture2DArray(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice)
 {
-    return gTextures2DArray[TextureIndex].Sample(gSamplers[SamplerIndex], float3(UV, (float)Slice));
+    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], float3(UV, (float)Slice));
 }
 
 float4 SampleTexture2DArrayLevel(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float Lod)
 {
-    return gTextures2DArray[TextureIndex].SampleLevel(gSamplers[SamplerIndex], float3(UV, (float)Slice), Lod);
+    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], float3(UV, (float)Slice), Lod);
 }
 
 // Explicit-gradient variant, for the deferred VisBuffer lane (see SampleTexture2DGrad above). The
 // gradients are 2D: a layer index has no derivative, so only UV drives mip selection.
 float4 SampleTexture2DArrayGrad(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
 {
-    return gTextures2DArray[TextureIndex].SampleGrad(gSamplers[SamplerIndex], float3(UV, (float)Slice), Ddx, Ddy);
+    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].SampleGrad(gSamplers[NonUniformResourceIndex(SamplerIndex)], float3(UV, (float)Slice), Ddx, Ddy);
 }
 
 // Array counterpart of SampleTexture2DAuto, split on the same switch and for the same reason. Without
@@ -141,37 +141,42 @@ float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV,
 
 float4 LoadTexture2DArray(uint TextureIndex, int2 Texel, uint Slice, int Mip = 0)
 {
-    return gTextures2DArray[TextureIndex].Load(int4(Texel, (int)Slice, Mip));
+    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].Load(int4(Texel, (int)Slice, Mip));
 }
 
 float4 SampleTextureCube(uint TextureIndex, uint SamplerIndex, float3 Dir)
 {
-    return gTexturesCube[TextureIndex].Sample(gSamplers[SamplerIndex], Dir);
+    return gTexturesCube[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], Dir);
 }
 
 float4 SampleTextureCubeLevel(uint TextureIndex, uint SamplerIndex, float3 Dir, float Lod)
 {
-    return gTexturesCube[TextureIndex].SampleLevel(gSamplers[SamplerIndex], Dir, Lod);
+    return gTexturesCube[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], Dir, Lod);
 }
 
 float4 SampleTextureCubeArrayLevel(uint TextureIndex, uint SamplerIndex, float3 Dir, uint Slice, float Lod)
 {
-    return gTexturesCubeArray[TextureIndex].SampleLevel(gSamplers[SamplerIndex], float4(Dir, (float)Slice), Lod);
+    return gTexturesCubeArray[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], float4(Dir, (float)Slice), Lod);
 }
 
 float4 SampleTexture3D(uint TextureIndex, uint SamplerIndex, float3 UVW)
 {
-    return gTextures3D[TextureIndex].Sample(gSamplers[SamplerIndex], UVW);
+    return gTextures3D[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], UVW);
+}
+
+float4 SampleTexture3DLevel(uint TextureIndex, uint SamplerIndex, float3 UVW, float Lod)
+{
+    return gTextures3D[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], UVW, Lod);
 }
 
 float4 LoadTexture2D(uint TextureIndex, int2 Texel, int Mip = 0)
 {
-    return gTextures2D[TextureIndex].Load(int3(Texel, Mip));
+    return gTextures2D[NonUniformResourceIndex(TextureIndex)].Load(int3(Texel, Mip));
 }
 
 uint LoadTexture2DUInt(uint TextureIndex, int2 Texel, int Mip = 0)
 {
-    return gTextures2DUInt[TextureIndex].Load(int3(Texel, Mip));
+    return gTextures2DUInt[NonUniformResourceIndex(TextureIndex)].Load(int3(Texel, Mip));
 }
 
 // Fullscreen-triangle vertex helper: call from a VS with SV_VertexID, no vertex buffers. UV is

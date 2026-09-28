@@ -245,5 +245,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         Transmittance *= StepTrans;
     }
 
+    // Distant cloud thins into the horizon haze, rather than ending on the hard line where the march is clamped.
+    float DistanceFade = 1.0 - smoothstep(Pass().MaxDistance * 0.4, Pass().MaxDistance, Start);
+    Scattered     *= DistanceFade;
+    Transmittance  = lerp(1.0, Transmittance, DistanceFade);
+
     gRWTextures2D[Pass().ScatterUAV][P] = float4(SanitizeRadiance(Scattered), Transmittance);
 }

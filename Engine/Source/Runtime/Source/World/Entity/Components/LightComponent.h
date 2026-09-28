@@ -173,10 +173,14 @@ namespace Lumina
             {
                 return Intensity;
             }
+
+            // A low moon crosses far more atmosphere than a low sun needs to fade out over, so it brightens more slowly.
+            constexpr float SunFadeElevation  = 0.1f;
+            constexpr float MoonFadeElevation = 0.35f;
             const float Elevation = Math::Normalize(Direction).y;
             return Elevation >= 0.0f
-                ? Intensity * Math::SmoothStep(0.0f, 0.1f, Elevation)
-                : MoonIntensity * Math::SmoothStep(0.0f, 0.1f, -Elevation);
+                ? Intensity * Math::SmoothStep(0.0f, SunFadeElevation, Elevation)
+                : MoonIntensity * Math::SmoothStep(0.0f, MoonFadeElevation, -Elevation);
         }
 
         /** When true, this light contributes to the shadow pass. */

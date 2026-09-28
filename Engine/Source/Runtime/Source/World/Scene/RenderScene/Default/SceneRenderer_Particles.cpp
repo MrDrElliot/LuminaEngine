@@ -13,6 +13,11 @@ namespace Lumina
     static constexpr uint32 ParticleMaxPrewarmSteps = 300;
     static constexpr uint32 ParticleMaxFixedSteps   = 4;
 
+    static constexpr uint32 ParticleMaxCollisionSources   = 16;
+    static constexpr uint64 ParticleCollisionListBytes    = (uint64)PARTICLE_EVENT_CAPACITY * sizeof(FParticleEventGPU);
+    static constexpr uint64 ParticleCollisionListOffset   = ParticleEventCountBytes + (uint64)EParticleEventType::Collision * ParticleCollisionListBytes;
+    static constexpr uint64 ParticleCollisionReadbackStride = ParticleEventCountBytes + ParticleCollisionListBytes;
+
     // Mirrors the render pass block in ParticleSpriteCommon.slang.
     struct FParticlePushConstants
     {
@@ -242,6 +247,8 @@ namespace Lumina
         const float DeltaTime   = Frame.CachedWorldDeltaTime;
 
         bParticlePoolReuseBarrierIssued = false;
+
+        ReadParticleCollisions();
 
         if (!ParticleGPUStates.empty())
         {
@@ -553,7 +560,7 @@ namespace Lumina
                 SimParams.NoiseParams       = FVector4(Resolved.NoiseSpeed, InheritFactor, 0.0f, 0.0f);
                 SimParams.Timing            = FVector4(StepDelta, State.TotalTime, State.SystemAge, EmitterScale);
                 SimParams.EmitterDelta      = bFirstStep ? EmitterDelta : FMatrix4(1.0f);
-                SimParams.EventParams       = FVector4(Item.RaisedEventRate, Resolved.InheritParentVelocity, 0.0f, 0.0f);
+                SimParams.EventParams       = FVector4(Item.RaisedEventRate, Resolved.InheritParentVelocity, Resolved.bSpawnAlongSurfaceNormal ? 1.0f : 0.0f, 0.0f);
                 SimParams.EventInfo         = FUIntVector4(Item.RaisedEventMask,
                                                            bConsumesEvents ? (uint32)Resolved.SpawnEvent : PARTICLE_NO_EVENT_LIST,
                                                            Item.EmissionMeshSlot,
@@ -629,7 +636,15 @@ namespace Lumina
                         RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferWrite);
                 }
             }
+
+            TVector<FParticleCollisionSource>& CollisionSources = ParticleCollisionReadback[CurrentFrameSlot].Sources;
+            if (Item.bReportCollisions && State.bSimulatedThisFrame && State.EventBuffer && CollisionSources.size() < ParticleMaxCollisionSources)
+            {
+                CollisionSources.push_back({ Item.Entity, Item.EmitterIndex, State.EventBuffer.Gpu });
+            }
         }
+
+        CopyParticleCollisions(CL);
 
         if (bAnySimulated)
         {
@@ -639,6 +654,77 @@ namespace Lumina
                 RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader,
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
         }
+    }
+
+    void FDefaultSceneRenderer::ReadParticleCollisions()
+    {
+        // The frame ring waited on this slot's last submission before the render phase began, so its copies have landed.
+        FParticleCollisionReadback& Readback = ParticleCollisionReadback[CurrentFrameSlot];
+        const std::byte* Base = Readback.Buffer.Cpu;
+        for (size_t Index = 0; Base != nullptr && Index < Readback.Sources.size(); ++Index)
+        {
+            const FParticleCollisionSource& Source = Readback.Sources[Index];
+            const std::byte* Copy = Base + Index * ParticleCollisionReadbackStride;
+            const uint32 Raised = reinterpret_cast<const uint32*>(Copy)[(uint32)EParticleEventType::Collision];
+            const uint32 Count = Math::Min(Raised, (uint32)PARTICLE_EVENT_CAPACITY);
+            const FParticleEventGPU* Events = reinterpret_cast<const FParticleEventGPU*>(Copy + ParticleEventCountBytes);
+
+            TVector<FParticleCollision>& Hits = ParticleCollisionResults[Source.Entity];
+            Hits.reserve(Hits.size() + Count);
+            for (uint32 EventIndex = 0; EventIndex < Count; ++EventIndex)
+            {
+                const FParticleEventGPU& Event = Events[EventIndex];
+                FParticleCollision& Hit = Hits.emplace_back();
+                Hit.Position     = FVector3(Event.PositionSize);
+                Hit.Size         = Event.PositionSize.w;
+                Hit.Velocity     = FVector3(Event.VelocityFlags);
+                Hit.Normal       = FVector3(Event.Extra);
+                Hit.ImpactSpeed  = Event.Extra.w;
+                Hit.EmitterIndex = Source.EmitterIndex;
+            }
+        }
+        Readback.Sources.clear();
+    }
+
+    void FDefaultSceneRenderer::CopyParticleCollisions(RHI::FCmdListH CL)
+    {
+        FParticleCollisionReadback& Readback = ParticleCollisionReadback[CurrentFrameSlot];
+        if (Readback.Sources.empty())
+        {
+            return;
+        }
+
+        if (!Readback.Buffer)
+        {
+            Readback.Buffer = RHI::Malloc(ParticleMaxCollisionSources * ParticleCollisionReadbackStride, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+            if (!Readback.Buffer)
+            {
+                Readback.Sources.clear();
+                return;
+            }
+            RHI::SetDebugName(Readback.Buffer.Gpu, "Readback.ParticleCollisions");
+        }
+
+        TFixedVector<RHI::FBufferCopy, ParticleMaxCollisionSources * 2> Copies;
+        for (size_t Index = 0; Index < Readback.Sources.size(); ++Index)
+        {
+            const uint64 Offset = Index * ParticleCollisionReadbackStride;
+            const RHI::GPUPtr Events = Readback.Sources[Index].EventBuffer;
+            Copies.push_back(RHI::FBufferCopy(Readback.Buffer.Sub(Offset, ParticleEventCountBytes), RHI::FGPURange{ Events, ParticleEventCountBytes }));
+            Copies.push_back(RHI::FBufferCopy(Readback.Buffer.Sub(Offset + ParticleEventCountBytes, ParticleCollisionListBytes),
+                RHI::FGPURange{ Events + ParticleCollisionListOffset, ParticleCollisionListBytes }));
+        }
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
+        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(Copies.data(), Copies.size()));
+
+        // Next frame clears these counts, and the CPU reads the copy once this slot comes round.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute | RHI::EStageFlags::Host,
+            RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::HostRead);
     }
 
     // ParticleSortCompact packs a slot index into the low bits of every sort key.
@@ -949,9 +1035,25 @@ namespace Lumina
         Pass.DepthAttachment.Color[0] = 0.0f;
         Pass.RenderArea               = HDR.GetExtent();
 
-        RHI::CmdBeginRenderPass(CL, Pass);
-        SetViewportScissor(CL, HDR.GetExtent());
-        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+        // Only the first pass may clear; a reopened pass continues from what the previous one stored.
+        auto OpenParticlePass = [&]()
+        {
+            RHI::CmdBeginRenderPass(CL, Pass);
+            SetViewportScissor(CL, HDR.GetExtent());
+            RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+            Color.LoadOp                = RHI::ELoadOp::Load;
+            Pass.DepthAttachment.LoadOp = RHI::ELoadOp::Load;
+        };
+
+        // Soft particles sample the depth attachment, so a pass that also writes it would be a feedback loop.
+        auto IsolateDepthWriter = [&]()
+        {
+            RHI::CmdEndRenderPass(CL);
+            Barriers::RasterToRead(CL);
+            OpenParticlePass();
+        };
+
+        OpenParticlePass();
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
@@ -981,6 +1083,10 @@ namespace Lumina
 
             RHI::FDepthStencilDesc DepthDesc;
             const bool bWriteDepth = bMaterial ? Item.bMaterialWritesDepth : Resolved.bWriteDepth;
+            if (bWriteDepth)
+            {
+                IsolateDepthWriter();
+            }
             DepthDesc.DepthMode = bWriteDepth
                 ? (RHI::EDepthFlags::Read | RHI::EDepthFlags::Write)
                 : RHI::EDepthFlags::Read;
@@ -1008,6 +1114,11 @@ namespace Lumina
             else
             {
                 RHI::CmdDraw(CL, MakeArgs(PC), PC.VertsPerParticle * State.AllocatedMax, 1u, 0u, 0u);
+            }
+
+            if (bWriteDepth)
+            {
+                IsolateDepthWriter();
             }
         }
 

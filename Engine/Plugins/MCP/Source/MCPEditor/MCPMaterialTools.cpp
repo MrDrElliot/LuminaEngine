@@ -471,6 +471,8 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Applied.Error);
                     }
 
+                    // The details panel runs this too, and a node whose pins follow its properties rebuilds them here.
+                    Node->PostPropertyChange(Property.Property);
                     NodeGraphOps::NotifyNodeValuesChanged(Target.Graph);
 
                     nlohmann::json After;

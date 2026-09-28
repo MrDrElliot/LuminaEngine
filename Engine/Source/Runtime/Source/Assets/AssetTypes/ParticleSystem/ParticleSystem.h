@@ -61,6 +61,8 @@ namespace Lumina
         VelocityAligned,
         // Turns toward the camera about world up only, so fire columns and distant smoke stay upright.
         VerticalAxis,
+        // Lies across its velocity, so a sub-emitter spawned along a collision normal lies flat on the surface its parent hit.
+        SurfaceAligned,
     };
 
     REFLECT()
@@ -101,6 +103,33 @@ namespace Lumina
         Collision,
         // EventRate times per second for as long as the parent lives.
         Continuous,
+    };
+
+    // Where a particle hit, read back from the GPU for an emitter that reports its collisions.
+    REFLECT()
+    struct RUNTIME_API FParticleCollision
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FVector3 Position = FVector3(0.0f);
+
+        PROPERTY()
+        FVector3 Normal = FVector3(0.0f, 1.0f, 0.0f);
+
+        // After the bounce, so a particle that dies on the hit reports zero.
+        PROPERTY()
+        FVector3 Velocity = FVector3(0.0f);
+
+        // How fast it was moving into the surface when it struck.
+        PROPERTY()
+        float ImpactSpeed = 0.0f;
+
+        PROPERTY()
+        float Size = 0.0f;
+
+        PROPERTY()
+        int32 EmitterIndex = 0;
     };
 
     // Which fields of an EmitParticle call replace what the spawn stack computed.
@@ -481,6 +510,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 0.0f, ClampMax = 1.0f)
         float InheritParentVelocity = 0.0f;
 
+        // Points each spawned particle along the surface normal its parent hit, which SurfaceAligned facing lies flat across.
+        PROPERTY(Editable, Category = "Sub-Emitter", EditCondition = "SpawnEvent == Collision")
+        bool bSpawnAlongSurfaceNormal = false;
+
+        // Hands where this emitter's particles hit to scripts through CParticleSystemLibrary::GetCollisions, a few frames late.
+        PROPERTY(Editable, Category = "Events")
+        bool bReportCollisions = false;
+
         // Below: legacy uniform-driven fields kept (non-editable) for assets not yet compiled to a
         // module stack; superseded by editor modules baked into the compute shader. Don't surface in editor.
         PROPERTY()
@@ -821,6 +858,7 @@ namespace Lumina
         int32                   ParticlesPerEvent       = 1;
         float                   EventRate               = 10.0f;
         float                   InheritParentVelocity   = 0.0f;
+        bool                    bSpawnAlongSurfaceNormal = false;
     };
 
     /** Bound properties read through component overrides, falling back to the emitter's authored value.

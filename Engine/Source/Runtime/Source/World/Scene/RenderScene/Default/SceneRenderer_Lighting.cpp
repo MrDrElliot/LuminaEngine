@@ -428,6 +428,11 @@ namespace Lumina
         const RHI::FGPURange SlotByMaterialRange =
             RHI::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
 
+        // Every view shares this ring slot, so a capture view must not clear it under the previous view's reads.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments, RHI::EAccessFlags::None,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
+
         // Only the counters are cleared; the prefix sum below rewrites every other field.
         RHI::CmdMemset(CL, { CountsAddr, sizeof(uint32) * Layout.NumSlots }, 0u);
         Barriers::TransferToCompute(CL);
@@ -1274,6 +1279,7 @@ namespace Lumina
         Ctx.ViewportW     = (float)Extent.x;
         Ctx.ViewportH     = (float)Extent.y;
 
+        bool bPreviousWroteDepth = false;
         ForEachMeshletBatch(CL, TranslucentDrawList, Ctx,
             [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
             {
@@ -1293,6 +1299,17 @@ namespace Lumina
             },
             [&](const FMeshDrawCommand& Batch)
             {
+                // A material may sample scene depth, so a batch that writes it gets pass breaks on both sides.
+                if (Batch.bWriteDepth || bPreviousWroteDepth)
+                {
+                    RHI::CmdEndRenderPass(CL);
+                    Barriers::RasterToRead(CL);
+                    RHI::CmdBeginRenderPass(CL, Pass);
+                    SetViewportScissor(CL, HDR.GetExtent());
+                    RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+                }
+                bPreviousWroteDepth = Batch.bWriteDepth;
+
                 // Per batch, since a depth-writing blend is a material choice and the pass mixes both.
                 RHI::FDepthStencilDesc DepthDesc;
                 DepthDesc.DepthMode = Batch.bWriteDepth
@@ -1730,10 +1747,11 @@ namespace Lumina
                          RenderUtils::GetGroupCount(Width,  AtmosphereTileSize),
                          RenderUtils::GetGroupCount(Height, AtmosphereTileSize), 1);
 
+        // Translucent, particle and overlay passes load and blend HDR next, with no raster barrier in between when nothing is translucent.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute | RHI::EStageFlags::RasterColorOut,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
     }
 
     void FDefaultSceneRenderer::WaterPass(RHI::FCmdListH CL)
@@ -1796,12 +1814,20 @@ namespace Lumina
             RHI::TGPUSpan<FGPUWater> Waters;
             uint32 SceneColorIndex;
             uint32 SceneDepthIndex;
+            uint32 AerialInScatterIndex;
+            uint32 AerialTransmittanceIndex;
+            float  AerialRange;
+            float  AerialIntensity;
         };
-        static_assert(sizeof(FWaterPushConstants) == 24, "FWaterPushConstants must match Includes/Water.slang.");
+        static_assert(sizeof(FWaterPushConstants) == 40, "FWaterPushConstants must match Includes/Water.slang.");
 
         FWaterPushConstants PC = {};
         PC.Waters          = RHI::CopyTransientArray(Waters.data(), Waters.size());
         PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
+        PC.AerialInScatterIndex     = AtmosphereTerms.AerialInScatterIndex;
+        PC.AerialTransmittanceIndex = AtmosphereTerms.AerialTransmittanceIndex;
+        PC.AerialRange              = AtmosphereTerms.AerialRange;
+        PC.AerialIntensity          = AtmosphereTerms.AerialIntensity;
         PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
 
         const RHI::GPUPtr Args = MakeArgs(PC);

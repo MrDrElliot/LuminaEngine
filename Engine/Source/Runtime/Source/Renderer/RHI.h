@@ -617,7 +617,8 @@ namespace Lumina::RHI
     RUNTIME_API FUIntVector2 GetSwapchainExtent(FSwapchainH Swapchain);
     RUNTIME_API EFormat      GetSwapchainFormat(FSwapchainH Swapchain);
     RUNTIME_API void         CmdSwapchainBarrierToRender(FCmdListH CL, FSwapchainH Swapchain);
-    RUNTIME_API bool         PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue);
+    RUNTIME_API bool         PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue,
+                                              FSemaphoreH ExtraWait = {}, uint64 ExtraWaitValue = 0);
 
     struct FPipelineStat
     {
@@ -654,6 +655,9 @@ namespace Lumina::RHI
 
     /** Reclaims a range for reuse. Vulkan requires it before any write, so record it first each frame. */
     RUNTIME_API void         CmdResetTimestamps(FCmdListH CL, FQueryPoolH Pool, uint32 First, uint32 Count);
+
+    // Host-side reset, legal anywhere a command reset inside a render pass is not. False when the device lacks hostQueryReset.
+    RUNTIME_API bool         ResetTimestamps(FQueryPoolH Pool, uint32 First, uint32 Count);
 
     /** Writes the GPU tick at Stage into Index. No-op unless collection is armed. */
     RUNTIME_API void         CmdWriteTimestamp(FCmdListH CL, FQueryPoolH Pool, uint32 Index, EStageFlags Stage);
@@ -742,17 +746,20 @@ namespace Lumina::RHI
         // MeshShader belongs in the SOURCE mask: a mesh shader that reads the draw list also writes.
         inline void RasterToRead(FCmdListH CL)
         {
+            // Pixel and vertex stages too, or their storage writes lose the ShaderWrite bit to the stage clamp.
             CmdBarrier(CL,
                 EStageFlags::RasterColorOut | EStageFlags::FragmentTests |
-                EStageFlags::MeshShader,
+                EStageFlags::MeshShader | EStageFlags::PixelShader | EStageFlags::VertexShader,
                 EAccessFlags::ColorWrite | EAccessFlags::DepthStencilWrite | EAccessFlags::ShaderWrite,
                 EStageFlags::PixelShader | EStageFlags::VertexShader | EStageFlags::Compute |
                 EStageFlags::MeshShader |
                 EStageFlags::IndirectArguments |
-                EStageFlags::RasterColorOut | EStageFlags::FragmentTests,
-                EAccessFlags::ShaderRead | EAccessFlags::IndirectRead |
+                EStageFlags::RasterColorOut | EStageFlags::FragmentTests |
+                EStageFlags::Transfer,
+                EAccessFlags::ShaderRead | EAccessFlags::ShaderWrite | EAccessFlags::IndirectRead |
                 EAccessFlags::ColorRead | EAccessFlags::ColorWrite |
-                EAccessFlags::DepthStencilRead | EAccessFlags::DepthStencilWrite);
+                EAccessFlags::DepthStencilRead | EAccessFlags::DepthStencilWrite |
+                EAccessFlags::TransferRead | EAccessFlags::TransferWrite);
         }
 
         inline void RasterToRaster(FCmdListH CL)
@@ -775,10 +782,10 @@ namespace Lumina::RHI
         inline void SceneToTransfer(FCmdListH CL)
         {
             CmdBarrier(CL,
-                EStageFlags::RasterColorOut | EStageFlags::PixelShader |
+                EStageFlags::RasterColorOut | EStageFlags::PixelShader | EStageFlags::FragmentTests |
                 EStageFlags::Compute | EStageFlags::Transfer,
-                EAccessFlags::ColorWrite | EAccessFlags::ShaderWrite | EAccessFlags::TransferWrite,
-                EStageFlags::Transfer, EAccessFlags::TransferRead);
+                EAccessFlags::ColorWrite | EAccessFlags::ShaderWrite | EAccessFlags::DepthStencilWrite | EAccessFlags::TransferWrite,
+                EStageFlags::Transfer, EAccessFlags::TransferRead | EAccessFlags::TransferWrite);
         }
 
         /** Pairs with SceneToTransfer where the copy is only ever sampled, never fetched indirectly. */
@@ -792,17 +799,20 @@ namespace Lumina::RHI
         // Narrow variants: use only where every reader of every buffer written is in the destination.
         inline void TransferToCompute(FCmdListH CL)
         {
+            // ShaderWrite in the destination because cleared counters are then bumped by atomics.
             CmdBarrier(CL, EStageFlags::Transfer, EAccessFlags::TransferWrite,
-                EStageFlags::Compute | EStageFlags::MeshShader, EAccessFlags::ShaderRead);
+                EStageFlags::Compute | EStageFlags::MeshShader | EStageFlags::VertexShader | EStageFlags::PixelShader |
+                EStageFlags::IndirectArguments,
+                EAccessFlags::ShaderRead | EAccessFlags::ShaderWrite | EAccessFlags::IndirectRead);
         }
 
         /** A cull dispatch whose output feeds later dispatches, the task/mesh stages, and indirect fetch. */
         inline void ComputeToGeometry(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Compute, EAccessFlags::ShaderWrite,
-                EStageFlags::Compute | EStageFlags::MeshShader |
+                EStageFlags::Compute | EStageFlags::MeshShader | EStageFlags::VertexShader | EStageFlags::PixelShader |
                 EStageFlags::IndirectArguments,
-                EAccessFlags::ShaderRead | EAccessFlags::IndirectRead);
+                EAccessFlags::ShaderRead | EAccessFlags::ShaderWrite | EAccessFlags::IndirectRead);
         }
 
         /** A dispatch that writes nothing but indirect arguments. */

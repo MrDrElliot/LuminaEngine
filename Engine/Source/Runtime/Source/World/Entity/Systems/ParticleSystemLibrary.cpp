@@ -61,4 +61,26 @@ namespace Lumina
         World->SetEntityLifetime(Spawned, ResolveLifetime(ParticleSystem, Lifetime));
         return Spawned;
     }
+
+    void CParticleSystemLibrary::GetCollisions(CWorld* World, ECS::FEntity Entity, int32 EmitterIndex, TVector<FParticleCollision>& OutCollisions)
+    {
+        if (World == nullptr)
+        {
+            return;
+        }
+
+        const SParticleSystemComponent* Effect = World->TryGetComponent<SParticleSystemComponent>(Entity);
+        if (Effect == nullptr)
+        {
+            return;
+        }
+
+        for (const FParticleCollision& Hit : Effect->Collisions)
+        {
+            if (EmitterIndex < 0 || Hit.EmitterIndex == EmitterIndex)
+            {
+                OutCollisions.push_back(Hit);
+            }
+        }
+    }
 }

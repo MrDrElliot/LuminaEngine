@@ -330,6 +330,16 @@ namespace Lumina
         }
         ParticleGPUStates.clear();
 
+        for (FParticleCollisionReadback& Readback : ParticleCollisionReadback)
+        {
+            if (Readback.Buffer)
+            {
+                RHI::Retire(Readback.Buffer);
+            }
+            Readback = {};
+        }
+        ParticleCollisionResults.clear();
+
         #if USING(WITH_EDITOR)
         for (FPickerReadbackSlot& Slot : PickerReadbackRing)
         {

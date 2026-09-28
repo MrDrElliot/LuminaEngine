@@ -772,16 +772,9 @@ namespace Lumina
 
     FScenePrimitiveSet::FGrassSpeciesBinding FScenePrimitiveSet::AcquireGrassSpecies(CStaticMesh* Mesh, uint32 Capacity)
     {
-        FGrassSpeciesBinding Result;
-
         if (Mesh == nullptr || Capacity == 0u)
         {
-            return Result;
-        }
-
-        if (auto It = GrassSpecies.find(Mesh); It != GrassSpecies.end() && It->second.Capacity >= Capacity)
-        {
-            return It->second;
+            return {};
         }
 
         // One surface only. A multi-material grass mesh would need a block per surface, and silently
@@ -789,34 +782,34 @@ namespace Lumina
         const uint32 Handle = FMeshResolveCache::Get().Resolve(Mesh, {});
         if (!FMeshResolveCache::Get().IsValidHandle(Handle))
         {
-            return Result;
+            return {};
         }
 
         const FResolvedMesh& Resolved = FMeshResolveCache::Get().GetEntry(Handle);
         if (Resolved.Surfaces.empty())
         {
-            return Result;
+            return {};
         }
 
-        const FResolvedSurface& Surface = Resolved.Surfaces[0];
+        if (auto It = GrassSpecies.find(Mesh); It != GrassSpecies.end() && It->second.Capacity >= Capacity)
+        {
+            // The first resolve may have been the default material standing in for one still compiling or loading.
+            if (It->second.ResolvedGeneration != Resolved.Generation)
+            {
+                BindGrassSurface(It->second, Resolved);
+            }
+            return It->second;
+        }
 
-        const uint32 BatchIndex = Batches.FindOrAddBatch(Surface);
-        Batches.AddBatchRef(BatchIndex, false);
-
-        // Grass is never skinned and always has geometry once its mesh resolved. Active is set per blade by
-        // the scatter, not here, so an unwritten slot in the block stays free.
-        EInstanceFlags Flags = EInstanceFlags::HasGeometry | Surface.MaterialFlags;
-
+        FGrassSpeciesBinding Result;
         Result.InstanceSlotBase  = AllocateInstanceSlotBlock(Capacity);
         Result.Capacity          = Capacity;
-        Result.DrawIDAndFlags    = PackDrawIDAndFlags(BatchIndex, Flags);
-        Result.SurfaceDescIndex  = InternSurfaceDesc(Surface);
-        Result.MaterialIndex     = Surface.MaterialIdx;
         Result.MeshletHeaderSlot = Mesh->GetMeshResource().MeshBuffers.MeshletHeaderSlot;
         // Enclosing-sphere radius of the bind-pose AABB, which is what the cull's sphere test wants.
         const FVector3 Extent = Mesh->GetAABB().GetSize() * 0.5f;
         Result.MeshBoundsRadius  = Math::Sqrt(Extent.x * Extent.x + Extent.y * Extent.y + Extent.z * Extent.z);
         Result.bValid            = true;
+        BindGrassSurface(Result, Resolved);
 
         // The block starts inactive so a frame that dispatches no scatter draws nothing rather than garbage.
         for (uint32 i = 0; i < Capacity; ++i)
@@ -826,6 +819,28 @@ namespace Lumina
 
         GrassSpecies[Mesh] = Result;
         return Result;
+    }
+
+    void FScenePrimitiveSet::BindGrassSurface(FGrassSpeciesBinding& Binding, const FResolvedMesh& Resolved)
+    {
+        const FResolvedSurface& Surface = Resolved.Surfaces[0];
+
+        const uint32 BatchIndex = Batches.FindOrAddBatch(Surface);
+        Batches.AddBatchRef(BatchIndex, false);
+        if (Binding.ResolvedGeneration != 0u)
+        {
+            Batches.ReleaseBatchRef(Binding.BatchIndex, false);
+        }
+
+        // Grass is never skinned and always has geometry once its mesh resolved. Active is set per blade by
+        // the scatter, not here, so an unwritten slot in the block stays free.
+        const EInstanceFlags Flags = EInstanceFlags::HasGeometry | Surface.MaterialFlags;
+
+        Binding.BatchIndex         = BatchIndex;
+        Binding.DrawIDAndFlags     = PackDrawIDAndFlags(BatchIndex, Flags);
+        Binding.SurfaceDescIndex   = InternSurfaceDesc(Surface);
+        Binding.MaterialIndex      = Surface.MaterialIdx;
+        Binding.ResolvedGeneration = Resolved.Generation;
     }
 
     uint32 FScenePrimitiveSet::InternSurfaceDesc(const FResolvedSurface& Surface)

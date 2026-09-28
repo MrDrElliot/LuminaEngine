@@ -377,8 +377,9 @@ namespace Lumina::Physics
                                      || Math::LengthSquared(ColliderRotationOffset) > LE_SMALL_NUMBER;
         if (bHasColliderOffset)
         {
+            // In the entity's scaled local space, like the shape sizes above and the navmesh's reading of the same offset.
             const FQuat OffsetRotation(ColliderRotationOffset);
-            const b3Transform Offset = Box3DUtils::ToB3Transform(ColliderTranslationOffset, OffsetRotation);
+            const b3Transform Offset = Box3DUtils::ToB3Transform(ColliderTranslationOffset * Scale, OffsetRotation);
 
             for (FPendingShape& Shape : Out.Shapes)
             {

@@ -394,6 +394,7 @@ namespace Lumina
         R.ParticlesPerEvent       = Math::Max(Emitter.ParticlesPerEvent, 1);
         R.EventRate               = Math::Max(Emitter.EventRate, 0.0f);
         R.InheritParentVelocity   = Emitter.InheritParentVelocity;
+        R.bSpawnAlongSurfaceNormal = Emitter.bSpawnAlongSurfaceNormal;
 
         return R;
     }

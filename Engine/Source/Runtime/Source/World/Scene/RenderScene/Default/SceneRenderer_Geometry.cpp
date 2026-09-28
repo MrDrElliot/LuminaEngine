@@ -49,8 +49,10 @@ namespace Lumina
 
             if (Op.Mode == FTexturePaintOp::EMode::Clear)
             {
+                // Transfer in the source too, so two clears of one target in a frame stay ordered.
                 RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+                    RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer,
+                    RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::TransferWrite,
                     RHI::EStageFlags::Transfer,
                     RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                 const float Clear[4] = { Op.Color.r, Op.Color.g, Op.Color.b, Op.Color.a };
@@ -113,7 +115,8 @@ namespace Lumina
 
         // Painted texels are sampled by materials in every shader stage.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite,
-                        RHI::EStageFlags::PixelShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
+                        RHI::EStageFlags::PixelShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::MeshShader | RHI::EStageFlags::Compute,
+                        RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
     }
 
     void FDefaultSceneRenderer::VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
@@ -890,6 +893,11 @@ namespace Lumina
             InitialArgs.InstanceCount = 0u;
             InitialArgs.FirstVertex   = 0u;
             InitialArgs.FirstInstance = 0u;
+
+            // A capture view resets these while the primary view's terrain draws may still be fetching them.
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::None,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
             WriteBuffer(CL, State.IndirectDrawBuffer.Gpu, &InitialArgs, sizeof(InitialArgs));
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
@@ -974,7 +982,7 @@ namespace Lumina
         float   TileWorldSize   = 0.0f;
         float   MaxHeight       = 0.0f;
         float   TerrainBaseY    = 0.0f;
-        uint32  _Pad0 = 0;
+        uint32  Resolution      = 0;
         uint32  _Pad1 = 0;
         uint32  _Pad2 = 0;
     };
@@ -1047,10 +1055,11 @@ namespace Lumina
                     continue;
                 }
 
-                // A species may cap its own draw distance below the component's radius.
-                const float Radius = Species.CullDistance > 0.0f
+                // A species may cap its own radius, and dense grass keeps a bounded candidate grid rather than a huge dispatch.
+                constexpr float GrassMaxGridSide = 2048.0f;
+                const float Radius = Math::Min(Species.CullDistance > 0.0f
                                    ? Math::Min(Species.CullDistance, TerrainItem.GrassMaxDrawDistance)
-                                   : TerrainItem.GrassMaxDrawDistance;
+                                   : TerrainItem.GrassMaxDrawDistance, Species.CellSize * GrassMaxGridSide * 0.5f);
                 if (Radius <= 0.0f || Species.CellSize <= 0.0f)
                 {
                     continue;
@@ -1133,6 +1142,7 @@ namespace Lumina
                 Push.TileWorldSize      = TerrainItem.TileWorldSize;
                 Push.MaxHeight          = TerrainItem.MaxHeight;
                 Push.TerrainBaseY       = Origin.y;
+                Push.Resolution         = (uint32)TerrainItem.Resolution;
 
                 const uint32 Groups = (GridSide + 7u) / 8u;
                 RHI::CmdDispatch(CL, MakeArgs(Push), Groups, Groups, 1u);
@@ -1306,6 +1316,9 @@ namespace Lumina
 
             RHI::CmdEndRenderPass(CL);
             VisLoadOp = RHI::ELoadOp::Load;   // only the first terrain may own the clear
+
+            // The next terrain's pass loads these same attachments, and separate passes are not ordered for free.
+            Barriers::RasterToRaster(CL);
         }
 
         Barriers::RasterToRead(CL);
@@ -1439,6 +1452,9 @@ namespace Lumina
             RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer, 1u, sizeof(RHI::FDrawIndirectArguments));
 
             RHI::CmdEndRenderPass(CL);
+
+            // The next terrain's pass loads these same attachments, and separate passes are not ordered for free.
+            Barriers::RasterToRaster(CL);
         }
 
         Barriers::RasterToRead(CL);

@@ -135,15 +135,20 @@ namespace Lumina
 
     void CParticleModule_SceneCollision::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
+        // Scoped, so a stack with several collision modules does not declare the hit twice.
         const FString Hit = "CollideWithSceneDepth(P.Position, P.Velocity, DeltaTime, " + Compiler.Param("Restitution", Restitution)
-            + ", " + Compiler.Param("Friction", Friction) + ", " + Compiler.Param("Thickness", Thickness) + ")";
-        Compiler.EmitUpdate("if (" + Hit + ")");
+            + ", " + Compiler.Param("Friction", Friction) + ", " + Compiler.Param("Thickness", Thickness) + ", HitNormal)";
         Compiler.EmitUpdate("{");
-        Compiler.EmitUpdate("\tRaiseParticleEvent(PARTICLE_EVENT_COLLISION, P);");
+        Compiler.EmitUpdate("\tconst float3 ImpactVelocity = P.Velocity;");
+        Compiler.EmitUpdate("\tfloat3 HitNormal;");
+        Compiler.EmitUpdate("\tif (" + Hit + ")");
+        Compiler.EmitUpdate("\t{");
+        Compiler.EmitUpdate("\t\tRaiseParticleCollision(P, HitNormal, max(-dot(ImpactVelocity, HitNormal), 0.0));");
         if (bKillOnHit)
         {
-            Compiler.EmitUpdate("\tP.Age = P.Lifetime;");
+            Compiler.EmitUpdate("\t\tP.Age = P.Lifetime;");
         }
+        Compiler.EmitUpdate("\t}");
         Compiler.EmitUpdate("}");
     }
 

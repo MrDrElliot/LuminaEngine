@@ -56,8 +56,9 @@ float3 ApplyAerialPerspective(float3 Color, float2 UV, float Depth)
     float W       = saturate(sqrt(RayDist / max(Pass().AerialRange, 1.0)));
 
     float3 UVW       = float3(UV, W);
-    float3 InScatter = SampleTexture3D(Pass().AerialInScatterIndex,     SAMPLER_LINEAR_CLAMP, UVW).rgb;
-    float3 Trans     = SampleTexture3D(Pass().AerialTransmittanceIndex, SAMPLER_LINEAR_CLAMP, UVW).rgb;
+    // Explicit level, since an implicit one needs compute derivatives and the LUT has a single mip anyway.
+    float3 InScatter = SampleTexture3DLevel(Pass().AerialInScatterIndex,     SAMPLER_LINEAR_CLAMP, UVW, 0.0).rgb;
+    float3 Trans     = SampleTexture3DLevel(Pass().AerialTransmittanceIndex, SAMPLER_LINEAR_CLAMP, UVW, 0.0).rgb;
 
     float3 Fogged = Color * Trans + InScatter;
     return lerp(Color, Fogged, saturate(Pass().AerialIntensity));

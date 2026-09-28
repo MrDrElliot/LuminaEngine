@@ -34,6 +34,13 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint WaterIndex : SV_Vulk
 
     float2 UV       = float2(float(gx), float(gy)) / float(Cells);   // [0,1]
     float3 LocalPos = float3(UV.x - 0.5, 0.0, UV.y - 0.5);
+
+    // Only the outermost ring stretches, so the grid keeps its density near the camera while the sea runs to the horizon.
+    if (W.HorizonScale > 1.0 && (gx == 0u || gy == 0u || gx == Cells || gy == Cells))
+    {
+        LocalPos.xz *= W.HorizonScale;
+        UV = LocalPos.xz + 0.5;
+    }
     float3 WorldBase = mul(W.WaterToWorld, float4(LocalPos, 1.0)).xyz;
 
     FGerstnerResult G = EvaluateGerstner(WorldBase.xz, W, GetTime());

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "Core/Object/FunctionLibrary.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Transform.h"
@@ -29,5 +30,9 @@ namespace Lumina
         FUNCTION()
         static ECS::FEntity SpawnParticleSystemAttached(CWorld* World, CParticleSystem* ParticleSystem,
             ECS::FEntity Parent, const FName& Socket, FVector3 Offset, float Lifetime);
+
+        // Where the particles of emitters flagged bReportCollisions hit, a few frames ago. A negative index takes every emitter.
+        FUNCTION()
+        static void GetCollisions(CWorld* World, ECS::FEntity Entity, int32 EmitterIndex, TVector<FParticleCollision>& OutCollisions);
     };
 }

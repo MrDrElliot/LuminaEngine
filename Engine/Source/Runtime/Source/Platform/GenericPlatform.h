@@ -17,6 +17,7 @@ using int16  = signed short int;
 using int32  = signed int;
 using int64  = int64_t;
 
+
 namespace Lumina
 {
     using int8   = signed char;

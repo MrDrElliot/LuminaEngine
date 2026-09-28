@@ -323,6 +323,13 @@ namespace Lumina
         const uint32 HDRWidth = HDR.GetSizeX();
         const uint32 HDRHght  = HDR.GetSizeY();
 
+        // Per pass, since the frame-scratch clear runs once and a capture view would bin on top of the primary's counts.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::None,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
+        RHI::CmdMemzero(CL, Histogram);
+        RHI::Barriers::TransferToCompute(CL);
+
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BuildCS));
 
         FHistogramBuildPushConstants BuildPC = {};
@@ -531,10 +538,12 @@ namespace Lumina
                 RHI::EStageFlags::Transfer,
                 RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
             RHI::CmdCopyTexture(CL, Source->Texture, RHI::FTextureSlice{}, CurrentView->Output.Texture, RHI::FTextureSlice{});
+
+            // The outline, widgets and UI then load and blend Output as a color attachment.
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                RHI::EStageFlags::PixelShader,
-                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
         }
     }
 

@@ -126,6 +126,31 @@ public readonly unsafe struct TVector<T> : IList<T>
         }
     }
 
+    // Grows with default-constructed elements or truncates, in one crossing rather than one per element.
+    public void Resize(int Size)
+    {
+        if (IsValid && Size >= 0)
+        {
+            OpsPtr->Resize((void*)Vector, (nuint)Size);
+        }
+    }
+
+    public void Reserve(int Size)
+    {
+        if (IsValid && Size > 0)
+        {
+            OpsPtr->Reserve((void*)Vector, (nuint)Size);
+        }
+    }
+
+    // Replaces the contents with Values in one resize and one copy, for bulk data such as a terrain heightmap.
+    public void Assign(ReadOnlySpan<T> Values)
+    {
+        ThrowIfMarshalled(nameof(Assign));
+        Resize(Values.Length);
+        Values.CopyTo(AsSpan());
+    }
+
     public void RemoveAt(int index)
     {
         if ((uint)index >= (uint)Count)

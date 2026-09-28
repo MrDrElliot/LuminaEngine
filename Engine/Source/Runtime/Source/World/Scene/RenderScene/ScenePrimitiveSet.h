@@ -291,6 +291,10 @@ namespace Lumina
             uint32 MaterialIndex      = 0;
             float  MeshBoundsRadius   = 0.0f;
             bool   bValid             = false;
+
+            // The batch the block holds a reference on and the resolve it was bound from.
+            uint32 BatchIndex         = 0;
+            uint32 ResolvedGeneration = 0;
         };
 
         /**
@@ -302,6 +306,9 @@ namespace Lumina
          * Idempotent per (mesh, capacity); a second call for the same species returns the same block.
          */
         FGrassSpeciesBinding AcquireGrassSpecies(CStaticMesh* Mesh, uint32 Capacity);
+
+        // Points a species' block at its surface's current batch, material and surface desc.
+        void BindGrassSurface(FGrassSpeciesBinding& Binding, const FResolvedMesh& Resolved);
 
         // Touches only Primitives[Index], so this half is parallel-safe; kNoBoneSlice means it needs one.
         uint32                      TouchBoneSlice(uint32 Index, uint32 Count, uint32 FrameNumber);

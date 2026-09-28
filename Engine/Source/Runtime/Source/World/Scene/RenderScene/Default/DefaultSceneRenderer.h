@@ -285,8 +285,9 @@ namespace Lumina
                 uint32                  EmissionMeshSlot    = 0u;
                 // The parent emitter in the same entity when this one is a sub-emitter, else -1.
                 int32                   SourceEmitterIndex  = -1;
-                // Event lists this emitter's particles raise because a sub-emitter consumes them.
+                // Event lists this emitter's particles raise because a sub-emitter consumes them or scripts read them.
                 uint32                  RaisedEventMask     = 0u;
+                bool                    bReportCollisions   = false;
                 float                   RaisedEventRate     = 0.0f;
                 TVector<FParticleEventGPU> ScriptEmits;
             };
@@ -1401,6 +1402,24 @@ namespace Lumina
         uint32                                          GrassCursorCursor = 0;
         
         THashMap<ECS::FEntity, TVector<FParticleGPUState>> ParticleGPUStates;
+
+        struct FParticleCollisionSource
+        {
+            ECS::FEntity Entity;
+            int32        EmitterIndex = 0;
+            RHI::GPUPtr  EventBuffer = 0;
+        };
+        // One frame slot's copies of the collision lists of emitters that report them, read once the slot comes round again.
+        struct FParticleCollisionReadback
+        {
+            RHI::FGPUAllocation               Buffer = {};
+            TVector<FParticleCollisionSource> Sources;
+        };
+        TArray<FParticleCollisionReadback, RHI::kFramesInFlight> ParticleCollisionReadback = {};
+        // Read back but not yet handed to the components, which the next extract does.
+        THashMap<ECS::FEntity, TVector<FParticleCollision>> ParticleCollisionResults;
+        void ReadParticleCollisions();
+        void CopyParticleCollisions(RHI::FCmdListH CL);
         THashMap<uint64, TVector<RHI::FGPUAllocation>>    ParticleBufferPool;
         uint64                                            ParticlePoolBytes = 0;
         // Set once a pooled buffer is handed out this frame, since its previous frame's reads need a barrier before the clear.
