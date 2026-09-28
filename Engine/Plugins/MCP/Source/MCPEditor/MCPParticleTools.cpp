@@ -21,7 +21,8 @@
 
 namespace Lumina::MCP
 {
-    namespace
+    // Named because the other tool files share these Register names and can land in one unity blob.
+    namespace ParticleTools
     {
         enum class EParticleAccess : uint8
         {
@@ -793,18 +794,18 @@ namespace Lumina::MCP
 
     void RegisterParticleTools(FStringView Owner)
     {
-        RegisterListModuleTypes(Owner);
-        RegisterDescribe(Owner);
-        RegisterCreate(Owner);
-        RegisterAddEmitter(Owner);
-        RegisterRemoveEmitter(Owner);
-        RegisterSetEmitterProperty(Owner);
-        RegisterAddModule(Owner);
-        RegisterRemoveModule(Owner);
-        RegisterMoveModule(Owner);
-        RegisterSetModuleProperty(Owner);
-        RegisterSetUserParameter(Owner);
-        RegisterRemoveUserParameter(Owner);
-        RegisterCompile(Owner);
+        ParticleTools::RegisterListModuleTypes(Owner);
+        ParticleTools::RegisterDescribe(Owner);
+        ParticleTools::RegisterCreate(Owner);
+        ParticleTools::RegisterAddEmitter(Owner);
+        ParticleTools::RegisterRemoveEmitter(Owner);
+        ParticleTools::RegisterSetEmitterProperty(Owner);
+        ParticleTools::RegisterAddModule(Owner);
+        ParticleTools::RegisterRemoveModule(Owner);
+        ParticleTools::RegisterMoveModule(Owner);
+        ParticleTools::RegisterSetModuleProperty(Owner);
+        ParticleTools::RegisterSetUserParameter(Owner);
+        ParticleTools::RegisterRemoveUserParameter(Owner);
+        ParticleTools::RegisterCompile(Owner);
     }
 }
