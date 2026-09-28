@@ -46,8 +46,12 @@ namespace Lumina::ClangUtils
         }
         clang_disposeTokens(TranslationUnit, Tokens, NumTokens);
 
-        // The extent can run one token past the parameter, so a separator is trimmed rather than kept.
-        while (!Result.empty() && (Result.back() == ',' || Result.back() == ')'))
+        // The extent can run one token past the parameter, and only an unbalanced paren is that overrun, never the close of FName().
+        auto Unbalanced = [&Result]()
+        {
+            return std::count(Result.begin(), Result.end(), ')') > std::count(Result.begin(), Result.end(), '(');
+        };
+        while (!Result.empty() && (Result.back() == ',' || (Result.back() == ')' && Unbalanced())))
         {
             Result.pop_back();
         }
