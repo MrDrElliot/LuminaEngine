@@ -7,7 +7,7 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/DelegateProperty.h"
 #include "Core/Delegates/CoreDelegates.h"
-#include "ScriptDelegateTestTypes.h"
+#include "Scripting/ScriptDelegateTestTypes.h"
 
 using namespace Lumina;
 

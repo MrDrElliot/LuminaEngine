@@ -29,7 +29,7 @@
 #include "Scripting/DotNet/ExportSignature.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/InstancedStruct.h"
-#include "ScriptDelegateTestTypes.h"
+#include "Scripting/ScriptDelegateTestTypes.h"
 
 using namespace Lumina;
 
