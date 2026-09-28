@@ -2112,6 +2112,7 @@ namespace Lumina::Reflection
             Writer.BeginBlock();
             Writer.Linef("if (global::System.Runtime.InteropServices.GCHandle.FromIntPtr(__handle).Target is %s __o)", ClassName.c_str());
             Writer.BeginBlock();
+            Writer.Line("using var __scope = global::LuminaSharp.Game.EnterScriptEvent(__o);");
             if (FB.bVoid)
             {
                 Writer.Linef("__o.%s(%s);", Name.c_str(), CallArgs.c_str());
