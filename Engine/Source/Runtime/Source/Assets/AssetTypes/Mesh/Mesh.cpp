@@ -94,6 +94,11 @@ namespace Lumina
         GenerateGPUBuffers();
     }
 
+    bool CMesh::IsGeometryResident() const
+    {
+        return !HasAnyFlag(OF_NeedsLoad) && MeshResources != nullptr && MeshResources->MeshBuffers.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot;
+    }
+
     bool CMesh::IsReadyForRender() const
     {
         LUMINA_PROFILE_SCOPE();
