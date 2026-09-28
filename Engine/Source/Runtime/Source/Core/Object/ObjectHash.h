@@ -32,6 +32,7 @@ namespace Lumina
 
         CObjectBase* FindObject(const FGuid& GUID);
         CObjectBase* FindObject(const FName& Name, CClass* Class);
+        CObjectBase* FindObject(const FName& Name, const CPackage* Package);
 
         void Clear();
 

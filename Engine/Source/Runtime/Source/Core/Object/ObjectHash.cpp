@@ -78,6 +78,28 @@ namespace Lumina
         return nullptr;
     }
 
+    CObjectBase* FObjectHashTables::FindObject(const FName& Name, const CPackage* Package)
+    {
+        LUMINA_PROFILE_SCOPE();
+        FReadScopeLock Lock(Mutex);
+
+        auto It = ObjectNameHash.find(Name);
+        if (It == ObjectNameHash.end())
+        {
+            return nullptr;
+        }
+
+        for (CObjectBase* Object : It->second)
+        {
+            if (Object->GetPackage() == Package && !Object->HasAnyFlag(OF_MarkedDestroy))
+            {
+                return Object;
+            }
+        }
+
+        return nullptr;
+    }
+
 
     void FObjectHashTables::Clear()
     {
