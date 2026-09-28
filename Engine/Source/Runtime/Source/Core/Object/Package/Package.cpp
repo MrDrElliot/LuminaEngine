@@ -885,6 +885,8 @@ namespace Lumina
                 continue;
             }
 
+            // Flagged first, so one a holder keeps alive can no longer be found by name and reused by a recreate at this path.
+            ExportObject->SetFlag(OF_MarkedDestroy);
             ExportObject->ConditionalBeginDestroy();
         }
 

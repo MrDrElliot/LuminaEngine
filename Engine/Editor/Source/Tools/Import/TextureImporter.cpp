@@ -92,15 +92,15 @@ namespace Lumina
         }
 
         CPackage* Package = Texture->GetPackage();
-        if (CPackage::SavePackage(Package, Package->GetPackagePath()))
+        if (!CPackage::SavePackage(Package, Package->GetPackagePath()))
         {
-            FAssetRegistry::Get().AssetCreated(Texture);
-        }
-        else
-        {
-            LOG_ERROR("[TextureImport] failed to save '{0}'; asset will not be registered", Package->GetPackagePath());
+            // Discarded rather than left unsaved in memory, where it would make every retry at this path skip.
+            OutResult.Error = FString("Failed to save ") + FString(Package->GetPackagePath().c_str());
+            Import::Textures::DiscardFailedCook(Texture);
+            return;
         }
 
+        FAssetRegistry::Get().AssetCreated(Texture);
         OutResult.CreatedObjects.push_back(Texture);
     }
 
