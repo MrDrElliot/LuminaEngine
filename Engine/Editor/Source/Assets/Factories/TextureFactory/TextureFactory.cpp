@@ -1164,15 +1164,10 @@ namespace Lumina
 
         const Import::Textures::FTextureImportResult& Result = MaybeResult.value();
 
-        // A caller-supplied role wins; otherwise classify by filename.
-        if (Request.ColorSpace != ETextureColorSpace::Auto)
-        {
-            Texture->ColorSpace = Request.ColorSpace;
-        }
-        else if (Texture->ColorSpace == ETextureColorSpace::Auto)
-        {
-            Texture->ColorSpace = ClassifyColorSpaceByFilename(SourcePath.c_str());
-        }
+        // A new texture starts as SRGB rather than Auto, so an Auto request classifies by filename unconditionally.
+        Texture->ColorSpace = Request.ColorSpace != ETextureColorSpace::Auto
+            ? Request.ColorSpace
+            : ClassifyColorSpaceByFilename(SourcePath.c_str());
 
         // Float-source data must take the Environment path; Basis would silently corrupt it.
         const bool bIsFloatSource =

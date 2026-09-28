@@ -181,6 +181,7 @@ namespace Lumina
         HasGeometry             = BIT(9),   // the mesh's meshlet header is resident
 
         ShadowOnly              = BIT(10),  // survives shadow views only; every camera view rejects it
+        NoDecals                = BIT(11),  // decals pass over it, for things that move through them
     };
 
     ENUM_CLASS_FLAGS(EInstanceFlags);
@@ -657,9 +658,10 @@ namespace Lumina
         float       Opacity;            // master coverage multiplier
         uint32      MaterialIndex;      // slot into the material uniform buffer
         uint32      Flags;              // reserved
+        FVector4    UVTransform;        // xy scale and zw offset of the atlas cell shown
     };
 
-    static_assert(sizeof(FGPUDecal) == 144, "FGPUDecal layout must match DecalCommon.slang");
+    static_assert(sizeof(FGPUDecal) == 160, "FGPUDecal layout must match DecalCommon.slang");
     VERIFY_SSBO_ALIGNMENT(FGPUDecal);
 
     struct alignas(16) FGPUReflectionProbe
@@ -1291,9 +1293,10 @@ namespace Lumina
 
         // Opaque scene depth, for the screen-space traces that run after the depth pass.
         uint32          SceneDepthIndex   = ~0u;
-        uint32          _DepthPad0        = 0;
-        uint32          _DepthPad1        = 0;
-        uint32          _DepthPad2        = 0;
+        // This view's decal layers, ~0u when no decal rendered, so every opaque pass composites them.
+        uint32          DBufferAIndex     = ~0u;
+        uint32          DBufferBIndex     = ~0u;
+        uint32          DBufferCIndex     = ~0u;
 
         // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
         FExponentialHeightFogParams FogParams = {};

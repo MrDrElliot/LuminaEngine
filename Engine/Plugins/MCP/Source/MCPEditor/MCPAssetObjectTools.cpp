@@ -239,10 +239,10 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SDeleteAssetParams& In, SDeleteAssetResult& Out)
                 {
-                    const TOptional<FGuid> Guid = FGuid::TryParse(FStringView(In.Asset));
+                    const TOptional<FGuid> Guid = Agent::ParseAssetGuid(FStringView(In.Asset));
                     if (!Guid.IsSet())
                     {
-                        return Agent::FToolResult::Error(Lumina::Format("'{}' is not a GUID.", In.Asset));
+                        return Agent::FToolResult::Error(Lumina::Format("'{}' is neither a GUID nor an asset path.", In.Asset));
                     }
 
                     // The registry knows the path without loading, which a file about to go should not need.

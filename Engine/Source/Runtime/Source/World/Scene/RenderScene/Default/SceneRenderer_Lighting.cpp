@@ -539,9 +539,9 @@ namespace Lumina
         struct FDeferredMaterialPC
         {
             uint32      VisBufferIndex;
-            uint32      DBufferAIndex;
-            uint32      DBufferBIndex;
-            uint32      DBufferCIndex;
+            uint32      _Pad0;
+            uint32      _Pad1;
+            uint32      _Pad2;
             uint32      DrawListCount;
             uint32      SlotIndex;
             uint32      ScreenW;
@@ -559,18 +559,6 @@ namespace Lumina
         static_assert(sizeof(FDeferredMaterialPC) == 104, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
 
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
-        if (Frame.Primitives.DecalExtracts.empty())
-        {
-            PC.DBufferAIndex = 0xFFFFFFFFu;
-            PC.DBufferBIndex = 0xFFFFFFFFu;
-            PC.DBufferCIndex = 0xFFFFFFFFu;
-        }
-        else
-        {
-            PC.DBufferAIndex = (uint32)GetNamedImage(ENamedImage::DBufferA).GetResourceID();
-            PC.DBufferBIndex = (uint32)GetNamedImage(ENamedImage::DBufferB).GetResourceID();
-            PC.DBufferCIndex = (uint32)GetNamedImage(ENamedImage::DBufferC).GetResourceID();
-        }
         PC.DrawListCount = DrawListCapacity;
         PC.ScreenW       = Layout.ScreenW;
         PC.ScreenH       = Layout.ScreenH;

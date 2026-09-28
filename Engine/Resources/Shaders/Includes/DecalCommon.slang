@@ -18,6 +18,7 @@ struct FGPUDecal
     float    Opacity;        // master coverage multiplier
     uint     MaterialIndex;  // index into Materials()
     uint     Flags;          // reserved
+    float4   UVTransform;    // xy scale and zw offset of the atlas cell shown
 };
 
 // Per-pass constants, identical in VS and PS so they share one push range. The decal *index* still

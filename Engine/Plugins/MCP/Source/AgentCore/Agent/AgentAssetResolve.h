@@ -5,13 +5,16 @@
 #include "Containers/StringView.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Object.h"
+#include "GUID/GUID.h"
 
 namespace Lumina::Agent
 {
-    // Loads the asset a GUID string names; false with a reason when it is malformed or names nothing.
-    NODISCARD AGENTCORE_API bool ResolveAssetObject(FStringView Guid, CObject*& OutObject, FString& OutError);
+    // The GUID a GUID string or registered content path names, unset when it is neither.
+    NODISCARD AGENTCORE_API TOptional<FGuid> ParseAssetGuid(FStringView GuidOrPath);
 
-    // Loads the asset a GUID string names; false with a reason when it is malformed or names nothing.
+    // Loads the asset a GUID or content path names, such as /Game/Content/Decals/T_Scorch.
+    NODISCARD AGENTCORE_API bool ResolveAssetObject(FStringView GuidOrPath, CObject*& OutObject, FString& OutError);
+
     template<typename T>
     NODISCARD bool ResolveAsset(FStringView Guid, T*& OutAsset, FString& OutError)
     {

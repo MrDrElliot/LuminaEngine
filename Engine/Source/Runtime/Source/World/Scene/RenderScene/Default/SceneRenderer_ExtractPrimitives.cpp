@@ -587,6 +587,33 @@ namespace Lumina
 #endif
     }
 
+    static float DecalLifetimeFade(SDecalComponent& Decal, float WorldTime)
+    {
+        if (Decal.Lifetime <= 0.0f)
+        {
+            return 1.0f;
+        }
+        if (Decal.SpawnTime < 0.0f)
+        {
+            Decal.SpawnTime = WorldTime;
+        }
+        const float Remaining = Decal.Lifetime + Decal.FadeOutDuration - (WorldTime - Decal.SpawnTime);
+        if (Decal.FadeOutDuration <= 0.0f)
+        {
+            return Remaining > 0.0f ? 1.0f : 0.0f;
+        }
+        return Math::Clamp(Remaining / Decal.FadeOutDuration, 0.0f, 1.0f);
+    }
+
+    static FVector4 DecalAtlasTransform(const SDecalComponent& Decal)
+    {
+        const int32 Columns = Math::Max(Decal.AtlasColumns, 1);
+        const int32 Rows    = Math::Max(Decal.AtlasRows, 1);
+        const int32 Cell    = Math::Clamp(Decal.AtlasCell, 0, Columns * Rows - 1);
+        return FVector4(1.0f / (float)Columns, 1.0f / (float)Rows,
+                        (float)(Cell % Columns) / (float)Columns, (float)(Cell / Columns) / (float)Rows);
+    }
+
     void FDefaultSceneRenderer::ExtractDecals(ECS::FRegistry& Registry, FFrameData& Frame)
     {
         LUMINA_PROFILE_SECTION("Extract Decals");
@@ -599,8 +626,16 @@ namespace Lumina
         DecalSortScratch.clear();
         DecalGroupMinSort.clear();
 
-        DecalView.ForEach([&](ECS::FEntity Entity, const SDecalComponent& Decal)
+        const float WorldTime = (float)World->GetTimeSinceWorldCreation();
+
+        DecalView.ForEach([&](ECS::FEntity Entity, SDecalComponent& Decal)
         {
+            const float LifetimeFade = DecalLifetimeFade(Decal, WorldTime);
+            if (LifetimeFade <= 0.0f)
+            {
+                return;
+            }
+
             CMaterialInterface* Material = Decal.DecalMaterial.Get();
             FShaderH DecalVS;
             FShaderH DecalPS;
@@ -619,9 +654,10 @@ namespace Lumina
             Item.DecalToWorld  = Math::Scale(TransformStorage.Get(Entity).GetWorldMatrix(), Decal.Size);
             Item.WorldToDecal  = Math::Inverse(Item.DecalToWorld);
             Item.FadeAngleCos  = Math::Cos(Math::Radians(Math::Clamp(Decal.FadeAngle, 0.0f, 89.9f)));
-            Item.Opacity       = Math::Clamp(Decal.Opacity, 0.0f, 1.0f);
+            Item.Opacity       = Math::Clamp(Decal.Opacity, 0.0f, 1.0f) * LifetimeFade;
             Item.MaterialIndex = (uint32)MaterialIndex;
             Item.Flags         = 0;
+            Item.UVTransform   = DecalAtlasTransform(Decal);
 
             DecalSortScratch.push_back({ ShaderOwner, Decal.SortOrder, Item });
         });
