@@ -239,6 +239,10 @@ namespace Lumina::DotNet
         // which is what an explicit user request wants; a watched-file change pushes it out instead.
         TAtomic<double>                             GScriptReloadEarliest{ 0.0 };
 
+        // Counts finished reloads whether they compiled or not, so a waiter can tell a failure from one still queued.
+        TAtomic<int32>                              GScriptReloadsFinished{ 0 };
+        TAtomic<int32>                              GLastScriptReloadResult{ 0 };
+
         // Long enough to swallow the several events one save produces, short enough to feel immediate.
         constexpr double                            kScriptReloadQuietSeconds = 0.25;
 
@@ -1295,7 +1299,19 @@ namespace Lumina::DotNet
 
     void ReloadScripts()
     {
-        LoadScriptUnitsCore(BuildScriptUnits(), /*bEditorFollowups*/true);
+        const int32 Result = LoadScriptUnitsCore(BuildScriptUnits(), /*bEditorFollowups*/true);
+        GLastScriptReloadResult.store(Result, Atomic::MemoryOrderRelease);
+        GScriptReloadsFinished.fetch_add(1, Atomic::MemoryOrderAcqRel);
+    }
+
+    int32 GetFinishedScriptReloads()
+    {
+        return GScriptReloadsFinished.load(Atomic::MemoryOrderAcquire);
+    }
+
+    int32 GetLastScriptReloadResult()
+    {
+        return GLastScriptReloadResult.load(Atomic::MemoryOrderAcquire);
     }
 
     void TrackSignalListener(CWorld* World, void* Listener)

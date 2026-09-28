@@ -36,6 +36,10 @@ namespace Lumina::DotNet
     
     RUNTIME_API void ReloadScripts();
 
+    // How many reloads have run to completion, successful or not, and the host result of the latest, where 0 is success.
+    RUNTIME_API int32 GetFinishedScriptReloads();
+    RUNTIME_API int32 GetLastScriptReloadResult();
+
     //~ Registry signal listeners, tracked per world so teardown destroys the ones script never disposed.
     RUNTIME_API void TrackSignalListener(CWorld* World, void* Listener);
     RUNTIME_API void ForgetSignalListener(CWorld* World, void* Listener);
