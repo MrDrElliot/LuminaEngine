@@ -260,3 +260,70 @@ TEST(ECSTests, RenderSettings_OutliveTheirReader)
     const bool bDrawBillboards = Registry.Ctx().GetOrEmplace<FSceneRenderSettings>().bDrawBillboards;
     EXPECT_FALSE(bDrawBillboards);
 }
+
+namespace
+{
+    struct FEpochProbe
+    {
+        int32 Value = 0;
+    };
+
+    const uint32* EpochOf(const ECS::FRegistry& Registry)
+    {
+        const ECS::FSparseSet* Pool = Registry.FindStorage(ECS::GetComponentTypeID<FEpochProbe>());
+        return Pool != nullptr ? Pool->GetLayoutEpoch() : nullptr;
+    }
+}
+
+TEST(ECSTests, LayoutEpoch_ChangesWhenAPackedPoolRelocates)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity First = Registry.Create();
+    const FEpochProbe* Before = &Registry.Emplace<FEpochProbe>(First);
+    const uint32* Epoch = EpochOf(Registry);
+    ASSERT_NE(Epoch, nullptr);
+    const uint32 Initial = *Epoch;
+
+    for (int32 Index = 0; Index < 4096; ++Index)
+    {
+        Registry.Emplace<FEpochProbe>(Registry.Create());
+    }
+
+    // An in-place widen keeps every address, and only a move owes the view a revalidation.
+    const FEpochProbe* After = Registry.TryGet<FEpochProbe>(First);
+    if (After != Before)
+    {
+        EXPECT_NE(*Epoch, Initial);
+    }
+}
+
+TEST(ECSTests, LayoutEpoch_ChangesOnRemoval)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity A = Registry.Create();
+    const ECS::FEntity B = Registry.Create();
+    Registry.Emplace<FEpochProbe>(A).Value = 1;
+    Registry.Emplace<FEpochProbe>(B).Value = 2;
+
+    const uint32* Epoch = EpochOf(Registry);
+    ASSERT_NE(Epoch, nullptr);
+    const uint32 Before = *Epoch;
+
+    Registry.Remove<FEpochProbe>(A);
+    EXPECT_NE(*Epoch, Before);
+    EXPECT_EQ(Registry.Get<FEpochProbe>(B).Value, 2);
+}
+
+TEST(ECSTests, LayoutEpoch_ReadsDeadAfterThePoolIsDestroyed)
+{
+    const uint32* Epoch = nullptr;
+    {
+        ECS::FRegistry Registry{};
+        Registry.Emplace<FEpochProbe>(Registry.Create());
+        Epoch = EpochOf(Registry);
+        ASSERT_NE(Epoch, nullptr);
+        EXPECT_NE(*Epoch, ECS::FSparseSet::DeadLayoutEpoch);
+    }
+
+    EXPECT_EQ(*Epoch, ECS::FSparseSet::DeadLayoutEpoch);
+}

@@ -108,6 +108,10 @@ namespace Lumina::ECS
         NODISCARD CStruct* GetStruct() const { return TypeInfo.GetStruct(); }
         NODISCARD FORCEINLINE const FName& GetName() const { return TypeInfo.Name; }
 
+        // Changes whenever an element may move or die, and outlives the pool to read DeadLayoutEpoch after it.
+        NODISCARD FORCEINLINE const uint32* GetLayoutEpoch() const { return LayoutEpoch; }
+        static constexpr uint32 DeadLayoutEpoch = 0xFFFFFFFFu;
+
         NODISCARD FORCEINLINE bool IsPaged() const { return bPaged; }
         NODISCARD FORCEINLINE bool IsInPlaceDelete() const { return bInPlaceDelete; }
         NODISCARD FORCEINLINE uint32 GetPayloadPageSize() const { return PayloadPageMask + 1u; }
@@ -260,10 +264,13 @@ namespace Lumina::ECS
         RUNTIME_API uint32 ReleaseSlot(FEntity Entity);
 
         RUNTIME_API void GrowPayloadTo(size_t ElementCount);
+        RUNTIME_API void BumpLayoutEpoch();
         RUNTIME_API void DestroyLiveElements();
         RUNTIME_API void FreePayload();
 
         FComponentTypeInfo TypeInfo;
+
+        uint32* LayoutEpoch = nullptr;
 
         TVector<FEntity*> SparsePages;
         TVector<FEntity> Dense;

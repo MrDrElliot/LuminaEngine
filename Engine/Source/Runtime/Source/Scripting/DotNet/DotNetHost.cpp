@@ -1768,6 +1768,29 @@ LUMINA_DOTNET_EXPORT(void*, GetComponent)(uint64 World, uint32 Entity, const voi
     return (R && O) ? O->Get(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
 }
 
+// Also hands back the pool's layout epoch, so the view can revalidate itself without crossing again.
+LUMINA_DOTNET_EXPORT(void*, GetComponentTracked)(uint64 World, uint32 Entity, const void* Ops, const uint32** OutEpoch)
+{
+    *OutEpoch = nullptr;
+    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
+    const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
+    if (R == nullptr || O == nullptr)
+    {
+        return nullptr;
+    }
+
+    void* Component = O->Get(*R, static_cast<Lumina::ECS::FEntity>(Entity));
+    if (Component != nullptr)
+    {
+        if (const Lumina::ECS::FSparseSet* Pool = R->FindStorage(static_cast<uint32>(O->TypeId)))
+        {
+            *OutEpoch = Pool->GetLayoutEpoch();
+        }
+    }
+
+    return Component;
+}
+
 LUMINA_DOTNET_EXPORT(int, HasComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
@@ -2092,6 +2115,7 @@ LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(NativeSelfTest),
     LUMINA_DOTNET_SIG(FindComponentOps),
     LUMINA_DOTNET_SIG(GetComponent),
+    LUMINA_DOTNET_SIG(GetComponentTracked),
     LUMINA_DOTNET_SIG(HasComponent),
     LUMINA_DOTNET_SIG(EmplaceComponent),
     LUMINA_DOTNET_SIG(RemoveComponent),

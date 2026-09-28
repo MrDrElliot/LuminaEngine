@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -32,15 +32,19 @@ public readonly unsafe partial struct EntityRegistry
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Call_Lumina_CWorld_IsValidEntity", SuppressGCTransition = true)]
     private static partial bool ValidRaw(ulong World, uint Entity);
 
-    /// The component of type T on the entity, or null if absent (mirrors registry.try_get).
+    /// The component of type T on the entity, or null if absent (mirrors registry.try_get). Safe to keep across frames.
     public T? TryGet<T>(Entity Entity) where T : NativeStruct
     {
-        IntPtr Pointer = Native.GetComponent(WorldHandle, Entity.Id, ComponentOps<T>.Token);
+        uint* Epoch = null;
+        IntPtr Pointer = Native.GetComponentTracked(WorldHandle, Entity.Id, ComponentOps<T>.Token, &Epoch);
         if (Pointer == IntPtr.Zero)
         {
             return null;
         }
-        return Wrapper<T>.Create(Pointer);
+
+        T? View = Wrapper<T>.Create(Pointer);
+        View?.BindComponentView(WorldHandle, Entity.Id, ComponentOps<T>.Token, Epoch);
+        return View;
     }
 
     /// The component of type T on the entity; throws if absent (mirrors registry.get).
@@ -62,7 +66,9 @@ public readonly unsafe partial struct EntityRegistry
         {
             return null;
         }
-        return Wrapper<T>.Create(Pointer);
+
+        // The emplace ran signals that may have grown the pool, so the view tracks what is there now.
+        return TryGet<T>(Entity);
     }
 
     public bool Remove<T>(Entity Entity) where T : NativeStruct
