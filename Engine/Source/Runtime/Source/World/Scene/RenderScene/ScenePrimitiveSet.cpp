@@ -1411,6 +1411,7 @@ namespace Lumina
 
                 EInstanceFlags BaseFlags = EInstanceFlags::None;
                 if (C->bReceiveShadow)          { BaseFlags |= EInstanceFlags::ReceiveShadow; }
+                if (!C->bReceiveDecals)         { BaseFlags |= EInstanceFlags::NoDecals; }
                 if (C->bIgnoreOcclusionCulling) { BaseFlags |= EInstanceFlags::IgnoreOcclusionCulling; }
                 Prim.BaseFlags = BaseFlags;
 

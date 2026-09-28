@@ -66,7 +66,7 @@ PSOutput FragmentMain(PSInput Input)
 
     // Material graph aliases. UV0 is the projected decal UV (local XY -> [0,1]).
     uint   MaterialIndex = Decal.MaterialIndex;
-    float2 UV0           = Local.xy + 0.5;
+    float2 UV0           = (Local.xy + 0.5) * Decal.UVTransform.xy + Decal.UVTransform.zw;
     float3 WorldNormal   = Ngeo;
     float3 ViewPosition  = mul(GetCameraView(), float4(WorldPosition, 1.0)).xyz;
     float4 VertexColor   = float4(1.0, 1.0, 1.0, 1.0);

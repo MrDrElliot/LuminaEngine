@@ -67,6 +67,7 @@ enum EInstanceFlags
     HasGeometry     = BIT(9),   // the mesh's meshlet header is resident
 
     ShadowOnly      = BIT(10),  // survives shadow views only; every camera view rejects it
+    NoDecals        = BIT(11),  // decals pass over it
 }
 
 // Mirror of Lumina::FMeshletVertex. Position is three 16-bit offsets from the meshlet anchor -- decode
@@ -1108,9 +1109,10 @@ struct FSceneGlobalData
 
     // Opaque scene depth, for the screen-space traces that run after the depth pass.
     uint              SceneDepthIndex;
-    uint              _DepthPad0;
-    uint              _DepthPad1;
-    uint              _DepthPad2;
+    // This view's decal layers, ~0u when no decal rendered.
+    uint              DBufferAIndex;
+    uint              DBufferBIndex;
+    uint              DBufferCIndex;
 
     // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
     FExponentialHeightFogParams FogParams;

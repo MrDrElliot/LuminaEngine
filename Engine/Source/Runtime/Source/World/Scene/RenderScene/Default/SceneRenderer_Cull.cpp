@@ -561,6 +561,11 @@ namespace Lumina
             SceneGlobalData.SceneDepthIndex =
                 (uint32)CurrentView->Images[(int)ENamedImage::DepthAttachment].GetResourceID();
 
+            const bool bDecals = !Frame.Primitives.DecalExtracts.empty();
+            SceneGlobalData.DBufferAIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferA].GetResourceID() : ~0u;
+            SceneGlobalData.DBufferBIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferB].GetResourceID() : ~0u;
+            SceneGlobalData.DBufferCIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferC].GetResourceID() : ~0u;
+
             FrameFlags.bShadowMaskValid = (LightData.bHasSun != 0) &&
                                               (Frame.Lighting.Lights[0].ShadowDataIndex != INDEX_NONE);
             if (FrameFlags.bShadowMaskValid)

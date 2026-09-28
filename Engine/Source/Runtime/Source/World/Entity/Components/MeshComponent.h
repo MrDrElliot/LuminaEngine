@@ -51,6 +51,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows")
         bool bReceiveShadow = true;
 
+        // Off for anything that moves through the world, so a scorch mark does not paint the vehicle over it.
+        PROPERTY(Editable, Category = "Rendering")
+        bool bReceiveDecals = true;
+
         /** When true, this mesh blocks visibility for occluded objects behind it. */
         PROPERTY(Editable, Category = "Culling")
         bool bUseAsOccluder = true;

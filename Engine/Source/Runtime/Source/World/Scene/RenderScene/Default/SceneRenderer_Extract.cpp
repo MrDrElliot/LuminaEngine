@@ -780,6 +780,7 @@ namespace Lumina
 
             EInstanceFlags BaseFlags = SeedFlags;
             if (Component.bReceiveShadow)          { BaseFlags |= EInstanceFlags::ReceiveShadow; }
+            if (!Component.bReceiveDecals)         { BaseFlags |= EInstanceFlags::NoDecals; }
             if (Component.bIgnoreOcclusionCulling) { BaseFlags |= EInstanceFlags::IgnoreOcclusionCulling; }
             Component.CachedBaseFlags = BaseFlags;
 

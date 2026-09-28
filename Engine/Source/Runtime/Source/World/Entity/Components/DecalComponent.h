@@ -35,5 +35,26 @@ namespace Lumina
         /** Higher values draw later (on top of) lower ones when decals overlap. */
         PROPERTY(Editable, Category = "Decal")
         int32 SortOrder = 0;
+
+        // Cells across and down a sprite sheet, so one material carries several variants.
+        PROPERTY(Editable, Category = "Decal|Atlas", ClampMin = 1)
+        int32 AtlasColumns = 1;
+
+        PROPERTY(Editable, Category = "Decal|Atlas", ClampMin = 1)
+        int32 AtlasRows = 1;
+
+        // Counted across, then down.
+        PROPERTY(Editable, Category = "Decal|Atlas", ClampMin = 0)
+        int32 AtlasCell = 0;
+
+        // Seconds at full opacity before fading, where zero keeps the decal until it is destroyed.
+        PROPERTY(Editable, Category = "Decal|Lifetime", ClampMin = 0.0f, Units = "s")
+        float Lifetime = 0.0f;
+
+        PROPERTY(Editable, Category = "Decal|Lifetime", ClampMin = 0.0f, Units = "s")
+        float FadeOutDuration = 1.0f;
+
+        // World time the decal appeared, stamped on its first rendered frame when nothing set it.
+        float SpawnTime = -1.0f;
     };
 }

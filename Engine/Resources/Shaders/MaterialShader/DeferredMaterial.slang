@@ -9,14 +9,13 @@
 // Per-material GBuffer generation over exactly the pixels the classify passes proved that material
 // owns. COMPUTE, not a quad: every thread is a real pixel, so derivatives must be analytic.
 
-// Offsets 0-12 overlay FDBufferPushConstants (DBuffer.slang) so the shared BuildGBufferData -> ApplyDBuffer
 // reads the decal indices out of this same block: offset 0 is read there as an (unused) MeshletBase.
 struct FDeferredMaterialArgs
 {
     uint  VisBufferIndex;   // 0
-    uint  DBufferAIndex;    // 4
-    uint  DBufferBIndex;    // 8
-    uint  DBufferCIndex;    // 12
+    uint  _Pad0;            // 4
+    uint  _Pad1;            // 8
+    uint  _Pad2;            // 12
     uint  DrawListCount;    // 16  MeshletDrawList slot bound
     uint  SlotIndex;        // 20  this dispatch's dense material slot
     uint  ScreenW;          // 24
