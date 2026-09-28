@@ -43,7 +43,9 @@
   <ItemGroup>
     <!-- Bindings emitted by the Reflector. Globbed by MSBuild rather than listed, because they do
          not exist until the reflection step has run. -->
-    <Compile Include="$(MSBuildThisFileDirectory)..\..\..\Intermediates\CSharpBindings\**\*.generated.cs">
+    <!-- Test suites reflect only when they build, so their bindings would make this assembly depend on a test build. -->
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\..\Intermediates\CSharpBindings\**\*.generated.cs"
+             Exclude="$(MSBuildThisFileDirectory)..\..\..\Intermediates\CSharpBindings\*Tests\**;$(MSBuildThisFileDirectory)..\..\..\Intermediates\CSharpBindings\*Benchmarks\**">
       <Link>Generated\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Compile>
   </ItemGroup>

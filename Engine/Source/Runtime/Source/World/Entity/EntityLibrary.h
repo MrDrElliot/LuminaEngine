@@ -3,6 +3,7 @@
 #include "Core/Object/FunctionLibrary.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Containers/Vector.h"
+#include "Core/Math/Transform.h"
 #include "World/ECS/Entity.h"
 #include "EntityLibrary.generated.h"
 
@@ -29,6 +30,10 @@ namespace Lumina
         // Where the entity is drawn this frame, which follow cameras want over the simulated pose.
         FUNCTION()
         static FVector3 GetRenderLocation(CWorld* World, ECS::FEntity Entity);
+
+        // One crossing for a whole pool of entities that script moves every frame. Pairs by index, extras ignored.
+        FUNCTION()
+        static void SetLocalTransforms(CWorld* World, const ECS::FEntity* Entities, int32 EntityCount, const FTransform* Transforms, int32 TransformCount);
 
         FUNCTION()
         static ECS::FEntity GetFirstChild(CWorld* World, ECS::FEntity Entity);

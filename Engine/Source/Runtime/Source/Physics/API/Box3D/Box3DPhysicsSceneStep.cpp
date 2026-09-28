@@ -679,6 +679,7 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
+        FlushDeferredBodyCreations();
         bStepInProgress.store(true, std::memory_order_release);
         struct FStepGuard { TAtomic<bool>& F; ~FStepGuard() { F.store(false, std::memory_order_release); } } StepGuard{ bStepInProgress };
 

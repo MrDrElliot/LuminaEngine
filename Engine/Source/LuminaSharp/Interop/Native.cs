@@ -115,6 +115,15 @@ public static unsafe partial class Native
     // Pure reads (try_get / any_of): non-blocking, no managed re-entry -> SuppressGCTransition.
     [NativeCall(SuppressGCTransition = true)] public static partial IntPtr GetComponent(ulong World, uint Entity, IntPtr Ops);
     [NativeCall(SuppressGCTransition = true)] public static partial int HasComponent(ulong World, uint Entity, IntPtr Ops);
+
+    // Hand-bound, because the out-pointer to the pool's layout epoch is not a shape the generator covers.
+    public static IntPtr GetComponentTracked(ulong World, uint Entity, IntPtr Ops, uint** OutEpoch)
+    {
+        return GetComponentTracked_(World, Entity, Ops, OutEpoch);
+    }
+
+    private static readonly delegate* unmanaged[Cdecl, SuppressGCTransition]<ulong, uint, IntPtr, uint**, IntPtr> GetComponentTracked_ =
+        (delegate* unmanaged[Cdecl, SuppressGCTransition]<ulong, uint, IntPtr, uint**, IntPtr>)NativeBindings.Resolve(Host.NativeLibrary, "LuminaSharp_GetComponentTracked");
     // Emplace/Remove fire on_construct/on_destroy, which can re-enter managed (signal trampolines) -> not safe.
     [NativeCall] public static partial IntPtr EmplaceComponent(ulong World, uint Entity, IntPtr Ops);
     [NativeCall] public static partial int RemoveComponent(ulong World, uint Entity, IntPtr Ops);

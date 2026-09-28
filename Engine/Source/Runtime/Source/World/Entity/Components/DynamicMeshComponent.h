@@ -11,7 +11,36 @@
 
 namespace Lumina
 {
-    struct FDynamicMeshBuildData;
+    // One material-tagged slice of the index buffer.
+    struct FDynamicMeshSection
+    {
+        int32 MaterialSlot = 0;
+        int32 StartIndex   = 0;
+        int32 IndexCount   = 0;
+    };
+
+    // CPU-side streams for a mesh built from data, consumed by BuildMeshResource.
+    struct FDynamicMeshBuildData
+    {
+        TVector<FVector3>            Positions;
+        TVector<FVector3>            Normals;   // unpacked; octahedral-packed when the resource is built
+        TVector<FVector2>            UVs;
+        TVector<uint32>              Colors;    // RGBA8 packed
+        TVector<uint32>              Indices;
+        TVector<FDynamicMeshSection> Sections;
+    };
+
+    struct FMeshBuildOptions
+    {
+        uint32 MaxLODs             = 1;
+        bool   bGenerateTangents   = false;
+        bool   bMeshletConeCulling = false;
+        bool   bOptimizeMeshlets   = true;
+        bool   bFastMeshletBuild   = true;
+    };
+
+    // Packs the streams into a resource ready for meshlet generation, deriving normals when absent. Consumes positions and indices.
+    RUNTIME_API TUniquePtr<FMeshResource> BuildMeshResource(FDynamicMeshBuildData& Data, const FMeshBuildOptions& Options);
     
     struct FDynamicMeshRenderData
     {

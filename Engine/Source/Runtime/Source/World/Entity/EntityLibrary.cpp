@@ -5,6 +5,7 @@
 #include "World/Entity/EntityUtils.h"
 
 #include "World/Entity/Components/RelationshipComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
 
 namespace Lumina
@@ -71,6 +72,26 @@ namespace Lumina
         }
 
         return ECS::Utils::GetRenderLocation(ECS::GetWorldRegistry(*World), Entity);
+    }
+
+    void CEntityLibrary::SetLocalTransforms(CWorld* World, const ECS::FEntity* Entities, int32 EntityCount, const FTransform* Transforms, int32 TransformCount)
+    {
+        if (World == nullptr || Entities == nullptr || Transforms == nullptr)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SCOPE();
+
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        const int32 Count = Math::Min(EntityCount, TransformCount);
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entities[Index]))
+            {
+                Transform->SetLocalTransform(Transforms[Index]);
+            }
+        }
     }
 
     void CEntityLibrary::GetSubtree(CWorld* World, ECS::FEntity Entity, TVector<ECS::FEntity>& Out)

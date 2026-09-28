@@ -13,6 +13,8 @@
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Plugin.h>
+#include <RmlUi/Core/StyleSheetContainer.h>
 #include <RmlUi/Core/ElementText.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
@@ -275,6 +277,7 @@ namespace Lumina::RmlUi
             Rml::String                             Name;
             TVector<Rml::String>                    MemberNames;   // column names ({{ item.Name }})
             TVector<TVector<Rml::Variant>>          Rows;          // Rows[row][col], string variants
+            TVector<TVector<Rml::Variant>>          PreviousRows;  // the rows before the last resize
             Rml::UniquePtr<Rml::VariableDefinition> ArrayDef;
             Rml::UniquePtr<Rml::VariableDefinition> StructDef;
             Rml::UniquePtr<Rml::VariableDefinition> MemberDef;
@@ -293,6 +296,13 @@ namespace Lumina::RmlUi
                 if (Row >= 0 && Row < (int)List->Rows.size() && Col >= 0 && Col < (int)List->Rows[Row].size())
                 {
                     Out = List->Rows[Row][Col];
+                    return true;
+                }
+
+                // A row the list just shrank past stays bound for one update while its element is removed.
+                if (Row >= (int)List->Rows.size() && Row < (int)List->PreviousRows.size() && Col >= 0 && Col < (int)List->PreviousRows[Row].size())
+                {
+                    Out = List->PreviousRows[Row][Col];
                     return true;
                 }
                 return false;
@@ -333,12 +343,13 @@ namespace Lumina::RmlUi
             {
                 const int Count = (int)List->Rows.size();
                 const int Index = Address.index;
-                if (Index < 0 || Index >= Count)
+                if (Address.name == "size")
                 {
-                    if (Address.name == "size")
-                    {
-                        return Rml::MakeLiteralIntVariable(Count);
-                    }
+                    return Rml::MakeLiteralIntVariable(Count);
+                }
+
+                if (Index < 0)
+                {
                     return Rml::DataVariable();
                 }
                 return Rml::DataVariable(List->StructDef.get(), reinterpret_cast<void*>((uintptr_t)Index));
@@ -662,6 +673,61 @@ namespace Lumina::RmlUi
         }
     }
 
+    namespace
+    {
+        // RmlUi ships no user agent stylesheet, so without this every div in every document lays out inline.
+        class FDefaultStyleSheetPlugin final : public Rml::Plugin
+        {
+        public:
+
+            int GetEventClasses() override { return EVT_DOCUMENT; }
+
+            void OnDocumentLoad(Rml::ElementDocument* Document) override
+            {
+                if (!bLoaded)
+                {
+                    bLoaded = true;
+                    FString Source;
+                    if (VFS::ReadFile(Source, "/Engine/Resources/UI/Default.rcss"))
+                    {
+                        DefaultRcss = Rml::String(Source.c_str());
+                    }
+                }
+
+                if (Document == nullptr || DefaultRcss.empty())
+                {
+                    return;
+                }
+
+                // Parsed per document, because combining mutates the sheet it starts from.
+                Rml::SharedPtr<Rml::StyleSheetContainer> Base = Rml::Factory::InstanceStyleSheetString(DefaultRcss);
+                if (Base == nullptr)
+                {
+                    return;
+                }
+
+                const Rml::StyleSheetContainer* Own = Document->GetStyleSheetContainer();
+                Document->SetStyleSheetContainer(Own != nullptr ? Base->CombineStyleSheetContainer(*Own) : Base);
+            }
+
+        private:
+
+            Rml::String DefaultRcss;
+            bool bLoaded = false;
+        };
+
+        void RegisterDefaultStyleSheet()
+        {
+            static FDefaultStyleSheetPlugin Plugin;
+            static bool bRegistered = false;
+            if (!bRegistered)
+            {
+                bRegistered = true;
+                Rml::RegisterPlugin(&Plugin);
+            }
+        }
+    }
+
     bool Initialize()
     {
         FState& State = S();
@@ -697,6 +763,8 @@ namespace Lumina::RmlUi
             ResetOnFailure();
             return false;
         }
+
+        RegisterDefaultStyleSheet();
 
         if (!State.Renderer->Initialize())
         {
@@ -2209,6 +2277,7 @@ namespace Lumina::RmlUi
         }
         FListField* L = M->Lists[ListField].get();
         const size_t Cols = L->MemberNames.size();
+        L->PreviousRows = Move(L->Rows);
         L->Rows.assign((size_t)RowCount, TVector<Rml::Variant>());
         for (TVector<Rml::Variant>& Row : L->Rows)
         {

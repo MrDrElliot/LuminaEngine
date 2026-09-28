@@ -203,6 +203,7 @@ namespace Lumina::Physics
 
         void BeginBodyBatch() override;
         void EndBodyBatch() override;
+        void FlushDeferredBodyCreations();
 
         uint32 CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances) override;
         void DestroyStaticBodyGroup(uint32 GroupID) override;
@@ -264,7 +265,6 @@ namespace Lumina::Physics
 
         void BulkCreateRigidBodies(ECS::FRegistry& Registry);
         void CreateRigidBodiesBatched(const TVector<ECS::FEntity>& Entities);
-        void CreateRigidBodyImmediate(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void RebuildStaleDynamicMeshBodies(ECS::FRegistry& Registry);
 
         EBodyBuildStatus TryBuildRigidBody(ECS::FRegistry& Registry, ECS::FEntity Entity, FRigidBodyBuildResult& OutResult);

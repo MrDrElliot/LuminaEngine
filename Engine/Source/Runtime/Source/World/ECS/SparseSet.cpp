@@ -2,6 +2,7 @@
 #include "SparseSet.h"
 
 #include "Core/Assertions/Assert.h"
+#include "Core/Threading/Thread.h"
 
 namespace Lumina::ECS
 {
@@ -15,6 +16,26 @@ namespace Lumina::ECS
         NODISCARD constexpr size_t PayloadAlignment(uint32 ElementAlignment)
         {
             return ElementAlignment > MinPayloadAlignment ? ElementAlignment : MinPayloadAlignment;
+        }
+
+        // Never freed or reused, because a script view may still read the slot after its pool is destroyed.
+        uint32* AcquireLayoutEpochSlot()
+        {
+            constexpr uint32 SlotsPerChunk = 1024;
+            static FMutex Mutex;
+            static uint32* Chunk = nullptr;
+            static uint32 Used = SlotsPerChunk;
+
+            FScopeLock Lock(Mutex);
+            if (Used == SlotsPerChunk)
+            {
+                Chunk = static_cast<uint32*>(Memory::Malloc(sizeof(uint32) * SlotsPerChunk, alignof(uint32)));
+                Used = 0;
+            }
+
+            uint32* Slot = &Chunk[Used++];
+            *Slot = 1;
+            return Slot;
         }
     }
 
@@ -34,10 +55,12 @@ namespace Lumina::ECS
         }
 
         PayloadPageMask = RequestedPageSize - 1u;
+        LayoutEpoch = AcquireLayoutEpochSlot();
     }
 
     FSparseSet::~FSparseSet()
     {
+        *LayoutEpoch = DeadLayoutEpoch;
         DestroyLiveElements();
         FreePayload();
 
@@ -108,6 +131,12 @@ namespace Lumina::ECS
         return Slots[EntityIndex % SparsePageSize];
     }
 
+    void FSparseSet::BumpLayoutEpoch()
+    {
+        const uint32 Next = *LayoutEpoch + 1u;
+        *LayoutEpoch = Next == DeadLayoutEpoch ? 1u : Next;
+    }
+
     void FSparseSet::GrowPayloadTo(size_t ElementCount)
     {
         if (ElementSize == 0)
@@ -138,6 +167,8 @@ namespace Lumina::ECS
             NewCapacity *= 2u;
         }
 
+        const uint8* PreviousBlock = PackedData;
+
         // Realloc first, because rpmalloc can often widen the block in place and skip the copy entirely.
         if (TypeInfo.bTriviallyRelocatable || TypeInfo.Relocate == nullptr)
         {
@@ -159,6 +190,11 @@ namespace Lumina::ECS
                 Memory::Free(Block);
             }
             PackedData = NewBlock;
+        }
+
+        if (PackedData != PreviousBlock)
+        {
+            BumpLayoutEpoch();
         }
 
         PackedCapacity = NewCapacity;
@@ -218,6 +254,8 @@ namespace Lumina::ECS
         {
             return false;
         }
+
+        BumpLayoutEpoch();
 
         // Only a stable pool leaves a hole. A paged pool that owes nobody a fixed address still swaps.
         if (bInPlaceDelete)
@@ -330,6 +368,7 @@ namespace Lumina::ECS
 
     void FSparseSet::ClearAll()
     {
+        BumpLayoutEpoch();
         DestroyLiveElements();
 
         for (FEntity* Page : SparsePages)
@@ -351,6 +390,8 @@ namespace Lumina::ECS
         {
             return;
         }
+
+        BumpLayoutEpoch();
 
         uint32 Write = 0;
         for (uint32 Read = 0; Read < static_cast<uint32>(Dense.size()); ++Read)

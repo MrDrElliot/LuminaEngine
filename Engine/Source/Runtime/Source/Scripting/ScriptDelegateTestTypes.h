@@ -8,7 +8,7 @@
 namespace Lumina
 {
     REFLECT()
-    struct SDelegateTestPayload
+    struct RUNTIME_API SDelegateTestPayload
     {
         GENERATED_BODY()
 
@@ -25,7 +25,7 @@ namespace Lumina
     typedef TScriptDelegate<SDelegateTestPayload, float, FString> FOnTestThreeArgs;
 
     REFLECT()
-    struct SDelegateTestHost
+    struct RUNTIME_API SDelegateTestHost
     {
         GENERATED_BODY()
 

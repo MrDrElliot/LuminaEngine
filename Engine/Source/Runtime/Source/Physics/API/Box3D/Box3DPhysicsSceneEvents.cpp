@@ -299,12 +299,6 @@ namespace Lumina::Physics
             Transform->SetHasPhysicsBody(true);
         }
 
-        if (BodyBatchDepth > 0)
-        {
-            BatchedBodyCreations.push_back(Entity);
-            return;
-        }
-
         if (bStepInProgress.load(std::memory_order_acquire))
         {
             FScopeLock Lock(PendingRigidBodyMutex);
@@ -312,7 +306,21 @@ namespace Lumina::Physics
             return;
         }
 
-        CreateRigidBodyImmediate(Registry, Entity);
+        // Deferred even outside a batch, so the fields a caller sets right after adding the component are the ones built.
+        BatchedBodyCreations.push_back(Entity);
+    }
+
+    void FBox3DPhysicsScene::FlushDeferredBodyCreations()
+    {
+        if (BodyBatchDepth > 0 || BatchedBodyCreations.empty() || bStepInProgress.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
+        // Taken first, because a body creation can construct components that queue more of them.
+        TVector<ECS::FEntity> Entities = Move(BatchedBodyCreations);
+        BatchedBodyCreations.clear();
+        CreateRigidBodiesBatched(Entities);
     }
 
     void FBox3DPhysicsScene::OnRigidBodyComponentUpdated(ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -351,44 +359,6 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnColliderComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-    }
-
-    void FBox3DPhysicsScene::CreateRigidBodyImmediate(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        FRigidBodyBuildResult Build;
-        const EBodyBuildStatus Status = TryBuildRigidBody(Registry, Entity, Build);
-
-        switch (Status)
-        {
-            case EBodyBuildStatus::Success:
-            {
-                const uint32 Handle = CommitRigidBody(Entity, Build);
-                if (Handle == InvalidBodyHandle)
-                {
-                    return;
-                }
-
-                SRigidBodyComponent& Body = Registry.Get<SRigidBodyComponent>(Entity);
-                Body.BodyID = Handle;
-                Body.LastBodyPosition = Build.LastBodyPosition;
-                Body.LastBodyRotation = Build.LastBodyRotation;
-
-                if (Handle >= BodyAwake.size())
-                {
-                    BodyAwake.resize(Handle + 1, 0);
-                }
-                break;
-            }
-            case EBodyBuildStatus::Defer:
-            case EBodyBuildStatus::NoCollider:
-            {
-                FScopeLock Lock(PendingRigidBodyMutex);
-                PendingRigidBodyCreations.push(Entity);
-                break;
-            }
-            default:
-                break;
-        }
     }
 
     void FBox3DPhysicsScene::RebuildStaleDynamicMeshBodies(ECS::FRegistry& Registry)

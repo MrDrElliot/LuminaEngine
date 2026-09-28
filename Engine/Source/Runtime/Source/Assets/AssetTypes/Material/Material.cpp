@@ -877,7 +877,8 @@ namespace Lumina
         
         // Starts from the shared neutral surface, so a new field is never left uninitialized here.
         PixelReplacement += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
-        PixelReplacement += "\tMaterial.Diffuse               = float3(1.0);\n";
+        // Procedural geometry colors itself per vertex, and an imported mesh without a color stream reads white.
+        PixelReplacement += "\tMaterial.Diffuse               = VertexColor.rgb;\n";
         PixelReplacement += "\tMaterial.Metallic              = 0.0;\n";
         PixelReplacement += "\tMaterial.Roughness             = 1.0;\n";
         PixelReplacement += "\tMaterial.Specular              = 0.5;\n";

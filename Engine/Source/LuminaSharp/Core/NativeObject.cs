@@ -159,19 +159,92 @@ public unsafe class NativeObject
 /// <summary>
 /// Base for the generated opaque wrappers around native structs that are NOT blittable.
 /// </summary>
-public class NativeStruct
+public unsafe class NativeStruct
 {
+    private const uint DeadEpoch = 0xFFFFFFFFu;
+
     private IntPtr RawHandle;
+
+    // Set for a component fetched through the registry, which makes the view safe to keep across frames.
+    private uint* EpochSlot;
+    private uint Epoch;
+    private ulong World;
+    private uint EntityId;
+    private IntPtr Ops;
 
     protected internal NativeStruct(IntPtr Handle)
     {
         RawHandle = Handle;
     }
 
-    // A borrow, not a reference. Fetch through Registry.Get where you use it and never store one.
+    // A component view revalidates itself when its pool relocates, so it may be stored and reused.
     protected internal IntPtr Handle
     {
-        get => RawHandle;
-        set => RawHandle = value;
+        get
+        {
+            if (EpochSlot != null && *EpochSlot != Epoch)
+            {
+                Revalidate(true);
+            }
+
+            return RawHandle;
+        }
+        set
+        {
+            RawHandle = value;
+            EpochSlot = null;
+        }
+    }
+
+    /// False once the component this view points at has been removed or its world destroyed.
+    public bool IsValid
+    {
+        get
+        {
+            if (EpochSlot == null)
+            {
+                return RawHandle != IntPtr.Zero;
+            }
+
+            return *EpochSlot == Epoch || Revalidate(false);
+        }
+    }
+
+    internal void BindComponentView(ulong InWorld, uint InEntity, IntPtr InOps, uint* InEpochSlot)
+    {
+        World = InWorld;
+        EntityId = InEntity;
+        Ops = InOps;
+        EpochSlot = InEpochSlot;
+        Epoch = InEpochSlot != null ? *InEpochSlot : 0;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool Revalidate(bool bThrow)
+    {
+        uint Observed = *EpochSlot;
+        IntPtr Pointer = IntPtr.Zero;
+        uint* Slot = null;
+
+        // A dead pool means the world is gone, and its handle can no longer be dereferenced.
+        if (Observed != DeadEpoch)
+        {
+            Pointer = Native.GetComponentTracked(World, EntityId, Ops, &Slot);
+        }
+
+        if (Pointer == IntPtr.Zero)
+        {
+            if (bThrow)
+            {
+                throw new InvalidOperationException($"{GetType().Name} is no longer on entity {EntityId & 0xFFFFF}; it was removed or its world was destroyed.");
+            }
+
+            return false;
+        }
+
+        RawHandle = Pointer;
+        EpochSlot = Slot;
+        Epoch = Observed;
+        return true;
     }
 }

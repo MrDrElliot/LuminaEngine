@@ -1,0 +1,19 @@
+/* Merged beneath every document, since RmlUi itself leaves every element inline. */
+body, div, p, h1, h2, h3, h4, h5, h6, header, footer, section, nav, form, ul, ol, li, blockquote, pre, hr
+{
+    display: block;
+}
+
+h1 { font-size: 2em; font-weight: bold; }
+h2 { font-size: 1.5em; font-weight: bold; }
+h3 { font-size: 1.17em; font-weight: bold; }
+h4, h5, h6 { font-weight: bold; }
+
+em, i { font-style: italic; }
+strong, b { font-weight: bold; }
+pre { white-space: pre; }
+
+table { display: table; }
+tr { display: table-row; }
+td, th { display: table-cell; }
+th { font-weight: bold; }
