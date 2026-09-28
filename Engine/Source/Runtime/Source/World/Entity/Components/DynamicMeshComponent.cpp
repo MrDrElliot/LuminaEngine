@@ -20,25 +20,6 @@
 
 namespace Lumina
 {
-    // One material-tagged slice of the index buffer.
-    struct FDynamicMeshSection
-    {
-        int32 MaterialSlot = 0;
-        int32 StartIndex   = 0;
-        int32 IndexCount   = 0;
-    };
-
-    // CPU-side staging filled by the setters; consumed and cleared by Commit().
-    struct FDynamicMeshBuildData
-    {
-        TVector<FVector3>            Positions;
-        TVector<FVector3>            Normals;   // unpacked; octahedral-packed at Commit
-        TVector<FVector2>            UVs;
-        TVector<uint32>              Colors;    // RGBA8 packed
-        TVector<uint32>              Indices;
-        TVector<FDynamicMeshSection> Sections;
-    };
-
     namespace
     {
         constexpr uint32 kCommitGrain = 4096;
@@ -319,26 +300,19 @@ namespace Lumina
         BD.Indices.assign(Data, Data + Math::Max(0, Count));
     }
 
-    bool SDynamicMeshComponent::Commit()
+    TUniquePtr<FMeshResource> BuildMeshResource(FDynamicMeshBuildData& BD, const FMeshBuildOptions& Options)
     {
-        if (!BuildData || BuildData->Positions.empty() || BuildData->Indices.empty())
-        {
-            return false;
-        }
-
         LUMINA_PROFILE_SCOPE();
-        LUMINA_MEMORY_SCOPE("Meshes");
 
-        FDynamicMeshBuildData& BD = *BuildData;
         const size_t VertexCount = BD.Positions.size();
 
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
         Resource->bSkinnedMesh          = false;
-        Resource->MaxLODs               = (uint32)Math::Clamp(MaxLODs, 1, (int32)MAX_MESH_LODS);
-        Resource->bGenerateTangents     = bGenerateTangents;
-        Resource->bMeshletConeCulling   = bMeshletConeCulling;
-        Resource->bOptimizeMeshlets     = bOptimizeMeshlets;
-        Resource->bFastMeshletBuild     = bFastMeshletBuild;
+        Resource->MaxLODs               = Math::Clamp(Options.MaxLODs, 1u, (uint32)MAX_MESH_LODS);
+        Resource->bGenerateTangents     = Options.bGenerateTangents;
+        Resource->bMeshletConeCulling   = Options.bMeshletConeCulling;
+        Resource->bOptimizeMeshlets     = Options.bOptimizeMeshlets;
+        Resource->bFastMeshletBuild     = Options.bFastMeshletBuild;
 
         // Normals derive first because that is the only stage reading Positions and Indices.
         const TVector<FVector3>* SourceNormals = &BD.Normals;
@@ -429,9 +403,6 @@ namespace Lumina
 
         (void)MaterialSlotCount;   // slots come from MaterialOverrides; nothing to size here anymore
 
-        CommittedVertexCount   = (int32)VertexCount;
-        CommittedTriangleCount = (int32)(Resource->Indices.size() / 3);
-
         // Local bounds from the staged positions, before GenerateMeshlets drops the scratch streams.
         FVector3 Min(FLT_MAX), Max(-FLT_MAX);
         for (const FVector3& P : Resource->Positions)
@@ -440,14 +411,41 @@ namespace Lumina
             Max = Math::Max(Max, P);
         }
 
+        // Handed down so CreateForResource does not walk the positions a second time for the header.
+        Resource->LocalBounds = FAABB(Min, Max);
+        return Resource;
+    }
+
+    bool SDynamicMeshComponent::Commit()
+    {
+        if (!BuildData || BuildData->Positions.empty() || BuildData->Indices.empty())
+        {
+            return false;
+        }
+
+        LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Meshes");
+
+        FMeshBuildOptions Options;
+        Options.MaxLODs             = (uint32)Math::Max(MaxLODs, 1);
+        Options.bGenerateTangents   = bGenerateTangents;
+        Options.bMeshletConeCulling = bMeshletConeCulling;
+        Options.bOptimizeMeshlets   = bOptimizeMeshlets;
+        Options.bFastMeshletBuild   = bFastMeshletBuild;
+
+        TUniquePtr<FMeshResource> Resource = BuildMeshResource(*BuildData, Options);
+
+        CommittedVertexCount   = (int32)Resource->Positions.size();
+        CommittedTriangleCount = (int32)(Resource->Indices.size() / 3);
+
+        const FVector3 Min = Resource->LocalBounds.Min;
+        const FVector3 Max = Resource->LocalBounds.Max;
+
         TSharedPtr<FDynamicMeshRenderData> NewData = MakeShared<FDynamicMeshRenderData>();
         NewData->LocalMin    = Min;
         NewData->LocalMax    = Max;
         NewData->LocalCenter = (Min + Max) * 0.5f;
         NewData->LocalRadius = Math::Length(Max - NewData->LocalCenter);
-
-        // Handed down so CreateForResource does not walk the positions a second time for the header.
-        Resource->LocalBounds = FAABB(Min, Max);
 
         Import::Mesh::GenerateMeshlets(*Resource);
         NewData->Resource = std::move(*Resource);

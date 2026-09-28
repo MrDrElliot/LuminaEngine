@@ -524,6 +524,9 @@ namespace Lumina
         PhysicsScene.reset();
         DestroyRenderer();
 
+        // After the renderer, so nothing still draws the meshes script built.
+        RetainedObjects.clear();
+
         FCoreDelegates::Get().PostWorldUnload.Broadcast();
     }
 
