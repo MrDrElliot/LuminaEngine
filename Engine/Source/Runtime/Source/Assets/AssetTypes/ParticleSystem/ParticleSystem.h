@@ -13,6 +13,7 @@ namespace Lumina
 {
     class CTexture;
     class CMaterialInterface;
+    class CStaticMesh;
 
     REFLECT()
     enum class EParticleEmitterShape : uint8
@@ -25,6 +26,8 @@ namespace Lumina
         Disk,
         // The half of a sphere above the emitter, so a ground burst never spawns underground.
         Hemisphere,
+        // The surface of the emitter's EmissionMesh, with ShapeSize.x scaling it.
+        Mesh,
     };
 
     REFLECT()
@@ -56,7 +59,61 @@ namespace Lumina
         /** Long axis follows the particle's velocity, still turned to face the camera. Sparks, rain,
          *  debris trails -- anything whose direction of travel should read. */
         VelocityAligned,
+        // Turns toward the camera about world up only, so fire columns and distant smoke stay upright.
+        VerticalAxis,
     };
+
+    REFLECT()
+    enum class EParticleRenderMode : uint8
+    {
+        Sprite,
+        // Draws the emitter's Mesh at every particle, for debris and casings.
+        Mesh,
+        // A strip through each particle's recent positions, for rocket and tracer trails.
+        Ribbon,
+    };
+
+    REFLECT()
+    enum class EParticleSortMode : uint8
+    {
+        // Farthest first, which alpha blending needs.
+        ByDistance,
+        OldestFirst,
+        YoungestFirst,
+        // Draw order is slot order, which is cheapest and fine for additive and opaque emitters.
+        None,
+    };
+
+    REFLECT()
+    enum class EParticleFlipbookMode : uint8
+    {
+        // One pass through the sheet across the particle's life.
+        OverLife,
+        // Plays at FlipbookFPS and wraps.
+        Loop,
+    };
+
+    // What a parent emitter's particle must do for a sub-emitter to spawn from it.
+    REFLECT()
+    enum class EParticleEventType : uint8
+    {
+        Death,
+        Collision,
+        // EventRate times per second for as long as the parent lives.
+        Continuous,
+    };
+
+    // Which fields of an EmitParticle call replace what the spawn stack computed.
+    namespace EParticleEmitFlags
+    {
+        enum Type : uint32
+        {
+            Position = 1u << 0,
+            Velocity = 1u << 1,
+            Color    = 1u << 2,
+            Size     = 1u << 3,
+        };
+    }
 
     REFLECT()
     enum class EParticleShaderMode : uint8
@@ -367,6 +424,63 @@ namespace Lumina
         PROPERTY(Editable, Category = "Simulation")
         bool bLooping = true;
 
+        // Carries live particles along when the emitter moves or turns, for exhaust and muzzle effects.
+        PROPERTY(Editable, Category = "Simulation")
+        bool bLocalSpace = false;
+
+        // Seconds simulated at once when the emitter starts, so a looping effect appears already in progress.
+        PROPERTY(Editable, Category = "Simulation", ClampMin = 0.0f)
+        float PrewarmTime = 0.0f;
+
+        // Fraction of each cycle's particles released together at its start, where 1 is one burst per cycle.
+        PROPERTY(Editable, Category = "Simulation", ClampMin = 0.0f, ClampMax = 1.0f)
+        float Explosiveness = 0.0f;
+
+        // Steps the simulation at this rate instead of every frame. Zero follows the frame rate.
+        PROPERTY(Editable, Category = "Simulation", ClampMin = 0.0f)
+        float FixedFPS = 0.0f;
+
+        // Draws a fixed-rate emitter where its particles would be now, so a low FixedFPS still moves smoothly.
+        PROPERTY(Editable, Category = "Simulation", EditCondition = "FixedFPS")
+        bool bInterpolate = true;
+
+        // Restarts the random sequence from Seed on every activation, so the effect plays the same each time.
+        PROPERTY(Editable, Category = "Simulation")
+        bool bUseFixedSeed = false;
+
+        PROPERTY(Editable, Category = "Simulation", EditCondition = "bUseFixedSeed")
+        int32 Seed = 0;
+
+        // Surface a Shape Location module set to Mesh spawns on.
+        PROPERTY(Editable, Category = "Simulation")
+        TObjectPtr<CStaticMesh> EmissionMesh;
+
+        // Meters around the emitter its particles can reach, scaled with the entity. Off-screen bounds skip drawing, and zero never culls.
+        PROPERTY(Editable, Category = "Culling", ClampMin = 0.0f)
+        float VisibilityRadius = 20.0f;
+
+        // Beyond this many meters from the camera the emitter neither simulates nor draws. Zero never culls.
+        PROPERTY(Editable, Category = "Culling", ClampMin = 0.0f)
+        float CullDistance = 0.0f;
+
+        // Name of an emitter in this system whose particles spawn this one's. Empty spawns from the emitter itself.
+        PROPERTY(Editable, Category = "Sub-Emitter")
+        FString SpawnFromEmitter;
+
+        PROPERTY(Editable, Category = "Sub-Emitter")
+        EParticleEventType SpawnEvent = EParticleEventType::Death;
+
+        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 1)
+        int32 ParticlesPerEvent = 1;
+
+        // Events per second from each parent particle when SpawnEvent is Continuous.
+        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 0.0f, EditCondition = "SpawnEvent == Continuous")
+        float EventRate = 10.0f;
+
+        // Fraction of the parent particle's velocity each spawned particle starts with.
+        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 0.0f, ClampMax = 1.0f)
+        float InheritParentVelocity = 0.0f;
+
         // Below: legacy uniform-driven fields kept (non-editable) for assets not yet compiled to a
         // module stack; superseded by editor modules baked into the compute shader. Don't surface in editor.
         PROPERTY()
@@ -479,6 +593,45 @@ namespace Lumina
         PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
         bool bLit = false;
 
+        PROPERTY(Editable, Category = "Render")
+        EParticleRenderMode RenderMode = EParticleRenderMode::Sprite;
+
+        PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode == Mesh")
+        TObjectPtr<CStaticMesh> Mesh;
+
+        // Points each mesh's up axis along its velocity instead of tumbling it by the particle's rotation.
+        PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode == Mesh")
+        bool bAlignMeshToVelocity = false;
+
+        // Samples kept per ribbon, so more segments curve more smoothly over the same length.
+        PROPERTY(Editable, Category = "Render", ClampMin = 2, ClampMax = 64, EditCondition = "RenderMode == Ribbon")
+        int32 RibbonSegments = 12;
+
+        // Seconds of travel the ribbon trails behind its particle.
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.01f, EditCondition = "RenderMode == Ribbon")
+        float RibbonLength = 0.4f;
+
+        // Ribbon width at the tail as a fraction of the head, which is the particle's size.
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "RenderMode == Ribbon")
+        float RibbonTailWidth = 0.0f;
+
+        // Draws the particles into the sun's shadow cascades, faded by their alpha.
+        PROPERTY(Editable, Category = "Render")
+        bool bCastShadows = false;
+
+        PROPERTY(Editable, Category = "Render")
+        EParticleSortMode SortMode = EParticleSortMode::ByDistance;
+
+        PROPERTY(Editable, Category = "Render")
+        EParticleFlipbookMode FlipbookMode = EParticleFlipbookMode::OverLife;
+
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "FlipbookMode == Loop")
+        float FlipbookFPS = 15.0f;
+
+        // Starts each particle on a random cell, so a sheet of variants reads as a mix.
+        PROPERTY(Editable, Category = "Render")
+        bool bRandomStartFrame = false;
+
         FShaderH ComputeShader = {};
     };
 
@@ -575,6 +728,29 @@ namespace Lumina
         // Estimated time until all particles are dead; bumped on spawn, decremented otherwise.
         // At 0 with no spawn, the simulate dispatch is skipped.
         float           AliveTimeRemaining  = 0.0f;
+
+        // Events this emitter's particles raise for sub-emitters, one list per EParticleEventType.
+        RHI::FGPUAllocation EventBuffer = {};
+        uint64          EventBufferSize     = 0;
+        // Past positions per particle for ribbons, RibbonSegments float4 each.
+        RHI::FGPUAllocation RibbonHistoryBuffer = {};
+        uint64          RibbonHistorySize   = 0;
+        uint32          AllocatedRibbonSegments = 0;
+        uint32          RibbonHead          = 0;
+        float           RibbonTimer         = 0.0f;
+        // Keys for emitters too large for the single-workgroup sort.
+        RHI::FGPUAllocation SortKeyBuffer = {};
+        uint64          SortKeyBufferSize   = 0;
+        uint64          SortIndexBufferSize = 0;
+        // Unspent time below one fixed step, and the offset the draw extrapolates particles by.
+        float           FixedStepRemainder  = 0.0f;
+        // Negative until the first explosive cycle fires, which is on the emitter's first step.
+        float           CycleTime           = -1.0f;
+        FMatrix4        PrevEmitterMatrix   = FMatrix4(1.0f);
+        bool            bHasPrevMatrix      = false;
+        bool            bPrewarmPending     = true;
+        // Seconds a sub-emitter keeps simulating after its parent last ran, so late events still spawn.
+        float           ParentAliveTime     = 0.0f;
     };
 
     /** Per-frame, per-emitter snapshot of simulation properties after binding resolution. */
@@ -619,6 +795,32 @@ namespace Lumina
         bool                    bWriteDepth             = false;
         float                   SoftFadeDistance        = 0.0f;
         bool                    bLit                    = false;
+
+        bool                    bLocalSpace             = false;
+        float                   PrewarmTime             = 0.0f;
+        float                   Explosiveness           = 0.0f;
+        float                   FixedFPS                = 0.0f;
+        bool                    bInterpolate            = true;
+        bool                    bUseFixedSeed           = false;
+        int32                   Seed                    = 0;
+        float                   VisibilityRadius        = 0.0f;
+        float                   CullDistance            = 0.0f;
+
+        EParticleRenderMode     RenderMode              = EParticleRenderMode::Sprite;
+        bool                    bAlignMeshToVelocity    = false;
+        int32                   RibbonSegments          = 12;
+        float                   RibbonLength            = 0.4f;
+        float                   RibbonTailWidth         = 0.0f;
+        bool                    bCastShadows            = false;
+        EParticleSortMode       SortMode                = EParticleSortMode::ByDistance;
+        EParticleFlipbookMode   FlipbookMode            = EParticleFlipbookMode::OverLife;
+        float                   FlipbookFPS             = 15.0f;
+        bool                    bRandomStartFrame       = false;
+
+        EParticleEventType      SpawnEvent              = EParticleEventType::Death;
+        int32                   ParticlesPerEvent       = 1;
+        float                   EventRate               = 10.0f;
+        float                   InheritParentVelocity   = 0.0f;
     };
 
     /** Bound properties read through component overrides, falling back to the emitter's authored value.

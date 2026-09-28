@@ -45,6 +45,8 @@
 #include "World/Entity/Components/TriangleBatcherComponent.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
+#include "World/Entity/Components/ParticleFieldComponents.h"
+#include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "World/Entity/Components/DecalComponent.h"
 #include "World/Entity/Components/WaterComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"

@@ -1346,11 +1346,53 @@ namespace Lumina
         Frame.Extracts.TerrainExtracts.resize(TerrainCount);
     }
 
+    static uint32 ResidentMeshletHeaderSlot(const CStaticMesh* Mesh)
+    {
+        return (Mesh != nullptr && Mesh->IsGeometryResident()) ? Mesh->GetMeshBuffers().MeshletHeaderSlot : 0u;
+    }
+
+    // Rigid, so the axes stay unit length and the entity's scale moves into the extent.
+    static FParticleShapeGPU MakeParticleShape(const STransformComponent& Transform, EParticleShapeType Shape, const FVector3& Extent)
+    {
+        const FMatrix4 World = Transform.GetWorldMatrix();
+        const FVector3 Scale = Transform.GetWorldScale();
+
+        FParticleShapeGPU Out;
+        Out.Center = FVector4(FVector3(World[3]), (float)Shape);
+        Out.AxisX  = FVector4(Math::Normalize(FVector3(World[0])), 0.0f);
+        Out.AxisY  = FVector4(Math::Normalize(FVector3(World[1])), 0.0f);
+        Out.AxisZ  = FVector4(Math::Normalize(FVector3(World[2])), 0.0f);
+        Out.Extent = Shape == EParticleShapeType::Sphere
+            ? FVector4(Extent.x * Math::Max(Math::Max(Scale.x, Scale.y), Scale.z), 0.0f, 0.0f, 0.0f)
+            : FVector4(Extent * Scale, 0.0f);
+        Out.Params = FVector4(0.0f);
+        return Out;
+    }
+
     void FDefaultSceneRenderer::ExtractParticles(ECS::FRegistry& Registry, FFrameData& Frame)
     {
         LUMINA_PROFILE_SECTION("Extract Particles");
 
         auto TransformStorage = Registry.GetStorage<STransformComponent>();
+
+        Frame.Extracts.ParticleAttractors.clear();
+        Registry.View<SParticleAttractorComponent>(ECS::TExclude<SDisabledTag>{}).ForEach([&](ECS::FEntity Entity, SParticleAttractorComponent& Attractor)
+        {
+            if (Attractor.bEnabled && Attractor.Strength != 0.0f)
+            {
+                FParticleShapeGPU& Shape = Frame.Extracts.ParticleAttractors.emplace_back(MakeParticleShape(TransformStorage.Get(Entity), Attractor.Shape, Attractor.Extent));
+                Shape.Params = FVector4(Attractor.Strength, Attractor.Attenuation, Attractor.Directionality, 0.0f);
+            }
+        });
+
+        Frame.Extracts.ParticleColliders.clear();
+        Registry.View<SParticleColliderComponent>(ECS::TExclude<SDisabledTag>{}).ForEach([&](ECS::FEntity Entity, SParticleColliderComponent& Collider)
+        {
+            if (Collider.bEnabled)
+            {
+                Frame.Extracts.ParticleColliders.push_back(MakeParticleShape(TransformStorage.Get(Entity), Collider.Shape, Collider.Extent));
+            }
+        });
         auto ParticleAllView = Registry.View<SParticleSystemComponent>();
         auto ParticleView = Registry.View<SParticleSystemComponent>(ECS::TExclude<SDisabledTag>{});
 
@@ -1378,6 +1420,37 @@ namespace Lumina
 
             const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
             const int32    EmitterCount = (int32)PS->Emitters.size();
+
+            // A sub-emitter names its parent, so the parent learns here which event lists it has to raise.
+            TFixedVector<int32, 8>  SourceIndices;
+            TFixedVector<uint32, 8> RaisedMasks;
+            TFixedVector<float, 8>  RaisedRates;
+            SourceIndices.resize(EmitterCount, -1);
+            RaisedMasks.resize(EmitterCount, 0u);
+            RaisedRates.resize(EmitterCount, 0.0f);
+            for (int32 Child = 0; Child < EmitterCount; ++Child)
+            {
+                const CParticleEmitter* ChildEmitter = PS->Emitters[Child].Get();
+                if (ChildEmitter == nullptr || !ChildEmitter->bEnabled || ChildEmitter->SpawnFromEmitter.empty())
+                {
+                    continue;
+                }
+
+                for (int32 Parent = 0; Parent < EmitterCount; ++Parent)
+                {
+                    const CParticleEmitter* ParentEmitter = PS->Emitters[Parent].Get();
+                    if (Parent != Child && ParentEmitter != nullptr && ParentEmitter->EmitterName == ChildEmitter->SpawnFromEmitter)
+                    {
+                        SourceIndices[Child] = Parent;
+                        RaisedMasks[Parent] |= 1u << (uint32)ChildEmitter->SpawnEvent;
+                        if (ChildEmitter->SpawnEvent == EParticleEventType::Continuous)
+                        {
+                            RaisedRates[Parent] = Math::Max(RaisedRates[Parent], ChildEmitter->EventRate);
+                        }
+                        break;
+                    }
+                }
+            }
 
             for (int32 EmitterIdx = 0; EmitterIdx < EmitterCount; ++EmitterIdx)
             {
@@ -1417,6 +1490,20 @@ namespace Lumina
                 Item.bBurstOnSpawn       = Component.bBurstOnSpawn;
                 Item.bForceBurst         = bForceBurst;
                 Item.bForceReset         = bForceReset;
+                Item.MeshletHeaderSlot   = Emitter->RenderMode == EParticleRenderMode::Mesh ? ResidentMeshletHeaderSlot(Emitter->Mesh.Get()) : 0u;
+                Item.MeshletCount        = Item.MeshletHeaderSlot != 0u ? Emitter->Mesh->GetMeshBuffers().MeshletCount : 0u;
+                Item.EmissionMeshSlot    = ResidentMeshletHeaderSlot(Emitter->EmissionMesh.Get());
+                Item.SourceEmitterIndex  = SourceIndices[EmitterIdx];
+                Item.RaisedEventMask     = RaisedMasks[EmitterIdx];
+                Item.RaisedEventRate     = RaisedRates[EmitterIdx];
+                Item.ScriptEmits.clear();
+                for (const FParticleScriptEmit& Emit : Component.PendingEmits)
+                {
+                    if (Emit.EmitterIndex == EmitterIdx)
+                    {
+                        Item.ScriptEmits.push_back(FParticleEventGPU{ Emit.PositionSize, Emit.VelocityFlags, Emit.Color });
+                    }
+                }
 
                 Item.bReady = Emitter->IsReadyForSimulation();
                 if (Item.bReady)
@@ -1463,6 +1550,8 @@ namespace Lumina
                     }
                 }
             }
+
+            Component.PendingEmits.clear();
         });
         Frame.Extracts.ParticleExtracts.resize(ParticleCount);
     }

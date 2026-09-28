@@ -1107,6 +1107,13 @@ namespace Lumina::Reflection
             {
                 // A non-blittable element (FString, FName or opaque struct) needs per-index count and getat thunks.
                 EmitNativeArray(Writer, Prop, B, Friendly, Qualified, Api);
+
+                // EmitCSharpArray views these kinds as a TVector, whose static initializer calls the ops export.
+                const bool bManagedVectorView = B.Elem->Kind == EBind::StructOpaque || B.Elem->Kind == EBind::Str || B.Elem->Kind == EBind::SoftObject;
+                if (bManagedVectorView && !IsReadOnlyProp(Prop))
+                {
+                    EmitVectorOpsExport(Writer, Prop, Friendly, Qualified, Api);
+                }
             }
             else if (!IsReadOnlyProp(Prop))
             {

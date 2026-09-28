@@ -342,8 +342,23 @@ namespace Lumina::MCP
                 TextureImporter->Group = TextureGroup;
             }
 
+            // Importers with a settings step read the source here, and building without it produces nothing.
+            const FImportRequest Request{ FFixedString(SourcePath.c_str()), Destination };
             FImportResult Result;
-            Importer->BuildAssets(FImportRequest{ FFixedString(SourcePath.c_str()), Destination }, Result, nullptr);
+            FString ParseError;
+            if (Importer->ParseSource(Request, ParseError, nullptr))
+            {
+                Importer->BuildAssets(Request, Result, nullptr);
+            }
+            else
+            {
+                Result.Error = ParseError.empty() ? FString("The source could not be read.") : ParseError;
+            }
+            Importer->ReleaseSourceData();
+            if (Result.Succeeded() && Result.CreatedObjects.empty())
+            {
+                Result.Error = "The importer produced no assets.";
+            }
 
             // Popping releases the last pin, so each object dies on its own turn rather than when a
             // neighbor's destructor drops the last reference to it.

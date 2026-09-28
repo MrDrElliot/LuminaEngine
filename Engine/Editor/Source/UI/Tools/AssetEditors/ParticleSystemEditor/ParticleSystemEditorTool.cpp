@@ -115,6 +115,10 @@ namespace Lumina
         FAssetEditorTool::Update(UpdateContext);
 
         PreviewAge += (float)UpdateContext.GetDeltaTime();
+        if (bShowGizmos)
+        {
+            DrawEmitterGizmos();
+        }
         if (bLoopPreview)
         {
             const CParticleSystem* PS = Cast<CParticleSystem>(Asset.Get());
@@ -208,9 +212,79 @@ namespace Lumina
         }
 
         ImGui::MenuItem(LE_ICON_REPEAT" Loop Preview", nullptr, &bLoopPreview);
+        ImGui::MenuItem(LE_ICON_SHAPE_OUTLINE" Gizmos", nullptr, &bShowGizmos);
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("Re-fire a one-shot system once its particles have expired. Streaming emitters are left alone.");
+        }
+    }
+
+    void FParticleSystemEditorTool::DrawEmitterGizmos()
+    {
+        const CParticleSystem* PS = Cast<CParticleSystem>(Asset.Get());
+        if (PS == nullptr || !World.IsValid() || !World->IsValidEntity(ParticleEntity)
+            || SelectedEmitter < 0 || SelectedEmitter >= (int32)PS->Emitters.size() || PS->Emitters[SelectedEmitter] == nullptr)
+        {
+            return;
+        }
+
+        const CParticleEmitter* Emitter = PS->Emitters[SelectedEmitter].Get();
+        const FVector3 Origin = World->GetComponent<STransformComponent>(ParticleEntity).GetLocation();
+        const FVector4 ShapeColor(0.3f, 0.8f, 1.0f, 1.0f);
+        const FVector4 BoundsColor(1.0f, 0.75f, 0.2f, 1.0f);
+
+        if (Emitter->VisibilityRadius > 0.0f)
+        {
+            World->DrawSphere(Origin, Emitter->VisibilityRadius, BoundsColor, {}, {}, {});
+        }
+
+        const CParticleEmitterStack* Stack = GetStackFor(SelectedEmitter);
+        if (Stack == nullptr)
+        {
+            return;
+        }
+
+        for (const TObjectPtr<CParticleModule>& Module : Stack->SpawnModules)
+        {
+            const CParticleModule_SpawnLocation* Location = Cast<CParticleModule_SpawnLocation>(Module.Get());
+            if (Location == nullptr || !Location->bEnabled)
+            {
+                continue;
+            }
+
+            const FVector3 Size = Location->ShapeSize.AsVector3();
+            switch (Location->Shape)
+            {
+            case EParticleEmitterShape::Sphere:
+            case EParticleEmitterShape::Hemisphere:
+                World->DrawSphere(Origin, Size.x, ShapeColor, {}, {}, {});
+                break;
+            case EParticleEmitterShape::Box:
+                World->DrawBox(Origin, Size, FQuat::Identity(), ShapeColor, {}, {}, {});
+                break;
+            case EParticleEmitterShape::Cone:
+                World->DrawCone(Origin, FVector3(0.0f, 1.0f, 0.0f), Math::Atan2(Size.x, Math::Max(Size.y, 1e-4f)), Size.y, ShapeColor, {}, {}, {});
+                break;
+            case EParticleEmitterShape::Ring:
+            case EParticleEmitterShape::Disk:
+            {
+                constexpr int32 Segments = 32;
+                for (float Radius : { Size.x, Size.y })
+                {
+                    for (int32 Index = 0; Index < Segments && Radius > 0.0f; ++Index)
+                    {
+                        const float A = Math::TwoPi<float>() * (float)Index / (float)Segments;
+                        const float B = Math::TwoPi<float>() * (float)(Index + 1) / (float)Segments;
+                        World->DrawLine(Origin + FVector3(Math::Cos(A), 0.0f, Math::Sin(A)) * Radius,
+                                        Origin + FVector3(Math::Cos(B), 0.0f, Math::Sin(B)) * Radius, ShapeColor, {}, {}, {});
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+            }
+            break;
         }
     }
 

@@ -3,32 +3,262 @@
 
 namespace Lumina
 {
+    using FParticleExtract = FDefaultSceneRenderer::FFrameData::FParticleExtract;
+
+    static constexpr uint64 ParticleCounterBytes    = 4 * sizeof(uint32);
+    static constexpr uint64 ParticleEventCountBytes = 4 * sizeof(uint32);
+    static constexpr uint64 ParticleEventBufferSize = ParticleEventCountBytes + (uint64)PARTICLE_EVENT_LISTS * PARTICLE_EVENT_CAPACITY * sizeof(FParticleEventGPU);
+    static constexpr uint64 ParticlePoolByteBudget  = 128ull << 20;
+    static constexpr float  ParticlePrewarmStep     = 1.0f / 30.0f;
+    static constexpr uint32 ParticleMaxPrewarmSteps = 300;
+    static constexpr uint32 ParticleMaxFixedSteps   = 4;
+
+    // Mirrors the render pass block in ParticleSpriteCommon.slang.
+    struct FParticlePushConstants
+    {
+        RHI::TGPUSpan<FGPUParticle> Particles;
+        uint32   TextureIndex;
+        uint32   FacingMode;
+        FVector4 Tint;
+        float    VelocityStretch;
+        uint32   SubUVColumns;
+        uint32   SubUVRows;
+        uint32   AttrFloats;
+        RHI::TGPUSpan<float> Attributes;
+        int32    AttrSlotSizeScaleX;
+        int32    AttrSlotSizeScaleY;
+        int32    AttrSlotPrevPosX;
+        int32    AttrSlotPrevPosY;
+        int32    AttrSlotPrevPosZ;
+        uint32   MaterialIndex;
+        uint32   bSorted;
+        RHI::TGPUSpan<uint32> SortedIndices;
+        float    SoftFadeDistance;
+        uint32   RenderFlags;
+        RHI::TGPUSpan<FVector4> RibbonHistory;
+        uint32   RenderMode;
+        uint32   VertsPerParticle;
+        uint32   MeshletHeaderSlot;
+        uint32   bAlignMeshToVelocity;
+        uint32   RibbonSegments;
+        uint32   RibbonHead;
+        float    RibbonTailWidth;
+        float    ExtrapolateTime;
+        uint32   FlipbookMode;
+        float    FlipbookFPS;
+        uint32   bRandomStartFrame;
+        uint32   bShadowPass;
+        int32    ShadowDataIndex;
+        uint32   ShadowCascade;
+    };
+    static_assert(sizeof(FParticlePushConstants) == 200, "FParticlePushConstants must match ParticleSpriteCommon.slang.");
+
+    static float EmitterUniformScale(const FMatrix4& WorldMat)
+    {
+        const float Sum = Math::Length(FVector3(WorldMat[0])) + Math::Length(FVector3(WorldMat[1])) + Math::Length(FVector3(WorldMat[2]));
+        return Math::Max(Sum / 3.0f, 1e-4f);
+    }
+
+    static uint32 ParticleVertsPerParticle(const FParticleExtract& Item)
+    {
+        switch (Item.Resolved.RenderMode)
+        {
+        case EParticleRenderMode::Mesh:
+            return Item.MeshletCount * MESHLET_MAX_TRIANGLES * 3u;
+        case EParticleRenderMode::Ribbon:
+            return (uint32)Item.Resolved.RibbonSegments * 6u;
+        default:
+            return 6u;
+        }
+    }
+
+    static bool IsParticleDrawable(const FParticleExtract& Item)
+    {
+        return Item.Resolved.RenderMode != EParticleRenderMode::Mesh || Item.MeshletHeaderSlot != 0u;
+    }
+
+    RHI::FGPUAllocation FDefaultSceneRenderer::AcquireParticleBuffer(uint64 Size, const char* DebugName)
+    {
+        auto It = ParticleBufferPool.find(Size);
+        if (It != ParticleBufferPool.end() && !It->second.empty())
+        {
+            const RHI::FGPUAllocation Reused = It->second.back();
+            It->second.pop_back();
+            ParticlePoolBytes -= Size;
+            return Reused;
+        }
+
+        const RHI::FGPUAllocation Allocation = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+        RHI::SetDebugName(Allocation.Gpu, DebugName);
+        return Allocation;
+    }
+
+    void FDefaultSceneRenderer::ReleaseParticleBuffer(RHI::FGPUAllocation& Allocation, uint64 Size)
+    {
+        if (!Allocation)
+        {
+            return;
+        }
+
+        if (ParticlePoolBytes + Size <= ParticlePoolByteBudget)
+        {
+            ParticleBufferPool[Size].push_back(Allocation);
+            ParticlePoolBytes += Size;
+        }
+        else
+        {
+            DeferFree(Allocation);
+        }
+        Allocation = {};
+    }
+
+    void FDefaultSceneRenderer::ReleaseParticleState(FParticleGPUState& State)
+    {
+        ReleaseParticleBuffer(State.ParticleBuffer, State.ParticleBufferSize);
+        ReleaseParticleBuffer(State.SpawnCounterBuffer, ParticleCounterBytes);
+        ReleaseParticleBuffer(State.AttributeBuffer, State.AttributeBufferSize);
+        ReleaseParticleBuffer(State.SortIndexBuffer, State.SortIndexBufferSize);
+        ReleaseParticleBuffer(State.SortDrawArgsBuffer, sizeof(RHI::FDrawIndirectArguments));
+        ReleaseParticleBuffer(State.SortKeyBuffer, State.SortKeyBufferSize);
+        ReleaseParticleBuffer(State.EventBuffer, State.EventBufferSize);
+        ReleaseParticleBuffer(State.RibbonHistoryBuffer, State.RibbonHistorySize);
+        State.AllocatedMax = 0;
+        State.SortCount    = 0;
+    }
+
+    void FDefaultSceneRenderer::EnsureParticleBuffers(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleGPUState& State)
+    {
+        const FResolvedParticleParams& Resolved = Item.Resolved;
+        const uint32 MaxParticles    = (uint32)Resolved.MaxParticles;
+        const uint32 RibbonSegments  = Resolved.RenderMode == EParticleRenderMode::Ribbon ? (uint32)Resolved.RibbonSegments : 0u;
+        const bool   bWantsEvents    = Item.RaisedEventMask != 0u;
+        const bool   bWantsSort      = Resolved.SortMode != EParticleSortMode::None && MaxParticles <= PARTICLE_GLOBAL_SORT_CAPACITY;
+
+        const bool bNeedsAlloc = (State.ParticleBuffer.Gpu == 0)
+                              || (State.AllocatedMax != MaxParticles)
+                              || (State.AllocatedAttributeFloats != Item.AttributeFloatCount)
+                              || (State.AllocatedRibbonSegments != RibbonSegments)
+                              || ((State.EventBuffer.Gpu != 0) != bWantsEvents)
+                              || ((State.SortCount > 0) != bWantsSort);
+        if (!bNeedsAlloc)
+        {
+            return;
+        }
+
+        ReleaseParticleState(State);
+
+        // A pooled buffer may still be read by an earlier frame's draw, so its clear waits for those reads.
+        if (!bParticlePoolReuseBarrierIssued)
+        {
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite);
+            bParticlePoolReuseBarrierIssued = true;
+        }
+
+        State.ParticleBufferSize  = (uint64)MaxParticles * sizeof(FGPUParticle);
+        State.ParticleBuffer      = AcquireParticleBuffer(State.ParticleBufferSize, "Particles.Particles");
+        State.SpawnCounterBuffer  = AcquireParticleBuffer(ParticleCounterBytes, "Particles.SpawnCounter");
+        State.AttributeBufferSize = (uint64)MaxParticles * (uint64)Item.AttributeFloatCount * sizeof(float);
+        State.AttributeBuffer     = AcquireParticleBuffer(State.AttributeBufferSize, "Particles.Attributes");
+
+        RHI::CmdMemset(CL, { State.ParticleBuffer.Gpu, State.ParticleBufferSize }, 0u);
+        RHI::CmdMemset(CL, { State.AttributeBuffer.Gpu, State.AttributeBufferSize }, 0u);
+        RHI::CmdMemset(CL, { State.SpawnCounterBuffer.Gpu, ParticleCounterBytes }, 0u);
+
+        if (RibbonSegments > 0u)
+        {
+            State.RibbonHistorySize   = (uint64)MaxParticles * RibbonSegments * sizeof(FVector4);
+            State.RibbonHistoryBuffer = AcquireParticleBuffer(State.RibbonHistorySize, "Particles.RibbonHistory");
+        }
+
+        if (bWantsEvents)
+        {
+            State.EventBufferSize = ParticleEventBufferSize;
+            State.EventBuffer     = AcquireParticleBuffer(State.EventBufferSize, "Particles.Events");
+            RHI::CmdMemset(CL, { State.EventBuffer.Gpu, ParticleEventCountBytes }, 0u);
+        }
+
+        if (bWantsSort)
+        {
+            State.SortCount           = (uint32)Math::NextPowerOfTwo((int32)MaxParticles);
+            State.SortIndexBufferSize = (uint64)MaxParticles * sizeof(uint32);
+            State.SortIndexBuffer     = AcquireParticleBuffer(State.SortIndexBufferSize, "Particles.SortIndices");
+            State.SortDrawArgsBuffer  = AcquireParticleBuffer(sizeof(RHI::FDrawIndirectArguments), "Particles.SortDrawArgs");
+
+            // A sort that never runs must draw nothing rather than an uninitialized count.
+            RHI::CmdMemset(CL, { State.SortDrawArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments) }, 0u);
+
+            if (State.SortCount > PARTICLE_SORT_CAPACITY)
+            {
+                State.SortKeyBufferSize = (uint64)State.SortCount * sizeof(uint32);
+                State.SortKeyBuffer     = AcquireParticleBuffer(State.SortKeyBufferSize, "Particles.SortKeys");
+            }
+        }
+
+        State.AllocatedMax             = MaxParticles;
+        State.AllocatedAttributeFloats = Item.AttributeFloatCount;
+        State.AllocatedRibbonSegments  = RibbonSegments;
+        State.SpawnAccumulator         = 0.0f;
+        State.SystemAge                = 0.0f;
+        State.CycleTime                = -1.0f;
+        State.RibbonHead               = 0u;
+        State.RibbonTimer              = 0.0f;
+        State.AliveTimeRemaining       = 0.0f;
+        State.bBurstPending            = true;
+        State.bPrewarmPending          = true;
+        if (Resolved.bUseFixedSeed)
+        {
+            State.FrameSeed = (uint32)Resolved.Seed;
+        }
+    }
+
+    bool FDefaultSceneRenderer::IsParticleEmitterCulled(const FFrameData::FParticleExtract& Item, bool bForDraw) const
+    {
+        const FFrameData& Frame   = *RenderFrame;
+        const FVector3    Center  = FVector3(Item.WorldMatrix * FVector4(Item.EmitterOffset, 1.0f));
+        const FVector3    Camera  = Frame.ViewVolume.GetViewPosition();
+
+        if (Item.Resolved.CullDistance > 0.0f && Math::Length(Center - Camera) > Item.Resolved.CullDistance)
+        {
+            return true;
+        }
+
+        if (bForDraw && Item.Resolved.VisibilityRadius > 0.0f)
+        {
+            const float Radius = Item.Resolved.VisibilityRadius * EmitterUniformScale(Item.WorldMatrix);
+            return !Frame.CameraFrustum.IntersectsSphere(Center, Radius);
+        }
+
+        return false;
+    }
+
     void FDefaultSceneRenderer::ParticleSimulatePass(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SECTION_COLORED("Particle Simulate", tracy::Color::Orange);
 
         const FFrameData& Frame = *RenderFrame;
         const float DeltaTime   = Frame.CachedWorldDeltaTime;
-        
+
+        bParticlePoolReuseBarrierIssued = false;
+
         if (!ParticleGPUStates.empty())
         {
-            const TVector<ECS::FEntity>& Live = Frame.Extracts.LiveParticleEntities;
-            auto IsLive = [&](ECS::FEntity E)
+            THashSet<ECS::FEntity> Live;
+            Live.reserve(Frame.Extracts.LiveParticleEntities.size());
+            for (ECS::FEntity Entity : Frame.Extracts.LiveParticleEntities)
             {
-                return Algo::Contains(Live, E);
-            };
+                Live.insert(Entity);
+            }
 
             for (auto It = ParticleGPUStates.begin(); It != ParticleGPUStates.end();)
             {
-                if (!IsLive(It->first))
+                if (!Live.contains(It->first))
                 {
                     for (FParticleGPUState& Dead : It->second)
                     {
-                        if (Dead.ParticleBuffer)     { DeferFree(Dead.ParticleBuffer); }
-                        if (Dead.SpawnCounterBuffer) { DeferFree(Dead.SpawnCounterBuffer); }
-                        if (Dead.AttributeBuffer)    { DeferFree(Dead.AttributeBuffer); }
-                        if (Dead.SortIndexBuffer)    { DeferFree(Dead.SortIndexBuffer); }
-                        if (Dead.SortDrawArgsBuffer) { DeferFree(Dead.SortDrawArgsBuffer); }
+                        ReleaseParticleState(Dead);
                     }
                     It = ParticleGPUStates.erase(It);
                 }
@@ -38,6 +268,40 @@ namespace Lumina
                 }
             }
         }
+
+        if (Frame.Extracts.ParticleExtracts.empty())
+        {
+            return;
+        }
+
+        // Shared by every emitter this frame, so each crosses to the GPU once.
+        const RHI::TGPUSpan<FParticleShapeGPU> AttractorSpan = Frame.Extracts.ParticleAttractors.empty()
+            ? RHI::TGPUSpan<FParticleShapeGPU>()
+            : RHI::TGPUSpan<FParticleShapeGPU>(RHI::CopyTransientArray(Frame.Extracts.ParticleAttractors.data(), Frame.Extracts.ParticleAttractors.size()));
+        const RHI::TGPUSpan<FParticleShapeGPU> ColliderSpan = Frame.Extracts.ParticleColliders.empty()
+            ? RHI::TGPUSpan<FParticleShapeGPU>()
+            : RHI::TGPUSpan<FParticleShapeGPU>(RHI::CopyTransientArray(Frame.Extracts.ParticleColliders.data(), Frame.Extracts.ParticleColliders.size()));
+
+        TFixedVector<FParticleTerrainGPU, 4> Terrains;
+        for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
+        {
+            auto TerrainIt = TerrainGPUStates.find(TerrainItem.Entity);
+            if (TerrainIt == TerrainGPUStates.end() || !TerrainIt->second.HeightmapTexture || !TerrainIt->second.NormalTexture)
+            {
+                continue;
+            }
+
+            const FVector3 Origin = FVector3(TerrainItem.WorldMatrix[3]);
+            FParticleTerrainGPU& Terrain = Terrains.emplace_back();
+            Terrain.OriginSize   = FVector4(Origin.x, Origin.z, TerrainItem.TileWorldSize, Origin.y);
+            Terrain.HeightParams = FVector4(TerrainItem.MaxHeight, 0.0f, 0.0f, 0.0f);
+            Terrain.Textures     = FUIntVector4((uint32)TerrainIt->second.HeightmapTexture.GetResourceID(), (uint32)TerrainIt->second.NormalTexture.GetResourceID(), 0u, 0u);
+        }
+        const RHI::TGPUSpan<FParticleTerrainGPU> TerrainSpan = Terrains.empty()
+            ? RHI::TGPUSpan<FParticleTerrainGPU>()
+            : RHI::TGPUSpan<FParticleTerrainGPU>(RHI::CopyTransientArray(Terrains.data(), Terrains.size()));
+
+        static const FShaderH DefaultSimShader = FShaderLibrary::Get("ParticleSimulate.slang");
 
         bool bAnySimulated = false;
 
@@ -55,18 +319,13 @@ namespace Lumina
             {
                 continue;
             }
-            
+
             TVector<FParticleGPUState>& EntityStates = ParticleGPUStates[Item.Entity];
             if ((int32)EntityStates.size() != Item.EmitterCount)
             {
                 for (int32 Stale = Item.EmitterCount; Stale < (int32)EntityStates.size(); ++Stale)
                 {
-                    FParticleGPUState& Dropped = EntityStates[(size_t)Stale];
-                    if (Dropped.ParticleBuffer)     { DeferFree(Dropped.ParticleBuffer); }
-                    if (Dropped.SpawnCounterBuffer) { DeferFree(Dropped.SpawnCounterBuffer); }
-                    if (Dropped.AttributeBuffer)    { DeferFree(Dropped.AttributeBuffer); }
-                    if (Dropped.SortIndexBuffer)    { DeferFree(Dropped.SortIndexBuffer); }
-                    if (Dropped.SortDrawArgsBuffer) { DeferFree(Dropped.SortDrawArgsBuffer); }
+                    ReleaseParticleState(EntityStates[(size_t)Stale]);
                 }
                 EntityStates.resize((size_t)Math::Max(Item.EmitterCount, 1));
             }
@@ -75,130 +334,72 @@ namespace Lumina
             // An emitter that reaches none of the dispatches below is fully dead, and draws nothing.
             State.bSimulatedThisFrame = false;
 
-            const bool bNeedsAlloc = (State.ParticleBuffer.Gpu == 0)
-                                  || (State.AllocatedMax != MaxParticles)
-                                  || (State.AllocatedAttributeFloats != Item.AttributeFloatCount);
-            if (bNeedsAlloc)
+            if (IsParticleEmitterCulled(Item, false))
             {
-                if (State.ParticleBuffer)     { DeferFree(State.ParticleBuffer); }
-                if (State.SpawnCounterBuffer) { DeferFree(State.SpawnCounterBuffer); }
-                if (State.AttributeBuffer)    { DeferFree(State.AttributeBuffer); }
-                if (State.SortIndexBuffer)    { DeferFree(State.SortIndexBuffer); }
-                if (State.SortDrawArgsBuffer) { DeferFree(State.SortDrawArgsBuffer); }
-                State.SortIndexBuffer    = {};
-                State.SortDrawArgsBuffer = {};
-
-                State.ParticleBufferSize = (uint64)MaxParticles * sizeof(FGPUParticle);
-                State.ParticleBuffer     = RHI::Malloc(State.ParticleBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-                State.SpawnCounterBuffer = RHI::Malloc(sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-                RHI::SetDebugName(State.ParticleBuffer.Gpu,     "Particles.Particles");
-                RHI::SetDebugName(State.SpawnCounterBuffer.Gpu, "Particles.SpawnCounter");
-
-                State.AttributeBufferSize = (uint64)MaxParticles * (uint64)Item.AttributeFloatCount * sizeof(float);
-                State.AttributeBuffer     = RHI::Malloc(State.AttributeBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-                RHI::SetDebugName(State.AttributeBuffer.Gpu,    "Particles.Attributes");
-
-                // Bitonic needs a power-of-two span, and one workgroup can only hold so much of it.
-                State.SortCount = (MaxParticles <= PARTICLE_SORT_CAPACITY)
-                    ? (uint32)Math::NextPowerOfTwo((int32)MaxParticles)
-                    : 0u;
-                if (State.SortCount > 0)
-                {
-                    State.SortIndexBuffer    = RHI::Malloc((uint64)MaxParticles * sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-                    State.SortDrawArgsBuffer = RHI::Malloc(sizeof(RHI::FDrawIndirectArguments),   RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-                    RHI::SetDebugName(State.SortIndexBuffer.Gpu,    "Particles.SortIndices");
-                    RHI::SetDebugName(State.SortDrawArgsBuffer.Gpu, "Particles.SortDrawArgs");
-
-                    // A sort that never runs must draw nothing rather than an uninitialized count.
-                    RHI::CmdMemset(CL, { State.SortDrawArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments) }, 0u);
-                }
-
-                // Zero-fill the particle buffer so all entries start dead.
-                RHI::CmdMemset(CL, { State.ParticleBuffer.Gpu, State.ParticleBufferSize }, 0u);
-                RHI::CmdMemset(CL, { State.AttributeBuffer.Gpu, State.AttributeBufferSize }, 0u);
-
-                State.AllocatedMax             = MaxParticles;
-                State.AllocatedAttributeFloats = Item.AttributeFloatCount;
-                State.SpawnAccumulator  = 0.0f;
-                State.SystemAge         = 0.0f;
-                State.bBurstPending     = true;
+                continue;
             }
 
-            // Apply the extract-phase Activate()/Deactivate() intents to the render-owned sim state.
+            EnsureParticleBuffers(CL, Item, State);
+
             if (Item.bForceReset)
             {
                 RHI::CmdMemset(CL, { State.ParticleBuffer.Gpu, State.ParticleBufferSize }, 0u);
                 State.AliveTimeRemaining = 0.0f;
                 State.SpawnAccumulator   = 0.0f;
                 State.SystemAge          = 0.0f;
+                State.CycleTime          = -1.0f;
+                State.bPrewarmPending    = true;
+                if (Resolved.bUseFixedSeed)
+                {
+                    State.FrameSeed = (uint32)Resolved.Seed;
+                }
             }
             if (Item.bForceBurst)
             {
                 State.bBurstPending = true;
             }
 
-            const float ScaledDelta = DeltaTime * Item.TimeScale;
-            State.TotalTime += DeltaTime;
-            State.SystemAge += ScaledDelta;
-
-            const bool bDurationExpired = (Resolved.Duration > 0.0f) && (State.SystemAge >= Resolved.Duration);
-            if (bDurationExpired)
-            {
-                if (Resolved.bLooping)
-                {
-                    State.SystemAge = fmodf(State.SystemAge, Resolved.Duration);
-                    State.bBurstPending = true;
-                }
-            }
-
-            const bool bEmitActive = Item.bEmit && !(bDurationExpired && !Resolved.bLooping);
-
-            uint32 SpawnCount = 0;
-            if (bEmitActive && Resolved.SpawnRate > 0.0f && Item.SpawnRateMultiplier > 0.0f)
-            {
-                State.SpawnAccumulator += DeltaTime * Resolved.SpawnRate * Item.SpawnRateMultiplier;
-                SpawnCount = (uint32)State.SpawnAccumulator;
-                State.SpawnAccumulator -= (float)SpawnCount;
-            }
-            else
-            {
-                State.SpawnAccumulator = 0.0f;
-            }
-
-            const bool bDoBurst = bEmitActive && Item.bBurstOnSpawn && State.bBurstPending && Resolved.BurstCount > 0;
-            if (bDoBurst)
-            {
-                SpawnCount += (uint32)Resolved.BurstCount;
-                State.bBurstPending = false;
-            }
-            else if (!Item.bBurstOnSpawn)
-            {
-                State.bBurstPending = false;
-            }
-
-            SpawnCount = Math::Min(SpawnCount, MaxParticles);
-
-            const float MaxLifetime = Math::Max(Resolved.LifetimeRange.y, 0.0f);
-            if (SpawnCount > 0)
-            {
-                State.AliveTimeRemaining = Math::Max(State.AliveTimeRemaining, MaxLifetime);
-            }
-            State.AliveTimeRemaining = Math::Max(State.AliveTimeRemaining - ScaledDelta, 0.0f);
-
-            if (SpawnCount == 0 && State.AliveTimeRemaining <= 0.0f)
+            const FShaderH ComputeShader = Item.bUsesCustomShader ? Item.CustomComputeShader : DefaultSimShader;
+            const FShaderEntry* SimEntry = FShaderLibrary::Resolve(ComputeShader);
+            if (SimEntry == nullptr || !SimEntry->IsValid())
             {
                 continue;
             }
 
-            RHI::CmdMemset(CL, { State.SpawnCounterBuffer.Gpu, sizeof(uint32) }, 0u);
+            // Steps are either one per frame or a whole number of fixed steps, preceded by any prewarm.
+            const float FrameDelta = DeltaTime * Item.TimeScale;
+            TFixedVector<float, 8> StepDeltas;
+            uint32 PrewarmSteps = 0;
+            if (State.bPrewarmPending && Resolved.PrewarmTime > 0.0f)
+            {
+                PrewarmSteps = Math::Min((uint32)Math::Ceil(Resolved.PrewarmTime / ParticlePrewarmStep), ParticleMaxPrewarmSteps);
+            }
+            State.bPrewarmPending = false;
 
-            const FMatrix4 WorldMat = Item.WorldMatrix;
-            const FVector3 EmitterWorld = FVector3(WorldMat * FVector4(Item.EmitterOffset, 1.0f));
+            if (Resolved.FixedFPS > 0.0f)
+            {
+                const float Step = 1.0f / Resolved.FixedFPS;
+                State.FixedStepRemainder += FrameDelta;
+                const uint32 Steps = Math::Min((uint32)(State.FixedStepRemainder / Step), ParticleMaxFixedSteps);
+                State.FixedStepRemainder = Math::Min(State.FixedStepRemainder - (float)Steps * Step, Step);
+                for (uint32 Index = 0; Index < Steps; ++Index)
+                {
+                    StepDeltas.push_back(Step);
+                }
+            }
+            else
+            {
+                State.FixedStepRemainder = 0.0f;
+                StepDeltas.push_back(FrameDelta);
+            }
+
+            const FMatrix4 WorldMat       = Item.WorldMatrix;
+            const FVector3 EmitterWorld   = FVector3(WorldMat * FVector4(Item.EmitterOffset, 1.0f));
             const FVector3 EmitterRight   = Math::Normalize(FVector3(WorldMat[0]));
             const FVector3 EmitterUp      = Math::Normalize(FVector3(WorldMat[1]));
             const FVector3 EmitterForward = Math::Normalize(FVector3(WorldMat[2]));
-            const float EmitterScale = Math::Max((Math::Length(FVector3(WorldMat[0])) + Math::Length(FVector3(WorldMat[1])) + Math::Length(FVector3(WorldMat[2]))) / 3.0f, 1e-4f);
-            
+            const float    EmitterScale   = EmitterUniformScale(WorldMat);
+
             FVector3 EmitterVelocity(0.0f);
             if (State.bHasPrevPosition && DeltaTime > 0.0f)
             {
@@ -207,82 +408,227 @@ namespace Lumina
             State.PrevEmitterPosition = EmitterWorld;
             State.bHasPrevPosition    = true;
 
+            const FMatrix4 EmitterDelta = State.bHasPrevMatrix ? WorldMat * Math::Inverse(State.PrevEmitterMatrix) : FMatrix4(1.0f);
+            State.PrevEmitterMatrix = WorldMat;
+            State.bHasPrevMatrix    = true;
+
+            // A sub-emitter keeps simulating while its parent runs, since the parent's events arrive unannounced.
+            FParticleGPUState* Parent = nullptr;
+            if (Item.SourceEmitterIndex >= 0 && Item.SourceEmitterIndex < (int32)EntityStates.size())
+            {
+                Parent = &EntityStates[(size_t)Item.SourceEmitterIndex];
+                if (Parent->bSimulatedThisFrame || Parent->AliveTimeRemaining > 0.0f)
+                {
+                    State.ParentAliveTime = Math::Max(Resolved.LifetimeRange.y, 0.0f) + 0.5f;
+                }
+            }
+
             const float InheritFactor = Math::Clamp(Resolved.InheritEmitterVelocity, 0.0f, 1.0f);
+            const float CycleLength   = Resolved.Duration > 0.0f ? Resolved.Duration : Math::Max(Resolved.LifetimeRange.y, 0.01f);
+            const float MaxLifetime   = Math::Max(Resolved.LifetimeRange.y, 0.0f);
+            const uint32 TotalSteps   = PrewarmSteps + (uint32)StepDeltas.size();
 
-            State.FrameSeed = (State.FrameSeed + 2654435761u) ^ (uint32)Item.Entity;
-
-            uint32 SimFlags = 0u;
-            if (Resolved.bLooping)
+            for (uint32 StepIndex = 0; StepIndex < TotalSteps; ++StepIndex)
             {
-                SimFlags |= PARTICLE_SIM_FLAG_LOOP;
+                const bool  bPrewarm   = StepIndex < PrewarmSteps;
+                const float StepDelta  = bPrewarm ? ParticlePrewarmStep : StepDeltas[StepIndex - PrewarmSteps];
+                const bool  bFirstStep = StepIndex == 0;
+                const bool  bLastStep  = StepIndex + 1 == TotalSteps;
+
+                State.TotalTime += StepDelta;
+                State.SystemAge += StepDelta;
+
+                const bool bDurationExpired = (Resolved.Duration > 0.0f) && (State.SystemAge >= Resolved.Duration);
+                if (bDurationExpired && Resolved.bLooping)
+                {
+                    State.SystemAge = fmodf(State.SystemAge, Resolved.Duration);
+                    State.bBurstPending = true;
+                }
+
+                const bool  bEmitActive = Item.bEmit && !(bDurationExpired && !Resolved.bLooping);
+                const float Rate        = Resolved.SpawnRate * Item.SpawnRateMultiplier;
+
+                uint32 SpawnCount = 0;
+                if (bEmitActive && Rate > 0.0f)
+                {
+                    State.SpawnAccumulator += StepDelta * Rate * (1.0f - Resolved.Explosiveness);
+                    SpawnCount = (uint32)State.SpawnAccumulator;
+                    State.SpawnAccumulator -= (float)SpawnCount;
+
+                    if (Resolved.Explosiveness > 0.0f)
+                    {
+                        const bool bCycleStart = State.CycleTime < 0.0f || State.CycleTime + StepDelta >= CycleLength;
+                        State.CycleTime = bCycleStart ? 0.0f : State.CycleTime + StepDelta;
+                        if (bCycleStart)
+                        {
+                            SpawnCount += (uint32)Math::Round(Resolved.Explosiveness * Rate * CycleLength);
+                        }
+                    }
+                }
+                else
+                {
+                    State.SpawnAccumulator = 0.0f;
+                }
+
+                const bool bDoBurst = bEmitActive && Item.bBurstOnSpawn && State.bBurstPending && Resolved.BurstCount > 0;
+                if (bDoBurst)
+                {
+                    SpawnCount += (uint32)Resolved.BurstCount;
+                    State.bBurstPending = false;
+                }
+                else if (!Item.bBurstOnSpawn)
+                {
+                    State.bBurstPending = false;
+                }
+
+                SpawnCount = Math::Min(SpawnCount, MaxParticles);
+
+                // Script emits and parent events are consumed once per frame, on its first step.
+                const bool bConsumesScript = bFirstStep && !Item.ScriptEmits.empty();
+                const bool bConsumesEvents = bFirstStep && Parent != nullptr && Parent->EventBuffer.Gpu != 0;
+                if (SpawnCount > 0 || bConsumesScript || (bConsumesEvents && State.ParentAliveTime > 0.0f))
+                {
+                    State.AliveTimeRemaining = Math::Max(State.AliveTimeRemaining, MaxLifetime);
+                }
+                State.AliveTimeRemaining = Math::Max(State.AliveTimeRemaining - StepDelta, 0.0f);
+                State.ParentAliveTime    = Math::Max(State.ParentAliveTime - StepDelta, 0.0f);
+
+                if (SpawnCount == 0 && State.AliveTimeRemaining <= 0.0f && State.ParentAliveTime <= 0.0f && !bConsumesScript)
+                {
+                    continue;
+                }
+
+                bool bRibbonAdvance = false;
+                if (State.AllocatedRibbonSegments > 0u)
+                {
+                    const float Interval = Resolved.RibbonLength / (float)State.AllocatedRibbonSegments;
+                    State.RibbonTimer += StepDelta;
+                    if (State.RibbonTimer >= Interval)
+                    {
+                        State.RibbonTimer = Math::Min(State.RibbonTimer - Interval, Interval);
+                        State.RibbonHead  = (State.RibbonHead + 1u) % State.AllocatedRibbonSegments;
+                        bRibbonAdvance    = true;
+                    }
+                }
+
+                RHI::CmdMemset(CL, { State.SpawnCounterBuffer.Gpu, ParticleCounterBytes }, 0u);
+                if (bFirstStep && State.EventBuffer.Gpu != 0)
+                {
+                    RHI::CmdMemset(CL, { State.EventBuffer.Gpu, ParticleEventCountBytes }, 0u);
+                }
+
+                State.FrameSeed = (State.FrameSeed + 2654435761u) ^ (Resolved.bUseFixedSeed ? 0u : (uint32)Item.Entity);
+
+                uint32 SimFlags = 0u;
+                if (Resolved.bLooping)
+                {
+                    SimFlags |= PARTICLE_SIM_FLAG_LOOP;
+                }
+                if (State.bBurstPending)
+                {
+                    SimFlags |= PARTICLE_SIM_FLAG_BURST_PENDING;
+                }
+                if (Resolved.bLocalSpace && bFirstStep)
+                {
+                    SimFlags |= PARTICLE_SIM_FLAG_LOCAL_SPACE;
+                }
+
+                FParticleSimParamsGPU SimParams{};
+                SimParams.EmitterPosition   = FVector4(EmitterWorld, 1.0f);
+                SimParams.EmitterForward    = FVector4(EmitterForward, EmitterVelocity.x);
+                SimParams.EmitterRight      = FVector4(EmitterRight,   EmitterVelocity.y);
+                SimParams.EmitterUp         = FVector4(EmitterUp,      EmitterVelocity.z);
+                SimParams.Counts            = FUIntVector4(MaxParticles, SpawnCount, State.FrameSeed, SimFlags);
+                SimParams.Modes             = FUIntVector4((uint32)Resolved.Shape, (uint32)Resolved.VelocityMode, 0u, 0u);
+                SimParams.ShapeSize         = FVector4(Resolved.ShapeSize, Math::Radians(Resolved.ShapeAngle));
+                SimParams.VelocityMin       = FVector4(Resolved.VelocityMin, 0.0f);
+                SimParams.VelocityMax       = FVector4(Resolved.VelocityMax, 0.0f);
+                SimParams.SpeedAndLifetime  = FVector4(Resolved.SpeedRange.x, Resolved.SpeedRange.y, Resolved.LifetimeRange.x, Resolved.LifetimeRange.y);
+                SimParams.Gravity           = FVector4(Resolved.Gravity, Resolved.Drag);
+                SimParams.StartColor        = Resolved.StartColor;
+                SimParams.EndColor          = Resolved.EndColor;
+                SimParams.SizeRange         = FVector4(Resolved.StartSizeRange.x, Resolved.StartSizeRange.y, Resolved.EndSizeRange.x, Resolved.EndSizeRange.y);
+                SimParams.RotationRange     = FVector4(Resolved.RotationRange.x, Resolved.RotationRange.y, Resolved.RotationSpeedRange.x, Resolved.RotationSpeedRange.y);
+                SimParams.NoiseStrength     = FVector4(Resolved.NoiseStrength, Resolved.NoiseScale);
+                SimParams.NoiseParams       = FVector4(Resolved.NoiseSpeed, InheritFactor, 0.0f, 0.0f);
+                SimParams.Timing            = FVector4(StepDelta, State.TotalTime, State.SystemAge, EmitterScale);
+                SimParams.EmitterDelta      = bFirstStep ? EmitterDelta : FMatrix4(1.0f);
+                SimParams.EventParams       = FVector4(Item.RaisedEventRate, Resolved.InheritParentVelocity, 0.0f, 0.0f);
+                SimParams.EventInfo         = FUIntVector4(Item.RaisedEventMask,
+                                                           bConsumesEvents ? (uint32)Resolved.SpawnEvent : PARTICLE_NO_EVENT_LIST,
+                                                           Item.EmissionMeshSlot,
+                                                           (uint32)Resolved.ParticlesPerEvent);
+                SimParams.RibbonInfo        = FUIntVector4(State.AllocatedRibbonSegments, State.RibbonHead, bRibbonAdvance ? 1u : 0u, 0u);
+
+                // Buffer fills (zero/reset/counter) must land before the sim reads them.
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::Compute,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+
+                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
+
+                // Mirrors FParticleSimArgs in ParticleSimCommon.slang, everything by device address.
+                struct FParticleSimArgs
+                {
+                    uint64 ParamsAddr;
+                    RHI::TGPUSpan<FGPUParticle>      Particles;
+                    RHI::TGPUSpan<uint32>            SpawnCounter;
+                    RHI::TGPUSpan<FVector4>          ModuleParams;
+                    RHI::TGPUSpan<float>             Attributes;
+                    RHI::TGPUSpan<FParticleEventGPU> OwnEvents;
+                    RHI::TGPUSpan<uint32>            OwnEventCounts;
+                    RHI::TGPUSpan<FParticleEventGPU> SourceEvents;
+                    RHI::TGPUSpan<uint32>            SourceEventCounts;
+                    RHI::TGPUSpan<FParticleEventGPU> ScriptEvents;
+                    RHI::TGPUSpan<FVector4>          RibbonHistory;
+                    RHI::TGPUSpan<FParticleShapeGPU> Attractors;
+                    RHI::TGPUSpan<FParticleShapeGPU> Colliders;
+                    RHI::TGPUSpan<FParticleTerrainGPU> Terrains;
+                };
+                static_assert(sizeof(FParticleSimArgs) == 216, "FParticleSimArgs must match ParticleSimCommon.slang.");
+
+                FParticleSimArgs SimArgs = {};
+                SimArgs.ParamsAddr   = RHI::CopyTransient(SimParams);
+                SimArgs.Particles    = { State.ParticleBuffer, MaxParticles };
+                SimArgs.SpawnCounter = { State.SpawnCounterBuffer };
+                if (!Item.ModuleParamValues.empty())
+                {
+                    SimArgs.ModuleParams = RHI::CopyTransientArray(Item.ModuleParamValues.data(), Item.ModuleParamValues.size());
+                }
+                SimArgs.Attributes   = { State.AttributeBuffer };
+                if (State.EventBuffer.Gpu != 0)
+                {
+                    SimArgs.OwnEventCounts = RHI::TGPUSpan<uint32>::FromAddress(State.EventBuffer.Gpu, PARTICLE_EVENT_LISTS);
+                    SimArgs.OwnEvents      = RHI::TGPUSpan<FParticleEventGPU>::FromAddress(State.EventBuffer.Gpu + ParticleEventCountBytes, PARTICLE_EVENT_LISTS * PARTICLE_EVENT_CAPACITY);
+                }
+                if (bConsumesEvents)
+                {
+                    SimArgs.SourceEventCounts = RHI::TGPUSpan<uint32>::FromAddress(Parent->EventBuffer.Gpu, PARTICLE_EVENT_LISTS);
+                    SimArgs.SourceEvents      = RHI::TGPUSpan<FParticleEventGPU>::FromAddress(Parent->EventBuffer.Gpu + ParticleEventCountBytes, PARTICLE_EVENT_LISTS * PARTICLE_EVENT_CAPACITY);
+                }
+                if (bConsumesScript)
+                {
+                    SimArgs.ScriptEvents = RHI::CopyTransientArray(Item.ScriptEmits.data(), Item.ScriptEmits.size());
+                }
+                SimArgs.RibbonHistory = { State.RibbonHistoryBuffer };
+                SimArgs.Attractors    = AttractorSpan;
+                SimArgs.Colliders     = ColliderSpan;
+                SimArgs.Terrains      = TerrainSpan;
+
+                RHI::CmdDispatch(CL, MakeArgs(SimArgs), RenderUtils::GetGroupCount(MaxParticles, 64u), 1u, 1u);
+                bAnySimulated = true;
+                State.bSimulatedThisFrame = true;
+
+                // The next step, a sub-emitter reading these events, or next frame's event clear all touch what this wrote.
+                if (!bLastStep || Item.RaisedEventMask != 0u || Item.SourceEmitterIndex >= 0)
+                {
+                    RHI::CmdBarrier(CL,
+                        RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite,
+                        RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer,
+                        RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferWrite);
+                }
             }
-            if (State.bBurstPending)
-            {
-                SimFlags |= PARTICLE_SIM_FLAG_BURST_PENDING;
-            }
-
-            FParticleSimParamsGPU SimParams{};
-            SimParams.EmitterPosition   = FVector4(EmitterWorld, 1.0f);
-            SimParams.EmitterForward    = FVector4(EmitterForward, EmitterVelocity.x);
-            SimParams.EmitterRight      = FVector4(EmitterRight,   EmitterVelocity.y);
-            SimParams.EmitterUp         = FVector4(EmitterUp,      EmitterVelocity.z);
-            SimParams.Counts            = FUIntVector4(MaxParticles, SpawnCount, State.FrameSeed, SimFlags);
-            SimParams.Modes             = FUIntVector4((uint32)Resolved.Shape, (uint32)Resolved.VelocityMode, 0u, 0u);
-            SimParams.ShapeSize         = FVector4(Resolved.ShapeSize, Math::Radians(Resolved.ShapeAngle));
-            SimParams.VelocityMin       = FVector4(Resolved.VelocityMin, 0.0f);
-            SimParams.VelocityMax       = FVector4(Resolved.VelocityMax, 0.0f);
-            SimParams.SpeedAndLifetime  = FVector4(Resolved.SpeedRange.x, Resolved.SpeedRange.y, Resolved.LifetimeRange.x, Resolved.LifetimeRange.y);
-            SimParams.Gravity           = FVector4(Resolved.Gravity, Resolved.Drag);
-            SimParams.StartColor        = Resolved.StartColor;
-            SimParams.EndColor          = Resolved.EndColor;
-            SimParams.SizeRange         = FVector4(Resolved.StartSizeRange.x, Resolved.StartSizeRange.y, Resolved.EndSizeRange.x, Resolved.EndSizeRange.y);
-            SimParams.RotationRange     = FVector4(Resolved.RotationRange.x, Resolved.RotationRange.y, Resolved.RotationSpeedRange.x, Resolved.RotationSpeedRange.y);
-            SimParams.NoiseStrength     = FVector4(Resolved.NoiseStrength, Resolved.NoiseScale);
-            SimParams.NoiseParams       = FVector4(Resolved.NoiseSpeed, InheritFactor, 0.0f, 0.0f);
-            SimParams.Timing            = FVector4(ScaledDelta, State.TotalTime, State.SystemAge, EmitterScale);
-
-            static const FShaderH DefaultSimShader = FShaderLibrary::Get("ParticleSimulate.slang");
-            FShaderH ComputeShader = Item.bUsesCustomShader ? Item.CustomComputeShader : DefaultSimShader;
-
-            const FShaderEntry* SimEntry = FShaderLibrary::Resolve(ComputeShader);
-            if (SimEntry == nullptr || !SimEntry->IsValid())
-            {
-                continue;
-            }
-
-            // Buffer fills (zero/reset/counter) must land before the sim reads them.
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                RHI::EStageFlags::Compute,
-                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
-
-            // Mirrors FParticleSimArgs in ParticleSimulate.slang, everything by device address.
-            struct FParticleSimArgs
-            {
-                uint64 ParamsAddr;
-                RHI::TGPUSpan<FGPUParticle> Particles;
-                RHI::TGPUSpan<uint32>       SpawnCounter;
-                RHI::TGPUSpan<FVector4>     ModuleParams;
-                RHI::TGPUSpan<float>        Attributes;
-            };
-            static_assert(sizeof(FParticleSimArgs) == 72, "FParticleSimArgs must match ParticleSimCommon.slang.");
-
-            FParticleSimArgs SimArgs = {};
-            SimArgs.ParamsAddr   = RHI::CopyTransient(SimParams);
-            SimArgs.Particles    = { State.ParticleBuffer, MaxParticles };
-            SimArgs.SpawnCounter = { State.SpawnCounterBuffer };
-            if (!Item.ModuleParamValues.empty())
-            {
-                SimArgs.ModuleParams = RHI::CopyTransientArray(Item.ModuleParamValues.data(),
-                                                               Item.ModuleParamValues.size());
-            }
-            SimArgs.Attributes   = { State.AttributeBuffer };
-
-            RHI::CmdDispatch(CL, MakeArgs(SimArgs), RenderUtils::GetGroupCount(MaxParticles, 64u), 1u, 1u);
-            bAnySimulated = true;
-            State.bSimulatedThisFrame = true;
         }
 
         if (bAnySimulated)
@@ -298,6 +644,82 @@ namespace Lumina
     // ParticleSortCompact packs a slot index into the low bits of every sort key.
     static_assert((1u << PARTICLE_SORT_INDEX_BITS) == PARTICLE_SORT_CAPACITY,
                   "The sort key's index field must address exactly the sortable capacity.");
+    static_assert((1u << PARTICLE_GLOBAL_SORT_INDEX_BITS) == PARTICLE_GLOBAL_SORT_CAPACITY,
+                  "The multi-pass sort key's index field must address exactly its capacity.");
+
+    // Stages of ParticleSortGlobal.slang.
+    enum class EParticleGlobalSortStage : uint32
+    {
+        Keys,
+        LocalSort,
+        GlobalStep,
+        LocalMerge,
+        Compact,
+    };
+
+    void FDefaultSceneRenderer::SortParticlesGlobal(RHI::FCmdListH CL, FParticleGPUState& State, uint32 SortMode, uint32 VertsPerParticle)
+    {
+        static const FShaderH GlobalSortShader = FShaderLibrary::Get("ParticleSortGlobal.slang");
+        const FShaderEntry* Entry = FShaderLibrary::Resolve(GlobalSortShader);
+        if (Entry == nullptr || !Entry->IsValid() || !State.SortKeyBuffer)
+        {
+            return;
+        }
+
+        // Mirrors FParticleGlobalSortArgs in ParticleSortGlobal.slang.
+        struct FParticleGlobalSortArgs
+        {
+            RHI::TGPUSpan<FGPUParticle>                 Particles;
+            RHI::TGPUSpan<uint32>                       Keys;
+            RHI::TGPUSpan<uint32>                       OutIndices;
+            RHI::TGPUSpan<RHI::FDrawIndirectArguments>  OutDrawArgs;
+            RHI::TGPUSpan<uint32>                       Counters;
+            uint32 SortCount;
+            uint32 Stage;
+            uint32 K;
+            uint32 J;
+            uint32 SortMode;
+            uint32 VertsPerParticle;
+        };
+        static_assert(sizeof(FParticleGlobalSortArgs) == 104, "FParticleGlobalSortArgs must match ParticleSortGlobal.slang.");
+
+        FParticleGlobalSortArgs Args = {};
+        Args.Particles        = { State.ParticleBuffer, State.AllocatedMax };
+        Args.Keys             = { State.SortKeyBuffer };
+        Args.OutIndices       = { State.SortIndexBuffer };
+        Args.OutDrawArgs      = { State.SortDrawArgsBuffer };
+        Args.Counters         = { State.SpawnCounterBuffer };
+        Args.SortCount        = State.SortCount;
+        Args.SortMode         = SortMode;
+        Args.VertsPerParticle = VertsPerParticle;
+
+        const uint32 ElementGroups = RenderUtils::GetGroupCount(State.SortCount, (uint32)PARTICLE_SORT_THREADS);
+        const uint32 BlockGroups   = State.SortCount / PARTICLE_SORT_CAPACITY;
+
+        auto Dispatch = [&](EParticleGlobalSortStage Stage, uint32 Groups, uint32 K, uint32 J)
+        {
+            Args.Stage = (uint32)Stage;
+            Args.K     = K;
+            Args.J     = J;
+            RHI::CmdDispatch(CL, MakeArgs(Args), Groups, 1u, 1u);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        };
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(GlobalSortShader));
+        Dispatch(EParticleGlobalSortStage::Keys, ElementGroups, 0u, 0u);
+        Dispatch(EParticleGlobalSortStage::LocalSort, BlockGroups, 0u, 0u);
+        for (uint32 K = PARTICLE_SORT_CAPACITY * 2u; K <= State.SortCount; K <<= 1u)
+        {
+            for (uint32 J = K >> 1u; J >= PARTICLE_SORT_CAPACITY; J >>= 1u)
+            {
+                Dispatch(EParticleGlobalSortStage::GlobalStep, ElementGroups, K, J);
+            }
+            Dispatch(EParticleGlobalSortStage::LocalMerge, BlockGroups, K, 0u);
+        }
+        Dispatch(EParticleGlobalSortStage::Compact, ElementGroups, 0u, 0u);
+    }
 
     void FDefaultSceneRenderer::ParticleSortPass(RHI::FCmdListH CL)
     {
@@ -316,7 +738,7 @@ namespace Lumina
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
-            if (!Item.bReady)
+            if (!Item.bReady || !IsParticleDrawable(Item) || IsParticleEmitterCulled(Item, true))
             {
                 continue;
             }
@@ -334,8 +756,17 @@ namespace Lumina
                 continue;
             }
 
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SortShader));
+            const uint32 SortMode         = (uint32)Item.Resolved.SortMode;
+            const uint32 VertsPerParticle = ParticleVertsPerParticle(Item);
             bAnySorted = true;
+
+            if (State.SortCount > PARTICLE_SORT_CAPACITY)
+            {
+                SortParticlesGlobal(CL, State, SortMode, VertsPerParticle);
+                continue;
+            }
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SortShader));
 
             // Mirrors FParticleSortArgs in ParticleSortCompact.slang, pointers first to stay 8-aligned.
             struct FParticleSortArgs
@@ -344,15 +775,19 @@ namespace Lumina
                 RHI::TGPUSpan<uint32>       OutIndices;
                 RHI::TGPUSpan<RHI::FDrawIndirectArguments> OutDrawArgs;
                 uint32 SortCount;
+                uint32 SortMode;
+                uint32 VertsPerParticle;
                 uint32 _Pad0;
             };
-            static_assert(sizeof(FParticleSortArgs) == 56, "FParticleSortArgs must match ParticleSortCompact.slang.");
+            static_assert(sizeof(FParticleSortArgs) == 64, "FParticleSortArgs must match ParticleSortCompact.slang.");
 
             FParticleSortArgs SortArgs = {};
-            SortArgs.Particles  = { State.ParticleBuffer, State.AllocatedMax };
-            SortArgs.OutIndices = { State.SortIndexBuffer };
-            SortArgs.OutDrawArgs = { State.SortDrawArgsBuffer };
-            SortArgs.SortCount  = State.SortCount;
+            SortArgs.Particles        = { State.ParticleBuffer, State.AllocatedMax };
+            SortArgs.OutIndices       = { State.SortIndexBuffer };
+            SortArgs.OutDrawArgs      = { State.SortDrawArgsBuffer };
+            SortArgs.SortCount        = State.SortCount;
+            SortArgs.SortMode         = SortMode;
+            SortArgs.VertsPerParticle = VertsPerParticle;
 
             RHI::CmdDispatch(CL, MakeArgs(SortArgs), 1u, 1u, 1u);
         }
@@ -424,6 +859,57 @@ namespace Lumina
         }
     }
 
+    static FShaderH ParticleVertexShaderFor(EParticleRenderMode Mode)
+    {
+        static const FShaderH SpriteVertexShader = FShaderLibrary::Get("ParticleVertex.slang");
+        static const FShaderH MeshVertexShader   = FShaderLibrary::Get("ParticleMeshVertex.slang");
+        static const FShaderH RibbonVertexShader = FShaderLibrary::Get("ParticleRibbonVertex.slang");
+        switch (Mode)
+        {
+        case EParticleRenderMode::Mesh:   return MeshVertexShader;
+        case EParticleRenderMode::Ribbon: return RibbonVertexShader;
+        default:                          return SpriteVertexShader;
+        }
+    }
+
+    // Everything the three particle vertex stages read, before the per-pass fields are set.
+    static FParticlePushConstants MakeParticlePushConstants(const FParticleExtract& Item, const FParticleGPUState& State, bool bMaterial)
+    {
+        const FResolvedParticleParams& Resolved = Item.Resolved;
+
+        FParticlePushConstants PC = {};
+        PC.Particles            = { State.ParticleBuffer, State.AllocatedMax };
+        PC.TextureIndex         = Item.TextureIndex;
+        PC.FacingMode           = (uint32)Resolved.FacingMode;
+        PC.Tint                 = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
+        PC.VelocityStretch      = Resolved.VelocityStretch;
+        PC.SubUVColumns         = (uint32)Math::Max(Resolved.SubUVColumns, 1);
+        PC.SubUVRows            = (uint32)Math::Max(Resolved.SubUVRows, 1);
+        PC.AttrFloats           = Math::Max(Item.AttributeFloatCount, 1u);
+        PC.Attributes           = { State.AttributeBuffer };
+        PC.AttrSlotSizeScaleX   = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleX];
+        PC.AttrSlotSizeScaleY   = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleY];
+        PC.AttrSlotPrevPosX     = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosX];
+        PC.AttrSlotPrevPosY     = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosY];
+        PC.AttrSlotPrevPosZ     = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosZ];
+        PC.MaterialIndex        = bMaterial ? (uint32)Item.MaterialIndex : 0u;
+        PC.RenderFlags          = (uint32)Resolved.BlendMode | (Resolved.bLit ? PARTICLE_RENDER_FLAG_LIT : 0u);
+        PC.RibbonHistory        = { State.RibbonHistoryBuffer };
+        PC.RenderMode           = (uint32)Resolved.RenderMode;
+        PC.VertsPerParticle     = ParticleVertsPerParticle(Item);
+        PC.MeshletHeaderSlot    = Item.MeshletHeaderSlot;
+        PC.bAlignMeshToVelocity = Resolved.bAlignMeshToVelocity ? 1u : 0u;
+        PC.RibbonSegments       = State.AllocatedRibbonSegments;
+        PC.RibbonHead           = State.RibbonHead;
+        PC.RibbonTailWidth      = Resolved.RibbonTailWidth;
+        PC.ExtrapolateTime      = (Resolved.FixedFPS > 0.0f && Resolved.bInterpolate) ? State.FixedStepRemainder : 0.0f;
+        PC.FlipbookMode         = (uint32)Resolved.FlipbookMode;
+        PC.FlipbookFPS          = Resolved.FlipbookFPS;
+        PC.bRandomStartFrame    = Resolved.bRandomStartFrame ? 1u : 0u;
+        PC.ShadowDataIndex      = INDEX_NONE;
+        return PC;
+    }
+
     void FDefaultSceneRenderer::ParticleRenderPass(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SECTION_COLORED("Particle Render", tracy::Color::OrangeRed);
@@ -436,9 +922,8 @@ namespace Lumina
             return;
         }
 
-        static const FShaderH SpriteVertexShader = FShaderLibrary::Get("ParticleVertex.slang");
-        static const FShaderH SpritePixelShader  = FShaderLibrary::Get("ParticlePixel.slang");
-        if (!SpriteVertexShader || !SpritePixelShader)
+        static const FShaderH SpritePixelShader = FShaderLibrary::Get("ParticlePixel.slang");
+        if (!SpritePixelShader)
         {
             return;
         }
@@ -468,33 +953,9 @@ namespace Lumina
         SetViewportScissor(CL, HDR.GetExtent());
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
-        struct FParticlePushConstants
-        {
-            RHI::TGPUSpan<FGPUParticle> Particles;
-            uint32   TextureIndex;
-            uint32   FacingMode;
-            FVector4 Tint;
-            float    VelocityStretch;
-            uint32   SubUVColumns;
-            uint32   SubUVRows;
-            uint32   AttrFloats;        // floats per particle in the attribute buffer
-            RHI::TGPUSpan<float> Attributes;   // empty when the emitter declared none
-            int32    AttrSlotSizeScaleX; // -1 when the stack did not declare it
-            int32    AttrSlotSizeScaleY;
-            int32    AttrSlotPrevPosX;
-            int32    AttrSlotPrevPosY;
-            int32    AttrSlotPrevPosZ;
-            uint32   MaterialIndex;      // Materials() slot; read only by the Particle material stages
-            uint32   bSorted;            // 0 draws unsorted at full capacity, and SortedIndices is not read
-            RHI::TGPUSpan<uint32> SortedIndices;
-            float    SoftFadeDistance;   // 0 whenever this pass writes the depth the fade samples
-            uint32   RenderFlags;        // EParticleBlendMode in the low byte, PARTICLE_RENDER_FLAG_LIT above it
-        };
-        static_assert(sizeof(FParticlePushConstants) == 128, "FParticlePushConstants must match the slang pass block.");
-
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
-            if (!Item.bReady)
+            if (!Item.bReady || !IsParticleDrawable(Item) || IsParticleEmitterCulled(Item, true))
             {
                 continue;
             }
@@ -515,7 +976,8 @@ namespace Lumina
             const bool bSorted = (State.SortCount > 0) && State.SortIndexBuffer && State.SortDrawArgsBuffer;
 
             const FResolvedParticleParams& Resolved = Item.Resolved;
-            const bool bMaterial = (Item.MaterialIndex >= 0);
+            // A Particle material shades sprites only; meshes and ribbons keep the built-in stages.
+            const bool bMaterial = (Item.MaterialIndex >= 0) && Resolved.RenderMode == EParticleRenderMode::Sprite;
 
             RHI::FDepthStencilDesc DepthDesc;
             const bool bWriteDepth = bMaterial ? Item.bMaterialWritesDepth : Resolved.bWriteDepth;
@@ -526,7 +988,7 @@ namespace Lumina
             RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
             FGraphicsPipelineKey Key;
-            Key.VS          = bMaterial ? Item.MaterialVertexShader : SpriteVertexShader;
+            Key.VS          = bMaterial ? Item.MaterialVertexShader : ParticleVertexShaderFor(Resolved.RenderMode);
             Key.PS          = bMaterial ? Item.MaterialPixelShader  : SpritePixelShader;
             Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ HDR.Desc.Format, bMaterial
@@ -534,26 +996,10 @@ namespace Lumina
                 : MakeParticleBlend(Resolved.BlendMode) });
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
-            FParticlePushConstants PC = {};
-            PC.Particles         = { State.ParticleBuffer, State.AllocatedMax };
-            PC.TextureIndex      = Item.TextureIndex;
-            PC.FacingMode        = (uint32)Resolved.FacingMode;
-            PC.Tint              = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
-            PC.VelocityStretch   = Resolved.VelocityStretch;
-            PC.SubUVColumns      = (uint32)Math::Max(Resolved.SubUVColumns, 1);
-            PC.SubUVRows         = (uint32)Math::Max(Resolved.SubUVRows, 1);
-            PC.AttrFloats        = Math::Max(Item.AttributeFloatCount, 1u);
-            PC.Attributes        = { State.AttributeBuffer };
-            PC.AttrSlotSizeScaleX = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleX];
-            PC.AttrSlotSizeScaleY = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleY];
-            PC.AttrSlotPrevPosX   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosX];
-            PC.AttrSlotPrevPosY   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosY];
-            PC.AttrSlotPrevPosZ   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosZ];
-            PC.MaterialIndex      = bMaterial ? (uint32)Item.MaterialIndex : 0u;
-            PC.bSorted            = bSorted ? 1u : 0u;
-            PC.SortedIndices      = { State.SortIndexBuffer };
-            PC.SoftFadeDistance   = (bWriteDepth || bClearsDepth) ? 0.0f : Resolved.SoftFadeDistance;
-            PC.RenderFlags        = (uint32)Resolved.BlendMode | (Resolved.bLit ? PARTICLE_RENDER_FLAG_LIT : 0u);
+            FParticlePushConstants PC = MakeParticlePushConstants(Item, State, bMaterial);
+            PC.bSorted          = bSorted ? 1u : 0u;
+            PC.SortedIndices    = { State.SortIndexBuffer };
+            PC.SoftFadeDistance = (bWriteDepth || bClearsDepth) ? 0.0f : Resolved.SoftFadeDistance;
 
             if (bSorted)
             {
@@ -561,11 +1007,65 @@ namespace Lumina
             }
             else
             {
-                RHI::CmdDraw(CL, MakeArgs(PC), 6u * State.AllocatedMax, 1u, 0u, 0u);
+                RHI::CmdDraw(CL, MakeArgs(PC), PC.VertsPerParticle * State.AllocatedMax, 1u, 0u, 0u);
             }
         }
 
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
+    }
+
+    void FDefaultSceneRenderer::ParticleShadowCasters(RHI::FCmdListH CL, int32 SunShadowDataIndex)
+    {
+        const FFrameData& Frame = *RenderFrame;
+
+        static const FShaderH ShadowPixelShader = FShaderLibrary::Get("ParticleShadowPixel.slang");
+        if (!ShadowPixelShader)
+        {
+            return;
+        }
+
+        for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
+        {
+            if (!Item.bReady || !Item.Resolved.bCastShadows || !IsParticleDrawable(Item) || IsParticleEmitterCulled(Item, false))
+            {
+                continue;
+            }
+
+            // The cascades render before this frame's simulation, so they show the particles as last simulated.
+            auto ParticleStateIt = ParticleGPUStates.find(Item.Entity);
+            if (ParticleStateIt == ParticleGPUStates.end() || Item.EmitterIndex >= (int32)ParticleStateIt->second.size())
+            {
+                continue;
+            }
+            const FParticleGPUState& State = ParticleStateIt->second[(size_t)Item.EmitterIndex];
+            if (!State.ParticleBuffer || !State.bSimulatedThisFrame)
+            {
+                continue;
+            }
+
+            FGraphicsPipelineKey Key;
+            Key.VS          = ParticleVertexShaderFor(Item.Resolved.RenderMode);
+            Key.PS          = ShadowPixelShader;
+            Key.DepthFormat = EFormat::D32;
+            RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+            FParticlePushConstants PC = MakeParticlePushConstants(Item, State, false);
+            PC.bShadowPass     = 1u;
+            PC.ShadowDataIndex = SunShadowDataIndex;
+
+            for (uint32 Cascade = 0; Cascade < (uint32)NumCascades; ++Cascade)
+            {
+                const int32 TileX = GCSMCascadeOriginX[Cascade];
+                const int32 TileY = GCSMCascadeOriginY[Cascade];
+                const int32 TileW = GCSMCascadeSizes[Cascade];
+                const RHI::FRect TileRect{ TileX, TileX + TileW, TileY, TileY + TileW };
+                RHI::CmdSetViewport(CL, TileRect);
+                RHI::CmdSetScissor(CL, TileRect);
+
+                PC.ShadowCascade = Cascade;
+                RHI::CmdDraw(CL, MakeArgs(PC), PC.VertsPerParticle * State.AllocatedMax, 1u, 0u, 0u);
+            }
+        }
     }
 }

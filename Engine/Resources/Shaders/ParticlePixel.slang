@@ -1,32 +1,30 @@
-#include "Includes/ParticleSpriteCommon.slang"
-
-struct PSInput
-{
-    float4                  Color        : PARTICLE_COLOR;
-    float2                  UV           : TEXCOORD0;
-    nointerpolation uint    TextureIndex : TEXTURE_INDEX;
-    float3                  Normal       : PARTICLE_NORMAL;
-    float3                  Ambient      : PARTICLE_AMBIENT;
-    float3                  SunLight     : PARTICLE_SUN;
-    float4                  Position     : SV_Position;
-};
+#include "Includes/ParticleLighting.slang"
 
 struct PSOutput
 {
     float4 Color : SV_Target0;
 };
 
-// Soft radial falloff used when no texture is assigned. Keeps particles from
-// rendering as hard squares and gives decent results for smoke/fire defaults.
-float DefaultSprite(float2 uv)
+// Coverage when no texture is assigned, a soft disc for sprites, a soft band for ribbons and solid for meshes.
+float DefaultCoverage(float2 UV)
 {
-    float2 p = uv * 2.0 - 1.0;
-    float d  = saturate(1.0 - dot(p, p));
-    return d * d;
+    if (Pass().RenderMode == PARTICLE_RENDER_MESH)
+    {
+        return 1.0;
+    }
+    if (Pass().RenderMode == PARTICLE_RENDER_RIBBON)
+    {
+        const float Across = UV.y * 2.0 - 1.0;
+        return saturate(1.0 - Across * Across);
+    }
+
+    const float2 Centered = UV * 2.0 - 1.0;
+    const float  Disc     = saturate(1.0 - dot(Centered, Centered));
+    return Disc * Disc;
 }
 
 [shader("pixel")]
-PSOutput PixelMain(PSInput In)
+PSOutput PixelMain(FParticleVertexOutput In)
 {
     float4 texel;
     if (In.TextureIndex != 0u)
@@ -35,17 +33,17 @@ PSOutput PixelMain(PSInput In)
     }
     else
     {
-        float mask = DefaultSprite(In.UV);
-        texel = float4(1.0, 1.0, 1.0, mask);
+        texel = float4(1.0, 1.0, 1.0, DefaultCoverage(In.UV));
     }
 
     float4 outColor = texel * In.Color;
 
     if (IsParticleLit())
     {
-        // Half-Lambert wraps light around the puff, which reads as scattering through smoke rather than a hard terminator.
-        const float Wrap = saturate(dot(normalize(In.Normal), GetSunDirection()) * 0.5 + 0.5);
-        outColor.rgb *= In.Ambient + In.SunLight * (Wrap * INV_PI);
+        // A mesh is a real surface, while half-Lambert wraps light around a puff the way it scatters through smoke.
+        const float NdotL  = dot(normalize(In.Normal), GetSunDirection());
+        const float Facing = Pass().RenderMode == PARTICLE_RENDER_MESH ? saturate(NdotL) : saturate(NdotL * 0.5 + 0.5);
+        outColor.rgb *= In.Ambient + In.SunLight * (Facing * INV_PI);
     }
 
     const float Fade = ParticleSoftFade(In.Position);

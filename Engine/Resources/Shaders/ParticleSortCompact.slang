@@ -10,6 +10,8 @@ struct FParticleSortArgs
     GPUSpan<FDrawIndirectArguments> OutDrawArgs;
     // Particles rounded up to the power of two bitonic needs, clamped to the groupshared array.
     uint                            SortCount;
+    uint                            SortMode;
+    uint                            VertsPerParticle;
     uint                            _Pad0;
 };
 FParticleSortArgs* Pass() { return GetPassArgs<FParticleSortArgs>(); }
@@ -20,13 +22,11 @@ static const uint kDeadKey = ~0u;
 groupshared uint gKeys[PARTICLE_SORT_CAPACITY];
 groupshared uint gLiveCount;
 
-// Reciprocal distance, so far particles take the small keys an ascending sort emits first.
-uint ParticleDepthKey(float3 WorldPos, float3 CameraPos)
+// Held one below kDeadKey, which a particle sitting on the camera would otherwise reach.
+uint ParticleDepthKey(FGPUParticle P, float3 CameraPos)
 {
-    const float Nearness = 1.0 / (1.0 + length(WorldPos - CameraPos));
-    const uint  MaxKey   = (1u << PARTICLE_SORT_DEPTH_BITS) - 1u;
-    // Held one below kDeadKey, which a particle sitting on the camera would otherwise reach.
-    return min((uint)(saturate(Nearness) * (float)MaxKey), MaxKey - 1u);
+    const uint MaxKey = (1u << PARTICLE_SORT_DEPTH_BITS) - 1u;
+    return min((uint)(saturate(ParticleSortValue(P, CameraPos, Pass().SortMode)) * (float)MaxKey), MaxKey - 1u);
 }
 
 // RULE. No lane may return early, or the barriers below go non-uniform and AMD hangs.
@@ -55,7 +55,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
             // Must match the liveness test in ParticleVertex.slang, which draws what this counts.
             if (P.Lifetime > 0.0 && P.Age < P.Lifetime && P.Size > 0.0)
             {
-                Key = (ParticleDepthKey(P.Position, CameraPos) << PARTICLE_SORT_INDEX_BITS) | i;
+                Key = (ParticleDepthKey(P, CameraPos) << PARTICLE_SORT_INDEX_BITS) | i;
                 ++LocalLive;
             }
         }
@@ -103,7 +103,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
     if (Lane == 0u)
     {
         FDrawIndirectArguments Args;
-        Args.VertexCount   = LiveCount * 6u;
+        Args.VertexCount   = LiveCount * Pass().VertsPerParticle;
         Args.InstanceCount = 1u;
         Args.VertexOffset  = 0u;
         Args.FirstInstance = 0u;

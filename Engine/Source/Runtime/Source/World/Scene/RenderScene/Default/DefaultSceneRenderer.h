@@ -278,6 +278,17 @@ namespace Lumina
                 uint32                  AttributeFloatCount = 1u;
 
                 int32                   RenderAttrSlots[ParticleRenderAttribute::Count];
+
+                // Meshlet header slots of the render and emission meshes, zero when absent or not resident.
+                uint32                  MeshletHeaderSlot   = 0u;
+                uint32                  MeshletCount        = 0u;
+                uint32                  EmissionMeshSlot    = 0u;
+                // The parent emitter in the same entity when this one is a sub-emitter, else -1.
+                int32                   SourceEmitterIndex  = -1;
+                // Event lists this emitter's particles raise because a sub-emitter consumes them.
+                uint32                  RaisedEventMask     = 0u;
+                float                   RaisedEventRate     = 0.0f;
+                TVector<FParticleEventGPU> ScriptEmits;
             };
 
             struct FCaptureViewData
@@ -450,6 +461,8 @@ namespace Lumina
                 TVector<ECS::FEntity>            LiveTerrainEntities;
                 TVector<FParticleExtract>        ParticleExtracts;
                 TVector<ECS::FEntity>            LiveParticleEntities;
+                TVector<FParticleShapeGPU>       ParticleAttractors;
+                TVector<FParticleShapeGPU>       ParticleColliders;
                 TVector<FTexturePaintOp>         PaintOps;
 
                 #if USING(WITH_EDITOR)
@@ -743,6 +756,15 @@ namespace Lumina
         void ParticleSimulatePass(RHI::FCmdListH CL);
         void ParticleSortPass(RHI::FCmdListH CL);
         void ParticleRenderPass(RHI::FCmdListH CL);
+        void ParticleShadowCasters(RHI::FCmdListH CL, int32 SunShadowDataIndex);
+
+        // Exact-size free lists, so effects that come and go reuse their buffers instead of reallocating.
+        RHI::FGPUAllocation AcquireParticleBuffer(uint64 Size, const char* DebugName);
+        void ReleaseParticleBuffer(RHI::FGPUAllocation& Allocation, uint64 Size);
+        void ReleaseParticleState(FParticleGPUState& State);
+        void EnsureParticleBuffers(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleGPUState& State);
+        bool IsParticleEmitterCulled(const FFrameData::FParticleExtract& Item, bool bForDraw) const;
+        void SortParticlesGlobal(RHI::FCmdListH CL, FParticleGPUState& State, uint32 SortMode, uint32 VertsPerParticle);
         void TerrainUpdatePass(RHI::FCmdListH CL);
         void TerrainCullPass(RHI::FCmdListH CL);
 
@@ -1376,6 +1398,10 @@ namespace Lumina
         uint32                                          GrassCursorCursor = 0;
         
         THashMap<ECS::FEntity, TVector<FParticleGPUState>> ParticleGPUStates;
+        THashMap<uint64, TVector<RHI::FGPUAllocation>>    ParticleBufferPool;
+        uint64                                            ParticlePoolBytes = 0;
+        // Set once a pooled buffer is handed out this frame, since its previous frame's reads need a barrier before the clear.
+        bool                                              bParticlePoolReuseBarrierIssued = false;
 
         FScenePrimitiveSet                      ScenePrimitives;
         TVector<ECS::FEntity>                   MovedTransformScratch;

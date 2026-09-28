@@ -2,6 +2,16 @@
 
 namespace LuminaSharp;
 
+/// Which fields of an EmitParticle call replace what the emitter's spawn stack computed. Mirrors EParticleEmitFlags.
+[System.Flags]
+public enum EParticleEmitFlags
+{
+    Position = 1 << 0,
+    Velocity = 1 << 1,
+    Color    = 1 << 2,
+    Size     = 1 << 3,
+}
+
 /// Play particle effects in the current world, the visual counterpart to <see cref="Sound"/>.
 public static class Fx
 {

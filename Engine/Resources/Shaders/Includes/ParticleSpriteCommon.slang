@@ -7,6 +7,16 @@
 static const uint PARTICLE_FACING_CAMERA   = 0u;
 static const uint PARTICLE_FACING_WORLD_XZ = 1u;
 static const uint PARTICLE_FACING_VELOCITY = 2u;
+static const uint PARTICLE_FACING_VERTICAL = 3u;
+
+// Must match EParticleRenderMode.
+static const uint PARTICLE_RENDER_SPRITE = 0u;
+static const uint PARTICLE_RENDER_MESH   = 1u;
+static const uint PARTICLE_RENDER_RIBBON = 2u;
+
+// Must match EParticleFlipbookMode.
+static const uint PARTICLE_FLIPBOOK_OVER_LIFE = 0u;
+static const uint PARTICLE_FLIPBOOK_LOOP      = 1u;
 
 // Must match EParticleBlendMode in ParticleSystem.h.
 static const uint PARTICLE_BLEND_ALPHA          = 0u;
@@ -39,8 +49,114 @@ struct FParticlePushConstants
     GPUSpan<uint> SortedIndices;   // live particles back-to-front
     float  SoftFadeDistance;       // meters of depth fade against the scene; 0 disables it
     uint   RenderFlags;            // EParticleBlendMode in the low byte, PARTICLE_RENDER_LIT above it
+    GPUSpan<float4> RibbonHistory; // RibbonSegments past positions per particle
+    uint   RenderMode;             // EParticleRenderMode
+    uint   VertsPerParticle;
+    uint   MeshletHeaderSlot;      // the Mesh render mode's mesh
+    uint   bAlignMeshToVelocity;
+    uint   RibbonSegments;
+    uint   RibbonHead;             // newest history sample
+    float  RibbonTailWidth;
+    float  ExtrapolateTime;        // seconds a fixed-rate emitter is behind the frame
+    uint   FlipbookMode;
+    float  FlipbookFPS;
+    uint   bRandomStartFrame;
+    uint   bShadowPass;            // drawing into the sun cascade ShadowCascade instead of the camera
+    int    ShadowDataIndex;
+    uint   ShadowCascade;
 };
 FParticlePushConstants* Pass() { return GetPassArgs<FParticlePushConstants>(); }
+
+// The draw covers VertsPerParticle vertices per particle, and a sorted draw only the live ones in order.
+uint ParticleSlotForVertex(uint VertexIndex)
+{
+    const uint Ordinal = VertexIndex / max(Pass().VertsPerParticle, 1u);
+    return (Pass().bSorted != 0u) ? SpanGet(&Pass().SortedIndices, Ordinal) : Ordinal;
+}
+
+bool IsParticleAlive(FGPUParticle P)
+{
+    return (P.Lifetime > 0.0) && (P.Age < P.Lifetime) && (P.Size > 0.0);
+}
+
+// Where the particle would be now, when a fixed-rate emitter last stepped ExtrapolateTime ago.
+float3 ParticleDrawPosition(FGPUParticle P)
+{
+    return P.Position + P.Velocity * Pass().ExtrapolateTime;
+}
+
+// The frame sprites face, which is the camera's except in the shadow pass, where it is the sun's.
+struct FParticleViewBasis
+{
+    float3 Right;
+    float3 Up;
+    float3 Forward;
+    float3 Eye;
+};
+
+FParticleViewBasis ParticleViewBasis(float3 Around)
+{
+    FParticleViewBasis Basis;
+    if (Pass().bShadowPass != 0u)
+    {
+        const float3 ToSun = normalize(GetSunDirection());
+        const float3 Helper = abs(ToSun.y) > 0.99 ? float3(1.0, 0.0, 0.0) : float3(0.0, 1.0, 0.0);
+        Basis.Forward = -ToSun;
+        Basis.Right   = normalize(cross(Helper, Basis.Forward));
+        Basis.Up      = cross(Basis.Forward, Basis.Right);
+        Basis.Eye     = Around + ToSun * 1000.0;
+        return Basis;
+    }
+
+    const float4x4 ViewMatrix = GetCameraView();
+    Basis.Right   =  float3(ViewMatrix[0][0], ViewMatrix[0][1], ViewMatrix[0][2]);
+    Basis.Up      = -float3(ViewMatrix[1][0], ViewMatrix[1][1], ViewMatrix[1][2]);
+    Basis.Forward =  float3(ViewMatrix[2][0], ViewMatrix[2][1], ViewMatrix[2][2]);
+    Basis.Eye     = GetCameraPosition();
+    return Basis;
+}
+
+float4 ParticleToClip(float3 WorldPos)
+{
+    if (Pass().bShadowPass != 0u)
+    {
+        return mul(GetShadowViewProjection(Pass().ShadowDataIndex, Pass().ShadowCascade), float4(WorldPos, 1.0));
+    }
+    return WorldToClip(WorldPos);
+}
+
+// A stable 0..1 per particle from its spawn seed.
+float ParticleSeedRandom(FGPUParticle P)
+{
+    return frac(P.Seed * 0.61803398875 + 0.5);
+}
+
+// Cell of the sprite sheet this particle shows now, per the emitter's flipbook mode.
+float2 ParticleFlipbookUV(FGPUParticle P, float2 UV)
+{
+    const uint FrameCount = max(Pass().SubUVColumns * Pass().SubUVRows, 1u);
+    if (FrameCount <= 1u)
+    {
+        return UV;
+    }
+
+    const uint StartFrame = Pass().bRandomStartFrame != 0u ? (uint)(ParticleSeedRandom(P) * (float)FrameCount) : 0u;
+    uint Frame;
+    if (Pass().FlipbookMode == PARTICLE_FLIPBOOK_LOOP)
+    {
+        Frame = (uint)(P.Age * Pass().FlipbookFPS);
+    }
+    else
+    {
+        // Clamped off the last frame, since at LifeRatio 1 the floor lands one cell past the sheet.
+        Frame = min((uint)(saturate(P.Age / max(P.Lifetime, 1e-4)) * (float)FrameCount), FrameCount - 1u);
+    }
+    Frame = (Frame + StartFrame) % FrameCount;
+
+    const float2 CellSize = float2(1.0 / (float)Pass().SubUVColumns, 1.0 / (float)Pass().SubUVRows);
+    const float2 CellIdx  = float2((float)(Frame % Pass().SubUVColumns), (float)(Frame / Pass().SubUVColumns));
+    return (CellIdx + UV) * CellSize;
+}
 
 uint ParticleBlendMode() { return Pass().RenderFlags & 0xFFu; }
 bool IsParticleLit()     { return (Pass().RenderFlags & PARTICLE_RENDER_LIT) != 0u; }
@@ -110,17 +226,15 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
 {
     const uint QuadIndex = VertexIndex % 6;
 
-    // The sorted draw covers only live particles, so the slot has to be looked up, not derived.
-    const uint ParticleIndex = (Pass().bSorted != 0u)
-        ? SpanGet(&Pass().SortedIndices, VertexIndex / 6)
-        : (VertexIndex / 6);
+    const uint ParticleIndex = ParticleSlotForVertex(VertexIndex);
 
     FGPUParticle P = SpanGet(&Pass().Particles, ParticleIndex);
+    P.Position = ParticleDrawPosition(P);
     OutParticle = P;
 
     FParticleSprite Sprite;
     Sprite.ParticleIndex = ParticleIndex;
-    Sprite.bAlive        = (P.Lifetime > 0.0) && (P.Age < P.Lifetime) && (P.Size > 0.0);
+    Sprite.bAlive        = IsParticleAlive(P);
     Sprite.WorldPosition = P.Position;
     Sprite.UV            = kParticleQuadUVs[QuadIndex];
     Sprite.AxisRight     = float3(1.0, 0.0, 0.0);
@@ -133,11 +247,10 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
         return Sprite;
     }
 
-    // Fetched once and handed back to the caller's clip transform, which avoids a second matrix load.
-    const float4x4 ViewMatrix = GetCameraView();
-
-    const float3 CameraRight =  float3(ViewMatrix[0][0], ViewMatrix[0][1], ViewMatrix[0][2]);
-    const float3 CameraUp    = -float3(ViewMatrix[1][0], ViewMatrix[1][1], ViewMatrix[1][2]);
+    const FParticleViewBasis View = ParticleViewBasis(P.Position);
+    const float3 CameraRight   = View.Right;
+    const float3 CameraUp      = View.Up;
+    const float3 CameraForward = View.Forward;
 
     float3 BillboardRight;
     float3 BillboardUp;
@@ -163,8 +276,6 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
         if (Len > 1e-5)
         {
             const float3 Dir = Delta / Len;
-            // Row 2 of the view matrix, matching CameraRight/CameraUp above.
-            const float3 CameraForward = float3(ViewMatrix[2][0], ViewMatrix[2][1], ViewMatrix[2][2]);
             float3 Side = cross(Dir, CameraForward);
             const float SideLen = length(Side);
             Side = (SideLen > 1e-5) ? (Side / SideLen) : CameraRight;
@@ -189,7 +300,6 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
         if (Speed > 1e-5)
         {
             const float3 Dir = P.Velocity / Speed;
-            const float3 CameraForward = float3(ViewMatrix[2][0], ViewMatrix[2][1], ViewMatrix[2][2]);
             float3 Side = cross(Dir, CameraForward);
             const float SideLen = length(Side);
             Side = (SideLen > 1e-5) ? (Side / SideLen) : CameraRight;
@@ -211,6 +321,12 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
         BillboardRight = float3(1.0, 0.0, 0.0);
         BillboardUp    = float3(0.0, 0.0, 1.0);
     }
+    else if (Pass().FacingMode == PARTICLE_FACING_VERTICAL)
+    {
+        const float3 Flat = float3(View.Eye.x - P.Position.x, 0.0, View.Eye.z - P.Position.z);
+        BillboardUp    = float3(0.0, 1.0, 0.0);
+        BillboardRight = dot(Flat, Flat) > 1e-8 ? normalize(cross(BillboardUp, Flat)) : CameraRight;
+    }
     else
     {
         BillboardRight = CameraRight;
@@ -228,23 +344,13 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
     const float3 WorldPos = QuadCenter + AxisRight * Local.x + AxisUp * Local.y;
 
     float3 Normal = normalize(cross(AxisRight, AxisUp));
-    if (dot(Normal, GetCameraPosition() - WorldPos) < 0.0)
+    if (dot(Normal, View.Eye - WorldPos) < 0.0)
     {
         Normal = -Normal;
     }
 
     // The sub-UV frame advances with age, so a flipbook needs no per-particle storage.
-    float2 UV = kParticleQuadUVs[QuadIndex];
-    const uint FrameCount = max(Pass().SubUVColumns * Pass().SubUVRows, 1u);
-    if (FrameCount > 1u)
-    {
-        const float LifeRatio = saturate(P.Age / max(P.Lifetime, 1e-4));
-        // Clamped off the last frame, since at LifeRatio 1 the floor lands one cell past the sheet.
-        const uint  Frame     = min((uint)(LifeRatio * (float)FrameCount), FrameCount - 1u);
-        const float2 CellSize = float2(1.0 / (float)Pass().SubUVColumns, 1.0 / (float)Pass().SubUVRows);
-        const float2 CellIdx  = float2((float)(Frame % Pass().SubUVColumns), (float)(Frame / Pass().SubUVColumns));
-        UV = (CellIdx + UV) * CellSize;
-    }
+    const float2 UV = ParticleFlipbookUV(P, kParticleQuadUVs[QuadIndex]);
 
     Sprite.WorldPosition = WorldPos;
     Sprite.UV            = UV;
@@ -281,5 +387,5 @@ float ParticleRelativeTime(FGPUParticle P)
 // Stable per-particle 0..1 from the spawn seed, so a graph can vary one sprite against its neighbors.
 float ParticleRandom(FGPUParticle P)
 {
-    return frac(P.Seed * 0.61803398875 + 0.5);
+    return ParticleSeedRandom(P);
 }

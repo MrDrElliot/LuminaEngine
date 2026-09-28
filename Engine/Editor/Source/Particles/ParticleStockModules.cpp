@@ -18,7 +18,7 @@ namespace Lumina
         Compiler.EmitSpawn("float3 " + Off + " = SampleEmitterShape(Seed, " + ShapeId(Shape) + ", "
             + Compiler.Param("ShapeSize", ShapeSize) + ", radians(" + Compiler.Param("ConeAngle", ConeAngle) + "), "
             + "SimParams().EmitterForward.xyz, SimParams().EmitterRight.xyz, SimParams().EmitterUp.xyz);");
-        Compiler.EmitSpawn("P.Position = SimParams().EmitterPosition.xyz + " + Off + " * EmitterScale();");
+        Compiler.EmitSpawn("P.Position = SpawnOrigin + " + Off + " * EmitterScale();");
     }
 
     void CParticleModule_InitialVelocity::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
@@ -37,7 +37,7 @@ namespace Lumina
             const FString D = LocalVar(ModuleIndex, "dir");
             const FString L = LocalVar(ModuleIndex, "len");
             const FString S = LocalVar(ModuleIndex, "speed");
-            Compiler.EmitSpawn("float3 " + D + " = P.Position - SimParams().EmitterPosition.xyz;");
+            Compiler.EmitSpawn("float3 " + D + " = P.Position - SpawnOrigin;");
             Compiler.EmitSpawn("float " + L + " = length(" + D + ");");
             Compiler.EmitSpawn(D + " = (" + L + " > 1e-5) ? (" + D + " / " + L + ") : RandOnUnitSphere(Seed);");
             Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("SpeedRange", SpeedRange) + ";");
@@ -137,7 +137,14 @@ namespace Lumina
     {
         const FString Hit = "CollideWithSceneDepth(P.Position, P.Velocity, DeltaTime, " + Compiler.Param("Restitution", Restitution)
             + ", " + Compiler.Param("Friction", Friction) + ", " + Compiler.Param("Thickness", Thickness) + ")";
-        Compiler.EmitUpdate(bKillOnHit ? "if (" + Hit + ") { P.Age = P.Lifetime; }" : Hit + ";");
+        Compiler.EmitUpdate("if (" + Hit + ")");
+        Compiler.EmitUpdate("{");
+        Compiler.EmitUpdate("\tRaiseParticleEvent(PARTICLE_EVENT_COLLISION, P);");
+        if (bKillOnHit)
+        {
+            Compiler.EmitUpdate("\tP.Age = P.Lifetime;");
+        }
+        Compiler.EmitUpdate("}");
     }
 
     // Seeded so a freshly added module reproduces the old default instead of an empty white ramp.

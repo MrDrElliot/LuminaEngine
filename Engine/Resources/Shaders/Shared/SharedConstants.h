@@ -93,9 +93,19 @@
 #define COL_A_SHIFT                     24
 #define COL_A_MASK                      0xFF000000
 
-// Emitter slots one workgroup can sort in groupshared; a larger emitter draws unsorted and uncompacted.
+// Emitter slots one workgroup can sort in groupshared; larger emitters take the multi-pass sort.
 #define PARTICLE_SORT_CAPACITY          2048u
 #define PARTICLE_SORT_INDEX_BITS        11u
 #define PARTICLE_SORT_INDEX_MASK        0x7FFu
 #define PARTICLE_SORT_DEPTH_BITS        21u
 #define PARTICLE_SORT_THREADS           256
+
+// The multi-pass sort keeps its keys in memory, and an emitter past this draws unsorted.
+#define PARTICLE_GLOBAL_SORT_CAPACITY   65536u
+#define PARTICLE_GLOBAL_SORT_INDEX_BITS 16u
+#define PARTICLE_GLOBAL_SORT_INDEX_MASK 0xFFFFu
+#define PARTICLE_GLOBAL_SORT_KEY_BITS   16u
+
+// Events per list per frame an emitter can raise for its sub-emitters; extras are dropped.
+#define PARTICLE_EVENT_CAPACITY         1024u
+#define PARTICLE_EVENT_LISTS            3u
