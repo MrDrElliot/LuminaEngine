@@ -553,7 +553,7 @@ float LinearizeSceneDepth(float RawDepth)
 {
     float ZNear = GetNearPlane();
     float ZFar  = GetFarPlane();
-    return ZNear * ZFar / max(ZFar - RawDepth * (ZFar - ZNear), 1e-6);
+    return ZNear * ZFar / max(ZNear + RawDepth * (ZFar - ZNear), 1e-6);
 }
 uint2    GetScreenSize()            { return Scene().ScreenSize.xy; }
 
