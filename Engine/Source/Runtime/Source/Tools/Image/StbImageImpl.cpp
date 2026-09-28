@@ -17,6 +17,27 @@
 #define STBIR_MALLOC(Size, Context)    LmThirdPartyMalloc(Size, "stb_image_resize")
 #define STBIR_FREE(Ptr, Context)       LmThirdPartyFree(Ptr)
 
+#include "miniz.h"
+
+// stb's own deflate is several times slower than miniz at its fastest level, which made a full-screen PNG cost most of a second.
+static unsigned char* LuminaStbiwZlibCompress(unsigned char* Data, int DataLength, int* OutLength, int /*Quality*/)
+{
+    mz_ulong Bound = mz_compressBound((mz_ulong)DataLength);
+    unsigned char* Out = static_cast<unsigned char*>(LmThirdPartyMalloc(Bound, "stb_image_write"));
+    if (Out == nullptr)
+    {
+        return nullptr;
+    }
+    if (mz_compress2(Out, &Bound, Data, (mz_ulong)DataLength, MZ_BEST_SPEED) != MZ_OK)
+    {
+        LmThirdPartyFree(Out);
+        return nullptr;
+    }
+    *OutLength = (int)Bound;
+    return Out;
+}
+#define STBIW_ZLIB_COMPRESS LuminaStbiwZlibCompress
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
@@ -56,6 +77,9 @@ namespace Lumina::ImageWrite
     bool WritePngFile(
         const char* Path, uint32 Width, uint32 Height, uint32 Channels, const uint8* Pixels, uint32 RowPitch)
     {
+        // stb otherwise tries all five row filters on every row, and Paeth alone suits rendered images.
+        constexpr int PaethFilter = 4;
+        stbi_write_force_png_filter = PaethFilter;
         return stbi_write_png(Path, (int)Width, (int)Height, (int)Channels, Pixels, (int)RowPitch) != 0;
     }
 

@@ -125,6 +125,92 @@ namespace Lumina
         TVector<SProfilerZone> Gpu;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SProfilerHitchParams
+    {
+        GENERATED_BODY()
+
+        // The trace to read. Empty reads the one the last profiler capture wrote.
+        PROPERTY()
+        FString CaptureFile;
+
+        // Frames longer than this count as hitches. Zero picks twice the median frame, and at least 8 ms over it.
+        PROPERTY()
+        float ThresholdMs = 0.0f;
+
+        PROPERTY()
+        int32 MaxHitches = 8;
+
+        // How many zones to list per hitch, ranked by the time spent in each zone itself.
+        PROPERTY()
+        int32 TopZones = 10;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SProfilerHitchZone
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Name;
+
+        // Time inside this zone minus its children, summed over the hitch frame.
+        PROPERTY()
+        float SelfMs = 0.0f;
+
+        PROPERTY()
+        int32 Count = 0;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SProfilerHitch
+    {
+        GENERATED_BODY()
+
+        // Seconds from the start of the capture.
+        PROPERTY()
+        float AtSeconds = 0.0f;
+
+        PROPERTY()
+        float FrameMs = 0.0f;
+
+        // Zones on the thread that runs the frame.
+        PROPERTY()
+        TVector<SProfilerHitchZone> GameThread;
+
+        // Zones on every other thread during the same frame, merged by name.
+        PROPERTY()
+        TVector<SProfilerHitchZone> Workers;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SProfilerHitchResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString CaptureFile;
+
+        PROPERTY()
+        int32 Frames = 0;
+
+        PROPERTY()
+        float MedianFrameMs = 0.0f;
+
+        PROPERTY()
+        float P99FrameMs = 0.0f;
+
+        PROPERTY()
+        float ThresholdMs = 0.0f;
+
+        // Every frame over the threshold, though only the worst MaxHitches are broken down.
+        PROPERTY()
+        int32 HitchCount = 0;
+
+        PROPERTY()
+        TVector<SProfilerHitch> Hitches;
+    };
+
     namespace MCP
     {
         // Records Tracy captures of the running editor and reports where the frame goes.

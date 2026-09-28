@@ -86,8 +86,16 @@ namespace Lumina
          *  test: a script that was loaded or stamped but never adopted must not receive OnDetach. */
         bool IsAttached() const { return OwningEntity != ECS::NullEntity; }
 
+        FUNCTION()
         bool IsReady() const { return bReady; }
         void MarkReady() { bReady = true; }
+
+        // Set when OnAttach or OnReady threw, so a half-built script keeps its OnDetach but never ticks.
+        FUNCTION()
+        bool IsFaulted() const { return bFaulted; }
+        void MarkFaulted() { bFaulted = true; }
+
+        bool ShouldTick() const { return bReady && !bFaulted; }
 
 
     private:
@@ -97,6 +105,7 @@ namespace Lumina
 
         // Transient: OnReady has run. Not serialized -- a loaded script re-readies on its first tick.
         bool bReady = false;
+        bool bFaulted = false;
     };
 
     /** One script kept verbatim because its class was not loadable when the world was read. */

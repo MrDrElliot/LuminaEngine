@@ -476,7 +476,9 @@ namespace Lumina::Platform
 
         HANDLE ReadEnd = nullptr;
         HANDLE WriteEnd = nullptr;
-        if (!CreatePipe(&ReadEnd, &WriteEnd, &sa, 0))
+        // Sized so a chatty child rarely blocks on a full pipe while the loop below sleeps on an empty one.
+        constexpr DWORD CapturePipeBytes = 1u << 20;
+        if (!CreatePipe(&ReadEnd, &WriteEnd, &sa, CapturePipeBytes))
         {
             return -1;
         }
@@ -531,7 +533,7 @@ namespace Lumina::Platform
         }
 
         FString Pending;
-        char ReadBuf[4096];
+        TVector<char> ReadBuf(64 * 1024);
         DWORD BytesRead = 0;
 
         // Done once the child exits and the pipe drains, since a grandchild like mspdbsrv can hold the write end open for minutes.
@@ -551,12 +553,12 @@ namespace Lumina::Platform
                 }
                 continue;
             }
-            const DWORD ToRead = Available < (DWORD)sizeof(ReadBuf) ? Available : (DWORD)sizeof(ReadBuf);
-            if (!ReadFile(ReadEnd, ReadBuf, ToRead, &BytesRead, nullptr) || BytesRead == 0)
+            const DWORD ToRead = Available < (DWORD)ReadBuf.size() ? Available : (DWORD)ReadBuf.size();
+            if (!ReadFile(ReadEnd, ReadBuf.data(), ToRead, &BytesRead, nullptr) || BytesRead == 0)
             {
                 break;
             }
-            Pending.append(ReadBuf, BytesRead);
+            Pending.append(ReadBuf.data(), BytesRead);
 
             size_t Cursor = 0;
             for (;;)

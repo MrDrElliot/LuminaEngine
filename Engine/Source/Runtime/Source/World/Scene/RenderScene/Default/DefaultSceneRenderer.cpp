@@ -10,6 +10,11 @@ namespace Lumina
     static constexpr uint32 kUninitializedBufferPoison = 0xDEADBEEFu;
     #endif
 
+    namespace
+    {
+        FScenePipelineCache& ScenePipelines() { return Render().GetScenePipelineCache(); }
+    }
+
     FDefaultSceneRenderer::FDefaultSceneRenderer(CWorld* InWorld)
         : IRenderScene(InWorld)
         , ShadowAtlas(FShadowAtlasConfig())
@@ -21,6 +26,9 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Render Scene");
 
         RHI::WaitDeviceIdle();
+
+        // Pipelines outlive a world, so a new one is a natural point to drop those a shader recompile orphaned.
+        ScenePipelines().PurgeStale();
 
         // Shared (view-independent) buffers + images first.
         InitBuffers();
@@ -351,12 +359,6 @@ namespace Lumina
         }
         #endif
 
-        // Pipeline + depth-state caches.
-        for (auto& [Hash, Pipeline] : PipelineCache)
-        {
-            RHI::Retire(Pipeline);
-        }
-        PipelineCache.clear();
     }
 
     void FDefaultSceneRenderer::PrepareRender(uint8 /*FrameIndex*/)
@@ -1995,11 +1997,11 @@ namespace Lumina
         }
 
         {
-            FReadScopeLock Lock(PipelineCacheMutex);
-            auto It = PipelineCache.find(Seed);
-            if (It != PipelineCache.end())
+            FReadScopeLock Lock(ScenePipelines().Mutex);
+            auto It = ScenePipelines().Entries.find(Seed);
+            if (It != ScenePipelines().Entries.end())
             {
-                return It->second;
+                return It->second.Pipeline;
             }
         }
 
@@ -2042,17 +2044,17 @@ namespace Lumina
         };
         const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 8);
 
-        FWriteScopeLock Lock(PipelineCacheMutex);
-        if (auto Existing = PipelineCache.find(Seed); Existing != PipelineCache.end())
+        FWriteScopeLock Lock(ScenePipelines().Mutex);
+        if (auto Existing = ScenePipelines().Entries.find(Seed); Existing != ScenePipelines().Entries.end())
         {
-            return Existing->second;
+            return Existing->second.Pipeline;
         }
 
         // Task-less by construction, since MeshletCull.slang compacted before any draw was recorded.
         RHI::FPipelineH Pipeline = MSEntry != nullptr
             ? RHI::CreateMeshShaderPipeline(RHI::FShaderSource{}, MSEntry->Source(), PSSource, Desc, Consts)
             : RHI::CreateGraphicsPipeline(VSEntry->Source(), PSSource, Desc, Consts);
-        PipelineCache.emplace(Seed, Pipeline);
+        ScenePipelines().Entries.emplace(Seed, FScenePipelineCache::FEntry{ Pipeline, { Key.VS, Key.PS, Key.MS } });
 
 #if USING(WITH_EDITOR)
         if (Key.PS != nullptr && !FShaderLibrary::HasPipelineStats(Key.PS))
@@ -2083,19 +2085,19 @@ namespace Lumina
         }
 
         {
-            FReadScopeLock Lock(PipelineCacheMutex);
-            auto It = PipelineCache.find(Seed);
-            if (It != PipelineCache.end())
+            FReadScopeLock Lock(ScenePipelines().Mutex);
+            auto It = ScenePipelines().Entries.find(Seed);
+            if (It != ScenePipelines().Entries.end())
             {
-                return It->second;
+                return It->second.Pipeline;
             }
         }
 
         // See GetOrCreatePipeline for why the write lock spans creation and re-checks.
-        FWriteScopeLock Lock(PipelineCacheMutex);
-        if (auto Existing = PipelineCache.find(Seed); Existing != PipelineCache.end())
+        FWriteScopeLock Lock(ScenePipelines().Mutex);
+        if (auto Existing = ScenePipelines().Entries.find(Seed); Existing != ScenePipelines().Entries.end())
         {
-            return Existing->second;
+            return Existing->second.Pipeline;
         }
 
         const FShaderEntry* CSEntry = FShaderLibrary::Resolve(CS);
@@ -2106,7 +2108,7 @@ namespace Lumina
         }
 
         RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(CSEntry->Source(), Constants);
-        PipelineCache.emplace(Seed, Pipeline);
+        ScenePipelines().Entries.emplace(Seed, FScenePipelineCache::FEntry{ Pipeline, { CS, FShaderH{}, FShaderH{} } });
 
         #if USING(WITH_EDITOR)
         if (!FShaderLibrary::HasPipelineStats(CS))

@@ -861,8 +861,7 @@ TEST_F(FFrameMarshalTest, AReflectedOutContainerCrossesAsAnArray)
     EXPECT_EQ(Ints(0, &First, &Last, &Calls), 0) << "an empty container is an empty array, not a null one";
 }
 
-// Past the stack scratch the binding sizes an exact buffer and refills it, which is the only path that
-// calls the bound function twice.
+// Past the stack scratch the thunk stashes the whole result, so a query with side effects still runs once.
 TEST_F(FFrameMarshalTest, AnOutContainerLargerThanTheScratchBufferStillArrivesWhole)
 {
     auto* Ints = (FVecIntsFn)DotNet::ResolveManagedExport("Test_VectorBindingInts");
@@ -876,7 +875,7 @@ TEST_F(FFrameMarshalTest, AnOutContainerLargerThanTheScratchBufferStillArrivesWh
     EXPECT_EQ(Ints(Count, &First, &Last, &Calls), Count);
     EXPECT_EQ(First, 0);
     EXPECT_EQ(Last, Count - 1);
-    EXPECT_EQ(Calls, 2) << "an overflow refills an exact buffer, so the query runs a second time";
+    EXPECT_EQ(Calls, 1) << "an overflow copies the stashed result rather than running the query again";
 }
 
 // A string return sizes into stack scratch first, so an ordinary name costs one crossing rather than two.
@@ -895,7 +894,7 @@ TEST_F(FFrameMarshalTest, AStringReturnThatFitsTheScratchBufferCostsOneCrossing)
     EXPECT_EQ(Last, 'a' + ((Length - 1) % 26));
 }
 
-// Past the scratch the binding sizes an exact buffer and refills it, which is the only path that calls twice.
+// Past the scratch the thunk stashes the whole string, so the call still costs one run of the function.
 TEST_F(FFrameMarshalTest, AStringReturnLargerThanTheScratchBufferStillArrivesWhole)
 {
     auto* Bind = (FStringBindFn)DotNet::ResolveManagedExport("Test_StringBinding");
@@ -906,7 +905,7 @@ TEST_F(FFrameMarshalTest, AStringReturnLargerThanTheScratchBufferStillArrivesWho
     int32 Last = -1;
     const int32 Length = 900;
     EXPECT_EQ(Bind(Length, &Calls, &First, &Last), Length);
-    EXPECT_EQ(Calls, 2) << "an overflow refills an exact buffer, so the query runs a second time";
+    EXPECT_EQ(Calls, 1) << "an overflow copies the stashed string rather than running the function again";
     EXPECT_EQ(First, 'a');
     EXPECT_EQ(Last, 'a' + ((Length - 1) % 26));
 }

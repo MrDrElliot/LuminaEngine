@@ -15,5 +15,7 @@
 #define LUMINA_PROFILE_TAG(x)                       ZoneText(x, strlen(x))
 // Renames the open zone, so a dispatcher's bar reads as the work rather than as the dispatcher.
 #define LUMINA_PROFILE_NAME(x)                      ZoneName(x, strlen(x))
+// A zone named at runtime, which unlike a renamed zone keeps that name in a CSV export. Once-per-item work only.
+#define LUMINA_PROFILE_SECTION_DYNAMIC(x)           ZoneTransientN(LuminaDynamicZone, x, true)
 #define LUMINA_PROFILE_LOG(text, size)              TracyMessage(text, size)
 #define LUMINA_PROFILE_VALUE(text, value)           TracyPlot(text, value)

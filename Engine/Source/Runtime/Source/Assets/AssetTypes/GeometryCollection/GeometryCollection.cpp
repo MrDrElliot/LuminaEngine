@@ -12,6 +12,7 @@
 #include "Renderer/Vertex.h"
 #include "Log/Log.h"
 #include "Renderer/MeshQuantization.h"
+#include "TaskSystem/TaskSystem.h"
 
 namespace Lumina
 {
@@ -421,7 +422,7 @@ namespace Lumina
             Hull = MakeBox(Mn, Mx);   // hull clip collapsed (bad data) -> fall back to box
         }
 
-        LOG_INFO("[Fracture] MeshletVerts={} Tris={} HullPlanes={} HullFacesAfterClip={} BoundsDiag={}", NumPos, NumTri, HullPlanes.size(), FacesAfterClip, Diag);
+        LOG_DEBUG("[Fracture] MeshletVerts={} Tris={} HullPlanes={} HullFacesAfterClip={} BoundsDiag={}", NumPos, NumTri, HullPlanes.size(), FacesAfterClip, Diag);
 
         auto InsideHull = [&](const FVector3& S) -> bool
         {
@@ -451,9 +452,12 @@ namespace Lumina
             Seeds.push_back(S);
         }
 
-        OutPieces.reserve(N);
-        for (int32 i = 0; i < N; ++i)
+        // Every cell clips against every other seed, so the cells run in parallel into their own slots and keep seed order.
+        TVector<FFracturePiece> Cells((size_t)N);
+        TVector<uint8> bCellBuilt((size_t)N, 0);
+        Task::ParallelFor((uint32)N, [&](uint32 CellIndex)
         {
+            const int32 i = (int32)CellIndex;
             FConvexPoly Poly = Hull;   // start from the hull, not the box
             for (int32 j = 0; j < N && !Poly.Faces.empty(); ++j)
             {
@@ -472,10 +476,15 @@ namespace Lumina
                 ClipPolyByPlane(Poly, Normal, Math::Dot(Normal, Mid), Eps);
             }
 
-            FFracturePiece Piece;
-            if (BuildPieceFromPoly(Poly, Piece, ColorSource))
+            bCellBuilt[(size_t)i] = BuildPieceFromPoly(Poly, Cells[(size_t)i], ColorSource) ? 1 : 0;
+        });
+
+        OutPieces.reserve(N);
+        for (size_t i = 0; i < Cells.size(); ++i)
+        {
+            if (bCellBuilt[i] != 0)
             {
-                OutPieces.push_back(Move(Piece));
+                OutPieces.push_back(Move(Cells[i]));
             }
         }
     }

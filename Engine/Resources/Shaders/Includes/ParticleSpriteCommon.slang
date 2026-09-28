@@ -349,6 +349,18 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
         BillboardUp    = CameraUp;
     }
 
+    // Wholly inside the camera fade the sprite would shade every pixel only to discard it, so it is dropped before rasterizing.
+    const float CameraFade = Pass().CameraFadeDistance;
+    if (CameraFade > 0.0 && Pass().bShadowPass == 0u)
+    {
+        const float FarthestDepth = WorldToClip(QuadCenter).w + max(Extent.x, Extent.y);
+        if (FarthestDepth < CameraFade * 0.3)
+        {
+            Sprite.bAlive = false;
+            return Sprite;
+        }
+    }
+
     // Turning the axes rather than the corner offset gives the same vertex and leaves a usable frame.
     const float Angle = bDirectional ? 0.0 : P.Rotation;
     const float s     = sin(Angle);

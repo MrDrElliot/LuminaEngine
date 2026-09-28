@@ -5,6 +5,9 @@
 
 namespace Lumina::Scripting
 {
+    // Keeps a result too big for the managed caller's scratch, so it copies the bytes rather than calling again.
+    RUNTIME_API void StashCallOverflow(const void* CallerScratch, const void* Data, size_t Bytes);
+
     template<size_t Size>
     struct TScriptReturnBits;
 

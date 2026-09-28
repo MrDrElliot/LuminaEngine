@@ -153,3 +153,59 @@ TEST_F(FOwnershipFixture, AnUnboundDelegateIsNotVisitedByTheReloadSweep)
     ClearAllManagedDelegateBindings();
     EXPECT_EQ(GFreedContexts, 1);
 }
+
+// Component storage relocates by move-construct and destroy, which must not cost the listeners.
+TEST_F(FOwnershipFixture, RelocatingTheDelegateKeepsEveryListener)
+{
+    auto* Source = Memory::New<TScriptDelegate<int32>>();
+    int32 Context = 0;
+    int32 Calls = 0;
+    Source->BindManaged(&NoopThunk, &Context);
+    Source->AddLambda([&Calls](const int32&) { ++Calls; });
+
+    auto* Relocated = Memory::New<TScriptDelegate<int32>>(std::move(*Source));
+    Memory::Delete(Source);
+
+    EXPECT_EQ(GFreedContexts, 0);
+    EXPECT_EQ(Relocated->GetBindingCount(), 2u);
+    EXPECT_EQ(Relocated->GetManagedBindingCount(), 1u);
+
+    Relocated->Broadcast(7);
+    EXPECT_EQ(Calls, 1);
+
+    Memory::Delete(Relocated);
+    EXPECT_EQ(GFreedContexts, 1);
+}
+
+// The managed binding remembers the address it bound at, so unbinding has to find the listener after a move.
+TEST_F(FOwnershipFixture, UnbindingFindsAListenerThatWasRelocated)
+{
+    auto* Source = Memory::New<TScriptDelegate<int32>>();
+    int32 Context = 0;
+    const uint64 Id = Source->BindManaged(&NoopThunk, &Context);
+    const void* BoundAt = Source;
+
+    TScriptDelegate<int32> Relocated(std::move(*Source));
+    Memory::Delete(Source);
+
+    EXPECT_TRUE(FScriptDelegateBase::UnbindManagedAnywhere(BoundAt, Id));
+    EXPECT_EQ(GFreedContexts, 1);
+    EXPECT_EQ(Relocated.GetBindingCount(), 0u);
+
+    // The relocated delegate left the sweep set with its last managed listener.
+    ClearAllManagedDelegateBindings();
+    EXPECT_EQ(GFreedContexts, 1);
+}
+
+// Assigning a value is not a new identity, so the destination keeps its own listeners.
+TEST_F(FOwnershipFixture, AssigningOverADelegateKeepsItsListeners)
+{
+    TScriptDelegate<int32> Target;
+    TScriptDelegate<int32> Value;
+    int32 Context = 0;
+    Target.BindManaged(&NoopThunk, &Context);
+
+    Target = std::move(Value);
+    EXPECT_EQ(Target.GetManagedBindingCount(), 1u);
+    EXPECT_EQ(GFreedContexts, 0);
+}

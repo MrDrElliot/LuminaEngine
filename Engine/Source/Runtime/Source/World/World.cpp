@@ -474,8 +474,15 @@ namespace Lumina
     
     void CWorld::TeardownWorld()
     {
+        bTearingDown = true;
+
         // First, so every subscription the managed side drops still disconnects against a live world.
         DotNet::NotifyWorldTeardown(this);
+
+        // Scripts go before anything they can reach, so every OnDetach still sees live subsystems, physics and timers.
+        EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy.Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityRegistry.OnEntityDestroyed().Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityScripts::DetachAllInRegistry(EntityRegistry);
 
         // Before the systems and the registry go, so a subsystem can still read the world it leaves.
         WorldSubsystems::DestroyAll(Subsystems);
@@ -508,11 +515,6 @@ namespace Lumina
 
         EntityRegistry.Ctx().Get<FTimerManager>().Clear();
         EntityRegistry.Ctx().Get<FTweenManager>().Clear();
-
-        // Detached up front, since OnDestroy publishes while iterating the pool it is about to empty.
-        EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy.Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
-        EntityRegistry.OnEntityDestroyed().Disconnect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
-        EntityScripts::DetachAllInRegistry(EntityRegistry);
 
         RegistryPending.Clear();
         EntityRegistry.Clear();

@@ -728,10 +728,7 @@ LUMINA_DOTNET_EXPORT(void*, DelegateArgProperty)(void* PropertyPtr, int32 Index)
 
 LUMINA_DOTNET_EXPORT(void, DelegateUnbind)(void* DelegatePtr, uint64 Handle)
 {
-    if (DelegatePtr != nullptr)
-    {
-        static_cast<FScriptDelegateBase*>(DelegatePtr)->UnbindManaged(Handle);
-    }
+    FScriptDelegateBase::UnbindManagedAnywhere(DelegatePtr, Handle);
 }
 
 LUMINA_DOTNET_SIGNATURES(

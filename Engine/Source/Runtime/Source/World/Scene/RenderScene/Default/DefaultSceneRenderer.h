@@ -1214,8 +1214,6 @@ namespace Lumina
         };
         FAtmosphereTerms                        AtmosphereTerms = {};
         
-        mutable FSharedMutex                    PipelineCacheMutex;
-        THashMap<uint64, RHI::FPipelineH>       PipelineCache;
 
         
         TVector<CMaterialInterface*>            PendingPostProcessMaterials;
@@ -1382,6 +1380,10 @@ namespace Lumina
         uint32                                              LastBlocksOverflowed = 0;
         uint32                                              MeshletDrawTagCounter = 0;
         uint32                                              FrameVisibleInstanceCapacity = 0;
+
+        // Instance slots over the last few frames, since anything added after the readback it lags could be visible.
+        uint32                                              RecentSlotCounts[RHI::kFramesInFlight + 1] = {};
+        uint32                                              RecentSlotCursor = 0;
         void   UpdateMeshletBoundFeedback(uint8 Slot);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialClassifyRing = MakeSceneRing<RHI::kFramesInFlight>("Material.ClassifyBlock", 1.0f, EBufferInit::Undefined, /*bAllowShrink*/ false);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialPixelListRing = MakeSceneRing<RHI::kFramesInFlight>("Material.PixelList", 1.2f);

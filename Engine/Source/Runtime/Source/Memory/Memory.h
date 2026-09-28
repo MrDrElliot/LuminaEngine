@@ -108,6 +108,19 @@ namespace Lumina::Memory
     RUNTIME_API NODISCARD size_t GetPeakHugeAllocMemory();
     RUNTIME_API NODISCARD size_t GetTotalMappedMemory();
     RUNTIME_API NODISCARD size_t GetTotalUnmappedMemory();
+
+    // Exact bytes the OS has committed to the allocator, unlike the mapped figure which keeps decommitted holes.
+    RUNTIME_API NODISCARD size_t GetCommittedMemory();
+    RUNTIME_API NODISCARD bool UsesHugePages();
+
+    // Writes the allocator's per-thread, per-size-class statistics as text, for diffing two points in a session.
+    RUNTIME_API bool DumpAllocatorStatistics(const char* Path);
+
+    // Asks every thread to hand its cached spans back to the OS, which is worth doing after a level unload.
+    RUNTIME_API void RequestCacheTrim();
+
+    // A worker about to sleep trims its own cache here when a trim was requested since it last did.
+    RUNTIME_API void TrimThreadCacheIfRequested();
     
     RUNTIME_API LUMINA_ALLOCATION LUMINA_RESTRICT_RETURN NODISCARD void* Malloc(size_t Size, size_t Alignment = DEFAULT_ALIGNMENT) LUMINA_ALLOC_SIZE(1);
 

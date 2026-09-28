@@ -98,6 +98,17 @@ public static partial class Game
 
     private static Scope Capture() => new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField, EventTarget, EventWorldCache);
 
+    // The whole callback context, for code that resumes later and must see the same world, entity and script.
+    internal static Scope Snapshot() => Capture();
+
+    // Re-enters a snapshot, returning the context to restore once the resumed code is done.
+    internal static Scope Resume(Scope Captured)
+    {
+        Scope Prior = Capture();
+        Captured.Dispose();
+        return Prior;
+    }
+
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
     public readonly struct Scope : IDisposable
     {

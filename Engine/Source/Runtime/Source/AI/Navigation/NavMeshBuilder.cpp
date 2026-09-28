@@ -510,6 +510,22 @@ namespace Lumina::NavMeshBuilder
         return Handle;
     }
 
+    TSharedPtr<FNavBakeHandle> Bake(FNavBuildInput Input, TFunction<void(FNavBuildInput&)> Prepare)
+    {
+        TSharedPtr<FNavBakeHandle> Handle = MakeShared<FNavBakeHandle>();
+
+        Task::AsyncTask(1, 1, [Handle, In = std::move(Input), Prepare = Move(Prepare)](uint32, uint32, uint32) mutable
+        {
+            if (Prepare)
+            {
+                Prepare(In);
+            }
+            RunBake(In, *Handle);
+        }, ETaskPriority::Background);
+
+        return Handle;
+    }
+
     bool BakeSync(FNavBuildInput Input, FNavBuildOutput& Out)
     {
         FNavBakeHandle Handle;

@@ -24,9 +24,18 @@ internal sealed class EntityScriptRuntime
     // Called before the free, since a kept value gets recycled into an unrelated object's handle.
     internal void Forget(IntPtr Pointer)
     {
-        if (Pointer != IntPtr.Zero)
+        if (Pointer == IntPtr.Zero)
         {
-            LiveHandles.Remove(GCHandle.FromIntPtr(Pointer));
+            return;
+        }
+
+        GCHandle Handle = GCHandle.FromIntPtr(Pointer);
+        LiveHandles.Remove(Handle);
+
+        // Every destruction path releases the handle here, so this is where the script's awaits learn it is gone.
+        if (Handle.Target is EntityScript Script)
+        {
+            Script.CancelDestroyToken();
         }
     }
 

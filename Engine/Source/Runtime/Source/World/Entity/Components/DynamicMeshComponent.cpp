@@ -4,6 +4,7 @@
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Mesh/Mesh.h"
+#include "Assets/AssetTypes/Mesh/MeshBuildBatch.h"
 #include "Core/Math/SIMD/PackHalf.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
@@ -417,6 +418,22 @@ namespace Lumina
     }
 
     bool SDynamicMeshComponent::Commit()
+    {
+        if (!BuildData || BuildData->Positions.empty() || BuildData->Indices.empty())
+        {
+            return false;
+        }
+
+        // A script tick's commits wait for its batch, which builds them all at once across the workers.
+        if (FMeshBuildBatchScope::IsOpen())
+        {
+            bCommitPending = true;
+            return true;
+        }
+        return CommitNow();
+    }
+
+    bool SDynamicMeshComponent::CommitNow()
     {
         if (!BuildData || BuildData->Positions.empty() || BuildData->Indices.empty())
         {

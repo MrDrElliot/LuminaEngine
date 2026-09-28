@@ -350,9 +350,17 @@ namespace Lumina
             // Windowed peak, not the last readback: that count lags kFramesInFlight and collapses the
             // allocation the moment the camera looks at something empty.
             const uint32 VisibleDemand   = VisibleInstanceDemand.Observe(LastVisibleInstances);
-            uint32 VisibleCapacityWanted = Math::Max(VisibleDemand, 4096u);
 
-            const uint32 VisibleCapacityMax = Math::Max(Frame.Geometry.RetainedUpload.SlotCount, 1u);
+            // A level load or mass spawn outruns the lagging demand, so the growth since that readback is reserved too.
+            const uint32 SlotCount       = Frame.Geometry.RetainedUpload.SlotCount;
+            const uint32 SlotCountBefore = RecentSlotCounts[RecentSlotCursor];
+            RecentSlotCounts[RecentSlotCursor] = SlotCount;
+            RecentSlotCursor = (RecentSlotCursor + 1u) % (uint32)std::size(RecentSlotCounts);
+            const uint32 SlotGrowth = SlotCount > SlotCountBefore ? SlotCount - SlotCountBefore : 0u;
+
+            uint32 VisibleCapacityWanted = Math::Max(VisibleDemand, 4096u) + SlotGrowth;
+
+            const uint32 VisibleCapacityMax = Math::Max(SlotCount, 1u);
 
             if (LastVisibleInstances == 0u)
             {

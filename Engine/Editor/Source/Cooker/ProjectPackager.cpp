@@ -12,6 +12,7 @@
 
 #include <fstream>
 #include "Containers/StringFormat.h"
+#include "Containers/HashTable.h"
 
 namespace Lumina
 {
@@ -203,6 +204,66 @@ namespace Lumina
             return false;
         }
 
+        constexpr const char* BuildRulesSuffix = ".Build.cs";
+
+        // Every module the engine can build, so a game module another project left in the shared Binaries is never shipped.
+        THashSet<FString> CollectEngineModuleNames(FStringView EngineDir)
+        {
+            THashSet<FString> Names;
+            for (const char* Root : { "Engine/Source", "Engine/Plugins", "Engine/Editor" })
+            {
+                Filesystem::IterateDirectoryRecursive(Join(EngineDir, Root), [&Names](const Filesystem::FDirectoryEntry& Entry)
+                {
+                    const FStringView FileName = Entry.Name;
+                    if (!Entry.IsDirectory() && FileName.ends_with(BuildRulesSuffix))
+                    {
+                        Names.insert(FString(FileName.data(), FileName.size() - strlen(BuildRulesSuffix)));
+                    }
+                });
+            }
+            return Names;
+        }
+
+        // The module a "<Module>-<Config>" binary belongs to, or empty for a binary without the suffix.
+        FStringView ModuleOfSuffixedBinary(FStringView Stem)
+        {
+            for (const char* Cfg : { "-Debug", "-Development", "-Shipping" })
+            {
+                if (Stem.ends_with(Cfg))
+                {
+                    return Stem.substr(0, Stem.size() - strlen(Cfg));
+                }
+            }
+            return {};
+        }
+
+        // Binaries an earlier package wrote that this one did not, which the game would otherwise carry forever.
+        void RemoveStaleBinaries(FStringView DestDir, const THashSet<FString>& WrittenStems, const TFunction<void(FStringView)>& LogFunc)
+        {
+            TVector<FString> Stale;
+            Filesystem::IterateDirectory(DestDir, [&](const Filesystem::FDirectoryEntry& Entry)
+            {
+                const FStringView Ext = Entry.GetExtension();
+                if (Entry.IsDirectory() || (Ext != FStringView(".dll") && Ext != FStringView(".pdb")))
+                {
+                    return;
+                }
+                const FStringView Stem = StemOf(Entry.Name);
+                if (!ModuleOfSuffixedBinary(Stem).empty() && !WrittenStems.contains(FString(Stem.data(), Stem.size())))
+                {
+                    Stale.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+                }
+            });
+
+            for (const FString& Path : Stale)
+            {
+                if (Filesystem::RemoveFile(FStringView(Path.c_str(), Path.size())))
+                {
+                    LogPackager(LogFunc, Format("  - removed stale {}", FileNameOf(Path).c_str()).c_str());
+                }
+            }
+        }
+
         // Editor-only / tooling DLLs that aren't needed at runtime; hard-coded since no programmatic check exists.
         bool IsEditorOnlyDll(FStringView FileName)
         {
@@ -214,6 +275,8 @@ namespace Lumina
                                   FStringView DestDir,
                                   const FString& ConfigSuffix,
                                   FStringView ProjectName,
+                                  const THashSet<FString>* AllowedModules,
+                                  THashSet<FString>& WrittenStems,
                                   const TFunction<void(FStringView)>& LogFunc)
         {
             size_t Copied = 0;
@@ -285,6 +348,16 @@ namespace Lumina
                     return;
                 }
 
+                // Another project's game module, built into the shared engine Binaries and never loaded by this game.
+                const FStringView Module = ModuleOfSuffixedBinary(Stem);
+                if (AllowedModules != nullptr && bDll && !Module.empty() && Module != ProjectName
+                    && !AllowedModules->contains(FString(Module.data(), Module.size())))
+                {
+                    ++Skipped;
+                    LogPackager(LogFunc, Format("  (skipped {}, not an engine module)", FileName).c_str());
+                    return;
+                }
+
                 // Rename launcher to <ProjectName>.exe; safe because it never reads its own filename.
                 FString DstName(FileName.data(), FileName.size());
                 if (bExe && !ProjectName.empty())
@@ -296,6 +369,8 @@ namespace Lumina
                 if (CopyFileTo(Entry.FullPath, Join(DestDir, DstName)))
                 {
                     ++Copied;
+                    const FStringView DstStem = StemOf(FStringView(DstName.c_str(), DstName.size()));
+                    WrittenStems.insert(FString(DstStem.data(), DstStem.size()));
                     LogPackager(LogFunc, Format("  + {} -> {}",
                         FileName, DstName.c_str()).c_str());
                 }
@@ -488,7 +563,9 @@ namespace Lumina
         LogPackager(LogFunc, Format("Copying {} binaries from {}",
             Config.c_str(), BinariesDir.c_str()).c_str());
 
-        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, LogFunc);
+        const THashSet<FString> EngineModules = CollectEngineModuleNames(Paths::GetEngineInstallDirectory());
+        THashSet<FString> WrittenStems;
+        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, &EngineModules, WrittenStems, LogFunc);
 
         // Project modules link into the project tree, while engine binaries stay shared where they are.
         if (!ProjectDir.empty())
@@ -500,7 +577,7 @@ namespace Lumina
                 LogPackager(LogFunc, Format("Copying project binaries from {}",
                     ProjectBinaries.c_str()).c_str());
 
-                Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, LogFunc);
+                Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, nullptr, WrittenStems, LogFunc);
             }
         }
 
@@ -510,6 +587,7 @@ namespace Lumina
             return Result;
         }
         LogPackager(LogFunc, Format("Copied {} runtime files.", Copied).c_str());
+        RemoveStaleBinaries(DestDir, WrittenStems, LogFunc);
 
         // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
         CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DestDir, !(Config == "Shipping"), LogFunc);

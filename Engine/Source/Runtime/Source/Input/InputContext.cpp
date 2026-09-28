@@ -31,6 +31,21 @@ namespace Lumina
         RTHeight = H;
     }
 
+    void FInputContext::ContextToWindow(double ContextX, double ContextY, double& OutWindowX, double& OutWindowY) const
+    {
+        const double PanelW = double(RectMaxX - RectMinX);
+        const double PanelH = double(RectMaxY - RectMinY);
+        if (PanelW <= 0.0 || PanelH <= 0.0 || RTWidth == 0 || RTHeight == 0)
+        {
+            OutWindowX = ContextX + double(RectMinX);
+            OutWindowY = ContextY + double(RectMinY);
+            return;
+        }
+
+        OutWindowX = double(RectMinX) + ContextX / double(RTWidth) * PanelW;
+        OutWindowY = double(RectMinY) + ContextY / double(RTHeight) * PanelH;
+    }
+
     bool FInputContext::WindowToContext(double WindowX, double WindowY, double& OutX, double& OutY) const
     {
         const double PanelW = double(RectMaxX - RectMinX);

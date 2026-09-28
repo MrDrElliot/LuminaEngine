@@ -8,6 +8,8 @@ public static class LuminaFeatures
 
     public const string GpuProfiling = "GpuProfiling";
 
+    public const string RmlUiProfiling = "RmlUiProfiling";
+
     public const string Validation = "Validation";
 
     public const string GpuValidation = "GpuValidation";
@@ -50,6 +52,9 @@ public static class LuminaFeatures
 
             // Query pools and their readback are dead weight in a shipping build.
             GpuProfiling => bNonShipping,
+
+            // RmlUi opens a zone per element, property and text run, which made one document load read ten times its cost.
+            RmlUiProfiling => false,
 
             // Debug only. On in Development these instrumented every physics measurement taken there.
             Box3DDebugChecks => Target.Configuration == BuildConfiguration.Debug,
@@ -94,8 +99,12 @@ public static class LuminaFeatures
                 // this the zones double-end.
                 "TRACY_FIBERS",
                 "TRACY_ALLOW_SHADOW_WARNING",
-                "RMLUI_TRACY_PROFILING",
             });
+
+            if (IsActive(Target, RmlUiProfiling))
+            {
+                Definitions.Add("RMLUI_TRACY_PROFILING");
+            }
         }
 
         if (IsActive(Target, GpuProfiling))

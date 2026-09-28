@@ -102,6 +102,12 @@ namespace Lumina
         FUNCTION()
         bool Commit();
 
+        // Commit's build, run at once whatever batch is open; the batch itself calls this for every pending commit.
+        bool CommitNow();
+
+        // Set by a Commit made while a mesh build batch was open, and cleared when the batch builds it.
+        bool bCommitPending = false;
+
         /** True once Commit() has produced a renderable mesh. */
         FUNCTION()
         bool IsBuilt() const;

@@ -63,6 +63,39 @@ namespace Lumina
         return GRenderManager;
     }
 
+    void FScenePipelineCache::PurgeStale()
+    {
+        FWriteScopeLock Lock(Mutex);
+        for (auto It = Entries.begin(); It != Entries.end();)
+        {
+            bool bStale = false;
+            for (const FShaderH& Shader : It->second.Shaders)
+            {
+                bStale |= Shader != nullptr && FShaderLibrary::Resolve(Shader) == nullptr;
+            }
+
+            if (bStale)
+            {
+                RHI::Retire(It->second.Pipeline);
+                It = Entries.erase(It);
+            }
+            else
+            {
+                ++It;
+            }
+        }
+    }
+
+    void FScenePipelineCache::ReleaseAll()
+    {
+        FWriteScopeLock Lock(Mutex);
+        for (auto& [Hash, Entry] : Entries)
+        {
+            RHI::Retire(Entry.Pipeline);
+        }
+        Entries.clear();
+    }
+
     FRenderManager::FRenderManager()
     {
     }
@@ -98,6 +131,7 @@ namespace Lumina
             #endif
         }
         SharedRenderResources.Reset();
+        ScenePipelineCache.ReleaseAll();
 
         GShaderCompiler = nullptr;
         if (ShaderCompiler != nullptr)

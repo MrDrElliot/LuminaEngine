@@ -440,6 +440,7 @@ internal sealed class ScriptManager
         Asset.PurgePending();                 // in-flight async asset-load callbacks
         ScriptAsync.Clear();                  // tokens for async functions still running in the old generation
         GameTaskRegistry.CancelAll();         // pending awaits, whose continuations close over unloading code
+        Interop.ResetExceptionThrottle();     // the reloaded code earns a full stack on its first throw
         ScriptCallback.PurgeAll();            // in-flight one-shot callbacks handed to native
         PropertyAccessor.ClearScriptCaches(); // cached get/set delegates over user property types
         ScriptFunctionDispatch.Reset();        // [ScriptFunction] bindings, which root user MethodInfos

@@ -8,6 +8,7 @@
 #include "Core/Windows/Window.h"
 #include "Core/Windows/WindowInput.h"
 #include "Core/Threading/Thread.h"
+#include "Input/InputContext.h"
 #include "Input/InputViewport.h"
 #include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
@@ -32,7 +33,7 @@ namespace Lumina::MCP
         {
             FString Error;
             SessionOps::FPlayState State;
-            SessionOps::GetPlayState(State, Error);
+            (void)SessionOps::GetPlayState(State, Error);
 
             Out.bPlaying = State.bPlaying;
             Out.bPaused  = State.bPaused;
@@ -644,9 +645,19 @@ namespace Lumina::MCP
                     Out.X = In.X;
                     Out.Y = In.Y;
 
+                    double WindowX = In.X;
+                    double WindowY = In.Y;
+                    (void)Agent::FGameThreadGate::Run([&]()
+                    {
+                        if (FInputViewport* Viewport = FInputViewportRegistry::Get().GetFocusedViewport())
+                        {
+                            Viewport->GetContext().ContextToWindow(In.X, In.Y, WindowX, WindowY);
+                        }
+                    }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds());
+
                     FMouseMoveInput Move;
-                    Move.X = In.X;
-                    Move.Y = In.Y;
+                    Move.X = (float)WindowX;
+                    Move.Y = (float)WindowY;
                     InjectedMoves.Enqueue(Move);
 
                     // The move has to land before the button, or the click resolves against the old position.
@@ -657,8 +668,8 @@ namespace Lumina::MCP
                         FMouseButtonInput Button;
                         Button.Button   = static_cast<EMouseKey>(In.Button);
                         Button.bPressed = bPressed;
-                        Button.X        = In.X;
-                        Button.Y        = In.Y;
+                        Button.X        = (float)WindowX;
+                        Button.Y        = (float)WindowY;
                         InjectedButtons.Enqueue(Button);
                     };
 

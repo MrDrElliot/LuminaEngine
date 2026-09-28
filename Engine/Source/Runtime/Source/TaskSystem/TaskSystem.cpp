@@ -107,6 +107,8 @@ namespace Lumina
         // A count cannot express the crossover, and the thunk address is one instantiation per call site.
         constexpr uint32 kCostSlots         = 256;
         constexpr uint64 kSerialBudgetNanos = 25'000;   // below this, the fan-out costs more than the work
+        constexpr uint64 kSerialOverrunFactor = 4;
+        constexpr uint64 kBackgroundGrabNanos = 1'000'000;
 
         struct alignas(64) FCostEntry
         {
@@ -249,20 +251,76 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        thread_local uint32 GInlineNestedDepth = 0;
+    }
+
+    Task::FInlineNestedScope::FInlineNestedScope()
+    {
+        ++GInlineNestedDepth;
+    }
+
+    Task::FInlineNestedScope::~FInlineNestedScope()
+    {
+        --GInlineNestedDepth;
+    }
+
+    bool Task::FInlineNestedScope::IsOpen()
+    {
+        return GInlineNestedDepth > 0;
+    }
+
     void FTaskSystem::ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx)
     {
-        const uint32 Grain = Task::ComputeCursorGrain(Num, MinRange);
+        // Running inline never waits, so the enclosing item cannot park and pick up unrelated work meanwhile.
+        if (GInlineNestedDepth > 0)
+        {
+            Thunk(Ctx, 0, Num, Jobs::GetWorkerIndex());
+            return;
+        }
+
+        uint32 Grain = Task::ComputeCursorGrain(Num, MinRange);
 
         // A loop finishing inside the dispatch overhead runs on the caller and submits nothing.
         const uint64 NanosPerItem = EstimatedNanosPerItem(Thunk);
         const bool   bTooSmall    = NanosPerItem != 0 && NanosPerItem * Num <= kSerialBudgetNanos;
 
-        if (Num <= Grain || bTooSmall)
+        // Background jobs yield only between grabs, so a grab is sized to about a millisecond once the item cost is known.
+        if (Priority == ETaskPriority::Background && NanosPerItem != 0)
+        {
+            const uint64 ItemsPerGrab = Math::Max<uint64>(1, kBackgroundGrabNanos / NanosPerItem);
+            Grain = (uint32)Math::Clamp<uint64>(ItemsPerGrab, Math::Max(MinRange, 1u), Grain);
+        }
+
+        if (Num <= Grain)
         {
             const double Start = PlatformTime::Seconds();
             Thunk(Ctx, 0, Num, Jobs::GetWorkerIndex());
             RecordItemCost(Thunk, Num, PlatformTime::Seconds() - Start);
             return;
+        }
+
+        // The estimate comes from earlier calls whose items may have been far lighter, so an overrun hands the rest to the workers.
+        uint32 FirstItem = 0;
+        if (bTooSmall)
+        {
+            const double Start    = PlatformTime::Seconds();
+            const double Deadline = Start + (double)(kSerialBudgetNanos * kSerialOverrunFactor) * 1.0e-9;
+            const uint32 Worker   = Jobs::GetWorkerIndex();
+            double Now = Start;
+            while (FirstItem < Num && Now <= Deadline)
+            {
+                const uint32 End = Num - FirstItem < Grain ? Num : FirstItem + Grain;
+                Thunk(Ctx, FirstItem, End, Worker);
+                FirstItem = End;
+                Now = PlatformTime::Seconds();
+            }
+            RecordItemCost(Thunk, FirstItem, Now - Start);
+            if (FirstItem >= Num)
+            {
+                return;
+            }
         }
 
         FCursorFor C;
@@ -271,9 +329,10 @@ namespace Lumina
         C.Num   = Num;
         C.Grain = Grain;
         C.Priority = ToJobPriority(Priority);
+        C.Cursor.store(FirstItem, std::memory_order_relaxed);
 
         // One job per worker at most, minus the grab the participating caller takes itself.
-        const uint32 Grabs = (Num + Grain - 1) / Grain;
+        const uint32 Grabs = (Num - FirstItem + Grain - 1) / Grain;
         uint32 K = Grabs - 1;
         K = Math::Min(K, Math::Min(Jobs::GetNumWorkers(), Task::kMaxChunks));
 

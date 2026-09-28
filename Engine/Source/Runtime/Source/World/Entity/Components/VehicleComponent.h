@@ -168,10 +168,10 @@ namespace Lumina
         PROPERTY(ReadOnly, Category = "Vehicle|State")
         int32 GroundedWheels = 0;
 
-        FUNCTION(Script)
+        FUNCTION()
         bool IsGrounded() const { return GroundedWheels > 0; }
 
-        FUNCTION(Script)
+        FUNCTION()
         void SetInput(float InThrottle, float InSteer, float InBrake = 0.0f, bool bInHandbrake = false)
         {
             Throttle   = Math::Clamp(InThrottle, -1.0f, 1.0f);
@@ -180,7 +180,7 @@ namespace Lumina
             bHandbrake = bInHandbrake;
         }
 
-        FUNCTION(Script)
+        FUNCTION()
         void AddWheel(FVector3 Position, float Radius, float SuspensionTravel, bool bSteer, bool bDrive, bool bInHandbrake = false,
                       uint32 Visual = 0xFFFFFFFF)
         {

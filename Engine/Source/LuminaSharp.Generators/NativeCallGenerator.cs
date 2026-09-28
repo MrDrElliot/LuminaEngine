@@ -283,7 +283,7 @@ namespace LuminaSharp
             if (stringReturn)
             {
                 string prefix = callArgs.Count > 0 ? coreArgs + ", " : string.Empty;
-                // Stack scratch first, so an ordinary result costs one call and only an overflow calls twice.
+                // An overflow copies what the native side stashed, and only an export that stashes nothing is called twice.
                 return pad + "byte* __rb = stackalloc byte[" + Utf8ScratchBytes + "];\n"
                      + pad + "int __len = " + field + "(" + prefix + "__rb, " + Utf8ScratchBytes + ");\n"
                      + pad + "if (__len <= 0) { return string.Empty; }\n"
@@ -292,7 +292,8 @@ namespace LuminaSharp
                      + pad + "}\n"
                      + pad + "byte[] __buf = new byte[__len];\n"
                      + pad + "fixed (byte* __bp = __buf)\n" + pad + "{\n"
-                     + pad + "    int __w = " + field + "(" + prefix + "__bp, __len);\n"
+                     + pad + "    int __w = global::LuminaSharp.NativeBindings.TakeCallOverflow(__rb, __bp, __len);\n"
+                     + pad + "    if (__w < 0) { __w = " + field + "(" + prefix + "__bp, __len); }\n"
                      + pad + "    return global::LuminaSharp.Interop.GetString(__bp, __w < __len ? __w : __len);\n"
                      + pad + "}\n";
             }
@@ -318,7 +319,8 @@ namespace LuminaSharp
                      + pad + "    __raw = new global::System.IntPtr[__len];\n"
                      + pad + "    fixed (global::System.IntPtr* __bp = __raw)\n"
                      + pad + "    {\n"
-                     + pad + "        __w = " + field + "(" + prefix + "__bp, __len);\n"
+                     + pad + "        __w = global::LuminaSharp.NativeBindings.TakeCallOverflow(__sb, __bp, __len * global::System.IntPtr.Size);\n"
+                     + pad + "        __w = __w < 0 ? " + field + "(" + prefix + "__bp, __len) : __w / global::System.IntPtr.Size;\n"
                      + pad + "    }\n"
                      + pad + "    if (__w > __len) { __w = __len; }\n"
                      + pad + "    if (__w < 0) { __w = 0; }\n"
@@ -336,7 +338,7 @@ namespace LuminaSharp
             if (arrayReturn)
             {
                 string prefix = callArgs.Count > 0 ? coreArgs + ", " : string.Empty;
-                // Stack scratch first, so an ordinary result costs one call and only an overflow calls twice.
+                // An overflow copies what the native side stashed, and only an export that stashes nothing is called twice.
                 return pad + "int __cap = 1024 / global::System.Runtime.CompilerServices.Unsafe.SizeOf<" + arrayElemFq + ">();\n"
                      + pad + "if (__cap < 1) { __cap = 1; }\n"
                      + pad + arrayElemFq + "* __sb = stackalloc " + arrayElemFq + "[__cap];\n"
@@ -350,7 +352,9 @@ namespace LuminaSharp
                      + pad + arrayElemFq + "[] __buf = new " + arrayElemFq + "[__len];\n"
                      + pad + "int __w;\n"
                      + pad + "fixed (" + arrayElemFq + "* __bp = __buf)\n" + pad + "{\n"
-                     + pad + "    __w = " + field + "(" + prefix + "__bp, __len);\n"
+                     + pad + "    int __es = global::System.Runtime.CompilerServices.Unsafe.SizeOf<" + arrayElemFq + ">();\n"
+                     + pad + "    __w = global::LuminaSharp.NativeBindings.TakeCallOverflow(__sb, __bp, __len * __es);\n"
+                     + pad + "    __w = __w < 0 ? " + field + "(" + prefix + "__bp, __len) : __w / __es;\n"
                      + pad + "}\n"
                      // A count that grew between the calls is clamped, never read past the buffer.
                      + pad + "if (__w < __len) { global::System.Array.Resize(ref __buf, __w < 0 ? 0 : __w); }\n"
@@ -363,7 +367,7 @@ namespace LuminaSharp
                 // (NativeStruct) returns must NOT -- they have no managed-instance slot. See IsCObjectRef.
                 string build = nativeRefReturnIsCObject
                     ? "global::LuminaSharp.Wrapper<" + nativeRefRetType + ">.ForObject(__p)"
-                    : "__p == global::System.IntPtr.Zero ? null : new " + nativeRefRetType + "(__p)";
+                    : "global::LuminaSharp.NativeObjectMarshal.FromStructPointer<" + nativeRefRetType + ">(__p)";
 
                 return pad + "global::System.IntPtr __p = " + field + "(" + coreArgs + ");\n"
                      + pad + "return " + build + ";\n";

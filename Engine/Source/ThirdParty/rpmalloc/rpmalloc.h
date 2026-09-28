@@ -220,6 +220,22 @@ extern "C" {
 	RPMALLOC_EXPORT void
 		rpmalloc_thread_collect(void);
 
+	// Bytes the OS currently has committed for this allocator.
+	RPMALLOC_EXPORT size_t
+		rpmalloc_committed_bytes(void);
+
+	// Nonzero when large pages were granted, in which case spans cannot be returned one at a time.
+	RPMALLOC_EXPORT int
+		rpmalloc_uses_huge_pages(void);
+
+	// Unmaps the spans the calling thread's heap has cached for reuse.
+	RPMALLOC_EXPORT void
+		rpmalloc_thread_trim_caches(void);
+
+	// Unmaps the spans held in the global cache.
+	RPMALLOC_EXPORT void
+		rpmalloc_global_trim_caches(void);
+
 	//! Query if allocator is initialized for calling thread
 	RPMALLOC_EXPORT int
 		rpmalloc_is_thread_initialized(void);

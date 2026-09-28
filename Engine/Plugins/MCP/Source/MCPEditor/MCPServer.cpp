@@ -17,6 +17,7 @@
 #include "MCPParticleTools.h"
 #include "MCPPrefabTools.h"
 #include "MCPProfilerTools.h"
+#include "MCPRuntimeTools.h"
 #include "MCPSceneTools.h"
 #include "MCPSequenceTools.h"
 
@@ -114,6 +115,7 @@ namespace Lumina::MCP
         RegisterPrefabTools(GOwner);
         RegisterEditorSessionTools(GOwner);
         RegisterProfilerTools(GOwner);
+        RegisterRuntimeTools(GOwner);
         RegisterSequenceTools(GOwner);
         RegisterPackageTools(GOwner);
 

@@ -149,6 +149,7 @@ namespace Lumina::MCP
 
         FMutex JobMutex;
         TUniquePtr<FCaptureJob> Job;
+        FString LastCaptureFile;
 
         bool StartCapture(float Seconds, bool bUncapFrameRate, FString& OutFile, FString& OutError)
         {
@@ -226,6 +227,11 @@ namespace Lumina::MCP
             }
 
             Out.CaptureFile = Finished->File;
+            if (Finished->bCaptured)
+            {
+                FScopeLock Lock(JobMutex);
+                LastCaptureFile = Finished->File;
+            }
             if (!Finished->bCaptured)
             {
                 return Agent::FToolResult::Error(Lumina::Format(
@@ -240,8 +246,16 @@ namespace Lumina::MCP
             ReadZones(Export, Lumina::Format("-s \"{}\" {}\"{}\"", Separator, In.bSelfTime ? "-e " : "", Out.CaptureFile), false, Cpu);
             ReadZones(Export, Lumina::Format("-s \"{}\" -u -g \"{}\"", Separator, Out.CaptureFile), true, Gpu);
 
-            const auto Frame = Cpu.find(FString(FrameZone));
-            if (Frame == Cpu.end() || Frame->second.Count == 0)
+            // A frame's self time is only what its children leave over, so frame totals always come from inclusive times.
+            THashMap<FString, FZoneTotals> Inclusive;
+            if (In.bSelfTime)
+            {
+                ReadZones(Export, Lumina::Format("-s \"{}\" \"{}\"", Separator, Out.CaptureFile), false, Inclusive);
+            }
+            const THashMap<FString, FZoneTotals>& Totals = In.bSelfTime ? Inclusive : Cpu;
+
+            const auto Frame = Totals.find(FString(FrameZone));
+            if (Frame == Totals.end() || Frame->second.Count == 0)
             {
                 return Agent::FToolResult::Error(Lumina::Format("The trace at {} has no {} zones to count frames by.", Out.CaptureFile, FrameZone));
             }
@@ -249,14 +263,195 @@ namespace Lumina::MCP
             Out.Frames = (int32)Frame->second.Count;
             Out.FrameMs = (float)(Frame->second.TotalNs / 1.0e6 / Out.Frames);
             Out.MaxFrameMs = (float)(Frame->second.MaxNs / 1.0e6);
-            Out.LimiterMs = MsPerFrame(Cpu, LimiterZone, Out.Frames);
-            Out.GpuWaitMs = MsPerFrame(Cpu, GpuWaitZone, Out.Frames);
+            Out.LimiterMs = MsPerFrame(Totals, LimiterZone, Out.Frames);
+            Out.GpuWaitMs = MsPerFrame(Totals, GpuWaitZone, Out.Frames);
             Out.Cpu = Rank(Cpu, Out.Frames, Top, In.Filter);
             Out.Gpu = Rank(Gpu, Out.Frames, Top, In.Filter);
 
             return Agent::FToolResult::Ok(Lumina::Format(
                 "{} frames at {:.2f} ms ({:.2f} ms max), {:.2f} ms waiting on the GPU and {:.2f} ms in the frame limiter per frame. Trace saved to {}.",
                 Out.Frames, Out.FrameMs, Out.MaxFrameMs, Out.GpuWaitMs, Out.LimiterMs, Out.CaptureFile));
+        }
+    }
+
+    namespace
+    {
+        // One zone event from an unwrapped export, with its name interned.
+        struct FZoneEvent
+        {
+            int64 Start = 0;
+            int64 Duration = 0;
+            int64 Self = 0;
+            int32 Name = 0;
+            int32 Thread = 0;
+        };
+
+        void RankInto(const THashMap<int32, SProfilerHitchZone>& Totals, int32 Top, TVector<SProfilerHitchZone>& Out)
+        {
+            for (const auto& [Id, Zone] : Totals)
+            {
+                Out.push_back(Zone);
+            }
+            Algo::Sort(Out, [](const SProfilerHitchZone& A, const SProfilerHitchZone& B) { return A.SelfMs > B.SelfMs; });
+            if ((int32)Out.size() > Top)
+            {
+                Out.resize(Top);
+            }
+        }
+
+        Agent::FToolResult FindHitches(const SProfilerHitchParams& In, SProfilerHitchResult& Out)
+        {
+            Out.CaptureFile = In.CaptureFile;
+            if (Out.CaptureFile.empty())
+            {
+                FScopeLock Lock(JobMutex);
+                Out.CaptureFile = LastCaptureFile;
+            }
+            if (Out.CaptureFile.empty() || !Paths::Exists(Out.CaptureFile))
+            {
+                return Agent::FToolResult::Error("No trace to read; record one with profiler.capture or pass CaptureFile.");
+            }
+
+            THashMap<FString, int32> NameIds;
+            TVector<FString> Names;
+            TVector<FZoneEvent> Events;
+            bool bHeader = true;
+            RunTool(TracyTool("tracy-csvexport"), Lumina::Format("-u -s \"{}\" \"{}\"", Separator, Out.CaptureFile), [&](FStringView Line)
+            {
+                if (bHeader)
+                {
+                    bHeader = false;
+                    return;
+                }
+
+                const TVector<FStringView> Fields = SplitFields(Line);
+                if (Fields.size() < 6)
+                {
+                    return;
+                }
+
+                const FString Name(Fields[0].data(), Fields[0].size());
+                auto Found = NameIds.find(Name);
+                if (Found == NameIds.end())
+                {
+                    Found = NameIds.emplace(Name, (int32)Names.size()).first;
+                    Names.push_back(Name);
+                }
+
+                FZoneEvent& Event = Events.emplace_back();
+                Event.Name = Found->second;
+                Event.Start = (int64)ToNumber(Fields[3]);
+                Event.Duration = (int64)ToNumber(Fields[4]);
+                Event.Thread = (int32)ToNumber(Fields[5]);
+            });
+
+            const auto FrameName = NameIds.find(FString(FrameZone));
+            if (FrameName == NameIds.end())
+            {
+                return Agent::FToolResult::Error(Lumina::Format("The trace at {} has no {} zones to find frames by.", Out.CaptureFile, FrameZone));
+            }
+
+            // Parents sort before the children they contain, which is what the self-time pass below walks.
+            Algo::Sort(Events, [](const FZoneEvent& A, const FZoneEvent& B)
+            {
+                if (A.Thread != B.Thread) { return A.Thread < B.Thread; }
+                if (A.Start != B.Start) { return A.Start < B.Start; }
+                return A.Duration > B.Duration;
+            });
+
+            TVector<size_t> Open;
+            for (size_t Index = 0; Index < Events.size(); ++Index)
+            {
+                FZoneEvent& Event = Events[Index];
+                Event.Self = Event.Duration;
+                while (!Open.empty())
+                {
+                    const FZoneEvent& Parent = Events[Open.back()];
+                    if (Parent.Thread == Event.Thread && Event.Start < Parent.Start + Parent.Duration)
+                    {
+                        break;
+                    }
+                    Open.pop_back();
+                }
+                if (!Open.empty())
+                {
+                    Events[Open.back()].Self -= Event.Duration;
+                }
+                Open.push_back(Index);
+            }
+
+            TVector<size_t> Frames;
+            int64 FirstStart = INT64_MAX;
+            for (size_t Index = 0; Index < Events.size(); ++Index)
+            {
+                FirstStart = Math::Min(FirstStart, Events[Index].Start);
+                if (Events[Index].Name == FrameName->second)
+                {
+                    Frames.push_back(Index);
+                }
+            }
+            if (Frames.empty())
+            {
+                return Agent::FToolResult::Error("The trace recorded no whole frames.");
+            }
+
+            TVector<float> Sorted;
+            for (size_t Index : Frames)
+            {
+                Sorted.push_back((float)(Events[Index].Duration / 1.0e6));
+            }
+            Algo::Sort(Sorted, [](float A, float B) { return A < B; });
+            Out.Frames = (int32)Sorted.size();
+            Out.MedianFrameMs = Sorted[Sorted.size() / 2];
+            Out.P99FrameMs = Sorted[Math::Min(Sorted.size() - 1, (size_t)((float)Sorted.size() * 0.99f))];
+            Out.ThresholdMs = In.ThresholdMs > 0.0f ? In.ThresholdMs : Math::Max(Out.MedianFrameMs * 2.0f, Out.MedianFrameMs + 8.0f);
+
+            TVector<size_t> Slow;
+            for (size_t Index : Frames)
+            {
+                if ((float)(Events[Index].Duration / 1.0e6) > Out.ThresholdMs)
+                {
+                    Slow.push_back(Index);
+                }
+            }
+            Out.HitchCount = (int32)Slow.size();
+            Algo::Sort(Slow, [&Events](size_t A, size_t B) { return Events[A].Duration > Events[B].Duration; });
+            if ((int32)Slow.size() > Math::Max(In.MaxHitches, 0))
+            {
+                Slow.resize(Math::Max(In.MaxHitches, 0));
+            }
+
+            const int32 Top = Math::Clamp(In.TopZones, 1, 50);
+            for (size_t FrameIndex : Slow)
+            {
+                const FZoneEvent& Frame = Events[FrameIndex];
+                const int64 End = Frame.Start + Frame.Duration;
+                THashMap<int32, SProfilerHitchZone> Game;
+                THashMap<int32, SProfilerHitchZone> Workers;
+                for (const FZoneEvent& Event : Events)
+                {
+                    if (Event.Start < Frame.Start || Event.Start >= End || Event.Self <= 0)
+                    {
+                        continue;
+                    }
+                    THashMap<int32, SProfilerHitchZone>& Into = Event.Thread == Frame.Thread ? Game : Workers;
+                    SProfilerHitchZone& Zone = Into[Event.Name];
+                    Zone.Name = Names[Event.Name];
+                    Zone.SelfMs += (float)(Event.Self / 1.0e6);
+                    Zone.Count += 1;
+                }
+
+                SProfilerHitch& Hitch = Out.Hitches.emplace_back();
+                Hitch.AtSeconds = (float)((Frame.Start - FirstStart) / 1.0e9);
+                Hitch.FrameMs = (float)(Frame.Duration / 1.0e6);
+                RankInto(Game, Top, Hitch.GameThread);
+                RankInto(Workers, Top, Hitch.Workers);
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format(
+                "{} frames, median {:.2f} ms, p99 {:.2f} ms. {} over {:.1f} ms{}.",
+                Out.Frames, Out.MedianFrameMs, Out.P99FrameMs, Out.HitchCount, Out.ThresholdMs,
+                Out.Hitches.empty() ? FString() : Lumina::Format(", the worst {:.1f} ms", Out.Hitches[0].FrameMs)));
         }
     }
 
@@ -286,6 +481,16 @@ namespace Lumina::MCP
             [](const SProfilerReportParams& In, SProfilerCaptureResult& Out)
             {
                 return FinishCapture(In, Out);
+            });
+
+        Registry.Register<SProfilerHitchParams, SProfilerHitchResult>(
+            Owner, "profiler.hitches",
+            "Find the frames in a Tracy capture that ran long and break each one down by the zones that spent the time, "
+            "on the game thread and on the workers. Reads the last capture unless CaptureFile names another.",
+            Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
+            [](const SProfilerHitchParams& In, SProfilerHitchResult& Out)
+            {
+                return FindHitches(In, Out);
             });
 
         Registry.Register<SProfilerCaptureParams, SProfilerCaptureResult>(

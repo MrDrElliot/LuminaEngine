@@ -107,12 +107,13 @@ namespace Lumina::Physics
         Def.destroyDebugShape = &FBox3DDebugRenderer::DestroyDebugShape;
         Def.userDebugShapeContext = this;
 
-        // Pre-sizing avoids the world reallocating its body and contact arrays during a spawn burst.
-        Def.capacity.dynamicBodyCount = (int)MaxBodies;
-        Def.capacity.staticBodyCount = (int)MaxBodies;
-        Def.capacity.dynamicShapeCount = (int)MaxBodies;
-        Def.capacity.staticShapeCount = (int)MaxBodies;
-        Def.capacity.contactCount = (int)InitSettings.MaxPhysicsContactConstraints;
+        // A working-size reservation, since Box3D grows its arrays on demand and reserving the whole limit cost 128 MB per world.
+        const int InitialBodies = (int)Math::Min(MaxBodies, kInitialBodyReservation);
+        Def.capacity.dynamicBodyCount = InitialBodies;
+        Def.capacity.staticBodyCount = InitialBodies;
+        Def.capacity.dynamicShapeCount = InitialBodies;
+        Def.capacity.staticShapeCount = InitialBodies;
+        Def.capacity.contactCount = (int)Math::Min(InitSettings.MaxPhysicsContactConstraints, kInitialContactReservation);
 
         WorldId = b3CreateWorld(&Def);
 

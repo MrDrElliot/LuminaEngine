@@ -935,6 +935,9 @@ _rpmalloc_unmap(void* address, size_t size, size_t offset, size_t release) {
 	_memory_config.memory_unmap(address, size, offset, release);
 }
 
+// Bytes the OS has committed to this allocator, counted exactly since the mapped statistic keeps decommitted holes.
+static atomic64_t _memory_committed_os;
+
 //! Default implementation to map new pages to virtual memory
 static void*
 _rpmalloc_mmap_os(size_t size, size_t* offset) {
@@ -995,6 +998,7 @@ _rpmalloc_mmap_os(size_t size, size_t* offset) {
 	}
 #endif
 	_rpmalloc_stat_add(&_mapped_pages_os, (int32_t)((size + padding) >> _memory_page_size_shift));
+	atomic_add64(&_memory_committed_os, (int64_t)(size + padding));
 	if (padding) {
 		size_t final_padding = padding - ((uintptr_t)ptr & ~_memory_span_mask);
 		rpmalloc_assert(final_padding <= _memory_span_size, "Internal failure in padding");
@@ -1013,14 +1017,18 @@ _rpmalloc_unmap_os(void* address, size_t size, size_t offset, size_t release) {
 	rpmalloc_assert(release || (offset == 0), "Invalid unmap size");
 	rpmalloc_assert(!release || (release >= _memory_page_size), "Invalid unmap size");
 	rpmalloc_assert(size >= _memory_page_size, "Invalid unmap size");
+	// A decommit frees the range itself, and a release frees whatever of the reservation was still committed, the size given plus any padding.
+	int64_t freed = (int64_t)size;
 	if (release && offset) {
 		offset <<= 3;
 		address = pointer_offset(address, -(int32_t)offset);
 		if ((release >= _memory_span_size) && (_memory_span_size > _memory_map_granularity)) {
 			//Padding is always one span size
 			release += _memory_span_size;
+			freed += (int64_t)_memory_span_size;
 		}
 	}
+	atomic_add64(&_memory_committed_os, -freed);
 #if !DISABLE_UNMAP
 #if PLATFORM_WINDOWS
 	if (!VirtualFree(address, release ? 0 : size, release ? MEM_RELEASE : MEM_DECOMMIT)) {
@@ -1276,17 +1284,22 @@ _rpmalloc_span_unmap(span_t* span) {
 		//It must be kept in memory since span header must be used
 		span->flags |= SPAN_FLAG_MASTER | SPAN_FLAG_SUBSPAN | SPAN_FLAG_UNMAPPED_MASTER;
 		_rpmalloc_stat_add(&_unmapped_master_spans, 1);
+		// Only the header page is read once a master is unmapped, so the rest is returned now instead of pinned by any live subspan.
+		if ((_memory_span_size >= _memory_page_size) && (span_count * _memory_span_size > _memory_page_size))
+			_rpmalloc_unmap(pointer_offset(span, _memory_page_size), span_count * _memory_span_size - _memory_page_size, 0, 0);
 	}
 
 	if (atomic_add32(&master->remaining_spans, -(int32_t)span_count) <= 0) {
 		//Everything unmapped, unmap the master span with release flag to unmap the entire range of the super span
 		rpmalloc_assert(!!(master->flags & SPAN_FLAG_MASTER) && !!(master->flags & SPAN_FLAG_SUBSPAN), "Span flag corrupted");
-		size_t unmap_count = master->span_count;
+		size_t unmap_size = master->span_count * _memory_span_size;
 		if (_memory_span_size < _memory_page_size)
-			unmap_count = master->total_spans;
+			unmap_size = master->total_spans * _memory_span_size;
+		else if (unmap_size > _memory_page_size)
+			unmap_size = _memory_page_size;  // the header page is all the master kept committed
 		_rpmalloc_stat_sub(&_master_spans, 1);
 		_rpmalloc_stat_sub(&_unmapped_master_spans, 1);
-		_rpmalloc_unmap(master, unmap_count * _memory_span_size, master->align_offset, (size_t)master->total_spans * _memory_span_size);
+		_rpmalloc_unmap(master, unmap_size, master->align_offset, (size_t)master->total_spans * _memory_span_size);
 	}
 }
 
@@ -3069,6 +3082,53 @@ rpmalloc_thread_finalize(int release_caches) {
 #endif
 }
 
+size_t
+rpmalloc_committed_bytes(void) {
+	return (size_t)atomic_add64(&_memory_committed_os, 0);
+}
+
+int
+rpmalloc_uses_huge_pages(void) {
+	return _memory_huge_pages;
+}
+
+// Returns the calling thread's cached spans to the OS, since the cache otherwise only drains when the thread exits.
+void
+rpmalloc_thread_trim_caches(void) {
+	heap_t* heap = get_thread_heap_raw();
+	if (!heap)
+		return;
+	_rpmalloc_heap_cache_adopt_deferred(heap, 0);
+	// The reserve and each class's one-span cache are free too, and each pins the super span it came from, as heap finalization knows.
+	if (heap->spans_reserved) {
+		span_t* reserve = _rpmalloc_span_map(heap, heap->spans_reserved);
+		_rpmalloc_span_unmap(reserve);
+		heap->spans_reserved = 0;
+	}
+	for (size_t iclass = 0; iclass < SIZE_CLASS_COUNT; ++iclass) {
+		if (heap->size_class[iclass].cache)
+			_rpmalloc_span_unmap(heap->size_class[iclass].cache);
+		heap->size_class[iclass].cache = 0;
+	}
+#if ENABLE_THREAD_CACHE
+	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass) {
+		span_cache_t* span_cache = !iclass ? &heap->span_cache : (span_cache_t*)(heap->span_large_cache + (iclass - 1));
+		for (size_t ispan = 0; ispan < span_cache->count; ++ispan)
+			_rpmalloc_span_unmap(span_cache->span[ispan]);
+		span_cache->count = 0;
+	}
+#endif
+}
+
+// Returns every span in the shared cache to the OS, which is safe at any time since each class is taken under its lock.
+void
+rpmalloc_global_trim_caches(void) {
+#if ENABLE_GLOBAL_CACHE
+	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass)
+		_rpmalloc_global_cache_finalize(&_memory_span_cache[iclass]);
+#endif
+}
+
 int
 rpmalloc_is_thread_initialized(void) {
 	return (get_thread_heap_raw() != 0) ? 1 : 0;
@@ -3415,6 +3475,24 @@ rpmalloc_dump_statistics(void* file) {
 		mapped_peak / (size_t)(1024 * 1024),
 		mapped_total / (size_t)(1024 * 1024),
 		unmapped_total / (size_t)(1024 * 1024));
+
+	// Where committed memory sits outside live spans, which the per-class tables above cannot show.
+	size_t heap_reserved = 0;
+	size_t heap_count = 0;
+	for (size_t list_idx = 0; list_idx < HEAP_ARRAY_SIZE; ++list_idx) {
+		for (heap_t* heap = _memory_heaps[list_idx]; heap; heap = heap->next_heap) {
+			heap_reserved += (size_t)heap->spans_reserved * _memory_span_size;
+			++heap_count;
+		}
+	}
+	fprintf(file, "CommittedMiB HeapCount HeapReserveMiB GlobalReserveMiB MasterSpans UnmappedMasters\n");
+	fprintf(file, "%12zu %9zu %14zu %16zu %11d %15d\n",
+		(size_t)atomic_add64(&_memory_committed_os, 0) / (size_t)(1024 * 1024),
+		heap_count,
+		heap_reserved / (size_t)(1024 * 1024),
+		(_memory_global_reserve_count * _memory_span_size) / (size_t)(1024 * 1024),
+		atomic_load32(&_master_spans),
+		atomic_load32(&_unmapped_master_spans));
 
 	fprintf(file, "\n");
 #if 0

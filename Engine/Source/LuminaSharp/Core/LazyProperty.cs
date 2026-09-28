@@ -15,11 +15,17 @@ public struct LazyPropertyOffset
     private nint Value;
     private bool bResolved;
 
+    // A miss is not cached, since the class may still be gaining properties, and throws rather than reaching field 0.
     public nint Get(string Type, string Property)
     {
         if (!bResolved)
         {
-            Value = NativeBindings.PropertyOffset(Type, Property);
+            int Offset = NativeBindings.TryPropertyOffset(Type, Property);
+            if (Offset < 0)
+            {
+                throw new System.InvalidOperationException($"{Type}.{Property} did not resolve against native reflection, so its C# accessor has no field to reach.");
+            }
+            Value = Offset;
             bResolved = true;
         }
         return Value;

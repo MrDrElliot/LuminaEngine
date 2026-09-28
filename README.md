@@ -371,6 +371,7 @@ configuration), and the choices are baked in when you regenerate the solution.
 | -------------------- | ------------------------------------------ | ---------------------------------------- |
 | `Tracy` | Tracy CPU/GPU profiler (`LUMINA_PROFILE_*`) | Debug + Development; **off** in Shipping |
 | `GpuProfiling` | GPU timing query pools and their readback | Debug + Development; **off** in Shipping |
+| `RmlUiProfiling` | RmlUi's own Tracy zones, one per element, property and text run | **off**; needs `Tracy` |
 | `Validation` | Vulkan validation + sync layers | Debug only |
 | `GpuValidation` | GPU-assisted validation inside every shader | **off** everywhere; `--gpuvalidation` toggles at runtime |
 | `Aftermath` | NVIDIA Nsight Aftermath GPU crash dumps | NVIDIA hosts, Debug + Development |

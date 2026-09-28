@@ -11,6 +11,9 @@ internal static class GameTaskRegistry
     internal interface ICancelPending
     {
         void Cancel();
+
+        // The world the await is waiting on, zero when it waits on none.
+        ulong World { get; }
     }
 
     internal static int PendingCount
@@ -37,6 +40,34 @@ internal static class GameTaskRegistry
         lock (Pending)
         {
             Pending.Remove(Source);
+        }
+    }
+
+    // Its timers are cleared with the world, so anything still waiting on them would otherwise never resume.
+    internal static void CancelWorld(ulong World)
+    {
+        List<ICancelPending> Doomed = new();
+        lock (Pending)
+        {
+            foreach (ICancelPending Source in Pending)
+            {
+                if (Source.World == World)
+                {
+                    Doomed.Add(Source);
+                }
+            }
+        }
+
+        foreach (ICancelPending Source in Doomed)
+        {
+            try
+            {
+                Source.Cancel();
+            }
+            catch (Exception Exception)
+            {
+                Interop.LogException(Exception);
+            }
         }
     }
 

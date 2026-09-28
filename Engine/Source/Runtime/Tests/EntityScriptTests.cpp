@@ -311,6 +311,28 @@ TEST(EntityScriptUnification, FixedUpdateWaitsForReady)
     EXPECT_EQ(Script->FixedUpdateCount, 1);
 }
 
+// The managed boundary marks a script faulted when its OnAttach or OnReady throws, which is simulated here.
+TEST(EntityScriptUnification, AFaultedScriptStopsTickingButStillDetaches)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
+
+    CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
+    ASSERT_NE(Script, nullptr);
+    Script->MarkFaulted();
+
+    EntityScripts::Tick(Registry, 0.1f);
+    EntityScripts::Tick(Registry, 0.1f);
+    EntityScripts::TickFixed(Registry, 1.0f / 60.0f);
+    EXPECT_EQ(Script->ReadyCount, 0) << "a script whose attach failed is not readied";
+    EXPECT_EQ(Script->UpdateCount, 0);
+    EXPECT_EQ(Script->FixedUpdateCount, 0);
+
+    TObjectPtr<CEntityScript> Pinned(Script);
+    EntityScripts::DetachAll(Registry, Entity);
+    EXPECT_EQ(Script->DetachCount, 1) << "whatever OnAttach managed to set up is still owed its OnDetach";
+}
+
 // Several scripts on one entity, and several scripted entities, all driven by the one loop.
 TEST(EntityScriptUnification, ManyScriptsAndEntitiesTickThroughOneLoop)
 {

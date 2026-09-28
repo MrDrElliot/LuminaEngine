@@ -222,6 +222,10 @@ namespace Lumina
         FUNCTION()
         bool IsPaused() const { return bPaused; }
 
+        // True from the start of teardown, so an OnDetach can tell the whole world going away from its own entity being removed.
+        FUNCTION()
+        bool IsTearingDown() const { return bTearingDown; }
+
         /** World time scale (slow motion / speed up). Scales DeltaTime for systems, scripts, and physics. */
         FUNCTION()
         void SetTimeDilation(float Dilation);
@@ -759,6 +763,7 @@ namespace Lumina
         
         EWorldType                                          WorldType = EWorldType::None;
         bool                                                bInitializing = true;
+        bool                                                bTearingDown = false;
     };
     
     

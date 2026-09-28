@@ -56,13 +56,7 @@ namespace Lumina
 
     FScriptDelegateBase::~FScriptDelegateBase()
     {
-        // A handler is free to destroy the owner mid-broadcast, so every open frame stops touching this.
-        for (FBroadcastFrame* Frame = ActiveBroadcast; Frame != nullptr; Frame = Frame->Previous)
-        {
-            Frame->bAlive = false;
-        }
-        ActiveBroadcast = nullptr;
-
+        EndOpenBroadcasts();
         ManagedBoundDelegates().erase(this);
 
         // A managed listener's Destroy is what releases its GCHandle, so this frees both kinds.
@@ -75,6 +69,67 @@ namespace Lumina
         }
         Listeners.clear();
         LiveCount = 0;
+    }
+
+    FScriptDelegateBase::FScriptDelegateBase(FScriptDelegateBase&& Other) noexcept
+    {
+        Other.EndOpenBroadcasts();
+
+        // Retired slots stay behind, since only an open broadcast needed them kept in place.
+        for (const FListener& Listener : Other.Listeners)
+        {
+            if (Listener.Thunk != nullptr)
+            {
+                Listeners.push_back(Listener);
+            }
+        }
+        LiveCount = (uint16)Listeners.size();
+
+        Other.Listeners.clear();
+        Other.LiveCount = 0;
+
+        if (ManagedBoundDelegates().erase(&Other) != 0)
+        {
+            ManagedBoundDelegates().insert(this);
+        }
+    }
+
+    // A handler is free to destroy or relocate the owner mid-broadcast, so every open frame stops touching this.
+    void FScriptDelegateBase::EndOpenBroadcasts()
+    {
+        for (FBroadcastFrame* Frame = ActiveBroadcast; Frame != nullptr; Frame = Frame->Previous)
+        {
+            Frame->bAlive = false;
+        }
+        ActiveBroadcast    = nullptr;
+        LockCount          = 0;
+        bCompactionPending = false;
+    }
+
+    bool FScriptDelegateBase::UnbindManagedAnywhere(const void* LastKnownAddress, uint64 Id)
+    {
+        if (Id == 0)
+        {
+            return false;
+        }
+
+        // Only a delegate in the set is known to be alive, so the address is never dereferenced on trust.
+        THashSet<FScriptDelegateBase*>& Bound = ManagedBoundDelegates();
+        FScriptDelegateBase* Hint = static_cast<FScriptDelegateBase*>(const_cast<void*>(LastKnownAddress));
+        if (Bound.contains(Hint) && Hint->UnbindManaged(Id))
+        {
+            return true;
+        }
+
+        for (FScriptDelegateBase* Delegate : Bound)
+        {
+            // Returns at once, since a successful unbind can erase the delegate from the set being walked.
+            if (Delegate != Hint && Delegate->UnbindManaged(Id))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     uint64 FScriptDelegateBase::AddListener(FThunk Thunk, void* Context, void (*Destroy)(void*))

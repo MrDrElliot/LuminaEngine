@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
@@ -10,6 +13,26 @@ public static unsafe class NativeBindings
     public static void LogException(Exception Exception)
     {
         Interop.LogException(Exception);
+    }
+
+    // Script event thunks land here, so a throwing OnAttach or OnReady disables its script instead of ticking it half-built.
+    public static void ScriptEventException(object? Target, string Event, Exception Exception)
+    {
+        string Owner = Target?.GetType().FullName ?? "<released script>";
+        Interop.LogException(Exception, Owner + "." + Event);
+
+        if (Target is Lumina.CEntityScript Script && (Event == "OnAttach" || Event == "OnReady"))
+        {
+            try
+            {
+                Native.EntityScriptMarkFaulted(Script.Handle);
+                Native.Log(ELogLevel.Warn, $"{Owner} stopped ticking because its {Event} threw. It still receives OnDetach.");
+            }
+            catch (Exception Secondary)
+            {
+                Interop.LogException(Secondary);
+            }
+        }
     }
 
     /// <summary>Resolves an export from a module (by name) to a function pointer; null on miss.</summary>
@@ -76,24 +99,61 @@ public static unsafe class NativeBindings
     // Property resolve helpers for the generated bindings: a blittable property caches a byte offset
     // (PropertyOffset), a non-blittable one an FProperty* token (FindProperty), resolved once per property.
 
-    /// <summary>Byte offset of Type.Prop within its container.</summary>
-    /// <remarks>
-    /// A failed resolve returns -1 natively, and the generated accessors add the offset to the container
-    /// pointer unconditionally -- so an unresolved property silently reads and writes the byte *before* the
-    /// component instead of the field, leaving the field at its default and corrupting whatever sits there.
-    /// That is invisible at the call site, so say so loudly and clamp to 0 rather than let it scribble.
-    /// </remarks>
+    // Indexed by the negative offset PropertyOffset hands back, so FieldAt can name what failed.
+    private static readonly List<string> UnresolvedProperties = new();
+
+    // A miss returns a negative sentinel rather than a usable offset, and FieldAt throws on it at the access.
     public static int PropertyOffset(string Type, string Prop)
     {
         int Offset = CallWithStringArgs(Type, Prop, PropertyOffsetByName);
+        if (Offset >= 0)
+        {
+            return Offset;
+        }
+
+        Native.Log(ELogLevel.Error,
+            $"NativeBindings: property '{Type}.{Prop}' did not resolve, so its C# accessor throws. "
+            + "The reflected type or property name is missing or does not match.");
+        lock (UnresolvedProperties)
+        {
+            UnresolvedProperties.Add(Type + "." + Prop);
+            return -UnresolvedProperties.Count;
+        }
+    }
+
+    // Bytes a generated thunk stashed when its result overflowed Scratch, or -1 so the caller calls again.
+    public static int TakeCallOverflow(void* Scratch, void* Dest, int Bytes)
+    {
+        return TakeCallOverflowExport != null ? TakeCallOverflowExport(Scratch, Dest, Bytes) : -1;
+    }
+
+    // Unlike PropertyOffset this neither logs nor records, for a caller that retries until the class is complete.
+    internal static int TryPropertyOffset(string Type, string Prop) => CallWithStringArgs(Type, Prop, PropertyOffsetByName);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static nint FieldAt(nint Container, nint Offset)
+    {
         if (Offset < 0)
         {
-            Native.Log(ELogLevel.Error,
-                $"NativeBindings: property '{Type}.{Prop}' did not resolve; its C# accessor will not reach the "
-                + "native field. The reflected type or property name is missing or does not match.");
-            return 0;
+            ThrowUnresolvedProperty(Offset);
         }
-        return Offset;
+        return Container + Offset;
+    }
+
+    [DoesNotReturn]
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowUnresolvedProperty(nint Offset)
+    {
+        string Name = "an unknown property";
+        lock (UnresolvedProperties)
+        {
+            int Index = (int)(-Offset) - 1;
+            if (Index >= 0 && Index < UnresolvedProperties.Count)
+            {
+                Name = UnresolvedProperties[Index];
+            }
+        }
+        throw new InvalidOperationException($"{Name} did not resolve against native reflection, so its C# accessor has no field to reach.");
     }
 
     /// <summary>FProperty* token for Type.Prop (opaque); IntPtr.Zero on miss.</summary>
@@ -149,6 +209,9 @@ public static unsafe class NativeBindings
     // Resolved without a check of its own, since it is what every other check asks.
     private static readonly delegate* unmanaged[Cdecl]<byte*, int, int> ExportSignatureExport =
         (delegate* unmanaged[Cdecl]<byte*, int, int>)Resolve(Host.NativeLibrary, "LuminaSharp_ExportSignature");
+
+    private static readonly delegate* unmanaged[Cdecl]<void*, void*, int, int> TakeCallOverflowExport =
+        (delegate* unmanaged[Cdecl]<void*, void*, int, int>)Resolve(Host.NativeLibrary, "LuminaSharp_TakeCallOverflow");
 
     private static readonly delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int> PropertyOffsetByName =
         (delegate* unmanaged[Cdecl]<byte*, int, byte*, int, int>)Resolve(Host.NativeLibrary, "LuminaSharp_PropertyOffsetByName");

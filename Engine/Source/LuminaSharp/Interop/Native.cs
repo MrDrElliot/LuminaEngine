@@ -40,6 +40,8 @@ public static unsafe partial class Native
     // The world's own FSystemContext*, so OnTeardown gets a valid context outside a scheduler tick.
     [NativeCall(EntryPoint = "LuminaSharp_World_GetSystemContext")] public static partial IntPtr WorldGetSystemContext(ulong World);
 
+    [NativeCall(EntryPoint = "LuminaSharp_EntityScript_MarkFaulted")] public static partial void EntityScriptMarkFaulted(IntPtr Script);
+
 
     // Row memory as a raw pointer, since the row type is only known at runtime; CDataTable gates the reads.
     [NativeCall(EntryPoint = "LuminaSharp_DataTable_FindRow")] public static partial IntPtr DataTableFindRow(IntPtr Table, string RowName);
@@ -121,6 +123,21 @@ public static unsafe partial class Native
     {
         return GetComponentTracked_(World, Entity, Ops, OutEpoch);
     }
+
+    public static bool TrackComponentPointer(IntPtr Payload, IntPtr Ops, out ulong World, out uint Entity, out uint* Epoch)
+    {
+        ulong OutWorld = 0;
+        uint OutEntity = 0;
+        uint* OutEpoch = null;
+        bool bFound = TrackComponentPointer_ != null && TrackComponentPointer_(Payload, Ops, &OutWorld, &OutEntity, &OutEpoch) != 0;
+        World = OutWorld;
+        Entity = OutEntity;
+        Epoch = OutEpoch;
+        return bFound;
+    }
+
+    private static readonly delegate* unmanaged[Cdecl]<IntPtr, IntPtr, ulong*, uint*, uint**, int> TrackComponentPointer_ =
+        (delegate* unmanaged[Cdecl]<IntPtr, IntPtr, ulong*, uint*, uint**, int>)NativeBindings.Resolve(Host.NativeLibrary, "LuminaSharp_TrackComponentPointer");
 
     private static readonly delegate* unmanaged[Cdecl, SuppressGCTransition]<ulong, uint, IntPtr, uint**, IntPtr> GetComponentTracked_ =
         (delegate* unmanaged[Cdecl, SuppressGCTransition]<ulong, uint, IntPtr, uint**, IntPtr>)NativeBindings.Resolve(Host.NativeLibrary, "LuminaSharp_GetComponentTracked");

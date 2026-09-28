@@ -724,7 +724,7 @@ namespace Lumina::Reflection
                     const std::string OpsField = "__ops_" + Member;
                     const std::string OpsThunk = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
                     Writer.Linef("public global::Lumina.TVector<%s> %s =>", B.Elem->CSharp.c_str(), PropName.c_str());
-                    Writer.Linef("    new global::Lumina.TVector<%s>((nint)Handle + %s, %s);", B.Elem->CSharp.c_str(), OffName.c_str(), OpsField.c_str());
+                    Writer.Linef("    new global::Lumina.TVector<%s>(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s), %s);", B.Elem->CSharp.c_str(), OffName.c_str(), OpsField.c_str());
                     Writer.Linef("private static readonly delegate* unmanaged[Cdecl]<nint> %s =", OpsFn.c_str());
                     Writer.Linef("    (delegate* unmanaged[Cdecl]<nint>)global::LuminaSharp.NativeBindings.Resolve(\"%s\", \"%s\");",
                         Module.c_str(), OpsThunk.c_str());
@@ -748,7 +748,7 @@ namespace Lumina::Reflection
                 const std::string OpsThunk2 = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
 
                 Writer.Linef("public %s %s =>", View.c_str(), PropName.c_str());
-                Writer.Linef("    new %s((nint)Handle + %s, %s);", View.c_str(), OffName2.c_str(), OpsField2.c_str());
+                Writer.Linef("    new %s(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s), %s);", View.c_str(), OffName2.c_str(), OpsField2.c_str());
                 Writer.Linef("private static readonly nint %s = (nint)global::LuminaSharp.NativeBindings.PropertyOffset(\"%s\", \"%s\");",
                     OffName2.c_str(), TypeName.c_str(), Member.c_str());
                 Writer.Linef("private static readonly delegate* unmanaged[Cdecl]<nint> %s =", OpsFn2.c_str());
@@ -892,11 +892,11 @@ namespace Lumina::Reflection
                     const char* T = (B.Kind == EBind::Bool) ? "bool" : CS;
                     Writer.Linef("public %s %s", T, PropName.c_str());
                     Writer.BeginBlock();
-                    Writer.Linef("get => global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<%s>((void*)((nint)Handle + %s));",
+                    Writer.Linef("get => global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<%s>((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)));",
                         T, OffName.c_str());
                     if (!bRO)
                     {
-                        Writer.Linef("set => global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)((nint)Handle + %s), value);",
+                        Writer.Linef("set => global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)), value);",
                             OffName.c_str());
                     }
                     Writer.EndBlock();
@@ -921,7 +921,7 @@ namespace Lumina::Reflection
                     else
                     {
                         // The FString read decodes in place, while the set still assigns through the native allocator.
-                        Writer.Linef("get => global::LuminaSharp.NativeMarshal.ReadString((nint)Handle + %s);", OffName.c_str());
+                        Writer.Linef("get => global::LuminaSharp.NativeMarshal.ReadString(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s));", OffName.c_str());
                         if (!bRO)
                         {
                             Writer.Linef("set => global::LuminaSharp.Native.PropSetString(Handle, %s, value);", PropFieldName.c_str());
@@ -967,7 +967,7 @@ namespace Lumina::Reflection
                     if (B.Elem != nullptr && !IsBlittableElementKind(B.Elem->Kind))
                     {
                         Writer.Linef("public global::Lumina.TOptional<%s> %s =>", CS, PropName.c_str());
-                        Writer.Linef("    new global::Lumina.TOptional<%s>((nint)Handle + %s, %s);", CS,
+                        Writer.Linef("    new global::Lumina.TOptional<%s>(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s), %s);", CS,
                             OffName.c_str(), PropFieldName.c_str());
                         EmitOffsetField(Writer, OffName, TypeName, Member);
                         EmitTokenField(Writer, PropFieldName, TypeName, Member);
@@ -1045,14 +1045,14 @@ namespace Lumina::Reflection
                 case EBind::InstancedStruct:
                 {
                     // A view over the slot, so the stored type and value are reached through it rather than copied.
-                    Writer.Linef("public %s %s => new %s((nint)Handle + %s);", CS, PropName.c_str(), CS, OffName.c_str());
+                    Writer.Linef("public %s %s => new %s(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s));", CS, PropName.c_str(), CS, OffName.c_str());
                     EmitOffsetField(Writer, OffName, TypeName, Member);
                     break;
                 }
                 case EBind::StructOpaque:
                 {
                     // A wrapper viewing the embedded struct in place at the offset (read-only). No export.
-                    Writer.Linef("public %s %s => new %s((nint)Handle + %s);", CS, PropName.c_str(), CS, OffName.c_str());
+                    Writer.Linef("public %s %s => new %s(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s));", CS, PropName.c_str(), CS, OffName.c_str());
                     EmitOffsetField(Writer, OffName, TypeName, Member);
                     break;
                 }
@@ -1064,7 +1064,7 @@ namespace Lumina::Reflection
                     // The ops come from the property token, so the token field has to initialize first.
                     const std::string MapOps = "__mapops_" + Member;
                     const std::string View = "global::Lumina.THashMap<" + B.Elem->CSharp + ", " + B.Value->CSharp + ">";
-                    Writer.Linef("public %s %s => new %s((nint)Handle + %s, %s);",
+                    Writer.Linef("public %s %s => new %s(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s), %s);",
                         View.c_str(), PropName.c_str(), View.c_str(), OffName.c_str(), MapOps.c_str());
                     EmitTokenField(Writer, PropFieldName, TypeName, Member);
                     EmitOffsetField(Writer, OffName, TypeName, Member);
@@ -1076,13 +1076,13 @@ namespace Lumina::Reflection
                 {
                     if (B.CSharp.empty())
                     {
-                        Writer.Linef("public global::LuminaSharp.ScriptDelegate %s => new global::LuminaSharp.ScriptDelegate((void*)((nint)Handle + %s));",
+                        Writer.Linef("public global::LuminaSharp.ScriptDelegate %s => new global::LuminaSharp.ScriptDelegate((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)));",
                             PropName.c_str(), OffName.c_str());
                     }
                     else
                     {
                         // The property token is what the argument slots are resolved from, once per signature.
-                        Writer.Linef("public global::LuminaSharp.ScriptDelegate<%s> %s => new global::LuminaSharp.ScriptDelegate<%s>((void*)((nint)Handle + %s), %s);",
+                        Writer.Linef("public global::LuminaSharp.ScriptDelegate<%s> %s => new global::LuminaSharp.ScriptDelegate<%s>((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)), %s);",
                             CS, PropName.c_str(), CS, OffName.c_str(), PropFieldName.c_str());
                         EmitTokenField(Writer, PropFieldName, TypeName, Member);
                     }
@@ -1862,7 +1862,8 @@ namespace Lumina::Reflection
                         bStringReturn = true;
                         RetCpp = "int";
                         Body = "auto __r = " + CallExpr + "; const char* __s = __r.c_str(); int __l = 0; if (__s) { while (__s[__l]) { ++__l; } } "
-                               "if (__s && Buffer && Capacity > 0) { const int __n = __l < Capacity ? __l : Capacity; for (int __i = 0; __i < __n; ++__i) { Buffer[__i] = __s[__i]; } } return __l;";
+                               "if (__s && Buffer && Capacity > 0) { const int __n = __l < Capacity ? __l : Capacity; for (int __i = 0; __i < __n; ++__i) { Buffer[__i] = __s[__i]; } } "
+                               "if (__s && Buffer && __l > Capacity) { Lumina::Scripting::StashCallOverflow(Buffer, __s, (size_t)__l); } return __l;";
                         break;
                     default: break;
                     }
@@ -1874,10 +1875,17 @@ namespace Lumina::Reflection
                 const bool bObjectElem = !VectorOutBuffer.empty();
                 const std::string Read = bObjectElem ? "__vec[(size_t)__i].Get()" : "__vec[(size_t)__i]";
                 RetCpp = "int";
+                const std::string BufferElem = bObjectElem ? VectorOutBuffer : VectorOutElem;
+                const std::string Stash = bObjectElem
+                    ? ("Lumina::TVector<" + BufferElem + "> __o; __o.resize((size_t)__n); "
+                       + "for (int __i = 0; __i < __n; ++__i) { __o[(size_t)__i] = " + Read + "; } "
+                       + "Lumina::Scripting::StashCallOverflow(Buffer, __o.data(), (size_t)__n * sizeof(" + BufferElem + "));")
+                    : ("Lumina::Scripting::StashCallOverflow(Buffer, __vec.data(), (size_t)__n * sizeof(" + BufferElem + "));");
                 Body = "Lumina::TVector<" + VectorOutElem + "> __vec; " + CallExpr + "; "
                      + "const int __n = (int)__vec.size(); "
                      + "if (Buffer && Capacity > 0) { const int __c = __n < Capacity ? __n : Capacity; "
                      + "for (int __i = 0; __i < __c; ++__i) { Buffer[__i] = " + Read + "; } } "
+                     + "if (Buffer && __n > Capacity) { " + Stash + " } "
                      + "return __n;";
                 Params += (Params.empty() ? std::string() : std::string(", "))
                      + (bObjectElem ? VectorOutBuffer : VectorOutElem) + "* Buffer, int Capacity";
@@ -2115,10 +2123,13 @@ namespace Lumina::Reflection
             Writer.Line("[global::System.Runtime.InteropServices.UnmanagedCallersOnly(CallConvs = new[] { typeof(global::System.Runtime.CompilerServices.CallConvStdcall) })]");
             Writer.Linef("internal static %s %s(global::System.IntPtr __handle%s)", SeRetAbiCS(FB).c_str(), Dispatch.c_str(), AbiParams.c_str());
             Writer.BeginBlock();
+            // Declared outside the try so the catch can name the script that threw.
+            Writer.Line("object __target = null;");
             Writer.Line("try");
             Writer.BeginBlock();
             Writer.Linef("if (global::System.Runtime.InteropServices.GCHandle.FromIntPtr(__handle).Target is %s __o)", ClassName.c_str());
             Writer.BeginBlock();
+            Writer.Line("__target = __o;");
             Writer.Line("using var __scope = global::LuminaSharp.Game.EnterScriptEvent(__o);");
             if (FB.bVoid)
             {
@@ -2132,7 +2143,7 @@ namespace Lumina::Reflection
             }
             Writer.EndBlock();
             Writer.EndBlock();
-            Writer.Line("catch (global::System.Exception __ex) { global::LuminaSharp.NativeBindings.LogException(__ex); }");
+            Writer.Linef("catch (global::System.Exception __ex) { global::LuminaSharp.NativeBindings.ScriptEventException(__target, \"%s\", __ex); }", Name.c_str());
             if (!FB.bVoid) { Writer.Line("return default;"); }
             Writer.EndBlock();
         }
@@ -2502,7 +2513,8 @@ namespace Lumina::Reflection
                         bStringReturn = true;
                         RetCpp = "int";
                         Body = "auto __r = " + CallExpr + "; const char* __s = __r.c_str(); int __l = 0; if (__s) { while (__s[__l]) { ++__l; } } "
-                               "if (__s && Buffer && Capacity > 0) { const int __n = __l < Capacity ? __l : Capacity; for (int __i = 0; __i < __n; ++__i) { Buffer[__i] = __s[__i]; } } return __l;";
+                               "if (__s && Buffer && Capacity > 0) { const int __n = __l < Capacity ? __l : Capacity; for (int __i = 0; __i < __n; ++__i) { Buffer[__i] = __s[__i]; } } "
+                               "if (__s && Buffer && __l > Capacity) { Lumina::Scripting::StashCallOverflow(Buffer, __s, (size_t)__l); } return __l;";
                         break;
                     default: break;
                     }

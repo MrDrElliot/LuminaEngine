@@ -74,6 +74,52 @@ namespace Lumina::ECS
         }
     }
 
+    FEntity FSparseSet::FindPayloadOwner(const void* Payload) const
+    {
+        if (Payload == nullptr || ElementSize == 0)
+        {
+            return NullEntity;
+        }
+
+        const uintptr_t Address = reinterpret_cast<uintptr_t>(Payload);
+        size_t DenseIndex = Dense.size();
+        if (bPaged)
+        {
+            const size_t PageBytes = static_cast<size_t>(PayloadPageMask + 1u) * ElementSize;
+            for (size_t Page = 0; Page < PayloadPages.size(); ++Page)
+            {
+                const uintptr_t Begin = reinterpret_cast<uintptr_t>(PayloadPages[Page]);
+                if (Begin != 0 && Address >= Begin && Address < Begin + PageBytes)
+                {
+                    const size_t Offset = Address - Begin;
+                    if (Offset % ElementSize == 0)
+                    {
+                        DenseIndex = (Page << PayloadPageShift) + Offset / ElementSize;
+                    }
+                    break;
+                }
+            }
+        }
+        else
+        {
+            const uintptr_t Begin = reinterpret_cast<uintptr_t>(PackedData);
+            if (Begin != 0 && Address >= Begin && Address < Begin + Dense.size() * ElementSize)
+            {
+                const size_t Offset = Address - Begin;
+                if (Offset % ElementSize == 0)
+                {
+                    DenseIndex = Offset / ElementSize;
+                }
+            }
+        }
+
+        if (DenseIndex >= Dense.size() || Dense[DenseIndex].IsTombstone())
+        {
+            return NullEntity;
+        }
+        return Dense[DenseIndex];
+    }
+
     void FSparseSet::FreePayload()
     {
         if (PackedData != nullptr)

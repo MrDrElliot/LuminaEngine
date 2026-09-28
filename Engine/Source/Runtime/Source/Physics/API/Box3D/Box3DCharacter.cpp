@@ -374,8 +374,8 @@ namespace Lumina::Physics
                 if (Result == EMoverSeatResult::Seated)
                 {
                     const FVector3 SeatedPosition = Box3DUtils::FromB3Vec3(Seated);
-                    LOG_DISPLAY("Character on entity {} spawned inside geometry and was seated from y {:.2f} to {:.2f} "
-                             "after {} step(s) waiting for ground.",
+                    LOG_DEBUG("Character on entity {} spawned inside geometry and was seated from y {:.2f} to {:.2f} "
+                              "after {} step(s) waiting for ground.",
                         (Entity).Value, Character.Position.y, SeatedPosition.y, Character.AwaitingGroundSteps);
 
                     Character.Position = SeatedPosition;
@@ -384,7 +384,7 @@ namespace Lumina::Physics
                 }
                 else
                 {
-                    LOG_DISPLAY("Character on entity {} starts airborne at y {:.2f} after {} step(s) waiting for ground.",
+                    LOG_DEBUG("Character on entity {} starts airborne at y {:.2f} after {} step(s) waiting for ground.",
                         (Entity).Value, Character.SpawnPosition.y, Character.AwaitingGroundSteps);
                 }
 

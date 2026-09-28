@@ -375,7 +375,15 @@ internal sealed class BusState
                 bool Reaches = Entry.Match == GameplayTagMatch.Partial || IsChannelLevel;
                 if (Reaches && Entry.MessageType.IsAssignableFrom(MessageType))
                 {
-                    Entry.Invoke(Boxed);
+                    // One throwing listener must not starve the rest, nor surface inside the sender.
+                    try
+                    {
+                        Entry.Invoke(Boxed);
+                    }
+                    catch (Exception Exception)
+                    {
+                        Interop.LogException(Exception, "message bus listener");
+                    }
                 }
             }
         }
@@ -383,6 +391,20 @@ internal sealed class BusState
         {
             Array.Clear(Buffer, 0, Count);
             ArrayPool<Listener>.Shared.Return(Buffer);
+        }
+    }
+
+    // A handler that throws is logged and treated as not having consumed the message.
+    private static bool InvokeGuarded(EntityListener Entry, object Boxed)
+    {
+        try
+        {
+            return Entry.Invoke(Boxed);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception, "message bus listener");
+            return false;
         }
     }
 
@@ -410,7 +432,7 @@ internal sealed class BusState
             {
                 EntityListener Entry = Buffer[Index];
                 bool Reaches = Entry.Match == GameplayTagMatch.Exact ? Entry.ChannelId == ExactId : Ancestors.Contains(Entry.ChannelId);
-                if (Reaches && Entry.MessageType.IsAssignableFrom(MessageType) && Entry.Invoke(Boxed))
+                if (Reaches && Entry.MessageType.IsAssignableFrom(MessageType) && InvokeGuarded(Entry, Boxed))
                 {
                     Continue = false;
                     break;

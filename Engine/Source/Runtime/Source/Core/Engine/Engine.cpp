@@ -3,6 +3,7 @@
 #include "RuntimePCH.h"
 #include <string>
 #include "Engine.h"
+#include "FrameStats.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Audio/AudioContext.h"
@@ -81,6 +82,8 @@ namespace Lumina
 
     // Offline rendering steps the game a fixed amount per frame however long each frame takes to draw.
     static TConsoleVar CVarFixedDeltaTime("Core.FixedDeltaTime", 0.0f, "Seconds every frame advances the game by, whatever it took to draw; 0 uses the real frame time");
+
+    static TConsoleVar CVarTrimAllocatorCaches("Core.TrimAllocatorCaches", true, "Hand the allocator's cached memory back to the OS once a level that replaced another has settled");
     
     static FString ReadStartupProjectFromDisk()
     {
@@ -506,7 +509,9 @@ namespace Lumina
 
     void FEngine::MarkLoopStart()
     {
-        UpdateContext.MarkFrameStart(PlatformTime::Seconds());
+        const double Now = PlatformTime::Seconds();
+        UpdateContext.MarkFrameStart(Now);
+        FrameStats::MarkFrame(Now);
 
         const float FixedDeltaTime = CVarFixedDeltaTime.GetValue();
         if (FixedDeltaTime > 0.0f)
@@ -553,6 +558,11 @@ namespace Lumina
                 
                 ProcessPendingOpenLevel();
                 ProcessPendingTravel();
+
+                if (CacheTrimCountdown > 0 && --CacheTrimCountdown == 0 && CVarTrimAllocatorCaches.GetValue())
+                {
+                    Memory::RequestCacheTrim();
+                }
 
                 // Unloads assemblies and destroys objects.
                 DotNet::ProcessPendingScriptReload();
@@ -1107,6 +1117,15 @@ namespace Lumina
             LOG_ERROR("FEngine::Travel: WorldManager not initialized.");
             return;
         }
+
+        const FrameStats::FSummary Level = FrameStats::Summarize(3, LevelStartSeconds);
+        if (Level.Frames > 0)
+        {
+            LOG_INFO("Travel to {}: the level before ran {} frames over {:.1f} s, mean {:.2f} ms, p99 {:.2f} ms, max {:.1f} ms, {} over 50 ms, {} MB committed.",
+                RawPath.c_str(), Level.Frames, Level.WindowSeconds, Level.MeanMs, Level.P99Ms, Level.MaxMs, Level.Over50Ms,
+                (uint64)Platform::GetProcessMemoryUsageMegaBytes());
+        }
+        LevelStartSeconds = PlatformTime::Seconds();
 
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawPath);
 

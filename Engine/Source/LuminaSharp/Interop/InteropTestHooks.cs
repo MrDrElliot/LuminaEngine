@@ -762,6 +762,8 @@ internal static unsafe class InteropTestHooks
         {
             Canceled = true;
         }
+
+        public ulong World => 0;
     }
 
     // Native gets a token for an async script function, polls it, and sees it finish on the tick.

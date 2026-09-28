@@ -7,6 +7,9 @@
 #include "SwapchainTarget.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/SmartPtr.h"
+#include "Containers/HashTable.h"
+#include "Core/Threading/Thread.h"
+#include "Renderer/ShaderHandle.h"
 
 namespace Lumina
 {
@@ -35,6 +38,23 @@ namespace Lumina
         bool            bInitialized = false;
 
         void Reset() { *this = FSharedRenderResources{}; }
+    };
+
+    // A pipeline depends only on its shaders and raster state, so every scene renderer shares one set and a new world reuses them.
+    struct FScenePipelineCache
+    {
+        struct FEntry
+        {
+            RHI::FPipelineH Pipeline;
+            FShaderH        Shaders[3];
+        };
+
+        FSharedMutex             Mutex;
+        THashMap<uint64, FEntry> Entries;
+
+        // Retires every pipeline built from a shader that no longer resolves, which a recompile leaves behind.
+        RUNTIME_API void PurgeStale();
+        void ReleaseAll();
     };
 
     class FRenderManager
@@ -78,6 +98,7 @@ namespace Lumina
 
         // Lazily populated by the first render scene; aliased by all later scenes.
         NODISCARD FSharedRenderResources& GetSharedRenderResources() { return SharedRenderResources; }
+        NODISCARD FScenePipelineCache& GetScenePipelineCache() { return ScenePipelineCache; }
 
     private:
         
@@ -99,6 +120,7 @@ namespace Lumina
         FSpirVShaderCompiler*               ShaderCompiler = nullptr;
 
         FSharedRenderResources              SharedRenderResources;
+        FScenePipelineCache                 ScenePipelineCache;
 
         // New RHI owns presentation: the primary window swapchain.
         RHI::FSwapchainTarget               SwapchainTarget;

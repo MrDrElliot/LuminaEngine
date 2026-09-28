@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -106,13 +107,61 @@ internal static unsafe class Interop
     /// managed exception never unwinds into native code. Swallows any secondary logging failure.</summary>
     public static void LogException(Exception Exception)
     {
+        LogException(Exception, null);
+    }
+
+    // Keyed by throw site, so a script throwing every frame logs its stack once and then a count.
+    private static readonly Dictionary<string, int> ExceptionCounts = new();
+    private const int MaxTrackedExceptionSites = 4096;
+
+    internal static void LogException(Exception Exception, string? Context)
+    {
         try
         {
-            Native.Log(ELogLevel.Error, "LuminaSharp boundary exception: " + Exception);
+            string Where = Context != null ? " in " + Context : string.Empty;
+            string Key = Exception.GetType().FullName + "@" + Exception.TargetSite?.DeclaringType?.FullName + "." + Exception.TargetSite?.Name + Where;
+
+            int Count;
+            lock (ExceptionCounts)
+            {
+                if (ExceptionCounts.Count >= MaxTrackedExceptionSites && !ExceptionCounts.ContainsKey(Key))
+                {
+                    ExceptionCounts.Clear();
+                }
+                ExceptionCounts.TryGetValue(Key, out Count);
+                ExceptionCounts[Key] = ++Count;
+            }
+
+            if (Count == 1)
+            {
+                Native.Log(ELogLevel.Error, "LuminaSharp boundary exception" + Where + ": " + Exception);
+            }
+            else if (IsPowerOfTen(Count))
+            {
+                Native.Log(ELogLevel.Error, $"LuminaSharp boundary exception{Where} repeated {Count} times: {Exception.GetType().Name}: {Exception.Message}");
+            }
         }
         catch
         {
             // The boundary must not throw, even if logging fails.
         }
+    }
+
+    // A reload usually means the throwing code changed, so its first throw deserves a full stack again.
+    internal static void ResetExceptionThrottle()
+    {
+        lock (ExceptionCounts)
+        {
+            ExceptionCounts.Clear();
+        }
+    }
+
+    private static bool IsPowerOfTen(int Value)
+    {
+        while (Value >= 10 && Value % 10 == 0)
+        {
+            Value /= 10;
+        }
+        return Value == 1;
     }
 }

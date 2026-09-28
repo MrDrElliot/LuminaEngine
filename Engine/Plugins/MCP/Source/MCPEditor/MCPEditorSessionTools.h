@@ -74,7 +74,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Viewport pixel to move to before the button is sent. */
+        // A pixel of the game view as editor.screenshot saves it, mapped onto the viewport wherever it is docked.
         PROPERTY()
         float X = 0.0f;
 

@@ -20,6 +20,23 @@ public static class NativeObjectMarshal
         return Object == IntPtr.Zero ? null : Wrapper<T>.ForObject(Object);
     }
 
+    // A component returned by pointer tracks its owner like a registry fetch, so a kept view never reads a relocated slot.
+    public static unsafe T? FromStructPointer<T>(IntPtr Pointer) where T : NativeStruct
+    {
+        if (Pointer == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        T? View = Wrapper<T>.Create(Pointer);
+        IntPtr Ops = ComponentOps<T>.Token;
+        if (View != null && Ops != IntPtr.Zero && Native.TrackComponentPointer(Pointer, Ops, out ulong World, out uint Entity, out uint* Epoch))
+        {
+            View.BindComponentView(World, Entity, Ops, Epoch);
+        }
+        return View;
+    }
+
     // The same wrapper for a type only known at runtime, which is what a reflective call has. The generic
     // instantiation is cached, since resolving it per call would cost more than the call.
     private static readonly global::System.Collections.Generic.Dictionary<Type, Func<IntPtr, NativeObject?>> FromHandleByType = new();

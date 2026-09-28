@@ -3,6 +3,7 @@
 #include <cfloat>
 #include "AI/Navigation/NavTypes.h"
 #include "Memory/SmartPtr.h"
+#include "Containers/Function.h"
 
 namespace Lumina
 {
@@ -61,6 +62,9 @@ namespace Lumina
     {
         /** Tile-parallel async bake; non-blocking. Cancel via Handle->bCancelRequested. The worker keeps its own reference. */
         RUNTIME_API TSharedPtr<FNavBakeHandle> Bake(FNavBuildInput Input);
+
+        // Prepare runs on the bake worker first, so geometry emission never holds the game thread.
+        RUNTIME_API TSharedPtr<FNavBakeHandle> Bake(FNavBuildInput Input, TFunction<void(FNavBuildInput&)> Prepare);
 
         /** Blocking variant; still parallelizes tile work internally. */
         RUNTIME_API bool BakeSync(FNavBuildInput Input, FNavBuildOutput& Out);

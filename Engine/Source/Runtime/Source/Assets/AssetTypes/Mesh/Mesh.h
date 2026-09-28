@@ -71,6 +71,13 @@ namespace Lumina
         FORCEINLINE FMeshResource& GetMeshResource() const { return *MeshResources.get(); }
 
         void SetMeshResource(TUniquePtr<FMeshResource>&& NewResource);
+
+        // Takes the resource and bounds now, and leaves meshlets and GPU buffers to an open FMeshBuildBatchScope.
+        void SetMeshResourceBatched(TUniquePtr<FMeshResource>&& NewResource);
+
+        // The two halves a batch runs, the first safely in parallel with other meshes and the second on the game thread.
+        void BuildDeferredMeshlets();
+        void UploadDeferredBuffers();
         
         FORCEINLINE const FMeshResource::FMeshBuffers& GetMeshBuffers() const { return MeshResources->MeshBuffers; }
         

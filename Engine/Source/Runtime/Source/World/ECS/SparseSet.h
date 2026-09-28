@@ -101,6 +101,9 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE const FEntity* GetDenseData() const { return Dense.data(); }
         NODISCARD FORCEINLINE FEntity GetDenseAt(size_t Index) const { return Dense[Index]; }
 
+        // The entity whose payload starts at Payload, or null when the address is not a live element of this pool.
+        NODISCARD FEntity FindPayloadOwner(const void* Payload) const;
+
         NODISCARD FORCEINLINE bool HasTombstones() const { return Dense.size() != LiveCount; }
 
         NODISCARD FORCEINLINE const FComponentTypeInfo& GetTypeInfo() const { return TypeInfo; }

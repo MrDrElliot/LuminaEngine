@@ -31,6 +31,7 @@
 #include "Platform/Process/PlatformProcess.h"
 #include "Platform/Time/PlatformTime.h"
 #include "World/World.h"
+#include "World/WorldManager.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/Component.h"
 #include "Scripting/DotNet/DotNetExport.h"
@@ -1807,6 +1808,39 @@ LUMINA_DOTNET_EXPORT(void*, GetComponentTracked)(uint64 World, uint32 Entity, co
     return Component;
 }
 
+// A reflected function hands back a bare component pointer, so this finds its owner for the view to track.
+LUMINA_DOTNET_EXPORT(int, TrackComponentPointer)(const void* Payload, const void* Ops, uint64* OutWorld, uint32* OutEntity, const uint32** OutEpoch)
+{
+    *OutWorld = 0;
+    *OutEntity = 0;
+    *OutEpoch = nullptr;
+    const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
+    if (Payload == nullptr || O == nullptr || Lumina::GWorldManager == nullptr)
+    {
+        return 0;
+    }
+
+    int Found = 0;
+    Lumina::GWorldManager->ForEachWorld([&](Lumina::CWorld& World)
+    {
+        if (Found != 0)
+        {
+            return;
+        }
+
+        const Lumina::ECS::FSparseSet* Pool = Lumina::ECS::GetWorldRegistry(World).FindStorage(static_cast<uint32>(O->TypeId));
+        const Lumina::ECS::FEntity Owner = Pool != nullptr ? Pool->FindPayloadOwner(Payload) : Lumina::ECS::NullEntity;
+        if (!Owner.IsNull())
+        {
+            *OutWorld = reinterpret_cast<uint64>(&World);
+            *OutEntity = Owner.GetPacked();
+            *OutEpoch = Pool->GetLayoutEpoch();
+            Found = 1;
+        }
+    });
+    return Found;
+}
+
 LUMINA_DOTNET_EXPORT(int, HasComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
@@ -2132,6 +2166,7 @@ LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(FindComponentOps),
     LUMINA_DOTNET_SIG(GetComponent),
     LUMINA_DOTNET_SIG(GetComponentTracked),
+    LUMINA_DOTNET_SIG(TrackComponentPointer),
     LUMINA_DOTNET_SIG(HasComponent),
     LUMINA_DOTNET_SIG(EmplaceComponent),
     LUMINA_DOTNET_SIG(RemoveComponent),

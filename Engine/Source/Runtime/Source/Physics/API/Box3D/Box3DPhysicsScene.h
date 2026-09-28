@@ -382,6 +382,9 @@ namespace Lumina::Physics
         uint32                                  CollisionSteps = 0;
         uint32                                  MaxBodies = 0;
 
+        static constexpr uint32                 kInitialBodyReservation = 4096;
+        static constexpr uint32                 kInitialContactReservation = 8192;
+
         // Hash of the settings last pushed, so an unedited frame skips the setter calls entirely.
         uint64                                  WorldSettingsHash = 0;
 

@@ -103,6 +103,9 @@ namespace Lumina
 
         RUNTIME_API void VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func) override;
 
+        // A torn-down world leaves the allocator caching its memory, so it is handed back once the next level has settled.
+        RUNTIME_API void ScheduleCacheTrim() { CacheTrimCountdown = kCacheTrimDelayFrames; }
+
         /** Queues world travel; swap runs at next FrameStart. Prefers PIE Game world; preserves editor proxy on PIE exit. */
         RUNTIME_API void Travel(FStringView WorldPath);
 
@@ -154,6 +157,12 @@ namespace Lumina
 
         FString                 PendingTravelPath;
         bool                    bHasPendingTravel = false;
+
+        // Engine time the current level began, so a travel can report how the level it leaves ran.
+        double                  LevelStartSeconds = 0.0;
+
+        static constexpr uint32 kCacheTrimDelayFrames = 120;
+        uint32                  CacheTrimCountdown = 0;
 
         // Deferred OpenLevel/Host/Connect, drained at FrameStart.
         FURL                    PendingOpenURL;

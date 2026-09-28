@@ -71,7 +71,7 @@ namespace Lumina
         Mesh->Materials[0] = Material != nullptr ? Material : static_cast<CMaterialInterface*>(CMaterial::GetDefaultMaterial());
 
         World->RetainObject(Mesh);
-        Mesh->SetMeshResource(Move(Resource));
+        Mesh->SetMeshResourceBatched(Move(Resource));
         return Mesh;
     }
 }

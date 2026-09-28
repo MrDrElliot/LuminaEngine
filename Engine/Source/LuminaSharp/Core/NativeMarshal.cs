@@ -49,7 +49,7 @@ public static unsafe class NativeMarshal
     /// <summary>A zero-copy span over a native TVector&lt;T&gt; embedded at Container+Offset (blittable element).</summary>
     public static ReadOnlySpan<T> ReadVector<T>(nint Container, nint Offset) where T : unmanaged
     {
-        return DecodeVector<T>((byte*)Container + Offset);
+        return DecodeVector<T>((byte*)NativeBindings.FieldAt(Container, Offset));
     }
 
     // The single source of truth for the TVector layout (Data@0, Count@8 as uint32); shared by ReadVector and TVector.

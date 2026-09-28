@@ -2,6 +2,7 @@
 #include "World/ECS/Registry.h"
 #include "EntityScript.h"
 
+#include "Assets/AssetTypes/Mesh/MeshBuildBatch.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
@@ -338,12 +339,18 @@ namespace Lumina
             Component.Scripts.push_back(Script);
 
             // By the first tick every sibling script added the same frame exists, so OnReady can reference them.
-            Script->OnAttach();
+            {
+                LUMINA_PROFILE_SECTION_DYNAMIC(Script->GetClass()->GetName().c_str());
+                Script->OnAttach();
+            }
             return Script;
         }
 
         void Tick(ECS::FRegistry& Registry, float DeltaTime, EScriptUpdatePhase Phase)
         {
+            // Scripts build meshes one at a time, so their builds are held and run together when the tick ends.
+            FMeshBuildBatchScope MeshBatch(Registry);
+
             // Attach and OnReady are phase-independent, so a PostPhysics script is built in the same pass.
             const bool bDrainLifecycle = Phase == EScriptUpdatePhase::PrePhysics;
 
@@ -374,7 +381,10 @@ namespace Lumina
                     if (bDrainLifecycle && Script->GetOwningEntity() == ECS::NullEntity)
                     {
                         Script->SetOwner(Entity, World);
-                        Script->OnAttach();
+                        {
+                            LUMINA_PROFILE_SECTION_DYNAMIC(Script->GetClass()->GetName().c_str());
+                            Script->OnAttach();
+                        }
 
                         // OnAttach is user code; it may have detached this very script.
                         if (!IsStillAttached(Registry, Entity, Script))
@@ -383,10 +393,19 @@ namespace Lumina
                         }
                     }
 
+                    if (Script->IsFaulted())
+                    {
+                        continue;
+                    }
+
                     if (bDrainLifecycle && !Script->IsReady())
                     {
                         Script->MarkReady();
-                        Script->OnReady();
+                        {
+                            // Once per script, so naming it by class costs nothing per frame and splits the script system's time.
+                            LUMINA_PROFILE_SECTION_DYNAMIC(Script->GetClass()->GetName().c_str());
+                            Script->OnReady();
+                        }
 
                         if (!IsStillAttached(Registry, Entity, Script))
                         {
@@ -394,7 +413,7 @@ namespace Lumina
                         }
                     }
 
-                    if (Script->IsReady() && ScriptPhase(Script) == Phase)
+                    if (Script->ShouldTick() && ScriptPhase(Script) == Phase)
                     {
                         Script->OnUpdate(DeltaTime);
                     }
@@ -422,7 +441,7 @@ namespace Lumina
                 {
                     // Fixed update only runs on a readied script, so none sees a fixed step before its OnReady.
                     CEntityScript* Script = Held.Get();
-                    if (Script != nullptr && Script->IsReady() && IsStillAttached(Registry, Entity, Script))
+                    if (Script != nullptr && Script->ShouldTick() && IsStillAttached(Registry, Entity, Script))
                     {
                         Script->OnFixedUpdate(FixedDeltaTime);
                     }
@@ -516,7 +535,7 @@ namespace Lumina
             for (TObjectPtr<CEntityScript>& Held : Scripts)
             {
                 CEntityScript* Script = Held.Get();
-                if (IsStillAttached(Registry, Entity, Script))
+                if (IsStillAttached(Registry, Entity, Script) && !Script->IsFaulted())
                 {
                     Script->OnInput(Event);
                 }
@@ -532,7 +551,7 @@ namespace Lumina
             for (TObjectPtr<CEntityScript>& Held : Scripts)
             {
                 CEntityScript* Script = Held.Get();
-                if (!IsStillAttached(Registry, Entity, Script))
+                if (!IsStillAttached(Registry, Entity, Script) || Script->IsFaulted())
                 {
                     continue;
                 }

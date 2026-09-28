@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Mesh.h"
+#include "MeshBuildBatch.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Core/Engine/Engine.h"
@@ -92,6 +93,35 @@ namespace Lumina
         }
 
         GenerateGPUBuffers();
+    }
+
+    void CMesh::SetMeshResourceBatched(TUniquePtr<FMeshResource>&& NewResource)
+    {
+        if (!FMeshBuildBatchScope::IsOpen())
+        {
+            SetMeshResource(std::move(NewResource));
+            return;
+        }
+
+        MeshResources = std::move(NewResource);
+        GenerateBoundingBox();
+        FMeshBuildBatchScope::DeferMeshlets(this);
+    }
+
+    void CMesh::BuildDeferredMeshlets()
+    {
+        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.empty())
+        {
+            Import::Mesh::GenerateMeshlets(*MeshResources);
+        }
+    }
+
+    void CMesh::UploadDeferredBuffers()
+    {
+        if (MeshResources)
+        {
+            GenerateGPUBuffers();
+        }
     }
 
     bool CMesh::IsGeometryResident() const

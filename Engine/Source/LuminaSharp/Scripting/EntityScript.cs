@@ -35,12 +35,26 @@ public abstract class EntityScript : Lumina.CEntityScript
 {
     internal TypeDescription Description = null!; // set at Create; cached labels + callback flags, no per-frame reflection
 
-    /// <summary>This script's entity (mirrors C++ ECS::FEntity). Read from the native object, which is the
-    /// single owner of the value for both languages.</summary>
-    public Entity Entity => GetOwningEntity();
+    // The native object owns both values and sets them once at attach, so the first real read is kept.
+    private Entity CachedEntity = Entity.Null;
+    private Lumina.CWorld? CachedWorld;
+    private Lumina.STransformComponent? CachedTransform;
 
-    /// <summary>The world this script lives in. Also read from the native object.</summary>
-    public Lumina.CWorld World => GetWorld();
+    /// <summary>This script's entity (mirrors C++ ECS::FEntity).</summary>
+    public Entity Entity
+    {
+        get
+        {
+            if (CachedEntity.IsNull)
+            {
+                CachedEntity = GetOwningEntity();
+            }
+            return CachedEntity;
+        }
+    }
+
+    /// <summary>The world this script lives in.</summary>
+    public Lumina.CWorld World => CachedWorld ??= GetWorld();
 
     /// <summary>The world's component store (mirrors C++ ECS::FRegistry).</summary>
     public EntityRegistry Registry => World.Registry;
@@ -50,6 +64,9 @@ public abstract class EntityScript : Lumina.CEntityScript
     /// <summary>Cancelled when this script is detached/destroyed. Pass to <see cref="GameTask"/> calls so a
     /// pending <c>await</c> stops cleanly when the entity goes away.</summary>
     protected System.Threading.CancellationToken DestroyToken => (DestroyCts ??= new System.Threading.CancellationTokenSource()).Token;
+
+    // The token GameTask falls back to, so an await started by a script ends with it even when no token was passed.
+    internal System.Threading.CancellationToken LifetimeToken => DestroyToken;
 
     internal void CancelDestroyToken()
     {
@@ -61,8 +78,19 @@ public abstract class EntityScript : Lumina.CEntityScript
         }
     }
 
-    // This entity's transform, resolved on each access because a view dies at the next structural change.
-    public Lumina.STransformComponent Transform => Registry.Get<Lumina.STransformComponent>(Entity);
+    // A registry view follows its pool across relocation, so it is kept until the component itself is gone.
+    public Lumina.STransformComponent Transform
+    {
+        get
+        {
+            if (CachedTransform is { IsValid: true } Kept)
+            {
+                return Kept;
+            }
+            CachedTransform = Registry.Get<Lumina.STransformComponent>(Entity);
+            return CachedTransform;
+        }
+    }
 
 
     // The world subsystem of type T, which is where shared gameplay state belongs.

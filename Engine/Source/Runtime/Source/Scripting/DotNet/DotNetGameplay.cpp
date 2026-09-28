@@ -20,6 +20,7 @@
 #include "Scripting/DotNet/DotNetExport.h"
 #include "Scripting/DotNet/ExportSignature.h"
 #include "Scripting/DotNet/DotNetHost.h"
+#include "Scripting/EntityScript.h"
 #include "Input/InputActionMap.h"
 #include "Input/InputQuery.h"
 #include "Input/InputViewport.h"
@@ -44,6 +45,15 @@ LUMINA_DOTNET_EXPORT(const void*, World_GetSystemContext)(uint64 World)
 // Game, the engine-level session operations.
 
 // Valid only for the duration of the OnUpdate crossing, forwarding to the matching context method.
+
+// The managed boundary caught a throw from OnAttach or OnReady, and only it knows which script raised it.
+LUMINA_DOTNET_EXPORT(void, EntityScript_MarkFaulted)(CEntityScript* Script)
+{
+    if (Script != nullptr)
+    {
+        Script->MarkFaulted();
+    }
+}
 
 LUMINA_DOTNET_EXPORT(float, SystemContext_GetDeltaTime)(const FSystemContext* Ctx)
 {
@@ -95,6 +105,7 @@ LUMINA_DOTNET_EXPORT(void, SystemContext_DrawDebugLine)(const FSystemContext* Ct
 
 LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(World_GetSystemContext),
+    LUMINA_DOTNET_SIG(EntityScript_MarkFaulted),
     LUMINA_DOTNET_SIG(SystemContext_GetDeltaTime),
     LUMINA_DOTNET_SIG(SystemContext_GetTime),
     LUMINA_DOTNET_SIG(SystemContext_Create),

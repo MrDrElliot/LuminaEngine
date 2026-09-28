@@ -33,11 +33,16 @@ namespace Lumina
         FScriptDelegateBase() = default;
         RUNTIME_API ~FScriptDelegateBase();
 
-        // Copy and move are inert; a copied/moved component starts unbound rather than aliasing another's listeners.
+        // Listeners belong to the delegate's identity, so a copy starts unbound and assigning a value keeps them.
         FScriptDelegateBase(const FScriptDelegateBase&) {}
-        FScriptDelegateBase(FScriptDelegateBase&&) noexcept {}
         FScriptDelegateBase& operator=(const FScriptDelegateBase&) { return *this; }
         FScriptDelegateBase& operator=(FScriptDelegateBase&&) noexcept { return *this; }
+
+        // Component storage relocates by move-construct and destroy, so the new address inherits the listeners.
+        RUNTIME_API FScriptDelegateBase(FScriptDelegateBase&& Other) noexcept;
+
+        // Unbinds by id wherever the listener now lives, so a binding outlives its delegate being relocated.
+        RUNTIME_API static bool UnbindManagedAnywhere(const void* LastKnownAddress, uint64 Id);
 
         // Registers a managed listener; returns an id used to unbind. Game thread only.
         RUNTIME_API uint64 BindManaged(FThunk Thunk, void* Context);
@@ -89,6 +94,7 @@ namespace Lumina
 
         void RetireAt(size_t Index);
         void Compact();
+        void EndOpenBroadcasts();
 
         TVector<FListener> Listeners;
         FBroadcastFrame*   ActiveBroadcast = nullptr;
@@ -221,9 +227,9 @@ namespace Lumina
 
         TScriptDelegate() = default;
 
-        // Inert like the base, or assignment would replace the native listeners while keeping the managed ones.
+        // Same identity rules as the base, spelled out because a defaulted copy would not be inert.
         TScriptDelegate(const TScriptDelegate&) {}
-        TScriptDelegate(TScriptDelegate&&) noexcept {}
+        TScriptDelegate(TScriptDelegate&& Other) noexcept : FScriptDelegateBase(std::move(Other)) {}
         TScriptDelegate& operator=(const TScriptDelegate&) { return *this; }
         TScriptDelegate& operator=(TScriptDelegate&&) noexcept { return *this; }
 

@@ -7,6 +7,9 @@
 #include "Core/Assertions/Assert.h"
 #include "Core/Profiler/Profile.h"
 #include "Core/Templates/Align.h"
+#include "Log/Log.h"
+#include "Platform/Process/PlatformProcess.h"
+#include "Platform/Time/PlatformTime.h"
 
 namespace Lumina
 {
@@ -79,6 +82,49 @@ namespace Lumina
     size_t Memory::GetPeakHugeAllocMemory()    { rpmalloc_global_statistics_t s; rpmalloc_global_statistics(&s); return s.huge_alloc_peak; }
     size_t Memory::GetTotalMappedMemory()      { rpmalloc_global_statistics_t s; rpmalloc_global_statistics(&s); return s.mapped_total; }
     size_t Memory::GetTotalUnmappedMemory()    { rpmalloc_global_statistics_t s; rpmalloc_global_statistics(&s); return s.unmapped_total; }
+    size_t Memory::GetCommittedMemory()        { return rpmalloc_committed_bytes(); }
+    bool   Memory::UsesHugePages()             { return rpmalloc_uses_huge_pages() != 0; }
+
+    bool Memory::DumpAllocatorStatistics(const char* Path)
+    {
+        FILE* File = nullptr;
+        if (fopen_s(&File, Path, "w") != 0 || File == nullptr)
+        {
+            return false;
+        }
+        rpmalloc_dump_statistics(File);
+        fclose(File);
+        return true;
+    }
+
+    namespace
+    {
+        std::atomic<uint32> GCacheTrimEpoch{0};
+        thread_local uint32 GThreadTrimEpoch = 0;
+    }
+
+    void Memory::RequestCacheTrim()
+    {
+        LUMINA_PROFILE_SCOPE();
+        const size_t CommitBefore = Platform::GetProcessMemoryUsageBytes();
+        const double Start = PlatformTime::Seconds();
+        GThreadTrimEpoch = GCacheTrimEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
+        rpmalloc_thread_trim_caches();
+        rpmalloc_global_trim_caches();
+        const size_t CommitAfter = Platform::GetProcessMemoryUsageBytes();
+        LOG_INFO("Allocator cache trim released {} MB on the calling thread in {:.2f} ms; idle workers release theirs next.",
+            (int64)(CommitBefore > CommitAfter ? CommitBefore - CommitAfter : 0) >> 20, (PlatformTime::Seconds() - Start) * 1000.0);
+    }
+
+    void Memory::TrimThreadCacheIfRequested()
+    {
+        const uint32 Epoch = GCacheTrimEpoch.load(std::memory_order_relaxed);
+        if (Epoch != GThreadTrimEpoch)
+        {
+            GThreadTrimEpoch = Epoch;
+            rpmalloc_thread_trim_caches();
+        }
+    }
 
     void Memory::Initialize()
     {

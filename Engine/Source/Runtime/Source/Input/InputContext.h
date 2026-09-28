@@ -37,6 +37,9 @@ namespace Lumina
 
         bool WindowToContext(double WindowX, double WindowY, double& OutX, double& OutY) const;
 
+        // The inverse, for input injected at a pixel of the rendered view.
+        RUNTIME_API void ContextToWindow(double ContextX, double ContextY, double& OutWindowX, double& OutWindowY) const;
+
         RUNTIME_API bool OnEvent(FEvent& Event);
 
         RUNTIME_API double GetMouseX()      const { return IsGameInputGated() ? 0.0 : MouseX; }

@@ -316,6 +316,12 @@ namespace Lumina
         }
 
         // 12 tris (2 per face); world matrix precomputed by caller.
+        // Background work is never run by a waiting thread, so a gather the game thread blocks on has to outrank a bake in flight.
+        ETaskPriority GatherPriority()
+        {
+            return Threading::IsMainThread() ? ETaskPriority::High : ETaskPriority::Background;
+        }
+
         void EmitBoxGeometry(const FMatrix4& W, const FVector3& HalfExtent, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc)
         {
             const FVector3 H = HalfExtent;
@@ -618,7 +624,7 @@ namespace Lumina
                         Strip.push_back(A); Strip.push_back(D); Strip.push_back(C);
                     }
                 }
-            }, 1, ETaskPriority::Background);
+            }, 1, GatherPriority());
 
             size_t Total = 0;
             for (const TVector<FVector3>& Strip : Strips)
@@ -708,7 +714,7 @@ namespace Lumina
                 {
                     EmitNavSourcePrim(Prims[i], EmitMin, EmitMax, Acc);
                 }
-            }, 1, ETaskPriority::Background);
+            }, 1, GatherPriority());
 
             size_t TotalVerts = 0;
             size_t TotalIndices = 0;
@@ -1232,7 +1238,7 @@ namespace Lumina
         }
 
         // One walk feeds geometry and annotations, so a full bake and a hot rebake see the same authored set.
-        void FillBuildInput(const FSystemContext& Context, SNavMeshComponent& Comp, FNavBuildInput& Out)
+        void SnapshotBuildInput(const FSystemContext& Context, SNavMeshComponent& Comp, FNavBuildInput& Out, TVector<FNavSourcePrim>& OutPrims)
         {
             Out.Settings  = Comp.Settings;
             Out.BoundsMin = Comp.Center - Comp.GetWorldExtents();
@@ -1241,15 +1247,12 @@ namespace Lumina
             TVector<FNavSourceEntry> Sources;
             CollectNavSources(Context, Out.BoundsMin, Out.BoundsMax, true, Comp.Settings.CellSize, Sources);
 
-            TVector<FNavSourcePrim> Prims;
-            Prims.reserve(Sources.size());
-            for (const FNavSourceEntry& Entry : Sources)
+            OutPrims.reserve(Sources.size());
+            for (FNavSourceEntry& Entry : Sources)
             {
                 AppendAnnotation(Entry.Prim, Out.AreaVolumes, Out.Links);
-                Prims.push_back(Entry.Prim);
+                OutPrims.push_back(std::move(Entry.Prim));
             }
-
-            EmitNavSourcePrims(Prims.data(), Prims.size(), Out.BoundsMin, Out.BoundsMax, Out.Vertices, Out.Indices);
         }
 
         void TickComponent(const FSystemContext& Context, ECS::FEntity Entity, SNavMeshComponent& Comp)
@@ -1905,26 +1908,30 @@ namespace Lumina
             return;
         }
 
+        // The snapshot reads the registry so it stays here, while emitting its triangles moves to the bake worker.
         FNavBuildInput Input;
-        FillBuildInput(Context, Comp, Input);
-
-        if (Input.Vertices.empty() || Input.Indices.empty())
-        {
-            LOG_WARN("NavMesh bake starting with no source geometry inside bounds. The result will be an empty navmesh; check that static meshes (non-character-controller) overlap the bounds volume.");
-        }
-        else
-        {
-            LOG_INFO("NavMesh bake starting: {} verts, {} tris, bounds=({:.1f},{:.1f},{:.1f})..({:.1f},{:.1f},{:.1f}).",
-                (int32)Input.Vertices.size(), (int32)(Input.Indices.size() / 3),
-                Input.BoundsMin.x, Input.BoundsMin.y, Input.BoundsMin.z,
-                Input.BoundsMax.x, Input.BoundsMax.y, Input.BoundsMax.z);
-        }
+        TVector<FNavSourcePrim> Prims;
+        SnapshotBuildInput(Context, Comp, Input, Prims);
 
         // EntityAABB cache populated at bake-completion drain (avoids tight-vs-conservative AABB mismatch storm).
         Comp.Runtime.EntityAABBs.clear();
         Comp.Runtime.DirtyTiles.clear();
         Comp.Runtime.PendingRebakes.clear();
-        Comp.Runtime.ActiveBake = NavMeshBuilder::Bake(std::move(Input));
+        Comp.Runtime.ActiveBake = NavMeshBuilder::Bake(std::move(Input), [Prims = std::move(Prims)](FNavBuildInput& In)
+        {
+            EmitNavSourcePrims(Prims.data(), Prims.size(), In.BoundsMin, In.BoundsMax, In.Vertices, In.Indices);
+            if (In.Vertices.empty() || In.Indices.empty())
+            {
+                LOG_WARN("NavMesh bake starting with no source geometry inside bounds. The result will be an empty navmesh; check that static meshes (non-character-controller) overlap the bounds volume.");
+            }
+            else
+            {
+                LOG_INFO("NavMesh bake starting: {} verts, {} tris, bounds=({:.1f},{:.1f},{:.1f})..({:.1f},{:.1f},{:.1f}).",
+                    (int32)In.Vertices.size(), (int32)(In.Indices.size() / 3),
+                    In.BoundsMin.x, In.BoundsMin.y, In.BoundsMin.z,
+                    In.BoundsMax.x, In.BoundsMax.y, In.BoundsMax.z);
+            }
+        });
         Comp.Runtime.State = ENavBakeState::Building;
     }
 

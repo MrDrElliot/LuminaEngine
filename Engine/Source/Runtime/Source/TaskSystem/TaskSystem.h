@@ -7,6 +7,7 @@
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 #include "Platform/GenericPlatform.h"
+#include "Core/LuminaMacros.h"
 #include <type_traits>
 #include <utility>
 
@@ -30,6 +31,17 @@ namespace Lumina
         RUNTIME_API uint32 ComputeChunkCount(uint32 Num, uint32 MinRange);
 
         inline constexpr uint32 kMaxChunks = 256;
+
+        // Runs every ParallelFor on this thread inline while open, for an item of a loop that is already parallel at an outer level.
+        class RUNTIME_API FInlineNestedScope
+        {
+        public:
+            FInlineNestedScope();
+            ~FInlineNestedScope();
+            LE_NO_COPYMOVE(FInlineNestedScope);
+
+            static bool IsOpen();
+        };
 
         // Cursor-grab size for shared-cursor fan-outs: never finer than the pre-split balance floor.
         inline uint32 ComputeCursorGrain(uint32 Num, uint32 MinRange)

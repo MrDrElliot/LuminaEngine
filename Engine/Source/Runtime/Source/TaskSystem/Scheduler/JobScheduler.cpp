@@ -1248,6 +1248,7 @@ namespace Lumina::Jobs
                 return;
             }
             FlushCachedFiber(W);
+            Memory::TrimThreadCacheIfRequested();
 #if USING(WITH_EDITOR)
             FJobProfiler::Get().IdleBegin(W, FJobProfiler::NowMs());
 #endif

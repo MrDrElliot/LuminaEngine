@@ -265,6 +265,10 @@ namespace Lumina
         {
             if (Contexts[i]->World.Get() == World)
             {
+                if (GEngine != nullptr)
+                {
+                    GEngine->ScheduleCacheTrim();
+                }
                 World->TeardownWorld();
                 World->OwningContext = nullptr;
 
