@@ -21,7 +21,7 @@ struct FGPUWater
     uint     DetailNormalIndex;
     uint     FoamTextureIndex;
     uint     GridResolution;
-    uint     Flags;
+    float    HorizonScale;     // outer ring's distance as a multiple of the body's, 1 when it has no horizon skirt
 };
 
 // Per-pass push (identical VS+PS so they share one range). The water-body index arrives via
@@ -31,6 +31,12 @@ struct FWaterPushConstants
     GPUSpan<FGPUWater> Waters;        // the per-frame water array
     uint       SceneColorIndex; // bindless 2D SRV: HDR scene copy (refraction + SSR color)
     uint       SceneDepthIndex; // bindless 2D SRV: opaque scene depth (raw reverse-Z NDC [0,1])
+
+    // The aerial perspective LUT, with the in-scatter index at WATER_INVALID_TEX when the view has none.
+    uint       AerialInScatterIndex;
+    uint       AerialTransmittanceIndex;
+    float      AerialRange;
+    float      AerialIntensity;
 };
 FWaterPushConstants* Pass() { return GetPassArgs<FWaterPushConstants>(); }
 

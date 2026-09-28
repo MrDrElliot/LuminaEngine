@@ -1106,8 +1106,9 @@ namespace Lumina
         RHI::CmdBlitTexture(CL, CurrentTarget, Slice, LayerTexture(DestLayer), Slice, RHI::EFilter::Nearest);
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer,
-            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer | RHI::EStageFlags::RasterColorOut,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite |
+            RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
     }
 
     void FRmlUiRenderer::CopyLayerToTexture(RHI::FCmdListH CL, uint32 SourceLayer, RHI::FTextureH Dest,
@@ -1130,8 +1131,8 @@ namespace Lumina
 
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
-            RHI::EStageFlags::PixelShader,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
         OpenPassSized(CL, Dest, true, DestSize);
         RHI::CmdSetPipeline(CL, Pipeline);
         RHI::CmdDraw(CL, RHI::CopyTransient(Args), 3, 1, 0, 0);
@@ -1302,8 +1303,8 @@ namespace Lumina
             bPassScissorSet = false;
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
-                RHI::EStageFlags::PixelShader,
-                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
             OpenPass(CL, LayerTexture(Active), bClear);
             bPassScissorSet = bSavedScissor;
             if (bClear)
@@ -1482,6 +1483,13 @@ namespace Lumina
         RHI::FRenderPassDesc Pass;
         Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
         Pass.RenderArea       = CurrentSize;
+
+        // A pooled layer comes back while the composite that last sampled it may still be reading.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::RasterColorOut,
+            RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
         RHI::CmdBeginRenderPass(CL, Pass);
         RHI::CmdEndRenderPass(CL);
     }
@@ -1512,8 +1520,8 @@ namespace Lumina
         // The source was just written as a color attachment, so make those writes visible to sampling.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
-            RHI::EStageFlags::PixelShader,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
 
         OpenPass(CL, LayerTexture(DestLayer), !bBlend);
         RHI::CmdSetPipeline(CL, Pipeline);
@@ -1753,6 +1761,9 @@ namespace Lumina
             }
             RHI::Textures::Upload(It->second.Managed, 0, Pending.Bytes.data(), Pending.Bytes.size(), (uint32)Pending.Width);
         }
+
+        // The queue otherwise drains at the next BeginFrame, a frame after this one samples the texture.
+        RHI::FlushUploads();
 
         PendingTextureUploads.clear();
     }
@@ -2397,14 +2408,14 @@ namespace Lumina
                 // Clear to transparent so the document breaks instead of showing the old asset.
                 const float Transparent[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
                 RHI::CmdBarrier(CmdList,
-                    RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite,
+                    RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
                     RHI::EStageFlags::Transfer,
                     RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                 RHI::CmdClearTexture(CmdList, Tex.Managed.Texture, Transparent);
                 RHI::CmdBarrier(CmdList,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                    RHI::EStageFlags::PixelShader,
-                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                    RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut,
+                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
                 Tex.bBrushStale   = true;
                 Tex.bBrushCleared = true;
             }
@@ -2444,6 +2455,12 @@ namespace Lumina
         Rendered.clear();
 
         bool bAnyWrites = false;
+
+        // Brushes are shared, so a previous context's pass may still be sampling or writing one this loop redraws.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::RasterColorOut,
+            RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
 
         // A brush RT is created undefined, so give it transparent black once before anything samples it.
         auto ClearBrushOnce = [&](FTexture& Tex)
@@ -2545,8 +2562,8 @@ namespace Lumina
             // Brush RT writes visible to the UI pass sampling them.
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorWrite,
-                RHI::EStageFlags::PixelShader,
-                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::RasterColorOut,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
         }
     }
 }

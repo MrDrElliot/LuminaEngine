@@ -2,6 +2,7 @@
 
 #include "Platform/GenericPlatform.h"
 #include "Vector/VectorTypes.h"
+#include <bit>
 #include <cstring>
 
 // Bit-packing helpers (half-float pack/unpack) the engine uses.
@@ -10,10 +11,9 @@ namespace Lumina::Math
 {
     namespace Detail
     {
-        [[nodiscard]] inline uint16 FloatToHalf(float F)
+        [[nodiscard]] constexpr uint16 FloatToHalf(float F)
         {
-            uint32 Bits;
-            std::memcpy(&Bits, &F, sizeof(Bits));
+            const uint32 Bits = std::bit_cast<uint32>(F);
 
             const uint32 Sign = (Bits >> 16) & 0x8000u;
             int32 Exp = static_cast<int32>((Bits >> 23) & 0xFFu) - 127 + 15;
@@ -45,7 +45,7 @@ namespace Lumina::Math
             return Half;
         }
 
-        [[nodiscard]] inline float HalfToFloat(uint16 H)
+        [[nodiscard]] constexpr float HalfToFloat(uint16 H)
         {
             const uint32 Sign = static_cast<uint32>(H & 0x8000u) << 16;
             uint32 Exp = (H >> 10) & 0x1Fu;
@@ -75,20 +75,18 @@ namespace Lumina::Math
                 Bits = Sign | ((Exp + (127 - 15)) << 23) | (Mant << 13);
             }
 
-            float F;
-            std::memcpy(&F, &Bits, sizeof(F));
-            return F;
+            return std::bit_cast<float>(Bits);
         }
     }
 
     // PackHalf2x16: x -> low 16 bits, y -> high 16 bits.
-    [[nodiscard]] inline uint32 PackHalf2x16(const TVec<float, 2>& V)
+    [[nodiscard]] constexpr uint32 PackHalf2x16(const TVec<float, 2>& V)
     {
         return static_cast<uint32>(Detail::FloatToHalf(V.x)) |
                (static_cast<uint32>(Detail::FloatToHalf(V.y)) << 16);
     }
 
-    [[nodiscard]] inline TVec<float, 2> UnpackHalf2x16(uint32 Packed)
+    [[nodiscard]] constexpr TVec<float, 2> UnpackHalf2x16(uint32 Packed)
     {
         return TVec<float, 2>(
             Detail::HalfToFloat(static_cast<uint16>(Packed & 0xFFFFu)),

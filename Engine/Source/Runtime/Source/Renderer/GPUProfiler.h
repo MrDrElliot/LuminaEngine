@@ -84,6 +84,7 @@ namespace Lumina
             uint32                 QueryCursor = 0;
             uint64                 FrameNumber = 0;
             bool                   bPendingResolve = false;
+            bool                   bHostReset = false;
         };
 
         void Resolve(FSlot& Slot);

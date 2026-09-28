@@ -48,7 +48,8 @@ float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bo
 {
     float3 ShapeUVW = (WorldPos + float3(M.WindOffset.x, 0.0, M.WindOffset.y)) / max(M.ShapeScale, 1.0);
 
-    float4 Shape = SampleTexture3D(M.NoiseIndex, SAMPLER_LINEAR_WRAP, ShapeUVW);
+    // Explicit level, since this runs in compute and the noise volume has a single mip.
+    float4 Shape = SampleTexture3DLevel(M.NoiseIndex, SAMPLER_LINEAR_WRAP, ShapeUVW, 0.0);
 
     // The Worley octaves ride on the base as a noise floor, which is what carves the billows.
     float LowFreq = Shape.g * 0.625 + Shape.b * 0.25 + Shape.a * 0.125;
@@ -67,7 +68,7 @@ float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bo
     float3 DetailUVW = (WorldPos + float3(M.DetailWindOffset.x, 0.0, M.DetailWindOffset.y))
                      / max(M.DetailScale, 1.0);
 
-    float4 Detail    = SampleTexture3D(M.NoiseIndex, SAMPLER_LINEAR_WRAP, DetailUVW);
+    float4 Detail    = SampleTexture3DLevel(M.NoiseIndex, SAMPLER_LINEAR_WRAP, DetailUVW, 0.0);
     float  DetailFBM = Detail.g * 0.625 + Detail.b * 0.25 + Detail.a * 0.125;
 
     // Wispy at the base and billowed aloft, which is the direction real erosion runs.

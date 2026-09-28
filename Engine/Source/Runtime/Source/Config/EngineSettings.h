@@ -359,7 +359,7 @@ namespace Lumina
 
         /** Slices and steps per pixel. 0 low, 1 medium, 2 high, 3 ultra. */
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0, ClampMax = 3)
-        int32 GTAOQualityLevel = 3;
+        int32 GTAOQualityLevel = 2;
 
         /** Edge-aware denoise passes. 0 disabled, 1 sharp, 2 medium, 3 soft. */
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0, ClampMax = 3)

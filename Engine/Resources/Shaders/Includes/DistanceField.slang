@@ -61,7 +61,7 @@ float SampleDistanceFieldLocal(FDistanceFieldVolume Volume, float3 LocalPosition
         return Volume.MaxDistance;
     }
 
-    float Encoded = gTextures3D[Volume.TextureIndex]
+    float Encoded = gTextures3D[NonUniformResourceIndex(Volume.TextureIndex)]
         .SampleLevel(gSamplers[SAMPLER_LINEAR_CLAMP], Volume.LocalToUVW(LocalPosition), 0.0).r;
 
     // Two-sided fields spend the whole byte on [0, Max]; signed ones split it around 0.5.

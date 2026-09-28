@@ -195,6 +195,16 @@ namespace Lumina
                 Surface.MaterialIndex = NewSlot;
             }
 
+            // A source with no materials still gets one slot per surface, pointed at, so assigning a material later takes effect.
+            if (SlotToSource.empty())
+            {
+                for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
+                {
+                    Surface.MaterialIndex = (int16)SlotToSource.size();
+                    SlotToSource.push_back(-1);
+                }
+            }
+
             return SlotToSource;
         }
 

@@ -8,6 +8,7 @@ static const uint PARTICLE_FACING_CAMERA   = 0u;
 static const uint PARTICLE_FACING_WORLD_XZ = 1u;
 static const uint PARTICLE_FACING_VELOCITY = 2u;
 static const uint PARTICLE_FACING_VERTICAL = 3u;
+static const uint PARTICLE_FACING_SURFACE  = 4u;
 
 // Must match EParticleRenderMode.
 static const uint PARTICLE_RENDER_SPRITE = 0u;
@@ -320,6 +321,15 @@ FParticleSprite ExpandParticleSprite(uint VertexIndex, out FGPUParticle OutParti
     {
         BillboardRight = float3(1.0, 0.0, 0.0);
         BillboardUp    = float3(0.0, 0.0, 1.0);
+    }
+    else if (Pass().FacingMode == PARTICLE_FACING_SURFACE)
+    {
+        // Lies across its velocity, which a sub-emitter spawned along a collision normal points out of the surface hit.
+        const float Speed = length(P.Velocity);
+        const float3 Normal = Speed > 1e-8 ? P.Velocity / Speed : float3(0.0, 1.0, 0.0);
+        const float3 Across = abs(Normal.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+        BillboardRight = normalize(cross(Across, Normal));
+        BillboardUp    = cross(Normal, BillboardRight);
     }
     else if (Pass().FacingMode == PARTICLE_FACING_VERTICAL)
     {

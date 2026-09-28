@@ -328,15 +328,25 @@ namespace Lumina
         bPinsBuilt = true;
     }
 
-    void CMaterialExpression_CustomSlang::DrawNodeTitleBar()
+    void CMaterialExpression_CustomSlang::RebuildPinsIfStale()
     {
-        // Signature edits land through the details panel, so pick them up on the next draw.
-        const uint64 Current = ComputeSignatureHash();
-        if (!bPinsBuilt || Current != SignatureHash)
+        if (!bPinsBuilt || ComputeSignatureHash() != SignatureHash)
         {
             RebuildPins();
         }
+    }
+
+    void CMaterialExpression_CustomSlang::DrawNodeTitleBar()
+    {
+        RebuildPinsIfStale();
         Super::DrawNodeTitleBar();
+    }
+
+    // A signature edited without the graph open, as a tool does, would otherwise keep its old pins until drawn.
+    void CMaterialExpression_CustomSlang::PostPropertyChange(FProperty* ChangedProperty)
+    {
+        Super::PostPropertyChange(ChangedProperty);
+        RebuildPinsIfStale();
     }
 
     void CMaterialExpression_CustomSlang::DrawNodeBody()

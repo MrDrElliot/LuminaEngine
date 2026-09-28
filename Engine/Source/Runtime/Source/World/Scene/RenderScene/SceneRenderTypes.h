@@ -706,7 +706,7 @@ namespace Lumina
         uint32   DetailNormalIndex; // bindless 2D SRV, ~0u if none
         uint32   FoamTextureIndex;  // bindless 2D SRV, ~0u if none
         uint32   GridResolution;    // verts per side of the procedural grid
-        uint32   Flags;             // reserved
+        float    HorizonScale;      // outer ring's distance as a multiple of the body's, 1 when it has no horizon skirt
     };
 
     static_assert(sizeof(FGPUWater) == 288, "FGPUWater layout must match Includes/Water.slang");
@@ -1171,7 +1171,7 @@ namespace Lumina
     {
         FVector4  PositionSize;        // xyz position, w size
         FVector4  VelocityFlags;       // xyz velocity, w EParticleEmitFlags as float bits
-        FVector4  Color;
+        FVector4  Extra;               // a script emit's color, or a collision's surface normal in xyz and impact speed in w
     };
     static_assert(sizeof(FParticleEventGPU) == 48, "FParticleEventGPU layout must match shader");
 

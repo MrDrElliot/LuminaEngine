@@ -90,8 +90,12 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
     // No NdotL early-out: a depth-derived normal is unreliable exactly at silhouettes, and a wrongly
     // skipped pixel writes 1.0 -- a bright speckle on a shadowed edge is worse than doing the work.
+    // Same-surface neighbor differences, since ddx is undefined next to the sky pixels that returned above.
+    const float3 dWdx = mul((float3x3)InvView, dPdx);
+    const float3 dWdy = mul((float3x3)InvView, dPdy);
+
     FLight Sun  = GetLightAt(0);
-    float  Mask = ComputeDirectionalShadow(Sun, WorldPos, NWorld, P, Input.Position.xy);
+    float  Mask = ComputeDirectionalShadow(Sun, WorldPos, NWorld, P, Input.Position.xy, dWdx, dWdy);
 
     // min rather than a multiply, which would darken a PCSS penumbra twice for the one occluder.
     const float3 ViewL  = normalize(NormalWorldToView(normalize(Sun.Direction.xyz)));

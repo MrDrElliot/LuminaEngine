@@ -769,7 +769,8 @@ namespace Lumina
             Item.DetailNormalIndex = ResolveTexture(Water.DetailNormalMap);
             Item.FoamTextureIndex  = ResolveTexture(Water.FoamTexture);
             Item.GridResolution    = (uint32)Math::Clamp(Water.GridResolution, 2, 512);
-            Item.Flags             = 0;
+            const float BodyWidth  = Math::Max(Math::Max(Water.Extent.x, Water.Extent.y), 1.0f);
+            Item.HorizonScale      = Math::Max(Water.HorizonExtent / BodyWidth, 1.0f);
 
             Frame.Water.Surfaces.push_back(Item);
             const FVector4 LocalCam = Item.WorldToWater * FVector4(CameraPos, 1.0f);

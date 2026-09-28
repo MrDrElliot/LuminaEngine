@@ -22,6 +22,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Water|Surface", ClampMin = 2, ClampMax = 512)
         int32 GridResolution = 384;
 
+        // Width the outermost ring of cells stretches out to, so a sea meets the horizon; 0 keeps the body its own size.
+        PROPERTY(Editable, Category = "Water|Surface", ClampMin = 0.0f, Units = "m")
+        float HorizonExtent = 0.0f;
+
         /** Master surface opacity (soft-blended at the shoreline regardless). */
         PROPERTY(Editable, Category = "Water|Surface", ClampMin = 0.0f, ClampMax = 1.0f)
         float Opacity = 1.0f;

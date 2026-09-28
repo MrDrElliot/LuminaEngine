@@ -19,7 +19,7 @@ struct FShadowTex
 FShadowTex MakeShadowTex(uint Index)
 {
     FShadowTex S;
-    S.Tex = gTextures2D[Index];
+    S.Tex = gTextures2D[NonUniformResourceIndex(Index)];
     S.Cmp = gCmpSamplers[SAMPLER_SHADOW];
     S.Pt  = gSamplers[SAMPLER_POINT_CLAMP];
     return S;
@@ -202,7 +202,7 @@ float SampleShadowMask(float2 PixelPos)
     {
         return 1.0;
     }
-    return gTextures2D[Index].Load(int3(int2(PixelPos), 0)).r;
+    return gTextures2D[NonUniformResourceIndex(Index)].Load(int3(int2(PixelPos), 0)).r;
 }
 
 // ToLight is the TO-LIGHT vector, matching FLight::Direction. Passing the travel direction instead
@@ -296,7 +296,15 @@ float SampleCascadeTentPCF(float2 AtlasUV, float RefDepth, float2 AtlasTexel, fl
 
 // PCSS-filtered sample of one directional cascade. Returns 1.0 (and Inside=false) when the fragment
 // is outside the cascade's projected range so the caller can fall back to another cascade or fully-lit.
-float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPos, float3 Normal, float3 ToLight, float Bias, float2 ScreenPos, out bool Inside)
+float3 ProjectToCascade(float4x4 CascadeVP, float3 WorldPos)
+{
+    float4 ShadowCoord = mul(CascadeVP, float4(WorldPos, 1.0));
+    return ShadowCoord.xyz / max(ShadowCoord.w, 1e-6);
+}
+
+// dWdx/dWdy are the world-space pixel footprint, passed in because ddx is undefined once a quad neighbor returned early.
+float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPos, float3 Normal, float3 ToLight, float Bias, float2 ScreenPos,
+                               float3 dWdx, float3 dWdy, out bool Inside)
 {
     // Normal-offset the receiver before projecting; removes self-shadow banding depth bias can't fix.
     float3 OffsetPos = FragmentPos + NormalOffsetWS(Normal, ToLight, CascadeIndex);
@@ -307,12 +315,13 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
     float2 ProjectionUV = ProjCoords.xy * 0.5 + 0.5;
     float  CurrentDepth = ProjCoords.z;
 
-    // Screen-space derivatives of the shadow-space depth/UV, taken before the Inside early-out so the
-    // quad stays coherent. Used below to predict the receiver's own depth across the blocker search.
-    float2 dUVdx = ddx(ProjectionUV);
-    float2 dUVdy = ddy(ProjectionUV);
-    float  dDdx  = ddx(CurrentDepth);
-    float  dDdy  = ddy(CurrentDepth);
+    // Shadow-space UV and depth per screen pixel, predicting the receiver's own depth across the blocker search.
+    const float3 ProjX = ProjectToCascade(CascadeVP, OffsetPos + dWdx);
+    const float3 ProjY = ProjectToCascade(CascadeVP, OffsetPos + dWdy);
+    float2 dUVdx = (ProjX.xy - ProjCoords.xy) * 0.5;
+    float2 dUVdy = (ProjY.xy - ProjCoords.xy) * 0.5;
+    float  dDdx  = ProjX.z - CurrentDepth;
+    float  dDdy  = ProjY.z - CurrentDepth;
 
     Inside = !(any(ProjectionUV < 0.0) || any(ProjectionUV > 1.0) ||
                CurrentDepth < 0.0 || CurrentDepth > 1.0);
@@ -439,7 +448,7 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
 
 // Factored out so the sun and any other directional light share the exact same cascade PCSS. Normal
 // feeds only the slope bias and normal-offset push, so the mask pass can pass a geometric normal.
-float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos)
+float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, float3 dWdx, float3 dWdy)
 {
     // Sun with bCastShadows = false leaves ShadowDataIndex at INDEX_NONE;
     // skip the cascade work and treat as fully lit.
@@ -465,7 +474,7 @@ float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, 
     float  Bias        = ComputeShadowBias(Light.Flags, Normal, LightToFrag, CascadeIndex);
 
     bool  InsideA;
-    float ShadowA = SampleDirectionalCascade(Light, CascadeIndex, FragmentPos, Normal, LightToFrag, Bias, ScreenPos, InsideA);
+    float ShadowA = SampleDirectionalCascade(Light, CascadeIndex, FragmentPos, Normal, LightToFrag, Bias, ScreenPos, dWdx, dWdy, InsideA);
 
     // Blend into the next cascade near the split boundary so the transition is smooth, not a seam.
     float CascadeNear = (CascadeIndex == 0) ? 0.0 : CascadeSplits[CascadeIndex - 1];
@@ -481,7 +490,7 @@ float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, 
         float BiasB   = ComputeShadowBias(Light.Flags, Normal, LightToFrag, CascadeIndex + 1);
 
         bool  InsideB;
-        float ShadowB = SampleDirectionalCascade(Light, CascadeIndex + 1, FragmentPos, Normal, LightToFrag, BiasB, ScreenPos, InsideB);
+        float ShadowB = SampleDirectionalCascade(Light, CascadeIndex + 1, FragmentPos, Normal, LightToFrag, BiasB, ScreenPos, dWdx, dWdy, InsideB);
 
         if (InsideB)
         {
@@ -503,6 +512,12 @@ float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, 
     }
 
     return ShadowA;
+}
+
+// Forward shading keeps hardware derivatives, which a rasterized surface has for every lane of the quad.
+float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos)
+{
+    return ComputeDirectionalShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos, ddx(FragmentPos), ddy(FragmentPos));
 }
 
 #endif // !SHADING_COMPUTE

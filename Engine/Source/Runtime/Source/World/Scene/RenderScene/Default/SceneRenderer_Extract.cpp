@@ -1412,6 +1412,13 @@ namespace Lumina
 
         ParticleView.ForEach([&](ECS::FEntity Entity, SParticleSystemComponent& Component)
         {
+            Component.Collisions.clear();
+            if (auto Hits = ParticleCollisionResults.find(Entity); Hits != ParticleCollisionResults.end())
+            {
+                Component.Collisions = Move(Hits->second);
+                ParticleCollisionResults.erase(Hits);
+            }
+
             CParticleSystem* PS = Component.ParticleSystem.Get();
 
             const bool bForceBurst = Component.bForceBurst;
@@ -1500,7 +1507,8 @@ namespace Lumina
                 Item.MeshletCount        = Item.MeshletHeaderSlot != 0u ? Emitter->Mesh->GetMeshBuffers().MeshletCount : 0u;
                 Item.EmissionMeshSlot    = ResidentMeshletHeaderSlot(Emitter->EmissionMesh.Get());
                 Item.SourceEmitterIndex  = SourceIndices[EmitterIdx];
-                Item.RaisedEventMask     = RaisedMasks[EmitterIdx];
+                Item.bReportCollisions   = Emitter->bReportCollisions;
+                Item.RaisedEventMask     = RaisedMasks[EmitterIdx] | (Emitter->bReportCollisions ? 1u << (uint32)EParticleEventType::Collision : 0u);
                 Item.RaisedEventRate     = RaisedRates[EmitterIdx];
                 Item.ScriptEmits.clear();
                 for (const FParticleScriptEmit& Emit : Component.PendingEmits)
@@ -1560,6 +1568,9 @@ namespace Lumina
             Component.PendingEmits.clear();
         });
         Frame.Extracts.ParticleExtracts.resize(ParticleCount);
+
+        // Whatever no component claimed belongs to one that is gone.
+        ParticleCollisionResults.clear();
     }
 
     const SEnvironmentComponent* FDefaultSceneRenderer::ExtractEnvironment(ECS::FRegistry& Registry, FFrameData& Frame)
@@ -3996,9 +4007,8 @@ namespace Lumina
                 Species.Mesh       = Type->Mesh.Get();
                 Species.LayerIndex = Output.LayerIndex;
 
-                // Density is instances per square metre, so the candidate grid spacing is its inverse root.
-                // Converted to world units here, once, rather than per thread on the GPU.
-                Species.CellSize = Math::Max(0.01f, 100.0f / Math::Sqrt(Density));
+                // Density is instances per square meter and a world unit is a meter, so the spacing is its inverse root.
+                Species.CellSize = Math::Max(0.01f, 1.0f / Math::Sqrt(Density));
 
                 Species.MinWeight     = Type->MinWeight;
                 Species.ScaleMin      = Type->ScaleMin;

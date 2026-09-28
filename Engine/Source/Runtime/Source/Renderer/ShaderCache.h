@@ -8,7 +8,7 @@ namespace Lumina
 {
     namespace FShaderCache
     {
-        constexpr auto kShaderCacheVersion      = 1;
+        constexpr auto kShaderCacheVersion      = 2;
         constexpr FStringView kCacheDirectory   = "/Intermediates/ShaderCache";
         uint64 ComputeSourceSetHash(FStringView ShaderVirtualPath, const TVector<FString>& Defines, const TVector<FString>& SearchRoots, FStringView EntryPoint);
 

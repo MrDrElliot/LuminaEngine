@@ -372,7 +372,8 @@ namespace Lumina
 
         slang::TargetDesc TargetDesc = {};
         TargetDesc.format  = SLANG_SPIRV;
-        TargetDesc.profile = GlobalSession->findProfile("spirv_1_5");
+        // 1.6 lowers discard to OpDemoteToHelperInvocation, so derivatives after a discard stay defined.
+        TargetDesc.profile = GlobalSession->findProfile("spirv_1_6");
         TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
         // Declaring the capability silences warning 41012, and the emitted SPIR-V is identical.

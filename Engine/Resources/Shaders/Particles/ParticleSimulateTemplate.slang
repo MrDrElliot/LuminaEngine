@@ -87,6 +87,12 @@ $PARTICLE_ATTR_DEFAULTS
     if (Origin == SPAWN_EVENT)
     {
         P.Velocity += Source.VelocityFlags.xyz * SimParams().EventParams.y;
+
+        // Only a direction for SurfaceAligned facing to lie across, far too slow to carry the particle anywhere.
+        if (SimParams().EventParams.z > 0.0 && dot(Source.Extra.xyz, Source.Extra.xyz) > 0.5)
+        {
+            P.Velocity = Source.Extra.xyz * PARTICLE_SURFACE_NORMAL_SPEED;
+        }
     }
     else
     {
@@ -99,7 +105,7 @@ $PARTICLE_ATTR_DEFAULTS
         const uint Flags = asuint(Source.VelocityFlags.w);
         if ((Flags & PARTICLE_EMIT_POSITION) != 0u) { P.Position = Source.PositionSize.xyz; }
         if ((Flags & PARTICLE_EMIT_VELOCITY) != 0u) { P.Velocity = Source.VelocityFlags.xyz; }
-        if ((Flags & PARTICLE_EMIT_COLOR)    != 0u) { P.Color    = Source.Color; }
+        if ((Flags & PARTICLE_EMIT_COLOR)    != 0u) { P.Color    = Source.Extra; }
         if ((Flags & PARTICLE_EMIT_SIZE)     != 0u) { P.Size     = Source.PositionSize.w; }
     }
 

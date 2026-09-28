@@ -109,6 +109,9 @@ namespace Lumina
         Slot.Stack.clear();
         Slot.QueryCursor = 0;
         Slot.FrameNumber = ++FrameCounter;
+
+        // After the resolve read last cycle's values, and outside any render pass, which a scope may open inside.
+        Slot.bHostReset = RHI::ResetTimestamps(Slot.Pool, 0, MaxScopesPerFrame * kQueriesPerScope);
     }
 
     void FGPUProfiler::BeginScope(RHI::FCmdListH CL, const char* Name)
@@ -136,8 +139,11 @@ namespace Lumina
         Scope.EndQuery    = Slot.QueryCursor + 1;
         Slot.QueryCursor += kQueriesPerScope;
 
-        // Reset immediately before the write, so ordering inside this list is the only guarantee needed.
-        RHI::CmdResetTimestamps(CL, Slot.Pool, Scope.BeginQuery, kQueriesPerScope);
+        // Without hostQueryReset, reset immediately before the write, so ordering inside this list is the only guarantee needed.
+        if (!Slot.bHostReset)
+        {
+            RHI::CmdResetTimestamps(CL, Slot.Pool, Scope.BeginQuery, kQueriesPerScope);
+        }
         RHI::CmdWriteTimestamp(CL, Slot.Pool, Scope.BeginQuery, RHI::EStageFlags::AllCommands);
 
         Slot.Stack.push_back((int32)Slot.Scopes.size() - 1);

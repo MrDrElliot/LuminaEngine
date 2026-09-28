@@ -40,7 +40,7 @@ float3x3 BuildTangentFrame(float3 FragNormal, float4 FragTangent)
 float ParallaxMipLevel(uint HeightTextureIndex, float2 UVDdx, float2 UVDdy)
 {
     float2 TexSize;
-    gTextures2D[HeightTextureIndex].GetDimensions(TexSize.x, TexSize.y);
+    gTextures2D[NonUniformResourceIndex(HeightTextureIndex)].GetDimensions(TexSize.x, TexSize.y);
 
     float2 Dx = UVDdx * TexSize;
     float2 Dy = UVDdy * TexSize;

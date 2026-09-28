@@ -85,6 +85,7 @@ namespace Lumina
 
         void DrawNodeBody() override;
         void DrawNodeTitleBar() override;
+        void PostPropertyChange(FProperty* ChangedProperty) override;
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         /** Shown on the node so several custom nodes stay tellable apart. Cosmetic only. */
@@ -125,5 +126,6 @@ namespace Lumina
         bool   bPinsBuilt = false;
 
         uint64 ComputeSignatureHash() const;
+        void RebuildPinsIfStale();
     };
 }

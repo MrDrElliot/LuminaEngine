@@ -139,6 +139,9 @@ namespace Lumina
         // Calls queued since the last extract. A world nothing renders caps this instead of growing it.
         TVector<FParticleScriptEmit> PendingEmits;
 
+        // Hits the renderer read back for emitters that report collisions, replaced at every extract.
+        TVector<FParticleCollision> Collisions;
+
         //~ Begin User Parameters
         /** True if this component or its asset declares a parameter with the given name. */
         FUNCTION()

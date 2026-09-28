@@ -322,6 +322,34 @@ namespace Lumina::RHI
         }
     }
 
+    void FlushUploads()
+    {
+        if (!GUpload.bInitialized || GUpload.QueuedOps.load(std::memory_order_relaxed) == 0)
+        {
+            return;
+        }
+
+        TVector<FGPUAllocation> OwnedStaging;
+
+        uint32 SliceMask = 0;
+        uint64 Batch = 0;
+        const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
+        if (!Upload::Flush(CL, OwnedStaging, &SliceMask, &Batch))
+        {
+            ResetCommandList(CL);
+            return;
+        }
+
+        const uint64 Value = Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
+        Upload::NoteFlushSubmitted(Batch, SliceMask, EQueueType::Graphics, GetQueueTimeline(EQueueType::Graphics), Value);
+
+        // After the submit, so each retire is gated on a queue value that covers the copy.
+        for (const FGPUAllocation& Staging : OwnedStaging)
+        {
+            Retire(Staging);
+        }
+    }
+
     namespace Upload
     {
         void Initialize()
@@ -483,6 +511,17 @@ namespace Lumina::RHI
                 const bool bWritesBuffer  = (Op.Type == EUploadOp::Buffer);
 
                 FFlushTarget& T = (bSplit && bWritesBuffer) ? Targets[0] : Targets[1];
+
+                // In-place updates overwrite what the previous frame may still be reading on this queue.
+                if (!T.bAny)
+                {
+                    RHI::CmdBarrier(T.CL,
+                        RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader |
+                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer,
+                        RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::DepthStencilWrite | RHI::EAccessFlags::TransferWrite,
+                        RHI::EStageFlags::Transfer,
+                        RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+                }
                 T.bAny = true;
 
                 if (Op.Slice != kNoSlice)
@@ -564,8 +603,10 @@ namespace Lumina::RHI
                 }
                 RHI::CmdBarrier(Targets[i].CL,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                    RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer,
-                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
+                    RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer |
+                    RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead |
+                    RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::DepthStencilRead | RHI::EAccessFlags::DepthStencilWrite);
                 Result |= (1u << i);
             }
             

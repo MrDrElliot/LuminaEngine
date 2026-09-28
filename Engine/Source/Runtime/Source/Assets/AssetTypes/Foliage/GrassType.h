@@ -59,8 +59,8 @@ namespace Lumina
          * Chunks are scattered when they come within this distance of the camera and released when they
          * leave, so this bounds both the draw distance and the resident instance count.
          */
-        PROPERTY(Editable, Category = "Rendering", ClampMin = 1.0f, NoDrag, Delta = 256.0f)
-        float CullDistance = 8192.0f;
+        PROPERTY(Editable, Category = "Rendering", ClampMin = 1.0f, NoDrag, Delta = 1.0f)
+        float CullDistance = 60.0f;
 
         PROPERTY(Editable, Category = "Rendering")
         bool bCastShadow = false;

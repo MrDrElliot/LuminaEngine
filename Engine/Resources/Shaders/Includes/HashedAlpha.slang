@@ -30,6 +30,9 @@ float HashedAlpha_Hash3D(float3 V)
 // The cutoff this pixel compares Opacity against. Pixel lanes only, since it needs a quad.
 float HashedAlphaThreshold(float3 Anchor, float ViewDistance, float Cutoff)
 {
+    // Ahead of the early-out, because a quad straddling the fade start would otherwise differentiate with lanes gone.
+    const float MaxDeriv = max(length(ddx(Anchor)), length(ddy(Anchor)));
+
     const float Fade = saturate((ViewDistance - kHashFadeStart) / max(kHashFadeEnd - kHashFadeStart, 1e-4));
     if (Fade <= 0.0)
     {
@@ -37,7 +40,6 @@ float HashedAlphaThreshold(float3 Anchor, float ViewDistance, float Cutoff)
     }
 
     // Cell sized to the pixel footprint, so the grain stays constant on screen as the surface recedes.
-    const float MaxDeriv = max(length(ddx(Anchor)), length(ddy(Anchor)));
     const float PixScale = 1.0 / max(kHashScale * MaxDeriv, 1e-8);
 
     // Two power-of-two cell sizes, blended, so the grain does not visibly step as the surface moves.

@@ -15,6 +15,7 @@
 #include "MCPMaterialTools.h"
 #include "MCPParticleTools.h"
 #include "MCPPrefabTools.h"
+#include "MCPProfilerTools.h"
 #include "MCPSceneTools.h"
 
 namespace Lumina::MCP
@@ -110,6 +111,7 @@ namespace Lumina::MCP
         RegisterDataTableTools(GOwner);
         RegisterPrefabTools(GOwner);
         RegisterEditorSessionTools(GOwner);
+        RegisterProfilerTools(GOwner);
 
         Http::FServerParams Params;
         Params.Port = Settings.Port;

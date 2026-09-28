@@ -33,6 +33,9 @@ static const uint PARTICLE_EVENT_COLLISION  = 1u;
 static const uint PARTICLE_EVENT_CONTINUOUS = 2u;
 static const uint PARTICLE_NO_EVENT_LIST    = 0xFFFFFFFFu;
 
+// Speed a particle spawned along its parent's collision normal moves at, which is only there to carry the direction.
+static const float PARTICLE_SURFACE_NORMAL_SPEED = 0.001;
+
 // Must match EParticleEmitFlags.
 static const uint PARTICLE_EMIT_POSITION = 1u << 0;
 static const uint PARTICLE_EMIT_VELOCITY = 1u << 1;
@@ -101,7 +104,7 @@ struct FParticleEvent
 {
     float4  PositionSize;        // xyz position, w size
     float4  VelocityFlags;       // xyz velocity, w PARTICLE_EMIT flags as float bits
-    float4  Color;
+    float4  Extra;               // a script emit's color, or a collision's surface normal in xyz and impact speed in w
 };
 
 // Attractor or collider volume with unit axes, its scale folded into Extent.
@@ -195,8 +198,28 @@ void RaiseParticleEvent(uint List, FGPUParticle P)
         FParticleEvent Event;
         Event.PositionSize  = float4(P.Position, P.Size);
         Event.VelocityFlags = float4(P.Velocity, 0.0);
-        Event.Color         = P.Color;
+        Event.Extra         = P.Color;
         SpanSet(&SimArgs().OwnEvents, List * PARTICLE_EVENT_CAPACITY + Slot, Event);
+    }
+}
+
+// A contact carries the surface it met and how hard, for sub-emitters that lie on it and scripts that read hits back.
+void RaiseParticleCollision(FGPUParticle P, float3 Normal, float ImpactSpeed)
+{
+    if ((SimParams().EventInfo.x & (1u << PARTICLE_EVENT_COLLISION)) == 0u)
+    {
+        return;
+    }
+
+    uint Slot;
+    InterlockedAdd(SpanAt(&SimArgs().OwnEventCounts, PARTICLE_EVENT_COLLISION)[0], 1u, Slot);
+    if (Slot < PARTICLE_EVENT_CAPACITY)
+    {
+        FParticleEvent Event;
+        Event.PositionSize  = float4(P.Position, P.Size);
+        Event.VelocityFlags = float4(P.Velocity, 0.0);
+        Event.Extra         = float4(Normal, ImpactSpeed);
+        SpanSet(&SimArgs().OwnEvents, PARTICLE_EVENT_COLLISION * PARTICLE_EVENT_CAPACITY + Slot, Event);
     }
 }
 
@@ -293,9 +316,10 @@ void ReflectOffSurface(inout float3 Velocity, float3 Normal, float Restitution, 
 }
 
 // Pushes a particle of the given Radius out of every collider volume and terrain. Returns true on contact.
-bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Restitution, float Friction, float Radius, bool bTerrain)
+bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Restitution, float Friction, float Radius, bool bTerrain, out float3 HitNormal)
 {
     bool bHit = false;
+    HitNormal = float3(0.0, 1.0, 0.0);
 
     const uint ColliderCount = SimArgs().Colliders.Count;
     for (uint Index = 0u; Index < ColliderCount; ++Index)
@@ -346,6 +370,7 @@ bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Resti
         const float3 Normal = ShapeToWorldDir(Shape, LocalNormal);
         Position = Shape.Center.xyz + ShapeToWorldDir(Shape, Local);
         ReflectOffSurface(Velocity, Normal, Restitution, Friction);
+        HitNormal = Normal;
         bHit = true;
     }
 
@@ -368,10 +393,17 @@ bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Resti
         const float3 Normal = normalize(SampleTexture2DLevel(Terrain.Textures.y, SAMPLER_LINEAR_CLAMP, UV, 0.0).xyz * 2.0 - 1.0);
         Position.y = Ground + Radius;
         ReflectOffSurface(Velocity, Normal, Restitution, Friction);
+        HitNormal = Normal;
         bHit = true;
     }
 
     return bHit;
+}
+
+bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Restitution, float Friction, float Radius, bool bTerrain)
+{
+    float3 HitNormal;
+    return CollideWithShapes(Position, Velocity, Restitution, Friction, Radius, bTerrain, HitNormal);
 }
 
 // Module parameter slot accessor. Generated module code indexes this instead of embedding literals, so
@@ -484,8 +516,9 @@ float3 RandDirectionInCone(inout uint state, float3 forward, float3 right, float
 }
 
 // Reads the opaque depth buffer, so only surfaces the camera sees collide. Returns true on contact.
-bool CollideWithSceneDepth(inout float3 Position, inout float3 Velocity, float DeltaTime, float Restitution, float Friction, float Thickness)
+bool CollideWithSceneDepth(inout float3 Position, inout float3 Velocity, float DeltaTime, float Restitution, float Friction, float Thickness, out float3 HitNormal)
 {
+    HitNormal = float3(0.0, 1.0, 0.0);
     const uint DepthIndex = Scene().SceneDepthIndex;
     if (DepthIndex == 0xFFFFFFFFu)
     {
@@ -540,7 +573,14 @@ bool CollideWithSceneDepth(inout float3 Position, inout float3 Velocity, float D
     }
 
     Position = mul(GetInverseCameraView(), float4(SurfaceP, 1.0)).xyz + Normal * 0.02;
+    HitNormal = Normal;
     return true;
+}
+
+bool CollideWithSceneDepth(inout float3 Position, inout float3 Velocity, float DeltaTime, float Restitution, float Friction, float Thickness)
+{
+    float3 HitNormal;
+    return CollideWithSceneDepth(Position, Velocity, DeltaTime, Restitution, Friction, Thickness, HitNormal);
 }
 
 // Emitter-local offset or velocity to world, x along right, y along up and z along forward.
