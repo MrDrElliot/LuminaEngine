@@ -118,6 +118,28 @@ public static class Mathf
         return MoveTowards(Current, Current + Delta, MaxDelta);
     }
 
+    // Degree twins of the above, for yaw and pitch, which gameplay keeps in degrees.
+    public static float DeltaAngleDegrees(float Current, float Target)
+    {
+        float Delta = Repeat(Target - Current, 360.0f);
+        return Delta > 180.0f ? Delta - 360.0f : Delta;
+    }
+
+    public static float LerpAngleDegrees(float A, float B, float T)
+    {
+        return A + DeltaAngleDegrees(A, B) * Clamp01(T);
+    }
+
+    public static float MoveTowardsAngleDegrees(float Current, float Target, float MaxDelta)
+    {
+        float Delta = DeltaAngleDegrees(Current, Target);
+        if (-MaxDelta < Delta && Delta < MaxDelta)
+        {
+            return Target;
+        }
+        return MoveTowards(Current, Current + Delta, MaxDelta);
+    }
+
     // Relative-tolerance compare scaled to magnitude (Unity-style).
     public static bool Approximately(float A, float B)
     {
