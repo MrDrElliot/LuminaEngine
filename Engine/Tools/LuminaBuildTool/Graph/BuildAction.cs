@@ -54,6 +54,9 @@ public sealed class BuildAction
     /// <summary>Files that must exist and be older than the outputs for the action to be skipped.</summary>
     public List<FileItem> PrerequisiteItems { get; } = new();
 
+    // Re-lists inputs another action may create mid-build, called before the pre-run recheck.
+    public Func<IEnumerable<FileItem>>? DiscoverLatePrerequisites { get; set; }
+
     /// <summary>Files the action always writes.</summary>
     public List<FileItem> ProducedItems { get; } = new();
 

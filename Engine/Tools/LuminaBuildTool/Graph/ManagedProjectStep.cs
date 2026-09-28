@@ -61,6 +61,9 @@ public static class ManagedProjectStep
                 {
                     Action.PrerequisiteItems.Add(Binding);
                 }
+
+                // A newly reflected type writes a binding file that did not exist when the graph was planned.
+                Action.DiscoverLatePrerequisites = () => EnumerateGeneratedBindings(Target, Project);
             }
 
             Action.ProducedItems.Add(FileItem.Get(Project.OutputAssembly));
