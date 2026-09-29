@@ -534,7 +534,6 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Material GBuffer Pass", tracy::Color::Red);
         SCENE_GPU_SCOPE(CL, "Material GBuffer");
 
-        const FFrameData& Frame  = *RenderFrame;
         const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
 
         const RHI::FGPUAllocation Classify  = GetMaterialClassify();

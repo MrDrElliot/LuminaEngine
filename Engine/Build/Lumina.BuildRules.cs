@@ -215,9 +215,11 @@ public abstract class LuminaTargetRules : TargetRules
                 CompilerWarning.Comment,                 // a // comment continued by a trailing backslash
                 CompilerWarning.ExtraSemi,               // a semicolon that declares nothing
                 CompilerWarning.SignCompare,             // a signed and an unsigned value compared directly
-                CompilerWarning.UnusedVariable,
-                CompilerWarning.UnusedButSetVariable,
                 CompilerWarning.UnusedFunction);
+
+            Warnings.Set(WarningSeverity.Warning,
+                CompilerWarning.UnusedVariable,
+                CompilerWarning.UnusedButSetVariable);
         }
     }
 }

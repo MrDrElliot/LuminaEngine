@@ -46,8 +46,8 @@ public static class LinuxToolchainLocator
 
     private static readonly (CompilerFamily Family, string Cxx, string Cc)[] Candidates =
     {
-        (CompilerFamily.Clang, "clang++", "clang"),
         (CompilerFamily.Gcc, "g++", "gcc"),
+        (CompilerFamily.Clang, "clang++", "clang"),
     };
 
     public static UnixToolchainInstallation Locate()

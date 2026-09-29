@@ -301,8 +301,7 @@ namespace Lumina
             }
             else
             {
-                ImGui::Text(LE_ICON_FLASH " %llu bound (%llu native, %llu script)",
-                    (uint64)Total, (uint64)(Total - Managed), (uint64)Managed);
+                ImGuiX::Text(LE_ICON_FLASH " {} bound ({} native, {} script)", Total, (Total - Managed), Managed);
             }
             return EPropertyChangeOp::None;
         }
