@@ -700,7 +700,7 @@ namespace Lumina
         FVector3 InheritedVelocity(0.0f);
         if (PhysicsScene)
         {
-            if (const SRigidBodyComponent* RB = EntityRegistry.TryGet<SRigidBodyComponent>(Entity))
+            if (EntityRegistry.TryGet<SRigidBodyComponent>(Entity) != nullptr)
             {
                 if (PhysicsScene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
                 {

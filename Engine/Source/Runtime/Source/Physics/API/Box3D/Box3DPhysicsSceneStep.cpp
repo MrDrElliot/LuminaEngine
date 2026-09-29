@@ -396,7 +396,6 @@ namespace Lumina::Physics
                 continue;
             }
 
-            SRigidBodyComponent& BodyComponent = RigidStorage.Get(Entity);
             const FVector3 NewPosition = Box3DUtils::FromB3Vec3(Event.transform.p);
             const FQuat NewRotation = Box3DUtils::FromB3Quat(Event.transform.q);
 

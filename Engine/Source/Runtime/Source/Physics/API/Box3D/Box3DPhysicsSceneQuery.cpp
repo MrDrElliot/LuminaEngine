@@ -78,7 +78,6 @@ namespace Lumina::Physics
             FQueryContext& Query = *static_cast<FQueryContext*>(Context);
 
             const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
-            const uint32 Handle = HandleOfBody(BodyId);
             if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
             {
                 return -1.0f;
@@ -97,7 +96,6 @@ namespace Lumina::Physics
             FQueryContext& Query = *static_cast<FQueryContext*>(Context);
 
             const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
-            const uint32 Handle = HandleOfBody(BodyId);
             if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
             {
                 return -1.0f;
@@ -115,7 +113,6 @@ namespace Lumina::Physics
 
             const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
             void* UserData = b3Body_IsValid(BodyId) ? b3Body_GetUserData(BodyId) : nullptr;
-            const uint32 Handle = UnpackHandle(UserData);
 
             if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
             {
