@@ -302,7 +302,7 @@ namespace Lumina
             else
             {
                 ImGui::Text(LE_ICON_FLASH " %llu bound (%llu native, %llu script)",
-                    (uint64)Total, (uint64)(Total - Managed), (uint64)Managed);
+                    (unsigned long long)Total, (unsigned long long)(Total - Managed), (unsigned long long)Managed);
             }
             return EPropertyChangeOp::None;
         }

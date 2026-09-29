@@ -1445,13 +1445,13 @@ namespace Lumina
                 const bool bLogTimings = CVarNavTimings.GetValue();
                 Task::AsyncTask(1, 1, [Job, Tiles = std::move(TilesCopy), InitOrigin, InitTileSize, InitMaxTiles, InitMaxPolys, bLogTimings](uint32, uint32, uint32) mutable
                 {
-                    const int32 TileCount = (int32)Tiles.size();
+                    const int32 NumHydratedTiles = (int32)Tiles.size();
                     PlatformTime::FStopwatch Watch;
                     auto Mesh = MakeUnique<FNavMesh>();
                     Mesh->Initialize(InitOrigin, InitTileSize, InitMaxTiles, InitMaxPolys, std::move(Tiles));
                     if (bLogTimings)
                     {
-                        LOG_INFO("NavTiming hydrate: {} tiles, maxTiles={}, {:.1f} ms.", TileCount, InitMaxTiles, Watch.ElapsedMilliseconds());
+                        LOG_INFO("NavTiming hydrate: {} tiles, maxTiles={}, {:.1f} ms.", NumHydratedTiles, InitMaxTiles, Watch.ElapsedMilliseconds());
                     }
                     Job->ResultMesh = std::move(Mesh);
                     Job->bDone.store(true, std::memory_order_release);

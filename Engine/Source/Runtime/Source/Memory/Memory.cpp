@@ -87,8 +87,8 @@ namespace Lumina
 
     bool Memory::DumpAllocatorStatistics(const char* Path)
     {
-        FILE* File = nullptr;
-        if (fopen_s(&File, Path, "w") != 0 || File == nullptr)
+        FILE* File = std::fopen(Path, "w");
+        if (File == nullptr)
         {
             return false;
         }
