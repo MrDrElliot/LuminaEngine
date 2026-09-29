@@ -75,11 +75,11 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     // FEngine::LoadProject mounts and starts itself. Only a packaged game has paks to mount.
     if (!Parsed.Has("project"))
     {
-        FCoreDelegates::OnPreEngineInit.AddLambda([]
+        (void)FCoreDelegates::OnPreEngineInit.AddLambda([]
         {
             GEngine->MountCookedRuntime();
         });
-        FCoreDelegates::OnPostEngineInit.AddLambda([]
+        (void)FCoreDelegates::OnPostEngineInit.AddLambda([]
         {
             GEngine->StartCookedGame();
         });

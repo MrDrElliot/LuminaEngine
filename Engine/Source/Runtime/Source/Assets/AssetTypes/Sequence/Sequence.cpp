@@ -739,7 +739,7 @@ namespace Lumina
             }
         }
 
-        std::stable_sort(Ordered.begin(), Ordered.end(), [](const CSequenceTrack* A, const CSequenceTrack* B)
+        Algo::StableSort(Ordered.begin(), Ordered.end(), [](const CSequenceTrack* A, const CSequenceTrack* B)
         {
             return A->GetEvaluationOrder() < B->GetEvaluationOrder();
         });

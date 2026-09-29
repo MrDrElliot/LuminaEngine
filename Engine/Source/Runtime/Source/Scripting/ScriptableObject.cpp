@@ -427,8 +427,6 @@ namespace Lumina
                         const uint32 Count = Scripting::AppendScriptPropertiesToClass(Minted, Schema);
                         if (Count > 0)
                         {
-                            LOG_DISPLAY("Scriptable '{}': appended {} script propert{} to the minted class.",
-                                Desc->TypeName.c_str(), Count, Count == 1 ? "y" : "ies");
                             NeedDefaults.push_back(Minted);
                         }
                     }
@@ -466,7 +464,7 @@ namespace Lumina
             DotNet::ApplyScriptableDefaults(Minted->GetName().ToString(), DefaultObject);
         }
 
-        // LAST, because a replacement has to be linked and hold a default object before an instance can be
+        // last, because a replacement has to be linked and hold a default object before an instance can be
         // built on it. Every holder is reached through the reflected graph and the registered providers, so
         // nothing here knows what was pointing at the old classes.
         FObjectReinstancer Reinstancer;
