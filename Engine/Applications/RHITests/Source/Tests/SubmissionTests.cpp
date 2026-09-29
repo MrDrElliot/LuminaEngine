@@ -83,7 +83,7 @@ namespace Lumina::RHITests
     {
         if (!RHI::SupportsAsyncCompute())
         {
-            LOG_INFO("             (no async compute queue on this device -- nothing to exercise)");
+            LOG_INFO("(no async compute queue on this device -- nothing to exercise)");
             return;
         }
 
@@ -102,7 +102,7 @@ namespace Lumina::RHITests
     {
         if (!RHI::SupportsAsyncTransfer())
         {
-            LOG_INFO("             (no async transfer queue on this device -- nothing to exercise)");
+            LOG_INFO("(no async transfer queue on this device -- nothing to exercise)");
             return;
         }
 

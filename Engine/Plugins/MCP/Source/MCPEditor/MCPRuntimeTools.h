@@ -274,6 +274,74 @@ namespace Lumina
         FString Map;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SSettingsParams
+    {
+        GENERATED_BODY()
+
+        // A settings class such as RendererSettings, matched by class or display name. Empty lists every class.
+        PROPERTY()
+        FString Class;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSettingsClassInfo
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        FString DisplayName;
+
+        PROPERTY()
+        FString ConfigFile;
+
+        // Every field as JSON, only filled when a single class was asked for.
+        PROPERTY()
+        FString Values;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSettingsResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        TVector<SSettingsClassInfo> Classes;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSetSettingParams
+    {
+        GENERATED_BODY()
+
+        // A settings class such as RendererSettings, matched by class or display name.
+        PROPERTY()
+        FString Class;
+
+        // The field to change, dotted for nested structs.
+        PROPERTY()
+        FString Path;
+
+        // The new value as JSON, so strings and enum names need quotes.
+        PROPERTY()
+        FString Value;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSetSettingResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Previous;
+
+        PROPERTY()
+        FString Current;
+    };
+
     namespace MCP
     {
         // Frame timing, memory and level travel for exercising a running game.

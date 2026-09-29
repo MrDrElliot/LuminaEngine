@@ -4,6 +4,7 @@
 #include "Audio/AudioGlobals.h"
 #include "Containers/StringFormat.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Engine/Engine.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
@@ -16,7 +17,6 @@ namespace Lumina::MovieCapture
     namespace
     {
         constexpr const char* FixedDeltaVariable = "Core.FixedDeltaTime";
-        constexpr const char* MaxFpsVariable = "Core.MaxFPS";
 
         struct FState
         {
@@ -26,7 +26,7 @@ namespace Lumina::MovieCapture
             uint32        WarmupRemaining = 0;
             bool          bStartedCallback = false;
             FString       PreviousFixedDelta;
-            FString       PreviousMaxFps;
+            int32         PreviousFrameRateCap = -1;
             TVector<uint8> Source;
             TVector<uint8> Frame;
 
@@ -168,7 +168,10 @@ namespace Lumina::MovieCapture
             S.WavSamples.shrink_to_fit();
 
             WriteVariable(FixedDeltaVariable, S.PreviousFixedDelta.empty() ? FString("0") : S.PreviousFixedDelta);
-            WriteVariable(MaxFpsVariable, S.PreviousMaxFps);
+            if (GEngine != nullptr)
+            {
+                GEngine->SetFrameRateCapOverride(S.PreviousFrameRateCap);
+            }
 
             S.Status.bActive = false;
             S.Status.bFinished = true;
@@ -246,9 +249,12 @@ namespace Lumina::MovieCapture
 
         // Every frame advances the game by exactly one video frame, however long it takes to draw and encode.
         S.PreviousFixedDelta = ReadVariable(FixedDeltaVariable);
-        S.PreviousMaxFps = ReadVariable(MaxFpsVariable);
         FConsoleRegistry::Get().SetValueFromString(FixedDeltaVariable, Lumina::Format("{}", 1.0 / (double)Settings.FrameRate));
-        FConsoleRegistry::Get().SetValueFromString(MaxFpsVariable, "0");
+        if (GEngine != nullptr)
+        {
+            S.PreviousFrameRateCap = GEngine->GetFrameRateCapOverride();
+            GEngine->SetFrameRateCapOverride(0);
+        }
 
         S.Settings = Move(Settings);
         return true;

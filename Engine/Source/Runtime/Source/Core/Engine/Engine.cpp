@@ -78,7 +78,6 @@ namespace Lumina
 
     static FUIntVector2 EngineViewportSize = FUIntVector2(0, 0);
 
-    static TConsoleVar CVarMaxFrameRate("Core.MaxFPS", 165, "Changes the maximum frame-rate of your engine");
 
     // Offline rendering steps the game a fixed amount per frame however long each frame takes to draw.
     static TConsoleVar CVarFixedDeltaTime("Core.FixedDeltaTime", 0.0f, "Seconds every frame advances the game by, whatever it took to draw; 0 uses the real frame time");
@@ -507,6 +506,11 @@ namespace Lumina
         return false;
     }
 
+    int32 FEngine::GetMaxFrameRate() const
+    {
+        return FrameRateCapOverride >= 0 ? FrameRateCapOverride : GetDefault<CRendererSettings>()->MaxFPS;
+    }
+
     void FEngine::MarkLoopStart()
     {
         const double Now = PlatformTime::Seconds();
@@ -692,7 +696,7 @@ namespace Lumina
 
         UpdateContext.MarkFrameEnd(PlatformTime::Seconds());
 
-        int32 MaxFrameRate = CVarMaxFrameRate.GetValue();
+        int32 MaxFrameRate = GetMaxFrameRate();
         
         if (!GIsHeadless && Windowing::GetPrimaryWindowHandle()->IsWindowMinimized())
         {

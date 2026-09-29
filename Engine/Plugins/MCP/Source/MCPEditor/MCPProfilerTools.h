@@ -29,7 +29,7 @@ namespace Lumina
         PROPERTY()
         bool bSelfTime = false;
 
-        // Lifts Core.MaxFPS for the capture and puts it back after, so the frame time shows the real cost rather than the cap.
+        // Lifts the frame rate cap for the capture and puts it back after, so the frame time shows the real cost rather than the cap.
         PROPERTY()
         bool bUncapFrameRate = true;
     };
@@ -104,6 +104,11 @@ namespace Lumina
         PROPERTY()
         int32 Frames = 0;
 
+        // Wall-clock time from one frame to the next, which is what the frame rate follows.
+        PROPERTY()
+        float PeriodMs = 0.0f;
+
+        // Time inside the frame zone, which leaves out the GPU fence wait that runs between frames.
         PROPERTY()
         float FrameMs = 0.0f;
 

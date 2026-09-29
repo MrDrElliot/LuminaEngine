@@ -158,16 +158,15 @@ namespace Lumina::Benchmark
 
         GState.bStarted = true;
 
-        const FString Cap = Format("{}", GState.FrameRateCap);
-        if (FConsoleRegistry::Get().SetValueFromString(FStringView("Core.MaxFPS"),
-                FStringView(Cap.c_str(), Cap.size())))
+        if (GEngine != nullptr)
         {
-            LOG_DISPLAY("Benchmark: Core.MaxFPS set to {}{}", GState.FrameRateCap,
+            GEngine->SetFrameRateCapOverride(GState.FrameRateCap);
+            LOG_DISPLAY("Benchmark: frame rate cap set to {}{}", GState.FrameRateCap,
                 GState.FrameRateCap == 0 ? FString(" (uncapped)") : FString());
         }
         else
         {
-            LOG_WARN("Benchmark: could not clear Core.MaxFPS, so the run measures the frame rate cap.");
+            LOG_WARN("Benchmark: no engine to set the frame rate cap on, so the run measures the saved cap.");
         }
 
         if (GState.Map.empty() || GEngine == nullptr)

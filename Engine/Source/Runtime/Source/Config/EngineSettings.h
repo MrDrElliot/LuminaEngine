@@ -247,6 +247,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Display")
         EPresentMode PresentMode = EPresentMode::FIFO;
 
+        // Frames per second the engine paces itself to, where 0 runs uncapped.
+        PROPERTY(Editable, Category = "Display", ClampMin = 0, ClampMax = 1000)
+        int32 MaxFPS = 0;
+
         void PostInitSettings() override;
 
         // Pushes PresentMode to the RHI, rebuilding the primary swapchain if one already exists.

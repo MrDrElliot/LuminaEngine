@@ -588,6 +588,12 @@ namespace Lumina::RHI
     };
 #endif
 
+    struct FPresentSync
+    {
+        VkSemaphore Semaphore = VK_NULL_HANDLE;
+        VkFence     Fence     = VK_NULL_HANDLE;
+    };
+
     struct FSwapchain
     {
         VkSurfaceKHR            Surface;
@@ -595,9 +601,9 @@ namespace Lumina::RHI
         FUIntVector2           Extent;
         TVector<FTextureH>     Images;             // external FTextures (one per swapchain image)
         TVector<VkSemaphore>   AcquireSemaphores;  // binary, ring
-        TVector<VkSemaphore>   PresentSemaphores;  // binary, one per image
-        TVector<VkFence>       PresentFences;      // one per image, empty without swapchain maintenance1
-        TVector<uint8>         PresentFenceInFlight;
+        TVector<VkSemaphore>   PresentSemaphores;  // binary, one per image, only without swapchain maintenance1
+        TVector<FPresentSync>  PresentSyncFree;    // with maintenance1, pairs whose present has finished
+        TVector<FPresentSync>  PresentSyncInFlight;
         uint32                 AcquireIndex;
         uint32                 CurrentImageIndex;
         VkSemaphore            CurrentAcquire;
@@ -5309,6 +5315,7 @@ namespace Lumina::RHI
 
         const VkFormat Format = VK_FORMAT_B8G8R8A8_UNORM;
 
+
         VkSwapchainCreateInfoKHR Info
         {
             .sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -5360,21 +5367,13 @@ namespace Lumina::RHI
             }));
         }
 
-        // One present semaphore per image, and a small ring of acquire semaphores.
+        // Maintenance1 pools its present semaphores on demand, so only the fallback needs one per image.
         const uint32 AcquireCount = Math::Max((uint32)kFramesInFlight, Count);
-        SC.PresentSemaphores.resize(Count);
+        SC.PresentSemaphores.resize(GDevice->bSwapchainMaintenance1 ? 0 : Count);
         SC.AcquireSemaphores.resize(AcquireCount);
 
-        if (GDevice->bSwapchainMaintenance1)
-        {
-            SC.PresentFences.resize(Count);
-            SC.PresentFenceInFlight.assign(Count, 0);
-            const VkFenceCreateInfo FenceInfo { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-            for (uint32 i = 0; i < Count; ++i) { VK_CHECK(vkCreateFence(*GDevice, &FenceInfo, nullptr, &SC.PresentFences[i])); }
-        }
-
         const VkSemaphoreCreateInfo SemInfo { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-        for (uint32 i = 0; i < Count; ++i)        { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &SC.PresentSemaphores[i])); }
+        for (VkSemaphore& Semaphore : SC.PresentSemaphores) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &Semaphore)); }
         for (uint32 i = 0; i < AcquireCount; ++i) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &SC.AcquireSemaphores[i])); }
 
         return true;
@@ -5384,12 +5383,9 @@ namespace Lumina::RHI
     static void WaitSwapchainPresents(FSwapchain& SC)
     {
         TVector<VkFence> Pending;
-        for (size_t i = 0; i < SC.PresentFences.size(); ++i)
+        for (const FPresentSync& Sync : SC.PresentSyncInFlight)
         {
-            if (SC.PresentFenceInFlight[i] != 0)
-            {
-                Pending.push_back(SC.PresentFences[i]);
-            }
+            Pending.push_back(Sync.Fence);
         }
 
         if (!Pending.empty())
@@ -5398,7 +5394,55 @@ namespace Lumina::RHI
             vkResetFences(*GDevice, (uint32)Pending.size(), Pending.data());
         }
 
-        for (uint8& InFlight : SC.PresentFenceInFlight) { InFlight = 0; }
+        SC.PresentSyncFree.insert(SC.PresentSyncFree.end(), SC.PresentSyncInFlight.begin(), SC.PresentSyncInFlight.end());
+        SC.PresentSyncInFlight.clear();
+    }
+
+    // Presents in flight beyond this are waited on rather than pooled, which bounds a surface that stops presenting.
+    constexpr size_t kMaxPresentsInFlight = 16;
+
+    // Recycles pairs whose present has finished, so a present never waits on an earlier present of the same image.
+    static FPresentSync TakePresentSync(FSwapchain& SC)
+    {
+        if (SC.PresentSyncInFlight.size() >= kMaxPresentsInFlight)
+        {
+            LUMINA_PROFILE_SECTION("Present Pool Wait");
+            TVector<VkFence> Pending;
+            for (const FPresentSync& Sync : SC.PresentSyncInFlight)
+            {
+                Pending.push_back(Sync.Fence);
+            }
+            vkWaitForFences(*GDevice, (uint32)Pending.size(), Pending.data(), VK_FALSE, UINT64_MAX);
+        }
+
+        for (size_t i = 0; i < SC.PresentSyncInFlight.size();)
+        {
+            FPresentSync& Sync = SC.PresentSyncInFlight[i];
+            if (vkGetFenceStatus(*GDevice, Sync.Fence) != VK_SUCCESS)
+            {
+                ++i;
+                continue;
+            }
+
+            vkResetFences(*GDevice, 1, &Sync.Fence);
+            SC.PresentSyncFree.push_back(Sync);
+            Sync = SC.PresentSyncInFlight.back();
+            SC.PresentSyncInFlight.pop_back();
+        }
+
+        if (!SC.PresentSyncFree.empty())
+        {
+            const FPresentSync Sync = SC.PresentSyncFree.back();
+            SC.PresentSyncFree.pop_back();
+            return Sync;
+        }
+
+        FPresentSync Sync;
+        const VkSemaphoreCreateInfo SemInfo { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+        const VkFenceCreateInfo FenceInfo { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &Sync.Semaphore));
+        VK_CHECK(vkCreateFence(*GDevice, &FenceInfo, nullptr, &Sync.Fence));
+        return Sync;
     }
 
     static void DestroySwapchainImages(FSwapchain& SC)
@@ -5410,12 +5454,21 @@ namespace Lumina::RHI
         SC.Images.clear();
 
         WaitSwapchainPresents(SC);
-        for (VkFence Fence : SC.PresentFences) { vkDestroyFence(*GDevice, Fence, nullptr); }
-        SC.PresentFences.clear();
-        SC.PresentFenceInFlight.clear();
+        for (const FPresentSync& Sync : SC.PresentSyncFree)
+        {
+            vkDestroySemaphore(*GDevice, Sync.Semaphore, nullptr);
+            vkDestroyFence(*GDevice, Sync.Fence, nullptr);
+        }
+        SC.PresentSyncFree.clear();
 
-        for (VkSemaphore Semaphore : SC.PresentSemaphores) { vkDestroySemaphore(*GDevice, Semaphore, nullptr); }
-        for (VkSemaphore Semaphore : SC.AcquireSemaphores) { vkDestroySemaphore(*GDevice, Semaphore, nullptr); }
+        for (VkSemaphore Semaphore : SC.PresentSemaphores)
+        {
+            vkDestroySemaphore(*GDevice, Semaphore, nullptr);
+        }
+        for (VkSemaphore Semaphore : SC.AcquireSemaphores)
+        {
+            vkDestroySemaphore(*GDevice, Semaphore, nullptr);
+        }
         SC.PresentSemaphores.clear();
         SC.AcquireSemaphores.clear();
     }
@@ -5713,7 +5766,11 @@ namespace Lumina::RHI
 
         vkEndCommandBuffer(CL.CommandBuffer);
 
-        VkSemaphore PresentSem = SC.PresentSemaphores[SC.CurrentImageIndex];
+        const FPresentSync Sync = GDevice->bSwapchainMaintenance1
+            ? TakePresentSync(SC)
+            : FPresentSync{ SC.PresentSemaphores[SC.CurrentImageIndex], VK_NULL_HANDLE };
+        const VkSemaphore PresentSem = Sync.Semaphore;
+        const VkFence PresentFence = Sync.Fence;
 
         // Present submits and presents on the graphics queue, so it takes that queue's lock.
         FScopeLock SubmitLock(QueueLockFor(EQueueType::Graphics));
@@ -5774,17 +5831,6 @@ namespace Lumina::RHI
         VkQueue GraphicsQueue = GDevice->Queues[(uint32)EQueueType::Graphics];
         VK_CHECK(vkQueueSubmit2(GraphicsQueue, 1, &Submit, VK_NULL_HANDLE));
 
-        VkFence PresentFence = VK_NULL_HANDLE;
-        if (!SC.PresentFences.empty())
-        {
-            PresentFence = SC.PresentFences[SC.CurrentImageIndex];
-            if (SC.PresentFenceInFlight[SC.CurrentImageIndex] != 0)
-            {
-                vkWaitForFences(*GDevice, 1, &PresentFence, VK_TRUE, UINT64_MAX);
-                vkResetFences(*GDevice, 1, &PresentFence);
-            }
-        }
-
         const VkSwapchainPresentFenceInfoKHR PresentFenceInfo
         {
             .sType          = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR,
@@ -5806,9 +5852,10 @@ namespace Lumina::RHI
         };
 
         const VkResult Result = vkQueuePresentKHR(GraphicsQueue, &PresentInfo);
-        if (PresentFence != VK_NULL_HANDLE && Result != VK_ERROR_OUT_OF_DATE_KHR)
+        if (PresentFence != VK_NULL_HANDLE)
         {
-            SC.PresentFenceInFlight[SC.CurrentImageIndex] = 1;
+            // An out-of-date present is taken not to signal its fence, so that pair goes straight back to the pool.
+            (Result == VK_ERROR_OUT_OF_DATE_KHR ? SC.PresentSyncFree : SC.PresentSyncInFlight).push_back(Sync);
         }
         return Result == VK_SUCCESS;
     }

@@ -1,6 +1,9 @@
 #include "MCPRuntimeTools.h"
 
+#include "Agent/AgentObjectEdit.h"
+#include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
+#include "Config/Config.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Engine/EngineURL.h"
@@ -192,6 +195,98 @@ namespace Lumina::MCP
         }
     }
 
+    static CClass* FindSettingsClass(FStringView Wanted)
+    {
+        CClass* Found = nullptr;
+        GConfig->ForEachSettingsClass([&](CClass* Class)
+        {
+            const FString Name(Class->GetName().ToString().c_str());
+            const FString Display = Class->HasMeta("DisplayName") ? Class->GetMeta("DisplayName") : FString();
+            const FStringView Bare = FStringView(Name).starts_with('C') ? FStringView(Name).substr(1) : FStringView(Name);
+            if (Found == nullptr && (EqualsIgnoreCase(Wanted, FStringView(Name)) || EqualsIgnoreCase(Wanted, Bare)
+                || EqualsIgnoreCase(Wanted, FStringView(Display))))
+            {
+                Found = Class;
+            }
+        });
+        return Found;
+    }
+
+    static SSettingsClassInfo DescribeSettingsClass(CClass* Class)
+    {
+        SSettingsClassInfo Info;
+        Info.Name        = FString(Class->GetName().ToString().c_str());
+        Info.DisplayName = Class->HasMeta("DisplayName") ? Class->GetMeta("DisplayName") : Info.Name;
+        Info.ConfigFile  = Class->HasMeta("ConfigFile") ? Class->GetMeta("ConfigFile") : FString();
+        return Info;
+    }
+
+    static void RegisterSettingsTools(Agent::FToolRegistry& Registry, FStringView Owner)
+    {
+        Registry.Register<SSettingsParams, SSettingsResult>(
+            Owner, "settings.get",
+            "List the developer settings classes, or report every value of one of them, such as RendererSettings.",
+            Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+            [](const SSettingsParams& In, SSettingsResult& Out)
+            {
+                if (In.Class.empty())
+                {
+                    GConfig->ForEachSettingsClass([&](CClass* Class) { Out.Classes.push_back(DescribeSettingsClass(Class)); });
+                    return Agent::FToolResult::Ok(Lumina::Format("{} settings classes.", Out.Classes.size()));
+                }
+
+                CClass* Class = FindSettingsClass(FStringView(In.Class));
+                if (Class == nullptr)
+                {
+                    return Agent::FToolResult::Error(Lumina::Format("No settings class named '{}'.", In.Class));
+                }
+
+                nlohmann::json Values;
+                if (const Agent::FMarshalResult Written = Agent::WriteStruct(Class, Class->GetDefaultObject(), Values);
+                    !Written.IsValid())
+                {
+                    return Agent::FToolResult::Error(Written.Error);
+                }
+
+                SSettingsClassInfo& Info = Out.Classes.emplace_back(DescribeSettingsClass(Class));
+                Info.Values = FString(Values.dump(2).c_str());
+                return Agent::FToolResult::Ok(Lumina::Format("{} {}", Info.Name, Info.Values));
+            });
+
+        Registry.Register<SSetSettingParams, SSetSettingResult>(
+            Owner, "settings.set",
+            "Change one developer setting and save it to its config file, exactly as the Settings panel does, so it "
+            "applies live and persists.",
+            Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+            [](const SSetSettingParams& In, SSetSettingResult& Out)
+            {
+                CClass* Class = FindSettingsClass(FStringView(In.Class));
+                if (Class == nullptr)
+                {
+                    return Agent::FToolResult::Error(Lumina::Format("No settings class named '{}'.", In.Class));
+                }
+
+                const nlohmann::json Value = nlohmann::json::parse(In.Value.c_str(), nullptr, false);
+                if (Value.is_discarded())
+                {
+                    return Agent::FToolResult::Error("Value is not JSON. Strings and enum names need quotes.");
+                }
+
+                CObject* Defaults = Class->GetDefaultObject();
+                const Agent::FObjectEditResult Edit = Agent::SetObjectProperty(
+                    Class, Defaults, Defaults, FStringView(In.Path), Value, "Set Setting (agent)");
+                if (!Edit.IsValid())
+                {
+                    return Agent::FToolResult::Error(Edit.Error);
+                }
+
+                GConfig->SaveSettings(Class);
+                Out.Previous = Edit.Previous;
+                Out.Current  = Edit.Current;
+                return Agent::FToolResult::Ok(Lumina::Format("{}.{} is now {}, was {}.", Class->GetName(), In.Path, Out.Current, Out.Previous));
+            });
+    }
+
     void RegisterRuntimeTools(FStringView Owner)
     {
         Agent::FToolRegistry& Registry = Agent::FToolRegistry::Get();
@@ -241,5 +336,7 @@ namespace Lumina::MCP
                 GEngine->OpenLevel(Url);
                 return Agent::FToolResult::Ok(Lumina::Format("Opening {}.", Url.Map));
             });
+
+        RegisterSettingsTools(Registry, Owner);
     }
 }

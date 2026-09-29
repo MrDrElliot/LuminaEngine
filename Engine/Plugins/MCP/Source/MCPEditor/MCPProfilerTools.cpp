@@ -5,6 +5,7 @@
 #include "Containers/Algorithm.h"
 #include "Containers/HashTable.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Engine/Engine.h"
 #include "Core/Math/Math.h"
 #include "MCPTextMatch.h"
 #include "Paths/Paths.h"
@@ -24,7 +25,6 @@ namespace Lumina::MCP
         constexpr const char* FrameZone = "Lumina::FEngine::Update";
         constexpr const char* LimiterZone = "Frame-Rate-Limiter";
         constexpr const char* GpuWaitZone = "Frame Fence (GPU)";
-        constexpr const char* MaxFpsVariable = "Core.MaxFPS";
 
         struct FZoneTotals
         {
@@ -143,6 +143,7 @@ namespace Lumina::MCP
         {
             FString File;
             FString Failure;
+            int32 Seconds = 0;
             bool bCaptured = false;
             FThread Worker;
         };
@@ -169,19 +170,21 @@ namespace Lumina::MCP
 
             FCaptureJob* Running = Job.get();
             const int32 CaptureSeconds = (int32)Math::Ceil(Math::Clamp(Seconds, 1.0f, MaxCaptureSeconds));
+            Running->Seconds = CaptureSeconds;
             Running->Worker = FThread([Running, CaptureSeconds, bUncapFrameRate]()
             {
                 const int32 GateTimeout = Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds();
-                FString PreviousCap;
+                bool bCapLifted = false;
+                int32 PreviousCap = -1;
                 if (bUncapFrameRate)
                 {
-                    (void)Agent::FGameThreadGate::Run([&PreviousCap]()
+                    (void)Agent::FGameThreadGate::Run([&PreviousCap, &bCapLifted]()
                         {
-                            FConsoleRegistry& Registry = FConsoleRegistry::Get();
-                            if (const TOptional<FString> Current = Registry.GetValueAsString(MaxFpsVariable); Current.IsSet())
+                            if (GEngine != nullptr)
                             {
-                                PreviousCap = *Current;
-                                Registry.SetValueFromString(MaxFpsVariable, "0");
+                                PreviousCap = GEngine->GetFrameRateCapOverride();
+                                GEngine->SetFrameRateCapOverride(0);
+                                bCapLifted = true;
                             }
                         }, GateTimeout);
                 }
@@ -198,11 +201,14 @@ namespace Lumina::MCP
                     (uint32)CaptureSeconds * 1000u + 30000u);
                 Running->bCaptured = bRan && Paths::Exists(Running->File);
 
-                if (!PreviousCap.empty())
+                if (bCapLifted)
                 {
-                    (void)Agent::FGameThreadGate::Run([&PreviousCap]()
+                    (void)Agent::FGameThreadGate::Run([PreviousCap]()
                         {
-                            FConsoleRegistry::Get().SetValueFromString(MaxFpsVariable, PreviousCap);
+                            if (GEngine != nullptr)
+                            {
+                                GEngine->SetFrameRateCapOverride(PreviousCap);
+                            }
                         }, GateTimeout);
                 }
             });
@@ -265,12 +271,15 @@ namespace Lumina::MCP
             Out.MaxFrameMs = (float)(Frame->second.MaxNs / 1.0e6);
             Out.LimiterMs = MsPerFrame(Totals, LimiterZone, Out.Frames);
             Out.GpuWaitMs = MsPerFrame(Totals, GpuWaitZone, Out.Frames);
+            Out.PeriodMs = (float)(Finished->Seconds * 1000.0 / Out.Frames);
             Out.Cpu = Rank(Cpu, Out.Frames, Top, In.Filter);
             Out.Gpu = Rank(Gpu, Out.Frames, Top, In.Filter);
 
             return Agent::FToolResult::Ok(Lumina::Format(
-                "{} frames at {:.2f} ms ({:.2f} ms max), {:.2f} ms waiting on the GPU and {:.2f} ms in the frame limiter per frame. Trace saved to {}.",
-                Out.Frames, Out.FrameMs, Out.MaxFrameMs, Out.GpuWaitMs, Out.LimiterMs, Out.CaptureFile));
+                "{} frames, {:.2f} ms apart ({:.0f} fps). The frame zone took {:.2f} ms ({:.2f} ms max), with {:.2f} ms more waiting "
+                "on the GPU and {:.2f} ms in the frame limiter per frame. Trace saved to {}.",
+                Out.Frames, Out.PeriodMs, 1000.0f / Math::Max(Out.PeriodMs, 0.001f), Out.FrameMs, Out.MaxFrameMs, Out.GpuWaitMs,
+                Out.LimiterMs, Out.CaptureFile));
         }
     }
 
@@ -393,6 +402,12 @@ namespace Lumina::MCP
             if (Frames.empty())
             {
                 return Agent::FToolResult::Error("The trace recorded no whole frames.");
+            }
+
+            // A frame lasts until the next one starts, so a stall on the GPU fence outside the frame zone still counts.
+            for (size_t Slot = 0; Slot + 1 < Frames.size(); ++Slot)
+            {
+                Events[Frames[Slot]].Duration = Events[Frames[Slot + 1]].Start - Events[Frames[Slot]].Start;
             }
 
             TVector<float> Sorted;

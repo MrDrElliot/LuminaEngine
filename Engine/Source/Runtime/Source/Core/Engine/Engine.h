@@ -103,6 +103,13 @@ namespace Lumina
 
         RUNTIME_API void VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func) override;
 
+        // A tool's temporary frame rate cap, which wins over the saved setting until set back to a negative value.
+        RUNTIME_API void SetFrameRateCapOverride(int32 Cap) { FrameRateCapOverride = Cap; }
+        RUNTIME_API int32 GetFrameRateCapOverride() const { return FrameRateCapOverride; }
+
+        // The cap this frame paces to, where 0 means uncapped.
+        RUNTIME_API int32 GetMaxFrameRate() const;
+
         // A torn-down world leaves the allocator caching its memory, so it is handed back once the next level has settled.
         RUNTIME_API void ScheduleCacheTrim() { CacheTrimCountdown = kCacheTrimDelayFrames; }
 
@@ -160,6 +167,8 @@ namespace Lumina
 
         // Engine time the current level began, so a travel can report how the level it leaves ran.
         double                  LevelStartSeconds = 0.0;
+
+        int32                   FrameRateCapOverride = -1;
 
         static constexpr uint32 kCacheTrimDelayFrames = 120;
         uint32                  CacheTrimCountdown = 0;

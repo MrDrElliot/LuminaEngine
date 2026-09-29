@@ -307,19 +307,24 @@ namespace Lumina
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
+            RHI::CmdBeginMarker(CL, "Present Pass");
             SwapchainTarget.BarrierToRender(CL);
 
             #if WITH_EDITOR
             {
                 LUMINA_PROFILE_SECTION_COLORED("Editor UI", tracy::Color::SlateBlue1);
+                RHI::CmdBeginMarker(CL, "Editor UI");
                 RmlUi::RenderEditorContexts(CL);
+                RHI::CmdEndMarker(CL);
             }
             #endif
 
             #if WITH_EDITOR
             {
                 LUMINA_PROFILE_SECTION_COLORED("ImGui Record", tracy::Color::SlateBlue3);
+                RHI::CmdBeginMarker(CL, "ImGui");
                 ImGuiRenderer->OnEndFrame_NewRHI(CL, SwapImage, Extent, ImGuiDrawData);
+                RHI::CmdEndMarker(CL);
             }
             #endif
 
@@ -343,6 +348,8 @@ namespace Lumina
                 }
             }
             #endif
+
+            RHI::CmdEndMarker(CL);
 
             {
                 LUMINA_PROFILE_SECTION_COLORED("Present", tracy::Color::Orange4);
