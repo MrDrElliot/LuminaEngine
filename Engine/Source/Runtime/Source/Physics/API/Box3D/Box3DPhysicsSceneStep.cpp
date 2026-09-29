@@ -4,6 +4,7 @@
 #include "Box3DPhysicsScene.h"
 
 #include "Box3DCharacterHandle.h"
+#include "Box3DRagdollHandle.h"
 #include "Box3DInternal.h"
 #include "Box3DPhysics.h"
 #include "Box3DUtils.h"
@@ -14,6 +15,7 @@
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
@@ -39,11 +41,50 @@ namespace Lumina::Physics
 
         Registry.View<SRigidBodyComponent, STransformComponent>().ForEach([](SRigidBodyComponent&, STransformComponent& T) { T.SetHasPhysicsBody(true); });
 
+        SynchronizeBodies();
+
         // One rebuild after the bulk spawn beats the incremental inserts each static shape would have done.
         b3World_RebuildStaticTree(WorldId);
 
         Registry.GetSignals<SCharacterPhysicsComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnCharacterComponentConstructed>(this);
         Registry.GetSignals<SCharacterPhysicsComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnCharacterComponentDestroyed>(this);
+
+        Registry.GetSignals<SSphereColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SSphereColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SSphereColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SBoxColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SBoxColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SBoxColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCapsuleColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCapsuleColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCapsuleColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCylinderColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCylinderColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCylinderColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SPlaneColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SPlaneColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SPlaneColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCollisionShapeComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCollisionShapeComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCollisionShapeComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCompoundColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCompoundColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SMeshColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SMeshColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STerrainColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STerrainColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SDynamicMeshColliderComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SDynamicMeshColliderComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SDynamicMeshColliderComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
 
         Registry.GetSignals<SRigidBodyComponent>().OnUpdate.Connect<&FBox3DPhysicsScene::OnRigidBodyComponentUpdated>(this);
         Registry.GetSignals<SRigidBodyComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnRigidBodyComponentConstructed>(this);
@@ -77,6 +118,43 @@ namespace Lumina::Physics
         Registry.GetSignals<SCharacterPhysicsComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnCharacterComponentConstructed>(this);
         Registry.GetSignals<SCharacterPhysicsComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnCharacterComponentDestroyed>(this);
 
+        Registry.GetSignals<SSphereColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SSphereColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SSphereColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SBoxColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SBoxColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SBoxColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCapsuleColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCapsuleColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCapsuleColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCylinderColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCylinderColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCylinderColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCapsuleColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STaperedCylinderColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SPlaneColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SPlaneColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SPlaneColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCollisionShapeComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCollisionShapeComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCollisionShapeComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SCompoundColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCompoundColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SCompoundColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SMeshColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SMeshColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SMeshColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<STerrainColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STerrainColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<STerrainColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+        Registry.GetSignals<SDynamicMeshColliderComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SDynamicMeshColliderComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnColliderComponentAdded>(this);
+        Registry.GetSignals<SDynamicMeshColliderComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnColliderComponentRemoved>(this);
+
         Registry.GetSignals<SRigidBodyComponent>().OnUpdate.Disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentUpdated>(this);
         Registry.GetSignals<SRigidBodyComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentConstructed>(this);
         Registry.GetSignals<SRigidBodyComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnRigidBodyComponentDestroyed>(this);
@@ -106,10 +184,20 @@ namespace Lumina::Physics
             OnCharacterComponentDestroyed(Registry, EntityID);
         });
 
+        PendingStaticGroups.clear();
+        PendingRagdolls.clear();
+        for (const FOwnedRagdoll& Ragdoll : OwnedRagdolls) { Ragdoll.Handle->bPendingDestroy = true; }
+        DestroyAllConstraints();
+        SynchronizeBodies();
+        PendingBodyCommands.clear();
+        BodyCommandScratch.clear();
+        PendingRigidBodies.clear();
+        PendingCharacters.clear();
+        PendingConstraintCreations.clear();
         DestroyAllStaticBodyGroups();
     }
 
-    void FBox3DPhysicsScene::ApplyDirtyTransforms(float FixedDt)
+    void FBox3DPhysicsScene::ApplyDirtyTransforms(float FixedDt, uint32 RemainingSteps, bool bFirstStep)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -118,20 +206,23 @@ namespace Lumina::Physics
 
         auto BodySyncView = Registry.View<SRigidBodyComponent, FNeedsPhysicsBodyUpdate>();
 
+        if (bFirstStep)
+        {
         for (uint32 Handle : AuthoredKinematicHandles)
         {
             BodyAuthoredKinematic[Handle] = 0;
         }
         PreviousAuthoredKinematicHandles.swap(AuthoredKinematicHandles);
         AuthoredKinematicHandles.clear();
+        }
 
         // Spread over every step this update runs, so a second step does not carry the body past its target.
-        const float KinematicSpan = FixedDt * (float)Math::Max(CollisionSteps, 1u);
+        const float KinematicSpan = FixedDt * (float)Math::Max(RemainingSteps, 1u);
 
         // Box3D body writes touch shared world arrays, so this stays serial rather than a ParallelFor.
         for (auto [Entity, BodyComponent, Update] : BodySyncView.Each())
         {
-            const b3BodyId BodyId = ResolveBody(BodyComponent.BodyID);
+            const b3BodyId BodyId = ResolveBody(FindEntityBody(Entity));
             if (!b3Body_IsValid(BodyId))
             {
                 continue;
@@ -146,8 +237,8 @@ namespace Lumina::Physics
             // A teleport has no previous pose to blend from, so the interpolator must not span the jump.
             auto AdoptTeleportedPose = [&]
             {
-                BodyComponent.LastBodyPosition = TargetLocation;
-                BodyComponent.LastBodyRotation = TargetRotation;
+                RigidBodies.at(Entity).LastBodyPosition = TargetLocation;
+                RigidBodies.at(Entity).LastBodyRotation = TargetRotation;
             };
 
             switch (b3Body_GetType(BodyId))
@@ -162,7 +253,7 @@ namespace Lumina::Physics
                 {
                     // Target-transform drive keeps the swept motion the contact solver needs.
                     b3Body_SetTargetTransform(BodyId, b3WorldTransform{ Position, Rotation }, KinematicSpan, Update.bActivate);
-                    MarkAuthoredKinematic(BodyComponent.BodyID);
+                    MarkAuthoredKinematic(FindEntityBody(Entity));
                     break;
                 }
                 case b3_bodyTypeCount:
@@ -200,6 +291,8 @@ namespace Lumina::Physics
         }
 
         // The drive velocity outlives its target, so a body nobody placed again would keep drifting.
+        if (bFirstStep)
+        {
         for (uint32 Handle : PreviousAuthoredKinematicHandles)
         {
             const b3BodyId BodyId = ResolveBody(Handle);
@@ -210,11 +303,13 @@ namespace Lumina::Physics
             }
         }
 
+        }
+
         // Carried forward with the payload intact, since a blanket clear lost a spawn-then-SetLocation.
         RetryBodyUpdates.clear();
         for (auto [Entity, BodyComponent, Update] : BodySyncView.Each())
         {
-            if (BodyComponent.BodyID == InvalidBodyHandle)
+            if (FindEntityBody(Entity) == InvalidBodyHandle)
             {
                 RetryBodyUpdates.push_back({ Entity, Update });
             }
@@ -296,7 +391,7 @@ namespace Lumina::Physics
             // The event carries the user data, so resolving the entity costs no body lookup.
             const ECS::FEntity Entity = UnpackEntity(Event.userData);
             const uint32 Handle = UnpackHandle(Event.userData);
-            if (!RigidStorage.Contains(Entity))
+            if (!RigidStorage.Contains(Entity) || FindEntityBody(Entity) != Handle)
             {
                 continue;
             }
@@ -322,20 +417,20 @@ namespace Lumina::Physics
             // Gameplay already put its transform where it should draw, and the step only chased that placement.
             if (Handle < BodyAuthoredKinematic.size() && BodyAuthoredKinematic[Handle] != 0)
             {
-                BodyComponent.LastBodyPosition = NewPosition;
-                BodyComponent.LastBodyRotation = NewRotation;
+                RigidBodies.at(Entity).LastBodyPosition = NewPosition;
+                RigidBodies.at(Entity).LastBodyRotation = NewRotation;
                 continue;
             }
 
-            const uint32 Slot = StageInterpSlot(Handle, BodyComponent.LastBodyPosition, BodyComponent.LastBodyRotation);
+            const uint32 Slot = StageInterpSlot(Handle, RigidBodies.at(Entity).LastBodyPosition, RigidBodies.at(Entity).LastBodyRotation);
 
             if (bStageForInterp)
             {
-                InterpStaging.PrevPos[Slot] = BodyComponent.LastBodyPosition;
-                InterpStaging.PrevQx[Slot] = BodyComponent.LastBodyRotation.x;
-                InterpStaging.PrevQy[Slot] = BodyComponent.LastBodyRotation.y;
-                InterpStaging.PrevQz[Slot] = BodyComponent.LastBodyRotation.z;
-                InterpStaging.PrevQw[Slot] = BodyComponent.LastBodyRotation.w;
+                InterpStaging.PrevPos[Slot] = RigidBodies.at(Entity).LastBodyPosition;
+                InterpStaging.PrevQx[Slot] = RigidBodies.at(Entity).LastBodyRotation.x;
+                InterpStaging.PrevQy[Slot] = RigidBodies.at(Entity).LastBodyRotation.y;
+                InterpStaging.PrevQz[Slot] = RigidBodies.at(Entity).LastBodyRotation.z;
+                InterpStaging.PrevQw[Slot] = RigidBodies.at(Entity).LastBodyRotation.w;
             }
 
             InterpStaging.Entities[Slot] = Entity;
@@ -346,8 +441,8 @@ namespace Lumina::Physics
             InterpStaging.CurrQw[Slot] = NewRotation.w;
             InterpStaging.Flags[Slot] = NewPosition.y < KillHeight ? EInterpFlag::BelowKill : EInterpFlag::Interpolate;
 
-            BodyComponent.LastBodyPosition = NewPosition;
-            BodyComponent.LastBodyRotation = NewRotation;
+            RigidBodies.at(Entity).LastBodyPosition = NewPosition;
+            RigidBodies.at(Entity).LastBodyRotation = NewRotation;
         }
     }
 
@@ -695,35 +790,8 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        FlushDeferredBodyCreations();
-        bStepInProgress.store(true, std::memory_order_release);
-        struct FStepGuard { TAtomic<bool>& F; ~FStepGuard() { F.store(false, std::memory_order_release); } } StepGuard{ bStepInProgress };
-
         RebuildStaleDynamicMeshBodies(ECS::GetWorldRegistry(*World));
-
-        {
-            TQueue<ECS::FEntity> PendingThisStep;
-            {
-                FScopeLock Lock(PendingRigidBodyMutex);
-                PendingThisStep.swap(PendingRigidBodyCreations);
-            }
-
-            PendingDrainScratch.clear();
-            while (!PendingThisStep.empty())
-            {
-                const ECS::FEntity Entity = PendingThisStep.front();
-                PendingThisStep.pop();
-
-                if (World->IsValidEntity(Entity))
-                {
-                    PendingDrainScratch.push_back(Entity);
-                }
-            }
-
-            CreateRigidBodiesBatched(PendingDrainScratch);
-        }
-
-        DrainPendingConstraints();
+        SynchronizeBodies();
 
         const Lumina::SDefaultWorldSettings& WorldSettings = World->GetDefaultWorldSettings();
         if (WorldSettingsChanged(WorldSettings))
@@ -752,8 +820,6 @@ namespace Lumina::Physics
 
         if (CollisionSteps > 0)
         {
-            ApplyDirtyTransforms(FixedTimestep);
-            LatchCharacterInput();
 
             for (uint32 Step = 0; Step < CollisionSteps; ++Step)
             {
@@ -768,6 +834,11 @@ namespace Lumina::Physics
 
                     PreStepCallback(FixedTimestep);
                 }
+
+                SynchronizeBodies();
+                ApplyDirtyTransforms(FixedTimestep, CollisionSteps - Step, Step == 0);
+                if (Step == 0) { LatchCharacterInput(); }
+                ApplyBodyCommands();
 
                 // After the fixed script tick, so input a script sets this step drives this step.
                 UpdateVehicles(FixedTimestep);

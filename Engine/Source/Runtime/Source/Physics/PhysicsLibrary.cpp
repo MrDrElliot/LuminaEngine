@@ -17,17 +17,11 @@ namespace Lumina
             return World != nullptr ? World->GetPhysicsScene() : nullptr;
         }
 
-        void StageIgnore(Physics::IPhysicsScene* Scene, ECS::FEntity IgnoreEntity,
-            TFixedVector<uint32, Lumina::MaxInlineIgnoreBodies>& Out)
+        void StageIgnore(ECS::FEntity Entity, TFixedVector<ECS::FEntity, MaxInlineIgnoreEntities>& Out)
         {
-            if (Scene == nullptr || IgnoreEntity == ECS::NullEntity)
+            if (Entity != ECS::NullEntity)
             {
-                return;
-            }
-            const uint32 BodyID = Scene->GetEntityBodyID(IgnoreEntity);
-            if (BodyID != 0xFFFFFFFFu)
-            {
-                Out.push_back(BodyID);
+                Out.push_back(Entity);
             }
         }
 
@@ -55,7 +49,7 @@ namespace Lumina
         Settings.Start = Start;
         Settings.End = End;
         Settings.LayerMask = LayerMask;
-        StageIgnore(Scene, IgnoreEntity, Settings.IgnoreBodies);
+        StageIgnore(IgnoreEntity, Settings.IgnoreEntities);
 
         TOptional<SRayResult> Result = Scene->CastRay(Settings);
         return Result.has_value() ? Result.value() : SRayResult();
@@ -74,7 +68,7 @@ namespace Lumina
         Settings.Start = Start;
         Settings.End = End;
         Settings.LayerMask = LayerMask;
-        StageIgnore(Scene, IgnoreEntity, Settings.IgnoreBodies);
+        StageIgnore(IgnoreEntity, Settings.IgnoreEntities);
 
         Scene->CastRayAll(Settings, Out);
     }
@@ -92,7 +86,7 @@ namespace Lumina
         Settings.Start = Start;
         Settings.End = End;
         Settings.Radius = Radius;
-        StageIgnore(Scene, IgnoreEntity, Settings.IgnoreBodies);
+        StageIgnore(IgnoreEntity, Settings.IgnoreEntities);
 
         World->CastSphere(Settings, Out);
     }
@@ -106,8 +100,8 @@ namespace Lumina
             return;
         }
 
-        TFixedVector<uint32, Lumina::MaxInlineIgnoreBodies> Ignore;
-        StageIgnore(Scene, IgnoreEntity, Ignore);
+        TFixedVector<ECS::FEntity, Lumina::MaxInlineIgnoreEntities> Ignore;
+        StageIgnore(IgnoreEntity, Ignore);
         RunQuery(Out, [&](TSpan<ECS::FEntity> Results)
         {
             return Scene->OverlapSphere(Center, Radius, Ignore, Results);
@@ -123,8 +117,8 @@ namespace Lumina
             return;
         }
 
-        TFixedVector<uint32, Lumina::MaxInlineIgnoreBodies> Ignore;
-        StageIgnore(Scene, IgnoreEntity, Ignore);
+        TFixedVector<ECS::FEntity, Lumina::MaxInlineIgnoreEntities> Ignore;
+        StageIgnore(IgnoreEntity, Ignore);
         RunQuery(Out, [&](TSpan<ECS::FEntity> Results)
         {
             return Scene->OverlapBox(Center, HalfExtents, Rotation, Ignore, Results);
@@ -140,8 +134,8 @@ namespace Lumina
             return;
         }
 
-        TFixedVector<uint32, Lumina::MaxInlineIgnoreBodies> Ignore;
-        StageIgnore(Scene, IgnoreEntity, Ignore);
+        TFixedVector<ECS::FEntity, Lumina::MaxInlineIgnoreEntities> Ignore;
+        StageIgnore(IgnoreEntity, Ignore);
         RunQuery(Out, [&](TSpan<ECS::FEntity> Results)
         {
             return Scene->CollidePoint(Point, Ignore, Results);
@@ -227,18 +221,12 @@ namespace Lumina
     float CPhysicsLibrary::GetMass(CWorld* World, ECS::FEntity Entity)
     {
         Physics::IPhysicsScene* Scene = SceneOf(World);
-        return Scene ? Scene->GetBodyMass(Scene->GetEntityBodyID(Entity)) : 0.0f;
+        return Scene ? Scene->GetBodyMass(Entity) : 0.0f;
     }
 
     void CPhysicsLibrary::SetGravityFactor(CWorld* World, ECS::FEntity Entity, float Factor)
     {
         if (Physics::IPhysicsScene* Scene = SceneOf(World)) { Scene->SetGravityFactor(Entity, Factor); }
-    }
-
-    uint32 CPhysicsLibrary::GetBodyId(CWorld* World, ECS::FEntity Entity)
-    {
-        Physics::IPhysicsScene* Scene = SceneOf(World);
-        return Scene ? Scene->GetEntityBodyID(Entity) : 0xFFFFFFFFu;
     }
 
     void CPhysicsLibrary::ActivateBody(CWorld* World, ECS::FEntity Entity)
@@ -248,11 +236,7 @@ namespace Lumina
         {
             return;
         }
-        const uint32 BodyID = Scene->GetEntityBodyID(Entity);
-        if (BodyID != 0xFFFFFFFFu)
-        {
-            Scene->ActivateBody(BodyID);
-        }
+        Scene->ActivateBody(Entity);
     }
 
     void CPhysicsLibrary::DeactivateBody(CWorld* World, ECS::FEntity Entity)
@@ -262,11 +246,7 @@ namespace Lumina
         {
             return;
         }
-        const uint32 BodyID = Scene->GetEntityBodyID(Entity);
-        if (BodyID != 0xFFFFFFFFu)
-        {
-            Scene->DeactivateBody(BodyID);
-        }
+        Scene->DeactivateBody(Entity);
     }
 
     bool CPhysicsLibrary::IsAwake(CWorld* World, ECS::FEntity Entity)
@@ -276,23 +256,12 @@ namespace Lumina
         {
             return false;
         }
-        const uint32 BodyID = Scene->GetEntityBodyID(Entity);
-        return BodyID != 0xFFFFFFFFu && Scene->IsBodyActive(BodyID);
+        return Scene->IsBodyActive(Entity);
     }
 
     void CPhysicsLibrary::SetSurfaceVelocity(CWorld* World, ECS::FEntity Entity, FVector3 Linear, FVector3 Angular)
     {
         if (Physics::IPhysicsScene* Scene = SceneOf(World)) { Scene->SetSurfaceVelocity(Entity, Linear, Angular); }
-    }
-
-    void CPhysicsLibrary::BeginBodyBatch(CWorld* World)
-    {
-        if (Physics::IPhysicsScene* Scene = SceneOf(World)) { Scene->BeginBodyBatch(); }
-    }
-
-    void CPhysicsLibrary::EndBodyBatch(CWorld* World)
-    {
-        if (Physics::IPhysicsScene* Scene = SceneOf(World)) { Scene->EndBodyBatch(); }
     }
 
     uint32 CPhysicsLibrary::CreateConstraint(CWorld* World, Physics::FConstraintDesc Desc)

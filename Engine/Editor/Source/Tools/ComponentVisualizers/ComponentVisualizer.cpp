@@ -1186,9 +1186,9 @@ namespace Lumina
         }
 
         // Line to the connected body (nothing drawn when anchored to the world).
-        if (Con.TargetBody != 0xFFFFFFFFu)
+        if (Con.TargetEntity != ECS::NullEntity)
         {
-            const ECS::FEntity Target = static_cast<ECS::FEntity>(Con.TargetBody);
+            const ECS::FEntity Target = Con.TargetEntity;
             const STransformComponent* TargetTransform =
                 Registry.IsValid(Target) ? Registry.TryGet<STransformComponent>(Target) : nullptr;
             if (TargetTransform != nullptr)

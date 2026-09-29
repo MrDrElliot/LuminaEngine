@@ -65,22 +65,52 @@ namespace Lumina::Physics
 
     TSharedPtr<FPhysicsRagdollHandle> FBox3DPhysicsScene::CreateRagdoll(const FRagdollDesc& Desc)
     {
+        if (Desc.Skeleton == nullptr || Desc.ComponentBoneGlobals == nullptr
+            || Desc.Skeleton->GetNumBones() == 0 || Desc.ComponentBoneGlobals->size() != Desc.Skeleton->Bones.size())
+        {
+            return nullptr;
+        }
+        FPendingRagdoll Request;
+        Request.Description = Desc;
+        Request.Description.Asset = nullptr;
+        Request.Description.Skeleton = nullptr;
+        Request.Description.ComponentBoneGlobals = nullptr;
+        Request.Skeleton = MakeShared<FSkeletonResource>();
+        Request.Skeleton->Bones = Desc.Skeleton->Bones;
+        Request.Skeleton->BoneNameToIndex = Desc.Skeleton->BoneNameToIndex;
+        Request.Globals = *Desc.ComponentBoneGlobals;
+        if (Desc.Asset)
+        {
+            Request.Bodies = Desc.Asset->Bodies;
+            Request.Constraints = Desc.Asset->Constraints;
+            Request.Description.FallbackProfile = Desc.Asset->CollisionProfile;
+        }
+        Request.Handle = MakeShared<FPhysicsRagdollHandle>();
+        auto Handle = Request.Handle;
+        OwnedRagdolls.push_back({ Desc.Entity, Handle });
+        PendingRagdolls.push_back(Move(Request));
+        return Handle;
+    }
+
+    TSharedPtr<FPhysicsRagdollHandle> FBox3DPhysicsScene::CommitRagdoll(const FPendingRagdoll& Request)
+    {
         LUMINA_PROFILE_SCOPE();
 
-        const FSkeletonResource* Skeleton = Desc.Skeleton;
-        if (Skeleton == nullptr || Desc.ComponentBoneGlobals == nullptr)
+        const FRagdollDesc& Desc = Request.Description;
+        const FSkeletonResource* Skeleton = Request.Skeleton.get();
+        if (Skeleton == nullptr)
         {
             return nullptr;
         }
 
-        const TVector<FMatrix4>& Globals = *Desc.ComponentBoneGlobals;
+        const TVector<FMatrix4>& Globals = Request.Globals;
         const int32 NumBones = Skeleton->GetNumBones();
         if ((int32)Globals.size() != NumBones || NumBones == 0)
         {
             return nullptr;
         }
 
-        const FCollisionProfile Profile = Desc.Asset ? Desc.Asset->CollisionProfile : Desc.FallbackProfile;
+        const FCollisionProfile Profile = Desc.FallbackProfile;
 
         TVector<FRagdollBodyDef> Defs;
         THashMap<int32, int32> BoneToBody;
@@ -91,13 +121,13 @@ namespace Lumina::Physics
             AnimPose::DecomposeTRS(Desc.EntityToWorld * Globals[BoneIndex], OutPos, OutRot, Scale);
         };
 
-        if (Desc.Asset && !Desc.Asset->Bodies.empty())
+        if (!Request.Bodies.empty())
         {
             TVector<int32> Order;
-            Order.reserve(Desc.Asset->Bodies.size());
-            for (int32 i = 0; i < (int32)Desc.Asset->Bodies.size(); ++i)
+            Order.reserve(Request.Bodies.size());
+            for (int32 i = 0; i < (int32)Request.Bodies.size(); ++i)
             {
-                if (Skeleton->FindBoneIndex(Desc.Asset->Bodies[i].BoneName) != INDEX_NONE)
+                if (Skeleton->FindBoneIndex(Request.Bodies[i].BoneName) != INDEX_NONE)
                 {
                     Order.push_back(i);
                 }
@@ -105,12 +135,12 @@ namespace Lumina::Physics
 
             Algo::Sort(Order, [&](int32 A, int32 B)
             {
-                return Skeleton->FindBoneIndex(Desc.Asset->Bodies[A].BoneName) < Skeleton->FindBoneIndex(Desc.Asset->Bodies[B].BoneName);
+                return Skeleton->FindBoneIndex(Request.Bodies[A].BoneName) < Skeleton->FindBoneIndex(Request.Bodies[B].BoneName);
             });
 
             for (int32 SetupIdx : Order)
             {
-                const SPhysicsBodySetup& Setup = Desc.Asset->Bodies[SetupIdx];
+                const SPhysicsBodySetup& Setup = Request.Bodies[SetupIdx];
                 const int32 BoneIndex = Skeleton->FindBoneIndex(Setup.BoneName);
 
                 FRagdollBodyDef Def;
@@ -217,7 +247,8 @@ namespace Lumina::Physics
             }
         }
 
-        TSharedPtr<FPhysicsRagdollHandle> Handle = MakeShared<FPhysicsRagdollHandle>();
+        TSharedPtr<FPhysicsRagdollHandle> Handle = Request.Handle;
+        if (BodyHandles.size() - FreeBodyHandles.size() + Defs.size() > MaxBodies) { return nullptr; }
         Handle->WorldId = WorldId;
         Handle->Bodies.reserve(Defs.size());
         Handle->BodyHandles.reserve(Defs.size());
@@ -295,10 +326,10 @@ namespace Lumina::Physics
             float Swing1 = Def.Swing1Deg;
             float Swing2 = Def.Swing2Deg;
 
-            if (Desc.Asset)
+            if (!Request.Constraints.empty())
             {
                 const FName ChildBone = Skeleton->GetBone(Def.BoneIndex).Name;
-                for (const SPhysicsConstraintSetup& C : Desc.Asset->Constraints)
+                for (const SPhysicsConstraintSetup& C : Request.Constraints)
                 {
                     if (C.ChildBone == ChildBone)
                     {
@@ -369,6 +400,11 @@ namespace Lumina::Physics
         return Handle;
     }
 
+    bool FBox3DPhysicsScene::IsRagdollReady(const FPhysicsRagdollHandle& Handle) const
+    {
+        return Handle.bAddedToScene && !Handle.bPendingDestroy;
+    }
+
     void FBox3DPhysicsScene::ReadRagdollPose(const FPhysicsRagdollHandle& Handle, const FMatrix4& WorldToEntity,
                                              const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms)
     {
@@ -427,13 +463,7 @@ namespace Lumina::Physics
             return;
         }
 
-        for (uint32 BodyHandle : Handle->BodyHandles)
-        {
-            UnregisterBody(BodyHandle);
-        }
-        Handle->BodyHandles.clear();
-
-        Handle->Release();
+        Handle->bPendingDestroy = true;
     }
 
     void FBox3DPhysicsScene::GetRagdollRootTransform(const FPhysicsRagdollHandle& Handle, FVector3& OutPosition, FQuat& OutRotation)
@@ -451,10 +481,10 @@ namespace Lumina::Physics
         OutRotation = Box3DUtils::FromB3Quat(b3Body_GetRotation(Handle.Bodies[0]));
     }
 
-    void FBox3DPhysicsScene::ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+    void FBox3DPhysicsScene::ApplyBuoyancy(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
         float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime)
     {
-        const b3BodyId BodyId = ResolveBody(GetEntityBodyID(Entity));
+        const b3BodyId BodyId = ResolveBody(FindEntityBody(Entity));
         if (!b3Body_IsValid(BodyId) || b3Body_GetType(BodyId) != b3_dynamicBody)
         {
             return;

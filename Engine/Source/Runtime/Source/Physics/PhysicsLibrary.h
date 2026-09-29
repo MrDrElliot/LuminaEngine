@@ -108,9 +108,6 @@ namespace Lumina
         FUNCTION()
         static void SetGravityFactor(CWorld* World, ECS::FEntity Entity, float Factor);
 
-        /** The entity's native body id, or 0xFFFFFFFF when it has no rigid body. */
-        FUNCTION()
-        static uint32 GetBodyId(CWorld* World, ECS::FEntity Entity);
 
         FUNCTION()
         static void ActivateBody(CWorld* World, ECS::FEntity Entity);
@@ -125,14 +122,6 @@ namespace Lumina
         /** Drags bodies resting on this collider, the conveyor belt. Zero clears it. */
         FUNCTION()
         static void SetSurfaceVelocity(CWorld* World, ECS::FEntity Entity, FVector3 Linear, FVector3 Angular);
-
-        //~ Bulk spawn. Bodies created between these enter the broadphase together rather than one at a time.
-
-        FUNCTION()
-        static void BeginBodyBatch(CWorld* World);
-
-        FUNCTION()
-        static void EndBodyBatch(CWorld* World);
 
         //~ Constraints. A body left as the null entity anchors that side to the world.
 

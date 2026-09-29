@@ -20,6 +20,7 @@ namespace Lumina
         TVector<int32>      JointToBone;
 
         bool bAddedToScene = false;
+        bool bPendingDestroy = false;
 
         FPhysicsRagdollHandle() = default;
         FPhysicsRagdollHandle(const FPhysicsRagdollHandle&) = delete;

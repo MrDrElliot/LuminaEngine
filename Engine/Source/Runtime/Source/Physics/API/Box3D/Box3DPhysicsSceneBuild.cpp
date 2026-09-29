@@ -69,7 +69,7 @@ namespace Lumina::Physics
             return EBodyBuildStatus::Error;
         }
 
-        if (RigidBody->BodyID != InvalidBodyHandle)
+        if (FindEntityBody(Entity) != InvalidBodyHandle)
         {
             return EBodyBuildStatus::AlreadyExists;
         }
@@ -488,6 +488,11 @@ namespace Lumina::Physics
             Build.BodyDef.position = b3Add(Build.BodyDef.position, WorldOffset);
             Build.LastBodyPosition = Box3DUtils::FromB3Vec3(Build.BodyDef.position);
             break;
+        }
+
+        if (BodyHandles.size() - FreeBodyHandles.size() >= MaxBodies)
+        {
+            return InvalidBodyHandle;
         }
 
         const b3BodyId BodyId = b3CreateBody(WorldId, &Build.BodyDef);

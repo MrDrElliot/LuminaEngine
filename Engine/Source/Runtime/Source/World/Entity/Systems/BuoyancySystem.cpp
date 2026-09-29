@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "Physics/PhysicsScene.h"
 #include "BuoyancySystem.h"
 #include "World/ECS/Registry.h"
 #include "SystemContext.h"
@@ -81,7 +82,7 @@ namespace Lumina
 
         const float Time = (float)Context.GetTime();
         const float Dt   = (float)Context.GetDeltaTime();
-        if (Dt <= 0.0f)
+        if (Dt <= 0.0f || Context.GetPhysicsScene() == nullptr)
         {
             return;
         }
@@ -109,7 +110,7 @@ namespace Lumina
         Context.CreateView<SBuoyancyComponent, SRigidBodyComponent>().ForEach(
             [&](ECS::FEntity Entity, const SBuoyancyComponent& B, const SRigidBodyComponent& RB)
             {
-                if (RB.BodyID == 0xFFFFFFFFu)
+                if (Context.GetPhysicsScene()->GetBodyStatus(Entity) != Physics::EPhysicsBodyStatus::Ready)
                 {
                     return;
                 }

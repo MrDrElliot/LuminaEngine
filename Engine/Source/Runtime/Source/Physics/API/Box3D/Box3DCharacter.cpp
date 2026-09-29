@@ -125,11 +125,13 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnCharacterComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (BodyBatchDepth > 0)
-        {
-            BatchedCharacterCreations.push_back(Entity);
-            return;
-        }
+        FBodyRecord& Record = CharacterBodies[Entity];
+        Record.Revision = NextBindingRevision++;
+        PendingCharacters.push_back(Entity);
+    }
+
+    void FBox3DPhysicsScene::CreateCharacter(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
 
         SCharacterPhysicsComponent* Component = Registry.TryGet<SCharacterPhysicsComponent>(Entity);
         if (Component == nullptr || Component->Character)
@@ -189,6 +191,8 @@ namespace Lumina::Physics
         ShapeDef.enableSensorEvents = true;
         Handle->ProxyShape = b3CreateCapsuleShape(Handle->ProxyBody, &ShapeDef, &LocalCapsule);
 
+        CharacterBodies[Entity].Handle = Handle->ProxyBodyHandle;
+        CharacterBodies[Entity].Status = EPhysicsBodyStatus::Ready;
         Component->Character = Move(Handle);
         Component->LastBodyPosition = Component->Character->Position;
         Component->LastBodyRotation = Component->Character->Rotation;
@@ -196,21 +200,19 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnCharacterComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        SCharacterPhysicsComponent* Component = Registry.TryGet<SCharacterPhysicsComponent>(Entity);
-        if (Component == nullptr || !Component->Character)
+        if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end())
         {
-            return;
+            if (It->second.Handle != InvalidBodyHandle)
+            {
+                PendingBodyDestructions.push_back(It->second.Handle);
+            }
+            CharacterBodies.erase(It);
         }
-
-        FPhysicsCharacterHandle& Handle = *Component->Character;
-        if (b3Body_IsValid(Handle.ProxyBody))
+        if (SCharacterPhysicsComponent* Component = Registry.TryGet<SCharacterPhysicsComponent>(Entity))
         {
-            b3DestroyBody(Handle.ProxyBody);
-            Handle.ProxyBody = b3_nullBodyId;
+            if (Component->Character) { Component->Character->ProxyBody = b3_nullBodyId; }
+            Component->Character.reset();
         }
-
-        UnregisterBody(Handle.ProxyBodyHandle);
-        Component->Character.reset();
     }
 
     void FBox3DPhysicsScene::LatchCharacterInput()

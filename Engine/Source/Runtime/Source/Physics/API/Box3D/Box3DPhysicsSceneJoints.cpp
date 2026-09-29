@@ -52,13 +52,38 @@ namespace Lumina::Physics
 
     uint32 FBox3DPhysicsScene::CreateConstraint(const FConstraintDesc& Desc)
     {
+        auto RevisionOf = [&](ECS::FEntity Entity) -> uint64
+        {
+            if (auto It = RigidBodies.find(Entity); It != RigidBodies.end()) { return It->second.Revision; }
+            if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end()) { return It->second.Revision; }
+            return 0;
+        };
+        const uint64 RevisionA = RevisionOf(Desc.BodyA);
+        const uint64 RevisionB = RevisionOf(Desc.BodyB);
+        if (RevisionB == 0 || (Desc.BodyA != ECS::NullEntity && RevisionA == 0))
+        {
+            return 0;
+        }
+        FScopeLock Lock(ConstraintsMutex);
+        const uint32 Handle = NextConstraintID++;
+        FBox3DConstraint& Constraint = Constraints[Handle];
+        Constraint.Description = Desc;
+        Constraint.RevisionA = RevisionA;
+        Constraint.RevisionB = RevisionB;
+        Constraint.Type = Desc.Type;
+        Constraint.bSettingsDirty = true;
+        return Handle;
+    }
+
+    bool FBox3DPhysicsScene::CommitConstraint(uint32 Handle, const FConstraintDesc& Desc)
+    {
         LUMINA_PROFILE_SCOPE();
 
-        const b3BodyId BodyA = Desc.BodyA == ECS::NullEntity ? b3_nullBodyId : ResolveBody(GetEntityBodyID(Desc.BodyA));
-        const b3BodyId BodyB = Desc.BodyB == ECS::NullEntity ? b3_nullBodyId : ResolveBody(GetEntityBodyID(Desc.BodyB));
+        const b3BodyId BodyA = Desc.BodyA == ECS::NullEntity ? b3_nullBodyId : ResolveBody(FindEntityBody(Desc.BodyA));
+        const b3BodyId BodyB = Desc.BodyB == ECS::NullEntity ? b3_nullBodyId : ResolveBody(FindEntityBody(Desc.BodyB));
 
         // Box3D has no world anchor body, so the constrained side must at least exist.
-        if (!b3Body_IsValid(BodyB))
+        if (!b3Body_IsValid(BodyB) || (Desc.BodyA != ECS::NullEntity && !b3Body_IsValid(BodyA)))
         {
             return 0;
         }
@@ -182,9 +207,6 @@ namespace Lumina::Physics
             return 0;
         }
 
-        FScopeLock Lock(ConstraintsMutex);
-        const uint32 Handle = NextConstraintID++;
-
         b3Joint_SetUserData(JointId, reinterpret_cast<void*>((uintptr_t)Handle));
 
         FBox3DConstraint& Constraint = Constraints[Handle];
@@ -194,7 +216,7 @@ namespace Lumina::Physics
         Constraint.MotorForceLimit = Desc.MotorForceLimit;
         Constraint.MotorTorqueLimit = Desc.MotorTorqueLimit;
 
-        return Handle;
+        return true;
     }
 
     void FBox3DPhysicsScene::DestroyConstraint(uint32 ConstraintID)
@@ -207,15 +229,32 @@ namespace Lumina::Physics
             return;
         }
 
-        if (b3Joint_IsValid(It->second.JointId))
-        {
-            b3DestroyJoint(It->second.JointId, true);
-        }
-
-        Constraints.erase(It);
+        It->second.bDestroy = true;
     }
 
     void FBox3DPhysicsScene::SetConstraintEnabled(uint32 ConstraintID, bool bEnabled)
+    {
+        FScopeLock Lock(ConstraintsMutex);
+        if (auto It = Constraints.find(ConstraintID); It != Constraints.end())
+        {
+            It->second.bEnabled = bEnabled;
+            It->second.bSettingsDirty = true;
+        }
+    }
+
+    void FBox3DPhysicsScene::SetConstraintMotor(uint32 ConstraintID, EConstraintMotorMode Mode, float Target)
+    {
+        FScopeLock Lock(ConstraintsMutex);
+        if (auto It = Constraints.find(ConstraintID); It != Constraints.end())
+        {
+            It->second.bMotorSet = true;
+            It->second.MotorMode = Mode;
+            It->second.MotorTarget = Target;
+            It->second.bSettingsDirty = true;
+        }
+    }
+
+    void FBox3DPhysicsScene::ApplyConstraintEnabled(uint32 ConstraintID, bool bEnabled)
     {
         FScopeLock Lock(ConstraintsMutex);
 
@@ -231,7 +270,7 @@ namespace Lumina::Physics
         b3Joint_SetConstraintTuning(Constraint.JointId, bEnabled ? 60.0f : 0.0f, bEnabled ? 2.0f : 0.0f);
     }
 
-    void FBox3DPhysicsScene::SetConstraintMotor(uint32 ConstraintID, EConstraintMotorMode Mode, float Target)
+    void FBox3DPhysicsScene::ApplyConstraintMotor(uint32 ConstraintID, EConstraintMotorMode Mode, float Target)
     {
         FScopeLock Lock(ConstraintsMutex);
 
@@ -394,7 +433,7 @@ namespace Lumina::Physics
         }
 
         // Both bodies have to exist before the joint can be anchored, so an early frame just retries.
-        const uint32 SelfBody = GetEntityBodyID(Entity);
+        const uint32 SelfBody = FindEntityBody(Entity);
         if (!b3Body_IsValid(ResolveBody(SelfBody)))
         {
             return false;
@@ -406,15 +445,10 @@ namespace Lumina::Physics
             return false;
         }
 
-        ECS::FEntity TargetEntity = ECS::NullEntity;
-        if (Component->TargetBody != 0xFFFFFFFFu)
+        const ECS::FEntity TargetEntity = Component->TargetEntity;
+        if (TargetEntity != ECS::NullEntity && FindEntityBody(TargetEntity) == InvalidBodyHandle)
         {
-            const b3BodyId TargetBody = ResolveBody(Component->TargetBody);
-            if (!b3Body_IsValid(TargetBody))
-            {
-                return false;
-            }
-            TargetEntity = EntityOfBody(TargetBody);
+            return false;
         }
 
         FConstraintDesc Desc;
@@ -433,6 +467,40 @@ namespace Lumina::Physics
 
         Component->ConstraintID = CreateConstraint(Desc);
         return Component->ConstraintID != 0;
+    }
+
+    void FBox3DPhysicsScene::SynchronizeConstraints()
+    {
+        auto Matches = [&](ECS::FEntity Entity, uint64 Revision)
+        {
+            if (Entity == ECS::NullEntity) { return true; }
+            if (auto It = RigidBodies.find(Entity); It != RigidBodies.end()) { return It->second.Revision == Revision; }
+            if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end()) { return It->second.Revision == Revision; }
+            return false;
+        };
+        TVector<uint32> Removed;
+        for (auto& [Handle, Constraint] : Constraints)
+        {
+            if (Constraint.bDestroy || !Matches(Constraint.Description.BodyA, Constraint.RevisionA)
+                || !Matches(Constraint.Description.BodyB, Constraint.RevisionB))
+            {
+                if (b3Joint_IsValid(Constraint.JointId)) { b3DestroyJoint(Constraint.JointId, true); }
+                Removed.push_back(Handle);
+                continue;
+            }
+            if (!Constraint.bBroken && !b3Joint_IsValid(Constraint.JointId))
+            {
+                if (!CommitConstraint(Handle, Constraint.Description)) { continue; }
+                Constraint.bSettingsDirty = true;
+            }
+            if (Constraint.bSettingsDirty)
+            {
+                ApplyConstraintEnabled(Handle, Constraint.bEnabled);
+                if (Constraint.bMotorSet) { ApplyConstraintMotor(Handle, Constraint.MotorMode, Constraint.MotorTarget); }
+                Constraint.bSettingsDirty = false;
+            }
+        }
+        for (uint32 Handle : Removed) { Constraints.erase(Handle); }
     }
 
     void FBox3DPhysicsScene::DrainPendingConstraints()
@@ -467,108 +535,89 @@ namespace Lumina::Physics
 
     uint32 FBox3DPhysicsScene::CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances)
     {
-        LUMINA_PROFILE_SCOPE();
-
-        if (Instances.empty())
-        {
-            return 0;
-        }
-
-        const uint32 GroupID = NextStaticBodyGroupID++;
-        TVector<uint32>& Handles = StaticBodyGroups[GroupID];
-        Handles.reserve(Instances.size());
-
+        if (Instances.empty()) { return 0; }
+        FPendingStaticGroup Request;
+        Request.GroupID = NextStaticBodyGroupID++;
+        Request.Owner = Owner;
+        FCollisionProfile Profile;
+        Profile.Layer = ECollisionProfiles::Static;
         for (const FStaticInstanceDesc& Instance : Instances)
         {
-            b3BodyDef BodyDef = b3DefaultBodyDef();
-            BodyDef.type = b3_staticBody;
-            BodyDef.position = Box3DUtils::ToB3Vec3(Instance.Position);
-            BodyDef.rotation = Box3DUtils::ToB3Quat(Instance.Rotation);
-
-            const b3BodyId BodyId = b3CreateBody(WorldId, &BodyDef);
-            if (!b3Body_IsValid(BodyId))
+            FRigidBodyBuildResult Build;
+            Build.BodyDef = b3DefaultBodyDef();
+            Build.BodyDef.type = b3_staticBody;
+            Build.BodyDef.position = Box3DUtils::ToB3Vec3(Instance.Position);
+            Build.BodyDef.rotation = Box3DUtils::ToB3Quat(Instance.Rotation);
+            Build.ShapeDef = b3DefaultShapeDef();
+            Build.ShapeDef.updateBodyMass = false;
+            Build.ShapeDef.filter = Box3DUtils::MakeShapeFilter(Profile);
+            Build.ShapeDef.userData = Box3DUtils::PackProfileUserData(Profile);
+            Build.ShapeDef.enableCustomFiltering = Box3DUtils::UsesPermissiveCollisionFilter();
+            Build.ShapeDef.invokeContactCreation = false;
+            if (Instance.Material)
             {
-                continue;
+                Build.ShapeDef.baseMaterial.friction = Instance.Material->Friction;
+                Build.ShapeDef.baseMaterial.restitution = Instance.Material->Restitution;
             }
-
-            const uint32 Handle = RegisterBody(BodyId);
-            b3Body_SetUserData(BodyId, PackBodyUserData(Owner, Handle));
-
-            b3ShapeDef ShapeDef = b3DefaultShapeDef();
-            ShapeDef.updateBodyMass = false;
-
-            FCollisionProfile StaticProfile;
-            StaticProfile.Layer = ECollisionProfiles::Static;
-            ShapeDef.filter = Box3DUtils::MakeShapeFilter(StaticProfile);
-            ShapeDef.userData = Box3DUtils::PackProfileUserData(StaticProfile);
-            ShapeDef.enableCustomFiltering = Box3DUtils::UsesPermissiveCollisionFilter();
-
-            // Foliage never scans on creation; one static tree rebuild below covers the whole group.
-            ShapeDef.invokeContactCreation = false;
-
-            if (Instance.Material != nullptr)
+            if (Instance.Shape)
             {
-                ShapeDef.baseMaterial.friction = Instance.Material->Friction;
-                ShapeDef.baseMaterial.restitution = Instance.Material->Restitution;
+                BuildCollisionShapeAsset(*Instance.Shape, Instance.Scale, Build.Shapes);
             }
-
-            bool bBuilt = false;
-
-            if (Instance.Shape != nullptr)
+            else if (Instance.Mesh && Instance.bConvex)
             {
-                TVector<FPendingShape> Shapes;
-                if (BuildCollisionShapeAsset(*Instance.Shape, Instance.Scale, Shapes))
+                if (const b3HullData* Hull = GetOrCreateMeshHull(Instance.Mesh))
                 {
-                    for (const FPendingShape& Shape : Shapes)
-                    {
-                        switch (Shape.Type)
-                        {
-                            case b3_sphereShape:  b3CreateSphereShape(BodyId, &ShapeDef, &Shape.Sphere); break;
-                            case b3_capsuleShape: b3CreateCapsuleShape(BodyId, &ShapeDef, &Shape.Capsule); break;
-                            case b3_hullShape:    b3CreateTransformedHullShape(BodyId, &ShapeDef, Shape.Hull, Shape.Transform, Shape.Scale); break;
-                            case b3_meshShape:    b3CreateMeshShape(BodyId, &ShapeDef, Shape.Mesh, Shape.Scale); break;
-                            default: break;
-                        }
-                    }
-                    bBuilt = true;
+                    FPendingShape Shape = MakeHullShape(Hull, FVector3(0.0f), FQuat::Identity());
+                    Shape.Scale = Box3DUtils::ToB3Vec3(Instance.Scale);
+                    Build.Shapes.push_back(Shape);
                 }
             }
-            else if (Instance.Mesh != nullptr)
+            else if (Instance.Mesh)
             {
-                if (Instance.bConvex)
+                if (const b3MeshData* Mesh = GetOrCreateTriangleMesh(Instance.Mesh))
                 {
-                    // Instances of one source share the cached unit hull, so N instances hold one copy.
-                    if (const b3HullData* Hull = GetOrCreateMeshHull(Instance.Mesh))
-                    {
-                        b3CreateTransformedHullShape(BodyId, &ShapeDef, Hull, IdentityTransform, Box3DUtils::ToB3Vec3(Instance.Scale));
-                        bBuilt = true;
-                    }
-                }
-                else if (const b3MeshData* MeshData = GetOrCreateTriangleMesh(Instance.Mesh))
-                {
-                    b3CreateMeshShape(BodyId, &ShapeDef, MeshData, Box3DUtils::ToB3Vec3(Instance.Scale));
-                    bBuilt = true;
+                    FPendingShape Shape;
+                    Shape.Type = b3_meshShape;
+                    Shape.Mesh = Mesh;
+                    Shape.Scale = Box3DUtils::ToB3Vec3(Instance.Scale);
+                    Build.Shapes.push_back(Shape);
                 }
             }
+            if (!Build.Shapes.empty()) { Request.Builds.push_back(Move(Build)); }
+        }
+        if (Request.Builds.empty()) { return 0; }
+        const uint32 GroupID = Request.GroupID;
+        StaticBodyGroups[GroupID];
+        PendingStaticGroups.push_back(Move(Request));
+        return GroupID;
+    }
 
-            if (!bBuilt)
+    void FBox3DPhysicsScene::CommitStaticBodyGroup(uint32 GroupID, ECS::FEntity Owner, TSpan<const FRigidBodyBuildResult> Builds)
+    {
+        auto It = StaticBodyGroups.find(GroupID);
+        if (It == StaticBodyGroups.end()) { return; }
+        auto& Handles = It->second;
+        for (const FRigidBodyBuildResult& Build : Builds)
+        {
+            if (BodyHandles.size() - FreeBodyHandles.size() >= MaxBodies) { break; }
+            const b3BodyId Body = b3CreateBody(WorldId, &Build.BodyDef);
+            if (!b3Body_IsValid(Body)) { continue; }
+            const uint32 Handle = RegisterBody(Body);
+            b3Body_SetUserData(Body, PackBodyUserData(Owner, Handle));
+            for (const FPendingShape& Shape : Build.Shapes)
             {
-                b3DestroyBody(BodyId);
-                UnregisterBody(Handle);
-                continue;
+                switch (Shape.Type)
+                {
+                    case b3_sphereShape: b3CreateSphereShape(Body, &Build.ShapeDef, &Shape.Sphere); break;
+                    case b3_capsuleShape: b3CreateCapsuleShape(Body, &Build.ShapeDef, &Shape.Capsule); break;
+                    case b3_hullShape: b3CreateTransformedHullShape(Body, &Build.ShapeDef, Shape.Hull, Shape.Transform, Shape.Scale); break;
+                    case b3_meshShape: b3CreateMeshShape(Body, &Build.ShapeDef, Shape.Mesh, Shape.Scale); break;
+                    default: break;
+                }
             }
-
             Handles.push_back(Handle);
         }
-
-        if (Handles.empty())
-        {
-            StaticBodyGroups.erase(GroupID);
-            return 0;
-        }
-
-        b3World_RebuildStaticTree(WorldId);
-        return GroupID;
+        bStaticTreeDirty = true;
     }
 
     void FBox3DPhysicsScene::DestroyStaticBodyGroup(uint32 GroupID)
@@ -581,16 +630,9 @@ namespace Lumina::Physics
 
         for (uint32 Handle : It->second)
         {
-            const b3BodyId BodyId = ResolveBody(Handle);
-            if (b3Body_IsValid(BodyId))
-            {
-                b3DestroyBody(BodyId);
-            }
-            UnregisterBody(Handle);
+            PendingBodyDestructions.push_back(Handle);
         }
-
         StaticBodyGroups.erase(It);
-        b3World_RebuildStaticTree(WorldId);
     }
 
     void FBox3DPhysicsScene::DestroyAllStaticBodyGroups()

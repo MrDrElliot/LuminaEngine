@@ -142,9 +142,9 @@ namespace Lumina
             Context.CreateView<SRigidBodyComponent, STransformComponent>().ForEach(
                 [&](ECS::FEntity Entity, const SRigidBodyComponent& Body, const STransformComponent&)
                 {
-                    if (Body.BodyID != kKinematicsInvalidBody)
+                    if (Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
                     {
-                        Refine(Entity, Scene->GetLinearVelocity(Body.BodyID));
+                        Refine(Entity, Scene->GetLinearVelocity(Entity));
                     }
                 });
         }

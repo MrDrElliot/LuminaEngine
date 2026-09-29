@@ -702,11 +702,11 @@ namespace Lumina
         {
             if (const SRigidBodyComponent* RB = EntityRegistry.TryGet<SRigidBodyComponent>(Entity))
             {
-                if (RB->BodyID != 0xFFFFFFFFu)
+                if (PhysicsScene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
                 {
-                    OwnerTransform.SetLocation(PhysicsScene->GetBodyPosition(RB->BodyID));
-                    OwnerTransform.SetRotation(PhysicsScene->GetBodyRotation(RB->BodyID));
-                    InheritedVelocity       = PhysicsScene->GetLinearVelocity(RB->BodyID);
+                    OwnerTransform.SetLocation(PhysicsScene->GetBodyPosition(Entity));
+                    OwnerTransform.SetRotation(PhysicsScene->GetBodyRotation(Entity));
+                    InheritedVelocity       = PhysicsScene->GetLinearVelocity(Entity);
                 }
             }
         }
@@ -724,9 +724,9 @@ namespace Lumina
         };
 
         // Inherited momentum + an outward blast (radial from Origin) + random spin on a fresh body.
-        auto LaunchBody = [&](uint32 BodyID, const FVector3& WorldCenter, uint32 Seed)
+        auto LaunchBody = [&](ECS::FEntity Fragment, const FVector3& WorldCenter, uint32 Seed)
         {
-            if (!PhysicsScene || BodyID == 0xFFFFFFFFu)
+            if (!PhysicsScene)
             {
                 return;
             }
@@ -740,12 +740,12 @@ namespace Lumina
             const FVector3 LaunchVelocity = InheritedVelocity
                 + Direction * (LaunchSpeed * SpeedJitter)
                 + FVector3(0.0f, LaunchSpeed * 0.2f, 0.0f);
-            PhysicsScene->OnSetVelocityEvent(SSetVelocityEvent{ BodyID, LaunchVelocity });
+            PhysicsScene->OnSetVelocityEvent(SSetVelocityEvent{ Fragment, LaunchVelocity });
 
             if (SpinSpeed > 0.0f)
             {
                 const FVector3 Spin(Hash01(Seed + 4) - 0.5f, Hash01(Seed + 5) - 0.5f, Hash01(Seed + 6) - 0.5f);
-                PhysicsScene->OnSetAngularVelocityEvent(SSetAngularVelocityEvent{ BodyID, Spin * (2.0f * SpinSpeed) });
+                PhysicsScene->OnSetAngularVelocityEvent(SSetAngularVelocityEvent{ Fragment, Spin * (2.0f * SpinSpeed) });
             }
         };
 
@@ -772,11 +772,6 @@ namespace Lumina
 
         const TVector<FFracturePiece>& Pieces = CollectionData ? CollectionData->Pieces : GeneratedPieces;
 
-        // BodyIDs are valid only after EndBodyBatch, so impulses are collected and applied then.
-        struct FPendingLaunch { ECS::FEntity Fragment; FVector3 Center; uint32 Seed; };
-        TVector<FPendingLaunch> PendingLaunches;
-        PendingLaunches.reserve(Pieces.size());
-
         // Cap fragments at physics body headroom, since overflowing the body arrays trips a hard assert.
         uint32 MaxFragments = 0xFFFFFFFFu;
         if (PhysicsScene)
@@ -794,11 +789,6 @@ namespace Lumina
                 LOG_WARN("FractureEntity: clamped {} fragments to {} (physics body headroom {}/{}). Raise World Settings > Physics > MaxPhysicsBodies.",
                     Desired, MaxFragments, Used, MaxBodies);
             }
-        }
-
-        if (PhysicsScene)
-        {
-            PhysicsScene->BeginBodyBatch();
         }
 
         if (!Pieces.empty())
@@ -836,7 +826,6 @@ namespace Lumina
 
                 EntityRegistry.Emplace<SStaticMeshComponent>(Fragment).SetStaticMesh(PieceMesh);
 
-                // The collider's on_construct builds the shape synchronously, so set Mesh and bConvex first.
                 SMeshColliderComponent ColliderDesc;
                 ColliderDesc.Mesh    = PieceMesh;
                 ColliderDesc.bConvex = true;
@@ -845,7 +834,7 @@ namespace Lumina
                 EntityRegistry.Emplace<SLifetimeComponent>(Fragment).Lifetime = Destructible->FragmentLifetime;
                 EntityRegistry.Emplace<SFragmentComponent>(Fragment).Source   = (Entity).Value;
                 
-                PendingLaunches.push_back({ Fragment, WorldCenter, (Fragment).Value + static_cast<uint32>(Spawned) });
+                LaunchBody(Fragment, WorldCenter, (Fragment).Value + static_cast<uint32>(Spawned));
 
                 ++Spawned;
             }
@@ -885,7 +874,6 @@ namespace Lumina
                     FragmentMeshComp.MaterialOverrides = MeshComp->MaterialOverrides;
                 }
 
-                // The box collider builds a Dynamic body synchronously, so set HalfExtent up front.
                 SBoxColliderComponent BoxDesc;
                 BoxDesc.HalfExtent = ColliderHalf;
                 EntityRegistry.Emplace<SBoxColliderComponent>(Fragment, std::move(BoxDesc));
@@ -893,20 +881,10 @@ namespace Lumina
                 EntityRegistry.Emplace<SLifetimeComponent>(Fragment).Lifetime = Destructible->FragmentLifetime;
                 EntityRegistry.Emplace<SFragmentComponent>(Fragment).Source   = (Entity).Value;
 
-                PendingLaunches.push_back({ Fragment, CellWorldCenter, (Fragment).Value + static_cast<uint32>(Spawned) });
+                LaunchBody(Fragment, CellWorldCenter, (Fragment).Value + static_cast<uint32>(Spawned));
 
                 ++Spawned;
             }
-        }
-
-        // Insert all the queued bodies at once, then apply the launch impulses now that BodyIDs exist.
-        if (PhysicsScene)
-        {
-            PhysicsScene->EndBodyBatch();
-        }
-        for (const FPendingLaunch& Launch : PendingLaunches)
-        {
-            LaunchBody(EntityRegistry.Get<SRigidBodyComponent>(Launch.Fragment).BodyID, Launch.Center, Launch.Seed);
         }
 
         Destructible->bFractured = true;
@@ -986,7 +964,6 @@ namespace Lumina
             if (const SRigidBodyComponent* SourceBody = EntityRegistry.TryGet<SRigidBodyComponent>(Source))
             {
                 SRigidBodyComponent NewBody = *SourceBody;
-                NewBody.BodyID = 0xFFFFFFFF;
 
                 EntityRegistry.Remove<SRigidBodyComponent>(NewEntity);
                 EntityRegistry.Emplace<SRigidBodyComponent>(NewEntity, std::move(NewBody));

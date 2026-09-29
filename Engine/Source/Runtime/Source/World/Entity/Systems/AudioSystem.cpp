@@ -239,10 +239,10 @@ namespace Lumina
 					Trace.End       = Position;
 					Trace.LayerMask = Settings->OcclusionTraceChannel;
 
-					const uint32 BodyID = SystemContext.GetEntityBodyID(Entity);
-					if (BodyID != ~0u)
+					const ECS::FEntity BodyID = Entity;
+					if (BodyID != ECS::NullEntity)
 					{
-						Trace.IgnoreBodies.push_back(BodyID);
+						Trace.IgnoreEntities.push_back(BodyID);
 					}
 
 					Audio.OcclusionTarget = PhysicsScene->CastRay(Trace).has_value() ? 1.0f : 0.0f;

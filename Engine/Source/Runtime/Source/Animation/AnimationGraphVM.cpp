@@ -1497,7 +1497,7 @@ namespace Lumina
                     Ray.Start     = FootWorld + WorldUp * TraceUp;
                     Ray.End       = FootWorld - WorldUp * TraceDown;
                     Ray.LayerMask = (ECollisionProfiles)LayerMask;
-                    Ray.IgnoreBodies.push_back(SceneContext->SelfBodyID);
+                    Ray.IgnoreEntities.push_back(SceneContext->SelfEntity);
 
                     if (const TOptional<SRayResult> Hit = SceneContext->Scene->CastRay(Ray))
                     {

@@ -178,10 +178,10 @@ namespace Lumina
                 Settings.Start  = Arm.CurrentPivot + SocketWorld;
                 Settings.End    = DesiredEnd;
                 Settings.Radius = Arm.ProbeSize;
-                Settings.IgnoreBodies.push_back(Context.GetEntityBodyID(Entity));
+                Settings.IgnoreEntities.push_back(Entity);
                 if (bHasTarget)
                 {
-                    Settings.IgnoreBodies.push_back(Context.GetEntityBodyID(Target));
+                    Settings.IgnoreEntities.push_back(Target);
                 }
 
                 const TOptional<SRayResult> Hit = Context.CastSphereClosest(Settings);

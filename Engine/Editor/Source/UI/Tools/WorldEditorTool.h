@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Physics/Ray/RayCast.h"
 
 #include "World/ECS/Registry.h"
 
@@ -177,7 +178,7 @@ namespace Lumina
         // simulation can be poked at without stopping it. Mirrors the physics asset editor's grab.
         void UpdateSimulationGrab(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, bool bInViewportHovered);
 
-        bool IsSimulationGrabActive() const { return GrabbedBodyID != 0xFFFFFFFFu; }
+        bool IsSimulationGrabActive() const { return GrabbedTarget.IsSet(); }
 
         EDITOR_API void StopAllSimulations();
 
@@ -361,7 +362,7 @@ namespace Lumina
 
         // Physics-body grab. Held across frames: the spring needs the attach point that was picked on the
         // initial click, not whatever the ray hits as the body swings away.
-        uint32                                  GrabbedBodyID = 0xFFFFFFFFu;
+        FPhysicsBodyTarget                      GrabbedTarget;
         float                                   GrabDistance = 0.0f;
         FVector3                                GrabLocalOffset = FVector3(0.0f);
 

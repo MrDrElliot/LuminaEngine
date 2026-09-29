@@ -239,7 +239,7 @@ namespace Lumina
         FQuat    WorldRotation = FQuat::Identity();
 
         // Ignored by every trace, so a foot never lands on the character it belongs to.
-        uint32 SelfBodyID = ~0u;
+        ECS::FEntity SelfEntity = ECS::NullEntity;
 
         // World-space movement this frame, which is what LoadMoveAngle measures its angle against.
         FVector3 Velocity = FVector3(0.0f);

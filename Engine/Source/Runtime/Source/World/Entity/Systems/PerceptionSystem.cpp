@@ -289,17 +289,14 @@ namespace Lumina
                 PS.Entity = Src;
                 PS.AimPoint = Xf.GetWorldLocationCached() + S.SightTargetOffset;
                 PS.AffiliationTags = &S.AffiliationTags;
-                PS.BodyID = Context.GetEntityBodyID(Src);
                 PS.RegisteredSenses = (uint8)S.RegisteredSenses;
                 State.SourceGrid.Sources.push_back(PS);
             }
         }
 
-        TVector<uint32> PerceiverBodies((size_t)NumPerceivers);
         float MaxSightRange = 1.0f;
         for (int32 i = 0; i < NumPerceivers; ++i)
         {
-            PerceiverBodies[i] = Context.GetEntityBodyID(Perceivers[i]);
             const SPerceptionComponent& C = View.Get<SPerceptionComponent>(Perceivers[i]);
             MaxSightRange = Math::Max(C.LoseSightRadius, MaxSightRange);
         }
@@ -351,7 +348,7 @@ namespace Lumina
             }
 
             const float CosHalfFOV = Math::Cos(Math::Radians(Comp.SightFOVDegrees * 0.5f));
-            const uint32 SelfBody = PerceiverBodies[Index];
+            const ECS::FEntity SelfBody = E;
 
             Grid.ForEachInRadius(Eye, Comp.LoseSightRadius, [&](const FPerceptionSource& Src)
             {
@@ -389,7 +386,7 @@ namespace Lumina
                 Ray.Start = Eye;
                 Ray.End = Src.AimPoint;
                 Ray.LayerMask = Comp.SightBlockingMask;
-                Ray.IgnoreBodies.push_back(SelfBody);
+                Ray.IgnoreEntities.push_back(SelfBody);
                 const TOptional<SRayResult> Hit = Scene->CastRay(Ray);
                 if (Hit.has_value() && Hit->Entity != (uint32)Src.Entity)
                 {

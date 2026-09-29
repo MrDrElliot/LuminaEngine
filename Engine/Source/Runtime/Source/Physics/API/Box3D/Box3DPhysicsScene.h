@@ -14,6 +14,7 @@
 #include "Core/Threading/Thread.h"
 #include "Memory/SmartPtr.h"
 #include "Physics/PhysicsScene.h"
+#include "Assets/AssetTypes/PhysicsAsset/PhysicsAsset.h"
 #include "Renderer/SkeletonResource.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Events/ImpulseEvent.h"
@@ -139,12 +140,12 @@ namespace Lumina::Physics
 
         void DispatchPendingEvents() override;
 
-        void ActivateBody(uint32 BodyID) override;
-        void DeactivateBody(uint32 BodyID) override;
-        void ChangeBodyMotionType(uint32 BodyID, EBodyType NewType) override;
-        bool IsBodyActive(uint32 BodyID) override;
+        void ActivateBody(ECS::FEntity Entity) override;
+        void DeactivateBody(ECS::FEntity Entity) override;
+        void ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType) override;
+        bool IsBodyActive(ECS::FEntity Entity) const override;
 
-        void ApplyDirtyTransforms(float FixedDt);
+        void ApplyDirtyTransforms(float FixedDt, uint32 RemainingSteps, bool bFirstStep);
         void UpdateCharacters(float FixedDt);
         void UpdateVehicles(float FixedDt);
         void PoseVehicleWheels();
@@ -155,7 +156,11 @@ namespace Lumina::Physics
         void PropagateRenderPosesToDescendants(ECS::FRegistry& Registry);
         void RetireStaleRenderOverrides(ECS::FRegistry& Registry);
 
-        uint32 GetEntityBodyID(ECS::FEntity Entity) override;
+        EPhysicsBodyStatus GetBodyStatus(ECS::FEntity Entity) const override;
+        bool TryGetBodyState(ECS::FEntity Entity, FPhysicsBodyState& Out) const override;
+        bool TryGetTargetState(const FPhysicsBodyTarget& Target, FPhysicsBodyState& Out) const override;
+        void AddForceAtTarget(const FPhysicsBodyTarget& Target, const FVector3& Force, const FVector3& Point) override;
+        FPhysicsBodyTarget MakeBodyTarget(uint32 Handle) const;
 
         TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) override;
         void CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits) override;
@@ -163,9 +168,9 @@ namespace Lumina::Physics
         void CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits) override;
 
         int32 ResolveHitBoneIndex(ECS::FEntity Entity, b3BodyId BodyId) const;
-        int32 CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) override;
-        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) override;
-        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities) override;
+        int32 CollidePoint(const FVector3& Point, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) override;
+        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) override;
+        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) override;
 
         void OnCharacterComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void OnCharacterComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
@@ -192,25 +197,23 @@ namespace Lumina::Physics
         void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
             float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime) override;
 
-        FVector3 GetVelocityAtPoint(uint32 BodyID, const FVector3& Point) override;
-        FVector3 GetLinearVelocity(uint32 BodyID) override;
-        FVector3 GetAngularVelocity(uint32 BodyID) override;
-        FVector3 GetCenterOfMass(uint32 BodyID) override;
-        float GetBodyMass(uint32 BodyID) override;
-        FVector3 GetBodyPosition(uint32 BodyID) override;
-        FQuat GetBodyRotation(uint32 BodyID) override;
+        FVector3 GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const override;
+        FVector3 GetLinearVelocity(ECS::FEntity Entity) const override;
+        FVector3 GetAngularVelocity(ECS::FEntity Entity) const override;
+        FVector3 GetCenterOfMass(ECS::FEntity Entity) const override;
+        float GetBodyMass(ECS::FEntity Entity) const override;
+        FVector3 GetBodyPosition(ECS::FEntity Entity) const override;
+        FQuat GetBodyRotation(ECS::FEntity Entity) const override;
 
         uint32 GetBodyCount() override;
         uint32 GetMaxBodyCount() override;
 
-        void BeginBodyBatch() override;
-        void EndBodyBatch() override;
-        void FlushDeferredBodyCreations();
 
         uint32 CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances) override;
         void DestroyStaticBodyGroup(uint32 GroupID) override;
 
         TSharedPtr<FPhysicsRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) override;
+        bool IsRagdollReady(const FPhysicsRagdollHandle& Handle) const override;
         void ReadRagdollPose(const FPhysicsRagdollHandle& Handle, const FMatrix4& WorldToEntity, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms) override;
         void DestroyRagdoll(const TSharedPtr<FPhysicsRagdollHandle>& Handle) override;
         void GetRagdollRootTransform(const FPhysicsRagdollHandle& Handle, FVector3& OutPosition, FQuat& OutRotation) override;
@@ -255,6 +258,43 @@ namespace Lumina::Physics
 
     private:
 
+        uint32 FindEntityBody(ECS::FEntity Entity) const;
+        b3BodyId ResolveTarget(const FPhysicsBodyTarget& Target) const;
+        bool ReadBodyState(b3BodyId Body, FPhysicsBodyState& Out) const;
+        void SynchronizeBodies();
+        void SynchronizeBodyGroups();
+        void CommitStaticBodyGroup(uint32 GroupID, ECS::FEntity Owner, TSpan<const FRigidBodyBuildResult> Builds);
+
+        struct FPendingStaticGroup
+        {
+            uint32 GroupID = 0;
+            ECS::FEntity Owner = ECS::NullEntity;
+            TVector<FRigidBodyBuildResult> Builds;
+        };
+        TVector<FPendingStaticGroup> PendingStaticGroups;
+
+        struct FPendingRagdoll
+        {
+            FRagdollDesc Description;
+            TSharedPtr<FSkeletonResource> Skeleton;
+            TVector<FMatrix4> Globals;
+            TVector<SPhysicsBodySetup> Bodies;
+            TVector<SPhysicsConstraintSetup> Constraints;
+            TSharedPtr<FPhysicsRagdollHandle> Handle;
+        };
+        TSharedPtr<FPhysicsRagdollHandle> CommitRagdoll(const FPendingRagdoll& Request);
+        TVector<FPendingRagdoll> PendingRagdolls;
+        struct FOwnedRagdoll
+        {
+            ECS::FEntity Owner;
+            TSharedPtr<FPhysicsRagdollHandle> Handle;
+        };
+        TVector<FOwnedRagdoll> OwnedRagdolls;
+        void DestroyBodyHandle(uint32 Handle);
+        void CreateCharacter(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void ApplyBuoyancy(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
+            float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime);
+        void ApplySurfaceVelocity(b3BodyId Body, const FVector3& Linear, const FVector3& Angular);
         void DispatchContactEvents();
         void DispatchActivationEvents();
         void DrainStepEvents();
@@ -275,6 +315,10 @@ namespace Lumina::Physics
 
         bool TryCreateComponentConstraint(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void DrainPendingConstraints();
+        void SynchronizeConstraints();
+        bool CommitConstraint(uint32 Handle, const FConstraintDesc& Desc);
+        void ApplyConstraintEnabled(uint32 ConstraintID, bool bEnabled);
+        void ApplyConstraintMotor(uint32 ConstraintID, EConstraintMotorMode Mode, float Target);
         void MonitorBreakableConstraints(float Dt);
         void DestroyAllConstraints();
         void DestroyAllStaticBodyGroups();
@@ -340,10 +384,51 @@ namespace Lumina::Physics
         };
         TVector<FDeferredBodyUpdate>            RetryBodyUpdates;
 
-        FMutex                                  PendingRigidBodyMutex;
-        TQueue<ECS::FEntity>                    PendingRigidBodyCreations;
+        struct FBodyRecord
+        {
+            uint32 Handle = ~0u;
+            uint64 Revision = 0;
+            EPhysicsBodyStatus Status = EPhysicsBodyStatus::Pending;
+            FVector3 LastBodyPosition = FVector3(0.0f);
+            FQuat LastBodyRotation = FQuat::Identity();
+            bool bRebuild = false;
+        };
 
-        TAtomic<bool>                           bStepInProgress{ false };
+        THashMap<ECS::FEntity, FBodyRecord> RigidBodies;
+        THashMap<ECS::FEntity, FBodyRecord> CharacterBodies;
+        uint64 NextBindingRevision = 1;
+        TVector<ECS::FEntity> PendingRigidBodies;
+        TVector<ECS::FEntity> PendingCharacters;
+        TVector<uint32> PendingBodyDestructions;
+        TVector<uint32> BodyGenerations;
+        uint64 SceneIdentity = 0;
+        bool bStaticTreeDirty = false;
+
+        enum class EBodyCommand : uint8
+        {
+            Impulse, Force, Torque, AngularImpulse, LinearVelocity, AngularVelocity,
+            ImpulseAtPosition, ForceAtPosition, Gravity, Activate, Deactivate, MotionType,
+            SurfaceVelocity, Buoyancy, TargetForce
+        };
+
+        struct FBodyCommand
+        {
+            EBodyCommand Type;
+            ECS::FEntity Entity = ECS::NullEntity;
+            uint64 Revision = 0;
+            bool bCharacter = false;
+            FPhysicsBodyTarget Target;
+            FVector3 Value = FVector3(0.0f);
+            FVector3 Point = FVector3(0.0f);
+            FVector3 Secondary = FVector3(0.0f);
+            FVector4 Parameters = FVector4(0.0f);
+        };
+
+        void QueueBodyCommand(FBodyCommand Command);
+        void ApplyBodyCommands();
+        FMutex BodyCommandMutex;
+        TVector<FBodyCommand> PendingBodyCommands;
+        TVector<FBodyCommand> BodyCommandScratch;
 
         // Offsets the re-validation phase of resting characters so a settled crowd does not poll on one step.
         uint64                                  CharacterStepCounter = 0;
@@ -351,9 +436,6 @@ namespace Lumina::Physics
         TVector<FCharacterWork>                 CharacterWorkScratch;
         TVector<FCharacterPushBucket>           CharacterPushScratch;
 
-        int32                                   BodyBatchDepth = 0;
-        TVector<ECS::FEntity>                   BatchedBodyCreations;
-        TVector<ECS::FEntity>                   BatchedCharacterCreations;
 
         TVector<FRigidBodyBuildResult>          BatchBuildScratch;
         TVector<EBodyBuildStatus>               BatchStatusScratch;
@@ -396,6 +478,14 @@ namespace Lumina::Physics
         struct FBox3DConstraint
         {
             b3JointId               JointId{};
+            FConstraintDesc         Description;
+            uint64                  RevisionA = 0;
+            uint64                  RevisionB = 0;
+            bool                    bDestroy = false;
+            bool                    bSettingsDirty = false;
+            bool                    bMotorSet = false;
+            EConstraintMotorMode    MotorMode = EConstraintMotorMode::Off;
+            float                   MotorTarget = 0.0f;
             EPhysicsConstraintType  Type = EPhysicsConstraintType::Point;
             float                   BreakForce = 0.0f;
             float                   MotorForceLimit = 0.0f;

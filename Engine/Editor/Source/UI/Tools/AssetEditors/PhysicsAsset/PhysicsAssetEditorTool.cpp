@@ -895,7 +895,6 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::UpdateSimulationGrab(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
     {
-        constexpr uint32 InvalidBody = 0xFFFFFFFF;
         constexpr float GrabReach = 100.0f;
         constexpr float GrabStiffness = 400.0f;
         constexpr float GrabDamping = 30.0f;
@@ -903,14 +902,14 @@ namespace Lumina
         Physics::IPhysicsScene* Scene = World->GetPhysicsScene();
         if (Scene == nullptr)
         {
-            GrabbedBodyID = InvalidBody;
+            GrabbedTarget = {};
             return;
         }
 
         const bool bGrabHeld = ImGui::GetIO().KeyShift && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        if (GrabbedBodyID != InvalidBody && !bGrabHeld)
+        if (GrabbedTarget.IsSet() && !bGrabHeld)
         {
-            GrabbedBodyID = InvalidBody;
+            GrabbedTarget = {};
         }
 
         const ImVec2 MousePos = ImGui::GetMousePos();
@@ -920,7 +919,7 @@ namespace Lumina
             return;
         }
 
-        if (GrabbedBodyID == InvalidBody)
+        if (!GrabbedTarget.IsSet())
         {
             if (!bViewportHovered || !ImGui::GetIO().KeyShift || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
@@ -939,26 +938,31 @@ namespace Lumina
                 return;
             }
 
-            GrabbedBodyID = (uint32)Hit->BodyID;
+            Physics::FPhysicsBodyState BodyState;
+            if (!Scene->TryGetTargetState(Hit->Target, BodyState) || BodyState.Mass <= 0.0f)
+            {
+                return;
+            }
+            GrabbedTarget = Hit->Target;
             GrabDistance = Math::Length(Hit->Location - RayOrigin);
-            GrabLocalOffset = Math::Inverse(Scene->GetBodyRotation(GrabbedBodyID)) * (Hit->Location - Scene->GetBodyPosition(GrabbedBodyID));
+            GrabLocalOffset = Math::Inverse(BodyState.Rotation) * (Hit->Location - BodyState.Position);
             return;
         }
 
+        Physics::FPhysicsBodyState BodyState;
+        if (!Scene->TryGetTargetState(GrabbedTarget, BodyState) || BodyState.Mass <= 0.0f)
+        {
+            GrabbedTarget = {};
+            return;
+        }
         const FVector3 Target = RayOrigin + RayDirection * GrabDistance;
-        const FVector3 AttachPoint = Scene->GetBodyPosition(GrabbedBodyID) + Scene->GetBodyRotation(GrabbedBodyID) * GrabLocalOffset;
+        const FVector3 AttachPoint = BodyState.Position + BodyState.Rotation * GrabLocalOffset;
 
         // The damping term is what stops the body oscillating once the cursor stops.
         const FVector3 Force = (Target - AttachPoint) * GrabStiffness
-                             - Scene->GetVelocityAtPoint(GrabbedBodyID, AttachPoint) * GrabDamping;
+                             - (BodyState.LinearVelocity + Math::Cross(BodyState.AngularVelocity, AttachPoint - BodyState.CenterOfMass)) * GrabDamping;
 
-        SAddForceAtPositionEvent ForceEvent;
-        ForceEvent.BodyID = GrabbedBodyID;
-        ForceEvent.Force = Force;
-        ForceEvent.Position = AttachPoint;
-
-        Scene->ActivateBody(GrabbedBodyID);
-        Scene->OnAddForceAtPositionEvent(ForceEvent);
+        Scene->AddForceAtTarget(GrabbedTarget, Force, AttachPoint);
 
         World->DrawLine(AttachPoint, Target, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 2.5f, false);
         World->DrawSphere(Target, 0.035f, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 10, 2.0f, false);
@@ -1325,10 +1329,10 @@ namespace Lumina
 
             // The body is built from a deferred queue, so report what landed rather than what was asked.
             const SRigidBodyComponent* FloorBody = World->TryGetComponent<SRigidBodyComponent>(FloorBodyEntity);
-            if (!bFloorBodyReported && FloorBody != nullptr && FloorBody->BodyID != 0xFFFFFFFF)
+            if (!bFloorBodyReported && FloorBody != nullptr && World->GetPhysicsScene()->GetBodyStatus(FloorBodyEntity) == Physics::EPhysicsBodyStatus::Ready)
             {
                 bFloorBodyReported = true;
-                LOG_INFO("PhysicsAsset sim: floor body {} created at {}, half extent {}", FloorBody->BodyID,
+                LOG_INFO("PhysicsAsset sim: floor body {} created at {}, half extent {}", FloorBodyEntity.Value,
                     FloorTransform.GetLocation().y, World->GetComponent<SBoxColliderComponent>(FloorBodyEntity).HalfExtent.y);
             }
             else if (!bFloorBodyReported && SimulationFrames == 60)
@@ -1421,7 +1425,7 @@ namespace Lumina
         }
 
         World->SetPaused(true);
-        GrabbedBodyID = 0xFFFFFFFF;
+        GrabbedTarget = {};
 
         if (MeshEntity != ECS::NullEntity)
         {

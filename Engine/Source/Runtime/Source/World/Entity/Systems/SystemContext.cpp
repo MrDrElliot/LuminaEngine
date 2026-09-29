@@ -45,28 +45,22 @@ namespace Lumina
         return World ? World->GetPhysicsScene() : nullptr;
     }
 
-    void FSystemContext::ActivateBody(uint32 BodyID)
+    void FSystemContext::ActivateBody(ECS::FEntity Entity)
     {
         CheckPhysics(true);
-        World->PhysicsScene->ActivateBody(BodyID);
+        World->PhysicsScene->ActivateBody(Entity);
     }
 
-    void FSystemContext::DeactivateBody(uint32 BodyID)
+    void FSystemContext::DeactivateBody(ECS::FEntity Entity)
     {
         CheckPhysics(true);
-        World->PhysicsScene->DeactivateBody(BodyID);
+        World->PhysicsScene->DeactivateBody(Entity);
     }
 
-    void FSystemContext::ChangeBodyMotionType(uint32 BodyID, EBodyType NewType)
+    void FSystemContext::ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType)
     {
         CheckPhysics(true);
-        World->PhysicsScene->ChangeBodyMotionType(BodyID, NewType);
-    }
-
-    uint32 FSystemContext::GetEntityBodyID(ECS::FEntity Entity) const
-    {
-        CheckPhysics(false);
-        return World->PhysicsScene ? World->PhysicsScene->GetEntityBodyID(Entity) : ~0u;
+        World->PhysicsScene->ChangeBodyMotionType(Entity, NewType);
     }
 
     FVector3 FSystemContext::GetBodyPosition(ECS::FEntity Entity) const

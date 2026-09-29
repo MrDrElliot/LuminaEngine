@@ -19,7 +19,7 @@ namespace Lumina::Physics
         struct FQueryContext
         {
             FBox3DPhysicsScene*     Scene = nullptr;
-            TSpan<const uint32>     IgnoreBodies;
+            TSpan<const ECS::FEntity>     IgnoreEntities;
             TVector<SRayResult>*    Hits = nullptr;
             SRayResult*             Closest = nullptr;
             TSpan<ECS::FEntity>     OutEntities;
@@ -31,11 +31,11 @@ namespace Lumina::Physics
         };
 
         // The ignore list is inline and tiny, so a linear scan beats any set on both branches and cache.
-        FORCEINLINE bool IsIgnored(TSpan<const uint32> IgnoreBodies, uint32 Handle)
+        FORCEINLINE bool IsIgnored(TSpan<const ECS::FEntity> IgnoreEntities, ECS::FEntity Entity)
         {
-            for (uint32 Ignored : IgnoreBodies)
+            for (ECS::FEntity Ignored : IgnoreEntities)
             {
-                if (Ignored == Handle)
+                if (Ignored == Entity)
                 {
                     return true;
                 }
@@ -60,7 +60,7 @@ namespace Lumina::Physics
 
             const ECS::FEntity Entity = UnpackEntity(UserData);
 
-            Result.BodyID = (int64)UnpackHandle(UserData);
+            Result.Target = Scene.MakeBodyTarget(UnpackHandle(UserData));
             Result.Entity = (Entity).Value;
             Result.Start = Start;
             Result.End = End;
@@ -79,7 +79,7 @@ namespace Lumina::Physics
 
             const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
             const uint32 Handle = HandleOfBody(BodyId);
-            if (IsIgnored(Query.IgnoreBodies, Handle))
+            if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
             {
                 return -1.0f;
             }
@@ -98,7 +98,7 @@ namespace Lumina::Physics
 
             const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
             const uint32 Handle = HandleOfBody(BodyId);
-            if (IsIgnored(Query.IgnoreBodies, Handle))
+            if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
             {
                 return -1.0f;
             }
@@ -117,7 +117,7 @@ namespace Lumina::Physics
             void* UserData = b3Body_IsValid(BodyId) ? b3Body_GetUserData(BodyId) : nullptr;
             const uint32 Handle = UnpackHandle(UserData);
 
-            if (IsIgnored(Query.IgnoreBodies, Handle))
+            if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
             {
                 return true;
             }
@@ -187,7 +187,7 @@ namespace Lumina::Physics
         const b3QueryFilter Filter = MakeLayerFilter(Settings.LayerMask);
         SRayResult Result{};
 
-        if (Settings.IgnoreBodies.empty())
+        if (Settings.IgnoreEntities.empty())
         {
             const b3RayResult Hit = b3World_CastRayClosest(WorldId, Box3DUtils::ToB3Vec3(Settings.Start),
                                                            Box3DUtils::ToB3Vec3(Delta), Filter);
@@ -202,7 +202,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreBodies = TSpan<const uint32>(Settings.IgnoreBodies.data(), Settings.IgnoreBodies.size());
+        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.data(), Settings.IgnoreEntities.size());
         Query.Closest = &Result;
         Query.Start = Settings.Start;
         Query.End = Settings.End;
@@ -234,7 +234,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreBodies = TSpan<const uint32>(Settings.IgnoreBodies.data(), Settings.IgnoreBodies.size());
+        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.data(), Settings.IgnoreEntities.size());
         Query.Hits = &OutHits;
         Query.Start = Settings.Start;
         Query.End = Settings.End;
@@ -268,7 +268,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreBodies = TSpan<const uint32>(Settings.IgnoreBodies.data(), Settings.IgnoreBodies.size());
+        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.data(), Settings.IgnoreEntities.size());
         Query.Hits = &OutHits;
         Query.Start = Settings.Start;
         Query.End = Settings.End;
@@ -301,7 +301,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreBodies = TSpan<const uint32>(Settings.IgnoreBodies.data(), Settings.IgnoreBodies.size());
+        Query.IgnoreEntities = TSpan<const ECS::FEntity>(Settings.IgnoreEntities.data(), Settings.IgnoreEntities.size());
         Query.Closest = &Result;
         Query.Start = Settings.Start;
         Query.End = Settings.End;
@@ -318,7 +318,7 @@ namespace Lumina::Physics
         return Result;
     }
 
-    int32 FBox3DPhysicsScene::OverlapSphere(const FVector3& Center, float Radius, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities)
+    int32 FBox3DPhysicsScene::OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -327,7 +327,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreBodies = IgnoreBodies;
+        Query.IgnoreEntities = IgnoreEntities;
         Query.OutEntities = OutEntities;
 
         b3World_OverlapShape(WorldId, Box3DUtils::ToB3Vec3(Center), &Proxy, b3DefaultQueryFilter(), &OverlapCallback, &Query);
@@ -335,7 +335,7 @@ namespace Lumina::Physics
         return Query.EntityCount;
     }
 
-    int32 FBox3DPhysicsScene::OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities)
+    int32 FBox3DPhysicsScene::OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -350,7 +350,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreBodies = IgnoreBodies;
+        Query.IgnoreEntities = IgnoreEntities;
         Query.OutEntities = OutEntities;
 
         b3World_OverlapShape(WorldId, Box3DUtils::ToB3Vec3(Center), &Proxy, b3DefaultQueryFilter(), &OverlapCallback, &Query);
@@ -358,7 +358,7 @@ namespace Lumina::Physics
         return Query.EntityCount;
     }
 
-    int32 FBox3DPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const uint32> IgnoreBodies, TSpan<ECS::FEntity> OutEntities)
+    int32 FBox3DPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -368,7 +368,7 @@ namespace Lumina::Physics
 
         FQueryContext Query;
         Query.Scene = this;
-        Query.IgnoreBodies = IgnoreBodies;
+        Query.IgnoreEntities = IgnoreEntities;
         Query.OutEntities = OutEntities;
 
         b3World_OverlapShape(WorldId, Box3DUtils::ToB3Vec3(Point), &Proxy, b3DefaultQueryFilter(), &OverlapCallback, &Query);

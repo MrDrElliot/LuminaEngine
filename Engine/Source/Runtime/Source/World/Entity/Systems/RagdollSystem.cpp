@@ -109,7 +109,7 @@ namespace Lumina
             for (ECS::FEntity Entity : View)
             {
                 SRagdollComponent& Ragdoll = View.Get<SRagdollComponent>(Entity);
-                if (Ragdoll.RealizedState != ERagdollState::Simulated || !Ragdoll.Ragdoll)
+                if (Ragdoll.RealizedState != ERagdollState::Simulated || !Ragdoll.Ragdoll || !Scene->IsRagdollReady(*Ragdoll.Ragdoll))
                 {
                     continue;
                 }

@@ -120,6 +120,9 @@ namespace Lumina::Physics
         LOG_DISPLAY("[Box3D] Scene created with {} solver worker(s), capacity {} bodies.",
             TaskBridge.GetWorkerCount(), MaxBodies);
 
+        static TAtomic<uint64> NextSceneIdentity{ 1 };
+        SceneIdentity = NextSceneIdentity.fetch_add(1, std::memory_order_relaxed);
+
         BodyMaterials.resize(MaxBodies);
         BodyHandles.reserve(MaxBodies);
 
@@ -291,10 +294,12 @@ namespace Lumina::Physics
             const uint32 Handle = FreeBodyHandles.back();
             FreeBodyHandles.pop_back();
             BodyHandles[Handle] = BodyId;
+            ++BodyGenerations[Handle];
             return Handle;
         }
 
         BodyHandles.push_back(BodyId);
+        BodyGenerations.push_back(1);
         return (uint32)(BodyHandles.size() - 1);
     }
 
@@ -329,24 +334,16 @@ namespace Lumina::Physics
     {
     }
 
-    uint32 FBox3DPhysicsScene::GetEntityBodyID(ECS::FEntity Entity)
+    uint32 FBox3DPhysicsScene::FindEntityBody(ECS::FEntity Entity) const
     {
-        FlushDeferredBodyCreations();
-        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
-
-        if (const SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Entity))
+        if (auto It = RigidBodies.find(Entity); It != RigidBodies.end())
         {
-            return Body->BodyID;
+            return It->second.Handle;
         }
-
-        if (const SCharacterPhysicsComponent* Character = Registry.TryGet<SCharacterPhysicsComponent>(Entity))
+        if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end())
         {
-            if (Character->Character)
-            {
-                return Character->Character->ProxyBodyHandle;
-            }
+            return It->second.Handle;
         }
-
         return InvalidBodyHandle;
     }
 
@@ -360,164 +357,136 @@ namespace Lumina::Physics
         return MaxBodies;
     }
 
-    bool FBox3DPhysicsScene::IsBodyActive(uint32 BodyID)
+    bool FBox3DPhysicsScene::IsBodyActive(ECS::FEntity Entity) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body) && b3Body_IsAwake(Body);
     }
 
-    void FBox3DPhysicsScene::ActivateBody(uint32 BodyID)
+    void FBox3DPhysicsScene::ActivateBody(ECS::FEntity Entity)
     {
-        const b3BodyId Body = ResolveBody(BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_SetAwake(Body, true);
-        }
+        QueueBodyCommand({ EBodyCommand::Activate, Entity });
     }
 
-    void FBox3DPhysicsScene::DeactivateBody(uint32 BodyID)
+    void FBox3DPhysicsScene::DeactivateBody(ECS::FEntity Entity)
     {
-        const b3BodyId Body = ResolveBody(BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_SetAwake(Body, false);
-        }
+        QueueBodyCommand({ EBodyCommand::Deactivate, Entity });
     }
 
-    void FBox3DPhysicsScene::ChangeBodyMotionType(uint32 BodyID, EBodyType NewType)
+    void FBox3DPhysicsScene::ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType)
     {
-        const b3BodyId Body = ResolveBody(BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_SetType(Body, Box3DUtils::ToBox3DBodyType(NewType));
-        }
+        FBodyCommand Command{ EBodyCommand::MotionType, Entity };
+        Command.Parameters.x = static_cast<float>(NewType);
+        QueueBodyCommand(Command);
     }
 
-    FVector3 FBox3DPhysicsScene::GetLinearVelocity(uint32 BodyID)
+    FVector3 FBox3DPhysicsScene::GetLinearVelocity(ECS::FEntity Entity) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body) ? Box3DUtils::FromB3Vec3(b3Body_GetLinearVelocity(Body)) : FVector3(0.0f);
     }
 
-    FVector3 FBox3DPhysicsScene::GetAngularVelocity(uint32 BodyID)
+    FVector3 FBox3DPhysicsScene::GetAngularVelocity(ECS::FEntity Entity) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body) ? Box3DUtils::FromB3Vec3(b3Body_GetAngularVelocity(Body)) : FVector3(0.0f);
     }
 
-    FVector3 FBox3DPhysicsScene::GetVelocityAtPoint(uint32 BodyID, const FVector3& Point)
+    FVector3 FBox3DPhysicsScene::GetVelocityAtPoint(ECS::FEntity Entity, const FVector3& Point) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body)
             ? Box3DUtils::FromB3Vec3(b3Body_GetWorldPointVelocity(Body, Box3DUtils::ToB3Vec3(Point)))
             : FVector3(0.0f);
     }
 
-    FVector3 FBox3DPhysicsScene::GetCenterOfMass(uint32 BodyID)
+    FVector3 FBox3DPhysicsScene::GetCenterOfMass(ECS::FEntity Entity) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body) ? Box3DUtils::FromB3Vec3(b3Body_GetWorldCenter(Body)) : FVector3(0.0f);
     }
 
-    float FBox3DPhysicsScene::GetBodyMass(uint32 BodyID)
+    float FBox3DPhysicsScene::GetBodyMass(ECS::FEntity Entity) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body) ? b3Body_GetMass(Body) : 0.0f;
     }
 
-    FVector3 FBox3DPhysicsScene::GetBodyPosition(uint32 BodyID)
+    FVector3 FBox3DPhysicsScene::GetBodyPosition(ECS::FEntity Entity) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body) ? Box3DUtils::FromB3Vec3(b3Body_GetPosition(Body)) : FVector3(0.0f);
     }
 
-    FQuat FBox3DPhysicsScene::GetBodyRotation(uint32 BodyID)
+    FQuat FBox3DPhysicsScene::GetBodyRotation(ECS::FEntity Entity) const
     {
-        const b3BodyId Body = ResolveBody(BodyID);
+        const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
         return b3Body_IsValid(Body) ? Box3DUtils::FromB3Quat(b3Body_GetRotation(Body)) : FQuat::Identity();
     }
 
-    void FBox3DPhysicsScene::OnImpulseEvent(const SImpulseEvent& Impulse)
+    void FBox3DPhysicsScene::OnImpulseEvent(const SImpulseEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(Impulse.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_ApplyLinearImpulseToCenter(Body, Box3DUtils::ToB3Vec3(Impulse.Impulse), true);
-        }
+        FBodyCommand Command{ EBodyCommand::Impulse, Event.Entity };
+        Command.Value = Event.Impulse;
+        QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnForceEvent(const SForceEvent& Force)
+    void FBox3DPhysicsScene::OnForceEvent(const SForceEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(Force.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_ApplyForceToCenter(Body, Box3DUtils::ToB3Vec3(Force.Force), true);
-        }
+        FBodyCommand Command{ EBodyCommand::Force, Event.Entity };
+        Command.Value = Event.Force;
+        QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnTorqueEvent(const STorqueEvent& Torque)
+    void FBox3DPhysicsScene::OnTorqueEvent(const STorqueEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(Torque.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_ApplyTorque(Body, Box3DUtils::ToB3Vec3(Torque.Torque), true);
-        }
+        FBodyCommand Command{ EBodyCommand::Torque, Event.Entity };
+        Command.Value = Event.Torque;
+        QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnAngularImpulseEvent(const SAngularImpulseEvent& AngularImpulse)
+    void FBox3DPhysicsScene::OnAngularImpulseEvent(const SAngularImpulseEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(AngularImpulse.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_ApplyAngularImpulse(Body, Box3DUtils::ToB3Vec3(AngularImpulse.AngularImpulse), true);
-        }
+        FBodyCommand Command{ EBodyCommand::AngularImpulse, Event.Entity };
+        Command.Value = Event.AngularImpulse;
+        QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnSetVelocityEvent(const SSetVelocityEvent& Velocity)
+    void FBox3DPhysicsScene::OnSetVelocityEvent(const SSetVelocityEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(Velocity.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_SetLinearVelocity(Body, Box3DUtils::ToB3Vec3(Velocity.Velocity));
-            b3Body_SetAwake(Body, true);
-        }
+        FBodyCommand Command{ EBodyCommand::LinearVelocity, Event.Entity };
+        Command.Value = Event.Velocity;
+        QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnSetAngularVelocityEvent(const SSetAngularVelocityEvent& AngularVelocity)
+    void FBox3DPhysicsScene::OnSetAngularVelocityEvent(const SSetAngularVelocityEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(AngularVelocity.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_SetAngularVelocity(Body, Box3DUtils::ToB3Vec3(AngularVelocity.AngularVelocity));
-            b3Body_SetAwake(Body, true);
-        }
+        FBodyCommand Command{ EBodyCommand::AngularVelocity, Event.Entity };
+        Command.Value = Event.AngularVelocity;
+        QueueBodyCommand(Command);
     }
 
     void FBox3DPhysicsScene::OnAddImpulseAtPositionEvent(const SAddImpulseAtPositionEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(Event.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_ApplyLinearImpulse(Body, Box3DUtils::ToB3Vec3(Event.Impulse), Box3DUtils::ToB3Vec3(Event.Position), true);
-        }
+        FBodyCommand Command{ EBodyCommand::ImpulseAtPosition, Event.Entity };
+        Command.Value = Event.Impulse;
+        Command.Point = Event.Position;
+        QueueBodyCommand(Command);
     }
 
     void FBox3DPhysicsScene::OnAddForceAtPositionEvent(const SAddForceAtPositionEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(Event.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_ApplyForce(Body, Box3DUtils::ToB3Vec3(Event.Force), Box3DUtils::ToB3Vec3(Event.Position), true);
-        }
+        FBodyCommand Command{ EBodyCommand::ForceAtPosition, Event.Entity };
+        Command.Value = Event.Force;
+        Command.Point = Event.Position;
+        QueueBodyCommand(Command);
     }
 
     void FBox3DPhysicsScene::OnSetGravityFactorEvent(const SSetGravityFactorEvent& Event)
     {
-        const b3BodyId Body = ResolveBody(Event.BodyID);
-        if (b3Body_IsValid(Body))
-        {
-            b3Body_SetGravityScale(Body, Event.GravityFactor);
-        }
+        FBodyCommand Command{ EBodyCommand::Gravity, Event.Entity };
+        Command.Parameters.x = Event.GravityFactor;
+        QueueBodyCommand(Command);
     }
 
     void FBox3DPhysicsScene::StoreBodyMaterial(uint32 BodyID, const FRigidBodyBuildResult& Build)
@@ -543,9 +512,8 @@ namespace Lumina::Physics
         }
     }
 
-    void FBox3DPhysicsScene::SetSurfaceVelocity(ECS::FEntity Entity, const FVector3& Linear, const FVector3& Angular)
+    void FBox3DPhysicsScene::ApplySurfaceVelocity(b3BodyId Body, const FVector3& Linear, const FVector3& Angular)
     {
-        const b3BodyId Body = ResolveBody(GetEntityBodyID(Entity));
         if (!b3Body_IsValid(Body))
         {
             return;

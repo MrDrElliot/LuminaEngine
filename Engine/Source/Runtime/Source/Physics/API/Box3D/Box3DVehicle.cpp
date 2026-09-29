@@ -87,9 +87,9 @@ namespace Lumina::Physics
         const bool bDebugDraw = FBox3DPhysicsContext::IsDebugDrawEnabled();
         const bool bPermissive = Box3DUtils::UsesPermissiveCollisionFilter();
 
-        Registry.View<SVehicleComponent, SRigidBodyComponent>().ForEach([&](ECS::FEntity, SVehicleComponent& Vehicle, const SRigidBodyComponent& RigidBody)
+        Registry.View<SVehicleComponent, SRigidBodyComponent>().ForEach([&](ECS::FEntity Entity, SVehicleComponent& Vehicle, const SRigidBodyComponent& RigidBody)
         {
-            const b3BodyId Body = ResolveBody(RigidBody.BodyID);
+            const b3BodyId Body = ResolveBody(FindEntityBody(Entity));
             if (!b3Body_IsValid(Body) || b3Body_GetType(Body) != b3_dynamicBody || Vehicle.Wheels.empty())
             {
                 return;

@@ -13,9 +13,26 @@
 namespace Lumina
 {
     // Inline capacity for a query's ignore list; going past it spills to the heap, never drops bodies.
-    inline constexpr size_t MaxInlineIgnoreBodies = 8;
+    inline constexpr size_t MaxInlineIgnoreEntities = 8;
 
     inline constexpr ECollisionProfiles AllCollisionProfiles = ECollisionProfiles::All;
+
+    REFLECT()
+    struct FPhysicsBodyTarget
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        uint64 Scene = 0;
+
+        PROPERTY()
+        uint32 Slot = ~0u;
+
+        PROPERTY()
+        uint32 Generation = 0;
+
+        bool IsSet() const { return Scene != 0 && Slot != ~0u; }
+    };
 
     REFLECT()
     struct SRayResult
@@ -23,7 +40,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY()
-        int64 BodyID;
+        FPhysicsBodyTarget Target;
 
         PROPERTY()
         uint32 Entity = ECS::NullEntity.Value;
@@ -87,12 +104,12 @@ namespace Lumina
         ECollisionProfiles LayerMask = AllCollisionProfiles;
 
         PROPERTY()
-        TFixedVector<uint32, MaxInlineIgnoreBodies> IgnoreBodies;
+        TFixedVector<ECS::FEntity, MaxInlineIgnoreEntities> IgnoreEntities;
 
         FUNCTION()
-        void AddIgnoredBody(uint32 Body)
+        void AddIgnoredEntity(ECS::FEntity Entity)
         {
-            IgnoreBodies.push_back(Body);
+            IgnoreEntities.push_back(Entity);
         }
     };
 
@@ -128,12 +145,12 @@ namespace Lumina
         ECollisionProfiles LayerMask = AllCollisionProfiles;
 
         PROPERTY()
-        TFixedVector<uint32, MaxInlineIgnoreBodies> IgnoreBodies;
+        TFixedVector<ECS::FEntity, MaxInlineIgnoreEntities> IgnoreEntities;
 
         FUNCTION()
-        void AddIgnoredBody(uint32 Body)
+        void AddIgnoredEntity(ECS::FEntity Entity)
         {
-            IgnoreBodies.push_back(Body);
+            IgnoreEntities.push_back(Entity);
         }
     };
 }

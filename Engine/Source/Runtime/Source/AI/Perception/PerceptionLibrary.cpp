@@ -111,10 +111,10 @@ namespace Lumina
         Ray.Start = Start;
         Ray.End = End;
         Ray.LayerMask = ECollisionProfiles::Static | ECollisionProfiles::Dynamic;
-        const uint32 FromBody = Scene->GetEntityBodyID(From);
-        if (FromBody != 0xFFFFFFFFu)
+        const ECS::FEntity FromBody = From;
+        if (FromBody != ECS::NullEntity)
         {
-            Ray.IgnoreBodies.push_back(FromBody);
+            Ray.IgnoreEntities.push_back(FromBody);
         }
 
         const TOptional<SRayResult> Hit = Scene->CastRay(Ray);

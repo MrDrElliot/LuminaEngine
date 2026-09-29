@@ -1314,7 +1314,6 @@ namespace Lumina
         (void)ViewportOrigin;
         (void)ViewportSize;
 
-        constexpr uint32 InvalidBody = 0xFFFFFFFFu;
         constexpr float  GrabReach = 500.0f;
 
         // A spring is second order and rings, while asking for a velocity is first order and cannot overshoot.
@@ -1329,14 +1328,14 @@ namespace Lumina
         Physics::IPhysicsScene* Scene = HasSimulatingWorld() && World != nullptr ? World->GetPhysicsScene() : nullptr;
         if (Scene == nullptr)
         {
-            GrabbedBodyID = InvalidBody;
+            GrabbedTarget = {};
             return;
         }
 
         const bool bGrabHeld = ImGui::GetIO().KeyShift && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        if (GrabbedBodyID != InvalidBody && !bGrabHeld)
+        if (GrabbedTarget.IsSet() && !bGrabHeld)
         {
-            GrabbedBodyID = InvalidBody;
+            GrabbedTarget = {};
         }
 
         FVector3 RayOrigin, RayDirection;
@@ -1345,7 +1344,7 @@ namespace Lumina
             return;
         }
 
-        if (GrabbedBodyID == InvalidBody)
+        if (!GrabbedTarget.IsSet())
         {
             if (!bInViewportHovered || !ImGui::GetIO().KeyShift || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
@@ -1372,16 +1371,27 @@ namespace Lumina
                 return;
             }
 
-            GrabbedBodyID = (uint32)Hit->BodyID;
+            Physics::FPhysicsBodyState BodyState;
+            if (!Scene->TryGetTargetState(Hit->Target, BodyState) || BodyState.Mass <= 0.0f)
+            {
+                return;
+            }
+            GrabbedTarget = Hit->Target;
             GrabDistance = Math::Length(Hit->Location - RayOrigin);
-            GrabLocalOffset = Math::Inverse(Scene->GetBodyRotation(GrabbedBodyID))
-                            * (Hit->Location - Scene->GetBodyPosition(GrabbedBodyID));
+            GrabLocalOffset = Math::Inverse(BodyState.Rotation)
+                            * (Hit->Location - BodyState.Position);
             return;
         }
 
+        Physics::FPhysicsBodyState BodyState;
+        if (!Scene->TryGetTargetState(GrabbedTarget, BodyState) || BodyState.Mass <= 0.0f)
+        {
+            GrabbedTarget = {};
+            return;
+        }
         const FVector3 Target = RayOrigin + RayDirection * GrabDistance;
-        const FVector3 AttachPoint = Scene->GetBodyPosition(GrabbedBodyID)
-                                   + Scene->GetBodyRotation(GrabbedBodyID) * GrabLocalOffset;
+        const FVector3 AttachPoint = BodyState.Position
+                                   + BodyState.Rotation * GrabLocalOffset;
 
         // Capped so a fast cursor asks for a drag rather than a launch, which stops the body arriving instantly.
         FVector3 DesiredVelocity = (Target - AttachPoint) * ApproachGain;
@@ -1393,7 +1403,7 @@ namespace Lumina
         }
 
         // GetVelocityAtPoint includes spin, so a body rotating under the grab is corrected by the same term.
-        FVector3 Acceleration = (DesiredVelocity - Scene->GetVelocityAtPoint(GrabbedBodyID, AttachPoint))
+        FVector3 Acceleration = (DesiredVelocity - (BodyState.LinearVelocity + Math::Cross(BodyState.AngularVelocity, AttachPoint - BodyState.CenterOfMass)))
                               * VelocityGain;
 
         const float AccelerationMagnitude = Math::Length(Acceleration);
@@ -1403,20 +1413,14 @@ namespace Lumina
         }
 
         // A body reporting zero mass is static or kinematic, so the grab lets go rather than pulling on nothing.
-        const float BodyMass = Scene->GetBodyMass(GrabbedBodyID);
+        const float BodyMass = BodyState.Mass;
         if (BodyMass <= 0.0f)
         {
-            GrabbedBodyID = InvalidBody;
+            GrabbedTarget = {};
             return;
         }
 
-        SAddForceAtPositionEvent ForceEvent;
-        ForceEvent.BodyID = GrabbedBodyID;
-        ForceEvent.Force = Acceleration * BodyMass;
-        ForceEvent.Position = AttachPoint;
-
-        Scene->ActivateBody(GrabbedBodyID);
-        Scene->OnAddForceAtPositionEvent(ForceEvent);
+        Scene->AddForceAtTarget(GrabbedTarget, Acceleration * BodyMass, AttachPoint);
 
         World->DrawLine(AttachPoint, Target, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 2.5f, false);
         World->DrawSphere(Target, 0.035f, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 10, 2.0f, false);

@@ -440,12 +440,7 @@ namespace Lumina
                     continue;
                 }
 
-                const uint32 BodyID = PhysScene->GetEntityBodyID(Entity);
-                if (BodyID != ~0u) // body created yet?
-                {
-                    PhysScene->ChangeBodyMotionType(BodyID, EBodyType::Kinematic);
-                    Net.bProxyPhysicsConfigured = true;
-                }
+                PhysScene->ChangeBodyMotionType(Entity, EBodyType::Kinematic);
             }
         }
 

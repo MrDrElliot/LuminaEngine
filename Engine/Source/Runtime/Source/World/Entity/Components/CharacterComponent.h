@@ -103,7 +103,6 @@ namespace Lumina
         bool bCollideWithCharacters = true;
 
         FUNCTION()
-        uint32 GetBodyID() const;
 
     };
 

@@ -1,8 +1,10 @@
 #include "RuntimePCH.h"
+#include <algorithm>
 #include "World/ECS/Registry.h"
 #include "Box3DPhysicsScene.h"
 
 #include "Box3DCharacterHandle.h"
+#include "Box3DRagdollHandle.h"
 #include "Box3DInternal.h"
 #include "Box3DUtils.h"
 
@@ -22,14 +24,11 @@ namespace Lumina::Physics
     {
         // Orient a contact record for one receiving side; POD fill, no per-event table built downstream.
         SCollisionEvent BuildCollisionEvent(ECS::FEntity SelfEntity, ECS::FEntity OtherEntity,
-                                           uint32 SelfBodyID, uint32 OtherBodyID,
                                            const FContactRecord& Record, bool bFlipNormal)
         {
             SCollisionEvent Event;
             Event.Entity = SelfEntity;
             Event.Other = OtherEntity;
-            Event.BodyID = SelfBodyID;
-            Event.OtherBodyID = OtherBodyID;
             Event.Point = Record.Point;
 
             // The normal points outward from self, so a script can react with its negation to bounce away.
@@ -223,8 +222,7 @@ namespace Lumina::Physics
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        auto Deliver = [&](ECS::FEntity Self, ECS::FEntity Other, uint32 SelfBody, uint32 OtherBody,
-                           const FContactRecord& Record, bool bFlipNormal, bool bIsAdded, bool bIsOverlap)
+        auto Deliver = [&](ECS::FEntity Self, ECS::FEntity Other, const FContactRecord& Record, bool bFlipNormal, bool bIsAdded, bool bIsOverlap)
         {
             if (Self == ECS::NullEntity || !Registry.IsValid(Self))
             {
@@ -246,7 +244,7 @@ namespace Lumina::Physics
                 return;
             }
 
-            Delegate.Broadcast(BuildCollisionEvent(Self, Other, SelfBody, OtherBody, Record, bFlipNormal));
+            Delegate.Broadcast(BuildCollisionEvent(Self, Other, Record, bFlipNormal));
         };
 
         for (const FContactRecord& Record : ContactDrainScratch)
@@ -254,8 +252,8 @@ namespace Lumina::Physics
             const bool bAdded = (Record.Type == EContactEventType::Added);
             const bool bOverlap = Record.bSensorA || Record.bSensorB;
 
-            Deliver(Record.EntityA, Record.EntityB, Record.BodyIDA, Record.BodyIDB, Record, false, bAdded, bOverlap);
-            Deliver(Record.EntityB, Record.EntityA, Record.BodyIDB, Record.BodyIDA, Record, true, bAdded, bOverlap);
+            Deliver(Record.EntityA, Record.EntityB, Record, false, bAdded, bOverlap);
+            Deliver(Record.EntityB, Record.EntityA, Record, true, bAdded, bOverlap);
         }
 
         ContactDrainScratch.clear();
@@ -292,97 +290,164 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnRigidBodyComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        LUMINA_PROFILE_SCOPE();
-
         if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
         {
             Transform->SetHasPhysicsBody(true);
         }
-
-        if (bStepInProgress.load(std::memory_order_acquire))
-        {
-            FScopeLock Lock(PendingRigidBodyMutex);
-            PendingRigidBodyCreations.push(Entity);
-            return;
-        }
-
-        // Deferred even outside a batch, so the fields a caller sets right after adding the component are the ones built.
-        BatchedBodyCreations.push_back(Entity);
-    }
-
-    void FBox3DPhysicsScene::FlushDeferredBodyCreations()
-    {
-        if (BodyBatchDepth > 0 || BatchedBodyCreations.empty() || bStepInProgress.load(std::memory_order_acquire))
-        {
-            return;
-        }
-
-        // Taken first, because a body creation can construct components that queue more of them.
-        TVector<ECS::FEntity> Entities = Move(BatchedBodyCreations);
-        BatchedBodyCreations.clear();
-        CreateRigidBodiesBatched(Entities);
+        FBodyRecord& Record = RigidBodies[Entity];
+        Record.Revision = NextBindingRevision++;
+        PendingRigidBodies.push_back(Entity);
     }
 
     void FBox3DPhysicsScene::OnRigidBodyComponentUpdated(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
+        if (auto It = RigidBodies.find(Entity); It != RigidBodies.end())
+        {
+            It->second.bRebuild = true;
+            PendingRigidBodies.push_back(Entity);
+        }
     }
 
     void FBox3DPhysicsScene::OnRigidBodyComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Entity);
-        if (Body == nullptr || Body->BodyID == InvalidBodyHandle)
+        if (auto It = RigidBodies.find(Entity); It != RigidBodies.end())
         {
-            return;
+            if (It->second.Handle != InvalidBodyHandle)
+            {
+                PendingBodyDestructions.push_back(It->second.Handle);
+            }
+            RigidBodies.erase(It);
         }
-
-        const uint32 Handle = Body->BodyID;
-        const b3BodyId BodyId = ResolveBody(Handle);
-        if (b3Body_IsValid(BodyId))
-        {
-            b3DestroyBody(BodyId);
-        }
-
-        UnregisterBody(Handle);
-        ClearBodyMaterial(Handle);
-
-        if (Handle < BodyAwake.size())
-        {
-            BodyAwake[Handle] = 0;
-        }
-
-        Body->BodyID = InvalidBodyHandle;
     }
 
     void FBox3DPhysicsScene::OnColliderComponentAdded(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
+        OnRigidBodyComponentUpdated(Registry, Entity);
     }
 
     void FBox3DPhysicsScene::OnColliderComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
+        OnRigidBodyComponentUpdated(Registry, Entity);
     }
 
     void FBox3DPhysicsScene::RebuildStaleDynamicMeshBodies(ECS::FRegistry& Registry)
     {
-        LUMINA_PROFILE_SCOPE();
-
         auto View = Registry.View<SDynamicMeshColliderComponent, SDynamicMeshComponent, SRigidBodyComponent>();
         for (auto [Entity, Collider, Mesh, Body] : View.Each())
         {
             const uint32 Version = Mesh.LoadRenderDataVersion();
-            if (Version == Collider.GeometryVersion)
+            if (Version != Collider.GeometryVersion)
+            {
+                Collider.GeometryVersion = Version;
+                OnRigidBodyComponentUpdated(Registry, Entity);
+            }
+        }
+    }
+
+    void FBox3DPhysicsScene::DestroyBodyHandle(uint32 Handle)
+    {
+        const b3BodyId Body = ResolveBody(Handle);
+        if (!b3Body_IsValid(Body))
+        {
+            return;
+        }
+        b3DestroyBody(Body);
+        UnregisterBody(Handle);
+        ClearBodyMaterial(Handle);
+        if (Handle < BodyAwake.size())
+        {
+            BodyAwake[Handle] = 0;
+        }
+    }
+
+    void FBox3DPhysicsScene::SynchronizeBodyGroups()
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        for (const FPendingStaticGroup& Group : PendingStaticGroups)
+        {
+            if (Registry.IsValid(Group.Owner)) { CommitStaticBodyGroup(Group.GroupID, Group.Owner, Group.Builds); }
+            else { StaticBodyGroups.erase(Group.GroupID); }
+        }
+        PendingStaticGroups.clear();
+        for (const FPendingRagdoll& Request : PendingRagdolls)
+        {
+            if (Registry.IsValid(Request.Description.Entity) && !Request.Handle->bPendingDestroy)
+            {
+                CommitRagdoll(Request);
+            }
+        }
+        PendingRagdolls.clear();
+        size_t Count = 0;
+        for (const FOwnedRagdoll& Ragdoll : OwnedRagdolls)
+        {
+            if (Ragdoll.Handle->bPendingDestroy || !Registry.IsValid(Ragdoll.Owner))
+            {
+                for (uint32 Handle : Ragdoll.Handle->BodyHandles) { DestroyBodyHandle(Handle); }
+                Ragdoll.Handle->BodyHandles.clear();
+                Ragdoll.Handle->Release();
+            }
+            else
+            {
+                OwnedRagdolls[Count++] = Ragdoll;
+            }
+        }
+        OwnedRagdolls.resize(Count);
+    }
+
+    void FBox3DPhysicsScene::SynchronizeBodies()
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        for (uint32 Handle : PendingBodyDestructions)
+        {
+            DestroyBodyHandle(Handle);
+        }
+        PendingBodyDestructions.clear();
+
+        PendingDrainScratch.clear();
+        PendingDrainScratch.swap(PendingRigidBodies);
+        std::sort(PendingDrainScratch.begin(), PendingDrainScratch.end());
+        PendingDrainScratch.erase(std::unique(PendingDrainScratch.begin(), PendingDrainScratch.end()), PendingDrainScratch.end());
+        size_t Count = 0;
+        for (ECS::FEntity Entity : PendingDrainScratch)
+        {
+            auto It = RigidBodies.find(Entity);
+            if (!Registry.IsValid(Entity) || It == RigidBodies.end())
             {
                 continue;
             }
-
-            Collider.GeometryVersion = Version;
-
-            if (Body.BodyID != InvalidBodyHandle)
+            FBodyRecord& Record = It->second;
+            if (Record.bRebuild)
             {
-                OnRigidBodyComponentDestroyed(Registry, Entity);
+                DestroyBodyHandle(Record.Handle);
+                Record.Handle = InvalidBodyHandle;
+                Record.Status = EPhysicsBodyStatus::Pending;
+                Record.bRebuild = false;
             }
+            PendingDrainScratch[Count++] = Entity;
+        }
+        PendingDrainScratch.resize(Count);
+        CreateRigidBodiesBatched(PendingDrainScratch);
 
-            FScopeLock Lock(PendingRigidBodyMutex);
-            PendingRigidBodyCreations.push(Entity);
+        TVector<ECS::FEntity> Characters;
+        Characters.swap(PendingCharacters);
+        for (ECS::FEntity Entity : Characters)
+        {
+            if (Registry.IsValid(Entity) && CharacterBodies.find(Entity) != CharacterBodies.end())
+            {
+                CreateCharacter(Registry, Entity);
+                if (CharacterBodies[Entity].Status == EPhysicsBodyStatus::Pending)
+                {
+                    PendingCharacters.push_back(Entity);
+                }
+            }
+        }
+        SynchronizeBodyGroups();
+        DrainPendingConstraints();
+        SynchronizeConstraints();
+        if (bStaticTreeDirty)
+        {
+            b3World_RebuildStaticTree(WorldId);
+            bStaticTreeDirty = false;
         }
     }
 
@@ -424,11 +489,13 @@ namespace Lumina::Physics
                     const uint32 Handle = CommitRigidBody(Entity, Build);
                     if (Handle == InvalidBodyHandle)
                     {
+                        RigidBodies[Entity].Status = EPhysicsBodyStatus::Failed;
                         break;
                     }
 
-                    SRigidBodyComponent& Body = Registry.Get<SRigidBodyComponent>(Entity);
-                    Body.BodyID = Handle;
+                    FBodyRecord& Body = RigidBodies[Entity];
+                    Body.Handle = Handle;
+                    Body.Status = EPhysicsBodyStatus::Ready;
                     Body.LastBodyPosition = Build.LastBodyPosition;
                     Body.LastBodyRotation = Build.LastBodyRotation;
 
@@ -441,12 +508,15 @@ namespace Lumina::Physics
                     break;
                 }
                 case EBodyBuildStatus::Defer:
-                case EBodyBuildStatus::NoCollider:
                 {
-                    FScopeLock Lock(PendingRigidBodyMutex);
-                    PendingRigidBodyCreations.push(Entity);
+                    PendingRigidBodies.push_back(Entity);
                     break;
                 }
+                case EBodyBuildStatus::NoCollider:
+                    break;
+                case EBodyBuildStatus::Error:
+                    RigidBodies[Entity].Status = EPhysicsBodyStatus::Failed;
+                    break;
                 default:
                     break;
             }
@@ -455,56 +525,18 @@ namespace Lumina::Physics
         // Static shapes skipped their own contact scan on creation, so the tree is rebuilt once here.
         if (bCreatedStatic)
         {
-            b3World_RebuildStaticTree(WorldId);
+            bStaticTreeDirty = true;
         }
     }
 
     void FBox3DPhysicsScene::BulkCreateRigidBodies(ECS::FRegistry& Registry)
     {
-        TVector<ECS::FEntity> Candidates;
         Registry.View<SRigidBodyComponent>().ForEach([&](ECS::FEntity Entity, SRigidBodyComponent&)
         {
-            Candidates.push_back(Entity);
+            OnRigidBodyComponentConstructed(Registry, Entity);
         });
 
-        CreateRigidBodiesBatched(Candidates);
+        SynchronizeBodies();
     }
 
-    void FBox3DPhysicsScene::BeginBodyBatch()
-    {
-        ++BodyBatchDepth;
-    }
-
-    void FBox3DPhysicsScene::EndBodyBatch()
-    {
-        if (BodyBatchDepth == 0)
-        {
-            return;
-        }
-
-        // An inner pair folds into the outermost batch, which is what commits.
-        if (--BodyBatchDepth > 0)
-        {
-            return;
-        }
-
-        if (!BatchedBodyCreations.empty())
-        {
-            CreateRigidBodiesBatched(BatchedBodyCreations);
-            BatchedBodyCreations.clear();
-        }
-
-        if (!BatchedCharacterCreations.empty())
-        {
-            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
-            for (ECS::FEntity Entity : BatchedCharacterCreations)
-            {
-                if (Registry.IsValid(Entity))
-                {
-                    OnCharacterComponentConstructed(Registry, Entity);
-                }
-            }
-            BatchedCharacterCreations.clear();
-        }
-    }
 }

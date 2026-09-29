@@ -59,9 +59,9 @@ namespace Lumina
             TOptional<SRayResult> Hit;
             if (Scene != nullptr)
             {
-                const uint32 SelfBody = Context.GetEntityBodyID(Entity);
-                const uint32 InstigatorBody = (Projectile.Instigator != ECS::NullEntity)
-                    ? Context.GetEntityBodyID(Projectile.Instigator) : ~0u;
+                const ECS::FEntity SelfBody = Entity;
+                const ECS::FEntity InstigatorBody = (Projectile.Instigator != ECS::NullEntity)
+                    ? Projectile.Instigator : ECS::NullEntity;
 
                 if (Projectile.Radius > 0.0f)
                 {
@@ -70,8 +70,8 @@ namespace Lumina
                     Settings.End = End;
                     Settings.Radius = Projectile.Radius;
                     Settings.LayerMask = Projectile.CollisionMask;
-                    if (SelfBody != ~0u)       { Settings.AddIgnoredBody(SelfBody); }
-                    if (InstigatorBody != ~0u) { Settings.AddIgnoredBody(InstigatorBody); }
+                    if (SelfBody != ECS::NullEntity)       { Settings.AddIgnoredEntity(SelfBody); }
+                    if (InstigatorBody != ECS::NullEntity) { Settings.AddIgnoredEntity(InstigatorBody); }
 
                     Hit = Scene->CastSphereClosest(Settings);
                 }
@@ -81,8 +81,8 @@ namespace Lumina
                     Settings.Start = Start;
                     Settings.End = End;
                     Settings.LayerMask = Projectile.CollisionMask;
-                    if (SelfBody != ~0u)       { Settings.AddIgnoredBody(SelfBody); }
-                    if (InstigatorBody != ~0u) { Settings.AddIgnoredBody(InstigatorBody); }
+                    if (SelfBody != ECS::NullEntity)       { Settings.AddIgnoredEntity(SelfBody); }
+                    if (InstigatorBody != ECS::NullEntity) { Settings.AddIgnoredEntity(InstigatorBody); }
 
                     Hit = Scene->CastRay(Settings);
                 }

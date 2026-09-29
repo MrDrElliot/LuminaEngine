@@ -18,14 +18,6 @@ namespace Lumina
     {
         GENERATED_BODY()
         
-        // Snapshots for interpolation.
-        FVector3 LastBodyPosition;
-        FQuat LastBodyRotation;
-        
-        /** Internal body ID, read-only, assigned by the physics system. */
-        PROPERTY(ReadOnly, Category = "Physics")
-        uint32 BodyID = 0xFFFFFFFF;
-
         /** Mass of the rigid body in kg. */
         PROPERTY(Editable, Category = "Physics")
         float Mass = 1.0f;
@@ -524,7 +516,7 @@ namespace Lumina
 
         /** The body this entity is jointed to. Leave as the null entity to anchor to the world. */
         PROPERTY(Editable, Entity, Category = "Constraint")
-        uint32 TargetBody = 0xFFFFFFFF;
+        ECS::FEntity TargetEntity = ECS::NullEntity;
 
         /** Pivot in this entity's local space (Point/Hinge/Slider/Cone). The world anchor tracks the body. */
         PROPERTY(Editable, Category = "Constraint")

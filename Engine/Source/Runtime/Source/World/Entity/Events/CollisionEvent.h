@@ -23,14 +23,6 @@ namespace Lumina
         PROPERTY()
         ECS::FEntity Other = ECS::NullEntity;
 
-        /** This body's physics body id. */
-        PROPERTY()
-        uint32 BodyID = 0;
-
-        /** The other body's physics body id. */
-        PROPERTY()
-        uint32 OtherBodyID = 0;
-
         /** World-space contact point. */
         PROPERTY()
         FVector3 Point = FVector3(0.0f);

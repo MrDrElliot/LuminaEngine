@@ -193,7 +193,6 @@ namespace Lumina
         {
             const Lumina::ECS::FComponentTypeID ID = SrcSetPtr->GetTypeInfo().TypeID;
             Lumina::ECS::FSparseSet& SrcSet = *SrcSetPtr;
-            // Rigid bodies carry a runtime BodyID that must not be copied; handled below.
             if (IsNonReplicatedStorage(ID)
                 || ID == ECS::GetComponentTypeID<SRigidBodyComponent>()
                 || (ExtraSkipStorage != nullptr && ExtraSkipStorage(ID)))
@@ -229,7 +228,6 @@ namespace Lumina
             if (const SRigidBodyComponent* SrcBody = Source.TryGet<SRigidBodyComponent>(SrcE))
             {
                 SRigidBodyComponent NewBody = *SrcBody;
-                NewBody.BodyID = 0xFFFFFFFFu;
                 Dest.EmplaceOrReplace<SRigidBodyComponent>(DestE, NewBody);
             }
         }
@@ -317,22 +315,10 @@ namespace Lumina
                      GetName().c_str(), (uint32)PrefabRoots.size());
         }
         
-        struct FBodyBatchScope
-        {
-            Physics::IPhysicsScene* Scene;
-            explicit FBodyBatchScope(Physics::IPhysicsScene* InScene) : Scene(InScene)
-            {
-                if (Scene) { Scene->BeginBodyBatch(); }
-            }
-            ~FBodyBatchScope() { if (Scene) { Scene->EndBodyBatch(); } }
-        };
-
         THashMap<ECS::FEntity, ECS::FEntity> Map;
         ECS::FEntity WorldRoot = ECS::NullEntity;
 
         {
-            FBodyBatchScope BodyBatch(TargetWorld->GetPhysicsScene());
-
             CopyRegistry(Registry, WorldRegistry, Map);
 
             WorldRoot = Map[PrefabRoot];

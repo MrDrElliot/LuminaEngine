@@ -13,12 +13,4 @@ namespace Lumina
     SCharacterPhysicsComponent::SCharacterPhysicsComponent(SCharacterPhysicsComponent&&) noexcept = default;
     SCharacterPhysicsComponent& SCharacterPhysicsComponent::operator=(SCharacterPhysicsComponent&&) noexcept = default;
 
-    uint32 SCharacterPhysicsComponent::GetBodyID() const
-    {
-        if (Character == nullptr)
-        {
-            return 0xFFFFFFFF;
-        }
-        return Character->ProxyBodyHandle;
-    }
 }

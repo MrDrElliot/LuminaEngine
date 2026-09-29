@@ -151,12 +151,11 @@ namespace Lumina
         /** The world's physics scene, or null when the world has none. */
         RUNTIME_API Physics::IPhysicsScene* GetPhysicsScene() const;
 
-        RUNTIME_API void ActivateBody(uint32 BodyID);
-        RUNTIME_API void DeactivateBody(uint32 BodyID);
-        RUNTIME_API void ChangeBodyMotionType(uint32 BodyID, EBodyType NewType);
+        RUNTIME_API void ActivateBody(ECS::FEntity Entity);
+        RUNTIME_API void DeactivateBody(ECS::FEntity Entity);
+        RUNTIME_API void ChangeBodyMotionType(ECS::FEntity Entity, EBodyType NewType);
 
         /** Physics body id for an entity, or ~0u when it has no body / no physics scene. */
-        RUNTIME_API uint32 GetEntityBodyID(ECS::FEntity Entity) const;
 
         /** Live physics-body pose (NOT the lagged STransformComponent) and velocity, for physics-stage systems. */
         RUNTIME_API FVector3 GetBodyPosition(ECS::FEntity Entity) const;

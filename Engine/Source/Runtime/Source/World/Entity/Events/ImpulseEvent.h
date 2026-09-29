@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Object/ObjectMacros.h"
+#include "World/ECS/Entity.h"
 #include "ImpulseEvent.generated.h"
 
 namespace Lumina
@@ -12,7 +13,7 @@ namespace Lumina
 
         /** Target physics body to apply the impulse to. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Impulse vector in world space (kg·m/s). */
         PROPERTY()
@@ -26,7 +27,7 @@ namespace Lumina
 
         /** Target physics body to apply the force to. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Continuous force vector in world space (N). Applied for one physics step. */
         PROPERTY()
@@ -40,7 +41,7 @@ namespace Lumina
 
         /** Target physics body to apply torque to. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Torque vector in world space (N·m). Applied for one physics step. */
         PROPERTY()
@@ -54,7 +55,7 @@ namespace Lumina
 
         /** Target physics body to apply the angular impulse to. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Angular impulse in world space (kg·m²/s). */
         PROPERTY()
@@ -68,7 +69,7 @@ namespace Lumina
 
         /** Target physics body whose velocity will be replaced. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** New linear velocity in world space (m/s). */
         PROPERTY()
@@ -82,7 +83,7 @@ namespace Lumina
 
         /** Target physics body whose angular velocity will be replaced. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** New angular velocity in world space (rad/s). */
         PROPERTY()
@@ -96,7 +97,7 @@ namespace Lumina
 
         /** Target physics body to apply the impulse to. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Impulse vector in world space (kg·m/s). */
         PROPERTY()
@@ -114,7 +115,7 @@ namespace Lumina
 
         /** Target physics body to apply the force to. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Force vector in world space (N). */
         PROPERTY()
@@ -132,7 +133,7 @@ namespace Lumina
 
         /** Target physics body whose gravity factor will be set. */
         PROPERTY()
-        uint32 BodyID;
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Gravity scale multiplier for this body (0 = no gravity, 1 = full gravity). */
         PROPERTY()
