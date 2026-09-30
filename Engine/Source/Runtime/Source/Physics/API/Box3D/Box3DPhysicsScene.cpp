@@ -424,45 +424,45 @@ namespace Lumina::Physics
         return b3Body_IsValid(Body) ? Box3DUtils::FromB3Quat(b3Body_GetRotation(Body)) : FQuat::Identity();
     }
 
-    void FBox3DPhysicsScene::OnImpulseEvent(const SImpulseEvent& Event)
+    void FBox3DPhysicsScene::OnImpulseEvent(const SImpulseEvent& Impulse)
     {
-        FBodyCommand Command{ EBodyCommand::Impulse, Event.Entity };
-        Command.Value = Event.Impulse;
+        FBodyCommand Command{ EBodyCommand::Impulse, Impulse.Entity };
+        Command.Value = Impulse.Impulse;
         QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnForceEvent(const SForceEvent& Event)
+    void FBox3DPhysicsScene::OnForceEvent(const SForceEvent& Force)
     {
-        FBodyCommand Command{ EBodyCommand::Force, Event.Entity };
-        Command.Value = Event.Force;
+        FBodyCommand Command{ EBodyCommand::Force, Force.Entity };
+        Command.Value = Force.Force;
         QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnTorqueEvent(const STorqueEvent& Event)
+    void FBox3DPhysicsScene::OnTorqueEvent(const STorqueEvent& Torque)
     {
-        FBodyCommand Command{ EBodyCommand::Torque, Event.Entity };
-        Command.Value = Event.Torque;
+        FBodyCommand Command{ EBodyCommand::Torque, Torque.Entity };
+        Command.Value = Torque.Torque;
         QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnAngularImpulseEvent(const SAngularImpulseEvent& Event)
+    void FBox3DPhysicsScene::OnAngularImpulseEvent(const SAngularImpulseEvent& AngularImpulse)
     {
-        FBodyCommand Command{ EBodyCommand::AngularImpulse, Event.Entity };
-        Command.Value = Event.AngularImpulse;
+        FBodyCommand Command{ EBodyCommand::AngularImpulse, AngularImpulse.Entity };
+        Command.Value = AngularImpulse.AngularImpulse;
         QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnSetVelocityEvent(const SSetVelocityEvent& Event)
+    void FBox3DPhysicsScene::OnSetVelocityEvent(const SSetVelocityEvent& Velocity)
     {
-        FBodyCommand Command{ EBodyCommand::LinearVelocity, Event.Entity };
-        Command.Value = Event.Velocity;
+        FBodyCommand Command{ EBodyCommand::LinearVelocity, Velocity.Entity };
+        Command.Value = Velocity.Velocity;
         QueueBodyCommand(Command);
     }
 
-    void FBox3DPhysicsScene::OnSetAngularVelocityEvent(const SSetAngularVelocityEvent& Event)
+    void FBox3DPhysicsScene::OnSetAngularVelocityEvent(const SSetAngularVelocityEvent& AngularVelocity)
     {
-        FBodyCommand Command{ EBodyCommand::AngularVelocity, Event.Entity };
-        Command.Value = Event.AngularVelocity;
+        FBodyCommand Command{ EBodyCommand::AngularVelocity, AngularVelocity.Entity };
+        Command.Value = AngularVelocity.AngularVelocity;
         QueueBodyCommand(Command);
     }
 
