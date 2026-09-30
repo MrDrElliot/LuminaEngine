@@ -92,16 +92,16 @@ namespace Lumina::ECS
         // The driver bounds the result, so this is an upper bound rather than a count.
         NODISCARD FORCEINLINE size_t Num() const { return NumCandidates(); }
 
-        // Range-for support, so a call site can walk entities without a callback.
+        // Range-for support, so a call site can walk entities without a callback. Backward, like ForEach.
         class FIterator
         {
         public:
 
             FIterator() = default;
 
-            FIterator(const TView* InView, size_t InIndex)
+            FIterator(const TView* InView, size_t InEndSlot)
                 : View(InView)
-                , Index(InIndex)
+                , EndSlot(InEndSlot)
             {
                 if (InView != nullptr)
                 {
@@ -110,12 +110,12 @@ namespace Lumina::ECS
                 Advance();
             }
 
-            NODISCARD FEntity operator * () const { return View->GetDriver()->GetDenseData()[Index]; }
+            NODISCARD FEntity operator * () const { return View->GetDriver()->GetDenseData()[EndSlot - 1u]; }
 
-            FIterator& operator ++ () { ++Index; Advance(); return *this; }
+            FIterator& operator ++ () { --EndSlot; Advance(); return *this; }
 
-            NODISCARD bool operator == (const FIterator& Other) const { return Index == Other.Index; }
-            NODISCARD bool operator != (const FIterator& Other) const { return Index != Other.Index; }
+            NODISCARD bool operator == (const FIterator& Other) const { return EndSlot == Other.EndSlot; }
+            NODISCARD bool operator != (const FIterator& Other) const { return EndSlot != Other.EndSlot; }
 
         private:
 
@@ -126,23 +126,22 @@ namespace Lumina::ECS
                     return;
                 }
 
-                const FSparseSet* Set = View->GetDriver();
-                const size_t Count = Set->GetDenseSize();
-                const FEntity* Dense = Set->GetDenseData();
-
-                while (Index < Count && (Dense[Index].IsTombstone() || !View->MatchesRestWith(Dense[Index], Probes)))
+                const FEntity* Dense = View->GetDriver()->GetDenseData();
+                while (EndSlot > 0 && (Dense[EndSlot - 1u].IsTombstone() || !View->MatchesRestWith(Dense[EndSlot - 1u], Probes)))
                 {
-                    ++Index;
+                    --EndSlot;
                 }
             }
 
             const TView* View = nullptr;
-            size_t Index = 0;
+
+            // One past the current slot, so the finished walk sits at zero without wrapping.
+            size_t EndSlot = 0;
             FExcludeProbes Probes{};
         };
 
-        NODISCARD FIterator begin() const { return FIterator(this, 0); }
-        NODISCARD FIterator end() const { return FIterator(this, GetDriver() != nullptr ? GetDriver()->GetDenseSize() : 0); }
+        NODISCARD FIterator begin() const { return FIterator(this, NumDenseSlots()); }
+        NODISCARD FIterator end() const { return FIterator(this, 0); }
 
         // Tuple iteration, so a range-for can bind the entity and its components and still use break.
         class FEachIterator
@@ -151,9 +150,9 @@ namespace Lumina::ECS
 
             FEachIterator() = default;
 
-            FEachIterator(const TView* InView, size_t InIndex)
+            FEachIterator(const TView* InView, size_t InEndSlot)
                 : View(InView)
-                , Index(InIndex)
+                , EndSlot(InEndSlot)
             {
                 if (InView != nullptr)
                 {
@@ -164,15 +163,16 @@ namespace Lumina::ECS
 
             NODISCARD auto operator * () const
             {
+                const size_t Index = EndSlot - 1u;
                 const FEntity Entity = View->GetDriver()->GetDenseData()[Index];
                 return TupleCat(TTuple<FEntity>(Entity),
                     View->RefTupleAt(Entity, static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{}));
             }
 
-            FEachIterator& operator ++ () { ++Index; Advance(); return *this; }
+            FEachIterator& operator ++ () { --EndSlot; Advance(); return *this; }
 
-            NODISCARD bool operator == (const FEachIterator& Other) const { return Index == Other.Index; }
-            NODISCARD bool operator != (const FEachIterator& Other) const { return Index != Other.Index; }
+            NODISCARD bool operator == (const FEachIterator& Other) const { return EndSlot == Other.EndSlot; }
+            NODISCARD bool operator != (const FEachIterator& Other) const { return EndSlot != Other.EndSlot; }
 
         private:
 
@@ -183,18 +183,17 @@ namespace Lumina::ECS
                     return;
                 }
 
-                const FSparseSet* Set = View->GetDriver();
-                const size_t Count = Set->GetDenseSize();
-                const FEntity* Dense = Set->GetDenseData();
-
-                while (Index < Count && (Dense[Index].IsTombstone() || !View->MatchesRestWith(Dense[Index], Probes)))
+                const FEntity* Dense = View->GetDriver()->GetDenseData();
+                while (EndSlot > 0 && (Dense[EndSlot - 1u].IsTombstone() || !View->MatchesRestWith(Dense[EndSlot - 1u], Probes)))
                 {
-                    ++Index;
+                    --EndSlot;
                 }
             }
 
             const TView* View = nullptr;
-            size_t Index = 0;
+
+            // One past the current slot, so the finished walk sits at zero without wrapping.
+            size_t EndSlot = 0;
             FExcludeProbes Probes{};
         };
 
@@ -202,13 +201,8 @@ namespace Lumina::ECS
         {
             const TView* View = nullptr;
 
-            NODISCARD FEachIterator begin() const { return FEachIterator(View, 0); }
-
-            NODISCARD FEachIterator end() const
-            {
-                const FSparseSet* Set = View->GetDriver();
-                return FEachIterator(View, Set != nullptr ? Set->GetDenseSize() : 0);
-            }
+            NODISCARD FEachIterator begin() const { return FEachIterator(View, View->NumDenseSlots()); }
+            NODISCARD FEachIterator end() const { return FEachIterator(View, 0); }
         };
 
         NODISCARD FEachRange Each() const { return FEachRange{ this }; }
@@ -272,10 +266,12 @@ namespace Lumina::ECS
 
             const FEntity* DenseData = Driver->GetDenseData();
             const size_t DenseSize = Driver->GetDenseSize();
+            const uint8* DriverPackedBlock = Driver->GetPackedBlock();
             const size_t Last = End < DenseSize ? End : DenseSize;
             const FExcludeProbes Probes = MakeExcludeProbes();
 
-            for (size_t Index = Begin; Index < Last; ++Index)
+            // Backward, so removing the current entity only pulls an already visited one into its slot.
+            for (size_t Index = Last; Index-- > Begin;)
             {
                 const FEntity Entity = DenseData[Index];
                 if (Entity.IsTombstone())
@@ -307,6 +303,8 @@ namespace Lumina::ECS
 
                 Apply([&Func, Entity](auto*... Value) { InvokeEntityCallback(Func, Entity, *Value...); }, Values);
             }
+
+            CheckWalkDidNotReallocate(Driver, DenseData, DriverPackedBlock);
         }
 
         // Entity-only iteration, for a caller that reaches its components through Get.
@@ -320,33 +318,35 @@ namespace Lumina::ECS
 
             const FEntity* DenseData = Driver->GetDenseData();
             const size_t DenseSize = Driver->GetDenseSize();
+            const uint8* DriverPackedBlock = Driver->GetPackedBlock();
 
             // A packed single pool has nothing to filter and no holes, so the walk is just the array.
-            if constexpr (IncludeCount == 1 && ExcludeCount == 0)
+            constexpr bool bUnfiltered = (IncludeCount == 1 && ExcludeCount == 0);
+            if (bUnfiltered && !Driver->HasTombstones())
             {
-                if (!Driver->HasTombstones())
+                for (size_t Index = DenseSize; Index-- > 0;)
                 {
-                    for (size_t Index = 0; Index < DenseSize; ++Index)
+                    Func(DenseData[Index]);
+                }
+            }
+            else
+            {
+                for (size_t Index = DenseSize; Index-- > 0;)
+                {
+                    const FEntity Entity = DenseData[Index];
+                    if (Entity.IsTombstone())
                     {
-                        Func(DenseData[Index]);
+                        continue;
                     }
-                    return;
+                    if (!MatchesRest(Entity))
+                    {
+                        continue;
+                    }
+                    Func(Entity);
                 }
             }
 
-            for (size_t Index = 0; Index < DenseSize; ++Index)
-            {
-                const FEntity Entity = DenseData[Index];
-                if (Entity.IsTombstone())
-                {
-                    continue;
-                }
-                if (!MatchesRest(Entity))
-                {
-                    continue;
-                }
-                Func(Entity);
-            }
+            CheckWalkDidNotReallocate(Driver, DenseData, DriverPackedBlock);
         }
 
     private:
@@ -596,26 +596,26 @@ namespace Lumina::ECS
         // The driver bounds the result, so this is an upper bound rather than a count.
         NODISCARD size_t Num() const { return Driver != nullptr ? Driver->Num() : 0; }
 
-        // Range-for support, so a call site can walk entities without a callback.
+        // Range-for support, so a call site can walk entities without a callback. Backward, like ForEach.
         class FIterator
         {
         public:
 
             FIterator() = default;
 
-            FIterator(const FRuntimeView* InView, size_t InIndex)
+            FIterator(const FRuntimeView* InView, size_t InEndSlot)
                 : View(InView)
-                , Index(InIndex)
+                , EndSlot(InEndSlot)
             {
                 Advance();
             }
 
-            NODISCARD FEntity operator * () const { return View->GetDriver()->GetDenseData()[Index]; }
+            NODISCARD FEntity operator * () const { return View->GetDriver()->GetDenseData()[EndSlot - 1u]; }
 
-            FIterator& operator ++ () { ++Index; Advance(); return *this; }
+            FIterator& operator ++ () { --EndSlot; Advance(); return *this; }
 
-            NODISCARD bool operator == (const FIterator& Other) const { return Index == Other.Index; }
-            NODISCARD bool operator != (const FIterator& Other) const { return Index != Other.Index; }
+            NODISCARD bool operator == (const FIterator& Other) const { return EndSlot == Other.EndSlot; }
+            NODISCARD bool operator != (const FIterator& Other) const { return EndSlot != Other.EndSlot; }
 
         private:
 
@@ -626,22 +626,21 @@ namespace Lumina::ECS
                     return;
                 }
 
-                const FSparseSet* Set = View->GetDriver();
-                const size_t Count = Set->GetDenseSize();
-                const FEntity* Dense = Set->GetDenseData();
-
-                while (Index < Count && (Dense[Index].IsTombstone() || !View->MatchesRest(Dense[Index])))
+                const FEntity* Dense = View->GetDriver()->GetDenseData();
+                while (EndSlot > 0 && (Dense[EndSlot - 1u].IsTombstone() || !View->MatchesRest(Dense[EndSlot - 1u])))
                 {
-                    ++Index;
+                    --EndSlot;
                 }
             }
 
             const FRuntimeView* View = nullptr;
-            size_t Index = 0;
+
+            // One past the current slot, so the finished walk sits at zero without wrapping.
+            size_t EndSlot = 0;
         };
 
-        NODISCARD FIterator begin() const { return FIterator(this, 0); }
-        NODISCARD FIterator end() const { return FIterator(this, GetDriver() != nullptr ? GetDriver()->GetDenseSize() : 0); }
+        NODISCARD FIterator begin() const { return FIterator(this, GetDriver() != nullptr ? GetDriver()->GetDenseSize() : 0); }
+        NODISCARD FIterator end() const { return FIterator(this, 0); }
 
         NODISCARD bool IsEmpty() const { return Driver == nullptr || Driver->Num() == 0; }
 
@@ -674,8 +673,9 @@ namespace Lumina::ECS
 
             const FEntity* DenseData = Driver->GetDenseData();
             const size_t DenseSize = Driver->GetDenseSize();
+            const uint8* DriverPackedBlock = Driver->GetPackedBlock();
 
-            for (size_t Index = 0; Index < DenseSize; ++Index)
+            for (size_t Index = DenseSize; Index-- > 0;)
             {
                 const FEntity Entity = DenseData[Index];
                 if (Entity.IsTombstone() || !MatchesRest(Entity))
@@ -684,6 +684,8 @@ namespace Lumina::ECS
                 }
                 Func(Entity);
             }
+
+            CheckWalkDidNotReallocate(Driver, DenseData, DriverPackedBlock);
         }
 
     private:

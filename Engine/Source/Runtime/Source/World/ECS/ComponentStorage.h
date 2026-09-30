@@ -10,6 +10,14 @@
 
 namespace Lumina::ECS
 {
+    // Removal never reallocates, so moved arrays mean the walk's own callback added to the pool it was reading.
+    FORCEINLINE void CheckWalkDidNotReallocate([[maybe_unused]] const FSparseSet* Set,
+        [[maybe_unused]] const FEntity* DenseData, [[maybe_unused]] const uint8* PackedBlock)
+    {
+        DEBUG_ASSERT(Set->GetDenseData() == DenseData && Set->GetPackedBlock() == PackedBlock,
+            "A component was added to a pool while iterating it, which reallocated the arrays the walk was reading");
+    }
+
     // A typed lens onto one FSparseSet. Holds a pointer and nothing else, so it costs the same to pass as one.
     template<CComponent T>
     class TComponentStorage
@@ -44,30 +52,31 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE size_t GetDenseSize() const { return Set->GetDenseSize(); }
         NODISCARD FORCEINLINE const FEntity* GetDenseData() const { return Set->GetDenseData(); }
 
-        // Tuple iteration over the pool, matching the shape a view hands back.
+        // Tuple iteration over the pool, matching the shape a view hands back. Walks backward like every pool walk.
         class FEachIterator
         {
         public:
 
             FEachIterator() = default;
 
-            FEachIterator(const TComponentStorage* InStorage, size_t InIndex)
+            FEachIterator(const TComponentStorage* InStorage, size_t InEndSlot)
                 : Storage(InStorage)
-                , Index(InIndex)
+                , EndSlot(InEndSlot)
             {
                 Advance();
             }
 
             NODISCARD auto operator * () const
             {
+                const size_t Index = EndSlot - 1u;
                 return TTuple<FEntity, T&>(Storage->GetDenseData()[Index],
                     Storage->GetAtDense(static_cast<uint32>(Index)));
             }
 
-            FEachIterator& operator ++ () { ++Index; Advance(); return *this; }
+            FEachIterator& operator ++ () { --EndSlot; Advance(); return *this; }
 
-            NODISCARD bool operator == (const FEachIterator& Other) const { return Index == Other.Index; }
-            NODISCARD bool operator != (const FEachIterator& Other) const { return Index != Other.Index; }
+            NODISCARD bool operator == (const FEachIterator& Other) const { return EndSlot == Other.EndSlot; }
+            NODISCARD bool operator != (const FEachIterator& Other) const { return EndSlot != Other.EndSlot; }
 
         private:
 
@@ -78,25 +87,25 @@ namespace Lumina::ECS
                     return;
                 }
 
-                const size_t Count = Storage->GetDenseSize();
                 const FEntity* Dense = Storage->GetDenseData();
-
-                while (Index < Count && Dense[Index].IsTombstone())
+                while (EndSlot > 0 && Dense[EndSlot - 1u].IsTombstone())
                 {
-                    ++Index;
+                    --EndSlot;
                 }
             }
 
             const TComponentStorage* Storage = nullptr;
-            size_t Index = 0;
+
+            // One past the current slot, so the finished walk sits at zero without wrapping.
+            size_t EndSlot = 0;
         };
 
         struct FEachRange
         {
             const TComponentStorage* Storage = nullptr;
 
-            NODISCARD FEachIterator begin() const { return FEachIterator(Storage, 0); }
-            NODISCARD FEachIterator end() const { return FEachIterator(Storage, Storage->GetDenseSize()); }
+            NODISCARD FEachIterator begin() const { return FEachIterator(Storage, Storage->GetDenseSize()); }
+            NODISCARD FEachIterator end() const { return FEachIterator(Storage, 0); }
         };
 
         NODISCARD FEachRange Each() const requires CDataComponent<T> { return FEachRange{ this }; }
@@ -200,11 +209,12 @@ namespace Lumina::ECS
         {
             const FEntity* DenseData = Set->GetDenseData();
             const size_t DenseSize = Set->GetDenseSize();
+            const uint8* PackedBlock = Set->GetPackedBlock();
 
             // A tag reaches the callback as membership only, so the value is never in the argument list.
             if constexpr (bEmpty)
             {
-                for (size_t Index = 0; Index < DenseSize; ++Index)
+                for (size_t Index = DenseSize; Index-- > 0;)
                 {
                     const FEntity Entity = DenseData[Index];
                     if (Accept(Entity))
@@ -218,13 +228,13 @@ namespace Lumina::ECS
                 const bool bSkipHoles = bInPlaceDelete && Set->HasTombstones();
                 const size_t PageCount = (DenseSize + PageSize - 1u) / PageSize;
 
-                for (size_t PageIndex = 0; PageIndex < PageCount; ++PageIndex)
+                for (size_t PageIndex = PageCount; PageIndex-- > 0;)
                 {
                     T* Page = reinterpret_cast<T*>(Set->GetPayloadPage(PageIndex));
                     const size_t Base = PageIndex * PageSize;
                     const size_t Count = (Base + PageSize <= DenseSize) ? PageSize : (DenseSize - Base);
 
-                    for (size_t Offset = 0; Offset < Count; ++Offset)
+                    for (size_t Offset = Count; Offset-- > 0;)
                     {
                         const FEntity Entity = DenseData[Base + Offset];
                         if ((!bSkipHoles || !Entity.IsTombstone()) && Accept(Entity))
@@ -237,7 +247,7 @@ namespace Lumina::ECS
             else
             {
                 T* Elements = reinterpret_cast<T*>(Set->GetPackedBlock());
-                for (size_t Index = 0; Index < DenseSize; ++Index)
+                for (size_t Index = DenseSize; Index-- > 0;)
                 {
                     const FEntity Entity = DenseData[Index];
                     if (Accept(Entity))
@@ -246,18 +256,21 @@ namespace Lumina::ECS
                     }
                 }
             }
+
+            CheckWalkDidNotReallocate(Set, DenseData, PackedBlock);
         }
 
-        // Storage order, so the page pointer advances once per page rather than once per element.
+        // Backward, so swap-and-pop only ever pulls an already visited element into the slot being removed.
         template<typename TFunc>
         FORCEINLINE void ForEachDense(TFunc Func) const
         {
             const FEntity* DenseData = Set->GetDenseData();
             const size_t DenseSize = Set->GetDenseSize();
+            const uint8* PackedBlock = Set->GetPackedBlock();
 
             if constexpr (bEmpty)
             {
-                for (size_t Index = 0; Index < DenseSize; ++Index)
+                for (size_t Index = DenseSize; Index-- > 0;)
                 {
                     Func(DenseData[Index]);
                 }
@@ -267,7 +280,7 @@ namespace Lumina::ECS
                 const bool bSkipHoles = bInPlaceDelete && Set->HasTombstones();
                 const size_t PageCount = (DenseSize + PageSize - 1u) / PageSize;
 
-                for (size_t PageIndex = 0; PageIndex < PageCount; ++PageIndex)
+                for (size_t PageIndex = PageCount; PageIndex-- > 0;)
                 {
                     T* Page = reinterpret_cast<T*>(Set->GetPayloadPage(PageIndex));
                     const size_t Base = PageIndex * PageSize;
@@ -276,7 +289,7 @@ namespace Lumina::ECS
                     // Split rather than branching per element, so the common no-hole page stays a tight loop.
                     if (bSkipHoles)
                     {
-                        for (size_t Offset = 0; Offset < Count; ++Offset)
+                        for (size_t Offset = Count; Offset-- > 0;)
                         {
                             const FEntity Entity = DenseData[Base + Offset];
                             if (!Entity.IsTombstone())
@@ -287,7 +300,7 @@ namespace Lumina::ECS
                     }
                     else
                     {
-                        for (size_t Offset = 0; Offset < Count; ++Offset)
+                        for (size_t Offset = Count; Offset-- > 0;)
                         {
                             InvokeEntityCallback(Func, DenseData[Base + Offset], Page[Offset]);
                         }
@@ -297,11 +310,13 @@ namespace Lumina::ECS
             else
             {
                 T* Elements = reinterpret_cast<T*>(Set->GetPackedBlock());
-                for (size_t Index = 0; Index < DenseSize; ++Index)
+                for (size_t Index = DenseSize; Index-- > 0;)
                 {
                     InvokeEntityCallback(Func, DenseData[Index], Elements[Index]);
                 }
             }
+
+            CheckWalkDidNotReallocate(Set, DenseData, PackedBlock);
         }
 
     private:
