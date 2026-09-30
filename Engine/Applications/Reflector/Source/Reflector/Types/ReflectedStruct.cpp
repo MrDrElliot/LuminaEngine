@@ -148,19 +148,6 @@ namespace Lumina::Reflection
         const std::string Api = Names::ProjectApiMacro(Header->Project->Name);
         const std::string ConstructFn = Names::ConstructFunction("CStruct", Namespace, DisplayName);
 
-        // An alias name belongs to the `using`, so forward declaring it as a struct would redeclare it.
-        if (!bIsAlias)
-        {
-            if (!Namespace.empty())
-            {
-                Writer.Linef("namespace %s { struct %s; }", Namespace.c_str(), EmittedCppName().c_str());
-            }
-            else
-            {
-                Writer.Linef("\tclass %s;", EmittedCppName().c_str());
-            }
-        }
-
         Writer.Linef("%s Lumina::CStruct* %s();", Api.c_str(), ConstructFn.c_str());
     }
 

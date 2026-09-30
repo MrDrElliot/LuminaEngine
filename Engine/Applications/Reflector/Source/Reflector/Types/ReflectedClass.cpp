@@ -13,15 +13,6 @@ namespace Lumina::Reflection
         const std::string Package = Names::ScriptPackage(Header->Project->Name);
         const std::string ConstructFn = Names::ConstructFunction("CClass", Namespace, DisplayName);
 
-        if (!Namespace.empty())
-        {
-            Writer.Linef("namespace %s { class %s; }", Namespace.c_str(), DisplayName.c_str());
-        }
-        else
-        {
-            Writer.Linef("\tclass %s;", DisplayName.c_str());
-        }
-
         Writer.Linef("%s Lumina::CClass* %s();", Api.c_str(), ConstructFn.c_str());
 
         // DECLARE_CLASS block used by GENERATED_BODY.
