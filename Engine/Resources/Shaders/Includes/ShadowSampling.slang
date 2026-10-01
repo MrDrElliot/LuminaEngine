@@ -42,17 +42,23 @@ FCubemapCoord DirectionToCubemapCoord(float3 Dir)
 
     float3 AbsDir = abs(Dir);
 
-    float IsXMax = step(AbsDir.y, AbsDir.x) * step(AbsDir.z, AbsDir.x);
-    float IsYMax = step(AbsDir.x, AbsDir.y) * step(AbsDir.z, AbsDir.y);
+    // Exclusive picks, since summed step() masks counted a two-axis tie twice and drove the face negative.
+    float IsXMax = (AbsDir.x >= AbsDir.y && AbsDir.x >= AbsDir.z) ? 1.0 : 0.0;
+    float IsYMax = (IsXMax == 0.0 && AbsDir.y >= AbsDir.z) ? 1.0 : 0.0;
     float IsZMax = 1.0 - IsXMax - IsYMax;
 
-    float3 FaceIndex = float3(
-        lerp(1.0, 0.0, step(0.0, Dir.x)),
-        lerp(3.0, 2.0, step(0.0, Dir.y)),
-        lerp(5.0, 4.0, step(0.0, Dir.z))
-    );
-
-    Result.Face = int(IsXMax * FaceIndex.x + IsYMax * FaceIndex.y + IsZMax * FaceIndex.z);
+    if (IsXMax > 0.0)
+    {
+        Result.Face = Dir.x >= 0.0 ? 0 : 1;
+    }
+    else if (IsYMax > 0.0)
+    {
+        Result.Face = Dir.y >= 0.0 ? 2 : 3;
+    }
+    else
+    {
+        Result.Face = Dir.z >= 0.0 ? 4 : 5;
+    }
 
     float2 UVX = float2( sign(Dir.x) * Dir.z,  Dir.y)                / AbsDir.x;
     float2 UVY = float2(-Dir.x,                -sign(Dir.y) * Dir.z) / AbsDir.y;

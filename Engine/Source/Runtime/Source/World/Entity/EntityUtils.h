@@ -134,11 +134,8 @@ namespace Lumina::ECS::Utils
 	// Appends every entity moved since the last drain. Game thread. False when none.
 	RUNTIME_API bool DrainMovedTransforms(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Out);
 
-	// Reports an entity whose displayed pose changed while its transform did not, such as a new FRenderTransform.
+	// Reports an entity whose drawn pose changed while its transform did not.
 	RUNTIME_API void PublishMovedTransform(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
-	// Where the entity is drawn, which for an interpolated physics body sits between two fixed steps.
-	RUNTIME_API FVector3 GetRenderLocation(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
 	// Tag the entity's body (if any) for the physics sync. Single-threaded; for external (non-setter) paths.
 	RUNTIME_API void MarkPhysicsBodyDirtyIfBodied(ECS::FRegistry& Registry, ECS::FEntity Entity);

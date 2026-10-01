@@ -1671,6 +1671,49 @@ namespace Lumina::MCP
 
     namespace SequenceTools
     {
+        void RegisterSetCameraView(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSetCameraViewParams, SCameraViewResult>(
+                Owner, "camera.set_view",
+                "Move the editor viewport camera to a location, facing a Target point or a Rotation, to frame a screenshot.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSetCameraViewParams& In, SCameraViewResult& Out)
+                {
+                    if (In.Location.size() != 3 || (In.Target.size() != 3 && In.Rotation.size() != 3))
+                    {
+                        return Agent::FToolResult::Error("Location is [x,y,z], plus a Target [x,y,z] or a Rotation [pitch,yaw,roll].");
+                    }
+
+                    FString Error;
+                    CWorld* World = SessionOps::GetSceneWorld(Error);
+                    if (World == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Error.empty() ? FString("No world is open.") : Error);
+                    }
+
+                    const ECS::FEntity Camera = World->GetActiveCameraEntity();
+                    STransformComponent* Transform = Camera != ECS::NullEntity && World->IsValidEntity(Camera)
+                        ? World->TryGetComponent<STransformComponent>(Camera) : nullptr;
+                    if (Transform == nullptr)
+                    {
+                        return Agent::FToolResult::Error("The editor world has no viewport camera.");
+                    }
+
+                    const FVector3 Location(In.Location[0], In.Location[1], In.Location[2]);
+                    const FQuat Rotation = In.Target.size() == 3
+                        ? Math::FindLookAtRotation(FVector3(In.Target[0], In.Target[1], In.Target[2]), Location)
+                        : FQuat(Math::Radians(FVector3(In.Rotation[0], In.Rotation[1], In.Rotation[2])));
+                    Transform->SetLocation(Location);
+                    Transform->SetRotation(Rotation);
+
+                    const FVector3 Euler = Math::Degrees(Math::YawFirstEulerAngles(Rotation));
+                    Out.World = "Editor";
+                    Out.Location = { Location.x, Location.y, Location.z };
+                    Out.Rotation = { Euler.x, Euler.y, Euler.z };
+                    return Agent::FToolResult::Ok(Lumina::Format("Camera at [{:.2f},{:.2f},{:.2f}].", Location.x, Location.y, Location.z));
+                });
+        }
+
         void RegisterGroundHeight(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SGroundHeightParams, SGroundHeightResult>(
@@ -1723,5 +1766,6 @@ namespace Lumina::MCP
         SequenceTools::RegisterMovieStatus(Owner);
         SequenceTools::RegisterMovieStop(Owner);
         SequenceTools::RegisterCameraView(Owner);
+        SequenceTools::RegisterSetCameraView(Owner);
     }
 }

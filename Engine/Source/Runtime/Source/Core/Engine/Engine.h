@@ -167,6 +167,13 @@ namespace Lumina
         // Ideal wake time for the frame-rate cap, advanced by one frame budget per frame.
         double                  FrameTargetTime = 0.0;
 
+        void PaceDeltaToDisplay(double Now);
+
+        // Wall time the paced delta has paid out up to, and the display interval it pays in.
+        double                  PacedClock = 0.0;
+        double                  RefreshInterval = 0.0;
+        double                  RefreshCheckTime = -1.0;
+
         FString                 PendingTravelPath;
         bool                    bHasPendingTravel = false;
 

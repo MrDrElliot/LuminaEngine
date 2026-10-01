@@ -38,6 +38,9 @@ namespace Lumina
 		// Resolution of the monitor the window currently sits on (pixels).
 		RUNTIME_API FUIntVector2 GetMonitorResolution() const;
 
+		// Refresh rate of the monitor the window sits on, in Hz, or zero when the platform cannot say.
+		RUNTIME_API float GetRefreshRate() const;
+
 		RUNTIME_API void GetWindowPosition(int& X, int& Y);
 		RUNTIME_API void SetWindowPosition(int X, int Y);
 

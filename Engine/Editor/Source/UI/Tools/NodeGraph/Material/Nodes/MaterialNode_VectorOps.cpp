@@ -230,6 +230,9 @@ namespace Lumina
         Axis     = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), "Axis", ENodePinDirection::Input));
         Angle    = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), "Angle", ENodePinDirection::Input));
         Pivot    = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), "Pivot", ENodePinDirection::Input));
+
+        Output->SetInputType(EMaterialInputType::Float3);
+        Output->SetComponentMask(EComponentMask::RGB);
     }
     
     void CMaterialExpression_RotateAboutAxis::GenerateDefinition(FMaterialCompiler& Compiler)

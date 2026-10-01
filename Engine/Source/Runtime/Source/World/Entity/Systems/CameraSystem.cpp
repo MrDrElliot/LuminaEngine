@@ -16,7 +16,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Low);
         RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Low);
         Writes<FResolvedSceneView, FCameraGlobalState, SCameraComponent>();
-        Reads<STransformComponent, SPostProcessComponent, FRenderTransform>();
+        Reads<STransformComponent, SPostProcessComponent>();
     }
 
     float EvaluateCameraBlend(ECameraBlendFunction Function, float Alpha)
@@ -109,21 +109,6 @@ namespace Lumina
             }
         }
 
-        // A camera under a simulated body follows its interpolated display pose, or the view judders at the physics rate.
-        static void DisplayPose(const ECS::FRegistry& Registry, ECS::FEntity Entity, const STransformComponent& Transform, FVector3& OutPosition, FQuat& OutRotation)
-        {
-            if (const FRenderTransform* Render = Registry.TryGet<FRenderTransform>(Entity))
-            {
-                const FTransform Display(Render->Matrix);
-                OutPosition = Display.GetLocation();
-                OutRotation = Display.GetRotation();
-                return;
-            }
-
-            OutPosition = Transform.GetWorldLocation();
-            OutRotation = Transform.GetWorldRotation();
-        }
-
         // Advances no clock, so calling it a second time inside one frame is free of side effects.
         static bool StampResolvedView(ECS::FRegistry& Registry, FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
         {
@@ -138,7 +123,8 @@ namespace Lumina
             const STransformComponent& CameraTransform = Registry.Get<STransformComponent>(CameraEntity);
             SCameraComponent& Camera = Registry.Get<SCameraComponent>(CameraEntity);
 
-            DisplayPose(Registry, CameraEntity, CameraTransform, OutPosition, OutRotation);
+            OutPosition = CameraTransform.GetWorldLocation();
+            OutRotation = CameraTransform.GetWorldRotation();
             OutFOV      = Camera.FOV;
 
             const FCameraGlobalState::FBlendState& Blend = CameraState.Blend;
@@ -217,7 +203,8 @@ namespace Lumina
         // Live pose of the active camera; the blend (if any) eases toward this.
         FVector3 TargetPosition;
         FQuat TargetRotation;
-        Detail::DisplayPose(Registry, CameraEntity, CameraTransform, TargetPosition, TargetRotation);
+        TargetPosition = CameraTransform.GetWorldLocation();
+        TargetRotation = CameraTransform.GetWorldRotation();
         const float TargetFOV           = Camera.FOV;
 
         const FVector3 CameraWorldPos = TargetPosition;

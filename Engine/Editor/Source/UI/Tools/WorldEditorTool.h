@@ -42,6 +42,9 @@ namespace Lumina
 
         void OnInitialize() override;
 
+        // Hides the grid, billboards, AABBs and gizmos so the viewport shows what a runtime camera would.
+        void ToggleGameViewMode();
+
         /** Frames the default scene's floor and sphere. */
         void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
@@ -261,9 +264,6 @@ namespace Lumina
         void DrawDetailsHeaderExtraButtons(ECS::FEntity Entity) override;
         void DrawDetailsExtraSections(ECS::FEntity Entity) override;
 
-        /** Toggle the editor's "game view": hide grid, billboards, AABBs, gizmos so the
-         *  viewport shows only what a runtime camera would. Bound to G by default. */
-        void ToggleGameViewMode();
 
     private:
 

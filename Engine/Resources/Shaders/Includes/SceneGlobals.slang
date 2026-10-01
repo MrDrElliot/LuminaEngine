@@ -541,7 +541,7 @@ float4x4 GetShadowViewProjection(int ShadowDataIndex, uint ViewIndex)
     {
         return (float4x4)0.0;
     }
-    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).ViewProjection[ViewIndex]);
+    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).ViewProjection[min(ViewIndex, 5u)]);
 }
 
 FLightShadow GetShadowTile(int ShadowDataIndex, uint Face)
@@ -551,7 +551,7 @@ FLightShadow GetShadowTile(int ShadowDataIndex, uint Face)
         FLightShadow Empty = {};
         return Empty;
     }
-    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).Shadow[Face]);
+    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).Shadow[min(Face, 5u)]);
 }
 
 float    GetTime()                  { return Scene().Time;       }

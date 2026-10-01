@@ -184,6 +184,8 @@ public static unsafe partial class Native
     // the path. Backs the C# Asset API.
 
     [NativeCall] public static partial IntPtr LoadObject(string Path);
+    [NativeCall] public static partial IntPtr PinObject(IntPtr Object);
+    [NativeCall] public static partial void UnpinObject(IntPtr Pin);
     [NativeCall] public static partial bool AssetExists(string Path);
     [NativeCall] public static partial void LoadObjectAsync(string Path, IntPtr Callback);
 

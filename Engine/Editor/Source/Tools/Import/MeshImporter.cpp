@@ -20,6 +20,7 @@
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/NameComponent.h"
+#include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/PostProcessComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
@@ -43,6 +44,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Log/Log.h"
 #include "Containers/StringFormat.h"
+#include "Core/Serialization/Structured/JsonStructuredArchive.h"
 
 namespace Lumina
 {
@@ -61,6 +63,115 @@ namespace Lumina
                 Stem = Stem.substr(0, Dot);
             }
             return FFixedString(Import::MakeAssetName("T_", Stem).c_str());
+        }
+
+        // Blender custom properties arrive as node extras naming collision, render, nav, tag, or a component.
+        void ApplyNodeExtras(ECS::FRegistry& Registry, ECS::FEntity Entity, const FSourceSceneNode& Node,
+                             CStaticMesh* Mesh, ESceneCollision DefaultCollision)
+        {
+            nlohmann::json Extras = nlohmann::json::object();
+            if (!Node.Extras.empty())
+            {
+                Extras = nlohmann::json::parse(Node.Extras.c_str(), nullptr, false);
+                if (Extras.is_discarded() || !Extras.is_object())
+                {
+                    LOG_WARN("[Import] node '{}' has extras that are not a JSON object", Node.Name);
+                    Extras = nlohmann::json::object();
+                }
+            }
+
+            const FStringView Name(Node.Name.c_str());
+            ESceneCollision Collision = Mesh != nullptr ? DefaultCollision : ESceneCollision::None;
+            bool bRender = true;
+            bool bTrigger = false;
+            bool bNav = true;
+            bool bBodyFromExtras = false;
+            if (Name.starts_with("UCX_"))
+            {
+                Collision = ESceneCollision::ConvexHull;
+                bRender = false;
+            }
+            else if (Name.starts_with("COL_"))
+            {
+                Collision = ESceneCollision::TriangleMesh;
+                bRender = false;
+            }
+
+            auto IsTrue = [](const nlohmann::json& Value)
+            {
+                return Value.is_boolean() ? Value.get<bool>() : Value.is_number() && Value.get<double>() != 0.0;
+            };
+
+            for (auto It = Extras.begin(); It != Extras.end(); ++It)
+            {
+                const std::string& Key = It.key();
+                const nlohmann::json& Value = It.value();
+                if (Key == "collision" && Value.is_string())
+                {
+                    const std::string Kind = Value.get<std::string>();
+                    bTrigger = Kind == "trigger";
+                    Collision = Kind == "mesh" ? ESceneCollision::TriangleMesh
+                              : (Kind == "convex" || bTrigger) ? ESceneCollision::ConvexHull
+                              : ESceneCollision::None;
+                }
+                else if (Key == "render")
+                {
+                    bRender = IsTrue(Value);
+                }
+                else if (Key == "nav")
+                {
+                    bNav = IsTrue(Value);
+                }
+                else if (Key == "tag" && Value.is_string())
+                {
+                    ECS::Utils::SetEntityTag(Registry, Entity, FName(Value.get<std::string>().c_str()));
+                }
+                else if (CStruct* Component = FindComponentStruct(FStringView(Key.c_str(), Key.size())))
+                {
+                    // A Blender custom property holds a nested object only when typed in Python, so a JSON string works too.
+                    nlohmann::json Fields = Value.is_string() ? nlohmann::json::parse(Value.get<std::string>(), nullptr, false) : Value;
+                    if (Fields.is_discarded() || !Fields.is_object())
+                    {
+                        LOG_WARN("[Import] node '{}' extra '{}' is not a JSON object", Node.Name, Key.c_str());
+                        continue;
+                    }
+                    if (void* Data = Component->GetComponentOps()->Emplace(Registry, Entity))
+                    {
+                        FJsonStructuredArchive::LoadStruct(Fields, Component, Data);
+                    }
+                    bBodyFromExtras |= Component == SRigidBodyComponent::StaticStruct();
+                }
+                else
+                {
+                    LOG_WARN("[Import] node '{}' extra '{}' names no component or import key", Node.Name, Key.c_str());
+                }
+            }
+
+            if (Mesh == nullptr)
+            {
+                return;
+            }
+            if (!bRender)
+            {
+                Registry.Remove<SStaticMeshComponent>(Entity);
+            }
+            if (Collision == ESceneCollision::None)
+            {
+                return;
+            }
+
+            SRigidBodyComponent& Body = Registry.GetOrEmplace<SRigidBodyComponent>(Entity);
+            if (!bBodyFromExtras)
+            {
+                Body.BodyType = EBodyType::Static;
+            }
+
+            SMeshColliderComponent& Collider = Registry.GetOrEmplace<SMeshColliderComponent>(Entity);
+            Collider.Mesh = Mesh;
+            // Triangle meshes cannot simulate, so a body the extras made dynamic gets a hull instead.
+            Collider.bConvex = Collision == ESceneCollision::ConvexHull || Body.BodyType == EBodyType::Dynamic;
+            Collider.bIsTrigger = bTrigger;
+            Collider.bAffectsNavigation = bNav && !bTrigger;
         }
 
         // Importing over an existing asset replaces it in place, so its GUID and every reference to it survive.
@@ -679,7 +790,8 @@ namespace Lumina
         TVector<uint8> bKeep(Nodes.size(), 0);
         for (size_t i = 0; i < Nodes.size(); ++i)
         {
-            if (Nodes[i].Kind == ESourceNodeKind::Empty)
+            // An empty with user properties is a marker the author placed on purpose, such as a spawn point.
+            if (Nodes[i].Kind == ESourceNodeKind::Empty && Nodes[i].Extras.empty())
             {
                 continue;
             }
@@ -826,10 +938,12 @@ namespace Lumina
                         return (Index >= 0 && (size_t)Index < ResourceToMesh.size()) ? ResourceToMesh[Index] : nullptr;
                     };
 
-                    if (CStaticMesh* Static = Cast<CStaticMesh>(MeshAt(Slot.StaticResource)))
+                    CStaticMesh* Static = Cast<CStaticMesh>(MeshAt(Slot.StaticResource));
+                    if (Static != nullptr)
                     {
                         Registry.Emplace<SStaticMeshComponent>(Entity).StaticMesh = Static;
                     }
+                    ApplyNodeExtras(Registry, Entity, Node, Static, SceneCollision);
                     if (CSkeletalMesh* Skinned = Cast<CSkeletalMesh>(MeshAt(Slot.SkinnedResource)))
                     {
                         Registry.Emplace<SSkeletalMeshComponent>(Entity).SkeletalMesh = Skinned;
@@ -926,6 +1040,11 @@ namespace Lumina
 
             default:
                 break;
+            }
+
+            if (Node.Kind != ESourceNodeKind::Mesh)
+            {
+                ApplyNodeExtras(Registry, Entity, Node, nullptr, ESceneCollision::None);
             }
         }
 

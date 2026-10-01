@@ -28,6 +28,40 @@ namespace Lumina
             }
         }
 
+        int32 DefaultWidthFor(ECustomSlangInputDefault Default)
+        {
+            switch (Default)
+            {
+                case ECustomSlangInputDefault::UV0:           return 2;
+                case ECustomSlangInputDefault::WorldPosition: return 3;
+                case ECustomSlangInputDefault::WorldNormal:   return 3;
+                case ECustomSlangInputDefault::VertexColor:   return 4;
+                case ECustomSlangInputDefault::Zero:
+                default:                                      return 1;
+            }
+        }
+
+        // Slang rejects a C style cast between vector widths, so narrowing swizzles and widening pads with zeros.
+        FString CoerceToType(const FString& Expr, int32 FromWidth, EMaterialInputType To)
+        {
+            const FString TypeName = FMaterialCompiler::GetHLSLTypeName(To);
+            const int32 ToWidth = FMaterialCompiler::GetComponentCount(To);
+            if (To == EMaterialInputType::TextureHandle || FromWidth == ToWidth || FromWidth <= 1)
+            {
+                return "(" + TypeName + ")(" + Expr + ")";
+            }
+            if (ToWidth < FromWidth)
+            {
+                return "(" + Expr + ")." + FString("xyzw").substr(0, ToWidth);
+            }
+            FString Padded = TypeName + "(" + Expr;
+            for (int32 Index = FromWidth; Index < ToWidth; ++Index)
+            {
+                Padded += ", 0.0";
+            }
+            return Padded + ")";
+        }
+
         bool IsIdentifierStart(char C) { return (C >= 'A' && C <= 'Z') || (C >= 'a' && C <= 'z') || C == '_'; }
         bool IsIdentifierBody(char C)  { return IsIdentifierStart(C) || (C >= '0' && C <= '9'); }
 
@@ -471,7 +505,9 @@ namespace Lumina
 
         // Resolve upstream expressions BEFORE opening the block so nothing upstream lands inside our scope.
         TVector<FString> ArgExprs;
+        TVector<int32> ArgWidths;
         ArgExprs.reserve(CustomInputPins.size());
+        ArgWidths.reserve(CustomInputPins.size());
         for (size_t i = 0; i < CustomInputPins.size(); ++i)
         {
             // The stage aliases are float-typed, so a handle input falls back to the neutral index instead.
@@ -483,18 +519,27 @@ namespace Lumina
                 : (i < Inputs.size() ? DefaultExpressionFor(Inputs[i].Default) : FString("0.0"));
 
             const FMaterialCompiler::FInputValue Value = Compiler.GetTypedInputValue(CustomInputPins[i], Fallback);
-            ArgExprs.push_back(Value.Value + GetSwizzleForMask(Value.Mask));
+            const FString Swizzle = GetSwizzleForMask(Value.Mask);
+            ArgExprs.push_back(Value.Value + Swizzle);
+            if (!CustomInputPins[i]->HasConnection())
+            {
+                ArgWidths.push_back(bHandle || i >= Inputs.size() ? 1 : DefaultWidthFor(Inputs[i].Default));
+            }
+            else
+            {
+                ArgWidths.push_back(Swizzle.empty() ? Value.ComponentCount : FMaterialCompiler::GetComponentCount(Value.Mask));
+            }
         }
 
         Compiler.AddRaw(FString("// ---- custom slang: ") + Title.c_str() + " ----\n");
         Compiler.AddRaw("{\n");
 
-        // The cast coerces whatever width was wired in, so the body sees exactly the type it declared.
+        // Coercing whatever width was wired in means the body sees exactly the type it declared.
         for (size_t i = 0; i < CustomInputPins.size() && i < Inputs.size(); ++i)
         {
             const EMaterialInputType T = ToMaterialInputType(Inputs[i].Type);
             const FString TypeName = FMaterialCompiler::GetHLSLTypeName(T);
-            Compiler.AddRaw("const " + TypeName + " " + Inputs[i].Name.ToString() + " = (" + TypeName + ")(" + ArgExprs[i] + ");\n");
+            Compiler.AddRaw("const " + TypeName + " " + Inputs[i].Name.ToString() + " = " + CoerceToType(ArgExprs[i], ArgWidths[i], T) + ";\n");
         }
 
         // Outputs as zero-initialized locals the body assigns to.

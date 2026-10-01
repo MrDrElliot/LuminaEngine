@@ -1180,17 +1180,6 @@ namespace Lumina::ECS::Utils
         }
     }
 
-    FVector3 GetRenderLocation(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        if (const FRenderTransform* Render = Registry.TryGet<FRenderTransform>(Entity))
-        {
-            return FVector3(Render->Matrix[3]);
-        }
-
-        const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
-        return Transform != nullptr ? Transform->GetWorldLocation() : FVector3(0.0f);
-    }
-
     bool DrainMovedTransforms(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Out)
     {
         TUniquePtr<FTransformDirtyState>* Holder = Registry.Ctx().Find<TUniquePtr<FTransformDirtyState>>();

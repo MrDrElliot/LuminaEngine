@@ -13,6 +13,7 @@
 #include "Log/Log.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
+#include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
@@ -531,16 +532,26 @@ namespace Lumina::Physics
             InterpStaging.PushBack();
 
             const FVector3 CurrentPosition = Component.Character->Position;
-            const FQuat CurrentRotation = Component.Character->Rotation;
+            FQuat CurrentRotation = Component.Character->Rotation;
+            FQuat PreviousRotation = Component.LastBodyRotation;
+
+            // Look input steers the capsule rather than being simulated, so it shows the frame it arrives instead of a step later.
+            const SCharacterMovementComponent* Movement = Registry.TryGet<SCharacterMovementComponent>(Entity);
+            const SCharacterControllerComponent* Controller = Registry.TryGet<SCharacterControllerComponent>(Entity);
+            if (Movement != nullptr && Controller != nullptr && Movement->bUseControllerRotation)
+            {
+                CurrentRotation = FQuat(FVector3(0.0f, Math::Radians(Controller->LookInput.x), 0.0f));
+                PreviousRotation = CurrentRotation;
+            }
 
             InterpStaging.Entities[Slot] = Entity;
             InterpStaging.Flags[Slot] = CurrentPosition.y < KillHeight ? EInterpFlag::BelowKill : EInterpFlag::Interpolate;
             InterpStaging.PrevPos[Slot] = Component.LastBodyPosition;
             InterpStaging.CurrPos[Slot] = CurrentPosition;
-            InterpStaging.PrevQx[Slot] = Component.LastBodyRotation.x;
-            InterpStaging.PrevQy[Slot] = Component.LastBodyRotation.y;
-            InterpStaging.PrevQz[Slot] = Component.LastBodyRotation.z;
-            InterpStaging.PrevQw[Slot] = Component.LastBodyRotation.w;
+            InterpStaging.PrevQx[Slot] = PreviousRotation.x;
+            InterpStaging.PrevQy[Slot] = PreviousRotation.y;
+            InterpStaging.PrevQz[Slot] = PreviousRotation.z;
+            InterpStaging.PrevQw[Slot] = PreviousRotation.w;
             InterpStaging.CurrQx[Slot] = CurrentRotation.x;
             InterpStaging.CurrQy[Slot] = CurrentRotation.y;
             InterpStaging.CurrQz[Slot] = CurrentRotation.z;
@@ -572,23 +583,20 @@ namespace Lumina::Physics
                       Total, Alpha);
     }
 
+    // Writes the blend into the transform itself, so cameras, attachments and scripts see one pose and the body keeps the simulated one.
     void FBox3DPhysicsScene::ApplyInterpolatedTransforms()
     {
         LUMINA_PROFILE_SCOPE();
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
-        ++RenderOverrideStamp;
-        RenderOverridesNext.clear();
 
         const uint32 Count = (uint32)InterpStaging.Entities.size();
         if (Count == 0)
         {
-            RetireStaleRenderOverrides(Registry);
             return;
         }
 
         auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto RenderStorage = Registry.GetStorage<FRenderTransform>();
 
         ECS::Utils::FlushDirtyPhysicsBodies(Registry);
 
@@ -615,54 +623,25 @@ namespace Lumina::Physics
                 continue;
             }
 
-            if (!TransformStorage.Contains(Entity))
+            // An authored move outranks the body pose until the teleport reaches the body.
+            if (!TransformStorage.Contains(Entity) || PendingTeleport.Contains(Entity))
             {
                 continue;
             }
 
-            // An authored move outranks the body pose, so drop the override and show the target.
-            if (PendingTeleport.Contains(Entity))
-            {
-                if (RenderStorage.Contains(Entity))
-                {
-                    RenderStorage.RemoveEntity(Entity);
-                }
-                continue;
-            }
-
-            if (!RenderStorage.Contains(Entity))
-            {
-                RenderStorage.Emplace(Entity, FRenderTransform{});
-            }
             (TransformStorage.Get(Entity).bIsFlat ? InterpApplied : InterpAppliedParented).push_back(i);
         }
 
-        auto WriteSimPose = [&](uint32 i)
+        auto WritePose = [&](uint32 i)
         {
-            TransformStorage.Get(InterpStaging.Entities[i]).SetFromPhysics(InterpStaging.CurrPos[i],
-                FQuat(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]));
+            TransformStorage.Get(InterpStaging.Entities[i]).SetFromPhysics(InterpStaging.LerpPos[i],
+                FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i], InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
         };
 
-        auto WriteRenderPose = [&](uint32 i)
-        {
-            const ECS::FEntity Entity = InterpStaging.Entities[i];
-
-            FTransform RenderPose = TransformStorage.Get(Entity).GetWorldTransformCached();
-            RenderPose.SetLocation(InterpStaging.LerpPos[i]);
-            RenderPose.SetRotation(FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i],
-                                         InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
-
-            FRenderTransform& Render = RenderStorage.Get(Entity);
-            Render.Matrix = RenderPose.GetMatrix();
-            Render.Stamp = RenderOverrideStamp;
-        };
-
-        // A flat body's world pose is its local one, so its render pose needs no resolve in between.
         const uint32 FlatCount = (uint32)InterpApplied.size();
         const auto WriteFlat = [&](uint32 Index)
         {
-            WriteSimPose(InterpApplied[Index]);
-            WriteRenderPose(InterpApplied[Index]);
+            WritePose(InterpApplied[Index]);
         };
         if (FlatCount > InterpParallelThreshold)
         {
@@ -676,117 +655,15 @@ namespace Lumina::Physics
             }
         }
 
+        // The resolve carries a parented body's pose down to everything attached to it.
         if (!InterpAppliedParented.empty())
         {
             for (uint32 i : InterpAppliedParented)
             {
-                WriteSimPose(i);
+                WritePose(i);
             }
             ECS::Utils::ResolveAllDirtyTransforms(Registry);
-            for (uint32 i : InterpAppliedParented)
-            {
-                WriteRenderPose(i);
-            }
         }
-
-        for (uint32 i : InterpApplied)
-        {
-            RenderOverridesNext.push_back(InterpStaging.Entities[i]);
-        }
-        for (uint32 i : InterpAppliedParented)
-        {
-            RenderOverridesNext.push_back(InterpStaging.Entities[i]);
-        }
-
-        // Only a parented body can have descendants, and those were appended after every flat one.
-        if (!InterpAppliedParented.empty())
-        {
-            PropagateRenderPosesToDescendants(Registry, InterpApplied.size());
-        }
-
-        RetireStaleRenderOverrides(Registry);
-    }
-
-    // A mesh parented under a body would otherwise draw at the stepped pose while the body draws interpolated.
-    void FBox3DPhysicsScene::PropagateRenderPosesToDescendants(ECS::FRegistry& Registry, size_t FirstBody)
-    {
-        LUMINA_PROFILE_SCOPE();
-
-        auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto RenderStorage = Registry.GetStorage<FRenderTransform>();
-        auto RelationshipStorage = Registry.GetStorage<FRelationshipComponent>();
-        const size_t BodyCount = RenderOverridesNext.size();
-
-        for (size_t BodyIndex = FirstBody; BodyIndex < BodyCount; ++BodyIndex)
-        {
-            const ECS::FEntity Body = RenderOverridesNext[BodyIndex];
-            if (!RelationshipStorage.Contains(Body) || RelationshipStorage.Get(Body).First == ECS::NullEntity)
-            {
-                continue;
-            }
-
-            const FMatrix4 BodyRender = RenderStorage.Get(Body).Matrix;
-            const FMatrix4 WorldToRender = BodyRender * Math::Inverse(TransformStorage.Get(Body).GetWorldMatrixCached());
-
-            RenderDescendantStack.clear();
-            RenderDescendantStack.push_back(RelationshipStorage.Get(Body).First);
-            while (!RenderDescendantStack.empty())
-            {
-                const ECS::FEntity Node = RenderDescendantStack.back();
-                RenderDescendantStack.pop_back();
-
-                const FRelationshipComponent* Relationship = RelationshipStorage.Contains(Node) ? &RelationshipStorage.Get(Node) : nullptr;
-                if (Relationship != nullptr && Relationship->Next != ECS::NullEntity)
-                {
-                    RenderDescendantStack.push_back(Relationship->Next);
-                }
-
-                // A nested body interpolates itself, and its own subtree follows it.
-                if (RenderStorage.Contains(Node) && RenderStorage.Get(Node).Stamp == RenderOverrideStamp)
-                {
-                    continue;
-                }
-
-                if (Relationship != nullptr && Relationship->First != ECS::NullEntity)
-                {
-                    RenderDescendantStack.push_back(Relationship->First);
-                }
-
-                if (!TransformStorage.Contains(Node))
-                {
-                    continue;
-                }
-
-                if (!RenderStorage.Contains(Node))
-                {
-                    RenderStorage.Emplace(Node, FRenderTransform{});
-                }
-
-                FRenderTransform& Render = RenderStorage.Get(Node);
-                Render.Matrix = WorldToRender * TransformStorage.Get(Node).GetWorldMatrixCached();
-                Render.Stamp = RenderOverrideStamp;
-                RenderOverridesNext.push_back(Node);
-                ECS::Utils::PublishMovedTransform(Registry, Node);
-            }
-        }
-    }
-
-    // An entity that stops being simulated keeps drawing wherever its last override put it unless it is dropped.
-    void FBox3DPhysicsScene::RetireStaleRenderOverrides(ECS::FRegistry& Registry)
-    {
-        auto RenderStorage = Registry.GetStorage<FRenderTransform>();
-        for (ECS::FEntity Entity : RenderOverrides)
-        {
-            if (!Registry.IsValid(Entity) || !RenderStorage.Contains(Entity) || RenderStorage.Get(Entity).Stamp == RenderOverrideStamp)
-            {
-                continue;
-            }
-
-            RenderStorage.RemoveEntity(Entity);
-            ECS::Utils::PublishMovedTransform(Registry, Entity);
-        }
-
-        RenderOverrides.swap(RenderOverridesNext);
     }
 
     void FBox3DPhysicsScene::Update(double DeltaTime)
@@ -816,6 +693,9 @@ namespace Lumina::Physics
         // Move events only come from a step, so a frame without one blends the last step's bodies again at its own alpha.
         if (CollisionSteps > 0)
         {
+            // Fixed scripts start from the simulated pose, and a body that stops moving rests where it was simulated.
+            BuildInterpolatedTransforms(1.0f);
+            ApplyInterpolatedTransforms();
             ResetInterpStaging();
         }
         ContactDrainScratch.clear();

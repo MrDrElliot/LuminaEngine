@@ -1233,7 +1233,6 @@ namespace Lumina
     struct FScenePrimitiveSet::FSyncPools
     {
         ECS::TComponentStorage<STransformComponent>          Transform    = {};
-        ECS::TComponentStorage<FRenderTransform>       RenderXform  = {};
         ECS::TComponentStorage<SStaticMeshComponent>   StaticMesh   = {};
         ECS::TComponentStorage<SSkeletalMeshComponent> SkeletalMesh = {};
         ECS::TComponentStorage<SDynamicMeshComponent>        DynamicMesh  = {};
@@ -1245,7 +1244,6 @@ namespace Lumina
 
         explicit FSyncPools(ECS::FRegistry& Registry)
             : Transform(Registry.GetStorage<STransformComponent>())
-            , RenderXform(Registry.GetStorage<FRenderTransform>())
             , StaticMesh(Registry.GetStorage<SStaticMeshComponent>())
             , SkeletalMesh(Registry.GetStorage<SSkeletalMeshComponent>())
             , DynamicMesh(Registry.GetStorage<SDynamicMeshComponent>())
@@ -1257,13 +1255,6 @@ namespace Lumina
             Sources[(uint32)EPrimitiveSource::SkeletalMesh] = SkeletalMesh.GetSet();
         }
     };
-
-    static FORCEINLINE FMatrix4 ReadRenderMatrix(ECS::TComponentStorage<FRenderTransform> RenderStorage,
-                                                 ECS::FEntity Entity, const STransformComponent& Transform)
-    {
-        return RenderStorage->Contains(Entity) ? RenderStorage->Get(Entity).Matrix
-                                               : Transform.GetWorldMatrixCached();
-    }
 
     namespace
     {
@@ -1489,7 +1480,7 @@ namespace Lumina
                 return;
             }
 
-            Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
+            Primitives[Index].Transform = Pools.Transform->Get(Entity).GetWorldMatrixCached();
             RebuildWorldBounds(Index);
             RefreshInstanceTransform(Index);
             ++StructureGeneration;
@@ -1529,7 +1520,7 @@ namespace Lumina
 
         if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Transform))
         {
-            Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
+            Primitives[Index].Transform = Pools.Transform->Get(Entity).GetWorldMatrixCached();
         }
 
         RefreshPrimitiveData(Pools, Index);
@@ -2210,7 +2201,7 @@ namespace Lumina
             return;
         }
 
-        const FMatrix4 Matrix = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->Get(Entity));
+        const FMatrix4 Matrix = Pools.Transform->Get(Entity).GetWorldMatrixCached();
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
