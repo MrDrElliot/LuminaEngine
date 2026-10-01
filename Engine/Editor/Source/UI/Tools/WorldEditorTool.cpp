@@ -77,6 +77,18 @@
 namespace Lumina
 {
     static constexpr const char* WorldSettingsName = "World Settings";
+
+    // The console has no context pointer, so the command reaches the world editor through this.
+    static FWorldEditorTool* GActiveWorldEditor = nullptr;
+
+    static FAutoConsoleCommand GToggleGameViewCommand("Editor.ToggleGameView",
+        "Hide or show editor overlays such as the grid and gizmos, as the G key does over the viewport.", []
+        {
+            if (GActiveWorldEditor != nullptr)
+            {
+                GActiveWorldEditor->ToggleGameViewMode();
+            }
+        });
     static constexpr const char* SceneGraphName = "Scene Graph";
     static constexpr const char* SystemsName = "Systems";
     
@@ -337,6 +349,7 @@ namespace Lumina
 
     void FWorldEditorTool::OnInitialize()
     {
+        GActiveWorldEditor = this;
         CreateToolWindow(SceneGraphName, [&] (bool bFocused)
         {
             DrawOutliner(bFocused);
@@ -795,6 +808,10 @@ namespace Lumina
 
     void FWorldEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
+        if (GActiveWorldEditor == this)
+        {
+            GActiveWorldEditor = nullptr;
+        }
         FCoreDelegates::OnWorldTraveled.Remove(WorldTraveledHandle);
         WorldTraveledHandle = FDelegateHandle{};
         FCoreDelegates::Get().OnGameQuitRequested.Remove(GameQuitHandle);

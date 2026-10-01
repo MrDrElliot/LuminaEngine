@@ -698,6 +698,23 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SSetCameraViewParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        TVector<float> Location;
+
+        // A point to face, used when given, otherwise Rotation applies.
+        PROPERTY()
+        TVector<float> Target;
+
+        // Pitch, yaw and roll in degrees, as camera.get_view reports them.
+        PROPERTY()
+        TVector<float> Rotation;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SGroundHeightParams
     {
         GENERATED_BODY()

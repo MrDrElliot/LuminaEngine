@@ -27,6 +27,15 @@ namespace Lumina
         Raw,
     };
 
+    // Collider a scene prefab gives each mesh entity when the node's own extras do not pick one.
+    REFLECT()
+    enum class ESceneCollision : uint8
+    {
+        None,
+        TriangleMesh,
+        ConvexHull,
+    };
+
     /**
      * Shared stages of every mesh-format import. A format importer implements ParseMeshSource (parse ->
      * discovery -> dedup) and inherits processing, asset creation and serialization from here, so the
@@ -113,6 +122,10 @@ namespace Lumina
          */
         PROPERTY(Editable, Category = "Scene")
         bool bImportCameras = true;
+
+        // Node extras override this per node, and UCX_ or COL_ named nodes become invisible colliders.
+        PROPERTY(Editable, Category = "Scene")
+        ESceneCollision SceneCollision = ESceneCollision::None;
 
         /** Also import the source's lights, so a placed prefab lights itself instead of borrowing the host world's lighting. */
         PROPERTY(Editable, Category = "Scene")

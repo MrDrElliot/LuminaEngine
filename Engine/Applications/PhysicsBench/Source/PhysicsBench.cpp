@@ -199,12 +199,10 @@ namespace PhysicsBench
             const ECS::FEntity Entity = Registry.Create();
             STransformComponent& Transform = Registry.Emplace<STransformComponent>(Entity);
             Transform.Bind(Registry, Entity);
-            Registry.Emplace<FRenderTransform>(Entity);
             Entities.push_back(Entity);
         }
 
         auto TransformStorage = Registry.GetStorage<STransformComponent>();
-        auto RenderStorage = Registry.GetStorage<FRenderTransform>();
 
         auto WriteOne = [&](uint32 Index)
         {
@@ -213,10 +211,6 @@ namespace PhysicsBench
 
             STransformComponent& Transform = TransformStorage.Get(Entity);
             Transform.SetFromPhysics(FVector3(Wave, Wave + 1.0f, Wave), FQuat::Identity());
-
-            FTransform RenderPose = Transform.GetWorldTransformCached();
-            RenderPose.SetLocation(FVector3(Wave, Wave + 1.0f, Wave));
-            RenderStorage.Get(Entity).Matrix = RenderPose.GetMatrix();
         };
 
         constexpr uint32 Passes = 20;

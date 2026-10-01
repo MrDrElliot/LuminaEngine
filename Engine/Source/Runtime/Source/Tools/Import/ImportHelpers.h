@@ -403,6 +403,9 @@ namespace Lumina::Import
 
             FSourceLight    Light;
             FSourceCamera   Camera;
+
+            // The node's user properties as a JSON object (glTF extras), empty when it has none.
+            FString         Extras;
         };
 
         struct FMeshStatistics : INonCopyable

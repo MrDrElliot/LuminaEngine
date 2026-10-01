@@ -19,6 +19,7 @@
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/ManagedInstance.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Threading/Atomic.h"
 #include "Scripting/ScriptStruct.h"
 #include "Scripting/ScriptableObject.h"
@@ -1992,6 +1993,21 @@ LUMINA_DOTNET_EXPORT(void*, LoadObject)(const char* Path, int Len)
     return Lumina::StaticLoadObject(Lumina::FStringView(Path, static_cast<size_t>(Len)));
 }
 
+// A strong reference a script holds on an object, so an asset it loaded outlives the frame that loaded it.
+LUMINA_DOTNET_EXPORT(void*, PinObject)(void* Object)
+{
+    if (Object == nullptr)
+    {
+        return nullptr;
+    }
+    return Lumina::Memory::New<Lumina::TObjectPtr<Lumina::CObject>>(static_cast<Lumina::CObject*>(Object));
+}
+
+LUMINA_DOTNET_EXPORT(void, UnpinObject)(void* Pin)
+{
+    Lumina::Memory::Delete(static_cast<Lumina::TObjectPtr<Lumina::CObject>*>(Pin));
+}
+
 // Registry probe (no load). Backs Asset.Exists.
 LUMINA_DOTNET_EXPORT(int, AssetExists)(const char* Path, int Len)
 {
@@ -2184,6 +2200,8 @@ LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(ObjectSetManagedInstance),
     LUMINA_DOTNET_SIG(ReleaseAllManagedInstances),
     LUMINA_DOTNET_SIG(LoadObject),
+    LUMINA_DOTNET_SIG(PinObject),
+    LUMINA_DOTNET_SIG(UnpinObject),
     LUMINA_DOTNET_SIG(AssetExists),
     LUMINA_DOTNET_SIG(LoadObjectAsync),
     LUMINA_DOTNET_SIG(GetObjectPath),

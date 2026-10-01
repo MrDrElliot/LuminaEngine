@@ -1,6 +1,8 @@
 #include "MCPAssetTools.h"
 
 #include "Agent/AgentAssetResolve.h"
+#include "Agent/AgentPropertyPath.h"
+#include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
 #include "MCPTextMatch.h"
 #include "Asset/AssetOps.h"
@@ -315,8 +317,30 @@ namespace Lumina::MCP
         }
 
         // Mirrors the content browser's OS-drop import, minus the settings dialog, for one file at a time.
-        void ImportOneFile(const std::filesystem::path& File, const FString& Folder, ETextureGroup TextureGroup,
-            SImportAssetsResult& Out)
+        // Settings names only fields of the importer class, so one call can carry keys for several formats.
+        bool ApplyImporterSettings(CImporter* Importer, const nlohmann::json& Settings, FString& OutError)
+        {
+            for (auto It = Settings.begin(); It != Settings.end(); ++It)
+            {
+                Agent::FResolvedProperty Target;
+                FString Ignored;
+                if (!Agent::ResolvePropertyPath(Importer->GetClass(), Importer, FStringView(It.key().c_str()), Target, Ignored))
+                {
+                    continue;
+                }
+                const Agent::FMarshalResult Result = Agent::ReadProperty(It.value(), Target.Property, Target.ValuePtr,
+                    FStringView(It.key().c_str()));
+                if (!Result.IsValid())
+                {
+                    OutError = Result.Error;
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        void ImportOneFile(const std::filesystem::path& File, const FString& Folder, const SImportAssetsParams& In,
+            const nlohmann::json& Settings, SImportAssetsResult& Out)
         {
             const FString SourcePath = FString(File.generic_string().c_str());
             const FString FileName = FString(File.filename().string().c_str());
@@ -339,7 +363,15 @@ namespace Lumina::MCP
             CImporter* Importer = CImporterRegistry::CreateImporterOfClass(ImporterCDO->GetClass());
             if (CTextureImporter* TextureImporter = Cast<CTextureImporter>(Importer))
             {
-                TextureImporter->Group = TextureGroup;
+                TextureImporter->Group = In.TextureGroup;
+            }
+
+            FString SettingsError;
+            if (!ApplyImporterSettings(Importer, Settings, SettingsError))
+            {
+                CImporterRegistry::DestroyImporter(Importer);
+                Out.Failed.push_back(FileName + ": " + SettingsError);
+                return;
             }
 
             // Importers with a settings step read the source here, and building without it produces nothing.
@@ -379,13 +411,13 @@ namespace Lumina::MCP
         }
 
         void ImportDirectory(const std::filesystem::path& Directory, const FString& Folder, const SImportAssetsParams& In,
-            SImportAssetsResult& Out)
+            const nlohmann::json& Settings, SImportAssetsResult& Out)
         {
             for (const std::filesystem::directory_entry& Entry : std::filesystem::directory_iterator(Directory))
             {
                 if (!Entry.is_directory())
                 {
-                    ImportOneFile(Entry.path(), Folder, In.TextureGroup, Out);
+                    ImportOneFile(Entry.path(), Folder, In, Settings, Out);
                     continue;
                 }
 
@@ -401,7 +433,7 @@ namespace Lumina::MCP
                     continue;
                 }
 
-                ImportDirectory(Entry.path(), SubFolder, In, Out);
+                ImportDirectory(Entry.path(), SubFolder, In, Settings, Out);
             }
         }
 
@@ -432,6 +464,16 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("{} does not exist.", In.Source));
                     }
 
+                    nlohmann::json Settings = nlohmann::json::object();
+                    if (!In.Settings.empty())
+                    {
+                        Settings = nlohmann::json::parse(In.Settings.c_str(), nullptr, false);
+                        if (Settings.is_discarded() || !Settings.is_object())
+                        {
+                            return Agent::FToolResult::Error("Settings must be a JSON object of importer properties.");
+                        }
+                    }
+
                     size_t Created = 0;
                     if (!CreateFolderChain(FStringView(In.DestinationFolder), Created, Error))
                     {
@@ -440,11 +482,11 @@ namespace Lumina::MCP
 
                     if (std::filesystem::is_directory(Source))
                     {
-                        ImportDirectory(Source, In.DestinationFolder, In, Out);
+                        ImportDirectory(Source, In.DestinationFolder, In, Settings, Out);
                     }
                     else
                     {
-                        ImportOneFile(Source, In.DestinationFolder, In.TextureGroup, Out);
+                        ImportOneFile(Source, In.DestinationFolder, In, Settings, Out);
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("Imported {}, skipped {}, failed {}.",

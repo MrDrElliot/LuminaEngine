@@ -19,7 +19,7 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Medium);
         Writes<STransformComponent, SCameraFollowComponent, SSpringArmComponent>();
-        Reads<SystemResource::PhysicsQuery, FRelationshipComponent, FRenderTransform>();
+        Reads<SystemResource::PhysicsQuery, FRelationshipComponent>();
     }
 
     namespace Detail
@@ -85,7 +85,7 @@ namespace Lumina
             const STransformComponent& Xform       = FollowView.Get<STransformComponent>(Entity);
             const STransformComponent& TargetXform = Registry.Get<STransformComponent>(Target);
 
-            const FVector3 TargetPos = ECS::Utils::GetRenderLocation(Registry, Target);
+            const FVector3 TargetPos = TargetXform.GetWorldLocation();
             const FQuat TargetRot = TargetXform.GetWorldRotation();
 
             const FVector3 DesiredPos = Follow.bWorldSpaceOffset
@@ -145,7 +145,7 @@ namespace Lumina
             if (bHasTarget)
             {
                 const STransformComponent& TargetXform = Registry.Get<STransformComponent>(Target);
-                PivotBase  = ECS::Utils::GetRenderLocation(Registry, Target);
+                PivotBase  = TargetXform.GetWorldLocation();
                 ControlRot = Arm.bUseControlRotation ? Xform.GetWorldRotation() : TargetXform.GetWorldRotation();
             }
             else

@@ -113,7 +113,25 @@ namespace Lumina
             }
         }
 
-        FMatrix4 NodeLocalMatrix(const cgltf_node& Node)
+        // glTF is right handed with -X as right, so mirroring X keeps forward and up, as the FBX importer does.
+        const FMatrix4 kMirrorX = Math::Scale(FMatrix4(1.0f), FVector3(-1.0f, 1.0f, 1.0f));
+
+        FMatrix4 ToEngineSpace(const FMatrix4& Matrix)
+        {
+            return kMirrorX * Matrix * kMirrorX;
+        }
+
+        FVector3 ToEngineSpace(const FVector3& Vector)
+        {
+            return FVector3(-Vector.x, Vector.y, Vector.z);
+        }
+
+        FQuat ToEngineSpace(const FQuat& Rotation)
+        {
+            return FQuat(Rotation.w, Rotation.x, -Rotation.y, -Rotation.z);
+        }
+
+        FMatrix4 SourceLocalMatrix(const cgltf_node& Node)
         {
             if (Node.has_matrix)
             {
@@ -134,6 +152,11 @@ namespace Lumina
                 Result = Math::Scale(Result, FVector3(Node.scale[0], Node.scale[1], Node.scale[2]));
             }
             return Result;
+        }
+
+        FMatrix4 NodeLocalMatrix(const cgltf_node& Node)
+        {
+            return ToEngineSpace(SourceLocalMatrix(Node));
         }
 
         struct FGeometryScratch
@@ -804,11 +827,15 @@ namespace Lumina
                 SceneNode.Name = (Node.name != nullptr && Node.name[0] != '\0')
                     ? FName(Node.name)
                     : FName("Node", (uint32)cgltf_node_index(&Data, &Node));
+                if (Node.extras.data != nullptr)
+                {
+                    SceneNode.Extras = Node.extras.data;
+                }
 
                 if (Node.has_matrix)
                 {
                     // glTF requires node matrices to be decomposable into TRS, so this never loses shear.
-                    const FTransform Decomposed(Math::MakeMat4(Node.matrix));
+                    const FTransform Decomposed(NodeLocalMatrix(Node));
                     SceneNode.Translation = Decomposed.GetLocation();
                     SceneNode.Rotation    = Decomposed.GetRotation();
                     SceneNode.Scale       = Decomposed.GetScale();
@@ -817,11 +844,11 @@ namespace Lumina
                 {
                     if (Node.has_translation)
                     {
-                        SceneNode.Translation = FVector3(Node.translation[0], Node.translation[1], Node.translation[2]);
+                        SceneNode.Translation = ToEngineSpace(FVector3(Node.translation[0], Node.translation[1], Node.translation[2]));
                     }
                     if (Node.has_rotation)
                     {
-                        SceneNode.Rotation = FQuat(Node.rotation[3], Node.rotation[0], Node.rotation[1], Node.rotation[2]);
+                        SceneNode.Rotation = ToEngineSpace(FQuat(Node.rotation[3], Node.rotation[0], Node.rotation[1], Node.rotation[2]));
                     }
                     if (Node.has_scale)
                     {
@@ -1029,8 +1056,12 @@ namespace Lumina
                               const FMatrix4& WorldMatrix,
                               FGeometryScratch& Scratch)
         {
-            const FMatrix4 PositionMatrix = Math::Scale(FMatrix4(1.0f), FVector3(Options.Scale)) * WorldMatrix;
-            const FMatrix3 NormalMatrix   = Math::Transpose(Math::Inverse(FMatrix3(WorldMatrix)));
+            // WorldMatrix is already in engine space, so only the object space vertices still need the mirror.
+            const FMatrix4 ObjectToEngine = WorldMatrix * kMirrorX;
+            const FMatrix4 PositionMatrix = Math::Scale(FMatrix4(1.0f), FVector3(Options.Scale)) * ObjectToEngine;
+            const FMatrix3 NormalMatrix   = Math::Transpose(Math::Inverse(FMatrix3(ObjectToEngine)));
+            // A reflection turns every triangle inside out, so it flips winding back to front facing.
+            const bool bReverseWinding = Math::Determinant(FMatrix3(ObjectToEngine)) < 0.0f;
 
             for (cgltf_size p = 0; p < Mesh.primitives_count; ++p)
             {
@@ -1207,6 +1238,14 @@ namespace Lumina
                     for (size_t i = 0; i < VertexCount; ++i)
                     {
                         Resource.Indices[BaseIndex + i] = (uint32)(BaseVertex + i);
+                    }
+                }
+
+                if (bReverseWinding)
+                {
+                    for (size_t i = BaseIndex; i + 2 < Resource.Indices.size(); i += 3)
+                    {
+                        std::swap(Resource.Indices[i + 1], Resource.Indices[i + 2]);
                     }
                 }
 
@@ -1392,7 +1431,7 @@ namespace Lumina
                     }
 
                     Bone.LocalTransform = NodeLocalMatrix(JointNode);
-                    Bone.InvBindMatrix  = (j < InverseBindMatrices.size()) ? InverseBindMatrices[j] : FMatrix4(1.0f);
+                    Bone.InvBindMatrix  = (j < InverseBindMatrices.size()) ? ToEngineSpace(InverseBindMatrices[j]) : FMatrix4(1.0f);
 
                     Skeleton->BoneNameToIndex[Bone.Name] = (int32)j;
                     Skeleton->Bones.push_back(Bone);
@@ -1454,7 +1493,7 @@ namespace Lumina
                         Channel.Translations.resize(Values->count);
                         for (cgltf_size i = 0; i < Values->count; ++i)
                         {
-                            Channel.Translations[i] = FVector3(Raw[i * 3 + 0], Raw[i * 3 + 1], Raw[i * 3 + 2]) * Options.Scale;
+                            Channel.Translations[i] = ToEngineSpace(FVector3(Raw[i * 3 + 0], Raw[i * 3 + 1], Raw[i * 3 + 2])) * Options.Scale;
                         }
                     }
                     else if (Channel.TargetPath == FAnimationChannel::ETargetPath::Scale)
@@ -1470,7 +1509,7 @@ namespace Lumina
                         Channel.Rotations.resize(Values->count);
                         for (cgltf_size i = 0; i < Values->count; ++i)
                         {
-                            Channel.Rotations[i] = FQuat(Raw[i * 4 + 3], Raw[i * 4 + 0], Raw[i * 4 + 1], Raw[i * 4 + 2]);
+                            Channel.Rotations[i] = ToEngineSpace(FQuat(Raw[i * 4 + 3], Raw[i * 4 + 0], Raw[i * 4 + 1], Raw[i * 4 + 2]));
                         }
                     }
 

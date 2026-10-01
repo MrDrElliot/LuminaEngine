@@ -192,6 +192,10 @@ namespace Lumina
         /** Mip policy for imported textures. UI skips the mip chain, since the UI pass never minifies. */
         PROPERTY()
         ETextureGroup TextureGroup = ETextureGroup::World;
+
+        // JSON object of importer properties, such as {"bImportAsPrefab": true, "SceneCollision": "TriangleMesh"}.
+        PROPERTY()
+        FString Settings;
     };
 
     REFLECT()

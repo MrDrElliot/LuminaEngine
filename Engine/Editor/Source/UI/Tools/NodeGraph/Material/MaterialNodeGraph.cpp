@@ -338,13 +338,13 @@ namespace Lumina
             EdNodeGraph::FError Error;
             Error.Name = "Type Mismatch";
 
-            const char* SourceTypeName = "Float";
-            switch (SourceType)
+            // Named by width, since a texture sample's pin type is Texture yet it hands over a float4.
+            const char* SourceTypeName = "float";
+            switch (SourceComponents)
             {
-                case EMaterialInputType::Float:   SourceTypeName = "float";  break;
-                case EMaterialInputType::Float2:  SourceTypeName = "float2"; break;
-                case EMaterialInputType::Float3:  SourceTypeName = "float3"; break;
-                case EMaterialInputType::Float4:  SourceTypeName = "float4"; break;
+                case 2: SourceTypeName = "float2"; break;
+                case 3: SourceTypeName = "float3"; break;
+                case 4: SourceTypeName = "float4"; break;
                 default: break;
             }
 

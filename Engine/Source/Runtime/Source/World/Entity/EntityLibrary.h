@@ -27,10 +27,6 @@ namespace Lumina
         FUNCTION()
         static FName GetTag(CWorld* World, ECS::FEntity Entity);
 
-        // Where the entity is drawn this frame, which follow cameras want over the simulated pose.
-        FUNCTION()
-        static FVector3 GetRenderLocation(CWorld* World, ECS::FEntity Entity);
-
         // One crossing for a whole pool of entities that script moves every frame. Pairs by index, extras ignored.
         FUNCTION()
         static void SetLocalTransforms(CWorld* World, const ECS::FEntity* Entities, int32 EntityCount, const FTransform* Transforms, int32 TransformCount);

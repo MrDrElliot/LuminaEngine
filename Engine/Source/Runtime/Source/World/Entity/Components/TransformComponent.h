@@ -41,9 +41,6 @@ namespace Lumina
      * entity has no such dependency -- world IS local -- so its setter resolves itself inline and never
      * touches the queue at all (see bIsFlat). The queue is not a race fix; it is a dependency-ordering
      * mechanism that only hierarchical entities need.
-     *
-     * Display poses live elsewhere and are never authored here: FRenderTransform holds the interpolated
-     * matrix for physics-driven entities, and the render scene keeps its own snapshot taken at Extract.
      */
     // ScriptFastCalls: local accessors are bound SuppressGCTransition. World getters opt out (they resolve).
     REFLECT(Component, HideInComponentList, ScriptFastCalls)
@@ -449,17 +446,4 @@ namespace Lumina
     // WorldTransform to move to its own pool.
     static_assert(sizeof(STransformComponent) == 128,
         "STransformComponent changed size. It is quantized to 64B; see the note above before adjusting this.");
-
-    // Display-time world matrix, present only on entities the physics step interpolates. Render reads it in
-    // preference to STransformComponent's own world pose; nothing else may. STransformComponent holds the
-    // simulated pose, so gameplay, queries and the body re-sync all agree with the simulated pose, while the
-    // visual is free to sit between two fixed steps. Not reflected: pure per-frame render state.
-    struct FRenderTransform
-    {
-        FMatrix4 Matrix = FMatrix4(1.0f);
-
-        // The physics apply that last wrote it, so an override nobody refreshes can be retired.
-        uint32 Stamp = 0;
-    };
-    
 }

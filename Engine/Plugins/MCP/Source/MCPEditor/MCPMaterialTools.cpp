@@ -525,8 +525,14 @@ namespace Lumina::MCP
 
                     if (!Result.bSuccess)
                     {
-                        return Agent::FToolResult::Error(Lumina::Format("Compile failed with {} error(s). {}",
-                            Out.Errors.size(), Out.Errors.empty() ? FString() : Out.Errors[0]));
+                        // A failed call carries no structured result, so every error has to ride in the text.
+                        FString Listed;
+                        for (const FString& Line : Out.Errors)
+                        {
+                            Listed += "\n- " + Line;
+                        }
+                        return Agent::FToolResult::Error(Lumina::Format("Compile failed with {} error(s).{}",
+                            Out.Errors.size(), Listed));
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("Compiled with {} warning(s).",

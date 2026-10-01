@@ -347,6 +347,17 @@ namespace Lumina
 		return FUIntVector2(1920, 1080);
 	}
 
+	float FWindow::GetRefreshRate() const
+	{
+		GLFWmonitor* Monitor = GetCurrentMonitor(Impl->Window);
+		if (Monitor == nullptr)
+		{
+			Monitor = glfwGetPrimaryMonitor();
+		}
+		const GLFWvidmode* Mode = Monitor != nullptr ? glfwGetVideoMode(Monitor) : nullptr;
+		return Mode != nullptr ? (float)Mode->refreshRate : 0.0f;
+	}
+
 	uint32 FWindow::GetHeight() const
 	{
 		return GetExtent().y;

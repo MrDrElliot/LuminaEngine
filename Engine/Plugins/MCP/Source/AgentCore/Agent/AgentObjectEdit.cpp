@@ -113,7 +113,8 @@ namespace Lumina::Agent
             return Result;
         }
 
-        if (Owner != nullptr && Owner->GetPackage() != nullptr)
+        // A default object lives in a native script package and persists through its config file instead.
+        if (Owner != nullptr && Owner->GetPackage() != nullptr && !Owner->HasAnyFlag(OF_DefaultObject))
         {
             Owner->GetPackage()->MarkDirty();
         }

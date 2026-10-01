@@ -585,7 +585,7 @@ namespace Lumina::Physics
         }
         if (Request.Builds.empty()) { return 0; }
         const uint32 GroupID = Request.GroupID;
-        StaticBodyGroups[GroupID];
+        StaticBodyGroups.try_emplace(GroupID);
         PendingStaticGroups.push_back(Move(Request));
         return GroupID;
     }

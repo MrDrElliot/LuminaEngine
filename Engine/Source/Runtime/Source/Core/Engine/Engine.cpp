@@ -82,6 +82,8 @@ namespace Lumina
     // Offline rendering steps the game a fixed amount per frame however long each frame takes to draw.
     static TConsoleVar CVarFixedDeltaTime("Core.FixedDeltaTime", 0.0f, "Seconds every frame advances the game by, whatever it took to draw; 0 uses the real frame time");
 
+    static TConsoleVar CVarPaceToDisplay("Core.PaceToDisplay", true, "Under FIFO present, advance each frame by whole display refresh intervals so motion stays even on screen");
+
     static TConsoleVar CVarTrimAllocatorCaches("Core.TrimAllocatorCaches", true, "Hand the allocator's cached memory back to the OS once a level that replaced another has settled");
     
     static FString ReadStartupProjectFromDisk()
@@ -517,12 +519,50 @@ namespace Lumina
         const double Now = PlatformTime::Seconds();
         UpdateContext.MarkFrameStart(Now);
         FrameStats::MarkFrame(Now);
+        PaceDeltaToDisplay(Now);
 
         const float FixedDeltaTime = CVarFixedDeltaTime.GetValue();
         if (FixedDeltaTime > 0.0f)
         {
             UpdateContext.DeltaTime = FixedDeltaTime;
         }
+    }
+
+    // FIFO shows each frame on a refresh boundary however unevenly the loop runs, so time advances by whole intervals.
+    void FEngine::PaceDeltaToDisplay(double Now)
+    {
+        if (!CVarPaceToDisplay.GetValue() || GIsHeadless || GetDefault<CRendererSettings>()->PresentMode != EPresentMode::FIFO
+            || GetMaxFrameRate() > 0)
+        {
+            PacedClock = 0.0;
+            return;
+        }
+
+        if (RefreshCheckTime < 0.0 || Now - RefreshCheckTime > 1.0)
+        {
+            RefreshCheckTime = Now;
+            const FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
+            const float Hz = Window != nullptr ? Window->GetRefreshRate() : 0.0f;
+            RefreshInterval = Hz > 1.0f ? 1.0 / (double)Hz : 0.0;
+        }
+
+        const double Raw = UpdateContext.DeltaTime;
+        if (RefreshInterval <= 0.0 || Raw <= 0.0)
+        {
+            PacedClock = 0.0;
+            return;
+        }
+
+        // A hitch or a stall resyncs to the wall clock rather than paying its debt out over later frames.
+        const double Owed = Now - PacedClock;
+        if (PacedClock <= 0.0 || Owed > RefreshInterval * 6.0 || Owed < -RefreshInterval * 2.0)
+        {
+            PacedClock = Now - Raw;
+        }
+
+        const double Intervals = Math::Max(1.0, std::round((Now - PacedClock) / RefreshInterval));
+        UpdateContext.DeltaTime = Intervals * RefreshInterval;
+        PacedClock += UpdateContext.DeltaTime;
     }
 
     bool FEngine::Update(bool bApplicationWantsExit)

@@ -397,6 +397,24 @@ namespace Lumina
 		return nullptr;
 	}
 
+	// Width of a default literal such as 0.5 or float3(0.0, 0.0, 1.0), or zero for a named alias it cannot see into.
+	static int32 LiteralComponentCount(const FString& Literal)
+	{
+		for (int32 Width = 2; Width <= 4; ++Width)
+		{
+			if (Literal.starts_with(Format("float{}(", Width).c_str()))
+			{
+				return Width;
+			}
+		}
+		if (Literal.empty())
+		{
+			return 0;
+		}
+		const char First = Literal[0];
+		return (First == '-' || First == '.' || (First >= '0' && First <= '9')) ? 1 : 0;
+	}
+
 	FMaterialCompiler::FInputValue FMaterialCompiler::GetTypedInputValue(CMaterialInput* Input, const FString& DefaultValueStr)
 	{
 		FInputValue Result;
@@ -439,12 +457,13 @@ namespace Lumina
 		}
 		else
 		{
-			FString NodeName		= Input->GetOwningNode()->GetNodeFullName();
+			const int32 LiteralWidth = LiteralComponentCount(DefaultValueStr);
+			const int32 Count       = LiteralWidth > 0 ? LiteralWidth : GetComponentCount(Input->GetComponentMask());
 
-			Result.Type				= GetTypeFromComponentCount(GetComponentCount(Input->GetComponentMask()));
-			Result.ComponentCount	= GetComponentCount(Input->GetComponentMask());
+			Result.Type				= GetTypeFromComponentCount(Count);
+			Result.ComponentCount	= Count;
 			Result.Value 			= DefaultValueStr;
-			Result.Mask  			= Input->GetComponentMask();
+			Result.Mask  			= LiteralWidth > 0 ? EComponentMask::None : Input->GetComponentMask();
 		}
 
 		return Result;
@@ -734,11 +753,42 @@ namespace Lumina
 		FInputValue BValue = GetTypedInputValue(B, DB);
 		FInputValue CValue = GetTypedInputValue(C, DC);
 
-		EMaterialInputType ResultType = DetermineResultType(AValue.Type, BValue.Type, true);
-		ResultType = DetermineResultType(ResultType, CValue.Type, true);
+		const FInputValue* Values[3] = { &AValue, &BValue, &CValue };
+		int32 Widths[3];
+		int32 Narrowest = 4;
+		int32 Widest = 1;
+		for (int32 I = 0; I < 3; ++I)
+		{
+			Widths[I] = GetSwizzleForMask(Values[I]->Mask).empty() ? Values[I]->ComponentCount : GetComponentCount(Values[I]->Mask);
+			if (Widths[I] > 1)
+			{
+				Narrowest = Math::Min(Narrowest, Widths[I]);
+				Widest = Math::Max(Widest, Widths[I]);
+			}
+		}
+
+		const int32 ResultWidth = Widest > 1 ? Narrowest : 1;
+		if (Widest > 1 && Narrowest != Widest)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node = A->GetOwningNode<CMaterialGraphNode>();
+			Error.Name = "Type Mismatch";
+			Error.Description = Func + " got inputs of " + Format("{}", Narrowest) + " and " + Format("{}", Widest)
+			                  + " components, so the wider ones were cut to " + Format("{}", Narrowest) + ".";
+			// The trimmed call is valid code, so this warns rather than failing the compile.
+			AddWarning(Error);
+		}
+
+		auto Operand = [&](int32 I)
+		{
+			const FString Expr = Values[I]->Value + GetSwizzleForMask(Values[I]->Mask);
+			return (Widths[I] > ResultWidth) ? "(" + Expr + ")." + FString("xyzw").substr(0, ResultWidth) : Expr;
+		};
+
+		EMaterialInputType ResultType = GetTypeFromComponentCount(ResultWidth);
 		FString TypeStr = GetVectorType(ResultType);
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + ", " + BValue.Value + ", " + CValue.Value + ");\n");
+		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + Operand(0) + ", " + Operand(1) + ", " + Operand(2) + ");\n");
 
 		// Otherwise Unknown until the specific function earns a rule of its own.
 		RegisterDeriv(OwningNode, (AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero
@@ -1455,6 +1505,14 @@ namespace Lumina
 	{
 		if (Texture == nullptr || Texture->GetResourceID() < 0)
 		{
+			EdNodeGraph::FError Error;
+			Error.Node = Node;
+			Error.Name = "Missing Texture";
+			Error.Description = Texture == nullptr ? FString("Texture Sample has no texture assigned.") : FString("Texture Sample's texture has no GPU resource.");
+			AddError(Error);
+			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
+			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
 
@@ -2670,7 +2728,7 @@ namespace Lumina
 		                   ? FString("Inst.MeshletHeaderSlot")
 		                   : FString("GetInstance(Input.InstanceIndex).MeshletHeaderSlot");
 
-		GetActiveChunk().append("FMeshletHeader* " + HeaderVar + " = MeshletHeaders() + " + Slot + ";\n");
+		GetActiveChunk().append("FMeshletHeader* " + HeaderVar + " = SpanAt(MeshletHeaders(), " + Slot + ");\n");
 		return HeaderVar;
 	}
 
@@ -3117,18 +3175,7 @@ namespace Lumina
 	void FMaterialCompiler::Clamp(CMaterialInput* A, CMaterialInput* B, CMaterialInput* C)
 	{
 		CMaterialExpression_Clamp* Node = A->GetOwningNode<CMaterialExpression_Clamp>();
-		FString OwningNode = A->GetOwningNode()->GetNodeFullName();
-
-		FInputValue XValue = GetTypedInputValue(C, "1.0");
-		FInputValue AValue = GetTypedInputValue(A, Node->ConstA);
-		FInputValue BValue = GetTypedInputValue(B, Node->ConstB);
-
-		EMaterialInputType ResultType = DetermineResultType(AValue.Type, BValue.Type, true);
-		ResultType = DetermineResultType(ResultType, XValue.Type, true);
-		FString TypeStr = GetVectorType(ResultType);
-
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = clamp(" + XValue.Value + ", " + AValue.Value + ", " + BValue.Value + ");\n");
-		Node->Output->SetInputType(ResultType);
+		Node->Output->SetInputType(EmitTernaryFunc("clamp", C, A, B, 1.0f, Node->ConstA, Node->ConstB));
 	}
 
 	void FMaterialCompiler::SmoothStep(CMaterialInput* A, CMaterialInput* B, CMaterialInput* C)
@@ -3264,12 +3311,24 @@ namespace Lumina
 		FInputValue AngleV = GetTypedInputValue(Angle, 0.0f);
 		FInputValue PivotV = GetTypedInputValue(Pivot, "float3(0.0, 0.0, 0.0)");
 
-		GetActiveChunk().append("float3 " + OwningNode + "_K = normalize(" + AV.Value + ".xyz);\n");
-		GetActiveChunk().append("float  " + OwningNode + "_S = sin(" + AngleV.Value + ");\n");
-		GetActiveChunk().append("float  " + OwningNode + "_C = cos(" + AngleV.Value + ");\n");
+		auto Width = [](const FInputValue& V)
+		{
+			return GetSwizzleForMask(V.Mask).empty() ? V.ComponentCount : GetComponentCount(V.Mask);
+		};
+		auto AsFloat3 = [&](const FInputValue& V)
+		{
+			const FString Expr = V.Value + GetSwizzleForMask(V.Mask);
+			const int32 Count = Width(V);
+			return Count >= 3 ? "(" + Expr + ").xyz" : Count == 2 ? "float3(" + Expr + ", 0.0)" : "float3(" + Expr + ")";
+		};
+		const FString AngleStr = Width(AngleV) > 1 ? "(" + AngleV.Value + GetSwizzleForMask(AngleV.Mask) + ").x" : AngleV.Value + GetSwizzleForMask(AngleV.Mask);
+
+		GetActiveChunk().append("float3 " + OwningNode + "_K = normalize(" + AsFloat3(AV) + ");\n");
+		GetActiveChunk().append("float  " + OwningNode + "_S = sin(" + AngleStr + ");\n");
+		GetActiveChunk().append("float  " + OwningNode + "_C = cos(" + AngleStr + ");\n");
 
 		// translate to pivot space
-		GetActiveChunk().append("float3 " + OwningNode + "_V = " + PV.Value + ".xyz - " + PivotV.Value + ".xyz;\n");
+		GetActiveChunk().append("float3 " + OwningNode + "_V = " + AsFloat3(PV) + " - " + AsFloat3(PivotV) + ";\n");
 
 		// rotate
 		GetActiveChunk().append(
@@ -3279,7 +3338,7 @@ namespace Lumina
 		);
 
 		// translate back
-		GetActiveChunk().append("float3 " + OwningNode + " = " + OwningNode + "_R + " + PivotV.Value + ".xyz;\n");
+		GetActiveChunk().append("float3 " + OwningNode + " = " + OwningNode + "_R + " + AsFloat3(PivotV) + ";\n");
 
 		SetOwningOutputType(Position, EMaterialInputType::Float3);
 	}
