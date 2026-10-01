@@ -265,6 +265,7 @@ namespace Lumina
         const auto& DeferredMaterials = Frame.Geometry.DeferredMaterials;
 
         BinnedDeferredSlotShaders.clear();
+        BinnedDeferredSlotKinds.clear();
         BinnedDeferredSlotLookup.clear();
         uint32 MaxMaterialIndex = 0u;
         for (const auto& M : DeferredMaterials)
@@ -329,11 +330,13 @@ namespace Lumina
                 {
                     Slot = (uint32)BinnedDeferredSlotShaders.size();
                     BinnedDeferredSlotShaders.push_back(BinShader);
+                    BinnedDeferredSlotKinds.push_back(0u);
                     BinnedDeferredSlotLookup.emplace(BinShader.Handle, Slot);
                 }
             }
 
             BinnedDeferredSlotByMaterial[M.MaterialIndex] = Slot;
+            BinnedDeferredSlotKinds[Slot] |= M.InstanceKinds;
         }
 
         const uint32 NumSlots = (uint32)BinnedDeferredSlotShaders.size();
@@ -612,9 +615,21 @@ namespace Lumina
             ArgsCpu[Slot].SlotIndex = Slot;
         }
 
+        const uint64 bVelocity = PC.VelocityUAV != 0xFFFFFFFFu ? 1u : 0u;
+
         for (uint32 Slot = 0; Slot < Layout.NumSlots; ++Slot)
         {
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BinnedDeferredSlotShaders[Slot]));
+            // Specialized per slot on velocity and vertex kinds, since each unused path costs about a third of the registers.
+            const uint8  Kinds   = Slot < (uint32)BinnedDeferredSlotKinds.size() ? BinnedDeferredSlotKinds[Slot] : 3u;
+            const uint64 Skinned = Kinds == 1u ? 0u : (Kinds == 2u ? 1u : 2u);
+            const RHI::FSpecializationConstant DeferredConsts[] =
+            {
+                RHI::FSpecializationConstant{ .ConstantID = 9u, .AsInt = bVelocity, .Type = RHI::ESpecializationConstantType::UInt32 },
+                RHI::FSpecializationConstant{ .ConstantID = 5u, .AsInt = Skinned,   .Type = RHI::ESpecializationConstantType::UInt32 },
+            };
+            const TSpan<const RHI::FSpecializationConstant> DeferredSpec(DeferredConsts, 2);
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BinnedDeferredSlotShaders[Slot], DeferredSpec));
             RHI::CmdDispatchIndirect(CL, ArgsAlloc.Gpu + Slot * sizeof(FDeferredMaterialPC), Classify.Skip(Layout.MaterialArgsOffset + Slot * (uint32)sizeof(RHI::FDispatchIndirectArguments)));
         }
 
@@ -677,7 +692,28 @@ namespace Lumina
         PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
         PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
-        DispatchComputeIndirect(CL, LightingCS, PC, Classify.Skip(Layout.LightArgsOffset));
+        // Frame-uniform features the light loop would otherwise carry registers for on every pixel.
+        bool bLocalShadows = false;
+        bool bLocalContact = false;
+        for (uint32 Index = 0; Index < NumLiveLights && Index < (uint32)RenderFrame->Lighting.Lights.size(); ++Index)
+        {
+            const FLight& Light = RenderFrame->Lighting.Lights[Index];
+            if (EnumHasAnyFlags(Light.Flags, ELightFlags::Directional))
+            {
+                continue;
+            }
+            bLocalShadows |= Light.ShadowDataIndex != INDEX_NONE;
+            bLocalContact |= EnumHasAnyFlags(Light.Flags, ELightFlags::ContactShadow);
+        }
+
+        const RHI::FSpecializationConstant LightingConsts[] =
+        {
+            RHI::FSpecializationConstant{ .ConstantID = 10u, .AsInt = bLocalShadows ? 1u : 0u,     .Type = RHI::ESpecializationConstantType::UInt32 },
+            RHI::FSpecializationConstant{ .ConstantID = 11u, .AsInt = bLocalContact ? 1u : 0u,     .Type = RHI::ESpecializationConstantType::UInt32 },
+            RHI::FSpecializationConstant{ .ConstantID = 12u, .AsInt = NumActiveProbes > 0 ? 1u : 0u, .Type = RHI::ESpecializationConstantType::UInt32 },
+        };
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS, TSpan<const RHI::FSpecializationConstant>(LightingConsts, 3)));
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
 
         // The lit HDR target is drawn into by the forward passes, sampled, and read by the post chain.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
@@ -1426,7 +1462,7 @@ namespace Lumina
 
             float  CloudShadowCenterY;
             uint32 CloudDepthIndex;  // bindless 2D SRV of the depth each cloud texel was marched against
-            float  _Pad1;
+            float  CloudFloor;       // altitude of the cloud layer's base, so the composite can skip clouds below reach
             float  _Pad2;
         };
         static_assert(sizeof(FAtmosphereCompositePushConstants) == 96,
@@ -1711,8 +1747,6 @@ namespace Lumina
         const uint32 Width  = HDR.GetSizeX();
         const uint32 Height = HDR.GetSizeY();
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS));
-
         FAtmosphereCompositePushConstants PC = {};
         PC.HDRUAV     = (uint32)HDRUAV;
         PC.DepthIndex = (uint32)SceneDepth.GetResourceID();
@@ -1739,6 +1773,22 @@ namespace Lumina
         PC.CloudShadowExtent  = Frame.SceneGlobalData.FogCloudShadowExtent;
         PC.CloudShadowCenterX = Frame.SceneGlobalData.FogCloudShadowCenter.x;
         PC.CloudShadowCenterY = Frame.SceneGlobalData.FogCloudShadowCenter.y;
+
+        PC.CloudFloor         = Math::Max(Frame.Volumetrics.Clouds.LayerBottom, 100.0f);
+
+        auto Spec = [](uint32 Id, bool bOn)
+        {
+            return RHI::FSpecializationConstant{ .ConstantID = Id, .AsInt = bOn ? 1u : 0u, .Type = RHI::ESpecializationConstantType::UInt32 };
+        };
+        const RHI::FSpecializationConstant CompositeConsts[] =
+        {
+            Spec(13u, PC.AerialInScatterIndex != ~0u),
+            Spec(14u, PC.CloudScatterIndex != ~0u),
+            Spec(15u, PC.bFog != 0u),
+            Spec(16u, PC.bVolumetric != 0u),
+            Spec(17u, PC.FarShaftSteps > 0u),
+        };
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS, TSpan<const RHI::FSpecializationConstant>(CompositeConsts, 5)));
 
         RHI::CmdDispatch(CL, MakeArgs(PC),
                          RenderUtils::GetGroupCount(Width,  AtmosphereTileSize),

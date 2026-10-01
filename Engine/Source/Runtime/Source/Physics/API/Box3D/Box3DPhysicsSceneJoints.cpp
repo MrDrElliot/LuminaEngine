@@ -54,9 +54,8 @@ namespace Lumina::Physics
     {
         auto RevisionOf = [&](ECS::FEntity Entity) -> uint64
         {
-            if (auto It = RigidBodies.find(Entity); It != RigidBodies.end()) { return It->second.Revision; }
-            if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end()) { return It->second.Revision; }
-            return 0;
+            const FBodyRecord* Record = FindBodyRecord(Entity);
+            return Record != nullptr ? Record->Revision : 0;
         };
         const uint64 RevisionA = RevisionOf(Desc.BodyA);
         const uint64 RevisionB = RevisionOf(Desc.BodyB);
@@ -474,9 +473,8 @@ namespace Lumina::Physics
         auto Matches = [&](ECS::FEntity Entity, uint64 Revision)
         {
             if (Entity == ECS::NullEntity) { return true; }
-            if (auto It = RigidBodies.find(Entity); It != RigidBodies.end()) { return It->second.Revision == Revision; }
-            if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end()) { return It->second.Revision == Revision; }
-            return false;
+            const FBodyRecord* Record = FindBodyRecord(Entity);
+            return Record != nullptr && Record->Revision == Revision;
         };
         TVector<uint32> Removed;
         for (auto& [Handle, Constraint] : Constraints)

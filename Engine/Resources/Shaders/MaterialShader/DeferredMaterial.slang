@@ -32,6 +32,9 @@ struct FDeferredMaterialArgs
 };
 FDeferredMaterialArgs* Pass() { return GetPassArgs<FDeferredMaterialArgs>(); }
 
+// Off without a velocity target, so the motion-vector path and its second vertex-graph run drop out of the register budget.
+[vk::constant_id(9)] const uint SPEC_DEFERRED_VELOCITY = 1;
+
 // Object space at the previous frame's pose, so the caller only has to apply the previous model matrix.
 float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Current)
 {
@@ -95,7 +98,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         // Re-apply WorldPositionOffset per corner so the rebuilt triangle matches what the geometry pass
         // rasterized. Load and transform are FUSED so only one corner's FVertexData (48 VGPRs) is live.
         FGPUInstance* Inst = T.Ref.Inst;   // reached, not stored -- see FMeshletRef
-        const bool bWantVelocity = Pass().VelocityUAV != 0xFFFFFFFFu;
+        const bool bWantVelocity = SPEC_DEFERRED_VELOCITY != 0u && Pass().VelocityUAV != 0xFFFFFFFFu;
         const float4x4 PrevModel = bWantVelocity ? PrevModelMatrixOf(T.Ref.Inst, ModelMatrix) : ModelMatrix;
 
         FMeshletWorldVertex W[3];

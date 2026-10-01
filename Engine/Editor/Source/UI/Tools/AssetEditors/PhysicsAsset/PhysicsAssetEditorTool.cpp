@@ -6,7 +6,6 @@
 #include "Core/Object/Package/Package.h"
 #include "Physics/PhysicsScene.h"
 #include "Physics/Ray/RayCast.h"
-#include "World/Entity/Events/ImpulseEvent.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"

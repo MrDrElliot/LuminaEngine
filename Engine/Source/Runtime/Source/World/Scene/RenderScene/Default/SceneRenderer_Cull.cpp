@@ -919,8 +919,34 @@ namespace Lumina
 
                     // Both buffers share the slot list, so one run scan feeds both writes.
                     CollectRuns(Upload.DirtySlots, RetainedRunScratch);
-                    WriteBufferRuns(CL, RetainedCullEntryBuffer.Gpu, SrcCullEntries, sizeof(FInstanceCullEntry), RetainedRunScratch);
-                    WriteBufferRuns(CL, RetainedTransformBuffer.Gpu, SrcTransforms,  sizeof(FTransform3x4),      RetainedRunScratch);
+
+                    // A crowd dirties thousands of short runs, which cost more to record as copies than to scatter on the GPU.
+                    constexpr SIZE_T ScatterUploadMinSlots     = 1024;
+                    constexpr SIZE_T ScatterUploadMaxRunLength = 64;
+                    const SIZE_T NumDirty = Upload.DirtySlots.size();
+                    if (NumDirty >= ScatterUploadMinSlots && RetainedRunScratch.size() * ScatterUploadMaxRunLength > NumDirty)
+                    {
+                        const RHI::FGPURange Slots = RHI::CopyTransientArray(Upload.DirtySlots.data(), NumDirty);
+
+                        // The previous frame read these buffers in every stage, and the scatter overwrites them.
+                        RHI::CmdBarrier(CL,
+                            RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead,
+                            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite);
+
+                        WriteBufferScatter(CL, RetainedCullEntryBuffer.Gpu, RetainedCullEntryBuffer.Size, SrcCullEntries,
+                                           sizeof(FInstanceCullEntry), Slots, Upload.DirtySlots);
+                        WriteBufferScatter(CL, RetainedTransformBuffer.Gpu, RetainedTransformBuffer.Size, SrcTransforms,
+                                           sizeof(FTransform3x4), Slots, Upload.DirtySlots);
+
+                        RHI::CmdBarrier(CL,
+                            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                            RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                    }
+                    else
+                    {
+                        WriteBufferRuns(CL, RetainedCullEntryBuffer.Gpu, SrcCullEntries, sizeof(FInstanceCullEntry), RetainedRunScratch);
+                        WriteBufferRuns(CL, RetainedTransformBuffer.Gpu, SrcTransforms,  sizeof(FTransform3x4),      RetainedRunScratch);
+                    }
 
                     CollectRuns(Upload.DirtyStaticSlots, RetainedRunScratch);
                     WriteBufferRuns(CL, RetainedStaticBuffer.Gpu, SrcStatic, sizeof(FInstanceStatic), RetainedRunScratch);

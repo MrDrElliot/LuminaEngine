@@ -3,21 +3,21 @@
 #include "Box3DInternal.h"
 #include "Box3DUtils.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "TaskSystem/Scheduler/JobScheduler.h"
 #include "World/World.h"
 
 namespace Lumina::Physics
 {
     EPhysicsBodyStatus FBox3DPhysicsScene::GetBodyStatus(ECS::FEntity Entity) const
     {
-        if (auto It = RigidBodies.find(Entity); It != RigidBodies.end())
-        {
-            return It->second.Status;
-        }
-        if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end())
-        {
-            return It->second.Status;
-        }
-        return EPhysicsBodyStatus::Missing;
+        const FBodyRecord* Record = FindBodyRecord(Entity);
+        return Record != nullptr ? Record->Status : EPhysicsBodyStatus::Missing;
+    }
+
+    const FBox3DPhysicsScene::FBodyRecord* FBox3DPhysicsScene::FindBodyRecord(ECS::FEntity Entity) const
+    {
+        const FBodyRecord* Record = RigidBodies.Find(Entity);
+        return Record != nullptr ? Record : CharacterBodies.Find(Entity);
     }
 
     FPhysicsBodyTarget FBox3DPhysicsScene::MakeBodyTarget(uint32 Handle) const
@@ -69,129 +69,136 @@ namespace Lumina::Physics
         return ReadBodyState(ResolveTarget(Target), Out);
     }
 
-    void FBox3DPhysicsScene::QueueBodyCommand(FBodyCommand Command)
+    void FBox3DPhysicsScene::QueueBodyCommand(const FBodyCommand& Command)
     {
-        if (Command.Type != EBodyCommand::TargetForce)
+        const uint32 Slot = Jobs::GetWorkerIndex();
+        if (Slot < (uint32)ThreadBodyCommands.size())
         {
-            const FBodyRecord* Record = nullptr;
-            if (auto It = RigidBodies.find(Command.Entity); It != RigidBodies.end())
-            {
-                Record = &It->second;
-            }
-            else if (auto Character = CharacterBodies.find(Command.Entity); Character != CharacterBodies.end())
-            {
-                Record = &Character->second;
-                Command.bCharacter = true;
-            }
-            if (Record == nullptr || Record->Status == EPhysicsBodyStatus::Failed)
-            {
-                return;
-            }
-            Command.Revision = Record->Revision;
+            ThreadBodyCommands[Slot].push_back(Command);
+            return;
         }
         FScopeLock Lock(BodyCommandMutex);
-        PendingBodyCommands.push_back(Command);
+        OverflowBodyCommands.push_back(Command);
     }
 
     void FBox3DPhysicsScene::ApplyBodyCommands()
     {
         BodyCommandScratch.clear();
+        // Swapped out first, since a command such as buoyancy can queue more while it applies.
+        const auto Drain = [this](TVector<FBodyCommand>& Commands)
+        {
+            DrainBodyCommands.clear();
+            DrainBodyCommands.swap(Commands);
+            for (const FBodyCommand& Command : DrainBodyCommands)
+            {
+                if (ApplyBodyCommand(Command) == EBodyCommandResult::Waiting)
+                {
+                    BodyCommandScratch.push_back(Command);
+                }
+            }
+            if (Commands.empty())
+            {
+                DrainBodyCommands.clear();
+                Commands.swap(DrainBodyCommands);
+            }
+        };
+
+        // Waiting commands were queued first, so they run first to keep each body's order.
+        Drain(WaitingBodyCommands);
+        for (TVector<FBodyCommand>& Commands : ThreadBodyCommands)
+        {
+            Drain(Commands);
+        }
         {
             FScopeLock Lock(BodyCommandMutex);
-            BodyCommandScratch.swap(PendingBodyCommands);
+            Drain(OverflowBodyCommands);
         }
-        size_t Waiting = 0;
-        for (const FBodyCommand& Command : BodyCommandScratch)
+        WaitingBodyCommands.swap(BodyCommandScratch);
+    }
+
+    FBox3DPhysicsScene::EBodyCommandResult FBox3DPhysicsScene::ApplyBodyCommand(const FBodyCommand& Command)
+    {
+        b3BodyId Body = b3_nullBodyId;
+        if (Command.Type == EBodyCommand::TargetForce)
         {
-            b3BodyId Body = b3_nullBodyId;
-            if (Command.Type == EBodyCommand::TargetForce)
-            {
-                Body = ResolveTarget(Command.Target);
-            }
-            else
-            {
-                const auto& Records = Command.bCharacter ? CharacterBodies : RigidBodies;
-                auto It = Records.find(Command.Entity);
-                if (It == Records.end() || It->second.Revision != Command.Revision
-                    || It->second.Status == EPhysicsBodyStatus::Failed)
-                {
-                    continue;
-                }
-                if (It->second.Status == EPhysicsBodyStatus::Pending)
-                {
-                    BodyCommandScratch[Waiting++] = Command;
-                    continue;
-                }
-                Body = ResolveBody(It->second.Handle);
-            }
-            if (!b3Body_IsValid(Body))
-            {
-                continue;
-            }
-            const b3Vec3 Value = Box3DUtils::ToB3Vec3(Command.Value);
-            const b3Vec3 Point = Box3DUtils::ToB3Vec3(Command.Point);
-            switch (Command.Type)
-            {
-                case EBodyCommand::Impulse:
-                    b3Body_ApplyLinearImpulseToCenter(Body, Value, true);
-                    break;
-                case EBodyCommand::Force:
-                    b3Body_ApplyForceToCenter(Body, Value, true);
-                    break;
-                case EBodyCommand::Torque:
-                    b3Body_ApplyTorque(Body, Value, true);
-                    break;
-                case EBodyCommand::AngularImpulse:
-                    b3Body_ApplyAngularImpulse(Body, Value, true);
-                    break;
-                case EBodyCommand::LinearVelocity:
-                    b3Body_SetLinearVelocity(Body, Value);
-                    b3Body_SetAwake(Body, true);
-                    break;
-                case EBodyCommand::AngularVelocity:
-                    b3Body_SetAngularVelocity(Body, Value);
-                    b3Body_SetAwake(Body, true);
-                    break;
-                case EBodyCommand::ImpulseAtPosition:
-                    b3Body_ApplyLinearImpulse(Body, Value, Point, true);
-                    break;
-                case EBodyCommand::ForceAtPosition:
-                case EBodyCommand::TargetForce:
-                    b3Body_ApplyForce(Body, Value, Point, true);
-                    break;
-                case EBodyCommand::Gravity:
-                    b3Body_SetGravityScale(Body, Command.Parameters.x);
-                    break;
-                case EBodyCommand::Activate:
-                    b3Body_SetAwake(Body, true);
-                    break;
-                case EBodyCommand::Deactivate:
-                    b3Body_SetAwake(Body, false);
-                    break;
-                case EBodyCommand::MotionType:
-                {
-                    const EBodyType Type = static_cast<EBodyType>(static_cast<uint8>(Command.Parameters.x));
-                    b3Body_SetType(Body, Box3DUtils::ToBox3DBodyType(Type));
-                    if (auto* Component = ECS::GetWorldRegistry(*World).TryGet<SRigidBodyComponent>(Command.Entity))
-                    {
-                        Component->BodyType = Type;
-                    }
-                    break;
-                }
-                case EBodyCommand::SurfaceVelocity:
-                    ApplySurfaceVelocity(Body, Command.Value, Command.Secondary);
-                    break;
-                case EBodyCommand::Buoyancy:
-                    ApplyBuoyancy(Command.Entity, Command.Point, Command.Secondary,
-                        Command.Parameters.x, Command.Parameters.y, Command.Parameters.z, Command.Value, Command.Parameters.w);
-                    break;
-            }
+            Body = ResolveTarget(Command.Target);
         }
-        if (Waiting > 0)
+        else
         {
-            FScopeLock Lock(BodyCommandMutex);
-            PendingBodyCommands.insert(PendingBodyCommands.begin(), BodyCommandScratch.begin(), BodyCommandScratch.begin() + Waiting);
+            const FBodyRecord* Record = FindBodyRecord(Command.Entity);
+            if (Record == nullptr || Record->Status == EPhysicsBodyStatus::Failed)
+            {
+                return EBodyCommandResult::Dropped;
+            }
+            if (Record->Status == EPhysicsBodyStatus::Pending)
+            {
+                return EBodyCommandResult::Waiting;
+            }
+            Body = ResolveBody(Record->Handle);
         }
+        if (!b3Body_IsValid(Body))
+        {
+            return EBodyCommandResult::Dropped;
+        }
+        const b3Vec3 Value = Box3DUtils::ToB3Vec3(Command.Value);
+        const b3Vec3 Point = Box3DUtils::ToB3Vec3(Command.Point);
+        switch (Command.Type)
+        {
+            case EBodyCommand::Impulse:
+                b3Body_ApplyLinearImpulseToCenter(Body, Value, true);
+                break;
+            case EBodyCommand::Force:
+                b3Body_ApplyForceToCenter(Body, Value, true);
+                break;
+            case EBodyCommand::Torque:
+                b3Body_ApplyTorque(Body, Value, true);
+                break;
+            case EBodyCommand::AngularImpulse:
+                b3Body_ApplyAngularImpulse(Body, Value, true);
+                break;
+            case EBodyCommand::LinearVelocity:
+                b3Body_SetLinearVelocity(Body, Value);
+                b3Body_SetAwake(Body, true);
+                break;
+            case EBodyCommand::AngularVelocity:
+                b3Body_SetAngularVelocity(Body, Value);
+                b3Body_SetAwake(Body, true);
+                break;
+            case EBodyCommand::ImpulseAtPosition:
+                b3Body_ApplyLinearImpulse(Body, Value, Point, true);
+                break;
+            case EBodyCommand::ForceAtPosition:
+            case EBodyCommand::TargetForce:
+                b3Body_ApplyForce(Body, Value, Point, true);
+                break;
+            case EBodyCommand::Gravity:
+                b3Body_SetGravityScale(Body, Command.Parameters.x);
+                break;
+            case EBodyCommand::Activate:
+                b3Body_SetAwake(Body, true);
+                break;
+            case EBodyCommand::Deactivate:
+                b3Body_SetAwake(Body, false);
+                break;
+            case EBodyCommand::MotionType:
+            {
+                const EBodyType Type = static_cast<EBodyType>(static_cast<uint8>(Command.Parameters.x));
+                b3Body_SetType(Body, Box3DUtils::ToBox3DBodyType(Type));
+                if (auto* Component = ECS::GetWorldRegistry(*World).TryGet<SRigidBodyComponent>(Command.Entity))
+                {
+                    Component->BodyType = Type;
+                }
+                break;
+            }
+            case EBodyCommand::SurfaceVelocity:
+                ApplySurfaceVelocity(Body, Command.Value, Command.Secondary);
+                break;
+            case EBodyCommand::Buoyancy:
+                ApplyBuoyancy(Command.Entity, Command.Point, Command.Secondary,
+                    Command.Parameters.x, Command.Parameters.y, Command.Parameters.z, Command.Value, Command.Parameters.w);
+                break;
+        }
+        return EBodyCommandResult::Applied;
     }
 
     void FBox3DPhysicsScene::AddForceAtTarget(const FPhysicsBodyTarget& Target, const FVector3& Force, const FVector3& Point)

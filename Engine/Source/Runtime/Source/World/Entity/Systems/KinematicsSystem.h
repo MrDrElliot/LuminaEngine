@@ -54,7 +54,7 @@ namespace Lumina
         }
     };
 
-    // Resolves one world velocity per entity from the physics body, the character mover, or a difference.
+    // Resolves a world velocity for each entity a consumer reads, from the physics body, the character mover, or a difference.
     REFLECT()
     class RUNTIME_API SKinematicsSystem : public CEntitySystem
     {

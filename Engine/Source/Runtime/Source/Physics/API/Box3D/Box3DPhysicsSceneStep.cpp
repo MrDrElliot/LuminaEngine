@@ -1,6 +1,5 @@
 #include "RuntimePCH.h"
 #include "World/ECS/Registry.h"
-#include "World/ECS/EventDispatcher.h"
 #include "Box3DPhysicsScene.h"
 
 #include "Box3DCharacterHandle.h"
@@ -98,17 +97,6 @@ namespace Lumina::Physics
             C.ConstraintID = 0;
             PendingConstraintCreations.push_back(E);
         });
-
-        ECS::FEventDispatcher& Dispatcher = *World->GetSingleton<ECS::FEventDispatcher*>();
-        Dispatcher.Sink<SImpulseEvent>().Connect<&FBox3DPhysicsScene::OnImpulseEvent>(this);
-        Dispatcher.Sink<SForceEvent>().Connect<&FBox3DPhysicsScene::OnForceEvent>(this);
-        Dispatcher.Sink<STorqueEvent>().Connect<&FBox3DPhysicsScene::OnTorqueEvent>(this);
-        Dispatcher.Sink<SAngularImpulseEvent>().Connect<&FBox3DPhysicsScene::OnAngularImpulseEvent>(this);
-        Dispatcher.Sink<SSetVelocityEvent>().Connect<&FBox3DPhysicsScene::OnSetVelocityEvent>(this);
-        Dispatcher.Sink<SSetAngularVelocityEvent>().Connect<&FBox3DPhysicsScene::OnSetAngularVelocityEvent>(this);
-        Dispatcher.Sink<SAddImpulseAtPositionEvent>().Connect<&FBox3DPhysicsScene::OnAddImpulseAtPositionEvent>(this);
-        Dispatcher.Sink<SAddForceAtPositionEvent>().Connect<&FBox3DPhysicsScene::OnAddForceAtPositionEvent>(this);
-        Dispatcher.Sink<SSetGravityFactorEvent>().Connect<&FBox3DPhysicsScene::OnSetGravityFactorEvent>(this);
     }
 
     void FBox3DPhysicsScene::StopSimulate()
@@ -162,17 +150,6 @@ namespace Lumina::Physics
         Registry.GetSignals<SPhysicsConstraintComponent>().OnConstruct.Disconnect<&FBox3DPhysicsScene::OnConstraintComponentConstructed>(this);
         Registry.GetSignals<SPhysicsConstraintComponent>().OnDestroy.Disconnect<&FBox3DPhysicsScene::OnConstraintComponentDestroyed>(this);
 
-        ECS::FEventDispatcher& Dispatcher = *World->GetSingleton<ECS::FEventDispatcher*>();
-        Dispatcher.Sink<SImpulseEvent>().Disconnect<&FBox3DPhysicsScene::OnImpulseEvent>(this);
-        Dispatcher.Sink<SForceEvent>().Disconnect<&FBox3DPhysicsScene::OnForceEvent>(this);
-        Dispatcher.Sink<STorqueEvent>().Disconnect<&FBox3DPhysicsScene::OnTorqueEvent>(this);
-        Dispatcher.Sink<SAngularImpulseEvent>().Disconnect<&FBox3DPhysicsScene::OnAngularImpulseEvent>(this);
-        Dispatcher.Sink<SSetVelocityEvent>().Disconnect<&FBox3DPhysicsScene::OnSetVelocityEvent>(this);
-        Dispatcher.Sink<SSetAngularVelocityEvent>().Disconnect<&FBox3DPhysicsScene::OnSetAngularVelocityEvent>(this);
-        Dispatcher.Sink<SAddImpulseAtPositionEvent>().Disconnect<&FBox3DPhysicsScene::OnAddImpulseAtPositionEvent>(this);
-        Dispatcher.Sink<SAddForceAtPositionEvent>().Disconnect<&FBox3DPhysicsScene::OnAddForceAtPositionEvent>(this);
-        Dispatcher.Sink<SSetGravityFactorEvent>().Disconnect<&FBox3DPhysicsScene::OnSetGravityFactorEvent>(this);
-
         Registry.View<SRigidBodyComponent>().ForEach([&](ECS::FEntity EntityID, SRigidBodyComponent&)
         {
             OnRigidBodyComponentDestroyed(Registry, EntityID);
@@ -189,7 +166,12 @@ namespace Lumina::Physics
         for (const FOwnedRagdoll& Ragdoll : OwnedRagdolls) { Ragdoll.Handle->bPendingDestroy = true; }
         DestroyAllConstraints();
         SynchronizeBodies();
-        PendingBodyCommands.clear();
+        for (TVector<FBodyCommand>& Commands : ThreadBodyCommands)
+        {
+            Commands.clear();
+        }
+        OverflowBodyCommands.clear();
+        WaitingBodyCommands.clear();
         BodyCommandScratch.clear();
         PendingRigidBodies.clear();
         PendingCharacters.clear();
@@ -237,8 +219,11 @@ namespace Lumina::Physics
             // A teleport has no previous pose to blend from, so the interpolator must not span the jump.
             auto AdoptTeleportedPose = [&]
             {
-                RigidBodies.at(Entity).LastBodyPosition = TargetLocation;
-                RigidBodies.at(Entity).LastBodyRotation = TargetRotation;
+                if (FBodyRecord* Record = RigidBodies.Find(Entity))
+                {
+                    Record->LastBodyPosition = TargetLocation;
+                    Record->LastBodyRotation = TargetRotation;
+                }
             };
 
             switch (b3Body_GetType(BodyId))
@@ -397,12 +382,12 @@ namespace Lumina::Physics
             }
 
             // One lookup per event, since every field below lives on this record.
-            const auto Found = RigidBodies.find(Entity);
-            if (Found == RigidBodies.end() || Found->second.Handle != Handle)
+            FBodyRecord* Found = RigidBodies.Find(Entity);
+            if (Found == nullptr || Found->Handle != Handle)
             {
                 continue;
             }
-            FBodyRecord& Record = Found->second;
+            FBodyRecord& Record = *Found;
 
             const FVector3 NewPosition = Box3DUtils::FromB3Vec3(Event.transform.p);
             const FQuat NewRotation = Box3DUtils::FromB3Quat(Event.transform.q);
@@ -611,9 +596,9 @@ namespace Lumina::Physics
 
         InterpApplied.clear();
         InterpApplied.reserve(Count);
+        InterpAppliedParented.clear();
 
-        bool bAnyParented = false;
-
+        // Structural work stays serial, so the passes below only write components that already exist.
         for (uint32 i = 0; i < Count; ++i)
         {
             const EInterpFlag Flag = InterpStaging.Flags[i];
@@ -645,34 +630,21 @@ namespace Lumina::Physics
                 continue;
             }
 
-            STransformComponent& TransformComponent = TransformStorage.Get(Entity);
-            TransformComponent.SetFromPhysics(InterpStaging.CurrPos[i],
-                FQuat(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]));
-
-            bAnyParented |= !TransformComponent.bIsFlat;
-
-            InterpApplied.push_back(i);
-        }
-
-        // A flat body resolved itself in the write above, so the whole registry sweep is owed to nobody.
-        if (bAnyParented)
-        {
-            ECS::Utils::ResolveAllDirtyTransforms(Registry);
-        }
-
-        // The override has to exist before the writes below, which may run on workers and cannot grow a pool.
-        for (uint32 i : InterpApplied)
-        {
-            const ECS::FEntity Entity = InterpStaging.Entities[i];
             if (!RenderStorage.Contains(Entity))
             {
                 RenderStorage.Emplace(Entity, FRenderTransform{});
             }
+            (TransformStorage.Get(Entity).bIsFlat ? InterpApplied : InterpAppliedParented).push_back(i);
         }
 
-        auto WriteRenderPose = [&](uint32 Index)
+        auto WriteSimPose = [&](uint32 i)
         {
-            const uint32 i = InterpApplied[Index];
+            TransformStorage.Get(InterpStaging.Entities[i]).SetFromPhysics(InterpStaging.CurrPos[i],
+                FQuat(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]));
+        };
+
+        auto WriteRenderPose = [&](uint32 i)
+        {
             const ECS::FEntity Entity = InterpStaging.Entities[i];
 
             FTransform RenderPose = TransformStorage.Get(Entity).GetWorldTransformCached();
@@ -685,16 +657,35 @@ namespace Lumina::Physics
             Render.Stamp = RenderOverrideStamp;
         };
 
-        const uint32 AppliedCount = (uint32)InterpApplied.size();
-        if (AppliedCount > InterpParallelThreshold)
+        // A flat body's world pose is its local one, so its render pose needs no resolve in between.
+        const uint32 FlatCount = (uint32)InterpApplied.size();
+        const auto WriteFlat = [&](uint32 Index)
         {
-            Task::ParallelFor(AppliedCount, WriteRenderPose);
+            WriteSimPose(InterpApplied[Index]);
+            WriteRenderPose(InterpApplied[Index]);
+        };
+        if (FlatCount > InterpParallelThreshold)
+        {
+            Task::ParallelFor(FlatCount, WriteFlat);
         }
         else
         {
-            for (uint32 Index = 0; Index < AppliedCount; ++Index)
+            for (uint32 Index = 0; Index < FlatCount; ++Index)
             {
-                WriteRenderPose(Index);
+                WriteFlat(Index);
+            }
+        }
+
+        if (!InterpAppliedParented.empty())
+        {
+            for (uint32 i : InterpAppliedParented)
+            {
+                WriteSimPose(i);
+            }
+            ECS::Utils::ResolveAllDirtyTransforms(Registry);
+            for (uint32 i : InterpAppliedParented)
+            {
+                WriteRenderPose(i);
             }
         }
 
@@ -702,17 +693,22 @@ namespace Lumina::Physics
         {
             RenderOverridesNext.push_back(InterpStaging.Entities[i]);
         }
-
-        if (bAnyParented)
+        for (uint32 i : InterpAppliedParented)
         {
-            PropagateRenderPosesToDescendants(Registry);
+            RenderOverridesNext.push_back(InterpStaging.Entities[i]);
+        }
+
+        // Only a parented body can have descendants, and those were appended after every flat one.
+        if (!InterpAppliedParented.empty())
+        {
+            PropagateRenderPosesToDescendants(Registry, InterpApplied.size());
         }
 
         RetireStaleRenderOverrides(Registry);
     }
 
     // A mesh parented under a body would otherwise draw at the stepped pose while the body draws interpolated.
-    void FBox3DPhysicsScene::PropagateRenderPosesToDescendants(ECS::FRegistry& Registry)
+    void FBox3DPhysicsScene::PropagateRenderPosesToDescendants(ECS::FRegistry& Registry, size_t FirstBody)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -721,7 +717,7 @@ namespace Lumina::Physics
         auto RelationshipStorage = Registry.GetStorage<FRelationshipComponent>();
         const size_t BodyCount = RenderOverridesNext.size();
 
-        for (size_t BodyIndex = 0; BodyIndex < BodyCount; ++BodyIndex)
+        for (size_t BodyIndex = FirstBody; BodyIndex < BodyCount; ++BodyIndex)
         {
             const ECS::FEntity Body = RenderOverridesNext[BodyIndex];
             if (!RelationshipStorage.Contains(Body) || RelationshipStorage.Get(Body).First == ECS::NullEntity)

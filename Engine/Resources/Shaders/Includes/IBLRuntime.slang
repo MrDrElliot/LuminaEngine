@@ -40,8 +40,16 @@ float3 SamplePrefilter(float3 R, float Roughness)
 // Specular radiance arriving along R: local probes first, sky for whatever influence they leave.
 // The sky prefilter is an infinitely-distant environment, so it is the correct fallback rather than a
 // black hole -- a pixel half-covered by one probe reads half local reflection, half sky.
+// A frame with no probes specializes this to 0, so the probe walk and its matrices leave the register budget.
+[vk::constant_id(12)] const uint SPEC_REFLECTION_PROBES = 1;
+
 float3 SampleSpecularRadiance(float3 WorldPos, float3 R, float Roughness)
 {
+    if (SPEC_REFLECTION_PROBES == 0)
+    {
+        return SamplePrefilter(R, Roughness);
+    }
+
     FProbeSample Probes = SampleReflectionProbes(WorldPos, R, Roughness);
     if (Probes.Weight >= 0.999)
     {

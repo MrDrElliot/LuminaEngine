@@ -44,7 +44,6 @@
 #include "Entity/Components/FoliageComponent.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
-#include "Entity/Events/ImpulseEvent.h"
 #include "Entity/Components/EntityTags.h"
 #include "Entity/Components/LineBatcherComponent.h"
 #include "Entity/Components/TriangleBatcherComponent.h"
@@ -740,12 +739,12 @@ namespace Lumina
             const FVector3 LaunchVelocity = InheritedVelocity
                 + Direction * (LaunchSpeed * SpeedJitter)
                 + FVector3(0.0f, LaunchSpeed * 0.2f, 0.0f);
-            PhysicsScene->OnSetVelocityEvent(SSetVelocityEvent{ Fragment, LaunchVelocity });
+            PhysicsScene->SetLinearVelocity(Fragment, LaunchVelocity);
 
             if (SpinSpeed > 0.0f)
             {
                 const FVector3 Spin(Hash01(Seed + 4) - 0.5f, Hash01(Seed + 5) - 0.5f, Hash01(Seed + 6) - 0.5f);
-                PhysicsScene->OnSetAngularVelocityEvent(SSetAngularVelocityEvent{ Fragment, Spin * (2.0f * SpinSpeed) });
+                PhysicsScene->SetAngularVelocity(Fragment, Spin * (2.0f * SpinSpeed));
             }
         };
 

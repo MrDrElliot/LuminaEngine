@@ -24,6 +24,10 @@
 // touches the sun still paid the cascade PCSS live range. TRANSLUCENT never opts in (mask is opaque depth).
 [vk::constant_id(6)] const uint SPEC_SHADOW_MASK        = 0;
 
+// Frame-uniform light loop features, so a frame without them specializes to 0 and sheds their registers.
+[vk::constant_id(10)] const uint SPEC_LOCAL_SHADOWS      = 1;
+[vk::constant_id(11)] const uint SPEC_LOCAL_CONTACT      = 1;
+
 // Hash-to-color for the meshlet debug view; stable per-meshlet hues across frames.
 float3 MeshletDebugColor(uint Index)
 {
@@ -825,13 +829,13 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         if (bLit)
         {
             float Shadow = 1.0;
-            if (Light.ShadowDataIndex != INDEX_NONE)
+            if (SPEC_LOCAL_SHADOWS != 0 && Light.ShadowDataIndex != INDEX_NONE)
             {
                 Shadow = ComputeShadowFactor(Light, WorldPosition, bBackFacing ? -N : N, ViewPosition, ScreenPos, bReceiveShadow, bContactShadows);
             }
 
             // Independent of the shadow map, so a light with no atlas tile can still ground what sits under it.
-            if (bReceiveShadow && bContactShadows && HasFlag(Light.Flags, ELightFlags::ContactShadow))
+            if (SPEC_LOCAL_CONTACT != 0 && bReceiveShadow && bContactShadows && HasFlag(Light.Flags, ELightFlags::ContactShadow))
             {
                 Shadow = min(Shadow, LocalContactShadow(Light, WorldPosition, bBackFacing ? -N : N, ScreenPos));
             }
@@ -867,12 +871,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     // GTAO comes from OPAQUE depth, so at a glass pixel it holds the occlusion of what is behind it.
     float GTAO = 1.0;
 #ifndef TRANSLUCENT
-    // The compute lane drops the spec constant, same reasoning as SPEC_SHADOW_MASK above:
-    // GetOrCreateComputePipeline supplies no specialization info, so SPEC_ENABLE_GTAO would sit pinned at
-    // its default of 1 and the dead-strip this constant exists for could never happen. Keeping it there
-    // bought nothing and made DeferredLighting the one compute module in the engine carrying an
-    // OpSpecConstant -- which is exactly the shape RHITests found GPU-AV instrumentation dying on.
-    // Behaviour is unchanged: pinned-at-1 already reduced to this runtime test.
+    // The compute lane tests at runtime, since deferred lighting does not specialize on GTAO and the fetch is one texel.
 #ifdef SHADING_COMPUTE
     if (Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
 #else

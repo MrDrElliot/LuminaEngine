@@ -903,6 +903,9 @@ namespace Lumina
             ? (uint32)CurrentView->Images[(int)ENamedImage::ShadowMask].GetResourceID()
             : ~0u;
 
+        // This view's own depth, since the sky pass discards wherever that depth holds geometry.
+        Globals.SceneDepthIndex = (uint32)CurrentView->Images[(int)ENamedImage::DepthAttachment].GetResourceID();
+
         // This view's OWN moment targets, or captures rebuild transmittance from the main camera.
         Globals.MomentZerothIndex = (uint32)CurrentView->Images[(int)ENamedImage::MomentZeroth].GetResourceID();
         Globals.MomentsIndex      = (uint32)CurrentView->Images[(int)ENamedImage::Moments].GetResourceID();
@@ -2176,25 +2179,106 @@ namespace Lumina
         }
 
         TVector<RHI::FBufferCopy>& Copies = UploadCopyScratch;
+        TVector<uint64>& Cursors = UploadCursorScratch;
         Copies.clear();
+        Cursors.clear();
         Copies.reserve(Runs.size());
+        Cursors.reserve(Runs.size());
 
         uint64 Cursor = 0;
         for (const FUIntVector2& Run : Runs)
         {
             const uint64 Bytes = (uint64)Run.y * Stride;
-            if (Bytes == 0)
-            {
-                continue;
-            }
-
             const uint64 SrcOffset = (uint64)Run.x * Stride;
-            Memory::Memcpy(StagingBytes + Cursor, (const uint8*)Src + SrcOffset, Bytes);
-            Copies.push_back(RHI::FBufferCopy{ { Dst + SrcOffset, Bytes }, { Staging.Gpu + Cursor, Bytes } });
+            Cursors.push_back(Cursor);
+            if (Bytes != 0)
+            {
+                Copies.push_back(RHI::FBufferCopy{ { Dst + SrcOffset, Bytes }, { Staging.Gpu + Cursor, Bytes } });
+            }
             Cursor += Bytes;
         }
 
+        // Thousands of scattered runs are one memcpy each, so a large upload fans out across the workers.
+        auto CopyRuns = [&Runs, &Cursors, StagingBytes, Src, Stride](uint32 Begin, uint32 End)
+        {
+            for (uint32 i = Begin; i < End; ++i)
+            {
+                const FUIntVector2& Run = Runs[i];
+                Memory::Memcpy(StagingBytes + Cursors[i], (const uint8*)Src + (uint64)Run.x * Stride, (uint64)Run.y * Stride);
+            }
+        };
+
+        constexpr uint64 ParallelUploadBytes = 256u * 1024u;
+        const uint32 NumRuns = (uint32)Runs.size();
+        if (Total >= ParallelUploadBytes && NumRuns > 1u)
+        {
+            const uint32 MinRunsPerTask = Math::Max(1u, (uint32)(NumRuns * (ParallelUploadBytes / 8u) / Total));
+            Task::ParallelFor(NumRuns, [&CopyRuns](const Task::FParallelRange& Range)
+            {
+                CopyRuns(Range.Start, Range.End);
+            }, MinRunsPerTask);
+        }
+        else
+        {
+            CopyRuns(0u, NumRuns);
+        }
+
         RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(Copies.data(), Copies.size()));
+    }
+
+    void FDefaultSceneRenderer::WriteBufferScatter(RHI::FCmdListH CL, RHI::GPUPtr Dst, uint64 DstBytes, const void* Src, uint64 Stride,
+                                                  RHI::FGPURange Slots, const TVector<uint32>& SlotList)
+    {
+        static const FShaderH ScatterCS = FShaderLibrary::Get("ScatterUpload.slang");
+        const uint32 Count = (uint32)SlotList.size();
+        if (!ScatterCS || Count == 0 || Stride == 0 || (Stride % 16u) != 0)
+        {
+            return;
+        }
+
+        const RHI::FTransientAlloc Staging = RHI::AllocTransient((uint64)Count * Stride);
+        uint8* const StagingBytes = (uint8*)Staging.Cpu;
+        if (StagingBytes == nullptr)
+        {
+            return;
+        }
+
+        // Elements are a few 16-byte words, so copying them as words inline beats a sized memcpy call per element.
+        const uint32* SlotData = SlotList.data();
+        const uint32  Words    = (uint32)(Stride / 16u);
+        Task::ParallelFor(Count, [StagingBytes, Src, Words, SlotData](const Task::FParallelRange& Range)
+        {
+            FUIntVector4*       Out = (FUIntVector4*)StagingBytes + (uint64)Range.Start * Words;
+            const FUIntVector4* In  = (const FUIntVector4*)Src;
+            for (uint32 i = Range.Start; i < Range.End; ++i)
+            {
+                const FUIntVector4* Element = In + (uint64)SlotData[i] * Words;
+                for (uint32 w = 0; w < Words; ++w)
+                {
+                    *Out++ = Element[w];
+                }
+            }
+        }, 1024);
+
+        struct FScatterUploadPC
+        {
+            RHI::TGPUSpan<uint32>        Slots;
+            RHI::TGPUSpan<FUIntVector4>  Source;
+            RHI::TGPUSpan<FUIntVector4>  Dest;
+            uint32                       Count;
+            uint32                       ElementWords;
+            uint32                       _Pad0;
+            uint32                       _Pad1;
+        } PC = {};
+        static_assert(sizeof(FScatterUploadPC) == 64, "FScatterUploadPC must match ScatterUpload.slang FScatterUploadArgs.");
+
+        PC.Slots        = Slots;
+        PC.Source       = RHI::TGPUSpan<FUIntVector4>::FromAddress(Staging.Gpu, Count * Words);
+        PC.Dest         = RHI::TGPUSpan<FUIntVector4>::FromAddress(Dst, (uint32)Math::Min<uint64>(DstBytes / 16u, 0xFFFFFFFFull));
+        PC.Count        = Count;
+        PC.ElementWords = Words;
+
+        DispatchCompute(CL, ScatterCS, PC, RenderUtils::GetGroupCount(Count, 64u), 1u, 1u);
     }
 
     void FDefaultSceneRenderer::StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size)

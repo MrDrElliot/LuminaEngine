@@ -14,7 +14,7 @@ namespace Lumina
     // C# Entity handle), so the Reflector auto-generates the LuminaSharp SPerceptionEvent value mirror + a
     // native size assert, no hand-written mirror.
     REFLECT(Event)
-    struct SPerceptionEvent
+    struct RUNTIME_API SPerceptionEvent
     {
         GENERATED_BODY()
 

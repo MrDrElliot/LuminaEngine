@@ -625,16 +625,8 @@ namespace Lumina
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         MovedTransformScratch.clear();
-        if (ECS::Utils::DrainMovedTransforms(Registry, MovedTransformScratch))
-        {
-            FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
-            for (ECS::FEntity Entity : MovedTransformScratch)
-            {
-                Tracker.MarkAllSources(Entity, EPrimitiveDirty::Transform);
-            }
-        }
-
-        ScenePrimitives.Sync(*World);
+        ECS::Utils::DrainMovedTransforms(Registry, MovedTransformScratch);
+        ScenePrimitives.Sync(*World, TSpan<const ECS::FEntity>(MovedTransformScratch.data(), MovedTransformScratch.size()));
 
         PublishRetainedUpload();
     }
@@ -662,17 +654,31 @@ namespace Lumina
 
         if (!Out.bFull)
         {
-            auto Collect = [SlotCount](const TVector<uint32>& In, TVector<uint32>& OutList)
+            // A bitmap over the slot range yields the sorted, unique list in linear time, where a sort did not.
+            DirtySlotBits.resize(((SIZE_T)SlotCount + 63u) / 64u);
+            auto Collect = [this, SlotCount](const TVector<uint32>& In, TVector<uint32>& OutList)
             {
                 for (uint32 DirtySlot : In)
                 {
                     if (DirtySlot < SlotCount)   // a slot freed after being marked is simply dropped
                     {
-                        OutList.push_back(DirtySlot);
+                        DirtySlotBits[DirtySlot >> 6] |= 1ull << (DirtySlot & 63u);
                     }
                 }
-                Algo::Sort(OutList);
-                OutList.erase(Algo::Unique(OutList), OutList.end());
+                for (SIZE_T Word = 0; Word < DirtySlotBits.size(); ++Word)
+                {
+                    uint64 Bits = DirtySlotBits[Word];
+                    if (Bits == 0)
+                    {
+                        continue;
+                    }
+                    DirtySlotBits[Word] = 0;
+                    while (Bits != 0)
+                    {
+                        OutList.push_back((uint32)(Word * 64u) + (uint32)std::countr_zero(Bits));
+                        Bits &= Bits - 1u;
+                    }
+                }
             };
 
             Collect(ScenePrimitives.GetDirtyInstanceSlots(), Out.DirtySlots);
@@ -2477,7 +2483,8 @@ namespace Lumina
             {
                 for (const FSceneBatchRegistry::FDeferredMaterialSlot& MatSlot : Batch.DeferredMaterials)
                 {
-                    DeferredMaterials.push_back({ (uint32)MatSlot.MaterialIndex, MatSlot.DeferredShader });
+                    const uint8 Kinds = (uint8)((Batch.StaticRefCount != 0u ? 1u : 0u) | (Batch.SkinnedRefCount != 0u ? 2u : 0u));
+                    DeferredMaterials.push_back({ (uint32)MatSlot.MaterialIndex, MatSlot.DeferredShader, Kinds });
                 }
             }
         }
@@ -2726,7 +2733,7 @@ namespace Lumina
         for (ECS::FEntity Entity : PointView)
         {
             const SPointLightComponent& Light = PointView.Get<SPointLightComponent>(Entity);
-            if (!Light.bCastShadows)
+            if (!Light.bCastShadows || Light.Intensity <= 0.0f)
             {
                 continue;
             }
@@ -2744,7 +2751,7 @@ namespace Lumina
         for (ECS::FEntity Entity : SpotView)
         {
             const SSpotLightComponent& Light    = SpotView.Get<SSpotLightComponent>(Entity);
-            if (!Light.bCastShadows)
+            if (!Light.bCastShadows || Light.Intensity <= 0.0f)
             {
                 continue;
             }
@@ -2798,6 +2805,12 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount)
     {
+        // A switched-off light adds nothing to the image, so it should not take a slot or a cluster test either.
+        if (PointLight.Intensity <= 0.0f)
+        {
+            return;
+        }
+
         const FVector3 Position = TransformComponent.GetWorldLocationCached();
 
         // Ahead of the slot handout, so an unreachable light costs neither a light index nor a cluster test.
@@ -2868,6 +2881,11 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount)
     {
+        if (SpotLight.Intensity <= 0.0f)
+        {
+            return;
+        }
+
         const FVector3 Position = TransformComponent.GetWorldLocationCached();
 
         // Tested as the full attenuation sphere; the cone would reject more but needs the rotation first.
