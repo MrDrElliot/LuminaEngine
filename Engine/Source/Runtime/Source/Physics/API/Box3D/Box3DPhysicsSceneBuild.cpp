@@ -12,6 +12,7 @@
 #include "Assets/AssetTypes/Physics/CollisionShape.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "Log/Log.h"
+#include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
@@ -296,20 +297,21 @@ namespace Lumina::Physics
                 return EBodyBuildStatus::Defer;
             }
 
-            TVector<b3Vec3> Positions;
-            TVector<int32> Indices;
-            if (!GatherMeshResourceGeometry(MeshData->Resource, Scale, Positions, DMC->bConvex ? nullptr : &Indices))
+            // StartDynamicMeshCooks launched the build, and the entity waits in the pending list until it lands.
+            const auto CookIt = DynamicMeshCooks.find(Entity);
+            if (CookIt == DynamicMeshCooks.end() || CookIt->second.RenderData != MeshData
+                || !CookIt->second.Cook->bDone.load(std::memory_order_acquire))
             {
-                LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
-                return EBodyBuildStatus::Error;
+                return EBodyBuildStatus::Defer;
             }
 
-            // A dynamic mesh is unique per component, so the shared caches have nothing to hit.
+            FDynamicMeshCook& Cook = *CookIt->second.Cook;
             if (DMC->bConvex)
             {
-                b3HullData* Hull = b3CreateHull(Positions.data(), (int)Positions.size(), B3_MAX_HULL_VERTICES);
+                b3HullData* Hull = std::exchange(Cook.Hull, nullptr);
                 if (Hull == nullptr)
                 {
+                    LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
                 TrackOwnedHull(Hull);
@@ -317,17 +319,10 @@ namespace Lumina::Physics
             }
             else
             {
-                b3MeshDef Def = b3MeshDef{};
-                Def.vertices = Positions.data();
-                Def.vertexCount = (int)Positions.size();
-                Def.indices = Indices.data();
-                Def.triangleCount = (int)(Indices.size() / 3);
-                Def.weldVertices = true;
-                Def.identifyEdges = true;
-
-                b3MeshData* Built = b3CreateMesh(&Def, nullptr, 0);
+                b3MeshData* Built = std::exchange(Cook.Mesh, nullptr);
                 if (Built == nullptr)
                 {
+                    LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
                 TrackOwnedMesh(Built);
@@ -580,5 +575,111 @@ namespace Lumina::Physics
         StoreBodyMaterial(Handle, Build);
 
         return Handle;
+    }
+
+    FBox3DPhysicsScene::FDynamicMeshCook::~FDynamicMeshCook()
+    {
+        // Only a cook nobody consumed still owns its result, as when the entity went away mid-build.
+        if (Mesh != nullptr)
+        {
+            b3DestroyMesh(Mesh);
+        }
+        if (Hull != nullptr)
+        {
+            b3DestroyHull(Hull);
+        }
+    }
+
+    bool FBox3DPhysicsScene::IsDynamicMeshCookPending(ECS::FEntity Entity) const
+    {
+        const auto It = DynamicMeshCooks.find(Entity);
+        return It != DynamicMeshCooks.end() && !It->second.Cook->bDone.load(std::memory_order_acquire);
+    }
+
+    void FBox3DPhysicsScene::RunDynamicMeshCook(FPendingDynamicMeshCook& Pending)
+    {
+        FDynamicMeshCook& Cook = *Pending.Cook;
+        if (Pending.bConvex)
+        {
+            Cook.Hull = b3CreateHull(Pending.Positions.data(), (int)Pending.Positions.size(), B3_MAX_HULL_VERTICES);
+        }
+        else
+        {
+            b3MeshDef Def = b3MeshDef{};
+            Def.vertices      = Pending.Positions.data();
+            Def.vertexCount   = (int)Pending.Positions.size();
+            Def.indices       = Pending.Indices.data();
+            Def.triangleCount = (int)(Pending.Indices.size() / 3);
+            Def.weldVertices  = true;
+            Def.identifyEdges = true;
+            Cook.Mesh = b3CreateMesh(&Def, nullptr, 0);
+        }
+        Cook.bFailed = Pending.bConvex ? Cook.Hull == nullptr : Cook.Mesh == nullptr;
+        Cook.bDone.store(true, std::memory_order_release);
+    }
+
+    void FBox3DPhysicsScene::StartDynamicMeshCooks(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Entities)
+    {
+        TVector<FPendingDynamicMeshCook> Cooks;
+        for (ECS::FEntity Entity : Entities)
+        {
+            const SDynamicMeshColliderComponent* DMC       = Registry.TryGet<SDynamicMeshColliderComponent>(Entity);
+            const SDynamicMeshComponent*         DM        = Registry.TryGet<SDynamicMeshComponent>(Entity);
+            const STransformComponent*           Transform = Registry.TryGet<STransformComponent>(Entity);
+            if (DMC == nullptr || DM == nullptr || Transform == nullptr)
+            {
+                continue;
+            }
+
+            TSharedPtr<FDynamicMeshRenderData> MeshData = DM->LoadRenderData();
+            if (!MeshData || MeshData->Resource.MeshletData.IsEmpty())
+            {
+                continue;
+            }
+
+            const FVector3 Scale   = Transform->GetScale();
+            const bool     bConvex = DMC->bConvex;
+
+            FDynamicMeshCookEntry& Entry = DynamicMeshCooks[Entity];
+            if (Entry.Cook && Entry.RenderData == MeshData && Entry.Scale == Scale && Entry.bConvex == bConvex)
+            {
+                continue;
+            }
+
+            TSharedPtr<FDynamicMeshCook> Cook = MakeShared<FDynamicMeshCook>();
+            Entry.Cook       = Cook;
+            Entry.RenderData = MeshData;
+            Entry.Scale      = Scale;
+            Entry.bConvex    = bConvex;
+
+            // Copied here, because the worker must not read a snapshot whose CPU data a later commit may drop.
+            TVector<b3Vec3> Positions;
+            TVector<int32>  Indices;
+            if (!GatherMeshResourceGeometry(MeshData->Resource, Scale, Positions, bConvex ? nullptr : &Indices))
+            {
+                Cook->bFailed = true;
+                Cook->bDone.store(true, std::memory_order_release);
+                continue;
+            }
+
+            Cooks.push_back({ Cook, Move(Positions), Move(Indices), bConvex });
+        }
+
+        if (bCookDynamicMeshesInline)
+        {
+            Task::ParallelFor((uint32)Cooks.size(), [&Cooks](uint32 Index)
+            {
+                RunDynamicMeshCook(Cooks[Index]);
+            });
+            return;
+        }
+
+        for (FPendingDynamicMeshCook& Pending : Cooks)
+        {
+            Task::AsyncTask(1, 1, [Pending = Move(Pending)](uint32, uint32, uint32) mutable
+            {
+                RunDynamicMeshCook(Pending);
+            }, ETaskPriority::Background);
+        }
     }
 }

@@ -1562,6 +1562,12 @@ namespace Lumina::ECS::Utils
         NewLocal.SetLocation(Translation);
         NewLocal.SetRotation(Rotation);
         NewLocal.SetScale(Scale);
+
+        // Gameplay that re-asserts a pose every frame would otherwise re-sync the entity and its subtree each time.
+        if (NewLocal == Transform->LocalTransform && !Transform->bHasPhysicsBody)
+        {
+            return;
+        }
         Transform->SetLocalTransform(NewLocal);
     }
 

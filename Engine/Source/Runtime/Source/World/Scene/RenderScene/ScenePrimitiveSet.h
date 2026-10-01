@@ -330,7 +330,7 @@ namespace Lumina
         const TVector<uint32>&      GetDirtyInstanceSlots() const { return DirtyInstanceSlots; }
         const TVector<uint32>&      GetDirtyStaticSlots() const   { return DirtyStaticSlots; }
         void                        ClearDirtyInstanceSlots()     { DirtyInstanceSlots.clear(); DirtyStaticSlots.clear(); }
-        // True when the slot array itself was reallocated, so the whole thing has to be re-sent.
+        // True after a reset or when most slots changed at once, so the whole array is re-sent.
         bool                        NeedsFullInstanceUpload() const { return bFullInstanceUpload; }
         void                        ClearFullInstanceUpload()       { bFullInstanceUpload = false; }
 

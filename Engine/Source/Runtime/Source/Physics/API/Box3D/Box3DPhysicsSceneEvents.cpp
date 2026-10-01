@@ -327,6 +327,7 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnColliderComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
+        DynamicMeshCooks.erase(Entity);
         OnRigidBodyComponentUpdated(Registry, Entity);
     }
 
@@ -410,14 +411,28 @@ namespace Lumina::Physics
         size_t Count = 0;
         for (ECS::FEntity Entity : PendingDrainScratch)
         {
-            FBodyRecord* Found = RigidBodies.Find(Entity);
-            if (!Registry.IsValid(Entity) || Found == nullptr)
+            if (Registry.IsValid(Entity) && RigidBodies.Find(Entity) != nullptr)
             {
-                continue;
+                PendingDrainScratch[Count++] = Entity;
             }
-            FBodyRecord& Record = *Found;
+        }
+        PendingDrainScratch.resize(Count);
+
+        StartDynamicMeshCooks(Registry, PendingDrainScratch);
+
+        Count = 0;
+        for (ECS::FEntity Entity : PendingDrainScratch)
+        {
+            FBodyRecord& Record = *RigidBodies.Find(Entity);
             if (Record.bRebuild)
             {
+                // The old body keeps colliding until its replacement is cooked, so a rebuilt chunk never drops what stands on it.
+                if (IsDynamicMeshCookPending(Entity))
+                {
+                    PendingRigidBodies.push_back(Entity);
+                    continue;
+                }
+
                 DestroyBodyHandle(Record.Handle);
                 Record.Handle = InvalidBodyHandle;
                 Record.Status = EPhysicsBodyStatus::Pending;
@@ -482,6 +497,11 @@ namespace Lumina::Physics
         {
             const ECS::FEntity Entity = Entities[Index];
 
+            if (BatchStatusScratch[Index] != EBodyBuildStatus::Defer)
+            {
+                DynamicMeshCooks.erase(Entity);
+            }
+
             switch (BatchStatusScratch[Index])
             {
                 case EBodyBuildStatus::Success:
@@ -537,7 +557,9 @@ namespace Lumina::Physics
             OnRigidBodyComponentConstructed(Registry, Entity);
         });
 
+        bCookDynamicMeshesInline = true;
         SynchronizeBodies();
+        bCookDynamicMeshesInline = false;
     }
 
 }

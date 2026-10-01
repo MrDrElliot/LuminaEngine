@@ -1102,7 +1102,8 @@ namespace Lumina
          *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
          *  a buffer that is provably rewritten in full before anything reads it. */
         // Grows to the buffer's policy, and shrinks only while both the policy and the caller allow it.
-        void ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink = true);
+        void ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink = true,
+                           bool bPreserveContents = false);
 
         // Freed when this slot's previous GPU work has completed.
         void DeferFree(const RHI::FGPUAllocation& Allocation);

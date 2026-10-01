@@ -634,7 +634,21 @@ namespace Lumina::Physics
 
         auto WritePose = [&](uint32 i)
         {
-            TransformStorage.Get(InterpStaging.Entities[i]).SetFromPhysics(InterpStaging.LerpPos[i],
+            STransformComponent& Transform = TransformStorage.Get(InterpStaging.Entities[i]);
+            const FQuat Previous(InterpStaging.PrevQw[i], InterpStaging.PrevQx[i], InterpStaging.PrevQy[i], InterpStaging.PrevQz[i]);
+            const FQuat Current(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]);
+
+            // A resting body or idle character would otherwise mark itself and its whole hierarchy moved every frame.
+            if (InterpStaging.PrevPos[i] == InterpStaging.CurrPos[i] && Previous == Current)
+            {
+                if (Transform.LocalTransform.GetLocation() != InterpStaging.CurrPos[i] || Transform.LocalTransform.GetRotation() != Current)
+                {
+                    Transform.SetFromPhysics(InterpStaging.CurrPos[i], Current);
+                }
+                return;
+            }
+
+            Transform.SetFromPhysics(InterpStaging.LerpPos[i],
                 FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i], InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
         };
 

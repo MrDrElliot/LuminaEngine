@@ -643,7 +643,8 @@ namespace Lumina
         Out.DirtyStaticSlots.clear();
 
         const uint32 DeviceCapacity = RetainedDeviceCapacity.load(std::memory_order_acquire);
-        Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || SlotCount > DeviceCapacity;
+        // Growth keeps the device contents, so only a device holding nothing valid needs everything again.
+        Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || DeviceCapacity == 0;
 
         if (!Out.bFull
             && (ScenePrimitives.GetDirtyInstanceSlots().size() * 4 >= (SIZE_T)SlotCount

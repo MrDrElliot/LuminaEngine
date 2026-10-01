@@ -876,6 +876,58 @@ TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
     }
 }
 
+namespace
+{
+    void EmptyBackgroundJob(void*, uint32)
+    {
+    }
+}
+
+// Every pooled counter carries a Background job first, so the gate below is guaranteed to be a recycled one.
+TEST(TaskSystem, RecycledCounterDoesNotInheritBackgroundBand)
+{
+    constexpr uint32 kCountersToCycle = 8192 + 64;
+    TVector<Jobs::FCounter*> Cycled;
+    Cycled.reserve(kCountersToCycle);
+    for (uint32 i = 0; i < kCountersToCycle; ++i)
+    {
+        Jobs::FCounter* Counter = Jobs::AllocCounter(0);
+        Jobs::RunJob(&EmptyBackgroundJob, nullptr, Jobs::EJobPriority::Background, Counter, "AssistTest.Recycle");
+        Cycled.push_back(Counter);
+    }
+    for (Jobs::FCounter* Counter : Cycled)
+    {
+        Jobs::WaitForCounter(Counter, 0);
+        Jobs::FreeCounter(Counter);
+    }
+
+    FAssistProbe Probe;
+    Probe.WaitingThread = Threading::GetThreadID();
+
+    Jobs::FCounter* ProbeCounter = Jobs::AllocCounter(0);
+    for (uint32 i = 0; i < kAssistProbeCount; ++i)
+    {
+        Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Background, ProbeCounter, "AssistTest.Background");
+    }
+
+    Jobs::FCounter* Gate = Jobs::AllocCounter(1);
+    FThread Releaser([Gate]
+    {
+        Lumina::PlatformTime::SleepMilliseconds(50);
+        Jobs::DecrementCounter(Gate, 1);
+    });
+
+    Jobs::WaitForCounter(Gate, 0);
+    Releaser.join();
+
+    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u)
+        << "a wait on a recycled counter adopted unrelated Background work, so AllocCounter is leaving the "
+           "previous owner's WaitBand in place";
+
+    Jobs::WaitForCounter(ProbeCounter, 0);
+    Jobs::FreeCounter(ProbeCounter);
+    Jobs::FreeCounter(Gate);
+}
 TEST(TaskSystem, AssistWaitStillRunsNonBackgroundWork)
 {
     // The complement, guarding against over-correcting this into assisting with nothing.
