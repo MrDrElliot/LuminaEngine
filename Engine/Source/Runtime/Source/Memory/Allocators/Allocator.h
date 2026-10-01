@@ -253,6 +253,45 @@ namespace Lumina
             return BlockCount; 
         }
     
+        // Blocks the cursor has reached, counting the first, which is the frame's footprint just before a Reset.
+        SIZE_T GetBlocksInUse() const
+        {
+            SIZE_T InUse = 0;
+            for (const Block* Current = FirstBlock; Current != nullptr; Current = Current->Next)
+            {
+                ++InUse;
+                if (Current == CurrentBlock)
+                {
+                    break;
+                }
+            }
+            return InUse;
+        }
+
+        // Frees chained blocks past the first Keep. Only valid with the cursor in the first block, as right after Reset.
+        void TrimBlocks(SIZE_T Keep)
+        {
+            Block* Last = FirstBlock;
+            for (SIZE_T Index = 1; Index < Keep && Last != nullptr && Last->Next != nullptr; ++Index)
+            {
+                Last = Last->Next;
+            }
+            if (Last == nullptr)
+            {
+                return;
+            }
+
+            Block* Extra = Last->Next;
+            Last->Next = nullptr;
+            while (Extra != nullptr)
+            {
+                Block* Next = Extra->Next;
+                Memory::Free(Extra);
+                --BlockCount;
+                Extra = Next;
+            }
+        }
+
     private:
         
         struct Block

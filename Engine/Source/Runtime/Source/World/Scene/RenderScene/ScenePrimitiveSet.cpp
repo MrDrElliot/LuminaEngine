@@ -532,16 +532,14 @@ namespace Lumina
         }
 
         const uint32 Slot = (uint32)RetainedCullEntries.size();
-        const SIZE_T OldCapacity = RetainedCullEntries.capacity();
 
         RetainedCullEntries.emplace_back();
         RetainedTransforms.emplace_back();
         RetainedStatic.emplace_back();
 
-        if (RetainedCullEntries.capacity() != OldCapacity)
-        {
-            bFullInstanceUpload = true;
-        }
+        // The device range past the old count may hold a slot from before a reset, so a new slot always uploads.
+        MarkInstanceDirty(Slot);
+        MarkStaticDirty(Slot);
         return Slot;
     }
 
@@ -757,15 +755,16 @@ namespace Lumina
     {
         // Deliberately not the free list: the block must be contiguous so the GPU can index it from one base.
         const uint32 Base = (uint32)RetainedCullEntries.size();
-        const SIZE_T OldCapacity = RetainedCullEntries.capacity();
 
         RetainedCullEntries.resize(Base + Count);
         RetainedTransforms.resize(Base + Count);
         RetainedStatic.resize(Base + Count);
 
-        if (RetainedCullEntries.capacity() != OldCapacity)
+        // The scatter relies on its unused slots reading inactive, so the block starts from uploaded zeros.
+        for (uint32 Slot = Base; Slot < Base + Count; ++Slot)
         {
-            bFullInstanceUpload = true;
+            MarkInstanceDirty(Slot);
+            MarkStaticDirty(Slot);
         }
         return Base;
     }
@@ -994,6 +993,7 @@ namespace Lumina
 
         const FScenePrimitive& Prim   = Primitives[Index];
         const FVector4&        Sphere = Bounds[Index];
+        const FTransform3x4    Packed = PackTransform3x4(Prim.Transform);
 
         for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
@@ -1003,8 +1003,12 @@ namespace Lumina
                 continue;
             }
 
-            RetainedCullEntries[Slot].SphereBounds = Sphere;
-            RetainedTransforms[Slot]               = PackTransform3x4(Prim.Transform);
+            const bool bBoundsChanged    = StoreIfChanged(RetainedCullEntries[Slot].SphereBounds, Sphere);
+            const bool bTransformChanged = StoreIfChanged(RetainedTransforms[Slot], Packed);
+            if (!bBoundsChanged && !bTransformChanged)
+            {
+                continue;
+            }
 
             if (DirtySink != nullptr)
             {
@@ -1753,6 +1757,9 @@ namespace Lumina
             RefreshFoliageInstance(Ref, Type, Instance, EntityID);
         }
 
+        // Every slot now holds its transform and bounds, so a second copy per instance is hundreds of megabytes in a large field.
+        Foliage->ReleaseRenderCache();
+
         if (DeadBindings > 1024 && DeadBindings * 4 > (uint32)Bindings.size())
         {
             CompactBindings();
@@ -2096,15 +2103,9 @@ namespace Lumina
         const SIZE_T FreeSlots         = InstanceFreeSlots.size();
         const SIZE_T NeededSlots       = NewPrimitives > FreeSlots ? NewPrimitives - FreeSlots : 0;
         const SIZE_T InstanceTarget    = RetainedCullEntries.size() + NeededSlots;
-        const SIZE_T OldSlotCapacity   = RetainedCullEntries.capacity();
         ReserveGeometric(RetainedCullEntries, InstanceTarget);
         ReserveGeometric(RetainedTransforms, InstanceTarget);
         ReserveGeometric(RetainedStatic, InstanceTarget);
-
-        if (RetainedCullEntries.capacity() != OldSlotCapacity)
-        {
-            bFullInstanceUpload = true;
-        }
     }
 
     void FScenePrimitiveSet::PartitionDrain()
@@ -2524,6 +2525,19 @@ namespace Lumina
         LUMINA_PROFILE_VALUE("Sync/RefreshInstances", (int64)SyncStats.RefreshInstanceCalls);
         LUMINA_PROFILE_VALUE("Sync/DirtySlots",       (int64)DirtyInstanceSlots.size());
         LUMINA_PROFILE_VALUE("Sync/Primitives",       (int64)Primitives.size());
+
+        int64 FoliageInstances = 0;
+        for (const auto& [Entity, State] : FoliageByEntity)
+        {
+            FoliageInstances += (int64)State.Instances.size();
+        }
+        int64 GrassSlots = 0;
+        for (const auto& [Mesh, Binding] : GrassSpecies)
+        {
+            GrassSlots += Binding.Capacity;
+        }
+        LUMINA_PROFILE_VALUE("Sync/FoliageInstances", FoliageInstances);
+        LUMINA_PROFILE_VALUE("Sync/GrassSlots",       GrassSlots);
     }
 
     // Every active slot contributes its surface's LARGEST LOD, a true bound on one view's appends.

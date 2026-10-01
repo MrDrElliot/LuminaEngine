@@ -430,48 +430,67 @@ namespace Lumina
             }
         }
 
-        // Keyed pairs, so the comparator never reaches back into Textures for a scattered load.
+        // Every visible texture ties on priority, and an unstable order shed a different set each frame.
         Algo::Sort(Order,
-            [](const TPair<float, uint32>& A, const TPair<float, uint32>& B) { return A.first < B.first; });
+            [](const TPair<float, uint32>& A, const TPair<float, uint32>& B)
+            {
+                return A.first != B.first ? A.first < B.first : A.second < B.second;
+            });
 
         // Compacted as textures reach their floor, so a later pass never revisits one that cannot shed.
-        SIZE_T Live = Order.size();
-        while (Total > Budget && Live > 0)
+        const auto ShedPass = [this, &Total, Budget](TVector<TPair<float, uint32>>& Candidates, bool bOnlyUnresident)
         {
-            SIZE_T Write = 0;
-            bool bDroppedAny = false;
-
-            for (SIZE_T i = 0; i < Live; ++i)
+            SIZE_T Live = Candidates.size();
+            while (Total > Budget && Live > 0)
             {
-                const uint32 Index = Order[i].second;
+                SIZE_T Write = 0;
+                bool bDroppedAny = false;
 
-                FStreamingTexture& Entry   = Textures[Index];
-                const CTexture*    Texture = Entry.Texture.Get();
-                if (Texture == nullptr || Entry.BudgetedFirstMip >= Entry.TailFirstMip)
+                for (SIZE_T i = 0; i < Live; ++i)
                 {
-                    continue;   // already at its floor; the inline tail is never given up
+                    FStreamingTexture& Entry   = Textures[Candidates[i].second];
+                    const CTexture*    Texture = Entry.Texture.Get();
+                    if (Texture == nullptr)
+                    {
+                        continue;
+                    }
+
+                    // The inline tail is never given up, and the first pass stops where shedding would start demoting.
+                    const uint32 Floor = bOnlyUnresident
+                        ? Math::Min<uint32>(Entry.TailFirstMip, Texture->GetResidentFirstMip())
+                        : Entry.TailFirstMip;
+                    if (Entry.BudgetedFirstMip >= Floor)
+                    {
+                        continue;
+                    }
+
+                    if (Total > Budget)
+                    {
+                        const FTextureResource& Resource = Texture->GetTextureResource();
+                        const uint64 Before = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
+                        ++Entry.BudgetedFirstMip;
+                        const uint64 After  = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
+
+                        Total -= (Before - After);
+                        bDroppedAny = true;
+                    }
+
+                    Candidates[Write++] = Candidates[i];
                 }
 
-                if (Total > Budget)
+                Live = Write;
+                if (!bDroppedAny)
                 {
-                    const FTextureResource& Resource = Texture->GetTextureResource();
-                    const uint64 Before = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
-                    ++Entry.BudgetedFirstMip;
-                    const uint64 After  = Resource.CalcSizeBytesFromMip(Entry.BudgetedFirstMip);
-
-                    Total -= (Before - After);
-                    bDroppedAny = true;
+                    break;
                 }
-
-                Order[Write++] = Order[i];
             }
+        };
 
-            Live = Write;
-            if (!bDroppedAny)
-            {
-                break;
-            }
-        }
+        // Declining promotions fits the pool without touching anything resident, so it is tried before any demotion.
+        TVector<TPair<float, uint32>>& Unresident = BudgetUnresidentScratch;
+        Unresident.assign(Order.begin(), Order.end());
+        ShedPass(Unresident, /*bOnlyUnresident*/ true);
+        ShedPass(Order, /*bOnlyUnresident*/ false);
 
         if (Total > Budget)
         {
@@ -486,7 +505,8 @@ namespace Lumina
         LUMINA_PROFILE_SECTION("Streaming::ApplyDemotions");
 
         const uint64 Budget      = GetBudgetBytes();
-        const bool   bUnderPress = ResidentBytesTotal > Budget;
+        // A promotion refused for room last frame is waiting on exactly these demotions, so they skip the dead band.
+        const bool   bUnderPress = ResidentBytesTotal > Budget || bPromotionBlockedByPool;
 
         for (FStreamingTexture& Entry : Textures)
         {
@@ -621,6 +641,14 @@ namespace Lumina
         Algo::Sort(Candidates,
             [](const TPair<float, uint32>& A, const TPair<float, uint32>& B) { return A.first > B.first; });
 
+        const uint64 Budget = GetBudgetBytes();
+        bPromotionBlockedByPool = false;
+        uint64 PendingGrowth = 0;
+        for (const TUniquePtr<FPendingLoad>& Pending : PendingLoads)
+        {
+            PendingGrowth += Pending->GrowthBytes;
+        }
+
         for (const TPair<float, uint32>& Candidate : Candidates)
         {
             const uint32 Index = Candidate.second;
@@ -634,7 +662,15 @@ namespace Lumina
 
             const uint32 CurrentFirstMip = Texture->GetResidentFirstMip();
             const uint32 LayerCount      = Math::Max(Texture->GetTextureResource().GetNumLayers(), 1u);
-            const uint64 StagingBytes    = PredictStagingBytes(Texture, Entry.BudgetedFirstMip, CurrentFirstMip, LayerCount);
+
+            // A whole array chain in one read held hundreds of megabytes and a worker for 100 ms, so a load stops at the cap.
+            uint32 TargetFirstMip = Entry.BudgetedFirstMip;
+            uint64 StagingBytes   = PredictStagingBytes(Texture, TargetFirstMip, CurrentFirstMip, LayerCount);
+            while (TargetFirstMip + 1u < CurrentFirstMip && StagingBytes > MaxStagingBytes)
+            {
+                ++TargetFirstMip;
+                StagingBytes = PredictStagingBytes(Texture, TargetFirstMip, CurrentFirstMip, LayerCount);
+            }
 
             // Skip rather than break, since priority order means an oversized texture must not stall smaller ones.
             if (!PendingLoads.empty() && PendingLoadBytes + StagingBytes > MaxStagingBytes)
@@ -642,9 +678,20 @@ namespace Lumina
                 continue;
             }
 
+            // A promotion the pool cannot hold forces a demotion elsewhere, and that pair repeating is the churn.
+            const uint64 TargetBytes = Texture->GetTextureResource().CalcSizeBytesFromMip(TargetFirstMip);
+            const uint64 GrowthBytes = TargetBytes > Entry.ResidentBytes ? TargetBytes - Entry.ResidentBytes : 0;
+            if (Entry.PinCount == 0 && ResidentBytesTotal + PendingGrowth + GrowthBytes > Budget)
+            {
+                bPromotionBlockedByPool = true;
+                continue;
+            }
+
             TUniquePtr<FPendingLoad> Load = MakeUnique<FPendingLoad>();
             Load->Texture        = Texture;
-            Load->TargetFirstMip = Entry.BudgetedFirstMip;
+            Load->GrowthBytes    = GrowthBytes;
+            PendingGrowth       += GrowthBytes;
+            Load->TargetFirstMip = (uint8)TargetFirstMip;
             Load->SourceFirstMip = (uint8)CurrentFirstMip;
             Load->LayerCount     = LayerCount;
             Load->StagingBytes   = StagingBytes;

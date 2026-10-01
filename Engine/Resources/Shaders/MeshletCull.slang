@@ -48,23 +48,6 @@ FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 #error "MESHLET_CULL_GROUP_SIZE must fit one wave, or WaveActiveAnyTrue below covers only part of the group."
 #endif
 
-uint EmitMeshletSlot(uint ArgIdx, uint InstanceID, uint MeshletIdx)
-{
-    FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ArgIdx);
-    const uint Slot = AppendReserve(&Bucket.DrawCursor, Bucket.DrawCapacity, Bucket.DrawBase);
-    if (Slot == kAppendFull)
-    {
-        return kAppendFull;
-    }
-
-    FMeshletDraw Draw;
-    Draw.InstanceID        = InstanceID;
-    Draw.PackedIndexAndTag = FMeshletDraw::Pack(MeshletIdx, Scene().CullData.MeshletDrawTag);
-    SpanSet(MeshletDrawList(), Slot, Draw);
-
-    return Slot;
-}
-
 // Flat workgroup -> owning bucket. Blocks are dense inside a bucket but sparse across the arena, so the
 // bucket cannot be read from the block; BuildMeshletCullArgs writes a dense prefix and this inverts it.
 // Workgroup-uniform, and ~9 steps for the hundreds of buckets a frame has.
@@ -183,11 +166,28 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         bLaneVisible = bVisible;
     }
 
-    if (bKeep)
+    // The bucket is workgroup-uniform, so one atomic per wave reserves every survivor's slot.
+    const uint WaveKept = WaveActiveCountBits(bKeep);
+    if (WaveKept > 0u)
     {
-        // The append is the whole output: a slot in MeshletDrawList IS the survivor, and the mesh stage
-        // resolves it back into a meshlet. Refused only when the bucket's region is full.
-        bKeep = EmitMeshletSlot(ArgIdx, InstanceID, MeshletIdx) != kAppendFull;
+        FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ArgIdx);
+        uint WaveOld = 0u;
+        if (WaveIsFirstLane())
+        {
+            uint* Cursor = &Bucket.DrawCursor;
+            InterlockedAdd(Cursor[0], WaveKept, WaveOld);
+        }
+        WaveOld = WaveReadLaneFirst(WaveOld);
+
+        // The cursor still advances by the full count past capacity, so the readback keeps reporting demand.
+        const uint Local = WaveOld + WavePrefixCountBits(bKeep);
+        if (bKeep && Local < Bucket.DrawCapacity)
+        {
+            FMeshletDraw Draw;
+            Draw.InstanceID        = InstanceID;
+            Draw.PackedIndexAndTag = FMeshletDraw::Pack(MeshletIdx, Scene().CullData.MeshletDrawTag);
+            SpanSet(MeshletDrawList(), Bucket.DrawBase + Local, Draw);
+        }
     }
 
     // Reached by every lane, so the vote covers the whole group. Replaces gsAnyVisible and both barriers.

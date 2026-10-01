@@ -819,6 +819,11 @@ namespace Lumina
             LastPreSkinRequested     = Mapped[6];
             LastPreSkinOverflowed    = Mapped[7];
         }
+
+        LUMINA_PROFILE_VALUE("Cull/VisibleInstances",  (int64)LastVisibleInstances);
+        LUMINA_PROFILE_VALUE("Cull/DrawListEntries",   (int64)LastDrawListRequired);
+        LUMINA_PROFILE_VALUE("Cull/MeshletBlocks",     (int64)LastBlocksRequested);
+        LUMINA_PROFILE_VALUE("Cull/PreSkinVertices",   (int64)LastPreSkinRequested);
     }
 
     void FDefaultSceneRenderer::DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame)
@@ -842,6 +847,7 @@ namespace Lumina
         const uint32 RetainedSlots = Upload.SlotCount;
         const uint32 NumBatches    = Math::Max(Frame.Views.NumDrawsPerView, 1u);
         const uint32 NumCullViews  = (uint32)Frame.Views.CullViews.size();
+        LUMINA_PROFILE_VALUE("Cull/RetainedSlots", (int64)RetainedSlots);
 
         if (!TotalsZeroed[Slot] && GetTotals())
         {
@@ -862,9 +868,9 @@ namespace Lumina
             const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
 
             // Retained state is zeroed on growth because a free slot IS zero; the CPU writes zero on free too.
-            ReserveBuffer(CL, RetainedCullEntryBuffer, CullBytes,      /*bAllowShrink*/ Upload.bFull);
-            ReserveBuffer(CL, RetainedTransformBuffer, TransformBytes, /*bAllowShrink*/ Upload.bFull);
-            ReserveBuffer(CL, RetainedStaticBuffer,    StaticBytes,    /*bAllowShrink*/ Upload.bFull);
+            ReserveBuffer(CL, RetainedCullEntryBuffer, CullBytes,      /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ true);
+            ReserveBuffer(CL, RetainedTransformBuffer, TransformBytes, /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ true);
+            ReserveBuffer(CL, RetainedStaticBuffer,    StaticBytes,    /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ true);
 
             // Flipped so last frame's set stays readable all frame; both dispatches take their phase from it.
             InstanceVisibilityWriteIndex ^= 1u;
@@ -884,7 +890,11 @@ namespace Lumina
 
             InstanceVisibilityCapacity = VisCapacity;
 
-            if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedSlots > 0)
+            // A grow that failed leaves a buffer shorter than the slot range, and the writes below are unchecked.
+            const bool bRetainedFits = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>() >= RetainedSlots
+                                    && RetainedTransformBuffer.CapacityOf<FTransform3x4>()   >= RetainedSlots
+                                    && RetainedStaticBuffer.CapacityOf<FInstanceStatic>()    >= RetainedSlots;
+            if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedSlots > 0 && bRetainedFits)
             {
                 if (Upload.bFull)
                 {
@@ -955,7 +965,9 @@ namespace Lumina
             const uint32 CullCap      = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>();
             const uint32 TransformCap = RetainedTransformBuffer.CapacityOf<FTransform3x4>();
             const uint32 StaticCap    = RetainedStaticBuffer.CapacityOf<FInstanceStatic>();
-            RetainedDeviceCapacity.store(Math::Min(CullCap, Math::Min(TransformCap, StaticCap)), std::memory_order_release);
+            // Zero when the slots did not fit, so the dirty slots skipped above come back as a full upload.
+            RetainedDeviceCapacity.store(bRetainedFits ? Math::Min(CullCap, Math::Min(TransformCap, StaticCap)) : 0u,
+                                         std::memory_order_release);
             RetainedStaticCapacity = StaticCap;
         }
 

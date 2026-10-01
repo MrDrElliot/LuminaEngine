@@ -188,6 +188,53 @@ namespace Lumina::MCP
                 }
             }
 
+            RHI::FGPUMemoryStats GpuStats;
+            RHI::GetGPUMemoryStats(GpuStats);
+            for (const RHI::FGPUMemoryHeapStats& Heap : GpuStats.Heaps)
+            {
+                SMemoryGpuHeap& Row = Out.GpuHeaps.emplace_back();
+                Row.Index = (int32)Heap.HeapIndex;
+                Row.bDeviceLocal = Heap.bDeviceLocal;
+                Row.bHostVisible = Heap.bHostVisible;
+                Row.UsageMB = BytesToMB(Heap.UsageBytes);
+                Row.BlockMB = BytesToMB(Heap.BlockBytes);
+                Row.BudgetMB = BytesToMB(Heap.BudgetBytes);
+            }
+
+            TVector<RHI::FGPUAllocationInfo> GpuAllocations;
+            RHI::GetGPUAllocations(GpuAllocations);
+            THashMap<FString, SMemoryGpuCategory> GpuByCategory;
+            for (const RHI::FGPUAllocationInfo& Allocation : GpuAllocations)
+            {
+                const bool bTexture = Allocation.Kind == RHI::EGPUAllocationKind::Texture;
+                const bool bHostVisible = !bTexture && Allocation.Memory != RHI::EMemoryType::GPUOnly;
+                (bHostVisible ? Out.GpuHostVisibleMB : Out.GpuDeviceLocalMB) += BytesToMB(Allocation.Size);
+
+                const FStringView FullName(Allocation.Name);
+                const FStringView Prefix = FullName.empty() ? FStringView("<unnamed>") : FullName.substr(0, FullName.find('.'));
+                const char* MemoryName = bTexture ? "Texture"
+                    : Allocation.Memory == RHI::EMemoryType::CPUWrite ? "CPUWrite"
+                    : Allocation.Memory == RHI::EMemoryType::CPURead ? "CPURead" : "GPUOnly";
+
+                FString Key(Prefix);
+                Key += '|';
+                Key += MemoryName;
+                SMemoryGpuCategory& Row = GpuByCategory[Key];
+                Row.Name = FString(Prefix);
+                Row.Memory = MemoryName;
+                Row.MB += BytesToMB(Allocation.Size);
+                ++Row.Count;
+            }
+            for (auto& [Key, Row] : GpuByCategory)
+            {
+                Out.GpuCategories.push_back(Move(Row));
+            }
+            Algo::Sort(Out.GpuCategories, [](const SMemoryGpuCategory& A, const SMemoryGpuCategory& B) { return A.MB > B.MB; });
+            if ((int32)Out.GpuCategories.size() > Top)
+            {
+                Out.GpuCategories.resize((size_t)Top);
+            }
+
             if (In.bReset)
             {
                 Memory::ResetTracking();

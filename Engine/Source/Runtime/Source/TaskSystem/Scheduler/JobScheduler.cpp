@@ -1777,6 +1777,8 @@ namespace Lumina::Jobs
         }
 
         Counter->Value.store(InitialValue, std::memory_order_relaxed);
+        // A recycled counter that once gated Background work would otherwise let its next waiter adopt any Background job.
+        Counter->WaitBand.store(0u, std::memory_order_relaxed);
         Counter->Completion    = nullptr;
         Counter->CompletionCtx = nullptr;
         Counter->Waiters = nullptr;

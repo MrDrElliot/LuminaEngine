@@ -62,9 +62,39 @@ namespace Lumina
             alignas(64) TAtomic<uint32> Cursor{0};
         };
 
+        // Background items can run for many milliseconds each, so frame work keeps a share of the workers to itself.
+        TAtomic<uint32> GBackgroundGrabs{0};
+
+        FORCEINLINE uint32 MaxBackgroundGrabs()
+        {
+            const uint32 Workers = Jobs::GetNumWorkers();
+            const uint32 Reserve = Math::Max(2u, Workers / 4u);
+            return Workers > Reserve ? Workers - Reserve : 1u;
+        }
+
+        struct FBackgroundGrabScope
+        {
+            const bool bCounted;
+            explicit FBackgroundGrabScope(bool bInCounted) : bCounted(bInCounted)
+            {
+                if (bCounted)
+                {
+                    GBackgroundGrabs.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            ~FBackgroundGrabScope()
+            {
+                if (bCounted)
+                {
+                    GBackgroundGrabs.fetch_sub(1, std::memory_order_relaxed);
+                }
+            }
+        };
+
         // Items this thread pulled off the cursor, so the caller can price the loop from work it ran anyway.
         uint32 RunCursorRanges(FCursorFor& C)
         {
+            const bool bBackground = C.Priority == Jobs::EJobPriority::Background;
             uint32 Ran = 0;
             for (;;)
             {
@@ -74,6 +104,8 @@ namespace Lumina
                     return Ran;
                 }
                 const uint32 End = C.Num - Start < C.Grain ? C.Num : Start + C.Grain;
+                // Counted but never refused, since the caller draining its own loop is what guarantees it finishes.
+                const FBackgroundGrabScope Grab(bBackground);
                 // Re-read per range, since the thunk may wait inside and a resumed fiber can migrate.
                 C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
                 Ran += End - Start;
@@ -90,13 +122,22 @@ namespace Lumina
 
             for (;;)
             {
+                // A helper over the cap leaves; the caller is still draining the cursor, so the loop finishes regardless.
+                if (bYieldable && GBackgroundGrabs.load(std::memory_order_relaxed) >= MaxBackgroundGrabs())
+                {
+                    return;
+                }
+
                 const uint32 Start = C.Cursor.fetch_add(C.Grain, std::memory_order_relaxed);
                 if (Start >= C.Num)
                 {
                     return;
                 }
                 const uint32 End = C.Num - Start < C.Grain ? C.Num : Start + C.Grain;
-                C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
+                {
+                    const FBackgroundGrabScope Grab(bYieldable);
+                    C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
+                }
 
                 // Requeued before returning, so the counter never reaches zero with ranges left to run.
                 if (bYieldable && Jobs::HasForegroundWorkQueued()

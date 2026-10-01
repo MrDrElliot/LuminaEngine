@@ -91,6 +91,19 @@ float ApplyGeometricSpecularAA(float Roughness, float3 dNdx, float3 dNdy)
     return sqrt(saturate(Alpha + Kernel));
 }
 
+// A tap that leaves the face rect reads another light's tile, so it is skipped and the clamped center tap covers an empty result.
+void AccumulateLocalShadowTap(float2 BaseUV, float2 Offset, float2 TileMin, float2 TileMax, float RefDepth,
+                              inout float Shadow, inout float Weight)
+{
+    const float2 SampleUV = BaseUV + Offset;
+    if (any(SampleUV < TileMin) || any(SampleUV > TileMax))
+    {
+        return;
+    }
+    Shadow += ShadowAtlas().SampleCmpLevelZero(SampleUV, RefDepth);
+    Weight += 1.0;
+}
+
 float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, bool ReceiveShadow, bool bContactShadows)
 {
     if (!ReceiveShadow)
@@ -179,21 +192,36 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
 
     float Shadow = 0.0;
     float Weight = 0.0;
-    // [loop], not unrolled: an unrolled body holds all 8 tap temp-sets live and inflates the PS register
-    // allocation for the WHOLE shader, since the allocator reserves the peak across every path.
+
+    // Each tap is the previous one turned by the golden angle, so the disk costs one sincos rather than one per tap.
+    float2 EvenDir;
+    sincos(Angle, EvenDir.y, EvenDir.x);
+    const float2 GoldenStep  = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
+    const float2 GoldenStep2 = float2(cos(2.0 * kVogelGoldenAngle), sin(2.0 * kVogelGoldenAngle));
+
+    // The odd taps reach from the inner disk to its rim, so when all of them agree the rest cannot change the answer.
+    float2 Dir = RotateVogel(EvenDir, GoldenStep);
+    // [loop], not unrolled: an unrolled body holds every tap temp-set live and inflates the register allocation.
     [loop]
-    for (int i = 0; i < SHADOW_SAMPLE_COUNT; i++)
+    for (int i = 1; i < SHADOW_SAMPLE_COUNT; i += 2)
     {
-        float2 Offset   = VogelDiskSample(i, SHADOW_SAMPLE_COUNT, Angle) * FilterRadius;
-        float2 SampleUV = BaseUV + Offset;
-        // Skip taps that leave the face rect (those texels belong to another light's tile);
-        // the clamped center tap below guarantees at least one valid sample.
-        if (any(SampleUV < TileMin) || any(SampleUV > TileMax))
-        {
-            continue;
-        }
-        Shadow += ShadowAtlas().SampleCmpLevelZero(SampleUV, RefDepth);
-        Weight += 1.0;
+        AccumulateLocalShadowTap(BaseUV, Dir * (sqrt((float(i) + 0.5) / float(SHADOW_SAMPLE_COUNT)) * FilterRadius),
+                                 TileMin, TileMax, RefDepth, Shadow, Weight);
+        Dir = RotateVogel(Dir, GoldenStep2);
+    }
+
+    if (Weight >= float(SHADOW_SAMPLE_COUNT / 2) && (Shadow == 0.0 || Shadow == Weight))
+    {
+        return Shadow / Weight;
+    }
+
+    Dir = EvenDir;
+    [loop]
+    for (int i = 0; i < SHADOW_SAMPLE_COUNT; i += 2)
+    {
+        AccumulateLocalShadowTap(BaseUV, Dir * (sqrt((float(i) + 0.5) / float(SHADOW_SAMPLE_COUNT)) * FilterRadius),
+                                 TileMin, TileMax, RefDepth, Shadow, Weight);
+        Dir = RotateVogel(Dir, GoldenStep2);
     }
 
     if (Weight <= 0.0)

@@ -643,7 +643,8 @@ namespace Lumina
         Out.DirtyStaticSlots.clear();
 
         const uint32 DeviceCapacity = RetainedDeviceCapacity.load(std::memory_order_acquire);
-        Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || SlotCount > DeviceCapacity;
+        // Growth keeps the device contents, so only a device holding nothing valid needs everything again.
+        Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || DeviceCapacity == 0;
 
         if (!Out.bFull
             && (ScenePrimitives.GetDirtyInstanceSlots().size() * 4 >= (SIZE_T)SlotCount
@@ -2502,9 +2503,25 @@ namespace Lumina
             SkinnedSlots.clear();
             // Indexed by retained slot; grown, never cleared. Ungathered slots are rejected by their tag.
             const uint32 RetainedSlots = ScenePrimitives.GetRetainedSlotCount();
-            if ((uint32)SkinnedData.size() < RetainedSlots)
+
+            // Only as long as the highest skinned slot, since millions of static instances can share the slot range.
+            uint32 SkinnedExtent = 0;
+            for (uint32 t = 0; t < NumThreads; ++t)
             {
-                SkinnedData.resize(RetainedSlots);
+                if (ThreadLocal[t].bTouched)
+                {
+                    for (const FProcessedDrawItem& Item : ThreadLocal[t].Items)
+                    {
+                        if (Item.InstanceSlot < RetainedSlots)
+                        {
+                            SkinnedExtent = Math::Max(SkinnedExtent, Item.InstanceSlot + 1u);
+                        }
+                    }
+                }
+            }
+            if ((uint32)SkinnedData.size() < SkinnedExtent)
+            {
+                SkinnedData.resize(SkinnedExtent);
             }
 
             for (uint32 t = 0; t < NumThreads; ++t)

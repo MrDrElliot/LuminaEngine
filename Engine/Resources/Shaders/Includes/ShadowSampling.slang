@@ -384,10 +384,13 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
 
     // Fixed rotation for the blocker search: per-pixel rotation of this sparse pattern stipples thin
     // occluders. [loop], not [unroll] -- unrolling holds 8 tap temp-sets live and spikes PS VGPR.
+    const float2 GoldenStep = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
+    float2 SearchDir = float2(1.0, 0.0);
     [loop]
     for (int s = 0; s < PCSS_BLOCKER_SEARCH_TAPS; ++s)
     {
-        float2 VOffset  = VogelDiskSample(s, PCSS_BLOCKER_SEARCH_TAPS, 0.0);
+        float2 VOffset  = SearchDir * sqrt((float(s) + 0.5) / float(PCSS_BLOCKER_SEARCH_TAPS));
+        SearchDir       = RotateVogel(SearchDir, GoldenStep);
         float2 Offset   = VOffset * SearchRadius;   // cascade-UV space, for the receiver-plane prediction below
         float2 AtlasUV  = clamp(BaseAtlasUV + VOffset * SearchAtlasRadius, TileMin, TileMax);
         float  Depth    = ShadowCascade().SampleLevel(AtlasUV, 0.0).r;
@@ -450,10 +453,13 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
     float2 AtlasFilterRadius = FilterRadius * Tile.AtlasUVScale;
 
     half Shadow = half(0.0);
+    float2 DiskDir;
+    sincos(Angle + PI, DiskDir.y, DiskDir.x);
     [loop]
     for (int i = 0; i < SampleCount; ++i)
     {
-        half2  VOffset = half2(VogelDiskSample(i, SampleCount, Angle + PI));
+        half2  VOffset = half2(DiskDir * sqrt((float(i) + 0.5) / float(SampleCount)));
+        DiskDir        = RotateVogel(DiskDir, GoldenStep);
         float2 AtlasUV = clamp(BaseAtlasUV + float2(VOffset) * AtlasFilterRadius, TileMin, TileMax);
         Shadow        += half(ShadowCascade().SampleCmp(AtlasUV, RefDepth));
     }

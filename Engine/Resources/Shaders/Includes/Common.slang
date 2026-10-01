@@ -1266,6 +1266,15 @@ float4x4 MakeInstanceWorldToLocal(float4x4 ModelMatrix)
         float4(0.0, 0.0, 0.0, 1.0));
 }
 
+// The step VogelDiskSample takes between consecutive taps, 2 * PI * (1 - 1 / PHI).
+static const float kVogelGoldenAngle = 2.399963229728653;
+
+// Turns a tap's unit direction by a precomputed (cos, sin), so a loop pays one sincos instead of one per tap.
+float2 RotateVogel(float2 Dir, float2 Step)
+{
+    return float2(Dir.x * Step.x - Dir.y * Step.y, Dir.x * Step.y + Dir.y * Step.x);
+}
+
 float2 VogelDiskSample(int SampleIndex, int SamplesCount, float Angle)
 {
     float GoldenAngle = 2.0 * PI * (1.0 - 1.0 / PHI);

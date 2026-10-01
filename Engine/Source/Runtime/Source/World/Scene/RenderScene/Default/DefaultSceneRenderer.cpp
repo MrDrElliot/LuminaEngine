@@ -2299,7 +2299,8 @@ namespace Lumina
         StagedWrites.clear();
     }
 
-    void FDefaultSceneRenderer::ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink)
+    void FDefaultSceneRenderer::ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink,
+                                              bool bPreserveContents)
     {
         NeededBytes = Math::Max<uint64>(NeededBytes, 16ull);
 
@@ -2312,7 +2313,7 @@ namespace Lumina
                 return false;
             }
 
-            DeferFree(Buffer);
+            const RHI::FGPUAllocation Previous = Buffer;
             Buffer.Adopt(Grown);
 
             if (Buffer.Init == EBufferInit::Zeroed)
@@ -2333,6 +2334,24 @@ namespace Lumina
                     RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
             }
             #endif
+
+            // Carried across on the GPU, so growing a large retained buffer costs a copy instead of a full re-upload.
+            if (bPreserveContents && Previous.Gpu != 0)
+            {
+                const uint64 Kept = Math::Min(Previous.Size, Buffer.Size);
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+                RHI::CmdMemcpy(CL, { Buffer.Gpu, Kept }, { Previous.Gpu, Kept });
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferWrite);
+            }
+
+            if (Previous.Gpu != 0)
+            {
+                DeferFree(Previous);
+            }
             return true;
         };
 
