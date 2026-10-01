@@ -312,11 +312,11 @@ namespace Lumina::EditorEntityUtils
 
     namespace
     {
-        // The cube primitive is half-extent 1, so this scale lands the top face exactly on y = 0.
+        // The cube primitive spans one meter, so scaling it by the full size lands the top face exactly on y = 0.
         constexpr float kFloorHalfSize  = 10.0f;
         constexpr float kFloorHalfDepth = 0.5f;
 
-        // Unit-radius primitive, dropped from high enough to visibly fall rather than start resting.
+        // The sphere primitive has a half-meter radius, dropped from high enough to visibly fall rather than start resting.
         constexpr float kSphereRadius = 1.0f;
         constexpr float kSphereStartY = 4.0f;
 
@@ -367,15 +367,15 @@ namespace Lumina::EditorEntityUtils
         Entity = World->ConstructEntity("Floor", FTransform(
             FVector3(0.0f, -kFloorHalfDepth, 0.0f),
             FVector3(0.0f, 0.0f, 0.0f),
-            FVector3(kFloorHalfSize, kFloorHalfDepth, kFloorHalfSize)));
+            FVector3(kFloorHalfSize, kFloorHalfDepth, kFloorHalfSize) * 2.0f));
         World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(CPrimitiveManager::Get().CubeMesh.Get());
-        World->EmplaceComponent<SBoxColliderComponent>(Entity).HalfExtent = FVector3(1.0f);
+        World->EmplaceComponent<SBoxColliderComponent>(Entity);
         World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
 
         Entity = World->ConstructEntity("Sphere", FTransform(
             FVector3(0.0f, kSphereStartY, 0.0f),
             FVector3(0.0f, 0.0f, 0.0f),
-            FVector3(1.0f, 1.0f, 1.0f)));
+            FVector3(kSphereRadius * 2.0f)));
         {
             SStaticMeshComponent& Mesh = World->EmplaceComponent<SStaticMeshComponent>(Entity);
             Mesh.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
@@ -403,7 +403,7 @@ namespace Lumina::EditorEntityUtils
             }
         }
 
-        World->EmplaceComponent<SSphereColliderComponent>(Entity).Radius = kSphereRadius;
+        World->EmplaceComponent<SSphereColliderComponent>(Entity);
         World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Dynamic;
 
         // Volumetric on so the fog picks the colors up as shafts, with everything else left at defaults.

@@ -31,34 +31,29 @@ namespace Lumina::Physics
 
         {
             FReadScopeLock Lock(HullCacheMutex);
-            if (auto It = HullCache.find(Key); It != HullCache.end())
+            if (auto It = BoxHullCache.find(Key); It != BoxHullCache.end())
             {
-                return It->second;
+                return &It->second->base;
             }
         }
 
-        const b3Vec3 Extent = Box3DUtils::ToB3Vec3(HalfExtent);
-        const b3Vec3 Points[8] =
-        {
-            { -Extent.x, -Extent.y, -Extent.z }, {  Extent.x, -Extent.y, -Extent.z },
-            { -Extent.x,  Extent.y, -Extent.z }, {  Extent.x,  Extent.y, -Extent.z },
-            { -Extent.x, -Extent.y,  Extent.z }, {  Extent.x, -Extent.y,  Extent.z },
-            { -Extent.x,  Extent.y,  Extent.z }, {  Extent.x,  Extent.y,  Extent.z },
-        };
-
-        b3HullData* Hull = b3CreateHull(Points, 8, B3_MAX_HULL_VERTICES);
-        if (Hull == nullptr)
+        // A flat box has no volume for Box3D to collide against.
+        constexpr float MinHalfExtent = 1.0e-4f;
+        if (HalfExtent.x < MinHalfExtent || HalfExtent.y < MinHalfExtent || HalfExtent.z < MinHalfExtent)
         {
             return nullptr;
         }
 
+        // Analytic, where a general quickhull over the eight corners cost tens of microseconds for every new size.
+        b3BoxHull* Box = Memory::New<b3BoxHull>(b3MakeBoxHull(HalfExtent.x, HalfExtent.y, HalfExtent.z));
+
         TScopeLock Lock(HullCacheMutex);
-        auto [It, bInserted] = HullCache.try_emplace(Key, Hull);
+        auto [It, bInserted] = BoxHullCache.try_emplace(Key, Box);
         if (!bInserted)
         {
-            b3DestroyHull(Hull);
+            Memory::Delete(Box);
         }
-        return It->second;
+        return &It->second->base;
     }
 
     const b3HullData* FBox3DPhysicsScene::GetOrCreateCylinderHull(float Radius, float HalfHeight)

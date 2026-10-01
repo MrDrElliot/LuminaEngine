@@ -126,19 +126,19 @@ namespace Lumina::ECS
 
             FIterator() = default;
 
-            FIterator(const FSparseSet* InSet, size_t InIndex)
+            FIterator(const FSparseSet* InSet, size_t InEndSlot)
                 : Set(InSet)
-                , Index(InIndex)
+                , EndSlot(InEndSlot)
             {
                 Advance();
             }
 
-            NODISCARD FEntity operator * () const { return Set->Dense[Index]; }
+            NODISCARD FEntity operator * () const { return Set->Dense[EndSlot - 1u]; }
 
-            FIterator& operator ++ () { ++Index; Advance(); return *this; }
+            FIterator& operator ++ () { --EndSlot; Advance(); return *this; }
 
-            NODISCARD bool operator == (const FIterator& Other) const { return Index == Other.Index; }
-            NODISCARD bool operator != (const FIterator& Other) const { return Index != Other.Index; }
+            NODISCARD bool operator == (const FIterator& Other) const { return EndSlot == Other.EndSlot; }
+            NODISCARD bool operator != (const FIterator& Other) const { return EndSlot != Other.EndSlot; }
 
         private:
 
@@ -149,18 +149,21 @@ namespace Lumina::ECS
                     return;
                 }
 
-                while (Index < Set->Dense.size() && Set->Dense[Index].IsTombstone())
+                while (EndSlot > 0 && Set->Dense[EndSlot - 1u].IsTombstone())
                 {
-                    ++Index;
+                    --EndSlot;
                 }
             }
 
             const FSparseSet* Set = nullptr;
-            size_t Index = 0;
+
+            // One past the current slot, so the finished walk sits at zero without wrapping.
+            size_t EndSlot = 0;
         };
 
-        NODISCARD FIterator begin() const { return FIterator(this, 0); }
-        NODISCARD FIterator end() const { return FIterator(this, Dense.size()); }
+        // Backward, so removing the current entity only pulls an already visited one into its slot.
+        NODISCARD FIterator begin() const { return FIterator(this, Dense.size()); }
+        NODISCARD FIterator end() const { return FIterator(this, 0); }
 
 
         //~ Element access. The payload lives here, so none of this dispatches.

@@ -24,11 +24,16 @@
 static_assert(sizeof(Type) % 16 == 0, #Type " must be 16-byte aligned")
 
 constexpr int NumCascades = NUM_CASCADES;
-constexpr int ClusterGridSizeX = 16;
-constexpr int ClusterGridSizeY = 9;
 constexpr int ClusterGridSizeZ = 24;
 
-constexpr int NumClusters = ClusterGridSizeX * ClusterGridSizeY * ClusterGridSizeZ;
+// Screen pixels per cluster edge, fine enough that a cluster's list holds the lights its pixels can actually reach.
+constexpr int ClusterTilePixels = 64;
+
+// Every view's cluster buffer holds this many, which is 64 pixel tiles over 3840x2160; bigger views widen their tiles.
+constexpr int MaxClusters = 64 * 32 * ClusterGridSizeZ;
+constexpr int MaxClusterCullBlocks = 512;
+
+static_assert(ClusterGridSizeZ % CLUSTER_CULL_BLOCK_Z == 0, "Z slices must fill whole cull blocks");
 
 constexpr int GCSMCascadeSizes[NumCascades]   = { 2048, 2048, 2048, 2048 };
 constexpr int GCSMAtlasWidth                  = 4096;
@@ -42,6 +47,26 @@ constexpr int GMaxCullViews             = MAX_CULL_VIEWS;
 
 namespace Lumina
 {
+    // Cluster counts per axis for a view, with the tile widened until the grid fits the buffer and the cull dispatch.
+    inline FUIntVector4 ComputeClusterGrid(FUIntVector2 ScreenSize)
+    {
+        const uint32 Width  = Math::Max(ScreenSize.x, 1u);
+        const uint32 Height = Math::Max(ScreenSize.y, 1u);
+        constexpr uint32 TileStep = 16;
+        for (uint32 Tile = ClusterTilePixels; ; Tile += TileStep)
+        {
+            const uint32 X = (Width + Tile - 1) / Tile;
+            const uint32 Y = (Height + Tile - 1) / Tile;
+            const uint32 Blocks = ((X + CLUSTER_CULL_BLOCK_X - 1) / CLUSTER_CULL_BLOCK_X)
+                                * ((Y + CLUSTER_CULL_BLOCK_Y - 1) / CLUSTER_CULL_BLOCK_Y)
+                                * (ClusterGridSizeZ / CLUSTER_CULL_BLOCK_Z);
+            if (X * Y * ClusterGridSizeZ <= (uint32)MaxClusters && Blocks <= (uint32)MaxClusterCullBlocks)
+            {
+                return FUIntVector4(X, Y, ClusterGridSizeZ, 0);
+            }
+        }
+    }
+
     class CMaterialInterface;
     struct FSourceVertex;
     class CMaterial;
@@ -772,14 +797,14 @@ namespace Lumina
     {
         FVector4 MinPoint;
         FVector4 MaxPoint;
-        uint32 LightIndices[LIGHTS_PER_CLUSTER];
+        uint32 Offset;
         uint32 Count;
         // Explicit because alignas(16) adds them anyway and the Slang mirror has to spell them out to match.
-        uint32 _Pad[3];
+        uint32 _Pad[2];
     };
     
     VERIFY_SSBO_ALIGNMENT(FCluster);
-    static_assert(sizeof(FCluster) == 448, "FCluster layout must match FCluster in Common.slang");
+    static_assert(sizeof(FCluster) == 48, "FCluster layout must match FCluster in Common.slang");
     
     struct FLightClusterPC
     {
@@ -1218,6 +1243,8 @@ namespace Lumina
         RHI::TGPUSpan<FBoneTransform>       PrevBones;
         RHI::TGPUSpan<FTransform3x4>        PrevRetainedTransforms;
         RHI::TGPUSpan<FCluster>          Clusters;              // per-view, GPU-written
+        // Per-view light runs the clusters point into, with the allocation counter in the first word.
+        RHI::TGPUSpan<uint32>            ClusterLightIndices;
         RHI::TGPUSpan<FMaterialUniforms> Materials;             // non-dynamic
         RHI::TGPUSpan<FMaterialCollectionUniforms> Collections;         // slot 0 is the reserved zero one
         RHI::TGPUSpan<FBillboardInstance> Billboards;
@@ -1258,7 +1285,7 @@ namespace Lumina
         uint32 ProbeCubeArrayIndex   = 0;
         uint32 _Pad0                 = 0;
     };
-    static_assert(sizeof(FSceneRoot) == 352, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 368, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

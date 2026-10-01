@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/Delegates/Delegate.h"
 #include "Core/Module/ModuleInterface.h"
 #include "MCPServer.h"
 
@@ -19,5 +20,6 @@ namespace Lumina
     private:
 
         MCP::FServer Server;
+        FDelegateHandle ShutdownStartedHandle;
     };
 }

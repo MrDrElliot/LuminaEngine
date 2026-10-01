@@ -5,6 +5,7 @@
 #include "Allocators/Allocator.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Assertions/Assert.h"
+#include "Core/Console/ConsoleVariable.h"
 #include "Core/Profiler/Profile.h"
 #include "Core/Templates/Align.h"
 #include "Log/Log.h"
@@ -24,6 +25,16 @@ namespace Lumina
     }
     
     RUNTIME_API Memory::FMalloc* Memory::GMalloc = nullptr;
+
+    namespace
+    {
+        // Constant initialized so allocations made before the console variable registers read a valid depth.
+        constinit int32 GAllocCallstackDepth = 0;
+
+        TConsoleVar<int32> CVarAllocCallstackDepth("Profiler.AllocCallstackDepth", 0,
+            "Frames Tracy walks per allocation while connected. Each walk costs about a microsecond, which inflates allocating zones.",
+            [](const CVarValueType& Value) { GAllocCallstackDepth = Containers::Get<int32>(Value); });
+    }
 
     Memory::FMalloc::FMalloc() noexcept
     {
@@ -142,7 +153,7 @@ namespace Lumina
     {
         FMalloc& Allocator = (GMalloc != nullptr) ? *GMalloc : EnsureAllocator();
         void* pMemory = Allocator.Malloc(Size, Align<size_t>(Alignment, 16));
-        LUMINA_PROFILE_ALLOC(pMemory, Size);
+        TracyCAllocS(pMemory, Size, GAllocCallstackDepth);
     #if LUMINA_MEMORY_TRACKING
         ::Lumina::Memory::Hooks::OnAlloc(pMemory, Size);
     #endif
@@ -179,7 +190,7 @@ namespace Lumina
 
     void Memory::Free(void*& Memory)
     {
-        LUMINA_PROFILE_FREE(Memory);
+        TracyCFreeS(Memory, GAllocCallstackDepth);
     #if LUMINA_MEMORY_TRACKING
         ::Lumina::Memory::Hooks::OnFree(Memory);
     #endif

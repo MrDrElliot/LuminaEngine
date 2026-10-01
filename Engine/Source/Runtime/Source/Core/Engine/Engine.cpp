@@ -452,6 +452,7 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
+        FCoreDelegates::OnEngineShutdownStarted.Broadcast();
         FCoreDelegates::Get().OnPreEngineShutdown.BroadcastAndClear();
         
         Jobs::WaitForAll();
@@ -533,6 +534,25 @@ namespace Lumina
 
         // The hang watchdog dumps every thread's stack if this stops advancing.
         HangWatchdog::Heartbeat();
+
+        #if !USING(WITH_EDITOR) && !defined(LE_SHIPPING)
+        {
+            constexpr double TitleRefreshSeconds = 0.5;
+            const double Now = PlatformTime::Seconds();
+            ++TitleSampleFrames;
+            if (TitleSampleStart == 0.0)
+            {
+                TitleSampleStart = Now;
+                TitleSampleFrames = 0;
+            }
+            else if (Now - TitleSampleStart >= TitleRefreshSeconds)
+            {
+                RefreshWindowTitle((Now - TitleSampleStart) / TitleSampleFrames);
+                TitleSampleStart = Now;
+                TitleSampleFrames = 0;
+            }
+        }
+        #endif
 
         // Quiescent here, since the previous frame's parallel gathers are already joined and consumed.
         ResetThreadFrameAllocators();
@@ -973,6 +993,7 @@ namespace Lumina
         // A TSubclassOf naming a C# subclass could not resolve at first config load, since scripts were unminted.
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
+        RefreshWindowTitle();
         CreateGameInstance();
         LoadStartupMap();
 
@@ -1470,7 +1491,9 @@ namespace Lumina
         if (!ProjectName.empty())
         {
             const FFixedString DLLPath = Paths::Combine(ExeDir, Paths::MakeModuleFileName(ProjectName));
-            if (Paths::Exists(DLLPath))
+
+            // A monolithic game links its module into the executable, and LoadModule finds it registered there by name.
+            if (Paths::Exists(DLLPath) || FModuleManager::Get().HasStaticFactory(FName(ProjectName.c_str())))
             {
                 if (FModuleManager::Get().LoadModule(DLLPath))
                 {
@@ -1489,9 +1512,42 @@ namespace Lumina
         // Cooked settings loaded before the scripts minted, so re-resolve now that a C# class exists.
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
+        RefreshWindowTitle();
         CreateGameInstance();
         LoadStartupMap();
         return true;
+    }
+
+    void FEngine::RefreshWindowTitle(double AverageFrameSeconds)
+    {
+        // The editor draws its own title bar, so only a game window carries the game's name.
+        #if !USING(WITH_EDITOR)
+        FWindow* Window = GIsHeadless ? nullptr : Windowing::GetPrimaryWindowHandle();
+        if (Window == nullptr)
+        {
+            return;
+        }
+
+        const CProjectSettings* Settings = GetDefault<CProjectSettings>();
+        FString Title = Settings != nullptr && !Settings->GameDisplayName.empty() ? Settings->GameDisplayName : ProjectName;
+        if (Title.empty())
+        {
+            Title = "Lumina";
+        }
+
+        #if !defined(LE_SHIPPING)
+        const RHI::FGPUDeviceInfo Gpu = RHI::GetDeviceInfo();
+        Title += Format(" | Lumina {} {} | {} | {}", LUMINA_VERSION, LUMINA_CONFIGURATION_NAME, Gpu.APIName.c_str(), Gpu.Name.c_str());
+        if (AverageFrameSeconds > 0.0)
+        {
+            Title += Format(" | {:.0f} fps, {:.2f} ms", 1.0 / AverageFrameSeconds, AverageFrameSeconds * 1000.0);
+        }
+        #endif
+
+        Window->SetTitle(Title);
+        #else
+        (void)AverageFrameSeconds;
+        #endif
     }
 
     // Mirrors the rule CreateWorldContext uses, so a restore lands on exactly the contexts that had one.

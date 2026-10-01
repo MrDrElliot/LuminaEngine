@@ -139,14 +139,27 @@ namespace Lumina
         // The solver's own value beats a difference, which smears a collision across the whole frame.
         if (Physics::IPhysicsScene* Scene = Context.GetPhysicsScene())
         {
-            Context.CreateView<SRigidBodyComponent, STransformComponent>().ForEach(
-                [&](ECS::FEntity Entity, const SRigidBodyComponent& Body, const STransformComponent&)
+            const auto RefineBody = [&](ECS::FEntity Entity, const SRigidBodyComponent&, const STransformComponent&)
+            {
+                if (Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
                 {
-                    if (Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
-                    {
-                        Refine(Entity, Scene->GetLinearVelocity(Entity));
-                    }
-                });
+                    Refine(Entity, Scene->GetLinearVelocity(Entity));
+                }
+            };
+
+            // The world is not stepping before physics, so its body reads are safe from every worker at once.
+            auto BodyView = Context.CreateView<SRigidBodyComponent, STransformComponent>();
+            if (BodyView.NumDenseSlots() < kKinematicsParallelGrain || GTaskSystem == nullptr)
+            {
+                BodyView.ForEach(RefineBody);
+            }
+            else
+            {
+                Task::ParallelFor((uint32)BodyView.NumDenseSlots(), [&](const Task::FParallelRange& Range)
+                {
+                    BodyView.ForEachInRange(Range.Start, Range.End, RefineBody);
+                }, 256);
+            }
         }
 
         // Last, because a character mover owns its velocity outright and SAnimationSystem preferred it.

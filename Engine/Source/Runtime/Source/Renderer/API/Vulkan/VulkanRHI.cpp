@@ -19,6 +19,7 @@
 #include "Renderer/GPUProfiler.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/API/Vulkan/VulkanMacros.h"
+#include "Renderer/API/Vulkan/VulkanAllocator.h"
 #include "Renderer/RHINative.h"
 #include "Renderer/RenderDocImpl.h"
 #include "Renderer/ErrorHandling/Vulkan/VulkanCrashTracker.h"
@@ -27,6 +28,9 @@
 #include "Platform/CrashReporter.h"
 #include "Tools/Dialogs/Dialogs.h"
 
+// Only reached by a VMA object created without callbacks, which then still lands on the engine heap.
+#define VMA_SYSTEM_ALIGNED_MALLOC(size, alignment) ::Lumina::Memory::Malloc((size), (alignment))
+#define VMA_SYSTEM_ALIGNED_FREE(ptr) ::Lumina::Memory::Free(ptr)
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
@@ -928,7 +932,7 @@ namespace Lumina::RHI
         };
 
         VkImageView View = VK_NULL_HANDLE;
-        VK_CHECK(vkCreateImageView(*GDevice, &Info, nullptr, &View));
+        VK_CHECK(vkCreateImageView(*GDevice, &Info, Vulkan::HostAllocator(), &View));
         return View;
     }
 
@@ -1624,8 +1628,8 @@ namespace Lumina::RHI
         .pPoolSizes     = Pools
     };
 
-    vkCreateDescriptorSetLayout(*GDevice, &LayoutInfo, nullptr, &GDevice->DescriptorLayout);
-    vkCreateDescriptorPool(*GDevice, &PoolInfo, nullptr, &GDevice->DescriptorPool);
+    vkCreateDescriptorSetLayout(*GDevice, &LayoutInfo, Vulkan::HostAllocator(), &GDevice->DescriptorLayout);
+    vkCreateDescriptorPool(*GDevice, &PoolInfo, Vulkan::HostAllocator(), &GDevice->DescriptorPool);
     
     // Two slots, written independently. Offset 0 is the per-draw args block; offset 8 is the scene
     // root, which only CmdSetSceneRoot touches. Mirrors FRHIRoot in GlobalRHI.slang.
@@ -1647,7 +1651,7 @@ namespace Lumina::RHI
         .pPushConstantRanges = &PushConstantRanges
     };
     
-    VK_CHECK(vkCreatePipelineLayout(*GDevice, &CreateInfo, nullptr, &GDevice->PipelineLayout));
+    VK_CHECK(vkCreatePipelineLayout(*GDevice, &CreateInfo, Vulkan::HostAllocator(), &GDevice->PipelineLayout));
     }
 
     // One pool per queue and frame slot, holding the image-init transitions that submit prepends.
@@ -1664,7 +1668,7 @@ namespace Lumina::RHI
         };
         for (FDeviceImpl::FTransientRing& Ring : GDevice->TransientRings[QueueIndex])
         {
-            VK_CHECK(vkCreateCommandPool(*GDevice, &TransientPoolInfo, nullptr, &Ring.Pool));
+            VK_CHECK(vkCreateCommandPool(*GDevice, &TransientPoolInfo, Vulkan::HostAllocator(), &Ring.Pool));
         }
     }
     }
@@ -1699,7 +1703,7 @@ namespace Lumina::RHI
                 .queueFamilyIndex   = QueueFamily
             };
             VkCommandPool TracyPool = VK_NULL_HANDLE;
-            VK_CHECK(vkCreateCommandPool(*GDevice, &TracyPoolInfo, nullptr, &TracyPool));
+            VK_CHECK(vkCreateCommandPool(*GDevice, &TracyPoolInfo, Vulkan::HostAllocator(), &TracyPool));
 
             VkCommandBufferAllocateInfo TracyAllocInfo
             {
@@ -1722,7 +1726,7 @@ namespace Lumina::RHI
             LOG_DISPLAY("Tracy ctx '{}' queue {} -> ctx {:#x}, query pool {:#x}",
                 Name, QueueIndex, (uint64)(uintptr_t)Context, (uint64)Context->GetQueryPool());
 
-            vkDestroyCommandPool(*GDevice, TracyPool, nullptr);
+            vkDestroyCommandPool(*GDevice, TracyPool, Vulkan::HostAllocator());
         };
 
         CreateQueueContext(EQueueType::Graphics, "Graphics", 8);
@@ -1745,14 +1749,14 @@ namespace Lumina::RHI
 
     GDevice->Semaphores.SetDtor([](FSemaphore* Semaphore)
     {
-        vkDestroySemaphore(*GDevice, *Semaphore, nullptr);
+        vkDestroySemaphore(*GDevice, *Semaphore, Vulkan::HostAllocator());
         
         Semaphore->~FSemaphore();
     });
     
     GDevice->Pipelines.SetDtor([](FPipeline* Pipeline)
     {
-        vkDestroyPipeline(*GDevice, *Pipeline, nullptr); 
+        vkDestroyPipeline(*GDevice, *Pipeline, Vulkan::HostAllocator()); 
         
         Pipeline->~FPipeline();
     });
@@ -1761,7 +1765,7 @@ namespace Lumina::RHI
     {
         if (Texture->DefaultImageView != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(*GDevice, Texture->DefaultImageView, nullptr);
+            vkDestroyImageView(*GDevice, Texture->DefaultImageView, Vulkan::HostAllocator());
         }
 
         if (Texture->Allocation != nullptr)
@@ -1781,7 +1785,7 @@ namespace Lumina::RHI
         {
             if (View != VK_NULL_HANDLE)
             {
-                vkDestroyImageView(*GDevice, View, nullptr);
+                vkDestroyImageView(*GDevice, View, Vulkan::HostAllocator());
             }
         }
 
@@ -1789,7 +1793,7 @@ namespace Lumina::RHI
         {
             if (Sampler != VK_NULL_HANDLE)
             {
-                vkDestroySampler(*GDevice, Sampler, nullptr);
+                vkDestroySampler(*GDevice, Sampler, Vulkan::HostAllocator());
             }
         }
 
@@ -1799,7 +1803,7 @@ namespace Lumina::RHI
     
     GDevice->CommandLists.SetDtor([](FCommandList* CommandList)
     {
-        vkDestroyCommandPool(*GDevice, CommandList->Pool, nullptr);
+        vkDestroyCommandPool(*GDevice, CommandList->Pool, Vulkan::HostAllocator());
 
         CommandList->~FCommandList();
     });
@@ -1807,8 +1811,8 @@ namespace Lumina::RHI
     GDevice->Swapchains.SetDtor([](FSwapchain* Swapchain)
     {
         DestroySwapchainImages(*Swapchain);
-        vkDestroySwapchainKHR(*GDevice, Swapchain->Swapchain, nullptr);
-        vkDestroySurfaceKHR(GDevice->Instance, Swapchain->Surface, nullptr);
+        vkDestroySwapchainKHR(*GDevice, Swapchain->Swapchain, Vulkan::HostAllocator());
+        vkDestroySurfaceKHR(GDevice->Instance, Swapchain->Surface, Vulkan::HostAllocator());
 
         Swapchain->~FSwapchain();
     });
@@ -1816,7 +1820,7 @@ namespace Lumina::RHI
     GDevice->Surfaces.SetDtor([](FSurface* Surface)
     {
         // Null once CreateSwapchain has taken ownership; vkDestroySurfaceKHR accepts VK_NULL_HANDLE.
-        vkDestroySurfaceKHR(GDevice->Instance, Surface->Surface, nullptr);
+        vkDestroySurfaceKHR(GDevice->Instance, Surface->Surface, Vulkan::HostAllocator());
 
         Surface->~FSurface();
     });
@@ -1826,7 +1830,7 @@ namespace Lumina::RHI
     {
         if (QueryPool->Pool != VK_NULL_HANDLE)
         {
-            vkDestroyQueryPool(*GDevice, QueryPool->Pool, nullptr);
+            vkDestroyQueryPool(*GDevice, QueryPool->Pool, Vulkan::HostAllocator());
         }
 
         QueryPool->~FQueryPool();
@@ -2135,7 +2139,7 @@ namespace Lumina::RHI
             .ppEnabledExtensionNames = InstanceExtensions.data(),
         };
 
-        const VkResult InstanceResult = vkCreateInstance(&InstanceInfo, nullptr, &GDevice->Instance);
+        const VkResult InstanceResult = vkCreateInstance(&InstanceInfo, Vulkan::HostAllocator(), &GDevice->Instance);
         if (InstanceResult != VK_SUCCESS)
         {
             ShowVulkanInitFailure("Vulkan Instance Creation Failed",
@@ -2147,7 +2151,7 @@ namespace Lumina::RHI
 
         if (DeviceDesc.bValidation && vkCreateDebugUtilsMessengerEXT != nullptr)
         {
-            VK_CHECK(vkCreateDebugUtilsMessengerEXT(GDevice->Instance, &MessengerInfo, nullptr, &GDevice->DebugMessenger));
+            VK_CHECK(vkCreateDebugUtilsMessengerEXT(GDevice->Instance, &MessengerInfo, Vulkan::HostAllocator(), &GDevice->DebugMessenger));
         }
 
         return ValidationLayerVersion;
@@ -2386,7 +2390,7 @@ namespace Lumina::RHI
         };
 
         VkImage ProbeImage = VK_NULL_HANDLE;
-        if (vkCreateImage(GDevice->Device, &Probe, nullptr, &ProbeImage) != VK_SUCCESS)
+        if (vkCreateImage(GDevice->Device, &Probe, Vulkan::HostAllocator(), &ProbeImage) != VK_SUCCESS)
         {
             LOG_DISPLAY("Host image copy declined; an image carrying the usage bit could not be created.");
             return false;
@@ -2394,7 +2398,7 @@ namespace Lumina::RHI
 
         VkMemoryRequirements Requirements{};
         vkGetImageMemoryRequirements(GDevice->Device, ProbeImage, &Requirements);
-        vkDestroyImage(GDevice->Device, ProbeImage, nullptr);
+        vkDestroyImage(GDevice->Device, ProbeImage, Vulkan::HostAllocator());
 
         VkPhysicalDeviceMemoryProperties MemProps{};
         vkGetPhysicalDeviceMemoryProperties(GDevice->PhysicsDevice, &MemProps);
@@ -2428,6 +2432,7 @@ namespace Lumina::RHI
         AllocatorInfo.physicalDevice   = GDevice->PhysicsDevice;
         AllocatorInfo.device           = GDevice->Device;
         AllocatorInfo.pVulkanFunctions = &Functions;
+        AllocatorInfo.pAllocationCallbacks = Vulkan::HostAllocator();
         AllocatorInfo.flags            = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
         if (bMemoryPriority)
         {
@@ -2835,7 +2840,7 @@ namespace Lumina::RHI
                 .ppEnabledExtensionNames = GDevice->EnabledDeviceExtensions.data(),
             };
 
-            const VkResult DeviceResult = vkCreateDevice(GDevice->PhysicsDevice, &DeviceInfo, nullptr, &GDevice->Device);
+            const VkResult DeviceResult = vkCreateDevice(GDevice->PhysicsDevice, &DeviceInfo, Vulkan::HostAllocator(), &GDevice->Device);
             if (DeviceResult != VK_SUCCESS)
             {
                 ShowVulkanInitFailure("Vulkan Device Creation Failed",
@@ -2958,24 +2963,24 @@ namespace Lumina::RHI
         {
             for (FDeviceImpl::FTransientRing& Ring : QueueRings)
             {
-                vkDestroyCommandPool(*GDevice, Ring.Pool, nullptr);
+                vkDestroyCommandPool(*GDevice, Ring.Pool, Vulkan::HostAllocator());
             }
         }
-        vkDestroyPipelineLayout(*GDevice, GDevice->PipelineLayout, nullptr);
-        vkDestroyDescriptorPool(*GDevice, GDevice->DescriptorPool, nullptr);
-        vkDestroyDescriptorSetLayout(*GDevice, GDevice->DescriptorLayout, nullptr);
+        vkDestroyPipelineLayout(*GDevice, GDevice->PipelineLayout, Vulkan::HostAllocator());
+        vkDestroyDescriptorPool(*GDevice, GDevice->DescriptorPool, Vulkan::HostAllocator());
+        vkDestroyDescriptorSetLayout(*GDevice, GDevice->DescriptorLayout, Vulkan::HostAllocator());
 
         GDevice->CrashTracker->Shutdown();
         GDevice->CrashTracker = nullptr;
 
         vmaDestroyAllocator(GDevice->Allocator);
-        vkDestroyDevice(GDevice->Device, nullptr);
+        vkDestroyDevice(GDevice->Device, Vulkan::HostAllocator());
 
         if (GDevice->DebugMessenger != VK_NULL_HANDLE && vkDestroyDebugUtilsMessengerEXT != nullptr)
         {
-            vkDestroyDebugUtilsMessengerEXT(GDevice->Instance, GDevice->DebugMessenger, nullptr);
+            vkDestroyDebugUtilsMessengerEXT(GDevice->Instance, GDevice->DebugMessenger, Vulkan::HostAllocator());
         }
-        vkDestroyInstance(GDevice->Instance, nullptr);
+        vkDestroyInstance(GDevice->Instance, Vulkan::HostAllocator());
 
         delete GDevice;
         GDevice = nullptr;
@@ -3167,7 +3172,7 @@ namespace Lumina::RHI
             PageSize = Math::Max(PageSize / 2, Floor);
         }
 
-        const VmaVirtualBlockCreateInfo VirtualInfo{ .size = PageSize, .flags = 0, .pAllocationCallbacks = nullptr };
+        const VmaVirtualBlockCreateInfo VirtualInfo{ .size = PageSize, .flags = 0, .pAllocationCallbacks = Vulkan::HostAllocator() };
         if (vmaCreateVirtualBlock(&VirtualInfo, &Page.Suballocator) != VK_SUCCESS)
         {
             vmaDestroyBuffer(GDevice->Allocator, Page.Buffer, Page.Allocation);
@@ -3738,7 +3743,7 @@ namespace Lumina::RHI
             };
 
             VkShaderModule Module = VK_NULL_HANDLE;
-            VK_CHECK(vkCreateShaderModule(*GDevice, &Info, nullptr, &Module));
+            VK_CHECK(vkCreateShaderModule(*GDevice, &Info, Vulkan::HostAllocator(), &Module));
             return Module;
         }
     }
@@ -3970,12 +3975,12 @@ namespace Lumina::RHI
         };
         
         VkPipeline VulkanPipeline;
-        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, nullptr, 1, &CreateInfo, nullptr, &VulkanPipeline));
+        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, nullptr, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
 
-        vkDestroyShaderModule(*GDevice, VertModule, nullptr);
+        vkDestroyShaderModule(*GDevice, VertModule, Vulkan::HostAllocator());
         if (FragModule != VK_NULL_HANDLE)
         {
-            vkDestroyShaderModule(*GDevice, FragModule, nullptr);
+            vkDestroyShaderModule(*GDevice, FragModule, Vulkan::HostAllocator());
         }
 
         return GDevice->Pipelines.Emplace(VulkanPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS);
@@ -4032,7 +4037,7 @@ namespace Lumina::RHI
         };
 
         VkQueryPool Pool = VK_NULL_HANDLE;
-        VK_CHECK(vkCreateQueryPool(*GDevice, &Info, nullptr, &Pool));
+        VK_CHECK(vkCreateQueryPool(*GDevice, &Info, Vulkan::HostAllocator(), &Pool));
 
         return GDevice->QueryPools.Emplace(FQueryPool{ Pool, Capacity });
     }
@@ -4357,9 +4362,9 @@ namespace Lumina::RHI
         };
         
         VkPipeline Pipeline{};
-        VK_CHECK(vkCreateComputePipelines(*GDevice, nullptr, 1, &Info, nullptr, &Pipeline));
+        VK_CHECK(vkCreateComputePipelines(*GDevice, nullptr, 1, &Info, Vulkan::HostAllocator(), &Pipeline));
 
-        vkDestroyShaderModule(*GDevice, ShaderModule, nullptr);
+        vkDestroyShaderModule(*GDevice, ShaderModule, Vulkan::HostAllocator());
 
         return GDevice->Pipelines.Emplace(Pipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
     }
@@ -4615,16 +4620,16 @@ namespace Lumina::RHI
         };
 
         VkPipeline VulkanPipeline;
-        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, nullptr, 1, &CreateInfo, nullptr, &VulkanPipeline));
+        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, nullptr, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
 
         if (TaskModule != VK_NULL_HANDLE)
         {
-            vkDestroyShaderModule(*GDevice, TaskModule, nullptr);
+            vkDestroyShaderModule(*GDevice, TaskModule, Vulkan::HostAllocator());
         }
-        vkDestroyShaderModule(*GDevice, MeshModule, nullptr);
+        vkDestroyShaderModule(*GDevice, MeshModule, Vulkan::HostAllocator());
         if (FragModule != VK_NULL_HANDLE)
         {
-            vkDestroyShaderModule(*GDevice, FragModule, nullptr);
+            vkDestroyShaderModule(*GDevice, FragModule, Vulkan::HostAllocator());
         }
 
         return GDevice->Pipelines.Emplace(VulkanPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS);
@@ -4648,7 +4653,7 @@ namespace Lumina::RHI
         };
         
         VkSemaphore Semaphore;
-        vkCreateSemaphore(*GDevice, &Info, nullptr, &Semaphore);
+        vkCreateSemaphore(*GDevice, &Info, Vulkan::HostAllocator(), &Semaphore);
 
         return GDevice->Semaphores.Emplace(Semaphore);
     }
@@ -5006,7 +5011,7 @@ namespace Lumina::RHI
         }
 
         VkSampler Sampler = VK_NULL_HANDLE;
-        VK_CHECK(vkCreateSampler(*GDevice, &SamplerInfo, nullptr, &Sampler));
+        VK_CHECK(vkCreateSampler(*GDevice, &SamplerInfo, Vulkan::HostAllocator(), &Sampler));
 
         HeapData.Samplers[Slot] = Sampler;
 
@@ -5199,7 +5204,7 @@ namespace Lumina::RHI
         // Reached only on the retire fence, so nothing in flight still names the view.
         if (HeapData.RWImageViews[Slot] != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(*GDevice, HeapData.RWImageViews[Slot], nullptr);
+            vkDestroyImageView(*GDevice, HeapData.RWImageViews[Slot], Vulkan::HostAllocator());
             HeapData.RWImageViews[Slot] = VK_NULL_HANDLE;
         }
         HeapData.RWImageSlots.Free(Slot);
@@ -5217,7 +5222,7 @@ namespace Lumina::RHI
 
         if (HeapData.Samplers[Slot] != VK_NULL_HANDLE)
         {
-            vkDestroySampler(*GDevice, HeapData.Samplers[Slot], nullptr);
+            vkDestroySampler(*GDevice, HeapData.Samplers[Slot], Vulkan::HostAllocator());
             HeapData.Samplers[Slot] = VK_NULL_HANDLE;
         }
         HeapData.SamplerSlots.Free(Slot);
@@ -5334,7 +5339,7 @@ namespace Lumina::RHI
             .oldSwapchain     = OldSwapchain,
         };
 
-        if (vkCreateSwapchainKHR(*GDevice, &Info, nullptr, &SC.Swapchain) != VK_SUCCESS)
+        if (vkCreateSwapchainKHR(*GDevice, &Info, Vulkan::HostAllocator(), &SC.Swapchain) != VK_SUCCESS)
         {
             SC.Swapchain = VK_NULL_HANDLE;
             return false;   // transient create failure during resize; retry next frame
@@ -5373,8 +5378,8 @@ namespace Lumina::RHI
         SC.AcquireSemaphores.resize(AcquireCount);
 
         const VkSemaphoreCreateInfo SemInfo { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-        for (VkSemaphore& Semaphore : SC.PresentSemaphores) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &Semaphore)); }
-        for (uint32 i = 0; i < AcquireCount; ++i) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &SC.AcquireSemaphores[i])); }
+        for (VkSemaphore& Semaphore : SC.PresentSemaphores) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, Vulkan::HostAllocator(), &Semaphore)); }
+        for (uint32 i = 0; i < AcquireCount; ++i) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, Vulkan::HostAllocator(), &SC.AcquireSemaphores[i])); }
 
         return true;
     }
@@ -5440,8 +5445,8 @@ namespace Lumina::RHI
         FPresentSync Sync;
         const VkSemaphoreCreateInfo SemInfo { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
         const VkFenceCreateInfo FenceInfo { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-        VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &Sync.Semaphore));
-        VK_CHECK(vkCreateFence(*GDevice, &FenceInfo, nullptr, &Sync.Fence));
+        VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, Vulkan::HostAllocator(), &Sync.Semaphore));
+        VK_CHECK(vkCreateFence(*GDevice, &FenceInfo, Vulkan::HostAllocator(), &Sync.Fence));
         return Sync;
     }
 
@@ -5456,18 +5461,18 @@ namespace Lumina::RHI
         WaitSwapchainPresents(SC);
         for (const FPresentSync& Sync : SC.PresentSyncFree)
         {
-            vkDestroySemaphore(*GDevice, Sync.Semaphore, nullptr);
-            vkDestroyFence(*GDevice, Sync.Fence, nullptr);
+            vkDestroySemaphore(*GDevice, Sync.Semaphore, Vulkan::HostAllocator());
+            vkDestroyFence(*GDevice, Sync.Fence, Vulkan::HostAllocator());
         }
         SC.PresentSyncFree.clear();
 
         for (VkSemaphore Semaphore : SC.PresentSemaphores)
         {
-            vkDestroySemaphore(*GDevice, Semaphore, nullptr);
+            vkDestroySemaphore(*GDevice, Semaphore, Vulkan::HostAllocator());
         }
         for (VkSemaphore Semaphore : SC.AcquireSemaphores)
         {
-            vkDestroySemaphore(*GDevice, Semaphore, nullptr);
+            vkDestroySemaphore(*GDevice, Semaphore, Vulkan::HostAllocator());
         }
         SC.PresentSemaphores.clear();
         SC.AcquireSemaphores.clear();
@@ -5487,7 +5492,7 @@ namespace Lumina::RHI
 
         FSurface Surface{};
 
-        VK_CHECK(glfwCreateWindowSurface(GDevice->Instance, static_cast<GLFWwindow*>(WindowHandle), nullptr, &Surface.Surface));
+        VK_CHECK(glfwCreateWindowSurface(GDevice->Instance, static_cast<GLFWwindow*>(WindowHandle), Vulkan::HostAllocator(), &Surface.Surface));
 
         return GDevice->Surfaces.Emplace(Move(Surface));
     }
@@ -5554,7 +5559,7 @@ namespace Lumina::RHI
 
         if (Old != VK_NULL_HANDLE)
         {
-            vkDestroySwapchainKHR(*GDevice, Old, nullptr);
+            vkDestroySwapchainKHR(*GDevice, Old, Vulkan::HostAllocator());
         }
 
         SC.AcquireIndex = 0;
@@ -5908,7 +5913,7 @@ namespace Lumina::RHI
             };
 
             VkCommandPool Pool = VK_NULL_HANDLE;
-            VK_CHECK(vkCreateCommandPool(*GDevice, &Info, nullptr, &Pool));
+            VK_CHECK(vkCreateCommandPool(*GDevice, &Info, Vulkan::HostAllocator(), &Pool));
 
             VkCommandBufferAllocateInfo BufferInfo = {};
             BufferInfo.sType                = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;

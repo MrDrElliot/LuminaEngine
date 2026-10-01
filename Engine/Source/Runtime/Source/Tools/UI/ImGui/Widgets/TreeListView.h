@@ -97,6 +97,9 @@ namespace Lumina
         // Shift-click selects the whole run of rows from the last plainly-clicked one to the clicked one.
         bool                                                            bAllowRangeSelect = false;
 
+        // Cleared by an owner whose filter would pass every row, so Draw skips the per-row filter pass.
+        bool                                                            bFilterActive = true;
+
         // Horizontal shift per tree depth. Deep hierarchies in narrow hosts (picker popups over
         // 20+-level skeletons) want a tighter value than the outliner default.
         float                                                           IndentPerDepth = 21.0f;

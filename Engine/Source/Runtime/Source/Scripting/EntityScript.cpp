@@ -340,7 +340,7 @@ namespace Lumina
 
             // By the first tick every sibling script added the same frame exists, so OnReady can reference them.
             {
-                LUMINA_PROFILE_SECTION_DYNAMIC(Script->GetClass()->GetName().c_str());
+                LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                 Script->OnAttach();
             }
             return Script;
@@ -382,7 +382,7 @@ namespace Lumina
                     {
                         Script->SetOwner(Entity, World);
                         {
-                            LUMINA_PROFILE_SECTION_DYNAMIC(Script->GetClass()->GetName().c_str());
+                            LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                             Script->OnAttach();
                         }
 
@@ -403,7 +403,7 @@ namespace Lumina
                         Script->MarkReady();
                         {
                             // Once per script, so naming it by class costs nothing per frame and splits the script system's time.
-                            LUMINA_PROFILE_SECTION_DYNAMIC(Script->GetClass()->GetName().c_str());
+                            LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                             Script->OnReady();
                         }
 

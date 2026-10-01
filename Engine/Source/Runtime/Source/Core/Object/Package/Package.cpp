@@ -1172,7 +1172,8 @@ namespace Lumina
         bool BuildPackageBytes(CPackage* Package, bool bCooking,
                                TVector<uint8>& OutUncompressed,
                                TVector<uint8>& OutCompressed,
-                               CPackage::FBulkRegion& OutBulkRegion)
+                               CPackage::FBulkRegion& OutBulkRegion,
+                               const TFunction<bool(const CObject*)>& ExcludeExport = {})
         {
             (void)Package->FullyLoad();
 
@@ -1199,6 +1200,11 @@ namespace Lumina
             Writer.Seek(sizeof(FPackageHeader));
 
             FSaveContext SaveContext(Package);
+            if (bCooking)
+            {
+                SaveContext.ExcludeExport = ExcludeExport;
+                Writer.SetSavedExports(&SaveContext.SeenExports);
+            }
             Package->BuildSaveContext(SaveContext);
 
             Package->WriteExports(Writer, Header, SaveContext);
@@ -1395,7 +1401,7 @@ namespace Lumina
         return true;
     }
 
-    bool CPackage::SavePackageForCook(CPackage* Package, TVector<uint8>& OutCompressed)
+    bool CPackage::SavePackageForCook(CPackage* Package, TVector<uint8>& OutCompressed, const TFunction<bool(const CObject*)>& ExcludeExport)
     {
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Package Save");
@@ -1412,7 +1418,7 @@ namespace Lumina
         FBulkRegion    CookedBulkRegion;
 
         Package->bBulkDataUnresolved = false;
-        if (!BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed, CookedBulkRegion))
+        if (!BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed, CookedBulkRegion, ExcludeExport))
         {
             return false;
         }

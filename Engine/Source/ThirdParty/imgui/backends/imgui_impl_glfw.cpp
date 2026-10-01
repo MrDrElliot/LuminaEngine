@@ -976,7 +976,9 @@ static void ImGui_ImplGlfw_UpdateMouseData()
         // See https://github.com/glfw/glfw/issues/1236 if you want to help in making this a GLFW feature.
 #if GLFW_HAS_MOUSE_PASSTHROUGH
         const bool window_no_input = (viewport->Flags & ImGuiViewportFlags_NoInputs) != 0;
-        glfwSetWindowAttrib(window, GLFW_MOUSE_PASSTHROUGH, window_no_input);
+        // Lumina patch, since setting it restyles the Win32 window every frame even when unchanged.
+        if (glfwGetWindowAttrib(window, GLFW_MOUSE_PASSTHROUGH) != (window_no_input ? GLFW_TRUE : GLFW_FALSE))
+            glfwSetWindowAttrib(window, GLFW_MOUSE_PASSTHROUGH, window_no_input);
 #endif
 #if GLFW_HAS_MOUSE_PASSTHROUGH || GLFW_HAS_WINDOW_HOVERED
         if (glfwGetWindowAttrib(window, GLFW_HOVERED))

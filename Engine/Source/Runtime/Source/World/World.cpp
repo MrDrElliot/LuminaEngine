@@ -1838,6 +1838,8 @@ namespace Lumina
         
         auto RunOne = [&](FStageSlot& S)
         {
+            // Named per system, so one that has no zones of its own still shows up in a capture.
+            LUMINA_PROFILE_SECTION_NAMED(S.System->GetClass()->GetName().c_str());
             SetExecutingSystemAccess(&S.System->GetAccess());
             S.System->OnUpdate();
             SetExecutingSystemAccess(nullptr);

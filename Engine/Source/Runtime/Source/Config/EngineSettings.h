@@ -21,6 +21,10 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
+        // What the game window is titled, and the project name when left empty.
+        PROPERTY(Editable, Category = "Project")
+        FString GameDisplayName;
+
         /** CGameInstance subclass to instantiate at runtime */
         PROPERTY(Editable, Category = "Scripting")
         TSubclassOf<CGameInstance> GameInstanceClass;

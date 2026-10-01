@@ -7,6 +7,7 @@ namespace Lumina
     TMulticastDelegate<void>		            FCoreDelegates::OnPostEngineInit;
     TMulticastDelegate<void, FModuleInfo*>      FCoreDelegates::OnModuleLoaded;
     TMulticastDelegate<void>                    FCoreDelegates::OnModuleUnloaded;
+    TMulticastDelegate<void>                    FCoreDelegates::OnEngineShutdownStarted;
     TMulticastDelegate<void, CWorld*, CWorld*>  FCoreDelegates::OnWorldTraveled;
     TMulticastDelegate<void, FStringView>       FCoreDelegates::OnContentFileModified;
     TMulticastDelegate<void, FStringView, FStringView> FCoreDelegates::OnContentFileRenamed;

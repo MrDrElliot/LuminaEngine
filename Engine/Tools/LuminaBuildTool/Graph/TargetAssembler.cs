@@ -84,6 +84,8 @@ public sealed class TargetAssembler
             ResolveModule(ModuleName, new List<string>());
         }
 
+        LinkArchivesIntoExecutables();
+
         Target.LaunchModule = ModulesByName.TryGetValue(TargetRules.LaunchModuleName, out BuildModule? Launch) ? Launch : null;
 
         if (Target.LaunchModule is null && TargetRules.Type != TargetType.Program)
@@ -202,6 +204,30 @@ public sealed class TargetAssembler
                 if (Entry.GetHostType().IsAvailableIn(Info.Type))
                 {
                     yield return Entry.Name;
+                }
+            }
+        }
+    }
+
+    // Otherwise a plugin or game archive is missing from the image, and its DLL loads a second copy of the runtime.
+    private void LinkArchivesIntoExecutables()
+    {
+        if (!TargetRules.bMonolithic)
+        {
+            return;
+        }
+
+        List<BuildModule> Archives = ModulesByName.Values.Where(M => M.bRequiresWholeArchive).ToList();
+
+        foreach (BuildModule Executable in ModulesByName.Values.Where(M => M.BinaryType.IsExecutable()).ToList())
+        {
+            HashSet<BuildModule> Linked = Executable.EnumerateDependencyClosure().ToHashSet();
+
+            foreach (BuildModule Archive in Archives)
+            {
+                if (!Linked.Contains(Archive))
+                {
+                    Executable.PrivateDependencies.Add(Archive);
                 }
             }
         }
@@ -479,6 +505,12 @@ public sealed class TargetAssembler
     /// <summary>Plugin binaries live under the plugin's own Binaries directory, where the loader looks.</summary>
     private string ResolveBinariesDirectory(BuildTarget Target, BuildModule Module)
     {
+        // A project that links the engine application into its own executable keeps that executable beside the project.
+        if (Module.BinaryType.IsExecutable() && Directories.ProjectRoot is not null)
+        {
+            return Target.BinariesDirectory;
+        }
+
         if (!Module.bIsPlugin)
         {
             // Engine binaries stay beside the engine, project binaries beside the project.

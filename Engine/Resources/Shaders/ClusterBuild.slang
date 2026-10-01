@@ -32,6 +32,12 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
 
     uint TileIndex  = DispatchID.x;
     uint TotalTiles = GridSize.x * GridSize.y * GridSize.z;
+
+    // LightCull hands out this frame's light runs from zero, and runs after this dispatch's barrier.
+    if (TileIndex == 0u && SpanContains(ClusterLightIndices(), 0u))
+    {
+        SpanAt(ClusterLightIndices(), 0u)[0] = 0u;
+    }
     if (TileIndex >= TotalTiles)
         return;
 

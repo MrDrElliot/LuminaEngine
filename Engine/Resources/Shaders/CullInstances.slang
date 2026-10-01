@@ -92,10 +92,21 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
     return Slot - FirstVertex;
 }
 
+// Every lane tests every view, so the group stages them once rather than each lane streaming 128 bytes per view.
+groupshared FCullView gViews[MAX_CULL_VIEWS];
+
 [shader("compute")]
 [numthreads(LOCAL_SIZE_X, 1, 1)]
-void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupID)
+void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
 {
+    // Ahead of every early return, since the whole group has to reach the barrier.
+    const uint NumViews = min(Pass().NumViews, (uint)MAX_CULL_VIEWS);
+    for (uint StageView = LocalID.x; StageView < NumViews; StageView += LOCAL_SIZE_X)
+    {
+        gViews[StageView] = SpanGetAligned(CullViews(), StageView);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     // Undoes the Y fold the dispatch applies past MAX_DISPATCH_AXIS groups.
     const uint SlotIdx = GlobalID.x + GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X;
     if (!SpanContains(&Pass().RetainedCullEntries, SlotIdx))
@@ -225,9 +236,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // Does ANY view see it? Breaks on the first hit, so a visible instance pays one or two iterations.
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
-    for (uint v = 0; v < Pass().NumViews; ++v)
+    for (uint v = 0; v < NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(SpanGetAligned(CullViews(), v), Center, Radius, bNoCull, bCaster, bShadowOnly))
+        if (IsInstanceVisibleToView(gViews[v], Center, Radius, bNoCull, bCaster, bShadowOnly))
         {
             bAnyView = true;
             break;
@@ -259,9 +270,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // THE per-(instance, view) decision, made once. BuildMeshletBlocks reads what this writes instead of
     // re-deriving it, so the reservation and the append cannot disagree -- a mismatch used to hand one
     // bucket room nobody uses, starve the next, and drop the newest mesh with no error anywhere.
-    for (uint v = 0; v < Pass().NumViews; ++v)
+    for (uint v = 0; v < NumViews; ++v)
     {
-        FCullView View = SpanGetAligned(CullViews(), v);
+        FCullView View = gViews[v];
 
         uint2 Range   = uint2(0u, 0u);
         uint  Emitted = 0u;

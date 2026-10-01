@@ -345,7 +345,7 @@ namespace ECSBench
             Seen = 0;
             Registry.View<FStablePosition>().ForEach([&](ECS::FEntity, FStablePosition& Value)
             {
-                Check(Value.X == static_cast<float>(2 * Seen + 1), "compaction preserves values in order");
+                Check(Value.X == static_cast<float>(2 * (31 - Seen) + 1), "compaction preserves values in order");
                 ++Seen;
             });
             Check(Seen == 32, "a compacted view still visits every live element");
@@ -623,6 +623,218 @@ namespace ECSBench
             View.ForEach([&](ECS::FEntity) { ++Seen; });
             Check(Seen == 15, "a runtime view intersects and excludes");
         }
+
+        struct FRemovalPacked { static constexpr auto Layout = ECS::EComponentLayout::Packed; uint32 Value = 0; };
+        struct FRemovalPaged { static constexpr uint32 PageSize = 64; uint32 Value = 0; };
+        struct FRemovalPartner { uint32 Value = 0; };
+        struct FRemovalTag {};
+
+        constexpr uint32 RemovalEntityCount = 300;
+
+        NODISCARD bool ShouldRemoveDuringWalk(ECS::FEntity Entity)
+        {
+            return Entity.GetIndex() % 3 != 0;
+        }
+
+        // Every walk style removes the entity it is visiting, then proves nothing was skipped, repeated, or corrupted.
+        template<typename T, typename TWalk>
+        void CheckRemovalWalk(const char* Walk, TWalk RunWalk)
+        {
+            ECS::FRegistry Registry;
+            TVector<ECS::FEntity> Entities;
+            for (uint32 Index = 0; Index < RemovalEntityCount; ++Index)
+            {
+                const ECS::FEntity Entity = Registry.Create();
+                if constexpr (ECS::CDataComponent<T>)
+                {
+                    Registry.Emplace<T>(Entity, T{ .Value = Entity.GetIndex() });
+                }
+                else
+                {
+                    Registry.Emplace<T>(Entity);
+                }
+                Entities.push_back(Entity);
+            }
+
+            TVector<uint32> Visits(RemovalEntityCount, 0u);
+            bool bVisitedOnlySeeded = true;
+            RunWalk(Registry, [&](ECS::FEntity Entity)
+            {
+                if (Entity.GetIndex() >= RemovalEntityCount)
+                {
+                    bVisitedOnlySeeded = false;
+                    return;
+                }
+                ++Visits[Entity.GetIndex()];
+                if (ShouldRemoveDuringWalk(Entity))
+                {
+                    Registry.Remove<T>(Entity);
+                }
+            });
+
+            bool bEachOnce = true;
+            bool bSurvivorsIntact = true;
+            for (const ECS::FEntity Entity : Entities)
+            {
+                bEachOnce = bEachOnce && Visits[Entity.GetIndex()] == 1;
+
+                const bool bHas = Registry.HasAll<T>(Entity);
+                if (bHas == ShouldRemoveDuringWalk(Entity))
+                {
+                    bSurvivorsIntact = false;
+                }
+                if constexpr (ECS::CDataComponent<T>)
+                {
+                    if (bHas && Registry.Get<T>(Entity).Value != Entity.GetIndex())
+                    {
+                        bSurvivorsIntact = false;
+                    }
+                }
+            }
+
+            char Message[192];
+            std::snprintf(Message, sizeof(Message), "%s visits every entity once while removing the current one", Walk);
+            Check(bEachOnce && bVisitedOnlySeeded, Message);
+            std::snprintf(Message, sizeof(Message), "%s leaves exactly the kept entities with their own values", Walk);
+            Check(bSurvivorsIntact, Message);
+        }
+
+        // Gives every seeded entity the partner, plus spares, so the pool under test stays the smaller driver.
+        template<typename T>
+        void AddPartnersSoTheSeededPoolDrives(ECS::FRegistry& Registry)
+        {
+            Registry.View<T>().ForEachEntity([&Registry](ECS::FEntity Entity) { Registry.Emplace<FRemovalPartner>(Entity); });
+            for (int Spare = 0; Spare < 16; ++Spare)
+            {
+                Registry.Emplace<FRemovalPartner>(Registry.Create());
+            }
+        }
+
+        void CheckRemovalDuringIteration()
+        {
+            CheckRemovalWalk<FRemovalPacked>("a packed view ForEach", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                Registry.View<FRemovalPacked>().ForEach([&](ECS::FEntity Entity, FRemovalPacked&) { Visit(Entity); });
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("a paged view ForEach", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                Registry.View<FRemovalPaged>().ForEach([&](ECS::FEntity Entity, FRemovalPaged&) { Visit(Entity); });
+            });
+
+            CheckRemovalWalk<FRemovalTag>("a tag view ForEach", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                Registry.View<FRemovalTag>().ForEach([&](ECS::FEntity Entity) { Visit(Entity); });
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("an excluding view ForEach", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                Registry.Emplace<FRemovalTag>(Registry.Create());
+                Registry.View<FRemovalPaged>(ECS::TExclude<FRemovalTag>{}).ForEach(
+                    [&](ECS::FEntity Entity, FRemovalPaged&) { Visit(Entity); });
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("a two-pool view ForEach on its driver", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                AddPartnersSoTheSeededPoolDrives<FRemovalPaged>(Registry);
+                auto View = Registry.View<FRemovalPaged, FRemovalPartner>();
+                Check(View.GetDriver() == Registry.FindStorage<FRemovalPaged>().GetSet(), "the smaller pool drives the view");
+                View.ForEach([&](ECS::FEntity Entity, FRemovalPaged&, FRemovalPartner&) { Visit(Entity); });
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("a two-pool ForEachEntity on its driver", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                AddPartnersSoTheSeededPoolDrives<FRemovalPaged>(Registry);
+                Registry.View<FRemovalPaged, FRemovalPartner>().ForEachEntity(Visit);
+            });
+
+            CheckRemovalWalk<FRemovalPacked>("a view range-for", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                for (ECS::FEntity Entity : Registry.View<FRemovalPacked>())
+                {
+                    Visit(Entity);
+                }
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("a view Each range-for", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                auto View = Registry.View<FRemovalPaged>();
+                for (auto [Entity, Value] : View.Each())
+                {
+                    Visit(Entity);
+                }
+            });
+
+            CheckRemovalWalk<FRemovalPacked>("a storage Each range-for", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                const auto Storage = Registry.FindStorage<FRemovalPacked>();
+                for (auto [Entity, Value] : Storage.Each())
+                {
+                    Visit(Entity);
+                }
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("a sparse set range-for", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                for (ECS::FEntity Entity : *Registry.FindStorage<FRemovalPaged>().GetSet())
+                {
+                    Visit(Entity);
+                }
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("a runtime view ForEach", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                ECS::FRuntimeView View;
+                View.AddInclude(*Registry.FindStorage(ECS::GetComponentTypeID<FRemovalPaged>()));
+                View.ForEach(Visit);
+            });
+
+            CheckRemovalWalk<FRemovalPaged>("a runtime view range-for", [](ECS::FRegistry& Registry, auto Visit)
+            {
+                ECS::FRuntimeView View;
+                View.AddInclude(*Registry.FindStorage(ECS::GetComponentTypeID<FRemovalPaged>()));
+                for (ECS::FEntity Entity : View)
+                {
+                    Visit(Entity);
+                }
+            });
+
+            ECS::FRegistry Registry;
+            TVector<ECS::FEntity> Entities;
+            for (uint32 Index = 0; Index < RemovalEntityCount; ++Index)
+            {
+                const ECS::FEntity Entity = Registry.Create();
+                Registry.Emplace<FRemovalPaged>(Entity, FRemovalPaged{ .Value = Index });
+                Registry.Emplace<FRemovalPartner>(Entity, FRemovalPartner{ .Value = Index });
+                Entities.push_back(Entity);
+            }
+
+            uint32 Visited = 0;
+            Registry.View<FRemovalPaged, FRemovalPartner>().ForEach([&](ECS::FEntity Entity, FRemovalPaged&, FRemovalPartner&)
+            {
+                ++Visited;
+                if (ShouldRemoveDuringWalk(Entity))
+                {
+                    Registry.Destroy(Entity);
+                }
+            });
+
+            bool bDestroyedCleanly = true;
+            for (uint32 Index = 0; Index < RemovalEntityCount; ++Index)
+            {
+                const ECS::FEntity Entity = Entities[Index];
+                if (Registry.IsValid(Entity) == ShouldRemoveDuringWalk(Entity))
+                {
+                    bDestroyedCleanly = false;
+                }
+                else if (Registry.IsValid(Entity) && Registry.Get<FRemovalPartner>(Entity).Value != Index)
+                {
+                    bDestroyedCleanly = false;
+                }
+            }
+            Check(Visited == RemovalEntityCount, "destroying the current entity mid-walk skips nobody");
+            Check(bDestroyedCleanly, "destroying the current entity mid-walk leaves exactly the kept entities intact");
+        }
     }
 
     bool RunSelfCheck()
@@ -645,6 +857,7 @@ namespace ECSBench
         CheckComponentTraits();
         CheckTombstoneReuse();
         CheckRangeIteration();
+        CheckRemovalDuringIteration();
 
         std::printf("  %d checks, %d failures\n\n", Checks, Failures);
         return Failures == 0;

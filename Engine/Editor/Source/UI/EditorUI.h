@@ -141,9 +141,24 @@ namespace Lumina
         // so type-specific save work still runs.
         void SaveAllDirtyPackages() override;
 
+        struct FSaveAllResult
+        {
+            uint32           Saved = 0;
+            TVector<FString> FailedPaths;
+        };
+
+        // Save All without the toasts, reporting what it wrote and which packages refused.
+        FSaveAllResult SaveAllDirtyPackagesSilently();
+
+        // Exits a few frames from now past the unsaved-changes prompt and any other modal, so an agent's reply goes out first.
+        void QuitWithoutPrompt();
+
         // Re-entry guard for the dirty-packages prompt; true while the dialog is open.
         // A member (not a function-local static) so Cancel can re-arm it.
         bool bVerifyingDirtyPackages = false;
+
+        int32 PendingQuitFrames = 0;
+        bool  bQuitWithoutPrompt = false;
 
     private:
 

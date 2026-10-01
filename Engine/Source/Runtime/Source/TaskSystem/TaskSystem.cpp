@@ -11,6 +11,7 @@
 #include "Scheduler/JobProfiler.h"
 #endif
 #include <algorithm>
+#include <cstring>
 #include <cstdlib>
 
 namespace Lumina
@@ -55,6 +56,9 @@ namespace Lumina
             Jobs::EJobPriority Priority = Jobs::EJobPriority::Normal;
             Jobs::FCounter*    Counter  = nullptr;
 
+            // Names each worker's share after the function that issued the loop.
+            const char*        CallSite = nullptr;
+
             alignas(64) TAtomic<uint32> Cursor{0};
         };
 
@@ -82,6 +86,7 @@ namespace Lumina
         {
             FCursorFor& C = *static_cast<FCursorFor*>(Arg);
             const bool bYieldable = C.Priority == Jobs::EJobPriority::Background;
+            LUMINA_PROFILE_SECTION_NAMED(C.CallSite != nullptr ? C.CallSite : "Task::ParallelFor");
 
             for (;;)
             {
@@ -109,6 +114,8 @@ namespace Lumina
         constexpr uint64 kSerialBudgetNanos = 25'000;   // below this, the fan-out costs more than the work
         constexpr uint64 kSerialOverrunFactor = 4;
         constexpr uint64 kBackgroundGrabNanos = 1'000'000;
+        // Least work worth waking a helper for, since each costs a wake and is one more straggler to wait on.
+        constexpr uint64 kMinNanosPerHelper = 50'000;
 
         struct alignas(64) FCostEntry
         {
@@ -271,7 +278,77 @@ namespace Lumina
         return GInlineNestedDepth > 0;
     }
 
-    void FTaskSystem::ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx)
+    const char* Task::CallSiteName(const char* Signature)
+    {
+        static FMutex Mutex;
+        static TVector<FString> Names;
+
+        // The callable's type sits in the template argument, as ParallelFor<class Scope::Function::<lambda_1>> on MSVC and TFunc = Scope::Function(args)::<lambda on GCC or Clang.
+        FString Signed(Signature);
+        size_t Begin = Signed.find("ParallelFor<");
+        if (Begin != FString::npos)
+        {
+            Begin += 12;
+        }
+        else if ((Begin = Signed.find("TFunc = ")) != FString::npos)
+        {
+            Begin += 8;
+        }
+
+        FString Name = Signed;
+        if (Begin != FString::npos)
+        {
+            for (const char* Keyword : { "class ", "struct " })
+            {
+                if (Signed.find(Keyword, Begin) == Begin)
+                {
+                    Begin += strlen(Keyword);
+                }
+            }
+
+            // Whichever comes first ends the enclosing function's name, the lambda marker or GCC's parameter list.
+            const size_t Lambda = Signed.find("::<lambda", Begin);
+            const size_t Params = Signed.find('(', Begin);
+            const size_t Close  = Signed.find('>', Begin);
+            const size_t End    = Math::Min(Lambda, Math::Min(Params, Close));
+            if (End != FString::npos && End > Begin)
+            {
+                Name = Signed.substr(Begin, End - Begin);
+            }
+        }
+
+        // The anonymous and engine namespaces add nothing a reader needs and only make every name longer.
+        for (const char* Noise : { "`anonymous namespace'::", "(anonymous namespace)::", "Lumina::" })
+        {
+            for (size_t At = Name.find(Noise); At != FString::npos; At = Name.find(Noise))
+            {
+                Name.erase(At, strlen(Noise));
+            }
+        }
+
+        FScopeLock Lock(Mutex);
+        for (const FString& Existing : Names)
+        {
+            if (Existing == Name)
+            {
+                return Existing.c_str();
+            }
+        }
+        // Reserved up front, since growing the vector would move the strings every returned pointer refers to.
+        if (Names.capacity() == 0)
+        {
+            Names.reserve(1024);
+        }
+        if (Names.size() == Names.capacity())
+        {
+            return "Task::ParallelFor";
+        }
+        Names.push_back(Move(Name));
+        return Names.back().c_str();
+    }
+
+    void FTaskSystem::ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx,
+                                      const char* CallSite)
     {
         // Running inline never waits, so the enclosing item cannot park and pick up unrelated work meanwhile.
         if (GInlineNestedDepth > 0)
@@ -329,12 +406,20 @@ namespace Lumina
         C.Num   = Num;
         C.Grain = Grain;
         C.Priority = ToJobPriority(Priority);
+        C.CallSite = CallSite;
         C.Cursor.store(FirstItem, std::memory_order_relaxed);
 
         // One job per worker at most, minus the grab the participating caller takes itself.
         const uint32 Grabs = (Num - FirstItem + Grain - 1) / Grain;
         uint32 K = Grabs - 1;
         K = Math::Min(K, Math::Min(Jobs::GetNumWorkers(), Task::kMaxChunks));
+
+        // A priced loop goes only as wide as it has work to give each helper, and the caller runs whatever that leaves.
+        if (NanosPerItem != 0)
+        {
+            const uint64 Helpers = (NanosPerItem * (uint64)(Num - FirstItem)) / kMinNanosPerHelper;
+            K = (uint32)Math::Min<uint64>(K, Helpers);
+        }
 
         const Jobs::FJobDecl Decl{ &RunCursorJob, &C, "Task::ParallelFor" };
 

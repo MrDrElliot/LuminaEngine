@@ -3858,7 +3858,8 @@ void Profiler::CalibrateTimer()
         const auto t0 = std::chrono::high_resolution_clock::now();
         const auto r0 = GetTime();
         std::atomic_signal_fence( std::memory_order_acq_rel );
-        std::this_thread::sleep_for( std::chrono::milliseconds( 200 ) );
+        // Lumina patch, 200 ms stalled every DLL load and 25 ms already bounds the rate error near 4e-6.
+        std::this_thread::sleep_for( std::chrono::milliseconds( 25 ) );
         std::atomic_signal_fence( std::memory_order_acq_rel );
         const auto t1 = std::chrono::high_resolution_clock::now();
         const auto r1 = GetTime();
@@ -3877,7 +3878,8 @@ void Profiler::CalibrateDelay()
     constexpr int Iterations = 50000;
 
     auto mindiff = std::numeric_limits<int64_t>::max();
-    for( int i=0; i<Iterations * 10; i++ )
+    // Lumina patch, a tenth of the reference's pairs still finds the minimum tick delta.
+    for( int i=0; i<Iterations; i++ )
     {
         const auto t0i = GetTime();
         const auto t1i = GetTime();

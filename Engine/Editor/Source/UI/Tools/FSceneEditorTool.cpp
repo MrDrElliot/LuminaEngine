@@ -3624,6 +3624,7 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION("Draw Entity List");
                 FlushOutlinerPending();
+                OutlinerContext.bFilterActive = EntityFilterState.FilterName.IsActive() || !EntityFilterState.ComponentFilters.empty();
                 OutlinerListView.Draw(OutlinerContext);
 
                 // A folder created this frame only gets its row on the rebuild the Draw above schedules.

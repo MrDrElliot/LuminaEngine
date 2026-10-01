@@ -230,7 +230,8 @@ namespace Lumina
         RUNTIME_API static bool SavePackage(CPackage* Package, FStringView Path);
 
         /** Saves to compressed bytes for the cooker, stripping EditorOnly properties and thumbnails. */
-        RUNTIME_API NODISCARD static bool SavePackageForCook(CPackage* Package, TVector<uint8>& OutCompressed);
+        RUNTIME_API NODISCARD static bool SavePackageForCook(CPackage* Package, TVector<uint8>& OutCompressed,
+                                                             const TFunction<bool(const CObject*)>& ExcludeExport = {});
 
         /** Where a package's bulk region sits in its file, file-absolute, with the refs inside exports relative to it. */
         struct FBulkRegion

@@ -908,10 +908,10 @@ struct FCluster
 {
     float4 MinPoint;
     float4 MaxPoint;
-    uint   LightIndices[LIGHTS_PER_CLUSTER];
+    // Where this cluster's run starts in ClusterLightIndices, and how long it is.
+    uint   Offset;
     uint   Count;
-    // Present in the C++ mirror through alignas(16); without them the strides disagree by 12 bytes.
-    uint   _Pad[3];
+    uint   _Pad[2];
 };
 
 struct FFrustum

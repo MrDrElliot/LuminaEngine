@@ -47,19 +47,19 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #endif
 
-extern "C" void* LuminaRmlFreeTypeAlloc(size_t Size)
+extern "C" RUNTIME_API void* LuminaRmlFreeTypeAlloc(size_t Size)
 {
     LUMINA_MEMORY_SCOPE("RmlUi");
     return ::Lumina::Memory::Malloc(Size);
 }
 
-extern "C" void* LuminaRmlFreeTypeRealloc(void* Block, size_t NewSize)
+extern "C" RUNTIME_API void* LuminaRmlFreeTypeRealloc(void* Block, size_t NewSize)
 {
     LUMINA_MEMORY_SCOPE("RmlUi");
     return ::Lumina::Memory::Realloc(Block, NewSize);
 }
 
-extern "C" void LuminaRmlFreeTypeFree(void* Block)
+extern "C" RUNTIME_API void LuminaRmlFreeTypeFree(void* Block)
 {
     ::Lumina::Memory::Free(Block);
 }
@@ -1798,13 +1798,20 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || World == nullptr || VirtualPath.empty())
+        if (World == nullptr || VirtualPath.empty())
         {
+            return nullptr;
+        }
+        if (!State.bInitialized)
+        {
+            LOG_WARN("[RmlUi] World.UI.LoadDocument('{}') called before RmlUi initialized.", FString(VirtualPath.data(), VirtualPath.size()).c_str());
             return nullptr;
         }
         FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr || UI->Context == nullptr)
         {
+            LOG_WARN("[RmlUi] World.UI.LoadDocument('{}') found no UI context on world '{}'.",
+                FString(VirtualPath.data(), VirtualPath.size()).c_str(), World->GetName().c_str());
             return nullptr;
         }
         Rml::ElementDocument* Doc = UI->Context->LoadDocument(ToRml(VirtualPath));

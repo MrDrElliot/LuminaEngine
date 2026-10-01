@@ -2,6 +2,7 @@
 
 #include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Delegates/CoreDelegates.h"
 #include "Core/Module/ModuleManager.h"
 #include "Log/Log.h"
 
@@ -36,6 +37,9 @@ namespace Lumina
     {
         GModule = this;
 
+        // A request still in flight when shutdown tears down reflection would serialize its reply through freed types.
+        ShutdownStartedHandle = FCoreDelegates::OnEngineShutdownStarted.AddLambda([this]() { Server.Stop(); });
+
         // A single dash clusters into character flags, so the switch has to be the double dash form.
         const bool bSwitched = GCommandLine != nullptr && GCommandLine->Has("mcp");
 
@@ -69,6 +73,7 @@ namespace Lumina
     void FMCPEditorModule::ShutdownModule()
     {
         // The transport owns a thread that calls back into this DLL, so it has to stop before unload.
+        FCoreDelegates::OnEngineShutdownStarted.Remove(ShutdownStartedHandle);
         Server.Stop();
 
         GModule = nullptr;

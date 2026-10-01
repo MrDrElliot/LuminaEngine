@@ -128,7 +128,7 @@ namespace Lumina
 
         // Dense row list, because the clipper measures row height from the first submitted index.
         const TVector<int32>* Rows = &VisibleList;
-        if (Context.FilterFunction)
+        if (Context.FilterFunction && Context.bFilterActive)
         {
             FilteredList.clear();
             FilteredList.reserve(VisibleList.size());

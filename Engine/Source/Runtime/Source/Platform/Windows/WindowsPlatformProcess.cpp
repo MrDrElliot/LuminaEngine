@@ -485,17 +485,37 @@ namespace Lumina::Platform
         // The parent's read end must NOT be inherited by the child.
         SetHandleInformation(ReadEnd, HANDLE_FLAG_INHERIT, 0);
 
-        STARTUPINFOW si{};
-        si.cb = sizeof(si);
-        si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdInput  = nullptr;
-        si.hStdOutput = WriteEnd;
-        si.hStdError  = WriteEnd;
+        STARTUPINFOEXW si{};
+        si.StartupInfo.cb = sizeof(si);
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput  = nullptr;
+        si.StartupInfo.hStdOutput = WriteEnd;
+        si.StartupInfo.hStdError  = WriteEnd;
+
+        // Only the pipe is handed down, since a child that inherits a server's listening socket keeps its port bound after we exit.
+        SIZE_T AttributeBytes = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &AttributeBytes);
+        TVector<uint8> AttributeStorage(AttributeBytes);
+        si.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(AttributeStorage.data());
+        HANDLE InheritedHandles[] = { WriteEnd };
+        const bool bAttributeList = InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &AttributeBytes) != FALSE;
+        const bool bHandleList = bAttributeList
+            && UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                         InheritedHandles, sizeof(InheritedHandles), nullptr, nullptr);
+        if (bAttributeList && !bHandleList)
+        {
+            DeleteProcThreadAttributeList(si.lpAttributeList);
+        }
+        if (!bHandleList)
+        {
+            si.StartupInfo.cb = sizeof(STARTUPINFOW);
+            si.lpAttributeList = nullptr;
+        }
 
         PROCESS_INFORMATION pi{};
 
         // The editor is not a console app and output is captured, so suppress the popup.
-        const DWORD CreationFlags = CREATE_NO_WINDOW;
+        const DWORD CreationFlags = CREATE_NO_WINDOW | (bHandleList ? EXTENDED_STARTUPINFO_PRESENT : 0);
 
         BOOL ok = CreateProcessW(
             nullptr,
@@ -506,8 +526,13 @@ namespace Lumina::Platform
             CreationFlags,
             nullptr,
             WorkingDirectory,
-            &si,
+            &si.StartupInfo,
             &pi);
+
+        if (bHandleList)
+        {
+            DeleteProcThreadAttributeList(si.lpAttributeList);
+        }
 
         // Release parent's write end; without this ReadFile blocks forever after child exits.
         CloseHandle(WriteEnd);

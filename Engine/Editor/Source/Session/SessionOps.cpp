@@ -4,6 +4,7 @@
 
 #include "Core/Engine/Engine.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
 #include "World/World.h"
 #include "LuminaEditor.h"
@@ -263,6 +264,79 @@ namespace Lumina::SessionOps
             return false;
         }
         return UI->CloseTab(Name, bDiscardUnsaved, OutError);
+    }
+
+    TVector<FString> GetDirtyPackagePaths()
+    {
+        TVector<FString> Paths;
+        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
+        {
+            CPackage* Package = *Itr;
+            if (!Package->HasAnyFlag(OF_MarkedDestroy) && Package->IsDirty())
+            {
+                Paths.push_back(FString(Package->GetPackagePath().c_str()));
+            }
+        }
+        return Paths;
+    }
+
+    bool SaveAll(uint32& OutSaved, TVector<FString>& OutFailedPaths, FString& OutError)
+    {
+        FEditorUI* UI = FindUI();
+        if (UI == nullptr)
+        {
+            OutError = "The editor UI is not running.";
+            return false;
+        }
+
+        FEditorUI::FSaveAllResult Result = UI->SaveAllDirtyPackagesSilently();
+        OutSaved = Result.Saved;
+        OutFailedPaths = Move(Result.FailedPaths);
+        if (!OutFailedPaths.empty())
+        {
+            OutError = Lumina::Format("{} package(s) failed to save.", OutFailedPaths.size());
+            return false;
+        }
+        return true;
+    }
+
+    bool Quit(EQuitUnsaved Unsaved, FString& OutError)
+    {
+        FEditorUI* UI = FindUI();
+        if (UI == nullptr)
+        {
+            OutError = "The editor UI is not running.";
+            return false;
+        }
+
+        if (Unsaved == EQuitUnsaved::Save)
+        {
+            uint32 Saved = 0;
+            TVector<FString> Failed;
+            if (!SaveAll(Saved, Failed, OutError))
+            {
+                return false;
+            }
+        }
+        else if (Unsaved == EQuitUnsaved::Refuse)
+        {
+            const TVector<FString> Dirty = GetDirtyPackagePaths();
+            if (!Dirty.empty())
+            {
+                OutError = Lumina::Format("{} package(s) have unsaved changes.", Dirty.size());
+                return false;
+            }
+        }
+
+        // Shutting down under a live play session tears its world down out of order.
+        if (IsSimulating())
+        {
+            FString StopError;
+            (void)StopPlay(StopError);
+        }
+
+        UI->QuitWithoutPrompt();
+        return true;
     }
 
     bool OpenAsset(const FGuid& AssetGUID, FString& OutTabId, FString& OutError)

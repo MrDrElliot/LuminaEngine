@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Material.h"
+#include "Renderer/SpirvStrip.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Material/MaterialParameterCollection.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
@@ -177,7 +178,34 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Materials");
 
+        if (!(Ar.IsWriting() && Ar.IsCooking()))
+        {
+            CMaterialInterface::Serialize(Ar);
+            return;
+        }
+
+        // The shipped game never debugs its shaders, and the embedded source and line tables are a third of each binary.
+        FRecursiveScopeLock Lock(ShaderStageMutex);
+        TVector<FMaterialStageBlob> EditorStages = Stages;
+        TVector<FMaterialShaderPermutation> EditorPermutations = Permutations;
+
+        auto StripBlobs = [](TVector<FMaterialStageBlob>& Blobs)
+        {
+            for (FMaterialStageBlob& Blob : Blobs)
+            {
+                Spirv::StripDebugInfo(Blob.Spirv);
+            }
+        };
+        StripBlobs(Stages);
+        for (FMaterialShaderPermutation& Permutation : Permutations)
+        {
+            StripBlobs(Permutation.Stages);
+        }
+
         CMaterialInterface::Serialize(Ar);
+
+        Stages = Move(EditorStages);
+        Permutations = Move(EditorPermutations);
     }
 
     // The engine publishes GShaderCompiler before the first CDO, and tests do not, so the creators say so.
