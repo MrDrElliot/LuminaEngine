@@ -2372,8 +2372,8 @@ namespace Lumina::RHI
             return true;
         }
 
-        // NVIDIA answers false here, so the question becomes whether device-local memory is still reachable.
-        const VkImageCreateInfo Probe
+        // NVIDIA answers false here, so compare the memory an image may live in with and without the bit.
+        VkImageCreateInfo Probe
         {
             .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .imageType     = VK_IMAGE_TYPE_2D,
@@ -2383,41 +2383,58 @@ namespace Lumina::RHI
             .arrayLayers   = 1,
             .samples       = VK_SAMPLE_COUNT_1_BIT,
             .tiling        = VK_IMAGE_TILING_OPTIMAL,
-            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                           | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT,
+            .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
             .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         };
 
-        VkImage ProbeImage = VK_NULL_HANDLE;
-        if (vkCreateImage(GDevice->Device, &Probe, Vulkan::HostAllocator(), &ProbeImage) != VK_SUCCESS)
+        const auto AllowedTypes = [&Probe]() -> uint32
+        {
+            VkImage ProbeImage = VK_NULL_HANDLE;
+            if (vkCreateImage(GDevice->Device, &Probe, Vulkan::HostAllocator(), &ProbeImage) != VK_SUCCESS)
+            {
+                return 0u;
+            }
+            VkMemoryRequirements Requirements{};
+            vkGetImageMemoryRequirements(GDevice->Device, ProbeImage, &Requirements);
+            vkDestroyImage(GDevice->Device, ProbeImage, Vulkan::HostAllocator());
+            return Requirements.memoryTypeBits;
+        };
+
+        const uint32 PlainTypes = AllowedTypes();
+        Probe.usage |= VK_IMAGE_USAGE_HOST_TRANSFER_BIT;
+        const uint32 HostTypes = AllowedTypes();
+        if (HostTypes == 0u)
         {
             LOG_DISPLAY("Host image copy declined; an image carrying the usage bit could not be created.");
             return false;
         }
 
-        VkMemoryRequirements Requirements{};
-        vkGetImageMemoryRequirements(GDevice->Device, ProbeImage, &Requirements);
-        vkDestroyImage(GDevice->Device, ProbeImage, Vulkan::HostAllocator());
-
         VkPhysicalDeviceMemoryProperties MemProps{};
         vkGetPhysicalDeviceMemoryProperties(GDevice->PhysicsDevice, &MemProps);
 
+        // Device-local types a sampled image normally gets that are not CPU-mapped, which is where streamed mips belong.
+        uint32 PlainVramTypes = 0u;
         for (uint32 TypeIndex = 0; TypeIndex < MemProps.memoryTypeCount; ++TypeIndex)
         {
-            const bool bAllowed = (Requirements.memoryTypeBits & (1u << TypeIndex)) != 0;
-            const bool bDeviceLocal =
-                (MemProps.memoryTypes[TypeIndex].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
-
-            if (bAllowed && bDeviceLocal)
+            const VkMemoryPropertyFlags Flags = MemProps.memoryTypes[TypeIndex].propertyFlags;
+            if ((Flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (Flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
-                LOG_DISPLAY("Host image copy enabled; the usage bit keeps device-local memory reachable.");
-                return true;
+                PlainVramTypes |= 1u << TypeIndex;
             }
         }
+        PlainVramTypes &= PlainTypes;
 
-        LOG_DISPLAY("Host image copy declined; the usage bit would push images out of device-local memory.");
-        return false;
+        // On NVIDIA the bit leaves only host-visible types (system RAM or mapped VRAM), and streaming into those stalled frames for 100 ms.
+        if (PlainVramTypes != 0u && (HostTypes & PlainVramTypes) != PlainVramTypes)
+        {
+            LOG_DISPLAY("Host image copy declined; the usage bit narrows image memory from types {:#x} to {:#x}.",
+                        PlainTypes, HostTypes);
+            return false;
+        }
+
+        LOG_DISPLAY("Host image copy enabled; the usage bit keeps image memory types {:#x}.", HostTypes);
+        return true;
     }
 
     static void CreateAllocator(bool bMemoryPriority, bool bMemoryBudget)

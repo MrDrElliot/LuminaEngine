@@ -208,6 +208,9 @@ namespace Lumina
             // Charged at issue and stored, because applying the load moves MipBytes out and empties them.
             uint64                   StagingBytes   = 0;
 
+            // Pool bytes the promotion adds, held against the budget until the load retires.
+            uint64                   GrowthBytes    = 0;
+
             uint32 MipSpan() const { return (uint32)(SourceFirstMip - TargetFirstMip); }
             uint32 SliceIndex(uint32 Layer, uint32 Mip) const { return Layer * MipSpan() + (Mip - TargetFirstMip); }
 
@@ -246,6 +249,7 @@ namespace Lumina
 
         // Sort keys are precomputed into these so the comparator never reaches back into Textures.
         TVector<TPair<float, uint32>>           BudgetOrderScratch;
+        TVector<TPair<float, uint32>>           BudgetUnresidentScratch;
         TVector<TPair<float, uint32>>           PromotionScratch;
 
         TVector<FStreamingTexture>              Textures;
@@ -270,6 +274,9 @@ namespace Lumina
         // Residency changes left this frame, promotions and demotions together. Meters image create/retire
         // churn, which a demotion pays in full while spending no host bytes.
         uint32                                  FrameResidencyChanges = 0;
+
+        // Set when a promotion was refused because the pool was full, which lets demotions skip their dead band.
+        bool                                    bPromotionBlockedByPool = false;
 
         /** Where TickResidencyFills starts spending the frame's budget, advanced every frame. Registry
          *  order alone let whatever sits early take all of it, every frame, forever -- see the comment
