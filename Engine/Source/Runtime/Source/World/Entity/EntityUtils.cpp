@@ -869,36 +869,42 @@ namespace Lumina::ECS::Utils
         std::atomic<bool> bPublishMoved{ false };
         FDirtyQueue       MovedTransforms;
 
+        // One buffer per thread slot, since thousands of concurrent enqueues from a parallel pose overflow the ring into its spill lock.
+        struct alignas(64) FMovedSlot
+        {
+            FMutex                Lock;
+            TVector<ECS::FEntity> Items;
+        };
+        TVector<TUniquePtr<FMovedSlot>> MovedSlots;
+        uint32                          NumMovedSlots = 0;
+
         FORCEINLINE void PublishMoved(ECS::FEntity Entity)
         {
-            if (bPublishMoved.load(std::memory_order_relaxed))
+            if (!bPublishMoved.load(std::memory_order_relaxed))
             {
-                MovedTransforms.Enqueue(Entity);
+                return;
             }
+
+            const uint32 Slot = Jobs::IsInitialized() ? Jobs::GetWorkerIndex() : ~0u;
+            if (Slot < NumMovedSlots)
+            {
+                FMovedSlot& Moved = *MovedSlots[Slot];
+                TScopeLock<FMutex> Guard(Moved.Lock);
+                Moved.Items.push_back(Entity);
+                return;
+            }
+
+            MovedTransforms.Enqueue(Entity);
         }
 
-        // A resolve's workers collect here, since thousands of concurrent enqueues overflow the ring into its lock.
-        TVector<TVector<ECS::FEntity>> MovedBySlot;
-
-        FORCEINLINE void PublishMovedFromResolve(ECS::FEntity Entity)
+        void DrainMovedSlots(TVector<ECS::FEntity>& Out)
         {
-            if (bPublishMoved.load(std::memory_order_relaxed))
+            for (uint32 Slot = 0; Slot < NumMovedSlots; ++Slot)
             {
-                uint32 Slot = Jobs::GetWorkerIndex();
-                if (Slot >= MovedBySlot.size()) { Slot = 0; }
-                MovedBySlot[Slot].push_back(Entity);
-            }
-        }
-
-        void FlushMovedFromResolve()
-        {
-            for (TVector<ECS::FEntity>& Slot : MovedBySlot)
-            {
-                for (ECS::FEntity Entity : Slot)
-                {
-                    MovedTransforms.Enqueue(Entity);
-                }
-                Slot.clear();
+                FMovedSlot& Moved = *MovedSlots[Slot];
+                TScopeLock<FMutex> Guard(Moved.Lock);
+                Out.insert(Out.end(), Moved.Items.begin(), Moved.Items.end());
+                Moved.Items.clear();
             }
         }
 
@@ -906,7 +912,12 @@ namespace Lumina::ECS::Utils
         {
             const uint32 Slots = Jobs::IsInitialized() ? Jobs::GetNumThreadSlots() : 1;
             HierBySlot.resize(Slots);
-            MovedBySlot.resize(Slots);
+            NumMovedSlots = Slots;
+            MovedSlots.reserve(Slots);
+            for (uint32 Slot = 0; Slot < Slots; ++Slot)
+            {
+                MovedSlots.push_back(MakeUnique<FMovedSlot>());
+            }
         }
     };
     
@@ -1065,7 +1076,7 @@ namespace Lumina::ECS::Utils
                 {
                     if (bFromResolve)
                     {
-                        PublishState->PublishMovedFromResolve(Child);
+                        PublishState->PublishMoved(Child);
                     }
                     else
                     {
@@ -1191,6 +1202,8 @@ namespace Lumina::ECS::Utils
 
         const SIZE_T Before = Out.size();
 
+        State->DrainMovedSlots(Out);
+
         ECS::FEntity Batch[256];
         std::size_t Count;
         while ((Count = State->MovedTransforms.DequeueBulk(Batch, 256)) != 0)
@@ -1284,7 +1297,7 @@ namespace Lumina::ECS::Utils
             }
             T.WorldTransform = T.LocalTransform;
             T.bWorldDirty    = false;
-            DirtyState.PublishMovedFromResolve(E);
+            DirtyState.PublishMoved(E);
         };
 
         if (Raw.size() > 1000)
@@ -1298,8 +1311,6 @@ namespace Lumina::ECS::Utils
                 Filter(i);
             }
         }
-
-        DirtyState.FlushMovedFromResolve();
 
         // Gather hierarchical entities from the per-slot buffers with one reserve and one memcpy each.
         TVector<ECS::FEntity>& HierEntities = DirtyState.HierScratch;
@@ -1346,7 +1357,7 @@ namespace Lumina::ECS::Utils
                 DirtyTransform.WorldTransform = DirtyTransform.LocalTransform;
             }
 
-            DirtyState.PublishMovedFromResolve(DirtyEntity);
+            DirtyState.PublishMoved(DirtyEntity);
             PropagateTransformsToDescendants(TransformStorage, RelStorage, DirtyEntity, /*bClearDirty*/ false, &DirtyState, /*bFromResolve*/ true);
         };
 
@@ -1361,8 +1372,6 @@ namespace Lumina::ECS::Utils
                 ResolveHier(i);
             }
         }
-
-        DirtyState.FlushMovedFromResolve();
 
         for (ECS::FEntity Resolved : HierEntities)
         {

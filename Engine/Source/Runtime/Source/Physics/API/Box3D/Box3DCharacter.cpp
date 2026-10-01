@@ -125,7 +125,7 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnCharacterComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        FBodyRecord& Record = CharacterBodies[Entity];
+        FBodyRecord& Record = CharacterBodies.FindOrAdd(Entity);
         Record.Revision = NextBindingRevision++;
         PendingCharacters.push_back(Entity);
     }
@@ -191,8 +191,9 @@ namespace Lumina::Physics
         ShapeDef.enableSensorEvents = true;
         Handle->ProxyShape = b3CreateCapsuleShape(Handle->ProxyBody, &ShapeDef, &LocalCapsule);
 
-        CharacterBodies[Entity].Handle = Handle->ProxyBodyHandle;
-        CharacterBodies[Entity].Status = EPhysicsBodyStatus::Ready;
+        FBodyRecord& Record = CharacterBodies.FindOrAdd(Entity);
+        Record.Handle = Handle->ProxyBodyHandle;
+        Record.Status = EPhysicsBodyStatus::Ready;
         Component->Character = Move(Handle);
         Component->LastBodyPosition = Component->Character->Position;
         Component->LastBodyRotation = Component->Character->Rotation;
@@ -200,13 +201,13 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnCharacterComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (auto It = CharacterBodies.find(Entity); It != CharacterBodies.end())
+        if (const FBodyRecord* Record = CharacterBodies.Find(Entity))
         {
-            if (It->second.Handle != InvalidBodyHandle)
+            if (Record->Handle != InvalidBodyHandle)
             {
-                PendingBodyDestructions.push_back(It->second.Handle);
+                PendingBodyDestructions.push_back(Record->Handle);
             }
-            CharacterBodies.erase(It);
+            CharacterBodies.Remove(Entity);
         }
         if (SCharacterPhysicsComponent* Component = Registry.TryGet<SCharacterPhysicsComponent>(Entity))
         {

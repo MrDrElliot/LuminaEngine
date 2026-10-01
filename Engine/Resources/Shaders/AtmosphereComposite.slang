@@ -41,7 +41,7 @@ struct FPushConstants
 
     float CloudShadowCenterY;
     uint  CloudDepthIndex;           // raw depth each half-res cloud texel was marched against
-    float _Pad1;
+    float CloudFloor;                // altitude of the cloud layer's base
     float _Pad2;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -68,6 +68,9 @@ float3 ApplyAerialPerspective(float3 Color, float2 UV, float Depth)
 // A texel marched against a nearer surface stopped short, so blending it into a pixel behind that surface leaves a clear halo.
 static const float kCloudDepthMismatch  = 1.0e6;
 static const float kCloudDepthSharpness = 32.0;
+
+// In half-res texels; 1 would be plain bilinear.
+static const float kCloudTentRadius = 1.6;
 
 // How far a cloud texel's marched depth is from this pixel's, relative to the pixel's own distance.
 float CloudDepthError(float PixelRaw, float PixelLinear, float TexelRaw)
@@ -109,15 +112,16 @@ float4 UpsampleClouds(float2 UV, float Depth)
     float4 Closest    = float4(0.0, 0.0, 0.0, 1.0);
     float  ClosestErr = 3.0e38;
 
+    // A tent wider than bilinear, so the march's per-pixel start jitter averages out on thin wisps.
     [unroll]
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 16; ++i)
     {
-        int2   Offset = int2(i & 1, i >> 1);
+        int2   Offset = int2(i & 3, i >> 2) - 1;
         int2   Texel  = clamp(Base + Offset, int2(0, 0), MaxTexel);
         float4 Cloud  = gTextures2D[Pass().CloudScatterIndex].Load(int3(Texel, 0));
         float  Err    = CloudDepthError(Depth, PixelLinear, gTextures2D[Pass().CloudDepthIndex].Load(int3(Texel, 0)).r);
 
-        float2 Axis   = lerp(1.0 - Frac, Frac, float2(Offset));
+        float2 Axis   = max(kCloudTentRadius - abs(float2(Offset) - Frac), 0.0);
         float  Weight = Axis.x * Axis.y / (1.0 + Err * kCloudDepthSharpness);
         Sum          += Cloud * Weight;
         WeightSum    += Weight;
@@ -132,6 +136,13 @@ float4 UpsampleClouds(float2 UV, float Depth)
     // No texel matched, as in a sky gap narrower than a texel, so the best match is taken alone.
     return WeightSum > 1.0e-4 ? Sum / WeightSum : Closest;
 }
+
+// Each term is frame-uniform, so a frame without it specializes to 0 and sheds that term's registers.
+[vk::constant_id(13)] const uint SPEC_ATMOS_AERIAL     = 1;
+[vk::constant_id(14)] const uint SPEC_ATMOS_CLOUDS     = 1;
+[vk::constant_id(15)] const uint SPEC_ATMOS_FOG        = 1;
+[vk::constant_id(16)] const uint SPEC_ATMOS_VOLUMETRIC = 1;
+[vk::constant_id(17)] const uint SPEC_ATMOS_SHAFTS     = 1;
 
 float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
 {
@@ -160,7 +171,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
     // Froxel segment spans the camera to min(surface, froxel range), shadowed from the volume.
     float3 InScatter = float3(0.0);
     float  Trans     = 1.0;
-    if (Pass().bVolumetric != 0)
+    if (SPEC_ATMOS_VOLUMETRIC != 0 && Pass().bVolumetric != 0)
     {
         float W = bSky ? 1.0 : Froxel_DistanceToW(ViewDist, Pass().NearPlane, Pass().FogRange);
         // Dithering the depth sample by under half a slice breaks exponential-Z banding into grain.
@@ -193,7 +204,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
     float T1      = bSky ? 0.0 : ViewDist / ZPerT;
 
     // Marched because the closed form cannot carry a shadow term, and shafts would stop at the volume.
-    uint  MarchSteps = (bSunVolumetric && Pass().FarShaftSteps > 0u) ? Pass().FarShaftSteps : 0u;
+    uint  MarchSteps = (SPEC_ATMOS_SHAFTS != 0 && bSunVolumetric && Pass().FarShaftSteps > 0u) ? Pass().FarShaftSteps : 0u;
     float TMarchEnd  = T0;
     if (MarchSteps != 0u)
     {
@@ -293,13 +304,18 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     bool   bWrote = false;
 
     // Sky already carries the full atmosphere integral, and reverse-Z leaves it at depth 0.
-    if (Pass().AerialInScatterIndex != kAtmosphereTermOff && Depth > 0.0)
+    if (SPEC_ATMOS_AERIAL != 0 && Pass().AerialInScatterIndex != kAtmosphereTermOff && Depth > 0.0)
     {
         Result = ApplyAerialPerspective(Result, UV, Depth);
         bWrote = true;
     }
 
-    if (Pass().CloudScatterIndex != kAtmosphereTermOff)
+    // A ray climbs at most its own length, so a surface nearer than the gap to the cloud base has no cloud in front.
+    const float PlanetCurvatureMargin = 0.99;
+    const float CloudGap       = max(Pass().CloudFloor - GetCameraPosition().y, 0.0) * PlanetCurvatureMargin;
+    const bool  bCloudReachable = Depth <= 0.0
+        || length(ReconstructViewPos(UV, Depth, GetInverseCameraProjection())) >= CloudGap;
+    if (SPEC_ATMOS_CLOUDS != 0 && Pass().CloudScatterIndex != kAtmosphereTermOff && bCloudReachable)
     {
         float4 Cloud = UpsampleClouds(UV, Depth);
         if (Cloud.a <= 0.999)
@@ -309,7 +325,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         }
     }
 
-    if (Pass().bFog != 0)
+    if (SPEC_ATMOS_FOG != 0 && Pass().bFog != 0)
     {
         float4 Fog = IntegrateFog(UV, PixelPos, Depth);
         Result = Fog.rgb + Result * (1.0 - Fog.a);

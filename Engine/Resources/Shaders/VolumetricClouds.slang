@@ -77,6 +77,14 @@ float Cloud_SampleDensity(float3 WorldPos, float HeightFrac, bool bCheap)
     return Cloud_SampleDensityM(Cloud_Medium(), WorldPos, HeightFrac, bCheap);
 }
 
+// A step wider than a small cumulus lets neighboring pixels disagree on whether it is there at all.
+static const float kMaxStepLength = 150.0;
+static const uint  kMaxStepScale  = 4u;
+
+static const float kEmptyStepScale = 3.0;
+static const float kMaxEmptyStride = 300.0;
+static const uint  kEntryFineSteps = 3u;
+
 // Interleaved gradient noise: offsetting the first sample hides the march's step banding.
 float Cloud_IGN(float2 PixelPos)
 {
@@ -160,7 +168,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    uint  Steps    = max(Pass().MarchSteps, 16u);
+    // Grazing rays cross tens of kilometers of shell, so they buy more steps rather than outgrowing a cumulus.
+    uint  MinSteps = max(Pass().MarchSteps, 16u);
+    uint  Steps    = clamp(uint(ceil((End - Start) / kMaxStepLength)), MinSteps, MinSteps * kMaxStepScale);
     float BaseStep = (End - Start) / float(Steps);
 
     float LayerThickness = max(OuterR - InnerR, 1.0);
@@ -170,13 +180,15 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     float3 Scattered     = float3(0.0, 0.0, 0.0);
     float  Transmittance = 1.0;
 
-    // Empty space costs one shape fetch, so stride through it and spend the budget inside cloud.
-    const float kEmptyStepScale = 3.0;
+    // Empty space is cheap, so stride through it, but never far enough to jump a whole small cloud.
+    float EmptyStep = max(min(BaseStep * kEmptyStepScale, kMaxEmptyStride), BaseStep);
 
-    float T = Start + Cloud_IGN(float2(P)) * BaseStep;
+    float T        = Start + Cloud_IGN(float2(P)) * BaseStep;
+    bool  bStrode  = false;
+    uint  FineLeft = 0u;
 
     [loop]
-    for (uint i = 0u; i < Steps && T < End; ++i)
+    for (uint i = 0u; i < Steps * 2u && T < End; ++i)
     {
         if (Transmittance < 0.01)
         {
@@ -195,7 +207,19 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         float Density = Cloud_SampleDensity(WorldSample, HeightFrac, false);
         if (Density <= 0.0)
         {
-            T += BaseStep * kEmptyStepScale;
+            float Advance = FineLeft > 0u ? BaseStep : EmptyStep;
+            FineLeft = FineLeft > 0u ? FineLeft - 1u : 0u;
+            bStrode  = Advance > BaseStep;
+            T += Advance;
+            continue;
+        }
+
+        // The stride may have landed past the leading edge, so back up once and walk in at the fine step.
+        if (bStrode)
+        {
+            T -= EmptyStep - BaseStep;
+            bStrode  = false;
+            FineLeft = kEntryFineSteps;
             continue;
         }
 

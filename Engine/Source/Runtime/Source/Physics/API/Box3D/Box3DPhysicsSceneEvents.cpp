@@ -294,29 +294,29 @@ namespace Lumina::Physics
         {
             Transform->SetHasPhysicsBody(true);
         }
-        FBodyRecord& Record = RigidBodies[Entity];
+        FBodyRecord& Record = RigidBodies.FindOrAdd(Entity);
         Record.Revision = NextBindingRevision++;
         PendingRigidBodies.push_back(Entity);
     }
 
     void FBox3DPhysicsScene::OnRigidBodyComponentUpdated(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (auto It = RigidBodies.find(Entity); It != RigidBodies.end())
+        if (FBodyRecord* Record = RigidBodies.Find(Entity))
         {
-            It->second.bRebuild = true;
+            Record->bRebuild = true;
             PendingRigidBodies.push_back(Entity);
         }
     }
 
     void FBox3DPhysicsScene::OnRigidBodyComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (auto It = RigidBodies.find(Entity); It != RigidBodies.end())
+        if (const FBodyRecord* Record = RigidBodies.Find(Entity))
         {
-            if (It->second.Handle != InvalidBodyHandle)
+            if (Record->Handle != InvalidBodyHandle)
             {
-                PendingBodyDestructions.push_back(It->second.Handle);
+                PendingBodyDestructions.push_back(Record->Handle);
             }
-            RigidBodies.erase(It);
+            RigidBodies.Remove(Entity);
         }
     }
 
@@ -410,12 +410,12 @@ namespace Lumina::Physics
         size_t Count = 0;
         for (ECS::FEntity Entity : PendingDrainScratch)
         {
-            auto It = RigidBodies.find(Entity);
-            if (!Registry.IsValid(Entity) || It == RigidBodies.end())
+            FBodyRecord* Found = RigidBodies.Find(Entity);
+            if (!Registry.IsValid(Entity) || Found == nullptr)
             {
                 continue;
             }
-            FBodyRecord& Record = It->second;
+            FBodyRecord& Record = *Found;
             if (Record.bRebuild)
             {
                 DestroyBodyHandle(Record.Handle);
@@ -432,10 +432,11 @@ namespace Lumina::Physics
         Characters.swap(PendingCharacters);
         for (ECS::FEntity Entity : Characters)
         {
-            if (Registry.IsValid(Entity) && CharacterBodies.find(Entity) != CharacterBodies.end())
+            if (Registry.IsValid(Entity) && CharacterBodies.Contains(Entity))
             {
                 CreateCharacter(Registry, Entity);
-                if (CharacterBodies[Entity].Status == EPhysicsBodyStatus::Pending)
+                const FBodyRecord* Record = CharacterBodies.Find(Entity);
+                if (Record != nullptr && Record->Status == EPhysicsBodyStatus::Pending)
                 {
                     PendingCharacters.push_back(Entity);
                 }
@@ -489,11 +490,11 @@ namespace Lumina::Physics
                     const uint32 Handle = CommitRigidBody(Entity, Build);
                     if (Handle == InvalidBodyHandle)
                     {
-                        RigidBodies[Entity].Status = EPhysicsBodyStatus::Failed;
+                        RigidBodies.FindOrAdd(Entity).Status = EPhysicsBodyStatus::Failed;
                         break;
                     }
 
-                    FBodyRecord& Body = RigidBodies[Entity];
+                    FBodyRecord& Body = RigidBodies.FindOrAdd(Entity);
                     Body.Handle = Handle;
                     Body.Status = EPhysicsBodyStatus::Ready;
                     Body.LastBodyPosition = Build.LastBodyPosition;
@@ -515,7 +516,7 @@ namespace Lumina::Physics
                 case EBodyBuildStatus::NoCollider:
                     break;
                 case EBodyBuildStatus::Error:
-                    RigidBodies[Entity].Status = EPhysicsBodyStatus::Failed;
+                    RigidBodies.FindOrAdd(Entity).Status = EPhysicsBodyStatus::Failed;
                     break;
                 default:
                     break;

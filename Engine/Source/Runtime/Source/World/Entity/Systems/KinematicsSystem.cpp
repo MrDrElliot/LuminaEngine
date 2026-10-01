@@ -6,8 +6,11 @@
 #include "Physics/PhysicsScene.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/World.h"
+#include "World/Entity/Components/AudioSourceComponent.h"
+#include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Components/VelocityComponent.h"
 
@@ -22,6 +25,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Highest);
         Writes<SVelocityComponent, SystemResource::Kinematics>();
         Reads<STransformComponent, SCharacterMovementComponent, SRigidBodyComponent, SystemResource::PhysicsQuery>();
+        Reads<SSkeletalMeshComponent, SAudioSourceComponent, SAudioListenerComponent, SCameraComponent>();
     }
 
     namespace
@@ -56,19 +60,39 @@ namespace Lumina
             return;
         }
 
-        auto MotionView = Context.CreateView<STransformComponent>();
-        const ECS::FSparseSet* Driver = MotionView.GetDriver();
-        if (Driver == nullptr || Driver->IsEmpty())
+        // Only the components whose systems read a velocity, since differencing every transform paid for static scenery and crowds.
+        const ECS::FSparseSet* Consumers[] =
         {
-            return;
+            Context.CreateView<SSkeletalMeshComponent>().GetDriver(),
+            Context.CreateView<SAudioSourceComponent>().GetDriver(),
+            Context.CreateView<SAudioListenerComponent>().GetDriver(),
+            Context.CreateView<SCameraComponent>().GetDriver(),
+            Context.CreateView<SVelocityComponent>().GetDriver(),
+        };
+
+        uint32 MaxIndex = 0;
+        bool bAnyConsumer = false;
+        for (const ECS::FSparseSet* Pool : Consumers)
+        {
+            if (Pool == nullptr || Pool->IsEmpty())
+            {
+                continue;
+            }
+            bAnyConsumer = true;
+            const ECS::FEntity* Dense = Pool->GetDenseData();
+            for (size_t i = 0, Num = Pool->GetDenseSize(); i < Num; ++i)
+            {
+                if (!Dense[i].IsTombstone())
+                {
+                    MaxIndex = Math::Max(MaxIndex, Dense[i].GetIndex());
+                }
+            }
         }
 
-        const ECS::FEntity* Dense = Driver->GetDenseData();
-        const size_t   DenseNum   = Driver->GetDenseSize();
-        uint32 MaxIndex = 0;
-        for (size_t i = 0; i < DenseNum; ++i)
+        ++State.Stamp;
+        if (!bAnyConsumer)
         {
-            MaxIndex = Math::Max(MaxIndex, Dense[i].GetIndex());
+            return;
         }
 
         if ((uint32)State.ByEntityIndex.size() <= MaxIndex)
@@ -76,24 +100,33 @@ namespace Lumina
             State.ByEntityIndex.resize((size_t)MaxIndex + 1u);
         }
 
-        ++State.Stamp;
+        auto TransformStorage = Context.GetStorage<STransformComponent>();
 
         const uint32 Stamp     = State.Stamp;
         const float  DeltaTime = (float)Context.GetDeltaTime();
         const float  InvDelta  = DeltaTime > 0.0f ? (1.0f / DeltaTime) : 0.0f;
         FEntityKinematics* Entries = State.ByEntityIndex.data();
 
-        // Probe-free, so the pass that has to touch every entity never leaves the transform storage.
+        // An entity in two consumer pools is differenced once, since the second visit sees this pass's stamp.
         const auto Difference = [&](ECS::FEntity Entity)
         {
-            const FVector3 Location = MotionView.Get<STransformComponent>(Entity).GetWorldLocationCached();
+            const STransformComponent* Xform = Entity.IsTombstone() ? nullptr : TransformStorage.TryGet(Entity);
+            if (Xform == nullptr)
+            {
+                return;
+            }
 
             FEntityKinematics& Entry = Entries[Entity.GetIndex()];
+            if (Entry.Owner == Entity && Entry.Stamp == Stamp)
+            {
+                return;
+            }
             if (Entry.Owner != Entity)
             {
                 Entry.bHasPrevious = false;
             }
 
+            const FVector3 Location = Xform->GetWorldLocationCached();
             const FVector3 Velocity = (Entry.bHasPrevious && InvDelta > 0.0f)
                 ? (Location - Entry.PreviousLocation) * InvDelta
                 : FVector3(0.0f);
@@ -106,21 +139,31 @@ namespace Lumina
             Entry.bHasPrevious     = true;
         };
 
-        if (DenseNum < kKinematicsParallelGrain || GTaskSystem == nullptr)
+        // Pools run one after another, so an entity shared by two is never differenced by two workers at once.
+        for (const ECS::FSparseSet* Pool : Consumers)
         {
-            for (ECS::FEntity Entity : MotionView)
+            if (Pool == nullptr || Pool->IsEmpty())
             {
-                Difference(Entity);
+                continue;
             }
-        }
-        else
-        {
-            Task::ParallelFor((uint32)MotionView.NumDenseSlots(), [&](const Task::FParallelRange& Range)
+
+            const ECS::FEntity* Dense = Pool->GetDenseData();
+            const uint32 Num = (uint32)Pool->GetDenseSize();
+            if (Num < kKinematicsParallelGrain || GTaskSystem == nullptr)
             {
-                MotionView.ForEachInRange(Range.Start, Range.End, [&](ECS::FEntity Entity, STransformComponent&)
+                for (uint32 i = 0; i < Num; ++i)
                 {
-                    Difference(Entity);
-                });
+                    Difference(Dense[i]);
+                }
+                continue;
+            }
+
+            Task::ParallelFor(Num, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    Difference(Dense[i]);
+                }
             }, 256);
         }
 
@@ -141,6 +184,12 @@ namespace Lumina
         {
             const auto RefineBody = [&](ECS::FEntity Entity, const SRigidBodyComponent&, const STransformComponent&)
             {
+                // Most bodies have no consumer, and the stamp check is far cheaper than the scene's status lookup.
+                const uint32 Index = Entity.GetIndex();
+                if (Index >= (uint32)State.ByEntityIndex.size() || Entries[Index].Owner != Entity || Entries[Index].Stamp != Stamp)
+                {
+                    return;
+                }
                 if (Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
                 {
                     Refine(Entity, Scene->GetLinearVelocity(Entity));

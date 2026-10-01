@@ -4,10 +4,44 @@
 namespace Lumina
 {
 #if USING(WITH_EDITOR)
+    namespace
+    {
+        struct FPickerRegion
+        {
+            uint32 X = 0;
+            uint32 Y = 0;
+            uint32 Width = 0;
+            uint32 Height = 0;
+        };
+
+        // The window around the cursor that the readback copies, so the resolve and the copy agree on it.
+        FPickerRegion PickerCursorRegion(uint64 Packed, uint32 ImgW, uint32 ImgH, uint32 Extent)
+        {
+            const uint32 CursorX = Math::Min((uint32)((Packed >> 1) & 0x1FFFFF), ImgW - 1);
+            const uint32 CursorY = Math::Min((uint32)((Packed >> 22) & 0x1FFFFF), ImgH - 1);
+
+            FPickerRegion Region;
+            Region.Width  = Math::Min(Extent, ImgW);
+            Region.Height = Math::Min(Extent, ImgH);
+            Region.X      = Math::Min(CursorX - Math::Min(CursorX, Region.Width / 2), ImgW - Region.Width);
+            Region.Y      = Math::Min(CursorY - Math::Min(CursorY, Region.Height / 2), ImgH - Region.Height);
+            return Region;
+        }
+    }
+
     // Entity ids belong to the geometry, not any material, so they never enter the GBuffer.
     void FDefaultSceneRenderer::PickerResolvePass(RHI::FCmdListH CL)
     {
         if (RenderFrame->Geometry.DrawCommands.empty())
+        {
+            return;
+        }
+
+        // Only the selection outline reads the whole image; a hover reads one cursor window, and otherwise nothing does.
+        const bool   bOutline = !RenderFrame->Extracts.SelectionBits.empty();
+        const uint64 Cursor   = PickerCursorPacked.load(std::memory_order_relaxed);
+        const bool   bHover   = (Cursor & 1ull) != 0;
+        if (!bOutline && !bHover)
         {
             return;
         }
@@ -37,6 +71,11 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Extent);
+        if (!bOutline && Extent.x > 0 && Extent.y > 0)
+        {
+            const FPickerRegion Region = PickerCursorRegion(Cursor, Extent.x, Extent.y, PickerRegionExtent);
+            RHI::CmdSetScissor(CL, RHI::FRect{ (int)Region.X, (int)(Region.X + Region.Width), (int)Region.Y, (int)(Region.Y + Region.Height) });
+        }
         RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
@@ -236,13 +275,11 @@ namespace Lumina
             return;
         }
 
-        const uint32 CursorX = Math::Min((uint32)((Packed >> 1) & 0x1FFFFF), ImgW - 1);
-        const uint32 CursorY = Math::Min((uint32)((Packed >> 22) & 0x1FFFFF), ImgH - 1);
-
-        const uint32 RegionW = Math::Min(PickerRegionExtent, ImgW);
-        const uint32 RegionH = Math::Min(PickerRegionExtent, ImgH);
-        const uint32 OriginX = Math::Min(CursorX - Math::Min(CursorX, RegionW / 2), ImgW - RegionW);
-        const uint32 OriginY = Math::Min(CursorY - Math::Min(CursorY, RegionH / 2), ImgH - RegionH);
+        const FPickerRegion Region = PickerCursorRegion(Packed, ImgW, ImgH, PickerRegionExtent);
+        const uint32 RegionW = Region.Width;
+        const uint32 RegionH = Region.Height;
+        const uint32 OriginX = Region.X;
+        const uint32 OriginY = Region.Y;
 
         FPickerReadbackSlot& Slot = PickerReadbackRing[PickerReadbackWriteIndex];
 

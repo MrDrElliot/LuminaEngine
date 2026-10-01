@@ -11,7 +11,6 @@
 #include "Memory/SmartPtr.h"
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Ray/RayCast.h"
-#include "World/Entity/Events/ImpulseEvent.h"
 #include "Renderer/SkeletonResource.h"
 #include "Core/Object/ObjectMacros.h"
 #include "PhysicsScene.generated.h"
@@ -185,15 +184,15 @@ namespace Lumina::Physics
         virtual int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) = 0;
         virtual int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) = 0;
         
-        virtual void OnImpulseEvent(const SImpulseEvent& Impulse) = 0;
-        virtual void OnForceEvent(const SForceEvent& Force) = 0;
-        virtual void OnTorqueEvent(const STorqueEvent& Torque) = 0;
-        virtual void OnAngularImpulseEvent(const SAngularImpulseEvent& AngularImpulse) = 0;
-        virtual void OnSetVelocityEvent(const SSetVelocityEvent& Velocity) = 0;
-        virtual void OnSetAngularVelocityEvent(const SSetAngularVelocityEvent& AngularVelocity) = 0;
-        virtual void OnAddImpulseAtPositionEvent(const SAddImpulseAtPositionEvent& Event) = 0;
-        virtual void OnAddForceAtPositionEvent(const SAddForceAtPositionEvent& Event) = 0;
-        virtual void OnSetGravityFactorEvent(const SSetGravityFactorEvent& Event) = 0;
+        virtual void AddForce(ECS::FEntity Entity, const FVector3& Force) = 0;
+        virtual void AddImpulse(ECS::FEntity Entity, const FVector3& Impulse) = 0;
+        virtual void AddTorque(ECS::FEntity Entity, const FVector3& Torque) = 0;
+        virtual void AddAngularImpulse(ECS::FEntity Entity, const FVector3& AngularImpulse) = 0;
+        virtual void AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) = 0;
+        virtual void AddImpulseAtPosition(ECS::FEntity Entity, const FVector3& Impulse, const FVector3& Position) = 0;
+        virtual void SetLinearVelocity(ECS::FEntity Entity, const FVector3& Velocity) = 0;
+        virtual void SetAngularVelocity(ECS::FEntity Entity, const FVector3& AngularVelocity) = 0;
+        virtual void SetGravityFactor(ECS::FEntity Entity, float Factor) = 0;
 
         // Shape-accurate buoyancy: applies submerged-volume buoyancy + linear/angular drag impulse for
         // this frame. The caller supplies the fluid surface point + normal (e.g. sampled from the rendered
@@ -258,16 +257,6 @@ namespace Lumina::Physics
         // Current value of a powered joint: a Hinge's angle (radians) or a Slider's position (meters). 0 for
         // joints without a single driven scalar (Fixed/Point/Distance/Cone).
         virtual float GetConstraintValue(uint32 ConstraintID) { return 0.0f; }
-
-        void AddForce(ECS::FEntity E, const FVector3& Force)                   { SForceEvent Ev; Ev.Entity = E; Ev.Force = Force; OnForceEvent(Ev); }
-        void AddImpulse(ECS::FEntity E, const FVector3& Impulse)               { SImpulseEvent Ev; Ev.Entity = E; Ev.Impulse = Impulse; OnImpulseEvent(Ev); }
-        void AddTorque(ECS::FEntity E, const FVector3& Torque)                 { STorqueEvent Ev; Ev.Entity = E; Ev.Torque = Torque; OnTorqueEvent(Ev); }
-        void AddAngularImpulse(ECS::FEntity E, const FVector3& AngularImpulse) { SAngularImpulseEvent Ev; Ev.Entity = E; Ev.AngularImpulse = AngularImpulse; OnAngularImpulseEvent(Ev); }
-        void AddForceAtPosition(ECS::FEntity E, const FVector3& Force, const FVector3& Position)     { SAddForceAtPositionEvent Ev; Ev.Entity = E; Ev.Force = Force; Ev.Position = Position; OnAddForceAtPositionEvent(Ev); }
-        void AddImpulseAtPosition(ECS::FEntity E, const FVector3& Impulse, const FVector3& Position) { SAddImpulseAtPositionEvent Ev; Ev.Entity = E; Ev.Impulse = Impulse; Ev.Position = Position; OnAddImpulseAtPositionEvent(Ev); }
-        void SetLinearVelocity(ECS::FEntity E, const FVector3& Velocity)         { SSetVelocityEvent Ev; Ev.Entity = E; Ev.Velocity = Velocity; OnSetVelocityEvent(Ev); }
-        void SetAngularVelocity(ECS::FEntity E, const FVector3& AngularVelocity) { SSetAngularVelocityEvent Ev; Ev.Entity = E; Ev.AngularVelocity = AngularVelocity; OnSetAngularVelocityEvent(Ev); }
-        void SetGravityFactor(ECS::FEntity E, float Factor)                     { SSetGravityFactorEvent Ev; Ev.Entity = E; Ev.GravityFactor = Factor; OnSetGravityFactorEvent(Ev); }
 
     protected:
 

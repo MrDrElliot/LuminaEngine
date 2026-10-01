@@ -7,7 +7,11 @@
 #include "SystemSingletons.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/World.h"
+#include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
+#include "World/Entity/Components/PathFollowComponent.h"
+#include "World/Entity/Components/PerceptionComponent.h"
+#include "World/Entity/Components/RVOAgentComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -23,6 +27,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Highest);
         Writes<SystemResource::Significance>();
         Reads<STransformComponent, SStaticMeshComponent, SSkeletalMeshComponent, SDynamicMeshComponent>();
+        Reads<SAudioSourceComponent, SPathFollowComponent, SPerceptionComponent, SRVOAgentComponent>();
     }
 
     namespace
@@ -81,23 +86,44 @@ namespace Lumina
             return;
         }
 
-        auto View = Context.CreateView<STransformComponent>();
-        const ECS::FSparseSet* Driver = View.GetDriver();
-        if (Driver == nullptr || Driver->IsEmpty())
+        // Only the components whose systems read a score, so static scenery and crowds nobody asks about cost nothing.
+        const ECS::FSparseSet* Consumers[] =
         {
-            return;
+            Context.CreateView<SAudioSourceComponent>().GetDriver(),
+            Context.CreateView<SPathFollowComponent>().GetDriver(),
+            Context.CreateView<SPerceptionComponent>().GetDriver(),
+            Context.CreateView<SRVOAgentComponent>().GetDriver(),
+        };
+
+        uint32 MaxIndex = 0;
+        bool bAnyConsumer = false;
+        for (const ECS::FSparseSet* Pool : Consumers)
+        {
+            if (Pool == nullptr || Pool->IsEmpty())
+            {
+                continue;
+            }
+            bAnyConsumer = true;
+            const ECS::FEntity* Dense = Pool->GetDenseData();
+            for (size_t i = 0, Num = Pool->GetDenseSize(); i < Num; ++i)
+            {
+                if (!Dense[i].IsTombstone())
+                {
+                    MaxIndex = Math::Max(MaxIndex, Dense[i].GetIndex());
+                }
+            }
         }
 
         const FVector3 ViewOrigin = Resolved->ViewVolume.GetViewPosition();
         const FFrustum Frustum    = Resolved->ViewVolume.GetFrustum();
 
-        // Linear over the dense array, which beats growing the table from inside the parallel body.
-        const ECS::FEntity* Dense = Driver->GetDenseData();
-        const size_t   DenseNum = Driver->GetDenseSize();
-        uint32 MaxIndex = 0;
-        for (size_t i = 0; i < DenseNum; ++i)
+        ++State.Stamp;
+        State.ViewOrigin = ViewOrigin;
+        State.bHasView   = true;
+
+        if (!bAnyConsumer)
         {
-            MaxIndex = Math::Max(MaxIndex, Dense[i].GetIndex());
+            return;
         }
 
         if ((uint32)State.ByEntityIndex.size() <= MaxIndex)
@@ -105,22 +131,24 @@ namespace Lumina
             State.ByEntityIndex.resize((size_t)MaxIndex + 1u);
         }
 
-        ++State.Stamp;
-        State.ViewOrigin = ViewOrigin;
-        State.bHasView   = true;
-
-        auto StaticStorage   = Context.GetStorage<SStaticMeshComponent>();
-        auto SkeletalStorage = Context.GetStorage<SSkeletalMeshComponent>();
-        auto DynamicStorage  = Context.GetStorage<SDynamicMeshComponent>();
+        auto TransformStorage = Context.GetStorage<STransformComponent>();
+        auto StaticStorage    = Context.GetStorage<SStaticMeshComponent>();
+        auto SkeletalStorage  = Context.GetStorage<SSkeletalMeshComponent>();
+        auto DynamicStorage   = Context.GetStorage<SDynamicMeshComponent>();
 
         const uint32 Stamp = State.Stamp;
         FEntitySignificance* Scores = State.ByEntityIndex.data();
 
-        // Every entity owns a distinct index, so the parallel body never writes the same slot twice.
+        // Every entity owns a distinct index, and one in two pools writes the same score twice, so the body never races.
         const auto Score = [&](ECS::FEntity Entity)
         {
-            const STransformComponent& Xform = View.Get<STransformComponent>(Entity);
-            const VTransform World = Xform.GetWorldTransformCached();
+            const STransformComponent* Xform = Entity.IsTombstone() ? nullptr : TransformStorage.TryGet(Entity);
+            if (Xform == nullptr)
+            {
+                return;
+            }
+
+            const VTransform World = Xform->GetWorldTransformCached();
             const FVector3 Location = World.GetLocation();
 
             const SMeshComponent* Mesh = StaticStorage.TryGet(Entity);
@@ -146,22 +174,32 @@ namespace Lumina
             Out.bInView            = Frustum.IntersectsSphere(Location, Radius);
         };
 
-        if (DenseNum < kSignificanceParallelGrain || GTaskSystem == nullptr)
+        for (const ECS::FSparseSet* Pool : Consumers)
         {
-            for (ECS::FEntity Entity : View)
+            if (Pool == nullptr || Pool->IsEmpty())
             {
-                Score(Entity);
+                continue;
             }
-            return;
-        }
 
-        Task::ParallelFor((uint32)View.NumDenseSlots(), [&](const Task::FParallelRange& Range)
-        {
-            View.ForEachInRange(Range.Start, Range.End, [&](ECS::FEntity Entity, STransformComponent&)
+            const ECS::FEntity* Dense = Pool->GetDenseData();
+            const uint32 Num = (uint32)Pool->GetDenseSize();
+            if (Num < kSignificanceParallelGrain || GTaskSystem == nullptr)
             {
-                Score(Entity);
-            });
-        }, 256);
+                for (uint32 i = 0; i < Num; ++i)
+                {
+                    Score(Dense[i]);
+                }
+                continue;
+            }
+
+            Task::ParallelFor(Num, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    Score(Dense[i]);
+                }
+            }, 256);
+        }
     }
 
     namespace Significance

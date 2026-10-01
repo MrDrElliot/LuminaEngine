@@ -95,6 +95,15 @@ internal static class ScriptCompiler
             .Select(Source => CSharpSyntaxTree.ParseText(SourceText.From(Source.Text, Encoding.UTF8), ParseOptions, path: Source.Path))
             .ToArray();
 
+        // Routed value mirrors carry bool fields, and only with runtime marshalling off is their managed layout the sequential one C++ shares.
+        if (!Sources.Any(Source => Source.Text.Contains("DisableRuntimeMarshalling", StringComparison.Ordinal)))
+        {
+            SyntaxTree Marshalling = CSharpSyntaxTree.ParseText(
+                SourceText.From("[assembly: System.Runtime.CompilerServices.DisableRuntimeMarshalling]", Encoding.UTF8),
+                ParseOptions, path: AssemblyName + ".Marshalling.g.cs");
+            Trees = Trees.Append(Marshalling).ToArray();
+        }
+
         MetadataReference[] AllReferences = References;
         if (ExtraReferences != null && ExtraReferences.Count > 0)
         {
@@ -144,7 +153,9 @@ internal static class ScriptCompiler
                 OutputKind.DynamicallyLinkedLibrary,
                 optimizationLevel: bOptimize ? OptimizationLevel.Release : OptimizationLevel.Debug,
                 allowUnsafe: true,
-                nullableContextOptions: NullableContextOptions.Enable));
+                nullableContextOptions: NullableContextOptions.Enable)
+                // The NativeCall generator gives every script assembly its own copy of the attribute on purpose.
+                .WithSpecificDiagnosticOptions(new Dictionary<string, ReportDiagnostic> { ["CS0436"] = ReportDiagnostic.Suppress }));
 
         Compilation Compiled = Compilation;
         ImmutableArray<ISourceGenerator> Generators = SourceGenerators;

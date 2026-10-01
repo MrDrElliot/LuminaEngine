@@ -63,7 +63,7 @@ namespace Lumina
         }
     };
 
-    // Scores every entity carrying a transform once per frame; the scores live in the registry context.
+    // Scores the entities whose components read significance, once per frame; the scores live in the registry context.
     REFLECT()
     class RUNTIME_API SSignificanceSystem : public CEntitySystem
     {

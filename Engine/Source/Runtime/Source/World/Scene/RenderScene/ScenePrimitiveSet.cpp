@@ -1962,53 +1962,56 @@ namespace Lumina
     }
 
     // See FCoalescedEntity for why a frame's entries are folded before any of them are applied.
-    void FScenePrimitiveSet::CoalesceDrain()
+    void FScenePrimitiveSet::CoalesceDrain(TSpan<const ECS::FEntity> Moved)
     {
         LUMINA_PROFILE_SECTION("Sync/Coalesce");
 
         // Stamping beats clearing, since the table is sized by the entity index space.
         ++CoalesceStamp;
         CoalescedScratch.clear();
-        CoalescedScratch.reserve(DrainScratch.size());
+        CoalescedScratch.reserve(DrainScratch.size() + Moved.size());
 
-        for (const FRenderDirtyTracker::FEntry& Entry : DrainScratch)
+        auto RecordFor = [this](ECS::FEntity Entity) -> FCoalescedEntity&
         {
-            const uint32 Slot = (uint32)(Entry.Entity).GetIndex();
+            const uint32 Slot = (uint32)Entity.GetIndex();
             if (Slot >= (uint32)CoalesceByEntityIndex.size())
             {
                 CoalesceByEntityIndex.resize(Slot + 1u);
             }
 
             FCoalesceSlot& Mapped = CoalesceByEntityIndex[Slot];
-
-            uint32 RecordIndex = ~0u;
             if (Mapped.Stamp == CoalesceStamp
                 && Mapped.Index < (uint32)CoalescedScratch.size()
-                && CoalescedScratch[Mapped.Index].Entity == (Entry.Entity).Value)
+                && CoalescedScratch[Mapped.Index].Entity == Entity.Value)
             {
-                RecordIndex = Mapped.Index;
+                return CoalescedScratch[Mapped.Index];
             }
 
-            if (RecordIndex == ~0u)
+            Mapped.Stamp = CoalesceStamp;
+            Mapped.Index = (uint32)CoalescedScratch.size();
+            FCoalescedEntity& Record = CoalescedScratch.emplace_back();
+            Record.Entity = Entity.Value;
+            return Record;
+        };
+
+        // A move dirties every linked source but never foliage, which bakes its own world transform.
+        auto FoldAllSources = [](FCoalescedEntity& Record, EPrimitiveDirty Flags)
+        {
+            Record.Flags[(uint32)EPrimitiveSource::StaticMesh]   |= Flags;
+            Record.Flags[(uint32)EPrimitiveSource::DynamicMesh]  |= Flags;
+            Record.Flags[(uint32)EPrimitiveSource::SkeletalMesh] |= Flags;
+            if (Flags != EPrimitiveDirty::Transform)
             {
-                RecordIndex = (uint32)CoalescedScratch.size();
-                CoalescedScratch.emplace_back().Entity = (Entry.Entity).Value;
-                Mapped.Stamp = CoalesceStamp;
-                Mapped.Index = RecordIndex;
+                Record.Flags[(uint32)EPrimitiveSource::Foliage] |= Flags;
             }
+        };
 
-            FCoalescedEntity& Record = CoalescedScratch[RecordIndex];
-
+        for (const FRenderDirtyTracker::FEntry& Entry : DrainScratch)
+        {
+            FCoalescedEntity& Record = RecordFor(Entry.Entity);
             if (Entry.Source == EPrimitiveSource::AnySource)
             {
-                Record.Flags[(uint32)EPrimitiveSource::StaticMesh]   |= Entry.Flags;
-                Record.Flags[(uint32)EPrimitiveSource::DynamicMesh]  |= Entry.Flags;
-                Record.Flags[(uint32)EPrimitiveSource::SkeletalMesh] |= Entry.Flags;
-
-                if (Entry.Flags != EPrimitiveDirty::Transform)
-                {
-                    Record.Flags[(uint32)EPrimitiveSource::Foliage] |= Entry.Flags;
-                }
+                FoldAllSources(Record, Entry.Flags);
             }
             else
             {
@@ -2016,6 +2019,40 @@ namespace Lumina
                 if ((uint32)Entry.Source < (uint32)EPrimitiveSource::Num)
                 {
                     Record.Flags[(uint32)Entry.Source] |= Entry.Flags;
+                }
+            }
+        }
+
+        // Only a mover that also has a tracker record folds into it; every other mover is applied directly later.
+        if (!CoalescedScratch.empty() && !Moved.empty())
+        {
+            const uint32 NumThreads = (GTaskSystem != nullptr) ? GTaskSystem->GetNumTaskThreads() : 1u;
+            if ((uint32)ParallelOverlaps.size() < Math::Max(NumThreads, 1u))
+            {
+                ParallelOverlaps.resize(Math::Max(NumThreads, 1u));
+            }
+            for (TVector<ECS::FEntity>& Bucket : ParallelOverlaps)
+            {
+                Bucket.clear();
+            }
+
+            Task::ParallelFor((uint32)Moved.size(), [this, Moved](const Task::FParallelRange& Range)
+            {
+                TVector<ECS::FEntity>& Bucket = ParallelOverlaps[Range.Thread];
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    if (Moved[i] != ECS::NullEntity && HasCoalescedRecord(Moved[i]))
+                    {
+                        Bucket.push_back(Moved[i]);
+                    }
+                }
+            }, 2048);
+
+            for (const TVector<ECS::FEntity>& Bucket : ParallelOverlaps)
+            {
+                for (ECS::FEntity Entity : Bucket)
+                {
+                    FoldAllSources(RecordFor(Entity), EPrimitiveDirty::Transform);
                 }
             }
         }
@@ -2150,9 +2187,19 @@ namespace Lumina
                                                   TVector<uint32>* OutDirty)
     {
         const FCoalescedEntity& Record = CoalescedScratch[RecordIndex];
-        const ECS::FEntity      Entity = (ECS::FEntity)Record.Entity;
 
-        const uint8 Mask = GetSourceMask(Entity);
+        uint8 SourceBits = 0;
+        for (uint32 s = 0; s < kLinkedSources; ++s)
+        {
+            SourceBits |= Record.Flags[s] != EPrimitiveDirty::None ? (uint8)(1u << s) : (uint8)0u;
+        }
+        ApplyEntityTransform(Pools, (ECS::FEntity)Record.Entity, SourceBits, OutDirty);
+    }
+
+    void FScenePrimitiveSet::ApplyEntityTransform(const FSyncPools& Pools, ECS::FEntity Entity, uint8 SourceBits,
+                                                  TVector<uint32>* OutDirty)
+    {
+        const uint8 Mask = GetSourceMask(Entity) & SourceBits;
         if (Mask == 0)
         {
             return;
@@ -2167,7 +2214,7 @@ namespace Lumina
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
-            if ((Mask & (1u << s)) == 0 || Record.Flags[s] == EPrimitiveDirty::None)
+            if ((Mask & (1u << s)) == 0)
             {
                 continue;
             }
@@ -2182,6 +2229,95 @@ namespace Lumina
             RebuildWorldBounds(Index);
             RefreshInstanceTransform(Index, OutDirty);
         }
+    }
+
+    bool FScenePrimitiveSet::HasCoalescedRecord(ECS::FEntity Entity) const
+    {
+        const uint32 Slot = (uint32)Entity.GetIndex();
+        if (Slot >= (uint32)CoalesceByEntityIndex.size())
+        {
+            return false;
+        }
+        const FCoalesceSlot& Mapped = CoalesceByEntityIndex[Slot];
+        return Mapped.Stamp == CoalesceStamp
+            && Mapped.Index < (uint32)CoalescedScratch.size()
+            && CoalescedScratch[Mapped.Index].Entity == Entity.Value;
+    }
+
+    void FScenePrimitiveSet::ApplyMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved)
+    {
+        const uint32 Count = (uint32)Moved.size();
+        if (Count == 0)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION("Sync/Apply/Moved");
+
+        ++StructureGeneration;
+        SyncStats.SyncEntityCalls += Count;
+
+        if (MovedClaimByEntityIndex.empty())
+        {
+            MovedClaimByEntityIndex.resize((SIZE_T)ECS::FEntity::IndexMask + 1u, 0u);
+        }
+        // Zero is the never-claimed value, so a wrapped stamp clears the table rather than reusing it.
+        if (++MovedClaimStamp == 0u)
+        {
+            std::fill(MovedClaimByEntityIndex.begin(), MovedClaimByEntityIndex.end(), 0u);
+            MovedClaimStamp = 1u;
+        }
+
+        constexpr uint8 kMovedSources = (uint8)((1u << kLinkedSources) - 1u);
+        const uint32 Stamp = MovedClaimStamp;
+        uint32* Claims = MovedClaimByEntityIndex.data();
+
+        const auto ApplyOne = [this, &Pools, Stamp, Claims](ECS::FEntity Entity, TVector<uint32>* OutDirty)
+        {
+            if (Entity == ECS::NullEntity || HasCoalescedRecord(Entity))
+            {
+                return;
+            }
+            uint32& Claim = Claims[Entity.GetIndex()];
+            if (std::atomic_ref<uint32>(Claim).exchange(Stamp, std::memory_order_relaxed) == Stamp)
+            {
+                return;
+            }
+            ApplyEntityTransform(Pools, Entity, kMovedSources, OutDirty);
+        };
+
+        constexpr uint32 kParallelThreshold = 1024;
+        const uint32 NumSlots = (GTaskSystem != nullptr) ? GTaskSystem->GetNumTaskThreads() : 0u;
+        if (Count < kParallelThreshold || NumSlots <= 1)
+        {
+            for (ECS::FEntity Entity : Moved)
+            {
+                ApplyOne(Entity, nullptr);
+            }
+            return;
+        }
+
+        SyncStats.RefreshInstanceCalls += Count;
+
+        if ((uint32)ParallelDirtySlots.size() < NumSlots)
+        {
+            ParallelDirtySlots.resize(NumSlots);
+        }
+        for (TVector<uint32>& Bucket : ParallelDirtySlots)
+        {
+            Bucket.clear();
+        }
+
+        Task::ParallelFor(Count, [&ApplyOne, Moved, this](const Task::FParallelRange& Range)
+        {
+            TVector<uint32>& Bucket = ParallelDirtySlots[Range.Thread];
+            for (uint32 i = Range.Start; i < Range.End; ++i)
+            {
+                ApplyOne(Moved[i], &Bucket);
+            }
+        }, 64);
+
+        MergeParallelDirtySlots();
     }
 
     void FScenePrimitiveSet::MergeParallelDirtySlots()
@@ -2264,7 +2400,7 @@ namespace Lumina
         MergeParallelDirtySlots();
     }
 
-    void FScenePrimitiveSet::Sync(CWorld& World)
+    void FScenePrimitiveSet::Sync(CWorld& World, TSpan<const ECS::FEntity> Moved)
     {
         ECS::FRegistry&     Registry = ECS::GetWorldRegistry(World);
         FRenderDirtyTracker& Tracker  = FRenderDirtyTracker::Ensure(Registry);
@@ -2276,7 +2412,7 @@ namespace Lumina
             PollUnhookedSources(Registry, Tracker);
         }
 
-        if (!Tracker.HasPending() && !bResolveTableChanged)
+        if (!Tracker.HasPending() && !bResolveTableChanged && Moved.empty())
         {
             return;
         }
@@ -2300,9 +2436,9 @@ namespace Lumina
             DrainScratch.clear();
             Tracker.Drain(DrainScratch);
         }
-        SyncStats.DrainEntries = (uint32)DrainScratch.size();
+        SyncStats.DrainEntries = (uint32)(DrainScratch.size() + Moved.size());
 
-        CoalesceDrain();
+        CoalesceDrain(Moved);
         ReserveForDrain();
 
         // Resolved once for the whole drain, not once per entity. See FSyncPools.
@@ -2316,6 +2452,8 @@ namespace Lumina
             ApplyStructuralRecords(Registry, Pools);
 
             ApplyTransformRecords(Pools);
+
+            ApplyMovedTransforms(Pools, Moved);
         }
 
         if (bResolveTableChanged)

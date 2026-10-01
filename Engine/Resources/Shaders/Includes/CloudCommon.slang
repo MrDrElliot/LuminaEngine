@@ -51,9 +51,48 @@ float Cloud_HeightFraction(FCloudMedium M, float Y)
     return saturate((Y - M.LayerBottom) / max(M.LayerTop - M.LayerBottom, 1.0));
 }
 
+// The weather layer tiles at an irrational multiple of the shape tile, so the two repeats never line up.
+static const float kWeatherScaleRatio = 4.37;
+
+// Turning the weather layer against the shape tile keeps the two lattices from sharing an axis.
+static const float2x2 kWeatherRotation = float2x2(0.8572, -0.5150, 0.5150, 0.8572);
+
+// How far the weather layer drags the base shape, as a fraction of one shape tile.
+static const float kWeatherWarp = 0.3;
+
+struct FCloudWeather
+{
+    float  Coverage;
+    float  Billow;
+    float2 Warp;
+};
+
+// Plays the part of Unreal's cloud layout map and Nubis' weather map, read from the shared noise volume instead of a texture.
+FCloudWeather Cloud_SampleWeather(FCloudMedium M, float3 WorldPos)
+{
+    float2 Drifted = WorldPos.xz + M.WindOffset * 0.5;
+    float2 P = mul(kWeatherRotation, Drifted) / max(M.ShapeScale * kWeatherScaleRatio, 1.0);
+    float4 Layout = SampleTexture3DLevel(M.NoiseIndex, SAMPLER_LINEAR_WRAP, float3(P.x, 0.37, P.y), 0.0);
+
+    float Regional = smoothstep(0.3, 0.8, Layout.g * 0.6 + Layout.b * 0.4);
+
+    FCloudWeather Weather;
+    Weather.Coverage = saturate(M.Coverage * lerp(0.25, 1.75, Regional));
+    Weather.Billow   = saturate(M.Billow * lerp(0.55, 1.35, Layout.a));
+    Weather.Warp     = (float2(Layout.r, Layout.a) - 0.5) * (M.ShapeScale * kWeatherWarp);
+    return Weather;
+}
+
 float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bool bCheap)
 {
-    float3 ShapeUVW = (WorldPos + float3(M.WindOffset.x, 0.0, M.WindOffset.y)) / max(M.ShapeScale, 1.0);
+    FCloudWeather Weather = Cloud_SampleWeather(M, WorldPos);
+    if (Weather.Coverage <= 0.01)
+    {
+        return 0.0;
+    }
+
+    float2 ShapeXZ = WorldPos.xz + M.WindOffset + Weather.Warp;
+    float3 ShapeUVW = float3(ShapeXZ.x, WorldPos.y, ShapeXZ.y) / max(M.ShapeScale, 1.0);
 
     // Explicit level, since this runs in compute and the noise volume has a single mip.
     float4 Shape = SampleTexture3DLevel(M.NoiseIndex, SAMPLER_LINEAR_WRAP, ShapeUVW, 0.0);
@@ -62,10 +101,10 @@ float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bo
     float LowFreq = Shape.g * 0.625 + Shape.b * 0.25 + Shape.a * 0.125;
     float Base    = saturate(Cloud_Remap(Shape.r, LowFreq - 1.0, 1.0, 0.0, 1.0));
 
-    Base *= Cloud_HeightGradient(HeightFrac, M.Billow);
+    Base *= Cloud_HeightGradient(HeightFrac, Weather.Billow);
 
     // Coverage as the remap floor erodes inward, so puffs shrink rather than uniformly fading out.
-    float Floor   = lerp(kCoverageClearFloor, kCoverageOvercastFloor, saturate(M.Coverage));
+    float Floor   = lerp(kCoverageClearFloor, kCoverageOvercastFloor, Weather.Coverage);
     float Density = saturate(Cloud_Remap(Base, Floor, 1.0, 0.0, 1.0));
     if (Density <= 0.0 || bCheap)
     {

@@ -19,7 +19,7 @@ FEnvPushConstants* Pass() { return GetPassArgs<FEnvPushConstants>(); }
 // Uniform for the whole draw, so specializing it strips the three modes this pipeline is not.
 [vk::constant_id(8)] const uint SPEC_SKY_MODE = SKY_MODE_RUNTIME;
 
-struct FragmentInput  { float2 UV : TEXCOORD0; };
+struct FragmentInput  { float4 Position : SV_Position; float2 UV : TEXCOORD0; };
 struct FragmentOutput { float4 Color : SV_Target0; };
 
 // Reconstruct a world-space ray from fullscreen-quad UV. The camera projection's Y-flip is undone by
@@ -41,6 +41,13 @@ FragmentOutput FragmentMain(FragmentInput Input)
 
     float3 Color;
     uint SkyMode = (SPEC_SKY_MODE == SKY_MODE_RUNTIME) ? asuint(uEnvironment.Misc.x) : SPEC_SKY_MODE;
+
+    // Lighting overwrites covered pixels, but HDRI keeps them since its mip selection needs screen derivatives.
+    if (SkyMode != SKY_MODE_HDRI && Scene().SceneDepthIndex != 0xFFFFFFFFu
+        && gTextures2D[Scene().SceneDepthIndex].Load(int3(int2(Input.Position.xy), 0)).r > 0.0)
+    {
+        discard;
+    }
     if (SkyMode == SKY_MODE_SOLID)
     {
         // Flat color: skip the cube fetch entirely.

@@ -97,9 +97,14 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     FLight Sun  = GetLightAt(0);
     float  Mask = ComputeDirectionalShadow(Sun, WorldPos, NWorld, P, Input.Position.xy, dWdx, dWdy);
 
-    const float3 ViewL  = normalize(NormalWorldToView(normalize(Sun.Direction.xyz)));
-    const float  Jitter = InterleavedGradientNoise(Input.Position.xy);
-    const float  Contact = ContactShadow(P, NView, ViewL, Jitter, LightData().ShadowParams2.z, (uint)LightData().ShadowParams2.w);
+    // Surfaces read min(cascade, contact), so where the cascade is already fully dark the march cannot change it.
+    float Contact = 1.0;
+    if (Mask > 0.0)
+    {
+        const float3 ViewL  = normalize(NormalWorldToView(normalize(Sun.Direction.xyz)));
+        const float  Jitter = InterleavedGradientNoise(Input.Position.xy);
+        Contact = ContactShadow(P, NView, ViewL, Jitter, LightData().ShadowParams2.z, (uint)LightData().ShadowParams2.w);
+    }
 
     // Per-instance ReceiveShadow and the material's parallax SelfShadow are NOT folded in: this pass
     // cannot see them from depth, and both stay a cheap multiply in ShadeSurface where they are live.

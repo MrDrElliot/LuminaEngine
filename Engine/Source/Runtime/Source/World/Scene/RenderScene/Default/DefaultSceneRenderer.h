@@ -320,6 +320,8 @@ namespace Lumina
             {
                 uint32              MaterialIndex;
                 FShaderH DeferredShader;
+                // Bit 0 when a static instance binds this material, bit 1 when a skinned one does.
+                uint8               InstanceKinds = 0;
             };
 
             struct FGeometry
@@ -1092,6 +1094,10 @@ namespace Lumina
         void WriteBufferRuns(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Src, uint64 Stride,
                              const TVector<FUIntVector2>& Runs);
 
+        // Stages each listed element compactly and scatters it to its slot on the GPU, for a fragmented dirty set.
+        void WriteBufferScatter(RHI::FCmdListH CL, RHI::GPUPtr Dst, uint64 DstBytes, const void* Src, uint64 Stride,
+                                RHI::FGPURange Slots, const TVector<uint32>& SlotList);
+
         /** What a freshly (re)allocated scene buffer holds. Undefined is the honest description of what
          *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
          *  a buffer that is provably rewritten in full before anything reads it. */
@@ -1243,6 +1249,7 @@ namespace Lumina
         RHI::FSceneBindings                                             SceneBindings = {};
         TVector<RHI::FBufferCopy>                                       StagedWrites;
         TVector<RHI::FBufferCopy>                                       UploadCopyScratch;
+        TVector<uint64>                                                 UploadCursorScratch;
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View);
@@ -1456,10 +1463,12 @@ namespace Lumina
 
         FScenePrimitiveSet                      ScenePrimitives;
         TVector<ECS::FEntity>                   MovedTransformScratch;
+        TVector<uint64>                         DirtySlotBits;
 
         // Merge scratch, sized by draw slots (not by entities). Members so capacity survives frames.
 
         TVector<FShaderH>            BinnedDeferredSlotShaders;
+        TVector<uint8>               BinnedDeferredSlotKinds;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
         // Shader handle -> its dense bin, so binning stays linear in the visible material count.
         THashMap<uint64, uint32>                BinnedDeferredSlotLookup;

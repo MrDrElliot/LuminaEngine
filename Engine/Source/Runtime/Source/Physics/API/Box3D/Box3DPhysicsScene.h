@@ -7,6 +7,7 @@
 
 #include "Box3DTaskBridge.h"
 #include "Containers/HashTable.h"
+#include "World/ECS/EntityMap.h"
 #include "Containers/Queue.h"
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
@@ -17,7 +18,6 @@
 #include "Assets/AssetTypes/PhysicsAsset/PhysicsAsset.h"
 #include "Renderer/SkeletonResource.h"
 #include "World/Entity/Components/DirtyComponent.h"
-#include "World/Entity/Events/ImpulseEvent.h"
 
 namespace Lumina
 {
@@ -155,7 +155,7 @@ namespace Lumina::Physics
         void LatchCharacterInput();
         void BuildInterpolatedTransforms(float Alpha);
         void ApplyInterpolatedTransforms();
-        void PropagateRenderPosesToDescendants(ECS::FRegistry& Registry);
+        void PropagateRenderPosesToDescendants(ECS::FRegistry& Registry, size_t FirstBody);
         void RetireStaleRenderOverrides(ECS::FRegistry& Registry);
 
         EPhysicsBodyStatus GetBodyStatus(ECS::FEntity Entity) const override;
@@ -186,15 +186,15 @@ namespace Lumina::Physics
         void OnConstraintComponentConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void OnConstraintComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-        void OnImpulseEvent(const SImpulseEvent& Impulse) override;
-        void OnForceEvent(const SForceEvent& Force) override;
-        void OnTorqueEvent(const STorqueEvent& Torque) override;
-        void OnAngularImpulseEvent(const SAngularImpulseEvent& AngularImpulse) override;
-        void OnSetVelocityEvent(const SSetVelocityEvent& Velocity) override;
-        void OnSetAngularVelocityEvent(const SSetAngularVelocityEvent& AngularVelocity) override;
-        void OnAddImpulseAtPositionEvent(const SAddImpulseAtPositionEvent& Event) override;
-        void OnAddForceAtPositionEvent(const SAddForceAtPositionEvent& Event) override;
-        void OnSetGravityFactorEvent(const SSetGravityFactorEvent& Event) override;
+        void AddForce(ECS::FEntity Entity, const FVector3& Force) override;
+        void AddImpulse(ECS::FEntity Entity, const FVector3& Impulse) override;
+        void AddTorque(ECS::FEntity Entity, const FVector3& Torque) override;
+        void AddAngularImpulse(ECS::FEntity Entity, const FVector3& AngularImpulse) override;
+        void AddForceAtPosition(ECS::FEntity Entity, const FVector3& Force, const FVector3& Position) override;
+        void AddImpulseAtPosition(ECS::FEntity Entity, const FVector3& Impulse, const FVector3& Position) override;
+        void SetLinearVelocity(ECS::FEntity Entity, const FVector3& Velocity) override;
+        void SetAngularVelocity(ECS::FEntity Entity, const FVector3& AngularVelocity) override;
+        void SetGravityFactor(ECS::FEntity Entity, float Factor) override;
 
         void ApplyBuoyancyImpulse(ECS::FEntity Entity, const FVector3& SurfacePosition, const FVector3& SurfaceNormal,
             float Buoyancy, float LinearDrag, float AngularDrag, const FVector3& FluidVelocity, float DeltaTime) override;
@@ -398,8 +398,10 @@ namespace Lumina::Physics
             bool bRebuild = false;
         };
 
-        THashMap<ECS::FEntity, FBodyRecord> RigidBodies;
-        THashMap<ECS::FEntity, FBodyRecord> CharacterBodies;
+        ECS::TEntityMap<FBodyRecord> RigidBodies;
+        ECS::TEntityMap<FBodyRecord> CharacterBodies;
+
+        const FBodyRecord* FindBodyRecord(ECS::FEntity Entity) const;
         uint64 NextBindingRevision = 1;
         TVector<ECS::FEntity> PendingRigidBodies;
         TVector<ECS::FEntity> PendingCharacters;
@@ -419,8 +421,6 @@ namespace Lumina::Physics
         {
             EBodyCommand Type;
             ECS::FEntity Entity = ECS::NullEntity;
-            uint64 Revision = 0;
-            bool bCharacter = false;
             FPhysicsBodyTarget Target;
             FVector3 Value = FVector3(0.0f);
             FVector3 Point = FVector3(0.0f);
@@ -428,11 +428,19 @@ namespace Lumina::Physics
             FVector4 Parameters = FVector4(0.0f);
         };
 
-        void QueueBodyCommand(FBodyCommand Command);
+        enum class EBodyCommandResult : uint8 { Applied, Dropped, Waiting };
+
+        void QueueBodyCommand(const FBodyCommand& Command);
         void ApplyBodyCommands();
+        EBodyCommandResult ApplyBodyCommand(const FBodyCommand& Command);
+
+        // One queue per job thread slot, so callers on any worker push without a lock.
+        TVector<TVector<FBodyCommand>> ThreadBodyCommands;
         FMutex BodyCommandMutex;
-        TVector<FBodyCommand> PendingBodyCommands;
+        TVector<FBodyCommand> OverflowBodyCommands;
+        TVector<FBodyCommand> WaitingBodyCommands;
         TVector<FBodyCommand> BodyCommandScratch;
+        TVector<FBodyCommand> DrainBodyCommands;
 
         // Offsets the re-validation phase of resting characters so a settled crowd does not poll on one step.
         uint64                                  CharacterStepCounter = 0;
@@ -561,6 +569,7 @@ namespace Lumina::Physics
         uint32                                  InterpBodySlots = 0;
         bool                                    bInterpCharacterTail = false;
         TVector<uint32>                         InterpApplied;
+        TVector<uint32>                         InterpAppliedParented;
 
         // Entities holding an FRenderTransform after the last apply, so one the next apply skips can be retired.
         TVector<ECS::FEntity>                   RenderOverrides;

@@ -5,6 +5,7 @@
 
 #include "Renderer/ShaderHandle.h"
 #include "Containers/HashTable.h"
+#include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
@@ -244,7 +245,8 @@ namespace Lumina
         LE_NO_COPYMOVE(FScenePrimitiveSet);
 
         // Drains the dirty channel and applies it. O(changed), except on a requested full rescan.
-        void Sync(CWorld& World);
+        // Moved is the frame's drained transform list, folded in directly rather than queued through the tracker.
+        void Sync(CWorld& World, TSpan<const ECS::FEntity> Moved = {});
 
         // Drops every primitive and re-arms a full rescan. World teardown / scene rebuild.
         void Reset(ECS::FRegistry* Registry);
@@ -529,7 +531,7 @@ namespace Lumina
         uint32                      CoalesceStamp = 0;
 
         // Folds DrainScratch into CoalescedScratch.
-        void CoalesceDrain();
+        void CoalesceDrain(TSpan<const ECS::FEntity> Moved);
 
         // Grows the append-target arrays once, from the coalesced record set, before the apply pass runs.
         void ReserveForDrain();
@@ -539,6 +541,20 @@ namespace Lumina
         void ApplyTransformRecords(const FSyncPools& Pools);
 
         void ApplyTransformRecord(const FSyncPools& Pools, uint32 RecordIndex, TVector<uint32>* OutDirty);
+
+        // One entity's new matrix onto every linked source whose bit is set in SourceBits.
+        void ApplyEntityTransform(const FSyncPools& Pools, ECS::FEntity Entity, uint8 SourceBits, TVector<uint32>* OutDirty);
+
+        // True when this frame's tracker entries gave the entity a coalesced record of its own.
+        bool HasCoalescedRecord(ECS::FEntity Entity) const;
+
+        // Movers with no record skip coalescing entirely and are applied in parallel after the structural pass.
+        void ApplyMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved);
+
+        // Per entity index, the stamp of the pass that claimed it, so a mover listed twice is applied once.
+        TVector<uint32>             MovedClaimByEntityIndex;
+        uint32                      MovedClaimStamp = 0;
+        TVector<TVector<ECS::FEntity>> ParallelOverlaps;
 
         // Indices into CoalescedScratch, filled by PartitionDrain.
         TVector<uint32>             TransformRecords;

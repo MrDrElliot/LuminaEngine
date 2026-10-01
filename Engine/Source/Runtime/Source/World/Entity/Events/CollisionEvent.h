@@ -11,7 +11,7 @@ namespace Lumina
     // Every field is blittable (ECS::FEntity surfaces as the C# Entity handle), so the Reflector auto-generates
     // the LuminaSharp SCollisionEvent value mirror + a native size assert, no hand-written mirror.
     REFLECT(Event)
-    struct SCollisionEvent
+    struct RUNTIME_API SCollisionEvent
     {
         GENERATED_BODY()
 
