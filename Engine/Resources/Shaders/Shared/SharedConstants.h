@@ -85,7 +85,13 @@
 // The cluster light list packs two 13-bit light indices per uint.
 #define LIGHT_INDEX_MASK                0x1FFFu
 #define LIGHTS_PER_UINT                 2
-#define LIGHTS_PER_CLUSTER              100
+#define LIGHTS_PER_CLUSTER              512
+// Light indices one view's clusters share, since each cluster keeps a variable-length run of them.
+#define MAX_CLUSTER_LIGHT_INDICES       (1 << 21)
+// LightCull gives each workgroup this block of clusters, so one bounding box pre-culls the lights for all of them.
+#define CLUSTER_CULL_BLOCK_X            8
+#define CLUSTER_CULL_BLOCK_Y            4
+#define CLUSTER_CULL_BLOCK_Z            4
 
 #define COL_R_SHIFT                     0
 #define COL_G_SHIFT                     8

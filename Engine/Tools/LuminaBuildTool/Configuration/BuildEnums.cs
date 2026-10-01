@@ -141,6 +141,11 @@ public static class BuildEnumExtensions
     }
 
     /// <summary>True when the output is a loadable image rather than something absorbed into one.</summary>
+    public static bool IsExecutable(this ModuleBinaryType Type)
+    {
+        return Type is ModuleBinaryType.ConsoleApplication or ModuleBinaryType.WindowedApplication;
+    }
+
     public static bool IsLoadableImage(this ModuleBinaryType Type)
     {
         return Type is ModuleBinaryType.SharedLibrary

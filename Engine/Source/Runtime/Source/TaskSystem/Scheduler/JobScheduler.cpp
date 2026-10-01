@@ -1139,11 +1139,8 @@ namespace Lumina::Jobs
         // CurrentFiber is null for the duration, which routes any wait inside it to the assist loop.
         void RunJobNative(const FQueuedJob& Job, uint32 Slot)
         {
-            LUMINA_PROFILE_SECTION_COLORED("Job", tracy::Color::SteelBlue);
-            if (const char* Label = Job.GetName())
-            {
-                LUMINA_PROFILE_NAME(Label);
-            }
+            // Named by its label, so a capture says what each job was without reading zone text.
+            LUMINA_PROFILE_SECTION_NAMED(Job.GetName() != nullptr ? Job.GetName() : "Job");
             FWorkFiber* SavedFiber  = TLS.CurrentFiber;
             const char* SavedGuard  = GNoParkGuardName;
             const bool  bSavedNative = TLS.bNativeJob;
@@ -1361,11 +1358,7 @@ namespace Lumina::Jobs
 
                 {
                     // Scoped so it closes before the switch back, which is a different fiber's timeline.
-                    LUMINA_PROFILE_SECTION_COLORED("Fiber Job", tracy::Color::CadetBlue);
-                    if (const char* Label = Job.GetName())
-                    {
-                        LUMINA_PROFILE_NAME(Label);
-                    }
+                    LUMINA_PROFILE_SECTION_NAMED(Job.GetName() != nullptr ? Job.GetName() : "Fiber Job");
                     Job.Function(Job.Argument, TLS.WorkerIndex);
                 }
                 OnJobComplete(Job.GetCounter(), TLS.WorkerIndex);

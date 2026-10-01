@@ -18,7 +18,7 @@ struct FPushConstants
     float  Time;
     uint   ScatterUAV;          // bindless 3D UAV index of the froxel scatter volume
 
-    uint   bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
+    uint   LocalLightSamples;   // 0 skips local lights, 1 is the froxel center, 4 supersamples
     uint   _PadNumFogVolumes;
     uint   CloudShadowIndex;    // bindless 2D SRV, 0xFFFFFFFF when no cloud shadow was built
     float  CloudShadowExtent;
@@ -81,6 +81,10 @@ float SampleLocalShadow(FLight Light, float3 WorldPos)
               : uint(DirectionToCubemapCoord(WorldPos - Light.Position).Face);
 
     FLightShadow Tile = GetShadowTile(Light.ShadowDataIndex, Face);
+    if (Tile.ShadowMapIndex < 0)
+    {
+        return 1.0;
+    }
     float4x4 VP = GetShadowViewProjection(Light.ShadowDataIndex, Face);
     float4   SC = mul(VP, float4(WorldPos, 1.0));
     float3   P  = SC.xyz / max(SC.w, 1e-6);
@@ -93,17 +97,21 @@ float SampleLocalShadow(FLight Light, float3 WorldPos)
     return ShadowAtlas().SampleCmpLevelZero(AUV, P.z - 0.0005);
 }
 
-// Lights come from the cluster grid, so both the local count and each index need their own bound.
-float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, float3 WorldPos, float3 ToCam)
+static const uint kMaxLocalSamples = 4;
+
+// Every sample shares one walk of the cluster list, so a supersampled froxel fetches each light once.
+float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, float3 SamplePos[kMaxLocalSamples],
+                            float3 SampleToCam[kMaxLocalSamples], uint NumSamples)
 {
     float  G         = Fog.VolumetricParams.y;
     float3 InScatter = float3(0.0);
 
     uint NumLocal   = min(GetClusterLightCount(ClusterIndex), (uint)LIGHTS_PER_CLUSTER);
+    uint LightBase  = GetClusterLightBase(ClusterIndex);
     uint NumLights  = GetNumLights();   // loop-invariant; hoisted out of the per-light test
     for (uint li = 0; li < NumLocal; ++li)
     {
-        uint LightIndex = GetClusterLightIndex(ClusterIndex, li);
+        uint LightIndex = GetClusterLightAt(LightBase, li);
         // Cluster contents go stale across a scene switch and the array holds exactly NumLights entries.
         if (LightIndex >= NumLights)
         {
@@ -116,41 +124,46 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
             continue;
         }
 
-        float3 ToL  = L.Position - WorldPos;
-        float  Dist = length(ToL);
-        if (Dist > L.Radius)
-        {
-            continue;
-        }
-        float3 Ldir  = ToL / max(Dist, 1e-4);
         // Soft-core 1/d^2: a finite source radius caps the apex peak so the near-light glow spreads
         // over several froxels instead of a single pixelated spike. Per-light (VolumetricScatteringRadius).
-        float  R0    = L.Radius * L.VolumetricScatteringRadius;
-        float  Atten = 1.0 / max(Dist * Dist + R0 * R0, 1e-6);
-        float  DistR = Dist / L.Radius;
-        Atten *= 1.0 - smoothstep(clamp(L.Falloff, 0.0, 1.0), 1.0, DistR);
+        const float  R0    = L.Radius * L.VolumetricScatteringRadius;
+        const float3 LC    = UnpackColor(L.Color).rgb * (L.Intensity * L.VolumetricIntensity);
+        const bool   bSpot = HasFlag(L.Flags, ELightFlags::Spot);
+        const float3 SF    = bSpot ? normalize(L.Direction) : float3(0.0);   // to-light (surface->spot)
 
-        float Cone = 1.0;
-        if (HasFlag(L.Flags, ELightFlags::Spot))
+        for (uint s = 0; s < NumSamples; ++s)
         {
-            float3 SF    = normalize(L.Direction);   // to-light (surface->spot)
-            float  CosAt = dot(SF, Ldir);
-            Cone = saturate((CosAt - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
-            if (Cone <= 0.0)
+            const float3 WorldPos = SamplePos[s];
+            float3 ToL  = L.Position - WorldPos;
+            float  Dist = length(ToL);
+            if (Dist > L.Radius)
             {
                 continue;
             }
+            float3 Ldir  = ToL / max(Dist, 1e-4);
+            float  Atten = 1.0 / max(Dist * Dist + R0 * R0, 1e-6);
+            float  DistR = Dist / L.Radius;
+            Atten *= 1.0 - smoothstep(clamp(L.Falloff, 0.0, 1.0), 1.0, DistR);
+
+            float Cone = 1.0;
+            if (bSpot)
+            {
+                float CosAt = dot(SF, Ldir);
+                Cone = saturate((CosAt - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
+                if (Cone <= 0.0)
+                {
+                    continue;
+                }
+            }
+
+            float Shadow = SampleLocalShadow(L, WorldPos);
+
+            // Negated because Ldir points at the light while the photon travels away from it, as the sun's phase expects.
+            float PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, SampleToCam[s]), G, Shadow);
+            InScatter += LC * Atten * Cone * PhaseShadow;
         }
-
-        float Shadow = SampleLocalShadow(L, WorldPos);
-
-        // Ldir points toward the light; the photon travels the other way, so negate
-        // to match the sun's travel-direction phase convention.
-        float  PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, ToCam), G, Shadow);
-        float3 LC          = UnpackColor(L.Color).rgb;
-        InScatter += LC * L.Intensity * Atten * Cone * PhaseShadow * L.VolumetricIntensity;
     }
-    return InScatter;
+    return InScatter / float(max(NumSamples, 1u));
 }
 
 // The cluster grid slices view Z the same exponential way, just over the camera's full range.
@@ -245,24 +258,21 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     // Opted-in local point/spot lights. A single center sample aliases the bright near-light core
     // and cone edge into froxel-sized blocks, so (when enabled) supersample at 4 sub-froxel XY
     // positions and average -- the froxel stores the volume average, not a spike.
-    uint ClusterIndex = FroxelClusterIndex(DispatchID);
-    if (Pass().bSupersampleLocal != 0)
+    // Zero when no light in the frame scatters, which skips the cluster walk every froxel would otherwise pay.
+    const uint NumSamples = min(Pass().LocalLightSamples, kMaxLocalSamples);
+    if (NumSamples > 0)
     {
-        const float2 Offs[4] = { float2(0.25, 0.25), float2(0.75, 0.25),
-                                 float2(0.25, 0.75), float2(0.75, 0.75) };
-        float3 LocalSum = float3(0.0);
+        const float2 Offs[kMaxLocalSamples] = { float2(0.25, 0.25), float2(0.75, 0.25),
+                                                float2(0.25, 0.75), float2(0.75, 0.75) };
+        float3 SamplePos[kMaxLocalSamples];
+        float3 SampleToCam[kMaxLocalSamples];
         [unroll]
-        for (int s = 0; s < 4; ++s)
+        for (uint s = 0; s < kMaxLocalSamples; ++s)
         {
-            float3 SubPos   = FroxelToWorld(DispatchID, float3(Offs[s], 0.5));
-            float3 SubToCam = normalize(GetCameraPosition() - SubPos);
-            LocalSum += LocalLightsInScatter(uFog, ClusterIndex, SubPos, SubToCam);
+            SamplePos[s]   = NumSamples == 1 ? WorldPos : FroxelToWorld(DispatchID, float3(Offs[s], 0.5));
+            SampleToCam[s] = NumSamples == 1 ? ToCam : normalize(GetCameraPosition() - SamplePos[s]);
         }
-        InScatter += LocalSum * 0.25;
-    }
-    else
-    {
-        InScatter += LocalLightsInScatter(uFog, ClusterIndex, WorldPos, ToCam);
+        InScatter += LocalLightsInScatter(uFog, FroxelClusterIndex(DispatchID), SamplePos, SampleToCam, NumSamples);
     }
 
     // Emissive volumes glow on their own, so it rides outside the extinction-weighted scattering term.

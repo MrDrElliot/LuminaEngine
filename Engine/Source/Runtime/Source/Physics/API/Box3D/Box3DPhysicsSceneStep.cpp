@@ -391,10 +391,18 @@ namespace Lumina::Physics
             // The event carries the user data, so resolving the entity costs no body lookup.
             const ECS::FEntity Entity = UnpackEntity(Event.userData);
             const uint32 Handle = UnpackHandle(Event.userData);
-            if (!RigidStorage.Contains(Entity) || FindEntityBody(Entity) != Handle)
+            if (!RigidStorage.Contains(Entity))
             {
                 continue;
             }
+
+            // One lookup per event, since every field below lives on this record.
+            const auto Found = RigidBodies.find(Entity);
+            if (Found == RigidBodies.end() || Found->second.Handle != Handle)
+            {
+                continue;
+            }
+            FBodyRecord& Record = Found->second;
 
             const FVector3 NewPosition = Box3DUtils::FromB3Vec3(Event.transform.p);
             const FQuat NewRotation = Box3DUtils::FromB3Quat(Event.transform.q);
@@ -416,20 +424,20 @@ namespace Lumina::Physics
             // Gameplay already put its transform where it should draw, and the step only chased that placement.
             if (Handle < BodyAuthoredKinematic.size() && BodyAuthoredKinematic[Handle] != 0)
             {
-                RigidBodies.at(Entity).LastBodyPosition = NewPosition;
-                RigidBodies.at(Entity).LastBodyRotation = NewRotation;
+                Record.LastBodyPosition = NewPosition;
+                Record.LastBodyRotation = NewRotation;
                 continue;
             }
 
-            const uint32 Slot = StageInterpSlot(Handle, RigidBodies.at(Entity).LastBodyPosition, RigidBodies.at(Entity).LastBodyRotation);
+            const uint32 Slot = StageInterpSlot(Handle, Record.LastBodyPosition, Record.LastBodyRotation);
 
             if (bStageForInterp)
             {
-                InterpStaging.PrevPos[Slot] = RigidBodies.at(Entity).LastBodyPosition;
-                InterpStaging.PrevQx[Slot] = RigidBodies.at(Entity).LastBodyRotation.x;
-                InterpStaging.PrevQy[Slot] = RigidBodies.at(Entity).LastBodyRotation.y;
-                InterpStaging.PrevQz[Slot] = RigidBodies.at(Entity).LastBodyRotation.z;
-                InterpStaging.PrevQw[Slot] = RigidBodies.at(Entity).LastBodyRotation.w;
+                InterpStaging.PrevPos[Slot] = Record.LastBodyPosition;
+                InterpStaging.PrevQx[Slot] = Record.LastBodyRotation.x;
+                InterpStaging.PrevQy[Slot] = Record.LastBodyRotation.y;
+                InterpStaging.PrevQz[Slot] = Record.LastBodyRotation.z;
+                InterpStaging.PrevQw[Slot] = Record.LastBodyRotation.w;
             }
 
             InterpStaging.Entities[Slot] = Entity;
@@ -440,8 +448,8 @@ namespace Lumina::Physics
             InterpStaging.CurrQw[Slot] = NewRotation.w;
             InterpStaging.Flags[Slot] = NewPosition.y < KillHeight ? EInterpFlag::BelowKill : EInterpFlag::Interpolate;
 
-            RigidBodies.at(Entity).LastBodyPosition = NewPosition;
-            RigidBodies.at(Entity).LastBodyRotation = NewRotation;
+            Record.LastBodyPosition = NewPosition;
+            Record.LastBodyRotation = NewRotation;
         }
     }
 
@@ -855,6 +863,9 @@ namespace Lumina::Physics
 
             Accumulator -= (float)CollisionSteps * FixedTimestep;
         }
+
+        LUMINA_PROFILE_VALUE("Physics/AwakeBodies", (int64)b3World_GetAwakeBodyCount(WorldId));
+        LUMINA_PROFILE_VALUE("Physics/AwakeContacts", (int64)b3World_GetCounters(WorldId).awakeContactCount);
 
         if (FBox3DPhysicsContext::IsDebugDrawEnabled())
         {

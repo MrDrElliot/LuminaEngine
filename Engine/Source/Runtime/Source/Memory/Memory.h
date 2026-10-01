@@ -16,9 +16,6 @@
 #include "tracy/TracyC.h"
 
 
-#define LUMINA_PROFILE_ALLOC(p, size)   TracyCAllocS(p, size, 12)
-#define LUMINA_PROFILE_FREE(p)          TracyCFreeS(p, 12)
-
 constexpr size_t DEFAULT_ALIGNMENT = 16;
 
 namespace Lumina::Memory

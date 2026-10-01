@@ -149,6 +149,11 @@ namespace Lumina
 
         void RepointGameInstanceContexts(CGameInstance* Instance);
 
+        // The game's name, followed by engine and frame details in any build but Shipping.
+        void RefreshWindowTitle(double AverageFrameSeconds = 0.0);
+        double                        TitleSampleStart = 0.0;
+        uint32                        TitleSampleFrames = 0;
+
         /** Drains a queued Travel request; called at FrameStart. */
         RUNTIME_API void ProcessPendingTravel();
 

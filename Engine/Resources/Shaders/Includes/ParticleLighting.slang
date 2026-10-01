@@ -21,12 +21,13 @@ float3 ParticleLocalIrradiance(float3 WorldPos)
     const float2 ScreenPos = ((Clip.xy / Clip.w) * 0.5 + 0.5) * float2(GetScreenSize());
     const uint   Cluster   = ComputeClusterIndex(WorldToView(WorldPos).z, ScreenPos);
     const uint   Count     = min(GetClusterLightCount(Cluster), (uint)LIGHTS_PER_CLUSTER);
+    const uint   Base      = GetClusterLightBase(Cluster);
     const uint   NumLights = GetNumLights();
 
     float3 Irradiance = float3(0.0, 0.0, 0.0);
     for (uint Slot = 0u; Slot < Count; ++Slot)
     {
-        const uint LightIndex = GetClusterLightIndex(Cluster, Slot);
+        const uint LightIndex = GetClusterLightAt(Base, Slot);
         if (LightIndex >= NumLights)
         {
             continue;

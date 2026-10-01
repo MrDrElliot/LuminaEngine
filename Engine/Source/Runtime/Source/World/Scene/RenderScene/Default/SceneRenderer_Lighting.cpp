@@ -190,7 +190,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
 
         constexpr uint32 ClusterBuildGroupSize = 64;
-        constexpr uint32 ClusterDispatchGroups = (NumClusters + ClusterBuildGroupSize - 1) / ClusterBuildGroupSize;
+        constexpr uint32 ClusterDispatchGroups = (MaxClusters + ClusterBuildGroupSize - 1) / ClusterBuildGroupSize;
         RHI::CmdDispatch(CL, MakeArgs(), ClusterDispatchGroups, 1, 1);
 
         // LightCull consumes the cluster AABBs next.
@@ -221,9 +221,8 @@ namespace Lumina
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
 
-        constexpr uint32 LightCullGroupSize = 128;
-        constexpr uint32 LightCullGroups    = (NumClusters + LightCullGroupSize - 1) / LightCullGroupSize;
-        RHI::CmdDispatch(CL, MakeArgs(), LightCullGroups, 1, 1);
+        // One group per cull block of the largest grid a view can have; groups past this view's grid exit at once.
+        RHI::CmdDispatch(CL, MakeArgs(), MaxClusterCullBlocks, 1, 1);
 
         // Cluster light lists feed the lit pixel shaders.
         RHI::CmdBarrier(CL,
@@ -1341,7 +1340,7 @@ namespace Lumina
             float    Time;
             uint32   ScatterUAV;          // bindless 3D UAV index of the scatter volume
 
-            uint32   bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
+            uint32   LocalLightSamples;   // 0 skips local lights, 1 is the froxel center, 4 supersamples
             uint32   _PadNumFogVolumes;
             uint32   CloudShadowIndex;    // bindless 2D SRV, ~0u when no cloud shadow was built
             float    CloudShadowExtent;
@@ -1614,11 +1613,9 @@ namespace Lumina
         PC.CloudShadowExtent    = SceneGlobalData.FogCloudShadowExtent;
         PC.CloudShadowCenter[0] = SceneGlobalData.FogCloudShadowCenter.x;
         PC.CloudShadowCenter[1] = SceneGlobalData.FogCloudShadowCenter.y;
-        PC.bSupersampleLocal    = 1u;
-        if (const CRendererSettings* RS = GetDefault<CRendererSettings>())
-        {
-            PC.bSupersampleLocal = RS->bSupersampleVolumetricLights ? 1u : 0u;
-        }
+        const CRendererSettings* RS = GetDefault<CRendererSettings>();
+        const bool bSupersample = RS == nullptr || RS->bSupersampleVolumetricLights;
+        PC.LocalLightSamples    = !Frame.Volumetrics.bLocalVolumetricLights ? 0u : (bSupersample ? 4u : 1u);
         if (NumVolumes > 0)
         {
             PC.FogVolumes = RHI::CopyTransientArray(Frame.Volumetrics.FogVolumes.data(), NumVolumes);

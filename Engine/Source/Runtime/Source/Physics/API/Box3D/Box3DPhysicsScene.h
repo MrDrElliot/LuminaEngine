@@ -67,6 +67,8 @@ namespace Lumina::Physics
         b3BodyDef               BodyDef{};
         b3ShapeDef              ShapeDef{};
         TVector<FPendingShape>  Shapes;
+        // A box collider's hull lives here until commit, since Box3D clones it on shape creation and the shared cache's lock serialized parallel builds.
+        TUniquePtr<b3BoxHull>   BoxHull;
 
         FVector3                LastBodyPosition = FVector3(0.0f);
         FQuat                   LastBodyRotation = FQuat::Identity();
@@ -123,7 +125,7 @@ namespace Lumina::Physics
         TVector<FPendingCharacterPush> Pushes;
     };
 
-    class FBox3DPhysicsScene : public IPhysicsScene
+    class RUNTIME_API FBox3DPhysicsScene : public IPhysicsScene
     {
     public:
 
@@ -361,6 +363,8 @@ namespace Lumina::Physics
 
         mutable FSharedMutex                                HullCacheMutex;
         THashMap<FHullKey, b3HullData*, FHullKeyHash>       HullCache;
+        // Built analytically and owned here rather than by Box3D, so they are freed with Memory::Delete.
+        THashMap<FHullKey, b3BoxHull*, FHullKeyHash>        BoxHullCache;
 
         mutable FSharedMutex                                MeshCacheMutex;
         THashMap<const void*, b3MeshData*>                  MeshCache;

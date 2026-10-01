@@ -68,6 +68,13 @@ namespace Lumina::Physics
         return Shape;
     }
 
+    FORCEINLINE bool IsIdentityPlacement(const b3Transform& Transform, const b3Vec3& Scale)
+    {
+        return Transform.p.x == 0.0f && Transform.p.y == 0.0f && Transform.p.z == 0.0f
+            && Transform.q.v.x == 0.0f && Transform.q.v.y == 0.0f && Transform.q.v.z == 0.0f && Transform.q.s == 1.0f
+            && Scale.x == 1.0f && Scale.y == 1.0f && Scale.z == 1.0f;
+    }
+
     FORCEINLINE FPendingShape MakeHullShape(const b3HullData* Hull, const FVector3& Offset, const FQuat& Rotation)
     {
         FPendingShape Shape;

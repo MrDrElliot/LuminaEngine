@@ -7,6 +7,7 @@
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Math/Math.h"
+#include "Log/Log.h"
 #include "MCPTextMatch.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
@@ -63,7 +64,10 @@ namespace Lumina::MCP
         }
 
         // Bounded, since a tracy-capture left connected by an earlier run would otherwise hold the tool call forever.
-        constexpr uint32 ExportTimeoutMilliseconds = 120000;
+        // A few seconds of trace exports well inside this, so running past it means the trace itself is bad.
+        constexpr uint32 ExportTimeoutMilliseconds = 30000;
+        // Every event of a long capture, which the hitch report reads, takes longer to write out.
+        constexpr uint32 UnwrapTimeoutMilliseconds = 120000;
 
         bool RunTool(const FString& Executable, const FString& Arguments, const TFunction<void(FStringView)>& OnLine,
                      uint32 TimeoutMilliseconds = ExportTimeoutMilliseconds)
@@ -250,6 +254,12 @@ namespace Lumina::MCP
             THashMap<FString, FZoneTotals> Cpu;
             THashMap<FString, FZoneTotals> Gpu;
             ReadZones(Export, Lumina::Format("-s \"{}\" {}\"{}\"", Separator, In.bSelfTime ? "-e " : "", Out.CaptureFile), false, Cpu);
+            if (Cpu.empty())
+            {
+                return Agent::FToolResult::Error(Lumina::Format(
+                    "Tracy could not read the trace at {}. That usually means a job fiber was mid-job as the capture "
+                    "connected; record again.", Out.CaptureFile));
+            }
             ReadZones(Export, Lumina::Format("-s \"{}\" -u -g \"{}\"", Separator, Out.CaptureFile), true, Gpu);
 
             // A frame's self time is only what its children leave over, so frame totals always come from inclusive times.
@@ -263,7 +273,9 @@ namespace Lumina::MCP
             const auto Frame = Totals.find(FString(FrameZone));
             if (Frame == Totals.end() || Frame->second.Count == 0)
             {
-                return Agent::FToolResult::Error(Lumina::Format("The trace at {} has no {} zones to count frames by.", Out.CaptureFile, FrameZone));
+                return Agent::FToolResult::Error(Lumina::Format(
+                    "The trace at {} has no {} zones to count frames by. Tracy's export usually fails like this when a job "
+                    "fiber was mid-job as the capture connected; record again.", Out.CaptureFile, FrameZone));
             }
 
             Out.Frames = (int32)Frame->second.Count;
@@ -352,7 +364,7 @@ namespace Lumina::MCP
                 Event.Start = (int64)ToNumber(Fields[3]);
                 Event.Duration = (int64)ToNumber(Fields[4]);
                 Event.Thread = (int32)ToNumber(Fields[5]);
-            });
+            }, UnwrapTimeoutMilliseconds);
 
             const auto FrameName = NameIds.find(FString(FrameZone));
             if (FrameName == NameIds.end())
@@ -516,17 +528,29 @@ namespace Lumina::MCP
             Agent::EToolEffect::ReadOnly, Agent::EToolThread::Any,
             [](const SProfilerCaptureParams& In, SProfilerCaptureResult& Out)
             {
-                FString Error;
-                if (!StartCapture(In.Seconds, In.bUncapFrameRate, Out.CaptureFile, Error))
-                {
-                    return Agent::FToolResult::Error(Error);
-                }
-
                 SProfilerReportParams Report;
                 Report.Top = In.Top;
                 Report.Filter = In.Filter;
                 Report.bSelfTime = In.bSelfTime;
-                return FinishCapture(Report, Out);
+
+                // A fiber mid-job when Tracy connects can leave a trace its own tools cannot read, so record again.
+                constexpr int32 MaxAttempts = 3;
+                for (int32 Attempt = 1; ; ++Attempt)
+                {
+                    Out = SProfilerCaptureResult{};
+                    FString Error;
+                    if (!StartCapture(In.Seconds, In.bUncapFrameRate, Out.CaptureFile, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    Agent::FToolResult Result = FinishCapture(Report, Out);
+                    if (Out.Frames > 0 || Attempt == MaxAttempts)
+                    {
+                        return Result;
+                    }
+                    LOG_WARN("profiler.capture: {} could not be read back, recording again.", Out.CaptureFile);
+                }
             });
     }
 }

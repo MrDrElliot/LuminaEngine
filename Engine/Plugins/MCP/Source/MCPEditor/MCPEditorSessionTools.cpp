@@ -233,6 +233,61 @@ namespace Lumina::MCP
                 });
         }
 
+        void RegisterSaveAndQuit(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSaveAllParams, SSaveAllResult>(
+                Owner, "editor.save_all",
+                "Save every package with unsaved changes, as File > Save All does. Open asset editors do their own save work.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSaveAllParams&, SSaveAllResult& Out)
+                {
+                    uint32 Saved = 0;
+                    FString Error;
+                    const bool bAllSaved = SessionOps::SaveAll(Saved, Out.Failed, Error);
+                    Out.Saved = (int32)Saved;
+                    if (!bAllSaved)
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    return Agent::FToolResult::Ok(Saved == 0 ? FString("Nothing to save.") : Lumina::Format("Saved {} package(s).", Saved));
+                });
+
+            Agent::FToolRegistry::Get().Register<SQuitParams, SQuitResult>(
+                Owner, "editor.quit",
+                "Close the editor without the unsaved-changes prompt or any other popup. Refuses while packages are "
+                "unsaved unless bSaveFirst or bDiscardUnsaved. Play is stopped first and the exit lands a few frames later.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SQuitParams& In, SQuitResult& Out)
+                {
+                    if (In.bSaveFirst && In.bDiscardUnsaved)
+                    {
+                        return Agent::FToolResult::Error("Pass bSaveFirst or bDiscardUnsaved, not both.");
+                    }
+
+                    const SessionOps::EQuitUnsaved Unsaved = In.bSaveFirst ? SessionOps::EQuitUnsaved::Save
+                        : In.bDiscardUnsaved ? SessionOps::EQuitUnsaved::Discard
+                        : SessionOps::EQuitUnsaved::Refuse;
+
+                    FString Error;
+                    Out.bQuitting = SessionOps::Quit(Unsaved, Error);
+                    if (!Out.bQuitting)
+                    {
+                        Out.Unsaved = SessionOps::GetDirtyPackagePaths();
+                        for (const FString& Path : Out.Unsaved)
+                        {
+                            Error.append(Lumina::Format(" {}", Path));
+                        }
+                        return Agent::FToolResult::Error(Unsaved == SessionOps::EQuitUnsaved::Refuse
+                            ? Error + " Call editor.save_all, or pass bSaveFirst or bDiscardUnsaved."
+                            : Error);
+                    }
+
+                    LOG_INFO("[MCP] An agent closed the editor.");
+                    return Agent::FToolResult::Ok("Quitting.");
+                });
+        }
+
         void RegisterTabs(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SListTabsParams, SListTabsResult>(
@@ -781,6 +836,7 @@ namespace Lumina::MCP
         RegisterUndoRedo(Owner);
         RegisterPlayControl(Owner);
         RegisterTabs(Owner);
+        RegisterSaveAndQuit(Owner);
         RegisterScreenshot(Owner);
         RegisterLogTail(Owner);
         RegisterConsoleExec(Owner);

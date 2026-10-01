@@ -46,9 +46,12 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         // engine's list with one that includes this project's own modules.
         bPublishesEngineReflectionManifest = false;
 
-        // A game module loads into the editor process, so it stays a shared library even in
-        // Shipping; only a packaged standalone game links monolithically.
-        bMonolithic = false;
+        // A packaged Shipping game links into the engine executable, since a game library would load a second runtime beside it.
+        bMonolithic = Target.Type == TargetType.Game && Target.Configuration == BuildConfiguration.Shipping;
+        if (bMonolithic)
+        {
+            ExtraModuleNames.Add("Lumina");
+        }
 
         // This target builds a library the editor loads, so running it means running the editor
         // with this project opened rather than launching the library.

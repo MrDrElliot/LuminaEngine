@@ -354,9 +354,14 @@ namespace Lumina
 
                 const FLightShadowData& ShadowData = Frame.Lighting.Shadows[LightShadow.ShadowDataIndex];
 
+                uint32 FaceView = ViewBase;
                 for (int32 Face = 0; Face < 6; ++Face)
                 {
                     const FLightShadow& FaceShadow = ShadowData.Shadow[Face];
+                    if (FaceShadow.ShadowMapIndex == INDEX_NONE)
+                    {
+                        continue;
+                    }
                     const FShadowTile& Tile = AtlasTiles[FaceShadow.ShadowMapIndex];
                     const int32 TilePixelX = (int32)(Tile.UVOffset.x * GShadowAtlasResolution);
                     const int32 TilePixelY = (int32)(Tile.UVOffset.y * GShadowAtlasResolution);
@@ -366,7 +371,7 @@ namespace Lumina
                     RHI::CmdSetViewport(CL, TileRect);
                     RHI::CmdSetScissor(CL, TileRect);
 
-                    DrawShadowBatch(CL, Batch, bUseMesh, ViewBase + (uint32)Face,
+                    DrawShadowBatch(CL, Batch, bUseMesh, FaceView++,
                                     LightShadow.ShadowDataIndex, Face,
                                     FUIntVector2((uint32)TileSize, (uint32)TileSize));
                 }

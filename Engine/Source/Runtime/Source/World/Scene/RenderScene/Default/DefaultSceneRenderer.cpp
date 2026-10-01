@@ -3,6 +3,7 @@
 
 namespace Lumina
 {
+
     #if !defined(LE_SHIPPING)
     // Development only. Off is for measuring; on is what proves no pass reads memory nothing wrote.
     static TConsoleVar CVarPoisonUninitializedBuffers("r.Buffers.PoisonUninitialized", true,
@@ -88,7 +89,8 @@ namespace Lumina
         View.Size       = Math::Max(Size, FUIntVector2(1));
 
         // Per-view clustered-lighting grid (built from this view's projection).
-        View.ClusterBuffer = CreateSceneBuffer(sizeof(FCluster) * NumClusters, "View.ClusterGrid");
+        View.ClusterBuffer = CreateSceneBuffer(sizeof(FCluster) * MaxClusters, "View.ClusterGrid");
+        View.ClusterLightIndexBuffer = CreateSceneBuffer(sizeof(uint32) * (1u + MAX_CLUSTER_LIGHT_INDICES), "View.ClusterLightIndices");
         View.bClusterGridDirty = true;   // fresh buffer has undefined contents.
 
         InitViewImages(View);
@@ -243,6 +245,11 @@ namespace Lumina
             {
                 RHI::Retire(View.ClusterBuffer);
                 View.ClusterBuffer = {};
+            }
+            if (View.ClusterLightIndexBuffer)
+            {
+                RHI::Retire(View.ClusterLightIndexBuffer);
+                View.ClusterLightIndexBuffer = {};
             }
         }
         SceneViews.clear();
@@ -416,6 +423,9 @@ namespace Lumina
 
         PointAtView(SceneViews[0]);
         CurrentCameraEarlyView = 0u;                                // primary's early/frustum cull view
+
+        LUMINA_PROFILE_VALUE("View/Width",  (int64)GetNamedImage(ENamedImage::DepthAttachment).GetSizeX());
+        LUMINA_PROFILE_VALUE("View/Height", (int64)GetNamedImage(ENamedImage::DepthAttachment).GetSizeY());
 
         Frame.SceneGlobalData.CullData.PyramidWidth      = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeX();
         Frame.SceneGlobalData.CullData.PyramidHeight     = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeY();
@@ -1934,6 +1944,7 @@ namespace Lumina
 
         *Root = SceneRootShared;
         Root->Clusters           = { View.ClusterBuffer };
+        Root->ClusterLightIndices = { View.ClusterLightIndexBuffer };
         Root->BRDFLutIndex       = (uint32)View.Images[(int)ENamedImage::BRDFLut].GetResourceID();
         Root->SkyIrradianceIndex = (uint32)View.Images[(int)ENamedImage::SkyIrradiance].GetResourceID();
         {
@@ -2065,6 +2076,9 @@ namespace Lumina
                 FShaderLibrary::PublishPipelineStats(Key.PS, Move(Stats));
             }
         }
+
+        const FShaderEntry* NamedEntry = PSEntry != nullptr ? PSEntry : (MSEntry != nullptr ? MSEntry : VSEntry);
+        RHI::DumpPipelineISA(Pipeline, NamedEntry->Path);
 #endif
 
         return Pipeline;

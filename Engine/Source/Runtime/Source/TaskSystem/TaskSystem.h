@@ -30,6 +30,9 @@ namespace Lumina
         // Worker-balanced chunk count for splitting [0, Num) with the given grain.
         RUNTIME_API uint32 ComputeChunkCount(uint32 Num, uint32 MinRange);
 
+        // The function a callable was written in, read out of a template's signature and kept for the process.
+        RUNTIME_API const char* CallSiteName(const char* Signature);
+
         inline constexpr uint32 kMaxChunks = 256;
 
         // Runs every ParallelFor on this thread inline while open, for an item of a loop that is already parallel at an outer level.
@@ -109,7 +112,18 @@ namespace Lumina
                 }
             };
 
-            ParallelForImpl(Num, MinRange, Priority, Thunk, &Stored);
+#if defined(TRACY_ENABLE)
+            // The callable's type names the function that wrote it, which is what labels the chunks a worker runs.
+            #if defined(_MSC_VER)
+            static const char* const CallSite = Task::CallSiteName(__FUNCSIG__);
+            #else
+            static const char* const CallSite = Task::CallSiteName(__PRETTY_FUNCTION__);
+            #endif
+#else
+            constexpr const char* CallSite = nullptr;
+#endif
+
+            ParallelForImpl(Num, MinRange, Priority, Thunk, &Stored, CallSite);
         }
 
         template<typename TIterator, typename TFunc>
@@ -181,7 +195,8 @@ namespace Lumina
 
         // Splits [0, Num) into worker-balanced chunks, runs them, and waits. Single source of the
         // chunking policy; the templated entry points type-erase their callable into Thunk + Ctx.
-        RUNTIME_API void ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx);
+        RUNTIME_API void ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx,
+                                         const char* CallSite = nullptr);
     };
 
     namespace Task

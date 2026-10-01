@@ -43,6 +43,52 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SSaveAllParams
+    {
+        GENERATED_BODY()
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSaveAllResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int32 Saved = 0;
+
+        // Package paths that refused to save and are still dirty.
+        PROPERTY()
+        TVector<FString> Failed;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SQuitParams
+    {
+        GENERATED_BODY()
+
+        // Save every dirty package first, and stay open if any of them fails.
+        PROPERTY()
+        bool bSaveFirst = false;
+
+        // Quit even with unsaved changes, which are then lost.
+        PROPERTY()
+        bool bDiscardUnsaved = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SQuitResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bQuitting = false;
+
+        // What kept the editor open, when it refused.
+        PROPERTY()
+        TVector<FString> Unsaved;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SPauseParams
     {
         GENERATED_BODY()

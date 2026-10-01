@@ -238,7 +238,18 @@ namespace Lumina
         }
 
         // Binaries an earlier package wrote that this one did not, which the game would otherwise carry forever.
-        void RemoveStaleBinaries(FStringView DestDir, const THashSet<FString>& WrittenStems, const TFunction<void(FStringView)>& LogFunc)
+        // The reflector's Clang and the editor-only Nsight and BugSplat SDKs never load in a game, and Shipping compiles Aftermath out.
+        bool IsUnusedByGameDll(FStringView FileName, FStringView ConfigSuffix)
+        {
+            if (FileName == FStringView("libclang.dll") || FileName == FStringView("nvperf_grfx_host.dll") || FileName.starts_with("BugSplat"))
+            {
+                return true;
+            }
+            return ConfigSuffix == FStringView("Shipping") && FileName.starts_with("GFSDK_Aftermath");
+        }
+
+        void RemoveStaleBinaries(FStringView DestDir, const THashSet<FString>& WrittenStems, FStringView ConfigSuffix,
+                                 const TFunction<void(FStringView)>& LogFunc)
         {
             TVector<FString> Stale;
             Filesystem::IterateDirectory(DestDir, [&](const Filesystem::FDirectoryEntry& Entry)
@@ -249,7 +260,8 @@ namespace Lumina
                     return;
                 }
                 const FStringView Stem = StemOf(Entry.Name);
-                if (!ModuleOfSuffixedBinary(Stem).empty() && !WrittenStems.contains(FString(Stem.data(), Stem.size())))
+                const bool bUnwritten = !WrittenStems.contains(FString(Stem.data(), Stem.size()));
+                if (bUnwritten && (!ModuleOfSuffixedBinary(Stem).empty() || IsUnusedByGameDll(Entry.Name, ConfigSuffix)))
                 {
                     Stale.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
                 }
@@ -264,12 +276,13 @@ namespace Lumina
             }
         }
 
-        // Editor-only / tooling DLLs that aren't needed at runtime; hard-coded since no programmatic check exists.
-        bool IsEditorOnlyDll(FStringView FileName)
+        // In a monolithic build the engine, plugin and game modules are inside the executable, and the exe to ship is the project's.
+        struct FMonolithicCopy
         {
-            // libclang.dll is for the Reflector tool's Clang frontend (compile-time only).
-            return FileName == FStringView("libclang.dll");
-        }
+            bool                     bEnabled = false;
+            bool                     bCopyExecutable = true;
+            const THashSet<FString>* LinkedModules = nullptr;
+        };
 
         size_t CopyRuntimePayload(FStringView SourceDir,
                                   FStringView DestDir,
@@ -277,7 +290,8 @@ namespace Lumina
                                   FStringView ProjectName,
                                   const THashSet<FString>* AllowedModules,
                                   THashSet<FString>& WrittenStems,
-                                  const TFunction<void(FStringView)>& LogFunc)
+                                  const TFunction<void(FStringView)>& LogFunc,
+                                  const FMonolithicCopy& Monolithic = {})
         {
             size_t Copied = 0;
             size_t Skipped = 0;
@@ -301,9 +315,21 @@ namespace Lumina
                 const bool bDll = Ext == FStringView(".dll");
 
                 // Skip tools / wrong-config exes.
-                if (bExe && FileName != FStringView(MyExeName.c_str(), MyExeName.size()))
+                if (bExe && (FileName != FStringView(MyExeName.c_str(), MyExeName.size()) || !Monolithic.bCopyExecutable))
                 {
                     return;
+                }
+
+                // A stale module DLL here would load beside the executable's own copy of the same code.
+                if (bDll && Monolithic.bEnabled)
+                {
+                    const FStringView Linked = ModuleOfSuffixedBinary(Stem);
+                    if (!Linked.empty() && (Linked == ProjectName
+                        || (Monolithic.LinkedModules != nullptr && Monolithic.LinkedModules->contains(FString(Linked.data(), Linked.size())))))
+                    {
+                        ++Skipped;
+                        return;
+                    }
                 }
 
                 if (!bDll && !bExe)
@@ -331,7 +357,7 @@ namespace Lumina
                     return;
                 }
 
-                if (IsEditorOnlyDll(FileName))
+                if (IsUnusedByGameDll(FileName, FStringView(ConfigSuffix.c_str(), ConfigSuffix.size())))
                 {
                     ++Skipped;
                     return;
@@ -564,21 +590,26 @@ namespace Lumina
             Config.c_str(), BinariesDir.c_str()).c_str());
 
         const THashSet<FString> EngineModules = CollectEngineModuleNames(Paths::GetEngineInstallDirectory());
+        const FString ProjectBinaries = ProjectDir.empty() ? FString() : Join(ProjectDir, "Binaries/Windows64");
+
+        // Shipping links the game into the engine application, which the build leaves in the project's Binaries.
+        FMonolithicCopy Monolithic;
+        Monolithic.bEnabled = Config == "Shipping" && !ProjectDir.empty();
+        Monolithic.LinkedModules = &EngineModules;
+
+        FMonolithicCopy EngineCopy = Monolithic;
+        EngineCopy.bCopyExecutable = !Monolithic.bEnabled;
+
         THashSet<FString> WrittenStems;
-        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, &EngineModules, WrittenStems, LogFunc);
+        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, &EngineModules, WrittenStems, LogFunc, EngineCopy);
 
         // Project modules link into the project tree, while engine binaries stay shared where they are.
-        if (!ProjectDir.empty())
+        if (!ProjectBinaries.empty() && Filesystem::Exists(ProjectBinaries))
         {
-            const FString ProjectBinaries = Join(ProjectDir, "Binaries/Windows64");
+            LogPackager(LogFunc, Format("Copying project binaries from {}",
+                ProjectBinaries.c_str()).c_str());
 
-            if (Filesystem::Exists(ProjectBinaries))
-            {
-                LogPackager(LogFunc, Format("Copying project binaries from {}",
-                    ProjectBinaries.c_str()).c_str());
-
-                Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, nullptr, WrittenStems, LogFunc);
-            }
+            Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, nullptr, WrittenStems, LogFunc, Monolithic);
         }
 
         if (Copied == 0)
@@ -587,7 +618,7 @@ namespace Lumina
             return Result;
         }
         LogPackager(LogFunc, Format("Copied {} runtime files.", Copied).c_str());
-        RemoveStaleBinaries(DestDir, WrittenStems, LogFunc);
+        RemoveStaleBinaries(DestDir, WrittenStems, FStringView(Config.c_str(), Config.size()), LogFunc);
 
         // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
         CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DestDir, !(Config == "Shipping"), LogFunc);

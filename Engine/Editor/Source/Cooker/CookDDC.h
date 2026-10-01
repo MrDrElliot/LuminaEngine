@@ -24,7 +24,7 @@ namespace Lumina
     {
     public:
         // Bump to invalidate every cached entry; triggers: cook-mode serialize/saver layout, import wire format, EditorOnly strip rules.
-        static constexpr uint32 kCookStamp = 2;
+        static constexpr uint32 kCookStamp = 3;
 
         static FCookInputHash ComputeKey(uint64 SourceContentHash);
 

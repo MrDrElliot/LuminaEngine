@@ -43,6 +43,7 @@ namespace Lumina
 
 		RUNTIME_API void SetWindowSize(int X, int Y);
 
+		RUNTIME_API void SetTitle(const FString& Title);
 		RUNTIME_API void SetTitleBarHovered(bool bHovered);
 		RUNTIME_API void SetCursorMode(ECursorMode Mode);
 

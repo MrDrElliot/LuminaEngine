@@ -177,7 +177,7 @@ namespace Lumina
         World->EmplaceComponent<SParticleSystemComponent>(ParticleEntity);
 
         const STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
-        SetOrbitTarget(MeshTransform.GetLocation(), 4.0f);
+        SetOrbitTarget(MeshTransform.GetLocation(), 2.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
 
         ApplyMaterialToPreview();

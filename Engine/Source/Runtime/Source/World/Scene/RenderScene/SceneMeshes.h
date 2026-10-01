@@ -6,6 +6,9 @@
 
 namespace Lumina::PrimitiveMeshes
 {
+    // Primitives span one meter, the size every collider defaults to, so a primitive and its collider match unscaled.
+    constexpr float PrimitiveHalfSize = 0.5f;
+
     inline void GenerateCube(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices)
     {
         const FVector3 normals[] =
@@ -46,7 +49,7 @@ namespace Lumina::PrimitiveMeshes
                 int idx = face * 4 + i;
             
                 FSourceVertex vertex;
-                vertex.Position = positions[idx];
+                vertex.Position = positions[idx] * PrimitiveHalfSize;
                 vertex.Normal = PackNormal(normals[face]);
                 vertex.Tangent = 0; // GenerateMeshlets fills this in; zero so dedup byte-compare works.
                 vertex.UV = Math::PackHalf2x16(uvs[i]);
@@ -83,7 +86,7 @@ namespace Lumina::PrimitiveMeshes
         for (int i = 0; i < 4; ++i)
         {
             FSourceVertex v;
-            v.Position = positions[i];
+            v.Position = positions[i] * PrimitiveHalfSize;
             v.Normal = PackNormal(normal);
             v.Tangent = 0;
             v.UV     = Math::PackHalf2x16(uvs[i]);
@@ -117,7 +120,7 @@ namespace Lumina::PrimitiveMeshes
                 };
 
                 FSourceVertex vert;
-                vert.Position = pos;
+                vert.Position = pos * PrimitiveHalfSize;
                 vert.Normal = PackNormal(Math::Normalize(pos));
                 vert.Tangent = 0;
                 vert.UV     = Math::PackHalf2x16(FVector2(u, v));
@@ -150,7 +153,7 @@ namespace Lumina::PrimitiveMeshes
         OutVertices.clear();
         OutIndices.clear();
     
-        float halfHeight = 1.0f;
+        const float halfHeight = PrimitiveHalfSize;
     
         // Side vertices
         for (int i = 0; i <= Segments; ++i)
@@ -162,7 +165,7 @@ namespace Lumina::PrimitiveMeshes
             for (int j = 0; j < 2; ++j)
             {
                 FSourceVertex v;
-                v.Position = { dir.x, j ? halfHeight : -halfHeight, dir.z };
+                v.Position = { dir.x * PrimitiveHalfSize, j ? halfHeight : -halfHeight, dir.z * PrimitiveHalfSize };
                 v.Normal = PackNormal(Math::Normalize(dir));
                 v.Tangent = 0;
                 v.UV = Math::PackHalf2x16(FVector2(u, j));
@@ -205,7 +208,7 @@ namespace Lumina::PrimitiveMeshes
                 FVector3 dir = { std::cos(theta), 0, std::sin(theta) };
 
                 FSourceVertex v;
-                v.Position = { dir.x, y, dir.z };
+                v.Position = { dir.x * PrimitiveHalfSize, y, dir.z * PrimitiveHalfSize };
                 v.Normal = PackNormal(n);
                 v.Tangent = 0;
                 v.UV    = Math::PackHalf2x16(FVector2(u, cap));
@@ -235,8 +238,8 @@ namespace Lumina::PrimitiveMeshes
         OutVertices.clear();
         OutIndices.clear();
 
-        const float halfHeight = 1.0f;
-        const float radius     = 1.0f;
+        const float halfHeight = PrimitiveHalfSize;
+        const float radius     = PrimitiveHalfSize;
         const float H          = halfHeight * 2.0f;
         
         for (int i = 0; i < Segments; ++i)

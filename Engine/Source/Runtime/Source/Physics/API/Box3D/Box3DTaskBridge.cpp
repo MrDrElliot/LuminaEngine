@@ -1,5 +1,7 @@
 #include "RuntimePCH.h"
 #include "Box3DTaskBridge.h"
+#include "Containers/HashTable.h"
+#include "Core/Console/ConsoleVariable.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 
@@ -7,10 +9,36 @@ namespace Lumina::Physics
 {
     namespace
     {
+        TConsoleVar<int32> CVarBox3DWorkers("Physics.Box3D.Workers", 0,
+            "Workers each Box3D world steps with, read when a world is created. Zero picks one per physical core.");
+
+        uint32 CountPhysicalCores()
+        {
+            constexpr uint32 MaxDescribed = 256;
+            Threading::FCpuTopology Topology[MaxDescribed];
+            const uint32 Described = Threading::GetCpuTopology(Topology, MaxDescribed);
+            if (Described == 0)
+            {
+                // Without topology, assume two hardware threads per core, which is the common case.
+                return Math::Max(Threading::GetNumThreads() / 2u, 1u);
+            }
+
+            THashSet<uint16> Cores;
+            for (uint32 Index = 0; Index < Described; ++Index)
+            {
+                Cores.insert(Topology[Index].PhysicalCore);
+            }
+            return (uint32)Cores.size();
+        }
+
+        // One per physical core, since the solver's workers spin on each other at every stage and hyperthreads only add spinners.
         uint32 ResolvePhysicsWorkerCount()
         {
-            const uint32 LogicalCount = Threading::GetNumThreads();
-            return Math::Clamp(LogicalCount > 1 ? LogicalCount - 1 : 1, 1u, (uint32)B3_MAX_WORKERS);
+            if (const int32 Requested = CVarBox3DWorkers.GetValue(); Requested > 0)
+            {
+                return Math::Clamp((uint32)Requested, 1u, (uint32)B3_MAX_WORKERS);
+            }
+            return Math::Clamp(CountPhysicalCores(), 1u, (uint32)B3_MAX_WORKERS);
         }
     }
 

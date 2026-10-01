@@ -128,6 +128,10 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
     // Normal-offset the receiver before projecting; without it walls self-shadow at grazing angles
     // inside the face cone, leaving a dimmer square centered on the light.
     FLightShadow ShadowTile = GetShadowTile(Light.ShadowDataIndex, Face);
+    if (ShadowTile.ShadowMapIndex < 0)
+    {
+        return 1.0;   // no view reaches this face, so it was never rendered
+    }
 
     uint AtlasW, AtlasH;
     ShadowAtlas().GetDimensions(AtlasW, AtlasH);
@@ -682,6 +686,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     // overflows Clusters() -> garbage light list and an MMU fault.
     uint TileIndex  = ComputeClusterIndex(ViewPosition.z, ScreenPos);
     uint LightCount = GetClusterLightCount(TileIndex);
+    uint LightBase  = GetClusterLightBase(TileIndex);
 
     // Clearcoat state. Hoisted out of the loops but only meaningful inside the branch; a non-clearcoat
     // pixel leaves Coat at 0 and every clearcoat block below is skipped whole.
@@ -761,10 +766,10 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     [loop]
     for (uint Cursor = 0u; ; )
     {
-        // Index the array only in range; Count sits right after it, and would read as a real light.
+        // Index the run only in range, since the slot past it belongs to the next cluster.
         const bool bLaneDone = (Cursor >= SafeLightCount);
         const uint ReadSlot  = bLaneDone ? 0u : Cursor;
-        const uint LaneNext  = bLaneDone ? 0xFFFFFFFFu : GetClusterLightIndex(TileIndex, ReadSlot);
+        const uint LaneNext  = bLaneDone ? 0xFFFFFFFFu : GetClusterLightAt(LightBase, ReadSlot);
 
 #ifdef SHADING_COMPUTE
         // The wave walks the union of its lanes' lists, which is what puts each light fetch in scalar registers.

@@ -59,7 +59,7 @@ namespace Lumina
 
         constexpr float kThumbnailFOV       = 35.0f;
         constexpr float kMeshFramingScale   = 3.2f;   // Margin around bounds
-        constexpr float kSphereFramingScale = 5.5f;   // Sphere fills ~60% of frame
+        constexpr float kSphereFramingScale = 2.75f;   // Sphere fills ~60% of frame
 
         auto SetupStudioLighting = [](FThumbnailScene& Scene)
         {
@@ -175,7 +175,7 @@ namespace Lumina
                     Volume.PostProcessMaterials.push_back(Material);
                 }
 
-                // Sphere mesh has unit radius.
+                // Sphere mesh has a half-meter radius.
                 const FVector3 Dir = Math::Normalize(FVector3(0.0f, 0.25f, 1.0f));
                 Scene.SetCameraTransform(Dir * kSphereFramingScale, FVector3(0.0f), kThumbnailFOV);
             });

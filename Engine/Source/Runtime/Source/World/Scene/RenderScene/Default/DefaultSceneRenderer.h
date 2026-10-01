@@ -148,7 +148,13 @@ namespace Lumina
             FVector3    Up;             // Spot only
             float       Attenuation;
             float       OuterFOVDegrees;
+            // Point lights only, one bit per cube face that some view can see a receiver through.
+            uint32      FaceMask = kAllCubeFaces;
         };
+
+        static constexpr uint32 kAllCubeFaces = 0x3Fu;
+        // The cube faces of a point light whose region reaches any relevance view, since the rest shadow nothing on screen.
+        uint32 VisibleCubeFaces(const FVector3& Position, float Radius) const;
 
         // This frame's gathered scene. Extract writes it, RenderView reads it, same frame.
         struct FFrameData
@@ -418,6 +424,8 @@ namespace Lumina
 
                 TVector<FGPUFogVolume>           FogVolumes;
                 uint32                           FarShaftSteps        = 0;
+                // Any local light this frame scatters through fog, which is what the froxel inject walks cluster lists for.
+                bool                             bLocalVolumetricLights = false;
                 float                            FarShaftDistance     = 4000.0f;
             } Volumetrics;
 
@@ -567,6 +575,7 @@ namespace Lumina
             // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
             bool                                            bCloudNoiseBaked = false;
             RHI::FGPUAllocation                                    ClusterBuffer;
+            RHI::FGPUAllocation                                    ClusterLightIndexBuffer;
             FMatrix4                                        LastClusterInvProjection = FMatrix4(0.0f);
             FVector2                                        LastClusterNearFar       = FVector2(0.0f);
             FUIntVector2                                    LastClusterScreenSize    = FUIntVector2(0);
@@ -904,8 +913,20 @@ namespace Lumina
         uint32                                 BoneSliceFrameNumber = 0;
         TVector<FUIntVector2>                  BoneUploadScratch;
 
-        void ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount);
-        void ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount);
+        // Lights one parallel range builds, committed with one reservation so the ranges never contend per light.
+        struct FLightBatch
+        {
+            static constexpr uint32 Capacity = 32;
+            FLight         Lights[Capacity];
+            // LightIndex holds the slot within Lights until the batch is committed.
+            FShadowRequest Shadows[Capacity];
+            uint32         NumLights  = 0;
+            uint32         NumShadows = 0;
+        };
+
+        void ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
+        void ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
+        void FlushLightBatch(FLightBatch& Batch, TAtomic<uint32>& LightCount);
         void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight);
 
         void AllocateShadowTiles();

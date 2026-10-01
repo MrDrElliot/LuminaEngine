@@ -857,7 +857,12 @@ namespace Lumina
             ImPlot::ShowDemoWindow(&bShowImPlotDemoWindow);
         }
 
-        if (GEngine->IsCloseRequested())
+        if (PendingQuitFrames > 0 && --PendingQuitFrames == 0)
+        {
+            FApplication::RequestExit();
+        }
+
+        if (GEngine->IsCloseRequested() && !bQuitWithoutPrompt)
         {
             if (!bVerifyingDirtyPackages)
             {
@@ -3013,6 +3018,50 @@ namespace Lumina
 
         // The tool's own OnSave reports the result, so a second notification would just duplicate it.
         LastActiveTool->OnSave();
+    }
+
+    void FEditorUI::QuitWithoutPrompt()
+    {
+        bQuitWithoutPrompt = true;
+        constexpr int32 QuitDelayFrames = 3;
+        PendingQuitFrames = QuitDelayFrames;
+    }
+
+    FEditorUI::FSaveAllResult FEditorUI::SaveAllDirtyPackagesSilently()
+    {
+        FSaveAllResult Result;
+
+        TVector<CPackage*> DirtyPackages;
+        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
+        {
+            CPackage* Package = *Itr;
+            if (!Package->HasAnyFlag(OF_MarkedDestroy) && Package->IsDirty())
+            {
+                DirtyPackages.push_back(Package);
+            }
+        }
+
+        // Same routing as Save All, so an open tool still does its type-specific save work.
+        for (const auto& [Asset, Tool] : ActiveAssetTools)
+        {
+            CPackage* Package = (Asset != nullptr && Tool != nullptr) ? Asset->GetPackage() : nullptr;
+            if (Package != nullptr && Package->IsDirty() && !Package->HasAnyFlag(OF_MarkedDestroy))
+            {
+                Tool->OnSave();
+            }
+        }
+
+        for (CPackage* Package : DirtyPackages)
+        {
+            if (Package->IsDirty() && !CPackage::SavePackage(Package, Package->GetPackagePath()))
+            {
+                Result.FailedPaths.push_back(FString(Package->GetPackagePath().c_str()));
+                continue;
+            }
+            ++Result.Saved;
+        }
+
+        return Result;
     }
 
     void FEditorUI::SaveAllDirtyPackages()

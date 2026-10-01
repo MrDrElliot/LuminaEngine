@@ -200,6 +200,12 @@ namespace Lumina::Physics
         }
         HullCache.clear();
 
+        for (auto& [Key, Box] : BoxHullCache)
+        {
+            Memory::Delete(Box);
+        }
+        BoxHullCache.clear();
+
         for (auto& [Key, Mesh] : MeshCache)
         {
             b3DestroyMesh(Mesh);

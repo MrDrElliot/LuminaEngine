@@ -105,4 +105,22 @@ namespace Lumina::SessionOps
     EDITOR_API bool CloseTab(FStringView Name, bool bDiscardUnsaved, FString& OutError);
     // Opens the asset or focuses its existing tab, reporting which tab it landed in.
     EDITOR_API bool OpenAsset(const FGuid& AssetGUID, FString& OutTabId, FString& OutError);
+
+    //~ Saving and quitting.
+
+    // Package paths with unsaved changes, skipping deleted assets still awaiting their destroy.
+    NODISCARD EDITOR_API TVector<FString> GetDirtyPackagePaths();
+
+    // Saves every dirty package as File > Save All does; false when any refused, which OutFailedPaths names.
+    EDITOR_API bool SaveAll(uint32& OutSaved, TVector<FString>& OutFailedPaths, FString& OutError);
+
+    enum class EQuitUnsaved : uint8
+    {
+        Refuse,
+        Save,
+        Discard,
+    };
+
+    // Stops any play session and exits without the unsaved-changes prompt, once Unsaved has settled every dirty package.
+    EDITOR_API bool Quit(EQuitUnsaved Unsaved, FString& OutError);
 }

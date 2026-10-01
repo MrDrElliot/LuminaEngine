@@ -1,6 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
 
+#include <bit>
+
 namespace Lumina
 {
     namespace
@@ -127,7 +129,7 @@ namespace Lumina
             PrimaryView.PendingViewProjection = SceneGlobalData.CameraData.Projection * SceneGlobalData.CameraData.View;
         }
         SceneGlobalData.ScreenSize                      = FUIntVector4(PrimarySize.x, PrimarySize.y, 0, 0);
-        SceneGlobalData.GridSize                        = FUIntVector4(ClusterGridSizeX, ClusterGridSizeY, ClusterGridSizeZ, 0);
+        SceneGlobalData.GridSize                        = ComputeClusterGrid(PrimarySize);
         SceneGlobalData.Time                            = (float)World->GetTimeSinceWorldCreation();
         SceneGlobalData.DeltaTime                       = Frame.CachedWorldDeltaTime;
         // Derived rather than remembered, so it cannot drift out of step with the clock the graph reads.
@@ -221,6 +223,7 @@ namespace Lumina
             Data.CameraData.InverseProjection = VV.GetInverseProjectionMatrix();
             const FUIntVector2 CaptureSize      = SceneViews[Capture.SceneViewIndex].Size;
             Data.ScreenSize                   = FUIntVector4(CaptureSize.x, CaptureSize.y, 0, 0);
+            Data.GridSize                     = ComputeClusterGrid(CaptureSize);
             Data.FarPlane                     = VV.GetFar();
             Data.NearPlane                    = VV.GetNear();
             Data.CullData.Frustum             = AsGPU(VV.GetFrustum());
@@ -245,6 +248,7 @@ namespace Lumina
                 Data.CameraData.Projection        = VV.GetProjectionMatrix();
                 Data.CameraData.InverseProjection = VV.GetInverseProjectionMatrix();
                 Data.ScreenSize                   = FUIntVector4(FaceSize, FaceSize, 0, 0);
+                Data.GridSize                     = ComputeClusterGrid(FUIntVector2(FaceSize, FaceSize));
                 Data.FarPlane                     = VV.GetFar();
                 Data.NearPlane                    = VV.GetNear();
                 Data.CullData.Frustum             = AsGPU(VV.GetFrustum());
@@ -1121,22 +1125,26 @@ namespace Lumina
         {
             LUMINA_PROFILE_SECTION("Process Point Light Range");
 
+            FLightBatch Batch;
             PointLightView.ForEachInRange(Range.Start, Range.End,
                 [&](ECS::FEntity Entity, SPointLightComponent& PointLight)
             {
-                ProcessPointLight(PointLight, TransformStorage.Get(Entity), LightCount);
+                ProcessPointLight(PointLight, TransformStorage.Get(Entity), Batch, LightCount);
             });
+            FlushLightBatch(Batch, LightCount);
         });
         
         auto SpotLightTask = EmitGraph.AddParallelFor((uint32)SpotLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
         {
             LUMINA_PROFILE_SECTION("Process Spot Light Range");
 
+            FLightBatch Batch;
             SpotLightView.ForEachInRange(Range.Start, Range.End,
                 [&](ECS::FEntity Entity, SSpotLightComponent& SpotLight)
             {
-                ProcessSpotLight(SpotLight, TransformStorage.Get(Entity), LightCount);
+                ProcessSpotLight(SpotLight, TransformStorage.Get(Entity), Batch, LightCount);
             });
+            FlushLightBatch(Batch, LightCount);
         });
 
         EmitGraph.Add([this, &Registry, &Frame] { ExtractTerrain(Registry, Frame); },     ETaskPriority::Medium);
@@ -1169,12 +1177,25 @@ namespace Lumina
         // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
         NumLiveLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
 
+        Frame.Volumetrics.bLocalVolumetricLights = false;
+        for (uint32 Index = 0; Index < NumLiveLights; ++Index)
+        {
+            const ELightFlags Flags = Frame.Lighting.Lights[Index].Flags;
+            if (EnumHasAnyFlags(Flags, ELightFlags::Volumetric) && !EnumHasAnyFlags(Flags, ELightFlags::Directional))
+            {
+                Frame.Volumetrics.bLocalVolumetricLights = true;
+                break;
+            }
+        }
+
         // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
         AllocateShadowTiles();
 
         // Same overshoot as LightCount, and this is the last writer of the shadow counter.
         NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
                                    (uint32)MAX_SHADOWS);
+        LUMINA_PROFILE_VALUE("Shadows/LocalShadowed", (int64)NumLiveShadows);
+        LUMINA_PROFILE_VALUE("Lights/Live", (int64)NumLiveLights);
 
         // Serial after the light tasks, since the skylight reads the sun direction ProcessDirectionalLight wrote.
         const SEnvironmentComponent* ActiveEnv = ExtractEnvironment(Registry, Frame);
@@ -2539,6 +2560,59 @@ namespace Lumina
         FrameStats.NumBatches = NumLiveBatches;
     }
 
+    uint32 FDefaultSceneRenderer::VisibleCubeFaces(const FVector3& Position, float Radius) const
+    {
+        const TVector<FFrustum>& Volumes = ExtractFrame->Lighting.RelevanceFrusta;
+        if (Volumes.empty())
+        {
+            return kAllCubeFaces;
+        }
+
+        // Same order as the shadow views and DirectionToCubemapCoord, which is +X, -X, +Y, -Y, +Z, -Z.
+        static const FVector3 Axes[6]  = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+        static const FVector3 SideU[6] = { { 0, 1, 0 }, { 0, 1, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 } };
+        static const FVector3 SideV[6] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 1, 0 }, { 0, 1, 0 } };
+
+        uint32 Mask = 0u;
+        for (uint32 Face = 0; Face < 6; ++Face)
+        {
+            // A 90 degree face reaches Radius along its axis, so the apex and these four corners hull its part of the sphere.
+            const FVector3 Far = Position + Axes[Face] * Radius;
+            const FVector3 U   = SideU[Face] * Radius;
+            const FVector3 V   = SideV[Face] * Radius;
+            const FVector3 Hull[5] = { Position, Far + U + V, Far + U - V, Far - U + V, Far - U - V };
+
+            for (const FFrustum& Volume : Volumes)
+            {
+                bool bSeparated = false;
+                for (const FVector4& Plane : Volume.Planes)
+                {
+                    bool bAllOutside = true;
+                    for (const FVector3& Point : Hull)
+                    {
+                        if (Math::Dot(FVector3(Plane.x, Plane.y, Plane.z), Point) + Plane.w >= 0.0f)
+                        {
+                            bAllOutside = false;
+                            break;
+                        }
+                    }
+                    if (bAllOutside)
+                    {
+                        bSeparated = true;
+                        break;
+                    }
+                }
+
+                if (!bSeparated)
+                {
+                    Mask |= 1u << Face;
+                    break;
+                }
+            }
+        }
+        return Mask;
+    }
+
     bool FDefaultSceneRenderer::ShouldRequestShadow(const FVector3& LightPosition, float LightRadius) const
     {
         return ExtractFrame->CameraFrustum.IntersectsSphere(LightPosition, LightRadius);
@@ -2684,12 +2758,46 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount)
+    void FDefaultSceneRenderer::FlushLightBatch(FLightBatch& Batch, TAtomic<uint32>& LightCount)
     {
-        FFrameData& Frame                       = *ExtractFrame;
-        TVector<FShadowRequest>& ShadowRequests = Frame.Lighting.ShadowRequests;
-        FMutex& ShadowRequestMutex              = Frame.Lighting.ShadowRequestMutex;
+        if (Batch.NumLights == 0)
+        {
+            return;
+        }
 
+        FFrameData& Frame = *ExtractFrame;
+        const uint32 Base = LightCount.fetch_add(Batch.NumLights, std::memory_order_acq_rel);
+        const uint32 Fits = Base >= (uint32)MAX_LIGHTS ? 0u : Math::Min(Batch.NumLights, (uint32)MAX_LIGHTS - Base);
+        if (Fits < Batch.NumLights)
+        {
+            NotifyMaxLightsHit();
+        }
+
+        for (uint32 Slot = 0; Slot < Fits; ++Slot)
+        {
+            Frame.Lighting.Lights[Base + Slot] = Batch.Lights[Slot];
+        }
+
+        if (Batch.NumShadows != 0)
+        {
+            FScopeLock Lock(Frame.Lighting.ShadowRequestMutex);
+            for (uint32 Index = 0; Index < Batch.NumShadows; ++Index)
+            {
+                FShadowRequest& Request = Batch.Shadows[Index];
+                if (Request.LightIndex < Fits)
+                {
+                    Request.LightIndex += Base;
+                    Frame.Lighting.ShadowRequests.push_back(Request);
+                }
+            }
+        }
+
+        Batch.NumLights  = 0;
+        Batch.NumShadows = 0;
+    }
+
+    void FDefaultSceneRenderer::ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount)
+    {
         const FVector3 Position = TransformComponent.GetWorldLocationCached();
 
         // Ahead of the slot handout, so an unreachable light costs neither a light index nor a cluster test.
@@ -2698,12 +2806,7 @@ namespace Lumina
             return;
         }
 
-        auto Lights = LightCount.fetch_add(1, std::memory_order_acquire);
-        if (Lights >= MAX_LIGHTS)
-        {
-            NotifyMaxLightsHit();
-            return;
-        }
+        const uint32 Lights = Batch.NumLights;
 
         FLight Light                = {};
         Light.Flags                 = ELightFlags::Point;
@@ -2732,7 +2835,19 @@ namespace Lumina
             constexpr float ResolutionScale = 2048.0f;
             const uint32 DesiredPixels = (uint32)((Light.Radius / Math::Max(Dist, 0.01f)) * ResolutionScale);
 
-            FShadowRequest Req;
+            const uint32 FaceMask = VisibleCubeFaces(Light.Position, Light.Radius);
+            if (FaceMask == 0u)
+            {
+                Batch.Lights[Batch.NumLights++] = Light;
+                if (Batch.NumLights == FLightBatch::Capacity)
+                {
+                    FlushLightBatch(Batch, LightCount);
+                }
+                return;
+            }
+
+            FShadowRequest& Req = Batch.Shadows[Batch.NumShadows++];
+            Req.FaceMask        = FaceMask;
             Req.LightIndex      = Lights;
             Req.Type            = ELightType::Point;
             Req.DesiredPixels   = DesiredPixels;
@@ -2742,21 +2857,17 @@ namespace Lumina
             Req.Up              = FVector3(0.0f);
             Req.Attenuation     = Light.Radius;
             Req.OuterFOVDegrees = 0.0f;
-            {
-                FScopeLock Lock(ShadowRequestMutex);
-                ShadowRequests.push_back(Req);
-            }
         }
 
-        Frame.Lighting.Lights[Lights] = Light;
+        Batch.Lights[Batch.NumLights++] = Light;
+        if (Batch.NumLights == FLightBatch::Capacity)
+        {
+            FlushLightBatch(Batch, LightCount);
+        }
     }
 
-    void FDefaultSceneRenderer::ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, TAtomic<uint32>& LightCount)
+    void FDefaultSceneRenderer::ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount)
     {
-        FFrameData& Frame = *ExtractFrame;
-        auto& ShadowRequests    = Frame.Lighting.ShadowRequests;
-        auto& ShadowRequestMutex= Frame.Lighting.ShadowRequestMutex;
-
         const FVector3 Position = TransformComponent.GetWorldLocationCached();
 
         // Tested as the full attenuation sphere; the cone would reject more but needs the rotation first.
@@ -2765,12 +2876,7 @@ namespace Lumina
             return;
         }
 
-        auto Lights = LightCount.fetch_add(1, std::memory_order_acquire);
-        if (Lights >= MAX_LIGHTS)
-        {
-            NotifyMaxLightsHit();
-            return;
-        }
+        const uint32 Lights = Batch.NumLights;
 
         const FQuat WorldRotation = TransformComponent.GetWorldRotation();
         FVector3 UpdatedForward    = WorldRotation * FViewVolume::ForwardAxis;
@@ -2811,7 +2917,7 @@ namespace Lumina
             constexpr float ResolutionScale = 2048.0f;
             const uint32 DesiredPixels = (uint32)((Light.Radius / Math::Max(Dist, 0.01f)) * ResolutionScale);
 
-            FShadowRequest Req;
+            FShadowRequest& Req = Batch.Shadows[Batch.NumShadows++];
             Req.LightIndex      = Lights;
             Req.Type            = ELightType::Spot;
             Req.DesiredPixels   = DesiredPixels;
@@ -2821,13 +2927,13 @@ namespace Lumina
             Req.Up              = UpdatedUp;
             Req.Attenuation     = SpotLight.Attenuation;
             Req.OuterFOVDegrees = OuterDegrees;
-            {
-                FScopeLock Lock(ShadowRequestMutex);
-                ShadowRequests.push_back(Req);
-            }
         }
 
-        Frame.Lighting.Lights[Lights] = Light;
+        Batch.Lights[Batch.NumLights++] = Light;
+        if (Batch.NumLights == FLightBatch::Capacity)
+        {
+            FlushLightBatch(Batch, LightCount);
+        }
     }
 
     void FDefaultSceneRenderer::AllocateShadowTiles()
@@ -2838,6 +2944,7 @@ namespace Lumina
         auto& ShadowDataCount = Frame.Lighting.ShadowDataCount;
         auto& PackedShadows   = Frame.Lighting.PackedShadows;
 
+        LUMINA_PROFILE_VALUE("Shadows/Requested", (int64)ShadowRequests.size());
         if (ShadowRequests.empty())
         {
             return;
@@ -2857,7 +2964,7 @@ namespace Lumina
 
             auto ViewCost = [](const FShadowRequest& Req)
             {
-                return Req.Type == ELightType::Point ? 6u : 1u;
+                return Req.Type == ELightType::Point ? (uint32)std::popcount(Req.FaceMask) : 1u;
             };
 
             uint32 UsedViews = 0u;
@@ -2938,7 +3045,7 @@ namespace Lumina
         auto AreaCost = [&](uint32 i) -> uint64
         {
             const uint64 PerTile = (uint64)Sizes[i] * (uint64)Sizes[i];
-            return ShadowRequests[i].Type == ELightType::Point ? PerTile * 6ull : PerTile;
+            return ShadowRequests[i].Type == ELightType::Point ? PerTile * (uint64)std::popcount(ShadowRequests[i].FaceMask) : PerTile;
         };
 
         auto AreaSum = [&]() -> uint64
@@ -2987,10 +3094,14 @@ namespace Lumina
 
             if (Req.Type == ELightType::Point)
             {
-                int32 FaceTileIndices[6];
+                int32 FaceTileIndices[6] = { INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE };
                 bool  bAllAllocated = true;
                 for (uint32 Face = 0; Face < 6; ++Face)
                 {
+                    if ((Req.FaceMask & (1u << Face)) == 0u)
+                    {
+                        continue;
+                    }
                     FaceTileIndices[Face] = ShadowAtlas.AllocateTile(TileSize);
                     if (FaceTileIndices[Face] == INDEX_NONE)
                     {
@@ -3033,9 +3144,18 @@ namespace Lumina
                     SetFace(Face);
                     ShadowData.ViewProjection[Face] = LightView.ToReverseDepthViewProjectionMatrix();
 
-                    const FShadowTile& FaceTile = ShadowAtlas.GetTile(FaceTileIndices[Face]);
-
+                    // A face no view reaches keeps no tile, which the shaders read as unshadowed.
                     FLightShadow& Shadow   = ShadowData.Shadow[Face];
+                    if (FaceTileIndices[Face] == INDEX_NONE)
+                    {
+                        Shadow = FLightShadow{};
+                        Shadow.ShadowMapIndex  = INDEX_NONE;
+                        Shadow.LightIndex      = (int32)Req.LightIndex;
+                        Shadow.ShadowDataIndex = (int32)ShadowSlot;
+                        continue;
+                    }
+
+                    const FShadowTile& FaceTile = ShadowAtlas.GetTile(FaceTileIndices[Face]);
                     Shadow.AtlasUVOffset   = FaceTile.UVOffset;
                     Shadow.AtlasUVScale    = FaceTile.UVScale;
                     Shadow.ShadowMapIndex  = FaceTileIndices[Face];
@@ -3117,16 +3237,31 @@ namespace Lumina
             return ViewIndex;
         };
 
+        uint32 NumPointFaceViews = 0u;
+        for (const FLightShadow& PointShadow : PackedShadows[(uint32)ELightType::Point])
+        {
+            if (PointShadow.ShadowDataIndex < 0)
+            {
+                continue;
+            }
+            for (const FLightShadow& Face : Frame.Lighting.Shadows[PointShadow.ShadowDataIndex].Shadow)
+            {
+                NumPointFaceViews += Face.ShadowMapIndex != INDEX_NONE ? 1u : 0u;
+            }
+        }
+
         // Both VisBuffer phases rasterize the SAME camera view, so it contributes one entry.
         const uint32 NumViews =
             1u +                                                        // Camera
             (LightData.bHasSun ? (uint32)NumCascades : 0u) +            // CSM cascades
-            (uint32)PackedShadows[(uint32)ELightType::Point].size() * 6u +
+            NumPointFaceViews +
             (uint32)PackedShadows[(uint32)ELightType::Spot].size() +
             (uint32)Frame.Views.CaptureViews.size() +                         // Capture cameras (frustum-only)
             (Frame.ReflectionProbes.BakingProbe >= 0 ? 6u : 0u);              // Reflection-probe cube faces
 
         ASSERT(NumViews <= (uint32)GMaxCullViews);
+        LUMINA_PROFILE_VALUE("Shadows/PointFaceViews", (int64)NumPointFaceViews);
+        LUMINA_PROFILE_VALUE("Cull/Views", (int64)NumViews);
 
         CullViews.reserve(NumViews);
 
@@ -3204,10 +3339,14 @@ namespace Lumina
                 ConeFlag |
                 ECullViewFlags::CastShadowOnly;
 
+            // Only faces holding a tile get a view, in face order, which is how the shadow pass walks them.
             PointShadowCullViewBases.push_back((uint32)CullViews.size());
             for (int32 Face = 0; Face < 6; ++Face)
             {
-                PushView(ShadowData.ViewProjection[Face], Light.Position, FaceFlags);
+                if (ShadowData.Shadow[Face].ShadowMapIndex != INDEX_NONE)
+                {
+                    PushView(ShadowData.ViewProjection[Face], Light.Position, FaceFlags);
+                }
             }
         }
 
@@ -3816,7 +3955,12 @@ namespace Lumina
 
     void FDefaultSceneRenderer::NotifyMaxLightsHit()
     {
-        LOG_WARN("[Rendering] - Maximum Lights Hit! {}", MAX_LIGHTS);
+        // Every overflowing batch lands here every frame, so the log hears about it once.
+        static TAtomic<bool> bWarned{false};
+        if (!bWarned.exchange(true, std::memory_order_relaxed))
+        {
+            LOG_WARN("[Rendering] More than {} lights reach the view, so the rest are left out.", MAX_LIGHTS);
+        }
     }
 
     void FDefaultSceneRenderer::DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale)

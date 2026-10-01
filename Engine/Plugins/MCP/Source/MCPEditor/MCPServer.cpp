@@ -20,6 +20,7 @@
 #include "MCPRuntimeTools.h"
 #include "MCPSceneTools.h"
 #include "MCPSequenceTools.h"
+#include "MCPStressTools.h"
 
 namespace Lumina::MCP
 {
@@ -116,6 +117,7 @@ namespace Lumina::MCP
         RegisterEditorSessionTools(GOwner);
         RegisterProfilerTools(GOwner);
         RegisterRuntimeTools(GOwner);
+        RegisterStressTools(GOwner);
         RegisterSequenceTools(GOwner);
         RegisterPackageTools(GOwner);
 

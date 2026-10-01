@@ -24,6 +24,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Pak/PakWriter.h"
+#include "Renderer/ShaderCache.h"
 #include "World/World.h"
 #include "Containers/StringFormat.h"
 
@@ -52,7 +53,8 @@ namespace Lumina
                 }
             }
 
-            constexpr FStringView Suffixes[] = { ".csproj", ".sln", ".user", ".DotSettings", "/.gitkeep", "/.gitignore", "/.hidden",
+            // C# sources too, since the game loads the script assemblies the packager prebuilt.
+            constexpr FStringView Suffixes[] = { ".cs", ".csproj", ".sln", ".user", ".DotSettings", "/.gitkeep", "/.gitignore", "/.hidden",
                                                  "/Config/EditorSession.json" };
             for (const FStringView Suffix : Suffixes)
             {
@@ -89,6 +91,35 @@ namespace Lumina
         }
 
         // One bad asset falls back to a verbatim copy with a WARN rather than killing the whole cook.
+        // Script packages of modules the shipped game never loads, whose objects in an asset are editor state such as a node graph.
+        const THashSet<FName>& EditorScriptPackages()
+        {
+            static const THashSet<FName> Packages = []
+            {
+                THashSet<FName> Out;
+                Out.insert(FName("/Script/Editor"));
+                for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
+                {
+                    for (const FPluginModuleDescriptor& Module : Plugin->GetDescriptor().Modules)
+                    {
+                        if (Module.Type != EPluginModuleType::Runtime)
+                        {
+                            Out.insert(FName((FString("/Script/") + Module.Name).c_str()));
+                        }
+                    }
+                }
+                return Out;
+            }();
+            return Packages;
+        }
+
+        // A graph's nodes and pins are exports of their own, each an editor class, so they go by the same test.
+        bool IsEditorOnlyObject(const CObject* Object)
+        {
+            const CClass* Class = Object->GetClass();
+            return Class != nullptr && Class->GetPackage() != nullptr && EditorScriptPackages().contains(Class->GetPackage()->GetName());
+        }
+
         bool BundleAssetCooked(FPakWriter& Writer, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
         {
             FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
@@ -132,7 +163,15 @@ namespace Lumina
                 }
             }
 
-            if (!CPackage::SavePackageForCook(Package, CookedBytes))
+            uint32 EditorObjects = 0;
+            auto ExcludeEditorObjects = [&EditorObjects](const CObject* Object)
+            {
+                const bool bEditorOnly = IsEditorOnlyObject(Object);
+                EditorObjects += bEditorOnly ? 1u : 0u;
+                return bEditorOnly;
+            };
+
+            if (!CPackage::SavePackageForCook(Package, CookedBytes, ExcludeEditorObjects))
             {
                 LogCooker(LogFunc, Format("  [warn] cook-save failed, falling back to verbatim: {}",
                     VirtualPath).c_str());
@@ -143,9 +182,10 @@ namespace Lumina
             FCookDDC::Put(Key, CookedBytes);
 
             Writer.AddEntry(VirtualPath, TSpan<const uint8>(CookedBytes.data(), CookedBytes.size()));
-            LogCooker(LogFunc, Format("  + {} (cooked, {} bytes)",
+            LogCooker(LogFunc, Format("  + {} (cooked, {} bytes, {} editor object(s) left out)",
                 VirtualPath,
-                CookedBytes.size()).c_str());
+                CookedBytes.size(),
+                EditorObjects).c_str());
             return true;
         }
 
@@ -334,10 +374,23 @@ namespace Lumina
                 {
                     return;
                 }
-                if (BundleVfsFile(Writer, Info.VirtualPath.c_str(), LogFunc))
+
+                const FStringView VirtualPath(Info.VirtualPath.c_str(), Info.VirtualPath.size());
+                TVector<uint8> Bytes;
+                if (!VFS::ReadFile(Bytes, VirtualPath))
                 {
-                    ++Count;
+                    return;
                 }
+
+                // The editor compiles with full debug info for Nsight, which nothing in a shipped game reads.
+                TVector<uint8> Stripped;
+                const bool bStripped = FShaderCache::StripCacheFileForCook(Bytes, Stripped);
+                const TVector<uint8>& Shipped = bStripped ? Stripped : Bytes;
+
+                Writer.AddEntry(VirtualPath, TSpan<const uint8>(Shipped.data(), Shipped.size()));
+                LogCooker(LogFunc, Format("  + {} ({} bytes{})", VirtualPath, Shipped.size(),
+                    bStripped ? Format(", {} before stripping", Bytes.size()) : FString()).c_str());
+                ++Count;
             });
             return Count;
         }

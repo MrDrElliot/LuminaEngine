@@ -14,6 +14,11 @@ namespace Lumina
             return false;
         }
 
+        if (ExcludeExport && ExcludeExport(Export))
+        {
+            return false;
+        }
+
         if (!SeenExports.insert(Export).second)
         {
             return false;
@@ -72,7 +77,10 @@ namespace Lumina
         {
             if (Value->GetPackage() == Package)
             {
-                Index = FObjectPackageIndex((int32)Value->GetLoaderIndex());
+                if (SavedExports == nullptr || SavedExports->contains(Value))
+                {
+                    Index = FObjectPackageIndex((int32)Value->GetLoaderIndex());
+                }
             }
             else
             {
@@ -102,7 +110,10 @@ namespace Lumina
         {
             if (Obj->GetPackage() == Package)
             {
-                Index = FObjectPackageIndex((int32)Obj->GetLoaderIndex());
+                if (SavedExports == nullptr || SavedExports->contains(Obj))
+                {
+                    Index = FObjectPackageIndex((int32)Obj->GetLoaderIndex());
+                }
             }
             else
             {

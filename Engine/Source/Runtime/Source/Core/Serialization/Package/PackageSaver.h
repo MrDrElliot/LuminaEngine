@@ -3,6 +3,7 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/Archiver.h"
 #include "PackageNameTable.h"
+#include "Containers/Function.h"
 
 namespace Lumina
 {
@@ -29,6 +30,9 @@ namespace Lumina
         TVector<CObject*> Exports;
 
         CPackage* CurrentPackage;
+
+        // Set by a cook, which leaves out what the shipped game has no use for, such as an editor graph.
+        TFunction<bool(const CObject*)> ExcludeExport;
     };
 
     /** This archiver will traverse an object hierarchy and find any references and build a save context. */
@@ -86,6 +90,9 @@ namespace Lumina
 
         uint32 GetImportCount() const { return CurrentImportIndex; }
 
+        // A same-package object outside this set was excluded from the save, so a reference to it writes null.
+        void SetSavedExports(const THashSet<CObject*>* InSavedExports) { SavedExports = InSavedExports; }
+
         bool SupportsBulkData() const override { return true; }
 
         /** Appends to BulkBytes and hands back the offset within it. The region is written to disk after the
@@ -107,5 +114,6 @@ namespace Lumina
         THashSet<FGuid>             SoftReferencedGUIDs;
         TVector<uint8>              BulkBytes;
         uint32                      CurrentImportIndex = 0;
+        const THashSet<CObject*>*   SavedExports = nullptr;
     };
 }

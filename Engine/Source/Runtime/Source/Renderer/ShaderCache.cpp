@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ShaderCache.h"
+#include "SpirvStrip.h"
 #include "RenderResource.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Serialization/MemoryArchiver.h"
@@ -318,6 +319,39 @@ namespace Lumina::FShaderCache
         Out += HexBuf;
         Out += ".lsc";
         return Out;
+    }
+
+    bool StripCacheFileForCook(const TVector<uint8>& Source, TVector<uint8>& Out)
+    {
+        FMemoryReader Reader(Source);
+
+        uint32 Magic = 0;
+        uint32 Version = 0;
+        uint64 StoredHash = 0;
+        Reader << Magic;
+        Reader << Version;
+        Reader << StoredHash;
+        if (Reader.HasError() || Magic != CACHE_MAGIC || Version != kShaderCacheVersion)
+        {
+            return false;
+        }
+
+        FShaderHeader Header;
+        SerializeHeader(Reader, Header);
+        if (Reader.HasError())
+        {
+            return false;
+        }
+
+        Spirv::StripDebugInfo(Header.Binaries);
+
+        Out.clear();
+        FMemoryWriter Writer(Out);
+        Writer << Magic;
+        Writer << Version;
+        Writer << StoredHash;
+        SerializeHeader(Writer, Header);
+        return !Writer.HasError();
     }
 
     bool TryLoadByCachePath(FStringView CacheVirtualPath, uint64 SourceHash, FShaderHeader& OutHeader)

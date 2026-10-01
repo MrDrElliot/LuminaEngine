@@ -2,7 +2,7 @@
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
-// Must match FSceneRoot in SceneRenderTypes.h (352 B, scalar layout); the hottest pointers ride in FRHIRoot.
+// Must match FSceneRoot in SceneRenderTypes.h (368 B, scalar layout); the hottest pointers ride in FRHIRoot.
 struct FSceneRoot
 {
     GPUSpan<FBoneTransform>      Bones;
@@ -11,6 +11,8 @@ struct FSceneRoot
     GPUSpan<FBoneTransform>      PrevBones;
     GPUSpan<FTransform3x4>       PrevRetainedTransforms;
     GPUSpan<FCluster>            Clusters;
+    // Per-view light runs the clusters point into, with the allocation counter in the first word.
+    GPUSpan<uint>                ClusterLightIndices;
     GPUSpan<FMaterialUniforms>   Materials;
     GPUSpan<FMaterialCollection> Collections;
     GPUSpan<FBillboardInstance>  Billboards;
@@ -70,6 +72,7 @@ GPUSpan<FBoneTransform>*      Bones()                 { return &GetSceneRoot().B
 GPUSpan<FBoneTransform>*      PrevBones()             { return &GetSceneRoot().PrevBones; }
 GPUSpan<FTransform3x4>*       PrevRetainedTransforms(){ return &GetSceneRoot().PrevRetainedTransforms; }
 GPUSpan<FCluster>*            Clusters()              { return &GetSceneRoot().Clusters; }
+GPUSpan<uint>*                ClusterLightIndices()   { return &GetSceneRoot().ClusterLightIndices; }
 GPUSpan<FMaterialUniforms>*   Materials()             { return &GetSceneRoot().Materials; }
 GPUSpan<FMaterialCollection>* Collections()           { return &GetSceneRoot().Collections; }
 GPUSpan<FBillboardInstance>*  Billboards()            { return &GetSceneRoot().Billboards; }
@@ -655,7 +658,6 @@ uint ComputeClusterIndex(float ViewZ, float2 ScreenPos)
     return TileXY.x + TileXY.y * Grid.x + ZTile * Grid.x * Grid.y;
 }
 
-// FCluster is 448 B, almost all of it the light list, and the shading loop reads one word per light.
 uint GetClusterLightCount(uint ClusterIndex)
 {
     if (!SpanContains(Clusters(), ClusterIndex))
@@ -665,13 +667,25 @@ uint GetClusterLightCount(uint ClusterIndex)
     return SpanAt(Clusters(), ClusterIndex).Count;
 }
 
-uint GetClusterLightIndex(uint ClusterIndex, uint Slot)
+// The cluster's first slot in ClusterLightIndices, read once so the light loop fetches one word per light.
+uint GetClusterLightBase(uint ClusterIndex)
 {
     if (!SpanContains(Clusters(), ClusterIndex))
     {
         return 0u;
     }
-    return SpanAt(Clusters(), ClusterIndex).LightIndices[Slot];
+    return SpanAt(Clusters(), ClusterIndex).Offset + 1u;
+}
+
+// Past the pool's end reads as MAX_LIGHTS, which every loop already rejects as a stale index.
+uint GetClusterLightAt(uint Base, uint Slot)
+{
+    const uint PoolIndex = Base + Slot;
+    if (!SpanContains(ClusterLightIndices(), PoolIndex))
+    {
+        return (uint)MAX_LIGHTS;
+    }
+    return SpanAt(ClusterLightIndices(), PoolIndex)[0];
 }
 
 // Discrete heatmap for the "Light Complexity" view: how many lights a froxel

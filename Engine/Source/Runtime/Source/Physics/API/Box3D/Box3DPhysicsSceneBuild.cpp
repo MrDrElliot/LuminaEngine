@@ -61,7 +61,7 @@ namespace Lumina::Physics
 
     EBodyBuildStatus FBox3DPhysicsScene::TryBuildRigidBody(ECS::FRegistry& Registry, ECS::FEntity Entity, FRigidBodyBuildResult& Out)
     {
-        LUMINA_PROFILE_SCOPE();
+        // No zone, since fiber-mode Tracy serializes every zone on one lock and this runs per body across all workers.
 
         const SRigidBodyComponent* RigidBody = Registry.TryGet<SRigidBodyComponent>(Entity);
         if (RigidBody == nullptr)
@@ -98,13 +98,19 @@ namespace Lumina::Physics
             bColliderIsTrigger = BC->bIsTrigger;
             ResolvedMaterial = BC->PhysicsMaterial.Get();
 
-            const b3HullData* Hull = GetOrCreateBoxHull(BC->HalfExtent * Scale);
-            if (Hull == nullptr)
+            const FVector3 HalfExtent = BC->HalfExtent * Scale;
+            constexpr float MinHalfExtent = 1.0e-4f;
+            if (HalfExtent.x < MinHalfExtent || HalfExtent.y < MinHalfExtent || HalfExtent.z < MinHalfExtent)
             {
                 LOG_ERROR("Failed to create BoxCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
-            Out.Shapes.push_back(MakeHullShape(Hull, FVector3(0.0f), FQuat::Identity()));
+            if (!Out.BoxHull)
+            {
+                Out.BoxHull = MakeUnique<b3BoxHull>();
+            }
+            *Out.BoxHull = b3MakeBoxHull(HalfExtent.x, HalfExtent.y, HalfExtent.z);
+            Out.Shapes.push_back(MakeHullShape(&Out.BoxHull->base, FVector3(0.0f), FQuat::Identity()));
         }
         else if (const SSphereColliderComponent* SC = Registry.TryGet<SSphereColliderComponent>(Entity))
         {
@@ -518,7 +524,15 @@ namespace Lumina::Physics
                     b3CreateCapsuleShape(BodyId, &Build.ShapeDef, &Shape.Capsule);
                     break;
                 case b3_hullShape:
-                    b3CreateTransformedHullShape(BodyId, &Build.ShapeDef, Shape.Hull, Shape.Transform, Shape.Scale);
+                    // The transformed path clones and rebakes the hull per body, which an unplaced hull does not need.
+                    if (IsIdentityPlacement(Shape.Transform, Shape.Scale))
+                    {
+                        b3CreateHullShape(BodyId, &Build.ShapeDef, Shape.Hull);
+                    }
+                    else
+                    {
+                        b3CreateTransformedHullShape(BodyId, &Build.ShapeDef, Shape.Hull, Shape.Transform, Shape.Scale);
+                    }
                     break;
                 case b3_meshShape:
                     b3CreateMeshShape(BodyId, &Build.ShapeDef, Shape.Mesh, Shape.Scale);

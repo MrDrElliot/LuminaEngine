@@ -26,5 +26,8 @@ namespace Lumina
         bool TryLoadRaw(uint64 KeyHash, FShaderHeader& OutHeader);
 
         bool SaveRaw(uint64 KeyHash, const FShaderHeader& Header);
+
+        // Rewrites one cache file for a cook with its binaries' debug info stripped; false leaves it to ship as it was.
+        RUNTIME_API bool StripCacheFileForCook(const TVector<uint8>& Source, TVector<uint8>& Out);
     }
 }

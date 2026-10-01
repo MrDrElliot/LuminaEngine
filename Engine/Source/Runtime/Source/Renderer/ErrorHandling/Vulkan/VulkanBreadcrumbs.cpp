@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "Log/Log.h"
+#include "Renderer/API/Vulkan/VulkanAllocator.h"
 
 namespace Lumina::RHI
 {
@@ -55,7 +56,7 @@ namespace Lumina::RHI
         BufferInfo.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         BufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        if (vkCreateBuffer(InDevice, &BufferInfo, nullptr, &Buffer) != VK_SUCCESS)
+        if (vkCreateBuffer(InDevice, &BufferInfo, Vulkan::HostAllocator(), &Buffer) != VK_SUCCESS)
         {
             LOG_WARN("GPU breadcrumbs disabled: buffer creation failed.");
             return false;
@@ -77,7 +78,7 @@ namespace Lumina::RHI
         AllocInfo.allocationSize  = Requirements.size;
         AllocInfo.memoryTypeIndex = MemoryType;
 
-        if (vkAllocateMemory(InDevice, &AllocInfo, nullptr, &Memory) != VK_SUCCESS)
+        if (vkAllocateMemory(InDevice, &AllocInfo, Vulkan::HostAllocator(), &Memory) != VK_SUCCESS)
         {
             LOG_WARN("GPU breadcrumbs disabled: host memory allocation failed.");
             Shutdown(InDevice);
@@ -113,13 +114,13 @@ namespace Lumina::RHI
         if (Memory != VK_NULL_HANDLE)
         {
             vkUnmapMemory(InDevice, Memory);
-            vkFreeMemory(InDevice, Memory, nullptr);
+            vkFreeMemory(InDevice, Memory, Vulkan::HostAllocator());
             Memory = VK_NULL_HANDLE;
         }
 
         if (Buffer != VK_NULL_HANDLE)
         {
-            vkDestroyBuffer(InDevice, Buffer, nullptr);
+            vkDestroyBuffer(InDevice, Buffer, Vulkan::HostAllocator());
             Buffer = VK_NULL_HANDLE;
         }
     }

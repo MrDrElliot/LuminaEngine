@@ -372,6 +372,12 @@ namespace Lumina
 		glfwSetWindowSize(Impl->Window, X, Y);
 	}
 
+	void FWindow::SetTitle(const FString& Title)
+	{
+		Impl->Specs.Title = Title;
+		glfwSetWindowTitle(Impl->Window, Title.c_str());
+	}
+
 	void FWindow::SetTitleBarHovered(bool bHovered)
 	{
 		Impl->bTitleBarHovered = bHovered;

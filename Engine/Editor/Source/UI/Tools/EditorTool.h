@@ -214,7 +214,7 @@ namespace Lumina
         virtual void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const;
         
         /** Creates a plane at world 0 */
-        virtual ECS::FEntity CreateFloorPlane(float YOffset = 0.0f, float ScaleX = 10.0f, float ScaleY = 10.0f);
+        virtual ECS::FEntity CreateFloorPlane(float YOffset = 0.0f, float ScaleX = 20.0f, float ScaleY = 20.0f);
         
         /** Called just before updating the world at each stage */
         virtual void WorldUpdate(const FUpdateContext& UpdateContext) { }
