@@ -1757,6 +1757,9 @@ namespace Lumina
             RefreshFoliageInstance(Ref, Type, Instance, EntityID);
         }
 
+        // Every slot now holds its transform and bounds, so a second copy per instance is hundreds of megabytes in a large field.
+        Foliage->ReleaseRenderCache();
+
         if (DeadBindings > 1024 && DeadBindings * 4 > (uint32)Bindings.size())
         {
             CompactBindings();

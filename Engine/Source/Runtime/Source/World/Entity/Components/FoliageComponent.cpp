@@ -45,7 +45,7 @@ namespace Lumina
 
     void SFoliageComponent::EnsureRenderCache()
     {
-        if (BakedVersion == InstancesVersion && !bBakeIncomplete)
+        if (BakedVersion == InstancesVersion && !bBakeIncomplete && !bBakeReleased)
         {
             return; // cache already valid for the current instance set
         }
@@ -144,6 +144,7 @@ namespace Lumina
         }
 
         bBakeIncomplete = bIncomplete.load(std::memory_order_relaxed);
+        bBakeReleased   = false;
         BakedVersion    = InstancesVersion;
         ++BakeSerial;
     }

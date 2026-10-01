@@ -251,6 +251,12 @@ namespace Lumina
             GameInstance->PostWorldLoad(World);
         }
 
+        // Loading frees far more than it keeps, and without a trim those spans stay cached for the session.
+        if (GEngine != nullptr)
+        {
+            GEngine->ScheduleCacheTrim();
+        }
+
         return Raw;
     }
 

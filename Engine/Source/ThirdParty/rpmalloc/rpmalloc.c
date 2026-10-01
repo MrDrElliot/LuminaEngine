@@ -382,11 +382,15 @@ static FORCEINLINE int     atomic_cas_ptr(atomicptr_t* dst, void* val, void* ref
 //! Size of a span header (must be a multiple of SMALL_GRANULARITY and a power of two)
 #define SPAN_HEADER_SIZE          128
 //! Number of spans in thread cache
+#ifndef MAX_THREAD_SPAN_CACHE
 #define MAX_THREAD_SPAN_CACHE     400
+#endif
 //! Number of spans to transfer between thread and global cache
 #define THREAD_SPAN_CACHE_TRANSFER 64
 //! Number of spans in thread cache for large spans (must be greater than LARGE_CLASS_COUNT / 2)
+#ifndef MAX_THREAD_SPAN_LARGE_CACHE
 #define MAX_THREAD_SPAN_LARGE_CACHE 100
+#endif
 //! Number of spans to transfer between thread and global cache for large spans
 #define THREAD_SPAN_LARGE_CACHE_TRANSFER 6
 

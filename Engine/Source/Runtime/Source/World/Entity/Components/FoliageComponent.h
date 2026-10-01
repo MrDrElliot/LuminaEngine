@@ -161,6 +161,8 @@ namespace Lumina
         bool   bBakeIncomplete  = false;        // a type's mesh wasn't ready; rebake next frame
         uint32 BakeSerial       = 0;            // bumped by every bake, unlike BakedVersion which a retry repeats
         uint32 BakeRetryGeneration = 0;         // resolve generation an incomplete bake last retried at
+        // Separate from BakedVersion, which the scene polls to decide whether a sync is owed at all.
+        bool   bBakeReleased    = false;
 
         // Transient physics bake, owned by SFoliageCollisionSystem. Never serialized.
         uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none
@@ -183,6 +185,14 @@ namespace Lumina
         /** Rebuild BakedInstances from Instances/Types if the cache is stale. Cheap no-op when up to date.
          *  Game-thread only (called during render-command compile). */
         void EnsureRenderCache();
+
+        // Frees the bake once the retained scene holds it; the next EnsureRenderCache rebuilds it.
+        void ReleaseRenderCache()
+        {
+            BakedInstances.clear();
+            BakedInstances.shrink_to_fit();
+            bBakeReleased = true;
+        }
     };
 
     /** Call after ANY edit to a foliage component's Instances or Types.

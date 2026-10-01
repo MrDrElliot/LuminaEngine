@@ -249,10 +249,18 @@ namespace Lumina
             InFirstMip = NumMips - 1;
         }
 
-        // Recreate hands back an empty image, so bail before the GPU rather than leave it half filled.
+        // What the outgoing image holds decides how much of the new one fills on the GPU.
+        const uint32 OldFirstMip = TextureResource->ResidentFirstMip;
+        const bool   bHadImage   = TextureResource->NewTexture.IsValid()
+                                && TextureResource->NewTexture.SampledSlot != RHI::kInvalidHeapSlot;
+
+        // Without this every residency change re-uploaded the whole resident chain from the CPU.
+        const uint32 RetainedFrom = bHadImage ? Math::Max(OldFirstMip, InFirstMip) : NumMips;
+
+        // Recreate hands back an empty image, so every mip the host uploads (below RetainedFrom) needs its bytes first.
         for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
         {
-            for (uint32 Mip = InFirstMip; Mip < NumMips; ++Mip)
+            for (uint32 Mip = InFirstMip; Mip < RetainedFrom; ++Mip)
             {
                 const uint32 Index = TextureResource->MipIndex(Layer, Mip);
                 if (Index < TextureResource->Mips.size() && TextureResource->Mips[Index].Pixels.empty())
@@ -269,11 +277,6 @@ namespace Lumina
 
         const FUIntVector2 Extent      = TextureResource->MipExtent(InFirstMip);
         const uint32       ResidentNum = NumMips - InFirstMip;
-
-        // What the outgoing image holds decides how much of the new one fills on the GPU.
-        const uint32 OldFirstMip = TextureResource->ResidentFirstMip;
-        const bool   bHadImage   = TextureResource->NewTexture.IsValid()
-                                && TextureResource->NewTexture.SampledSlot != RHI::kInvalidHeapSlot;
 
         // Creating over the top orphaned the old image and moved the ResourceID materials had baked.
         if (TextureResource->IsArray())
@@ -301,9 +304,6 @@ namespace Lumina
                 .DebugName = DebugName.c_str(),
             });
         }
-
-        // Without this every residency change re-uploaded the whole resident chain from the CPU.
-        const uint32 RetainedFrom = bHadImage ? Math::Max(OldFirstMip, InFirstMip) : NumMips;
 
         for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
         {
@@ -546,7 +546,22 @@ namespace Lumina
         // The slot keeps naming the PREVIOUS image, so a shader reads the old resolution during the changeover.
         RHI::Textures::CommitRecreate(TextureResource->NewTexture);
         PendingFill.bActive = false;
+
+        ReleaseUploadedBulkMips();
         return false;
+    }
+
+    void CTexture::ReleaseUploadedBulkMips()
+    {
+        // The image holds them now and the package can re-read them, so keeping the bytes only doubles the texture.
+        for (FTextureResource::FMip& Mip : TextureResource->Mips)
+        {
+            if (Mip.BulkRef.IsValid() && !Mip.Pixels.empty())
+            {
+                Mip.Pixels.clear();
+                Mip.Pixels.shrink_to_fit();
+            }
+        }
     }
 
     void CTexture::OnDestroy()

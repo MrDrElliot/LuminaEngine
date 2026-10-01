@@ -193,6 +193,52 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SMemoryGpuHeap
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int32 Index = 0;
+
+        PROPERTY()
+        bool bDeviceLocal = false;
+
+        PROPERTY()
+        bool bHostVisible = false;
+
+        // What the OS charges this process on the heap, which includes the driver's own allocations.
+        PROPERTY()
+        float UsageMB = 0.0f;
+
+        // What the engine's allocator holds there, so usage well above it is the driver's.
+        PROPERTY()
+        float BlockMB = 0.0f;
+
+        PROPERTY()
+        float BudgetMB = 0.0f;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SMemoryGpuCategory
+    {
+        GENERATED_BODY()
+
+        // The debug name's segment before the first dot, the same grouping the Memory tool uses.
+        PROPERTY()
+        FString Name;
+
+        // CPUWrite, CPURead or GPUOnly for buffers, Texture for images.
+        PROPERTY()
+        FString Memory;
+
+        PROPERTY()
+        float MB = 0.0f;
+
+        PROPERTY()
+        int32 Count = 0;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SMemoryReport
     {
         GENERATED_BODY()
@@ -253,6 +299,19 @@ namespace Lumina
 
         PROPERTY()
         TVector<SMemoryCallSite> CallSites;
+
+        // Host-visible GPU allocations are mapped into the process, so they count toward its private commit.
+        PROPERTY()
+        float GpuHostVisibleMB = 0.0f;
+
+        PROPERTY()
+        float GpuDeviceLocalMB = 0.0f;
+
+        PROPERTY()
+        TVector<SMemoryGpuCategory> GpuCategories;
+
+        PROPERTY()
+        TVector<SMemoryGpuHeap> GpuHeaps;
     };
 
     REFLECT()

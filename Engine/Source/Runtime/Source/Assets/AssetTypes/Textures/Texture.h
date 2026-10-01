@@ -229,6 +229,9 @@ namespace Lumina
          *  nothing instead would strand the swap unarmed, which freezes the texture permanently. */
         void AbandonResidencyFill();
 
+        // Drops the CPU copy of every mip the bulk region can supply again, once the GPU image holds it.
+        void ReleaseUploadedBulkMips();
+
         /** Announce that something outside the streamer (an import, a re-cook) has replaced this texture's
          *  image and uploaded the WHOLE chain eagerly. Any half-drained residency fill describes the
          *  previous image and would upload into the new one at the wrong mip sizes, and the streamer's

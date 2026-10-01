@@ -227,7 +227,14 @@ namespace Lumina
         {
             FBlockLinearAllocator* Arena = nullptr;
             FFrameArenaNode*       Next  = nullptr;
+
+            // Largest frame in the current window, so blocks only a load spike needed are handed back.
+            SIZE_T                 WindowPeakBlocks = 0;
+            uint32                 WindowFrames     = 0;
         };
+
+        // About ten seconds at 60 Hz, long enough that a periodic burst keeps its blocks.
+        constexpr uint32 kFrameArenaTrimWindow = 600;
 
         FMutex       GFrameArenaMutex;
         FFrameArenaNode* GFrameArenaHead = nullptr;
@@ -276,7 +283,18 @@ namespace Lumina
         FScopeLock Lock(GFrameArenaMutex);
         for (FFrameArenaNode* N = GFrameArenaHead; N != nullptr; N = N->Next)
         {
+            N->WindowPeakBlocks = Math::Max(N->WindowPeakBlocks, N->Arena->GetBlocksInUse());
             N->Arena->Reset();
+
+            if (++N->WindowFrames >= kFrameArenaTrimWindow)
+            {
+                if (N->Arena->GetBlockCount() > N->WindowPeakBlocks)
+                {
+                    N->Arena->TrimBlocks(N->WindowPeakBlocks);
+                }
+                N->WindowPeakBlocks = 0;
+                N->WindowFrames     = 0;
+            }
         }
     }
 }

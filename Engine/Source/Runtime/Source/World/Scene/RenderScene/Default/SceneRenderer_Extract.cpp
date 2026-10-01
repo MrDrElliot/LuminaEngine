@@ -2503,9 +2503,25 @@ namespace Lumina
             SkinnedSlots.clear();
             // Indexed by retained slot; grown, never cleared. Ungathered slots are rejected by their tag.
             const uint32 RetainedSlots = ScenePrimitives.GetRetainedSlotCount();
-            if ((uint32)SkinnedData.size() < RetainedSlots)
+
+            // Only as long as the highest skinned slot, since millions of static instances can share the slot range.
+            uint32 SkinnedExtent = 0;
+            for (uint32 t = 0; t < NumThreads; ++t)
             {
-                SkinnedData.resize(RetainedSlots);
+                if (ThreadLocal[t].bTouched)
+                {
+                    for (const FProcessedDrawItem& Item : ThreadLocal[t].Items)
+                    {
+                        if (Item.InstanceSlot < RetainedSlots)
+                        {
+                            SkinnedExtent = Math::Max(SkinnedExtent, Item.InstanceSlot + 1u);
+                        }
+                    }
+                }
+            }
+            if ((uint32)SkinnedData.size() < SkinnedExtent)
+            {
+                SkinnedData.resize(SkinnedExtent);
             }
 
             for (uint32 t = 0; t < NumThreads; ++t)
