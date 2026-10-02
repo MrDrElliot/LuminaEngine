@@ -60,6 +60,17 @@ namespace Lumina
         /** CPU mirror of the per-chunk/meshlet metadata; partial edits re-bound in place. */
         TVector<FTerrainChunkInfo>      Chunks;
         TVector<FTerrainMeshletInfo>    Meshlets;
+
+        // A new render scene holds none of this terrain's GPU data, so everything uploads again.
+        void MarkRendererLost()
+        {
+            bFullHeightmapDirty     = true;
+            bFullWeightsDirty       = true;
+            bChunksDirty            = true;
+            PreparedResolution      = 0;
+            PreparedChunkResolution = 0;
+            PreparedLayerCount      = -1;
+        }
     };
 
     /** Heightmap-driven terrain. */

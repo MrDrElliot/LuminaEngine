@@ -12,6 +12,7 @@ namespace Lumina
     class CTexture;
     class CSkeleton;
     class CMaterialInstance;
+    class CMaterialInterface;
     class CPrefab;
     class CAnimation;
     struct FAnimationResource;
@@ -74,6 +75,10 @@ namespace Lumina
         /** Import the texture files the source references. Implied by Import Materials. */
         PROPERTY(Editable, Category = "Import")
         bool bImportTextures = true;
+
+        // Fills every slot of every imported mesh with this material instead of generating any.
+        PROPERTY(Editable, Category = "Import")
+        TObjectPtr<CMaterialInterface> OverrideMaterial;
 
         /** Uniform scale applied to all imported geometry, skeletons and animation translations. */
         PROPERTY(Editable, Category = "Transform", ClampMin = "0.001", ClampMax = "1000.0")

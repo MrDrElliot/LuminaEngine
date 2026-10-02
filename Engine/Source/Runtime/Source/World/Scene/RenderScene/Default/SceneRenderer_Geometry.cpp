@@ -1262,7 +1262,7 @@ namespace Lumina
             const float HalfSize        = TerrainItem.TileWorldSize * 0.5f;
 
             const int32 QuadsPerChunk        = Math::Max(1, TerrainItem.ChunkResolution - 1);
-            const int32 ChunksPerSide        = Math::Max(1, ((int32)Res - 1) / QuadsPerChunk);
+            const int32 ChunksPerSide        = GetTerrainChunksPerSide((int32)Res, QuadsPerChunk);
             const int32 MeshletsPerChunkSide = (QuadsPerChunk + GTerrainMeshletQuads - 1) / GTerrainMeshletQuads;
 
             FTerrainRenderParams RenderParams{};
@@ -1389,7 +1389,7 @@ namespace Lumina
             const float HalfSize = TerrainItem.TileWorldSize * 0.5f;
 
             const int32 QuadsPerChunk        = Math::Max(1, TerrainItem.ChunkResolution - 1);
-            const int32 ChunksPerSide        = Math::Max(1, ((int32)Res - 1) / QuadsPerChunk);
+            const int32 ChunksPerSide        = GetTerrainChunksPerSide((int32)Res, QuadsPerChunk);
             const int32 MeshletsPerChunkSide = (QuadsPerChunk + GTerrainMeshletQuads - 1) / GTerrainMeshletQuads;
 
             FTerrainRenderParams RenderParams{};

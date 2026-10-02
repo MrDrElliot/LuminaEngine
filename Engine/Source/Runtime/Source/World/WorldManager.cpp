@@ -94,11 +94,24 @@ namespace Lumina
 
         const double Grace = (double)CVarIdleReclaimSeconds.GetValue();
 
+        // A play session returns to the world it started from, so that scene is not idle, only hidden.
+        auto IsPlaySource = [this](const CWorld* World)
+        {
+            for (const TUniquePtr<FWorldContext>& Context : Contexts)
+            {
+                if (Context->bPIE && Context->SourceWorld.Get() == World)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
         // One reclaim per frame, since DestroyRenderer calls WaitIdle and batching stalls hard.
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
-            if (World != nullptr && World->ReclaimIdleRenderer(NowSeconds, Grace))
+            if (World != nullptr && !IsPlaySource(World) && World->ReclaimIdleRenderer(NowSeconds, Grace))
             {
                 break;
             }
@@ -217,6 +230,7 @@ namespace Lumina
 
     FWorldContext* FWorldManager::CreateWorldContext(CWorld* World, EWorldType Type, ENetMode NetMode)
     {
+        LUMINA_PROFILE_SCOPE();
         if (World == nullptr)
         {
             return nullptr;
@@ -318,6 +332,7 @@ namespace Lumina
 
     CWorld* FWorldManager::StartPIE(CWorld* SourceWorld, EWorldType SessionType, ENetMode NetMode)
     {
+        LUMINA_PROFILE_SCOPE();
         if (SourceWorld == nullptr)
         {
             return nullptr;

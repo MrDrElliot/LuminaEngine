@@ -1993,7 +1993,7 @@ LUMINA_DOTNET_EXPORT(void*, LoadObject)(const char* Path, int Len)
     return Lumina::StaticLoadObject(Lumina::FStringView(Path, static_cast<size_t>(Len)));
 }
 
-// A strong reference a script holds on an object, so an asset it loaded outlives the frame that loaded it.
+// The strong reference a canonical C# wrapper owns, released once the wrapper is collected.
 LUMINA_DOTNET_EXPORT(void*, PinObject)(void* Object)
 {
     if (Object == nullptr)

@@ -22,6 +22,12 @@ namespace Lumina
     constexpr int32 GTerrainMeshletMaxTris      = GTerrainMeshletMaxQuads * 2;
     constexpr int32 GTerrainMeshletMaxVerts     = GTerrainMeshletMaxTris * 3;
 
+    // Rounded up, since a grid that is not a whole number of chunks still needs its last quads drawn.
+    inline int32 GetTerrainChunksPerSide(int32 Resolution, int32 QuadsPerChunk)
+    {
+        return Math::Max(1, (Resolution - 1 + QuadsPerChunk - 1) / QuadsPerChunk);
+    }
+
     /** Mirror of FTerrainRenderParams in TerrainBase{Vertex,Pixel}Pass.slang. */
     struct alignas(16) FTerrainRenderParams
     {

@@ -3,15 +3,16 @@
 namespace LuminaSharp;
 
 /// <summary>
-/// Base for the generated opaque wrappers around native CObjects. Holds a WEAK handle (the CObject's
-/// object-array index + generation) rather than a bare pointer.
+/// Base for the generated opaque wrappers around native CObjects. Identifies the object by its object-array
+/// index + generation, and the canonical wrapper also owns a strong reference, as a TObjectPtr would.
 /// </summary>
-public unsafe class NativeObject
+public unsafe class NativeObject : IDisposable
 {
     private IntPtr RawHandle;            // pointer captured at construction; the fallback when untracked
     private int ObjectIndex = -1;        // GObjectArray slot, or -1 if the object isn't array-tracked
     private int ObjectGeneration;        // slot generation at capture; a free/reuse bumps it -> stale
     private byte* EntryPtr;              // the slot's array entry, which outlives every object in it
+    private ObjectReference? References; // set on the canonical wrapper, absent on a natively owned Scriptable
 
     // Read once. The entry outlives its objects, so revalidating through it needs no crossing at all.
     private static readonly int GenerationOffset = Native.ObjectLayoutOffset(0);
@@ -42,6 +43,30 @@ public unsafe class NativeObject
         ObjectIndex = unchecked((int)Packed);
         ObjectGeneration = (int)(Packed >> 32);
         EntryPtr = bFastPathUsable && ObjectIndex >= 0 ? (byte*)Native.ObjectGetEntry(Handle) : null;
+    }
+
+    // Called before the wrapper is published to the instance cache, so no other thread can see it yet.
+    internal void StartCountingReferences()
+    {
+        References = new ObjectReference(RawHandle);
+        References.Add();
+    }
+
+    internal void AddReference()
+    {
+        References?.Add();
+    }
+
+    // For an object whose owner tears it down explicitly, such as a world, so held wrappers stop pinning its shell.
+    internal void ReleaseAllReferences()
+    {
+        References?.ReleaseAll();
+    }
+
+    // Drops one handed-out reference, as releasing a TObjectPtr would; undisposed ones go when the wrapper is collected.
+    public void Dispose()
+    {
+        References?.Release();
     }
 
     /// <summary>True while the native CObject this wraps is still alive. </summary>
@@ -139,14 +164,15 @@ public unsafe class NativeObject
         ObjectIndex = unchecked((int)Packed);
         ObjectGeneration = (int)(Packed >> 32);
         EntryPtr = ObjectIndex >= 0 ? (byte*)Native.ObjectGetEntry(Pointer) : null;
+        References?.Redirect(Pointer);
         return Pointer;
     }
 
     private static InvalidOperationException Destroyed()
     {
         return new InvalidOperationException(
-            "Use of a destroyed native object: the CObject this wrapper referenced has been freed. " +
-            "Don't cache wrappers across frames or structural changes, re-fetch it (Asset.Load, the property, ...).");
+            "Use of a destroyed native object: the CObject this wrapper referenced was destroyed by its owner, " +
+            "for example a deleted asset or a torn-down world.");
     }
 
     /// <summary>Throws <see cref="InvalidOperationException"/> if the object has been destroyed.</summary>

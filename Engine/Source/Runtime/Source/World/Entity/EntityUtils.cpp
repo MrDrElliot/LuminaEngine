@@ -273,6 +273,7 @@ namespace Lumina::ECS::Utils
 
                 if (CStruct* Struct = FindObject<CStruct>(TypeName))
                 {
+                    LUMINA_PROFILE_SECTION_NAMED(Struct->GetName().c_str());
                     if (Struct == STagComponent::StaticStruct())
                     {
                         STagComponent NewTagComponent;
@@ -354,7 +355,10 @@ namespace Lumina::ECS::Utils
 
             int64 StartOfComponentData = Ar.Tell();
 
-            Entry.Struct->SerializeTaggedProperties(Ar, Entry.Set->GetRaw(Entity));
+            {
+                LUMINA_PROFILE_SECTION_NAMED(Name.c_str());
+                Entry.Struct->SerializeTaggedProperties(Ar, Entry.Set->GetRaw(Entity));
+            }
 
             int64 EndOfComponentData = Ar.Tell();
 
@@ -377,6 +381,7 @@ namespace Lumina::ECS::Utils
 
     bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry)
     {
+        LUMINA_PROFILE_SCOPE();
         if (Ar.IsWriting())
         {
             Registry.Compact();

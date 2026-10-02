@@ -642,6 +642,9 @@ namespace Lumina::RHI
         VkPhysicalDevice                PhysicsDevice;
         // Recorded at selection because the heap sizes are what the minimum spec was judged against.
         uint64                          DeviceLocalMemoryBytes = 0;
+        // Bindless binding sizes after clamping to the device's descriptor indexing limits.
+        uint32                          SampledHeapCapacity = 0;
+        uint32                          StorageHeapCapacity = 0;
         VmaAllocator                    Allocator;
         TArray<VkQueue, 3>              Queues;
         TArray<uint32, 3>               QueueFamilies;
@@ -1549,6 +1552,16 @@ namespace Lumina::RHI
     // The engine's single descriptor set (sampler, sampled, storage) and the one pipeline layout on it.
     static void CreateBindlessLayout()
     {
+    VkPhysicalDeviceDescriptorIndexingProperties IndexingLimits{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES };
+    VkPhysicalDeviceProperties2 DeviceProperties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &IndexingLimits };
+    vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &DeviceProperties);
+
+    GDevice->SampledHeapCapacity = Math::Min(kMaxSampledTextureHeapSize,
+        Math::Min(IndexingLimits.maxDescriptorSetUpdateAfterBindSampledImages, IndexingLimits.maxPerStageDescriptorUpdateAfterBindSampledImages));
+    GDevice->StorageHeapCapacity = Math::Min(kMaxStorageTextureHeapSize,
+        Math::Min(IndexingLimits.maxDescriptorSetUpdateAfterBindStorageImages, IndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageImages));
+    LOG_INFO("RHI: bindless heap holds {} sampled and {} storage images.", GDevice->SampledHeapCapacity, GDevice->StorageHeapCapacity);
+
     constexpr auto Flags =    VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
                             | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
                             | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
@@ -1572,11 +1585,11 @@ namespace Lumina::RHI
     {
         {
             .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            .descriptorCount = kMaxTextureHeapSize
+            .descriptorCount = GDevice->SampledHeapCapacity
         },
         {
             .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .descriptorCount = kMaxTextureHeapSize
+            .descriptorCount = GDevice->StorageHeapCapacity
         },
         {
             .type = VK_DESCRIPTOR_TYPE_SAMPLER,
@@ -1596,14 +1609,14 @@ namespace Lumina::RHI
         {
             .binding            = kImageBindingSlot,
             .descriptorType     = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            .descriptorCount    = kMaxTextureHeapSize,
+            .descriptorCount    = GDevice->SampledHeapCapacity,
             .stageFlags         = VK_SHADER_STAGE_ALL,
             .pImmutableSamplers = nullptr
         },
         {
             .binding            = kRWImageBindingSlot,
             .descriptorType     = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .descriptorCount    = kMaxTextureHeapSize,
+            .descriptorCount    = GDevice->StorageHeapCapacity,
             .stageFlags         = VK_SHADER_STAGE_ALL,
             .pImmutableSamplers = nullptr
         },
@@ -4821,6 +4834,8 @@ namespace Lumina::RHI
 
     FTextureHeapH CreateTextureHeap(uint32 TextureCount, uint32 RWTextureCount, uint32 SamplerCount)
     {
+        TextureCount   = Math::Min(TextureCount, GDevice->SampledHeapCapacity);
+        RWTextureCount = Math::Min(RWTextureCount, GDevice->StorageHeapCapacity);
         LUMINA_MEMORY_SCOPE("RHI");
         VkDescriptorSetAllocateInfo Info
         {

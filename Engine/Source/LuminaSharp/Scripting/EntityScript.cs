@@ -76,33 +76,6 @@ public abstract class EntityScript : Lumina.CEntityScript
             DestroyCts.Dispose();
             DestroyCts = null;
         }
-        ReleasePins();
-    }
-
-    private System.Collections.Generic.List<System.IntPtr>? Pins;
-
-    // Keeps an asset loaded with Asset.Load alive until this script goes away, so a cached wrapper stays valid.
-    protected T? KeepAlive<T>(T? Object) where T : NativeObject
-    {
-        if (Object is null || Object.Handle == System.IntPtr.Zero)
-        {
-            return Object;
-        }
-        (Pins ??= new()).Add(Native.PinObject(Object.Handle));
-        return Object;
-    }
-
-    private void ReleasePins()
-    {
-        if (Pins is null)
-        {
-            return;
-        }
-        foreach (System.IntPtr Pin in Pins)
-        {
-            Native.UnpinObject(Pin);
-        }
-        Pins = null;
     }
 
     // A registry view follows its pool across relocation, so it is kept until the component itself is gone.

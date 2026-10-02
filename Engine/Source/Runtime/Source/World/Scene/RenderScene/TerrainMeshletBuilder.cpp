@@ -44,7 +44,7 @@ namespace Lumina::TerrainMeshletBuilder
 
             Out.Resolution           = Resolution;
             Out.QuadsPerChunk        = ChunkRes - 1;
-            Out.ChunksPerSide        = Math::Max(1, (Resolution - 1) / Out.QuadsPerChunk);
+            Out.ChunksPerSide        = GetTerrainChunksPerSide(Resolution, Out.QuadsPerChunk);
             Out.MeshletQuadSide      = GTerrainMeshletQuads;
             Out.MeshletsPerChunkSide = (Out.QuadsPerChunk + Out.MeshletQuadSide - 1) / Out.MeshletQuadSide;
             Out.MeshletsPerChunk     = Out.MeshletsPerChunkSide * Out.MeshletsPerChunkSide;

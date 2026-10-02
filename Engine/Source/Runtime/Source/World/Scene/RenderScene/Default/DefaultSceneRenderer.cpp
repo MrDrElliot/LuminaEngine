@@ -2300,9 +2300,61 @@ namespace Lumina
             return;
         }
 
-        RHI::FTransientAlloc Staging = RHI::AllocTransient(Size);
-        Memory::Memcpy(Staging.Cpu, Data, Size);
-        StagedWrites.push_back(RHI::FBufferCopy{ { Dst, Size }, { Staging.Gpu, Size } });
+        // Under the RHI's dedicated-block size, so each piece is a pooled page suballocation that frees cheaply.
+        constexpr uint64 MaxStagePieceBytes = 16ull * 1024u * 1024u;
+
+        // Past this the per-frame ring would grow to fit a one-off burst, and resizing it frees host memory, which stalls the queue.
+        constexpr uint64 RingStageLimitBytes = 8ull * 1024u * 1024u;
+        const bool bPooledStaging = Size > RingStageLimitBytes;
+
+        // A full retained re-send is hundreds of megabytes, which one thread copies at a fraction of the bandwidth.
+        constexpr uint64 ParallelStageBytes = 4ull * 1024u * 1024u;
+        constexpr uint64 StageChunkBytes    = 1024u * 1024u;
+
+        const uint8* Source = static_cast<const uint8*>(Data);
+        for (uint64 PieceOffset = 0; PieceOffset < Size; PieceOffset += MaxStagePieceBytes)
+        {
+            const uint64 PieceBytes = Math::Min(MaxStagePieceBytes, Size - PieceOffset);
+            RHI::GPUPtr StagingGpu = 0;
+            uint8*      Dest       = nullptr;
+            if (bPooledStaging)
+            {
+                const RHI::FGPUAllocation Pooled = RHI::Malloc(PieceBytes, RHI::EMemoryType::CPUWrite);
+                if (Pooled.Gpu == 0)
+                {
+                    LOG_ERROR("Scene renderer: no staging for a {} MiB upload piece; that range keeps its old contents.", PieceBytes >> 20);
+                    continue;
+                }
+                RHI::Retire(Pooled);
+                StagingGpu = Pooled.Gpu;
+                Dest       = reinterpret_cast<uint8*>(Pooled.Cpu);
+            }
+            else
+            {
+                const RHI::FTransientAlloc Staging = RHI::AllocTransient(PieceBytes);
+                StagingGpu = Staging.Gpu;
+                Dest       = static_cast<uint8*>(Staging.Cpu);
+            }
+            const uint8* Piece = Source + PieceOffset;
+
+            if (PieceBytes >= ParallelStageBytes)
+            {
+                const uint32 NumChunks = (uint32)((PieceBytes + StageChunkBytes - 1u) / StageChunkBytes);
+                Task::ParallelFor(NumChunks, [Dest, Piece, PieceBytes, ChunkBytes = StageChunkBytes](const Task::FParallelRange& Range)
+                {
+                    for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
+                    {
+                        const uint64 Offset = (uint64)Chunk * ChunkBytes;
+                        Memory::Memcpy(Dest + Offset, Piece + Offset, Math::Min(ChunkBytes, PieceBytes - Offset));
+                    }
+                });
+            }
+            else
+            {
+                Memory::Memcpy(Dest, Piece, PieceBytes);
+            }
+            StagedWrites.push_back(RHI::FBufferCopy{ { Dst + PieceOffset, PieceBytes }, { StagingGpu, PieceBytes } });
+        }
     }
 
     void FDefaultSceneRenderer::FlushStagedWrites(RHI::FCmdListH CL)

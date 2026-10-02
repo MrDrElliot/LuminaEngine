@@ -148,10 +148,21 @@ public static unsafe partial class Host
             BusRegistry.Remove(World);
             UIDataModel.RemoveForWorld(World);
             GameTaskRegistry.CancelWorld(World);
+            DropWorldReference((IntPtr)World);
         }
         catch (Exception Exception)
         {
             Native.Log(ELogLevel.Error, $"OnWorldTeardown threw: {Exception}");
+        }
+    }
+
+    // Immediate, since the editor force-destroys a stopped PIE world, while its context still owns it here.
+    private static void DropWorldReference(IntPtr World)
+    {
+        IntPtr Existing = Native.ObjectGetManagedInstance(World);
+        if (Existing != IntPtr.Zero && GCHandle.FromIntPtr(Existing).Target is NativeObject Wrapper)
+        {
+            Wrapper.ReleaseAllReferences();
         }
     }
 
@@ -522,6 +533,7 @@ public static unsafe partial class Host
     {
         try
         {
+            ObjectReference.DrainReleases();
             Scripts?.Tick();
         }
         catch (Exception Exception)
@@ -538,6 +550,7 @@ public static unsafe partial class Host
         {
             Scripts?.Shutdown();
             Scripts = null;
+            ObjectReference.OnHostShutdown();
         }
         catch (Exception Exception)
         {

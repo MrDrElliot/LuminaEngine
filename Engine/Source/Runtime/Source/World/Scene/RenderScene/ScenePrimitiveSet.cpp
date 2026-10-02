@@ -178,6 +178,13 @@ namespace Lumina
         ++(bSkinned ? Batch.SkinnedRefCount : Batch.StaticRefCount);
     }
 
+    void FSceneBatchRegistry::AddBatchRefs(uint32 BatchIndex, bool bSkinned, uint32 Count)
+    {
+        FBatch& Batch = Batches[BatchIndex];
+        Batch.RefCount += Count;
+        (bSkinned ? Batch.SkinnedRefCount : Batch.StaticRefCount) += Count;
+    }
+
     void FSceneBatchRegistry::ReleaseBatchRef(uint32 BatchIndex, bool bSkinned)
     {
         if (BatchIndex >= (uint32)Batches.size())
@@ -1553,34 +1560,10 @@ namespace Lumina
                 continue;
             }
 
-            EInstanceFlags Flags = Type.BaseFlags | Binding.MaterialFlags;
-            if (Type.bCastShadow && Binding.bMaterialCastsShadows)
-            {
-                Flags |= EInstanceFlags::CastShadow;
-            }
-            if (Type.Surfaces != nullptr)
-            {
-                Flags |= EInstanceFlags::Active;
-            }
-            if (Type.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot)
-            {
-                Flags |= EInstanceFlags::HasGeometry;
-            }
-
-            FInstanceCullEntry NewCull = {};
-            // The bake already produced the world sphere; there is no local sphere to transform.
-            NewCull.SphereBounds     = Instance.SphereBounds;
-            NewCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
-            NewCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
-            NewCull.MaxDrawDistance  = Type.MaxDrawDistance;
-            NewCull.ForcedLODIndex   = -1;
-
-            const FTransform3x4 NewTransform = PackTransform3x4(Instance.Transform);
-
-            FInstanceStatic NewStatic = {};
-            NewStatic.MeshletHeaderSlot = Type.MeshletHeaderSlot;
-            NewStatic.MaterialIndex     = Binding.MaterialIndex;
-            NewStatic.EntityID          = EntityID;
+            FInstanceCullEntry NewCull;
+            FTransform3x4      NewTransform;
+            FInstanceStatic    NewStatic;
+            BuildFoliageEntries(Binding, Type, Instance, EntityID, NewCull, NewTransform, NewStatic);
 
             // A rebake or resolve bump rewrites every blade; only the ones that actually moved upload.
             const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
@@ -1594,6 +1577,121 @@ namespace Lumina
                 MarkStaticDirty(Slot);
             }
         }
+    }
+
+    // Below this a field binds faster serially than it takes to fan out.
+    static constexpr uint32 FreshFoliageParallelThreshold = 8192;
+
+    void FScenePrimitiveSet::BuildFoliageEntries(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type,
+                                                 const FFoliageBakedInstance& Instance, uint32 EntityID,
+                                                 FInstanceCullEntry& OutCull, FTransform3x4& OutTransform, FInstanceStatic& OutStatic)
+    {
+        EInstanceFlags Flags = Type.BaseFlags | Binding.MaterialFlags;
+        if (Type.bCastShadow && Binding.bMaterialCastsShadows)
+        {
+            Flags |= EInstanceFlags::CastShadow;
+        }
+        if (Type.Surfaces != nullptr)
+        {
+            Flags |= EInstanceFlags::Active;
+        }
+        if (Type.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot)
+        {
+            Flags |= EInstanceFlags::HasGeometry;
+        }
+
+        OutCull = {};
+        // The bake already produced the world sphere; there is no local sphere to transform.
+        OutCull.SphereBounds     = Instance.SphereBounds;
+        OutCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
+        OutCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
+        OutCull.MaxDrawDistance  = Type.MaxDrawDistance;
+        OutCull.ForcedLODIndex   = -1;
+
+        OutTransform = PackTransform3x4(Instance.Transform);
+
+        OutStatic = {};
+        OutStatic.MeshletHeaderSlot = Type.MeshletHeaderSlot;
+        OutStatic.MaterialIndex     = Binding.MaterialIndex;
+        OutStatic.EntityID          = EntityID;
+    }
+
+    void FScenePrimitiveSet::BindFreshFoliage(FFoliageEntityState& State, const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const uint32 TypeCount   = (uint32)FoliageTypeScratch.size();
+        const uint32 NewCount    = (uint32)Baked.size();
+        const uint32 BindingBase = (uint32)Bindings.size();
+
+        // Serial, because each span starts where the previous one ended.
+        TVector<uint32> InstancesPerType(TypeCount, 0u);
+        uint32 TotalBindings = 0;
+        for (uint32 i = 0; i < NewCount; ++i)
+        {
+            const int32 TypeIndex = Baked[i].TypeIndex;
+            const bool  bValidType = TypeIndex >= 0 && (uint32)TypeIndex < TypeCount;
+            const FBindingMemo* Memo = bValidType ? FoliageMemoScratch[TypeIndex] : nullptr;
+            const uint32 WantCount = (Memo != nullptr) ? (uint32)Memo->Protos.size() : 0u;
+
+            FFoliageInstanceRef& Ref = State.Instances[i];
+            Ref.TypeRow      = bValidType ? (uint16)TypeIndex : 0xFFFFu;
+            Ref.SurfaceCount = (uint16)WantCount;
+            Ref.BindingBase  = (WantCount != 0u) ? BindingBase + TotalBindings : 0u;
+            TotalBindings   += WantCount;
+            if (Memo != nullptr)
+            {
+                ++InstancesPerType[TypeIndex];
+            }
+        }
+
+        for (uint32 t = 0; t < TypeCount; ++t)
+        {
+            if (InstancesPerType[t] == 0u || FoliageMemoScratch[t] == nullptr)
+            {
+                continue;
+            }
+            const bool bSkinned = EnumHasAnyFlags(FoliageTypeScratch[t].BaseFlags, EInstanceFlags::Skinned);
+            for (const FSurfaceBinding& Proto : FoliageMemoScratch[t]->Protos)
+            {
+                Batches.AddBatchRefs(Proto.BatchIndex, bSkinned, InstancesPerType[t]);
+            }
+        }
+
+        Bindings.resize(BindingBase + TotalBindings);
+        const uint32 SlotBase = AllocateInstanceSlotBlock(TotalBindings);
+
+        Task::ParallelFor(NewCount, [&](const Task::FParallelRange& Range)
+        {
+            for (uint32 i = Range.Start; i < Range.End; ++i)
+            {
+                const FFoliageInstanceRef& Ref = State.Instances[i];
+                if (Ref.SurfaceCount == 0u)
+                {
+                    continue;
+                }
+
+                const FFoliageTypeResolve& Type = FoliageTypeScratch[Ref.TypeRow];
+                const FBindingMemo&        Memo = *FoliageMemoScratch[Ref.TypeRow];
+                const bool bSkinned = EnumHasAnyFlags(Type.BaseFlags, EInstanceFlags::Skinned);
+
+                for (uint32 s = 0; s < Ref.SurfaceCount; ++s)
+                {
+                    FSurfaceBinding& Binding = Bindings[Ref.BindingBase + s];
+                    Binding              = Memo.Protos[s];
+                    Binding.InstanceSlot = SlotBase + (Ref.BindingBase - BindingBase) + s;
+                    Binding.bSkinned     = bSkinned;
+
+                    BuildFoliageEntries(Binding, Type, Baked[i], EntityID,
+                                        RetainedCullEntries[Binding.InstanceSlot],
+                                        RetainedTransforms[Binding.InstanceSlot],
+                                        RetainedStatic[Binding.InstanceSlot]);
+                }
+            }
+        }, 4096);
+
+        SyncStats.BindCalls            += NewCount;
+        SyncStats.RefreshInstanceCalls += NewCount;
     }
 
     void FScenePrimitiveSet::SyncFoliage(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity,
@@ -1623,8 +1721,9 @@ namespace Lumina
 
         FFoliageEntityState& State = FoliageByEntity[Entity];
 
+        const uint32 PreviousCount = (uint32)State.Instances.size();
         const bool bBakeChanged = State.SyncedBakeSerial != Foliage->BakeSerial
-                               || NewCount != (uint32)State.Instances.size();
+                               || NewCount != PreviousCount;
         State.SyncedBakeSerial = Foliage->BakeSerial;
 
         // Shrink drops the tail; grow and overlap are handled by the write loop below.
@@ -1715,7 +1814,13 @@ namespace Lumina
         // writes nothing for it.
         const FFoliageTypeResolve UnresolvedType;
 
-        for (uint32 i = 0; i < NewCount; ++i)
+        const bool bFreshBind = PreviousCount == 0u && NewCount >= FreshFoliageParallelThreshold;
+        if (bFreshBind)
+        {
+            BindFreshFoliage(State, Baked, EntityID);
+        }
+
+        for (uint32 i = 0; i < NewCount && !bFreshBind; ++i)
         {
             const FFoliageBakedInstance& Instance = Baked[i];
             FFoliageInstanceRef&         Ref      = State.Instances[i];
