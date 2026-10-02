@@ -34,10 +34,10 @@ namespace Lumina
         }
     }
 
-    // The moment lane compiles a moment stage and the unordered lane must not; nothing may claim both.
+    // A blend resolves through weighted OIT or blends unordered, never both.
     TEST(MaterialBlendMode, EachBlendTakesExactlyOneTranslucencyLane)
     {
-        struct FCase { EBlendMode Blend; bool bMoment; bool bUnordered; };
+        struct FCase { EBlendMode Blend; bool bOIT; bool bUnordered; };
         const FCase Cases[] =
         {
             { EBlendMode::Opaque,         false, false },
@@ -53,11 +53,11 @@ namespace Lumina
             CMaterial* Material = MakeMaterial(Case.Blend);
             ASSERT_NE(Material, nullptr);
 
-            EXPECT_EQ(Material->IsMomentResolved(), Case.bMoment)
-                << "blend mode " << (int)Case.Blend << " picked the wrong moment lane";
+            EXPECT_EQ(Material->IsOITResolved(), Case.bOIT)
+                << "blend mode " << (int)Case.Blend << " picked the wrong OIT lane";
             EXPECT_EQ(Material->IsUnorderedBlend(), Case.bUnordered)
                 << "blend mode " << (int)Case.Blend << " picked the wrong unordered lane";
-            EXPECT_FALSE(Material->IsMomentResolved() && Material->IsUnorderedBlend())
+            EXPECT_FALSE(Material->IsOITResolved() && Material->IsUnorderedBlend())
                 << "blend mode " << (int)Case.Blend << " claimed both lanes";
         }
     }
@@ -120,7 +120,7 @@ namespace Lumina
         EXPECT_TRUE(Instance->WritesDepth());
         EXPECT_TRUE(Instance->IsShadowOnly());
         EXPECT_TRUE(Instance->IsUnorderedBlend());
-        EXPECT_FALSE(Instance->IsMomentResolved());
+        EXPECT_FALSE(Instance->IsOITResolved());
     }
 
     // A parentless instance must not claim state it cannot back, or the resolve reads a lane that is absent.
@@ -132,7 +132,7 @@ namespace Lumina
         EXPECT_TRUE(Instance->ReceivesDecals());
         EXPECT_FALSE(Instance->WritesDepth());
         EXPECT_FALSE(Instance->IsShadowOnly());
-        EXPECT_FALSE(Instance->IsMomentResolved());
+        EXPECT_FALSE(Instance->IsOITResolved());
         EXPECT_FALSE(Instance->IsUnorderedBlend());
     }
 

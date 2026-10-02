@@ -354,7 +354,7 @@ namespace Lumina::MCP
             const FFixedString Destination = Paths::Combine(FStringView(Folder), VFS::FileName(FStringView(SourcePath), true));
             FFixedString OnDisk = Destination;
             CPackage::AddPackageExt(OnDisk);
-            if (FindObject<CPackage>(Destination) != nullptr || VFS::Exists(OnDisk))
+            if (!In.ReplaceExisting && (FindObject<CPackage>(Destination) != nullptr || VFS::Exists(OnDisk)))
             {
                 Out.Skipped++;
                 return;
@@ -387,7 +387,7 @@ namespace Lumina::MCP
                 Result.Error = ParseError.empty() ? FString("The source could not be read.") : ParseError;
             }
             Importer->ReleaseSourceData();
-            if (Result.Succeeded() && Result.CreatedObjects.empty())
+            if (Result.Succeeded() && Result.CreatedObjects.empty() && !In.ReplaceExisting)
             {
                 Result.Error = "The importer produced no assets.";
             }
@@ -442,7 +442,7 @@ namespace Lumina::MCP
             Agent::FToolRegistry::Get().Register<SImportAssetsParams, SImportAssetsResult>(
                 Owner, "assets.import",
                 "Import a source file, or every importable file in a directory, into a content folder. "
-                "Existing assets are skipped, so a rerun resumes an import that timed out.",
+                "Existing assets are skipped unless ReplaceExisting is set, so a rerun resumes an import that timed out.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SImportAssetsParams& In, SImportAssetsResult& Out)
                 {

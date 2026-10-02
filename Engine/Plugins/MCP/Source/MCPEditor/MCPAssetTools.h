@@ -196,6 +196,10 @@ namespace Lumina
         // JSON object of importer properties, such as {"bImportAsPrefab": true, "SceneCollision": "TriangleMesh"}.
         PROPERTY()
         FString Settings;
+
+        // Runs the importer over existing assets, which it replaces in place, instead of skipping the file.
+        PROPERTY()
+        bool ReplaceExisting = false;
     };
 
     REFLECT()
