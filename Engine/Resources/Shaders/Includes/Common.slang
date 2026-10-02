@@ -9,7 +9,6 @@ static const float TWO_PI = 6.28318530718;
 static const float INV_PI = 0.31830988618;
 
 
-#define SHADOW_SAMPLE_COUNT 8
 // Upper bound for the directional cascade's runtime-tunable tap count
 // (SDirectionalLightComponent::ShadowSampleCount, forwarded via ShadowParams2.y).
 #define SHADOW_MAX_SAMPLE_COUNT 16
@@ -893,10 +892,9 @@ struct FLightData
     // Ortho depth range of each cascade, which turns a shadow-map NDC z delta into world units.
     float4 CascadeDepthRanges;
     // Directional shadow tuning (mirror FSceneLightData::ShadowParams).
-    // x = normal-bias scale, y = constant depth bias, z = PCSS softness, w = cascade blend fraction.
+    // x = normal-bias scale, y = constant depth bias, z = PCF radius in cascade-0 texels, w = cascade blend fraction.
     float4 ShadowParams;
-    // x = far-cascade distance-fade fraction, y = directional PCF tap count,
-    // z = contact-shadow world length (0 = off), w = contact-shadow tap count.
+    // x = far-cascade distance-fade fraction, y = directional PCF tap count, zw unused.
     float4 ShadowParams2;
     float4 AmbientLight;
     // Each carries its own live count, so no caller has to remember a separate bound.
@@ -908,9 +906,9 @@ struct FCluster
 {
     float4 MinPoint;
     float4 MaxPoint;
-    // Where this cluster's run starts in ClusterLightIndices, and how long it is.
-    uint   Offset;
-    uint   Count;
+    // The cluster's non-empty light-mask words, [FirstWord, EndWord), so a walk skips the empty ones.
+    uint   FirstWord;
+    uint   EndWord;
     uint   _Pad[2];
 };
 
@@ -1006,14 +1004,12 @@ struct FCullData
 #define DEBUG_MODE_LIGHT_COMPLEXITY     11u
 #define DEBUG_MODE_CLUSTER_GRID         12u
 #define DEBUG_MODE_SHADOW_CASCADES      13u
-#define DEBUG_MODE_SHADOW_PENUMBRA      14u
 #define DEBUG_MODE_GTAO                 15u
 #define DEBUG_MODE_MATERIAL_ID          16u
 #define DEBUG_MODE_TRIANGLE_ID          17u
 // OIT target inspectors for OITResolve.slang. LAYER_COUNT also makes the translucent BasePixelPass
 // write 1.0 per fragment into accum.a, turning that channel into a raw fragment count.
 #define DEBUG_MODE_OIT_ACCUM_COLOR      18u
-#define DEBUG_MODE_OIT_MOMENTS          19u
 #define DEBUG_MODE_OIT_TRANSMITTANCE    20u
 #define DEBUG_MODE_OIT_LAYER_COUNT      21u
 // INFLUENCE answers whether a probe reaches this pixel and which one; RADIANCE answers what it
@@ -1094,15 +1090,6 @@ struct FSceneGlobalData
     FCullData         CullData;
     FParallaxSettings ParallaxSettings;
 
-    // Bindless SRV of this view's screen-space sun-shadow mask. ~0u means the pass did not run for this
-    // view, so its opaque pipelines are specialized back to the inline cascade PCSS.
-    uint              ShadowMaskIndex;
-
-    // MBOIT moment targets for this view (MomentOIT.slang), read by the translucent shading pass.
-    // ~0u = not published; see the sentinel guard in BasePixelPass.slang.
-    uint              MomentZerothIndex;
-    uint              MomentsIndex;
-
     // Subsample index 0 or 1 that decorrelates screen-space noise. Stays 0 unless T2x is resolving.
     uint              TemporalPhase;
 
@@ -1112,6 +1099,9 @@ struct FSceneGlobalData
     uint              DBufferAIndex;
     uint              DBufferBIndex;
     uint              DBufferCIndex;
+    uint              _PadFogParams0;
+    uint              _PadFogParams1;
+    uint              _PadFogParams2;
 
     // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
     FExponentialHeightFogParams FogParams;
@@ -1285,12 +1275,11 @@ float2 VogelDiskSample(int SampleIndex, int SamplesCount, float Angle)
     return float2(r * c, r * s);
 }
 
-// Triangular-PDF dither (Gjol/Playdead). Two decorrelated uniform hashes per channel subtract to a
-// triangular distribution: flat noise floor, +/-1 LSB at 8-bit.
-float3 ScreenSpaceDither(float2 ScreenPos, float Time)
+// Triangular-PDF dither (Gjol/Playdead) in a fixed pattern, since a per-frame one flickers wherever a later pass quantizes coarsely.
+float3 ScreenSpaceDither(float2 ScreenPos)
 {
-    float3 S0 = float3(dot(float2(171.0, 231.0), ScreenPos.xy + Time));
-    float3 S1 = float3(dot(float2(113.0, 271.0), ScreenPos.xy + Time + 13.7));
+    float3 S0 = float3(dot(float2(171.0, 231.0), ScreenPos.xy));
+    float3 S1 = float3(dot(float2(113.0, 271.0), ScreenPos.xy + 13.7));
     float3 R0 = frac(S0 / float3(103.0, 71.0, 97.0));
     float3 R1 = frac(S1 / float3(89.0, 113.0, 127.0));
     return (R0 + R1 - 1.0) / 255.0;

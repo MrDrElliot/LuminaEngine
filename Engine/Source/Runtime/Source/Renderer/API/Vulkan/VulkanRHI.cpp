@@ -5245,7 +5245,7 @@ namespace Lumina::RHI
         HeapData.SamplerSlots.Free(Slot);
     }
     
-    static EPresentMode GPresentMode = EPresentMode::FIFO;
+    static EPresentMode GPresentMode = EPresentMode::Immediate;
 
     void SetPresentMode(EPresentMode Mode)
     {

@@ -2,8 +2,7 @@
 #include "SceneGlobals.slang"
 #include "CloudCommon.slang"
 
-// The directional/cascade PCSS lives here, not in SurfaceShading.slang, because two consumers must not
-// drift: the inline path in ShadeSurface and ShadowMaskPixel.slang's full-screen resolve.
+// Cascade and atlas sampling shared by the lit passes, the volumetrics and the particles, so none of them drift.
 
 struct FShadowTex
 {
@@ -205,20 +204,6 @@ float SunOccluderDepthWS(FLight Light, float3 WorldPos)
     return 0.0;
 }
 
-// Load, not Sample: the mask is full-res and screen-aligned, so the fetch is an exact 1:1 texel read.
-// Guarded on the sentinel so a specialized view whose pass did not run reads fully lit, not texture 0.
-float SampleShadowMask(float2 PixelPos, bool bContactShadows)
-{
-    uint Index = Scene().ShadowMaskIndex;
-    if (Index == 0xFFFFFFFFu)
-    {
-        return 1.0;
-    }
-    // Red is cascade and cloud, green the contact march, kept apart so a surface can refuse it; min avoids a double penumbra.
-    const float2 Mask = gTextures2D[NonUniformResourceIndex(Index)].Load(int3(int2(PixelPos), 0)).rg;
-    return bContactShadows ? min(Mask.r, Mask.g) : Mask.r;
-}
-
 // ToLight is the TO-LIGHT vector, matching FLight::Direction. Passing the travel direction instead
 // silently inverts NdotL to zero on every lit surface and pins the bias at maximum.
 float ComputeShadowBias(uint LightFlags, float3 Normal, float3 ToLight, int CascadeIndex)
@@ -254,296 +239,116 @@ float3 NormalOffsetWS(float3 Normal, float3 ToLight, int CascadeIndex)
     return Normal * (TexelSize * 1.4 * OffsetScale * LightData().ShadowParams.x);
 }
 
-// Pack a per-cascade UV [0,1] into the shared cascade atlas. The atlas tile
-// for this cascade is described by FLightShadow.AtlasUVOffset/Scale.
-float2 CascadeAtlasUV(int ShadowDataIndex, int CascadeIndex, float2 CascadeUV)
+// Godot's default soft sun shadow, a few hardware-compare taps on a rotated Vogel disk with no blocker search.
+float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float3 Normal, float3 ToLight, float2 ScreenPos, out bool Inside)
 {
-    FLightShadow Tile = GetShadowTile(ShadowDataIndex, CascadeIndex);
-    return CascadeUV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
-}
+    // Godot's normal bias, minus its along-light part so it slides the receiver sideways rather than toward the sun.
+    float3 NormalOffset = NormalOffsetWS(Normal, ToLight, CascadeIndex);
+    NormalOffset -= ToLight * dot(ToLight, NormalOffset);
 
-// PCSS tuning: scale the PCF radius by receiver-to-blocker depth so the kernel collapses to a
-// near-point sample at contact and opens to a soft penumbra at distance.
-#define PCSS_BLOCKER_SEARCH_TAPS   8
-static const float PCSS_BlockerSearchRadius = 0.0035;  // UV radius of blocker search (scaled by CascadeScale)
-static const float PCSS_LightSize           = 0.05;     // Tunable: larger = softer far shadows
-// Bounds in SHADOW TEXELS, not UV: a floor so contact shadows still get multi-tap PCF, and a ceiling
-// the max tap count covers gap-free. Texel units keep softening consistent across cascades.
-static const float PCSS_MinFilterTexels     = 1.5;
-static const float PCSS_MaxFilterTexels     = 4.0;     // ~sqrt(SHADOW_MAX_SAMPLE_COUNT) -> coverable at max taps (16)
-static const float PCSS_BlockerDepthBias    = 0.0004;  // Bias for blocker classification
-static const float PCSS_MaxPlaneDepthBias   = 0.01;    // Cap on the receiver-plane prediction (silhouette-edge guard)
+    const float4x4 CascadeVP = GetShadowViewProjection(Light.ShadowDataIndex, CascadeIndex);
+    const float4   Coord     = mul(CascadeVP, float4(WorldPos + NormalOffset, 1.0));
+    const float3   Proj      = Coord.xyz / max(Coord.w, 1e-6);
+    const float2   CascadeUV = Proj.xy * 0.5 + 0.5;
 
-// The tent kernel's reach in shadow texels, past which PCSS widens the penumbra with the disk instead.
-static const float PCSS_TentFilterTexels    = 2.5;
-
-// The Witness 5x5 tent PCF from MJP's Shadows sample, weighted by sub-texel position so edges glide across texels.
-float SampleCascadeTentPCF(float2 AtlasUV, float RefDepth, float2 AtlasTexel, float2 TileMin, float2 TileMax)
-{
-    float2 TexelPos = AtlasUV / AtlasTexel;
-    float2 Center   = floor(TexelPos + 0.5);
-    float2 Frac     = TexelPos + 0.5 - Center;
-    float2 Base     = (Center - 0.5) * AtlasTexel;
-
-    float3 WeightU = float3(4.0 - 3.0 * Frac.x, 7.0, 1.0 + 3.0 * Frac.x);
-    float3 WeightV = float3(4.0 - 3.0 * Frac.y, 7.0, 1.0 + 3.0 * Frac.y);
-    float3 OffsetU = float3((3.0 - 2.0 * Frac.x) / WeightU.x - 2.0, (3.0 + Frac.x) / WeightU.y, Frac.x / WeightU.z + 2.0);
-    float3 OffsetV = float3((3.0 - 2.0 * Frac.y) / WeightV.x - 2.0, (3.0 + Frac.y) / WeightV.y, Frac.y / WeightV.z + 2.0);
-
-    float Sum = 0.0;
-    [unroll]
-    for (int y = 0; y < 3; ++y)
-    {
-        [unroll]
-        for (int x = 0; x < 3; ++x)
-        {
-            float2 UV = clamp(Base + float2(OffsetU[x], OffsetV[y]) * AtlasTexel, TileMin, TileMax);
-            Sum += WeightU[x] * WeightV[y] * ShadowCascade().SampleCmpLevelZero(UV, RefDepth);
-        }
-    }
-    return Sum * (1.0 / 144.0);
-}
-
-// PIXEL-ONLY: the receiver-plane bias differentiates with ddx/ddy. Guarded rather than left to dead
-// code elimination -- an OpDPdx surviving into a compute entry point is invalid SPIR-V.
-#ifndef SHADING_COMPUTE
-
-// PCSS-filtered sample of one directional cascade. Returns 1.0 (and Inside=false) when the fragment
-// is outside the cascade's projected range so the caller can fall back to another cascade or fully-lit.
-float3 ProjectToCascade(float4x4 CascadeVP, float3 WorldPos)
-{
-    float4 ShadowCoord = mul(CascadeVP, float4(WorldPos, 1.0));
-    return ShadowCoord.xyz / max(ShadowCoord.w, 1e-6);
-}
-
-// dWdx/dWdy are the world-space pixel footprint, passed in because ddx is undefined once a quad neighbor returned early.
-float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPos, float3 Normal, float3 ToLight, float Bias, float2 ScreenPos,
-                               float3 dWdx, float3 dWdy, out bool Inside)
-{
-    // Normal-offset the receiver before projecting; removes self-shadow banding depth bias can't fix.
-    float3 OffsetPos = FragmentPos + NormalOffsetWS(Normal, ToLight, CascadeIndex);
-
-    float4x4 CascadeVP  = GetShadowViewProjection(Light.ShadowDataIndex, CascadeIndex);
-    float4 ShadowCoord  = mul(CascadeVP, float4(OffsetPos, 1.0));
-    float3 ProjCoords   = ShadowCoord.xyz / max(ShadowCoord.w, 1e-6);
-    float2 ProjectionUV = ProjCoords.xy * 0.5 + 0.5;
-    float  CurrentDepth = ProjCoords.z;
-
-    // Shadow-space UV and depth per screen pixel, predicting the receiver's own depth across the blocker search.
-    const float3 ProjX = ProjectToCascade(CascadeVP, OffsetPos + dWdx);
-    const float3 ProjY = ProjectToCascade(CascadeVP, OffsetPos + dWdy);
-    float2 dUVdx = (ProjX.xy - ProjCoords.xy) * 0.5;
-    float2 dUVdy = (ProjY.xy - ProjCoords.xy) * 0.5;
-    float  dDdx  = ProjX.z - CurrentDepth;
-    float  dDdy  = ProjY.z - CurrentDepth;
-
-    Inside = !(any(ProjectionUV < 0.0) || any(ProjectionUV > 1.0) ||
-               CurrentDepth < 0.0 || CurrentDepth > 1.0);
+    Inside = all(CascadeUV >= 0.0) && all(CascadeUV <= 1.0) && Proj.z >= 0.0 && Proj.z <= 1.0;
     if (!Inside)
     {
         return 1.0;
     }
 
-    float IGN   = InterleavedGradientNoise(ScreenPos);
-    float Angle = IGN * TWO_PI;
+    const FLightShadow Tile     = GetShadowTile(Light.ShadowDataIndex, CascadeIndex);
+    const float2       BaseUV   = CascadeUV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
+    const float2       TileMin  = Tile.AtlasUVOffset;
+    const float2       TileMax  = Tile.AtlasUVOffset + Tile.AtlasUVScale;
+    const float        RefDepth = Proj.z - ComputeShadowBias(Light.Flags, Normal, ToLight, CascadeIndex);
 
-    float RefDepth = CurrentDepth - Bias;
-
-    // Outer cascades cover more world per texel, so scale the search and cap to keep the penumbra
-    // scene-proportional. Normalized by cascade count so the outermost keeps its softness at 3 or 4.
-    float CascadeScale = 1.0 + 3.0 * float(CascadeIndex) / float(max(NUM_CASCADES - 1, 1));
-
-    // Stage 1: blocker search through the point sampler for raw texel depths (the comparison sampler
-    // would return a PCF result, useless for classification). No occluder taps -> fully lit, early out.
-    float BlockerDepthSum = 0.0;
-    int   NumBlockers     = 0;
-
-    float SearchRadius = PCSS_BlockerSearchRadius * CascadeScale;
-
-    // Receiver-plane depth slope in shadow-UV space, from inverting the 2x2 Jacobian. Without it a sloped
-    // receiver is misread as an occluder across the far-cascade disk and sprays false penumbra noise.
-    float  Det = dUVdx.x * dUVdy.y - dUVdx.y * dUVdy.x;
-    float2 DepthSlopeUV = float2(0.0, 0.0);
-    if (abs(Det) > 1e-12)
+    const int Taps = clamp(int(LightData().ShadowParams2.y), 1, SHADOW_MAX_SAMPLE_COUNT);
+    if (Taps == 1)
     {
-        float InvDet = 1.0 / Det;
-        DepthSlopeUV.x = ( dUVdy.y * dDdx - dUVdx.y * dDdy) * InvDet;
-        DepthSlopeUV.y = (-dUVdy.x * dDdx + dUVdx.x * dDdy) * InvDet;
+        return ShadowCascade().SampleCmpLevelZero(BaseUV, RefDepth);
     }
 
-    // The cascade's atlas tile (UV scale/offset) is identical for every tap; load the 32-byte FLightShadow
-    // once here rather than re-fetching it per blocker/PCF tap (SPIR-V LICM doesn't hoist BDA loads).
-    FLightShadow Tile = GetShadowTile(Light.ShadowDataIndex, CascadeIndex);
+    // Set in cascade-0 texels and held at that world size, so far splits do not blur wider. A cascade spans 2 * radius.
+    const float  FilterTexels = LightData().ShadowParams.z;
+    const float  RadiusUV0    = FilterTexels / max(LightData().CascadeResolutions[0], 1.0);
+    const float2 RadiusUV     = RadiusUV0 * (LightData().CascadeRadii[0] / max(LightData().CascadeRadii[CascadeIndex], 1e-4)) * Tile.AtlasUVScale;
 
-    // Fold the per-tap cascade->atlas transform into loop invariants. clamp commutes through the positive
-    // linear atlas transform, so this matches clamping in cascade-UV while dropping the per-tap FMA.
-    float2 BaseAtlasUV       = ProjectionUV * Tile.AtlasUVScale + Tile.AtlasUVOffset;
-    float2 TileMin           = float2(0.001) * Tile.AtlasUVScale + Tile.AtlasUVOffset;
-    float2 TileMax           = float2(0.999) * Tile.AtlasUVScale + Tile.AtlasUVOffset;
-    float2 SearchAtlasRadius = SearchRadius * Tile.AtlasUVScale;
-
-    // Fixed rotation for the blocker search: per-pixel rotation of this sparse pattern stipples thin
-    // occluders. [loop], not [unroll] -- unrolling holds 8 tap temp-sets live and spikes PS VGPR.
+    float2 Dir;
+    sincos(InterleavedGradientNoise(ScreenPos) * TWO_PI, Dir.y, Dir.x);
     const float2 GoldenStep = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
-    float2 SearchDir = float2(1.0, 0.0);
+
+    float Shadow = 0.0;
     [loop]
-    for (int s = 0; s < PCSS_BLOCKER_SEARCH_TAPS; ++s)
+    for (int i = 0; i < Taps; ++i)
     {
-        float2 VOffset  = SearchDir * sqrt((float(s) + 0.5) / float(PCSS_BLOCKER_SEARCH_TAPS));
-        SearchDir       = RotateVogel(SearchDir, GoldenStep);
-        float2 Offset   = VOffset * SearchRadius;   // cascade-UV space, for the receiver-plane prediction below
-        float2 AtlasUV  = clamp(BaseAtlasUV + VOffset * SearchAtlasRadius, TileMin, TileMax);
-        float  Depth    = ShadowCascade().SampleLevel(AtlasUV, 0.0).r;
-
-        // Expected receiver depth at this offset along its own plane (clamped so a runaway gradient at a
-        // silhouette edge can't invert the test). Only depths in front of the predicted plane are occluders.
-        float PlaneDelta    = clamp(dot(DepthSlopeUV, Offset), -PCSS_MaxPlaneDepthBias, PCSS_MaxPlaneDepthBias);
-        float ReceiverDepth = CurrentDepth + PlaneDelta;
-
-        if (Depth < ReceiverDepth - PCSS_BlockerDepthBias)
-        {
-            BlockerDepthSum += Depth;
-            NumBlockers     += 1;
-        }
+        const float2 Offset = Dir * sqrt((float(i) + 0.5) / float(Taps));
+        Dir = RotateVogel(Dir, GoldenStep);
+        Shadow += ShadowCascade().SampleCmpLevelZero(clamp(BaseUV + Offset * RadiusUV, TileMin, TileMax), RefDepth);
     }
-
-    // Bounds in shadow texels: a floor so contact shadows still get multi-tap PCF, and a ceiling the max
-    // tap count covers gap-free. Texel units keep softening consistent across cascades.
-    float CascadeTexelUV = 1.0 / max(LightData().CascadeResolutions[CascadeIndex], 1.0);
-    float MinRadius      = PCSS_MinFilterTexels * CascadeTexelUV;
-    float MaxRadius      = PCSS_MaxFilterTexels * CascadeTexelUV;
-
-    // NO early-out on an empty blocker search: it is 8 sparse point taps on a fixed rotation, so a hard
-    // 1.0 stamps crisp texel-shaped lit rectangles wherever the pattern misses a real occluder.
-    float FilterRadius = MinRadius;
-    if (NumBlockers > 0)
-    {
-        float AvgBlockerDepth = BlockerDepthSum / float(NumBlockers);
-
-        // Stage 2: penumbra grows with receiver-to-blocker depth (ortho NDC-z delta) scaled by per-light
-        // softness (ShadowParams.z), clamped between the texel floor and ceiling.
-        float DepthDelta = max(CurrentDepth - AvgBlockerDepth, 0.0);
-        float Penumbra   = DepthDelta * LightData().ShadowParams.z;
-        FilterRadius     = clamp(Penumbra, MinRadius, MaxRadius);
-
-        // Low blocker coverage means partial occlusion, so pull the filter in slightly -- but never below
-        // the texel floor, or contact-hardened edges go blocky again.
-        float BlockerCoverage = float(NumBlockers) / float(PCSS_BLOCKER_SEARCH_TAPS);
-        FilterRadius = max(FilterRadius * lerp(0.75, 1.0, BlockerCoverage), MinRadius);
-    }
-
-    // The tent kernel covers every penumbra up to its own reach, which is all a hard contact shadow needs.
-    float2 AtlasTexel = CascadeTexelUV * Tile.AtlasUVScale;
-    float  Tent       = SampleCascadeTentPCF(BaseAtlasUV, RefDepth, AtlasTexel, TileMin, TileMax);
-    float  TentRadius = PCSS_TentFilterTexels * CascadeTexelUV;
-    float  DiskBlend  = saturate((FilterRadius - TentRadius) / max(MaxRadius - TentRadius, 1e-6));
-    if (DiskBlend <= 0.0)
-    {
-        return Tent;
-    }
-
-    // A wider penumbra blends toward the disk, whose tap count grows with its width to keep sample density even.
-    int   BaseTaps    = clamp(int(LightData().ShadowParams2.y), 1, SHADOW_MAX_SAMPLE_COUNT);
-    float RadiusFrac  = saturate(FilterRadius / max(MaxRadius, 1e-6));
-    int   SampleCount = clamp(int(lerp(float(BaseTaps), float(SHADOW_MAX_SAMPLE_COUNT), RadiusFrac)),
-                              BaseTaps, SHADOW_MAX_SAMPLE_COUNT);
-
-    // Same atlas fold as the blocker search. FP16 the unit disk offset (sub-texel, fp16 ~1e-6, packs into one
-    // register); the atlas UV + depth-compare ref stay fp32 for addressing precision.
-    float2 AtlasFilterRadius = FilterRadius * Tile.AtlasUVScale;
-
-    half Shadow = half(0.0);
-    float2 DiskDir;
-    sincos(Angle + PI, DiskDir.y, DiskDir.x);
-    [loop]
-    for (int i = 0; i < SampleCount; ++i)
-    {
-        half2  VOffset = half2(DiskDir * sqrt((float(i) + 0.5) / float(SampleCount)));
-        DiskDir        = RotateVogel(DiskDir, GoldenStep);
-        float2 AtlasUV = clamp(BaseAtlasUV + float2(VOffset) * AtlasFilterRadius, TileMin, TileMax);
-        Shadow        += half(ShadowCascade().SampleCmp(AtlasUV, RefDepth));
-    }
-    return lerp(Tent, float(Shadow) * rcp(float(SampleCount)), DiskBlend);
+    return Shadow / float(Taps);
 }
 
-// Factored out so the sun and any other directional light share the exact same cascade PCSS. Normal
-// feeds only the slope bias and normal-offset push, so the mask pass can pass a geometric normal.
-float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, float3 dWdx, float3 dWdy)
+// No derivatives anywhere below, so the compute lighting pass and the forward passes share this one path.
+float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos)
 {
-    // Sun with bCastShadows = false leaves ShadowDataIndex at INDEX_NONE;
-    // skip the cascade work and treat as fully lit.
+    // A sun with bCastShadows off leaves ShadowDataIndex at INDEX_NONE.
     if (Light.ShadowDataIndex == INDEX_NONE)
     {
         return 1.0;
     }
 
-    // Pick current cascade based on view-space Z against the split table (loaded once into registers).
-    float4 CascadeSplits = LightData().CascadeSplits;
+    const float4 CascadeSplits = LightData().CascadeSplits;
     int CascadeIndex = 0;
     for (int i = 0; i < NUM_CASCADES; ++i)
     {
         if (ViewPosition.z > CascadeSplits[i])
+        {
             CascadeIndex = i + 1;
+        }
     }
     if (CascadeIndex >= NUM_CASCADES)
-        return 1.0;
-
-    // TO-LIGHT, matching the SunL the BRDF uses. Negated into the travel direction, every sun-facing
-    // surface scores NdotL = 0, so the offset runs at full strength and pushes samples through casters.
-    float3 LightToFrag = normalize(Light.Direction);
-    float  Bias        = ComputeShadowBias(Light.Flags, Normal, LightToFrag, CascadeIndex);
-
-    bool  InsideA;
-    float ShadowA = SampleDirectionalCascade(Light, CascadeIndex, FragmentPos, Normal, LightToFrag, Bias, ScreenPos, dWdx, dWdy, InsideA);
-
-    // Blend into the next cascade near the split boundary so the transition is smooth, not a seam.
-    float CascadeNear = (CascadeIndex == 0) ? 0.0 : CascadeSplits[CascadeIndex - 1];
-    float CascadeFar  = CascadeSplits[CascadeIndex];
-    float CascadeLen  = max(CascadeFar - CascadeNear, 1e-4);
-    float LocalT      = saturate((ViewPosition.z - CascadeNear) / CascadeLen);
-
-    // Cross-fade fraction is per-light (ShadowParams.w); BlendStart = 1 - blend.
-    const float BlendStart = saturate(1.0 - LightData().ShadowParams.w);
-    if (LocalT > BlendStart && CascadeIndex + 1 < NUM_CASCADES)
     {
-        float BlendT  = saturate((LocalT - BlendStart) / (1.0 - BlendStart));
-        float BiasB   = ComputeShadowBias(Light.Flags, Normal, LightToFrag, CascadeIndex + 1);
+        return 1.0;
+    }
 
-        bool  InsideB;
-        float ShadowB = SampleDirectionalCascade(Light, CascadeIndex + 1, FragmentPos, Normal, LightToFrag, BiasB, ScreenPos, dWdx, dWdy, InsideB);
+    // TO-LIGHT, matching the SunL the BRDF uses; the travel direction would zero NdotL and max out the bias.
+    const float3 ToLight = normalize(Light.Direction);
 
+    bool InsideA;
+    const float ShadowA = SampleSunCascadePCF(Light, CascadeIndex, FragmentPos, Normal, ToLight, ScreenPos, InsideA);
+
+    const float CascadeNear = (CascadeIndex == 0) ? 0.0 : CascadeSplits[CascadeIndex - 1];
+    const float CascadeLen  = max(CascadeSplits[CascadeIndex] - CascadeNear, 1e-4);
+    const float LocalT      = saturate((ViewPosition.z - CascadeNear) / CascadeLen);
+
+    // Off by default, as in Godot; when a light enables it, pixels near a split pay for a second cascade.
+    const float BlendFraction = LightData().ShadowParams.w;
+    if (BlendFraction > 0.0 && CascadeIndex + 1 < NUM_CASCADES && LocalT > 1.0 - BlendFraction)
+    {
+        bool InsideB;
+        const float ShadowB = SampleSunCascadePCF(Light, CascadeIndex + 1, FragmentPos, Normal, ToLight, ScreenPos, InsideB);
         if (InsideB)
         {
-            return lerp(ShadowA, ShadowB, BlendT);
+            return lerp(ShadowA, ShadowB, saturate((LocalT - (1.0 - BlendFraction)) / BlendFraction));
         }
     }
 
-    // Final cascade: fade to fully lit over the outer slice so shadows
-    // dissolve at ShadowMaxDistance instead of popping off.
+    // Shadows dissolve over the outer slice of the last cascade instead of popping off at max distance.
     if (CascadeIndex + 1 == NUM_CASCADES)
     {
-        // Distance-fade fraction is per-light (ShadowParams2.x); start = 1 - fade.
-        const float FarFadeStart = saturate(1.0 - LightData().ShadowParams2.x);
-        if (LocalT > FarFadeStart)
+        const float FadeStart = saturate(1.0 - LightData().ShadowParams2.x);
+        if (LocalT > FadeStart)
         {
-            float FadeT = saturate((LocalT - FarFadeStart) / (1.0 - FarFadeStart));
-            return lerp(ShadowA, 1.0, FadeT);
+            return lerp(ShadowA, 1.0, saturate((LocalT - FadeStart) / max(1.0 - FadeStart, 1e-4)));
         }
     }
 
     return ShadowA;
 }
 
-float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, float3 dWdx, float3 dWdy)
-{
-    return ComputeDirectionalCascadeShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos, dWdx, dWdy)
-         * SampleDirectionalCloudShadow(FragmentPos);
-}
-
-// Forward shading keeps hardware derivatives, which a rasterized surface has for every lane of the quad.
 float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos)
 {
-    return ComputeDirectionalShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos, ddx(FragmentPos), ddy(FragmentPos));
+    return ComputeDirectionalCascadeShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos)
+         * SampleDirectionalCloudShadow(FragmentPos);
 }
-
-#endif // !SHADING_COMPUTE

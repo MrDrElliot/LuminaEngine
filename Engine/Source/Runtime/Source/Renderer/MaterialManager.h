@@ -61,6 +61,9 @@ namespace Lumina::RHI
          *  streaming feedback into per-texture residency demand. */
         RUNTIME_API uint32 CopySlotTextureIDs(uint32 Index, uint32* OutIDs, uint32 MaxIDs) const;
 
+        /** The slot's FMaterialUniforms::Flags as the shader reads them, or 0 for an unassigned slot. */
+        RUNTIME_API uint32 GetSlotFlags(uint32 Index) const;
+
     private:
 
         // Ensures the PUBLISHED table holds at least MinSlots. Caller holds the write lock.

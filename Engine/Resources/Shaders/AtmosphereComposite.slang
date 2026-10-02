@@ -4,11 +4,10 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/Fog.slang"
 #include "Includes/Froxel.slang"
-#include "Includes/ShadowSampling.slang"
 #include "Includes/CloudCommon.slang"
 #include "Includes/GlobalRHIStorage.slang"
 
-// Aerial perspective, clouds and fog in one HDR read-modify-write, in the order the old passes ran.
+// Reflections, aerial perspective, clouds and fog in one HDR read-modify-write, in the order the old passes ran.
 
 static const uint kAtmosphereTermOff = 0xFFFFFFFFu;
 
@@ -32,21 +31,80 @@ struct FPushConstants
     float NearPlane;
     float FogRange;
     uint  bVolumetric;               // froxel volume valid this frame
-    uint  FarShaftSteps;             // 0 = far field stays closed-form and unshadowed
-
     float FarShaftDistance;
-    uint  CloudShadowIndex;          // kAtmosphereTermOff when no cloud shadow was built
-    float CloudShadowExtent;
-    float CloudShadowCenterX;
 
-    float CloudShadowCenterY;
+    uint  FogShaftIndex;             // kAtmosphereTermOff keeps the far field closed-form and unshadowed
+    uint  FogShaftDepthIndex;        // raw depth each half-res shaft texel was marched against
     uint  CloudDepthIndex;           // raw depth each half-res cloud texel was marched against
     float CloudFloor;                // altitude of the cloud layer's base
-    float _Pad2;
+
+    uint  SSRTraceIndex;             // kAtmosphereTermOff disables screen-space reflections
+    uint  SSRTraceW;
+    uint  SSRTraceH;
+    uint  _Pad0;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-float3 ApplyAerialPerspective(float3 Color, float2 UV, float Depth)
+// Every term is a per-channel scale and offset of the HDR color, so they fold into one before HDR is touched.
+struct FHDRTerm
+{
+    float3 Scale;
+    float3 Offset;
+};
+
+void ComposeTerm(inout FHDRTerm Total, float3 Scale, float3 Offset)
+{
+    Total.Scale  *= Scale;
+    Total.Offset  = Total.Offset * Scale + Offset;
+}
+
+// Relative view-depth difference at which a trace texel's weight halves.
+static const float kSSRDepthSigma = 0.05;
+
+// The four nearest half-resolution trace texels, weighted by how well the depth each traced from matches this pixel's.
+float3 UpsampleReflectionDelta(int2 Pixel, float Depth)
+{
+    const float2 TracePos = (float2(Pixel) + 0.5) * 0.5 - 0.5;
+    const int2   Base     = int2(floor(TracePos));
+    const float2 F        = TracePos - float2(Base);
+    const int2   MaxTap   = int2(Pass().SSRTraceW, Pass().SSRTraceH) - 1;
+
+    float3 Delta[4];
+    int2   Taps[4];
+    bool   bAny = false;
+    [unroll]
+    for (int i = 0; i < 4; ++i)
+    {
+        Taps[i]  = clamp(Base + int2(i & 1, i >> 1), int2(0, 0), MaxTap);
+        Delta[i] = gTextures2D[Pass().SSRTraceIndex].Load(int3(Taps[i], 0)).rgb;
+        bAny     = bAny || any(Delta[i] != 0.0);
+    }
+
+    // Most of the screen is too rough to reflect, so the depth fetches are skipped there.
+    if (!bAny || Depth <= 0.0)
+    {
+        return float3(0.0);
+    }
+
+    const float Z         = LinearizeSceneDepth(Depth);
+    const float InvSigmaZ = 1.0 / (kSSRDepthSigma * Z);
+
+    float3 Sum       = float3(0.0);
+    float  SumWeight = 0.0;
+    [unroll]
+    for (int i = 0; i < 4; ++i)
+    {
+        // The trace stood each 2x2 block on its top-left pixel.
+        const float  TapZ   = LinearizeSceneDepth(gTextures2D[Pass().DepthIndex].Load(int3(Taps[i] * 2, 0)).r);
+        const float2 Bilin  = lerp(1.0 - F, F, float2(i & 1, i >> 1));
+        const float  Weight = Bilin.x * Bilin.y / (1.0 + abs(TapZ - Z) * InvSigmaZ);
+        Sum       += Delta[i] * Weight;
+        SumWeight += Weight;
+    }
+    return Sum / max(SumWeight, 1e-6);
+}
+
+FHDRTerm AerialPerspectiveTerm(float2 UV, float Depth)
 {
     float3 ViewPos  = ReconstructViewPos(UV, Depth, GetInverseCameraProjection());
     float3 WorldPos = mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz;
@@ -60,8 +118,11 @@ float3 ApplyAerialPerspective(float3 Color, float2 UV, float Depth)
     float3 InScatter = SampleTexture3DLevel(Pass().AerialInScatterIndex,     SAMPLER_LINEAR_CLAMP, UVW, 0.0).rgb;
     float3 Trans     = SampleTexture3DLevel(Pass().AerialTransmittanceIndex, SAMPLER_LINEAR_CLAMP, UVW, 0.0).rgb;
 
-    float3 Fogged = Color * Trans + InScatter;
-    return lerp(Color, Fogged, saturate(Pass().AerialIntensity));
+    const float Intensity = saturate(Pass().AerialIntensity);
+    FHDRTerm Term;
+    Term.Scale  = lerp(float3(1.0), Trans, Intensity);
+    Term.Offset = InScatter * Intensity;
+    return Term;
 }
 
 // Returns in-scatter in rgb and the clamped fog opacity in a, the pair the old blend state consumed.
@@ -137,12 +198,55 @@ float4 UpsampleClouds(float2 UV, float Depth)
     return WeightSum > 1.0e-4 ? Sum / WeightSum : Closest;
 }
 
+// The four nearest half-res shaft texels, weighted toward those marched against this pixel's depth.
+float4 UpsampleFogShafts(float2 UV, float Depth)
+{
+    uint Width;
+    uint Height;
+    gTextures2D[Pass().FogShaftIndex].GetDimensions(Width, Height);
+    const int2 MaxTexel = int2(Width, Height) - 1;
+
+    const float2 Coord = UV * float2(Width, Height) - 0.5;
+    const int2   Base  = int2(floor(Coord));
+    const float2 Frac  = Coord - float2(Base);
+
+    const float PixelLinear = Depth > 0.0 ? LinearizeSceneDepth(Depth) : 0.0;
+
+    float4 Sum        = float4(0.0, 0.0, 0.0, 0.0);
+    float  WeightSum  = 0.0;
+    float4 Closest    = float4(0.0, 0.0, 0.0, 1.0);
+    float  ClosestErr = 3.0e38;
+
+    [unroll]
+    for (int i = 0; i < 4; ++i)
+    {
+        const int2   Offset = int2(i & 1, i >> 1);
+        const int2   Texel  = clamp(Base + Offset, int2(0, 0), MaxTexel);
+        const float4 Shaft  = gTextures2D[Pass().FogShaftIndex].Load(int3(Texel, 0));
+        const float  Err    = CloudDepthError(Depth, PixelLinear, gTextures2D[Pass().FogShaftDepthIndex].Load(int3(Texel, 0)).r);
+
+        const float2 Axis   = lerp(1.0 - Frac, Frac, float2(Offset));
+        const float  Weight = Axis.x * Axis.y / (1.0 + Err * kCloudDepthSharpness);
+        Sum       += Shaft * Weight;
+        WeightSum += Weight;
+
+        if (Err < ClosestErr)
+        {
+            ClosestErr = Err;
+            Closest    = Shaft;
+        }
+    }
+
+    return WeightSum > 1.0e-4 ? Sum / WeightSum : Closest;
+}
+
 // Each term is frame-uniform, so a frame without it specializes to 0 and sheds that term's registers.
 [vk::constant_id(13)] const uint SPEC_ATMOS_AERIAL     = 1;
 [vk::constant_id(14)] const uint SPEC_ATMOS_CLOUDS     = 1;
 [vk::constant_id(15)] const uint SPEC_ATMOS_FOG        = 1;
 [vk::constant_id(16)] const uint SPEC_ATMOS_VOLUMETRIC = 1;
 [vk::constant_id(17)] const uint SPEC_ATMOS_SHAFTS     = 1;
+[vk::constant_id(18)] const uint SPEC_ATMOS_SSR        = 1;
 
 float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
 {
@@ -184,7 +288,6 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
 
     // Shared lighting for the far field, so its hand-off with the froxel volume stays continuous.
     float3 ToCam   = -RayDir;
-    float3 Ambient = GetVolumetricAmbientRadiance();
     bool   bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
     FLight Sun     = GetLightAt(0);
     float  CosSun  = -1.0;
@@ -203,53 +306,18 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
     float T0      = VolEndZ / ZPerT;
     float T1      = bSky ? 0.0 : ViewDist / ZPerT;
 
-    // Marched because the closed form cannot carry a shadow term, and shafts would stop at the volume.
-    uint  MarchSteps = (SPEC_ATMOS_SHAFTS != 0 && bSunVolumetric && Pass().FarShaftSteps > 0u) ? Pass().FarShaftSteps : 0u;
-    float TMarchEnd  = T0;
-    if (MarchSteps != 0u)
+    // Marched at half resolution by FogShafts, because the closed form cannot carry a shadow term.
+    float TMarchEnd = T0;
+    if (SPEC_ATMOS_SHAFTS != 0 && bSunVolumetric && Pass().FogShaftIndex != kAtmosphereTermOff)
     {
-        float Reach = T0 + Pass().FarShaftDistance;
-        TMarchEnd   = bSky ? Reach : min(T1, Reach);
+        const float Reach = T0 + Pass().FarShaftDistance;
+        TMarchEnd = bSky ? Reach : min(T1, Reach);
 
         if (TMarchEnd > T0)
         {
-            float  StepLen      = (TMarchEnd - T0) / float(MarchSteps);
-            // Same per-pixel hash the froxel lookup uses, so step banding lands as grain, not arcs.
-            float  Jitter       = InterleavedGradientNoise(PixelPos);
-            float2 ShadowCenter = float2(Pass().CloudShadowCenterX, Pass().CloudShadowCenterY);
-            // The march only recedes, so each step resumes the cascade search where the last one hit.
-            int    CascadeCursor = 0;
-
-            for (uint i = 0u; i < MarchSteps; ++i)
-            {
-                // Later steps all scale by Trans, so below this nothing further can still be seen.
-                if (Trans < 1.0e-6)
-                {
-                    break;
-                }
-
-                float  T = T0 + StepLen * (float(i) + Jitter);
-                float3 P = CamPos + RayDir * T;
-
-                float Density = Fog_DensityAt(uFog, P) * Fog_StartRamp(uFog, T);
-                if (Density <= 0.0)
-                {
-                    continue;
-                }
-
-                float Shadow = SampleSunCascadeFrom(Sun, P, CascadeCursor)
-                             * CloudShadow_Sample(Pass().CloudShadowIndex, P, ShadowCenter, Pass().CloudShadowExtent);
-
-                float3 Light  = Ambient + SunRadiance * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, Shadow);
-                float3 Albedo = Fog_Albedo(uFog, CosSun, T);
-
-                float  StepTrans = exp(-Density * StepLen);
-                // Analytic integral of in-scatter across the step, matching the froxel integrate pass.
-                float3 StepInt   = Albedo * Light * uFog.VolumetricParams.x * (1.0 - StepTrans);
-
-                InScatter += Trans * StepInt;
-                Trans     *= StepTrans;
-            }
+            const float4 Shaft = UpsampleFogShafts(UV, Depth);
+            InScatter += Trans * Shaft.rgb;
+            Trans     *= Shaft.a;
         }
     }
 
@@ -264,7 +332,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
         OD *= Fog_StartRamp(uFog, bSky ? 1e9 : 0.5 * (TRest + T1));
         float TransA = exp(-OD);
 
-        float3 Light = Ambient;
+        float3 Light = GetVolumetricAmbientRadiance();
         if (bSunVolumetric)
         {
             Light += SunRadiance * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, 1.0);
@@ -298,16 +366,23 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     float2 PixelPos = float2(DTid.xy) + 0.5;
     float2 UV       = PixelPos / float2(Size);
 
-    float  Depth  = gTextures2D[Pass().DepthIndex].Load(int3(P, 0)).r;
-    float4 Color  = gRWTextures2D[Pass().HDRUAV][P];
-    float3 Result = Color.rgb;
-    bool   bWrote = false;
+    float Depth = gTextures2D[Pass().DepthIndex].Load(int3(P, 0)).r;
+
+    FHDRTerm Total;
+    Total.Scale  = float3(1.0);
+    Total.Offset = float3(0.0);
+
+    // Reflections replace part of the surface's own shading, so they land before anything in front of it.
+    if (SPEC_ATMOS_SSR != 0 && Pass().SSRTraceIndex != kAtmosphereTermOff)
+    {
+        ComposeTerm(Total, float3(1.0), UpsampleReflectionDelta(P, Depth));
+    }
 
     // Sky already carries the full atmosphere integral, and reverse-Z leaves it at depth 0.
     if (SPEC_ATMOS_AERIAL != 0 && Pass().AerialInScatterIndex != kAtmosphereTermOff && Depth > 0.0)
     {
-        Result = ApplyAerialPerspective(Result, UV, Depth);
-        bWrote = true;
+        const FHDRTerm Aerial = AerialPerspectiveTerm(UV, Depth);
+        ComposeTerm(Total, Aerial.Scale, Aerial.Offset);
     }
 
     // A ray climbs at most its own length, so a surface nearer than the gap to the cloud base has no cloud in front.
@@ -320,20 +395,20 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         float4 Cloud = UpsampleClouds(UV, Depth);
         if (Cloud.a <= 0.999)
         {
-            Result = Result * Cloud.a + Cloud.rgb;
-            bWrote = true;
+            ComposeTerm(Total, float3(Cloud.a), Cloud.rgb);
         }
     }
 
     if (SPEC_ATMOS_FOG != 0 && Pass().bFog != 0)
     {
         float4 Fog = IntegrateFog(UV, PixelPos, Depth);
-        Result = Fog.rgb + Result * (1.0 - Fog.a);
-        bWrote = true;
+        ComposeTerm(Total, float3(1.0 - Fog.a), Fog.rgb);
     }
 
-    if (bWrote)
+    // HDR is only read and written where some term changes it.
+    if (any(Total.Scale != 1.0) || any(Total.Offset != 0.0))
     {
-        gRWTextures2D[Pass().HDRUAV][P] = float4(Result, Color.a);
+        const float4 Color = gRWTextures2D[Pass().HDRUAV][P];
+        gRWTextures2D[Pass().HDRUAV][P] = float4(Color.rgb * Total.Scale + Total.Offset, Color.a);
     }
 }

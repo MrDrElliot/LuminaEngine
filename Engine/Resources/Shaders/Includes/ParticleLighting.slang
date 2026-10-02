@@ -20,42 +20,47 @@ float3 ParticleLocalIrradiance(float3 WorldPos)
 
     const float2 ScreenPos = ((Clip.xy / Clip.w) * 0.5 + 0.5) * float2(GetScreenSize());
     const uint   Cluster   = ComputeClusterIndex(WorldToView(WorldPos).z, ScreenPos);
-    const uint   Count     = min(GetClusterLightCount(Cluster), (uint)LIGHTS_PER_CLUSTER);
-    const uint   Base      = GetClusterLightBase(Cluster);
+    const uint   MaskWords = GetClusterMaskWords();
+    const uint2  Words     = GetClusterWordRange(Cluster);
     const uint   NumLights = GetNumLights();
 
     float3 Irradiance = float3(0.0, 0.0, 0.0);
-    for (uint Slot = 0u; Slot < Count; ++Slot)
+    for (uint Word = Words.x; Word < Words.y; ++Word)
     {
-        const uint LightIndex = GetClusterLightAt(Base, Slot);
-        if (LightIndex >= NumLights)
+        uint Pending = GetClusterMaskWord(Cluster, Word, MaskWords);
+        while (Pending != 0u)
         {
-            continue;
+            const uint LightIndex = Word * 32u + firstbitlow(Pending);
+            Pending &= Pending - 1u;
+            if (LightIndex >= NumLights)
+            {
+                continue;
+            }
+
+            const FLight L = GetLightAt(LightIndex);
+            if (HasFlag(L.Flags, ELightFlags::Directional))
+            {
+                continue;
+            }
+
+            const float3 ToLight  = L.Position - WorldPos;
+            const float  Distance = length(ToLight);
+            if (Distance > L.Radius)
+            {
+                continue;
+            }
+
+            float Attenuation = 1.0 / max(Distance * Distance, 1e-4);
+            Attenuation *= 1.0 - smoothstep(clamp(L.Falloff, 0.0, 1.0), 1.0, Distance / L.Radius);
+
+            if (HasFlag(L.Flags, ELightFlags::Spot))
+            {
+                const float CosAngle = dot(normalize(L.Direction), ToLight / max(Distance, 1e-4));
+                Attenuation *= saturate((CosAngle - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
+            }
+
+            Irradiance += UnpackColor(L.Color).rgb * L.Intensity * Attenuation;
         }
-
-        const FLight L = GetLightAt(LightIndex);
-        if (HasFlag(L.Flags, ELightFlags::Directional))
-        {
-            continue;
-        }
-
-        const float3 ToLight  = L.Position - WorldPos;
-        const float  Distance = length(ToLight);
-        if (Distance > L.Radius)
-        {
-            continue;
-        }
-
-        float Attenuation = 1.0 / max(Distance * Distance, 1e-4);
-        Attenuation *= 1.0 - smoothstep(clamp(L.Falloff, 0.0, 1.0), 1.0, Distance / L.Radius);
-
-        if (HasFlag(L.Flags, ELightFlags::Spot))
-        {
-            const float CosAngle = dot(normalize(L.Direction), ToLight / max(Distance, 1e-4));
-            Attenuation *= saturate((CosAngle - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
-        }
-
-        Irradiance += UnpackColor(L.Color).rgb * L.Intensity * Attenuation;
     }
     return Irradiance;
 }

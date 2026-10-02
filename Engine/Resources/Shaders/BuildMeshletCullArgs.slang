@@ -1,8 +1,8 @@
-﻿#include "Includes/SceneGlobals.slang"
+#include "Includes/SceneGlobals.slang"
+#include "Includes/GroupScan.slang"
 
 // Lays out the meshlet cull's flat dispatch, then publishes what it appended as the draw slices the
-// mesh stage reads. Same serial one-workgroup scan as BuildDrawPrefix: NumViews * NumDraws is in the
-// hundreds, so a hierarchical scan would cost more in launch overhead than it saves.
+// mesh stage reads.
 //
 // Runs twice per cull phase. BEFORE the cull it assigns each bucket a dense offset in the flat block
 // dispatch and records where the phase starts appending; AFTER it turns the cursor movement into that
@@ -46,10 +46,7 @@ struct FBuildMeshletCullArgsArgs
 };
 FBuildMeshletCullArgsArgs* Pass() { return GetPassArgs<FBuildMeshletCullArgsArgs>(); }
 
-// The PRE pass is a running prefix, so it is serial by nature and does 3 writes per bucket. The POST
-// pass has no cross-bucket dependency and writes NumBuckets * SLICE_COUNT * SubDrawsPerSlice arguments,
-// which is thousands -- serial, that was the most expensive thing in the cull. It runs one thread per
-// bucket instead; the dispatch supplies one group for PRE and ceil(NumBuckets / 64) for POST.
+// PRE is one workgroup scanning contiguous runs of buckets; POST is one thread per bucket over ceil(NumBuckets / 64) groups.
 #define BUILD_CULL_ARGS_GROUP 64
 
 [shader("compute")]
@@ -61,32 +58,47 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
     if (Pass().bPost == 0u)
     {
-        // One thread owns the whole scan: the prefix is inherently serial and only NumBuckets long.
-        if (ThreadID.x != 0u)
-        {
-            return;
-        }
+        const uint PerThread = (NumBuckets + BUILD_CULL_ARGS_GROUP - 1u) / BUILD_CULL_ARGS_GROUP;
+        const uint First     = min(ThreadID.x * PerThread, NumBuckets);
+        const uint Last      = min(First + PerThread, NumBuckets);
+        const uint NumDraws  = max(Pass().NumDraws, 1u);
 
-        uint Running = 0u;
-        for (uint i = 0u; i < NumBuckets; ++i)
+        // The late phase only culls two-phase views, so every other bucket launches no workgroup at all.
+        const bool bLate = (Slice == MESHLET_SLICE_LATE);
+
+        uint Local = 0u;
+        for (uint i = First; i < Last; ++i)
         {
             FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
+            const bool bCulled = !bLate || SpanGetAligned(CullViews(), i / NumDraws).HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
+            // Blocks are dense inside a bucket but sparse across the arena, so the flat dispatch needs its own prefix.
+            Local += bCulled ? min(Bucket.BlockCursor, Bucket.BlockCapacity) : 0u;
+        }
 
-            // Blocks are dense inside a bucket but sparse across the arena, so the flat dispatch needs
-            // its own prefix. Clamped: the append cursor counts past capacity on an overflow frame.
+        uint2 Total;
+        uint Running = GroupExclusiveScan(uint2(Local, 0u), ThreadID.x, BUILD_CULL_ARGS_GROUP, Total).x;
+
+        for (uint i = First; i < Last; ++i)
+        {
+            FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
+            const bool bCulled = !bLate || SpanGetAligned(CullViews(), i / NumDraws).HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
+
             Bucket.CullWorkBase = Running;
-            Running += min(Bucket.BlockCursor, Bucket.BlockCapacity);
+            Running += bCulled ? min(Bucket.BlockCursor, Bucket.BlockCapacity) : 0u;
 
             // Where this phase starts appending, relative to DrawBase like the cursor itself.
             Bucket.SliceBase[Slice]  = min(Bucket.DrawCursor, Bucket.DrawCapacity);
             Bucket.SliceCount[Slice] = 0u;
         }
 
-        FDispatchIndirectArguments Args;
-        Args.GroupX = min(Running, (uint)MAX_DISPATCH_AXIS);
-        Args.GroupY = (Running + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
-        Args.GroupZ = 1u;
-        SpanSet(&Pass().OutCullDispatchArgs, 0u, Args);
+        if (ThreadID.x == 0u)
+        {
+            FDispatchIndirectArguments Args;
+            Args.GroupX = min(Total.x, (uint)MAX_DISPATCH_AXIS);
+            Args.GroupY = (Total.x + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
+            Args.GroupZ = 1u;
+            SpanSet(&Pass().OutCullDispatchArgs, 0u, Args);
+        }
         return;
     }
 

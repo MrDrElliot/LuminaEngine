@@ -11,8 +11,8 @@ struct FSceneRoot
     GPUSpan<FBoneTransform>      PrevBones;
     GPUSpan<FTransform3x4>       PrevRetainedTransforms;
     GPUSpan<FCluster>            Clusters;
-    // Per-view light runs the clusters point into, with the allocation counter in the first word.
-    GPUSpan<uint>                ClusterLightIndices;
+    // Per-view light bitmasks, GetClusterMaskWords() words per cluster.
+    GPUSpan<uint>                ClusterLightMasks;
     GPUSpan<FMaterialUniforms>   Materials;
     GPUSpan<FMaterialCollection> Collections;
     GPUSpan<FBillboardInstance>  Billboards;
@@ -72,7 +72,7 @@ GPUSpan<FBoneTransform>*      Bones()                 { return &GetSceneRoot().B
 GPUSpan<FBoneTransform>*      PrevBones()             { return &GetSceneRoot().PrevBones; }
 GPUSpan<FTransform3x4>*       PrevRetainedTransforms(){ return &GetSceneRoot().PrevRetainedTransforms; }
 GPUSpan<FCluster>*            Clusters()              { return &GetSceneRoot().Clusters; }
-GPUSpan<uint>*                ClusterLightIndices()   { return &GetSceneRoot().ClusterLightIndices; }
+GPUSpan<uint>*                ClusterLightMasks()     { return &GetSceneRoot().ClusterLightMasks; }
 GPUSpan<FMaterialUniforms>*   Materials()             { return &GetSceneRoot().Materials; }
 GPUSpan<FMaterialCollection>* Collections()           { return &GetSceneRoot().Collections; }
 GPUSpan<FBillboardInstance>*  Billboards()            { return &GetSceneRoot().Billboards; }
@@ -658,34 +658,43 @@ uint ComputeClusterIndex(float ViewZ, float2 ScreenPos)
     return TileXY.x + TileXY.y * Grid.x + ZTile * Grid.x * Grid.y;
 }
 
+// One bit per light, rounded up to whole words and clamped to what the pool holds for this grid, as LightCull wrote them.
+uint GetClusterMaskWords()
+{
+    const uint3 Grid        = Scene().GridSize.xyz;
+    const uint  NumClusters = max(Grid.x * Grid.y * Grid.z, 1u);
+    return min((GetNumLights() + 31u) / 32u, ClusterLightMasks().Count / NumClusters);
+}
+
+// The cluster's non-empty mask words as [first, end), so a walk never loads a word with no light in it.
+uint2 GetClusterWordRange(uint ClusterIndex)
+{
+    if (!SpanContains(Clusters(), ClusterIndex))
+    {
+        return uint2(0u, 0u);
+    }
+    FCluster* Cluster = SpanAt(Clusters(), ClusterIndex);
+    return uint2(Cluster.FirstWord, min(Cluster.EndWord, GetClusterMaskWords()));
+}
+
+// Bit b of word w is light 32 * w + b.
+uint GetClusterMaskWord(uint ClusterIndex, uint Word, uint MaskWords)
+{
+    const uint Index = ClusterIndex * MaskWords + Word;
+    return SpanContains(ClusterLightMasks(), Index) ? SpanAt(ClusterLightMasks(), Index)[0] : 0u;
+}
+
+// For the debug views, which want a count rather than the lights.
 uint GetClusterLightCount(uint ClusterIndex)
 {
-    if (!SpanContains(Clusters(), ClusterIndex))
+    const uint  MaskWords = GetClusterMaskWords();
+    const uint2 Range     = GetClusterWordRange(ClusterIndex);
+    uint Count = 0u;
+    for (uint Word = Range.x; Word < Range.y; ++Word)
     {
-        return 0u;
+        Count += countbits(GetClusterMaskWord(ClusterIndex, Word, MaskWords));
     }
-    return SpanAt(Clusters(), ClusterIndex).Count;
-}
-
-// The cluster's first slot in ClusterLightIndices, read once so the light loop fetches one word per light.
-uint GetClusterLightBase(uint ClusterIndex)
-{
-    if (!SpanContains(Clusters(), ClusterIndex))
-    {
-        return 0u;
-    }
-    return SpanAt(Clusters(), ClusterIndex).Offset + 1u;
-}
-
-// Past the pool's end reads as MAX_LIGHTS, which every loop already rejects as a stale index.
-uint GetClusterLightAt(uint Base, uint Slot)
-{
-    const uint PoolIndex = Base + Slot;
-    if (!SpanContains(ClusterLightIndices(), PoolIndex))
-    {
-        return (uint)MAX_LIGHTS;
-    }
-    return SpanAt(ClusterLightIndices(), PoolIndex)[0];
+    return Count;
 }
 
 // Discrete heatmap for the "Light Complexity" view: how many lights a froxel
@@ -710,15 +719,9 @@ float3 QuadEfficiencyColor(float Efficiency)
     return float3(1.0, 0.0, 0.0);
 }
 
-// Per-froxel hashed hue for the "Light Clusters" view. Empty froxels are dimmed; froxels at the
-// LIGHTS_PER_CLUSTER write cap turn white so light-list saturation is obvious.
+// Per-froxel hashed hue for the "Light Clusters" view, with empty froxels dimmed.
 float3 ClusterDebugColor(uint ClusterIndex, uint LightCount)
 {
-    if (LightCount >= (uint)LIGHTS_PER_CLUSTER)
-    {
-        return float3(1.0, 1.0, 1.0);
-    }
-
     uint H = ClusterIndex * 2654435761u;
     H ^= H >> 16; H *= 2246822519u;
     H ^= H >> 13; H *= 3266489917u;

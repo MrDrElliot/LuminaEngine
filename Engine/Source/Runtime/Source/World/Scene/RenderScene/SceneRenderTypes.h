@@ -111,12 +111,10 @@ namespace Lumina
         LightComplexity     = 11,
         ClusterGrid         = 12,
         ShadowCascades      = 13,
-        ShadowPenumbra      = 14,
         GTAO                = 15,
         MaterialID          = 16,
         TriangleID          = 17,
         OITAccumColor       = 18,
-        OITMoments          = 19,
         OITTransmittance    = 20,
         OITLayerCount       = 21,
         ProbeInfluence      = 22,
@@ -150,12 +148,10 @@ namespace Lumina
             case ERenderSceneDebugFlags::LightComplexity:   return "Light Complexity";
             case ERenderSceneDebugFlags::ClusterGrid:       return "Light Clusters";
             case ERenderSceneDebugFlags::ShadowCascades:    return "Shadow Cascades";
-            case ERenderSceneDebugFlags::ShadowPenumbra:    return "Shadow Penumbra";
             case ERenderSceneDebugFlags::GTAO:              return "GTAO";
             case ERenderSceneDebugFlags::MaterialID:        return "Material ID";
             case ERenderSceneDebugFlags::TriangleID:        return "Triangle ID";
             case ERenderSceneDebugFlags::OITAccumColor:     return "OIT Accum Color";
-            case ERenderSceneDebugFlags::OITMoments:        return "OIT Moments";
             case ERenderSceneDebugFlags::OITTransmittance:  return "OIT Transmittance";
             case ERenderSceneDebugFlags::OITLayerCount:     return "OIT Layer Count";
             case ERenderSceneDebugFlags::ProbeInfluence:    return "Reflection Probe Influence";
@@ -573,9 +569,10 @@ namespace Lumina
         // Ortho depth range of each cascade, which turns a shadow-map NDC z delta into world units.
         FVector4           CascadeDepthRanges{};
 
-        FVector4           ShadowParams{ 1.0f, 0.0f, 0.05f, 0.20f };
-        // x = far-cascade distance-fade fraction; yzw reserved.
-        FVector4           ShadowParams2{ 0.15f, 0.0f, 0.0f, 0.0f };
+        // x = normal-bias scale, y = constant depth bias, z = PCF radius in cascade-0 texels, w = cascade blend fraction.
+        FVector4           ShadowParams{ 1.0f, 0.0f, 2.0f, 0.0f };
+        // x = far-cascade distance-fade fraction, y = PCF tap count, zw unused.
+        FVector4           ShadowParams2{ 0.15f, 4.0f, 0.0f, 0.0f };
 
         FVector4           AmbientLight{};
 
@@ -797,8 +794,8 @@ namespace Lumina
     {
         FVector4 MinPoint;
         FVector4 MaxPoint;
-        uint32 Offset;
-        uint32 Count;
+        uint32 FirstWord;
+        uint32 EndWord;
         // Explicit because alignas(16) adds them anyway and the Slang mirror has to spell them out to match.
         uint32 _Pad[2];
     };
@@ -1243,8 +1240,8 @@ namespace Lumina
         RHI::TGPUSpan<FBoneTransform>       PrevBones;
         RHI::TGPUSpan<FTransform3x4>        PrevRetainedTransforms;
         RHI::TGPUSpan<FCluster>          Clusters;              // per-view, GPU-written
-        // Per-view light runs the clusters point into, with the allocation counter in the first word.
-        RHI::TGPUSpan<uint32>            ClusterLightIndices;
+        // Per-view light bitmasks, ClusterMaskWords words per cluster.
+        RHI::TGPUSpan<uint32>            ClusterLightMasks;
         RHI::TGPUSpan<FMaterialUniforms> Materials;             // non-dynamic
         RHI::TGPUSpan<FMaterialCollectionUniforms> Collections;         // slot 0 is the reserved zero one
         RHI::TGPUSpan<FBillboardInstance> Billboards;
@@ -1315,9 +1312,6 @@ namespace Lumina
         FCullData       CullData;
         FParallaxSettings ParallaxSettings;
 
-        uint32          ShadowMaskIndex   = ~0u;
-        uint32          MomentZerothIndex = ~0u;
-        uint32          MomentsIndex      = ~0u;
         // Subsample index 0 or 1 that decorrelates screen-space noise. Stays 0 unless T2x is resolving.
         uint32          TemporalPhase     = 0;
 
@@ -1327,6 +1321,7 @@ namespace Lumina
         uint32          DBufferAIndex     = ~0u;
         uint32          DBufferBIndex     = ~0u;
         uint32          DBufferCIndex     = ~0u;
+        uint32          _PadFogParams[3]  = {};
 
         // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
         FExponentialHeightFogParams FogParams = {};
@@ -1346,9 +1341,10 @@ namespace Lumina
         // The additive emission layer decals write, ~0u when no decal rendered.
         uint32          DBufferDIndex        = ~0u;
     };
-    // alignas(16) here but 4-byte aligned in scalar layout, so they agree only with no C++ padding.
-    static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0,
-                  "FogParams must land on 16 in FSceneGlobalData or C++ pads where the shader does not.");
+    // alignas(16) here but 4-byte aligned in scalar layout, so C++ must not pad in front of it, which the 16 check alone cannot see.
+    static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0 &&
+                  offsetof(FSceneGlobalData, FogParams) == offsetof(FSceneGlobalData, _PadFogParams) + sizeof(FSceneGlobalData::_PadFogParams),
+                  "FogParams must follow the field before it with no C++ padding, since the shader's scalar layout has none.");
 
     struct FMeshPass
     {
@@ -1374,7 +1370,6 @@ namespace Lumina
     struct FSceneFrameFlags
     {
         uint8 bHasEnvironment:1  = false;
-        uint8 bShadowMaskValid:1 = false;
         uint8 bGTAO:1            = false;
     };
 

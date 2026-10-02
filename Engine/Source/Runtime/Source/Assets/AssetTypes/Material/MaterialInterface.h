@@ -46,7 +46,7 @@ namespace Lumina
         /** Multiplies the scene by the material color. Commutative, so it needs no sorting and no OIT. */
         Modulate,
 
-        /** Alpha blending over an already-premultiplied color, resolved through MBOIT like Translucent. */
+        /** Alpha blending over an already-premultiplied color, resolved through OIT like Translucent. */
         AlphaComposite,
     };
 
@@ -168,14 +168,14 @@ namespace Lumina
         /** False keeps DBuffer decals off the surface, which skin, glass, foliage and water all want. */
         virtual bool ReceivesDecals() const { return true; }
 
-        /** Depth write for the unordered blend passes; the MBOIT lane accumulates and cannot honour it. */
+        /** Depth write for the unordered blend passes; the OIT lane accumulates and cannot honor it. */
         virtual bool WritesDepth() const { return false; }
 
         /** Casts into shadow maps but is culled out of every camera view, for invisible shadow proxies. */
         virtual bool IsShadowOnly() const { return false; }
 
-        /** Resolved through MBOIT, which is also what makes the moment stage required. */
-        virtual bool IsMomentResolved() { return false; }
+        /** Accumulated into the weighted blended OIT targets rather than blended in draw order. */
+        virtual bool IsOITResolved() { return false; }
 
         /** Blends straight into scene color with a commutative operator, so no moments and no sorting. */
         virtual bool IsUnorderedBlend() { return false; }

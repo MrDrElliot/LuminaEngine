@@ -937,9 +937,9 @@ namespace Lumina
         return Material ? Material->IsTwoSided() : false;
     }
 
-    bool CMaterialInstance::IsMomentResolved()
+    bool CMaterialInstance::IsOITResolved()
     {
-        return Material ? Material->IsMomentResolved() : false;
+        return Material ? Material->IsOITResolved() : false;
     }
 
     bool CMaterialInstance::IsUnorderedBlend()

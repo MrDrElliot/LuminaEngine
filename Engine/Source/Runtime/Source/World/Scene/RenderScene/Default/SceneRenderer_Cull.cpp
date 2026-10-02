@@ -578,21 +578,6 @@ namespace Lumina
             SceneGlobalData.DBufferCIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferC].GetResourceID() : ~0u;
             SceneGlobalData.DBufferDIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferD].GetResourceID() : ~0u;
 
-            FrameFlags.bShadowMaskValid = (LightData.bHasSun != 0) &&
-                                              (Frame.Lighting.Lights[0].ShadowDataIndex != INDEX_NONE);
-            if (FrameFlags.bShadowMaskValid)
-            {
-                SceneGlobalData.ShadowMaskIndex = (uint32)CurrentView->Images[(int)ENamedImage::ShadowMask].GetResourceID();
-            }
-            else
-            {
-                SceneGlobalData.ShadowMaskIndex = ~0u;
-            }
-
-            // Published unconditionally, since the images outlive the pass and nothing else reads them.
-            SceneGlobalData.MomentZerothIndex = (uint32)CurrentView->Images[(int)ENamedImage::MomentZeroth].GetResourceID();
-            SceneGlobalData.MomentsIndex      = (uint32)CurrentView->Images[(int)ENamedImage::Moments].GetResourceID();
-
             PublishFogGlobals(SceneGlobalData);
 
             SetSceneRoot(CL, *CurrentView, RHI::CopyTransient(SceneGlobalData));
@@ -782,6 +767,7 @@ namespace Lumina
         const auto& LightData   = Frame.Lighting.LightData;
 
         if (!LightData.bHasSun ||
+            Frame.SceneGlobalData.CullData.bShadowOcclusionCull == 0u ||
             Frame.Geometry.DrawCommands.empty() ||
             Frame.Lighting.Lights[0].ShadowDataIndex == INDEX_NONE ||
             Frame.Views.CascadeViewBase == ~0u)

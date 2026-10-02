@@ -1,8 +1,9 @@
-﻿#include "Includes/SceneGlobals.slang"
+#include "Includes/SceneGlobals.slang"
+#include "Includes/GroupScan.slang"
 
 // Turns CullInstances' counters into the view-major per-(view, draw) layout every later stage indexes.
-// One workgroup, one serial scan: NumViews * NumDraws is in the hundreds, so a hierarchical scan would
-// cost more in launch overhead than it saves.
+// One workgroup scans every bucket in parallel, each thread owning a contiguous run.
+#define DRAW_PREFIX_THREADS 256u
 
 struct FDispatchIndirectArguments
 {
@@ -40,51 +41,58 @@ struct FBuildDrawPrefixArgs
 FBuildDrawPrefixArgs* Pass() { return GetPassArgs<FBuildDrawPrefixArgs>(); }
 
 [shader("compute")]
-[numthreads(1, 1, 1)]
-void ComputeMain()
+[numthreads(DRAW_PREFIX_THREADS, 1, 1)]
+void ComputeMain(uint ThreadIndex : SV_GroupIndex)
 {
-    const uint NumDraws = Pass().NumDraws;
-    const uint NumViews = Pass().NumViews;
+    const uint NumBuckets = Pass().NumViews * Pass().NumDraws;
+    const uint PerThread  = (NumBuckets + DRAW_PREFIX_THREADS - 1u) / DRAW_PREFIX_THREADS;
+    const uint First      = min(ThreadIndex * PerThread, NumBuckets);
+    const uint Last       = min(First + PerThread, NumBuckets);
 
     const uint DrawCapacity  = Pass().DrawList.Count;
     const uint BlockCapacity = Pass().BlockList.Count;
 
-    uint DrawRunning  = 0u;
-    uint BlockRunning = 0u;
-
-    for (uint v = 0u; v < NumViews; ++v)
+    uint2 Local = uint2(0u, 0u);
+    for (uint i = First; i < Last; ++i)
     {
-        for (uint d = 0u; d < NumDraws; ++d)
-        {
-            const uint i = v * NumDraws + d;
-            FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
-
-            const uint DrawCount  = Bucket.DrawCapacity;
-            const uint BlockCount = Bucket.BlockCapacity;
-
-            // Room LEFT in each allocation. Clamping the offset alone is not enough: every appender takes
-            // its region's LENGTH as its capacity, so an unclamped length writes past the buffer from a
-            // base that is itself in range.
-            const uint DrawRoom  = (DrawRunning  < DrawCapacity)  ? (DrawCapacity  - DrawRunning)  : 0u;
-            const uint BlockRoom = (BlockRunning < BlockCapacity) ? (BlockCapacity - BlockRunning) : 0u;
-
-            const uint Emits  = min(DrawCount, DrawRoom);
-            const uint Blocks = min(BlockCount, BlockRoom);
-
-            // A region that cannot fit gets a zero-length window at the end rather than an offset past it.
-            // Capacity is published back as the room, not the requirement, so the task grid and the append
-            // bound are the same number and a workgroup can never walk a block the builder had no room for.
-            Bucket.DrawBase      = min(DrawRunning,  DrawCapacity);
-            Bucket.DrawCapacity  = Emits;
-            Bucket.BlockBase     = min(BlockRunning, BlockCapacity);
-            Bucket.BlockCapacity = Blocks;
-
-            // Demand, from the UNCLAMPED counts. OutTotals is what the CPU sizes the next allocation
-            // from, so it has to say what was needed rather than what fit.
-            DrawRunning  += DrawCount;
-            BlockRunning += BlockCount;
-        }
+        FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
+        Local += uint2(Bucket.DrawCapacity, Bucket.BlockCapacity);
     }
+
+    uint2 Demand;
+    const uint2 Running = GroupExclusiveScan(Local, ThreadIndex, DRAW_PREFIX_THREADS, Demand);
+    uint DrawRunning  = Running.x;
+    uint BlockRunning = Running.y;
+
+    for (uint i = First; i < Last; ++i)
+    {
+        FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
+
+        const uint DrawCount  = Bucket.DrawCapacity;
+        const uint BlockCount = Bucket.BlockCapacity;
+
+        // Room left in each allocation, since every appender takes its region's length as its capacity.
+        const uint DrawRoom  = (DrawRunning  < DrawCapacity)  ? (DrawCapacity  - DrawRunning)  : 0u;
+        const uint BlockRoom = (BlockRunning < BlockCapacity) ? (BlockCapacity - BlockRunning) : 0u;
+
+        // A region that cannot fit gets a zero-length window at the end, and its capacity is published as the room it has.
+        Bucket.DrawBase      = min(DrawRunning,  DrawCapacity);
+        Bucket.DrawCapacity  = min(DrawCount, DrawRoom);
+        Bucket.BlockBase     = min(BlockRunning, BlockCapacity);
+        Bucket.BlockCapacity = min(BlockCount, BlockRoom);
+
+        DrawRunning  += DrawCount;
+        BlockRunning += BlockCount;
+    }
+
+    if (ThreadIndex != 0u)
+    {
+        return;
+    }
+
+    // Demand, from the unclamped counts, since the CPU sizes the next allocation from what was needed.
+    DrawRunning  = Demand.x;
+    BlockRunning = Demand.y;
 
     const uint InstanceCapacity   = Pass().VisibleInstances.Count;
     const uint RequestedInstances = SpanGet(&Pass().InstanceCount, 0u);
@@ -105,7 +113,7 @@ void ComputeMain()
     SpanSet(&Pass().OutTotals, 7u, (PreSkinRequested > Pass().PreSkinArena.Count) ? 1u : 0u);
 
     // Folded across Y exactly as the CPU-side grids are; BuildMeshletBlocks undoes it.
-    const uint BlockThreads = VisibleInstances * NumViews;
+    const uint BlockThreads = VisibleInstances * Pass().NumViews;
     const uint BlockGroups  = (BlockThreads + 63u) / 64u;
 
     FDispatchIndirectArguments BlockArgs;

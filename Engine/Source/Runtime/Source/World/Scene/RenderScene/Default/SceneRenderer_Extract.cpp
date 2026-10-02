@@ -2465,7 +2465,6 @@ namespace Lumina
             Cmd.MaskedVisBufferPixelShader     = Batch.MaskedVisBufferPixelShader;
             Cmd.MeshShaderShadowMasked         = Batch.MeshShaderShadowMasked;
             Cmd.ShadowMaskedPixelShader        = Batch.ShadowMaskedPixelShader;
-            Cmd.MomentPixelShader              = Batch.MomentPixelShader;
             Cmd.IndirectDrawOffset             = b;
             Cmd.DrawCount                      = 1u;
             Cmd.bTranslucent                   = Batch.Key.bTranslucent;
@@ -3054,6 +3053,13 @@ namespace Lumina
         const uint32 MaxTile   = AtlasConfig.MaxTileResolution;
         const uint32 AtlasSize = AtlasConfig.AtlasResolution;
 
+        // A point light pays its texel density six times over, so its faces get their own, lower cap.
+        uint32 PointFaceCap = 512u;
+        if (const CRendererSettings* Settings = GetDefault<CRendererSettings>())
+        {
+            PointFaceCap = std::bit_floor((uint32)Math::Clamp(Settings->PointShadowResolution, 128, 1024));
+        }
+
         const uint64 Budget = (uint64)AtlasSize * (uint64)AtlasSize;
 
         const uint32 NumRequests = (uint32)ShadowRequests.size();
@@ -3075,6 +3081,10 @@ namespace Lumina
                 ++V;
             }
             Sizes[i] = Math::Clamp(V, MinTile, MaxTile);
+            if (ShadowRequests[i].Type == ELightType::Point)
+            {
+                Sizes[i] = Math::Max(Math::Min(Sizes[i], PointFaceCap), MinTile);
+            }
         }
 
         auto AreaCost = [&](uint32 i) -> uint64
@@ -3522,12 +3532,12 @@ namespace Lumina
         // Shadow tuning forwarded to the lit pixel shaders via the light buffer.
         LightData.ShadowParams  = FVector4(DirectionalLight.ShadowNormalBias,
                                             DirectionalLight.ShadowDepthBias,
-                                            DirectionalLight.ShadowSoftness,
+                                            DirectionalLight.ShadowFilterRadius,
                                             DirectionalLight.CascadeBlend);
         LightData.ShadowParams2 = FVector4(DirectionalLight.ShadowDistanceFade,
                                             float(DirectionalLight.ShadowSampleCount),
-                                            DirectionalLight.ContactShadowLength,
-                                            float(DirectionalLight.ContactShadowSamples));
+                                            0.0f,
+                                            0.0f);
 
         const float CascadeSplitLambda = Math::Clamp(DirectionalLight.CascadeSplitLambda, 0.0f, 1.0f);
 

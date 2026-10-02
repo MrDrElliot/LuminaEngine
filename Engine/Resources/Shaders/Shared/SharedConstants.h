@@ -56,7 +56,10 @@
 #define NO_SURFACE_DESC_INDEX           0xFFFFFFFFu
 
 #define MATERIAL_CLASSIFY_TILE          8
-#define MATERIAL_PIXEL_GROUP_SIZE       64
+// The deferred material pass runs one workgroup per classified tile, a thread per pixel.
+#define MATERIAL_PIXEL_GROUP_SIZE       (MATERIAL_CLASSIFY_TILE * MATERIAL_CLASSIFY_TILE)
+// Frames one streaming-feedback readback spans; the deferred material pass reports a rotating 1/N of its groups each frame.
+#define STREAMING_FEEDBACK_WINDOW       4u
 // Distinct deferred shaders one frame may bin. A backstop, not a knob; costs are linear in the live count.
 #define MATERIAL_MAX_SLOTS              1024u
 
@@ -85,9 +88,8 @@
 // The cluster light list packs two 13-bit light indices per uint.
 #define LIGHT_INDEX_MASK                0x1FFFu
 #define LIGHTS_PER_UINT                 2
-#define LIGHTS_PER_CLUSTER              512
-// Light indices one view's clusters share, since each cluster keeps a variable-length run of them.
-#define MAX_CLUSTER_LIGHT_INDICES       (1 << 21)
+// Light-mask words one view's clusters share, each cluster holding one bit per light rounded up to whole words.
+#define MAX_CLUSTER_MASK_WORDS          (1 << 21)
 // LightCull gives each workgroup this block of clusters, so one bounding box pre-culls the lights for all of them.
 #define CLUSTER_CULL_BLOCK_X            8
 #define CLUSTER_CULL_BLOCK_Y            4

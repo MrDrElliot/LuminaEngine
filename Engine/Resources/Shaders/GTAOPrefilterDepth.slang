@@ -16,6 +16,7 @@ struct FPushConstants
     uint  MipUAV4;
     float EffectRadius;
     float EffectFalloffRange;
+    uint  SrcScale;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -41,9 +42,23 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID
     const uint2 BaseCoord = DTid.xy;
     const uint2 PixCoord  = BaseCoord * 2u;
 
-    // Gathering on the texel corner with a (1,1) offset lands the quad exactly on PixCoord..PixCoord+1.
-    const float4 Depths4 = gTextures2D[Pass().SrcDepthIndex].GatherRed(
-        gSamplers[SAMPLER_POINT_CLAMP], float2(PixCoord) * V.ViewportPixelSize, int2(1, 1));
+    float4 Depths4;
+    if (Pass().SrcScale == 1u)
+    {
+        // Gathering on the texel corner with a (1,1) offset lands the quad exactly on PixCoord..PixCoord+1.
+        Depths4 = gTextures2D[Pass().SrcDepthIndex].GatherRed(
+            gSamplers[SAMPLER_POINT_CLAMP], float2(PixCoord) * V.ViewportPixelSize, int2(1, 1));
+    }
+    else
+    {
+        // Each reduced texel keeps the top-left source depth of its block, which GTAOUpsample compares against.
+        Texture2D Src = gTextures2D[Pass().SrcDepthIndex];
+        const uint S = Pass().SrcScale;
+        Depths4.w = Src.Load(int3((PixCoord + uint2(0, 0)) * S, 0)).r;
+        Depths4.z = Src.Load(int3((PixCoord + uint2(1, 0)) * S, 0)).r;
+        Depths4.x = Src.Load(int3((PixCoord + uint2(0, 1)) * S, 0)).r;
+        Depths4.y = Src.Load(int3((PixCoord + uint2(1, 1)) * S, 0)).r;
+    }
 
     const float Depth0 = XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, Depths4.w));
     const float Depth1 = XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, Depths4.z));

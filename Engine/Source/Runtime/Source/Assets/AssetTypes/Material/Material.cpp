@@ -45,7 +45,6 @@ namespace Lumina
             { "_VBMM", ERHIShaderType::Mesh     },
             { "_MVBP", ERHIShaderType::Fragment },
             { "_DM",   ERHIShaderType::Compute  },
-            { "_MOM",  ERHIShaderType::Fragment },
             { "_MSSM", ERHIShaderType::Mesh     },
             { "_SMP",  ERHIShaderType::Fragment },
         };
@@ -483,7 +482,6 @@ namespace Lumina
     {
         const bool bMeshlet = MaterialDomain::IsMeshlet(MaterialType);
         const bool bMasked  = BlendMode == EBlendMode::Masked;
-        const bool bMoment  = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::AlphaComposite;
 
         switch (Stage)
         {
@@ -497,7 +495,6 @@ namespace Lumina
         case EMaterialShaderStage::MaskedVisBufferPixel:
         case EMaterialShaderStage::MeshShadowMasked:
         case EMaterialShaderStage::ShadowMaskedPixel:    return bMeshlet && bMasked;
-        case EMaterialShaderStage::MomentPixel:          return bMeshlet && bMoment;
         default:                                         return false;
         }
     }

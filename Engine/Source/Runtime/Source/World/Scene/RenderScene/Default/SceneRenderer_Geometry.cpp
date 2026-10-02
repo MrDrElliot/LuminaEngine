@@ -1444,8 +1444,7 @@ namespace Lumina
             Key.VS          = VertexShader;
             Key.PS          = PixelShader;
             Key.DepthFormat = EFormat::D32;
-            Key.ShadingFeatures = SF_DebugViews | SF_GTAO | SF_Decals |
-                                  (FrameFlags.bShadowMaskValid ? (uint32)SF_ShadowMask : 0u);
+            Key.ShadingFeatures = SF_DebugViews | SF_GTAO | SF_Decals;
             Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
             #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ PickerRT.Desc.Format, {} });

@@ -76,7 +76,6 @@ namespace Lumina
             case EMaterialShaderStage::VisBufferMeshMasked:  return "Masked VisBuffer Geometry";
             case EMaterialShaderStage::MaskedVisBufferPixel: return "Masked VisBuffer Pixel";
             case EMaterialShaderStage::Deferred:             return "Deferred";
-            case EMaterialShaderStage::MomentPixel:          return "Moment Pixel";
             case EMaterialShaderStage::MeshShadowMasked:     return "Masked Shadow Geometry";
             case EMaterialShaderStage::ShadowMaskedPixel:    return "Masked Shadow Pixel";
             default:                                         return "Unknown";
@@ -168,7 +167,7 @@ namespace Lumina
 
         FShaderCompileOptions Options;
         Options.DebugName = MatName + " [PS]";
-        if (Material->IsMomentResolved())
+        if (Material->IsOITResolved())
         {
             Options.MacroDefinitions.emplace_back("TRANSLUCENT");
         }
@@ -290,15 +289,6 @@ namespace Lumina
 
         ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(Options), CommitStage(EMaterialShaderStage::Pixel));
 
-        if (IsStageRequired(Material, EMaterialShaderStage::MomentPixel))
-        {
-            FShaderCompileOptions MomentOptions;
-            MomentOptions.DebugName = MatName + " [MOM]";
-            MomentOptions.MacroDefinitions.emplace_back("TRANSLUCENT");
-            MomentOptions.MacroDefinitions.emplace_back("MOMENT_GENERATION");
-            // ComputeSurfaceCoverage tests the model at runtime, so the moment pass needs no unlit define.
-            ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(MomentOptions), CommitStage(EMaterialShaderStage::MomentPixel));
-        }
 
         return true;
     }

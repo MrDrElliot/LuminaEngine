@@ -33,7 +33,6 @@ namespace Lumina
 		FShaderH MeshShaderShadowMasked = {};
 		FShaderH ShadowMaskedPixelShader = {};
 		FShaderH PixelShader = {};
-		FShaderH MomentPixelShader = {};
 
 		uint32 bTranslucent : 1;
 		uint32 bMasked : 1;
@@ -52,7 +51,6 @@ namespace Lumina
 				&& MeshShaderShadowMasked     == Key.MeshShaderShadowMasked
 				&& ShadowMaskedPixelShader    == Key.ShadowMaskedPixelShader
 				&& PixelShader                == Key.PixelShader
-				&& MomentPixelShader          == Key.MomentPixelShader
 				&& bTranslucent == Key.bTranslucent
 				&& bMasked      == Key.bMasked
 				&& bAdditive    == Key.bAdditive
@@ -68,7 +66,7 @@ namespace Lumina
 		for (FShaderH Entry : { K.VisBufferMeshShader, K.VisBufferMeshShaderMasked,
 										   K.MaskedVisBufferPixelShader, K.MeshShaderBase,
 										   K.MeshShaderShadow, K.MeshShaderShadowMasked,
-										   K.ShadowMaskedPixelShader, K.PixelShader, K.MomentPixelShader })
+										   K.ShadowMaskedPixelShader, K.PixelShader })
 		{
 			Hash::HashCombine(Seed, Entry.Handle);
 		}
@@ -92,14 +90,13 @@ namespace Lumina
 		FShaderH					MaskedVisBufferPixelShader = {};// masked-only PS: opacity clip before VisID/depth
 		FShaderH					MeshShaderShadowMasked = {};    // shadow geometry, masked (full interpolants)
 		FShaderH					ShadowMaskedPixelShader = {};   // masked-only PS: opacity clip before shadow depth
-		FShaderH					MomentPixelShader = {};         // MBOIT pass 1: opacity-only moment accumulation
 		uint32                      		IndirectDrawOffset = 0;
 		uint32                      		DrawCount = 0;
 		uint32                      		bTranslucent : 1;
 		uint32                      		bMasked : 1;
 		uint32                      		bAdditive : 1;
 		uint32                      		bModulate : 1;        // blends as DstColor * Src, so it skips the moments too
-		uint32                      		bWriteDepth : 1;      // unordered blend lane only; MBOIT reads depth and never writes
+		uint32                      		bWriteDepth : 1;      // unordered blend lane only; the OIT lane reads depth and never writes
 		uint32                      		bTwoSided : 1;        // two-sided material: VisBuffer disables back-face cull
 		uint32                      		bAnySkinned : 1;      // batch has >=1 skinned binding (SPEC_SKINNED variant select)
 		uint32                      		bAnyStatic  : 1;      // batch has >=1 static binding; both set => mixed => dynamic

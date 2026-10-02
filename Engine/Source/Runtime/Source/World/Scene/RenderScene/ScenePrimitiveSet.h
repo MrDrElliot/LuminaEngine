@@ -121,7 +121,6 @@ namespace Lumina
             FShaderH             MaskedVisBufferPixelShader = {};
             FShaderH             MeshShaderShadowMasked = {};
             FShaderH             ShadowMaskedPixelShader = {};
-            FShaderH             MomentPixelShader = {};
             // No material identity here on purpose: a batch is a PIPELINE, and one pipeline serves every
             // material that compiles to it. The material is carried per instance
             // (FGPUInstance::MaterialIndex) and per deferred slot (DeferredMaterials below).

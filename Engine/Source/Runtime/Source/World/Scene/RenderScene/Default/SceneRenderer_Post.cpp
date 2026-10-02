@@ -35,7 +35,7 @@ namespace Lumina
             float    AutoExposureKey;    // middle-gray key; <= 0 disables auto-exposure.
             float    AutoExposureMinMul; // 2^MinEV clamp on the adapted multiplier.
             float    AutoExposureMaxMul; // 2^MaxEV clamp on the adapted multiplier.
-            float    _PadAE;
+            uint32   Features;           // EGradingFeature bits, so the shader skips stages left at identity.
 
             // .rgb = fade color, .a = fade amount.
             FVector4 Fade;
@@ -70,6 +70,45 @@ namespace Lumina
             PC.AutoExposureMinMul = 0.0f;
             PC.AutoExposureMaxMul = 1.0f;
             return PC;
+        }
+
+        // Mirrors GRADING_* in ColorGrading.slang.
+        enum EGradingFeature : uint32
+        {
+            GF_ChromaticAberration = 1u << 0,
+            GF_Bloom               = 1u << 1,
+            GF_AutoExposure        = 1u << 2,
+            GF_WhiteBalance        = 1u << 3,
+            GF_ColorFilter         = 1u << 4,
+            GF_LiftGammaGain       = 1u << 5,
+            GF_Contrast            = 1u << 6,
+            GF_Saturation          = 1u << 7,
+            GF_Vignette            = 1u << 8,
+            GF_Gamma               = 1u << 9,
+            GF_FilmGrain           = 1u << 10,
+            GF_Fade                = 1u << 11,
+            GF_Letterbox           = 1u << 12,
+        };
+
+        uint32 ComputeGradingFeatures(const FColorGradingConstants& PC)
+        {
+            auto IsWhite = [](const FVector4& V) { return V.x == 1.0f && V.y == 1.0f && V.z == 1.0f; };
+
+            uint32 Features = 0u;
+            if (PC.BloomTint.w > 0.0f)                                      { Features |= GF_ChromaticAberration; }
+            if (PC.BloomIntensity > 0.0f)                                   { Features |= GF_Bloom; }
+            if (PC.AutoExposureKey > 0.0f)                                  { Features |= GF_AutoExposure; }
+            if (PC.WhiteTemp != 0.0f || PC.WhiteTint != 0.0f)               { Features |= GF_WhiteBalance; }
+            if (PC.ColorFilter.w > 0.0f && !IsWhite(PC.ColorFilter))        { Features |= GF_ColorFilter; }
+            if (!IsWhite(PC.Shadows) || !IsWhite(PC.Midtones) || !IsWhite(PC.Highlights)) { Features |= GF_LiftGammaGain; }
+            if (PC.Contrast != 1.0f)                                        { Features |= GF_Contrast; }
+            if (PC.Saturation != 1.0f)                                      { Features |= GF_Saturation; }
+            if (PC.VignetteIntensity > 0.0f)                                { Features |= GF_Vignette; }
+            if (PC.Gamma != 1.0f)                                           { Features |= GF_Gamma; }
+            if (PC.Shadows.w > 0.0f)                                        { Features |= GF_FilmGrain; }
+            if (PC.Fade.w > 0.0f)                                           { Features |= GF_Fade; }
+            if (PC.Letterbox.x > 0.0f && PC.Letterbox.y > 0.0f)             { Features |= GF_Letterbox; }
+            return Features;
         }
 
         FColorGradingConstants BuildColorGradingConstants(const SPostProcessSettings* Settings, float Time)
@@ -425,6 +464,7 @@ namespace Lumina
 
         FColorGradingConstants Constants = BuildColorGradingConstants(ActivePostProcess, SceneGlobalData.Time);
         Constants.Letterbox.y = (float)Output.GetExtent().x / (float)Math::Max(Output.GetExtent().y, 1u);
+        Constants.Features    = ComputeGradingFeatures(Constants);
 
         struct FComposePushConstants
         {

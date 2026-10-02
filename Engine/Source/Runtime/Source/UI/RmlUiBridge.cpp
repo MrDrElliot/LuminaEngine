@@ -726,6 +726,36 @@ namespace Lumina::RmlUi
                 Rml::RegisterPlugin(&Plugin);
             }
         }
+
+        void CreateWorldContext(CWorld* World, FWorldUIContext& UI)
+        {
+            FState& State = S();
+
+            // TickWorldUI resizes from the real RT each frame; initial size is a placeholder.
+            const FWorldTarget Tgt = GetWorldTarget(World);
+            const Rml::Vector2i InitialSize = (Tgt.Size.x > 0 && Tgt.Size.y > 0)
+                ? Rml::Vector2i(int(Tgt.Size.x), int(Tgt.Size.y))
+                : Rml::Vector2i(1280, 720);
+
+            char NameBuf[64];
+            std::snprintf(NameBuf, sizeof(NameBuf), "world_%p", static_cast<void*>(World));
+
+            Rml::Context* Ctx = Rml::CreateContext(NameBuf, InitialSize);
+            if (Ctx == nullptr)
+            {
+                LOG_ERROR("[RmlUi] CreateContext failed for world {}.", static_cast<void*>(World));
+                return;
+            }
+
+            UI.Context = Ctx;
+            ApplyDefaultFontFamily(Ctx);
+
+            // Newest world becomes the active UI target.
+            State.ActiveWorld = World;
+            SyncDebuggerToActiveContext();
+
+            LOG_INFO("[RmlUi] Created context '{}' for world {} (initial {}x{}).", NameBuf, static_cast<void*>(World), InitialSize.x, InitialSize.y);
+        }
     }
 
     bool Initialize()
@@ -830,6 +860,15 @@ namespace Lumina::RmlUi
 
         State.bInitialized = true;
 
+        // A packaged game loads its startup map inside LoadProject, before this runs.
+        for (CWorld* World : State.Worlds)
+        {
+            if (FWorldUIContext* UI = World->GetUIContext(); UI != nullptr && UI->Context == nullptr)
+            {
+                CreateWorldContext(World, *UI);
+            }
+        }
+
         (void)FCoreDelegates::OnContentFileModified.AddStatic(&OnContentFileModified);
 
         LOG_INFO("[RmlUi] Initialized.");
@@ -914,35 +953,11 @@ namespace Lumina::RmlUi
         }
         State.Worlds.insert(World);
 
-        if (!State.bInitialized)
+        // A world loaded before Initialize gets its context from the backfill there.
+        if (State.bInitialized)
         {
-            return UI;
+            CreateWorldContext(World, *UI);
         }
-
-        // TickWorldUI resizes from the real RT each frame; initial size is a placeholder.
-        const FWorldTarget Tgt = GetWorldTarget(World);
-        const Rml::Vector2i InitialSize = (Tgt.Size.x > 0 && Tgt.Size.y > 0)
-            ? Rml::Vector2i(int(Tgt.Size.x), int(Tgt.Size.y))
-            : Rml::Vector2i(1280, 720);
-
-        char NameBuf[64];
-        std::snprintf(NameBuf, sizeof(NameBuf), "world_%p", static_cast<void*>(World));
-
-        Rml::Context* Ctx = Rml::CreateContext(NameBuf, InitialSize);
-        if (Ctx == nullptr)
-        {
-            LOG_ERROR("[RmlUi] CreateContext failed for world {}.", static_cast<void*>(World));
-            return UI;
-        }
-
-        UI->Context = Ctx;
-        ApplyDefaultFontFamily(Ctx);
-
-        // Newest world becomes the active UI target.
-        State.ActiveWorld = World;
-        SyncDebuggerToActiveContext();
-
-        LOG_INFO("[RmlUi] Created context '{}' for world {} (initial {}x{}).", NameBuf, static_cast<void*>(World), InitialSize.x, InitialSize.y);
         return UI;
     }
 

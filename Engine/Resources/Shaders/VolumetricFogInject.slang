@@ -106,61 +106,65 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
     float  G         = Fog.VolumetricParams.y;
     float3 InScatter = float3(0.0);
 
-    uint NumLocal   = min(GetClusterLightCount(ClusterIndex), (uint)LIGHTS_PER_CLUSTER);
-    uint LightBase  = GetClusterLightBase(ClusterIndex);
+    const uint  MaskWords = GetClusterMaskWords();
+    const uint2 Words     = GetClusterWordRange(ClusterIndex);
     uint NumLights  = GetNumLights();   // loop-invariant; hoisted out of the per-light test
-    for (uint li = 0; li < NumLocal; ++li)
+    for (uint Word = Words.x; Word < Words.y; ++Word)
     {
-        uint LightIndex = GetClusterLightAt(LightBase, li);
-        // Cluster contents go stale across a scene switch and the array holds exactly NumLights entries.
-        if (LightIndex >= NumLights)
+        uint Pending = GetClusterMaskWord(ClusterIndex, Word, MaskWords);
+        while (Pending != 0u)
         {
-            continue;
-        }
-
-        FLight L = GetLightAt(LightIndex);
-        if (!HasFlag(L.Flags, ELightFlags::Volumetric))
-        {
-            continue;
-        }
-
-        // Soft-core 1/d^2: a finite source radius caps the apex peak so the near-light glow spreads
-        // over several froxels instead of a single pixelated spike. Per-light (VolumetricScatteringRadius).
-        const float  R0    = L.Radius * L.VolumetricScatteringRadius;
-        const float3 LC    = UnpackColor(L.Color).rgb * (L.Intensity * L.VolumetricIntensity);
-        const bool   bSpot = HasFlag(L.Flags, ELightFlags::Spot);
-        const float3 SF    = bSpot ? normalize(L.Direction) : float3(0.0);   // to-light (surface->spot)
-
-        for (uint s = 0; s < NumSamples; ++s)
-        {
-            const float3 WorldPos = SamplePos[s];
-            float3 ToL  = L.Position - WorldPos;
-            float  Dist = length(ToL);
-            if (Dist > L.Radius)
+            uint LightIndex = Word * 32u + firstbitlow(Pending);
+            Pending &= Pending - 1u;
+            // Cluster contents go stale across a scene switch and the array holds exactly NumLights entries.
+            if (LightIndex >= NumLights)
             {
                 continue;
             }
-            float3 Ldir  = ToL / max(Dist, 1e-4);
-            float  Atten = 1.0 / max(Dist * Dist + R0 * R0, 1e-6);
-            float  DistR = Dist / L.Radius;
-            Atten *= 1.0 - smoothstep(clamp(L.Falloff, 0.0, 1.0), 1.0, DistR);
 
-            float Cone = 1.0;
-            if (bSpot)
+            FLight L = GetLightAt(LightIndex);
+            if (!HasFlag(L.Flags, ELightFlags::Volumetric))
             {
-                float CosAt = dot(SF, Ldir);
-                Cone = saturate((CosAt - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
-                if (Cone <= 0.0)
+                continue;
+            }
+
+            // A soft core, so the source radius spreads the near-light glow over several froxels instead of one spike.
+            const float  R0    = L.Radius * L.VolumetricScatteringRadius;
+            const float3 LC    = UnpackColor(L.Color).rgb * (L.Intensity * L.VolumetricIntensity);
+            const bool   bSpot = HasFlag(L.Flags, ELightFlags::Spot);
+            const float3 SF    = bSpot ? normalize(L.Direction) : float3(0.0);   // to-light (surface->spot)
+
+            for (uint s = 0; s < NumSamples; ++s)
+            {
+                const float3 WorldPos = SamplePos[s];
+                float3 ToL  = L.Position - WorldPos;
+                float  Dist = length(ToL);
+                if (Dist > L.Radius)
                 {
                     continue;
                 }
+                float3 Ldir  = ToL / max(Dist, 1e-4);
+                float  Atten = 1.0 / max(Dist * Dist + R0 * R0, 1e-6);
+                float  DistR = Dist / L.Radius;
+                Atten *= 1.0 - smoothstep(clamp(L.Falloff, 0.0, 1.0), 1.0, DistR);
+
+                float Cone = 1.0;
+                if (bSpot)
+                {
+                    float CosAt = dot(SF, Ldir);
+                    Cone = saturate((CosAt - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
+                    if (Cone <= 0.0)
+                    {
+                        continue;
+                    }
+                }
+
+                float Shadow = SampleLocalShadow(L, WorldPos);
+
+                // Negated because Ldir points at the light while the photon travels away from it, as the sun's phase expects.
+                float PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, SampleToCam[s]), G, Shadow);
+                InScatter += LC * Atten * Cone * PhaseShadow;
             }
-
-            float Shadow = SampleLocalShadow(L, WorldPos);
-
-            // Negated because Ldir points at the light while the photon travels away from it, as the sun's phase expects.
-            float PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, SampleToCam[s]), G, Shadow);
-            InScatter += LC * Atten * Cone * PhaseShadow;
         }
     }
     return InScatter / float(max(NumSamples, 1u));
