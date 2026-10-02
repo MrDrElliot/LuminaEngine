@@ -12,6 +12,7 @@
 #include "UI/Tools/NodeGraph/EdNode_Reroute.h"
 #include "Log/Log.h"
 #include "Containers/StringFormat.h"
+#include "Core/Math/Hash/Hash.h"
 
 namespace Lumina
 {
@@ -250,6 +251,16 @@ namespace Lumina
 		// Pixel template declares FMaterialPixelInputs Material above the token; append body + assignments only.
 		SubstituteToken(Loaded, "$MATERIAL_INPUTS", PixelChunks + PixelOutputChunks);
 		return Loaded;
+	}
+
+	uint64 FMaterialCompiler::GetGeneratedCodeHash() const
+	{
+		uint64 Hash = 0;
+		Hash::HashCombine(Hash, FStringView(PixelChunks.data(), PixelChunks.size()));
+		Hash::HashCombine(Hash, FStringView(PixelOutputChunks.data(), PixelOutputChunks.size()));
+		Hash::HashCombine(Hash, FStringView(VertexChunks.data(), VertexChunks.size()));
+		Hash::HashCombine(Hash, FStringView(VertexOutputChunks.data(), VertexOutputChunks.size()));
+		return Hash;
 	}
 
 	static FString GetVectorType(EMaterialInputType Type)

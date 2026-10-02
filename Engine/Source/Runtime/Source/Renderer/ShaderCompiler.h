@@ -27,6 +27,8 @@ namespace Lumina
         FString TemplateVirtualPath;
         // Which entry point to compile. Required once a module defines more than one.
         FString EntryPoint;
+        // Non-zero replaces the source-text key with the caller's own, stored in the project's material cache.
+        uint64 MaterialCacheKey = 0;
     };
     
     class IShaderCompiler

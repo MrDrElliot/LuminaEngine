@@ -23,9 +23,14 @@ namespace Lumina
         // A generated source has no file to key on, so the key is its text plus what it includes.
         uint64 ComputeRawSourceHash(FStringView Source, const TVector<FString>& Defines, const TVector<FString>& SearchRoots, FStringView TemplateVirtualPath, FStringView EntryPoint);
 
-        bool TryLoadRaw(uint64 KeyHash, FShaderHeader& OutHeader);
+        // Material binaries are rebuilt from graphs the project owns, so they live in the project's Intermediates.
+        constexpr FStringView kMaterialCacheDirectory = "/ProjectIntermediates/ShaderCache";
 
-        bool SaveRaw(uint64 KeyHash, const FShaderHeader& Header);
+        bool TryLoadRaw(uint64 KeyHash, FShaderHeader& OutHeader, FStringView Directory = kCacheDirectory);
+
+        bool SaveRaw(uint64 KeyHash, const FShaderHeader& Header, FStringView Directory = kCacheDirectory);
+
+        bool DeleteRaw(uint64 KeyHash, FStringView Directory);
 
         // Rewrites one cache file for a cook with its binaries' debug info stripped; false leaves it to ship as it was.
         RUNTIME_API bool StripCacheFileForCook(const TVector<uint8>& Source, TVector<uint8>& Out);

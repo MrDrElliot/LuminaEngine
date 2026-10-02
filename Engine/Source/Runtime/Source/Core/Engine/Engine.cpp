@@ -916,10 +916,15 @@ namespace Lumina
         CrashReporting::ClearAttachments();
         CrashReporting::AddAttachment(Paths::Combine(LogsDir, "Lumina.log"));
         
+        const FFixedString ProjectIntermediatesDir = Paths::Combine(ProjectPath, "Intermediates");
+        Filesystem::MakeDirectoryTree(ProjectIntermediatesDir);
+
         VFS::Unmount("/Game");
         VFS::Unmount("/Config");
+        VFS::Unmount("/ProjectIntermediates");
         VFS::Mount<VFS::FNativeFileSystem>("/Game", GameRootDir);
         VFS::Mount<VFS::FNativeFileSystem>("/Config", ConfigDir);
+        VFS::Mount<VFS::FNativeFileSystem>("/ProjectIntermediates", ProjectIntermediatesDir);
 
         GConfig->LoadPath("/Config");
         

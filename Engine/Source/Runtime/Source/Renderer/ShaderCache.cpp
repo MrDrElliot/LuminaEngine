@@ -256,28 +256,34 @@ namespace Lumina::FShaderCache
         return Hash == 0 ? 1 : Hash;
     }
 
-    static FString CachePathForKey(uint64 KeyHash)
+    static FString CachePathForKey(uint64 KeyHash, FStringView Directory)
     {
         char HexBuf[32];
         snprintf(HexBuf, sizeof(HexBuf), "%016llx", (unsigned long long)KeyHash);
 
-        FString Out = kCacheDirectory;
+        FString Out(Directory.data(), Directory.size());
         Out += "/raw_";
         Out += HexBuf;
         Out += ".lsc";
         return Out;
     }
 
-    bool TryLoadRaw(uint64 KeyHash, FShaderHeader& OutHeader)
+    bool TryLoadRaw(uint64 KeyHash, FShaderHeader& OutHeader, FStringView Directory)
     {
         if (KeyHash == 0)
         {
             return false;
         }
-        return TryLoadByCachePath(CachePathForKey(KeyHash), KeyHash, OutHeader);
+        return TryLoadByCachePath(CachePathForKey(KeyHash, Directory), KeyHash, OutHeader);
     }
 
-    bool SaveRaw(uint64 KeyHash, const FShaderHeader& Header)
+    bool DeleteRaw(uint64 KeyHash, FStringView Directory)
+    {
+        const FString Path = CachePathForKey(KeyHash, Directory);
+        return KeyHash != 0 && VFS::Exists(Path) && VFS::Remove(Path);
+    }
+
+    bool SaveRaw(uint64 KeyHash, const FShaderHeader& Header, FStringView Directory)
     {
         LUMINA_MEMORY_SCOPE("Shaders");
         if (KeyHash == 0)
@@ -285,7 +291,7 @@ namespace Lumina::FShaderCache
             return false;
         }
 
-        VFS::CreateDir(kCacheDirectory);
+        VFS::CreateDir(Directory);
 
         TVector<uint8> Bytes;
         FMemoryWriter Writer(Bytes);
@@ -299,7 +305,7 @@ namespace Lumina::FShaderCache
 
         SerializeHeader(Writer, const_cast<FShaderHeader&>(Header));
 
-        return VFS::AtomicWriteFile(CachePathForKey(KeyHash), TSpan<const uint8>(Bytes.data(), Bytes.size()));
+        return VFS::AtomicWriteFile(CachePathForKey(KeyHash, Directory), TSpan<const uint8>(Bytes.data(), Bytes.size()));
     }
 
     FString CachePathFor(FStringView ShaderVirtualPath, const TVector<FString>& Defines, FStringView EntryPoint)

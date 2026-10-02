@@ -147,6 +147,9 @@ namespace Lumina
         // VisBuffer pixel shader, which runs the graph just to evaluate Opacity for the geometry-stage clip).
         FString BuildPixelShaderFromTemplate(const FString& TemplateAbsolutePath) const;
 
+        // Hash of the graph's own emitted code, so it holds still when only the templates it is pasted into change.
+        uint64 GetGeneratedCodeHash() const;
+
         // True when the graph fed any chunks into the vertex stage. Equivalent
         // to "WorldPositionOffset pin had a connection."
         bool UsesVertexStage() const { return !VertexChunks.empty() || !VertexOutputChunks.empty(); }

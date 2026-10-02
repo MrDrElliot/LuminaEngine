@@ -154,12 +154,12 @@ namespace Lumina
                 FString Error;
                 if (!RecompileMaterialIfStale(Material, Error))
                 {
-                    LogCooker(LogFunc, Format("  [warn] {} predates the current shader templates and could not be recompiled, since {}",
+                    LogCooker(LogFunc, Format("  [warn] {} has stale or uncached shaders that could not be rebuilt, since {}",
                         VirtualPath, Error).c_str());
                 }
                 else if (bStale)
                 {
-                    LogCooker(LogFunc, Format("  recompiled {} against the current shader templates", VirtualPath).c_str());
+                    LogCooker(LogFunc, Format("  rebuilt {} shaders from its graph", VirtualPath).c_str());
                 }
             }
 
@@ -375,7 +375,12 @@ namespace Lumina
                     return;
                 }
 
+                // Keyed by generated source no cooked game can rebuild, and cooked materials embed their own SPIR-V.
                 const FStringView VirtualPath(Info.VirtualPath.c_str(), Info.VirtualPath.size());
+                if (VFS::FileName(VirtualPath).starts_with("raw_"))
+                {
+                    return;
+                }
                 TVector<uint8> Bytes;
                 if (!VFS::ReadFile(Bytes, VirtualPath))
                 {

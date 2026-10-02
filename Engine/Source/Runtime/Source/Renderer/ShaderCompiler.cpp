@@ -897,11 +897,13 @@ namespace Lumina
             // This used to hardcode the engine tree, so a graph could not include a plugin's shader header.
             const TVector<FString> SearchRoots = BuildShaderSearchRoots();
 
-            const uint64 CacheKey = FShaderCache::ComputeRawSourceHash(
+            const bool bMaterialKeyed = CompileOptions.MaterialCacheKey != 0;
+            const FStringView CacheDirectory = bMaterialKeyed ? FShaderCache::kMaterialCacheDirectory : FShaderCache::kCacheDirectory;
+            const uint64 CacheKey = bMaterialKeyed ? CompileOptions.MaterialCacheKey : FShaderCache::ComputeRawSourceHash(
                 ShaderString, CompileOptions.MacroDefinitions, SearchRoots, CompileOptions.TemplateVirtualPath,
                 CompileOptions.EntryPoint);
 
-            if (FShaderHeader Cached; FShaderCache::TryLoadRaw(CacheKey, Cached))
+            if (FShaderHeader Cached; FShaderCache::TryLoadRaw(CacheKey, Cached, CacheDirectory))
             {
                 // A cached binary still has to reach the crash tracker, or it resolves as unknown.
                 RHI::GetCrashTracker().RegisterShader(Cached.Binaries, Cached.DebugName);
@@ -952,7 +954,7 @@ namespace Lumina
 
             LOG_TRACE("Compiled raw shader '{0}' in {1:.2f} ms (Thread {2})", RawName, DurationMs, Thread);
 
-            FShaderCache::SaveRaw(CacheKey, Shader);
+            FShaderCache::SaveRaw(CacheKey, Shader, CacheDirectory);
 
             RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
 
