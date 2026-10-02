@@ -1089,7 +1089,9 @@ namespace Lumina
 
     void CWorld::SetEntityLocation(ECS::FEntity Entity, FVector3 Location)
     {
-        if (STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityLocation"))
+        // An unchanged write is skipped, since marking it dirty would re-sync the entity downstream for nothing.
+        STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityLocation");
+        if (Transform != nullptr && Transform->GetLocalLocation() != Location)
         {
             Transform->SetLocation(Location);
         }
@@ -1097,9 +1099,19 @@ namespace Lumina
 
     void CWorld::SetEntityRotation(ECS::FEntity Entity, FQuat Rotation)
     {
-        if (STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityRotation"))
+        STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityRotation");
+        if (Transform != nullptr && !(Transform->GetLocalRotation() == Rotation))
         {
             Transform->SetRotation(Rotation);
+        }
+    }
+
+    void CWorld::SetEntityLocationAndRotation(ECS::FEntity Entity, FVector3 Location, FQuat Rotation)
+    {
+        STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityLocationAndRotation");
+        if (Transform != nullptr && (Transform->GetLocalLocation() != Location || !(Transform->GetLocalRotation() == Rotation)))
+        {
+            Transform->SetLocalLocationAndRotation(Location, Rotation);
         }
     }
 

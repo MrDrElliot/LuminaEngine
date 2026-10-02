@@ -71,6 +71,16 @@ internal static unsafe class Interop
                 return;
             }
 
+            // UTF-8 never takes more than three bytes per UTF-16 unit, so a string that fits that bound encodes in one pass.
+            if (Value.Length * 3 + 1 <= ScratchBuffer.Length)
+            {
+                int Encoded = Encoding.UTF8.GetBytes(Value, ScratchBuffer);
+                ScratchBuffer[Encoded] = 0;
+                Pointer = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetReference(ScratchBuffer));
+                Length = Encoded;
+                return;
+            }
+
             int ByteCount = Encoding.UTF8.GetByteCount(Value);
             if (ByteCount + 1 <= ScratchBuffer.Length)
             {

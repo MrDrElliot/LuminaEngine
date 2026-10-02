@@ -79,6 +79,14 @@ namespace Lumina
             return InLocation;
         }
 
+        // Both at once, so a caller placing an entity marks it dirty once rather than twice.
+        void SetLocalLocationAndRotation(const FVector3& InLocation, const FQuat& InRotation)
+        {
+            LocalTransform.SetLocation(InLocation);
+            LocalTransform.SetRotation(InRotation);
+            MarkDirty();
+        }
+
         FUNCTION()
         FVector3 Translate(const FVector3& Delta)
         {

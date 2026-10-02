@@ -312,6 +312,10 @@ namespace Lumina
         FUNCTION()
         void SetEntityRotation(ECS::FEntity Entity, FQuat Rotation);
 
+        // One crossing and one lookup for the common case of placing an entity every frame.
+        FUNCTION()
+        void SetEntityLocationAndRotation(ECS::FEntity Entity, FVector3 Location, FQuat Rotation);
+
         FUNCTION()
         FVector3 TranslateEntity(ECS::FEntity Entity, FVector3 Translation);
 

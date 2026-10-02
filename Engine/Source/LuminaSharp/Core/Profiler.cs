@@ -15,7 +15,20 @@ public static class Profiler
     public static bool Enabled => Lumina.CGameplayProfilerLibrary.IsProfilerEnabled();
 
     /// <summary>Open a named scope. Pair with <see cref="End"/>; prefer <see cref="Sample"/> for exception safety.</summary>
-    public static void Begin(string Name) => Lumina.CGameplayProfilerLibrary.BeginScope(Name);
+    public static void Begin(string Name) => Lumina.CGameplayProfilerLibrary.BeginRegisteredScope(ScopeId(Name));
+
+    // Names are registered natively once, after which a sample sends only an id.
+    private static readonly System.Collections.Generic.Dictionary<string, int> ScopeIds = new();
+
+    private static int ScopeId(string Name)
+    {
+        if (!ScopeIds.TryGetValue(Name, out int Id))
+        {
+            Id = Lumina.CGameplayProfilerLibrary.RegisterScope(Name);
+            ScopeIds[Name] = Id;
+        }
+        return Id;
+    }
 
     /// <summary>Close the most recently opened scope.</summary>
     public static void End() => Lumina.CGameplayProfilerLibrary.EndScope();
@@ -29,7 +42,7 @@ public static class Profiler
     /// <summary>The disposable returned by <see cref="Sample"/>. Stack-only (a ref struct); do not store it.</summary>
     public readonly ref struct Scope
     {
-        public Scope(string Name) => Lumina.CGameplayProfilerLibrary.BeginScope(Name);
+        public Scope(string Name) => Lumina.CGameplayProfilerLibrary.BeginRegisteredScope(ScopeId(Name));
         public void Dispose() => Lumina.CGameplayProfilerLibrary.EndScope();
     }
 }

@@ -268,10 +268,19 @@ namespace LuminaSharp
         string sig = $"{acc}{staticMod} partial {retCs} {method.Name}({string.Join(", ", sigParams)})";
 
         var sb = new StringBuilder();
+        string statField = $"__st_{method.Name}";
+        string statCount = "if (global::LuminaSharp.InteropStats.Enabled) { ++global::LuminaSharp.InteropStats.Hits[" + statField + "]; }\n";
+        sb.Append("        private static readonly int ").Append(statField).Append(" = global::LuminaSharp.InteropStats.Register(\"")
+          .Append(type.Name).Append('.').Append(method.Name).Append("\");\n");
         sb.Append("        private static readonly ").Append(delegateType).Append(' ').Append(field).Append(" =\n");
         sb.Append("            (").Append(delegateType).Append(")global::LuminaSharp.NativeBindings.Resolve(\"")
           .Append(module).Append("\", \"").Append(entry).Append("\", ").Append(SignatureSum(nativeTypes))
           .Append(");\n");
+        // Every scratch buffer below is written before it is read, so zeroing it would be wasted work on each call.
+        if (stringParams.Count > 0 || stringReturn || arrayReturn)
+        {
+            sb.Append("        [global::System.Runtime.CompilerServices.SkipLocalsInit]\n");
+        }
         sb.Append("        ").Append(sig).Append('\n');
 
         static string Pad(int n) => new string(' ', n);
@@ -391,18 +400,20 @@ namespace LuminaSharp
         {
             if (method.ReturnsVoid)
             {
-                sb.Append("        {\n").Append(Pad(12)).Append(unboundGuard).Append(CoreBody(12)).Append("        }\n");
+                sb.Append("        {\n").Append(Pad(12)).Append(statCount).Append(Pad(12)).Append(unboundGuard).Append(CoreBody(12)).Append("        }\n");
             }
             else
             {
-                sb.Append("            => ").Append(field).Append(" != null ? ").Append(wrap($"{field}({coreArgs})"))
-                  .Append(" : ").Append(unboundThrow).Append(";\n");
+                sb.Append("        {\n").Append(Pad(12)).Append(statCount)
+                  .Append(Pad(12)).Append("return ").Append(field).Append(" != null ? ").Append(wrap($"{field}({coreArgs})"))
+                  .Append(" : ").Append(unboundThrow).Append(";\n        }\n");
             }
         }
         else
         {
             sb.Append("        {\n");
             int indent = 12;
+            sb.Append(Pad(indent)).Append(statCount);
             sb.Append(Pad(indent)).Append(unboundGuard);
 
             // String args: encode UTF-8 into stack scratch (allocation-free when it fits), free in finally.

@@ -104,7 +104,7 @@ namespace Lumina
 
     uint32 FNameTable::GetOrCreateIndex(const char* Str, size_t Length)
     {
-        if (!Str || !Str[0])
+        if (!Str || Length == 0)
         {
             return 0;
         }
@@ -295,6 +295,23 @@ namespace Lumina
         }
 
         Index = GetNameTable().GetOrCreateIndex(Str, Length);
+    }
+
+    FName::FName(FStringView Str)
+    {
+        if (Str.empty())
+        {
+            return;
+        }
+
+        size_t Length = Str.size();
+        uint32 ExternalNumber = 0;
+        if (TrySplitNumber(Str.data(), Length, Length, ExternalNumber))
+        {
+            Number = ExternalNumber + 1;
+        }
+
+        Index = GetNameTable().GetOrCreateIndex(Str.data(), Length);
     }
 
     FName::FName(const char* Str, uint32 InNumber)

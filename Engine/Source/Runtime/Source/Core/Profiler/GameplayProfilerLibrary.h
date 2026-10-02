@@ -18,6 +18,13 @@ namespace Lumina
         FUNCTION()
         static void BeginScope(const FString& Name);
 
+        // Interns a scope name once, so a hot sample opens by id without sending or copying its text.
+        FUNCTION()
+        static int32 RegisterScope(const FString& Name);
+
+        FUNCTION()
+        static void BeginRegisteredScope(int32 ScopeId);
+
         FUNCTION()
         static void EndScope();
 

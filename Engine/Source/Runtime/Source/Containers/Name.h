@@ -43,7 +43,8 @@ namespace Lumina
         FName(const FWString& Str) : FName(StringUtils::FromWideString(Str)) {}
         FName(const FFixedString& Str) : FName(Str.c_str()) {}
         FName(const FFixedWString& Str) : FName(StringUtils::FromWideString(Str.c_str())) {}
-        FName(FStringView Str) : FName(FString(Str.data(), Str.length()).c_str()) {}
+        // Interned straight from the view, since a temporary FString allocates for any name past the inline capacity.
+        FName(FStringView Str);
 
         explicit FName(uint32 InIndex) : Index(InIndex) {}
 
