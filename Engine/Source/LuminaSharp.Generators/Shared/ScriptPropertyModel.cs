@@ -40,7 +40,7 @@ internal static class ScriptPropertyClassifier
         // interface they share, so a new asset-reference type needs nothing here. Checked before the unmanaged
         // test at the bottom, which they would otherwise pass -- they are pointer-sized values, and reading
         // them as raw bytes would not read the FSoftObjectPath native actually stores.
-        if (IsAssetRef(Type))
+        if (IsSoftObjectReference(Type))
         {
             return FScriptPropertyClassification.Of(EScriptAccess.AssetPath);
         }
@@ -325,9 +325,9 @@ internal static class ScriptPropertyClassifier
         return Display(Type);
     }
 
-    public static bool IsAssetRef(ITypeSymbol Type)
+    public static bool IsSoftObjectReference(ITypeSymbol Type)
     {
-        return Type.AllInterfaces.Any(Interface => Interface.ToDisplayString() == ScriptPropertyTypeNames.AssetRef);
+        return Type.AllInterfaces.Any(Interface => Interface.ToDisplayString() == ScriptPropertyTypeNames.SoftObjectReference);
     }
 
     public static bool DerivesFromInputBinding(ITypeSymbol Type)
@@ -440,7 +440,7 @@ internal readonly struct FScriptPropertyClassification
 internal static class ScriptPropertyTypeNames
 {
     public const string NativeObject = "LuminaSharp.NativeObject";
-    public const string AssetRef = "LuminaSharp.IAssetRef";
+    public const string SoftObjectReference = "LuminaSharp.ISoftObjectReference";
     public const string InputBinding = "LuminaSharp.SInputBinding";
     public const string Entity = "LuminaSharp.Entity";
 

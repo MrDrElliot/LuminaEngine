@@ -545,6 +545,8 @@ public sealed class TargetAssembler
 
         public List<string> AdditionalLibraries { get; } = new();
 
+        public List<string> DelayLoadDLLs { get; } = new();
+
         public List<string> LibraryPaths { get; } = new();
     }
 
@@ -605,6 +607,7 @@ public sealed class TargetAssembler
 
         Exports.Definitions.AddRange(Rules.PublicDefinitions);
         Exports.SystemLibraries.AddRange(Rules.PublicSystemLibraries);
+        Exports.DelayLoadDLLs.AddRange(Rules.PublicDelayLoadDLLs);
         Exports.LibraryPaths.AddRange(Rules.PublicLibraryPaths.Select(Rules.ModulePath));
         Exports.AdditionalLibraries.AddRange(Rules.PublicAdditionalLibraries.Select(Rules.ModulePath));
 
@@ -616,6 +619,7 @@ public sealed class TargetAssembler
             Exports.SystemIncludePaths.AddRange(Inherited.SystemIncludePaths);
             Exports.Definitions.AddRange(Inherited.Definitions);
             Exports.SystemLibraries.AddRange(Inherited.SystemLibraries);
+            Exports.DelayLoadDLLs.AddRange(Inherited.DelayLoadDLLs);
             Exports.AdditionalLibraries.AddRange(Inherited.AdditionalLibraries);
             Exports.LibraryPaths.AddRange(Inherited.LibraryPaths);
         }
@@ -726,6 +730,7 @@ public sealed class TargetAssembler
 
         List<string> Libraries = new();
         List<string> LibraryPaths = new();
+        List<string> DelayLoadDLLs = new();
 
         // Dependency-first order reversed, so dependents precede what they depend on.
         foreach (BuildModule Dependency in Module.EnumerateDependencyClosure().Where(M => M != Module).Reverse())
@@ -746,10 +751,12 @@ public sealed class TargetAssembler
             Libraries.AddRange(Exports.AdditionalLibraries);
             Libraries.AddRange(Exports.SystemLibraries);
             LibraryPaths.AddRange(Exports.LibraryPaths);
+            DelayLoadDLLs.AddRange(Exports.DelayLoadDLLs);
         }
 
         AddUnique(Module.LinkLibraries, Libraries);
         AddUnique(Module.LinkLibraryPaths, LibraryPaths);
+        AddUnique(Module.DelayLoadDLLs, DelayLoadDLLs);
     }
 
     /// <summary>What a dependent puts on its link line, an import library, archive, or nothing.</summary>

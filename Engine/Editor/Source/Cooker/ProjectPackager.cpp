@@ -282,6 +282,9 @@ namespace Lumina
             bool                     bEnabled = false;
             bool                     bCopyExecutable = true;
             const THashSet<FString>* LinkedModules = nullptr;
+
+            // Where third-party DLLs go, since the monolithic exe imports none of them at startup.
+            FString                  PluginsDirectory;
         };
 
         size_t CopyRuntimePayload(FStringView SourceDir,
@@ -392,13 +395,17 @@ namespace Lumina
                     DstName.append(".exe");
                 }
 
-                if (CopyFileTo(Entry.FullPath, Join(DestDir, DstName)))
+                // Only a monolithic exe is free of startup imports, so only there do third-party DLLs leave the exe's folder.
+                const bool bToPlugins = bDll && Monolithic.bEnabled && !Monolithic.PluginsDirectory.empty() && ModuleOfSuffixedBinary(Stem).empty();
+                const FString DstDir = bToPlugins ? Monolithic.PluginsDirectory : FString(DestDir.data(), DestDir.size());
+
+                if (CopyFileTo(Entry.FullPath, Join(DstDir, DstName)))
                 {
                     ++Copied;
                     const FStringView DstStem = StemOf(FStringView(DstName.c_str(), DstName.size()));
                     WrittenStems.insert(FString(DstStem.data(), DstStem.size()));
-                    LogPackager(LogFunc, Format("  + {} -> {}",
-                        FileName, DstName.c_str()).c_str());
+                    LogPackager(LogFunc, Format("  + {} -> {}{}",
+                        FileName, bToPlugins ? "Plugins/" : "", DstName.c_str()).c_str());
                 }
                 else
                 {
@@ -414,6 +421,63 @@ namespace Lumina
             return Copied;
         }
 
+        // Paks used to sit beside the exe, where the game would still mount them over the data folder's.
+        void RemoveOldPaks(FStringView OutDir, const TFunction<void(FStringView)>& LogFunc)
+        {
+            TVector<FString> Old;
+            Filesystem::IterateDirectory(OutDir, [&Old](const Filesystem::FDirectoryEntry& Entry)
+            {
+                if (!Entry.IsDirectory() && (Entry.GetExtension() == FStringView(".pak") || Entry.Name.ends_with(".contents.txt")))
+                {
+                    Old.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+                }
+            });
+            for (const FString& Path : Old)
+            {
+                if (Filesystem::RemoveFile(FStringView(Path.c_str(), Path.size())))
+                {
+                    LogPackager(LogFunc, Format("  - removed {} from the old layout", FileNameOf(Path).c_str()).c_str());
+                }
+            }
+        }
+
+        // The runtime, managed code and third-party DLLs are restaged into the data folder, so earlier copies would only shadow them.
+        void RemoveOldPayload(FStringView OutDir, FStringView DataDir, const TFunction<void(FStringView)>& LogFunc)
+        {
+            const FStringView OldDirectories[] = { "DotNet", "External" };
+            for (const FStringView Directory : OldDirectories)
+            {
+                const FString Path = Join(OutDir, Directory);
+                if (Filesystem::Exists(Path) && Filesystem::RemoveTree(Path))
+                {
+                    LogPackager(LogFunc, Format("  - removed {}/ from the old layout", FString(Directory.data(), Directory.size()).c_str()).c_str());
+                }
+            }
+
+            const FStringView StagedDirectories[] = { "Managed", "Runtime", "Plugins" };
+            for (const FStringView Directory : StagedDirectories)
+            {
+                const FString Path = Join(DataDir, Directory);
+                if (Filesystem::Exists(Path))
+                {
+                    Filesystem::RemoveTree(Path);
+                }
+            }
+
+            TVector<FString> ThirdParty;
+            Filesystem::IterateDirectory(OutDir, [&ThirdParty](const Filesystem::FDirectoryEntry& Entry)
+            {
+                if (!Entry.IsDirectory() && Entry.GetExtension() == FStringView(".dll") && ModuleOfSuffixedBinary(StemOf(Entry.Name)).empty())
+                {
+                    ThirdParty.emplace_back(Entry.FullPath.data(), Entry.FullPath.size());
+                }
+            });
+            for (const FString& Path : ThirdParty)
+            {
+                Filesystem::RemoveFile(FStringView(Path.c_str(), Path.size()));
+            }
+        }
+
         // Recursively copies a directory tree (overwriting existing files). Returns the file count copied.
         size_t CopyDirectoryRecursive(FStringView Src, FStringView Dst)
         {
@@ -422,19 +486,29 @@ namespace Lumina
             return Count;
         }
 
-        // Mirrors the exe-relative layout DotNetHost::Initialize and DotNet::LoadCookedScripts probe.
+        // Mirrors the data-folder layout DotNetHost::Initialize and DotNet::LoadCookedScripts probe.
         void CopyDotNetPayload(FStringView EngineInstallDir,
                                FStringView BinariesDir,
-                               FStringView DestDir,
+                               FStringView DataDir,
                                bool bStageSymbols,
                                const TFunction<void(FStringView)>& LogFunc)
         {
-            // 1. Managed bootstrap assembly + its dependency closure (Roslyn, runtimeconfig, deps.json).
+            // 1. The managed bootstrap alone, since scripts arrive prebuilt and the script compiler and its generators never run in a game.
             const FString ManagedSrc = Join(BinariesDir, "DotNet/Managed");
-            if (Filesystem::Exists(ManagedSrc))
+            const FString ManagedDst = Join(DataDir, "Managed");
+            const FStringView BootstrapFiles[] = { "LuminaSharp.dll", "LuminaSharp.runtimeconfig.json" };
+            size_t BootstrapCopied = 0;
+            for (const FStringView File : BootstrapFiles)
             {
-                const size_t N = CopyDirectoryRecursive(ManagedSrc, Join(DestDir, "DotNet/Managed"));
-                LogPackager(LogFunc, Format("DotNet: staged managed bootstrap ({} file(s)).", N).c_str());
+                BootstrapCopied += CopyFileTo(Join(ManagedSrc, File), Join(ManagedDst, File)) ? 1 : 0;
+            }
+            if (bStageSymbols)
+            {
+                CopyFileTo(Join(ManagedSrc, "LuminaSharp.pdb"), Join(ManagedDst, "LuminaSharp.pdb"));
+            }
+            if (BootstrapCopied == std::size(BootstrapFiles))
+            {
+                LogPackager(LogFunc, "DotNet: staged the managed bootstrap.");
             }
             else
             {
@@ -446,7 +520,7 @@ namespace Lumina
             if (Filesystem::Exists(RuntimeSrc))
             {
                 LogPackager(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
-                const size_t N = CopyDirectoryRecursive(RuntimeSrc, Join(DestDir, "External/DotNet/runtime"));
+                const size_t N = CopyDirectoryRecursive(RuntimeSrc, Join(DataDir, "Runtime"));
                 LogPackager(LogFunc, Format("DotNet: staged .NET runtime ({} file(s)).", N).c_str());
             }
             else
@@ -454,11 +528,11 @@ namespace Lumina
                 LogPackager(LogFunc, Format("DotNet: [warn] bundled runtime not found at {}; C# disabled in package.", RuntimeSrc.c_str()).c_str());
             }
 
-            // 3. Prebuilt script assemblies + the manifest the cooked loader reads.
+            // 3. Prebuilt script assemblies + the manifest the cooked loader reads, beside the bootstrap that loads them.
             TVector<DotNet::FPackagedScriptUnit> Units;
             DotNet::GatherScriptUnitsForPackaging(Units);
 
-            const FString ScriptsDst = Join(DestDir, "DotNet/Scripts");
+            const FString& ScriptsDst = ManagedDst;
             FString Manifest = "{\n  \"Units\": [\n";
             size_t Staged = 0;
             for (const DotNet::FPackagedScriptUnit& Unit : Units)
@@ -600,6 +674,13 @@ namespace Lumina
         FMonolithicCopy EngineCopy = Monolithic;
         EngineCopy.bCopyExecutable = !Monolithic.bEnabled;
 
+        const FString DataDir = GetDataDirectory(FStringView(DestDir.c_str(), DestDir.size()), ProjectName);
+        Monolithic.PluginsDirectory = Join(DataDir, "Plugins");
+        EngineCopy.PluginsDirectory = Monolithic.PluginsDirectory;
+
+        // Staged fresh each build, and an older package kept its DLLs, runtime and managed code beside the exe.
+        RemoveOldPayload(DestDir, DataDir, LogFunc);
+
         THashSet<FString> WrittenStems;
         size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, &EngineModules, WrittenStems, LogFunc, EngineCopy);
 
@@ -621,10 +702,28 @@ namespace Lumina
         RemoveStaleBinaries(DestDir, WrittenStems, FStringView(Config.c_str(), Config.size()), LogFunc);
 
         // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
-        CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DestDir, !(Config == "Shipping"), LogFunc);
+        CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DataDir, !(Config == "Shipping"), LogFunc);
 
         Result.bSuccess = true;
         return Result;
+    }
+
+    FString FProjectPackager::GetDataDirectory(FStringView OutputDirectory, FStringView ProjectName)
+    {
+        FString Directory(OutputDirectory.data(), OutputDirectory.size());
+        Directory += "/";
+        Directory.append(ProjectName.data(), ProjectName.size());
+        Directory += "_Data";
+        return Directory;
+    }
+
+    FString FProjectPackager::GetPakPath(FStringView OutputDirectory, FStringView ProjectName)
+    {
+        FString Path = GetDataDirectory(OutputDirectory, ProjectName);
+        Path += "/";
+        Path.append(ProjectName.data(), ProjectName.size());
+        Path += ".pak";
+        return Path;
     }
 
     size_t FProjectPackager::ExtractLooseScripts(const FString& OutDir, const TFunction<void(FStringView)>& LogFunc)
@@ -659,7 +758,8 @@ namespace Lumina
 
         LogPackager(LogFunc, Format("Output directory: {}", OutDir.c_str()).c_str());
 
-        const FString PakPath = OutDir + "/" + ProjectName + ".pak";
+        const FString PakPath = GetPakPath(FStringView(OutDir.c_str(), OutDir.size()), FStringView(ProjectName.c_str(), ProjectName.size()));
+        RemoveOldPaks(OutDir, LogFunc);
         LogPackager(LogFunc, Format("Cooking PAK: {}", PakPath.c_str()).c_str());
 
         FCookOptions CookOpts;
@@ -680,7 +780,7 @@ namespace Lumina
         if (Options.bExtractScriptsAsLooseFiles)
         {
             LogPackager(LogFunc, "Extracting loose /Game files...");
-            const size_t Extracted = CopyLooseScripts(OutDir, LogFunc);
+            const size_t Extracted = CopyLooseScripts(GetDataDirectory(FStringView(OutDir.c_str(), OutDir.size()), FStringView(ProjectName.c_str(), ProjectName.size())), LogFunc);
             LogPackager(LogFunc, Format("Extracted {} loose script files.", Extracted).c_str());
         }
 

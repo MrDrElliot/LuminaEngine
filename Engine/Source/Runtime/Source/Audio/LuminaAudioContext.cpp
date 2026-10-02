@@ -236,8 +236,8 @@ namespace Lumina
 			return;
 		}
 
-		// With no device running nothing can still be reading them, so they go immediately.
-		const bool bDeviceIdle = !Device || !Device->IsRunning() || !Mixer.IsInitialized();
+		// Only a destroyed device is past reading them, since a suspended one resumes with every voice still holding its source.
+		const bool bDeviceIdle = !Device || !Mixer.IsInitialized();
 		const uint64 Now = Mixer.GetRenderCount();
 
 		for (size_t i = RetiredSources.size(); i > 0; --i)
@@ -372,6 +372,15 @@ namespace Lumina
 		// A priority takeover evicts this slot's previous occupant, whose source outlives the swap.
 		RetireSlotSource(Slot);
 
+		// Nothing drains the start queue while the device is down or being reopened, so decoding the voice would only fill it.
+		if (!Device || !Device->IsRunning() || Device->NeedsRestart())
+		{
+			LOG_WARN_ONCE("Audio: no output device is running; voices are dropped until it reopens");
+			ReleaseVoiceSlot(Slot, Play.Handle.Generation);
+			DroppedVoices.fetch_add(1, Atomic::MemoryOrderRelaxed);
+			return;
+		}
+
 		TSharedPtr<IAudioSource> Source;
 		bool bGenerated = false;
 
@@ -423,14 +432,19 @@ namespace Lumina
 		Desc.bGenerated = bGenerated;
 		Desc.Params     = Play.Params;
 
+		// A priority takeover lands on a slot the device thread is still rendering, so its source retires rather than dies.
+		RetireSlotSource(Slot);
+
 		// Published before the start is queued, so the device thread never sees a slot without its source.
 		SlotSources[Slot] = Move(Source);
 		SlotStartRenderCount[Slot] = Mixer.GetRenderCount();
 
 		if (!Mixer.StartVoice(Desc))
 		{
-			LOG_WARN("Audio: the mixer start queue is full; dropping a voice");
-			RetireSlotSource(Slot);
+			LOG_WARN_ONCE("Audio: the mixer start queue is full; dropping voices");
+
+			// The device thread never saw a voice that did not enqueue, so its source can die now rather than wait out a render count that may be frozen.
+			SlotSources[Slot].reset();
 			ReleaseVoiceSlot(Slot, Play.Handle.Generation);
 			DroppedVoices.fetch_add(1, Atomic::MemoryOrderRelaxed);
 			return;
@@ -443,8 +457,8 @@ namespace Lumina
 
 	void FLuminaAudioContext::CollectFinishedVoices()
 	{
-		// With no device nothing will ever drain the start queue, so a queued voice is collected at once.
-		const bool bDeviceIdle = !Device || !Device->IsRunning();
+		// With no device nothing will ever drain the start queue, so a queued voice is collected at once, but a suspended device drains it on resume.
+		const bool bDeviceIdle = !Device;
 		const uint64 Now = Mixer.GetRenderCount();
 
 		for (uint32 Slot = 0; Slot < MaxVoiceSlots; ++Slot)

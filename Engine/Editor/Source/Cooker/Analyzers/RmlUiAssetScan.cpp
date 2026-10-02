@@ -85,7 +85,7 @@ namespace Lumina
                 || Prev == '_' || Prev == '-');
         }
 
-        // Scans forward for a path-like substring starting with a slash and holding at least one dot.
+        // Scans forward for a path-like substring starting with a slash and naming something below a mount.
         FStringView ScanPath(FStringView Src, size_t Pos)
         {
             // Skip leading whitespace and a single optional quote.
@@ -104,8 +104,8 @@ namespace Lumina
             }
             FStringView Candidate = Src.substr(Start, Pos - Start);
 
-            // Must contain an extension separator; rejects bare "/Game" / "/".
-            if (Candidate.find('.') == FStringView::npos)
+            // An asset path may omit .lasset, as a spritesheet src does, so only a bare mount such as /Game is rejected here.
+            if (Candidate.find('/', 1) == FStringView::npos)
             {
                 return {};
             }
@@ -138,10 +138,35 @@ namespace Lumina
             }
         }
 
-        // Handles single, double and unquoted forms, with a left boundary check against ident tails.
-        void ScanCssUrl(FStringView Src, TVector<FString>& Out)
+        // A declaration such as the src of an @spritesheet, which names its texture without url().
+        void ScanCssProperty(FStringView Src, FStringView Key, TVector<FString>& Out)
         {
-            const FStringView Tok("url(");
+            size_t Pos = 0;
+            while (Pos < Src.size())
+            {
+                size_t Hit = Src.find(Key, Pos);
+                if (Hit == FStringView::npos) return;
+                Pos = Hit + Key.size();
+
+                if (!IsAttributeBoundary(Src, Hit)) continue;
+
+                size_t P = Pos;
+                while (P < Src.size() && std::isspace(static_cast<unsigned char>(Src[P]))) ++P;
+                if (P >= Src.size() || Src[P] != ':') continue;
+                ++P;
+
+                FStringView Path = ScanPath(Src, P);
+                if (!Path.empty())
+                {
+                    Out.emplace_back(Path.data(), Path.size());
+                    Pos = P + Path.size();
+                }
+            }
+        }
+
+        // A CSS function such as url( or RmlUi's image( decorator, in single, double and unquoted forms, boundary-checked against ident tails.
+        void ScanCssFunction(FStringView Src, FStringView Tok, TVector<FString>& Out)
+        {
             size_t Pos = 0;
             while (Pos < Src.size())
             {
@@ -206,7 +231,9 @@ namespace Lumina
         ScanAttribute(Src, FStringView("data-asset"), Out);
 
         // CSS / RCSS.
-        ScanCssUrl(Src, Out);
+        ScanCssProperty(Src, FStringView("src"), Out);
+        ScanCssFunction(Src, FStringView("url("), Out);
+        ScanCssFunction(Src, FStringView("image("), Out);
         ScanMaterialUri(Src, Out);
 
         return Out;
@@ -272,7 +299,20 @@ namespace Lumina
                 // Only registered-asset paths count as cook roots; .ttf/.png loose files still ship via BundleLooseContent.
                 if (Registry.GetAssetByPath(CandView) == nullptr)
                 {
-                    continue;
+                    FString WithExtension = Candidate + ".lasset";
+                    if (VFS::Extension(CandView).empty()
+                        && Registry.GetAssetByPath(FStringView(WithExtension.c_str(), WithExtension.size())) != nullptr)
+                    {
+                        Candidate = Move(WithExtension);
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                    if (UniqueAssets.find(Candidate) != UniqueAssets.end())
+                    {
+                        continue;
+                    }
                 }
 
                 if (LogFunc)

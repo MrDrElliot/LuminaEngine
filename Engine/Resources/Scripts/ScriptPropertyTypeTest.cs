@@ -104,7 +104,7 @@ public class ScriptPropertyTypeTest : EntityScript
 
     // A TYPED soft reference. Stored natively as the same single FSoftObjectPath the bare one above is, and
     // differing only in filtering the picker to CTexture -- which is the whole point of routing asset
-    // references by the IAssetRef interface rather than by type name: this needed no rewriter change.
+    // references by the ISoftObjectReference interface rather than by type name: this needed no rewriter change.
     [Property(Category = "References", Tooltip = "A typed soft reference, drawn as a CTexture picker.")]
     public TSoftObjectPtr<CTexture> TextureRef = new TSoftObjectPtr<CTexture>("/Engine/Resources/Content/DefaultTexture");
 
@@ -341,7 +341,7 @@ public class ScriptPropertyTypeTest : EntityScript
         AssetValue = Saved;
 
         // The typed soft reference goes through the same single native FSoftObjectPath, so what this proves
-        // beyond the above is that the IAssetRef routing reconstructs the WRAPPER type on read -- a path that
+        // beyond the above is that the ISoftObjectReference routing reconstructs the WRAPPER type on read -- a path that
         // came back as a bare FSoftObjectPath would not compile here, and one that came back default would
         // read as empty.
         TSoftObjectPtr<CTexture> SavedTexture = TextureRef;

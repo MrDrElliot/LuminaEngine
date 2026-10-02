@@ -34,6 +34,10 @@ namespace Lumina
                         const FUIntVector2& LogicalSize = FUIntVector2(0), const FVector4* ClearColor = nullptr);
         void EndFrame();
 
+        // Redraws the target's last batch for an unchanged frame, and is false when that batch has layers, filters, animated brushes or a new size.
+        bool ReplayCachedFrame(RHI::FCmdListH CmdList, RHI::FTextureH Target, const FUIntVector2& ViewportSize,
+                               const FUIntVector2& LogicalSize = FUIntVector2(0));
+
         // A target whose cached batch already holds this hash skips its pass entirely.
         uint64                      PeekFrameHash() const;
         bool                        IsTargetUpToDate(RHI::FTextureH Target, uint64 Hash) const;
@@ -51,6 +55,9 @@ namespace Lumina
         void                        ReleaseGeometry(Rml::CompiledGeometryHandle Geometry) override;
 
         Rml::TextureHandle          LoadTexture(Rml::Vector2i& OutDimensions, const Rml::String& Source) override;
+
+        // A reimport gives an asset texture a new slot and maybe a new size, which RmlUi's cached handle cannot see.
+        bool                        HasStaleAssetTextures() const;
         Rml::TextureHandle          GenerateTexture(Rml::Span<const Rml::byte> Bytes, Rml::Vector2i Dimensions) override;
         void                        ReleaseTexture(Rml::TextureHandle Texture) override;
 
@@ -97,6 +104,7 @@ namespace Lumina
             RHI::FManagedTexture       Managed;                    // owned (generated textures + brush RTs)
             uint32                     ResourceID = RHI::kInvalidHeapSlot; // global-heap sampled slot
             class CTexture*            AssetKeepalive = nullptr;   // rooted while held; released on ReleaseTexture
+            FUIntVector2               AssetExtent = {0, 0};
             class CMaterialInterface*  BrushMaterial  = nullptr;   // UI-material brush; rooted while held, rendered each frame
             FUIntVector2               BrushSize = {0, 0};
             FString                    BrushSourcePath;            // resolved asset path; re-validated so a rename/delete breaks the brush
@@ -152,6 +160,7 @@ namespace Lumina
         // Matches RmlUiCommon.slang UI_SHADER_*.
         static constexpr uint32 kUIShaderTextured          = 0;
         static constexpr uint32 kUIShaderTexturedStraight = 4;
+        static constexpr uint32 kUIShaderTexturedStraightSRGB = 5;
 
         struct FUiDraw
         {
@@ -215,6 +224,11 @@ namespace Lumina
             uint32            StableFrames = 0;  // consecutive frames the draw list was unchanged (drives dormancy)
             uint64            LastUsedFrame = 0; // eviction stamp; targets die without notice (resize) and their handles get recycled
             bool              bValid = false;
+
+            // Only a plain batch replays alone, since layer commands and brush passes are recorded per frame.
+            bool              bReplayable = false;
+            FUIntVector2      ReplaySize = {0, 0};
+            FUIntVector2      ReplayLogicalSize = {0, 0};
         };
 
         // A pooled full-size render target. Layer 0 is the frame's own target and is never pooled.
@@ -320,6 +334,8 @@ namespace Lumina
         void                        ReleaseTextureNow(Rml::TextureHandle Texture);
         void                        UploadPendingTextures();
         void                        RenderMaterialBrushes();
+        void                        SubmitBatch(RHI::FCmdListH CL, FTargetBatch& Batch);
+        void                        FinishFrame(RHI::FCmdListH CL);
         void                        RevalidateBrushes(RHI::FCmdListH CmdList);
 
         // Pipelines keyed by target format (widget/brush RTs and the world display image can differ).

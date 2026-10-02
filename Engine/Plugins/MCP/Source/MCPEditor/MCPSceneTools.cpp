@@ -12,6 +12,7 @@
 #include "Session/SessionOps.h"
 #include "Scene/SceneOps.h"
 #include "World/Entity/Components/NameComponent.h"
+#include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/World.h"
@@ -636,10 +637,202 @@ namespace Lumina::MCP
                         Out.Skipped.empty() ? "" : Lumina::Format(" {} id(s) named nothing.", Out.Skipped.size())));
                 });
         }
+
+        // The entities a call names, with any id that resolves to nothing kept for the reply.
+        TVector<ECS::FEntity> ResolveEntities(ECS::FRegistry& Registry, const TVector<FString>& Tokens, TVector<FString>& OutSkipped)
+        {
+            TVector<ECS::FEntity> Entities;
+            for (const FString& Token : Tokens)
+            {
+                ECS::FEntity Entity = ECS::NullEntity;
+                FString Error;
+                if (Agent::FEntityTokens::Resolve(Registry, FStringView(Token), Entity, Error))
+                {
+                    Entities.push_back(Entity);
+                }
+                else
+                {
+                    OutSkipped.push_back(Token);
+                }
+            }
+            return Entities;
+        }
+
+        // Tags live one per named storage, as the editor's tag chips add them, so an entity can carry several.
+        Agent::FToolResult EditTags(const SEntityTagParams& In, SEntityTagResult& Out, bool bAdd)
+        {
+            FString SceneError;
+            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+            if (ScenePtr == nullptr)
+            {
+                return Agent::FToolResult::Error(SceneError);
+            }
+            if (SessionOps::IsSimulating())
+            {
+                return Agent::FToolResult::Error("Stop play-in-editor first.");
+            }
+            if (In.Tag.empty())
+            {
+                return Agent::FToolResult::Error("Tag is empty.");
+            }
+
+            ECS::FRegistry& Registry = *ScenePtr;
+            const TVector<ECS::FEntity> Entities = ResolveEntities(Registry, In.Entities, Out.Skipped);
+            if (Entities.empty())
+            {
+                return Agent::FToolResult::Error("None of the ids named a live entity.");
+            }
+
+            const FName Tag(In.Tag.c_str());
+            SessionOps::RunTransacted(bAdd ? "Add Tag (agent)" : "Remove Tag (agent)", [&]()
+            {
+                ECS::TComponentStorage<STagComponent> Storage = Registry.NamedStorage<STagComponent>(Tag);
+                for (ECS::FEntity Entity : Entities)
+                {
+                    if (bAdd == Storage.Contains(Entity))
+                    {
+                        continue;
+                    }
+                    if (bAdd)
+                    {
+                        Storage.Emplace(Entity).Tag = Tag;
+                    }
+                    else
+                    {
+                        Storage.RemoveEntity(Entity);
+
+                        // The single-tag path also records its tag in the unnamed storage, which would otherwise outlive it.
+                        const STagComponent* Unnamed = Registry.TryGet<STagComponent>(Entity);
+                        if (Unnamed != nullptr && Unnamed->Tag == Tag)
+                        {
+                            Registry.Remove<STagComponent>(Entity);
+                        }
+                    }
+                    ++Out.Changed;
+                }
+            }, SceneError);
+
+            return Agent::FToolResult::Ok(Lumina::Format("{} '{}' {} {} entit{}.{}", bAdd ? "Added" : "Removed", In.Tag,
+                bAdd ? "to" : "from", Out.Changed, Out.Changed == 1 ? "y" : "ies",
+                Out.Skipped.empty() ? "" : Lumina::Format(" {} id(s) named nothing.", Out.Skipped.size())));
+        }
+
+        Agent::FToolResult FindByTag(const SFindByTagParams& In, SListEntitiesResult& Out)
+        {
+            FString SceneError;
+            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+            if (ScenePtr == nullptr)
+            {
+                return Agent::FToolResult::Error(SceneError);
+            }
+
+            ECS::FRegistry& Registry = *ScenePtr;
+            const int32 Limit = In.Limit > 0 ? In.Limit : 100;
+            const int32 Offset = In.Offset > 0 ? In.Offset : 0;
+            if (const ECS::FSparseSet* Storage = Registry.FindNamedStorage(ECS::GetComponentTypeID<STagComponent>(), FName(In.Tag.c_str())))
+            {
+                for (const ECS::FEntity Entity : *Storage)
+                {
+                    if (Entity.IsTombstone())
+                    {
+                        continue;
+                    }
+                    ++Out.Matched;
+                    if (Out.Matched <= Offset || static_cast<int32>(Out.Entities.size()) >= Limit)
+                    {
+                        continue;
+                    }
+                    SEntityInfo Info;
+                    Info.Id   = Agent::FEntityTokens::Mint(Registry, Entity);
+                    Info.Name = NameOf(Registry, Entity);
+                    Out.Entities.push_back(Move(Info));
+                }
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("{} of {} entities tagged '{}'.", Out.Entities.size(), Out.Matched, In.Tag));
+        }
+
+        Agent::FToolResult ListTags(const SListTagsParams& In, SListTagsResult& Out)
+        {
+            FString SceneError;
+            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+            if (ScenePtr == nullptr)
+            {
+                return Agent::FToolResult::Error(SceneError);
+            }
+
+            ECS::FRegistry& Registry = *ScenePtr;
+            const ECS::FComponentTypeID TagType = ECS::GetComponentTypeID<STagComponent>();
+            for (ECS::FSparseSet* Storage : Registry.GetActiveStorages())
+            {
+                if (Storage->GetTypeInfo().TypeID != TagType)
+                {
+                    continue;
+                }
+
+                // The unnamed storage mixes every tag, so only a storage that is its own tag's named one counts.
+                const STagComponent* First = nullptr;
+                int32 Live = 0;
+                for (const ECS::FEntity Entity : *Storage)
+                {
+                    if (Entity.IsTombstone())
+                    {
+                        continue;
+                    }
+                    if (First == nullptr)
+                    {
+                        First = static_cast<const STagComponent*>(Storage->GetRaw(Entity));
+                    }
+                    ++Live;
+                }
+                if (First == nullptr || Registry.FindNamedStorage(TagType, First->Tag) != Storage)
+                {
+                    continue;
+                }
+
+                const FString Tag(First->Tag.ToString().c_str());
+                if (ContainsText(FStringView(Tag), In.Contains))
+                {
+                    STagCount& Count = Out.Tags.emplace_back();
+                    Count.Tag      = Tag;
+                    Count.Entities = Live;
+                }
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("{} tag(s).", Out.Tags.size()));
+        }
+
+        void RegisterTagTools(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEntityTagParams, SEntityTagResult>(
+                Owner, "entity.add_tag",
+                "Add a tag to entities, as one undo step. Entities is a list of ids, and an entity can carry several tags.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEntityTagParams& In, SEntityTagResult& Out) { return EditTags(In, Out, true); });
+
+            Agent::FToolRegistry::Get().Register<SEntityTagParams, SEntityTagResult>(
+                Owner, "entity.remove_tag",
+                "Remove a tag from entities, as one undo step. Entities without it are left alone.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEntityTagParams& In, SEntityTagResult& Out) { return EditTags(In, Out, false); });
+
+            Agent::FToolRegistry::Get().Register<SFindByTagParams, SListEntitiesResult>(
+                Owner, "scene.find_by_tag",
+                "List the entities carrying a tag, with the id every other tool takes. Limit and Offset page a long list.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+                [](const SFindByTagParams& In, SListEntitiesResult& Out) { return FindByTag(In, Out); });
+
+            Agent::FToolRegistry::Get().Register<SListTagsParams, SListTagsResult>(
+                Owner, "scene.list_tags",
+                "List every tag in the open world with how many entities carry it. Contains filters by name.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+                [](const SListTagsParams& In, SListTagsResult& Out) { return ListTags(In, Out); });
+        }
     }
 
     void RegisterSceneTools(FStringView Owner)
     {
+        RegisterTagTools(Owner);
         RegisterListComponentTypes(Owner);
         RegisterListEntities(Owner);
         RegisterDescribeEntity(Owner);

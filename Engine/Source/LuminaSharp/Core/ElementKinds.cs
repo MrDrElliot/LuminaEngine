@@ -51,7 +51,7 @@ internal static class ElementKinds
             return EElementKind.SlotView;
         }
         // Matched by the interface rather than by name, so a new asset-reference type needs no change here.
-        if (typeof(IAssetRef).IsAssignableFrom(Slot))
+        if (typeof(ISoftObjectReference).IsAssignableFrom(Slot))
         {
             return EElementKind.SoftRef;
         }

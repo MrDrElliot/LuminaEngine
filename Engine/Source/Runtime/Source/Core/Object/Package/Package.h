@@ -233,6 +233,9 @@ namespace Lumina
         RUNTIME_API NODISCARD static bool SavePackageForCook(CPackage* Package, TVector<uint8>& OutCompressed,
                                                              const TFunction<bool(const CObject*)>& ExcludeExport = {});
 
+        // Cooks a single-export package from its file bytes without loading it, and is false when only a load and save can (bulk data, older version, several exports).
+        RUNTIME_API NODISCARD static bool StripPackageForCook(FStringView Path, TVector<uint8>& OutCompressed);
+
         /** Where a package's bulk region sits in its file, file-absolute, with the refs inside exports relative to it. */
         struct FBulkRegion
         {

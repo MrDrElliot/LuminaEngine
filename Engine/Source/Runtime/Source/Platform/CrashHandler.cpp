@@ -44,10 +44,7 @@ namespace Lumina::CrashHandler
             static FOnceFlag Once;
             CallOnce(Once, []
             {
-                FString ExePath = Platform::GetCurrentProcessPath();
-                Paths::Normalize(ExePath);
-
-                const FString Default = Paths::Parent(ExePath) + "/CrashDumps";
+                const FString Default = Paths::GetGameDataDirectory() + "/CrashDumps";
                 Publish(Default.c_str(), static_cast<uint32>(Default.size()));
             });
         }

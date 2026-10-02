@@ -46,6 +46,11 @@ namespace Lumina
         bool ForwardKeyEventToRmlUi(FEvent& Event);
         bool ForwardMouseEventToRmlUi(FEvent& Event);
 
+        // The window reports moves that go nowhere, and each one would wake the UI for a frame of layout and drawing.
+        double LastRmlMouseX = -1.0;
+        double LastRmlMouseY = -1.0;
+        bool   bLastRmlMoveConsumed = false;
+
         TUniquePtr<FInputContext> Context;
         CWorld* World = nullptr;
         void*   NativeWindowHandle = nullptr;

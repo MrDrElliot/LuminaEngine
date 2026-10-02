@@ -404,7 +404,7 @@ internal static class Serializer
     {
         if (Type.Kind == EPropertyType.SoftObject)
         {
-            return Value is IAssetRef Reference ? Reference.GetPath() : "";
+            return Value is ISoftObjectReference Reference ? Reference.GetPath() : "";
         }
         if (Type.IsInputAction)
         {
@@ -647,7 +647,7 @@ internal static class Serializer
         if (Type.Kind == EPropertyType.SoftObject)
         {
             object? Box = Activator.CreateInstance(Type.Clr);
-            if (Box is IAssetRef Reference)
+            if (Box is ISoftObjectReference Reference)
             {
                 Reference.SetFromPath(Text);
             }

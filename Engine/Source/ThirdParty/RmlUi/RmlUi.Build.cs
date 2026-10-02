@@ -22,6 +22,13 @@ public class RmlUi : LuminaThirdPartyModuleRules
         PrivateDefinitions.Add("RMLUI_VERSION=\"6.3\"");
         PrivateDefinitions.Add("RMLUI_FONT_ENGINE_FREETYPE");
 
+        // RmlUi ships its own zones for layout, styling and parsing, which a capture otherwise shows as one opaque update.
+        if (LuminaFeatures.IsActive(Target, LuminaFeatures.Tracy))
+        {
+            PrivateDependencyModuleNames.Add("Tracy");
+            PrivateDefinitions.Add("RMLUI_TRACY_PROFILING");
+        }
+
         // Vendored and trimmed to Core plus Debugger.
         SourceDirectories.Add("Source/Core");
         SourceDirectories.Add("Source/Debugger");

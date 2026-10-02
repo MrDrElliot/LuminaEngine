@@ -85,6 +85,9 @@ internal static class ScriptCompiler
         return null;
     }
 
+    // The generated IDE project adds the same import as a Using item, so IntelliSense agrees with this compile.
+    public const string ObjectCoreGlobalUsing = "global using static LuminaSharp.ObjectCore;";
+
     /// Compiles all sources into a PE plus its PDB, or null on error (diagnostics logged). ExtraReferences are the dependency units' emitted images.
     public static FScriptImage? Compile(string AssemblyName, IReadOnlyList<(string Path, string Text)> Sources,
         IReadOnlyList<MetadataReference>? ExtraReferences = null)
@@ -103,6 +106,11 @@ internal static class ScriptCompiler
                 ParseOptions, path: AssemblyName + ".Marshalling.g.cs");
             Trees = Trees.Append(Marshalling).ToArray();
         }
+
+        // Object loading reads as it does in C++, LoadObject<T>(Path) with no qualifier, in every script.
+        SyntaxTree ObjectCoreImport = CSharpSyntaxTree.ParseText(
+            SourceText.From(ObjectCoreGlobalUsing, Encoding.UTF8), ParseOptions, path: AssemblyName + ".ObjectCore.g.cs");
+        Trees = Trees.Append(ObjectCoreImport).ToArray();
 
         MetadataReference[] AllReferences = References;
         if (ExtraReferences != null && ExtraReferences.Count > 0)
@@ -158,6 +166,7 @@ internal static class ScriptCompiler
                 .WithSpecificDiagnosticOptions(new Dictionary<string, ReportDiagnostic> { ["CS0436"] = ReportDiagnostic.Suppress }));
 
         Compilation Compiled = Compilation;
+        bool bHadError = false;
         ImmutableArray<ISourceGenerator> Generators = SourceGenerators;
         if (Generators.Length > 0)
         {
@@ -168,6 +177,7 @@ internal static class ScriptCompiler
             {
                 if (Diagnostic.Severity == DiagnosticSeverity.Error)
                 {
+                    bHadError = true;
                     Native.Log(ELogLevel.Error, "C# generator: " + Diagnostic);
                 }
             }
@@ -178,7 +188,6 @@ internal static class ScriptCompiler
         EmitResult Result = Compiled.Emit(PeStream, PdbStream,
             options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb));
 
-        bool bHadError = false;
         foreach (Diagnostic Diagnostic in Result.Diagnostics)
         {
             if (Diagnostic.Severity == DiagnosticSeverity.Error)
@@ -228,16 +237,19 @@ internal static class ScriptCompiler
         // would surface as a bare CS9248 "must have an implementation part" with nothing naming the cause.
         "ScriptPropertyGenerator",
         "ScriptFunctionInvokerGenerator",   // [ScriptFunction] -> the typed frame invoker
+        "ContainerIndexerWriteGenerator",   // rejects a write through a TVector indexer that reads a held copy
     };
 
     private static ImmutableArray<ISourceGenerator> SourceGenerators => CachedGenerators ??= LoadGenerators();
+
+    internal static string GeneratorPath =>
+        Path.Combine(Path.GetDirectoryName(typeof(Host).Assembly.Location) ?? string.Empty, "LuminaSharp.Generators.dll");
 
     private static ImmutableArray<ISourceGenerator> LoadGenerators()
     {
         try
         {
-            string Directory = Path.GetDirectoryName(typeof(Host).Assembly.Location) ?? string.Empty;
-            string GeneratorPath = Path.Combine(Directory, "LuminaSharp.Generators.dll");
+            string GeneratorPath = ScriptCompiler.GeneratorPath;
             if (!File.Exists(GeneratorPath))
             {
                 Native.Log(ELogLevel.Warn,

@@ -126,6 +126,9 @@ namespace Lumina
             // Safe because the base is empty, which ResolveNativeBase is what guarantees.
             Minted->SetSuperStruct(Base);
 
+            // A class row's initializers live in its rewritten accessors, so the schema carried none of them.
+            DotNet::ApplyScriptableDefaults(FStringView(Desc.ScriptTypeName.c_str(), Desc.ScriptTypeName.size()), Minted->GetDefaultInstance());
+
             // An asset stores this rather than the object's name, so a re-mint still resolves.
             Minted->Metadata.AddValue("ScriptTypeName", Desc.ScriptTypeName.c_str());
             Minted->SetFlag(OF_Transient);

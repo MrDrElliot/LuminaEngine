@@ -63,11 +63,21 @@ namespace Lumina::Agent
             State->Phase.store(EPhase::Finished, std::memory_order_release);
         });
 
-        const double Deadline = PlatformTime::Seconds() + (static_cast<double>(TimeoutMilliseconds) / 1000.0);
+        const double Timeout = static_cast<double>(TimeoutMilliseconds) / 1000.0;
+        double Deadline = PlatformTime::Seconds() + Timeout;
+        uint64 LastStamp = MainThread::GetProgressStamp();
 
         for (;;)
         {
             const EPhase Phase = State->Phase.load(std::memory_order_acquire);
+
+            // A queue working through earlier callbacks, such as a long import, is busy rather than stuck.
+            const uint64 Stamp = MainThread::GetProgressStamp();
+            if (Stamp != LastStamp || (Stamp & 1u) != 0u)
+            {
+                LastStamp = Stamp;
+                Deadline  = PlatformTime::Seconds() + Timeout;
+            }
 
             if (Phase == EPhase::Finished)
             {

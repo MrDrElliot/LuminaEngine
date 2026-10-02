@@ -36,5 +36,12 @@ namespace Lumina
 
         // Per-frame world-space widget render jobs (cleared + refilled each TickWorldWidgets).
         TVector<FWidgetRenderJob>                WidgetJobs;
+
+        // A frame with no input, no edit and nothing animating skips RmlUi's update and render walks and replays the last batch.
+        uint64                                   SeenChangeGeneration = 0;
+        double                                   NextUpdateSeconds = 0.0;
+        FUIntVector2                             LastLayoutSize{0, 0};
+        float                                    LastDpRatio = 0.0f;
+        bool                                     bIdleThisFrame = false;
     };
 }

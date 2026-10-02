@@ -192,6 +192,18 @@ namespace Lumina
 
     bool FInputViewport::ForwardMouseEventToRmlUi(FEvent& Event)
     {
+        if (Event.IsA<FMouseMovedEvent>())
+        {
+            const double RawX = Context->GetMouseXRaw();
+            const double RawY = Context->GetMouseYRaw();
+            if (RawX == LastRmlMouseX && RawY == LastRmlMouseY)
+            {
+                return bLastRmlMoveConsumed;
+            }
+            LastRmlMouseX = RawX;
+            LastRmlMouseY = RawY;
+        }
+
         // Event listeners can mutate the DOM that render reads concurrently, so hold the lock throughout.
         RmlUi::FLockedWorldContext Ctx(World);
         if (!Ctx)
@@ -211,7 +223,8 @@ namespace Lumina
             const uint32 RTH  = Context->GetRenderTargetHeight();
             const double Px = (RTW > 0) ? (Cx / double(RTW)) * double(Dims.x) : Cx;
             const double Py = (RTH > 0) ? (Cy / double(RTH)) * double(Dims.y) : Cy;
-            return !Ctx->ProcessMouseMove(int(Px), int(Py), Mods);
+            bLastRmlMoveConsumed = !Ctx->ProcessMouseMove(int(Px), int(Py), Mods);
+            return bLastRmlMoveConsumed;
         }
         if (Event.IsA<FMouseButtonPressedEvent>())
         {

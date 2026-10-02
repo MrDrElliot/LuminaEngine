@@ -175,6 +175,24 @@ internal sealed class ScriptableRuntime
     /// </summary>
     public void ApplyDefaults(string TypeName, ulong NativeDefaultObject)
     {
+        // A script data table row has no class default object, so its initializers land in the minted struct's defaults block.
+        if (Library.GetDataStruct(TypeName) is { } Row)
+        {
+            if (Activator.CreateInstance(Row.Type) is NativeStruct RowInstance)
+            {
+                RowInstance.BindNativeHandle(new IntPtr(unchecked((long)NativeDefaultObject)));
+                try
+                {
+                    RowInstance.ApplyScriptDefaults();
+                }
+                catch (Exception Exception)
+                {
+                    Native.Log(ELogLevel.Error, $"Script defaults for '{TypeName}' threw: {Exception.Message}");
+                }
+            }
+            return;
+        }
+
         Type? Type = Library.GetScriptable(TypeName);
         if (Type == null || Activator.CreateInstance(Type) is not NativeObject Instance)
         {

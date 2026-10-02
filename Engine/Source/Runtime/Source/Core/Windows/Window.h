@@ -67,6 +67,7 @@ namespace Lumina
 		//~ Per window input. Subscribe directly; a host needs no application object to read the keyboard.
 
 		FWindowKeyDelegate         OnKey;
+		FWindowCharDelegate        OnChar;
 		FWindowMouseButtonDelegate OnMouseButton;
 		FWindowMouseMoveDelegate   OnMouseMove;
 		FWindowScrollDelegate      OnScroll;

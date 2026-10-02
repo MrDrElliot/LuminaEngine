@@ -273,6 +273,80 @@ namespace Lumina
         bool bRemoved = false;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SEntityTagParams
+    {
+        GENERATED_BODY()
+
+        // Ids from scene.list_entities, so one call can tag a whole batch.
+        PROPERTY()
+        TVector<FString> Entities;
+
+        PROPERTY()
+        FString Tag;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEntityTagResult
+    {
+        GENERATED_BODY()
+
+        // Entities whose tags actually changed, so a repeat call reports zero.
+        PROPERTY()
+        int32 Changed = 0;
+
+        // Ids that named nothing, reported rather than failing the whole call.
+        PROPERTY()
+        TVector<FString> Skipped;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SFindByTagParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Tag;
+
+        // How many to return at most, so a tag on thousands of entities cannot flood the reply.
+        PROPERTY()
+        int32 Limit = 100;
+
+        PROPERTY()
+        int32 Offset = 0;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API STagCount
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Tag;
+
+        PROPERTY()
+        int32 Entities = 0;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SListTagsParams
+    {
+        GENERATED_BODY()
+
+        // Only tags containing this. Empty lists every one of them.
+        PROPERTY()
+        FString Contains;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SListTagsResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        TVector<STagCount> Tags;
+    };
+
     namespace MCP
     {
         void RegisterSceneTools(FStringView Owner);

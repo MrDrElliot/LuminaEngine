@@ -45,6 +45,8 @@ namespace Lumina
     };
 
     DECLARE_MULTICAST_DELEGATE(FWindowKeyDelegate, FWindow*, const FKeyInput&);
+    // A typed character as a Unicode code point, after the keyboard layout and dead keys are applied.
+    DECLARE_MULTICAST_DELEGATE(FWindowCharDelegate, FWindow*, uint32);
     DECLARE_MULTICAST_DELEGATE(FWindowMouseButtonDelegate, FWindow*, const FMouseButtonInput&);
     DECLARE_MULTICAST_DELEGATE(FWindowMouseMoveDelegate, FWindow*, const FMouseMoveInput&);
     DECLARE_MULTICAST_DELEGATE(FWindowScrollDelegate, FWindow*, const FMouseScrollInput&);

@@ -36,8 +36,31 @@ namespace Lumina
 
         void Clear();
 
-        mutable FSharedMutex            Mutex;
-        FObjectGUIDMap                  ObjectGUIDHash;
-        TObjectHashMap<FName>           ObjectNameHash;
+    private:
+
+        // Loader threads register objects by the thousand, so one table behind one lock stalled every lookup while it regrew.
+        static constexpr uint32 ShardBits = 6;
+        static constexpr uint32 ShardCount = 1u << ShardBits;
+
+        struct alignas(64) FGuidShard
+        {
+            mutable FSharedMutex Mutex;
+            FObjectGUIDMap       Objects;
+        };
+
+        struct alignas(64) FNameShard
+        {
+            mutable FSharedMutex   Mutex;
+            TObjectHashMap<FName>  Objects;
+        };
+
+        template<typename TKey>
+        static uint32 ShardOf(const TKey& Key) noexcept
+        {
+            return static_cast<uint32>((GetTypeHash(Key) * 0x9E3779B97F4A7C15ull) >> (64 - ShardBits));
+        }
+
+        FGuidShard GuidShards[ShardCount];
+        FNameShard NameShards[ShardCount];
     };
 }

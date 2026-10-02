@@ -158,6 +158,13 @@ namespace Lumina
 			{
 				SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 				RenderLoop();
+
+				// A loop that ended on its own left nothing rendering, and voices queued behind it would never start.
+				if (!bStopRequested.load(Atomic::MemoryOrderAcquire))
+				{
+					bNeedsRestart.store(true, Atomic::MemoryOrderRelease);
+					bRunning.store(false, Atomic::MemoryOrderRelease);
+				}
 			}
 
 			CloseEndpoint();
@@ -301,12 +308,23 @@ namespace Lumina
 
 		void FWindowsAudioDevice::RenderLoop()
 		{
+			constexpr DWORD  kWakeTimeoutMs   = 2000;
+			constexpr uint32 kStalledWakeLimit = 2;
+
+			uint32 MissedWakes = 0;
 			while (!bStopRequested.load(Atomic::MemoryOrderAcquire))
 			{
-				if (WaitForSingleObject(BufferEvent, 2000) != WAIT_OBJECT_0)
+				if (WaitForSingleObject(BufferEvent, kWakeTimeoutMs) != WAIT_OBJECT_0)
 				{
+					// An endpoint that stops asking for audio without reporting an error is as gone as an invalidated one.
+					if (++MissedWakes >= kStalledWakeLimit)
+					{
+						LOG_WARN("[Audio] the output device stopped requesting audio; reopening it");
+						break;
+					}
 					continue;
 				}
+				MissedWakes = 0;
 
 				if (bStopRequested.load(Atomic::MemoryOrderAcquire))
 				{
@@ -317,10 +335,7 @@ namespace Lumina
 				HRESULT Result = Client->GetCurrentPadding(&Padding);
 				if (FAILED(Result))
 				{
-					if (Result == AUDCLNT_E_DEVICE_INVALIDATED)
-					{
-						bNeedsRestart.store(true, Atomic::MemoryOrderRelease);
-					}
+					LOG_WARN("[Audio] GetCurrentPadding failed (0x{0:X}); reopening the output device", (uint32)Result);
 					break;
 				}
 
@@ -334,10 +349,7 @@ namespace Lumina
 				Result = RenderClient->GetBuffer(Available, &Buffer);
 				if (FAILED(Result))
 				{
-					if (Result == AUDCLNT_E_DEVICE_INVALIDATED)
-					{
-						bNeedsRestart.store(true, Atomic::MemoryOrderRelease);
-					}
+					LOG_WARN("[Audio] GetBuffer failed (0x{0:X}); reopening the output device", (uint32)Result);
 					break;
 				}
 

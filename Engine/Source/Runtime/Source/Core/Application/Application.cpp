@@ -175,6 +175,7 @@ namespace Lumina
         MainWindow = new FWindow(FWindowSpecs{ .bShowTitlebar = !WITH_EDITOR });
 
         (void)MainWindow->OnKey.AddMember(this, &FApplication::ForwardKey);
+        (void)MainWindow->OnChar.AddMember(this, &FApplication::ForwardChar);
         (void)MainWindow->OnMouseButton.AddMember(this, &FApplication::ForwardMouseButton);
         (void)MainWindow->OnMouseMove.AddMember(this, &FApplication::ForwardMouseMove);
         (void)MainWindow->OnScroll.AddMember(this, &FApplication::ForwardScroll);
@@ -197,6 +198,11 @@ namespace Lumina
         {
             EventProcessor.Dispatch<FKeyReleasedEvent>(Input.Key, Input.bCtrl, Input.bShift, Input.bAlt, Input.bSuper);
         }
+    }
+
+    void FApplication::ForwardChar(FWindow* /*Window*/, uint32 Codepoint)
+    {
+        EventProcessor.Dispatch<FCharInputEvent>(Codepoint);
     }
 
     void FApplication::ForwardMouseButton(FWindow* /*Window*/, const FMouseButtonInput& Input)

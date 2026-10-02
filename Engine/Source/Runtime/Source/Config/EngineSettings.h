@@ -40,6 +40,10 @@ namespace Lumina
         /** Worlds the cooker walks from to build the shipped PAK. */
         PROPERTY(Editable, Category = "Maps")
         TVector<TSoftObjectPtr<CWorld>> CookRoots;
+
+        // Content folders that always ship, for assets a game loads by names it builds at runtime, such as /Game/Content/NPCs.
+        PROPERTY(Editable, Category = "Maps")
+        TVector<FString> CookFolders;
     };
 
     // Texture streaming budget and policy. Project-scoped rather than per-user: the pool size a project
@@ -288,6 +292,10 @@ namespace Lumina
         // Largest face a point light's cube shadow may claim. Higher is sharper, but every tap touches more cache lines.
         PROPERTY(Editable, Category = "Shadows", ClampMin = 128, ClampMax = 1024)
         int32 PointShadowResolution = 512;
+
+        // Multiplies every mesh's imported LOD switch distances, so a close third-person camera can push them out.
+        PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.25f, ClampMax = 16.0f, Delta = 0.25f)
+        float LODDistanceScale = 1.0f;
 
         /** Trace reflections against the depth buffer, falling back to the prefiltered cube off-screen. */
         PROPERTY(Editable, Category = "Screen Space Reflections")

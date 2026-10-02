@@ -73,28 +73,6 @@ internal sealed class ScriptManager
             FScriptImage Image;
             if (Unit.Sources.Count > 0)
             {
-                var Refs = new List<MetadataReference>();
-                foreach (string Dep in Unit.Dependencies)
-                {
-                    if (Images.TryGetValue(Dep, out byte[]? DepImage))
-                    {
-                        Refs.Add(MetadataReference.CreateFromImage(DepImage));
-                    }
-                }
-
-                foreach (string Reference in Unit.References)
-                {
-                    try
-                    {
-                        Refs.Add(MetadataReference.CreateFromFile(Reference));
-                    }
-                    catch (Exception Exception)
-                    {
-                        Native.Log(ELogLevel.Error,
-                            $"Script reference '{Reference}' could not be read for '{Unit.Name}': {Exception.Message}");
-                    }
-                }
-
                 // Roslyn is the single largest cost in engine startup, and nothing has usually changed.
                 string? CompileKey = ComputeCompileKey(Unit, Images);
                 if (TryLoadCachedAssembly(Unit.DllPath, CompileKey, out FScriptImage CachedImage))
@@ -103,7 +81,7 @@ internal sealed class ScriptManager
                 }
                 else
                 {
-                    FScriptImage? Compiled = ScriptCompiler.Compile(Unit.Name, Unit.Sources, Refs);
+                    FScriptImage? Compiled = CompileUnit(Unit, Images);
                     if (Compiled == null)
                     {
                         Native.Log(ELogLevel.Error,
@@ -189,6 +167,35 @@ internal sealed class ScriptManager
             $"Loaded C# scripts [generation {Generation}]: {Pending.Count} assembl(ies), {AllTypes.Count} type(s), " +
             $"{Library.EntityScriptTypeNames.Count} EntityScript(s), {Library.EntitySystemCount} EntitySystem(s).");
         return true;
+    }
+
+    // Kept out of LoadOrReload, whose JIT would otherwise load Roslyn in a packaged game that ships only prebuilt scripts.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static FScriptImage? CompileUnit(ScriptAssemblyUnit Unit, Dictionary<string, byte[]> Images)
+    {
+        var Refs = new List<MetadataReference>();
+        foreach (string Dep in Unit.Dependencies)
+        {
+            if (Images.TryGetValue(Dep, out byte[]? DepImage))
+            {
+                Refs.Add(MetadataReference.CreateFromImage(DepImage));
+            }
+        }
+
+        foreach (string Reference in Unit.References)
+        {
+            try
+            {
+                Refs.Add(MetadataReference.CreateFromFile(Reference));
+            }
+            catch (Exception Exception)
+            {
+                Native.Log(ELogLevel.Error,
+                    $"Script reference '{Reference}' could not be read for '{Unit.Name}': {Exception.Message}");
+            }
+        }
+
+        return ScriptCompiler.Compile(Unit.Name, Unit.Sources, Refs);
     }
 
     // Post-order DFS over the unit dependency graph: a unit appears after every dependency it names that is
@@ -296,6 +303,10 @@ internal sealed class ScriptManager
             Feed($"v{CompileCacheVersion}");
             Feed(ScriptCompiler.bOptimize ? "release" : "debug");
             Feed(typeof(ScriptManager).Assembly.FullName ?? "LuminaSharp");
+            // The assembly version never moves, so a script built against an older LuminaSharp would load and then miss members.
+            Feed(typeof(ScriptManager).Assembly.ManifestModule.ModuleVersionId.ToString());
+            var Generators = new FileInfo(ScriptCompiler.GeneratorPath);
+            Feed(Generators.Exists ? $"{Generators.Length}:{Generators.LastWriteTimeUtc.Ticks}" : "no generators");
             Feed(Unit.Name);
 
             foreach ((string Path, string Text) in Unit.Sources)
@@ -437,7 +448,7 @@ internal sealed class ScriptManager
         // The next generation rebuilds them lazily / re-subscribes.
         CTimerLibrary.ClearAllManaged();      // world timers whose Action captures a script instance
         UIDataModel.DisposeAll();             // MVVM bindings (user ViewModel + native data model)
-        Asset.PurgePending();                 // in-flight async asset-load callbacks
+        ObjectCore.PurgePendingLoads();                 // in-flight async asset-load callbacks
         ScriptAsync.Clear();                  // tokens for async functions still running in the old generation
         GameTaskRegistry.CancelAll();         // pending awaits, whose continuations close over unloading code
         Interop.ResetExceptionThrottle();     // the reloaded code earns a full stack on its first throw

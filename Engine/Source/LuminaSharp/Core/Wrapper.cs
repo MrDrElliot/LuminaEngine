@@ -66,10 +66,32 @@ internal static class Wrapper<T> where T : class
             null, new[] { typeof(IntPtr) }, null);
         if (Constructor == null)
         {
-            return Handle => null;
+            return BuildUnboundThenBind() ?? (Handle => null);
         }
 
         ParameterExpression Parameter = Expression.Parameter(typeof(IntPtr), "handle");
         return Expression.Lambda<Func<IntPtr, T?>>(Expression.New(Constructor, Parameter), Parameter).Compile();
+    }
+
+    // A script data table row declares no IntPtr constructor, so it is created unbound and then pointed at the row.
+    private static Func<IntPtr, T?>? BuildUnboundThenBind()
+    {
+        if (!typeof(NativeStruct).IsAssignableFrom(typeof(T)))
+        {
+            return null;
+        }
+        ConstructorInfo? Parameterless = typeof(T).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public, null, Type.EmptyTypes, null);
+        if (Parameterless == null)
+        {
+            return null;
+        }
+        Func<T> Make = Expression.Lambda<Func<T>>(Expression.New(Parameterless)).Compile();
+        return Handle =>
+        {
+            T Instance = Make();
+            (Instance as NativeStruct)!.BindNativeHandle(Handle);
+            return Instance;
+        };
     }
 }

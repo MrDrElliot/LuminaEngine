@@ -48,6 +48,12 @@ namespace Lumina
             }
         }
 
+        void SecondaryCharCallback(GLFWwindow* W, unsigned int Codepoint)
+        {
+            ImGui_ImplGlfw_CharCallback(W, Codepoint);
+            GApp->GetEventProcessor().Dispatch<FCharInputEvent>(Codepoint);
+        }
+
         void SecondaryMouseButtonCallback(GLFWwindow* W, int Button, int Action, int Mods)
         {
             ImGui_ImplGlfw_MouseButtonCallback(W, Button, Action, Mods);
@@ -93,6 +99,7 @@ namespace Lumina
                     GSecondaryWindowLastMouse[W] = ImVec2(static_cast<float>(X), static_cast<float>(Y));
                 }
                 glfwSetKeyCallback(W, SecondaryKeyCallback);
+                glfwSetCharCallback(W, SecondaryCharCallback);
                 glfwSetMouseButtonCallback(W, SecondaryMouseButtonCallback);
                 glfwSetCursorPosCallback(W, SecondaryCursorPosCallback);
                 glfwSetScrollCallback(W, SecondaryScrollCallback);

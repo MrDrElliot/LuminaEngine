@@ -45,6 +45,7 @@
 #include "Core/Object/SoftObjectPtr.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "TaskSystem/ThreadedCallback.h"
+#include "TaskSystem/Future.h"
 #include "Tools/UI/ImGui/ImGuiX.h"   // editor toast notifications for script-compile feedback
 #include "nlohmann/json.hpp"          // cooked script manifest (prebuilt-DLL unit graph)
 
@@ -509,8 +510,8 @@ namespace Lumina::DotNet
         {
             TVector<FScriptUnit> Units;
 
-            const FString ExeDir       = ParentOf(Platform::GetCurrentProcessPath());
-            const FString ScriptsDir   = Join(ExeDir, "DotNet/Scripts");
+            // A package keeps its script assemblies with LuminaSharp in the data folder's Managed directory.
+            const FString ScriptsDir   = Join(Paths::GetGameDataDirectory(), "Managed");
             const FString ManifestPath = Join(ScriptsDir, "scripts.manifest.json");
 
             FString Text;
@@ -676,6 +677,8 @@ namespace Lumina::DotNet
             Xml += "    <Analyzer Include=\""
                 + std::string(NativePath(Join(ParentOf(LuminaSharpDll), "LuminaSharp.Generators.dll")).c_str())
                 + "\" />\n";
+            // Matches the import ScriptCompiler adds to every runtime compile, so LoadObject<T> resolves the same in the IDE.
+            Xml += "    <Using Include=\"LuminaSharp.ObjectCore\" Static=\"true\" />\n";
             Xml += "  </ItemGroup>\n";
 
             // Named as packages rather than as their restored DLLs, so the IDE restores them the usual way.
@@ -878,20 +881,17 @@ namespace Lumina::DotNet
             return;
         }
 
-        // A packaged game ships the runtime beside the exe, so probe that layout before the install dir.
+        // A packaged game ships the runtime in its data folder, so probe that before the install dir.
         const FString ExeDir = ParentOf(Platform::GetCurrentProcessPath());
 
-        FString RuntimeSubPath = "External/DotNet/runtime/";
-        RuntimeSubPath.append(RuntimeRid());
-
-        FString Bundled = Join(ExeDir, RuntimeSubPath);
+        FString Bundled = Join(Paths::GetGameDataDirectory(), FString("Runtime/") + RuntimeRid());
         if (!Filesystem::Exists(Bundled))
         {
-            Bundled = Join(Paths::GetEngineInstallDirectory(), RuntimeSubPath);
+            Bundled = Join(Paths::GetEngineInstallDirectory(), FString("External/DotNet/runtime/") + RuntimeRid());
         }
         if (!Filesystem::Exists(Bundled))
         {
-            LOG_ERROR("C# scripting disabled: bundled .NET runtime not found next to the exe or under the engine install ('{}'). Run Setup.bat to extract External.", Bundled);
+            LOG_ERROR("C# scripting disabled: bundled .NET runtime not found in the game's data folder or under the engine install ('{}'). Run Setup.bat to extract External.", Bundled);
             return;
         }
         Bundled = NativePath(Bundled);
@@ -942,7 +942,10 @@ namespace Lumina::DotNet
 
         // Managed bootstrap, built next to the binaries by the LuminaSharp project.
         const FString ExePath    = NativePath(Platform::GetCurrentProcessPath());
-        const FString ManagedDir = Join(ExeDir, "DotNet/Managed");
+        const FString PackagedManagedDir = Join(Paths::GetGameDataDirectory(), "Managed");
+        const FString ManagedDir = Filesystem::Exists(Join(PackagedManagedDir, "LuminaSharp.dll"))
+            ? PackagedManagedDir
+            : Join(ExeDir, "DotNet/Managed");
 
         // Loading from a shadow copy leaves the canonical output free for a packaging build to overwrite.
         FString LoadDir = ManagedDir;
@@ -1733,6 +1736,7 @@ namespace Lumina::DotNet
     // Reachable from the global load export, which cannot see the anonymous-namespace delegate.
     void DispatchAssetCallback(void* Callback, void* Object)
     {
+        LUMINA_PROFILE_SCOPE();
         if (bInitialized && GManaged.InvokeAssetCallback != nullptr)
         {
             GManaged.InvokeAssetCallback(Callback, Object);
@@ -2008,33 +2012,87 @@ LUMINA_DOTNET_EXPORT(void, UnpinObject)(void* Pin)
     Lumina::Memory::Delete(static_cast<Lumina::TObjectPtr<Lumina::CObject>*>(Pin));
 }
 
-// Registry probe (no load). Backs Asset.Exists.
-LUMINA_DOTNET_EXPORT(int, AssetExists)(const char* Path, int Len)
+// Registry probe with no load, returning bool because the generated binding marshals a C# bool as one byte.
+LUMINA_DOTNET_EXPORT(bool, AssetExists)(const char* Path, int Len)
 {
     if (Path == nullptr || Len <= 0)
     {
-        return 0;
+        return false;
     }
-    return Lumina::FAssetRegistry::Get().GetAssetByPath(Lumina::FStringView(Path, static_cast<size_t>(Len))) != nullptr ? 1 : 0;
+    return Lumina::FAssetRegistry::Get().GetAssetByPath(Lumina::FStringView(Path, static_cast<size_t>(Len))) != nullptr;
+}
+
+namespace
+{
+    struct FPendingScriptLoad
+    {
+        Lumina::FString Path;
+        void*           Callback = nullptr;
+    };
+
+    // A streaming script asks for hundreds of assets in one frame, so a request only queues its path and a worker resolves the batch.
+    Lumina::FMutex                       GScriptLoadMutex;
+    Lumina::TVector<FPendingScriptLoad>  GScriptLoads;
+    bool                                 bScriptLoadDrainScheduled = false;
+
+    void RequestScriptLoad(const Lumina::FString& Path, void* Callback)
+    {
+        Lumina::FSoftObjectPath Soft{ Lumina::FStringView(Path.c_str(), Path.size()) };
+        Soft.LoadAsync([Callback](Lumina::CObject* Object)
+        {
+            // The only owner may be a release already queued for the game thread, so the hop holds its own reference.
+            Lumina::MainThread::Enqueue([Callback, Held = Lumina::TObjectPtr<Lumina::CObject>(Object)]()
+            {
+                Lumina::DotNet::DispatchAssetCallback(Callback, Held.Get());
+            });
+        });
+    }
+
+    void DrainScriptLoads()
+    {
+        LUMINA_PROFILE_SCOPE();
+        Lumina::TVector<FPendingScriptLoad> Batch;
+        for (;;)
+        {
+            {
+                Lumina::FScopeLock Lock(GScriptLoadMutex);
+                if (GScriptLoads.empty())
+                {
+                    bScriptLoadDrainScheduled = false;
+                    return;
+                }
+                Batch.swap(GScriptLoads);
+            }
+            for (const FPendingScriptLoad& Load : Batch)
+            {
+                RequestScriptLoad(Load.Path, Load.Callback);
+            }
+            Batch.clear();
+        }
+    }
 }
 
 // Resumes the managed continuation on the game thread with the loaded object, or null.
 LUMINA_DOTNET_EXPORT(void, LoadObjectAsync)(const char* Path, int Len, void* Callback)
 {
+    LUMINA_PROFILE_SCOPE();
     if (Path == nullptr || Len <= 0)
     {
         Lumina::DotNet::DispatchAssetCallback(Callback, nullptr);
         return;
     }
 
-    Lumina::FSoftObjectPath Soft{ Lumina::FStringView(Path, static_cast<size_t>(Len)) };
-    Soft.LoadAsync([Callback](Lumina::CObject* Object)
+    bool bSchedule = false;
     {
-        Lumina::MainThread::Enqueue([Callback, Object]()
-        {
-            Lumina::DotNet::DispatchAssetCallback(Callback, Object);
-        });
-    });
+        Lumina::FScopeLock Lock(GScriptLoadMutex);
+        GScriptLoads.push_back(FPendingScriptLoad{ Lumina::FString(Path, static_cast<size_t>(Len)), Callback });
+        bSchedule = !bScriptLoadDrainScheduled;
+        bScriptLoadDrainScheduled = true;
+    }
+    if (bSchedule)
+    {
+        Lumina::Task::Async([]() { DrainScriptLoads(); });
+    }
 }
 
 // Fills the buffer up to capacity and returns the full length, backing a path round-trip.

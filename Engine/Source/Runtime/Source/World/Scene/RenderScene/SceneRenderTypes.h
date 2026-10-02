@@ -1095,7 +1095,7 @@ namespace Lumina
         float  CullNearPlane;
         float  CullFarPlane;
 
-        uint32 _CullPad4;
+        float  LODDistanceScaleSq;
     };
 
     VERIFY_SSBO_ALIGNMENT(FCullData);

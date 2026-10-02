@@ -100,7 +100,7 @@ uint SelectSurfaceLODForView(FSurfaceDesc Desc, float3 ViewOrigin, float4 Sphere
     const float3 ToView  = SphereBounds.xyz - ViewOrigin;
     const float  DistSq  = dot(ToView, ToView);
     const uint   NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
-    const uint   Picked  = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w);
+    const uint   Picked  = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w * Scene().CullData.LODDistanceScaleSq);
 
     // NumLODs indexes MESHLET_MAX_LODS-long arrays, so clamp here: past the table the offsets are
     // whatever follows the allocation, and both the dispatch domain and the reservation sum from them.
@@ -125,7 +125,7 @@ uint SelectCascadeShadowLOD(FSurfaceDesc Desc, float3 CamPos, float4 SphereBound
 
     // The camera-distance pick the shadow LOD has always been biased off. Same expression and operand
     // order as SelectSurfaceLODForView so the two stay bit-identical on both sides.
-    const uint CameraLOD = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w);
+    const uint CameraLOD = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w * Scene().CullData.LODDistanceScaleSq);
 
     // Sloppy LODs (4-5) can hole and light-leak; past ShadowCoarseLODDistance the cascade texel is wide
     // enough that the holes stay sub-texel. Mirrors CullInstances' ShadowCap exactly.

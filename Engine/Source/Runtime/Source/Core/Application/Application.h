@@ -63,6 +63,7 @@ namespace Lumina
 		//~ Window input reaches the event processor through these rather than the window reaching for GApp.
 
 		void ForwardKey(FWindow* Window, const FKeyInput& Input);
+		void ForwardChar(FWindow* Window, uint32 Codepoint);
 		void ForwardMouseButton(FWindow* Window, const FMouseButtonInput& Input);
 		void ForwardMouseMove(FWindow* Window, const FMouseMoveInput& Input);
 		void ForwardScroll(FWindow* Window, const FMouseScrollInput& Input);

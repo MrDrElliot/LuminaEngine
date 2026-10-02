@@ -322,7 +322,7 @@ namespace Lumina::MCP
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Could not create {}.", OutputDirectory));
                     }
-                    const FString PakPath = OutputDirectory + "/" + Name + ".pak";
+                    const FString PakPath = FProjectPackager::GetPakPath(FStringView(OutputDirectory.c_str(), OutputDirectory.size()), FStringView(Name.c_str(), Name.size()));
 
                     {
                         FScopeLock Lock(S.Mutex);
@@ -487,9 +487,13 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("Could not start {}.", Executable));
                     }
 
-                    // A cooked game logs beside its executable, since it never loads a project directory to move the log into.
+                    // A cooked game logs into its data folder, since it never loads a project directory to move the log into.
                     G.Executable = Executable;
-                    G.LogPath = Directory + "/Logs/Lumina.log";
+                    FStringView ExeStem(Executable.c_str(), Executable.size());
+                    ExeStem = ExeStem.substr(ExeStem.find_last_of("/\\") + 1);
+                    ExeStem = ExeStem.substr(0, ExeStem.find_last_of('.'));
+                    const FString DataDir = Directory + "/" + FString(ExeStem.data(), ExeStem.size()) + "_Data";
+                    G.LogPath = (Filesystem::Exists(FStringView(DataDir.c_str(), DataDir.size())) ? DataDir : Directory) + "/Logs/Lumina.log";
                     G.StartSeconds = PlatformTime::Seconds();
                     G.EndSeconds = 0.0;
 

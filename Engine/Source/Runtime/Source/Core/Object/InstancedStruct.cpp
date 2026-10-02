@@ -43,6 +43,7 @@ namespace Lumina
 
         ScriptStruct      = Other.ScriptStruct;
         InstanceMemory    = Other.InstanceMemory;
+        ScriptTypePin     = Move(Other.ScriptTypePin);
         TypeIdentity      = Other.TypeIdentity;
         SeededGeneration  = Other.SeededGeneration;
 
@@ -75,6 +76,7 @@ namespace Lumina
 
             ScriptStruct      = Other.ScriptStruct;
             InstanceMemory    = Other.InstanceMemory;
+            ScriptTypePin     = Move(Other.ScriptTypePin);
             TypeIdentity      = Other.TypeIdentity;
             SeededGeneration  = Other.SeededGeneration;
 
@@ -107,6 +109,10 @@ namespace Lumina
 
         ScriptStruct = InStruct;
         TypeIdentity = DataStructIdentity(InStruct);
+        if (!TypeIdentity.IsNone())
+        {
+            ScriptTypePin = InStruct;
+        }
         SeededGeneration = FScriptDataStructRegistry::Get().GetGeneration();
         AllocateFor(InStruct);
         InStruct->InitializeStruct(InstanceMemory);
@@ -145,6 +151,7 @@ namespace Lumina
         ReleaseStorage(ScriptStruct, InstanceMemory, bInline);
 
         ScriptStruct = nullptr;
+        ScriptTypePin = nullptr;
         InstanceMemory = nullptr;
         bInline = false;
     }
@@ -198,7 +205,7 @@ namespace Lumina
         const bool bStaleInline = bInline;
 
         // Pinned, since a type that already died can neither be walked for fields nor destructed through.
-        TObjectPtr<CStruct> StalePin(Stale);
+        TObjectPtr<CStruct> StalePin = ScriptTypePin.IsValid() ? ScriptTypePin : TObjectPtr<CStruct>(Stale);
         const bool bStaleAlive = StalePin.IsValid();
 
         // Inline bytes are about to be overwritten, so the old value has to be moved out first.
@@ -211,6 +218,7 @@ namespace Lumina
         }
 
         ScriptStruct = Fresh;
+        ScriptTypePin = Fresh;
         InstanceMemory = nullptr;
         bInline = false;
 

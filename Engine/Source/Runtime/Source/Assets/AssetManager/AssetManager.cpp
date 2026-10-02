@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 
 #include "AssetManager.h"
+#include "TaskSystem/TaskSystem.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/ObjectCore.h"
@@ -35,6 +36,7 @@ namespace Lumina
 
     FAssetHandle FAssetManager::AcquireLoad(const FGuid& GUID, TPromise<CObject*>& OutPromise, bool& bShouldLoad)
     {
+        LUMINA_PROFILE_SCOPE();
         FFiberScopeLock Lock(RequestMutex);
 
         if (auto It = InFlight.find(GUID); It != InFlight.end())
@@ -75,20 +77,64 @@ namespace Lumina
 
     FAssetHandle FAssetManager::LoadAssetAsync(const FFixedString& PackagePath, const FGuid& RequestedAsset)
     {
+        LUMINA_PROFILE_SCOPE();
+
+        // An asset already in memory is the answer itself, so it skips the request table and the task that would only find it again.
+        if (CObject* Resident = FindObject<CObject>(RequestedAsset);
+            Resident != nullptr && !Resident->HasAnyFlag(OF_NeedsLoad | OF_Loading | OF_NeedsPostLoad))
+        {
+            TPromise<CObject*> Ready;
+            FAssetHandle Handle = Ready.GetFuture();
+            Ready.SetValue(Resident);
+            return Handle;
+        }
+
         TPromise<CObject*> Promise;
         bool bShouldLoad = false;
         FAssetHandle Handle = AcquireLoad(RequestedAsset, Promise, bShouldLoad);
 
         if (bShouldLoad)
         {
-            FFixedString Path = PackagePath;
-            Task::Async([this, Path, RequestedAsset, P = Move(Promise)]() mutable
+            bool bSchedule = false;
             {
-                PerformLoad(Path, RequestedAsset, Move(P));
-            });
+                LUMINA_PROFILE_SECTION("Queue Asset Load");
+                FFiberScopeLock Lock(RequestMutex);
+                QueuedLoads.push_back(FQueuedLoad{ PackagePath, RequestedAsset, Move(Promise) });
+                bSchedule = !bDrainScheduled;
+                bDrainScheduled = true;
+            }
+            if (bSchedule)
+            {
+                Task::Async([this]() { DrainQueuedLoads(); });
+            }
         }
 
         return Handle;
+    }
+
+    void FAssetManager::DrainQueuedLoads()
+    {
+        LUMINA_PROFILE_SCOPE();
+        TVector<FQueuedLoad> Batch;
+        for (;;)
+        {
+            {
+                FFiberScopeLock Lock(RequestMutex);
+                if (QueuedLoads.empty())
+                {
+                    bDrainScheduled = false;
+                    return;
+                }
+                Batch = Move(QueuedLoads);
+                QueuedLoads.clear();
+            }
+            Task::ParallelFor((uint32)Batch.size(), [this, &Batch](uint32 Index)
+            {
+                FQueuedLoad& Load = Batch[Index];
+                PerformLoad(Load.Path, Load.GUID, Move(Load.Promise));
+            }, 1);
+            Batch.clear();
+        }
     }
 
     CObject* FAssetManager::LoadAssetSynchronous(const FFixedString& PackagePath, const FGuid& RequestedAsset)

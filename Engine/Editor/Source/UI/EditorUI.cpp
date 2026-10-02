@@ -1,4 +1,5 @@
 ﻿#include "EditorUI.h"
+#include "Platform/Time/PlatformTime.h"
 #include <string>
 #include "Core/CoreEditorDelegates.h"
 #include "Tools/Screenshot/MovieCapture.h"
@@ -3510,32 +3511,40 @@ namespace Lumina
 
         SmoothedFPS = (SmoothedFrameTime > 0.0f) ? 1000.0f / SmoothedFrameTime : 0.0f;
 
-        const float MemoryMiB = (float)Platform::GetProcessMemoryUsageBytes() / (1024.0f * 1024.0f);
-        SmoothedMemoryMiB = (SmoothedMemoryMiB <= 0.0f)
-            ? MemoryMiB
-            : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * WeightFor(MemorySmoothingSeconds);
-
-        // Host-visible heaps are system RAM already counted in the working set, so they would double-count.
-        RHI::FGPUMemoryStats GPUStats;
-        RHI::GetGPUMemoryStats(GPUStats);
-
-        uint64 GPUUsedBytes = 0;
-        uint64 GPUBudgetBytes = 0;
-        for (const RHI::FGPUMemoryHeapStats& Heap : GPUStats.Heaps)
+        const double NowSeconds = PlatformTime::Seconds();
+        const double SinceSample = NowSeconds - LastMemorySampleSeconds;
+        if (LastMemorySampleSeconds < 0.0 || SinceSample >= MemorySampleSeconds)
         {
-            if (Heap.bDeviceLocal)
-            {
-                GPUUsedBytes   += Heap.UsageBytes;
-                GPUBudgetBytes += Heap.BudgetBytes;
-            }
-        }
+            LastMemorySampleSeconds = NowSeconds;
+            const float SampleWeight = 1.0f - Math::Exp(-(float)Math::Min(SinceSample, 10.0) / MemorySmoothingSeconds);
 
-        constexpr float BytesPerMiB = 1024.0f * 1024.0f;
-        const float GPUMemoryMiB = (float)GPUUsedBytes / BytesPerMiB;
-        SmoothedGPUMemoryMiB = (SmoothedGPUMemoryMiB <= 0.0f)
-            ? GPUMemoryMiB
-            : SmoothedGPUMemoryMiB + (GPUMemoryMiB - SmoothedGPUMemoryMiB) * WeightFor(MemorySmoothingSeconds);
-        GPUMemoryBudgetMiB = (float)GPUBudgetBytes / BytesPerMiB;
+            const float MemoryMiB = (float)Platform::GetProcessMemoryUsageBytes() / (1024.0f * 1024.0f);
+            SmoothedMemoryMiB = (SmoothedMemoryMiB <= 0.0f)
+                ? MemoryMiB
+                : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * SampleWeight;
+
+            // Host-visible heaps are system RAM already counted in the working set, so they would double-count.
+            RHI::FGPUMemoryStats GPUStats;
+            RHI::GetGPUMemoryStats(GPUStats);
+
+            uint64 GPUUsedBytes = 0;
+            uint64 GPUBudgetBytes = 0;
+            for (const RHI::FGPUMemoryHeapStats& Heap : GPUStats.Heaps)
+            {
+                if (Heap.bDeviceLocal)
+                {
+                    GPUUsedBytes   += Heap.UsageBytes;
+                    GPUBudgetBytes += Heap.BudgetBytes;
+                }
+            }
+
+            constexpr float BytesPerMiB = 1024.0f * 1024.0f;
+            const float GPUMemoryMiB = (float)GPUUsedBytes / BytesPerMiB;
+            SmoothedGPUMemoryMiB = (SmoothedGPUMemoryMiB <= 0.0f)
+                ? GPUMemoryMiB
+                : SmoothedGPUMemoryMiB + (GPUMemoryMiB - SmoothedGPUMemoryMiB) * SampleWeight;
+            GPUMemoryBudgetMiB = (float)GPUBudgetBytes / BytesPerMiB;
+        }
 
         FormatTo(Stats.Perf, LE_ICON_GAUGE " {:>3.0f} FPS / {:.2f} ms", SmoothedFPS, SmoothedFrameTime);
         FormatTo(Stats.Objects, LE_ICON_CUBE_OUTLINE " {}", GObjectArray.GetNumAliveObjects());

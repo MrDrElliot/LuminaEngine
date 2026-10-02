@@ -55,11 +55,23 @@ namespace Lumina
 		FAssetHandle AcquireLoad(const FGuid& GUID, TPromise<CObject*>& OutPromise, bool& bShouldLoad);
 		static void  RecordRequest(const FFixedString& Path, double DurationMs, EAssetLoadOutcome Outcome);
 		void         PerformLoad(const FFixedString& Path, const FGuid& GUID, TPromise<CObject*> Promise);
+		void         DrainQueuedLoads();
+
+		struct FQueuedLoad
+		{
+			FFixedString       Path;
+			FGuid              GUID;
+			TPromise<CObject*> Promise;
+		};
 
 	private:
 
 		FFiberMutex                          RequestMutex;
 		THashMap<FGuid, FAssetHandle>        InFlight; // asset GUID -> shared load handle, while loading
+
+		// A streaming burst asks for hundreds of assets in one frame, so requests queue for one draining task instead of a task each.
+		TVector<FQueuedLoad>                 QueuedLoads;
+		bool                                 bDrainScheduled = false;
 	};
 
 

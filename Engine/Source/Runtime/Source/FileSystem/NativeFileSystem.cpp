@@ -192,6 +192,7 @@ namespace Lumina::VFS
                 .VirtualPath    = Move(VirtualPath),
                 .PathSource     = FString(Entry.FullPath.data(), Entry.FullPath.size()),
                 .LastModifyTime = Entry.LastModifyTime,
+                .Size           = Entry.Size,
                 .Flags          = TranslateFlags(Entry.Attributes, Entry.Name)
             };
 

@@ -129,13 +129,18 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         discard;
     }
 
-    if (Draw.ShaderType != kUIShaderTextured && Draw.ShaderType != kUIShaderTexturedStraight)
+    const bool bStraight = Draw.ShaderType == kUIShaderTexturedStraight || Draw.ShaderType == kUIShaderTexturedStraightSRGB;
+    if (Draw.ShaderType != kUIShaderTextured && !bStraight)
     {
         return Input.Colour * SampleColorStops(Draw, GradientCoordinate(Draw, Input.UV)) * Coverage;
     }
 
     float4 Texel = SampleTexture2D(Draw.TextureID, Draw.SamplerIndex, Input.UV);
-    if (Draw.ShaderType == kUIShaderTexturedStraight)
+    if (Draw.ShaderType == kUIShaderTexturedStraightSRGB)
+    {
+        Texel.rgb = EncodeSRGB(Texel.rgb);
+    }
+    if (bStraight)
     {
         Texel.rgb *= Texel.a;
     }

@@ -944,7 +944,7 @@ namespace Lumina
         bHasPendingPrimarySize = true;
     }
 
-    // Quantized with hysteresis, since each apply is a full image realloc.
+    // Quantized with hysteresis while the panel is moving, since each apply is a full image realloc, then exact once it settles.
     void FDefaultSceneRenderer::SetPrimaryViewSize(const FUIntVector2& SizePixels)
     {
         bPrimaryTracksSwapchain = false;
@@ -956,6 +956,29 @@ namespace Lumina
 
         constexpr uint32 kViewSizeGranularity = 128;
         constexpr uint32 kShrinkDeadBand      = 2 * kViewSizeGranularity;
+        constexpr uint32 kSettleFrames        = 8;
+
+        const FUIntVector2 Exact(Math::Max(SizePixels.x, 1u), Math::Max(SizePixels.y, 1u));
+        if (Exact == LastRequestedPrimarySize)
+        {
+            PrimarySizeStableFrames = Math::Min(PrimarySizeStableFrames + 1u, kSettleFrames);
+        }
+        else
+        {
+            LastRequestedPrimarySize = Exact;
+            PrimarySizeStableFrames  = 0;
+        }
+
+        // The panel blits the whole image, so any slack would resample the scene and the UI text with it.
+        if (PrimarySizeStableFrames == kSettleFrames)
+        {
+            if (Exact != SceneViews[0].Size)
+            {
+                PendingPrimarySize     = Exact;
+                bHasPendingPrimarySize = true;
+            }
+            return;
+        }
 
         auto RoundUp = [](uint32 V)
         {

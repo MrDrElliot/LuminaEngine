@@ -100,6 +100,16 @@ namespace Lumina
         return Removed;
     }
 
+    void CFoliageLibrary::SetFoliageInstanceHidden(CWorld* World, int32 Index, bool bHidden)
+    {
+        ECS::FEntity Entity = ECS::NullEntity;
+        SFoliageComponent* Foliage = World != nullptr ? FindFoliage(World, Entity) : nullptr;
+        if (Foliage != nullptr && Index >= 0)
+        {
+            Foliage->SetInstanceHidden((uint32)Index, bHidden);
+        }
+    }
+
     int32 CFoliageLibrary::GetFoliageInstanceCount(CWorld* World)
     {
         ECS::FEntity Entity = ECS::NullEntity;

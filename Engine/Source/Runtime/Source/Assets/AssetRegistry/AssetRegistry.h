@@ -88,7 +88,7 @@ namespace Lumina
 		static FAssetRegistry& Get();
 
 		// Walks engine/project/plugin content, extracting FAssetData (incl. Dependencies) per .lasset.
-		// Incremental via .assetdb cache (mtime + content hash); async on Task::AsyncTask.
+		// Incremental via the binary cache, skipping files whose mtime and size match it; async on Task::AsyncTask.
 		void RunInitialDiscovery();
 		void OnInitialDiscoveryCompleted();
 
@@ -153,17 +153,21 @@ namespace Lumina
 		// Every subscriber touches editor UI state, and asset creation runs on import task fibers.
 		void DispatchRegistryChanged();
 
-		// True iff the on-disk asset is new or changed since the cached entry was extracted.
-		bool NeedsReextract(FStringView Path, int64 MTimeNs, uint64 ContentHash) const;
+		// True when the cached entry came from a file with this exact stamp, so nothing needs reading.
+		bool MatchesCachedStamp(FStringView Path, int64 MTimeNs, uint64 FileSize) const;
+
+		// True when the bytes still hash to the cached entry, which then takes the new stamp without a re-extract.
+		bool RefreshStampIfContentUnchanged(FStringView Path, uint64 ContentHash, int64 MTimeNs, uint64 FileSize);
 
 		// Full parse: header + ImportTable -> FAssetData incl. Dependencies.
 		void ProcessPackagePath(FStringView Path);
+		void ProcessPackage(FStringView Path, int64 MTimeNs, uint64 FileSize);
 
 		void ClearAssets();
 
 		void RecordFailedAsset(FStringView Path);
 
-		// Persistence to <EngineInstall>/Intermediates/AssetRegistry.assetdb; stale entries re-validated on next discovery.
+		// Persistence to <Project>/Intermediates/AssetRegistry.bin; stale entries re-validated on next discovery.
 		void SaveCache() const;
 		bool LoadCache();
 
@@ -172,7 +176,7 @@ namespace Lumina
 
 		// Reap cached entries under a walked root not visited this discovery (externally deleted).
 		// Disabled-plugin content survives: its mount isn't a walked root.
-		void ReapStaleEntries();
+		size_t ReapStaleEntries();
 
 
 		FAssetRegistryUpdatedDelegate	OnAssetRegistryUpdated;
@@ -180,6 +184,10 @@ namespace Lumina
 		// Path lookups are hot over a read mostly set, so they index rather than scan every entry.
 		void InvalidatePathIndex() const { bPathIndexValid = false; }
 		void RebuildPathIndex() const;
+		void EnsurePathIndex() const;
+
+		// Inserts under the held AssetsMutex, replacing any entry with the same path or GUID and keeping PathIndex valid.
+		void InsertAssetLocked(TUniquePtr<FAssetData>&& AssetData);
 
 		mutable FSharedMutex			AssetsMutex;
 		FAssetDataMap 					Assets;
@@ -205,6 +213,15 @@ namespace Lumina
 		// OnInitialDiscoveryCompleted to drive the reap pass.
 		TVector<FFixedString>			LastDiscoveryWalkedRoots;
 		TVector<FFixedString>			LastDiscoveryVisitedPaths; // sorted
+
+		// What the last discovery did, for its summary line and to skip rewriting a cache nothing changed.
+		uint64							DiscoveryStartCycles = 0;
+		double							DiscoveryCacheLoadMs = 0.0;
+		double							DiscoveryWalkMs = 0.0;
+		bool							bDiscoveryHadCache = false;
+		std::atomic<uint32>				DiscoveryUnchanged { 0 };
+		std::atomic<uint32>				DiscoveryRehashed { 0 };
+		std::atomic<uint32>				DiscoveryExtracted { 0 };
 	};
 
 	// RAII: suspends FAssetRegistry broadcasts for its lifetime so a bulk operation (importing many assets)

@@ -61,5 +61,10 @@ namespace Lumina
         // Mirrors loose (non-.lasset) files from /Game and /Scripts under <OutDir>/{Game,Scripts}/.
         // Main-thread only (walks VFS).
         static size_t ExtractLooseScripts(const FString& OutDir, const TFunction<void(FStringView)>& LogFunc = {});
+
+        // Everything a package holds besides its exe, <OutputDirectory>/<ProjectName>_Data, which the runtime finds from the exe's own name.
+        static FString GetDataDirectory(FStringView OutputDirectory, FStringView ProjectName);
+
+        static FString GetPakPath(FStringView OutputDirectory, FStringView ProjectName);
     };
 }

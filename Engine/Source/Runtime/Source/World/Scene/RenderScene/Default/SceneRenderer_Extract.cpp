@@ -158,6 +158,9 @@ namespace Lumina
         SceneGlobalData.CullData.ShadowLODBias          = FrameSettings.ShadowLODBias;
         SceneGlobalData.CullData.ShadowCoarseLODDistSq  = FrameSettings.ShadowCoarseLODDistance
                                                         * FrameSettings.ShadowCoarseLODDistance;
+        const CRendererSettings* LODSettings            = GetDefault<CRendererSettings>();
+        const float LODDistanceScale                    = LODSettings != nullptr ? Math::Clamp(LODSettings->LODDistanceScale, 0.25f, 16.0f) : 1.0f;
+        SceneGlobalData.CullData.LODDistanceScaleSq     = LODDistanceScale * LODDistanceScale;
         CascadeMinTexels                                = 1.0f;
         SceneGlobalData.CullData.DebugMode              = (uint32)FrameSettings.Flags;
         SceneGlobalData.CullData.bCascadeHZBValid       = 0u;
@@ -751,9 +754,9 @@ namespace Lumina
             return Hash | 1u;
         }
 
-        // Copies the mesh-level values into the component so the cull path never reaches the asset.
+        // Copies the mesh-level values into the component so the cull path never reaches the asset, and reports whether they changed.
         template <typename TComponent>
-        void ResolveMeshComponent(TComponent& Component, CMesh* Mesh,
+        bool ResolveMeshComponent(TComponent& Component, CMesh* Mesh,
                                   EInstanceFlags SeedFlags, TVector<CMaterialInterface*>& OverrideScratch)
         {
             OverrideScratch.clear();
@@ -767,6 +770,23 @@ namespace Lumina
             FMeshResolveCache& Cache = FMeshResolveCache::Get();
 
             const uint32 Handle = Cache.Resolve(Mesh, OverrideScratch);
+
+            // A static mesh swapped for one still uploading keeps drawing the old one, which a skeletal mesh cannot since its bones follow the new skeleton.
+            if constexpr (std::is_same_v<TComponent, SStaticMeshComponent>)
+            {
+                const bool bNewReady = Handle != INVALID_MESH_RESOLVE_HANDLE && Cache.GetEntry(Handle).bResolved;
+                const uint32 Shown = Component.ResolveHandle;
+                const bool bShownReady = Shown != INVALID_MESH_RESOLVE_HANDLE && Cache.IsValidHandle(Shown) && Cache.GetEntry(Shown).bResolved;
+                if (Mesh != nullptr && !bNewReady && bShownReady && Component.CachedMeshKey != (const void*)Mesh)
+                {
+                    // Stale makes the upload that completes the new mesh wake this component again.
+                    Component.bShowingPreviousMesh = true;
+                    Component.CachedEntryState = MESH_RESOLVE_STATE_STALE;
+                    return false;
+                }
+            }
+            Component.bShowingPreviousMesh = false;
+
             Component.ResolveHandle = Handle;
             Component.CachedMeshKey = (const void*)Mesh;
 
@@ -786,7 +806,7 @@ namespace Lumina
                     Component.CachedEntryState = MESH_RESOLVE_STATE_STALE;
                     FMeshResolveCache::MarkPendingWork();
                 }
-                return;
+                return true;
             }
 
             const FResolvedMesh& Entry = Cache.GetEntry(Handle);
@@ -802,6 +822,7 @@ namespace Lumina
 
             // An unready entry carries its own token too; the asset that completes it wakes the pass.
             Component.CachedEntryState = Cache.GetEntryState(Handle);
+            return true;
         }
 
         template <typename TStorage, typename TGetMesh>
@@ -833,7 +854,10 @@ namespace Lumina
                     continue;
                 }
 
-                ResolveMeshComponent(Component, Mesh, SeedFlags, OverrideScratch);
+                if (!ResolveMeshComponent(Component, Mesh, SeedFlags, OverrideScratch))
+                {
+                    continue;
+                }
 
                 Tracker.Mark(Entity, Source, EPrimitiveDirty::Data);
                 ++Refreshed;
@@ -2335,7 +2359,8 @@ namespace Lumina
 
             const FVector3 ToCamera = Center - CameraPos;
             const float    DistSq   = Math::Dot(ToCamera, ToCamera);
-            const float    RadiusSq = Radius * Radius;
+            // Same operand order as the GPU's SelectLOD callers, so the two picks agree bit for bit.
+            const float    RadiusSq = Radius * Radius * SceneGlobalData.CullData.LODDistanceScaleSq;
 
             const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
             FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();

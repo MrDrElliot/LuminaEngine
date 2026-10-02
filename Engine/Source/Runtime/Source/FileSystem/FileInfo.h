@@ -35,6 +35,8 @@ namespace Lumina::VFS
         FString         PathSource;
 
         int64           LastModifyTime;
+        // Zero when the backing store cannot say, which callers treat as unknown rather than empty.
+        uint64          Size = 0;
         EFileFlags      Flags;
 
         

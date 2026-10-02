@@ -508,6 +508,53 @@ namespace Lumina
             }
         }
 
+        CMesh* FindMeshToOverwrite(const FFixedString& Path, bool bSkinned)
+        {
+            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path);
+            CMesh* Mesh = Data != nullptr ? Cast<CMesh>(LoadObject<CObject>(Data->AssetGUID)) : nullptr;
+            return Mesh != nullptr && Mesh->IsSkinned() == bSkinned ? Mesh : nullptr;
+        }
+
+        // On the main thread, since the renderer may be reading the old buffers mid-frame.
+        void ReplaceMeshInPlace(CMesh* Existing, TUniquePtr<FMeshResource>&& NewResource,
+                                CMaterialInterface* OverrideMaterial, const FFixedString& SourcePath)
+        {
+            MainThread::Enqueue([Existing = TObjectPtr<CMesh>(Existing), NewResource = Move(NewResource),
+                                 Override = TObjectPtr<CMaterialInterface>(OverrideMaterial),
+                                 Source = FString(SourcePath.c_str())]() mutable
+            {
+                if (!Existing.IsValid())
+                {
+                    return;
+                }
+
+                NewResource->Name = Existing->GetName();
+                TVector<TObjectPtr<CMaterialInterface>> Materials;
+                if (Override.IsValid())
+                {
+                    Materials.resize(CountMaterialSlots(*NewResource), Override);
+                }
+                else
+                {
+                    RemapMaterialSlots(Existing->GetMeshResource(), Existing->Materials, *NewResource, Materials);
+                }
+                Existing->Materials = Move(Materials);
+
+                // SetMeshResource rebuilds bounds and buffers and invalidates the resolve cache, so components follow.
+                Existing->SetMeshResource(Move(NewResource));
+                Existing->SourcePath = Source;
+
+                CPackage* Package = Existing->GetPackage();
+                if (Package == nullptr || !CPackage::SavePackage(Package, Package->GetPackagePath()))
+                {
+                    LOG_ERROR("[Import] Replaced '{}' in memory but could not save it.", Existing->GetName());
+                    return;
+                }
+                FAssetRegistry::Get().AssetSaved(Existing.Get());
+                AssetEvents::BroadcastAssetDataChanged(Existing.Get());
+            });
+        }
+
         // The only stage that expands instances, so the cost is paid once and only on merge.
         bool MergeInstancesIntoSingleMesh(FMeshImportData& Data, FString& OutError)
         {
@@ -1342,7 +1389,22 @@ namespace Lumina
                 continue;
             }
 
-            const FFixedString MeshPath = bMultipleMeshes ? BuildPath(MeshResource->Name.ToString()) : BuildPath({});
+            const FFixedString MeshDesiredPath = bMultipleMeshes ? DesiredPath(MeshResource->Name.ToString()) : DesiredPath({});
+            if (Request.bReplaceExisting)
+            {
+                // A file that once held several meshes named this one File_Mesh, so a re-export down to one mesh still finds it.
+                CMesh* Existing = FindMeshToOverwrite(MeshDesiredPath, MeshResource->bSkinnedMesh);
+                if (Existing == nullptr && !bMultipleMeshes && !MeshResource->Name.IsNone())
+                {
+                    Existing = FindMeshToOverwrite(DesiredPath(MeshResource->Name.ToString()), MeshResource->bSkinnedMesh);
+                }
+                if (Existing != nullptr)
+                {
+                    ReplaceMeshInPlace(Existing, Move(MeshResource), OverrideMaterial.Get(), Request.SourcePath);
+                    continue;
+                }
+            }
+            const FFixedString MeshPath = Paths.Claim(MeshDesiredPath);
 
             CMesh* NewMesh = nullptr;
             if (!MeshResource->bSkinnedMesh)

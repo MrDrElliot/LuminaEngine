@@ -37,14 +37,14 @@ public static class Fx
 
     /// Resolves the reference (asset-manager cached) and plays it; a null or unset reference is a no-op.
     public static Entity Play(TSoftObjectPtr<CParticleSystem> System, FVector3 Location, float Lifetime = AutoLifetime)
-        => Play(System.Get(), Location, Lifetime);
+        => Play(System.LoadSynchronous(), Location, Lifetime);
 
     public static Entity PlayAligned(TSoftObjectPtr<CParticleSystem> System, FVector3 Location, FVector3 Normal, float Lifetime = AutoLifetime)
-        => PlayAligned(System.Get(), Location, Normal, Lifetime);
+        => PlayAligned(System.LoadSynchronous(), Location, Normal, Lifetime);
 
     public static Entity PlayAttached(TSoftObjectPtr<CParticleSystem> System, Entity Target, string Socket = "",
         FVector3 Offset = default, float Lifetime = AutoLifetime)
-        => PlayAttached(System.Get(), Target, Socket, Offset, Lifetime);
+        => PlayAttached(System.LoadSynchronous(), Target, Socket, Offset, Lifetime);
 
     /// Stops an effect entity emitting and lets its live particles finish, rather than cutting them off.
     public static void Stop(Entity Effect)

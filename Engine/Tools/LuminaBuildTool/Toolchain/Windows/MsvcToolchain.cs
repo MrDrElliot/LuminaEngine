@@ -709,6 +709,15 @@ public sealed class MsvcToolchain : IToolchain
         Arguments.AddRange(Module.LinkLibraries.Select(L => PathUtils.Quote(NormalizeLibraryName(L))));
         Arguments.AddRange(DefaultSystemLibraries);
 
+        if (Module.DelayLoadDLLs.Count > 0)
+        {
+            Arguments.AddRange(Module.DelayLoadDLLs.Select(Dll => $"/DELAYLOAD:{Dll}"));
+            Arguments.Add("delayimp.lib");
+
+            // The list follows the dependency closure, so a binary that never calls the DLL would warn about an unused delay load.
+            Arguments.Add("/IGNORE:4199");
+        }
+
         string ResponseFile = Path.Combine(Module.IntermediateDirectory, Module.Name + ".link.rsp");
 
         BuildAction Action = new(ActionType.Link, Module.Name)

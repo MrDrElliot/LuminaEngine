@@ -62,6 +62,8 @@ public sealed class BuildModule
     /// <summary>Libraries this module links, in dependency-first order.</summary>
     public List<string> LinkLibraries { get; } = new();
 
+    public List<string> DelayLoadDLLs { get; } = new();
+
     /// <summary>Library search paths for this module's link step.</summary>
     public List<string> LinkLibraryPaths { get; } = new();
 

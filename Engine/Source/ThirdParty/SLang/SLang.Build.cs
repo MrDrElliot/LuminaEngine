@@ -12,6 +12,12 @@ public class SLang : LuminaThirdPartyModuleRules
         PublicSystemLibraries.Add("slang");
         PublicSystemLibraries.Add("slang-compiler");
 
+        // Loaded on first use, after a package has pointed the loader at its data folder's Plugins directory.
+        if (Target.Platform == BuildPlatform.Windows64)
+        {
+            PublicDelayLoadDLLs.Add("slang.dll");
+        }
+
         // Read rather than restated: MakeLinuxBundle.sh fetches Slang using the same value, and when
         // the two were written down separately they drifted.
         string SlangVersion = ReadDependencyVersion("SLANG_VERSION");

@@ -55,7 +55,8 @@ namespace Lumina::Reflection
     X(Scriptable,           Flag,   Script,    "Emits a C# subclassable wrapper. Every reflected virtual on the class becomes overridable from C#.") \
     X(ScriptFastCalls,      Flag,   Script,    "Applies SuppressGCTransition to every binding on the type. FUNCTION(NoSuppressGCTransition) opts one back out.") \
     X(CSharpValueMirror,    Flag,   Script,    "The type has a hand-written blittable C# value struct. The emitter marshals it by value and generates no wrapper.") \
-    X(NoCSharp,             Flag,   Script,    "Suppresses C# binding generation for the type.")
+    X(NoCSharp,             Flag,   Script,    "Suppresses C# binding generation for the type.") \
+    X(OnScriptWrite,        Value,  Script,    "After C# writes any property of the type or a type derived from it, the generated setter calls this reflected function, the way an editor edit calls PostEditChange.")
 
 #define LUMINA_PROPERTY_SPECIFIERS(X) \
     X(Getter,               Either, Reflector, "Routes reads through the named accessor. Defaults to Get<PropertyName> when no value is given.") \

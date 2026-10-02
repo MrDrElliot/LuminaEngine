@@ -18,11 +18,17 @@ namespace Lumina
         bool AddEntry(FStringView VirtualPath, TSpan<const uint8> Data);
         bool AddEntry(FStringView VirtualPath, FStringView Data);
 
+        // Takes the bytes without a copy, and a precompressed entry such as a cooked package is stored without another deflate pass.
+        bool AddEntry(FStringView VirtualPath, TVector<uint8>&& Data, bool bPrecompressed = false);
+
         /** Overwrites NativeFilePath. */
         bool Finalize(FStringView NativeFilePath);
 
         size_t NumEntries() const { return Entries.size(); }
         size_t TotalEntryBytes() const { return TotalDataSize; }
+
+        // Every entry path in the order Finalize writes them.
+        void GetEntryPaths(TVector<FFixedString>& OutPaths) const;
 
     private:
 
@@ -30,6 +36,7 @@ namespace Lumina
         {
             FFixedString    VirtualPath;
             TVector<uint8>  Data;
+            bool            bPrecompressed = false;
         };
 
         TVector<FPendingEntry>          Entries;

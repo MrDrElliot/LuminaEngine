@@ -17,6 +17,7 @@
 #include "Core/Templates/LuminaTemplate.h"
 #include "Core/Threading/Thread.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Paths/Paths.h"
 
 
 // A call site formats, copies into a lock-free ring slot and returns, and one backend thread drains.
@@ -429,11 +430,9 @@ namespace Lumina::Logging
 		AddSink(MakeUnique<FStdoutSink>());
 		AddSink(MakeUnique<FMemorySink>(GetConsoleLogQueue()));
 
-		// Starts beside the exe because no project is known this early, and moves once one loads.
+		// Starts in the game's data folder (the exe's own outside a package) because no project is known this early, and moves once one loads.
 		{
-			FString LogPath(TCHAR_TO_UTF8(Platform::BaseDir()));
-			const size_t ExeNameStart = LogPath.find_last_of("/\\");
-			LogPath.resize(ExeNameStart == FString::npos ? 0 : ExeNameStart);
+			FString LogPath = Paths::GetGameDataDirectory();
 			LogPath.append("/Logs/");
 			LogPath.append(GLogFileName);
 

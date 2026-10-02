@@ -161,7 +161,8 @@ namespace Lumina
         
         void Shutdown();
     
-        void PreAllocateAllChunks();
+        // Chunks are allocated as indices reach them, so the cap costs only the chunk pointer table up front.
+        void EnsureChunkFor(int32 Index);
     
         RUNTIME_API const FCObjectEntry* GetItem(int32 Index) const;
     

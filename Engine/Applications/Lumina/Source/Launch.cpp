@@ -15,6 +15,9 @@
 #include "Log/Log.h"
 #include "Platform/CrashHandler.h"
 #include "Platform/CrashReporter.h"
+#include "Paths/Paths.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
+#include "Platform/Process/PlatformProcess.h"
 
 using namespace Lumina;
 
@@ -40,6 +43,12 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
 
     FCommandLine Parsed{ArgC, ArgV};
     GCommandLine = &Parsed;
+
+    // A package keeps third-party DLLs in its data folder, and slang is delay-loaded so its first load comes after this.
+    if (const FString PluginsDir = Paths::GetGameDataDirectory() + "/Plugins"; Filesystem::Exists(PluginsDir))
+    {
+        Platform::PushDLLDirectory(UTF8_TO_TCHAR(PluginsDir.c_str()));
+    }
 
     Benchmark::ParseCommandLine(Parsed);
 

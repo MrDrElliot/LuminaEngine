@@ -4,11 +4,23 @@
 #include "miniz.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Templates/LuminaTemplate.h"
+#include "Core/Profiler/Profile.h"
+#include "TaskSystem/TaskSystem.h"
 #include "Log/Log.h"
 
 namespace Lumina
 {
     bool FPakWriter::AddEntry(FStringView VirtualPath, TSpan<const uint8> Data)
+    {
+        return AddEntry(VirtualPath, TVector<uint8>(Data.begin(), Data.end()));
+    }
+
+    bool FPakWriter::AddEntry(FStringView VirtualPath, FStringView Data)
+    {
+        return AddEntry(VirtualPath, TSpan<const uint8>(reinterpret_cast<const uint8*>(Data.data()), Data.size()));
+    }
+
+    bool FPakWriter::AddEntry(FStringView VirtualPath, TVector<uint8>&& Data, bool bPrecompressed)
     {
         FFixedString Key(VirtualPath.data(), VirtualPath.size());
 
@@ -19,20 +31,28 @@ namespace Lumina
         }
 
         FPendingEntry Pending;
-        Pending.VirtualPath = Move(Key);
-        Pending.Data.assign(Data.begin(), Data.end());
+        Pending.VirtualPath    = Move(Key);
+        Pending.Data           = Move(Data);
+        Pending.bPrecompressed = bPrecompressed;
         TotalDataSize += Pending.Data.size();
         Entries.emplace_back(Move(Pending));
         return true;
     }
 
-    bool FPakWriter::AddEntry(FStringView VirtualPath, FStringView Data)
+    void FPakWriter::GetEntryPaths(TVector<FFixedString>& OutPaths) const
     {
-        return AddEntry(VirtualPath, TSpan<const uint8>(reinterpret_cast<const uint8*>(Data.data()), Data.size()));
+        OutPaths.clear();
+        OutPaths.reserve(Entries.size());
+        for (const FPendingEntry& Entry : Entries)
+        {
+            OutPaths.push_back(Entry.VirtualPath);
+        }
     }
 
     bool FPakWriter::Finalize(FStringView NativeFilePath)
     {
+        LUMINA_PROFILE_SCOPE();
+
         std::ofstream File(FString(NativeFilePath.data(), NativeFilePath.size()).c_str(), std::ios::binary | std::ios::trunc);
         if (!File)
         {
@@ -59,53 +79,74 @@ namespace Lumina
             uint8  Method;
         };
 
+        struct FEncoded
+        {
+            TVector<uint8> Compressed;
+            uint64         ContentHash = 0;
+            uint8          Method = (uint8)EPakCompression::None;
+        };
+
         TVector<FWriteRecord> Records;
         Records.reserve(Entries.size());
-
-        TVector<uint8> Scratch;
         size_t TotalCompressed = 0;
 
-        for (const FPendingEntry& Entry : Entries)
+        // Encoded in parallel batches and written in order, so the file is deterministic and only one batch of output is held at once.
+        constexpr size_t kBatchSize = 512;
+        TVector<FEncoded> Batch;
+        for (size_t First = 0; First < Entries.size(); First += kBatchSize)
         {
-            const uint64 Offset = (uint64)File.tellp();
-            const uint64 Original = (uint64)Entry.Data.size();
+            const size_t Count = Math::Min(kBatchSize, Entries.size() - First);
+            Batch.clear();
+            Batch.resize(Count);
 
-            FWriteRecord Rec{};
-            Rec.Offset = Offset;
-            Rec.UncompressedSize = Original;
-            Rec.ContentHash = Original > 0
-                ? Hash::XXHash::GetHash64(Entry.Data.data(), Entry.Data.size())
-                : 0;
-
-            const uint8* WritePtr = Entry.Data.data();
-            uint64 WriteSize = Original;
-            uint8 Method = (uint8)EPakCompression::None;
-
-            if (Original >= PAK_COMPRESSION_MIN_SIZE)
+            Task::ParallelFor((uint32)Count, [&](uint32 i)
             {
-                mz_ulong Bound = mz_compressBound((mz_ulong)Original);
-                Scratch.resize((size_t)Bound);
+                const FPendingEntry& Entry = Entries[First + i];
+                FEncoded& Out = Batch[i];
+                const uint64 Original = (uint64)Entry.Data.size();
+                Out.ContentHash = Original > 0 ? Hash::XXHash::GetHash64(Entry.Data.data(), Entry.Data.size()) : 0;
 
-                mz_ulong OutLen = Bound;
-                int Ret = mz_compress2(Scratch.data(), &OutLen, Entry.Data.data(), (mz_ulong)Original, MZ_DEFAULT_COMPRESSION);
+                if (Entry.bPrecompressed || Original < PAK_COMPRESSION_MIN_SIZE)
+                {
+                    return;
+                }
 
+                mz_ulong OutLen = mz_compressBound((mz_ulong)Original);
+                Out.Compressed.resize((size_t)OutLen);
+                const int Ret = mz_compress2(Out.Compressed.data(), &OutLen, Entry.Data.data(), (mz_ulong)Original, MZ_DEFAULT_COMPRESSION);
                 if (Ret == MZ_OK && OutLen < Original)
                 {
-                    WritePtr = Scratch.data();
-                    WriteSize = (uint64)OutLen;
-                    Method = (uint8)EPakCompression::Deflate;
+                    Out.Compressed.resize((size_t)OutLen);
+                    Out.Method = (uint8)EPakCompression::Deflate;
                 }
-            }
+                else
+                {
+                    Out.Compressed.clear();
+                }
+            }, 1);
 
-            if (WriteSize > 0)
+            for (size_t i = 0; i < Count; ++i)
             {
-                File.write(reinterpret_cast<const char*>(WritePtr), (std::streamsize)WriteSize);
-            }
+                const FPendingEntry& Entry = Entries[First + i];
+                const FEncoded& Encoded = Batch[i];
+                const bool bDeflated = Encoded.Method == (uint8)EPakCompression::Deflate;
 
-            Rec.CompressedSize = WriteSize;
-            Rec.Method = Method;
-            TotalCompressed += (size_t)WriteSize;
-            Records.emplace_back(Rec);
+                FWriteRecord Rec{};
+                Rec.Offset           = (uint64)File.tellp();
+                Rec.UncompressedSize = (uint64)Entry.Data.size();
+                Rec.ContentHash      = Encoded.ContentHash;
+                Rec.Method           = Encoded.Method;
+                Rec.CompressedSize   = bDeflated ? (uint64)Encoded.Compressed.size() : Rec.UncompressedSize;
+
+                const uint8* WritePtr = bDeflated ? Encoded.Compressed.data() : Entry.Data.data();
+                if (Rec.CompressedSize > 0)
+                {
+                    File.write(reinterpret_cast<const char*>(WritePtr), (std::streamsize)Rec.CompressedSize);
+                }
+
+                TotalCompressed += (size_t)Rec.CompressedSize;
+                Records.emplace_back(Rec);
+            }
         }
 
         const uint64 TocOffset = (uint64)File.tellp();

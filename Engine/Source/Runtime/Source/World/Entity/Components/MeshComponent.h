@@ -20,7 +20,7 @@ namespace Lumina
         RUNTIME_API CMaterialInstance* MakeDynamicMaterialInstance(CMaterialInterface* Current);
     }
 
-    REFLECT()
+    REFLECT(OnScriptWrite = MarkRenderStateDirty)
     struct RUNTIME_API SMeshComponent
     {
         GENERATED_BODY()
@@ -82,6 +82,9 @@ namespace Lumina
         // Compared against the live mesh field so a direct assignment self-heals after one frame.
         const void*     CachedMeshKey = nullptr;
 
+        // True while the cached fields still describe the last mesh that could draw, kept on screen until the new one is resident.
+        bool            bShowingPreviousMesh = false;
+
         /**
          * Staleness token of the resolve entry this component last copied from
          * (FMeshResolveCache::GetEntryState).
@@ -128,17 +131,7 @@ namespace Lumina
             InvalidateRenderResolve();
         }
 
-        /** Tells the renderer this component's render state changed and has to be re-read.
-         *
-         *  Call this after writing ANY render-facing property directly rather than through a setter --
-         *  ForcedLODIndex, CustomPrimitiveData, MaterialOverrides, bCastShadow, MaxDrawDistance. The
-         *  renderer keeps a RETAINED per-primitive GPU record and only rewrites it for primitives that
-         *  report a change, so a direct write with no mark is simply never picked up. It used to be free
-         *  because the old renderer re-read every component every frame; it is not any more.
-         *
-         *  Editor property edits route here through PostEditChange, so this is only needed from gameplay
-         *  code (C++ or C#).
-         */
+        // The retained scene never sees a raw C++ field write, so C++ calls this after one; editor and C# writes call it themselves.
         FUNCTION()
         void MarkRenderStateDirty() { InvalidateRenderResolve(); }
 

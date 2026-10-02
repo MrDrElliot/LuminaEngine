@@ -4,9 +4,11 @@
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Audio/AudioGlobals.h"
 #include "Audio/AudioSettings.h"
+#include "Audio/SoundPlayback.h"
 #include "Core/Object/ObjectCore.h"
 #include "Physics/PhysicsScene.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
+#include "World/Entity/Components/AudioVolumeComponent.h"
 #include "World/Entity/Components/ProceduralAudioComponent.h"
 #include "KinematicsSystem.h"
 #include "SignificanceSystem.h"
@@ -19,7 +21,7 @@ namespace Lumina
     void SAudioSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PostPhysics);
-        Writes<SAudioSourceComponent, SProceduralAudioComponent, SAudioListenerComponent>();
+        Writes<SAudioSourceComponent, SProceduralAudioComponent, SAudioListenerComponent, SAudioVolumeComponent>();
         Reads<STransformComponent, SystemResource::PhysicsQuery, SystemResource::Significance, SystemResource::Kinematics>();
     }
 
@@ -32,6 +34,135 @@ namespace Lumina
 				return Target;
 			}
 			return Current + (Target > Current ? MaxDelta : -MaxDelta);
+		}
+	}
+
+	namespace
+	{
+		struct FVolumeGroupWinner
+		{
+			FName        Group;
+			ECS::FEntity Entity = ECS::NullEntity;
+			int32        Priority = 0;
+			float        Weight = 0.0f;
+		};
+
+		// Each volume fades toward its own weight when it is ungrouped or wins its group, and toward silence otherwise.
+		template <typename TTransformStorage>
+		void UpdateAudioVolumes(const FSystemContext& Context, TTransformStorage& XForms, const FVector3& Listener, float DeltaTime)
+		{
+			TVector<FVolumeGroupWinner> Winners;
+			TVector<SAudioVolumeComponent*> GroupVoices;
+			auto View = Context.CreateView<SAudioVolumeComponent>();
+			View.ForEach([&](ECS::FEntity Entity, SAudioVolumeComponent& Volume)
+			{
+				if (Volume.bPlaying && !Volume.Group.IsNone())
+				{
+					GroupVoices.push_back(&Volume);
+				}
+
+				Volume.InsideWeight = (Volume.bEnabled && XForms.Contains(Entity)) ? Volume.ListenerWeight(XForms.Get(Entity), Listener) : 0.0f;
+				Volume.bListenerInside = Volume.InsideWeight > 0.0f;
+				if (!Volume.bListenerInside)
+				{
+					Volume.bFinishedThisVisit = false;
+					return;
+				}
+				if (Volume.Group.IsNone())
+				{
+					return;
+				}
+				FVolumeGroupWinner* Winner = nullptr;
+				for (FVolumeGroupWinner& Candidate : Winners)
+				{
+					if (Candidate.Group == Volume.Group)
+					{
+						Winner = &Candidate;
+						break;
+					}
+				}
+				if (Winner == nullptr)
+				{
+					Winners.push_back(FVolumeGroupWinner{ Volume.Group, Entity, Volume.Priority, Volume.InsideWeight });
+				}
+				else if (Volume.Priority > Winner->Priority || (Volume.Priority == Winner->Priority && Volume.InsideWeight > Winner->Weight))
+				{
+					*Winner = FVolumeGroupWinner{ Volume.Group, Entity, Volume.Priority, Volume.InsideWeight };
+				}
+			});
+
+			View.ForEach([&](ECS::FEntity Entity, SAudioVolumeComponent& Volume)
+			{
+				bool bWinsGroup = Volume.Group.IsNone();
+				for (const FVolumeGroupWinner& Winner : Winners)
+				{
+					if (Winner.Group == Volume.Group)
+					{
+						bWinsGroup = Winner.Entity == Entity;
+						break;
+					}
+				}
+
+				const float Target = (Volume.bListenerInside && bWinsGroup) ? Volume.InsideWeight : 0.0f;
+				const float FadeTime = Target > Volume.Gain ? Volume.FadeInTime : Volume.FadeOutTime;
+				Volume.Gain = MoveTowards(Volume.Gain, Target, FadeTime > 0.0f ? DeltaTime / FadeTime : 1.0f);
+
+				// A one-shot that played out stays quiet until the listener leaves and comes back.
+				if (Volume.bPlaying && Audio::Context().GetVoiceState(Volume.ActiveHandle) == EAudioVoiceState::Free)
+				{
+					Volume.bPlaying = false;
+					Volume.ActiveHandle = FAudioHandle::Invalid();
+					Volume.ResumeFrame = 0;
+					Volume.bFinishedThisVisit = !Volume.bLooping;
+				}
+
+				// Neighboring volumes of a group that play the same sound pass the voice along instead of restarting it.
+				if (!Volume.bPlaying && Target > 0.0f && !Volume.Group.IsNone())
+				{
+					for (SAudioVolumeComponent* Other : GroupVoices)
+					{
+						if (Other != &Volume && Other->bPlaying && Other->Group == Volume.Group && Other->Sound == Volume.Sound)
+						{
+							Volume.ActiveHandle  = Other->ActiveHandle;
+							Volume.Gain          = Math::Max(Volume.Gain, Other->Gain);
+							Volume.AppliedVolume = Other->AppliedVolume;
+							Volume.bPlaying      = true;
+							Other->ActiveHandle  = FAudioHandle::Invalid();
+							Other->bPlaying      = false;
+							Other->Gain          = 0.0f;
+							break;
+						}
+					}
+				}
+
+				const float Wanted = Volume.Volume * Volume.Gain;
+				if (!Volume.bPlaying)
+				{
+					if (Volume.Gain > 0.0f && !Volume.bFinishedThisVisit && Volume.Sound != nullptr && Volume.Sound->IsPlayable())
+					{
+						FAudioPlayParams Params;
+						Params.Volume       = Wanted;
+						Params.bLooping     = Volume.bLooping;
+						Params.bSpatialized = false;
+						Params.Bus          = Volume.Bus;
+						Params.StartFrame   = Volume.bResumePlayback ? Volume.ResumeFrame : 0;
+						Volume.ActiveHandle  = Audio::PlaySound(Volume.Sound.Get(), Params).Handle;
+						Volume.bPlaying      = Volume.ActiveHandle.IsValid();
+						Volume.AppliedVolume = Wanted;
+					}
+					return;
+				}
+
+				if (Volume.Gain <= 0.0f)
+				{
+					Volume.StopVoice();
+				}
+				else if (Math::Abs(Wanted - Volume.AppliedVolume) > 0.002f)
+				{
+					Audio::Context().SetVolume(Volume.ActiveHandle, Wanted);
+					Volume.AppliedVolume = Wanted;
+				}
+			});
 		}
 	}
 
@@ -70,6 +201,14 @@ namespace Lumina
 				Audio.ActiveHandle = FAudioHandle::Invalid();
 				Audio.bPlaying = false;
 			}
+		});
+
+		auto VolumeView = Context.CreateView<SAudioVolumeComponent>();
+		VolumeView.ForEach([](SAudioVolumeComponent& Volume)
+		{
+			Volume.ResumeFrame = 0;
+			Volume.StopVoice();
+			Volume.Gain = 0.0f;
 		});
 	}
 
@@ -130,6 +269,11 @@ namespace Lumina
 			{
 				Audio::Context().SetListenerEnabled(Index, (DrivenListenerMask & (1u << Index)) != 0);
 			}
+		}
+
+		if (bHasListener)
+		{
+			UpdateAudioVolumes(SystemContext, XFormStorage, ListenerPosition, DeltaTime);
 		}
 
 		const bool bOcclusionAllowed = bHasListener && Settings != nullptr && Settings->bOcclusionEnabled;

@@ -415,6 +415,16 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SSendTextParams
+    {
+        GENERATED_BODY()
+
+        // Sent as character input, the way a keyboard layout delivers typed text to a focused field.
+        PROPERTY()
+        FString Text;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SSendKeyResult
     {
         GENERATED_BODY()

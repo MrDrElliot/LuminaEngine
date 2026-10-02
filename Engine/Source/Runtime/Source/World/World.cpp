@@ -673,6 +673,7 @@ namespace Lumina
 
     ECS::FEntity CWorld::ConstructEntity(FName Name, const FTransform& Transform)
     {
+        LUMINA_PROFILE_SCOPE();
         DEBUG_ASSERT(Threading::IsMainThread(), "You may only construct entities on the main thread.");
         
         ECS::FEntity NewEntity = GetEntityRegistry().Create();
@@ -1060,6 +1061,7 @@ namespace Lumina
 
     void CWorld::DestroyEntity(ECS::FEntity Entity)
     {
+        LUMINA_PROFILE_SCOPE();
         EntityRegistry.Destroy(Entity);
     }
 

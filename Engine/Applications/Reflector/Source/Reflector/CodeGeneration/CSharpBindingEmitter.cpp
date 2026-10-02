@@ -354,6 +354,33 @@ namespace Lumina::Reflection
             return Root;
         }
 
+        // The function a script write must call, named on the type or the nearest parent that names one.
+        std::string FindScriptWriteHook(const FReflectedStruct& Type, const FReflectionDatabase& Db)
+        {
+            const FReflectedStruct* Current = &Type;
+            while (Current != nullptr)
+            {
+                if (const std::string* Hook = Current->TryGetMetadata("OnScriptWrite"))
+                {
+                    return *Hook;
+                }
+                const std::string& Parent = Current->Parent;
+                if (Parent.empty())
+                {
+                    break;
+                }
+                const bool bQualified = Parent.find("::") != std::string::npos;
+                const std::string Qualified = (bQualified || Current->Namespace.empty()) ? Parent : (Current->Namespace + "::" + Parent);
+                const FReflectedType* Found = Db.GetReflectedType<FReflectedType>(FStringHash(Qualified));
+                if (Found == nullptr || Found->Type == FReflectedType::EType::Enum || Found == Current)
+                {
+                    break;
+                }
+                Current = static_cast<const FReflectedStruct*>(Found);
+            }
+            return {};
+        }
+
         // Narrowed from EPropertyTypeFlags by Classify, then drives the managed member and the native thunk together.
         enum class EBind { None, Number, Bool, Enum, Str, Object, SoftObject, ClassRef, SubStructRef, StructValue, StructOpaque, InstancedStruct, Array, Map, Optional, Span, Delegate };
 
@@ -872,8 +899,28 @@ namespace Lumina::Reflection
 
         // Blittable kinds read native memory at the resolved offset, non-blittable route through exporters.
         void EmitCSharpMember(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
-            const std::string& Friendly, const std::string& Module, const std::string& TypeName)
+            const std::string& Friendly, const std::string& Module, const std::string& TypeName, const std::string& WriteHook)
         {
+            // A plain expression setter, or a block that also tells the type a script changed it.
+            auto EmitSetter = [&Writer, &WriteHook](const std::string& Statement)
+            {
+                if (WriteHook.empty())
+                {
+                    Writer.Linef("set => %s;", Statement.c_str());
+                    return;
+                }
+                Writer.Line("set");
+                Writer.BeginBlock();
+                Writer.Linef("%s;", Statement.c_str());
+                Writer.Linef("%s();", WriteHook.c_str());
+                Writer.EndBlock();
+            };
+            auto Format = [](const char* Pattern, auto... Args)
+            {
+                char Buffer[1024];
+                std::snprintf(Buffer, sizeof(Buffer), Pattern, Args...);
+                return std::string(Buffer);
+            };
             const std::string& Member = Prop.Name;
             const std::string PropName = SafeIdentifier(Member);
             const std::string OffName = "__off_" + Member;
@@ -896,8 +943,7 @@ namespace Lumina::Reflection
                         T, OffName.c_str());
                     if (!bRO)
                     {
-                        Writer.Linef("set => global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)), value);",
-                            OffName.c_str());
+                        EmitSetter(Format("global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)), value)", OffName.c_str()));
                     }
                     Writer.EndBlock();
                     EmitOffsetField(Writer, OffName, TypeName, Member);
@@ -913,7 +959,7 @@ namespace Lumina::Reflection
                         Writer.Linef("get => global::LuminaSharp.Native.PropGetName(Handle, %s);", PropFieldName.c_str());
                         if (!bRO)
                         {
-                            Writer.Linef("set => global::LuminaSharp.Native.PropSetName(Handle, %s, value);", PropFieldName.c_str());
+                            EmitSetter(Format("global::LuminaSharp.Native.PropSetName(Handle, %s, value)", PropFieldName.c_str()));
                         }
                         Writer.EndBlock();
                         EmitTokenField(Writer, PropFieldName, TypeName, Member);
@@ -924,7 +970,7 @@ namespace Lumina::Reflection
                         Writer.Linef("get => global::LuminaSharp.NativeMarshal.ReadString(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s));", OffName.c_str());
                         if (!bRO)
                         {
-                            Writer.Linef("set => global::LuminaSharp.Native.PropSetString(Handle, %s, value);", PropFieldName.c_str());
+                            EmitSetter(Format("global::LuminaSharp.Native.PropSetString(Handle, %s, value)", PropFieldName.c_str()));
                         }
                         Writer.EndBlock();
                         EmitOffsetField(Writer, OffName, TypeName, Member);
@@ -954,8 +1000,7 @@ namespace Lumina::Reflection
                     Writer.EndBlock();
                     if (!bRO)
                     {
-                        Writer.Linef("set => global::LuminaSharp.Native.PropSetObject(Handle, %s, global::LuminaSharp.NativeObjectMarshal.ToHandle(value));",
-                            PropFieldName.c_str());
+                        EmitSetter(Format("global::LuminaSharp.Native.PropSetObject(Handle, %s, global::LuminaSharp.NativeObjectMarshal.ToHandle(value))", PropFieldName.c_str()));
                     }
                     Writer.EndBlock();
                     EmitTokenField(Writer, PropFieldName, TypeName, Member);
@@ -994,6 +1039,10 @@ namespace Lumina::Reflection
                         Writer.BeginBlock();
                         Writer.Linef("global::LuminaSharp.Native.PropOptionalReset(Handle, %s);", PropFieldName.c_str());
                         Writer.EndBlock();
+                        if (!WriteHook.empty())
+                        {
+                            Writer.Linef("%s();", WriteHook.c_str());
+                        }
                         Writer.EndBlock();
                     }
                     Writer.EndBlock();
@@ -1005,12 +1054,11 @@ namespace Lumina::Reflection
                     // One FSoftObjectPath natively whatever the spelling, so the path is the whole value.
                     Writer.Linef("public %s %s", CS, PropName.c_str());
                     Writer.BeginBlock();
-                    Writer.Linef("get => global::LuminaSharp.AssetRefMarshal.Read<%s>(global::LuminaSharp.Native.PropGetAssetPath(Handle, %s));",
+                    Writer.Linef("get => global::LuminaSharp.SoftObjectReferenceMarshal.Read<%s>(global::LuminaSharp.Native.PropGetAssetPath(Handle, %s));",
                         CS, PropFieldName.c_str());
                     if (!bRO)
                     {
-                        Writer.Linef("set => global::LuminaSharp.Native.PropSetAssetPath(Handle, %s, global::LuminaSharp.AssetRefMarshal.Write(value));",
-                            PropFieldName.c_str());
+                        EmitSetter(Format("global::LuminaSharp.Native.PropSetAssetPath(Handle, %s, global::LuminaSharp.SoftObjectReferenceMarshal.Write(value))", PropFieldName.c_str()));
                     }
                     Writer.EndBlock();
                     EmitTokenField(Writer, PropFieldName, TypeName, Member);
@@ -1023,7 +1071,7 @@ namespace Lumina::Reflection
                     Writer.Linef("get => new %s(global::LuminaSharp.Native.PropGetClass(Handle, %s));", CS, PropFieldName.c_str());
                     if (!bRO)
                     {
-                        Writer.Linef("set => global::LuminaSharp.Native.PropSetClass(Handle, %s, value.ClassPtr);", PropFieldName.c_str());
+                        EmitSetter(Format("global::LuminaSharp.Native.PropSetClass(Handle, %s, value.ClassPtr)", PropFieldName.c_str()));
                     }
                     Writer.EndBlock();
                     EmitTokenField(Writer, PropFieldName, TypeName, Member);
@@ -1036,7 +1084,7 @@ namespace Lumina::Reflection
                     Writer.Linef("get => new %s(global::LuminaSharp.Native.PropGetSubStruct(Handle, %s));", CS, PropFieldName.c_str());
                     if (!bRO)
                     {
-                        Writer.Linef("set => global::LuminaSharp.Native.PropSetSubStruct(Handle, %s, value.StructPtr);", PropFieldName.c_str());
+                        EmitSetter(Format("global::LuminaSharp.Native.PropSetSubStruct(Handle, %s, value.StructPtr)", PropFieldName.c_str()));
                     }
                     Writer.EndBlock();
                     EmitTokenField(Writer, PropFieldName, TypeName, Member);
@@ -1127,6 +1175,7 @@ namespace Lumina::Reflection
         {
             const std::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
             const std::string Module = ModuleOf(Type);
+            const std::string WriteHook = FindScriptWriteHook(Type, Db);
             for (const auto& Prop : Type.Props)
             {
                 if (Prop->bInner || IsScriptHidden(*Prop))
@@ -1136,7 +1185,7 @@ namespace Lumina::Reflection
                 FBinding B;
                 if (Classify(*Prop, Type.Namespace, Db, B))
                 {
-                    EmitCSharpMember(Writer, *Prop, B, Friendly, Module, Type.DisplayName);
+                    EmitCSharpMember(Writer, *Prop, B, Friendly, Module, Type.DisplayName, WriteHook);
                 }
             }
         }

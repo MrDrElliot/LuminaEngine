@@ -503,11 +503,13 @@ namespace Lumina
 
         void    ReleaseFoliageInstance(FFoliageInstanceRef& Ref);
         void    RefreshFoliageInstance(const FFoliageInstanceRef& Ref, const FFoliageTypeResolve& Type,
-                                       const FFoliageBakedInstance& Instance, uint32 EntityID);
+                                       const FFoliageBakedInstance& Instance, uint32 EntityID, bool bHidden);
+        // Flips the active bit of instances a game hid or showed since the last frame, leaving the bake alone.
+        void    ApplyFoliageVisibilityEdits(ECS::FRegistry& Registry);
         // First sync of an entity, so every instance binds and its slots can be filled in parallel.
-        void    BindFreshFoliage(FFoliageEntityState& State, const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID);
+        void    BindFreshFoliage(FFoliageEntityState& State, const SFoliageComponent& Foliage, const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID);
         static void BuildFoliageEntries(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type,
-                                        const FFoliageBakedInstance& Instance, uint32 EntityID,
+                                        const FFoliageBakedInstance& Instance, uint32 EntityID, bool bHidden,
                                         FInstanceCullEntry& OutCull, FTransform3x4& OutTransform, FInstanceStatic& OutStatic);
         bool    FoliageBindingsMatchMemo(const FFoliageInstanceRef& Ref, const FBindingMemo* Memo) const;
         // Appends a retry target per foliage entity whose type resolve moved. Pairs with the primitive sweep.

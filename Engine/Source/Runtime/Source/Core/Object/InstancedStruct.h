@@ -1,5 +1,6 @@
 #pragma once
 #include "Class.h"
+#include "Core/Object/ObjectHandleTyped.h"
 
 namespace Lumina
 {
@@ -85,6 +86,9 @@ namespace Lumina
         // Mutable so a const read can re-mint a type a script reload replaced underneath it.
         mutable CStruct* ScriptStruct = nullptr;
         mutable uint8* InstanceMemory = nullptr;
+
+        // A reload drops the registry's ref to a script type, so the value keeps its own until it migrates or dies.
+        mutable TObjectPtr<CStruct> ScriptTypePin;
 
         // Stable identity of the stored type, so it survives the re-mint its pointer does not.
         FName TypeIdentity;

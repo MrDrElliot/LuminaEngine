@@ -902,4 +902,14 @@ internal static unsafe class InteropTestHooks
         *OutNativeWidth = 12;
         return (Agreeing != null ? 1 : 0) | (Drifted == null ? 2 : 0) | (Unchecked != null ? 4 : 0);
     }
+
+    // Writes two render-facing fields through the generated setters, which must tell the component it changed.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void Test_WriteStaticMeshComponent(IntPtr Component)
+    {
+        SStaticMeshComponent View = new(Component);
+        View.StaticMesh = null!;
+        View.bCastShadow = false;
+    }
 }

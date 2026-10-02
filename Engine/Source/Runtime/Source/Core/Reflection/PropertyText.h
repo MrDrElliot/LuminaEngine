@@ -11,10 +11,7 @@ namespace Lumina
 // Text form of a single reflected property value: what a CSV cell holds, and what a compact grid cell
 // shows and edits.
 //
-// Scalars, bools, strings, names, enums and object references round-trip exactly. Aggregates -- structs,
-// containers, delegates -- deliberately do NOT. A CSV cell is the wrong place to encode them, and a
-// half-working parse that silently drops fields is worse than refusing outright. Ask IsTextConvertible
-// before offering a column as editable.
+// Scalars and arrays of them round-trip as one CSV cell, while structs, maps and delegates are refused rather than half parsed.
 namespace Lumina::Reflection
 {
     RUNTIME_API bool IsTextConvertible(const FProperty* Property);

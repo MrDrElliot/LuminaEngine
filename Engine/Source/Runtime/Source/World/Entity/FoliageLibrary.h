@@ -37,5 +37,9 @@ namespace Lumina
 
         FUNCTION()
         static int32 GetFoliageInstanceCount(CWorld* World);
+
+        // Hides or shows one instance without rebaking the field, for a felled tree or an opened door.
+        FUNCTION()
+        static void SetFoliageInstanceHidden(CWorld* World, int32 Index, bool bHidden);
     };
 }

@@ -59,13 +59,13 @@ public readonly struct UIDocument
     }
 
     /// <summary>The document's root element (the body), e.g. to attach a document-wide event listener.</summary>
-    public UIElement Root => new(World, IsValid ? Lumina.CUILibrary.GetDocumentRoot(Handle) : default);
+    public ref readonly UIElement Root => ref UIElement.Hold(new(World, IsValid ? Lumina.CUILibrary.GetDocumentRoot(Handle) : default));
 
     /// <summary>The element with the given <c>id</c>, or an invalid element if absent.</summary>
     public UIElement GetElementById(string Id) => new(World, IsValid ? Lumina.CUILibrary.GetElementById(Handle, Id) : default);
 
     /// <summary>Shorthand for <see cref="GetElementById"/>: <c>document["score"]</c>.</summary>
-    public UIElement this[string Id] => GetElementById(Id);
+    public ref readonly UIElement this[string Id] => ref UIElement.Hold(GetElementById(Id));
 
     /// <summary>First element matching a CSS selector (e.g. ".health-bar > .fill"), or an invalid element.</summary>
     public UIElement Query(string Selector) => new(World, IsValid ? Lumina.CUILibrary.QuerySelector(Root.Handle, Selector) : default);

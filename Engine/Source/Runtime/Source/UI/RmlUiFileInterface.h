@@ -16,5 +16,8 @@ namespace Lumina
         size_t          Tell(Rml::FileHandle File) override;
         size_t          Length(Rml::FileHandle File) override;
         bool            LoadFile(const Rml::String& Path, Rml::String& OutData) override;
+
+        // True when a stylesheet read since the last call has a different write time on disk now, which leaves RmlUi's sheet cache stale.
+        static bool ConsumeChangedStyleSheets();
     };
 }

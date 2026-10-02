@@ -164,11 +164,31 @@ namespace Lumina
         // Separate from BakedVersion, which the scene polls to decide whether a sync is owed at all.
         bool   bBakeReleased    = false;
 
+        // Instances a game has hidden at runtime, such as a felled tree, kept apart from Instances so no rebake is owed.
+        TVector<uint8>  HiddenInstances;
+        TVector<uint32> PendingVisibilityEdits;
+
         // Transient physics bake, owned by SFoliageCollisionSystem. Never serialized.
         uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none
         uint32 CollisionBakedVersion = 0;       // InstancesVersion the bodies were built from
 
         bool IsValidType(int32 Index) const { return Index >= 0 && Index < (int32)Types.size(); }
+
+        bool IsInstanceHidden(uint32 Index) const { return Index < (uint32)HiddenInstances.size() && HiddenInstances[Index] != 0; }
+
+        void SetInstanceHidden(uint32 Index, bool bHidden)
+        {
+            if (Index >= (uint32)Instances.size() || IsInstanceHidden(Index) == bHidden)
+            {
+                return;
+            }
+            if (HiddenInstances.size() < Instances.size())
+            {
+                HiddenInstances.resize(Instances.size(), 0);
+            }
+            HiddenInstances[Index] = bHidden ? 1 : 0;
+            PendingVisibilityEdits.push_back(Index);
+        }
 
         /** Marks the render cache stale so the next frame rebakes. Call after any edit to Instances/Types. */
         void MarkInstancesChanged() { ++InstancesVersion; }

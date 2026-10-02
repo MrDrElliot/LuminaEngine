@@ -114,12 +114,12 @@ public static class GameTask
     /// <summary>Resume on the next world tick.</summary>
     public static System.Threading.Tasks.Task NextFrame(CancellationToken Token = default) => DelaySeconds(0.0f, Token);
 
-    /// <summary>Load an asset without blocking; resume with the result (or null) on the game thread.</summary>
-    public static System.Threading.Tasks.Task<T?> LoadAsync<T>(string Path, CancellationToken Token = default) where T : NativeObject
+    /// <summary>Load an object without blocking; resume with the result (or null) on the game thread.</summary>
+    public static System.Threading.Tasks.Task<T?> LoadObjectAsync<T>(string Path, CancellationToken Token = default) where T : NativeObject
     {
         FPending<T?> Pending = new(Game.InWorld ? Game.World : null);
         Pending.CancelOn(Token);
-        Asset.LoadAsync<T>(Path, Result => Pending.Settle(Result));
+        ObjectCore.AsyncLoadObject<T>(Path, Result => Pending.Settle(Result));
         return Pending.Source.Task;
     }
 }

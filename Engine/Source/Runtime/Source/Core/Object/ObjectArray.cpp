@@ -20,8 +20,6 @@ namespace Lumina
     
         Objects = Memory::NewArray<FCObjectEntry*>(MaxChunks);
         Memory::Memzero(Objects, MaxChunks * sizeof(FCObjectEntry*));  // NOLINT(bugprone-multi-level-implicit-pointer-conversion)
-            
-        PreAllocateAllChunks();
     }
 
     void FChunkedFixedCObjectArray::Shutdown()
@@ -47,17 +45,22 @@ namespace Lumina
         NumChunks = 0;
     }
 
-    void FChunkedFixedCObjectArray::PreAllocateAllChunks()
+    void FChunkedFixedCObjectArray::EnsureChunkFor(int32 Index)
     {
-        FScopeLock Lock(AllocationMutex);
-    
-        for (int32 ChunkIndex = 0; ChunkIndex < MaxChunks; ++ChunkIndex)
+        const int32 ChunkIndex = Index / NumElementsPerChunk;
+        if (ChunkIndex < NumChunks)
         {
-            if (!Objects[ChunkIndex])
-            {
-                Objects[ChunkIndex] = Memory::NewArray<FCObjectEntry>(NumElementsPerChunk);
-                NumChunks = ChunkIndex + 1;
-            }
+            return;
+        }
+
+        LUMINA_MEMORY_SCOPE("CObject");
+        FScopeLock Lock(AllocationMutex);
+        while (NumChunks <= ChunkIndex && NumChunks < MaxChunks)
+        {
+            Objects[NumChunks] = Memory::NewArray<FCObjectEntry>(NumElementsPerChunk);
+            // A reader that sees the count must also see the zeroed chunk behind the pointer.
+            std::atomic_thread_fence(std::memory_order_release);
+            ++NumChunks;
         }
     }
 
@@ -219,6 +222,7 @@ namespace Lumina
 
             // Strictly less, or a full pool passes the check and GetItem hands back the null it dereferences.
             ASSERT(Index < ChunkedArray.GetMaxElements(), "Object pool capacity exceeded!");
+            ChunkedArray.EnsureChunkFor(Index);
 
             FCObjectEntry* Item = ChunkedArray.GetItem(Index);
             DEBUG_ASSERT(Item != nullptr);

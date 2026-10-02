@@ -85,6 +85,13 @@ public static unsafe class NativeBindings
         return false;
     }
 
+    // What a call through a dropped or missing binding raises, naming the export rather than faulting at address zero.
+    public static InvalidOperationException Unbound(string EntryPoint)
+    {
+        return new InvalidOperationException(
+            $"Native export '{EntryPoint}' is not bound; the NativeBindings error logged when it resolved says why.");
+    }
+
     /// <summary>Resolves an export from a known module handle (the bootstrap binds).</summary>
     public static void* ResolveFrom(IntPtr ModuleHandle, string EntryPoint)
     {

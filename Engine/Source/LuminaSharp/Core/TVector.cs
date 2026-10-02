@@ -76,14 +76,16 @@ public readonly unsafe struct TVector<T> : IList<T>
     /// by-value indexer setter would not: assigning through a property that returns a struct is CS1612,
     /// because the setter would run on a temporary. Returning a ref sidesteps that, and it is accurate
     /// anyway -- the element lives in native memory.
-    /// <para>Blittable elements only, for the reason on <see cref="AsSpan"/>. <see cref="Get"/> and
-    /// <see cref="Set"/> work for every element type.</para>
+    /// <para>A marshalled element reads through a held copy, so LUM0201 sends writes to <see cref="Set"/> instead.</para>
     /// </summary>
     public ref T this[int index]
     {
         get
         {
-            ThrowIfMarshalled("the indexer");
+            if (ElementKind<T>.IsMarshalled)
+            {
+                return ref HeldElement<T>.Hold(Get(index));
+            }
             return ref Unsafe.AsRef<T>((void*)ElementAt(index));
         }
     }

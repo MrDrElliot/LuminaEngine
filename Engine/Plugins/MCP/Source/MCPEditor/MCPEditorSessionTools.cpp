@@ -623,6 +623,7 @@ namespace Lumina::MCP
 
         // Drained at the event pump so a key takes a real key's path and frame; anything later is already Held.
         TConcurrentQueue<FKeyInput> InjectedKeys;
+        TConcurrentQueue<uint32> InjectedCharacters;
         TConcurrentQueue<FMouseButtonInput> InjectedButtons;
         TConcurrentQueue<FMouseMoveInput> InjectedMoves;
         FDelegateHandle InputPumpedHandle;
@@ -634,6 +635,12 @@ namespace Lumina::MCP
             while (InjectedKeys.TryDequeue(Input))
             {
                 Window->OnKey.Broadcast(Window, Input);
+            }
+
+            uint32 Codepoint;
+            while (InjectedCharacters.TryDequeue(Codepoint))
+            {
+                Window->OnChar.Broadcast(Window, Codepoint);
             }
 
             // Moves before buttons, so a click is evaluated at the position it was aimed at.
@@ -669,6 +676,50 @@ namespace Lumina::MCP
                 }
                 bOutFocused = Viewports.GetFocusedViewport() != nullptr;
             }, Agent::FGameThreadGate::GetDefaultTimeoutMilliseconds()) == Agent::EGameThreadResult::Ran;
+        }
+
+        TVector<uint32> DecodeUtf8(FStringView Text)
+        {
+            TVector<uint32> Codepoints;
+            for (size_t i = 0; i < Text.size();)
+            {
+                const uint8 Lead = uint8(Text[i]);
+                const int Length = Lead < 0x80 ? 1 : (Lead >> 5) == 0x6 ? 2 : (Lead >> 4) == 0xE ? 3 : 4;
+                uint32 Codepoint = Length == 1 ? Lead : Lead & (0x3F >> (Length - 1));
+                for (int j = 1; j < Length && i + j < Text.size(); ++j)
+                {
+                    Codepoint = (Codepoint << 6) | (uint8(Text[i + j]) & 0x3F);
+                }
+                Codepoints.push_back(Codepoint);
+                i += Length;
+            }
+            return Codepoints;
+        }
+
+        void RegisterSendText(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSendTextParams, SSendKeyResult>(
+                Owner, "editor.send_text",
+                "Type text into the game viewport as character input, giving it input focus first. "
+                "Use it to fill a focused RmlUi text field or chat box; send_key covers keys that type nothing.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
+                [](const SSendTextParams& In, SSendKeyResult& Out)
+                {
+                    if (!FocusGameViewport(Out.bGameInputFocused))
+                    {
+                        return Agent::FToolResult::Error("The game thread did not pick up the focus change in time.");
+                    }
+
+                    // ImGui releases the keyboard at the next frame start, so text sent this frame would be swallowed.
+                    Threading::Sleep(100);
+
+                    const TVector<uint32> Codepoints = DecodeUtf8(In.Text);
+                    for (uint32 Codepoint : Codepoints)
+                    {
+                        InjectedCharacters.Enqueue(Codepoint);
+                    }
+                    return Agent::FToolResult::Ok(Lumina::Format("Typed {} characters.", Codepoints.size()));
+                });
         }
 
         void RegisterSendMouse(FStringView Owner)
@@ -833,6 +884,7 @@ namespace Lumina::MCP
     void RegisterEditorSessionTools(FStringView Owner)
     {
         RegisterSendKey(Owner);
+        RegisterSendText(Owner);
         RegisterUndoRedo(Owner);
         RegisterPlayControl(Owner);
         RegisterTabs(Owner);

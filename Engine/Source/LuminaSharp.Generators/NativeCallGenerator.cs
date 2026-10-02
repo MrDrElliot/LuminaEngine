@@ -382,22 +382,28 @@ namespace LuminaSharp
         bool hasStrings = stringParams.Count > 0;
         bool hasSpans = spanParams.Count > 0;
 
+        // A binding dropped at resolve stays null, so a call fails naming the export instead of jumping to zero.
+        string unboundThrow = "throw global::LuminaSharp.NativeBindings.Unbound(\"" + entry + "\")";
+        string unboundGuard = "if (" + field + " == null) { " + unboundThrow + "; }\n";
+
         // Trivial shape (no marshalling fixups, plain return): expression body / one-liner.
         if (!hasStrings && !hasSpans && !stringReturn && !arrayReturn && !nativeRefReturn)
         {
             if (method.ReturnsVoid)
             {
-                sb.Append("        {\n").Append(CoreBody(12)).Append("        }\n");
+                sb.Append("        {\n").Append(Pad(12)).Append(unboundGuard).Append(CoreBody(12)).Append("        }\n");
             }
             else
             {
-                sb.Append("            => ").Append(wrap($"{field}({coreArgs})")).Append(";\n");
+                sb.Append("            => ").Append(field).Append(" != null ? ").Append(wrap($"{field}({coreArgs})"))
+                  .Append(" : ").Append(unboundThrow).Append(";\n");
             }
         }
         else
         {
             sb.Append("        {\n");
             int indent = 12;
+            sb.Append(Pad(indent)).Append(unboundGuard);
 
             // String args: encode UTF-8 into stack scratch (allocation-free when it fits), free in finally.
             foreach ((int idx, string name) in stringParams)

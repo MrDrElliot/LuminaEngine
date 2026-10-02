@@ -8,7 +8,7 @@ namespace Lumina
 {
     class FAssetRegistry;
 
-    // Finds asset paths and content folders named in C# string literals, since scripts load by path and nothing imports those assets.
+    // Finds asset paths and content folders named in string literals of C# scripts and the JSON they read, since scripts load by path and nothing imports those assets.
     class FCSharpAssetScan
     {
     public:

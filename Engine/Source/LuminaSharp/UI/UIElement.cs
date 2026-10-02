@@ -20,6 +20,9 @@ public readonly unsafe struct UIElement
         this.Handle = Handle;
     }
 
+    // Indexers and properties hand elements out by readonly ref, which is what lets doc["id"].Text = ... compile.
+    internal static ref readonly UIElement Hold(UIElement Value) => ref HeldElement<UIElement>.Hold(Value);
+
     /// <summary>False if a query missed or the owning document has been closed.</summary>
     public bool IsValid => Handle.IsValid;
 

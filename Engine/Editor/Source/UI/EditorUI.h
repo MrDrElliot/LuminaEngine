@@ -397,6 +397,10 @@ namespace Lumina
         static constexpr float                          FrameTimeSmoothingSeconds = 0.2f;
         static constexpr float                          MemorySmoothingSeconds = 1.0f;
 
+        // The memory readouts query the OS and the GPU driver, which cost more than the text they feed, so they sample a few times a second.
+        static constexpr double                         MemorySampleSeconds = 0.25;
+        double                                          LastMemorySampleSeconds = -1.0;
+
         // Drives the title bar's unsaved-changes hint. Counting means walking every package, so it is
         // recounted on a timer instead of per frame -- a hint does not need to be frame-accurate.
         uint32                                          DirtyPackageCount = 0;

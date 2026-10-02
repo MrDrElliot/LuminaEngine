@@ -4,6 +4,7 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectCore.h"
+#include "Scripting/ScriptDataStruct.h"
 #include "Scripting/ScriptStruct.h"
 
 using namespace Lumina;
@@ -176,4 +177,36 @@ TEST(InstancedStructMigration, StorageOwningFieldsDeepCopy)
         << "the migrated string must be its own allocation, not a shared buffer";
 
     New->DestroyStruct(NewBytes.data());
+}
+
+// A reload drops the registry's ref first, so a value nobody touched since still has to destroy through its old type.
+TEST(InstancedStructMigration, ValueOutlivesItsTypesRegistryRef)
+{
+    FScriptExportSchema Schema;
+    Schema.Fields.push_back(ScalarField("Text", EPropertyTypeFlags::String));
+
+    TObjectPtr<CScriptStruct> RegistryRef = BuildLayout(Schema);
+    ASSERT_TRUE(RegistryRef.IsValid());
+    RegistryRef->Metadata.AddValue("ScriptTypeName", "ReloadProbeRow");
+
+    {
+        FInstancedStruct Value;
+        Value.InitializeAs(RegistryRef.Get());
+        *RegistryRef->GetProperty(FName("Text"))->GetValuePtr<FString>(Value.GetMutableMemory()) =
+            "long enough to live on the heap rather than inline";
+
+        RegistryRef = nullptr;
+    }
+
+    TObjectPtr<CScriptStruct> MigratedRef = BuildLayout(Schema);
+    ASSERT_TRUE(MigratedRef.IsValid());
+    MigratedRef->Metadata.AddValue("ScriptTypeName", "ReloadProbeRow");
+
+    FInstancedStruct Value;
+    Value.InitializeAs(MigratedRef.Get());
+    MigratedRef = nullptr;
+    FScriptDataStructRegistry::Get().Clear();
+
+    // The type is gone from the registry, so the value migrates to nothing, destroying its old contents on the way.
+    EXPECT_FALSE(Value.IsValid());
 }

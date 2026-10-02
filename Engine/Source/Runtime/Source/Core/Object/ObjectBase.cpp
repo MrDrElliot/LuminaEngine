@@ -18,7 +18,7 @@
 namespace Lumina
 {
 
-    static TConsoleVar MaxCObjectCount("Core.CObject.MaxCount", 100'000, "Maximum number of allowed CObjects");
+    static TConsoleVar MaxCObjectCount("Core.CObject.MaxCount", 4'194'304, "Maximum number of allowed CObjects");
     
     RUNTIME_API FCObjectArray GObjectArray;
 

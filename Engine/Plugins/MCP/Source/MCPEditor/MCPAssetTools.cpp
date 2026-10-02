@@ -6,6 +6,7 @@
 #include "Agent/AgentToolRegistry.h"
 #include "MCPTextMatch.h"
 #include "Asset/AssetOps.h"
+#include "Assets/AssetEvents.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
@@ -339,6 +340,36 @@ namespace Lumina::MCP
             return true;
         }
 
+        bool ReimportExisting(CImporter* Importer, const FFixedString& Destination, const FString& SourcePath,
+            SImportAssetsResult& Out, const FString& FileName)
+        {
+            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(FStringView(Destination.c_str(), Destination.size()));
+            if (Data == nullptr)
+            {
+                return false;
+            }
+            CObject* Asset = LoadObject<CObject>(Data->AssetGUID);
+            if (Asset == nullptr || !Importer->CanReimport(Asset->GetClass()))
+            {
+                return false;
+            }
+            if (!Importer->ReimportAsset(Asset, FImportRequest{ FFixedString(SourcePath.c_str()), FFixedString() }, nullptr))
+            {
+                Out.Failed.push_back(FileName + ": the reimport failed and the asset was left unchanged");
+                return true;
+            }
+            CPackage* Package = Asset->GetPackage();
+            if (Package == nullptr || !CPackage::SavePackage(Package, Package->GetPackagePath()))
+            {
+                Out.Failed.push_back(FileName + ": reimported in memory but could not be saved");
+                return true;
+            }
+            FAssetRegistry::Get().AssetSaved(Asset);
+            AssetEvents::BroadcastAssetDataChanged(Asset);
+            Out.Imported.push_back(FString(Destination.c_str()));
+            return true;
+        }
+
         void ImportOneFile(const std::filesystem::path& File, const FString& Folder, const SImportAssetsParams& In,
             const nlohmann::json& Settings, SImportAssetsResult& Out)
         {
@@ -374,8 +405,15 @@ namespace Lumina::MCP
                 return;
             }
 
+            // Replacing an asset that already exists updates it in place, as the content browser's reimport does, so its GUID and every reference to it survive.
+            if (In.ReplaceExisting && ReimportExisting(Importer, Destination, SourcePath, Out, FileName))
+            {
+                CImporterRegistry::DestroyImporter(Importer);
+                return;
+            }
+
             // Importers with a settings step read the source here, and building without it produces nothing.
-            const FImportRequest Request{ FFixedString(SourcePath.c_str()), Destination };
+            const FImportRequest Request{ FFixedString(SourcePath.c_str()), Destination, In.ReplaceExisting };
             FImportResult Result;
             FString ParseError;
             if (Importer->ParseSource(Request, ParseError, nullptr))
@@ -392,6 +430,16 @@ namespace Lumina::MCP
                 Result.Error = "The importer produced no assets.";
             }
 
+            // A file holding several meshes names each File_Mesh, so the caller is told the paths that really exist.
+            TVector<FString> CreatedPaths;
+            for (const TObjectPtr<CObject>& Created : Result.CreatedObjects)
+            {
+                if (Created.IsValid() && Created->GetPackage() != nullptr)
+                {
+                    CreatedPaths.push_back(FString(Created->GetPackage()->GetPackagePath().c_str()));
+                }
+            }
+
             // Popping releases the last pin, so each object dies on its own turn rather than when a
             // neighbor's destructor drops the last reference to it.
             while (!Result.CreatedObjects.empty())
@@ -402,7 +450,14 @@ namespace Lumina::MCP
 
             if (Result.Succeeded())
             {
-                Out.Imported.push_back(FString(Destination.c_str()));
+                if (CreatedPaths.empty())
+                {
+                    Out.Imported.push_back(FString(Destination.c_str()));
+                }
+                for (FString& Path : CreatedPaths)
+                {
+                    Out.Imported.push_back(Move(Path));
+                }
             }
             else
             {

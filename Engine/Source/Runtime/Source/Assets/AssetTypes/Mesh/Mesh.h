@@ -44,6 +44,8 @@ namespace Lumina
         void PostLoad() override;
         void OnDestroy() override;
 
+        // Script code that swaps meshes every frame keeps the old one up until the new one can draw.
+        FUNCTION()
         bool IsReadyForRender() const;
 
         // The meshlets are on the GPU, whether or not the materials are, which is all a particle or emission shape reads.

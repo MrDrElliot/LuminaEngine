@@ -216,6 +216,54 @@ TEST(LuminaAudioContext, ChurnsVoicesWithoutLosingSlots)
         << "voices leaked their slots across the churn";
 }
 
+TEST(LuminaAudioContext, StealingPlayingVoicesKeepsSlotAccountingIntact)
+{
+    if (!Jobs::IsInitialized())
+    {
+        GTEST_SKIP() << "the job system is required for the audio pump";
+    }
+
+    FLuminaAudioContext Context;
+    Context.SetBusVolume(EAudioBus::Master, 0.0f);
+
+    if (Context.GetDeviceInfo().PeriodFrames == 0)
+    {
+        GTEST_SKIP() << "no audio endpoint available, so the mixer never runs";
+    }
+
+    constexpr uint32 Cap = 8;
+    Context.SetMaxVoiceCount(Cap);
+    const TSharedPtr<FAudioData> Clip = MakeSineClip(48000);
+
+    // Low-priority loops fill every slot, so each later start has to steal one the mixer is still rendering.
+    FAudioPlayParams Background;
+    Background.bLooping = true;
+    Background.Priority = 10;
+    for (uint32 i = 0; i < Cap; ++i)
+    {
+        EXPECT_TRUE(Context.PlayAudio(Clip, Background).IsValid());
+    }
+    ASSERT_TRUE(PumpUntil(Context, [&]() { return Context.GetActiveVoiceCount() == Cap; }));
+
+    FAudioPlayParams Urgent;
+    Urgent.bLooping = true;
+    Urgent.Priority = 200;
+    for (uint32 Round = 0; Round < 64; ++Round)
+    {
+        const FAudioHandle Stolen = Context.PlayAudio(Clip, Urgent);
+        EXPECT_TRUE(Stolen.IsValid()) << "round " << Round;
+        Context.Update();
+        Threading::Sleep(1);
+        Context.StopSound(Stolen, EAudioStopMode::Immediate, 0.0f);
+        ASSERT_TRUE(PumpUntil(Context, [&]() { return Context.GetActiveVoiceCount() < Cap; })) << "round " << Round;
+        EXPECT_TRUE(Context.PlayAudio(Clip, Background).IsValid()) << "round " << Round;
+    }
+
+    Context.StopAllSounds(EAudioStopMode::Immediate, 0.0f);
+    ASSERT_TRUE(PumpUntil(Context, [&]() { return Context.GetActiveVoiceCount() == 0u; }))
+        << "stolen slots leaked";
+}
+
 TEST(LuminaAudioContext, ProceduralStreamsPlayAndAreNeverAutoCollected)
 {
     if (!Jobs::IsInitialized())

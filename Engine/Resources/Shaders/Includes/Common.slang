@@ -986,7 +986,7 @@ struct FCullData
     // The cull camera's clip range, which under a frozen cull is not the live view's.
     float    CullNearPlane;
     float    CullFarPlane;
-    uint     _CullPad4;
+    float    LODDistanceScaleSq;        // CRendererSettings::LODDistanceScale squared, applied to the bounding radius
 };
 
 // Debug visualization modes. Must match Lumina::ERenderSceneDebugFlags.

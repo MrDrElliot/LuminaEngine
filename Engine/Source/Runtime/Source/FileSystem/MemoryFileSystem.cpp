@@ -318,6 +318,7 @@ namespace Lumina::VFS
             .VirtualPath    = FString(Key.c_str(), Key.size()),
             .PathSource     = FString(Key.c_str(), Key.size()),
             .LastModifyTime = Entry.LastModifyTime,
+            .Size           = Entry.bIsDirectory ? 0 : (uint64)Entry.Data.size(),
             .Flags          = FlagsForPath(KeyView, Entry.bIsDirectory, false),
         };
 

@@ -7,6 +7,8 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "FileSystem/FileSystem.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
+#include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 
 #include <cstdio>
@@ -21,6 +23,42 @@ namespace Lumina
             TVector<uint8> Bytes;
             size_t         Cursor = 0;
         };
+
+        struct FReadStyleSheet
+        {
+            FString Path;
+            int64   WriteTime = 0;
+        };
+
+        // RmlUi keeps every parsed stylesheet by path for the whole session, so the files behind them are tracked here.
+        FMutex                  StyleSheetMutex;
+        TVector<FReadStyleSheet> ReadStyleSheets;
+
+        int64 WriteTimeOf(FStringView VirtualPath)
+        {
+            const FPathString Physical = VFS::ResolvePath(VirtualPath);
+            return Physical.empty() ? 0 : Filesystem::LastWriteTime(Physical);
+        }
+
+        void NoteStyleSheetRead(FStringView VirtualPath)
+        {
+            constexpr FStringView Extension(".rcss");
+            if (VirtualPath.size() < Extension.size() || VirtualPath.substr(VirtualPath.size() - Extension.size()) != Extension)
+            {
+                return;
+            }
+            const int64 WriteTime = WriteTimeOf(VirtualPath);
+            FScopeLock Lock(StyleSheetMutex);
+            for (FReadStyleSheet& Sheet : ReadStyleSheets)
+            {
+                if (FStringView(Sheet.Path.c_str(), Sheet.Path.size()) == VirtualPath)
+                {
+                    Sheet.WriteTime = WriteTime;
+                    return;
+                }
+            }
+            ReadStyleSheets.push_back(FReadStyleSheet{ FString(VirtualPath.data(), VirtualPath.size()), WriteTime });
+        }
 
         // A path naming a CFont asset is resolved through the asset system, not read raw off the VFS.
         bool TryReadFontAsset(const Rml::String& RawPath, TVector<uint8>& OutBytes)
@@ -65,12 +103,37 @@ namespace Lumina
                 LOG_WARN("[RmlUi] FileInterface::Open: '{}' not found.", Path.c_str());
                 return 0;
             }
+            NoteStyleSheetRead(FStringView(Resolved.c_str(), Resolved.size()));
+        }
+        else
+        {
+            NoteStyleSheetRead(Source);
         }
 
         FOpenedFile* File = new FOpenedFile{};
         File->Bytes  = Move(Bytes);
         File->Cursor = 0;
         return Rml::FileHandle(File);
+    }
+
+    bool FRmlUiFileInterface::ConsumeChangedStyleSheets()
+    {
+        FScopeLock Lock(StyleSheetMutex);
+        bool bChanged = false;
+        for (const FReadStyleSheet& Sheet : ReadStyleSheets)
+        {
+            if (WriteTimeOf(FStringView(Sheet.Path.c_str(), Sheet.Path.size())) != Sheet.WriteTime)
+            {
+                bChanged = true;
+                break;
+            }
+        }
+        // Every sheet is parsed again after a cache clear, which records its new time.
+        if (bChanged)
+        {
+            ReadStyleSheets.clear();
+        }
+        return bChanged;
     }
 
     void FRmlUiFileInterface::Close(Rml::FileHandle Handle)

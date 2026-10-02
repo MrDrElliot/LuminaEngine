@@ -13,6 +13,16 @@
 #define UI_SHADER_RADIAL   2u
 #define UI_SHADER_CONIC    3u
 #define kUIShaderTexturedStraight 4u // asset texture with straight alpha; premultiplied at sample time
+#define kUIShaderTexturedStraightSRGB 5u // the same from an sRGB texture, which the sampler hands back linear
+
+// The exact inverse of the hardware sRGB decode, so an asset texel reaches the display-encoded target as authored.
+float3 EncodeSRGB(float3 Linear)
+{
+    const float3 C    = saturate(Linear);
+    const float3 Low  = C * 12.92;
+    const float3 High = 1.055 * pow(C, float3(1.0 / 2.4)) - 0.055;
+    return lerp(High, Low, float3(C <= float3(0.0031308)));
+}
 
 struct FUiDraw
 {

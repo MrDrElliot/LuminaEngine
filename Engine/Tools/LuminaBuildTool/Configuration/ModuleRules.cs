@@ -111,6 +111,9 @@ public abstract class ModuleRules
     /// <summary>Prebuilt libraries by absolute path. Propagates to dependents.</summary>
     public List<string> PublicAdditionalLibraries { get; } = new();
 
+    // DLLs, such as "slang.dll", loaded on first call rather than at startup, so a package can keep them outside the exe's folder. Propagates to dependents.
+    public List<string> PublicDelayLoadDLLs { get; } = new();
+
     /// <summary>Library search paths. Propagates to dependents.</summary>
     public List<string> PublicLibraryPaths { get; } = new();
 

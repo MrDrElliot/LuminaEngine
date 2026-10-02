@@ -306,7 +306,7 @@ public static unsafe partial class Host
     }
 
 
-    /// Resumes an Asset.LoadAsync continuation; Callback is the GCHandle to an Action&lt;IntPtr&gt; trampoline, freed here.
+    /// Resumes an ObjectCore.AsyncLoadObject continuation; Callback is the GCHandle to an Action&lt;IntPtr&gt; trampoline, freed here.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static void InvokeAssetCallback(IntPtr Callback, IntPtr Object)
@@ -314,7 +314,7 @@ public static unsafe partial class Host
         try
         {
             GCHandle Handle = GCHandle.FromIntPtr(Callback);
-            Asset.Complete(Callback);
+            ObjectCore.CompleteAsyncLoad(Callback);
             Action<IntPtr>? Trampoline = Handle.Target as Action<IntPtr>;
             Handle.Free();
             Trampoline?.Invoke(Object);

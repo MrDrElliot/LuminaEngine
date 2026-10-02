@@ -149,6 +149,23 @@ TEST(AgentGameThread, WorkAlreadyRunningIsWaitedOutPastTheTimeout)
     EXPECT_TRUE(bFinished.load(std::memory_order_acquire));
 }
 
+// A long callback ahead in the queue keeps the main thread busy, which is not the same as the frame loop being stuck.
+TEST(AgentGameThread, WorkQueuedBehindALongCallbackWaitsForIt)
+{
+    TAtomic<bool> bRan { false };
+    EGameThreadResult Result = EGameThreadResult::TimedOut;
+
+    MainThread::Enqueue([]() { Threading::Sleep(300); });
+
+    RunOffThreadWhilePumping([&]()
+    {
+        Result = FGameThreadGate::Run([&bRan]() { bRan.store(true, std::memory_order_release); }, 50);
+    }, 5.0);
+
+    EXPECT_EQ(Result, EGameThreadResult::Ran);
+    EXPECT_TRUE(bRan.load(std::memory_order_acquire));
+}
+
 TEST(AgentGameThread, SeveralCallsAllRunInOrder)
 {
     TVector<int32> Order;

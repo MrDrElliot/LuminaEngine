@@ -3,6 +3,7 @@
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/HashTable.h"
+#include "Containers/StringFormat.h"
 #include "FileSystem/FileSystem.h"
 
 namespace Lumina
@@ -11,9 +12,17 @@ namespace Lumina
     {
         bool IsCSharpSource(FStringView VirtualPath)
         {
-            return VFS::Extension(VirtualPath) == ".cs"
+            return VFS::Extension(VirtualPath) == ".cs";
+        }
+
+        // Scripts read tables like item lists from JSON and load the meshes those name, so the data is scanned with the code.
+        bool IsScannedSource(FStringView VirtualPath)
+        {
+            const FStringView Extension = VFS::Extension(VirtualPath);
+            return (Extension == ".cs" || Extension == ".json")
                 && VirtualPath.find("/obj/") == FStringView::npos
-                && VirtualPath.find("/bin/") == FStringView::npos;
+                && VirtualPath.find("/bin/") == FStringView::npos
+                && VirtualPath.find("/Config/") == FStringView::npos;
         }
 
         // Reads one literal from its opening quote, returning the index just past its end.
@@ -149,7 +158,7 @@ namespace Lumina
         {
             VFS::RecursiveDirectoryIterator(Root, [&](const VFS::FFileInfo& Info)
             {
-                if (!Info.IsDirectory() && IsCSharpSource(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size())))
+                if (!Info.IsDirectory() && IsScannedSource(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size())))
                 {
                     Sources.emplace_back(Info.VirtualPath.c_str(), Info.VirtualPath.size());
                 }
@@ -164,6 +173,11 @@ namespace Lumina
                 continue;
             }
             ++Result.FilesScanned;
+
+            // A data file can name thousands of assets, so only code gets a line per reference.
+            const bool bLogEachRef = IsCSharpSource(FStringView(Source.c_str(), Source.size()));
+            const size_t AssetsBefore = Result.AssetPaths.size();
+            const size_t FoldersBefore = Result.FolderPaths.size();
 
             const FStringView Contents(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
             for (FString& Candidate : ExtractCandidates(Contents))
@@ -197,11 +211,19 @@ namespace Lumina
                     Kind = "folder";
                 }
 
-                if (Kind != nullptr && LogFunc)
+                if (Kind != nullptr && LogFunc && bLogEachRef)
                 {
                     FString Msg = FString("  [cs-ref] ") + Kind + " " + Candidate + "  (from " + Source + ")";
                     LogFunc(FStringView(Msg.c_str(), Msg.size()));
                 }
+            }
+
+            const size_t NewAssets = Result.AssetPaths.size() - AssetsBefore;
+            const size_t NewFolders = Result.FolderPaths.size() - FoldersBefore;
+            if (!bLogEachRef && LogFunc && (NewAssets > 0 || NewFolders > 0))
+            {
+                const FString Msg = Format("  [data-ref] {} names {} asset(s) and {} folder(s)", Source.c_str(), NewAssets, NewFolders);
+                LogFunc(FStringView(Msg.c_str(), Msg.size()));
             }
         }
         return Result;

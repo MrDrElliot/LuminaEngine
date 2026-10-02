@@ -1,6 +1,8 @@
 ﻿#include "AssetCooker.h"
 #include <string>
 #include "Platform/Filesystem/PlatformFilesystem.h"
+#include "Paths/Paths.h"
+#include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -19,6 +21,14 @@
 #include "Cooker/CookDDC.h"
 #include "Cooker/Graph/CookGraph.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Assets/AssetTypes/Material/MaterialInterface.h"
+#include "Assets/AssetTypes/Textures/Texture.h"
+#include "Core/Object/Class.h"
+#include "Core/Console/ConsoleVariable.h"
+#include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Platform/Time/PlatformTime.h"
+#include "TaskSystem/TaskSystem.h"
 #include "Core/Object/Cast.h"
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "FileSystem/FileSystem.h"
@@ -30,6 +40,12 @@
 
 namespace Lumina
 {
+    // Roots the cooker finds itself land in the one main pak, and only a plugin that names a chunk splits one off.
+    static const FName kMainChunkName("Main");
+
+    static TConsoleVar CVarCookVerifyStrip("Cook.VerifyStripPerClass", 0,
+        "Cooks this many file-cooked packages of each class through a load and save too, and logs whether the bytes match");
+
     namespace
     {
         void LogCooker(const TFunction<void(FStringView)>& LogFunc, FStringView Msg)
@@ -39,6 +55,12 @@ namespace Lumina
                 LogFunc(Msg);
             }
             LOG_INFO("[Cooker] {}", FString(Msg.data(), Msg.size()).c_str());
+        }
+
+        FStringView LeafName(FStringView Path)
+        {
+            const size_t Slash = Path.find_last_of("/\\");
+            return Slash == FStringView::npos ? Path : Path.substr(Slash + 1);
         }
 
         // IDE state, build output, project files and source-control markers, none of which a game reads.
@@ -132,10 +154,10 @@ namespace Lumina
             TVector<uint8> CookedBytes;
             if (FCookDDC::TryGet(Key, CookedBytes))
             {
-                Writer.AddEntry(VirtualPath, TSpan<const uint8>(CookedBytes.data(), CookedBytes.size()));
                 LogCooker(LogFunc, Format("  + {} (ddc, {} bytes)",
                     VirtualPath,
                     CookedBytes.size()).c_str());
+                Writer.AddEntry(VirtualPath, Move(CookedBytes), true);
                 return true;
             }
 
@@ -181,12 +203,181 @@ namespace Lumina
             // Silent failure is fine, since the freshly-cooked bytes still ship and only the cache misses.
             FCookDDC::Put(Key, CookedBytes);
 
-            Writer.AddEntry(VirtualPath, TSpan<const uint8>(CookedBytes.data(), CookedBytes.size()));
             LogCooker(LogFunc, Format("  + {} (cooked, {} bytes, {} editor object(s) left out)",
                 VirtualPath,
                 CookedBytes.size(),
                 EditorObjects).c_str());
+            Writer.AddEntry(VirtualPath, Move(CookedBytes), true);
             return true;
+        }
+
+        bool HasEditorOnlyData(const CStruct* Struct, THashMap<const CStruct*, bool>& Memo);
+
+        bool PropertyHasEditorOnlyData(const FProperty* Property, THashMap<const CStruct*, bool>& Memo)
+        {
+            if (Property->IsEditorOnly())
+            {
+                return true;
+            }
+            // Dispatched on the type tag, since some property classes come from modules built without RTTI.
+            if (Property->GetType() == EPropertyTypeFlags::Struct)
+            {
+                const CStruct* Struct = static_cast<const FStructProperty*>(Property)->GetStruct();
+                return Struct != nullptr && HasEditorOnlyData(Struct, Memo);
+            }
+            if (Property->GetType() == EPropertyTypeFlags::Vector)
+            {
+                const FProperty* Inner = static_cast<const FArrayProperty*>(Property)->GetInternalProperty();
+                return Inner != nullptr && PropertyHasEditorOnlyData(Inner, Memo);
+            }
+            return false;
+        }
+
+        bool HasEditorOnlyData(const CStruct* Struct, THashMap<const CStruct*, bool>& Memo)
+        {
+            if (auto It = Memo.find(Struct); It != Memo.end())
+            {
+                return It->second;
+            }
+            // Seeded false so a struct that contains itself through an array ends the walk.
+            Memo[Struct] = false;
+            bool bEditorOnly = false;
+            for (const FProperty* Property : Struct->GetProperties())
+            {
+                if (PropertyHasEditorOnlyData(Property, Memo))
+                {
+                    bEditorOnly = true;
+                    break;
+                }
+            }
+            Memo[Struct] = bEditorOnly;
+            return bEditorOnly;
+        }
+
+        // A class whose cooked bytes equal its saved bytes minus the thumbnail, so its packages cook without being loaded.
+        bool CooksWithoutLoading(const FAssetData* Data, THashMap<FName, bool>& ClassMemo, THashMap<const CStruct*, bool>& StructMemo)
+        {
+            if (Data == nullptr)
+            {
+                return false;
+            }
+            if (auto It = ClassMemo.find(Data->AssetClass); It != ClassMemo.end())
+            {
+                return It->second;
+            }
+
+            const CClass* Class = FindObject<CClass>(Data->AssetClass);
+
+            // Materials rebuild stale shaders and strip SPIR-V, and textures drop their source, both only in a real save.
+            const bool bEligible = Class != nullptr
+                && !Class->IsChildOf(CMaterialInterface::StaticClass())
+                && !Class->IsChildOf(CTexture::StaticClass())
+                && !(Class->GetPackage() != nullptr && EditorScriptPackages().contains(Class->GetPackage()->GetName()))
+                && !HasEditorOnlyData(Class, StructMemo);
+
+            ClassMemo[Data->AssetClass] = bEligible;
+            return bEligible;
+        }
+
+        void VerifyStrippedPackage(FStringView Path, const TVector<uint8>& Stripped, const TFunction<void(FStringView)>& LogFunc)
+        {
+            TVector<uint8> Saved;
+            CPackage* Package = CPackage::LoadPackage(Path);
+            const bool bSaved = Package != nullptr && CPackage::SavePackageForCook(Package, Saved, [](const CObject* Object) { return IsEditorOnlyObject(Object); });
+            const bool bMatch = bSaved && Saved == Stripped;
+            LogCooker(LogFunc, Format("  [verify] {} {} ({} bytes from the file, {} from a load and save)",
+                bMatch ? "matches" : "differs", Path, Stripped.size(), Saved.size()).c_str());
+
+            // Both versions are kept so a difference can be decoded and compared outside the editor.
+            if (!bMatch)
+            {
+                const FString Dir = FString(Paths::GetEngineInstallDirectory().c_str()) + "/Intermediates/CookVerify/";
+                std::filesystem::create_directories(Dir.c_str());
+                const FString Stem = Dir + FString(LeafName(Path).data(), LeafName(Path).size());
+                Filesystem::AtomicWriteFile(Stem + ".file", TSpan<const uint8>(Stripped.data(), Stripped.size()));
+                Filesystem::AtomicWriteFile(Stem + ".saved", TSpan<const uint8>(Saved.data(), Saved.size()));
+            }
+        }
+
+        // Most packages only lose their thumbnail, which needs no load, so they cook in parallel and only the rest are loaded and saved.
+        void BundleChunkAssets(FPakWriter& Writer, const TVector<const FCookNode*>& Nodes, FCookResult& Result,
+                               const TFunction<void(FStringView)>& LogFunc)
+        {
+            const double Start = PlatformTime::Seconds();
+
+            THashMap<FName, bool> ClassMemo;
+            THashMap<const CStruct*, bool> StructMemo;
+            TVector<uint8> bTryStrip(Nodes.size(), 0);
+            for (size_t i = 0; i < Nodes.size(); ++i)
+            {
+                const FStringView Path(Nodes[i]->Path.c_str(), Nodes[i]->Path.size());
+                bTryStrip[i] = CooksWithoutLoading(FAssetRegistry::Get().GetAssetByPath(Path), ClassMemo, StructMemo) ? 1 : 0;
+            }
+
+            TVector<TVector<uint8>> Stripped(Nodes.size());
+            TVector<uint8> bStripped(Nodes.size(), 0);
+            Task::ParallelFor((uint32)Nodes.size(), [&](uint32 i)
+            {
+                if (bTryStrip[i] != 0)
+                {
+                    const FStringView Path(Nodes[i]->Path.c_str(), Nodes[i]->Path.size());
+                    bStripped[i] = CPackage::StripPackageForCook(Path, Stripped[i]) ? 1 : 0;
+                }
+            }, 16);
+
+            // Added in graph order whichever path cooked them, so the pak stays deterministic.
+            size_t NumStripped = 0;
+            size_t NumLoaded = 0;
+            THashMap<FName, int32> Verified;
+            for (size_t i = 0; i < Nodes.size(); ++i)
+            {
+                const FStringView Path(Nodes[i]->Path.c_str(), Nodes[i]->Path.size());
+                if (bStripped[i] != 0 && Verified[Nodes[i]->AssetClass]++ < CVarCookVerifyStrip.GetValue())
+                {
+                    VerifyStrippedPackage(Path, Stripped[i], LogFunc);
+                }
+                if (bStripped[i] != 0)
+                {
+                    Writer.AddEntry(Path, Move(Stripped[i]), true);
+                    ++Result.NumAssetsCooked;
+                    ++NumStripped;
+                }
+                else if (BundleAssetCooked(Writer, Path, LogFunc))
+                {
+                    ++Result.NumAssetsCooked;
+                    ++NumLoaded;
+                }
+            }
+
+            LogCooker(LogFunc, Format("  {} asset(s) cooked from their files, {} loaded and saved, in {:.1f} s",
+                NumStripped, NumLoaded, PlatformTime::Seconds() - Start).c_str());
+        }
+
+        // Every entry of a pak, one per line, so what shipped can be checked without opening the pak.
+        void WritePakContents(const FPakWriter& Writer, const FString& PakPath, const TFunction<void(FStringView)>& LogFunc)
+        {
+            TVector<FFixedString> Paths;
+            Writer.GetEntryPaths(Paths);
+            Algo::Sort(Paths);
+
+            FString Text;
+            for (const FFixedString& Path : Paths)
+            {
+                Text.append(Path.c_str(), Path.size());
+                Text.push_back('\n');
+            }
+
+            // Kept with the project rather than in the package, so the shipped folder holds only what the game reads.
+            const FString ContentsDir = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Saved/Cook";
+            Filesystem::MakeDirectoryTree(FStringView(ContentsDir.c_str(), ContentsDir.size()));
+            const FString ContentsPath = ContentsDir + "/" + FString(LeafName(FStringView(PakPath.c_str(), PakPath.size())).data(),
+                                                                       LeafName(FStringView(PakPath.c_str(), PakPath.size())).size()) + ".contents.txt";
+            std::ofstream File(ContentsPath.c_str(), std::ios::binary | std::ios::trunc);
+            File.write(Text.data(), (std::streamsize)Text.size());
+            if (File.good())
+            {
+                LogCooker(LogFunc, Format("  listed {} entries in {}", Paths.size(), ContentsPath.c_str()).c_str());
+            }
         }
 
         // VirtualPath ends in ".lasset" (case-insensitive).
@@ -233,12 +424,6 @@ namespace Lumina
                 Walk(Plugin->GetMountAlias());
             }
             return Count;
-        }
-
-        FStringView LeafName(FStringView Path)
-        {
-            const size_t Slash = Path.find_last_of("/\\");
-            return Slash == FStringView::npos ? Path : Path.substr(Slash + 1);
         }
 
         bool BundleDiskFile(FPakWriter& Writer, FStringView DiskPath, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
@@ -460,15 +645,15 @@ namespace Lumina
             {
                 FCookRoot Root;
                 Root.Asset = FString(Data->Path.c_str(), Data->Path.size());
-                Root.Chunk = FName("Primary");
+                Root.Chunk = kMainChunkName;
                 Graph.AddRoot(Root);
             }
         }
 
         // The project root subdirs plus every enabled plugin's mount.
         TVector<FString> ContentRoots;
-        ContentRoots.emplace_back("/Game/Content");
-        ContentRoots.emplace_back("/Game/Scripts");
+        // All of /Game, since scripts keep the JSON they read beside them or in a data folder outside Content.
+        ContentRoots.emplace_back("/Game");
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
         {
             if (!Plugin->IsEnabled())        continue;
@@ -490,7 +675,7 @@ namespace Lumina
             {
                 FCookRoot Root;
                 Root.Asset = Path;
-                Root.Chunk = FName("UI");
+                Root.Chunk = kMainChunkName;
                 Graph.AddRoot(Root);
             }
         }
@@ -506,11 +691,11 @@ namespace Lumina
             }
             for (const FString& Path : ScriptScan.AssetPaths)
             {
-                Graph.AddRoot(FCookRoot{ Path, FName("Script") });
+                Graph.AddRoot(FCookRoot{ Path, kMainChunkName });
             }
             for (const FString& Folder : ScriptScan.FolderPaths)
             {
-                Graph.AddFolderRoot(FStringView(Folder.c_str(), Folder.size()), FName("Script"));
+                Graph.AddFolderRoot(FStringView(Folder.c_str(), Folder.size()), kMainChunkName);
             }
         }
 
@@ -576,14 +761,7 @@ namespace Lumina
             FPakWriter Writer;
             const bool bIsMain = (Chunk == kMainChunk);
 
-            for (const FCookNode* Node : ByChunk[Chunk])
-            {
-                FStringView Vp(Node->Path.c_str(), Node->Path.size());
-                if (BundleAssetCooked(Writer, Vp, LogFunc))
-                {
-                    ++Result.NumAssetsCooked;
-                }
-            }
+            BundleChunkAssets(Writer, ByChunk[Chunk], Result, LogFunc);
 
             size_t ChunkExtras = 0;
             if (bIsMain)
@@ -651,11 +829,13 @@ namespace Lumina
 
             const FString OutPath = ChunkPakPath(Chunk);
             const size_t ChunkBytes = Writer.TotalEntryBytes();
+            Filesystem::MakeParentDirectoryTree(FStringView(OutPath.c_str(), OutPath.size()));
             if (!Writer.Finalize(OutPath))
             {
                 Result.ErrorMessage = FString("Failed to write PAK at ") + OutPath;
                 return Result;
             }
+            WritePakContents(Writer, OutPath, LogFunc);
 
             FCookChunkResult ChunkResult;
             ChunkResult.Chunk     = Chunk;

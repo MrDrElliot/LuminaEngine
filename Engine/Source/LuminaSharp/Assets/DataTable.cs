@@ -88,6 +88,14 @@ public unsafe partial class CDataTable
     }
 }
 
+// A script row derives from this the way a C++ row derives from SDataTableRowBase, and the schema pass creates it unbound.
+public unsafe partial class SDataTableRowBase
+{
+    protected SDataTableRowBase() : base(IntPtr.Zero)
+    {
+    }
+}
+
 /// Handwritten extensions to the reflected <see cref="SDataTableRowHandle"/> wrapper.
 public unsafe partial class SDataTableRowHandle
 {

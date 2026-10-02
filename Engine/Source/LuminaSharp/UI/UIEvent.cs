@@ -50,10 +50,10 @@ public readonly struct UIEvent
     public UIEventType Type => (UIEventType)Data.Id;
 
     /// <summary>The deepest element the event originated on.</summary>
-    public UIElement Target => new(World, Data.TargetElement);
+    public ref readonly UIElement Target => ref UIElement.Hold(new(World, Data.TargetElement));
 
     /// <summary>The element the listener is attached to (where bubbling currently is).</summary>
-    public UIElement Current => new(World, Data.CurrentElement);
+    public ref readonly UIElement Current => ref UIElement.Hold(new(World, Data.CurrentElement));
 
     /// <summary>Mouse button for mouse events: 0 = left, 1 = right, 2 = middle; -1 if not a mouse event.</summary>
     public int MouseButton => Data.MouseButton;

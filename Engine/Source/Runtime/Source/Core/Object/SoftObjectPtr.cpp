@@ -23,6 +23,7 @@ namespace Lumina
 
     bool FSoftObjectPath::TryResolve() const
     {
+        LUMINA_PROFILE_SCOPE();
         FAssetRegistry& Registry = FAssetRegistry::Get();
 
         if (CachedGUID.IsValid())
@@ -65,6 +66,16 @@ namespace Lumina
         return true;
     }
 
+    // An authored path may omit the package extension, and the package read needs the file the registry found.
+    static FFixedString PackageFileFor(const FString& Path, const FGuid& GUID)
+    {
+        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(GUID))
+        {
+            return FFixedString(Data->Path.c_str(), Data->Path.size());
+        }
+        return FFixedString(Path.c_str(), Path.size());
+    }
+
     CObject* FSoftObjectPath::LoadSynchronous() const
     {
         if (!TryResolve())
@@ -72,11 +83,12 @@ namespace Lumina
             return nullptr;
         }
         // Soft paths are deep, and the load rejects an oversize path through its own bounds check.
-        return FAssetManager::Get().LoadAssetSynchronous(FFixedString(Path.c_str(), Path.size()), CachedGUID);
+        return FAssetManager::Get().LoadAssetSynchronous(PackageFileFor(Path, CachedGUID), CachedGUID);
     }
 
     void FSoftObjectPath::LoadAsync(const TFunction<void(CObject*)>& Callback) const
     {
+        LUMINA_PROFILE_SCOPE();
         if (!TryResolve())
         {
             if (Callback)
@@ -85,8 +97,12 @@ namespace Lumina
             }
             return;
         }
-        FAssetHandle Handle = FAssetManager::Get().LoadAssetAsync(
-            FFixedString(Path.c_str(), Path.size()), CachedGUID);
+        FFixedString PackageFile;
+        {
+            LUMINA_PROFILE_SECTION("Package File For");
+            PackageFile = PackageFileFor(Path, CachedGUID);
+        }
+        FAssetHandle Handle = FAssetManager::Get().LoadAssetAsync(PackageFile, CachedGUID);
         if (!Handle.IsValid())
         {
             if (Callback)
@@ -97,6 +113,7 @@ namespace Lumina
         }
         if (Callback)
         {
+            LUMINA_PROFILE_SECTION("Attach Load Continuation");
             Handle.Then([Callback](CObject*& Obj) { Callback(Obj); });
         }
     }

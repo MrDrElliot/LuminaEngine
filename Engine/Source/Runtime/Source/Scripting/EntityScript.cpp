@@ -415,6 +415,8 @@ namespace Lumina
 
                     if (Script->ShouldTick() && ScriptPhase(Script) == Phase)
                     {
+                        // Named by class, so a capture splits the script system's time by script and not just in total.
+                        LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                         Script->OnUpdate(DeltaTime);
                     }
                 }

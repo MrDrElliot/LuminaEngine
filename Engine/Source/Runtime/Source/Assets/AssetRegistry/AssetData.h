@@ -81,6 +81,9 @@ namespace Lumina
         // Source mtime (unix-epoch nanos); cheap pre-check before hashing on each discovery pass.
         int64                       SourceMTimeNs  = 0;
 
+        // Source size in bytes; with the mtime it lets discovery skip a file without reading it.
+        uint64                      FileSize       = 0;
+
         EAssetFlags                 Flags          = EAssetFlags::None;
 
         // Direct outbound refs from the package ImportTable (reflection-typed where possible).

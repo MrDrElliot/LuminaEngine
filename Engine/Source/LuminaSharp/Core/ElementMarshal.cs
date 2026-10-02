@@ -144,19 +144,19 @@ internal static class ElementKind<T>
     /// <summary>The reflected struct name StructAssign resolves; empty for every other kind.</summary>
     public static readonly string NativeName = Kind == EElementKind.StructView ? NativeTypeName.Of<T>() : string.Empty;
 
-    public static readonly Func<string, T>? MakeAssetRef = BindAssetRef<Func<string, T>>(nameof(AssetRefMarshal.Read));
+    public static readonly Func<string, T>? MakeSoftReference = BindSoftReference<Func<string, T>>(nameof(SoftObjectReferenceMarshal.Read));
 
-    public static readonly Func<T, string>? AssetRefPath = BindAssetRef<Func<T, string>>(nameof(AssetRefMarshal.Write));
+    public static readonly Func<T, string>? SoftReferencePath = BindSoftReference<Func<T, string>>(nameof(SoftObjectReferenceMarshal.Write));
 
-    // Only AssetRefMarshal carries the struct constraint that makes the interface calls constrained ones.
-    private static TDelegate? BindAssetRef<TDelegate>(string Method) where TDelegate : Delegate
+    // Only SoftObjectReferenceMarshal carries the struct constraint that makes the interface calls constrained ones.
+    private static TDelegate? BindSoftReference<TDelegate>(string Method) where TDelegate : Delegate
     {
         if (Kind != EElementKind.SoftRef || !typeof(T).IsValueType)
         {
             return null;
         }
 
-        return (TDelegate)typeof(AssetRefMarshal).GetMethod(Method)!
+        return (TDelegate)typeof(SoftObjectReferenceMarshal).GetMethod(Method)!
             .MakeGenericMethod(typeof(T))
             .CreateDelegate(typeof(TDelegate));
     }
@@ -207,8 +207,8 @@ public static unsafe class ElementMarshal
                 return ElementKind<T>.MakeView!(Address);
 
             case EElementKind.SoftRef:
-                // Casting the local to IAssetRef would mutate a box this then throws away, leaving the default.
-                return ElementKind<T>.MakeAssetRef!(Native.SoftPathGet(Address));
+                // Casting the local to ISoftObjectReference would mutate a box this then throws away, leaving the default.
+                return ElementKind<T>.MakeSoftReference!(Native.SoftPathGet(Address));
 
             case EElementKind.ManagedString:
             {
@@ -316,7 +316,7 @@ public static unsafe class ElementMarshal
                 break;
             }
             case EElementKind.SoftRef:
-                Native.SoftPathSet(Address, ElementKind<T>.AssetRefPath!(Value));
+                Native.SoftPathSet(Address, ElementKind<T>.SoftReferencePath!(Value));
                 break;
 
             case EElementKind.ManagedString:

@@ -18,6 +18,9 @@ namespace Lumina
 
         /** Destination package path, extension already stripped. */
         FFixedString DestinationPath;
+
+        // An asset already at a path this import would create is replaced in place rather than copied under a new name.
+        bool bReplaceExisting = false;
     };
 
     struct FImportResult

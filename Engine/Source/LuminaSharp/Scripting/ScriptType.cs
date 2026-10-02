@@ -85,7 +85,7 @@ public sealed class ScriptType
     // sizeof the managed value for a script-declared struct, which native checks its minted layout against.
     public int ManagedSize { get; init; }
 
-    /// <summary>Asset class filter for an AssetRef; empty means any.</summary>
+    /// <summary>Asset class filter for a soft object reference; empty means any.</summary>
     public string? TargetClass { get; init; }
 
     public string? EnumName { get; init; }

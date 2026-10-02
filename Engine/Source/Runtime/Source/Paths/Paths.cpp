@@ -9,6 +9,28 @@ namespace Lumina::Paths
 {
     static THashMap<FName, FString> CachedDirectories;
 
+    // Computed from the exe path alone, since the log and crash handler ask before paths are initialized.
+    const FString& GetGameDataDirectory()
+    {
+        static const FString Directory = []
+        {
+            FString ExePath = Platform::GetCurrentProcessPath();
+            Normalize(ExePath);
+
+            const size_t Slash = ExePath.find_last_of('/');
+            const FString ExeDir = Slash == FString::npos ? FString() : ExePath.substr(0, Slash);
+            FString Stem = Slash == FString::npos ? ExePath : ExePath.substr(Slash + 1);
+            if (const size_t Dot = Stem.find_last_of('.'); Dot != FString::npos)
+            {
+                Stem.resize(Dot);
+            }
+
+            const FString DataDir = ExeDir + "/" + Stem + "_Data";
+            return Filesystem::Exists(DataDir) ? DataDir : ExeDir;
+        }();
+        return Directory;
+    }
+
     namespace
     {
         const char* EngineResourceDirectoryName     = "EngineResourceDirectory";

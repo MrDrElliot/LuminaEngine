@@ -788,6 +788,9 @@ namespace Lumina
         void TerrainUpdatePass(RHI::FCmdListH CL);
         void TerrainCullPass(RHI::FCmdListH CL);
 
+        // Every terrain pass asks the same question, so a terrain skipped by the cull is never drawn with last frame's count.
+        bool IsTerrainInView(const FFrameData::FTerrainExtract& Terrain) const;
+
         /** Generates grass instances on the GPU for every species the visible terrains declare. */
         void GrassScatterPass(RHI::FCmdListH CL);
         void TerrainDepthPrePass(RHI::FCmdListH CL);
@@ -1563,6 +1566,8 @@ namespace Lumina
         // A resize destroys Output, and only a ticking world can repaint it. Held until Extract runs.
         FUIntVector2                            PendingPrimarySize = FUIntVector2(0);
         bool                                    bHasPendingPrimarySize = false;
+        FUIntVector2                            LastRequestedPrimarySize = FUIntVector2(0);
+        uint32                                  PrimarySizeStableFrames = 0;
 
 #if USING(WITH_EDITOR)
         static constexpr uint32                 PickerReadbackRingSize = RHI::kFramesInFlight + 1;

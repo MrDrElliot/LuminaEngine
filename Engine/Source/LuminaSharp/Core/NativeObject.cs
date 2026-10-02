@@ -236,6 +236,23 @@ public unsafe class NativeStruct
         }
     }
 
+    // Gates the accessors ScriptPropertyRewriter emits, since the schema pass builds one unbound instance per script row type.
+    protected internal bool HasNativeStorage => RawHandle != IntPtr.Zero;
+
+    // Overridden by the rewriter with a script row's [Property] initializers, run once into the minted struct's defaults.
+    protected virtual void __ApplyScriptDefaults()
+    {
+    }
+
+    internal void ApplyScriptDefaults() => __ApplyScriptDefaults();
+
+    // Points a script row created unbound at native row memory, since it declares no IntPtr constructor.
+    internal void BindNativeHandle(IntPtr NativeHandle)
+    {
+        RawHandle = NativeHandle;
+        EpochSlot = null;
+    }
+
     internal void BindComponentView(ulong InWorld, uint InEntity, IntPtr InOps, uint* InEpochSlot)
     {
         World = InWorld;

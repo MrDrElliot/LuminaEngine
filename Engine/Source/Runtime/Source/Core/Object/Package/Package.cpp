@@ -12,6 +12,7 @@
 #include "Memory/MemoryTracking.h"
 #include "Core/Serialization/Package/PackageLoader.h"
 #include "Core/Serialization/Package/PackageSaver.h"
+#include "Core/Serialization/MemoryArchiver.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "TaskSystem/TaskSystem.h"
@@ -38,6 +39,9 @@ namespace Lumina
         };
 
         // Chunked container.
+        // A world streaming thousands of small packages would bury everything else at one line per load.
+        constexpr double kSlowPackageLoadMs = 100.0;
+
         constexpr uint32 kPackageChunkMagic   = 0x32435A4C; // 'LZC2'
         constexpr uint32 kPackageChunkVersion = 2;
         constexpr uint32 kPackageChunkSize    = 4u * 1024 * 1024; // 4 MiB uncompressed per chunk
@@ -373,6 +377,7 @@ namespace Lumina
 
         bool DecompressPackageBinary(const TVector<uint8>& Raw, TVector<uint8>& Out)
         {
+            LUMINA_PROFILE_SCOPE();
             // A legacy stream starts with an uncompressed size that cannot collide with the magic.
             if (Raw.size() >= sizeof(uint32))
             {
@@ -491,30 +496,37 @@ namespace Lumina
             *OutBulkRegion = FBulkRegion{};
         }
 
-        const uint64 FileSize = (uint64)VFS::Size(Path);
+        LUMINA_PROFILE_SCOPE();
 
-        // Splitting a small package into two reads would double the IO count on a world load for nothing.
-        if (FileSize <= kWholeFileReadLimit)
+        // A clamped read one byte past the limit returns a small package whole from a single open, so only a large one pays for a size query.
         {
             TVector<uint8> RawBinary;
-            if (!VFS::ReadFile(RawBinary, Path))
             {
-                return false;
-            }
-
-            FBulkRegion Region;
-            if (ParseBulkTrailer(RawBinary.data(), RawBinary.size(), (uint64)RawBinary.size(), Region))
-            {
-                // The bulk bytes and trailer are not part of the deflate stream, so trim to the container.
-                RawBinary.resize((size_t)Region.FileOffset);
-                if (OutBulkRegion)
+                LUMINA_PROFILE_SECTION("Package File Read");
+                if (!VFS::ReadFileRange(RawBinary, Path, 0, kWholeFileReadLimit + 1))
                 {
-                    *OutBulkRegion = Region;
+                    return false;
                 }
             }
 
-            return DecompressPackageBinary(RawBinary, OutBinary);
+            if (RawBinary.size() <= kWholeFileReadLimit)
+            {
+                FBulkRegion Region;
+                if (ParseBulkTrailer(RawBinary.data(), RawBinary.size(), (uint64)RawBinary.size(), Region))
+                {
+                    // The bulk bytes and trailer are not part of the deflate stream, so trim to the container.
+                    RawBinary.resize((size_t)Region.FileOffset);
+                    if (OutBulkRegion)
+                    {
+                        *OutBulkRegion = Region;
+                    }
+                }
+
+                return DecompressPackageBinary(RawBinary, OutBinary);
+            }
         }
+
+        const uint64 FileSize = (uint64)VFS::Size(Path);
 
         // A large file checks for a bulk region before reading anything big.
         uint64 ContainerSize = FileSize;
@@ -992,10 +1004,12 @@ namespace Lumina
         
         FFixedString ObjectName = SanitizeObjectName(Path);
         
-        static FMutex FindOrCreateMutex;
+        // Only loads of the same package must agree on one object, so the lock is picked by name and different packages never wait.
+        static FMutex FindOrCreateMutexes[64];
         CPackage* Package = nullptr;
         {
-            FScopeLock Lock(FindOrCreateMutex);
+            LUMINA_PROFILE_SECTION("Find Or Create Package");
+            FScopeLock Lock(FindOrCreateMutexes[(GetTypeHash(FName(ObjectName)) * 0x9E3779B97F4A7C15ull) >> 58]);
             Package = FindObject<CPackage>(ObjectName);
             
             if (Package == nullptr)
@@ -1050,11 +1064,19 @@ namespace Lumina
 
         TVector<uint8> FileBinary;
         FBulkRegion    LoadedBulkRegion;
-        if (ReadPackageFile(Path, FileBinary, &LoadedBulkRegion))
+        bool bRead;
+        {
+            LUMINA_PROFILE_SECTION("Read Package File");
+            bRead = ReadPackageFile(Path, FileBinary, &LoadedBulkRegion);
+        }
+        if (bRead)
         {
             Package->SetBulkSource(LoadedBulkRegion, Path);
 
-            Package->CreateLoader(FileBinary);
+            {
+                LUMINA_PROFILE_SECTION("Create Package Loader");
+                Package->CreateLoader(FileBinary);
+            }
 
             FPackageLoader Reader(Package->LoaderBytes, Package);
         
@@ -1114,6 +1136,7 @@ namespace Lumina
                 if (PackageHeader.ThumbnailDataOffset != 0)
                 {
                     int64 SizeBefore = Reader.Tell();
+                    LUMINA_PROFILE_SECTION("Read Package Thumbnail");
                     Reader.Seek(PackageHeader.ThumbnailDataOffset);
                     Package->GetPackageThumbnail()->Serialize(Reader);
                     Reader.Seek(SizeBefore);
@@ -1123,7 +1146,14 @@ namespace Lumina
                 const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start);
                 
                 bSuccess = true;
-                LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->LoaderBytes->Size, DurationMs, Threading::GetThreadID());
+                if (DurationMs >= kSlowPackageLoadMs)
+                {
+                    LOG_INFO("Slow package load: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->LoaderBytes->Size, DurationMs, Threading::GetThreadID());
+                }
+                else
+                {
+                    LOG_TRACE("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->LoaderBytes->Size, DurationMs, Threading::GetThreadID());
+                }
 
 #if USING(WITH_EDITOR)
                 FAssetLoadRecord Entry;
@@ -1434,6 +1464,53 @@ namespace Lumina
         }
 
         return true;
+    }
+
+    bool CPackage::StripPackageForCook(FStringView Path, TVector<uint8>& OutCompressed)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        TVector<uint8> Binary;
+        FBulkRegion    Bulk;
+        if (!ReadPackageFile(Path, Binary, &Bulk) || Bulk.Size > 0 || Binary.size() < sizeof(FPackageHeader))
+        {
+            return false;
+        }
+
+        FPackageHeader Header{};
+        {
+            FMemoryReader Reader(Binary);
+            Reader << Header;
+        }
+
+        // A save from this engine is what a load and resave would write, apart from the thumbnail.
+        if (Header.Tag != PACKAGE_FILE_TAG || Header.Version != GPackageFileLuminaVersion.FileVersion || Header.ExportCount != 1)
+        {
+            return false;
+        }
+
+        // The thumbnail sits between the import table and the name table, which is always last.
+        if (Header.ThumbnailDataOffset != 0)
+        {
+            const int64 FileSize = (int64)Binary.size();
+            if (Header.ThumbnailDataOffset < Header.ImportTableOffset || Header.NameTableOffset < Header.ThumbnailDataOffset
+                || Header.NameTableOffset > FileSize)
+            {
+                return false;
+            }
+
+            const int64 ThumbnailSize = Header.NameTableOffset - Header.ThumbnailDataOffset;
+            Binary.erase(Binary.begin() + Header.ThumbnailDataOffset, Binary.begin() + Header.NameTableOffset);
+            Header.NameTableOffset    -= ThumbnailSize;
+            Header.ThumbnailDataOffset = 0;
+
+            TVector<uint8> HeaderBytes;
+            FMemoryWriter Writer(HeaderBytes);
+            Writer << Header;
+            Memory::Memcpy(Binary.data(), HeaderBytes.data(), HeaderBytes.size());
+        }
+
+        return CompressPackageBinary(Binary, OutCompressed, kZstdLevelCook);
     }
 
     void CPackage::CreateLoader(const TVector<uint8>& FileBinary)

@@ -1,4 +1,4 @@
-﻿#include "Core/Threading/Thread.h"
+#include "Core/Threading/Thread.h"
 #include "ProjectPackagerEditorTool.h"
 
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -172,7 +172,7 @@ namespace Lumina
 
         Filesystem::MakeDirectoryTree(PakDir);
 
-        const FString PakPath = PakDir + "/" + ProjectName + ".pak";
+        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(ProjectName.c_str(), ProjectName.size()));
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = bExtractScriptsLoose;
@@ -242,7 +242,7 @@ namespace Lumina
 
         Filesystem::MakeDirectoryTree(PakDir);
 
-        const FString PakPath = PakDir + "/" + ProjectName + ".pak";
+        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(ProjectName.c_str(), ProjectName.size()));
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = bExtractScriptsLoose;

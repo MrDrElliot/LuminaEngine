@@ -10,6 +10,7 @@
 #include "Audio/AudioTypes.h"
 #include "Assets/AssetTypes/Audio/SoundBase.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
+#include "World/Entity/Components/AudioVolumeComponent.h"
 #include "World/Entity/Components/ProceduralAudioComponent.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
@@ -1319,6 +1320,46 @@ namespace Lumina
 
         const FString SoundName = Source.Sound.IsValid() ? Source.Sound->GetName().ToString() : FString("No Sound");
         LabelAudioEmitter(Context, Center, SoundName.c_str(), Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
+    }
+
+    CStruct* CComponentVisualizer_AudioVolume::GetSupportedComponentType() const
+    {
+        return SAudioVolumeComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_AudioVolume::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const SAudioVolumeComponent& Volume = Registry.Get<SAudioVolumeComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+        const FVector3 Scale = Math::Abs(Transform.GetWorldScale());
+        const FVector4 Color = Volume.bListenerInside ? kAudioActive : kAudioFlat;
+
+        if (Volume.Shape == EAudioVolumeShape::Sphere)
+        {
+            const float Radius = Volume.Radius * Math::Max(Scale.x, Math::Max(Scale.y, Scale.z));
+            PDI->DrawSphere(Transform.GetWorldLocationCached(), Radius, Color, 32, 1.0f, true);
+            if (Volume.BlendDistance > 0.0f && Volume.BlendDistance < Radius)
+            {
+                PDI->DrawSphere(Transform.GetWorldLocationCached(), Radius - Volume.BlendDistance, Color * 0.6f, 24, 1.0f, true);
+            }
+            return;
+        }
+
+        const FVector3 Half = Volume.Extent * Scale;
+        PDI->DrawBox(Transform.GetWorldLocationCached(), Half, Transform.GetWorldRotationCached(), Color, 1.0f, true);
+        const FVector3 Inner = Half - FVector3(Volume.BlendDistance);
+        if (Volume.BlendDistance > 0.0f && Inner.x > 0.0f && Inner.y > 0.0f && Inner.z > 0.0f)
+        {
+            PDI->DrawBox(Transform.GetWorldLocationCached(), Inner, Transform.GetWorldRotationCached(), Color * 0.6f, 1.0f, true);
+        }
+    }
+
+    void CComponentVisualizer_AudioVolume::DrawVisualization(FComponentVisualizerContext& Context)
+    {
+        const SAudioVolumeComponent& Volume = Context.Get<SAudioVolumeComponent>();
+        const STransformComponent& Transform = Context.Get<STransformComponent>();
+        const FString SoundName = Volume.Sound.IsValid() ? Volume.Sound->GetName().ToString() : FString("No Sound");
+        LabelAudioEmitter(Context, Transform.GetWorldLocationCached(), SoundName.c_str(), Volume.Bus, Volume.Volume * Volume.Gain, false, Volume.bPlaying);
     }
 
     CStruct* CComponentVisualizer_ProceduralAudio::GetSupportedComponentType() const

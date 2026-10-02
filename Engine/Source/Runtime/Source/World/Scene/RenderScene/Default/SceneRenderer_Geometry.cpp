@@ -874,8 +874,8 @@ namespace Lumina
             return;
         }
 
-        bool bAnyDispatched = false;
-
+        // A world split into many terrains used to pay two pipeline barriers per terrain, which serialized the GPU.
+        TFixedVector<FTerrainGPUState*, 64> Visible;
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
             auto TerrainStateIt = TerrainGPUStates.find(TerrainItem.Entity);
@@ -888,49 +888,66 @@ namespace Lumina
             {
                 continue;
             }
-            if (State.AllocatedChunkCount == 0u || State.AllocatedMeshletCount == 0u)
+            if (State.AllocatedChunkCount == 0u || State.AllocatedMeshletCount == 0u || !IsTerrainInView(TerrainItem))
             {
                 continue;
             }
-
-            RHI::FDrawIndirectArguments InitialArgs{};
-            InitialArgs.VertexCount   = (uint32)(GTerrainMeshletMaxQuads * 6);
-            InitialArgs.InstanceCount = 0u;
-            InitialArgs.FirstVertex   = 0u;
-            InitialArgs.FirstInstance = 0u;
-
-            // A capture view resets these while the primary view's terrain draws may still be fetching them.
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::None,
-                RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
-            WriteBuffer(CL, State.IndirectDrawBuffer.Gpu, &InitialArgs, sizeof(InitialArgs));
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
-                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
-
-            if (!bAnyDispatched)
-            {
-                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
-            }
-
-            FTerrainCullPushConstants Push{};
-            Push.Chunks          = { State.ChunkInfoBuffer, State.AllocatedChunkCount };
-            Push.Meshlets        = { State.MeshletInfoBuffer, State.AllocatedMeshletCount };
-            Push.VisibleMeshlets = { State.VisibleMeshletBuffer, State.AllocatedMeshletCount };
-            Push.TerrainIndirect = { State.IndirectDrawBuffer };
-
-            RHI::CmdDispatch(CL, MakeArgs(Push), State.AllocatedChunkCount, 1u, 1u);
-            bAnyDispatched = true;
+            Visible.push_back(&State);
         }
-
-        if (bAnyDispatched)
+        if (Visible.empty())
         {
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments,
-                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
+            return;
         }
+
+        RHI::FDrawIndirectArguments InitialArgs{};
+        InitialArgs.VertexCount   = (uint32)(GTerrainMeshletMaxQuads * 6);
+        InitialArgs.InstanceCount = 0u;
+        InitialArgs.FirstVertex   = 0u;
+        InitialArgs.FirstInstance = 0u;
+
+        // A capture view resets these while the primary view's terrain draws may still be fetching them.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::None,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
+        for (FTerrainGPUState* State : Visible)
+        {
+            WriteBuffer(CL, State->IndirectDrawBuffer.Gpu, &InitialArgs, sizeof(InitialArgs));
+        }
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
+        for (FTerrainGPUState* State : Visible)
+        {
+            FTerrainCullPushConstants Push{};
+            Push.Chunks          = { State->ChunkInfoBuffer, State->AllocatedChunkCount };
+            Push.Meshlets        = { State->MeshletInfoBuffer, State->AllocatedMeshletCount };
+            Push.VisibleMeshlets = { State->VisibleMeshletBuffer, State->AllocatedMeshletCount };
+            Push.TerrainIndirect = { State->IndirectDrawBuffer };
+            RHI::CmdDispatch(CL, MakeArgs(Push), State->AllocatedChunkCount, 1u, 1u);
+        }
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
+    }
+
+    bool FDefaultSceneRenderer::IsTerrainInView(const FFrameData::FTerrainExtract& Terrain) const
+    {
+        const FFrameData& Frame = *RenderFrame;
+        if (!Frame.SceneGlobalData.CullData.bFrustumCull)
+        {
+            return true;
+        }
+        const FVector3 Origin = FVector3(Terrain.WorldMatrix[3]);
+        const float HalfSize = Terrain.TileWorldSize * 0.5f;
+        FAABB Bounds;
+        Bounds.Min = FVector3(Origin.x - HalfSize, Origin.y, Origin.z - HalfSize);
+        Bounds.Max = FVector3(Origin.x + HalfSize, Origin.y + Terrain.MaxHeight, Origin.z + HalfSize);
+        return Frame.CameraFrustum.IsInside(Bounds);
     }
 
     // Matches FGrassRetirePushConstants in GrassRetire.slang.
@@ -1219,11 +1236,12 @@ namespace Lumina
         static const FShaderH StampPS = FShaderLibrary::Get("TerrainDepthPixel.slang");
         const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
 
-        RHI::ELoadOp VisLoadOp = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
+        const RHI::ELoadOp VisLoadOp = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
+        bool bPassOpen = false;
 
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
-            if (TerrainItem.Resolution < 2 || TerrainItem.ChunkResolution < 2)
+            if (TerrainItem.Resolution < 2 || TerrainItem.ChunkResolution < 2 || !IsTerrainInView(TerrainItem))
             {
                 continue;
             }
@@ -1296,14 +1314,19 @@ namespace Lumina
             Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
             Pass.RenderArea               = Extent;
 
-            RHI::CmdBeginRenderPass(CL, Pass);
-            SetViewportScissor(CL, Extent);
+            // Every terrain writes the same attachments, so they share one pass and the first one owns the clear.
+            if (!bPassOpen)
+            {
+                RHI::CmdBeginRenderPass(CL, Pass);
+                SetViewportScissor(CL, Extent);
 
-            RHI::FDepthStencilDesc DepthDesc;
-            DepthDesc.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
-            DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-            RHI::CmdSetDepthStencil(CL, (DepthDesc));
-            RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+                RHI::FDepthStencilDesc DepthDesc;
+                DepthDesc.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
+                DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
+                RHI::CmdSetDepthStencil(CL, (DepthDesc));
+                RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+                bPassOpen = true;
+            }
 
             FGraphicsPipelineKey Key;
             Key.VS          = VertexShader;
@@ -1325,14 +1348,12 @@ namespace Lumina
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
 
             RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer, 1u, sizeof(RHI::FDrawIndirectArguments));
-
-            RHI::CmdEndRenderPass(CL);
-            VisLoadOp = RHI::ELoadOp::Load;   // only the first terrain may own the clear
-
-            // The next terrain's pass loads these same attachments, and separate passes are not ordered for free.
-            Barriers::RasterToRaster(CL);
         }
 
+        if (bPassOpen)
+        {
+            RHI::CmdEndRenderPass(CL);
+        }
         Barriers::RasterToRead(CL);
     }
 
@@ -1348,10 +1369,11 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("Terrain Render", tracy::Color::SeaGreen);
 
+        bool bPassOpen = false;
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
             const ECS::FEntity Entity  = TerrainItem.Entity;
-            if (TerrainItem.Resolution < 2 || TerrainItem.ChunkResolution < 2)
+            if (TerrainItem.Resolution < 2 || TerrainItem.ChunkResolution < 2 || !IsTerrainInView(TerrainItem))
             {
                 continue;
             }
@@ -1431,14 +1453,19 @@ namespace Lumina
             Pass.DepthAttachment.StoreOp        = RHI::EStoreOp::Store;
             Pass.RenderArea                     = Extent;
 
-            RHI::CmdBeginRenderPass(CL, Pass);
-            SetViewportScissor(CL, Extent);
+            // Every terrain writes the same attachments, so they share one pass and the first one owns the clears.
+            if (!bPassOpen)
+            {
+                RHI::CmdBeginRenderPass(CL, Pass);
+                SetViewportScissor(CL, Extent);
 
-            RHI::FDepthStencilDesc DepthDesc;
-            DepthDesc.DepthMode = RHI::EDepthFlags::Read;
-            DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-            RHI::CmdSetDepthStencil(CL, (DepthDesc));
-            RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+                RHI::FDepthStencilDesc DepthDesc;
+                DepthDesc.DepthMode = RHI::EDepthFlags::Read;
+                DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
+                RHI::CmdSetDepthStencil(CL, (DepthDesc));
+                RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+                bPassOpen = true;
+            }
 
             FGraphicsPipelineKey Key;
             Key.VS          = VertexShader;
@@ -1461,13 +1488,12 @@ namespace Lumina
             Push.LayerWeightsIndex = (uint32)State.LayerWeightTexture.GetResourceID();
 
             RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer, 1u, sizeof(RHI::FDrawIndirectArguments));
-
-            RHI::CmdEndRenderPass(CL);
-
-            // The next terrain's pass loads these same attachments, and separate passes are not ordered for free.
-            Barriers::RasterToRaster(CL);
         }
 
+        if (bPassOpen)
+        {
+            RHI::CmdEndRenderPass(CL);
+        }
         Barriers::RasterToRead(CL);
     }
 }

@@ -612,13 +612,15 @@ namespace Lumina
             NetRuntime->Update();
         }
 
+        // Drained even while minimized, since a tool request or an import queued here would otherwise wait for the window to come back.
+        MainThread::ProcessQueue();
+
         if (GIsHeadless || !Windowing::GetPrimaryWindowHandle()->IsWindowMinimized())
         {
             {
                 LUMINA_PROFILE_SECTION_COLORED("FrameStart", tracy::Color::Red);
                 UpdateContext.UpdateStage = EUpdateStage::FrameStart;
 
-                MainThread::ProcessQueue();
                 
                 ProcessPendingOpenLevel();
                 ProcessPendingTravel();
@@ -833,16 +835,33 @@ namespace Lumina
         // Each entry is an asset path with an implicit Main chunk, since advanced chunking is plugin-only.
         if (GConfig != nullptr)
         {
-            const TVector<TSoftObjectPtr<CWorld>>& Roots = GetDefault<CProjectSettings>()->CookRoots;
-            Result.reserve(Roots.size());
+            const CProjectSettings* Settings = GetDefault<CProjectSettings>();
+            const TVector<TSoftObjectPtr<CWorld>>& Roots = Settings->CookRoots;
+            Result.reserve(Roots.size() + 1);
+
+            // The game boots this map, so a project that only names its startup map still cooks it.
+            const FStringView StartupMap = Settings->GameStartupMap.GetPath();
+            if (!StartupMap.empty())
+            {
+                Result.push_back(FCookRoot{ FString(StartupMap.data(), StartupMap.size()), FName("Main") });
+            }
+
             for (const TSoftObjectPtr<CWorld>& SoftRoot : Roots)
             {
                 const FStringView PathView = SoftRoot.GetPath();
-                if (PathView.empty()) continue;
+                if (PathView.empty() || PathView == StartupMap) continue;
                 FCookRoot Root;
                 Root.Asset = FString(PathView.data(), PathView.size());
                 Root.Chunk = FName("Main");
                 Result.emplace_back(Move(Root));
+            }
+
+            for (const FString& Folder : Settings->CookFolders)
+            {
+                if (!Folder.empty())
+                {
+                    Result.push_back(FCookRoot{ Folder.ends_with("/") ? Folder : Folder + "/", FName("Main") });
+                }
             }
         }
 
@@ -1078,11 +1097,15 @@ namespace Lumina
         }
         if (RawMapName.empty())
         {
-            const TVector<FCookRoot> Roots = GetCookRoots();
-            if (!Roots.empty())
+            // A folder root names content to ship, not a world to boot.
+            for (const FCookRoot& Root : GetCookRoots())
             {
-                RawMapName = Roots[0].Asset;
-                LOG_DISPLAY("No Project.GameStartupMap set; falling back to first cook root '{}'.", RawMapName.c_str());
+                if (!Root.Asset.ends_with("/"))
+                {
+                    RawMapName = Root.Asset;
+                    LOG_DISPLAY("No Project.GameStartupMap set; falling back to first cook root '{}'.", RawMapName.c_str());
+                    break;
+                }
             }
         }
 
@@ -1411,16 +1434,12 @@ namespace Lumina
 
     bool FEngine::MountCookedRuntime()
     {
-        // Find the single .pak next to the exe. Platform::BaseDir returns wide on Windows; convert first.
-        const FString ExeFullPath = FString(TCHAR_TO_UTF8(Platform::BaseDir()));
-        const size_t LastSlash = ExeFullPath.find_last_of("/\\");
-        const FString ExeDir = (LastSlash == FString::npos)
-            ? ExeFullPath
-            : ExeFullPath.substr(0, LastSlash);
+        // A package keeps its paks in the data folder beside the exe.
+        const FString& DataDir = Paths::GetGameDataDirectory();
 
-        // Collect every .pak next to the exe (one per chunk); sorted for deterministic mount order.
+        // One .pak per chunk, sorted for a deterministic mount order.
         TVector<FFixedString> PakPaths;
-        Filesystem::IterateDirectory(ExeDir, [&PakPaths](const Filesystem::FDirectoryEntry& Entry)
+        Filesystem::IterateDirectory(DataDir, [&PakPaths](const Filesystem::FDirectoryEntry& Entry)
         {
             if (Entry.IsDirectory() || Entry.GetExtension() != FStringView(".pak"))
             {
@@ -1433,7 +1452,7 @@ namespace Lumina
 
         if (PakPaths.empty())
         {
-            LOG_ERROR("FEngine::LoadCookedRuntime: no .pak file found next to '{}'.", ExeDir.c_str());
+            LOG_ERROR("FEngine::LoadCookedRuntime: no .pak file found in '{}'.", DataDir.c_str());
             return false;
         }
 
@@ -1462,7 +1481,7 @@ namespace Lumina
             }
         }
         
-        const FString LooseGameDir = ExeDir + "/Game";
+        const FString LooseGameDir = DataDir + "/Game";
         if (Filesystem::Exists(LooseGameDir))
         {
             VFS::Mount<VFS::FNativeFileSystem>("/Game", LooseGameDir);

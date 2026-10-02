@@ -215,13 +215,13 @@ internal static class ScriptPropertyRewriter
                     break;
 
                 // Every asset-reference type is stored natively as one FSoftObjectPath, so all of them go
-                // through the path. Routed by the IAssetRef interface rather than by type name: a new
+                // through the path. Routed by the ISoftObjectReference interface rather than by type name: a new
                 // asset-reference type implements it and needs nothing here.
                 case EScriptAccess.AssetPath:
-                    Get = $"global::LuminaSharp.AssetRefMarshal.Read<{Type}>("
+                    Get = $"global::LuminaSharp.SoftObjectReferenceMarshal.Read<{Type}>("
                         + $"global::LuminaSharp.Native.PropGetAssetPath(Handle, {Token}))";
                     Set = $"global::LuminaSharp.Native.PropSetAssetPath(Handle, {Token}, "
-                        + $"global::LuminaSharp.AssetRefMarshal.Write(value))";
+                        + $"global::LuminaSharp.SoftObjectReferenceMarshal.Write(value))";
                     break;
 
                 // The canonical wrapper, so reading twice returns the same instance and reference equality

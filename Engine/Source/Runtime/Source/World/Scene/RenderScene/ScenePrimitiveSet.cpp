@@ -1375,7 +1375,7 @@ namespace Lumina
                 Prim.BaseFlags            = Base->CachedBaseFlags;
                 Prim.ResolveHandle        = Base->ResolveHandle;
 
-                if (Prim.ResolveHandle == INVALID_MESH_RESOLVE_HANDLE || Base->CachedMeshKey != LiveMesh)
+                if (Prim.ResolveHandle == INVALID_MESH_RESOLVE_HANDLE || (Base->CachedMeshKey != LiveMesh && !Base->bShowingPreviousMesh))
                 {
                     if (LiveMesh != nullptr)
                     {
@@ -1547,7 +1547,7 @@ namespace Lumina
     // The foliage counterpart of RefreshInstances. Everything the primitive path reads off FScenePrimitive
     // comes from the type row or the bake instead, so nothing per instance is stored to read it back.
     void FScenePrimitiveSet::RefreshFoliageInstance(const FFoliageInstanceRef& Ref, const FFoliageTypeResolve& Type,
-                                                    const FFoliageBakedInstance& Instance, uint32 EntityID)
+                                                    const FFoliageBakedInstance& Instance, uint32 EntityID, bool bHidden)
     {
         ++SyncStats.RefreshInstanceCalls;
 
@@ -1563,7 +1563,7 @@ namespace Lumina
             FInstanceCullEntry NewCull;
             FTransform3x4      NewTransform;
             FInstanceStatic    NewStatic;
-            BuildFoliageEntries(Binding, Type, Instance, EntityID, NewCull, NewTransform, NewStatic);
+            BuildFoliageEntries(Binding, Type, Instance, EntityID, bHidden, NewCull, NewTransform, NewStatic);
 
             // A rebake or resolve bump rewrites every blade; only the ones that actually moved upload.
             const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
@@ -1583,7 +1583,7 @@ namespace Lumina
     static constexpr uint32 FreshFoliageParallelThreshold = 8192;
 
     void FScenePrimitiveSet::BuildFoliageEntries(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type,
-                                                 const FFoliageBakedInstance& Instance, uint32 EntityID,
+                                                 const FFoliageBakedInstance& Instance, uint32 EntityID, bool bHidden,
                                                  FInstanceCullEntry& OutCull, FTransform3x4& OutTransform, FInstanceStatic& OutStatic)
     {
         EInstanceFlags Flags = Type.BaseFlags | Binding.MaterialFlags;
@@ -1591,7 +1591,7 @@ namespace Lumina
         {
             Flags |= EInstanceFlags::CastShadow;
         }
-        if (Type.Surfaces != nullptr)
+        if (Type.Surfaces != nullptr && !bHidden)
         {
             Flags |= EInstanceFlags::Active;
         }
@@ -1616,7 +1616,7 @@ namespace Lumina
         OutStatic.EntityID          = EntityID;
     }
 
-    void FScenePrimitiveSet::BindFreshFoliage(FFoliageEntityState& State, const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID)
+    void FScenePrimitiveSet::BindFreshFoliage(FFoliageEntityState& State, const SFoliageComponent& Foliage, const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -1682,7 +1682,7 @@ namespace Lumina
                     Binding.InstanceSlot = SlotBase + (Ref.BindingBase - BindingBase) + s;
                     Binding.bSkinned     = bSkinned;
 
-                    BuildFoliageEntries(Binding, Type, Baked[i], EntityID,
+                    BuildFoliageEntries(Binding, Type, Baked[i], EntityID, Foliage.IsInstanceHidden(i),
                                         RetainedCullEntries[Binding.InstanceSlot],
                                         RetainedTransforms[Binding.InstanceSlot],
                                         RetainedStatic[Binding.InstanceSlot]);
@@ -1817,7 +1817,7 @@ namespace Lumina
         const bool bFreshBind = PreviousCount == 0u && NewCount >= FreshFoliageParallelThreshold;
         if (bFreshBind)
         {
-            BindFreshFoliage(State, Baked, EntityID);
+            BindFreshFoliage(State, *Foliage, Baked, EntityID);
         }
 
         for (uint32 i = 0; i < NewCount && !bFreshBind; ++i)
@@ -1858,11 +1858,14 @@ namespace Lumina
                 ++SyncStats.BindsSkipped;
             }
 
-            RefreshFoliageInstance(Ref, Type, Instance, EntityID);
+            RefreshFoliageInstance(Ref, Type, Instance, EntityID, Foliage->IsInstanceHidden(i));
         }
 
         // Every slot now holds its transform and bounds, so a second copy per instance is hundreds of megabytes in a large field.
         Foliage->ReleaseRenderCache();
+
+        // The binds above already read the hidden flags, so edits queued before them are settled.
+        Foliage->PendingVisibilityEdits.clear();
 
         if (DeadBindings > 1024 && DeadBindings * 4 > (uint32)Bindings.size())
         {
@@ -1870,6 +1873,51 @@ namespace Lumina
         }
 
         ++StructureGeneration;
+    }
+
+    void FScenePrimitiveSet::ApplyFoliageVisibilityEdits(ECS::FRegistry& Registry)
+    {
+        for (auto&& [Entity, Foliage] : Registry.View<SFoliageComponent>().Each())
+        {
+            if (Foliage.PendingVisibilityEdits.empty())
+            {
+                continue;
+            }
+            auto Found = FoliageByEntity.find(Entity);
+            if (Found == FoliageByEntity.end())
+            {
+                // Not bound yet, and the first bind reads the hidden flags itself.
+                continue;
+            }
+
+            const uint32 ActiveBit = (uint32)EInstanceFlags::Active << 16;
+            const FFoliageEntityState& State = Found->second;
+            for (uint32 Index : Foliage.PendingVisibilityEdits)
+            {
+                if (Index >= (uint32)State.Instances.size())
+                {
+                    continue;
+                }
+                const FFoliageInstanceRef& Ref = State.Instances[Index];
+                const bool bHidden = Foliage.IsInstanceHidden(Index);
+                for (uint32 s = 0; s < Ref.SurfaceCount; ++s)
+                {
+                    const uint32 Slot = Bindings[Ref.BindingBase + s].InstanceSlot;
+                    if (Slot >= (uint32)RetainedCullEntries.size())
+                    {
+                        continue;
+                    }
+                    uint32& DrawIDAndFlags = RetainedCullEntries[Slot].DrawIDAndFlags;
+                    const uint32 Updated = bHidden ? (DrawIDAndFlags & ~ActiveBit) : (DrawIDAndFlags | ActiveBit);
+                    if (Updated != DrawIDAndFlags)
+                    {
+                        DrawIDAndFlags = Updated;
+                        MarkInstanceDirty(Slot);
+                    }
+                }
+            }
+            Foliage.PendingVisibilityEdits.clear();
+        }
     }
 
     bool FScenePrimitiveSet::FoliageBindingsMatchMemo(const FFoliageInstanceRef& Ref, const FBindingMemo* Memo) const
@@ -2507,6 +2555,8 @@ namespace Lumina
             LUMINA_PROFILE_SECTION("Sync/Poll");
             PollUnhookedSources(Registry, Tracker);
         }
+
+        ApplyFoliageVisibilityEdits(Registry);
 
         if (!Tracker.HasPending() && !bResolveTableChanged && Moved.empty())
         {

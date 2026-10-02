@@ -78,7 +78,8 @@ namespace Lumina::RmlUi
     class RUNTIME_API FLockedWorldContext
     {
     public:
-        explicit FLockedWorldContext(CWorld* World);
+        // A holder that may change the context wakes the UI for the next frame, and a read-only one passes false so it does not.
+        explicit FLockedWorldContext(CWorld* World, bool bMayModify = true);
         ~FLockedWorldContext();
 
         FLockedWorldContext(const FLockedWorldContext&)            = delete;

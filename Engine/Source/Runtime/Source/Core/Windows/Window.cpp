@@ -156,6 +156,14 @@ namespace Lumina
 			Owner->OnKey.Broadcast(Owner, Input);
 		}
 
+		void CharCallback(GLFWwindow* Window, unsigned int Codepoint)
+		{
+			if (FWindow* Owner = OwnerFrom(Window))
+			{
+				Owner->OnChar.Broadcast(Owner, Codepoint);
+			}
+		}
+
 		void WindowResizeCallback(GLFWwindow* Window, int width, int height)
 		{
 			FWindowImpl* Impl = ImplFrom(Window);
@@ -290,6 +298,7 @@ namespace Lumina
 			glfwSetCursorPosCallback(Impl->Window, MousePosCallback);
 			glfwSetScrollCallback(Impl->Window, MouseScrollCallback);
 			glfwSetKeyCallback(Impl->Window, KeyCallback);
+			glfwSetCharCallback(Impl->Window, CharCallback);
 			glfwSetWindowSizeCallback(Impl->Window, WindowResizeCallback);
 			glfwSetDropCallback(Impl->Window, WindowDropCallback);
 			glfwSetWindowCloseCallback(Impl->Window, WindowCloseCallback);
