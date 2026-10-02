@@ -1203,17 +1203,15 @@ namespace Lumina
                     { ERenderSceneDebugFlags::LightComplexity, "Light Complexity" },
                     { ERenderSceneDebugFlags::ClusterGrid,     "Light Clusters"   },
                     { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
-                    { ERenderSceneDebugFlags::ShadowPenumbra,  "Shadow Penumbra"  },
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
                     // The two failure modes look identical in a lit view, hence two separate inspectors.
                     { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },
                     { ERenderSceneDebugFlags::ProbeRadiance,   "Probe Radiance"   },
                 };
-                // Raw MBOIT target inspectors, for chasing translucency artifacts.
+                // Raw OIT target inspectors, for chasing translucency artifacts.
                 static const FViewModeEntry Translucency[] =
                 {
                     { ERenderSceneDebugFlags::OITAccumColor,   "OIT Accum Color"   },
-                    { ERenderSceneDebugFlags::OITMoments,      "OIT Moments"       },
                     { ERenderSceneDebugFlags::OITTransmittance,"OIT Transmittance" },
                     { ERenderSceneDebugFlags::OITLayerCount,   "OIT Layer Count"   },
                 };

@@ -210,31 +210,21 @@ namespace Lumina
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.01f, Delta = 0.0001f)
         float ShadowDepthBias = 0.0f;
 
-        /** Penumbra softness (PCSS light size); 0 = hard edges, larger = softer distant shadows. Above
-        ~0.01 an elevated caster's penumbra saturates the far-cascade filter cap and stipples/goes blocky. */
-        PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.001f)
-        float ShadowSoftness = 0.005f;
+        /** PCF filter radius in texels of the nearest cascade, held at that world size in the farther ones. 0 = hard. */
+        PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 8.0f, Delta = 0.1f)
+        float ShadowFilterRadius = 2.0f;
 
-        /** PCF taps per cascade sample; higher = smoother penumbra (less dither grain) at higher GPU cost. */
-        PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 1, ClampMax = 64)
-        int32 ShadowSampleCount = 8;
+        /** PCF taps per pixel. 4 matches Godot's default Soft Low; more smooths the edge at a linear cost. */
+        PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 1, ClampMax = 16)
+        int32 ShadowSampleCount = 4;
 
-        /** Fraction of each cascade over which it cross-fades into the next; reduces visible split seams. */
+        /** Fraction of each cascade that cross-fades into the next. 0 is off; pixels in the band sample two cascades. */
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.01f)
-        float CascadeBlend = 0.20f;
+        float CascadeBlend = 0.0f;
 
         /** Fraction of the last cascade over which shadows fade to fully lit, so the edge doesn't pop at max distance. */
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.01f)
         float ShadowDistanceFade = 0.15f;
-
-        /** World-space reach of the screen-space contact shadow, which fills in occlusion below a cascade
-        texel. 0 = off. Too large and the march leaves the depth buffer's near field and streaks. */
-        PROPERTY(Editable, Category = "Cascaded Shadows|Contact", ClampMin = 0.0f, ClampMax = 2.0f, Delta = 0.01f, Units = "m")
-        float ContactShadowLength = 0.15f;
-
-        /** Depth-buffer taps along the contact ray; more resolves thinner occluders at a linear cost. */
-        PROPERTY(Editable, Category = "Cascaded Shadows|Contact", ClampMin = 0, ClampMax = 32)
-        int32 ContactShadowSamples = 8;
 
         /** Drop casters whose bounds cover fewer than this many texels of the cascade doing the rejecting
         (0 = off). Trades shadow detail for geometry throughput. Thin geometry (railings, grates, wires)

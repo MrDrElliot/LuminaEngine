@@ -90,7 +90,7 @@ namespace Lumina
 
         // Per-view clustered-lighting grid (built from this view's projection).
         View.ClusterBuffer = CreateSceneBuffer(sizeof(FCluster) * MaxClusters, "View.ClusterGrid");
-        View.ClusterLightIndexBuffer = CreateSceneBuffer(sizeof(uint32) * (1u + MAX_CLUSTER_LIGHT_INDICES), "View.ClusterLightIndices");
+        View.ClusterLightMaskBuffer = CreateSceneBuffer(sizeof(uint32) * MAX_CLUSTER_MASK_WORDS, "View.ClusterLightMasks");
         View.bClusterGridDirty = true;   // fresh buffer has undefined contents.
 
         InitViewImages(View);
@@ -246,10 +246,10 @@ namespace Lumina
                 RHI::Retire(View.ClusterBuffer);
                 View.ClusterBuffer = {};
             }
-            if (View.ClusterLightIndexBuffer)
+            if (View.ClusterLightMaskBuffer)
             {
-                RHI::Retire(View.ClusterLightIndexBuffer);
-                View.ClusterLightIndexBuffer = {};
+                RHI::Retire(View.ClusterLightMaskBuffer);
+                View.ClusterLightMaskBuffer = {};
             }
         }
         SceneViews.clear();
@@ -307,7 +307,7 @@ namespace Lumina
             SkinWorkBaseRing[Slot].Release();
             InstanceViewRangeRing[Slot].Release();
             MaterialClassifyRing[Slot].Release();
-            MaterialPixelListRing[Slot].Release();
+            MaterialTileListRing[Slot].Release();
             VisibleInstanceRing[Slot].Release();
             TotalsRing[Slot].Release();
 
@@ -459,7 +459,7 @@ namespace Lumina
         // Publish this frame's stats for the editor-side GetRenderStats() reader.
         RenderStats = Frame.FrameStats;
 
-        // Published here, because a frozen cull skips both DepthPyramidPass calls and rebuilds nothing.
+        // Published here, because a frozen cull skips DepthPyramidPass and rebuilds nothing.
         if (!FrameSettings.bFreezeCulling)
         {
             bDepthPyramidValid.store(true, std::memory_order_release);
@@ -603,11 +603,6 @@ namespace Lumina
                 }
 
                 {
-                    SCENE_GPU_SCOPE(CL, "Shadow Mask");
-                    ShadowMaskPass(CL);
-                }
-                
-                {
                     SCENE_GPU_SCOPE(CL, "Environment");
                     EnvironmentPass(CL);
                 }
@@ -641,12 +636,6 @@ namespace Lumina
                 VelocityDebugPass(CL);
                 #endif
                 
-                if (!FrameSettings.bFreezeCulling)
-                {
-                    SCENE_GPU_SCOPE(CL, "Depth Pyramid (End)");
-                    DepthPyramidPass(CL);
-                }
-
                 {
                     SCENE_GPU_SCOPE(CL, "Screen Space Reflections");
                     ScreenSpaceReflectionsPass(CL);
@@ -672,6 +661,11 @@ namespace Lumina
                     FroxelIntegratePass(CL);
                 }
 
+                {
+                    SCENE_GPU_SCOPE(CL, "Fog Shafts");
+                    FogShaftPass(CL);
+                }
+
                 // Before translucency, which fogs itself in BasePixelPass; this sees only opaque depth.
                 {
                     SCENE_GPU_SCOPE(CL, "Atmosphere Composite");
@@ -682,11 +676,6 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Water");
                     WaterPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Moment Generation");
-                    MomentGenerationPass(CL);
                 }
 
                 {
@@ -895,20 +884,8 @@ namespace Lumina
         Globals.CullData.CullNearPlane             = Globals.NearPlane;
         Globals.CullData.CullFarPlane              = Globals.FarPlane;
 
-        // This view's OWN sun-shadow mask, or a skipped mask pass shades every pixel fully lit.
-        const FSceneLightData& Lights   = RenderFrame->Lighting.LightData;
-        FrameFlags.bShadowMaskValid = (Lights.bHasSun != 0)
-                                       && (RenderFrame->Lighting.Lights[0].ShadowDataIndex != INDEX_NONE);
-        Globals.ShadowMaskIndex         = FrameFlags.bShadowMaskValid
-            ? (uint32)CurrentView->Images[(int)ENamedImage::ShadowMask].GetResourceID()
-            : ~0u;
-
         // This view's own depth, since the sky pass discards wherever that depth holds geometry.
         Globals.SceneDepthIndex = (uint32)CurrentView->Images[(int)ENamedImage::DepthAttachment].GetResourceID();
-
-        // This view's OWN moment targets, or captures rebuild transmittance from the main camera.
-        Globals.MomentZerothIndex = (uint32)CurrentView->Images[(int)ENamedImage::MomentZeroth].GetResourceID();
-        Globals.MomentsIndex      = (uint32)CurrentView->Images[(int)ENamedImage::Moments].GetResourceID();
 
         PublishFogGlobals(Globals);
 
@@ -925,8 +902,6 @@ namespace Lumina
         EnvironmentPass(CL);
         DecalPass(CL);
         CloudShadowMapPass(CL);
-        // Resolves this view's sun shadows; the lighting dispatch reads nothing else for the sun.
-        ShadowMaskPass(CL);
         VisBufferClassifyPass(CL);
         MaterialGBufferPass(CL);
         DeferredLightingPass(CL);
@@ -936,9 +911,9 @@ namespace Lumina
         VolumetricCloudPass(CL);
         FroxelInjectPass(CL);
         FroxelIntegratePass(CL);
+        FogShaftPass(CL);
         AtmosphereCompositePass(CL);
         WaterPass(CL);
-        MomentGenerationPass(CL);
         TransparentPass(CL);
         OITResolvePass(CL);
         UnorderedTranslucentPass(CL);
@@ -1206,7 +1181,9 @@ namespace Lumina
         case ENamedImage::GTAO:               return "Scene.GTAO";
         case ENamedImage::GTAODenoise:        return "Scene.GTAODenoise";
         case ENamedImage::GTAOBlur:           return "Scene.GTAOBlur";
-        case ENamedImage::ShadowMask:         return "Scene.ShadowMask";
+        case ENamedImage::SSRTrace:           return "Scene.SSRTrace";
+        case ENamedImage::FogShaft:           return "Scene.FogShaft";
+        case ENamedImage::FogShaftDepth:      return "Scene.FogShaftDepth";
         case ENamedImage::Cascade:            return "Scene.Cascade";
         case ENamedImage::CascadePyramid:     return "Scene.CascadePyramid";
         case ENamedImage::DepthAttachment:    return "Scene.DepthAttachment";
@@ -1217,9 +1194,9 @@ namespace Lumina
         case ENamedImage::GBufferB:           return "Scene.GBufferB";
         case ENamedImage::GBufferC:           return "Scene.GBufferC";
         case ENamedImage::GBufferD:           return "Scene.GBufferD";
+        case ENamedImage::MaterialSlot:       return "Scene.MaterialSlot";
         case ENamedImage::Accum:              return "Scene.Accum";
-        case ENamedImage::MomentZeroth:       return "Scene.MomentZeroth";
-        case ENamedImage::Moments:            return "Scene.Moments";
+        case ENamedImage::Revealage:          return "Scene.Revealage";
         case ENamedImage::WaterRefraction:    return "Scene.WaterRefraction";
         case ENamedImage::SceneDepthCopy:     return "Scene.SceneDepthCopy";
         case ENamedImage::DBufferA:           return "Scene.DBufferA";
@@ -1278,8 +1255,7 @@ namespace Lumina
         switch (Image)
         {
         case ENamedImage::Accum:
-        case ENamedImage::MomentZeroth:
-        case ENamedImage::Moments:
+        case ENamedImage::Revealage:
         case ENamedImage::WaterRefraction:
         case ENamedImage::SceneDepthCopy:
         case ENamedImage::DBufferA:
@@ -1294,6 +1270,9 @@ namespace Lumina
         case ENamedImage::GTAO:
         case ENamedImage::GTAODenoise:
         case ENamedImage::GTAOBlur:
+        case ENamedImage::SSRTrace:
+        case ENamedImage::FogShaft:
+        case ENamedImage::FogShaftDepth:
             return true;
         default:
             return false;
@@ -1313,13 +1292,9 @@ namespace Lumina
             OutDesc.Format = EFormat::RGBA16_FLOAT;
             return true;
 
-        // Additively blended and fp32, since the Hankel reconstruction is ill-conditioned in fp16.
-        case ENamedImage::MomentZeroth:
-            OutDesc.Format = EFormat::R32_FLOAT;
-            return true;
-
-        case ENamedImage::Moments:
-            OutDesc.Format = EFormat::RGBA32_FLOAT;
+        // The product of every translucent layer's transparency, multiplied down from 1 by the blend.
+        case ENamedImage::Revealage:
+            OutDesc.Format = EFormat::R16_FLOAT;
             return true;
 
         // Never rendered into, since WaterPass copies HDR here and samples it.
@@ -1359,21 +1334,44 @@ namespace Lumina
             OutDesc.Format = EFormat::RGBA8_UNORM;
             return true;
 
-        // XeGTAO runs entirely in compute at full resolution, so every stage target needs a storage view.
+        // Storage for the compute stages, which trace at the quality level's size while GTAOBlur stays full size.
         case ENamedImage::GTAOEdges:
         case ENamedImage::GTAO:
         case ENamedImage::GTAODenoise:
         case ENamedImage::GTAOBlur:
-            OutDesc.Format = EFormat::R8_UNORM;
-            OutDesc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
-                             RHI::EImageUsageFlags::Storage;
+        {
+            const FUIntVector2 Size = (Image == ENamedImage::GTAOBlur) ? Extent : GetGTAOTraceExtent(Extent);
+            OutDesc.Dimension = FUIntVector3(Size.x, Size.y, 1);
+            OutDesc.Format    = EFormat::R8_UNORM;
+            OutDesc.Usage     = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
+                                RHI::EImageUsageFlags::Storage;
+            return true;
+        }
+
+        // Half resolution, the trace's reflection delta before SSRComposite upsamples it into HDR.
+        case ENamedImage::SSRTrace:
+            OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
+            OutDesc.Format    = EFormat::RGBA16_FLOAT;
+            OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            return true;
+
+        // Half resolution, the far-field fog segment AtmosphereComposite upsamples by the depth each texel marched against.
+        case ENamedImage::FogShaft:
+        case ENamedImage::FogShaftDepth:
+            OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
+            OutDesc.Format    = (Image == ENamedImage::FogShaft) ? EFormat::RGBA16_FLOAT : EFormat::R32_FLOAT;
+            OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             return true;
 
         case ENamedImage::GTAOWorkingDepth:
-            OutDesc.Format   = EFormat::R32_FLOAT;
-            OutDesc.MipCount = GTAODepthMipLevels;
-            OutDesc.Usage    = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+        {
+            const FUIntVector2 Size = GetGTAOTraceExtent(Extent);
+            OutDesc.Dimension = FUIntVector3(Size.x, Size.y, 1);
+            OutDesc.Format    = EFormat::R32_FLOAT;
+            OutDesc.MipCount  = GTAODepthMipLevels;
+            OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             return true;
+        }
 
         default:
             return false;
@@ -1403,16 +1401,21 @@ namespace Lumina
 
             View.ImageLastUsedTick[(int)Image] = OptionalImageTick;
 
-            FSceneImage& Slot = View.Images[(int)Image];
-            if (Slot.IsValid())
-            {
-                return;
-            }
-
             RHI::FTextureDesc Desc;
             if (!MakeOptionalImageDesc(Image, View.Size, Desc))
             {
                 return;
+            }
+
+            FSceneImage& Slot = View.Images[(int)Image];
+            if (Slot.IsValid())
+            {
+                // GTAO's trace resolution follows its quality level, so a level change resizes those targets here.
+                if (Slot.GetSizeX() == Desc.Dimension.x && Slot.GetSizeY() == Desc.Dimension.y)
+                {
+                    return;
+                }
+                RetireSceneImage(Slot);
             }
 
             Slot = CreateSceneImage(Desc, /*bSampled*/ true, bMipUAVs);
@@ -1420,8 +1423,7 @@ namespace Lumina
         };
 
         Want(ENamedImage::Accum,           bTranslucency);
-        Want(ENamedImage::MomentZeroth,    bTranslucency);
-        Want(ENamedImage::Moments,         bTranslucency);
+        Want(ENamedImage::Revealage,       bTranslucency);
         // SSR needs the same scene-color snapshot the water pass refracts through.
         const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>();
         const bool bSSR = RendererSettings != nullptr && RendererSettings->bScreenSpaceReflections;
@@ -1445,6 +1447,11 @@ namespace Lumina
         Want(ENamedImage::GTAO,             bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::GTAODenoise,      bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::GTAOBlur,         bGTAO, /*bMipUAVs*/ true);
+        Want(ENamedImage::SSRTrace,         bSSR,  /*bMipUAVs*/ true);
+
+        const bool bFogShafts = Frame.Volumetrics.bHasFog && Frame.Volumetrics.FarShaftSteps > 0u;
+        Want(ENamedImage::FogShaft,         bFogShafts, /*bMipUAVs*/ true);
+        Want(ENamedImage::FogShaftDepth,    bFogShafts, /*bMipUAVs*/ true);
 
         // A freshly created pair holds whatever the allocator handed back, which is not a previous frame.
         if (bTemporal && !bHadTemporalTargets)
@@ -1534,11 +1541,6 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::SMAABlend] = CreateSceneImage(Desc);
 
-        // Cascade and contact shadow in separate channels, so a surface can opt out of the contact march.
-        Desc.Format = EFormat::RG8_UNORM;
-        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
-        View.Images[(int)ENamedImage::ShadowMask]  = CreateSceneImage(Desc);
-
         // Scene depth; transfer-dst for the no-occluder clear, transfer-src for the copy the water samples.
         Desc.Format = EFormat::D32;
         Desc.Usage  = RHI::EImageUsageFlags::DepthAttachment | RHI::EImageUsageFlags::Sampled |
@@ -1579,6 +1581,9 @@ namespace Lumina
         View.Images[(int)ENamedImage::GBufferB] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
         Desc.Format = EFormat::R11G11B10_FLOAT;
         View.Images[(int)ENamedImage::GBufferD] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
+        // Each pixel's deferred slot plus one, which fp16 holds exactly up to MATERIAL_MAX_SLOTS.
+        Desc.Format = EFormat::R16_FLOAT;
+        View.Images[(int)ENamedImage::MaterialSlot] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
 
         // The optional targets now arrive through EnsureOptionalViewImages on first use.
 
@@ -1894,6 +1899,12 @@ namespace Lumina
             return;
         }
 
+        // The deferred lanes report a rotating share of their groups, so only a whole window is a complete mask.
+        if (++StreamingFeedbackTick % STREAMING_FEEDBACK_WINDOW != 0u)
+        {
+            return;
+        }
+
         SCENE_GPU_SCOPE(CL, "Streaming Feedback");
 
         // Every material lane that reports into the mask has run by now, so it is complete.
@@ -1903,7 +1914,7 @@ namespace Lumina
             RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         RHI::CmdMemcpy(CL, { StreamingFeedbackReadback[Slot].Gpu, StreamingFeedbackBuffer.Size }, StreamingFeedbackBuffer);
 
-        // Zero AFTER the copy, so the next frame's mask is what it sampled, not a growing union.
+        // Zero AFTER the copy, so the next window holds only what it sampled, not a growing union.
         RHI::Barriers::TransferToTransfer(CL);
         RHI::CmdMemzero(CL, StreamingFeedbackBuffer);
 
@@ -1926,10 +1937,12 @@ namespace Lumina
 
         // The slot written kFramesInFlight ago, whose copy the frame ring has already waited on.
         const uint32 Slot = (CurrentFrameSlot + 1u) % RHI::kFramesInFlight;
-        if (StreamingFeedbackStamp[Slot] == 0 || !StreamingFeedbackReadback[Slot])
+        // A slot keeps its last window between copies, and resubmitting it would reset what streaming already holds.
+        if (StreamingFeedbackStamp[Slot] <= StreamingFeedbackPublished || !StreamingFeedbackReadback[Slot])
         {
             return;
         }
+        StreamingFeedbackPublished = StreamingFeedbackStamp[Slot];
 
         const uint32* Masks = StreamingFeedbackReadback[Slot].CpuAs<const uint32>();
         if (Masks == nullptr)
@@ -1947,7 +1960,7 @@ namespace Lumina
 
         *Root = SceneRootShared;
         Root->Clusters           = { View.ClusterBuffer };
-        Root->ClusterLightIndices = { View.ClusterLightIndexBuffer };
+        Root->ClusterLightMasks  = { View.ClusterLightMaskBuffer };
         Root->BRDFLutIndex       = (uint32)View.Images[(int)ENamedImage::BRDFLut].GetResourceID();
         Root->SkyIrradianceIndex = (uint32)View.Images[(int)ENamedImage::SkyIrradiance].GetResourceID();
         {
@@ -2052,11 +2065,10 @@ namespace Lumina
             MakeUInt(3, (Key.ShadingFeatures & SF_GTAO)       ? 1u : 0u),
             MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u),
             MakeUInt(5, (uint32)Key.SkinnedMode),   // SPEC_SKINNED 0=static, 1=skinned, 2=dynamic
-            MakeUInt(6, (Key.ShadingFeatures & SF_ShadowMask) ? 1u : 0u),
             MakeUInt(7, (uint32)Key.TriCullMode),   // SPEC_TRI_CULL, per-triangle rejects
             MakeUInt(8, (uint32)Key.SkyMode),       // SPEC_SKY_MODE, GSkyMode_Runtime = branch at runtime
         };
-        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 8);
+        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 7);
 
         FWriteScopeLock Lock(ScenePipelines().Mutex);
         if (auto Existing = ScenePipelines().Entries.find(Seed); Existing != ScenePipelines().Entries.end())
@@ -2288,9 +2300,61 @@ namespace Lumina
             return;
         }
 
-        RHI::FTransientAlloc Staging = RHI::AllocTransient(Size);
-        Memory::Memcpy(Staging.Cpu, Data, Size);
-        StagedWrites.push_back(RHI::FBufferCopy{ { Dst, Size }, { Staging.Gpu, Size } });
+        // Under the RHI's dedicated-block size, so each piece is a pooled page suballocation that frees cheaply.
+        constexpr uint64 MaxStagePieceBytes = 16ull * 1024u * 1024u;
+
+        // Past this the per-frame ring would grow to fit a one-off burst, and resizing it frees host memory, which stalls the queue.
+        constexpr uint64 RingStageLimitBytes = 8ull * 1024u * 1024u;
+        const bool bPooledStaging = Size > RingStageLimitBytes;
+
+        // A full retained re-send is hundreds of megabytes, which one thread copies at a fraction of the bandwidth.
+        constexpr uint64 ParallelStageBytes = 4ull * 1024u * 1024u;
+        constexpr uint64 StageChunkBytes    = 1024u * 1024u;
+
+        const uint8* Source = static_cast<const uint8*>(Data);
+        for (uint64 PieceOffset = 0; PieceOffset < Size; PieceOffset += MaxStagePieceBytes)
+        {
+            const uint64 PieceBytes = Math::Min(MaxStagePieceBytes, Size - PieceOffset);
+            RHI::GPUPtr StagingGpu = 0;
+            uint8*      Dest       = nullptr;
+            if (bPooledStaging)
+            {
+                const RHI::FGPUAllocation Pooled = RHI::Malloc(PieceBytes, RHI::EMemoryType::CPUWrite);
+                if (Pooled.Gpu == 0)
+                {
+                    LOG_ERROR("Scene renderer: no staging for a {} MiB upload piece; that range keeps its old contents.", PieceBytes >> 20);
+                    continue;
+                }
+                RHI::Retire(Pooled);
+                StagingGpu = Pooled.Gpu;
+                Dest       = reinterpret_cast<uint8*>(Pooled.Cpu);
+            }
+            else
+            {
+                const RHI::FTransientAlloc Staging = RHI::AllocTransient(PieceBytes);
+                StagingGpu = Staging.Gpu;
+                Dest       = static_cast<uint8*>(Staging.Cpu);
+            }
+            const uint8* Piece = Source + PieceOffset;
+
+            if (PieceBytes >= ParallelStageBytes)
+            {
+                const uint32 NumChunks = (uint32)((PieceBytes + StageChunkBytes - 1u) / StageChunkBytes);
+                Task::ParallelFor(NumChunks, [Dest, Piece, PieceBytes, ChunkBytes = StageChunkBytes](const Task::FParallelRange& Range)
+                {
+                    for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
+                    {
+                        const uint64 Offset = (uint64)Chunk * ChunkBytes;
+                        Memory::Memcpy(Dest + Offset, Piece + Offset, Math::Min(ChunkBytes, PieceBytes - Offset));
+                    }
+                });
+            }
+            else
+            {
+                Memory::Memcpy(Dest, Piece, PieceBytes);
+            }
+            StagedWrites.push_back(RHI::FBufferCopy{ { Dst + PieceOffset, PieceBytes }, { StagingGpu, PieceBytes } });
+        }
     }
 
     void FDefaultSceneRenderer::FlushStagedWrites(RHI::FCmdListH CL)

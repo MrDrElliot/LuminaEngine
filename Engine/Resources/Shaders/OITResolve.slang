@@ -1,19 +1,14 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
-#include "Includes/MomentOIT.slang"
 
-// MBOIT composite. Every fragment was already weighted by the transmittance in front of it, so Accum.rgb
-// is added, not averaged; the background is attenuated by exp(-b_0). Blend is One / SrcAlpha, hence the
-// total transmittance in alpha:  HDR = Accum.rgb + HDR * exp(-b_0).
-//
-// Targets are read through the bindless table (texel fetch, no sampler) via the push constant.
+// Weighted blended OIT composite. Blend is One / SrcAlpha, so HDR = Average * (1 - Revealage) + HDR * Revealage.
 struct FPushConstants
 {
     uint AccumIndex;
-    uint MomentZerothIndex;
-    uint MomentsIndex;
+    uint RevealageIndex;
     uint _Pad0;
+    uint _Pad1;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -32,10 +27,9 @@ FSOutput FragmentMain(FSInput Input)
 {
     int2 Coords = int2(Input.Coord.xy);
 
-    float B0 = gTextures2D[Pass().MomentZerothIndex].Load(int3(Coords, 0)).r;
+    float Revealage = gTextures2D[Pass().RevealageIndex].Load(int3(Coords, 0)).r;
 
-    // View Mode > Translucency. Alpha 0 degenerates the composite blend to replace, so these overwrite
-    // the scene rather than tinting it.
+    // View Mode > Translucency. Alpha 0 degenerates the composite blend to replace, so these overwrite the scene.
     uint DebugMode = Scene().CullData.DebugMode;
     if (DebugMode >= DEBUG_MODE_OIT_ACCUM_COLOR && DebugMode <= DEBUG_MODE_OIT_LAYER_COUNT)
     {
@@ -44,7 +38,7 @@ FSOutput FragmentMain(FSInput Input)
         float3 Debug;
         if (DebugMode == DEBUG_MODE_OIT_LAYER_COUNT)
         {
-            // Hue-banded so a +-1 count flip reads as a colour change, not a subtle gray step.
+            // Hue-banded so a one-layer change reads as a color change, not a subtle gray step.
             uint  N   = (uint)(RawAccum.a + 0.5);
             float Hue = frac((float)N * 0.6180339887);
             float3 HueColor = saturate(float3(abs(Hue * 6.0 - 3.0) - 1.0,
@@ -54,7 +48,7 @@ FSOutput FragmentMain(FSInput Input)
         }
         else if (DebugMode == DEBUG_MODE_OIT_ACCUM_COLOR)
         {
-            // Reinhard-compressed. INF = red, NaN = magenta.
+            // Reinhard-compressed, with INF in red and NaN in magenta.
             Debug = RawAccum.rgb / (1.0 + RawAccum.rgb);
             if (isinf(max3(abs(RawAccum.rgb))))
             {
@@ -65,23 +59,9 @@ FSOutput FragmentMain(FSInput Input)
                 Debug = float3(1.0, 0.0, 1.0);
             }
         }
-        else if (DebugMode == DEBUG_MODE_OIT_MOMENTS)
+        else
         {
-            // Normalized b_1..b_3 as RGB. A flat single-colour field means every layer sits at one
-            // depth -- the case MOMENT_BIAS exists for.
-            if (B0 < MOMENT_MIN_ABSORBANCE)
-            {
-                Debug = float3(0.0);
-            }
-            else
-            {
-                float4 B = gTextures2D[Pass().MomentsIndex].Load(int3(Coords, 0)) / B0;
-                Debug = any(B != B) ? float3(1.0, 0.0, 1.0) : saturate(abs(B.xyz));
-            }
-        }
-        else // DEBUG_MODE_OIT_TRANSMITTANCE
-        {
-            Debug = float3(MomentTotalTransmittance(B0));
+            Debug = float3(Revealage);
         }
 
         FSOutput DebugOut;
@@ -89,20 +69,22 @@ FSOutput FragmentMain(FSInput Input)
         return DebugOut;
     }
 
-    if (B0 < MOMENT_MIN_ABSORBANCE)
+    // Nothing translucent covered this pixel.
+    if (Revealage >= 0.9999)
     {
         discard;
     }
 
-    float4 Accum = gTextures2D[Pass().AccumIndex].Load(int3(Coords, 0));
+    float4 Accum   = gTextures2D[Pass().AccumIndex].Load(int3(Coords, 0));
+    float3 Average = Accum.rgb / max(Accum.a, 1e-5);
 
     // Drop the translucency rather than stamping INF into HDR for the tonemapper to spread.
-    if (isinf(max3(abs(Accum.rgb))) || any(Accum.rgb != Accum.rgb))
+    if (isinf(max3(abs(Average))) || any(Average != Average))
     {
-        Accum.rgb = float3(0.0);
+        Average = float3(0.0);
     }
 
     FSOutput Output;
-    Output.Color = float4(Accum.rgb, MomentTotalTransmittance(B0));
+    Output.Color = float4(Average * (1.0 - Revealage), Revealage);
     return Output;
 }

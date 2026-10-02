@@ -40,7 +40,6 @@ namespace Lumina
         VisBufferMeshMasked,        // MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM; masked materials only
         MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID; masked materials only
         Deferred,                   // DeferredMaterial.slang
-        MomentPixel,                // BasePixelPass.slang + TRANSLUCENT + MOMENT_GENERATION; PBR translucent only
         MeshShadowMasked,           // MeshletMesh.slang + MESHLET_MESH_MASKED_SHADOW; masked materials only
         ShadowMaskedPixel,          // ShadowMaskedPixel.slang; masked materials only
 
@@ -112,7 +111,6 @@ namespace Lumina
         FShaderH GetMeshShaderShadowMasked() const { return GetStage(EMaterialShaderStage::MeshShadowMasked); }
         FShaderH GetShadowMaskedPixelShader() const { return GetStage(EMaterialShaderStage::ShadowMaskedPixel); }
         FShaderH GetDeferredShader() const { return GetStage(EMaterialShaderStage::Deferred); }
-        FShaderH GetMomentPixelShader() const { return GetStage(EMaterialShaderStage::MomentPixel); }
 
         /** Bumped whenever a recompile actually swaps a shader-library entry, and only then -- the library
             is content-keyed, so a recompile producing identical SPIR-V returns the same entry and does not
@@ -169,17 +167,14 @@ namespace Lumina
         /** Drops every permutation, which a recompile must do because it renumbers switch bits by name. */
         void ClearPermutations();
 
-        /** Content hash of the material shader template sources (Shaders/MaterialShader + Shaders/Includes),
-            computed once per run. Serialized per material as CompiledTemplateHash so stale binaries are
-            detectable after template edits. */
+        /** Content hash of the material shader template sources */
         static uint64 GetShaderTemplateHash();
 
         // Where a cook writes the template hash, so the shipped game compares against what its materials were built with.
         static constexpr const char* CookedShaderTemplateHashPath = "/Engine/ShaderTemplateHash.txt";
 
 #if USING(WITH_EDITOR)
-        /** Next asset material whose serialized stages predate the current shader templates (queued during
-            PostLoad); null when none remain. The editor drains this and recompiles from the saved graph. */
+        /** Next asset material whose serialized stages predate the current shader templates  */
         static TObjectPtr<CMaterial> PopStaleTemplateMaterial();
 
         /** Ask the editor to compile Key's permutation; idempotent, so an instance may call it freely. */
@@ -192,7 +187,7 @@ namespace Lumina
         EMaterialType GetMaterialType() const override { return MaterialType; }
         bool DoesCastShadows() const override { return bCastShadows; }
         bool IsTwoSided() const override { return bTwoSided; }
-        bool IsMomentResolved() override { return BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::AlphaComposite; }
+        bool IsOITResolved() override { return BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::AlphaComposite; }
         bool IsUnorderedBlend() override { return BlendMode == EBlendMode::Additive || BlendMode == EBlendMode::Modulate; }
         bool ReceivesDecals() const override { return bReceivesDecals; }
         bool WritesDepth() const override { return bWriteDepth; }
@@ -231,7 +226,7 @@ namespace Lumina
         PROPERTY(Editable, EditCondition = "MaterialType == PBR")
         bool bReceivesDecals = true;
 
-        /** Depth write for Additive and Modulate. Ignored by the MBOIT lane, which accumulates instead. */
+        /** Depth write for Additive and Modulate. Ignored by the OIT lane, which accumulates instead. */
         PROPERTY(Editable, EditCondition = "MaterialType == PBR || MaterialType == Particle")
         bool bWriteDepth = false;
 
@@ -239,23 +234,11 @@ namespace Lumina
         PROPERTY(Editable, EditCondition = "BlendMode == Masked")
         float OpacityMaskClipValue = 0.333f;
 
-        /** Default texture binding per texture-parameter index.
-         *
-         *  SOFT deliberately. These are only DEFAULTS: an instance that overrides a texture parameter
-         *  never reads the master's entry for it, so a hard reference would load the texture, upload it,
-         *  and hold a bindless slot for something nothing samples -- for every instance-only material in
-         *  the project. Resolution is per-slot and on demand through ResolveTextureSlot; an unresolved
-         *  slot reads the 1x1 placeholder and the block is re-pushed once the real texture lands.
-         *
-         *  Soft also reclassifies the cook edge (Hard -> Soft), so a default still ships when something
-         *  reaches it but no longer forces itself into the referring material's chunk. */
+        /** Default texture binding per texture-parameter index.  */
         PROPERTY()
         TVector<TSoftObjectPtr<CTexture>>       Textures;
 
-        /** Strong refs for the slots that have actually been demanded, parallel-indexed with Textures.
-         *  Not a PROPERTY: this is the runtime cache the soft refs resolve into, and holding the strong
-         *  ref here is precisely what keeps a demanded default resident. Entries stay null until asked
-         *  for, which is the whole point of the change. */
+        /** Strong refs for the slots that have actually been demanded */
         TVector<TObjectPtr<CTexture>>           ResolvedTextures;
 
         // Guards Textures and ResolvedTextures; the async load completion writes them from a loader thread.
@@ -269,25 +252,14 @@ namespace Lumina
         bool                                    bTextureLoadRequested = false;
 
         /** Resolves slot Index if it has not been already and returns its bindless resource ID, or the
-         *  placeholder ID while it cannot be resolved. Idempotent, and cheap after the first call.
-         *
-         *  Loads synchronously, so call it from a load or editor context -- NOT from the render extract,
-         *  which runs on worker fibers where blocking on disk I/O would stall a frame. The render-side
-         *  demand path goes through RequestTexturesResolved instead. */
+         *  placeholder ID while it cannot be resolved. */
         uint32 ResolveTextureSlot(uint32 Index);
 
         uint32 GetResolvedTextureSlot(uint32 Index) override { return ResolveTextureSlot(Index); }
 
         CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) override;
 
-        /** Non-blocking demand for the render path. Returns true when every slot is already resolved;
-         *  otherwise kicks a one-shot async load for the missing ones and returns false, leaving the
-         *  caller to treat this material as not-ready.
-         *
-         *  Deliberately shaped to reuse the fallback that already exists for a still-compiling material:
-         *  the surface draws with the default material for a few frames, and the load completion calls
-         *  FMeshResolveCache::InvalidateDependency to wake it. Blocking here instead would stall a
-         *  worker fiber on disk I/O in the middle of Extract. */
+        /** Non-blocking demand for the render path.  */
         bool RequestTexturesResolved() override;
 
         /** Compiled stages, only the ones that produced output, in the same shape a permutation stores. */
@@ -365,13 +337,6 @@ namespace Lumina
     };
 
     /** Re-uploads the texture bindings of every material that references ChangedTexture (null = all of
-     *  them), and returns how many were touched.
-     *
-     *  Masters run before instances: an instance rebuilds its uniform block by copying its parent's, so
-     *  refreshing them the other way round would copy the stale parent block and then overwrite the
-     *  instance's own correct value with it.
-     *
-     *  Deliberately global rather than a per-tool refresh: a material whose editor is closed is still being
-     *  rendered in the world, and it is exactly as wrong as one that happens to be open. */
+     *  them), and returns how many were touched. */
     RUNTIME_API uint32 RefreshMaterialsReferencingTexture(const CTexture* ChangedTexture);
 }

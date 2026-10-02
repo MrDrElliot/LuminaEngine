@@ -25,7 +25,9 @@ namespace Lumina::RHI
     constexpr auto kRWImageBindingSlot          = 2;
 
     constexpr auto kFramesInFlight              = 2;
-    constexpr auto kMaxTextureHeapSize          = INT16_MAX;
+    // Upper bounds for the bindless bindings; the device limits can lower them at startup.
+    constexpr uint32 kMaxSampledTextureHeapSize = 1u << 16;
+    constexpr uint32 kMaxStorageTextureHeapSize = INT16_MAX;
     constexpr auto kMaxNumSamplers              = 4000;
     constexpr auto kMaxNumTextureHeaps          = 1024;
     constexpr auto kDedicatedMemoryThreshold    = 32u * 1024 * 1024;

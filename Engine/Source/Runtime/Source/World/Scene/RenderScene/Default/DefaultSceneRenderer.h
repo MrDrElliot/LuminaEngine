@@ -506,7 +506,9 @@ namespace Lumina
             GTAO,
             GTAODenoise,
             GTAOBlur,
-            ShadowMask,
+            SSRTrace,
+            FogShaft,
+            FogShaftDepth,
             Cascade,
             CascadePyramid,
             DepthAttachment,
@@ -517,9 +519,9 @@ namespace Lumina
             GBufferB,
             GBufferC,
             GBufferD,
+            MaterialSlot,
             Accum,
-            MomentZeroth,
-            Moments,
+            Revealage,
             WaterRefraction,
             SceneDepthCopy,
             DBufferA,
@@ -577,7 +579,7 @@ namespace Lumina
             // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
             bool                                            bCloudNoiseBaked = false;
             RHI::FGPUAllocation                                    ClusterBuffer;
-            RHI::FGPUAllocation                                    ClusterLightIndexBuffer;
+            RHI::FGPUAllocation                                    ClusterLightMaskBuffer;
             FMatrix4                                        LastClusterInvProjection = FMatrix4(0.0f);
             FVector2                                        LastClusterNearFar       = FVector2(0.0f);
             FUIntVector2                                    LastClusterScreenSize    = FUIntVector2(0);
@@ -637,7 +639,7 @@ namespace Lumina
         /** Per-material counts, starts, scatter cursors, dispatch args and the frame pixel total. */
         RHI::FGPUAllocation GetMaterialClassify()  const { return MaterialClassifyRing[CurrentFrameSlot]; }
         /** One packed screen position per classified pixel, grouped into one contiguous run per material. */
-        RHI::FGPUAllocation GetMaterialPixelList() const { return MaterialPixelListRing[CurrentFrameSlot]; }
+        RHI::FGPUAllocation GetMaterialTileList() const { return MaterialTileListRing[CurrentFrameSlot]; }
 
         uint32 GetDisplayResourceID() const override;
         bool HasCompositedFrame() const override { return FramesComposited > 0; }
@@ -687,8 +689,8 @@ namespace Lumina
          *  through, so a view can never reach a pass with an optional target missing. */
         void PointAtView(FSceneView& View);
 
-        /** Targets for features a scene may contain none of: MBOIT translucency (Accum, MomentZeroth,
-         *  Moments), decals (DBufferA/B/C) and water (WaterRefraction). Sized into every view up front
+        /** Targets for features a scene may contain none of: OIT translucency (Accum, Revealage),
+         *  decals (DBufferA/B/C) and water (WaterRefraction). Sized into every view up front
          *  they are ~230 MB at 1080p -- per view, resident for the session, in a scene that may have no
          *  translucency, no decals and no water at all.
          *
@@ -791,9 +793,6 @@ namespace Lumina
         void TerrainDepthPrePass(RHI::FCmdListH CL);
         void TerrainRenderPass(RHI::FCmdListH CL);
         void GTAOPass(RHI::FCmdListH CL);
-        void ShadowMaskPass(RHI::FCmdListH CL);
-        /** MBOIT pass 1: accumulate absorbance moments over the translucent draw list, opacity only. */
-        void MomentGenerationPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
         void UnorderedTranslucentPass(RHI::FCmdListH CL);
@@ -806,6 +805,7 @@ namespace Lumina
         void AerialPerspectivePass(RHI::FCmdListH CL);
         void VolumetricCloudPass(RHI::FCmdListH CL);
         // One HDR read-modify-write for every term the three passes above produced a volume for.
+        void FogShaftPass(RHI::FCmdListH CL);
         void AtmosphereCompositePass(RHI::FCmdListH CL);
         void ScreenSpaceReflectionsPass(RHI::FCmdListH CL);
         void WaterPass(RHI::FCmdListH CL);
@@ -954,7 +954,6 @@ namespace Lumina
             SF_DebugViews = 1u << 0,
             SF_Decals     = 1u << 1,
             SF_GTAO       = 1u << 2,
-            SF_ShadowMask = 1u << 3,
             SF_All        = SF_DebugViews | SF_Decals | SF_GTAO,
         };
 
@@ -1239,6 +1238,11 @@ namespace Lumina
             float  AerialIntensity          = 0.0f;
             uint32 CloudScatterIndex        = ~0u;
             uint32 CloudDepthIndex          = ~0u;
+            uint32 SSRTraceIndex            = ~0u;
+            uint32 SSRTraceW                = 0;
+            uint32 SSRTraceH                = 0;
+            uint32 FogShaftIndex            = ~0u;
+            uint32 FogShaftDepthIndex       = ~0u;
         };
         FAtmosphereTerms                        AtmosphereTerms = {};
         
@@ -1256,8 +1260,8 @@ namespace Lumina
         uint64 BuildViewSceneRoot(FSceneView& View);
 
         /** Texture-streaming feedback (see RequestTextureResolution in SceneGlobals.slang). One uint per
-         *  bindless slot, OR-accumulated by the material lanes, copied to a readback slot and zeroed each
-         *  frame. Read kFramesInFlight later, which is when the copy is guaranteed complete. */
+         *  bindless slot, OR-accumulated by the material lanes over STREAMING_FEEDBACK_WINDOW frames, then
+         *  copied to a readback slot and zeroed. Read kFramesInFlight later, once the copy has landed. */
         void EnsureStreamingFeedbackBuffer();
         void CollectStreamingFeedback(RHI::FCmdListH CL);
         void PublishStreamingFeedback();
@@ -1272,6 +1276,9 @@ namespace Lumina
         uint32                                              NumLiveLights  = 0;
         uint32                                              NumLiveShadows = 0;
         uint64                                              StreamingFeedbackFrame = 0;
+        // Frames counted toward the current feedback window, and the newest window already handed to streaming.
+        uint64                                              StreamingFeedbackTick = 0;
+        uint64                                              StreamingFeedbackPublished = 0;
         
         TArray<FSceneBuffer, RHI::kFramesInFlight> RenderBucketRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.RenderBuckets", 1.5f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MeshletDrawListRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshletDrawList", kSceneBufferGrowth);
@@ -1415,7 +1422,7 @@ namespace Lumina
         uint32                                              RecentSlotCursor = 0;
         void   UpdateMeshletBoundFeedback(uint8 Slot);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialClassifyRing = MakeSceneRing<RHI::kFramesInFlight>("Material.ClassifyBlock", 1.0f, EBufferInit::Undefined, /*bAllowShrink*/ false);
-        TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialPixelListRing = MakeSceneRing<RHI::kFramesInFlight>("Material.PixelList", 1.2f);
+        TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialTileListRing = MakeSceneRing<RHI::kFramesInFlight>("Material.TileList", 1.2f);
         
         uint8                                                           CurrentFrameSlot = 0;
 
@@ -1470,6 +1477,8 @@ namespace Lumina
 
         TVector<FShaderH>            BinnedDeferredSlotShaders;
         TVector<uint8>               BinnedDeferredSlotKinds;
+        // Bit per EMaterialShadingModel among the binned materials, which specializes the lighting dispatch.
+        uint32                       BinnedShadingModelMask = 0u;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
         // Shader handle -> its dense bin, so binning stays linear in the visible material count.
         THashMap<uint64, uint32>                BinnedDeferredSlotLookup;
@@ -1479,15 +1488,12 @@ namespace Lumina
             uint32 NumSlots      = 0;
             uint32 ScreenW       = 0;
             uint32 ScreenH       = 0;
-            uint32 PixelCapacity = 0;   // entries the pixel list holds, taken from the allocation
+            uint32 TileStride    = 0;   // tile-list entries reserved per slot, one per screen tile
+            uint32 TileCapacity  = 0;   // entries the tile list holds, taken from the allocation
 
             // Byte offsets, packed to the live slot count; the shaders take each region by its own address.
             uint32 CountsOffset       = 0;
-            uint32 StartsOffset       = 0;
-            uint32 CursorsOffset      = 0;
-            uint32 TotalOffset        = 0;
             uint32 MaterialArgsOffset = 0;
-            uint32 LightArgsOffset    = 0;
             uint32 BlockSize          = 0;
         };
         // Derived once by VisBufferClassifyPass and read by the material and lighting passes. Zeroed at

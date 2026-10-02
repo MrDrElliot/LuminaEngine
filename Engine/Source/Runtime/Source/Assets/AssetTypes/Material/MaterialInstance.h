@@ -94,7 +94,7 @@ namespace Lumina
         bool IsReadyForRender() const override;
         bool DoesCastShadows() const override;
         bool IsTwoSided() const override;
-        bool IsMomentResolved() override;
+        bool IsOITResolved() override;
         bool IsUnorderedBlend() override;
         bool ReceivesDecals() const override;
         bool WritesDepth() const override;

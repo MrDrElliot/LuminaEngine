@@ -306,7 +306,7 @@ namespace Lumina
         const bool       bAdditive    = BlendMode == EBlendMode::Additive;
         const bool       bModulate    = BlendMode == EBlendMode::Modulate;
         // Everything the forward lane draws, whether the moments resolve it or a blend composites it.
-        const bool       bTranslucent = Material->IsMomentResolved() || Material->IsUnorderedBlend();
+        const bool       bTranslucent = Material->IsOITResolved() || Material->IsUnorderedBlend();
         // Translucency forces two-sided, or a translucent surface reads as a hole from behind.
         const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
 
@@ -327,7 +327,6 @@ namespace Lumina
         R.MeshShaderShadowMasked     = Stage(EMaterialShaderStage::MeshShadowMasked);
         R.ShadowMaskedPixelShader    = Stage(EMaterialShaderStage::ShadowMaskedPixel);
         R.DeferredShader             = Stage(EMaterialShaderStage::Deferred);
-        R.MomentPixelShader          = Stage(EMaterialShaderStage::MomentPixel);
 
         // Recorded from the RAW request, so a not-ready material that later compiles is noticed.
         MeshResolve::StampSurfaceSource(R, RawMaterial);
@@ -346,13 +345,10 @@ namespace Lumina
         if (bShadowOnly)  { MaterialFlags |= EInstanceFlags::ShadowOnly; }
         R.MaterialFlags = MaterialFlags;
 
-        // The MBOIT passes and the unordered blend pass are the only binders of MeshShaderBase / PixelShader.
+        // The OIT pass and the unordered blend pass are the only binders of MeshShaderBase / PixelShader.
         const bool bForwardShaded = bTranslucent;
 
-        // A commutative blend is already order-independent, so those batches skip the moments.
-        const bool bMomentGenerated = Material->IsMomentResolved();
-
-        // Only the unordered lane can honour it; the MBOIT lane reads depth and never writes.
+        // Only the unordered lane can honor it; the OIT lane reads depth and never writes.
         const bool bWriteDepth = Material->WritesDepth() && Material->IsUnorderedBlend();
 
         R.BatchKey = FDrawBatchKey
@@ -366,7 +362,6 @@ namespace Lumina
             .MeshShaderShadowMasked     = bMasked        ? R.MeshShaderShadowMasked     : FShaderH{},
             .ShadowMaskedPixelShader    = bMasked        ? R.ShadowMaskedPixelShader    : FShaderH{},
             .PixelShader                = bForwardShaded  ? R.PixelShader                : FShaderH{},
-            .MomentPixelShader          = bMomentGenerated ? R.MomentPixelShader         : FShaderH{},
             .bTranslucent = (bTranslucent ? 1u : 0u),
             .bMasked      = (bMasked      ? 1u : 0u),
             .bAdditive    = (bAdditive    ? 1u : 0u),

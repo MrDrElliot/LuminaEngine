@@ -1,26 +1,9 @@
-// Compute lane: no rasterizer, so nothing here may use ddx/ddy or an implicit-derivative sample. The
-// directional shadow comes from ShadowMaskPixel.slang's screen-space mask instead of the inline cascade
-// PCSS, and the debug-view switch is not compiled in at all (SceneDebugViewPixel.slang owns it).
+// Compute lane, so nothing here may use ddx/ddy; the debug-view switch lives in SceneDebugViewPixel.slang instead.
 #define SHADING_COMPUTE 1
 
 #include "Includes/SurfaceShading.slang"
 #include "Includes/VisBufferSurface.slang"
 #include "Includes/GlobalRHIStorage.slang"
-
-// Deferred lighting -- the final step of the visibility-buffer pipeline.
-//
-// ONE indirect dispatch over the whole compacted pixel list, which is every pixel the material passes
-// wrote a GBuffer for, each exactly once. Nothing else needs checking: background, terrain and any material
-// without a deferred shader were never classified, so they are simply not in the list and their HDR pixels
-// are left as the environment pass wrote them.
-//
-// Lighting cost is therefore independent of triangle density -- the point of the whole design. It is also
-// why this shader exists at all rather than lighting inside the material pass: there is one light loop, one
-// shadow lookup and one IBL evaluation per pixel no matter how many materials are on screen.
-//
-// World position is reconstructed from the depth buffer rather than stored: the VisBuffer geometry pass
-// wrote VisID and depth together, so the depth at this texel belongs to exactly the triangle whose material
-// filled this GBuffer texel.
 
 struct FDeferredLightingArgs
 {
@@ -32,24 +15,28 @@ struct FDeferredLightingArgs
     uint  HDRUAV;
     uint  ScreenW;
     uint  ScreenH;
-    GPUSpan<uint> PixelList;
-    GPUSpan<uint> Total;         // written by VisBufferMaterialPrefixSum
+    uint  SlotImageIndex;  // slot + 1 per pixel from the classify count, 0 where nothing deferred shades it
+    uint  _Pad0;
+    uint  _Pad1;
+    uint  _Pad2;
 };
 FDeferredLightingArgs* Pass() { return GetPassArgs<FDeferredLightingArgs>(); }
 
+// Screen tiles, each pixel lit only when classification gave it a GBuffer.
 [shader("compute")]
-[numthreads(MATERIAL_PIXEL_GROUP_SIZE, 1, 1)]
-void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
+[numthreads(MATERIAL_CLASSIFY_TILE, MATERIAL_CLASSIFY_TILE, 1)]
+void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
-    // Grid folded across Y by the prefix sum, for the same reason the material dispatches are.
-    const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
-    const uint Index       = LinearGroup * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-    if (Index >= SpanGet(&Pass().Total, 0u))
+    const uint2 Texel = DTid.xy;
+    if (Texel.x >= Pass().ScreenW || Texel.y >= Pass().ScreenH)
     {
         return;
     }
 
-    const uint2 Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, Index));
+    if (LoadTexture2D(Pass().SlotImageIndex, int2(Texel)).r < 0.5)
+    {
+        return;
+    }
 
     FGBufferTargets Targets;
     Targets.A = Pass().GBufferAIndex;
@@ -68,7 +55,5 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
     const FShadedSurface Shaded = ShadeGBuffer(G, WorldPosition, ViewPosition, ScreenPos);
 
-    // Opaque: alpha is 1 by definition. Masked cut-outs were clipped in the geometry stage and never
-    // reached the VisBuffer, so nothing in this list is partially covered.
     gRWTextures2D[Pass().HDRUAV][int2(Texel)] = float4(Shaded.Color, 1.0);
 }

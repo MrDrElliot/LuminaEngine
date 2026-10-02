@@ -83,7 +83,8 @@ namespace Lumina::RHI
 
     static void InitializeCore()
     {
-        GCore.GlobalHeap = CreateTextureHeap(8192, 1024, 64);
+        // Sized for whole-project thumbnail browsing; CreateTextureHeap clamps it to the device.
+        GCore.GlobalHeap = CreateTextureHeap(kMaxSampledTextureHeapSize, 1024, 64);
 
         for (FSemaphoreH& Timeline : GCore.QueueTimeline)
         {

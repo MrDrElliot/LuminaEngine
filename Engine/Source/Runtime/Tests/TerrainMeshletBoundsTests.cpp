@@ -109,3 +109,21 @@ TEST(TerrainMeshletBounds, MatchesScalarReferenceWithNegativeMaxHeight)
     // A negative scale flips which end of the raw range becomes the minimum.
     ExpectBoundsMatchScalarReference(65, 9, -75.0f);
 }
+
+TEST(TerrainMeshletBounds, ChunksCoverEveryQuad)
+{
+    // 1024 quads in 63-quad chunks leaves a remainder, which once went undrawn as a seam along two edges.
+    STerrainComponent Terrain = MakeTerrain(1025, 64, 100.0f);
+    TerrainMeshletBuilder::Build(Terrain, FVector3(0.0f));
+
+    int32 FarX = 0;
+    int32 FarY = 0;
+    for (const FTerrainMeshletInfo& Meshlet : Terrain.CPUState.Meshlets)
+    {
+        const FTerrainChunkInfo& Chunk = Terrain.CPUState.Chunks[Meshlet.ChunkIndex];
+        FarX = Math::Max(FarX, Chunk.QuadOrigin.x + Meshlet.ChunkLocalQuadOrigin.x + Meshlet.QuadExtent.x);
+        FarY = Math::Max(FarY, Chunk.QuadOrigin.y + Meshlet.ChunkLocalQuadOrigin.y + Meshlet.QuadExtent.y);
+    }
+    EXPECT_GE(FarX, 1024);
+    EXPECT_GE(FarY, 1024);
+}

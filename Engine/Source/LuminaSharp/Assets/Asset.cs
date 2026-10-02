@@ -6,9 +6,8 @@ namespace LuminaSharp;
 
 /// <summary>
 /// Loads engine assets from script, the C# analog of C++ StaticLoadObject / FSoftObjectPath. Paths are
-/// virtual asset paths (e.g. "/Game/Materials/Brick"). A returned object is a
-/// thin wrapper over the native CObject; assign it to a component property
-/// (<c>mesh.StaticMesh = Asset.Load&lt;CStaticMesh&gt;(path)</c>) to keep it alive through the engine's refcount.
+/// virtual asset paths (e.g. "/Game/Materials/Brick"). A returned object is a wrapper over the native
+/// CObject that holds a strong reference, so keeping it keeps the asset loaded, as a TObjectPtr member would.
 /// </summary>
 public static class Asset
 {

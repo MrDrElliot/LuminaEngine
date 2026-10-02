@@ -100,7 +100,6 @@ namespace Lumina
             }
 
             DecalPass(CL);
-            ShadowMaskPass(CL);
             VisBufferClassifyPass(CL);
             MaterialGBufferPass(CL);
             DeferredLightingPass(CL);
@@ -267,12 +266,18 @@ namespace Lumina
         BinnedDeferredSlotShaders.clear();
         BinnedDeferredSlotKinds.clear();
         BinnedDeferredSlotLookup.clear();
+        BinnedShadingModelMask = 0u;
+
+        const RHI::FMaterialManager& MaterialManager = Render().GetMaterialManager();
         uint32 MaxMaterialIndex = 0u;
         for (const auto& M : DeferredMaterials)
         {
             if (M.DeferredShader)
             {
                 MaxMaterialIndex = Math::Max(MaxMaterialIndex, M.MaterialIndex);
+
+                const uint32 ShadingModel = (MaterialManager.GetSlotFlags(M.MaterialIndex) >> kMaterialShadingModelShift) & kMaterialShadingModelMask;
+                BinnedShadingModelMask |= 1u << ShadingModel;
             }
         }
 
@@ -345,41 +350,38 @@ namespace Lumina
             return false;
         }
 
-        const uint64 PixelListSize = (uint64)Extent.x * (uint64)Extent.y * sizeof(uint32);
+        const uint32 TilesX   = RenderUtils::GetGroupCount(Extent.x, (uint32)MATERIAL_CLASSIFY_TILE);
+        const uint32 TilesY   = RenderUtils::GetGroupCount(Extent.y, (uint32)MATERIAL_CLASSIFY_TILE);
+        const uint64 NumTiles = (uint64)TilesX * (uint64)TilesY;
+        // A tile is listed at most once per slot, so a run of NumTiles per slot can never overflow.
+        const uint64 TileListSize = NumTiles * (uint64)NumSlots * sizeof(uint32);
 
         // Built into a local so a bail-out below leaves the member zeroed rather than half-filled.
         FMaterialClassifyLayout Layout;
         Layout.NumSlots = NumSlots;
 
         uint32 Cursor = 0u;
-        Layout.CountsOffset  = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
-        Layout.StartsOffset  = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
-        Layout.CursorsOffset = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
-        Layout.TotalOffset   = Cursor; Cursor += (uint32)sizeof(uint32);
+        Layout.CountsOffset = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
 
         Cursor = AlignClassifyRegion(Cursor);
         Layout.MaterialArgsOffset = Cursor;
         Cursor += NumSlots * (uint32)sizeof(RHI::FDispatchIndirectArguments);
 
-        Cursor = AlignClassifyRegion(Cursor);
-        Layout.LightArgsOffset = Cursor;
-        Cursor += (uint32)sizeof(RHI::FDispatchIndirectArguments);
-
         Layout.BlockSize = AlignClassifyRegion(Cursor);
 
         ReserveBuffer(CL, MaterialClassifyRing[CurrentFrameSlot], Layout.BlockSize);
-        ReserveBuffer(CL, MaterialPixelListRing[CurrentFrameSlot], PixelListSize);
+        ReserveBuffer(CL, MaterialTileListRing[CurrentFrameSlot], TileListSize);
 
-        if (!GetMaterialClassify() || !GetMaterialPixelList())
+        if (!GetMaterialClassify() || !GetMaterialTileList())
         {
             return false;
         }
 
-        Layout.ScreenW = Extent.x;
-        Layout.ScreenH = Extent.y;
-        // From the allocation, not from what was asked for, since the scatter bounds writes on this.
-        Layout.PixelCapacity = (uint32)Math::Min<uint64>(
-            GetMaterialPixelList().Size / sizeof(uint32), 0xFFFFFFFFull);
+        Layout.ScreenW    = Extent.x;
+        Layout.ScreenH    = Extent.y;
+        Layout.TileStride = (uint32)NumTiles;
+        // From the allocation, not from what was asked for, since the classify bounds writes on this.
+        Layout.TileCapacity = (uint32)Math::Min<uint64>(GetMaterialTileList().Size / sizeof(uint32), 0xFFFFFFFFull);
 
         MaterialClassifyLayout = Layout;
         return true;
@@ -397,10 +399,9 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("VisBuffer Classify", tracy::Color::Orange3);
 
-        static const FShaderH CountCS = FShaderLibrary::Get("VisBufferMaterialCount.slang");
-        static const FShaderH PrefixCS = FShaderLibrary::Get("VisBufferMaterialPrefixSum.slang");
-        static const FShaderH ScatterCS = FShaderLibrary::Get("VisBufferMaterialScatter.slang");
-        if (!CountCS || !PrefixCS || !ScatterCS)
+        static const FShaderH ClassifyCS = FShaderLibrary::Get("VisBufferMaterialClassify.slang");
+        static const FShaderH ArgsCS     = FShaderLibrary::Get("VisBufferMaterialArgs.slang");
+        if (!ClassifyCS || !ArgsCS)
         {
             return;
         }
@@ -414,17 +415,15 @@ namespace Lumina
 
         const FMaterialClassifyLayout Layout = MaterialClassifyLayout;
 
-        const FSceneImage& VisRT    = GetNamedImage(ENamedImage::VisBuffer);
-        const RHI::FGPUAllocation Classify = GetMaterialClassify();
-        const RHI::FGPUAllocation PixelList = GetMaterialPixelList();
-
-        const RHI::GPUPtr Base        = Classify.Gpu;
-        const RHI::GPUPtr CountsAddr  = Base + Layout.CountsOffset;
-        const RHI::GPUPtr StartsAddr  = Base + Layout.StartsOffset;
-        const RHI::GPUPtr CursorsAddr = Base + Layout.CursorsOffset;
-        const RHI::GPUPtr TotalAddr   = Base + Layout.TotalOffset;
-        const RHI::GPUPtr MatArgsAddr = Base + Layout.MaterialArgsOffset;
-        const RHI::GPUPtr LitArgsAddr = Base + Layout.LightArgsOffset;
+        const FSceneImage& VisRT   = GetNamedImage(ENamedImage::VisBuffer);
+        const FSceneImage& SlotRT  = GetNamedImage(ENamedImage::MaterialSlot);
+        const RHI::GPUPtr  Base    = GetMaterialClassify().Gpu;
+        const int32        SlotUAV = SlotRT.GetMipUAVIndex(0);
+        if (SlotUAV < 0)
+        {
+            MaterialClassifyLayout = FMaterialClassifyLayout{};
+            return;
+        }
 
         // MaterialIndex -> dense slot; uploaded to the transient ring and read by device address.
         const RHI::FGPURange SlotByMaterialRange =
@@ -435,88 +434,58 @@ namespace Lumina
             RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments, RHI::EAccessFlags::None,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
 
-        // Only the counters are cleared; the prefix sum below rewrites every other field.
-        RHI::CmdMemset(CL, { CountsAddr, sizeof(uint32) * Layout.NumSlots }, 0u);
+        // Only the counters are cleared; the args pass rewrites the dispatch triples.
+        RHI::CmdMemset(CL, { Base + Layout.CountsOffset, sizeof(uint32) * Layout.NumSlots }, 0u);
         Barriers::TransferToCompute(CL);
 
-        const uint32 GroupsX = RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE);
-        const uint32 GroupsY = RenderUtils::GetGroupCount(Layout.ScreenH, (uint32)MATERIAL_CLASSIFY_TILE);
+        const RHI::TGPUSpan<uint32> CountsSpan = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots);
 
-        const RHI::TGPUSpan<uint32> CountsSpan  = RHI::TGPUSpan<uint32>::FromAddress(CountsAddr, Layout.NumSlots);
-        const RHI::TGPUSpan<uint32> StartsSpan  = RHI::TGPUSpan<uint32>::FromAddress(StartsAddr, Layout.NumSlots);
-        const RHI::TGPUSpan<uint32> CursorsSpan = RHI::TGPUSpan<uint32>::FromAddress(CursorsAddr, Layout.NumSlots);
-        const RHI::TGPUSpan<uint32> SlotByMaterialSpan = SlotByMaterialRange;
-
-        struct FMaterialCountPC
+        struct FMaterialClassifyPC
         {
             RHI::TGPUSpan<uint32> Counts;
             RHI::TGPUSpan<uint32> SlotByMaterial;
+            RHI::TGPUSpan<uint32> TileList;
             uint32      VisBufferIndex;
+            uint32      SlotImageUAV;
             uint32      ScreenW;
             uint32      ScreenH;
             uint32      DrawListCount;
-        } CountPC = {};
-        static_assert(sizeof(FMaterialCountPC) == 48, "FMaterialCountPC must match VisBufferMaterialCount.slang FMaterialCountArgs.");
-        CountPC.Counts              = CountsSpan;
-        CountPC.SlotByMaterial      = SlotByMaterialSpan;
-        CountPC.VisBufferIndex      = (uint32)VisRT.GetResourceID();
-        CountPC.ScreenW             = Layout.ScreenW;
-        CountPC.ScreenH             = Layout.ScreenH;
-        CountPC.DrawListCount       = DrawListCapacity;
+            uint32      TileStride;
+            uint32      _Pad0;
+            uint32      _Pad1;
+        } ClassifyPC = {};
+        static_assert(sizeof(FMaterialClassifyPC) == 80, "FMaterialClassifyPC must match VisBufferMaterialClassify.slang FMaterialClassifyArgs.");
+        ClassifyPC.Counts         = CountsSpan;
+        ClassifyPC.SlotByMaterial = SlotByMaterialRange;
+        ClassifyPC.TileList       = { GetMaterialTileList(), Layout.TileCapacity };
+        ClassifyPC.VisBufferIndex = (uint32)VisRT.GetResourceID();
+        ClassifyPC.SlotImageUAV   = (uint32)SlotUAV;
+        ClassifyPC.ScreenW        = Layout.ScreenW;
+        ClassifyPC.ScreenH        = Layout.ScreenH;
+        ClassifyPC.DrawListCount  = DrawListCapacity;
+        ClassifyPC.TileStride     = Layout.TileStride;
 
-        DispatchCompute(CL, CountCS, CountPC, GroupsX, GroupsY, 1u);
+        DispatchCompute(CL, ClassifyCS, ClassifyPC,
+            RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE),
+            RenderUtils::GetGroupCount(Layout.ScreenH, (uint32)MATERIAL_CLASSIFY_TILE), 1u);
 
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
             RHI::EStageFlags::Compute,
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
-        struct FPrefixSumPC
+        struct FMaterialArgsPC
         {
             RHI::TGPUSpan<uint32> Counts;
-            RHI::TGPUSpan<uint32> Starts;
-            RHI::TGPUSpan<uint32> Cursors;
             RHI::TGPUSpan<uint32> Args;
-            RHI::TGPUSpan<uint32> LightArgs;
-            RHI::TGPUSpan<uint32> Total;
-        } PrefixPC = {};
-        static_assert(sizeof(FPrefixSumPC) == 96, "FPrefixSumPC must match VisBufferMaterialPrefixSum.slang FPrefixSumArgs.");
-        PrefixPC.Counts    = CountsSpan;
-        PrefixPC.Starts    = StartsSpan;
-        PrefixPC.Cursors   = CursorsSpan;
-        PrefixPC.Args      = RHI::TGPUSpan<uint32>::FromAddress(MatArgsAddr, Layout.NumSlots * 3u);
-        PrefixPC.LightArgs = RHI::TGPUSpan<uint32>::FromAddress(LitArgsAddr, 3u);
-        PrefixPC.Total     = RHI::TGPUSpan<uint32>::FromAddress(TotalAddr, 1u);
+        } ArgsPC = {};
+        static_assert(sizeof(FMaterialArgsPC) == 32, "FMaterialArgsPC must match VisBufferMaterialArgs.slang FMaterialArgsArgs.");
+        ArgsPC.Counts = CountsSpan;
+        ArgsPC.Args   = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.MaterialArgsOffset, Layout.NumSlots * 3u);
 
-        DispatchCompute(CL, PrefixCS, PrefixPC, 1u, 1u, 1u);
+        DispatchCompute(CL, ArgsCS, ArgsPC, RenderUtils::GetGroupCount(Layout.NumSlots, 64u), 1u, 1u);
 
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-
-        struct FMaterialScatterPC
-        {
-            RHI::TGPUSpan<uint32> Cursors;
-            RHI::TGPUSpan<uint32> PixelList;
-            RHI::TGPUSpan<uint32> SlotByMaterial;
-            uint32      VisBufferIndex;
-            uint32      ScreenW;
-            uint32      ScreenH;
-            uint32      DrawListCount;
-        } ScatterPC = {};
-        static_assert(sizeof(FMaterialScatterPC) == 64, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
-        ScatterPC.Cursors        = CursorsSpan;
-        ScatterPC.PixelList      = { PixelList, Layout.PixelCapacity };
-        ScatterPC.SlotByMaterial = SlotByMaterialSpan;
-        ScatterPC.VisBufferIndex = CountPC.VisBufferIndex;
-        ScatterPC.ScreenW        = Layout.ScreenW;
-        ScatterPC.ScreenH        = Layout.ScreenH;
-        ScatterPC.DrawListCount  = DrawListCapacity;
-
-        DispatchCompute(CL, ScatterCS, ScatterPC, GroupsX, GroupsY, 1u);
-
-        // The pixel list feeds the material dispatches; the argument triples feed the indirect fetch.
+        // The tile lists and stored slots feed the material dispatches; the argument triples feed the indirect fetch.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
             RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
@@ -538,16 +507,15 @@ namespace Lumina
 
         const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
 
-        const RHI::FGPUAllocation Classify  = GetMaterialClassify();
-        const RHI::FGPUAllocation PixelList = GetMaterialPixelList();
-        const RHI::GPUPtr  Base      = Classify.Gpu;
+        const RHI::FGPUAllocation Classify = GetMaterialClassify();
+        const RHI::GPUPtr         Base     = Classify.Gpu;
 
         struct FDeferredMaterialPC
         {
             uint32      VisBufferIndex;
-            uint32      _Pad0;
-            uint32      _Pad1;
-            uint32      _Pad2;
+            uint32      FeedbackPhase;
+            uint32      TileStride;
+            uint32      SlotImageIndex;
             uint32      DrawListCount;
             uint32      SlotIndex;
             uint32      ScreenW;
@@ -558,13 +526,13 @@ namespace Lumina
             uint32      GBufferDUAV;
             uint32      VelocityUAV;
             uint32      _PadVelocity;
-            RHI::TGPUSpan<uint32> PixelList;
-            RHI::TGPUSpan<uint32> Starts;
+            RHI::TGPUSpan<uint32> TileList;
             RHI::TGPUSpan<uint32> Counts;
         } PC = {};
-        static_assert(sizeof(FDeferredMaterialPC) == 104, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
+        static_assert(sizeof(FDeferredMaterialPC) == 88, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
 
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
+        PC.FeedbackPhase  = (uint32)(StreamingFeedbackTick % STREAMING_FEEDBACK_WINDOW);
         PC.DrawListCount = DrawListCapacity;
         PC.ScreenW       = Layout.ScreenW;
         PC.ScreenH       = Layout.ScreenH;
@@ -583,9 +551,10 @@ namespace Lumina
         PC.GBufferCUAV = (uint32)UAVC;
         PC.GBufferDUAV = (uint32)UAVD;
 
-        PC.PixelList = { PixelList, Layout.PixelCapacity };
-        PC.Starts    = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.StartsOffset, Layout.NumSlots);
-        PC.Counts    = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots);
+        PC.TileStride     = Layout.TileStride;
+        PC.SlotImageIndex = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
+        PC.TileList       = { GetMaterialTileList(), Layout.TileCapacity };
+        PC.Counts         = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots);
 
         // Invalid disables the write, which leaves the camera-only base the fullscreen pass laid down.
         PC.VelocityUAV = 0xFFFFFFFFu;
@@ -665,8 +634,6 @@ namespace Lumina
             return;
         }
 
-        const RHI::FGPUAllocation Classify = GetMaterialClassify();
-
         struct FDeferredLightingPC
         {
             uint32      GBufferAIndex;
@@ -677,20 +644,21 @@ namespace Lumina
             uint32      HDRUAV;
             uint32      ScreenW;
             uint32      ScreenH;
-            RHI::TGPUSpan<uint32> PixelList;
-            RHI::TGPUSpan<uint32> Total;
+            uint32      SlotImageIndex;
+            uint32      _Pad0;
+            uint32      _Pad1;
+            uint32      _Pad2;
         } PC = {};
-        static_assert(sizeof(FDeferredLightingPC) == 64, "FDeferredLightingPC must match DeferredLighting.slang FDeferredLightingArgs.");
-        PC.GBufferAIndex = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
-        PC.GBufferBIndex = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
-        PC.GBufferCIndex = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
-        PC.GBufferDIndex = (uint32)GetNamedImage(ENamedImage::GBufferD).GetResourceID();
-        PC.DepthIndex    = (uint32)GetNamedImage(ENamedImage::DepthAttachment).GetResourceID();
-        PC.HDRUAV        = (uint32)HDRUAV;
-        PC.ScreenW       = Layout.ScreenW;
-        PC.ScreenH       = Layout.ScreenH;
-        PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
-        PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
+        static_assert(sizeof(FDeferredLightingPC) == 48, "FDeferredLightingPC must match DeferredLighting.slang FDeferredLightingArgs.");
+        PC.GBufferAIndex  = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
+        PC.GBufferBIndex  = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
+        PC.GBufferCIndex  = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
+        PC.GBufferDIndex  = (uint32)GetNamedImage(ENamedImage::GBufferD).GetResourceID();
+        PC.DepthIndex     = (uint32)GetNamedImage(ENamedImage::DepthAttachment).GetResourceID();
+        PC.HDRUAV         = (uint32)HDRUAV;
+        PC.ScreenW        = Layout.ScreenW;
+        PC.ScreenH        = Layout.ScreenH;
+        PC.SlotImageIndex = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
 
         // Frame-uniform features the light loop would otherwise carry registers for on every pixel.
         bool bLocalShadows = false;
@@ -706,14 +674,23 @@ namespace Lumina
             bLocalContact |= EnumHasAnyFlags(Light.Flags, ELightFlags::ContactShadow);
         }
 
+        auto HasShadingModel = [this](EMaterialShadingModel Model) -> uint32
+        {
+            return (BinnedShadingModelMask >> (uint32)Model) & 1u;
+        };
+
         const RHI::FSpecializationConstant LightingConsts[] =
         {
             RHI::FSpecializationConstant{ .ConstantID = 10u, .AsInt = bLocalShadows ? 1u : 0u,     .Type = RHI::ESpecializationConstantType::UInt32 },
             RHI::FSpecializationConstant{ .ConstantID = 11u, .AsInt = bLocalContact ? 1u : 0u,     .Type = RHI::ESpecializationConstantType::UInt32 },
             RHI::FSpecializationConstant{ .ConstantID = 12u, .AsInt = NumActiveProbes > 0 ? 1u : 0u, .Type = RHI::ESpecializationConstantType::UInt32 },
+            RHI::FSpecializationConstant{ .ConstantID = 18u, .AsInt = HasShadingModel(EMaterialShadingModel::Clearcoat), .Type = RHI::ESpecializationConstantType::UInt32 },
+            RHI::FSpecializationConstant{ .ConstantID = 19u, .AsInt = HasShadingModel(EMaterialShadingModel::Foliage), .Type = RHI::ESpecializationConstantType::UInt32 },
         };
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS, TSpan<const RHI::FSpecializationConstant>(LightingConsts, 3)));
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), Classify.Skip(Layout.LightArgsOffset));
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS, TSpan<const RHI::FSpecializationConstant>(LightingConsts, 5)));
+        // Screen tiles rather than the material-sorted pixel list, so a wave shares its clusters, shadow texels and GBuffer lines.
+        RHI::CmdDispatch(CL, MakeArgs(PC), RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE),
+                         RenderUtils::GetGroupCount(Layout.ScreenH, (uint32)MATERIAL_CLASSIFY_TILE), 1u);
 
         // The lit HDR target is drawn into by the forward passes, sampled, and read by the post chain.
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
@@ -733,7 +710,8 @@ namespace Lumina
         static const FShaderH PrefilterCS = FShaderLibrary::Get("GTAOPrefilterDepth.slang");
         static const FShaderH MainCS      = FShaderLibrary::Get("GTAOMain.slang");
         static const FShaderH DenoiseCS   = FShaderLibrary::Get("GTAODenoise.slang");
-        if (!PrefilterCS || !MainCS || !DenoiseCS)
+        static const FShaderH UpsampleCS  = FShaderLibrary::Get("GTAOUpsample.slang");
+        if (!PrefilterCS || !MainCS || !DenoiseCS || !UpsampleCS)
         {
             return;
         }
@@ -752,8 +730,10 @@ namespace Lumina
             return;
         }
 
-        const uint32 Width  = Output.GetSizeX();
-        const uint32 Height = Output.GetSizeY();
+        // The trace runs at the stage targets' size, half the view below ultra quality, and upsamples into Output.
+        const uint32 Width       = TermA.GetSizeX();
+        const uint32 Height      = TermA.GetSizeY();
+        const bool   bHalfTrace  = Width != Output.GetSizeX() || Height != Output.GetSizeY();
 
         float Radius                   = 0.5f;
         float Intensity                = 1.0f;
@@ -793,8 +773,10 @@ namespace Lumina
                 uint32 MipUAV[GTAODepthMipLevels];
                 float  EffectRadius;
                 float  EffectFalloffRange;
+                uint32 SrcScale;
             } PC = {};
 
+            PC.SrcScale           = bHalfTrace ? 2u : 1u;
             PC.ViewportSize[0]    = Width;
             PC.ViewportSize[1]    = Height;
             PC.SrcDepthIndex      = (uint32)DepthSlot;
@@ -920,7 +902,7 @@ namespace Lumina
                 const bool bEven  = (PassIndex & 1u) == 0u;
 
                 const FSceneImage& Src = bEven ? TermA : TermB;
-                const FSceneImage& Dst = bFinal ? Output : (bEven ? TermB : TermA);
+                const FSceneImage& Dst = (bFinal && !bHalfTrace) ? Output : (bEven ? TermB : TermA);
 
                 const int32 SrcSlot = Src.GetResourceID();
                 const int32 DstSlot = Dst.GetMipUAVIndex(0);
@@ -945,149 +927,55 @@ namespace Lumina
                     RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             }
         }
-    }
 
-    void FDefaultSceneRenderer::ShadowMaskPass(RHI::FCmdListH CL)
-    {
-        if (!FrameFlags.bShadowMaskValid)
+        if (bHalfTrace)
         {
-            return;
-        }
+            SCENE_GPU_SCOPE(CL, "GTAO Upsample");
 
-        LUMINA_PROFILE_SECTION_COLORED("Shadow Mask", tracy::Color::Red);
-
-        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderH PixelShader = FShaderLibrary::Get("ShadowMaskPixel.slang");
-        if (!VertexShader || !PixelShader)
-        {
-            return;
-        }
-
-        const FSceneImage& Output = GetNamedImage(ENamedImage::ShadowMask);
-        const FSceneImage& Depth  = GetNamedImage(ENamedImage::DepthAttachment);
-
-        RHI::FRenderAttachment Color;
-        Color.Texture = Output.Texture;
-        Color.LoadOp  = RHI::ELoadOp::Undefined;   // every pixel is written (sky included)
-        Color.StoreOp = RHI::EStoreOp::Store;
-
-        RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-        Pass.RenderArea       = Output.GetExtent();
-
-        RHI::CmdBeginRenderPass(CL, Pass);
-        SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
-        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
-
-        FGraphicsPipelineKey Key;
-        Key.VS = VertexShader;
-        Key.PS = PixelShader;
-        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
-        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
-
-        struct FData
-        {
-            uint32 DepthIndex;
-        } PC;
-
-        PC.DepthIndex = (uint32)Depth.GetResourceID();
-
-        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
-        RHI::CmdEndRenderPass(CL);
-        Barriers::RasterToRead(CL);
-    }
-
-    // MBOIT pass 1 must see the identical fragment set TransparentPass will shade.
-    void FDefaultSceneRenderer::MomentGenerationPass(RHI::FCmdListH CL)
-    {
-        const FFrameData& Frame = *RenderFrame;
-        const auto& TranslucentDrawList = Frame.Geometry.TranslucentDrawList;
-
-        if (TranslucentDrawList.empty())
-        {
-            return;
-        }
-
-        LUMINA_PROFILE_SECTION_COLORED("Moment Generation Pass", tracy::Color::SteelBlue);
-
-        const FSceneImage& MomentZeroth = GetNamedImage(ENamedImage::MomentZeroth);
-        const FSceneImage& Moments      = GetNamedImage(ENamedImage::Moments);
-        const FUIntVector2 Extent       = GetNamedImage(ENamedImage::HDR).GetExtent();
-
-        // Zero absorbance reads as fully transmissive and composites as untouched background.
-        RHI::FRenderAttachment Colors[2];
-        Colors[0].Texture  = MomentZeroth.Texture;
-        Colors[0].LoadOp   = RHI::ELoadOp::Clear;
-        Colors[0].StoreOp  = RHI::EStoreOp::Store;
-        Colors[0].Color[0] = Colors[0].Color[1] = Colors[0].Color[2] = Colors[0].Color[3] = 0.0f;
-        Colors[1].Texture  = Moments.Texture;
-        Colors[1].LoadOp   = RHI::ELoadOp::Clear;
-        Colors[1].StoreOp  = RHI::EStoreOp::Store;
-        Colors[1].Color[0] = Colors[1].Color[1] = Colors[1].Color[2] = Colors[1].Color[3] = 0.0f;
-
-        RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, 2);
-        Pass.DepthAttachment.Texture = GetNamedImage(ENamedImage::DepthAttachment).Texture;
-        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
-        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
-        Pass.RenderArea              = Extent;
-
-        RHI::CmdBeginRenderPass(CL, Pass);
-        SetViewportScissor(CL, Extent);
-
-        // Depth-test but never write, so translucency neither hides behind walls nor self-occludes.
-        RHI::FDepthStencilDesc DepthDesc;
-        DepthDesc.DepthMode = RHI::EDepthFlags::Read;
-        DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
-        RHI::CmdSetDepthStencil(CL, (DepthDesc));
-
-        RHI::FBlendDesc MomentBlend;
-        MomentBlend.bBlendEnable   = true;
-        MomentBlend.SrcColorFactor = RHI::EFactor::One;
-        MomentBlend.DstColorFactor = RHI::EFactor::One;
-        MomentBlend.SrcAlphaFactor = RHI::EFactor::One;
-        MomentBlend.DstAlphaFactor = RHI::EFactor::One;
-
-        FMeshletPassContext Ctx;
-        Ctx.CullViewIndex = CurrentCameraEarlyView;
-        Ctx.ViewportW     = (float)Extent.x;
-        Ctx.ViewportH     = (float)Extent.y;
-
-        ForEachMeshletBatch(CL, TranslucentDrawList, Ctx,
-            [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
+            struct FUpsampleConstants
             {
-                if (Batch.bAdditive || Batch.bModulate)
-                {
-                    return false;   // UnorderedTranslucentPass owns these; a commutative blend needs no moments
-                }
+                uint32 FullSize[2];
+                uint32 HalfSize[2];
+                uint32 AOIndex;
+                uint32 HalfDepthIndex;
+                uint32 FullDepthIndex;
+                uint32 OutputUAV;
+            } PC = {};
 
-                // A null shader means the material fell back to a default, so skip it out of the moments.
-                if (Batch.MomentPixelShader == nullptr)
-                {
-                    return false;
-                }
+            // The final denoise pass wrote the ping-pong target its parity selects.
+            const uint32 NumPasses = (uint32)Math::Max(DenoisePasses, 1);
+            const FSceneImage& Denoised = ((NumPasses - 1u) & 1u) == 0u ? TermB : TermA;
 
-                Key.MS          = Batch.MeshShaderBase;
-                Key.PS          = Batch.MomentPixelShader;
-                Key.DepthFormat = EFormat::D32;
-                // TransparentPass must make the identical choice or the transmittance will not describe it.
-                Key.TriCullMode = (uint8)(Batch.bTwoSided ? 0u : (uint32)TriCull_Backface);
-                Key.ColorTargets.push_back({ MomentZeroth.Desc.Format, MomentBlend });
-                Key.ColorTargets.push_back({ Moments.Desc.Format, MomentBlend });
-                return true;
-            },
-            [&](const FMeshDrawCommand& Batch)
+            const int32 AOSlot        = Denoised.GetResourceID();
+            const int32 HalfDepthSlot = WorkingDepth.GetResourceID();
+            const int32 OutputSlot    = Output.GetMipUAVIndex(0);
+            if (AOSlot < 0 || HalfDepthSlot < 0 || OutputSlot < 0)
             {
-                // Honor the two-sided flag exactly as VisBufferPass does; these passes are ROP-bound.
-                RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
-            });
+                LOG_ERROR("GTAO upsample is missing a heap slot; skipping it.");
+                return;
+            }
 
-        RHI::CmdEndRenderPass(CL);
-        Barriers::RasterToRead(CL);
+            PC.FullSize[0]    = Output.GetSizeX();
+            PC.FullSize[1]    = Output.GetSizeY();
+            PC.HalfSize[0]    = Width;
+            PC.HalfSize[1]    = Height;
+            PC.AOIndex        = (uint32)AOSlot;
+            PC.HalfDepthIndex = (uint32)HalfDepthSlot;
+            PC.FullDepthIndex = (uint32)DepthSlot;
+            PC.OutputUAV      = (uint32)OutputSlot;
+
+            DispatchCompute(CL, UpsampleCS, PC,
+                RenderUtils::GetGroupCount(PC.FullSize[0], 8u),
+                RenderUtils::GetGroupCount(PC.FullSize[1], 8u), 1);
+
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        }
     }
 
-    // MBOIT pass 2 weights each fragment by the transmittance in front of it; no revealage target.
+    // Weighted blended OIT (McGuire and Bavoil 2013), one pass into a weighted sum and a revealage product.
     void FDefaultSceneRenderer::TransparentPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
@@ -1101,20 +989,26 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Transparent Pass", tracy::Color::CadetBlue);
 
         const FSceneImage& Accum     = GetNamedImage(ENamedImage::Accum);
+        const FSceneImage& Revealage = GetNamedImage(ENamedImage::Revealage);
         const FUIntVector2 Extent    = GetNamedImage(ENamedImage::HDR).GetExtent();
 
-        RHI::FRenderAttachment Colors[2];
-        uint32 NumColors = 1;
+        RHI::FRenderAttachment Colors[3];
+        uint32 NumColors = 2;
         Colors[0].Texture  = Accum.Texture;
         Colors[0].LoadOp   = RHI::ELoadOp::Clear;
         Colors[0].StoreOp  = RHI::EStoreOp::Store;
         Colors[0].Color[0] = Colors[0].Color[1] = Colors[0].Color[2] = Colors[0].Color[3] = 0.0f;
+        // Fully revealed until a layer covers it.
+        Colors[1].Texture  = Revealage.Texture;
+        Colors[1].LoadOp   = RHI::ELoadOp::Clear;
+        Colors[1].StoreOp  = RHI::EStoreOp::Store;
+        Colors[1].Color[0] = Colors[1].Color[1] = Colors[1].Color[2] = Colors[1].Color[3] = 1.0f;
         #if USING(WITH_EDITOR)
         const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
-        Colors[1].Texture  = Picker.Texture;
-        Colors[1].LoadOp   = RHI::ELoadOp::Load;
-        Colors[1].StoreOp  = RHI::EStoreOp::Store;
-        NumColors = 2;
+        Colors[2].Texture  = Picker.Texture;
+        Colors[2].LoadOp   = RHI::ELoadOp::Load;
+        Colors[2].StoreOp  = RHI::EStoreOp::Store;
+        NumColors = 3;
         #endif
 
         RHI::FRenderPassDesc Pass;
@@ -1139,6 +1033,13 @@ namespace Lumina
         AccumBlend.SrcAlphaFactor = RHI::EFactor::One;
         AccumBlend.DstAlphaFactor = RHI::EFactor::One;
 
+        RHI::FBlendDesc RevealageBlend;
+        RevealageBlend.bBlendEnable   = true;
+        RevealageBlend.SrcColorFactor = RHI::EFactor::Zero;
+        RevealageBlend.DstColorFactor = RHI::EFactor::OneMinusSrcColor;
+        RevealageBlend.SrcAlphaFactor = RHI::EFactor::Zero;
+        RevealageBlend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
+
         FMeshletPassContext Ctx;
         Ctx.CullViewIndex = CurrentCameraEarlyView;
         Ctx.ViewportW     = (float)Extent.x;
@@ -1155,9 +1056,9 @@ namespace Lumina
                 Key.MS          = Batch.MeshShaderBase;
                 Key.PS          = Batch.PixelShader;
                 Key.DepthFormat = EFormat::D32;
-                // MUST stay byte-identical to MomentGenerationPass' choice; see the comment there.
                 Key.TriCullMode = (uint8)(Batch.bTwoSided ? 0u : (uint32)TriCull_Backface);
                 Key.ColorTargets.push_back({ Accum.Desc.Format, AccumBlend });
+                Key.ColorTargets.push_back({ Revealage.Desc.Format, RevealageBlend });
                 #if USING(WITH_EDITOR)
                 Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
                 #endif
@@ -1191,10 +1092,9 @@ namespace Lumina
             return;
         }
 
-        const FSceneImage& HDR          = GetNamedImage(ENamedImage::HDR);
-        const FSceneImage& Accum        = GetNamedImage(ENamedImage::Accum);
-        const FSceneImage& MomentZeroth = GetNamedImage(ENamedImage::MomentZeroth);
-        const FSceneImage& Moments      = GetNamedImage(ENamedImage::Moments);
+        const FSceneImage& HDR       = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& Accum     = GetNamedImage(ENamedImage::Accum);
+        const FSceneImage& Revealage = GetNamedImage(ENamedImage::Revealage);
 
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;
@@ -1210,7 +1110,7 @@ namespace Lumina
         RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
-        // Added, not lerped, since each fragment was already pre-weighted by its transmittance.
+        // The resolve emits the layers' color already scaled by their coverage and the revealage in alpha.
         RHI::FBlendDesc CompositeBlend;
         CompositeBlend.bBlendEnable   = true;
         CompositeBlend.SrcColorFactor = RHI::EFactor::One;
@@ -1227,16 +1127,15 @@ namespace Lumina
         struct FOITResolvePushConstants
         {
             uint32 AccumIndex;
-            uint32 MomentZerothIndex;
-            uint32 MomentsIndex;
+            uint32 RevealageIndex;
             uint32 _Pad0;
+            uint32 _Pad1;
         };
         static_assert(sizeof(FOITResolvePushConstants) == 16, "FOITResolvePushConstants must match the slang pass block.");
 
         FOITResolvePushConstants PC = {};
-        PC.AccumIndex        = (uint32)Accum.GetResourceID();
-        PC.MomentZerothIndex = (uint32)MomentZeroth.GetResourceID();
-        PC.MomentsIndex      = (uint32)Moments.GetResourceID();
+        PC.AccumIndex     = (uint32)Accum.GetResourceID();
+        PC.RevealageIndex = (uint32)Revealage.GetResourceID();
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
@@ -1453,22 +1352,49 @@ namespace Lumina
             float  NearPlane;
             float  FogRange;
             uint32 bVolumetric;      // froxel volume valid this frame; 0 = analytic height fog only
-            uint32 FarShaftSteps;    // 0 = far field stays closed-form and unshadowed
-
             float  FarShaftDistance;
-            uint32 CloudShadowIndex; // bindless 2D SRV, ~0u when no cloud shadow was built
-            float  CloudShadowExtent;
-            float  CloudShadowCenterX;
 
-            float  CloudShadowCenterY;
-            uint32 CloudDepthIndex;  // bindless 2D SRV of the depth each cloud texel was marched against
-            float  CloudFloor;       // altitude of the cloud layer's base, so the composite can skip clouds below reach
-            float  _Pad2;
+            uint32 FogShaftIndex;      // bindless 2D SRV of the half-res shaft segment, ~0u keeps the far field unshadowed
+            uint32 FogShaftDepthIndex; // bindless 2D SRV of the depth each shaft texel was marched against
+            uint32 CloudDepthIndex;    // bindless 2D SRV of the depth each cloud texel was marched against
+            float  CloudFloor;         // altitude of the cloud layer's base, so the composite can skip clouds below reach
+
+            uint32 SSRTraceIndex;    // bindless 2D SRV of the half-resolution reflection delta, ~0u when SSR is off
+            uint32 SSRTraceW;
+            uint32 SSRTraceH;
+            uint32 _Pad0;
         };
         static_assert(sizeof(FAtmosphereCompositePushConstants) == 96,
             "FAtmosphereCompositePushConstants must match AtmosphereComposite.slang::FPushConstants.");
 
         constexpr uint32 AtmosphereTileSize = 8;
+
+        struct FFogShaftPushConstants
+        {
+            uint32 DepthIndex;
+            uint32 ShaftUAV;
+            uint32 ShaftDepthUAV;
+            uint32 ScreenW;
+
+            uint32 ScreenH;
+            uint32 TraceW;
+            uint32 TraceH;
+            uint32 Steps;
+
+            float  FogRange;
+            float  ShaftDistance;
+            uint32 bVolumetric;
+            uint32 CloudShadowIndex;
+
+            float  CloudShadowExtent;
+            float  CloudShadowCenterX;
+            float  CloudShadowCenterY;
+            uint32 _Pad0;
+        };
+        static_assert(sizeof(FFogShaftPushConstants) == 64,
+            "FFogShaftPushConstants must match FogShafts.slang::FPushConstants.");
+
+        constexpr uint32 FogShaftTileSize = 8;
     }
 
     void FDefaultSceneRenderer::PublishFogGlobals(FSceneGlobalData& Globals) const
@@ -1713,6 +1639,67 @@ namespace Lumina
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
+    void FDefaultSceneRenderer::FogShaftPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+
+        AtmosphereTerms.FogShaftIndex      = ~0u;
+        AtmosphereTerms.FogShaftDepthIndex = ~0u;
+
+        if (!Frame.Volumetrics.bHasFog || Frame.Volumetrics.FarShaftSteps == 0u)
+        {
+            return;
+        }
+
+        static const FShaderH CS = FShaderLibrary::Get("FogShafts.slang");
+        const FSceneImage& Shaft      = GetNamedImage(ENamedImage::FogShaft);
+        const FSceneImage& ShaftDepth = GetNamedImage(ENamedImage::FogShaftDepth);
+        if (!CS || !Shaft.IsValid() || !ShaftDepth.IsValid())
+        {
+            return;
+        }
+
+        const int32 ShaftUAV      = Shaft.GetMipUAVIndex(0);
+        const int32 ShaftDepthUAV = ShaftDepth.GetMipUAVIndex(0);
+        if (ShaftUAV < 0 || ShaftDepthUAV < 0)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Fog Shafts Pass", tracy::Color::Orange3);
+
+        const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
+
+        FFogShaftPushConstants PC = {};
+        PC.DepthIndex         = (uint32)GetNamedImage(ENamedImage::DepthAttachment).GetResourceID();
+        PC.ShaftUAV           = (uint32)ShaftUAV;
+        PC.ShaftDepthUAV      = (uint32)ShaftDepthUAV;
+        PC.ScreenW            = HDR.GetSizeX();
+        PC.ScreenH            = HDR.GetSizeY();
+        PC.TraceW             = Shaft.GetSizeX();
+        PC.TraceH             = Shaft.GetSizeY();
+        PC.Steps              = Frame.Volumetrics.FarShaftSteps;
+        PC.FogRange           = Math::Clamp(Frame.Volumetrics.FogParams.VolumetricParams.z, 1.0f, Frame.SceneGlobalData.FarPlane);
+        PC.ShaftDistance      = Frame.Volumetrics.FarShaftDistance;
+        PC.bVolumetric        = Frame.Volumetrics.bVolumetricFog ? 1u : 0u;
+        PC.CloudShadowIndex   = Frame.SceneGlobalData.FogCloudShadowIndex;
+        PC.CloudShadowExtent  = Frame.SceneGlobalData.FogCloudShadowExtent;
+        PC.CloudShadowCenterX = Frame.SceneGlobalData.FogCloudShadowCenter.x;
+        PC.CloudShadowCenterY = Frame.SceneGlobalData.FogCloudShadowCenter.y;
+
+        DispatchCompute(CL, CS, PC,
+                        RenderUtils::GetGroupCount(PC.TraceW, FogShaftTileSize),
+                        RenderUtils::GetGroupCount(PC.TraceH, FogShaftTileSize), 1);
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+
+        AtmosphereTerms.FogShaftIndex      = (uint32)Shaft.GetResourceID();
+        AtmosphereTerms.FogShaftDepthIndex = (uint32)ShaftDepth.GetResourceID();
+    }
+
     void FDefaultSceneRenderer::AtmosphereCompositePass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
@@ -1720,8 +1707,9 @@ namespace Lumina
         const bool bFog    = Frame.Volumetrics.bHasFog;
         const bool bAerial = AtmosphereTerms.AerialInScatterIndex != ~0u;
         const bool bClouds = AtmosphereTerms.CloudScatterIndex != ~0u;
+        const bool bSSR    = AtmosphereTerms.SSRTraceIndex != ~0u;
 
-        if (!bFog && !bAerial && !bClouds)
+        if (!bFog && !bAerial && !bClouds && !bSSR)
         {
             return;
         }
@@ -1767,14 +1755,14 @@ namespace Lumina
         PC.NearPlane          = Math::Max(Frame.SceneGlobalData.NearPlane, 0.05f);
         PC.FogRange           = Math::Clamp(Frame.Volumetrics.FogParams.VolumetricParams.z, 1.0f, Frame.SceneGlobalData.FarPlane);
         PC.bVolumetric        = Frame.Volumetrics.bVolumetricFog ? 1u : 0u;
-        PC.FarShaftSteps      = Frame.Volumetrics.FarShaftSteps;
         PC.FarShaftDistance   = Frame.Volumetrics.FarShaftDistance;
-        PC.CloudShadowIndex   = Frame.SceneGlobalData.FogCloudShadowIndex;
-        PC.CloudShadowExtent  = Frame.SceneGlobalData.FogCloudShadowExtent;
-        PC.CloudShadowCenterX = Frame.SceneGlobalData.FogCloudShadowCenter.x;
-        PC.CloudShadowCenterY = Frame.SceneGlobalData.FogCloudShadowCenter.y;
+        PC.FogShaftIndex      = AtmosphereTerms.FogShaftIndex;
+        PC.FogShaftDepthIndex = AtmosphereTerms.FogShaftDepthIndex;
 
         PC.CloudFloor         = Math::Max(Frame.Volumetrics.Clouds.LayerBottom, 100.0f);
+        PC.SSRTraceIndex      = AtmosphereTerms.SSRTraceIndex;
+        PC.SSRTraceW          = AtmosphereTerms.SSRTraceW;
+        PC.SSRTraceH          = AtmosphereTerms.SSRTraceH;
 
         auto Spec = [](uint32 Id, bool bOn)
         {
@@ -1786,9 +1774,10 @@ namespace Lumina
             Spec(14u, PC.CloudScatterIndex != ~0u),
             Spec(15u, PC.bFog != 0u),
             Spec(16u, PC.bVolumetric != 0u),
-            Spec(17u, PC.FarShaftSteps > 0u),
+            Spec(17u, PC.FogShaftIndex != ~0u),
+            Spec(18u, bSSR),
         };
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS, TSpan<const RHI::FSpecializationConstant>(CompositeConsts, 5)));
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS, TSpan<const RHI::FSpecializationConstant>(CompositeConsts, 6)));
 
         RHI::CmdDispatch(CL, MakeArgs(PC),
                          RenderUtils::GetGroupCount(Width,  AtmosphereTileSize),
@@ -2497,6 +2486,8 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScreenSpaceReflectionsPass(RHI::FCmdListH CL)
     {
+        AtmosphereTerms.SSRTraceIndex = ~0u;
+
         const CRendererSettings* RS = GetDefault<CRendererSettings>();
         if (RS == nullptr || !RS->bScreenSpaceReflections || RS->SSRIntensity <= 0.0f)
         {
@@ -2514,8 +2505,15 @@ namespace Lumina
             return;
         }
 
-        const FSceneImage& SceneColor = GetNamedImage(ENamedImage::WaterRefraction);
-        if (!SceneColor.IsValid())
+        const FSceneImage& Trace = GetNamedImage(ENamedImage::SSRTrace);
+        if (!Trace.IsValid())
+        {
+            return;
+        }
+
+        // Only GBuffer pixels reflect, and the slot table that identifies them exists once classify has run.
+        const FMaterialClassifyLayout Layout = MaterialClassifyLayout;
+        if (Layout.NumSlots == 0u)
         {
             return;
         }
@@ -2524,25 +2522,17 @@ namespace Lumina
 
         const FSceneImage& HDR   = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
-        const RHI::FGPUAllocation Classify = GetMaterialClassify();
 
-        // This walks the classify block's pixel list, whose offsets only exist once the pass has run.
-        const FMaterialClassifyLayout Layout = MaterialClassifyLayout;
-        if (Layout.NumSlots == 0u)
+        const int32 TraceUAV = Trace.GetMipUAVIndex(0);
+        if (TraceUAV < 0)
         {
             return;
         }
 
-        const int32 HDRUAV = HDR.GetMipUAVIndex(0);
-        if (HDRUAV < 0)
-        {
-            return;
-        }
-
-        // The trace reads neighboring pixels while the composite writes this one, so it needs a snapshot.
-        Barriers::SceneToTransfer(CL);
-        RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
-        Barriers::TransferToShaders(CL);
+        // Lighting and the forward passes before this wrote HDR, which the trace samples as scene color.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         struct FSSRPushConstants
         {
@@ -2552,47 +2542,55 @@ namespace Lumina
             uint32      GBufferDIndex;
 
             uint32      DepthIndex;
-            uint32      HDRUAV;
+            uint32      OutputUAV;
             uint32      SceneColorIndex;
-            uint32      ScreenW;
+            uint32      SlotImageIndex;
 
+            uint32      ScreenW;
             uint32      ScreenH;
+            uint32      TraceW;
+            uint32      TraceH;
+
             uint32      MaxSteps;
             float       MaxDistance;
             float       Thickness;
-
             float       Intensity;
+
             float       RoughnessFade;
             uint32      _Pad0;
             uint32      _Pad1;
-
-            RHI::TGPUSpan<uint32> PixelList;
-            RHI::TGPUSpan<uint32> Total;
+            uint32      _Pad2;
         } PC = {};
-        static_assert(sizeof(FSSRPushConstants) == 96, "FSSRPushConstants must match ScreenSpaceReflections.slang FSSRArgs.");
+        static_assert(sizeof(FSSRPushConstants) == 80, "FSSRPushConstants must match ScreenSpaceReflections.slang FSSRArgs.");
 
         PC.GBufferAIndex   = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
         PC.GBufferBIndex   = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
         PC.GBufferCIndex   = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
         PC.GBufferDIndex   = (uint32)GetNamedImage(ENamedImage::GBufferD).GetResourceID();
         PC.DepthIndex      = (uint32)Depth.GetResourceID();
-        PC.HDRUAV          = (uint32)HDRUAV;
-        PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
+        PC.OutputUAV       = (uint32)TraceUAV;
+        PC.SceneColorIndex = (uint32)HDR.GetResourceID();
+        PC.SlotImageIndex  = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
         PC.ScreenW         = HDR.GetSizeX();
         PC.ScreenH         = HDR.GetSizeY();
+        PC.TraceW          = Trace.GetSizeX();
+        PC.TraceH          = Trace.GetSizeY();
         PC.MaxSteps        = (uint32)Math::Clamp(RS->SSRMaxSteps, 4, 128);
         PC.MaxDistance     = Math::Max(RS->SSRMaxDistance, 1.0f);
         PC.Thickness       = Math::Max(RS->SSRThickness, 0.01f);
         PC.Intensity       = Math::Clamp(RS->SSRIntensity, 0.0f, 1.0f);
         PC.RoughnessFade   = Math::Clamp(RS->SSRRoughnessFade, 0.0f, 1.0f);
-        PC.PixelList = { GetMaterialPixelList(), Layout.PixelCapacity };
-        PC.Total     = RHI::TGPUSpan<uint32>::FromAddress(Classify.Gpu + Layout.TotalOffset, 1u);
 
-        DispatchComputeIndirect(CL, SSRCS, PC, Classify.Skip(Layout.LightArgsOffset));
+        DispatchCompute(CL, SSRCS, PC, RenderUtils::GetGroupCount(PC.TraceW, 8u), RenderUtils::GetGroupCount(PC.TraceH, 8u), 1u);
 
-        // HDR is a UAV write here, then a color attachment, a sampled input, and a post-chain read.
-        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                        RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
+        // The atmosphere composite adds the upsampled delta in the same HDR read-modify-write as fog.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+
+        AtmosphereTerms.SSRTraceIndex = (uint32)Trace.GetResourceID();
+        AtmosphereTerms.SSRTraceW     = PC.TraceW;
+        AtmosphereTerms.SSRTraceH     = PC.TraceH;
     }
 
     void FDefaultSceneRenderer::AerialPerspectivePass(RHI::FCmdListH CL)

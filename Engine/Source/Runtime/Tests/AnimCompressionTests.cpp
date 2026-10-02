@@ -1,4 +1,6 @@
-#include <gtest/gtest.h>
+﻿#include <gtest/gtest.h>
+
+#include <cstdio>
 
 #include "Animation/AnimCompression.h"
 #include "Animation/BindPose.h"
@@ -96,6 +98,26 @@ TEST(AnimCompression, InfersAuthoredSampleRate)
     AnimCompression::Build(Resource);
     EXPECT_EQ(Resource.Compressed.NumFrames, 61u);
     EXPECT_FLOAT_EQ(Resource.Compressed.SampleRate, 30.0f);
+}
+
+TEST(AnimCompression, StillChannelsDoNotSetTheSampleRate)
+{
+    FAnimationResource Resource;
+    Resource.Duration = 2.0f;
+    AddRotation(Resource, FName("Chest"), 2.0f, 49, Math::Radians(10.0f));
+    for (int32 i = 0; i < 12; ++i)
+    {
+        char Name[16];
+        std::snprintf(Name, sizeof(Name), "Still%d", i);
+        const FName Bone(Name);
+        AddConstantTranslation(Resource, Bone, 2.0f, 2, FVector3(0.0f, 0.1f, 0.0f));
+        AddScale(Resource, Bone, 2.0f, 2, 1.0f, 1.0f);
+    }
+
+    EXPECT_FLOAT_EQ(AnimCompression::InferSampleRate(Resource), 24.0f);
+
+    AnimCompression::Build(Resource);
+    EXPECT_EQ(Resource.Compressed.NumFrames, 49u);
 }
 
 TEST(AnimCompression, UniformClipStaysWithinBudget)

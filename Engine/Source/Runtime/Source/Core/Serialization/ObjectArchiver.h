@@ -41,6 +41,26 @@ namespace Lumina
         bool bLoadIfFindFails =false;
     };
 
+    // Names travel as their ids, which only the writing process can read back, for a copy made in memory.
+    class LUMINA_VISIBLE_TYPE FInProcessObjectArchiver : public FObjectProxyArchiver
+    {
+    public:
+
+        explicit FInProcessObjectArchiver(FArchive& InInnerAr)
+            : FObjectProxyArchiver(InInnerAr, /*bLoadIfFindFails*/ true)
+        {
+        }
+
+        using FObjectProxyArchiver::operator<<;
+
+        FArchive& operator<<(FName& Value) override
+        {
+            static_assert(sizeof(FName) == 2 * sizeof(uint32) && std::is_trivially_copyable_v<FName>);
+            Serialize(&Value, sizeof(FName));
+            return *this;
+        }
+    };
+
     // FObjectProxyArchiver that rewrites resolved references through a source -> copy table.
     //
     // Object references serialize as GUIDs, so a plain property copy hands the destination the SOURCE

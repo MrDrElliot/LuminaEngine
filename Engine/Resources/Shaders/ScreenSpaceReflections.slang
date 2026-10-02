@@ -5,7 +5,7 @@
 #include "Includes/VisBufferSurface.slang"
 #include "Includes/GlobalRHIStorage.slang"
 
-// Swaps the prefiltered environment radiance for a traced one wherever the screen has the answer.
+// Traces at half resolution and stores the change swapping the prefiltered environment for the traced radiance makes, which SSRComposite adds to HDR.
 
 struct FSSRArgs
 {
@@ -15,30 +15,26 @@ struct FSSRArgs
     uint  GBufferDIndex;
 
     uint  DepthIndex;
-    uint  HDRUAV;          // bindless 2D UAV: HDR, the composite target
-    uint  SceneColorIndex; // bindless 2D SRV: pre-pass copy of HDR, the trace reads this
-    uint  ScreenW;
+    uint  OutputUAV;       // half-resolution reflection delta
+    uint  SceneColorIndex; // HDR, read while nothing in this pass writes it
+    uint  SlotImageIndex;  // slot + 1 per pixel from the classify count, 0 where nothing deferred shades it
 
+    uint  ScreenW;
     uint  ScreenH;
+    uint  TraceW;
+    uint  TraceH;
+
     uint  MaxSteps;
     float MaxDistance;
     float Thickness;       // view-space depth span a hit may straddle before it reads as an occluder
-
     float Intensity;
+
     float RoughnessFade;   // roughness at which SSR has fully handed back to the cube
     uint  _Pad0;
     uint  _Pad1;
-
-    GPUSpan<uint> PixelList;
-    GPUSpan<uint> Total;
+    uint  _Pad2;
 };
 FSSRArgs* Pass() { return GetPassArgs<FSSRArgs>(); }
-
-// Spatially stable per-pixel hash; jitters the ray start so step banding breaks into fine grain.
-float SSR_IGN(float2 PixelPos)
-{
-    return InterleavedGradientNoise(PixelPos);
-}
 
 float SSR_ViewDepthAt(float2 UV)
 {
@@ -50,18 +46,13 @@ float SSR_ViewDepthAt(float2 UV)
     return ReconstructViewPos(UV, Raw, GetInverseCameraProjection()).z;
 }
 
-[shader("compute")]
-[numthreads(MATERIAL_PIXEL_GROUP_SIZE, 1, 1)]
-void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
+float3 TraceReflectionDelta(uint2 Texel)
 {
-    const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
-    const uint Index       = LinearGroup * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-    if (Index >= SpanGet(&Pass().Total, 0u))
+    // Only pixels with a GBuffer, since forward-shaded surfaces leave stale texels behind them.
+    if (LoadTexture2D(Pass().SlotImageIndex, int2(Texel)).r < 0.5)
     {
-        return;
+        return float3(0.0);
     }
-
-    const uint2 Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, Index));
 
     FGBufferTargets Targets;
     Targets.A = Pass().GBufferAIndex;
@@ -69,25 +60,27 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     Targets.C = Pass().GBufferCIndex;
     Targets.D = Pass().GBufferDIndex;
 
-    const FGBufferData G = LoadGBuffer(Targets, int2(Texel));
-    if (IsUnlit(G))
-    {
-        return;
-    }
-
-    const float Roughness = max(G.Roughness, 0.045);
+    // Roughness alone first, since most pixels are too rough to trace and need nothing else.
+    const float Roughness = max(LoadTexture2D(Targets.C, int2(Texel)).r, 0.045);
     const float RoughFade = 1.0 - saturate(Roughness / max(Pass().RoughnessFade, 1e-3));
     if (RoughFade <= 0.0)
     {
-        return;
+        return float3(0.0);
     }
 
-    const float2 ScreenPos = float2(Texel) + 0.5;
-    const float2 UV        = ScreenPos / float2(Pass().ScreenW, Pass().ScreenH);
-    const float  RawDepth  = LoadTexture2D(Pass().DepthIndex, int2(Texel)).r;
+    const FGBufferData G = LoadGBuffer(Targets, int2(Texel));
+    if (IsUnlit(G))
+    {
+        return float3(0.0);
+    }
+
+    const float2 ScreenSize = float2(Pass().ScreenW, Pass().ScreenH);
+    const float2 ScreenPos  = float2(Texel) + 0.5;
+    const float2 UV         = ScreenPos / ScreenSize;
+    const float  RawDepth   = LoadTexture2D(Pass().DepthIndex, int2(Texel)).r;
     if (RawDepth <= 0.0)
     {
-        return;
+        return float3(0.0);
     }
 
     const float3 ViewPos       = ReconstructViewPos(UV, RawDepth, GetInverseCameraProjection());
@@ -103,7 +96,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     // View space is +Z forward; a ray heading back at the eye can never land on screen geometry.
     if (ViewR.z <= 0.001)
     {
-        return;
+        return float3(0.0);
     }
 
     float3 StartV = ViewPos;
@@ -120,10 +113,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     const float4 ClipE = mul(GetCameraProjection(), float4(EndV, 1.0));
     if (ClipS.w <= 1e-4 || ClipE.w <= 1e-4)
     {
-        return;
+        return float3(0.0);
     }
 
-    const float2 ScreenSize = float2(Pass().ScreenW, Pass().ScreenH);
     const float2 PixS = ((ClipS.xy / ClipS.w) * 0.5 + 0.5) * ScreenSize;
     const float2 PixE = ((ClipE.xy / ClipE.w) * 0.5 + 0.5) * ScreenSize;
 
@@ -134,14 +126,14 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     const float PixelSpan = length(PixE - PixS);
     if (PixelSpan < 1.0)
     {
-        return;
+        return float3(0.0);
     }
 
     // Uniform PIXEL strides: uniform world steps are many pixels up close and sub-pixel far away.
     const uint  Steps  = max(Pass().MaxSteps, 4u);
     const float Stride = max(PixelSpan / float(Steps), 1.0);
     const uint  Count  = max(min((uint)(PixelSpan / Stride), Steps), 1u);
-    const float Jitter = SSR_IGN(ScreenPos);
+    const float Jitter = InterleavedGradientNoise(ScreenPos);
 
     // Grazing rays sit within depth-buffer precision of their own surface for the first few steps.
     const float ZBias = max(0.05, ViewPos.z * 0.002);
@@ -198,7 +190,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
     if (!bHit)
     {
-        return;
+        return float3(0.0);
     }
 
     // Screen border and eye-facing rays are where screen space has no data; a hard cut reads as a seam.
@@ -208,7 +200,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     float  Confidence = EdgeFade * BackFade * RoughFade * saturate(Pass().Intensity);
     if (Confidence <= 0.0)
     {
-        return;
+        return float3(0.0);
     }
 
     float3 HitColor = SanitizeRadiance(
@@ -227,8 +219,19 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     float  SpecAO = ComputeSpecularOcclusion(NdotV, AmbientAO, Roughness);
 
     float3 PreFilt = SampleSpecularRadiance(WorldPosition, R, Roughness);
-    float3 Delta   = FssEss * SpecAO * (HitColor - PreFilt) * Confidence;
+    return FssEss * SpecAO * (HitColor - PreFilt) * Confidence;
+}
 
-    float4 Dst = gRWTextures2D[Pass().HDRUAV][int2(Texel)];
-    gRWTextures2D[Pass().HDRUAV][int2(Texel)] = float4(Dst.rgb + Delta, Dst.a);
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void ComputeMain(uint3 DTid : SV_DispatchThreadID)
+{
+    if (DTid.x >= Pass().TraceW || DTid.y >= Pass().TraceH)
+    {
+        return;
+    }
+
+    // The top-left pixel of each 2x2 block stands for it, the texel SSRComposite compares depths against.
+    const uint2 Texel = min(DTid.xy * 2u, uint2(Pass().ScreenW, Pass().ScreenH) - 1u);
+    gRWTextures2D[Pass().OutputUAV][int2(DTid.xy)] = float4(TraceReflectionDelta(Texel), 0.0);
 }

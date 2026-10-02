@@ -73,9 +73,10 @@
 
 namespace Lumina
 {
-    inline constexpr uint32 GFroxelGridX = 160;
-    inline constexpr uint32 GFroxelGridY = 90;
-    inline constexpr uint32 GFroxelGridZ = 128;
+    // About twice Godot's default 64-slice volume; FroxelResolutionScale raises it where the fog needs detail.
+    inline constexpr uint32 GFroxelGridX = 96;
+    inline constexpr uint32 GFroxelGridY = 54;
+    inline constexpr uint32 GFroxelGridZ = 64;
 
     // Fixed by XeGTAO; the prefilter writes exactly these mips and the main pass clamps its lookup to them.
     inline constexpr uint32 GTAODepthMipLevels = 5;
@@ -166,6 +167,20 @@ namespace Lumina
     {
         const CRendererSettings* Settings = GetDefault<CRendererSettings>();
         return Settings != nullptr && Settings->bEnableGTAO;
+    }
+
+    // Only ultra traces every pixel; the lower levels trace a quarter of them and upsample, as Godot's default SSAO does.
+    inline constexpr int32 GGTAOFullResolutionQuality = 3;
+
+    inline bool IsGTAOHalfResolution()
+    {
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        return Settings == nullptr || Settings->GTAOQualityLevel < GGTAOFullResolutionQuality;
+    }
+
+    inline FUIntVector2 GetGTAOTraceExtent(const FUIntVector2& ViewExtent)
+    {
+        return IsGTAOHalfResolution() ? FUIntVector2((ViewExtent.x + 1u) / 2u, (ViewExtent.y + 1u) / 2u) : ViewExtent;
     }
 
     // A zero grain would ask for an unbounded task split; floor it.

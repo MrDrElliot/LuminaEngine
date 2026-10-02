@@ -43,7 +43,7 @@ struct FColorGradingConstants
     float AutoExposureKey;     // middle-grey key luminance; <= 0 disables auto-exposure
     float AutoExposureMinMul;  // clamp on the auto-exposure multiplier (2^MinEV)
     float AutoExposureMaxMul;  // clamp on the auto-exposure multiplier (2^MaxEV)
-    float _PadAE;
+    uint  Features;            // GRADING_* bits, set CPU side for every stage not at identity
 
     float4 Fade;               // .rgb display color, .a amount
     float4 Letterbox;          // .x picture aspect or 0, .y output aspect
@@ -52,7 +52,7 @@ struct FColorGradingConstants
 // Per-pass block: grading constants by device address + bindless indices for the three inputs.
 struct FComposePushConstants
 {
-    uint64_t Constants;   // FColorGradingConstants, see LoadBlock
+    uint64_t Constants;   // FColorGradingConstants, read field by field in FragmentMain
     uint HDRIndex;          // bindless SRV: pre-tone-map HDR
     uint BloomIndex;        // bindless SRV: bloom chain mip 0
     uint AdaptedLumIndex;   // bindless SRV: 1x1 adapted luminance
@@ -172,21 +172,36 @@ float3 ApplyFilmGrain(float3 X, float2 PixelPos, float Time, float Intensity, fl
     return X * (1.0 + Noise * Intensity * Falloff);
 }
 
+// Mirrors EGradingFeature in SceneRenderer_Post.cpp.
+static const uint GRADING_CHROMATIC_ABERRATION = 1u << 0;
+static const uint GRADING_BLOOM                = 1u << 1;
+static const uint GRADING_AUTO_EXPOSURE        = 1u << 2;
+static const uint GRADING_WHITE_BALANCE        = 1u << 3;
+static const uint GRADING_COLOR_FILTER         = 1u << 4;
+static const uint GRADING_LIFT_GAMMA_GAIN      = 1u << 5;
+static const uint GRADING_CONTRAST             = 1u << 6;
+static const uint GRADING_SATURATION           = 1u << 7;
+static const uint GRADING_VIGNETTE             = 1u << 8;
+static const uint GRADING_GAMMA                = 1u << 9;
+static const uint GRADING_FILM_GRAIN           = 1u << 10;
+static const uint GRADING_FADE                 = 1u << 11;
+static const uint GRADING_LETTERBOX            = 1u << 12;
+
 [shader("fragment")]
 float4 FragmentMain(VSOutput Input) : SV_Target0
 {
-    FColorGradingConstants Grading = LoadBlock<FColorGradingConstants>(Pass().Constants);
+    // Fields are read through the pointer inside each stage, so a disabled stage costs neither its loads nor its math.
+    FColorGradingConstants* Grading = (FColorGradingConstants*)Pass().Constants;
+    const uint Features = Grading.Features;
+
     SamplerState Smp    = gSamplers[SAMPLER_LINEAR_CLAMP];
     Texture2D    HDRTex = gTextures2D[Pass().HDRIndex];
 
-    // Radial chromatic aberration, applied to the HDR fetch so the lens artifact is graded and
-    // tone-mapped with everything else rather than stamped on in display space.
     float3 Color;
-    float  CA = Grading.BloomTint.a;
-    if (CA > 0.0)
+    if ((Features & GRADING_CHROMATIC_ABERRATION) != 0u)
     {
         float2 Center = Input.UV - 0.5;
-        float2 Offset = Center * CA;
+        float2 Offset = Center * Grading.BloomTint.a;
         Color.r = HDRTex.Sample(Smp, Input.UV + Offset).r;
         Color.g = HDRTex.Sample(Smp, Input.UV).g;
         Color.b = HDRTex.Sample(Smp, Input.UV - Offset).b;
@@ -196,17 +211,14 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
         Color = HDRTex.Sample(Smp, Input.UV).rgb;
     }
 
-    // Bloom composite (linear HDR space, before grading).
-    if (Grading.BloomIntensity > 0.0)
+    if ((Features & GRADING_BLOOM) != 0u)
     {
         float3 Bloom = gTextures2D[Pass().BloomIndex].SampleLevel(Smp, Input.UV, 0.0).rgb;
         Color += Bloom * Grading.BloomTint.rgb * Grading.BloomIntensity;
     }
 
-    // Auto-exposure: scale toward the middle-grey key from adapted luminance, clamped to the EV range.
-    // Key <= 0 disables it and manual Grading.Exposure stands alone.
     float AEScale = 1.0;
-    if (Grading.AutoExposureKey > 0.0)
+    if ((Features & GRADING_AUTO_EXPOSURE) != 0u)
     {
         float AdaptedLum = gTextures2D[Pass().AdaptedLumIndex].SampleLevel(Smp, float2(0.5, 0.5), 0.0).r;
         AEScale = clamp(Grading.AutoExposureKey / max(AdaptedLum, 1e-4),
@@ -214,52 +226,68 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
     }
     Color *= Grading.Exposure * AEScale;
 
-    if (Grading.WhiteTemp != 0.0 || Grading.WhiteTint != 0.0)
+    if ((Features & GRADING_WHITE_BALANCE) != 0u)
     {
         Color = WhiteBalance(Color, Grading.WhiteTemp, Grading.WhiteTint);
     }
 
-    // Color filter, lerp by intensity so saturation is independent of strength.
-    float3 Filtered = Color * Grading.ColorFilter.rgb;
-    Color = lerp(Color, Filtered, saturate(Grading.ColorFilter.a));
-    if (Grading.ColorFilter.a > 1.0)
+    if ((Features & GRADING_COLOR_FILTER) != 0u)
     {
-        // Allow >1 to push past full filter for stylized passes.
-        Color = lerp(Color, Filtered, Grading.ColorFilter.a - 1.0);
+        const float4 Filter   = Grading.ColorFilter;
+        const float3 Filtered = Color * Filter.rgb;
+        Color = lerp(Color, Filtered, saturate(Filter.a));
+        if (Filter.a > 1.0)
+        {
+            Color = lerp(Color, Filtered, Filter.a - 1.0);
+        }
     }
 
     Color = ApplyTonemap(Color, Grading.TonemapMode);
 
-    // Display-referred from here, which is the only range where lift/gamma/gain's pow is defined.
-    Color = LiftGammaGain(Color, Grading.Shadows.rgb, Grading.Midtones.rgb, Grading.Highlights.rgb);
-    Color = ApplyContrast(Color, Grading.Contrast);
+    if ((Features & GRADING_LIFT_GAMMA_GAIN) != 0u)
+    {
+        Color = LiftGammaGain(Color, Grading.Shadows.rgb, Grading.Midtones.rgb, Grading.Highlights.rgb);
+    }
+    if ((Features & GRADING_CONTRAST) != 0u)
+    {
+        Color = ApplyContrast(Color, Grading.Contrast);
+    }
     Color = max(Color, 0.0);
-    Color = ApplySaturation(Color, Grading.Saturation);
-    Color = max(Color, 0.0);
+    if ((Features & GRADING_SATURATION) != 0u)
+    {
+        Color = max(ApplySaturation(Color, Grading.Saturation), 0.0);
+    }
 
-    Color = ApplyVignette(Color, Input.UV, Grading.VignetteIntensity, Grading.VignetteRoundness, Grading.VignetteSmoothness, Grading.VignetteColor.rgb);
+    if ((Features & GRADING_VIGNETTE) != 0u)
+    {
+        Color = ApplyVignette(Color, Input.UV, Grading.VignetteIntensity, Grading.VignetteRoundness, Grading.VignetteSmoothness, Grading.VignetteColor.rgb);
+    }
 
-    // Display gamma (post-tonemap), a designer knob; the 1/2.2 sRGB encode is applied separately below.
-    if (Grading.Gamma != 1.0)
+    if ((Features & GRADING_GAMMA) != 0u)
     {
         Color = pow(max(Color, 0.0), float3(1.0 / Grading.Gamma));
     }
 
-    // Film grain (display space, pre-OETF). Knobs packed into the LGG triplet's .a slots to keep the block at 160 B.
-    Color = ApplyFilmGrain(Color, Input.Position.xy, Grading.Time,
-                           Grading.Shadows.a, Grading.Midtones.a, Grading.Highlights.a);
-    Color = max(Color, 0.0);
+    if ((Features & GRADING_FILM_GRAIN) != 0u)
+    {
+        Color = max(ApplyFilmGrain(Color, Input.Position.xy, Grading.Time,
+                                   Grading.Shadows.a, Grading.Midtones.a, Grading.Highlights.a), 0.0);
+    }
 
     Color = EncodeDisplayGamma(Color);
 
-    Color += ScreenSpaceDither(Input.Position.xy, Grading.Time);
+    Color += ScreenSpaceDither(Input.Position.xy);
 
-    Color = lerp(Color, Grading.Fade.rgb, saturate(Grading.Fade.a));
-
-    // Bars top and bottom when the picture is wider than the output, and at the sides when it is narrower.
-    if (Grading.Letterbox.x > 0.0 && Grading.Letterbox.y > 0.0)
+    if ((Features & GRADING_FADE) != 0u)
     {
-        const float Ratio = Grading.Letterbox.y / Grading.Letterbox.x;
+        const float4 Fade = Grading.Fade;
+        Color = lerp(Color, Fade.rgb, saturate(Fade.a));
+    }
+
+    if ((Features & GRADING_LETTERBOX) != 0u)
+    {
+        const float2 Letterbox = Grading.Letterbox.xy;
+        const float Ratio = Letterbox.y / Letterbox.x;
         const float2 FromCenter = abs(Input.UV - 0.5) * 2.0;
         if ((Ratio < 1.0 && FromCenter.y > Ratio) || (Ratio > 1.0 && FromCenter.x > 1.0 / Ratio))
         {

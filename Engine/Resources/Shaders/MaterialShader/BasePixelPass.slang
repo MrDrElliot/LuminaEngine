@@ -1,27 +1,18 @@
 #include "Includes/SurfaceShading.slang"
 #include "Includes/Fog.slang"
-#ifdef TRANSLUCENT
-#include "Includes/MomentOIT.slang"
-#endif
 
 // Forward base-pass pixel shader. The fragment input is the shared FBaseVertexOutput
 // (MeshletGeometry.slang), produced identically by the VS-emulation and mesh-shader geometry paths. All
 // lighting lives in ShadeSurface, shared with the deferred VisBuffer material pass so the two can't drift.
-//
-// Translucent materials compile twice for MBOIT (Includes/MomentOIT.slang): MOMENT_GENERATION runs the
-// opacity graph alone and accumulates moments; the default variant shades, weighted by them.
 
+// Translucent materials accumulate into weighted blended OIT targets, which OITResolve composites over the scene.
 struct PSOutput
 {
-    #if defined(TRANSLUCENT) && defined(MOMENT_GENERATION)
-
-    float   MomentB0    : SV_Target0;
-    float4  MomentB     : SV_Target1;
-
-    #elif defined(TRANSLUCENT)
+    #if defined(TRANSLUCENT)
 
     float4  Accum       : SV_Target0;
-    uint    Picker      : SV_Target1;
+    float   Revealage   : SV_Target1;
+    uint    Picker      : SV_Target2;
 
     #else
 
@@ -76,48 +67,12 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
 
     PSOutput Output;
 
-#if defined(TRANSLUCENT) && defined(MOMENT_GENERATION)
-
-    float Coverage = ComputeSurfaceCoverage(Input, Material);
-
-    // Zero absorbance contributes nothing; discarding keeps the ROP traffic off two wide moment targets.
-    // Safe under [earlydepthstencil] because the translucent passes only read depth.
-    if (Coverage < 1e-4)
-    {
-        discard;
-    }
-
-    // FragPos is view space (+Z forward), so its z is the linear depth the shading pass also warps.
-    float GenViewZ = max(abs(Input.FragPos.z), GetNearPlane());
-    MomentGenerate(MomentWarpDepth(GenViewZ), MomentAbsorbance(Coverage), Output.MomentB0, Output.MomentB);
-
-    return Output;
-
-#else
-
     FShadedSurface Shaded = ShadeSurface(Input, Material);
 
 #ifdef TRANSLUCENT
 
-    // Opacity plus the Fresnel energy the surface reflects away: what glass mirrors never reaches the
-    // background either. Mirrors ComputeSurfaceCoverage, which fed the moments.
+    // Opacity plus the Fresnel energy the surface reflects away, since what glass mirrors never reaches the background either.
     float Coverage = saturate(Shaded.Alpha + (1.0 - Shaded.Alpha) * Shaded.ReflectionCoverage);
-
-    // Sentinel-guarded like SampleShadowMask: indexing the bindless table with ~0u is a device loss, not
-    // an artifact. MakeSecondaryViewGlobals publishes these for captures and probe bakes too.
-    uint  ZerothIndex   = Scene().MomentZerothIndex;
-    float Transmittance = 1.0;
-    if (ZerothIndex != 0xFFFFFFFFu)
-    {
-        int2  MomentCoords = int2(Input.Position.xy);
-        float B0           = gTextures2D[ZerothIndex].Load(int3(MomentCoords, 0)).r;
-        if (B0 >= MOMENT_MIN_ABSORBANCE)
-        {
-            float4 B      = gTextures2D[Scene().MomentsIndex].Load(int3(MomentCoords, 0));
-            float  ViewZ  = max(abs(Input.FragPos.z), GetNearPlane());
-            Transmittance = MomentTransmittanceAtDepth(B0, B, MomentWarpDepth(ViewZ));
-        }
-    }
 
     // Transmission is premultiplied by alpha; Reflection stays full strength (glass attenuates what is
     // behind it, not its own specular). Sanitize before the additive accumulation, where one bad fragment
@@ -134,15 +89,18 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     bool   bAdditive = (GetMaterialFlags(MaterialIndex) & MatFlag_Additive) != 0u;
     Premultiplied    = Premultiplied * FogTerm.a + (bAdditive ? float3(0.0) : FogTerm.rgb * Coverage);
 
-    float3 Weighted      = min(Premultiplied * Transmittance, 1024.0);
+    // McGuire and Bavoil's depth weight, divided by its maximum so the fp16 sum cannot overflow.
+    const float ViewZ  = abs(Input.FragPos.z);
+    const float Weight = clamp(10.0 / (1e-5 + pow(ViewZ / 5.0, 2.0) + pow(ViewZ / 200.0, 6.0)), 1e-2, 3e3) / 3e3;
 
-    Output.Accum = float4(Weighted, Coverage);
+    Output.Accum     = float4(min(Premultiplied, 1024.0) * Weight, Coverage * Weight);
+    Output.Revealage = Coverage;
 
-    // View Mode > OIT Layer Count: 1.0 per fragment turns accum.a into a per-pixel fragment count,
-    // separating an unstable fragment SET from unstable fragment VALUES.
+    // View Mode > OIT Layer Count, where 1.0 per fragment turns accum.a into a per-pixel fragment count.
     if (SPEC_ENABLE_DEBUG_VIEWS != 0 && Scene().CullData.DebugMode == DEBUG_MODE_OIT_LAYER_COUNT)
     {
-        Output.Accum = float4(0.0, 0.0, 0.0, 1.0);
+        Output.Accum     = float4(0.0, 0.0, 0.0, 1.0);
+        Output.Revealage = 0.0;
     }
 
     Output.Picker = EntityID;
@@ -160,6 +118,4 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     return Output;
 
 #endif // TRANSLUCENT
-
-#endif // MOMENT_GENERATION
 }

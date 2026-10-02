@@ -20,13 +20,13 @@
 [vk::constant_id(2)] const uint SPEC_ENABLE_DECALS      = 1;
 [vk::constant_id(3)] const uint SPEC_ENABLE_GTAO        = 1;
 
-// Exists for REGISTER PRESSURE: whole-shader VGPR allocation takes the peak, so a pixel that never
-// touches the sun still paid the cascade PCSS live range. TRANSLUCENT never opts in (mask is opaque depth).
-[vk::constant_id(6)] const uint SPEC_SHADOW_MASK        = 0;
-
 // Frame-uniform light loop features, so a frame without them specializes to 0 and sheds their registers.
 [vk::constant_id(10)] const uint SPEC_LOCAL_SHADOWS      = 1;
 [vk::constant_id(11)] const uint SPEC_LOCAL_CONTACT      = 1;
+
+// Whether any material on screen uses the model, so the deferred lighting dispatch drops the branch and its registers otherwise.
+[vk::constant_id(18)] const uint SPEC_SHADING_CLEARCOAT  = 1;
+[vk::constant_id(19)] const uint SPEC_SHADING_FOLIAGE    = 1;
 
 // Hash-to-color for the meshlet debug view; stable per-meshlet hues across frames.
 float3 MeshletDebugColor(uint Index)
@@ -91,158 +91,130 @@ float ApplyGeometricSpecularAA(float Roughness, float3 dNdx, float3 dNdy)
     return sqrt(saturate(Alpha + Kernel));
 }
 
-// A tap that leaves the face rect reads another light's tile, so it is skipped and the clamped center tap covers an empty result.
-void AccumulateLocalShadowTap(float2 BaseUV, float2 Offset, float2 TileMin, float2 TileMax, float RefDepth,
-                              inout float Shadow, inout float Weight)
+// Godot's positional "Soft Low" filter, 4 taps within 2 atlas texels.
+static const int   kLocalShadowTaps          = 4;
+static const float kLocalShadowRadiusTexels  = 2.0;
+
+// One disk rotation per pixel, shared by every local light's shadow so the light loop pays for a single sincos.
+float2 LocalShadowNoiseDir(float2 ScreenPos)
 {
-    const float2 SampleUV = BaseUV + Offset;
-    if (any(SampleUV < TileMin) || any(SampleUV > TileMax))
-    {
-        return;
-    }
-    Shadow += ShadowAtlas().SampleCmpLevelZero(SampleUV, RefDepth);
-    Weight += 1.0;
+    float2 Dir;
+    sincos(InterleavedGradientNoise(ScreenPos) * TWO_PI, Dir.y, Dir.x);
+    return Dir;
 }
 
-float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, bool ReceiveShadow, bool bContactShadows)
+// The cube face's projection in closed form, the same numbers its view-projection matrix produces without loading it.
+float3 ProjectToCubeFace(float3 D, uint Face, float Radius)
+{
+    float3 P;
+    switch (Face)
+    {
+    case 0u:  P = float3( D.z,  D.y,  D.x); break;
+    case 1u:  P = float3(-D.z,  D.y, -D.x); break;
+    case 2u:  P = float3(-D.x, -D.z,  D.y); break;
+    case 3u:  P = float3(-D.x,  D.z, -D.y); break;
+    case 4u:  P = float3(-D.x,  D.y,  D.z); break;
+    default:  P = float3( D.x,  D.y, -D.z); break;
+    }
+    // Matches the shadow face projection, whose near plane is 1% of the radius with a 10 cm floor.
+    const float Near     = max(Radius * 0.01, 0.1);
+    const float InvRange = 1.0 / (Radius - Near);
+    const float InvDepth = 1.0 / max(P.z, 1e-6);
+    return float3(P.xy * InvDepth, Radius * InvRange - Radius * Near * InvRange * InvDepth);
+}
+
+float ComputeLocalShadow(FLight Light, float3 FragmentPos, float3 Normal, float2 NoiseDir)
+{
+    const bool   bSpot          = HasFlag(Light.Flags, ELightFlags::Spot);
+    const float3 LightToFrag    = FragmentPos - Light.Position;
+    const float3 LightDirToFrag = -normalize(LightToFrag);
+
+    uint Face = 0u;
+    if (!bSpot)
+    {
+        const float3 A = abs(LightToFrag);
+        Face = (A.x >= A.y && A.x >= A.z) ? (LightToFrag.x >= 0.0 ? 0u : 1u)
+             : (A.y >= A.z)               ? (LightToFrag.y >= 0.0 ? 2u : 3u)
+             :                              (LightToFrag.z >= 0.0 ? 4u : 5u);
+    }
+
+    const FLightShadow ShadowTile = GetShadowTile(Light.ShadowDataIndex, Face);
+    if (ShadowTile.ShadowMapIndex < 0)
+    {
+        return 1.0;
+    }
+
+    uint AtlasW, AtlasH;
+    ShadowAtlas().GetDimensions(AtlasW, AtlasH);
+    const float2 TexelUV = 1.0 / float2(AtlasW, AtlasH);
+
+    // Normal offset scaled to one shadow texel in world units, so grazing walls stop self-shadowing.
+    const float  AtlasTileTexels = max(ShadowTile.AtlasUVScale.x * float(AtlasW), 1.0);
+    const float  WorldTexel      = (Light.Radius * 2.0) / AtlasTileTexels;
+    const float  NdotL           = saturate(dot(Normal, LightDirToFrag));
+    const float3 OffsetPos       = FragmentPos + Normal * (WorldTexel * 1.4 * saturate(1.0 - NdotL));
+
+    // Constant, slope and tile-quantization terms, since a fixed bias tuned for 4096 texels self-shadows at 512.
+    const float SlopeFactor = sqrt(max(1.0 - NdotL * NdotL, 0.0));
+    const float Bias        = 0.00005 + 0.0003 * SlopeFactor + 1.5 / AtlasTileTexels;
+
+    float3 ProjCoords;
+    if (bSpot)
+    {
+        const float4 ShadowCoord = mul(GetShadowViewProjection(Light.ShadowDataIndex, 0u), float4(OffsetPos, 1.0));
+        ProjCoords = ShadowCoord.xyz / max(ShadowCoord.w, 1e-6);
+    }
+    else
+    {
+        ProjCoords = ProjectToCubeFace(OffsetPos - Light.Position, Face, Light.Radius);
+    }
+
+    if (ProjCoords.z < 0.0 || ProjCoords.z > 1.0)
+    {
+        return 1.0;
+    }
+
+    const float  RefDepth = ProjCoords.z - Bias;
+    const float2 BaseUV   = ShadowTile.AtlasUVOffset + saturate(ProjCoords.xy * 0.5 + 0.5) * ShadowTile.AtlasUVScale;
+    // Taps clamp half a texel inside the face rect so the comparison footprint never reads a neighboring tile.
+    const float2 TileMin  = ShadowTile.AtlasUVOffset + TexelUV * 0.5;
+    const float2 TileMax  = ShadowTile.AtlasUVOffset + ShadowTile.AtlasUVScale - TexelUV * 0.5;
+    const float2 RadiusUV = TexelUV * kLocalShadowRadiusTexels;
+
+    const float2 GoldenStep = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
+    float2 Dir    = NoiseDir;
+    float  Shadow = 0.0;
+    [unroll]
+    for (int i = 0; i < kLocalShadowTaps; ++i)
+    {
+        const float2 Offset = Dir * (RadiusUV * sqrt((float(i) + 0.5) / float(kLocalShadowTaps)));
+        Shadow += ShadowAtlas().SampleCmpLevelZero(clamp(BaseUV + Offset, TileMin, TileMax), RefDepth);
+        Dir = RotateVogel(Dir, GoldenStep);
+    }
+    return Shadow * (1.0 / float(kLocalShadowTaps));
+}
+
+float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, bool ReceiveShadow)
 {
     if (!ReceiveShadow)
     {
         return 1.0;
     }
-
-    bool IsSpotLight        = HasFlag(Light.Flags, ELightFlags::Spot);
-    bool IsDirectionalLight = HasFlag(Light.Flags, ELightFlags::Directional);
-
-    if (IsDirectionalLight)
+    if (HasFlag(Light.Flags, ELightFlags::Directional))
     {
-        // Mandatory in a compute lane: the inline path's receiver-plane bias needs ddx/ddy. SampleShadowMask
-        // returns 1.0 when no mask was resolved, so an unshadowed sun stays unshadowed.
-#ifdef SHADING_COMPUTE
-        return SampleShadowMask(ScreenPos, bContactShadows);
-#else
-        if (SPEC_SHADOW_MASK != 0)
-        {
-            return SampleShadowMask(ScreenPos, bContactShadows);
-        }
         return ComputeDirectionalShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos);
-#endif
     }
-
-    // Spot / point lights (atlas-based). Atlas stores rasterized NDC z from the shadow VS, so sample
-    // by projecting through the same face VP and using ProjCoords.xy/z, not cubemap UV.
-    float3 LightDirToFrag = normalize(Light.Position - FragmentPos);
-
-    // Pick the cube face for point lights; spot lights always use face 0.
-    int Face = 0;
-    if (!IsSpotLight)
-    {
-        // normalize(FragmentPos - Light.Position) == -LightDirToFrag (negation commutes through
-        // normalize), so reuse it instead of a second normalize.
-        Face = DirectionToCubemapCoord(-LightDirToFrag).Face;
-    }
-
-    // Normal-offset the receiver before projecting; without it walls self-shadow at grazing angles
-    // inside the face cone, leaving a dimmer square centered on the light.
-    FLightShadow ShadowTile = GetShadowTile(Light.ShadowDataIndex, Face);
-    if (ShadowTile.ShadowMapIndex < 0)
-    {
-        return 1.0;   // no view reaches this face, so it was never rendered
-    }
-
-    uint AtlasW, AtlasH;
-    ShadowAtlas().GetDimensions(AtlasW, AtlasH);
-
-    float  AtlasTileTexels  = max(ShadowTile.AtlasUVScale.x, 1e-6) * float(AtlasW);
-    float  WorldTexel       = (Light.Radius * 2.0) / max(AtlasTileTexels, 1.0);
-    float  NdotL            = saturate(dot(Normal, LightDirToFrag));
-    float  OffsetScale      = saturate(1.0 - NdotL);
-    float3 OffsetPos        = FragmentPos + Normal * (WorldTexel * 1.4 * OffsetScale);
-
-    // Receiver bias: constant + slope + tile-quantization term (NDC z quantizes to ~2/AtlasTileTexels),
-    // so a fixed bias tuned for 4096 texels self-shadows at 512 and below.
-    float SlopeFactor = sqrt(max(1.0 - NdotL * NdotL, 0.0));
-    float Bias        = 0.00005 + 0.0003 * SlopeFactor + 1.5 / max(AtlasTileTexels, 1.0);
-
-    float4x4 ShadowVP   = GetShadowViewProjection(Light.ShadowDataIndex, Face);
-    float4 ShadowCoord  = mul(ShadowVP, float4(OffsetPos, 1.0));
-    float3 ProjCoords   = ShadowCoord.xyz / max(ShadowCoord.w, 1e-6);
-    float2 ProjectionUV = ProjCoords.xy * 0.5 + 0.5;
-
-    // Only early-out on z (past the far plane). A UV early-out on [0,1] left a visible square at the
-    // face-cone boundary; the AM_Clamp atlas sampler already handles taps straying beyond the tile.
-    if (ProjCoords.z < 0.0 || ProjCoords.z > 1.0)
-        return 1.0;
-
-    float2 SafeUV = saturate(ProjectionUV);
-
-    float IGN   = InterleavedGradientNoise(ScreenPos);
-    float Angle = IGN * TWO_PI;
-    // Filter radius (atlas UV) capped at 30% of the tile extent so the Vogel disk stays in the face rect.
-    float TileUVExtent  = min(ShadowTile.AtlasUVScale.x, ShadowTile.AtlasUVScale.y);
-    float FilterRadius  = min(0.002, TileUVExtent * 0.3);
-
-    float RefDepth = ProjCoords.z - Bias;
-
-    // Build each tap's UV directly in atlas space: the old divide-by-AtlasUVScale round-trip cancels, so
-    // the per-tap divide vanishes and only the tile-rect test remains.
-    float2 BaseUV  = ShadowTile.AtlasUVOffset + SafeUV * ShadowTile.AtlasUVScale;
-    float2 TileMin = ShadowTile.AtlasUVOffset;
-    float2 TileMax = ShadowTile.AtlasUVOffset + ShadowTile.AtlasUVScale;
-
-    float Shadow = 0.0;
-    float Weight = 0.0;
-
-    // Each tap is the previous one turned by the golden angle, so the disk costs one sincos rather than one per tap.
-    float2 EvenDir;
-    sincos(Angle, EvenDir.y, EvenDir.x);
-    const float2 GoldenStep  = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
-    const float2 GoldenStep2 = float2(cos(2.0 * kVogelGoldenAngle), sin(2.0 * kVogelGoldenAngle));
-
-    // The odd taps reach from the inner disk to its rim, so when all of them agree the rest cannot change the answer.
-    float2 Dir = RotateVogel(EvenDir, GoldenStep);
-    // [loop], not unrolled: an unrolled body holds every tap temp-set live and inflates the register allocation.
-    [loop]
-    for (int i = 1; i < SHADOW_SAMPLE_COUNT; i += 2)
-    {
-        AccumulateLocalShadowTap(BaseUV, Dir * (sqrt((float(i) + 0.5) / float(SHADOW_SAMPLE_COUNT)) * FilterRadius),
-                                 TileMin, TileMax, RefDepth, Shadow, Weight);
-        Dir = RotateVogel(Dir, GoldenStep2);
-    }
-
-    if (Weight >= float(SHADOW_SAMPLE_COUNT / 2) && (Shadow == 0.0 || Shadow == Weight))
-    {
-        return Shadow / Weight;
-    }
-
-    Dir = EvenDir;
-    [loop]
-    for (int i = 0; i < SHADOW_SAMPLE_COUNT; i += 2)
-    {
-        AccumulateLocalShadowTap(BaseUV, Dir * (sqrt((float(i) + 0.5) / float(SHADOW_SAMPLE_COUNT)) * FilterRadius),
-                                 TileMin, TileMax, RefDepth, Shadow, Weight);
-        Dir = RotateVogel(Dir, GoldenStep2);
-    }
-
-    if (Weight <= 0.0)
-    {
-        return ShadowAtlas().SampleCmpLevelZero(BaseUV, RefDepth);
-    }
-    return Shadow / Weight;
+    return ComputeLocalShadow(Light, FragmentPos, Normal, LocalShadowNoiseDir(ScreenPos));
 }
 
-// Reach and step count live on the directional light, so a scene with no sun falls back to these.
 static const float kLocalContactReachMeters = 0.15;
 static const uint  kLocalContactSteps       = 8u;
 
 // Kept out of ComputeShadowFactor, which inlines at two sites; only local lights ever reach this one.
 float LocalContactShadow(FLight Light, float3 FragmentPos, float3 Normal, float2 ScreenPos)
 {
-    const float SunReach = LightData().ShadowParams2.z;
-    const uint  SunSteps = (uint)LightData().ShadowParams2.w;
-
-    const float Reach = SunReach > 0.0 ? SunReach : kLocalContactReachMeters;
-    const uint  Steps = SunSteps > 0u  ? SunSteps : kLocalContactSteps;
+    const float Reach = kLocalContactReachMeters;
+    const uint  Steps = kLocalContactSteps;
 
     const float3 ViewP = mul(GetCameraView(), float4(FragmentPos, 1.0)).xyz;
     const float3 ViewN = NormalWorldToView(Normal);
@@ -251,8 +223,7 @@ float LocalContactShadow(FLight Light, float3 FragmentPos, float3 Normal, float2
     return ContactShadow(ViewP, ViewN, ViewL, InterleavedGradientNoise(ScreenPos), Reach, Steps);
 }
 
-// Not compiled into a compute lane: the penumbra readout differentiates shadow-space depth with
-// ddx/ddy. The deferred renderer resolves debug views in SceneDebugViewPixel.slang for that reason.
+// Debug visualizers stay out of the compute lane; the deferred renderer resolves them in SceneDebugViewPixel.slang.
 #ifndef SHADING_COMPUTE
 
 // Walk the light table once to find the sun's shadow-data slot. Used by the
@@ -322,82 +293,6 @@ float3 CascadeDebugColor(float3 FragmentPos, float3 ViewPosition, float3 ShadedB
     return Color;
 }
 
-// R = FilterRadius / uncapped max (1.0 = pinned at the cascade cap), G = radius in texels / 32,
-// B = blocker coverage. Black = fully lit; dark gray = no sun or outside every cascade.
-float3 ShadowPenumbraDebug(float3 FragmentPos, float3 ViewPosition, float2 ScreenPos)
-{
-    int SunShadowIdx = FindSunShadowDataIndex();
-    if (SunShadowIdx == INDEX_NONE)
-        return float3(0.08, 0.08, 0.08);
-
-    int CascadeIndex = 0;
-    for (int i = 0; i < NUM_CASCADES; ++i)
-        if (ViewPosition.z > LightData().CascadeSplits[i])
-            CascadeIndex = i + 1;
-    if (CascadeIndex >= NUM_CASCADES)
-        return float3(0.15, 0.15, 0.15);
-
-    float4x4 CascadeVP  = GetShadowViewProjection(SunShadowIdx, CascadeIndex);
-    float4 ShadowCoord  = mul(CascadeVP, float4(FragmentPos, 1.0));
-    float3 ProjCoords   = ShadowCoord.xyz / max(ShadowCoord.w, 1e-6);
-    float2 ProjectionUV = ProjCoords.xy * 0.5 + 0.5;
-    float  CurrentDepth = ProjCoords.z;
-    if (any(ProjectionUV < 0.0) || any(ProjectionUV > 1.0) || CurrentDepth < 0.0 || CurrentDepth > 1.0)
-        return float3(0.15, 0.15, 0.15);
-
-    float CascadeScale = 1.0 + 3.0 * float(CascadeIndex) / float(max(NUM_CASCADES - 1, 1));
-    float SearchRadius = PCSS_BlockerSearchRadius * CascadeScale;
-
-    float2 dUVdx = ddx(ProjectionUV);
-    float2 dUVdy = ddy(ProjectionUV);
-    float  dDdx  = ddx(CurrentDepth);
-    float  dDdy  = ddy(CurrentDepth);
-    float  Det   = dUVdx.x * dUVdy.y - dUVdx.y * dUVdy.x;
-    float2 DepthSlopeUV = float2(0.0, 0.0);
-    if (abs(Det) > 1e-12)
-    {
-        float InvDet = 1.0 / Det;
-        DepthSlopeUV.x = ( dUVdy.y * dDdx - dUVdx.y * dDdy) * InvDet;
-        DepthSlopeUV.y = (-dUVdy.x * dDdx + dUVdx.x * dDdy) * InvDet;
-    }
-
-    float BlockerDepthSum = 0.0;
-    int   NumBlockers     = 0;
-    // [loop] (not [unroll]): see the directional blocker search -- rolling collapses 8 live tap-temp sets to one.
-    [loop]
-    for (int s = 0; s < PCSS_BLOCKER_SEARCH_TAPS; ++s)
-    {
-        float2 Offset    = VogelDiskSample(s, PCSS_BLOCKER_SEARCH_TAPS, 0.0) * SearchRadius;
-        float2 SampleUV  = clamp(ProjectionUV + Offset, 0.001, 0.999);
-        float2 AtlasUV   = CascadeAtlasUV(SunShadowIdx, CascadeIndex, SampleUV);
-        float  Depth     = ShadowCascade().SampleLevel(AtlasUV, 0.0).r;
-        float  PlaneDelta = clamp(dot(DepthSlopeUV, Offset), -PCSS_MaxPlaneDepthBias, PCSS_MaxPlaneDepthBias);
-        if (Depth < CurrentDepth + PlaneDelta - PCSS_BlockerDepthBias)
-        {
-            BlockerDepthSum += Depth;
-            NumBlockers     += 1;
-        }
-    }
-
-    if (NumBlockers == 0)
-        return float3(0.0, 0.0, 0.0);
-
-    float AvgBlockerDepth = BlockerDepthSum / float(NumBlockers);
-    float CascadeTexelUV  = 1.0 / max(LightData().CascadeResolutions[CascadeIndex], 1.0);
-    float MinRadius       = PCSS_MinFilterTexels * CascadeTexelUV;
-    float MaxRadius       = PCSS_MaxFilterTexels * CascadeTexelUV;
-    float DepthDelta      = max(CurrentDepth - AvgBlockerDepth, 0.0);
-    float Penumbra        = DepthDelta * LightData().ShadowParams.z;
-    float FilterRadius    = clamp(Penumbra, MinRadius, MaxRadius);
-    float BlockerCoverage = float(NumBlockers) / float(PCSS_BLOCKER_SEARCH_TAPS);
-    FilterRadius          = max(FilterRadius * lerp(0.75, 1.0, BlockerCoverage), MinRadius);
-
-    float FilterTexels = FilterRadius / CascadeTexelUV;
-    return float3(saturate(FilterRadius / max(MaxRadius, 1e-6)),
-                  saturate(FilterTexels / 32.0),
-                  BlockerCoverage);
-}
-
 #endif // !SHADING_COMPUTE
 
 // The roughness-dependent half of the specular lobe, rebuilt per light so each can raise the floor.
@@ -438,28 +333,31 @@ struct FShadingContext
     half3  EnergyComp;   // multi-scatter compensation (Turquin 2019)
 };
 
-// Incident radiance from one light: color x intensity, with distance attenuation and the spot cone.
+// Distance window times spot cone, zero wherever the light cannot reach, which lets callers skip its shadow and BRDF.
+float LightAttenuation(FLight Light, float3 L, float Distance)
+{
+    if (HasFlag(Light.Flags, ELightFlags::Directional))
+    {
+        return 1.0;
+    }
+
+    float Attenuation = 1.0 / max(Distance * Distance, 1e-8);
+    float DistRatio   = Distance / Light.Radius;
+    Attenuation      *= 1.0 - smoothstep(clamp(Light.Falloff, 0.0, 1.0), 1.0, DistRatio);
+
+    if (HasFlag(Light.Flags, ELightFlags::Spot))
+    {
+        float3 LightDir = normalize(Light.Direction.xyz);
+        float  CosTheta = dot(LightDir, L);
+        Attenuation    *= clamp((CosTheta - Light.Angles.y) / max(Light.Angles.x - Light.Angles.y, 0.001), 0.0, 1.0);
+    }
+    return Attenuation;
+}
+
 // Shared by the base BRDF and the clearcoat lobe so the two layers cannot disagree.
 float3 ComputeLightRadiance(FLight Light, float3 L, float Distance)
 {
-    float Attenuation = 1.0;
-    float Falloff     = 1.0;
-
-    if (!HasFlag(Light.Flags, ELightFlags::Directional))
-    {
-        Attenuation     = 1.0 / max(Distance * Distance, 1e-8);
-        float DistRatio = Distance / Light.Radius;
-        Attenuation    *= 1.0 - smoothstep(clamp(Light.Falloff, 0.0, 1.0), 1.0, DistRatio);
-
-        if (HasFlag(Light.Flags, ELightFlags::Spot))
-        {
-            float3 LightDir = normalize(Light.Direction.xyz);
-            float  CosTheta = dot(LightDir, L);
-            Falloff = clamp((CosTheta - Light.Angles.y) / max(Light.Angles.x - Light.Angles.y, 0.001), 0.0, 1.0);
-        }
-    }
-
-    return GetLightColor(Light).rgb * Light.Intensity * Attenuation * Falloff;
+    return GetLightColor(Light).rgb * Light.Intensity * LightAttenuation(Light, L, Distance);
 }
 
 // One extra GGX layer over the base at a fixed dielectric F0 of 0.04. Deliberately NOT in
@@ -576,36 +474,6 @@ struct FShadedSurface
     float  ReflectionCoverage;
 };
 
-// For the MBOIT moment pass, which would otherwise pay for every light and probe twice. Must stay in
-// lockstep with the Coverage line in BasePixelPass.slang or the moments describe a different surface.
-float ComputeSurfaceCoverage(FBaseVertexOutput Input, FMaterialPixelInputs Material)
-{
-    float Alpha = Material.Opacity;
-
-    // An unlit surface reflects nothing, so its coverage is just its alpha. Runtime, not a define: the
-    // shading model lives in the material's flags now.
-    if (GetMaterialShadingModel(GetMaterialFlags(Input.MaterialIndex)) == ShadingModel_Unlit)
-    {
-        return saturate(Alpha);
-    }
-
-    float3 WorldNormal   = normalize(Input.NormalWS.xyz);
-    float3 WorldPosition = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
-
-    float3 N = GetWorldNormal(WorldNormal, Input.TangentWS, Material.Normal);
-    float3 V = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
-
-    float  Roughness = max(Material.Roughness, 0.045);
-    float3 F0        = lerp(float3(0.08 * Material.Specular), Material.Diffuse, Material.Metallic);
-
-    // Directional-hemisphere specular reflectance, as the shading pass derives ReflectionCoverage.
-    float  NdotV  = saturate(dot(N, V));
-    float2 DFG    = SampleBRDFLUT(NdotV, Roughness);
-    float3 FssEss = FresnelSchlickRoughness(NdotV, F0, Roughness) * DFG.x + DFG.y;
-
-    return saturate(Alpha + (1.0 - Alpha) * saturate(Luminance(FssEss)));
-}
-
 // The material graph's output as GBuffer terms: tangent normal rotated to world, then DBuffer decals
 // composited so they receive lights and shadows exactly like the surface under them.
 FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Material)
@@ -716,18 +584,17 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
     // Clamps to ZNear: fragments below it make log() negative, wrapping ZTile to a huge value that
     // overflows Clusters() -> garbage light list and an MMU fault.
-    uint TileIndex  = ComputeClusterIndex(ViewPosition.z, ScreenPos);
-    uint LightCount = GetClusterLightCount(TileIndex);
-    uint LightBase  = GetClusterLightBase(TileIndex);
+    uint  ClusterIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
+    uint2 ClusterWords = GetClusterWordRange(ClusterIndex);
 
     // Clearcoat state. Hoisted out of the loops but only meaningful inside the branch; a non-clearcoat
     // pixel leaves Coat at 0 and every clearcoat block below is skipped whole.
-    const bool  bClearcoat = (G.ShadingModel == ShadingModel_Clearcoat);
+    const bool  bClearcoat = SPEC_SHADING_CLEARCOAT != 0u && (G.ShadingModel == ShadingModel_Clearcoat);
     const float Coat       = bClearcoat ? saturate(G.Clearcoat) : 0.0;
     float3      LoCoat     = float3(0.0);
 
     // Gates the back-facing light paths below; every other model keeps its early-out intact.
-    const bool  bFoliage   = (G.ShadingModel == ShadingModel_Foliage) && (G.Thickness > 0.0);
+    const bool  bFoliage   = SPEC_SHADING_FOLIAGE != 0u && (G.ShadingModel == ShadingModel_Foliage) && (G.Thickness > 0.0);
 
     float3 Lo = float3(0.0);
 #ifdef TRANSLUCENT
@@ -740,8 +607,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     {
         FLight Light = GetLightAt(0);
 
-        // Pixels facing away from the sun are fully self-shadowed (NdotL clamp), so skip the
-        // expensive cascade PCSS for them (~half a typical scene). SunL is reused by the BRDF below.
+        // Pixels facing away from the sun are self-shadowed, so they skip the cascade lookup; SunL feeds the BRDF too.
         float3 SunL    = normalize(Light.Direction.xyz);
         float  SunNdotL = dot(N, SunL);
 
@@ -757,7 +623,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         {
             // Cascade shadow, then the material's own height-field self-occlusion. Applied here and not
             // to the whole light loop because the parallax trace only ever ran against the sun.
-            float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow, bContactShadows);
+            float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
             Shadow *= G.SelfShadow;
 
             // A leaf lit from the front still passes some light forward at grazing view angles.
@@ -767,131 +633,145 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                 Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
                                            G.Transmission, G.Thickness) * FrontShadow;
             }
-#ifdef TRANSLUCENT
-            float3 SunDiffuse, SunSpec;
-            EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);
-            Lo     += SunDiffuse * Shadow;
-            LoSpec += SunSpec * Shadow;
-#else
-            float3 SunBase = EvaluateLightContribution(Light, Ctx, SunL, 0.0);
 
-            if (Coat > 0.0)
+            // Fully shadowed pixels get nothing from the sun, so they skip its BRDF.
+            if (Shadow > 0.0)
             {
-                // The coat reflects some light before it reaches the base, so the base is attenuated by exactly what
-                // the coat took. Without this the surface gains energy and reads washed out rather than lacquered.
-                float CoatF;
-                const float CoatSpec = EvaluateClearcoatLobe(N, V, SunL, G.ClearcoatRoughness, CoatF);
-                SunBase *= (1.0 - Coat * CoatF);
-                LoCoat  += ComputeLightRadiance(Light, SunL, 0.0) * (CoatSpec * Coat) * Shadow;
-            }
+#ifdef TRANSLUCENT
+                float3 SunDiffuse, SunSpec;
+                EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);
+                Lo     += SunDiffuse * Shadow;
+                LoSpec += SunSpec * Shadow;
+#else
+                float3 SunBase = EvaluateLightContribution(Light, Ctx, SunL, 0.0);
 
-            Lo += SunBase * Shadow;
+                if (Coat > 0.0)
+                {
+                    // The coat reflects some light before it reaches the base, so the base loses exactly what the coat took.
+                    float CoatF;
+                    const float CoatSpec = EvaluateClearcoatLobe(N, V, SunL, G.ClearcoatRoughness, CoatF);
+                    SunBase *= (1.0 - Coat * CoatF);
+                    LoCoat  += ComputeLightRadiance(Light, SunL, 0.0) * (CoatSpec * Coat) * Shadow;
+                }
+
+                Lo += SunBase * Shadow;
 #endif
+            }
         }
     }
 
-    // Hard upper bound mirrors LightCull's write cap, so uninitialized cluster memory cannot walk past the array.
-    uint SafeLightCount = min(LightCount, (uint)LIGHTS_PER_CLUSTER);
-    uint NumLights      = GetNumLights();   // loop-invariant; hoisted out of the per-light test
+    const float2 ShadowNoiseDir = LocalShadowNoiseDir(ScreenPos);
 
-    // LightCull appends in ascending order, so one cursor per lane walks the cluster list as a merge.
+    uint    NumLights   = GetNumLights();   // loop-invariant; hoisted out of the per-light test
+    FLight* LightArray  = LightData().Lights.Data;
+    const uint MaskWords = GetClusterMaskWords();
+
+#ifdef SHADING_COMPUTE
+    // The wave walks the union of its lanes' masks, so each light index is uniform and its fetch scalar.
+    const uint FirstWord = WaveActiveMin(ClusterWords.x);
+    const uint EndWord   = WaveActiveMax(ClusterWords.y);
+#else
+    const uint FirstWord = ClusterWords.x;
+    const uint EndWord   = ClusterWords.y;
+#endif
+
     [loop]
-    for (uint Cursor = 0u; ; )
+    for (uint Word = FirstWord; Word < EndWord; ++Word)
     {
-        // Index the run only in range, since the slot past it belongs to the next cluster.
-        const bool bLaneDone = (Cursor >= SafeLightCount);
-        const uint ReadSlot  = bLaneDone ? 0u : Cursor;
-        const uint LaneNext  = bLaneDone ? 0xFFFFFFFFu : GetClusterLightAt(LightBase, ReadSlot);
+        const bool bLaneWord = Word >= ClusterWords.x && Word < ClusterWords.y;
+        const uint LaneMask  = bLaneWord ? GetClusterMaskWord(ClusterIndex, Word, MaskWords) : 0u;
+#ifdef SHADING_COMPUTE
+        uint Pending = WaveActiveBitOr(LaneMask);
+#else
+        uint Pending = LaneMask;
+#endif
+
+        [loop]
+        while (Pending != 0u)
+        {
+            const uint Bit = firstbitlow(Pending);
+            Pending &= Pending - 1u;
+
+            const uint LightIndex  = Word * 32u + Bit;
+            const bool bLaneListed = ((LaneMask >> Bit) & 1u) != 0u;
+
+            // Wave-uniform on the scalar path, so rejecting a stale index never splits the wave.
+            if (LightIndex >= NumLights)
+            {
+                continue;
+            }
+
+            // Cheap culls read only Position/Radius; the full 64B light is fetched only once some lane wants it.
+            const FLight Culled = loadAligned<16>(LightArray + LightIndex);
+            float3 LightPos = Culled.Position;
+            float  Radius   = Culled.Radius;
+
+            float3 LightToFrag = LightPos - WorldPosition;
+            float  DistSq      = dot(LightToFrag, LightToFrag);
+            float  InvDist     = rsqrt(max(DistSq, 1e-8));
+            float3 L           = LightToFrag * InvDist;
+
+            // A listed light may reach only this pixel's back face, which contributes nothing except through foliage.
+            const bool bBackFacing = dot(N, L) <= 0.0;
+            const bool bLit        = bLaneListed
+                                  && (DistSq < Radius * Radius)
+                                  && (!bBackFacing || bFoliage);
 
 #ifdef SHADING_COMPUTE
-        // The wave walks the union of its lanes' lists, which is what puts each light fetch in scalar registers.
-        const uint LightIndex = WaveReadLaneFirst(WaveActiveMin(LaneNext));
-        const bool bWaveDone  = (LightIndex == 0xFFFFFFFFu);
+            if (!WaveActiveAnyTrue(bLit))
 #else
-        const uint LightIndex = LaneNext;
-        const bool bWaveDone  = bLaneDone;
+            if (!bLit)
 #endif
-        if (bWaveDone)
-        {
-            break;
-        }
-
-        // Advance before any skip below, or a rejected index would pin the cursor and hang the loop.
-        const bool bLaneListed = (LaneNext == LightIndex);
-        Cursor += bLaneListed ? 1u : 0u;
-
-        // Wave-uniform on the scalar path, so rejecting a stale index never splits the wave.
-        if (LightIndex >= NumLights)
-        {
-            continue;
-        }
-
-        // Cheap culls read only Position/Radius; the full 64B light is fetched only once some lane wants it.
-        const FLight Culled = GetLightAt(LightIndex);
-        float3 LightPos = Culled.Position;
-        float  Radius   = Culled.Radius;
-
-        float3 LightToFrag = LightPos - WorldPosition;
-        float  DistSq      = dot(LightToFrag, LightToFrag);
-        float  InvDist     = rsqrt(max(DistSq, 1e-8));
-        float3 L           = LightToFrag * InvDist;
-
-        // A listed light may reach only this pixel's back face, which contributes nothing except through foliage.
-        const bool bBackFacing = dot(N, L) <= 0.0;
-        const bool bLit        = bLaneListed
-                              && (DistSq < Radius * Radius)
-                              && (!bBackFacing || bFoliage);
-
-#ifdef SHADING_COMPUTE
-        if (!WaveActiveAnyTrue(bLit))
-#else
-        if (!bLit)
-#endif
-        {
-            continue;
-        }
-
-        FLight Light       = GetLightAt(LightIndex);
-        float  DistToLight = DistSq * InvDist;
-
-        if (bLit)
-        {
-            float Shadow = 1.0;
-            if (SPEC_LOCAL_SHADOWS != 0 && Light.ShadowDataIndex != INDEX_NONE)
             {
-                Shadow = ComputeShadowFactor(Light, WorldPosition, bBackFacing ? -N : N, ViewPosition, ScreenPos, bReceiveShadow, bContactShadows);
+                continue;
             }
 
-            // Independent of the shadow map, so a light with no atlas tile can still ground what sits under it.
-            if (SPEC_LOCAL_CONTACT != 0 && bReceiveShadow && bContactShadows && HasFlag(Light.Flags, ELightFlags::ContactShadow))
-            {
-                Shadow = min(Shadow, LocalContactShadow(Light, WorldPosition, bBackFacing ? -N : N, ScreenPos));
-            }
+            FLight Light       = Culled;
+            float  DistToLight = DistSq * InvDist;
 
-            if (bFoliage)
+            // A lane outside the falloff or the spot cone gets nothing from this light, so it takes neither a shadow nor a BRDF.
+            if (bLit && LightAttenuation(Light, L, DistToLight) > 0.0)
             {
-                Lo += EvaluateTransmission(Ctx, L, ComputeLightRadiance(Light, L, DistToLight),
-                                           G.Transmission, G.Thickness) * Shadow;
-            }
+                float Shadow = 1.0;
+                if (SPEC_LOCAL_SHADOWS != 0 && Light.ShadowDataIndex != INDEX_NONE)
+                {
+                    Shadow = bReceiveShadow ? ComputeLocalShadow(Light, WorldPosition, bBackFacing ? -N : N, ShadowNoiseDir) : 1.0;
+                }
+
+                // Independent of the shadow map, so a light with no atlas tile can still ground what sits under it.
+                if (SPEC_LOCAL_CONTACT != 0 && bReceiveShadow && bContactShadows && HasFlag(Light.Flags, ELightFlags::ContactShadow))
+                {
+                    Shadow = min(Shadow, LocalContactShadow(Light, WorldPosition, bBackFacing ? -N : N, ScreenPos));
+                }
+
+                if (Shadow > 0.0)
+                {
+                    if (bFoliage)
+                    {
+                        Lo += EvaluateTransmission(Ctx, L, ComputeLightRadiance(Light, L, DistToLight),
+                                                   G.Transmission, G.Thickness) * Shadow;
+                    }
 
 #ifdef TRANSLUCENT
-            float3 LightDiffuse, LightSpec;
-            EvaluateLightContributionSplit(Light, Ctx, L, DistToLight, LightDiffuse, LightSpec);
-            Lo     += LightDiffuse * Shadow;
-            LoSpec += LightSpec * Shadow;
+                    float3 LightDiffuse, LightSpec;
+                    EvaluateLightContributionSplit(Light, Ctx, L, DistToLight, LightDiffuse, LightSpec);
+                    Lo     += LightDiffuse * Shadow;
+                    LoSpec += LightSpec * Shadow;
 #else
-            float3 LightBase = EvaluateLightContribution(Light, Ctx, L, DistToLight);
+                    float3 LightBase = EvaluateLightContribution(Light, Ctx, L, DistToLight);
 
-            if (Coat > 0.0)
-            {
-                float CoatF;
-                const float CoatSpec = EvaluateClearcoatLobe(N, V, L, G.ClearcoatRoughness, CoatF);
-                LightBase *= (1.0 - Coat * CoatF);
-                LoCoat    += ComputeLightRadiance(Light, L, DistToLight) * (CoatSpec * Coat) * Shadow;
-            }
+                    if (Coat > 0.0)
+                    {
+                        float CoatF;
+                        const float CoatSpec = EvaluateClearcoatLobe(N, V, L, G.ClearcoatRoughness, CoatF);
+                        LightBase *= (1.0 - Coat * CoatF);
+                        LoCoat    += ComputeLightRadiance(Light, L, DistToLight) * (CoatSpec * Coat) * Shadow;
+                    }
 
-            Lo += LightBase * Shadow;
+                    Lo += LightBase * Shadow;
 #endif
+                }
+            }
         }
     }
 
@@ -919,8 +799,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     float3 Ambient;
     if (HasIBL())
     {
-        // Split-sum convolutions of the sky cube. NdotV/DFG are recomputed locally so the top-of-shader
-        // copies need not stay register-resident across PCSS and the whole clustered-light loop.
+        // NdotV and DFG are recomputed here so the top-of-shader copies are not held across the light loop.
         float  NdotV_IBL  = saturate(dot(N, V));
         float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
 #ifdef TRANSLUCENT
@@ -1063,9 +942,6 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
     }
     case DEBUG_MODE_SHADOW_CASCADES:
         Color = CascadeDebugColor(WorldPosition, ViewPosition, Color);
-        break;
-    case DEBUG_MODE_SHADOW_PENUMBRA:
-        Color = ShadowPenumbraDebug(WorldPosition, ViewPosition, ScreenPos);
         break;
     case DEBUG_MODE_GTAO:
     {

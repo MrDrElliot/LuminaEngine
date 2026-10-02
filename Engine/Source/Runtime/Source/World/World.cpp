@@ -67,6 +67,7 @@
 #include "Core/Object/ScriptClass.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/EntityScript.h"
+#include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/LifetimeComponent.h"
 #include "World/Entity/Components/ProjectileComponent.h"
 #include "World/Net/NetRole.h"
@@ -264,6 +265,7 @@ namespace Lumina
 
     void CWorld::Serialize(FArchive& Ar)
     {
+        LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("World");
         CObject::Serialize(Ar);
 
@@ -292,10 +294,14 @@ namespace Lumina
     
     void CWorld::InitializeWorld(EWorldType InWorldType)
     {
+        LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("World");
         WorldType = InWorldType;
         
-        CPrefab::CullOrphanedInstances(RegistryPending);
+        {
+            LUMINA_PROFILE_SECTION("CullOrphanedPrefabs");
+            CPrefab::CullOrphanedInstances(RegistryPending);
+        }
         
         // The swap takes the pending registry's singletons too, so anything set before init is carried over.
         const FSceneRenderSettings* ExistingRenderSettings = EntityRegistry.Ctx().Find<FSceneRenderSettings>();
@@ -311,12 +317,18 @@ namespace Lumina
         // Lives here rather than on the renderer, which ReclaimIdleRenderer destroys and CreateRenderer rebuilds.
         EntityRegistry.Ctx().Emplace<FSceneRenderSettings>(CarriedRenderSettings);
 
-        CPrefab::RefreshAllInstancesInWorld(this);
+        {
+            LUMINA_PROFILE_SECTION("RefreshPrefabInstances");
+            CPrefab::RefreshAllInstancesInWorld(this);
+        }
 
         // A tag serializes as its component, but FindByTag reads the per-tag storage, so refill it here.
         ECS::Utils::RebuildTagStorages(EntityRegistry);
 
-        EntityRegistry.Compact();
+        {
+            LUMINA_PROFILE_SECTION("CompactRegistry");
+            EntityRegistry.Compact();
+        }
         
         // Which entities a client may hold is a netcode question, so it is reported not decided.
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
@@ -355,6 +367,7 @@ namespace Lumina
         // Physics scene only for simulating worlds; the world reserves its body arrays up front.
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
         {
+            LUMINA_PROFILE_SECTION("CreatePhysicsScene");
             PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
             InstallPhysicsScriptHook();
         }
@@ -371,7 +384,10 @@ namespace Lumina
         EntityRegistry.Ctx().Emplace<FCameraGlobalState>();
         EntityRegistry.Ctx().Emplace<FResolvedSceneView>();
 
-        CreateRenderer();
+        {
+            LUMINA_PROFILE_SECTION("CreateRenderer");
+            CreateRenderer();
+        }
         UIContext = RmlUi::CreateWorldUI(this);
 
         // Seeded before registering systems so a disabled system is never constructed.
@@ -382,15 +398,22 @@ namespace Lumina
         }
         PendingDisabledSystems = DisabledSystems;
 
-        RegisterSystems();
+        {
+            LUMINA_PROFILE_SECTION("RegisterSystems");
+            RegisterSystems();
+        }
         
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
         {
+            LUMINA_PROFILE_SECTION("PhysicsSimulate");
             PhysicsScene->Simulate();
         }
         
         bSystemsStarted = true;
-        StartupPendingSystems();
+        {
+            LUMINA_PROFILE_SECTION("StartupSystems");
+            StartupPendingSystems();
+        }
 
         EntityRegistry.GetSignals<FRelationshipComponent>().OnDestroy      .Connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
         EntityRegistry.GetSignals<STransformComponent>().OnConstruct         .Connect<&ThisClass::OnTransformComponentConstruct>(this);
@@ -1197,6 +1220,12 @@ namespace Lumina
             RenderScene = RenderSceneFactory::Create(this);
             RenderScene->Init();
             EntityRegistry.Ctx().Emplace<IRenderScene*>(RenderScene.get());
+
+            // An idle reclaim destroys the previous scene, and terrain only uploads what it marks dirty.
+            EntityRegistry.View<STerrainComponent>().ForEach([](ECS::FEntity, STerrainComponent& Terrain)
+            {
+                Terrain.CPUState.MarkRendererLost();
+            });
         }
     }
 
@@ -1310,6 +1339,7 @@ namespace Lumina
 
     CWorld* CWorld::DuplicateWorld(CWorld* OwningWorld)
     {
+        LUMINA_PROFILE_SCOPE();
         CPackage* OuterPackage = OwningWorld->GetPackage();
         if (OuterPackage == nullptr)
         {
@@ -1318,16 +1348,22 @@ namespace Lumina
 
         TVector<uint8> Data;
         FMemoryWriter Writer(Data);
-        FObjectProxyArchiver WriterProxy(Writer, true);
-        OwningWorld->Serialize(WriterProxy);
+        FInProcessObjectArchiver WriterProxy(Writer);
+        {
+            LUMINA_PROFILE_SECTION("Write");
+            OwningWorld->Serialize(WriterProxy);
+        }
         
         FMemoryReader Reader(Data);
-        FObjectProxyArchiver ReaderProxy(Reader, true);
+        FInProcessObjectArchiver ReaderProxy(Reader);
         
         CWorld* PIEWorld = NewObject<CWorld>(nullptr, OwningWorld->GetName(), FGuid::New(), OF_Transient);
 
         PIEWorld->PreLoad();
-        PIEWorld->Serialize(ReaderProxy);
+        {
+            LUMINA_PROFILE_SECTION("Read");
+            PIEWorld->Serialize(ReaderProxy);
+        }
         PIEWorld->PostLoad();
 
         return PIEWorld;

@@ -249,7 +249,7 @@ namespace Lumina
 
         // How finished frames reach the display. Falls back if the device lacks the requested mode.
         PROPERTY(Editable, Category = "Display")
-        EPresentMode PresentMode = EPresentMode::FIFO;
+        EPresentMode PresentMode = EPresentMode::Immediate;
 
         // Frames per second the engine paces itself to, where 0 runs uncapped.
         PROPERTY(Editable, Category = "Display", ClampMin = 0, ClampMax = 1000)
@@ -260,7 +260,7 @@ namespace Lumina
         // Pushes PresentMode to the RHI, rebuilding the primary swapchain if one already exists.
         void ApplyPresentMode() const;
 
-        /** Volumetric fog froxel grid resolution multiplier (1.0 = 160x90x128). Higher is sharper but
+        /** Volumetric fog froxel grid resolution multiplier (1.0 = 96x54x64). Higher is sharper but
             costs more GPU; takes effect on viewport resize or editor restart. */
         PROPERTY(Editable, Category = "Volumetric Fog", ClampMin = 0.25f, ClampMax = 2.0f, Delta = 0.05f)
         float FroxelResolutionScale = 1.0f;
@@ -284,6 +284,10 @@ namespace Lumina
         /** Steps taken through the cloud layer per shadow texel. */
         PROPERTY(Editable, Category = "Volumetric Fog", ClampMin = 1, ClampMax = 32)
         int32 CloudShadowSteps = 8;
+
+        // Largest face a point light's cube shadow may claim. Higher is sharper, but every tap touches more cache lines.
+        PROPERTY(Editable, Category = "Shadows", ClampMin = 128, ClampMax = 1024)
+        int32 PointShadowResolution = 512;
 
         /** Trace reflections against the depth buffer, falling back to the prefiltered cube off-screen. */
         PROPERTY(Editable, Category = "Screen Space Reflections")
@@ -365,7 +369,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0.1f)
         float GTAOPower = 2.2f;
 
-        /** Slices and steps per pixel. 0 low, 1 medium, 2 high, 3 ultra. */
+        // Slices and steps per pixel, 0 low to 3 ultra. Below ultra the trace runs at half resolution and upsamples.
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0, ClampMax = 3)
         int32 GTAOQualityLevel = 2;
 

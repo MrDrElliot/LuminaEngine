@@ -31,7 +31,6 @@ namespace Lumina
         FShaderH MeshShaderShadowMasked = {};
         FShaderH ShadowMaskedPixelShader = {};
         FShaderH DeferredShader = {};
-        FShaderH MomentPixelShader = {};
 
         FDrawBatchKey   BatchKey    = {};
 

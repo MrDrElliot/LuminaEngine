@@ -20,9 +20,9 @@ internal static class Wrapper<T> where T : class
     /// object therefore return the same instance, so reference identity (<c>==</c>, <c>is</c>, dictionary keys)
     /// works and repeated access stops allocating.
     ///
-    /// Weak by design: the cache remembers the wrapper that exists, it never keeps one alive. So a wrapper
-    /// nothing references is collected normally, and the cache can never pin the collectible script ALC across
-    /// a hot reload. A collected (or reload-orphaned) target simply reads back null here and is rebuilt.
+    /// Every hand-out counts as one reference to the object (see NativeObject.Dispose), so holding the wrapper
+    /// keeps the object alive the way a TObjectPtr does. The cache itself stays weak, so a wrapper nothing references
+    /// is collected normally (releasing its references) and the cache can never pin the collectible script ALC.
     ///
     /// Only valid for CObject-backed wrappers. Component views (NativeStruct) are not objects, have no slot,
     /// and keep using <see cref="Create"/>.
@@ -41,6 +41,7 @@ internal static class Wrapper<T> where T : class
             // A type mismatch means the object was previously wrapped as a different (e.g. base) type.
             if (GCHandle.FromIntPtr(Existing).Target is T Cached)
             {
+                (Cached as NativeObject)?.AddReference();
                 return Cached;
             }
         }
@@ -50,6 +51,7 @@ internal static class Wrapper<T> where T : class
         {
             return null;
         }
+        (Instance as NativeObject)?.StartCountingReferences();
 
         // Set frees the handle it replaces, so the stale one above is not leaked.
         GCHandle Weak = GCHandle.Alloc(Instance, GCHandleType.Weak);

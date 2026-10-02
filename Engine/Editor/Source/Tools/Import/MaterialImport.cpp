@@ -160,6 +160,13 @@ namespace Lumina
             MFB_VertexColor      = BIT(4),
             /** Metalness and roughness arrive as two single-channel maps rather than one packed ORM. */
             MFB_SplitMetalRough  = BIT(5),
+            // One bit per optional map, because a slot sampled against a default texture still costs a fetch on every pixel.
+            MFB_BaseColorTexture = BIT(6),
+            MFB_MetalRoughTexture = BIT(7),
+            MFB_NormalTexture    = BIT(8),
+            MFB_EmissiveTexture  = BIT(9),
+            MFB_Emissive         = BIT(10),
+            MFB_OcclusionTexture = BIT(11),
         };
 
         // A packed map always wins, so a source supplying both never builds the split chain.
@@ -173,8 +180,17 @@ namespace Lumina
         {
             uint32 Signature = bHasVertexColors ? MFB_VertexColor : 0u;
             if (UsesSplitMetalRough(Src))      { Signature |= MFB_SplitMetalRough; }
-            if (Src.NormalScale != 1.0f)       { Signature |= MFB_NormalScale; }
-            if (Src.OcclusionStrength != 1.0f) { Signature |= MFB_OcclusionStrength; }
+            if (Src.BaseColorImage != INDEX_NONE)         { Signature |= MFB_BaseColorTexture; }
+            if (Src.MetallicRoughnessImage != INDEX_NONE) { Signature |= MFB_MetalRoughTexture; }
+            if (Src.NormalImage != INDEX_NONE)            { Signature |= MFB_NormalTexture; }
+            if (Src.OcclusionImage != INDEX_NONE)         { Signature |= MFB_OcclusionTexture; }
+            // glTF multiplies the emissive map by the factor, so a black factor leaves the map unread.
+            const bool bEmissiveFactor = Src.EmissiveColor.x > 0.0f || Src.EmissiveColor.y > 0.0f || Src.EmissiveColor.z > 0.0f;
+            if (bEmissiveFactor)                                       { Signature |= MFB_Emissive; }
+            if (bEmissiveFactor && Src.EmissiveImage != INDEX_NONE)    { Signature |= MFB_EmissiveTexture; }
+            // Scale and strength only shape a map, so without one they would build nodes nothing reads.
+            if ((Signature & MFB_NormalTexture) != 0 && Src.NormalScale != 1.0f)          { Signature |= MFB_NormalScale; }
+            if ((Signature & MFB_OcclusionTexture) != 0 && Src.OcclusionStrength != 1.0f) { Signature |= MFB_OcclusionStrength; }
             // 0.5 is the shading default, so an unauthored IOR needs no node at all.
             if (Math::Abs(ComputeEngineSpecular(Src) - 0.5f) > 0.001f) { Signature |= MFB_Specular; }
             // Must match GetMaster exactly, since unlit wins and would otherwise build unread coat nodes.
@@ -253,25 +269,31 @@ namespace Lumina
                 Connect(Add->Output, Sample->UV);
             };
 
-            // Base color = BaseColorTexture.rgb * BaseColorFactor.rgb.
-            auto* TexBase = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 0.0f * VS);
-            TexBase->bDynamic = true;
-            TexBase->ParameterName = "BaseColorTexture";
-            TexBase->Texture = White;
-            ApplySlotUV(TexBase, EMaterialTextureSlot::BaseColor, 0.0f * VS);
-
+            // Base color = BaseColorTexture.rgb * BaseColorFactor.rgb, or the factor alone without a map.
             auto* FacBase = AddNode<CMaterialExpression_ConstantFloat4>(Graph, ColTex, 190.0f * VS);
             FacBase->bDynamic = true;
             FacBase->ParameterName = "BaseColorFactor";
             FacBase->Value = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
 
-            auto* MulBase = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 60.0f * VS);
-            Connect(TexBase->GetOutputPins()[0].Get(), MulBase->A);   // RGBA
-            Connect(FacBase->GetOutputPins()[0].Get(), MulBase->B);
+            CMaterialExpression_TextureSample* TexBase = nullptr;
+            CEdNodeGraphPin* BaseColorSource = FacBase->GetOutputPins()[0].Get();
+            if ((FeatureSignature & MFB_BaseColorTexture) != 0)
+            {
+                TexBase = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 0.0f * VS);
+                TexBase->bDynamic = true;
+                TexBase->ParameterName = "BaseColorTexture";
+                TexBase->Texture = White;
+                ApplySlotUV(TexBase, EMaterialTextureSlot::BaseColor, 0.0f * VS);
+
+                auto* MulBase = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 60.0f * VS);
+                Connect(TexBase->GetOutputPins()[0].Get(), MulBase->A);   // RGBA
+                Connect(FacBase->GetOutputPins()[0].Get(), MulBase->B);
+                BaseColorSource = MulBase->Output;
+            }
 
             if ((FeatureSignature & MFB_VertexColor) == 0)
             {
-                Connect(MulBase->Output, Output->BaseColorPin);
+                Connect(BaseColorSource, Output->BaseColorPin);
             }
             else
             {
@@ -279,7 +301,7 @@ namespace Lumina
                 auto* VertColor = AddNode<CMaterialExpression_VertexColor>(Graph, ColTex, 250.0f * VS);
 
                 auto* MulVertex = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul + 160.0f, 60.0f * VS);
-                Connect(MulBase->Output, MulVertex->A);
+                Connect(BaseColorSource, MulVertex->A);
                 Connect(VertColor->GetOutputPins()[0].Get(), MulVertex->B);
                 Connect(MulVertex->Output, Output->BaseColorPin);
             }
@@ -300,7 +322,12 @@ namespace Lumina
             CEdNodeGraphPin* MetalSource = nullptr;
             CEdNodeGraphPin* RoughSource = nullptr;
 
-            if (!bSplitMetalRough)
+            if (!bSplitMetalRough && (FeatureSignature & MFB_MetalRoughTexture) == 0)
+            {
+                Connect(FacMetal->GetOutputPins()[0].Get(), Output->MetallicPin);
+                Connect(FacRough->GetOutputPins()[0].Get(), Output->RoughnessPin);
+            }
+            else if (!bSplitMetalRough)
             {
                 auto* TexMR = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 380.0f * VS);
                 TexMR->bDynamic = true;
@@ -329,28 +356,35 @@ namespace Lumina
                 RoughSource = TexRough->GetOutputPins()[1].Get();   // R channel
             }
 
-            auto* MulMetal = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 380.0f * VS);
-            Connect(MetalSource, MulMetal->A);
-            Connect(FacMetal->GetOutputPins()[0].Get(), MulMetal->B);
-            Connect(MulMetal->Output, Output->MetallicPin);
+            if (MetalSource != nullptr)
+            {
+                auto* MulMetal = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 380.0f * VS);
+                Connect(MetalSource, MulMetal->A);
+                Connect(FacMetal->GetOutputPins()[0].Get(), MulMetal->B);
+                Connect(MulMetal->Output, Output->MetallicPin);
 
-            auto* MulRough = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 490.0f * VS);
-            Connect(RoughSource, MulRough->A);
-            Connect(FacRough->GetOutputPins()[0].Get(), MulRough->B);
-            Connect(MulRough->Output, Output->RoughnessPin);
+                auto* MulRough = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 490.0f * VS);
+                Connect(RoughSource, MulRough->A);
+                Connect(FacRough->GetOutputPins()[0].Get(), MulRough->B);
+                Connect(MulRough->Output, Output->RoughnessPin);
+            }
 
-            // Feed the raw RGB, since the output node decodes and reconstructs z.
-            auto* TexNormal = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 730.0f * VS);
-            TexNormal->bDynamic = true;
-            TexNormal->ParameterName = "NormalTexture";
-            TexNormal->Texture = FlatNormal;
-            ApplySlotUV(TexNormal, EMaterialTextureSlot::Normal, 730.0f * VS);
+            // Feed the raw RGB, since the output node decodes and reconstructs z. Unwired, the geometric normal stands.
+            CMaterialExpression_TextureSample* TexNormal = nullptr;
+            if ((FeatureSignature & MFB_NormalTexture) != 0)
+            {
+                TexNormal = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 730.0f * VS);
+                TexNormal->bDynamic = true;
+                TexNormal->ParameterName = "NormalTexture";
+                TexNormal->Texture = FlatNormal;
+                ApplySlotUV(TexNormal, EMaterialTextureSlot::Normal, 730.0f * VS);
+            }
 
-            if ((FeatureSignature & MFB_NormalScale) == 0)
+            if (TexNormal != nullptr && (FeatureSignature & MFB_NormalScale) == 0)
             {
                 Connect(TexNormal->GetOutputPins()[0].Get(), Output->NormalPin);
             }
-            else
+            else if (TexNormal != nullptr)
             {
                 // Scaling all three channels about 0.5 in ENCODED space is equivalent and costs three nodes.
                 auto* Center = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 730.0f * VS);
@@ -375,35 +409,49 @@ namespace Lumina
                 Connect(Add->Output, Output->NormalPin);
             }
 
-            // Emissive = EmissiveTexture.rgb * EmissiveColor.rgb.
-            auto* TexEmissive = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 920.0f * VS);
-            TexEmissive->bDynamic = true;
-            TexEmissive->ParameterName = "EmissiveTexture";
-            TexEmissive->Texture = White;
-            ApplySlotUV(TexEmissive, EMaterialTextureSlot::Emissive, 920.0f * VS);
+            // Emissive = EmissiveTexture.rgb * EmissiveColor.rgb, left unwired when the factor is black.
+            if ((FeatureSignature & MFB_Emissive) != 0)
+            {
+                auto* FacEmissive = AddNode<CMaterialExpression_ConstantFloat4>(Graph, ColTex, 1110.0f * VS);
+                FacEmissive->bDynamic = true;
+                FacEmissive->ParameterName = "EmissiveColor";
+                FacEmissive->Value = FVector4(0.0f, 0.0f, 0.0f, 1.0f);
 
-            auto* FacEmissive = AddNode<CMaterialExpression_ConstantFloat4>(Graph, ColTex, 1110.0f * VS);
-            FacEmissive->bDynamic = true;
-            FacEmissive->ParameterName = "EmissiveColor";
-            FacEmissive->Value = FVector4(0.0f, 0.0f, 0.0f, 1.0f);
+                if ((FeatureSignature & MFB_EmissiveTexture) != 0)
+                {
+                    auto* TexEmissive = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 920.0f * VS);
+                    TexEmissive->bDynamic = true;
+                    TexEmissive->ParameterName = "EmissiveTexture";
+                    TexEmissive->Texture = White;
+                    ApplySlotUV(TexEmissive, EMaterialTextureSlot::Emissive, 920.0f * VS);
 
-            auto* MulEmissive = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 960.0f * VS);
-            Connect(TexEmissive->GetOutputPins()[0].Get(), MulEmissive->A);
-            Connect(FacEmissive->GetOutputPins()[0].Get(), MulEmissive->B);
-            Connect(MulEmissive->Output, Output->EmissivePin);
+                    auto* MulEmissive = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 960.0f * VS);
+                    Connect(TexEmissive->GetOutputPins()[0].Get(), MulEmissive->A);
+                    Connect(FacEmissive->GetOutputPins()[0].Get(), MulEmissive->B);
+                    Connect(MulEmissive->Output, Output->EmissivePin);
+                }
+                else
+                {
+                    Connect(FacEmissive->GetOutputPins()[0].Get(), Output->EmissivePin);
+                }
+            }
 
-            // Ambient occlusion = OcclusionTexture.r.
-            auto* TexOcclusion = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 1300.0f * VS);
-            TexOcclusion->bDynamic = true;
-            TexOcclusion->ParameterName = "OcclusionTexture";
-            TexOcclusion->Texture = White;
-            ApplySlotUV(TexOcclusion, EMaterialTextureSlot::Occlusion, 1300.0f * VS);
+            // Ambient occlusion = OcclusionTexture.r, left unwired without a map.
+            CMaterialExpression_TextureSample* TexOcclusion = nullptr;
+            if ((FeatureSignature & MFB_OcclusionTexture) != 0)
+            {
+                TexOcclusion = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 1300.0f * VS);
+                TexOcclusion->bDynamic = true;
+                TexOcclusion->ParameterName = "OcclusionTexture";
+                TexOcclusion->Texture = White;
+                ApplySlotUV(TexOcclusion, EMaterialTextureSlot::Occlusion, 1300.0f * VS);
+            }
 
-            if ((FeatureSignature & MFB_OcclusionStrength) == 0)
+            if (TexOcclusion != nullptr && (FeatureSignature & MFB_OcclusionStrength) == 0)
             {
                 Connect(TexOcclusion->GetOutputPins()[1].Get(), Output->AOPin);   // R channel
             }
-            else
+            else if (TexOcclusion != nullptr)
             {
                 // Strength fades the occlusion map toward unoccluded rather than scaling it.
                 auto* One = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 1300.0f * VS);
@@ -461,10 +509,17 @@ namespace Lumina
                 FacOpacity->ParameterName = "OpacityFactor";
                 FacOpacity->Value = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
 
-                auto* MulOpacity = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 1300.0f * VS);
-                Connect(TexBase->GetOutputPins()[4].Get(), MulOpacity->A);    // base color A
-                Connect(FacOpacity->GetOutputPins()[0].Get(), MulOpacity->B);
-                Connect(MulOpacity->Output, Output->OpacityPin);
+                if (TexBase != nullptr)
+                {
+                    auto* MulOpacity = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 1300.0f * VS);
+                    Connect(TexBase->GetOutputPins()[4].Get(), MulOpacity->A);    // base color A
+                    Connect(FacOpacity->GetOutputPins()[0].Get(), MulOpacity->B);
+                    Connect(MulOpacity->Output, Output->OpacityPin);
+                }
+                else
+                {
+                    Connect(FacOpacity->GetOutputPins()[0].Get(), Output->OpacityPin);
+                }
             }
 
             FinalizeGraph(Graph);
@@ -598,11 +653,11 @@ namespace Lumina
                     return nullptr;
                 }
 
-                // glTF BLEND legitimately means blend, so cutout foliage silently pays two geometry passes.
+                // glTF BLEND legitimately means blend, so cutout foliage silently pays for forward shading.
                 if (Blend == EBlendMode::Translucent)
                 {
                     LOG_WARN("[Import] '{}' imported as TRANSLUCENT (source alpha mode = BLEND). Translucency "
-                             "runs two full geometry passes through MBOIT and cannot be occlusion-culled. If "
+                             "is forward shaded through OIT and cannot be occlusion-culled. If "
                              "this is cutout geometry (foliage, fences, decals on cards), set Blend Mode to "
                              "Masked -- and tick Two Sided, which Translucent gets implicitly and Masked does not.",
                              Master->GetName());
@@ -682,7 +737,13 @@ namespace Lumina
                 Instance->SetVectorValue("BaseColorFactor", Src.BaseColorFactor);
                 Instance->SetScalarValue("MetallicFactor", Src.MetallicFactor);
                 Instance->SetScalarValue("RoughnessFactor", Src.RoughnessFactor);
-                Instance->SetVectorValue("EmissiveColor", FVector4(Src.EmissiveColor.x, Src.EmissiveColor.y, Src.EmissiveColor.z, 1.0f));
+
+                // Set only where the feature signature built the node, keeping this symmetric with the graph.
+                const uint32 FeatureSignature = BuildFeatureSignature(Src, bSourceHasVertexColors);
+                if ((FeatureSignature & MFB_Emissive) != 0)
+                {
+                    Instance->SetVectorValue("EmissiveColor", FVector4(Src.EmissiveColor.x, Src.EmissiveColor.y, Src.EmissiveColor.z, 1.0f));
+                }
 
                 // A channel with no image keeps the neutral default, and a failed cook warns since it flattens the look.
                 auto BindTexture = [&](const FName& Param, int32 ImageIndex)
@@ -713,7 +774,10 @@ namespace Lumina
                     BindTexture("MetallicRoughnessTexture", Src.MetallicRoughnessImage);
                 }
                 BindTexture("NormalTexture", Src.NormalImage);
-                BindTexture("EmissiveTexture", Src.EmissiveImage);
+                if ((FeatureSignature & MFB_EmissiveTexture) != 0)
+                {
+                    BindTexture("EmissiveTexture", Src.EmissiveImage);
+                }
                 BindTexture("OcclusionTexture", Src.OcclusionImage);
 
                 // The master bakes only WHICH set and whether a chain exists, so scale and offset stay per-instance.
@@ -735,8 +799,6 @@ namespace Lumina
                     Instance->SetScalarValue(FName((Stem + "UVRotation").c_str()), UVT.Rotation);
                 }
 
-                // Set only where the feature signature built the node, keeping this symmetric with the graph.
-                const uint32 FeatureSignature = BuildFeatureSignature(Src, bSourceHasVertexColors);
                 if ((FeatureSignature & MFB_NormalScale) != 0)
                 {
                     Instance->SetScalarValue("NormalScale", Src.NormalScale);

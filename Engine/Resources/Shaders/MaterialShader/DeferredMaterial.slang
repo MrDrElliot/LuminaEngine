@@ -6,16 +6,15 @@
 #include "Includes/GlobalRHIStorage.slang"
 #include "Includes/Wind.slang"   // this template substitutes the material vertex token too (WPO reconstruction)
 
-// Per-material GBuffer generation over exactly the pixels the classify passes proved that material
-// owns. COMPUTE, not a quad: every thread is a real pixel, so derivatives must be analytic.
+// Per-material GBuffer generation over the tiles classification binned under this material, in compute so derivatives are analytic.
 
 // reads the decal indices out of this same block: offset 0 is read there as an (unused) MeshletBase.
 struct FDeferredMaterialArgs
 {
     uint  VisBufferIndex;   // 0
-    uint  _Pad0;            // 4
-    uint  _Pad1;            // 8
-    uint  _Pad2;            // 12
+    uint  FeedbackPhase;    // 4   which 1/STREAMING_FEEDBACK_WINDOW of the groups report streaming feedback this frame
+    uint  TileStride;       // 8   TileList entries reserved per slot
+    uint  SlotImageIndex;   // 12  slot + 1 per pixel from classify
     uint  DrawListCount;    // 16  MeshletDrawList slot bound
     uint  SlotIndex;        // 20  this dispatch's dense material slot
     uint  ScreenW;          // 24
@@ -26,9 +25,8 @@ struct FDeferredMaterialArgs
     uint  GBufferDUAV;      // 44
     uint  VelocityUAV;      // 48  0xFFFFFFFF when temporal AA is off
     uint  _PadVelocity;     // 52
-    GPUSpan<uint> PixelList;  // 56  packed screen positions, one contiguous run per slot
-    GPUSpan<uint> Starts;     // 72
-    GPUSpan<uint> Counts;     // 88
+    GPUSpan<uint> TileList;   // 56  packed tile coordinates, one run of TileStride per slot
+    GPUSpan<uint> Counts;     // 72  tiles each slot owns
 };
 FDeferredMaterialArgs* Pass() { return GetPassArgs<FDeferredMaterialArgs>(); }
 
@@ -73,16 +71,25 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 {
     const uint Slot = Pass().SlotIndex;
 
-    // The grid is folded across Y because a 4K frame's pixel count overruns maxComputeWorkGroupCount[0];
-    // VisBufferMaterialPrefixSum built it with the matching fold.
+    // Folded across Y with the matching unfold in VisBufferMaterialArgs, one group per binned tile.
     const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
-    const uint Index       = LinearGroup * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-    if (Index >= SpanGet(&Pass().Counts, Slot))
+    if (LinearGroup >= SpanGet(&Pass().Counts, Slot))
     {
         return;
     }
 
-    const uint2 Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, SpanGet(&Pass().Starts, Slot) + Index));
+    const uint2 Tile  = UnpackVisPixel(SpanGet(&Pass().TileList, Slot * Pass().TileStride + LinearGroup));
+    const uint2 Texel = Tile * MATERIAL_CLASSIFY_TILE + uint2(Lane % MATERIAL_CLASSIFY_TILE, Lane / MATERIAL_CLASSIFY_TILE);
+    if (Texel.x >= Pass().ScreenW || Texel.y >= Pass().ScreenH)
+    {
+        return;
+    }
+
+    // A tile is shared with other materials, so the slot classify stored keeps only this one's pixels.
+    if ((uint)(LoadTexture2D(Pass().SlotImageIndex, int2(Texel)).r + 0.5) != Slot + 1u)
+    {
+        return;
+    }
 
     const uint   Raw = LoadTexture2DUInt(Pass().VisBufferIndex, int2(Texel));
     FVisTriangle T   = ResolveVisTriangle(Raw, Pass().DrawListCount);
@@ -219,7 +226,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         // One report per pixel, keyed by material slot -- see RequestMaterialResolution. This lane is where
         // residency demand comes from, because it is where the camera's view of a material is shaded, and
         // its gradients are the analytic barycentric ones (there is no quad here to take ddx/ddy from).
-        RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
+        // Group-uniform, so the wave ops inside stay convergent; the readback accumulates a whole window first.
+        if ((LinearGroup + Pass().FeedbackPhase) % STREAMING_FEEDBACK_WINDOW == 0u)
+        {
+            RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
+        }
         $MATERIAL_INPUTS
 
         G = BuildGBufferData(Input, Material);

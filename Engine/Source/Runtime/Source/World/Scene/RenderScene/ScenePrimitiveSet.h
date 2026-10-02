@@ -121,7 +121,6 @@ namespace Lumina
             FShaderH             MaskedVisBufferPixelShader = {};
             FShaderH             MeshShaderShadowMasked = {};
             FShaderH             ShadowMaskedPixelShader = {};
-            FShaderH             MomentPixelShader = {};
             // No material identity here on purpose: a batch is a PIPELINE, and one pipeline serves every
             // material that compiles to it. The material is carried per instance
             // (FGPUInstance::MaterialIndex) and per deferred slot (DeferredMaterials below).
@@ -139,6 +138,7 @@ namespace Lumina
         uint32 FindOrAddBatch(const FResolvedSurface& Surface);
 
         void AddBatchRef(uint32 BatchIndex, bool bSkinned);
+        void AddBatchRefs(uint32 BatchIndex, bool bSkinned, uint32 Count);
 
         void ReleaseBatchRef(uint32 BatchIndex, bool bSkinned);
 
@@ -504,6 +504,11 @@ namespace Lumina
         void    ReleaseFoliageInstance(FFoliageInstanceRef& Ref);
         void    RefreshFoliageInstance(const FFoliageInstanceRef& Ref, const FFoliageTypeResolve& Type,
                                        const FFoliageBakedInstance& Instance, uint32 EntityID);
+        // First sync of an entity, so every instance binds and its slots can be filled in parallel.
+        void    BindFreshFoliage(FFoliageEntityState& State, const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID);
+        static void BuildFoliageEntries(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type,
+                                        const FFoliageBakedInstance& Instance, uint32 EntityID,
+                                        FInstanceCullEntry& OutCull, FTransform3x4& OutTransform, FInstanceStatic& OutStatic);
         bool    FoliageBindingsMatchMemo(const FFoliageInstanceRef& Ref, const FBindingMemo* Memo) const;
         // Appends a retry target per foliage entity whose type resolve moved. Pairs with the primitive sweep.
         void    SweepFoliageResolves(FMeshResolveCache& Cache);

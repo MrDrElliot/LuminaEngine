@@ -58,6 +58,12 @@ namespace Lumina::RHI
         return NumMaterials;
     }
 
+    uint32 FMaterialManager::GetSlotFlags(uint32 Index) const
+    {
+        FReadScopeLock Lock(Mutex);
+        return Index < (uint32)Mirror.size() ? Mirror[Index].Flags : 0u;
+    }
+
     uint32 FMaterialManager::CopySlotTextureIDs(uint32 Index, uint32* OutIDs, uint32 MaxIDs) const
     {
         if (OutIDs == nullptr || MaxIDs == 0)

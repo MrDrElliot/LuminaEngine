@@ -90,6 +90,17 @@ namespace Lumina
             return true;
         }
 
+        bool IsStillChannel(const FAnimationChannel& Channel)
+        {
+            switch (Channel.TargetPath)
+            {
+            case FAnimationChannel::ETargetPath::Rotation:    return IsConstantQuat(Channel.Rotations, ConstantRotationTolerance);
+            case FAnimationChannel::ETargetPath::Translation: return IsConstantVec3(Channel.Translations, ConstantTranslationTolerance);
+            case FAnimationChannel::ETargetPath::Scale:       return IsConstantVec3(Channel.Scales, ConstantScaleTolerance);
+            default:                                          return true;
+            }
+        }
+
         void MakeConstantTrack(FCompressedAnimTrack& Track, const FVector3& Value)
         {
             Track.Format   = EAnimTrackFormat::Constant;
@@ -372,25 +383,30 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
 
     float AnimCompression::InferSampleRate(const FAnimationResource& Resource)
     {
-        TVector<float> ChannelDeltas;
-        ChannelDeltas.reserve(Resource.Channels.size());
+        // Exporters key a still channel only at its ends, so only moving channels say how densely the clip was authored.
+        float MovingDelta = 0.0f;
+        float AnyDelta    = 0.0f;
 
         for (const FAnimationChannel& Channel : Resource.Channels)
         {
             const float Delta = MedianKeyDelta(Channel.Timestamps);
-            if (Delta > 0.0f)
+            if (Delta <= 0.0f)
             {
-                ChannelDeltas.push_back(Delta);
+                continue;
+            }
+
+            AnyDelta = AnyDelta > 0.0f ? Math::Min(AnyDelta, Delta) : Delta;
+            if (!IsStillChannel(Channel))
+            {
+                MovingDelta = MovingDelta > 0.0f ? Math::Min(MovingDelta, Delta) : Delta;
             }
         }
 
-        if (ChannelDeltas.empty())
+        const float Delta = MovingDelta > 0.0f ? MovingDelta : AnyDelta;
+        if (Delta <= 0.0f)
         {
             return 0.0f;
         }
-
-        Algo::Sort(ChannelDeltas);
-        const float Delta = ChannelDeltas[ChannelDeltas.size() / 2];
 
         // Authoring rates are whole numbers, so rounding absorbs the float drift in the source timestamps.
         return Math::Max(1.0f, Math::Round(1.0f / Delta));

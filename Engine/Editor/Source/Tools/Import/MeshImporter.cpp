@@ -1507,7 +1507,21 @@ namespace Lumina
         // The sweep after it compares against this, so it only speaks up when the assets disagree.
         uint32 ExpectedNullSlots = 0;
 
-        if (bImportMaterials && !SourceData.Materials.empty())
+        if (OverrideMaterial.IsValid() && bImportMeshes)
+        {
+            for (CMesh* Mesh : ResourceToMesh)
+            {
+                if (Mesh == nullptr)
+                {
+                    continue;
+                }
+                for (size_t Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
+                {
+                    Mesh->SetMaterialAtSlot(Slot, OverrideMaterial.Get());
+                }
+            }
+        }
+        else if (bImportMaterials && !SourceData.Materials.empty())
         {
             if (Progress)
             {
