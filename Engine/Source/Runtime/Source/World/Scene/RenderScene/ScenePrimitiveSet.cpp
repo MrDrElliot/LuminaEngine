@@ -1582,6 +1582,96 @@ namespace Lumina
     // Below this a field binds faster serially than it takes to fan out.
     static constexpr uint32 FreshFoliageParallelThreshold = 8192;
 
+    void FScenePrimitiveSet::RefreshFoliageInstances(const FFoliageEntityState& State, const SFoliageComponent& Foliage,
+                                                     const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID,
+                                                     const FFoliageTypeResolve& UnresolvedType)
+    {
+        const uint32 Count = (uint32)FoliageRefreshScratch.size();
+        auto TypeOf = [&](const FFoliageInstanceRef& Ref) -> const FFoliageTypeResolve&
+        {
+            return Ref.TypeRow < (uint16)FoliageTypeScratch.size() ? FoliageTypeScratch[Ref.TypeRow] : UnresolvedType;
+        };
+
+        if (Count < FreshFoliageParallelThreshold)
+        {
+            for (uint32 Index : FoliageRefreshScratch)
+            {
+                const FFoliageInstanceRef& Ref = State.Instances[Index];
+                RefreshFoliageInstance(Ref, TypeOf(Ref), Baked[Index], EntityID, Foliage.IsInstanceHidden(Index));
+            }
+            return;
+        }
+
+        LUMINA_PROFILE_SCOPE();
+
+        // Low half marks a surface whose cull or transform changed, high half one whose static data did.
+        constexpr uint32 kMaxMaskedSurfaces = 16;
+        FoliageRefreshMasks.assign(Count, 0u);
+
+        Task::ParallelFor(Count, [&](const Task::FParallelRange& Range)
+        {
+            for (uint32 r = Range.Start; r < Range.End; ++r)
+            {
+                const uint32 Index = FoliageRefreshScratch[r];
+                const FFoliageInstanceRef& Ref = State.Instances[Index];
+                if (Ref.SurfaceCount > kMaxMaskedSurfaces)
+                {
+                    continue;
+                }
+
+                const FFoliageTypeResolve& Type = TypeOf(Ref);
+                const bool bHidden = Foliage.IsInstanceHidden(Index);
+                uint32 Mask = 0;
+                for (uint32 Surface = 0; Surface < Ref.SurfaceCount; ++Surface)
+                {
+                    const FSurfaceBinding& Binding = Bindings[Ref.BindingBase + Surface];
+                    const uint32 Slot = Binding.InstanceSlot;
+                    if (Slot >= (uint32)RetainedCullEntries.size())
+                    {
+                        continue;
+                    }
+
+                    FInstanceCullEntry NewCull;
+                    FTransform3x4      NewTransform;
+                    FInstanceStatic    NewStatic;
+                    BuildFoliageEntries(Binding, Type, Baked[Index], EntityID, bHidden, NewCull, NewTransform, NewStatic);
+
+                    const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
+                    const bool bTransformChanged = StoreIfChanged(RetainedTransforms[Slot], NewTransform);
+                    Mask |= (bCullChanged || bTransformChanged) ? (1u << Surface) : 0u;
+                    Mask |= StoreIfChanged(RetainedStatic[Slot], NewStatic) ? (1u << (Surface + 16)) : 0u;
+                }
+                FoliageRefreshMasks[r] = Mask;
+            }
+        }, 4096);
+
+        SyncStats.RefreshInstanceCalls += Count;
+        for (uint32 r = 0; r < Count; ++r)
+        {
+            const uint32 Index = FoliageRefreshScratch[r];
+            const FFoliageInstanceRef& Ref = State.Instances[Index];
+            if (Ref.SurfaceCount > kMaxMaskedSurfaces)
+            {
+                RefreshFoliageInstance(Ref, TypeOf(Ref), Baked[Index], EntityID, Foliage.IsInstanceHidden(Index));
+                continue;
+            }
+
+            const uint32 Mask = FoliageRefreshMasks[r];
+            for (uint32 Surface = 0; Mask != 0u && Surface < Ref.SurfaceCount; ++Surface)
+            {
+                const uint32 Slot = Bindings[Ref.BindingBase + Surface].InstanceSlot;
+                if (Mask & (1u << Surface))
+                {
+                    MarkInstanceDirty(Slot);
+                }
+                if (Mask & (1u << (Surface + 16)))
+                {
+                    MarkStaticDirty(Slot);
+                }
+            }
+        }
+    }
+
     void FScenePrimitiveSet::BuildFoliageEntries(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type,
                                                  const FFoliageBakedInstance& Instance, uint32 EntityID, bool bHidden,
                                                  FInstanceCullEntry& OutCull, FTransform3x4& OutTransform, FInstanceStatic& OutStatic)
@@ -1820,6 +1910,9 @@ namespace Lumina
             BindFreshFoliage(State, *Foliage, Baked, EntityID);
         }
 
+        // Rebinds stay serial since each appends a span, and the refreshes they gather run after them, in parallel for a big field.
+        FoliageRefreshScratch.clear();
+
         for (uint32 i = 0; i < NewCount && !bFreshBind; ++i)
         {
             const FFoliageBakedInstance& Instance = Baked[i];
@@ -1858,8 +1951,10 @@ namespace Lumina
                 ++SyncStats.BindsSkipped;
             }
 
-            RefreshFoliageInstance(Ref, Type, Instance, EntityID, Foliage->IsInstanceHidden(i));
+            FoliageRefreshScratch.push_back(i);
         }
+
+        RefreshFoliageInstances(State, *Foliage, Baked, EntityID, UnresolvedType);
 
         // Every slot now holds its transform and bounds, so a second copy per instance is hundreds of megabytes in a large field.
         Foliage->ReleaseRenderCache();

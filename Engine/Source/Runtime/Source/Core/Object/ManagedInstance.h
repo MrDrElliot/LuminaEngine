@@ -43,6 +43,12 @@ namespace Lumina
         /** True when Object's cached handle is the script's own instance rather than a weak wrapper. */
         RUNTIME_API bool IsScriptTwin(const CObjectBase* Object);
 
+        // Find and IsScriptTwin under one lock, since every script event dispatch asks both.
+        RUNTIME_API void* FindScriptTwin(const CObjectBase* Object);
+
+        // Moves whenever a cached handle is freed or replaced, so a caller holding one can tell it is still good.
+        RUNTIME_API uint32 GetHandleGeneration();
+
         /** Frees Object's handle and reclaims its slot. Called from ~CObjectBase; safe when there is none. */
         RUNTIME_API void Release(CObjectBase* Object);
 

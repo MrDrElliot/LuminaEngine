@@ -29,6 +29,20 @@ namespace Lumina
         All     = 0xFFFF,
     };
 
+    // How a tile's walkable area is split into regions before polygonization.
+    REFLECT()
+    enum class ENavRegionPartition : uint8
+    {
+        // Whatever the project's navigation settings choose.
+        ProjectDefault,
+        // Best polygons and the slowest, about two fifths of a tile bake.
+        Watershed,
+        // Fastest, but leaves long thin polygons.
+        Monotone,
+        // Close to watershed quality at a fraction of its cost, and suited to small tiles.
+        Layers,
+    };
+
     /** Offline voxelization + region build settings. */
     REFLECT()
     struct RUNTIME_API FNavBuildSettings
@@ -74,6 +88,9 @@ namespace Lumina
         /** Adjacent regions smaller than this are merged. */
         PROPERTY(Editable, Category = "Region", ClampMin = 0)
         int32 RegionMergeSize = 20;
+
+        PROPERTY(Editable, Category = "Region")
+        ENavRegionPartition Partition = ENavRegionPartition::ProjectDefault;
 
         /** Max vertices per nav polygon (3..6 typical). */
         PROPERTY(Editable, Category = "Polygonization", ClampMin = 3, ClampMax = 6)

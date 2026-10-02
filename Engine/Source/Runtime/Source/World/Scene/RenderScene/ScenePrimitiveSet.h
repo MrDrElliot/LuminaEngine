@@ -518,6 +518,14 @@ namespace Lumina
         // Memo per type for one SyncFoliage call; parallel to FoliageTypeScratch.
         TVector<const FBindingMemo*>        FoliageMemoScratch;
 
+        // Instances one SyncFoliage call refreshes, and the dirty surfaces each produced when that ran in parallel.
+        TVector<uint32>                     FoliageRefreshScratch;
+        TVector<uint32>                     FoliageRefreshMasks;
+
+        void    RefreshFoliageInstances(const FFoliageEntityState& State, const SFoliageComponent& Foliage,
+                                        const TVector<FFoliageBakedInstance>& Baked, uint32 EntityID,
+                                        const FFoliageTypeResolve& UnresolvedType);
+
         TVector<FRenderDirtyTracker::FEntry> DrainScratch;
         TVector<CMaterialInterface*>        OverrideScratch;
 

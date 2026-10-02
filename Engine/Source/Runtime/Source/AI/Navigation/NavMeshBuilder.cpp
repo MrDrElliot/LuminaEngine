@@ -6,6 +6,9 @@
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
 #include "TaskSystem/TaskSystem.h"
+#include "tracy/TracyC.h"
+#include "Core/Console/ConsoleVariable.h"
+#include <array>
 
 #if defined(LUMINA_HAS_RECAST)
     #include <Recast.h>
@@ -26,6 +29,25 @@ namespace Lumina::NavMeshBuilder
         void  RecastFree(void* Ptr)                 { if (Ptr) { Memory::Free(Ptr); } }
         void* DetourAlloc(size_t Size, dtAllocHint) { LUMINA_MEMORY_SCOPE("Navigation"); return Memory::Malloc(Size); }
         void  DetourFree(void* Ptr)                 { if (Ptr) { Memory::Free(Ptr); } }
+
+        TConsoleVar<int32> CVarNavRegionPartition("Nav.RegionPartition", 0,
+            "Overrides every volume's region partition for A/B testing, 0 uses the settings, 1 Watershed, 2 Monotone, 3 Layers.");
+
+        ENavRegionPartition ResolvePartition(ENavRegionPartition Setting)
+        {
+            const int32 Override = CVarNavRegionPartition.GetValue();
+            if (Override > (int32)ENavRegionPartition::ProjectDefault && Override <= (int32)ENavRegionPartition::Layers)
+            {
+                return (ENavRegionPartition)Override;
+            }
+            if (Setting != ENavRegionPartition::ProjectDefault)
+            {
+                return Setting;
+            }
+            const CNavigationSettings* Project = GetDefault<CNavigationSettings>();
+            const ENavRegionPartition ProjectPartition = Project != nullptr ? Project->RegionPartition : ENavRegionPartition::Layers;
+            return ProjectPartition == ENavRegionPartition::ProjectDefault ? ENavRegionPartition::Layers : ProjectPartition;
+        }
         const bool GNavAllocatorsSet = []
         {
             rcAllocSetCustom(RecastAlloc, RecastFree);
@@ -128,6 +150,65 @@ namespace Lumina::NavMeshBuilder
 
 #if defined(LUMINA_HAS_RECAST)
         // Pure over its inputs, so it is safe to call concurrently.
+        #if defined(TRACY_ENABLE)
+        // Recast already brackets each stage with a timer, so forwarding those to Tracy breaks a tile bake down by stage.
+        class FProfiledRecastContext final : public rcContext
+        {
+        public:
+            FProfiledRecastContext()
+                : rcContext(TracyCIsConnected != 0)
+            {
+                enableLog(false);
+            }
+
+        protected:
+            void doStartTimer(const rcTimerLabel Label) override
+            {
+                Zones[Label] = ___tracy_emit_zone_begin(&SourceLocation(Label), 1);
+            }
+
+            void doStopTimer(const rcTimerLabel Label) override
+            {
+                ___tracy_emit_zone_end(Zones[Label]);
+            }
+
+        private:
+            static const ___tracy_source_location_data& SourceLocation(rcTimerLabel Label)
+            {
+                static const char* const Names[RC_MAX_TIMERS] = {
+                    "Recast Total", "Recast Temp", "Recast Rasterize", "Recast Compact Heightfield", "Recast Contours",
+                    "Recast Contours Trace", "Recast Contours Simplify", "Recast Filter Border", "Recast Filter Walkable",
+                    "Recast Median Area", "Recast Filter Low Obstacles", "Recast Poly Mesh", "Recast Merge Poly Mesh",
+                    "Recast Erode", "Recast Mark Box", "Recast Mark Cylinder", "Recast Mark Convex", "Recast Distance Field",
+                    "Recast Distance Field Dist", "Recast Distance Field Blur", "Recast Regions", "Recast Regions Watershed",
+                    "Recast Regions Expand", "Recast Regions Flood", "Recast Regions Filter", "Recast Layers",
+                    "Recast Detail Mesh", "Recast Merge Detail Mesh",
+                };
+                static const auto Locations = []
+                {
+                    std::array<___tracy_source_location_data, RC_MAX_TIMERS> Out{};
+                    for (int32 i = 0; i < RC_MAX_TIMERS; ++i)
+                    {
+                        Out[i] = ___tracy_source_location_data{ Names[i], "BakeTile", __FILE__, (uint32_t)__LINE__, 0 };
+                    }
+                    return Out;
+                }();
+                return Locations[Label];
+            }
+
+            TracyCZoneCtx Zones[RC_MAX_TIMERS] = {};
+        };
+        #else
+        class FProfiledRecastContext final : public rcContext
+        {
+        public:
+            FProfiledRecastContext()
+                : rcContext(false)
+            {
+            }
+        };
+        #endif
+
         bool BakeTile(const FNavBuildInput& In, const FTileGrid& Grid, int32 TX, int32 TY, const int32* TileTriIndices, int32 NumTileTris, FNavTileData& Out)
         {
             const FNavBuildSettings& S = In.Settings;
@@ -167,7 +248,7 @@ namespace Lumina::NavMeshBuilder
             Cfg.bmax[1] = In.BoundsMax.y;
             Cfg.bmax[2] = TileMaxZ + Grid.BorderSize;
 
-            rcContext Ctx(false);
+            FProfiledRecastContext Ctx;
 
             rcHeightfield* Solid = rcAllocHeightfield();
             if (!Solid) return false;
@@ -254,9 +335,22 @@ namespace Lumina::NavMeshBuilder
                                      Volume.MinY, Volume.MaxY, Volume.Area, *Compact);
             }
 
-            // Watershed regions; monotone is faster but yields thin polys.
-            if (!rcBuildDistanceField(&Ctx, *Compact) ||
-                !rcBuildRegions(&Ctx, *Compact, Cfg.borderSize, Cfg.minRegionArea, Cfg.mergeRegionArea))
+            bool bRegionsBuilt = false;
+            switch (ResolvePartition(S.Partition))
+            {
+            case ENavRegionPartition::Monotone:
+                bRegionsBuilt = rcBuildRegionsMonotone(&Ctx, *Compact, Cfg.borderSize, Cfg.minRegionArea, Cfg.mergeRegionArea);
+                break;
+            case ENavRegionPartition::Layers:
+                bRegionsBuilt = rcBuildLayerRegions(&Ctx, *Compact, Cfg.borderSize, Cfg.minRegionArea);
+                break;
+            case ENavRegionPartition::Watershed:
+            default:
+                bRegionsBuilt = rcBuildDistanceField(&Ctx, *Compact)
+                             && rcBuildRegions(&Ctx, *Compact, Cfg.borderSize, Cfg.minRegionArea, Cfg.mergeRegionArea);
+                break;
+            }
+            if (!bRegionsBuilt)
             {
                 rcFreeCompactHeightfield(Compact);
                 return false;
@@ -551,6 +645,9 @@ namespace Lumina::NavMeshBuilder
         }
     }
 
+    // One worker in this many may rebake tiles while a game runs.
+    constexpr uint32 kRebakeWorkerShare = 4;
+
     void BakeTiles(const FNavBuildInput& Input, const FNavBuildOutput& BaseLayout,
                    const TVector<FNavTileCoord>& Coords, TVector<FNavTileData>& Out)
     {
@@ -595,10 +692,17 @@ namespace Lumina::NavMeshBuilder
             }
         }
 
-        Task::ParallelFor((uint32)Coords.size(), [&](uint32 i)
+        // A tile is several milliseconds no one can preempt, so a runtime rebake takes a few lanes rather than every worker the frame needs.
+        const uint32 Lanes = Math::Clamp(Jobs::GetNumWorkers() / kRebakeWorkerShare, 1u, (uint32)Coords.size());
+        std::atomic<uint32> NextTile{0};
+        Task::ParallelFor(Lanes, [&](uint32)
         {
-            const TVector<int32>& Tris = Bins[i];
-            BakeTile(Input, Grid, Coords[i].X, Coords[i].Y, Tris.empty() ? nullptr : Tris.data(), (int32)Tris.size(), Out[i]);
+            for (uint32 i = NextTile.fetch_add(1, std::memory_order_relaxed); i < (uint32)Coords.size();
+                 i = NextTile.fetch_add(1, std::memory_order_relaxed))
+            {
+                const TVector<int32>& Tris = Bins[i];
+                BakeTile(Input, Grid, Coords[i].X, Coords[i].Y, Tris.empty() ? nullptr : Tris.data(), (int32)Tris.size(), Out[i]);
+            }
         }, 1, ETaskPriority::Background);
     }
 

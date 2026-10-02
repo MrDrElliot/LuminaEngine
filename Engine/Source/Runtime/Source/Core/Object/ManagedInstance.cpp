@@ -66,6 +66,28 @@ namespace Lumina
             return Slots[Slot];
         }
 
+        uint32 GetHandleGeneration() const
+        {
+            return HandleGeneration.load(std::memory_order_relaxed);
+        }
+
+        void* FindScriptTwin(const CObjectBase* Object) const
+        {
+            if (Object == nullptr || Object->ManagedInstanceSlot == INDEX_NONE)
+            {
+                return nullptr;
+            }
+
+            FScopeLock Lock(Mutex);
+
+            const int32 Slot = Object->ManagedInstanceSlot;
+            if (!IsValidSlot(Slot) || Slot >= (int32)ScriptTwin.size() || !ScriptTwin[Slot])
+            {
+                return nullptr;
+            }
+            return Slots[Slot];
+        }
+
         bool IsScriptTwin(const CObjectBase* Object) const
         {
             if (Object == nullptr || Object->ManagedInstanceSlot == INDEX_NONE)
@@ -116,6 +138,7 @@ namespace Lumina
                 if (Object->ManagedInstanceSlot != INDEX_NONE)
                 {
                     // Replacing an instance (the previous wrapper was collected, or was the wrong type).
+                    HandleGeneration.fetch_add(1u, std::memory_order_relaxed);
                     Replaced = Slots[Object->ManagedInstanceSlot];
                     Slots[Object->ManagedInstanceSlot] = Handle;
                     ScriptTwin[Object->ManagedInstanceSlot] = bScriptTwin;
@@ -156,6 +179,7 @@ namespace Lumina
                     return;
                 }
 
+                HandleGeneration.fetch_add(1u, std::memory_order_relaxed);
                 Released = Slots[Slot];
                 Slots[Slot] = nullptr;
                 ScriptTwin[Slot] = false;
@@ -176,6 +200,7 @@ namespace Lumina
                 FScopeLock Lock(Mutex);
 
                 Released.reserve(Slots.size());
+                HandleGeneration.fetch_add(1u, std::memory_order_relaxed);
 
                 // Cleared through the back-reference list, so a later Find sees INDEX_NONE, not a recycled slot.
                 for (int32 Slot = 0; Slot < (int32)Slots.size(); ++Slot)
@@ -274,6 +299,7 @@ namespace Lumina
         int32                             LiveCount = 0;
         ManagedInstances::FFreeHandleFn   FreeHandleFn = nullptr;
         TAtomic<uint64>                   OffMainThreadMutations{0};
+        TAtomic<uint32>                   HandleGeneration{1};
         mutable bool                      bReportedBadSlot = false;
     };
 
@@ -292,6 +318,16 @@ namespace Lumina
         bool IsScriptTwin(const CObjectBase* Object)
         {
             return FManagedInstanceTable::Get().IsScriptTwin(Object);
+        }
+
+        void* FindScriptTwin(const CObjectBase* Object)
+        {
+            return FManagedInstanceTable::Get().FindScriptTwin(Object);
+        }
+
+        uint32 GetHandleGeneration()
+        {
+            return FManagedInstanceTable::Get().GetHandleGeneration();
         }
 
         void Set(CObjectBase* Object, void* Handle, bool bScriptTwin)

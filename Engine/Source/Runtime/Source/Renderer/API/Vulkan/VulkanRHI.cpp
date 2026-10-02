@@ -3586,6 +3586,14 @@ namespace Lumina::RHI
     {
         LUMINA_PROFILE_SECTION("RHI::FreeTexture");
 
+        // Indexing ignores the generation, so a stale handle would otherwise destroy whatever texture recycled its entry.
+        if (GDevice != nullptr && !GDevice->Textures.IsLive(Texture))
+        {
+            LOG_ERROR("RHI: destroy of texture handle {:#x} skipped, since that texture is already gone and its entry "
+                      "may now belong to a live one. Something retired the same texture twice.", Texture.Handle);
+            return;
+        }
+
         if (GDevice != nullptr)
         {
 #if USING(WITH_EDITOR)
@@ -4900,6 +4908,15 @@ namespace Lumina::RHI
     // Caller holds HeapMutex. Slot must already be marked occupied.
     static void PointSampledSlotAt(FTextureHeap& HeapData, uint32 Slot, FTextureH Texture)
     {
+        // A destroyed texture's entry still holds its freed view, which the GPU would sample long after the memory is gone.
+        if (!GDevice->Textures.IsLive(Texture))
+        {
+            LOG_ERROR("RHI: bindless slot {} was asked to name texture handle {:#x}, which is already destroyed. "
+                      "Pointing it at the fallback instead.", Slot, Texture.Handle);
+            PointSampledSlotAtFallback(HeapData, Slot);
+            return;
+        }
+
         FTexture& TextureData = GDevice->Textures[Texture];
 
 #if USING(WITH_EDITOR)

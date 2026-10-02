@@ -1347,6 +1347,7 @@ namespace Lumina
                 Comp.Runtime.LiveLayout.Tiles.clear();
                 Comp.Runtime.ActiveBake.reset();
                 Comp.Runtime.DirtyTiles.clear();
+                Comp.Runtime.SettlingTiles.clear();
 
                 if (NonEmptyTiles == 0)
                 {
@@ -1459,6 +1460,7 @@ namespace Lumina
 
                 // Cache left empty, so a source loaded before a serialized bake reads as new and gets its tiles.
                 Comp.Runtime.DirtyTiles.clear();
+                Comp.Runtime.SettlingTiles.clear();
             }
 
             if (!Comp.Runtime.Mesh || !Comp.Runtime.Mesh->IsReady() || Comp.Runtime.State != ENavBakeState::Ready)
@@ -1565,6 +1567,13 @@ namespace Lumina
             {
                 Comp.Runtime.DynamicScanTimer = 0.0f;
 
+                // What the previous scan dirtied has now been seen twice, so it is ready to rebake.
+                for (uint64 TileKey : Comp.Runtime.SettlingTiles)
+                {
+                    Comp.Runtime.DirtyTiles.insert(TileKey);
+                }
+                Comp.Runtime.SettlingTiles.clear();
+
                 // Detect moved, reshaped, added and removed source geometry and dirty its tiles.
                 THashMap<uint64, FNavSourceEntity> CurrentAABBs;
                 CurrentAABBs.reserve(Comp.Runtime.EntityAABBs.size());
@@ -1577,9 +1586,22 @@ namespace Lumina
                     {
                         for (int32 tx = TX0; tx <= TX1; ++tx)
                         {
-                            Comp.Runtime.DirtyTiles.insert(PackTileKey(tx, ty));
+                            // A tile already waiting rebakes from the geometry as it stands when it is kicked, so it needs no second pass.
+                            const uint64 TileKey = PackTileKey(tx, ty);
+                            if (!Comp.Runtime.DirtyTiles.contains(TileKey))
+                            {
+                                Comp.Runtime.SettlingTiles.insert(TileKey);
+                            }
                         }
                     }
+                };
+
+                // Counted per cause and collider type, so a timing log can say what keeps dirtying tiles.
+                constexpr int32 kTypeSlots = 16;
+                int32 CauseCounts[4][kTypeSlots] = {};
+                auto CountCause = [&](int32 Cause, uint64 Key)
+                {
+                    ++CauseCounts[Cause][Math::Min<int32>((int32)(Key & 0xFF), kTypeSlots - 1)];
                 };
 
                 auto VisitSource = [&](uint64 Key, const FVector3& Mn, const FVector3& Mx, uint64 ContentId)
@@ -1594,6 +1616,7 @@ namespace Lumina
 
                     if (bNew || bMoved || bReshaped)
                     {
+                        CountCause(bNew ? 0 : bMoved ? 1 : 2, Key);
                         if (bMoved || bReshaped)
                         {
                             // Old footprint also dirtied so vacated tris get re-evaluated.
@@ -1607,7 +1630,7 @@ namespace Lumina
                 PlatformTime::FStopwatch DetectWatch;
                 CollectNavSources(Context, Comp.Center - Comp.GetWorldExtents(), Comp.Center + Comp.GetWorldExtents(), false, 0.0f, CurrentSources);
                 const double DetectGatherMs = DetectWatch.ElapsedMilliseconds();
-                const int32 DirtyBefore = (int32)Comp.Runtime.DirtyTiles.size();
+                const int32 DirtyBefore = (int32)(Comp.Runtime.DirtyTiles.size() + Comp.Runtime.SettlingTiles.size());
                 for (const FNavSourceEntry& Src : CurrentSources)
                 {
                     VisitSource(Src.Key, Src.AABBMin, Src.AABBMax, Src.ContentId);
@@ -1618,13 +1641,14 @@ namespace Lumina
                 {
                     if (CurrentAABBs.find(Id) == CurrentAABBs.end())
                     {
+                        CountCause(3, Id);
                         MarkDirtyForAABB(Snap.AABBMin, Snap.AABBMax);
                     }
                 }
 
                 if (CVarNavTimings.GetValue())
                 {
-                    const int32 DirtyAfter = (int32)Comp.Runtime.DirtyTiles.size();
+                    const int32 DirtyAfter = (int32)(Comp.Runtime.DirtyTiles.size() + Comp.Runtime.SettlingTiles.size());
 
                     // Logged on a steady state too, since "nothing dirtied" is the answer when a scan finds
                     // no sources or the volume sits somewhere the geometry is not.
@@ -1646,10 +1670,43 @@ namespace Lumina
                             Comp.Center.x, Comp.Center.y, Comp.Center.z, WExt.x, WExt.y, WExt.z,
                             Comp.Origin.x, Comp.Origin.y, Comp.Origin.z,
                             (int32)Comp.Runtime.EntityAABBs.size());
+
+                        if (DirtyAfter != DirtyBefore)
+                        {
+                            const char* CauseNames[4] = { "new", "moved", "reshaped", "removed" };
+                            const char* TypeNames[kTypeSlots] = { "Box", "Sphere", "Mesh", "CharacterCapsule", "Capsule", "Cylinder", "Terrain",
+                                                                  "TriangleSoup", "DynamicMesh", "AreaVolume", "OffMeshLink", "?", "?", "?", "?", "?" };
+                            FString Causes;
+                            for (int32 Cause = 0; Cause < 4; ++Cause)
+                            {
+                                int32 Total = 0;
+                                int32 TopType = 0;
+                                for (int32 Type = 0; Type < kTypeSlots; ++Type)
+                                {
+                                    Total += CauseCounts[Cause][Type];
+                                    TopType = CauseCounts[Cause][Type] > CauseCounts[Cause][TopType] ? Type : TopType;
+                                }
+                                if (Total > 0)
+                                {
+                                    Causes += Format(" {} {} (mostly {})", CauseNames[Cause], Total, TypeNames[TopType]);
+                                }
+                            }
+                            LOG_INFO("NavTiming detect causes:{}", Causes.c_str());
+                        }
                     }
                 }
 
                 Comp.Runtime.EntityAABBs = std::move(CurrentAABBs);
+            }
+
+            // With scanning off nothing would promote them, so the last scan's tiles go straight through.
+            if (!Comp.bDynamicRebuild && !Comp.Runtime.SettlingTiles.empty())
+            {
+                for (uint64 TileKey : Comp.Runtime.SettlingTiles)
+                {
+                    Comp.Runtime.DirtyTiles.insert(TileKey);
+                }
+                Comp.Runtime.SettlingTiles.clear();
             }
 
             // Cap concurrent rebake jobs; remaining dirty tiles wait for next tick.
@@ -1666,16 +1723,22 @@ namespace Lumina
             TVector<uint64> Candidates(Comp.Runtime.DirtyTiles.begin(), Comp.Runtime.DirtyTiles.end());
             int32 SeedX, SeedY;
             NavTile::UnpackKey(Candidates[0], SeedX, SeedY);
-            const size_t Take = Math::Min((size_t)Capacity, Candidates.size());
+            auto SeedDistance = [SeedX, SeedY](uint64 Key)
+            {
+                int32 X, Y;
+                NavTile::UnpackKey(Key, X, Y);
+                return Math::Max(Math::Abs(X - SeedX), Math::Abs(Y - SeedY));
+            };
+            size_t Take = Math::Min((size_t)Capacity, Candidates.size());
             std::partial_sort(Candidates.begin(), Candidates.begin() + Take, Candidates.end(),
-                [SeedX, SeedY](uint64 A, uint64 B)
-                {
-                    int32 AX, AY, BX, BY;
-                    NavTile::UnpackKey(A, AX, AY);
-                    NavTile::UnpackKey(B, BX, BY);
-                    return Math::Max(Math::Abs(AX - SeedX), Math::Abs(AY - SeedY))
-                         < Math::Max(Math::Abs(BX - SeedX), Math::Abs(BY - SeedY));
-                });
+                [&SeedDistance](uint64 A, uint64 B) { return SeedDistance(A) < SeedDistance(B); });
+
+            // Tiles past this radius wait for a batch seeded near them, since one far tile widens the gather to everything in between.
+            constexpr int32 kMaxBatchRadiusTiles = 4;
+            while (Take > 1 && SeedDistance(Candidates[Take - 1]) > kMaxBatchRadiusTiles)
+            {
+                --Take;
+            }
 
             TVector<TSharedPtr<FNavTileRebake>> BatchJobs;
             BatchJobs.reserve(Take);
@@ -1880,6 +1943,7 @@ namespace Lumina
             Comp.Runtime.PendingInit.reset();
             Comp.Runtime.PendingRebakes.clear();
             Comp.Runtime.DirtyTiles.clear();
+            Comp.Runtime.SettlingTiles.clear();
             Comp.Runtime.EntityAABBs.clear();
             Comp.Runtime.State = ENavBakeState::Idle;
         }
@@ -1916,6 +1980,7 @@ namespace Lumina
         // EntityAABB cache populated at bake-completion drain (avoids tight-vs-conservative AABB mismatch storm).
         Comp.Runtime.EntityAABBs.clear();
         Comp.Runtime.DirtyTiles.clear();
+        Comp.Runtime.SettlingTiles.clear();
         Comp.Runtime.PendingRebakes.clear();
         Comp.Runtime.ActiveBake = NavMeshBuilder::Bake(std::move(Input), [Prims = std::move(Prims)](FNavBuildInput& In)
         {

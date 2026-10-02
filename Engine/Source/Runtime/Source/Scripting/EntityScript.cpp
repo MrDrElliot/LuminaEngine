@@ -7,6 +7,7 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/ManagedInstance.h"
 #include "Core/Object/ObjectIterator.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
@@ -60,14 +61,47 @@ namespace Lumina
         Pending = Other.Pending;
     }
 
+    // A component dies with its entity, which is how a script destroyed by another script's update is noticed.
+    SEntityScriptComponent::~SEntityScriptComponent()
+    {
+        if (!Scripts.empty())
+        {
+            EntityScripts::NoteStructureChange();
+        }
+    }
+
     SEntityScriptComponent& SEntityScriptComponent::operator=(const SEntityScriptComponent& Other)
     {
         if (this != &Other)
         {
             CloneScripts(Other.Scripts, Scripts);
             Pending = Other.Pending;
+            EntityScripts::NoteStructureChange();
         }
         return *this;
+    }
+
+    SEntityScriptComponent& SEntityScriptComponent::operator=(SEntityScriptComponent&& Other)
+    {
+        if (this != &Other)
+        {
+            Scripts = Move(Other.Scripts);
+            Pending = Move(Other.Pending);
+            EntityScripts::NoteStructureChange();
+        }
+        return *this;
+    }
+
+    // A script destroyed outright, not detached, must still stop a batch that has it queued.
+    CEntityScript::~CEntityScript()
+    {
+        EntityScripts::NoteStructureChange();
+    }
+
+    void CEntityScript::MarkFaulted()
+    {
+        bFaulted = true;
+        EntityScripts::NoteStructureChange();
     }
 
     bool SEntityScriptComponent::Serialize(FArchive& Ar)
@@ -205,11 +239,36 @@ namespace Lumina
 
         using FScriptSnapshot = TVector<TObjectPtr<CEntityScript>>;
 
+        // Counted by the PrePhysics pass, which visits every script, so a world with none in the later phase skips that walk.
+        struct FScriptPhaseCensus
+        {
+            uint32 PostPhysicsScripts = 0;
+        };
+
+        // Read by the managed batch between scripts, so it is a plain 32-bit counter any thread may bump.
+        std::atomic<uint32> GStructureEpoch{0};
+        static_assert(sizeof(std::atomic<uint32>) == sizeof(uint32) && std::atomic<uint32>::is_always_lock_free);
+
+        // Runs OnUpdate for a run of C# scripts in one crossing and returns how many ran before the epoch moved.
+        DotNet::TManagedExport<int32 (*)(void* const*, int32, float, const uint32*)> GDispatchUpdates("DispatchEntityScriptUpdates");
+
+        // Whether a class's OnUpdate is a C# override, which is what the batch can run without the native shim.
+        bool HasManagedUpdate(const CClass* Class)
+        {
+            static const FName OnUpdateName("OnUpdate");
+            return Class != nullptr && FindScriptOverride(Class, OnUpdateName) != nullptr;
+        }
+
         // Both tick passes rebuild these every call, so they are parked per thread rather than reallocated.
         struct FTickScratch
         {
             TVector<ECS::FEntity> Entities;
             FScriptSnapshot       Scripts;
+
+            // Unpinned, since freeing a queued script means detaching or destroying it, and either one moves the epoch.
+            TVector<void*>          BatchHandles;
+            TVector<ECS::FEntity>   BatchEntities;
+            TVector<CEntityScript*> BatchScripts;
         };
 
         // A nested tick falls back to its own storage rather than walking the outer pass's buffers.
@@ -337,6 +396,7 @@ namespace Lumina
 
             SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
             Component.Scripts.push_back(Script);
+            NoteStructureChange();
 
             // By the first tick every sibling script added the same frame exists, so OnReady can reference them.
             {
@@ -346,8 +406,22 @@ namespace Lumina
             return Script;
         }
 
+        void NoteStructureChange()
+        {
+            GStructureEpoch.fetch_add(1u, std::memory_order_relaxed);
+        }
+
         void Tick(ECS::FRegistry& Registry, float DeltaTime, EScriptUpdatePhase Phase)
         {
+            if (Phase == EScriptUpdatePhase::PostPhysics)
+            {
+                const FScriptPhaseCensus* Census = Registry.Ctx().Find<FScriptPhaseCensus>();
+                if (Census != nullptr && Census->PostPhysicsScripts == 0)
+                {
+                    return;
+                }
+            }
+
             // Scripts build meshes one at a time, so their builds are held and run together when the tick ends.
             FMeshBuildBatchScope MeshBatch(Registry);
 
@@ -358,24 +432,36 @@ namespace Lumina
             CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
             CWorld* World = WorldPtr != nullptr ? *WorldPtr : nullptr;
 
-            FTickScratchGuard    ScratchGuard;
-            FTickScratch&        Scratch  = ScratchGuard.Get();
-            TVector<ECS::FEntity>& Entities = Scratch.Entities;
-            FScriptSnapshot&       Scripts  = Scratch.Scripts;
+            FTickScratchGuard      ScratchGuard;
+            FTickScratch&          Scratch       = ScratchGuard.Get();
+            TVector<ECS::FEntity>& Entities      = Scratch.Entities;
+            FScriptSnapshot&       Scripts       = Scratch.Scripts;
+            TVector<void*>&        BatchHandles  = Scratch.BatchHandles;
+            TVector<ECS::FEntity>& BatchEntities = Scratch.BatchEntities;
+            TVector<CEntityScript*>& BatchScripts = Scratch.BatchScripts;
 
             SnapshotScriptedEntities(Registry, Entities);
 
-            for (ECS::FEntity Entity : Entities)
+            uint32 PostPhysicsScripts = 0;
+
+            // The unbatched path, which re-checks attachment after every callback exactly as it always has.
+            auto RunEntity = [&](ECS::FEntity Entity)
             {
                 SnapshotScripts(Registry, Entity, Scripts);
+
+                // Until a callback runs, the snapshot is exactly what the component holds, so there is nothing to re-check.
+                bool bUserCodeRan = false;
 
                 for (TObjectPtr<CEntityScript>& Held : Scripts)
                 {
                     CEntityScript* Script = Held.Get();
-                    if (!IsStillAttached(Registry, Entity, Script))
+                    if (bUserCodeRan ? !IsStillAttached(Registry, Entity, Script) : Script == nullptr)
                     {
                         continue;
                     }
+
+                    const EScriptUpdatePhase ScriptUpdatePhase = ScriptPhase(Script);
+                    PostPhysicsScripts += (ScriptUpdatePhase == EScriptUpdatePhase::PostPhysics) ? 1u : 0u;
 
                     // The one place entity and registry are both in hand, and it runs before OnReady.
                     if (bDrainLifecycle && Script->GetOwningEntity() == ECS::NullEntity)
@@ -385,6 +471,7 @@ namespace Lumina
                             LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                             Script->OnAttach();
                         }
+                        bUserCodeRan = true;
 
                         // OnAttach is user code; it may have detached this very script.
                         if (!IsStillAttached(Registry, Entity, Script))
@@ -406,6 +493,7 @@ namespace Lumina
                             LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                             Script->OnReady();
                         }
+                        bUserCodeRan = true;
 
                         if (!IsStillAttached(Registry, Entity, Script))
                         {
@@ -413,17 +501,197 @@ namespace Lumina
                         }
                     }
 
-                    if (Script->ShouldTick() && ScriptPhase(Script) == Phase)
+                    if (Script->ShouldTick() && ScriptUpdatePhase == Phase)
                     {
                         // Named by class, so a capture splits the script system's time by script and not just in total.
                         LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                         Script->OnUpdate(DeltaTime);
+                        bUserCodeRan = true;
                     }
                 }
+            };
+
+            // Queues the entity's updates when every script on it is settled and either C# or idle this phase.
+            const CClass*      CachedClass    = nullptr;
+            bool               bCachedManaged = false;
+            EScriptUpdatePhase CachedPhase    = EScriptUpdatePhase::PrePhysics;
+            auto TryQueueEntity = [&](ECS::FEntity Entity) -> bool
+            {
+                // Read in place rather than snapshotted, since nothing here runs script code that could change the list.
+                if (Entity == ECS::NullEntity || !Registry.IsValid(Entity))
+                {
+                    return false;
+                }
+                const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
+                if (Component == nullptr)
+                {
+                    return false;
+                }
+
+                for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+                {
+                    const CEntityScript* Script = Held.Get();
+                    if (Script == nullptr)
+                    {
+                        return false;
+                    }
+
+                    // Attach and OnReady are owed whatever the script's phase, and only the checked path runs them.
+                    if (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!Script->IsFaulted() && !Script->IsReady())))
+                    {
+                        return false;
+                    }
+
+                    // Phase and override are class data, so a run of one class resolves them once.
+                    const CClass* Class = Script->GetClass();
+                    if (Class != CachedClass)
+                    {
+                        CachedClass    = Class;
+                        bCachedManaged = HasManagedUpdate(Class);
+                        CachedPhase    = ScriptPhase(Script);
+                    }
+                    if (!Script->ShouldTick() || CachedPhase != Phase)
+                    {
+                        continue;
+                    }
+                    if (!bCachedManaged)
+                    {
+                        return false;
+                    }
+                }
+
+                const size_t Start = BatchHandles.size();
+                const uint32 EpochBefore = GStructureEpoch.load(std::memory_order_relaxed);
+                uint32 PostPhysicsHere = 0;
+                for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+                {
+                    CEntityScript* Script = Held.Get();
+                    const EScriptUpdatePhase ScriptUpdatePhase = Script->GetClass() == CachedClass ? CachedPhase : ScriptPhase(Script);
+                    PostPhysicsHere += (ScriptUpdatePhase == EScriptUpdatePhase::PostPhysics) ? 1u : 0u;
+                    if (!Script->ShouldTick() || ScriptUpdatePhase != Phase)
+                    {
+                        continue;
+                    }
+
+                    // Creating the managed instance runs its constructor, which could in principle touch this very list.
+                    const uint32 Generation = ManagedInstances::GetHandleGeneration();
+                    void* Handle = Script->CachedHandleGeneration == Generation ? Script->CachedManagedHandle : nullptr;
+                    if (Handle == nullptr)
+                    {
+                        Handle = Scriptable::GetOrCreateInstance(Script);
+                        Script->CachedManagedHandle    = Handle;
+                        Script->CachedHandleGeneration = Generation;
+                    }
+                    if (Handle == nullptr || GStructureEpoch.load(std::memory_order_relaxed) != EpochBefore)
+                    {
+                        BatchHandles.resize(Start);
+                        BatchEntities.resize(Start);
+                        BatchScripts.resize(Start);
+                        return false;
+                    }
+                    BatchHandles.push_back(Handle);
+                    BatchEntities.push_back(Entity);
+                    BatchScripts.push_back(Script);
+                }
+                PostPhysicsScripts += PostPhysicsHere;
+                return true;
+            };
+
+            // The epoch the queued entries were validated under, so a change before or during dispatch is caught.
+            uint32 QueuedEpoch = 0;
+
+            // Dispatches the first FlushCount entries; a structural change sends everything still queued down the checked path.
+            auto FlushBatch = [&](size_t FlushCount)
+            {
+                const size_t Total = BatchHandles.size();
+                if (FlushCount == 0 || Total == 0)
+                {
+                    return;
+                }
+
+                size_t Ran = 0;
+                auto* Dispatch = GDispatchUpdates.Get();
+                if (Dispatch != nullptr && GStructureEpoch.load(std::memory_order_relaxed) == QueuedEpoch)
+                {
+                    const CClass* Class = BatchScripts.front()->GetClass();
+                    LUMINA_PROFILE_SECTION_NAMED(Class->GetName().c_str());
+                    Ran = (size_t)Dispatch(BatchHandles.data(), (int32)FlushCount, DeltaTime, reinterpret_cast<const uint32*>(&GStructureEpoch));
+                }
+
+                if (Ran == FlushCount && GStructureEpoch.load(std::memory_order_relaxed) == QueuedEpoch)
+                {
+                    BatchHandles.erase(BatchHandles.begin(), BatchHandles.begin() + (ptrdiff_t)FlushCount);
+                    BatchEntities.erase(BatchEntities.begin(), BatchEntities.begin() + (ptrdiff_t)FlushCount);
+                    BatchScripts.erase(BatchScripts.begin(), BatchScripts.begin() + (ptrdiff_t)FlushCount);
+                    return;
+                }
+
+                // Something attached, detached, destroyed or faulted, so the rest goes the checked way.
+                size_t Index = Ran;
+                if (Ran > 0)
+                {
+                    const ECS::FEntity Interrupted = BatchEntities[Ran - 1];
+                    for (; Index < Total && BatchEntities[Index] == Interrupted; ++Index)
+                    {
+                        CEntityScript* Script = BatchScripts[Index];
+                        if (IsStillAttached(Registry, Interrupted, Script) && Script->ShouldTick() && ScriptPhase(Script) == Phase)
+                        {
+                            LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
+                            Script->OnUpdate(DeltaTime);
+                        }
+                    }
+                }
+                for (ECS::FEntity Previous = ECS::NullEntity; Index < Total; ++Index)
+                {
+                    if (BatchEntities[Index] != Previous)
+                    {
+                        Previous = BatchEntities[Index];
+                        RunEntity(Previous);
+                    }
+                }
+
+                BatchHandles.clear();
+                BatchEntities.clear();
+                BatchScripts.clear();
+            };
+
+            const bool bProfilerAttached = TracyIsConnected;
+            for (ECS::FEntity Entity : Entities)
+            {
+                const size_t QueuedBefore = BatchHandles.size();
+                if (QueuedBefore == 0)
+                {
+                    QueuedEpoch = GStructureEpoch.load(std::memory_order_relaxed);
+                }
+
+                if (TryQueueEntity(Entity))
+                {
+                    // A connected profiler still splits the time by class, so a run never mixes two.
+                    if (bProfilerAttached && QueuedBefore > 0 && BatchHandles.size() > QueuedBefore
+                        && BatchScripts[QueuedBefore]->GetClass() != BatchScripts.front()->GetClass())
+                    {
+                        FlushBatch(QueuedBefore);
+                    }
+                    continue;
+                }
+
+                FlushBatch(BatchHandles.size());
+                RunEntity(Entity);
             }
+            FlushBatch(BatchHandles.size());
 
             // Parked storage would otherwise hold the last entity's scripts alive until the next tick.
             Scripts.clear();
+
+            if (bDrainLifecycle)
+            {
+                FScriptPhaseCensus* Census = Registry.Ctx().Find<FScriptPhaseCensus>();
+                if (Census == nullptr)
+                {
+                    Census = &Registry.Ctx().Emplace<FScriptPhaseCensus>();
+                }
+                Census->PostPhysicsScripts = PostPhysicsScripts;
+            }
         }
 
         void TickFixed(ECS::FRegistry& Registry, float FixedDeltaTime)
@@ -506,6 +774,7 @@ namespace Lumina
             }
             
             TObjectPtr<CEntityScript> Pinned(Script);
+            NoteStructureChange();
 
             if (Script->IsAttached())
             {
@@ -579,6 +848,7 @@ namespace Lumina
             {
                 return;
             }
+            NoteStructureChange();
 
             for (TObjectPtr<CEntityScript>& Held : Scripts)
             {
@@ -643,6 +913,7 @@ namespace Lumina
                     }
 
                     Component->Scripts.push_back(Script);
+                    NoteStructureChange();
                     ++Restored;
 
                     LOG_INFO("SEntityScriptComponent: restored held script '{}' now that its class is loaded.",

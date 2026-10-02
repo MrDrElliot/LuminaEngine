@@ -32,6 +32,8 @@ namespace Lumina
 
     public:
 
+        ~CEntityScript() override;
+
         FUNCTION()
         virtual void OnAttach() {}
 
@@ -93,9 +95,13 @@ namespace Lumina
         // Set when OnAttach or OnReady threw, so a half-built script keeps its OnDetach but never ticks.
         FUNCTION()
         bool IsFaulted() const { return bFaulted; }
-        void MarkFaulted() { bFaulted = true; }
+        void MarkFaulted();
 
         bool ShouldTick() const { return bReady && !bFaulted; }
+
+        // The batched update's copy of this script's managed handle, trusted only while the generation still matches.
+        void*  CachedManagedHandle     = nullptr;
+        uint32 CachedHandleGeneration  = 0;
 
 
     private:
@@ -126,9 +132,9 @@ namespace Lumina
         GENERATED_BODY()
 
         SEntityScriptComponent() = default;
-        ~SEntityScriptComponent() = default;
+        ~SEntityScriptComponent();
         SEntityScriptComponent(SEntityScriptComponent&&) = default;
-        SEntityScriptComponent& operator=(SEntityScriptComponent&&) = default;
+        SEntityScriptComponent& operator=(SEntityScriptComponent&& Other);
 
         // A script is a per-entity subobject, so a copy (prefab stamp, component duplicate) clones it.
         SEntityScriptComponent(const SEntityScriptComponent& Other);
@@ -159,6 +165,9 @@ namespace Lumina
         /** Drains pending OnReady (PrePhysics only), then runs OnUpdate on the scripts declaring Phase. */
         RUNTIME_API void Tick(ECS::FRegistry& Registry, float DeltaTime,
             EScriptUpdatePhase Phase = EScriptUpdatePhase::PrePhysics);
+
+        // Bumped by anything that changes which scripts are attached or able to tick, so a batched update knows when to stop.
+        RUNTIME_API void NoteStructureChange();
 
         /** Runs OnFixedUpdate on every ready script. Driven at the physics rate. */
         RUNTIME_API void TickFixed(ECS::FRegistry& Registry, float FixedDeltaTime);

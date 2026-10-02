@@ -39,12 +39,9 @@ namespace Lumina
 
             // A hot reload drains the table, so a missing twin is the rebind signal with no per-instance stamp.
             // Only the script's own instance short-circuits; a weak wrapper here would silence the script.
-            if (ManagedInstances::IsScriptTwin(Object))
+            if (void* Existing = ManagedInstances::FindScriptTwin(Object))
             {
-                if (void* Existing = ManagedInstances::Find(Object))
-                {
-                    return Existing;
-                }
+                return Existing;
             }
 
             // The class default object is never dispatched to, so this is belt and braces rather than hot.

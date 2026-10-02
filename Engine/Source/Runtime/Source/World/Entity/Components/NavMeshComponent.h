@@ -58,6 +58,9 @@ namespace Lumina
         /** Tile coords waiting to be rebuilt. */
         THashSet<uint64>                        DirtyTiles;
 
+        // Dirtied by the latest scan and held for one more, so a source that leaves and returns across two scans rebakes its tiles once.
+        THashSet<uint64>                        SettlingTiles;
+
         /** Shared with async coordinator so Teardown can't dangle in-flight workers. */
         TVector<TSharedPtr<FNavTileRebake>>     PendingRebakes;
 

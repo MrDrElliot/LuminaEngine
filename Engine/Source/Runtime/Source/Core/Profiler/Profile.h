@@ -24,8 +24,8 @@ namespace Lumina::Profiler
     // Where a zone named by x records itself, built once per thread and name, so x must outlive the process.
     RUNTIME_API const tracy::SourceLocationData* NamedLocation(const char* Name);
 }
-// A runtime-named zone as cheap as a static one, for per-job and per-system names that are pooled or literal.
-#define LUMINA_PROFILE_SECTION_NAMED(x)             tracy::ScopedZone LuminaNamedZone(::Lumina::Profiler::NamedLocation(x), -1, true)
+// A runtime-named zone as cheap as a static one, and with no profiler attached the name is never looked up at all.
+#define LUMINA_PROFILE_SECTION_NAMED(x)             const bool bLuminaNamedZoneOn = TracyIsConnected;                                                     tracy::ScopedZone LuminaNamedZone(bLuminaNamedZoneOn ? ::Lumina::Profiler::NamedLocation(x) : nullptr, -1, bLuminaNamedZoneOn)
 #else
 #define LUMINA_PROFILE_SECTION_NAMED(x)
 #endif

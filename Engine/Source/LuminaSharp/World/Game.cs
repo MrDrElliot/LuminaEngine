@@ -74,6 +74,16 @@ public static partial class Game
         return Prior;
     }
 
+    // EnterScriptEvent without the save, for a batch that captured once and only changes the target per script.
+    internal static void RetargetScriptEvent(object Target)
+    {
+        ActiveWorld = null;
+        ActiveHasEntity = false;
+        ActiveScriptField = null;
+        EventTarget = Target;
+        EventWorldCache = null;
+    }
+
     internal static Scope Push(Lumina.CWorld World, Entity Entity)
     {
         Scope Prior = Capture();

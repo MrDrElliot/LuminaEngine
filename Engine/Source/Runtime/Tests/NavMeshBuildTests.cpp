@@ -148,6 +148,24 @@ TEST(NavMeshBuild, GroundPlaneBakesAndPathsAcross)
     EXPECT_GE(Path.Corners.size(), 2u);
 }
 
+// Every partition has to give a walkable, connected plane, since the cheaper ones are offered as drop-in replacements.
+TEST(NavMeshBuild, EveryRegionPartitionBakesAWalkablePlane)
+{
+    for (ENavRegionPartition Partition : { ENavRegionPartition::ProjectDefault, ENavRegionPartition::Watershed, ENavRegionPartition::Monotone, ENavRegionPartition::Layers })
+    {
+        FNavBuildInput In = MakeGroundPlane();
+        In.Settings.Partition = Partition;
+        TUniquePtr<FNavMesh> Mesh = BakeAndHydrate(std::move(In));
+        ASSERT_NE(Mesh, nullptr) << "partition " << (int32)Partition;
+        ASSERT_TRUE(Mesh->IsReady()) << "partition " << (int32)Partition;
+
+        FNavPath Path;
+        FNavQueryFilter Filter;
+        ASSERT_TRUE(Mesh->FindPath(FVector3(-10.0f, 0.0f, -10.0f), FVector3(10.0f, 0.0f, 10.0f), Filter, Path)) << "partition " << (int32)Partition;
+        EXPECT_FALSE(Path.bPartial) << "partition " << (int32)Partition;
+    }
+}
+
 TEST(NavMeshBuild, NullAreaVolumeSplitsThePlane)
 {
     FNavBuildInput In = MakeGroundPlane();

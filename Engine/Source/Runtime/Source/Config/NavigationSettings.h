@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AI/Navigation/NavTypes.h"
 #include "Config/DeveloperSettings.h"
 #include "NavigationSettings.generated.h"
 
@@ -42,6 +43,10 @@ namespace Lumina
         /** Concurrent single-tile rebakes kicked per component per tick when geometry moves. */
         PROPERTY(Editable, Category = "Bake", ClampMin = 1)
         int32 MaxConcurrentTileRebakes = 8;
+
+        // Region partition for every volume left on Project Default, where layers bake a tile about a quarter faster than watershed.
+        PROPERTY(Editable, Category = "Bake")
+        ENavRegionPartition RegionPartition = ENavRegionPartition::Layers;
 
         /** Longest polygon corridor a single FindPath may walk. Raising it costs stack in the query. */
         PROPERTY(Editable, Category = "Query", ClampMin = 16, ClampMax = 1024)
