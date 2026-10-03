@@ -52,14 +52,25 @@ namespace Lumina
             // The GUID keeps the key unique, and the readable prefix is what pipeline and crash logs print.
             FString ShaderKey = GetPackage() != nullptr ? GetPackage()->GetName().ToString() + "." : FString();
             ShaderKey += EmitterName + "_" + GetGUID().ToString() + "_CS";
+
+            // Commit adds a reference every call, so the one held for the previous compile is given back, even when it is the same entry.
+            const FShaderH Previous = ComputeShader;
             ComputeShader = FShaderLibrary::Commit(FName(ShaderKey), ERHIShaderType::Compute,
                 TSpan<const uint32>(ComputeShaderBinaries.data(), ComputeShaderBinaries.size()));
+            if (Previous != nullptr)
+            {
+                FShaderLibrary::Release(Previous);
+            }
         }
     }
 
     void CParticleEmitter::OnDestroy()
     {
         CObject::OnDestroy();
+        if (ComputeShader != nullptr)
+        {
+            FShaderLibrary::Release(ComputeShader);
+        }
         ComputeShader = {};
     }
 

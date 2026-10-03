@@ -245,6 +245,8 @@ namespace Lumina::ParticleOps
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
         FShaderCompileOptions Options;
         Options.DebugName = FString(System->GetName().c_str()) + "_" + Emitter->EmitterName + "_Sim";
+        // Without a template path the raw cache keys to zero and skips itself, so every save paid a full Slang compile.
+        Options.TemplateVirtualPath = "/Engine/Resources/Shaders/Particles/ParticleSimulateTemplate.slang";
         ShaderCompiler->CompilerShaderRaw(Source, Options, [Emitter, &bCompiled](const FShaderHeader& Header) mutable
         {
             Emitter->ComputeShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());

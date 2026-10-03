@@ -151,6 +151,8 @@ namespace Lumina
             return;
         }
 
+        // These may be the only strong refs, and dropping them first would destroy every module and reload it from disk.
+        TVector<TObjectPtr<CParticleEmitterStack>> Previous = Move(EmitterStacks);
         EmitterStacks.clear();
         EmitterStacks.reserve(PS->Emitters.size());
 
