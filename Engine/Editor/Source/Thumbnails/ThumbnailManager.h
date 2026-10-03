@@ -87,6 +87,10 @@ namespace Lumina
             FGuid    GUID;
             uint64   ContentHash = 0;
             uint32   DeferChecks = 0;
+            bool     bLoadAttempted = false;
+
+            // Keeps the asset alive from its load until its capture is read back.
+            TObjectPtr<CObject> Pin;
         };
 
         // Worker task: sidecar cache -> legacy embedded block -> queue a render. Resolves where a thumbnail comes from.
@@ -152,6 +156,8 @@ namespace Lumina
         // render target), and it completes on a LATER frame -- that is what makes the browser path async.
         FRenderRequest PendingRequest;
         bool           bHasPendingRequest = false;
+
+        void ClearPendingRequest();
 
         std::atomic<bool> bRegistryDirty{false};
     };

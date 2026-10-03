@@ -876,10 +876,12 @@ namespace Lumina
 
     void FAssetRegistry::RebuildReverseMap()
     {
+        LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Asset Registry");
         // Caller holds ReverseMapMutex write lock.
         ReverseDepMap.clear();
         FReadScopeLock AssetsLock(AssetsMutex);
+        ReverseDepMap.reserve(Assets.size());
         for (const TUniquePtr<FAssetData>& Data : Assets)
         {
             for (const FAssetDependency& Dep : Data->Dependencies)

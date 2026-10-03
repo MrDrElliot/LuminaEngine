@@ -132,6 +132,9 @@ namespace Lumina
 
         void VerifyDirtyPackages();
 
+        // Lists the packages with a checkbox each, and saves, discards or cancels the pending exit.
+        void OpenUnsavedChangesDialog(TVector<CPackage*> Packages);
+
         // Ctrl+P quick-open: a filterable list of every registered asset, Enter to open.
         void OpenAssetSearchModal();
 

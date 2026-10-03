@@ -126,6 +126,25 @@ namespace Lumina::ImGuiX
 
     RUNTIME_API bool ButtonEx(char const* pIcon, char const* pLabel, ImVec2 const& size = ImVec2( 0, 0 ), const ImColor& backgroundColor = ImGui::ColorConvertFloat4ToU32( ImGui::GetStyle().Colors[ImGuiCol_Button] ), const ImColor& iconColor = ImGui::ColorConvertFloat4ToU32( ImGui::GetStyle().Colors[ImGuiCol_Text] ), const ImColor& foregroundColor = ImGui::ColorConvertFloat4ToU32( ImGui::GetStyle().Colors[ImGuiCol_Text] ), bool shouldCenterContents = false );
 
+    enum class EButtonTone : uint8
+    {
+        Neutral,
+        Primary,
+        Danger,
+    };
+
+    // Tinted from the editor palette but kept close to a plain button, so a dialog's main action reads without shouting.
+    RUNTIME_API bool ToneButton(const char* Label, EButtonTone Tone, const ImVec2& Size = ImVec2(0, 0));
+
+    // The width ImGui::Button gives this label, never less than MinWidth.
+    RUNTIME_API float ButtonWidth(const char* Label, float MinWidth = 0.0f);
+
+    // Moves the cursor so content of this width ends flush with the right edge of the content region.
+    RUNTIME_API void AlignRight(float ContentWidth);
+
+    // Shows the mixed state while only some are checked, and returns true with the value to apply to all when clicked.
+    RUNTIME_API bool SelectAllCheckbox(const char* Label, uint32 NumChecked, uint32 NumTotal, bool& bOutCheckAll);
+
     RUNTIME_API inline bool FlatButton( char const* pLabel, ImVec2 const& size = ImVec2( 0, 0 ), const ImColor& foregroundColor = ImGui::ColorConvertFloat4ToU32( ImGui::GetStyle().Colors[ImGuiCol_Text] ) )
     {
         return ButtonEx( nullptr, pLabel, size, ImColor(0), ImColor(0), ImGui::ColorConvertFloat4ToU32(ImGui::GetStyle().Colors[ImGuiCol_Text]));

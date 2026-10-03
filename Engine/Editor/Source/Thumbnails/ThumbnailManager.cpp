@@ -463,7 +463,7 @@ namespace Lumina
         if (PersistentScene->GetWorld() == nullptr)
         {
             PersistentScene    = nullptr;   // failed init, so do not cache a dead scene for every later capture
-            bHasPendingRequest = false;
+            ClearPendingRequest();
             return false;
         }
         return true;
@@ -500,6 +500,12 @@ namespace Lumina
             SetRecordState(PendingRequest.Package, FPackageThumbnail::EState::Failed);
         }
 
+        ClearPendingRequest();
+    }
+
+    void CThumbnailManager::ClearPendingRequest()
+    {
+        PendingRequest     = FRenderRequest{};
         bHasPendingRequest = false;
     }
 
@@ -516,7 +522,7 @@ namespace Lumina
         {
             if (PersistentScene == nullptr || !PersistentScene->HasPendingCapture())
             {
-                bHasPendingRequest = false;   // scene went away underneath it
+                ClearPendingRequest();   // scene went away underneath it
             }
             else if (!PersistentScene->IsCaptureReady())
             {
@@ -534,11 +540,10 @@ namespace Lumina
                 {
                     SetRecordState(PendingRequest.Package, FPackageThumbnail::EState::Failed);
                 }
-                bHasPendingRequest = false;
+                ClearPendingRequest();
             }
         }
 
-        // Loading a CObject off the editor's loader path races it and tears its resources.
         TVector<FRenderRequest> Work;
         {
             FScopeLock Lock(RenderQueueMutex);
@@ -560,7 +565,9 @@ namespace Lumina
         SceneIdleFrames = 0;
 
         constexpr uint32 kMaxDeferChecks = 900;   // ~15s at 60fps
+        constexpr uint32 kLoadsPerFrame  = 1;
         uint32 Rendered = 0;
+        uint32 Loaded   = 0;
         TVector<FRenderRequest> Keep;
         Keep.reserve(Work.size());
 
@@ -589,6 +596,25 @@ namespace Lumina
             }
 
             CObject* Asset = FindObject<CObject>(Request.GUID);
+
+            // Loaded here on the game thread, where the editor loads too, since a worker load tears objects the editor is loading.
+            if (Asset == nullptr && !Request.bLoadAttempted && Loaded < kLoadsPerFrame)
+            {
+                Request.bLoadAttempted = true;
+                Request.Pin = LoadObjectGraph<CObject>(Request.GUID);
+                ++Loaded;
+                Asset = Request.Pin.Get();
+                if (Asset == nullptr)
+                {
+                    SetRecordState(Request.Package, FPackageThumbnail::EState::Failed);
+                    continue;
+                }
+            }
+            else if (Asset != nullptr && !Request.Pin)
+            {
+                Request.Pin = Asset;
+            }
+
             const bool bResident = Asset != nullptr
                 && !Asset->HasAnyFlag(OF_NeedsLoad | OF_Loading | OF_NeedsPostLoad | OF_MarkedDestroy);
             if (!bResident)

@@ -13,7 +13,8 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Serialization/Archiver.h"
-#include "FileSystem/FileSystem.h"
+#include "Platform/Time/PlatformTime.h"
+#include "TaskSystem/ParallelSort.h"
 #include "UI/Tools/EditorToolContext.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -79,6 +80,15 @@ namespace Lumina
             Color.w = 1.0f;
             return Color;
         }
+
+        bool NameLess(const FName& A, const FName& B)
+        {
+            return strcmp(A.c_str(), B.c_str()) < 0;
+        }
+
+        constexpr double kRowsRebuildIntervalSeconds = 1.0;
+        constexpr uint32 kLiveRowsPerFrame           = 4096;
+        constexpr uint32 kFilterRowsPerTask          = 8192;
     }
 
     void FAssetRegistryEditorTool::OnInitialize()
@@ -87,10 +97,16 @@ namespace Lumina
         {
             DrawWindow(bIsFocused);
         });
+
+        RegistryUpdatedHandle = FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]()
+        {
+            bRowsStale.store(true, std::memory_order_release);
+        });
     }
 
     void FAssetRegistryEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
+        FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(RegistryUpdatedHandle);
     }
 
     void FAssetRegistryEditorTool::DrawHelpMenu()
@@ -106,11 +122,12 @@ namespace Lumina
             "The object's strong ref-count: how many TObjectPtrs keep it alive (components, materials, the "
             "open editor, etc). Zero on a loaded asset means it is a candidate for unloading.");
         DrawHelpTextRow("Referenced By",
-            "Selecting a loaded asset scans every live object for reflected references to it. This catches "
-            "asset-to-asset links (a material's textures, a mesh's materials); ECS component references are "
-            "not reflected objects, so they show up in the ref-count but not this list.");
+            "The saved packages that import the selected asset, read from the registry, so it works for "
+            "unloaded assets too. For a loaded asset, Scan Live Objects instead searches every object in memory "
+            "for reflected references, which also finds unsaved ones but takes a noticeable moment.");
         DrawHelpTextRow("Refresh",
-            "Re-reads on-disk sizes and recomputes the referencer list. Everything else is live each frame.");
+            "Re-reads the registry and recomputes the referencer list. The list also follows registry changes "
+            "on its own, and loaded state and ref-counts are rechecked continuously a slice at a time.");
         DrawHelpTextRow("Open",
             "Double-click any row (or use the row's context menu) to open it in its asset editor.");
         DrawHelpTextRow("Selection",
@@ -179,10 +196,34 @@ namespace Lumina
         return 0;
     }
 
-    void FAssetRegistryEditorTool::RebuildReferencers(CObject* Target)
+    void FAssetRegistryEditorTool::RebuildRegistryReferencers(const FGuid& Target)
     {
         Referencers.clear();
-        CachedReferencerTarget = Target ? Target->GetGUID() : FGuid();
+        CachedReferencerTarget   = Target;
+        bReferencersFromLiveScan = false;
+
+        for (const FAssetData* Data : FAssetRegistry::Get().GetReferencersOf(Target))
+        {
+            FReferencer Ref;
+            Ref.Name    = Data->AssetName;
+            Ref.Class   = Data->AssetClass;
+            Ref.Package = FName(Data->Path.c_str());
+            Referencers.push_back(Ref);
+        }
+
+        Algo::Sort(Referencers, [](const FReferencer& A, const FReferencer& B)
+        {
+            return NameLess(A.Name, B.Name);
+        });
+    }
+
+    void FAssetRegistryEditorTool::RebuildLiveReferencers(CObject* Target)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        Referencers.clear();
+        CachedReferencerTarget   = Target ? Target->GetGUID() : FGuid();
+        bReferencersFromLiveScan = true;
 
         if (Target == nullptr)
         {
@@ -214,13 +255,13 @@ namespace Lumina
 
         Algo::Sort(Referencers, [](const FReferencer& A, const FReferencer& B)
         {
-            return A.Name.ToString() < B.Name.ToString();
+            return NameLess(A.Name, B.Name);
         });
     }
 
     bool FAssetRegistryEditorTool::PassesFilter(const FAssetRow& Row) const
     {
-        if (bShowLoadedOnly && Row.Loaded == nullptr)
+        if (bShowLoadedOnly && !Row.bLoaded)
         {
             return false;
         }
@@ -232,7 +273,7 @@ namespace Lumina
             return false;
         }
 
-        if (!SearchFilter.empty() && !ImGuiX::PassSearchFilter(SearchFilter, Row.Name.ToString()))
+        if (!SearchFilter.empty() && !ImGuiX::PassSearchFilter(FStringView(SearchFilter.c_str(), SearchFilter.size()), FStringView(Row.Name.c_str())))
         {
             return false;
         }
@@ -253,60 +294,181 @@ namespace Lumina
         return Hidden;
     }
 
-    void FAssetRegistryEditorTool::BuildVisibleRows(const TVector<FAssetRow>& Rows)
+    void FAssetRegistryEditorTool::RebuildRows()
     {
-        VisibleRows.clear();
-        VisibleGroups.clear();
+        LUMINA_PROFILE_SCOPE();
 
-        auto ByName = [](const FAssetRow* A, const FAssetRow* B)
+        Rows.clear();
+        RowIndexByGUID.clear();
+        AssetTypes.clear();
+        LoadedCount     = 0;
+        TotalCpuBytes   = 0;
+        TotalDiskBytes  = 0;
+        LiveSweepCursor = 0;
+
+        THashSet<FName> Types;
         {
-            return A->Name.ToString() < B->Name.ToString();
-        };
+            const FAssetDataMap& Assets = FAssetRegistry::Get().GetAssets();
+            Rows.reserve(Assets.size());
+            RowIndexByGUID.reserve(Assets.size());
 
-        if (bGroupByCategory)
-        {
-            THashMap<FString, TVector<const FAssetRow*>> Buckets;
-            for (const FAssetRow& Row : Rows)
+            for (const TUniquePtr<FAssetData>& Data : Assets)
             {
-                if (PassesFilter(Row))
-                {
-                    Buckets[Row.Class.ToString()].push_back(&Row);
-                }
-            }
+                FAssetRow Row;
+                Row.GUID      = Data->AssetGUID;
+                Row.Name      = Data->AssetName;
+                Row.Class     = Data->AssetClass;
+                Row.DiskBytes = Data->FileSize;
 
-            TVector<FString> Order;
-            Order.reserve(Buckets.size());
-            for (auto& Pair : Buckets)
-            {
-                Order.push_back(Pair.first);
-            }
-            Algo::Sort(Order);
-
-            // Flattened in draw order, so a VisibleRows index means the same thing to shift-range as on screen.
-            for (const FString& Category : Order)
-            {
-                TVector<const FAssetRow*>& Bucket = Buckets[Category];
-                Algo::Sort(Bucket, ByName);
-
-                FRowGroup Group;
-                Group.Category = Category;
-                Group.Start    = (uint32)VisibleRows.size();
-                Group.Count    = (uint32)Bucket.size();
-                VisibleGroups.push_back(Move(Group));
-
-                VisibleRows.insert(VisibleRows.end(), Bucket.begin(), Bucket.end());
+                TotalDiskBytes += Row.DiskBytes;
+                Types.insert(Row.Class);
+                RowIndexByGUID.emplace(Row.GUID, (uint32)Rows.size());
+                Rows.push_back(Row);
             }
         }
-        else
+
+        AssetTypes.assign(Types.begin(), Types.end());
+        Algo::Sort(AssetTypes, NameLess);
+
+        // Resolved once, so the sort compares raw strings instead of going through the name table each time.
+        TVector<const char*> RowNames(Rows.size());
+        RowsByName.resize(Rows.size());
+        for (uint32 Index = 0; Index < (uint32)Rows.size(); ++Index)
         {
-            for (const FAssetRow& Row : Rows)
+            RowNames[Index]   = Rows[Index].Name.c_str();
+            RowsByName[Index] = Index;
+        }
+        Task::ParallelSort(RowsByName.begin(), RowsByName.end(), [&RowNames](uint32 A, uint32 B)
+        {
+            return strcmp(RowNames[A], RowNames[B]) < 0;
+        });
+
+        // A counting sort by class over the name order, which keeps each class already sorted by name.
+        THashMap<FName, uint32> ClassSlots;
+        ClassSlots.reserve(AssetTypes.size());
+        for (uint32 Slot = 0; Slot < (uint32)AssetTypes.size(); ++Slot)
+        {
+            ClassSlots.emplace(AssetTypes[Slot], Slot);
+        }
+
+        TVector<uint32> RowSlots(Rows.size());
+        TVector<uint32> SlotStarts(AssetTypes.size() + 1, 0);
+        for (uint32 Index = 0; Index < (uint32)Rows.size(); ++Index)
+        {
+            RowSlots[Index] = ClassSlots[Rows[Index].Class];
+            ++SlotStarts[RowSlots[Index] + 1];
+        }
+        for (size_t Slot = 1; Slot < SlotStarts.size(); ++Slot)
+        {
+            SlotStarts[Slot] += SlotStarts[Slot - 1];
+        }
+
+        RowsByCategory.resize(Rows.size());
+        for (uint32 Index : RowsByName)
+        {
+            RowsByCategory[SlotStarts[RowSlots[Index]]++] = Index;
+        }
+
+        bVisibleStale = true;
+    }
+
+    void FAssetRegistryEditorTool::StepLiveState()
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const uint32 NumRows = (uint32)Rows.size();
+        const uint32 End = LiveSweepCursor + kLiveRowsPerFrame < NumRows ? LiveSweepCursor + kLiveRowsPerFrame : NumRows;
+
+        for (uint32 Index = LiveSweepCursor; Index < End; ++Index)
+        {
+            FAssetRow& Row = Rows[Index];
+            const bool   bWasLoaded = Row.bLoaded;
+            const uint64 OldCpu     = Row.CpuBytes;
+
+            CObject* Object = FindObject<CObject>(Row.GUID);
+            Row.bLoaded  = Object != nullptr;
+            Row.RefCount = Object != nullptr ? Object->GetStrongRefCount() : 0;
+            Row.CpuBytes = EstimateCpuBytes(Object);
+
+            LoadedCount   = LoadedCount + (Row.bLoaded ? 1u : 0u) - (bWasLoaded ? 1u : 0u);
+            TotalCpuBytes = TotalCpuBytes + Row.CpuBytes - OldCpu;
+            bSweepChangedLoaded |= bWasLoaded != Row.bLoaded;
+        }
+
+        LiveSweepCursor = End;
+        if (LiveSweepCursor < NumRows)
+        {
+            return;
+        }
+        LiveSweepCursor = 0;
+
+        if (bShowLoadedOnly && bSweepChangedLoaded)
+        {
+            bVisibleStale = true;
+        }
+        bSweepChangedLoaded = false;
+
+        // Membership is unchanged, so only the per-group totals in the headers need recounting.
+        for (FRowGroup& Group : VisibleGroups)
+        {
+            Group.Loaded   = 0;
+            Group.CpuBytes = 0;
+            for (uint32 Index = Group.Start; Index < Group.Start + Group.Count; ++Index)
             {
-                if (PassesFilter(Row))
+                if (VisibleRows[Index]->bLoaded)
                 {
-                    VisibleRows.push_back(&Row);
+                    ++Group.Loaded;
+                    Group.CpuBytes += VisibleRows[Index]->CpuBytes;
                 }
             }
-            Algo::Sort(VisibleRows, ByName);
+        }
+    }
+
+    void FAssetRegistryEditorTool::BuildVisibleRows()
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        VisibleRows.clear();
+        VisibleGroups.clear();
+        bVisibleStale = false;
+
+        // Both orders are presorted, so a filter change is one parallel test and one pass with no sorting.
+        const TVector<uint32>& Order = bGroupByCategory ? RowsByCategory : RowsByName;
+        TVector<uint8> Passes(Order.size(), 0);
+        Task::ParallelFor((uint32)Order.size(), [&](uint32 Index)
+        {
+            Passes[Index] = PassesFilter(Rows[Order[Index]]) ? 1 : 0;
+        }, kFilterRowsPerTask);
+
+        VisibleRows.reserve(Order.size());
+        for (size_t OrderIndex = 0; OrderIndex < Order.size(); ++OrderIndex)
+        {
+            if (Passes[OrderIndex] == 0)
+            {
+                continue;
+            }
+            const FAssetRow& Row = Rows[Order[OrderIndex]];
+
+            if (bGroupByCategory)
+            {
+                if (VisibleGroups.empty() || VisibleGroups.back().Category != Row.Class)
+                {
+                    FRowGroup Group;
+                    Group.Category = Row.Class;
+                    Group.Start    = (uint32)VisibleRows.size();
+                    VisibleGroups.push_back(Group);
+                }
+
+                FRowGroup& Group = VisibleGroups.back();
+                ++Group.Count;
+                if (Row.bLoaded)
+                {
+                    ++Group.Loaded;
+                    Group.CpuBytes += Row.CpuBytes;
+                }
+            }
+
+            VisibleRows.push_back(&Row);
         }
     }
 
@@ -396,43 +558,24 @@ namespace Lumina
 
     void FAssetRegistryEditorTool::DrawWindow(bool bIsFocused)
     {
-        // Resolve current registry state into rows once per frame.
-        TVector<FAssetRow> Rows;
+        const double Now = PlatformTime::Seconds();
+
+        // Throttled, since an import can update the registry many times a second.
+        if (Now >= NextRowsRebuildSeconds && bRowsStale.exchange(false, std::memory_order_acquire))
         {
-            const FAssetDataMap& Assets = FAssetRegistry::Get().GetAssets();
-            Rows.reserve(Assets.size());
-
-            for (const TUniquePtr<FAssetData>& Data : Assets)
-            {
-                FAssetRow Row;
-                Row.GUID   = Data->AssetGUID;
-                Row.Name   = Data->AssetName;
-                Row.Class  = Data->AssetClass;
-                Row.Path   = Data->Path;
-                Row.Loaded = FindObject<CObject>(Data->AssetGUID);
-                Row.RefCount = Row.Loaded ? Row.Loaded->GetStrongRefCount() : 0;
-                Row.CpuBytes = EstimateCpuBytes(Row.Loaded);
-
-                auto It = DiskSizeCache.find(Row.GUID);
-                if (It == DiskSizeCache.end())
-                {
-                    Row.DiskBytes = VFS::Size(Row.Path);
-                    DiskSizeCache.emplace(Row.GUID, Row.DiskBytes);
-                }
-                else
-                {
-                    Row.DiskBytes = It->second;
-                }
-
-                Rows.push_back(Row);
-            }
+            NextRowsRebuildSeconds = Now + kRowsRebuildIntervalSeconds;
+            RebuildRows();
         }
+        StepLiveState();
 
         // The Resave button needs the visible count and Ctrl+A needs something to select against.
-        BuildVisibleRows(Rows);
+        if (bVisibleStale)
+        {
+            BuildVisibleRows();
+        }
         HandleSelectionShortcuts();
 
-        DrawStatsBar(Rows);
+        DrawStatsBar();
         ImGui::Spacing();
         DrawFilterBar();
         ImGui::Spacing();
@@ -450,28 +593,19 @@ namespace Lumina
 
             ImGui::BeginChild("##DetailsPane", ImVec2(0, 0), true);
             {
-                DrawDetailsPanel(Rows);
+                DrawDetailsPanel();
             }
             ImGui::EndChild();
         }
         ImGui::EndChild();
     }
 
-    void FAssetRegistryEditorTool::DrawStatsBar(const TVector<FAssetRow>& Rows)
+    void FAssetRegistryEditorTool::DrawStatsBar()
     {
-        uint32 Loaded = 0;
-        uint64 TotalCpu = 0;
-        uint64 TotalDisk = 0;
-        for (const FAssetRow& Row : Rows)
-        {
-            if (Row.Loaded)
-            {
-                ++Loaded;
-                TotalCpu += Row.CpuBytes;
-            }
-            TotalDisk += Row.DiskBytes;
-        }
-        const uint32 Total = (uint32)Rows.size();
+        const uint32 Total     = (uint32)Rows.size();
+        const uint32 Loaded    = LoadedCount;
+        const uint64 TotalCpu  = TotalCpuBytes;
+        const uint64 TotalDisk = TotalDiskBytes;
 
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 1.0f));
         ImGui::BeginChild("##StatsBar", ImVec2(0, 64.0f), true, ImGuiWindowFlags_NoScrollbar);
@@ -503,22 +637,12 @@ namespace Lumina
     void FAssetRegistryEditorTool::DrawTypeFilterMenu()
     {
         // Taken from the registry rather than TypeVisibility, so an untouched type still appears.
-        TVector<FName> Types;
-        for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
-        {
-            if (!Algo::Contains(Types, Data->AssetClass))
-            {
-                Types.push_back(Data->AssetClass);
-            }
-        }
-        Algo::Sort(Types, [](const FName& A, const FName& B)
-        {
-            return A.ToString() < B.ToString();
-        });
+        const TVector<FName>& Types = AssetTypes;
 
         if (ImGui::MenuItem("Show All"))
         {
             TypeVisibility.clear();
+            bVisibleStale = true;
         }
         if (ImGui::MenuItem("Hide All"))
         {
@@ -526,6 +650,7 @@ namespace Lumina
             {
                 TypeVisibility.insert_or_assign(Type, false);
             }
+            bVisibleStale = true;
         }
 
         ImGui::Separator();
@@ -537,6 +662,7 @@ namespace Lumina
 
             if (ImGui::Checkbox(Type.c_str(), &bVisible))
             {
+                bVisibleStale = true;
                 if (bVisible)
                 {
                     // Erase rather than store true, so "absent == visible" stays the only rule.
@@ -554,7 +680,8 @@ namespace Lumina
     {
         if (ImGui::Button(LE_ICON_REFRESH " Refresh"))
         {
-            DiskSizeCache.clear();
+            bRowsStale.store(true, std::memory_order_release);
+            NextRowsRebuildSeconds = 0.0;
             CachedReferencerTarget = FGuid();
         }
 
@@ -562,7 +689,8 @@ namespace Lumina
         ImGui::SetNextItemWidth(260.0f);
         if (ImGui::InputTextWithHint("##Search", LE_ICON_MAGNIFY " Search assets...", SearchBuffer, IM_ARRAYSIZE(SearchBuffer)))
         {
-            SearchFilter = SearchBuffer;
+            SearchFilter  = SearchBuffer;
+            bVisibleStale = true;
         }
 
         ImGui::SameLine();
@@ -598,9 +726,9 @@ namespace Lumina
         }
 
         ImGui::SameLine();
-        ImGui::Checkbox("Group by Category", &bGroupByCategory);
+        bVisibleStale |= ImGui::Checkbox("Group by Category", &bGroupByCategory);
         ImGui::SameLine();
-        ImGui::Checkbox("Loaded Only", &bShowLoadedOnly);
+        bVisibleStale |= ImGui::Checkbox("Loaded Only", &bShowLoadedOnly);
 
         // The fallback to everything visible is what makes filter-then-resave a one-click migration.
         const uint32 SelectedCount = (uint32)SelectedGUIDs.size();
@@ -754,8 +882,8 @@ namespace Lumina
                         ImGuiX::Notifications::NotifySuccess("Resave: {0} package(s) saved.", ResaveSaved);
                     }
 
-                    // Disk sizes just changed under the cache.
-                    DiskSizeCache.clear();
+                    // Disk sizes just changed under the snapshot.
+                    bRowsStale.store(true, std::memory_order_release);
                     return true;
                 }
                 return false;
@@ -819,15 +947,15 @@ namespace Lumina
         }
     }
 
-    void FAssetRegistryEditorTool::DrawAssetTableRows(const TVector<const FAssetRow*>& Rows, uint32 BaseIndex)
+    void FAssetRegistryEditorTool::DrawAssetTableRows(const FAssetRow* const* GroupRows, uint32 Count, uint32 BaseIndex)
     {
         ImGuiListClipper Clipper;
-        Clipper.Begin((int)Rows.size());
+        Clipper.Begin((int)Count);
         while (Clipper.Step())
         {
             for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
             {
-                const FAssetRow& Row = *Rows[i];
+                const FAssetRow& Row = *GroupRows[i];
                 ImGui::TableNextRow();
                 ImGui::PushID(i);
 
@@ -878,7 +1006,10 @@ namespace Lumina
                     }
                     if (ImGui::MenuItem("Copy Path"))
                     {
-                        ImGui::SetClipboardText(Row.Path.c_str());
+                        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Row.GUID))
+                        {
+                            ImGui::SetClipboardText(Data->Path.c_str());
+                        }
                     }
                     if (ImGui::MenuItem("Copy GUID"))
                     {
@@ -893,12 +1024,12 @@ namespace Lumina
                 ImGui::PopStyleColor();
 
                 ImGui::TableSetColumnIndex(2);
-                ImGui::PushStyleColor(ImGuiCol_Text, StatusColor(Row.Loaded != nullptr));
-                ImGui::TextUnformatted(StatusLabel(Row.Loaded != nullptr));
+                ImGui::PushStyleColor(ImGuiCol_Text, StatusColor(Row.bLoaded));
+                ImGui::TextUnformatted(StatusLabel(Row.bLoaded));
                 ImGui::PopStyleColor();
 
                 ImGui::TableSetColumnIndex(3);
-                if (Row.Loaded)
+                if (Row.bLoaded)
                 {
                     const ImVec4 RefColor = Row.RefCount > 0 ? ImVec4(0.9f, 0.9f, 0.9f, 1.0f) : ImVec4(0.9f, 0.6f, 0.3f, 1.0f);
                     ImGui::PushStyleColor(ImGuiCol_Text, RefColor);
@@ -911,7 +1042,7 @@ namespace Lumina
                 }
 
                 ImGui::TableSetColumnIndex(4);
-                if (Row.Loaded)
+                if (Row.bLoaded)
                 {
                     ImGui::TextUnformatted(ImGuiX::FormatSize(Row.CpuBytes).c_str());
                 }
@@ -955,34 +1086,23 @@ namespace Lumina
         {
             for (const FRowGroup& Group : VisibleGroups)
             {
-                TVector<const FAssetRow*> Bucket(
-                    VisibleRows.begin() + Group.Start,
-                    VisibleRows.begin() + Group.Start + Group.Count);
+                // The triple hash keeps the header's open state stable while its counts change.
+                FFixedString Header;
+                FormatTo(Header, "{}  ({}/{} loaded, {})###{}", Group.Category.c_str(), Group.Loaded, Group.Count,
+                    ImGuiX::FormatSize(Group.CpuBytes).c_str(), Group.Category.c_str());
 
-                uint32 LoadedInCat = 0;
-                uint64 CpuInCat = 0;
-                for (const FAssetRow* R : Bucket)
-                {
-                    if (R->Loaded)
-                    {
-                        ++LoadedInCat;
-                        CpuInCat += R->CpuBytes;
-                    }
-                }
-
-                ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(FName(Group.Category)));
-                FString Header = Group.Category + "  (" + Format("{}", LoadedInCat) + "/" +
-                    Format("{}", Bucket.size()) + " loaded, " + FString(ImGuiX::FormatSize(CpuInCat).c_str()) + ")";
+                ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(Group.Category));
                 const bool bOpen = ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
                 ImGui::PopStyleColor();
 
                 if (bOpen)
                 {
-                    FString TableID = "##Table_" + Group.Category;
+                    FFixedString TableID;
+                    FormatTo(TableID, "##Table_{}", Group.Category.c_str());
                     if (ImGui::BeginTable(TableID.c_str(), 6, TableFlags))
                     {
                         SetupColumns(false);
-                        DrawAssetTableRows(Bucket, Group.Start);
+                        DrawAssetTableRows(VisibleRows.data() + Group.Start, Group.Count, Group.Start);
                         ImGui::EndTable();
                     }
                     ImGui::Spacing();
@@ -994,23 +1114,16 @@ namespace Lumina
             if (ImGui::BeginTable("##AssetTable", 6, TableFlags | ImGuiTableFlags_ScrollY, ImVec2(0, 0)))
             {
                 SetupColumns(true);
-                DrawAssetTableRows(VisibleRows, 0);
+                DrawAssetTableRows(VisibleRows.data(), (uint32)VisibleRows.size(), 0);
                 ImGui::EndTable();
             }
         }
     }
 
-    void FAssetRegistryEditorTool::DrawDetailsPanel(const TVector<FAssetRow>& Rows)
+    void FAssetRegistryEditorTool::DrawDetailsPanel()
     {
-        const FAssetRow* Selected = nullptr;
-        for (const FAssetRow& Row : Rows)
-        {
-            if (Row.GUID == SelectedGUID)
-            {
-                Selected = &Row;
-                break;
-            }
-        }
+        auto Found = RowIndexByGUID.find(SelectedGUID);
+        const FAssetRow* Selected = Found != RowIndexByGUID.end() ? &Rows[Found->second] : nullptr;
 
         if (Selected == nullptr)
         {
@@ -1035,10 +1148,13 @@ namespace Lumina
 
         Field("Name",  Selected->Name.ToString());
         Field("Class", Selected->Class.ToString(), CategoryColor(Selected->Class));
-        Field("Path",  FString(Selected->Path.c_str()));
+        const FAssetData* SelectedData = FAssetRegistry::Get().GetAssetByGUID(Selected->GUID);
+        Field("Path",  SelectedData != nullptr ? FString(SelectedData->Path.c_str()) : FString());
         Field("GUID",  Selected->GUID.ToString(), ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
 
-        const bool bLoaded = Selected->Loaded != nullptr;
+        // Looked up live, since the referencer scan dereferences it and the row may not have been rechecked yet.
+        CObject* LoadedObject = FindObject<CObject>(Selected->GUID);
+        const bool bLoaded = LoadedObject != nullptr;
         Field("Status", StatusLabel(bLoaded), StatusColor(bLoaded));
         Field("On Disk", ImGuiX::FormatSize(Selected->DiskBytes).c_str());
 
@@ -1047,54 +1163,68 @@ namespace Lumina
             Field("CPU Memory", ImGuiX::FormatSize(Selected->CpuBytes).c_str(), ImVec4(1.0f, 0.75f, 0.4f, 1.0f));
             Field("Ref Count", Format("{}", Selected->RefCount),
                 Selected->RefCount > 0 ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f) : ImVec4(0.9f, 0.6f, 0.3f, 1.0f));
-
+        }
+        else
+        {
+            ImGui::TextDisabled("Not resident in memory, so no ref-count");
+            ImGui::TextDisabled("or footprint until something loads it.");
             ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.9f, 1.0f, 1.0f));
-            ImGui::TextUnformatted(LE_ICON_LINK " Referenced By");
-            ImGui::PopStyleColor();
-            ImGui::Separator();
+        }
 
-            if (CachedReferencerTarget != Selected->GUID)
-            {
-                RebuildReferencers(Selected->Loaded);
-            }
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.9f, 1.0f, 1.0f));
+        ImGui::TextUnformatted(LE_ICON_LINK " Referenced By");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
 
-            if (Referencers.empty())
+        if (CachedReferencerTarget != Selected->GUID)
+        {
+            RebuildRegistryReferencers(Selected->GUID);
+        }
+
+        if (bLoaded && ImGui::SmallButton(LE_ICON_MAGNIFY " Scan Live Objects"))
+        {
+            RebuildLiveReferencers(LoadedObject);
+        }
+        ImGui::TextDisabled("%s", bReferencersFromLiveScan ? "From a scan of objects in memory." : "From saved packages.");
+
+        if (Referencers.empty())
+        {
+            ImGui::TextDisabled("No references found.");
+            if (bReferencersFromLiveScan)
             {
-                ImGui::TextDisabled("No reflected object references.");
                 ImGui::TextDisabled("(ECS components still count toward ref-count.)");
             }
-            else if (ImGui::BeginTable("##Referencers", 2,
-                ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY,
-                ImVec2(0, 0)))
-            {
-                ImGui::TableSetupColumn("Object");
-                ImGui::TableSetupColumn("Class");
-                ImGui::TableHeadersRow();
+        }
+        else if (ImGui::BeginTable("##Referencers", 2,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY,
+            ImVec2(0, 0)))
+        {
+            ImGui::TableSetupColumn("Object");
+            ImGui::TableSetupColumn("Class");
+            ImGui::TableHeadersRow();
 
-                for (const FReferencer& Ref : Referencers)
+            ImGuiListClipper Clipper;
+            Clipper.Begin((int)Referencers.size());
+            while (Clipper.Step())
+            {
+                for (int Index = Clipper.DisplayStart; Index < Clipper.DisplayEnd; ++Index)
                 {
+                    const FReferencer& Ref = Referencers[Index];
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     ImGui::TextUnformatted(Ref.Name.c_str());
                     if (ImGui::IsItemHovered())
                     {
-                        ImGui::SetTooltip("Package: %s", Ref.Package.c_str());
+                        ImGui::SetTooltip("Package %s", Ref.Package.c_str());
                     }
                     ImGui::TableSetColumnIndex(1);
                     ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(Ref.Class));
                     ImGui::TextUnformatted(Ref.Class.c_str());
                     ImGui::PopStyleColor();
                 }
-                ImGui::EndTable();
             }
-        }
-        else
-        {
-            ImGui::Spacing();
-            ImGui::TextDisabled("Not resident in memory.");
-            ImGui::TextDisabled("No ref-count, footprint, or referencers");
-            ImGui::TextDisabled("until something loads it.");
+            ImGui::EndTable();
         }
     }
 }

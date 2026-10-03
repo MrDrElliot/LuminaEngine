@@ -3172,264 +3172,177 @@ namespace Lumina
             }
         }
 
-        if (DirtyPackages.empty())
+        if (!DirtyPackages.empty())
         {
-            return;
+            OpenUnsavedChangesDialog(Move(DirtyPackages));
         }
-        
-        TVector<bool> PackageSelection;
-        PackageSelection.resize(DirtyPackages.size(), true);
-        
-        enum class ESaveState { Idle, Saving, Success, Failed };
-        TVector<ESaveState> SaveStates;
-        SaveStates.resize(DirtyPackages.size(), ESaveState::Idle);
-        
-        ModalManager.CreateDialogue("Unsaved Changes", ImVec2(620, 540),
-            [this, Packages = Move(DirtyPackages), Selection = Move(PackageSelection), States = Move(SaveStates)]() mutable
+    }
+
+    void FEditorUI::OpenUnsavedChangesDialog(TVector<CPackage*> Packages)
+    {
+        enum class ESaveState : uint8 { Pending, Saved, Failed };
+
+        TVector<bool>       Selection(Packages.size(), true);
+        TVector<ESaveState> States(Packages.size(), ESaveState::Pending);
+
+        ModalManager.CreateDialogue("Unsaved Changes", ImVec2(560, 380),
+            [this, Packages = Move(Packages), Selection = Move(Selection), States = Move(States)]() mutable -> bool
         {
-            // Matches the Open and New Project dialog opener so the prompt reads as the same family.
-            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogAccentGold);
-            ImGui::TextUnformatted(LE_ICON_ALERT_CIRCLE_OUTLINE "  Unsaved Changes");
-            ImGui::PopStyleColor();
-            ImGuiX::Font::PopFont();
-
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
-            ImGui::TextWrapped("%d package%s ha%s pending edits. Choose what to do before the editor closes.",
-                (int32)Packages.size(),
-                Packages.size() == 1 ? "" : "s",
-                Packages.size() == 1 ? "s" : "ve");
-            ImGui::PopStyleColor();
-
-            DrawSectionHeader("PACKAGES");
-
-            // Selection toolbar (compact, palette-aligned).
-            int32 SelectedCount = 0;
-            for (bool S : Selection) { if (S) ++SelectedCount; }
-
-            ImGui::PushStyleColor(ImGuiCol_Button,        kProjDialogRowBg);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kProjDialogRowBgHover);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kProjDialogRowBgActive);
-            if (ImGui::SmallButton(LE_ICON_CHECKBOX_MULTIPLE_OUTLINE " All"))
+            const uint32 NumPackages = (uint32)Packages.size();
+            uint32 NumSelected = 0;
+            for (bool bSelected : Selection)
             {
-                for (bool& S : Selection) S = true;
+                NumSelected += bSelected ? 1 : 0;
             }
-            ImGui::SameLine();
-            if (ImGui::SmallButton(LE_ICON_CHECKBOX_BLANK_OUTLINE " None"))
-            {
-                for (bool& S : Selection) S = false;
-            }
-            ImGui::PopStyleColor(3);
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
-            ImGui::Text("%d of %d selected", SelectedCount, (int32)Packages.size());
-            ImGui::PopStyleColor();
 
+            if (NumPackages == 1)
+            {
+                ImGui::TextUnformatted("1 package has unsaved changes.");
+            }
+            else
+            {
+                ImGuiX::Text("{} packages have unsaved changes.", NumPackages);
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
+            ImGui::TextUnformatted("Save them before the editor closes?");
+            ImGui::PopStyleColor();
             ImGui::Spacing();
 
-            // Rows mimic DrawProjectRow with a leading checkbox and trailing badge, sharing its colors.
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, kProjDialogPanelBg);
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
-            if (ImGui::BeginChild("##PackagesBody", ImVec2(0, -68), true, ImGuiWindowFlags_AlwaysVerticalScrollbar))
+            const float FooterHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+            constexpr ImGuiTableFlags TableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter
+                | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY;
+
+            if (ImGui::BeginTable("##UnsavedPackages", 3, TableFlags, ImVec2(0.0f, -FooterHeight)))
             {
-                for (size_t i = 0; i < Packages.size(); ++i)
+                ImGui::TableSetupScrollFreeze(0, 1);
+                ImGui::TableSetupColumn("##Select", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, ImGui::GetFrameHeight());
+                ImGui::TableSetupColumn("Package",  ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Status",   ImGuiTableColumnFlags_WidthFixed, ImGuiX::ButtonWidth(LE_ICON_CHECK " Modified"));
+
+                ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                ImGui::TableSetColumnIndex(0);
+                bool bCheckAll = false;
+                if (ImGuiX::SelectAllCheckbox("##SelectAll", NumSelected, NumPackages, bCheckAll))
                 {
-                    CPackage*  Package = Packages[i];
-                    const bool bSaved  = States[i] == ESaveState::Success;
-                    const bool bFailed = States[i] == ESaveState::Failed;
-
-                    const ImVec4 Accent =
-                        bFailed ? kProjDialogDanger    :
-                        bSaved  ? kProjDialogAccentSoft :
-                                  kProjDialogAccentGold;
-
-                    const float Avail   = ImGui::GetContentRegionAvail().x;
-                    const float Height  = 50.0f;
-                    const ImVec2 P0     = ImGui::GetCursorScreenPos();
-                    const ImVec2 P1     = ImVec2(P0.x + Avail, P0.y + Height);
-
-                    ImGui::PushID((int)i);
-
-                    // Hover-only background, and a click anywhere on the row toggles the checkbox.
-                    ImGui::SetCursorScreenPos(P0);
-                    const bool bRowClicked = ImGui::InvisibleButton("##row", ImVec2(Math::Max(Avail, 1.0f), Height));
-                    const bool bHovered    = ImGui::IsItemHovered();
-                    if (bRowClicked && States[i] == ESaveState::Idle)
+                    for (uint32 Index = 0; Index < NumPackages; ++Index)
                     {
-                        Selection[i] = !Selection[i];
+                        if (States[Index] == ESaveState::Pending)
+                        {
+                            Selection[Index] = bCheckAll;
+                        }
                     }
+                }
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TableHeader("Package");
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TableHeader("Status");
 
-                    ImDrawList* DL = ImGui::GetWindowDrawList();
-                    const ImU32 BgCol = ImGui::ColorConvertFloat4ToU32(bHovered ? kProjDialogRowBgHover : kProjDialogRowBg);
-                    DL->AddRectFilled(P0, P1, BgCol, 4.0f);
-                    DL->AddRectFilled(P0, ImVec2(P0.x + 3.0f, P1.y), ImGui::ColorConvertFloat4ToU32(Accent), 4.0f);
+                for (uint32 Index = 0; Index < NumPackages; ++Index)
+                {
+                    CPackage* Package = Packages[Index];
+                    const bool bLocked = States[Index] != ESaveState::Pending;
 
-                    // The checkbox gets click priority over the row-wide invisible button through its own rect.
-                    ImGui::SetCursorScreenPos(ImVec2(P0.x + 14.0f, P0.y + 16.0f));
-                    if (States[i] != ESaveState::Idle)
+                    ImGui::TableNextRow();
+                    ImGui::PushID((int)Index);
+
+                    // Submitted before the checkbox, since an overlapping item only wins the click when it comes later.
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::AlignTextToFramePadding();
+                    if (ImGui::Selectable(Package->GetName().c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap) && !bLocked)
                     {
-                        ImGui::BeginDisabled();
+                        Selection[Index] = !Selection[Index];
                     }
-                    ImGui::Checkbox("##sel", &Selection[i]);
-                    if (States[i] != ESaveState::Idle)
-                    {
-                        ImGui::EndDisabled();
-                    }
-
-                    // Title + path stacked.
-                    const float TextX = P0.x + 48.0f;
-                    ImGui::SetCursorScreenPos(ImVec2(TextX, P0.y + 7.0f));
-                    ImGuiX::Font::PushFont(ImGuiX::Font::EFont::SmallBold);
-                    ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextPrimary);
-                    ImGui::TextUnformatted(Package->GetName().c_str());
-                    ImGui::PopStyleColor();
-                    ImGuiX::Font::PopFont();
-
-                    ImGui::SetCursorScreenPos(ImVec2(TextX, P0.y + 27.0f));
-                    ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
-                    ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+                    ImGuiX::TextTooltip("{}", Package->GetPackagePath());
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
                     ImGui::TextUnformatted(Package->GetPackagePath().c_str());
                     ImGui::PopStyleColor();
-                    ImGuiX::Font::PopFont();
 
-                    // Trailing status badge (right-aligned).
-                    const char* StatusIcon = nullptr;
-                    const char* StatusText = nullptr;
-                    ImVec4      StatusCol  = kProjDialogTextDim;
-                    switch (States[i])
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::BeginDisabled(bLocked);
+                    ImGui::Checkbox("##Select", &Selection[Index]);
+                    ImGui::EndDisabled();
+
+                    ImGui::TableSetColumnIndex(2);
+                    switch (States[Index])
                     {
-                        case ESaveState::Saving:
-                            StatusIcon = LE_ICON_WATCH_VIBRATE;
-                            StatusText = "Saving...";
-                            StatusCol  = kProjDialogAccentBlue;
-                            break;
-                        case ESaveState::Success:
-                            StatusIcon = LE_ICON_CHECK_CIRCLE_OUTLINE;
-                            StatusText = "Saved";
-                            StatusCol  = ImVec4(0.45f, 0.85f, 0.55f, 1.0f);
-                            break;
-                        case ESaveState::Failed:
-                            StatusIcon = LE_ICON_ALERT_CIRCLE_OUTLINE;
-                            StatusText = "Failed";
-                            StatusCol  = kProjDialogDanger;
-                            break;
-                        default: break;
-                    }
-                    if (StatusText)
-                    {
-                        const ImVec2 LabelSize = ImGui::CalcTextSize(StatusText);
-                        const ImVec2 IconSize  = ImGui::CalcTextSize(StatusIcon);
-                        const float  StatusW   = LabelSize.x + IconSize.x + 10.0f;
-                        ImGui::SetCursorScreenPos(ImVec2(P1.x - StatusW - 12.0f, P0.y + (Height - LabelSize.y) * 0.5f));
-                        ImGui::PushStyleColor(ImGuiCol_Text, StatusCol);
-                        ImGui::Text("%s %s", StatusIcon, StatusText);
-                        ImGui::PopStyleColor();
+                    case ESaveState::Saved:
+                        ImGui::TextColored(EditorColors::Success(), LE_ICON_CHECK " Saved");
+                        break;
+                    case ESaveState::Failed:
+                        ImGui::TextColored(EditorColors::Danger(), LE_ICON_ALERT_CIRCLE_OUTLINE " Failed");
+                        break;
+                    default:
+                        ImGui::TextColored(EditorColors::TextMuted(), "Modified");
+                        break;
                     }
 
-                    // Ending on a real zero-size item clears IsSetPos, or EndChild trips the extend-bounds assert.
-                    const ImVec2 PkgNextRow(P0.x, P1.y + 6.0f);
-                    ImGui::SetCursorScreenPos(PkgNextRow);
-                    ImGui::Dummy(ImVec2(0.0f, 0.0f));
                     ImGui::PopID();
                 }
+                ImGui::EndTable();
             }
-            ImGui::EndChild();
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor();
 
-            // Right-aligned so the primary action lands at the F-pattern target.
-            constexpr float ButtonH = 32.0f;
-            constexpr float Gap     = 8.0f;
-            constexpr float MinW    = 90.0f;
+            ImGui::Spacing();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%u of %u selected", NumSelected, NumPackages);
 
             // ImGui has no mnemonic escaping, so a doubled ampersand reached the screen literally.
-            const char* SaveLabel    = LE_ICON_CONTENT_SAVE " Save & Exit";
-            const char* DiscardLabel = LE_ICON_DELETE " Discard & Exit";
+            const char* SaveLabel    = "Save & Exit";
+            const char* DiscardLabel = "Don't Save";
             const char* CancelLabel  = "Cancel";
 
-            // The three labels differ in length and scale with DPI, so a fixed width clipped the longest.
-            auto MeasureButton = [](const char* Label)
-            {
-                const float Text = ImGui::CalcTextSize(Label).x + ImGui::GetStyle().FramePadding.x * 2.0f + 12.0f;
-                return Text < MinW ? MinW : Text;
-            };
+            constexpr float MinButtonWidth = 96.0f;
+            const float Gap      = ImGui::GetStyle().ItemSpacing.x;
+            const float SaveW    = ImGuiX::ButtonWidth(SaveLabel, MinButtonWidth);
+            const float DiscardW = ImGuiX::ButtonWidth(DiscardLabel, MinButtonWidth);
+            const float CancelW  = ImGuiX::ButtonWidth(CancelLabel, MinButtonWidth);
 
-            const float SaveW    = MeasureButton(SaveLabel);
-            const float DiscardW = MeasureButton(DiscardLabel);
-            const float CancelW  = MeasureButton(CancelLabel);
-            const float Total    = SaveW + DiscardW + CancelW + Gap * 2.0f;
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.0f);
-            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - Total - 16.0f);
+            ImGui::SameLine();
+            ImGuiX::AlignRight(SaveW + DiscardW + CancelW + Gap * 2.0f);
 
             bool bShouldClose = false;
+            bool bCancel      = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 
-            // Save & Exit, primary.
-            const bool bAnySelected = SelectedCount > 0;
-            ImGui::PushStyleColor(ImGuiCol_Button,        kProjDialogAccentBlue);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.46f, 0.74f, 1.00f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.30f, 0.58f, 0.92f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.06f, 0.08f, 0.12f, 1.0f));
-            if (!bAnySelected)
+            ImGui::BeginDisabled(NumSelected == 0);
+            const bool bSave = ImGuiX::ToneButton(SaveLabel, ImGuiX::EButtonTone::Primary, ImVec2(SaveW, 0.0f))
+                || (NumSelected > 0 && ImGui::IsKeyPressed(ImGuiKey_Enter, false));
+            ImGui::EndDisabled();
+            if (bSave)
             {
-                ImGui::BeginDisabled();
-            }
-            if (ImGui::Button(SaveLabel, ImVec2(SaveW, ButtonH)))
-            {
-                // The dialog stays open this frame so a failed entry shows a badge instead of vanishing.
-                bool bAllOK = true;
-                for (size_t i = 0; i < Packages.size(); ++i)
+                // A failure keeps the dialog up with the row marked, so the user can pick another action.
+                bool bAllSaved = true;
+                for (uint32 Index = 0; Index < NumPackages; ++Index)
                 {
-                    if (!Selection[i])
+                    if (!Selection[Index] || States[Index] == ESaveState::Saved)
                     {
                         continue;
                     }
-                    States[i] = ESaveState::Saving;
-                    const bool bOK = CPackage::SavePackage(Packages[i], Packages[i]->GetPackagePath());
-                    States[i] = bOK ? ESaveState::Success : ESaveState::Failed;
-                    if (!bOK)
-                    {
-                        bAllOK = false;
-                    }
+                    const bool bSaved = CPackage::SavePackage(Packages[Index], Packages[Index]->GetPackagePath());
+                    States[Index] = bSaved ? ESaveState::Saved : ESaveState::Failed;
+                    bAllSaved &= bSaved;
                 }
-                // A failure keeps the dialog up so the user can pick another action.
-                bShouldClose = bAllOK;
+                bShouldClose = bAllSaved;
             }
-            if (!bAnySelected)
-            {
-                ImGui::EndDisabled();
-            }
-            ImGui::PopStyleColor(4);
-            ImGui::SameLine(0.0f, Gap);
 
-            // Discard & Exit, gold accent, makes the consequence visible.
-            ImGui::PushStyleColor(ImGuiCol_Button,        kProjDialogRowBg);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kProjDialogRowBgHover);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kProjDialogRowBgActive);
-            ImGui::PushStyleColor(ImGuiCol_Text,          kProjDialogAccentGold);
-            if (ImGui::Button(DiscardLabel, ImVec2(DiscardW, ButtonH)))
+            ImGui::SameLine(0.0f, Gap);
+            if (ImGuiX::ToneButton(DiscardLabel, ImGuiX::EButtonTone::Danger, ImVec2(DiscardW, 0.0f)))
             {
                 bShouldClose = true;
             }
-            ImGui::PopStyleColor(4);
-            ImGui::SameLine(0.0f, Gap);
 
-            // Cancel, soft, abort the exit entirely.
-            ImGui::PushStyleColor(ImGuiCol_Button,        kProjDialogRowBg);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kProjDialogRowBgHover);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kProjDialogRowBgActive);
-            ImGui::PushStyleColor(ImGuiCol_Text,          kProjDialogAccentSoft);
-            if (ImGui::Button(CancelLabel, ImVec2(CancelW, ButtonH)))
+            ImGui::SameLine(0.0f, Gap);
+            bCancel |= ImGui::Button(CancelLabel, ImVec2(CancelW, 0.0f));
+            if (bCancel)
             {
                 FApplication::CancelExit();
-                bVerifyingDirtyPackages = false; // re-arm for the next exit attempt
+                bVerifyingDirtyPackages = false;
                 bShouldClose = true;
             }
-            ImGui::PopStyleColor(4);
 
             return bShouldClose;
-        });
+        }, true, false);
     }
-    
+
     uint32 FEditorUI::CountDirtyPackages() const
     {
         uint32 Count = 0;

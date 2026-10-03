@@ -4,6 +4,7 @@
 #include "ImGuiX.h"
 
 #include "Core/Object/InstancedStruct.h"
+#include "EditorColors.h"
 #include "ImGuiDesignIcons.h"
 #include "ImGuiRenderer.h"
 #include "imgui_internal.h"
@@ -177,6 +178,58 @@ namespace Lumina::ImGuiX
     	}
     	
     	return "";
+    }
+
+    bool ToneButton(const char* Label, EButtonTone Tone, const ImVec2& Size)
+    {
+        if (Tone == EButtonTone::Neutral)
+        {
+            return ImGui::Button(Label, Size);
+        }
+
+        const ImVec4 Base = ImGui::GetStyle().Colors[ImGuiCol_Button];
+        const ImVec4 Tint = Tone == EButtonTone::Primary ? EditorColors::Accent() : EditorColors::Danger();
+        const float  Mix  = Tone == EButtonTone::Primary ? 0.55f : 0.30f;
+
+        auto Blend = [&](float Amount)
+        {
+            return ImVec4(Base.x + (Tint.x - Base.x) * Amount, Base.y + (Tint.y - Base.y) * Amount, Base.z + (Tint.z - Base.z) * Amount, 1.0f);
+        };
+
+        ImGui::PushStyleColor(ImGuiCol_Button,        Blend(Mix));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Blend(Mix + 0.15f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  Blend(Mix - 0.10f));
+        const bool bPressed = ImGui::Button(Label, Size);
+        ImGui::PopStyleColor(3);
+        return bPressed;
+    }
+
+    float ButtonWidth(const char* Label, float MinWidth)
+    {
+        const float Width = ImGui::CalcTextSize(Label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        return Width < MinWidth ? MinWidth : Width;
+    }
+
+    void AlignRight(float ContentWidth)
+    {
+        const float Slack = ImGui::GetContentRegionAvail().x - ContentWidth;
+        if (Slack > 0.0f)
+        {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + Slack);
+        }
+    }
+
+    bool SelectAllCheckbox(const char* Label, uint32 NumChecked, uint32 NumTotal, bool& bOutCheckAll)
+    {
+        bool bAllChecked = NumTotal > 0 && NumChecked == NumTotal;
+        const bool bMixed = NumChecked > 0 && NumChecked < NumTotal;
+
+        ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, bMixed);
+        const bool bClicked = ImGui::Checkbox(Label, &bAllChecked);
+        ImGui::PopItemFlag();
+
+        bOutCheckAll = bAllChecked;
+        return bClicked;
     }
 
     bool ButtonEx(char const* pIcon, char const* pLabel, ImVec2 const& size, const ImColor& backgroundColor, const ImColor& iconColor, const ImColor& foregroundColor, bool shouldCenterContents)
