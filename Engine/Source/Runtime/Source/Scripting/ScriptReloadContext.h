@@ -32,8 +32,8 @@ namespace Lumina
         EWorldType WorldType = EWorldType::None;
 
         /** The entity this script is attached to, the same one GetOwningEntity returns. */
-        PROPERTY(Entity)
-        uint32 Entity = 0;
+        PROPERTY()
+        ECS::FEntity Entity = ECS::NullEntity;
 
         /** Generation of the script load context now live; it advances once per reload. */
         PROPERTY()

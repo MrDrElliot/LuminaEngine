@@ -196,7 +196,7 @@ namespace Lumina::Physics
                 {
                     Wheel.Compression = 0.0f;
                     Wheel.PreviousCompressionLength = 0.0f;
-                    Wheel.GroundEntity = ECS::NullEntity.Value;
+                    Wheel.GroundEntity = ECS::NullEntity;
                     Wheel.SlipSpeed = 0.0f;
                     const float FreeSpin = Wheel.bDrive && !bLocked ? Drive * Vehicle.MaxSpeed / Wheel.Radius : 0.0f;
                     Wheel.SpinVelocity = Math::Lerp(Wheel.SpinVelocity, FreeSpin, Math::Min(1.0f, 2.0f * FixedDt));
@@ -219,7 +219,7 @@ namespace Lumina::Physics
                 Wheel.ContactNormal = Normal;
 
                 const b3BodyId Ground = b3Shape_GetBody(Ray.Shape);
-                Wheel.GroundEntity = EntityOfBody(Ground).Value;
+                Wheel.GroundEntity = EntityOfBody(Ground);
 
                 // The tire frame lies in the contact plane, turned by the wheel's steering.
                 const float SteerRadians = Math::Radians(Wheel.SteerAngle);
@@ -305,8 +305,8 @@ namespace Lumina::Physics
         {
             for (const FVehicleWheel& Wheel : Vehicle.Wheels)
             {
-                const ECS::FEntity Visual(Wheel.Visual);
-                STransformComponent* Transform = Wheel.Visual != ECS::NullEntity.Value ? Registry.TryGet<STransformComponent>(Visual) : nullptr;
+                const ECS::FEntity Visual = Wheel.Visual;
+                STransformComponent* Transform = Visual != ECS::NullEntity ? Registry.TryGet<STransformComponent>(Visual) : nullptr;
                 if (Transform == nullptr)
                 {
                     continue;

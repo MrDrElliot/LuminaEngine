@@ -177,7 +177,7 @@ LUMINA_DOTNET_EXPORT(uint32, RHI_HeapWriteSampler)(RHI::FTextureHeapH Heap, RHI:
     return RHI::HeapWriteSampler(Heap, Desc);
 }
 
-// Unbound now so no frame re-binds a dying texture, with only the index recycling deferred.
+// Unbound from the next frame on so no later frame binds a dying texture, with the index recycling deferred.
 LUMINA_DOTNET_EXPORT(void, RHI_HeapFreeTexture)(RHI::FTextureHeapH Heap, uint32 Slot)
 {
     RHI::HeapUnbindTexture(Heap, Slot);

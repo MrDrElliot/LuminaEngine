@@ -17,7 +17,7 @@ namespace Lumina::Scripting
 {
     // The schema kind is the shared reflected taxonomy Lumina::EPropertyTypeFlags (ObjectCore.h), mirrored by
     // LuminaSharp.EPropertyType. Script-specific shapes are carried as data on FScriptExportType rather than as
-    // distinct kinds: an entity is UInt32 + bEntity; an input binding is String + bInputAction; an asset ref
+    // distinct kinds: an input binding is String + bInputAction; an asset ref
     // is SoftObject + TargetClass; a native vs.
     // script struct is Struct distinguished by whether NativeName is set.
 
@@ -107,7 +107,6 @@ namespace Lumina::Scripting
     struct FScriptExportType
     {
         EPropertyTypeFlags            Kind = EPropertyTypeFlags::None;
-        bool                          bEntity = false;  ///< A UInt32 that is really an entity handle.
         bool                          bInputAction = false;  ///< A String that is really an input action name.
 
         // Enum kind.

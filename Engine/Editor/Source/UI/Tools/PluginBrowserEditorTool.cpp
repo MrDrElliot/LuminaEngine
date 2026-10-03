@@ -168,15 +168,19 @@ namespace Lumina
 
         ImGui::SameLine();
         const bool bHasProject = GEngine && !GEngine->GetProjectName().empty();
-        if (!bHasProject) ImGui::BeginDisabled();
+        const bool bCanCreate = bHasProject && !Paths::IsInstalledBuild();
+        if (!bCanCreate) ImGui::BeginDisabled();
         if (ImGui::Button(LE_ICON_PUZZLE_PLUS " New Plugin"))
         {
             OpenCreatePluginDialog();
         }
-        if (!bHasProject) ImGui::EndDisabled();
-        if (!bHasProject && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        if (!bCanCreate) ImGui::EndDisabled();
+        if (!bCanCreate && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         {
-            ImGui::SetTooltip("Load a project to create a plugin.");
+            // A new plugin is a pair of C++ modules, which an installed build cannot compile.
+            ImGui::SetTooltip(Paths::IsInstalledBuild()
+                ? "Creating a plugin needs a source build of the engine."
+                : "Load a project to create a plugin.");
         }
 
         // Right-aligned scope hint.

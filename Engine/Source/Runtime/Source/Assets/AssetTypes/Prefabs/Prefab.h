@@ -57,7 +57,8 @@ namespace Lumina
         static bool DetachInstance(CWorld* World, ECS::FEntity InstanceRoot);
 
         /** Replaces this prefab with a deep copy of RootEntity and descendants from SourceWorld. */
-        void CaptureFromWorld(CWorld* SourceWorld, ECS::FEntity RootEntity);
+        // Adopting tags every captured source entity as a member of this prefab, so a pushed-back instance stays one instance.
+        void CaptureFromWorld(CWorld* SourceWorld, ECS::FEntity RootEntity, bool bAdoptSourceAsInstance = false);
 
         /** Pointer to the StableID-matched prefab entity's reflected component of the given type, or
          *  null if that entity/component is absent. The per-leaf override baseline + reset-to-prefab default. */

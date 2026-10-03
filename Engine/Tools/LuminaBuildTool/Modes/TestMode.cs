@@ -162,7 +162,14 @@ public static class TestMode
 
             Log.Info("Running {0}", Suite.SuiteName);
 
-            if (Launch(Executable, SuiteArguments, EngineBinaries) != 0)
+            // Plugin modules write beside their plugin, so the loader needs every directory this suite linked into.
+            List<string> SearchDirectories = new() { EngineBinaries };
+            SearchDirectories.AddRange(Target.Modules
+                .Where(M => M.BinaryType == ModuleBinaryType.SharedLibrary && M.OutputDirectory.Length > 0)
+                .Select(M => M.OutputDirectory));
+            string LibraryPath = string.Join(Path.PathSeparator, SearchDirectories.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            if (Launch(Executable, SuiteArguments, LibraryPath) != 0)
             {
                 Failed.Add(Suite.SuiteName);
             }

@@ -84,6 +84,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         Delegate,
         InstancedStruct,
         Map,
+        Entity,
     };
 
     /** Must be in-sync with EPropertyFlags in ObjectCore.h */
@@ -98,8 +99,6 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         Protected       = BIT(5),
         SubField        = BIT(6),
         Trivial         = BIT(7),
-        // Prefab instancing remaps these raw entity ids, and a flag survives where METADATA_PARAMS strips metadata.
-        EntityHandle    = BIT(8),
         Builtin         = BIT(9),
         BulkSerialize   = BIT(10),
         // Property exists only for editor tooling. Stripped from cooked
@@ -146,7 +145,6 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         AppendFlag(EPropertyFlags::Protected, "Lumina::EPropertyFlags::Protected");
         AppendFlag(EPropertyFlags::SubField, "Lumina::EPropertyFlags::SubField");
         AppendFlag(EPropertyFlags::Trivial, "Lumina::EPropertyFlags::Trivial");
-        AppendFlag(EPropertyFlags::EntityHandle, "Lumina::EPropertyFlags::EntityHandle");
         AppendFlag(EPropertyFlags::Builtin, "Lumina::EPropertyFlags::Builtin");
         AppendFlag(EPropertyFlags::BulkSerialize, "Lumina::EPropertyFlags::BulkSerialize");
         AppendFlag(EPropertyFlags::EditorOnly, "Lumina::EPropertyFlags::EditorOnly");

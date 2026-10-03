@@ -42,6 +42,7 @@ namespace Lumina
         
         void Serialize(FArchive& Ar) override;
         void PostLoad() override;
+        void OnReferencesReplaced() override;
         void OnDestroy() override;
 
         // Script code that swaps meshes every frame keeps the old one up until the new one can draw.

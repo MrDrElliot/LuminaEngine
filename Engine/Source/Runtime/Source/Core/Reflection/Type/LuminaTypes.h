@@ -142,7 +142,6 @@ namespace Lumina
         NODISCARD bool IsReadOnly()     const       { return EnumHasAnyFlags(Flags, EPropertyFlags::ReadOnly); }
         NODISCARD bool IsEditorOnly()   const       { return EnumHasAnyFlags(Flags, EPropertyFlags::EditorOnly); }
         NODISCARD bool IsReplicated()   const       { return EnumHasAnyFlags(Flags, EPropertyFlags::Replicated); }
-        NODISCARD bool IsEntityHandle() const       { return EnumHasAnyFlags(Flags, EPropertyFlags::EntityHandle); }
         NODISCARD bool IsDuplicateTransient() const { return EnumHasAnyFlags(Flags, EPropertyFlags::DuplicateTransient); }
         NODISCARD bool IsOutParam()     const       { return EnumHasAnyFlags(Flags, EPropertyFlags::OutParam); }
         NODISCARD bool IsRefParam()     const       { return EnumHasAnyFlags(Flags, EPropertyFlags::RefParam); }
@@ -500,6 +499,18 @@ namespace Lumina
         DECLARE_FPROPERTY(EPropertyTypeFlags::UInt32)
 
         explicit FUInt32Property(const FPropertyParams* Params)
+            : Super(Params)
+        {}
+    };
+
+    // An ECS::FEntity, stored as its packed uint32 so this layer needs no ECS header.
+    class FEntityProperty : public TProperty_Numeric<uint32>
+    {
+    public:
+        using Super = TProperty_Numeric<uint32>;
+        DECLARE_FPROPERTY(EPropertyTypeFlags::Entity)
+
+        explicit FEntityProperty(const FPropertyParams* Params)
             : Super(Params)
         {}
     };

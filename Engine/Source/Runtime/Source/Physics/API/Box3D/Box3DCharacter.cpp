@@ -328,11 +328,11 @@ namespace Lumina::Physics
                 Character.Velocity = FVector3(0.0f);
                 Character.bGrounded = false;
                 Character.GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
-                Character.GroundEntity = 0xFFFFFFFFu;
+                Character.GroundEntity = ECS::NullEntity;
 
                 Movement.Velocity = FVector3(0.0f);
                 Movement.bGrounded = false;
-                Movement.GroundEntity = 0xFFFFFFFFu;
+                Movement.GroundEntity = ECS::NullEntity;
                 Movement.GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
 
                 // Reseeds the interp snapshot so the render transform does not streak across the jump.
@@ -720,7 +720,7 @@ namespace Lumina::Physics
 
             const b3BodyId GroundBody = b3Shape_GetBody(Gathered.Shapes[GroundPlane]);
             void* GroundUserData = b3Body_IsValid(GroundBody) ? b3Body_GetUserData(GroundBody) : nullptr;
-            Character.GroundEntity = GroundUserData != nullptr ? (UnpackEntity(GroundUserData)).Value : 0xFFFFFFFFu;
+            Character.GroundEntity = GroundUserData != nullptr ? UnpackEntity(GroundUserData) : ECS::NullEntity;
             Character.GroundVelocity = b3Body_IsValid(GroundBody)
                 ? Box3DUtils::FromB3Vec3(b3Body_GetWorldPointVelocity(GroundBody, Gathered.Points[GroundPlane]))
                 : FVector3(0.0f);
@@ -728,7 +728,7 @@ namespace Lumina::Physics
         else
         {
             Character.GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
-            Character.GroundEntity = 0xFFFFFFFFu;
+            Character.GroundEntity = ECS::NullEntity;
             Character.GroundVelocity = FVector3(0.0f);
         }
 

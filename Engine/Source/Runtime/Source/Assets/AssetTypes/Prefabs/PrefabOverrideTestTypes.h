@@ -32,7 +32,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        PROPERTY(Editable, Entity)
+        PROPERTY(Editable)
         ECS::FEntity Target = ECS::NullEntity;
 
         PROPERTY(Editable)

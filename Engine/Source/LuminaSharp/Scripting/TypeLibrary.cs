@@ -211,11 +211,9 @@ internal sealed class TypeLibrary
         {
             return new ScriptType { Kind = EPropertyType.String, Clr = Type };
         }
-        // An entity handle is a uint32 tagged so the value codec round-trips it as an Entity and the native
-        // editor draws an entity picker; there is no dedicated reflected property type for it.
         if (Type == typeof(Entity))
         {
-            return new ScriptType { Kind = EPropertyType.UInt32, Clr = Type, IsEntity = true };
+            return new ScriptType { Kind = EPropertyType.Entity, Clr = Type };
         }
         // An input binding is stored as the name of the action it listens to (the object itself carries the
         // subscriptions, which are code, not data), tagged so the editor draws the action picker. Checked

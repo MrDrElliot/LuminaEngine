@@ -56,6 +56,17 @@ namespace Lumina
 
         PROPERTY()
         FString Name;
+
+        // Id of the parent entity, empty at the world root.
+        PROPERTY()
+        FString Parent;
+
+        // Name of the prefab this entity was spawned from, empty when it is not part of an instance.
+        PROPERTY()
+        FString Prefab;
+
+        PROPERTY()
+        bool bPrefabRoot = false;
     };
 
     REFLECT()
@@ -225,6 +236,52 @@ namespace Lumina
         /** What it holds now, read back after applying. */
         PROPERTY()
         FString Current;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SDuplicateEntityParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Entity;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SDuplicateEntityResult
+    {
+        GENERATED_BODY()
+
+        // Id of the copy, which carries the same components, scripts and children.
+        PROPERTY()
+        FString Entity;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSetParentParams
+    {
+        GENERATED_BODY()
+
+        // The entity to move in the hierarchy.
+        PROPERTY()
+        FString Entity;
+
+        // The new parent, or empty to move it to the world root.
+        PROPERTY()
+        FString Parent;
+
+        // Keeps where it sits in the world; false keeps its local transform, so it moves with the new parent.
+        PROPERTY()
+        bool bKeepWorldTransform = true;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSetParentResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bReparented = false;
     };
 
     REFLECT()

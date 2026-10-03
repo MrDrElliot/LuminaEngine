@@ -10,8 +10,7 @@
 
 namespace Lumina
 {
-    // PROPERTY(Entity) uint32: a searchable picker over the active world context's entities.
-    // Stored value is the entity's integral id; unset is ECS::NullEntity's integral.
+    // A searchable picker over the active world context's entities, for an ECS::FEntity property.
     class FEntityPropertyCustomization : public IPropertyTypeCustomization
     {
     public:
@@ -31,7 +30,7 @@ namespace Lumina
 
     private:
 
-        uint32                        CachedValue = 0;
+        ECS::FEntity                  CachedValue = ECS::NullEntity;
         FPropertyEditSession          EditSession;
         TSharedPtr<FEntityPickBroker> PickBroker;
     };

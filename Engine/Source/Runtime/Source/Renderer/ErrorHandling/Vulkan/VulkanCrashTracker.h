@@ -58,13 +58,30 @@ namespace Lumina::RHI
             TVector<uint8> Binary;
             FString        DebugName;
             FString        FriendlyName;
+            uint64         Sequence = 0;
         };
+
+        struct FShaderRegistration
+        {
+            uint64 Hash     = 0;
+            uint64 Sequence = 0;
+        };
+
+        // Every material edit compiles new binaries, so without a ceiling the registry grows for the whole session.
+        static constexpr size_t kShaderRegistryBudgetBytes = 256ull * 1024 * 1024;
+
+        // Caller holds ShaderRegistryMutex. Drops the oldest registrations until the binaries fit the budget.
+        void EvictOldShadersLocked();
 
         mutable FSharedMutex ShaderRegistryMutex;
         // Keyed by GFSDK_Aftermath_ShaderBinaryHash::hash (uint64)
         THashMap<uint64, FRegisteredShader> RegisteredShaders;
         // Debug name (from GFSDK_Aftermath_GetShaderDebugNameSpirv) -> shader hash
         THashMap<FString, uint64> DebugNameToHash;
+        TVector<FShaderRegistration> RegistrationOrder;
+        size_t                       RegistrationHead = 0;
+        size_t                       RegisteredBytes  = 0;
+        uint64                       NextSequence     = 0;
 
         mutable FSharedMutex ShaderDebugInfoMutex;
         // Keyed by combined hash of the identifier id[0]/id[1] pair

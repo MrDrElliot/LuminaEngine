@@ -204,6 +204,10 @@ namespace Lumina
         /** Where to write it. Empty picks a timestamped name under Saved/Screenshots. */
         PROPERTY()
         FString OutputPath;
+
+        // Capture this tab's own world, such as an asset editor's preview, instead of the active one.
+        PROPERTY()
+        FString Tab;
     };
 
     REFLECT()
@@ -455,6 +459,86 @@ namespace Lumina
         /** Whether the game viewport had input focus once the key went in. */
         PROPERTY()
         bool bGameInputFocused = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SWindowParams
+    {
+        GENERATED_BODY()
+
+        // Query, Resize, Move, Minimize, Restore or Maximize, applied to the editor's main window.
+        PROPERTY()
+        FString Action = "Query";
+
+        // Client size in pixels, for Resize.
+        PROPERTY()
+        int32 Width = 0;
+
+        PROPERTY()
+        int32 Height = 0;
+
+        // Screen position of the top-left corner, for Move.
+        PROPERTY()
+        int32 X = 0;
+
+        PROPERTY()
+        int32 Y = 0;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SWindowState
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int32 Width = 0;
+
+        PROPERTY()
+        int32 Height = 0;
+
+        PROPERTY()
+        int32 X = 0;
+
+        PROPERTY()
+        int32 Y = 0;
+
+        PROPERTY()
+        bool bMinimized = false;
+
+        PROPERTY()
+        bool bMaximized = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SFloatTabParams
+    {
+        GENERATED_BODY()
+
+        // Tab id from editor.list_tabs, or a unique part of its name.
+        PROPERTY()
+        FString Tab;
+
+        // Screen position of the floating window's top-left corner.
+        PROPERTY()
+        int32 X = 100;
+
+        PROPERTY()
+        int32 Y = 100;
+
+        PROPERTY()
+        int32 Width = 800;
+
+        PROPERTY()
+        int32 Height = 600;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SFloatTabResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bQueued = false;
     };
 
     namespace MCP

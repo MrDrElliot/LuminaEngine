@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Object/ObjectMacros.h"
+#include "World/ECS/Entity.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Memory/SmartPtr.h"
 #include "Physics/Physics.h"
@@ -171,7 +172,7 @@ namespace Lumina
         /** Entity the character is standing on, or the null entity (0xFFFFFFFF) when airborne / on static
             world geometry with no entity. Drives footstep-surface lookups and moving-platform logic. */
         PROPERTY(ReadOnly, Category = "Movement")
-        uint32 GroundEntity = 0xFFFFFFFF;
+        ECS::FEntity GroundEntity = ECS::NullEntity;
 
         /** Number of jumps performed since last landing. */
         PROPERTY(ReadOnly, Category = "Movement")

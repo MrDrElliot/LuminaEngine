@@ -67,10 +67,6 @@ namespace Lumina
             {
                 PropertyFlags |= EPropertyFlags::Replicated;
             }
-            else if (MetadataPair.Key == "Entity")
-            {
-                PropertyFlags |= EPropertyFlags::EntityHandle;
-            }
             else if (MetadataPair.Key == "DuplicateTransient")
             {
                 PropertyFlags |= EPropertyFlags::DuplicateTransient;

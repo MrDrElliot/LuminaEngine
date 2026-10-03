@@ -31,6 +31,9 @@ namespace Lumina
     DEFINE_REFLECTED_NUMERIC_PROPERTY(FReflectedInt32Property,  Lumina::EPropertyTypeFlags::Int32,  "Int32",  "number")
     DEFINE_REFLECTED_NUMERIC_PROPERTY(FReflectedInt64Property,  Lumina::EPropertyTypeFlags::Int64,  "Int64",  "number")
 
+    // An ECS::FEntity, which shares the numeric params since it is stored as its packed uint32.
+    DEFINE_REFLECTED_NUMERIC_PROPERTY(FReflectedEntityProperty, Lumina::EPropertyTypeFlags::Entity, "Entity", "number")
+
     // Floating point + bool properties
     DEFINE_REFLECTED_NUMERIC_PROPERTY(FReflectedFloatProperty,  Lumina::EPropertyTypeFlags::Float,  "Float",  "number")
     DEFINE_REFLECTED_NUMERIC_PROPERTY(FReflectedDoubleProperty, Lumina::EPropertyTypeFlags::Double, "Double", "number")

@@ -108,6 +108,7 @@ namespace Lumina::Reflection
                 { "Int16",  "short",  2, 2 }, { "UInt16", "ushort", 2, 2 },
                 { "Int32",  "int",    4, 4 }, { "UInt32", "uint",   4, 4 }, { "Float",  "float", 4, 4 },
                 { "Int64",  "long",   8, 8 }, { "UInt64", "ulong",  8, 8 }, { "Double", "double",8, 8 },
+                { "Entity", "global::LuminaSharp.Entity", 4, 4 },
             };
             for (const FEntry& E : Table)
             {
@@ -223,7 +224,7 @@ namespace Lumina::Reflection
                 || Bare == "ECS::FEntity" || Bare == "Lumina::ECS::FEntity";
         }
 
-        // An ECS::FEntity field classifies as Int32, so it stays blittable and surfaces as the C# Entity.
+        // An ECS::FEntity field is its own Entity kind, blittable as its packed id, and surfaces as the C# Entity.
         bool IsEntityField(const FReflectedProperty& Prop)
         {
             return IsEntitySpelling(Prop.RawTypeName) || IsEntitySpelling(Prop.TypeName);
@@ -1503,7 +1504,7 @@ namespace Lumina::Reflection
 
             const std::string Bare = StripQualifiers(F.RawFieldType);
 
-            // Checked before the numeric path, where ECS::FEntity classifies as an int and would be skipped.
+            // An ECS::FEntity crosses as its packed id and surfaces as the C# Entity.
             if (IsEntitySpelling(F.RawFieldType) || IsEntitySpelling(F.TypeName))
             {
                 B.Kind = EBind::Number;

@@ -8,7 +8,7 @@ namespace LuminaSharp;
 /// script schema keys on this single shared enum instead of a parallel one, so there is nothing to keep in
 /// sync by hand; <see cref="LayoutValidator"/> asserts the values match native at bootstrap. Order IS the wire
 /// ABI (the schema sends these as kind bytes), so only ever append. Script-specific shapes are carried as data
-/// rather than distinct kinds: an entity is <c>UInt32</c> + <see cref="ScriptType.IsEntity"/>; an asset ref is
+/// rather than distinct kinds: an asset ref is
 /// <c>SoftObject</c> + TargetClass; a native vs. script struct is <c>Struct</c> distinguished by NativeName.
 /// </summary>
 public enum EPropertyType : byte
@@ -19,6 +19,7 @@ public enum EPropertyType : byte
     Float, Double,
     Bool, Object, SoftObject, Class, Name, String,
     Enum, Vector, Struct, Optional, SubStruct, Delegate, InstancedStruct, Map,
+    Entity,
 }
 
 /// <summary>Coarse self-describing kind on the value wire; integers and enums and entity are Int, asset refs String, structs Nested.</summary>
@@ -57,11 +58,6 @@ public sealed class ScriptType
 
     /// <summary>The CLR type this describes.</summary>
     public Type Clr { get; init; } = typeof(object);
-
-    /// <summary>True when this is a <see cref="Entity"/> handle (kind <see cref="EPropertyType.UInt32"/> carries
-    /// no entity marker of its own, so this rides alongside so the value codec and the native entity picker both
-    /// see it).</summary>
-    public bool IsEntity { get; init; }
 
     /// <summary>True when this is an <see cref="InputBinding"/> (kind <see cref="EPropertyType.String"/>): the
     /// value round-trips as the action name, and the native editor draws a picker of the project's actions.</summary>
@@ -104,7 +100,7 @@ public sealed class ScriptType
         EPropertyType.Bool => EScriptValueKind.Bool,
         EPropertyType.Int8 or EPropertyType.Int16 or EPropertyType.Int32 or EPropertyType.Int64 or
         EPropertyType.UInt8 or EPropertyType.UInt16 or EPropertyType.UInt32 or EPropertyType.UInt64 or
-        EPropertyType.Enum => EScriptValueKind.Int,
+        EPropertyType.Enum or EPropertyType.Entity => EScriptValueKind.Int,
         EPropertyType.Float or EPropertyType.Double => EScriptValueKind.Double,
         EPropertyType.String or EPropertyType.Name or EPropertyType.SoftObject => EScriptValueKind.String,
         EPropertyType.Struct => EScriptValueKind.Nested,

@@ -438,6 +438,25 @@ namespace Lumina
             [ChangedTexture](const TObjectPtr<CTexture>& Texture) { return Texture.Get() == ChangedTexture; });
     }
 
+    void CMaterial::OnReferencesReplaced()
+    {
+        // A nulled texture leaves its index in the block, and the heap hands that index to the next texture made.
+        {
+            FRecursiveScopeLock Lock(TextureSlotMutex);
+            const uint32 NumTextures = (uint32)Math::Min<size_t>(ResolvedTextures.size(), MAX_TEXTURES);
+            for (uint32 i = 0; i < NumTextures; ++i)
+            {
+                if (ResolvedTextures[i] == nullptr)
+                {
+                    MaterialUniforms.Textures[i] = RHI::Textures::DefaultResourceID();
+                }
+            }
+        }
+
+        RefreshTextureBindings(nullptr);
+        FMeshResolveCache::InvalidateDependency(this);
+    }
+
     bool CMaterial::RefreshTextureBindings(const CTexture* ChangedTexture)
     {
         if (ChangedTexture != nullptr && !ReferencesTexture(ChangedTexture))

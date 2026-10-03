@@ -37,6 +37,12 @@ namespace Lumina::Paths
     RUNTIME_API const FString& GetEngineShadersDirectory();
     RUNTIME_API const FString& GetEngineInstallDirectory();
 
+    // True for a prebuilt engine from LuminaBuild Package, which ships without sources or a toolchain.
+    RUNTIME_API bool IsInstalledBuild();
+
+    // Written beside Engine/Resources by the packager, so its presence is what marks an installed build.
+    inline constexpr const char* InstalledBuildMarker = "Engine/InstalledBuild.json";
+
     // A packaged game's folder for everything but its exe, <exe folder>/<exe name>_Data, or the exe's own folder when there is none.
     RUNTIME_API const FString& GetGameDataDirectory();
 

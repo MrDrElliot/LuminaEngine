@@ -665,7 +665,7 @@ namespace Lumina
     private:
         
         void InitBuffers();
-        void InitViewImages(FSceneView& View, uint32 ReuseOutputSlot = RHI::kInvalidHeapSlot);
+        void InitViewImages(FSceneView& View);
 
         void NameOwnedImages(TArray<FSceneImage, (int)ENamedImage::Num>& Images);
         void ReleaseViewImages(FSceneView& View);

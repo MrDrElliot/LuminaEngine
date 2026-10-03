@@ -593,6 +593,8 @@ namespace Lumina::RHI
     RUNTIME_API void        WaitDeviceIdle();
     // Once a frame slot's timelines are waited, so the slot's transient command buffers can be reused.
     RUNTIME_API void        RetireSlot(uint32 Slot);
+    // Lands the repoints and unbinds that were waiting for this frame slot's copy of each heap to go idle.
+    RUNTIME_API void        ApplyDeferredHeapWrites(uint32 Slot);
     RUNTIME_API uint64      GetSemaphoreValue(FSemaphoreH Semaphore);
     RUNTIME_API void        WaitSemaphore(FSemaphoreH Semaphore, uint64 Value);
 
@@ -685,6 +687,7 @@ namespace Lumina::RHI
     RUNTIME_API uint32          GetOpenCommandListCount(EQueueType Queue);
 
     RUNTIME_API uint32      HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture);
+    // Repoint and unbind reach each frame slot's copy at its next BeginFrame, so no in-flight frame sees the change.
     RUNTIME_API void        HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture);
     RUNTIME_API uint32      HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip = 0);
     RUNTIME_API uint32      HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc);

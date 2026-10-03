@@ -5,6 +5,7 @@
 #include "Containers/String.h"
 #include "Containers/StringView.h"
 #include "Containers/Vector.h"
+#include "Core/Math/Vector/VectorTypes.h"
 #include "GUID/GUID.h"
 #include "World/ECS/Registry.h"
 
@@ -103,6 +104,11 @@ namespace Lumina::SessionOps
     EDITOR_API void ForEachTab(const TFunction<void(const FTabInfo&)>& Functor);
     EDITOR_API bool FocusTab(FStringView Name, FString& OutError);
     EDITOR_API bool CloseTab(FStringView Name, bool bDiscardUnsaved, FString& OutError);
+    // The world a tab renders, which for an asset editor is its own preview world.
+    EDITOR_API CWorld* GetTabWorld(FStringView Name, FString& OutError);
+
+    // Undocks a tab onto a screen rect over the next two frames, outside the main window as its own OS window.
+    EDITOR_API bool FloatTab(FStringView Name, const FVector2& ScreenPosition, const FVector2& Size, FString& OutError);
     // Opens the asset or focuses its existing tab, reporting which tab it landed in.
     EDITOR_API bool OpenAsset(const FGuid& AssetGUID, FString& OutTabId, FString& OutError);
 

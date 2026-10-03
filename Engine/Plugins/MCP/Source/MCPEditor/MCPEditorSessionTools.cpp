@@ -513,7 +513,22 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error("Source has to be FinalLDR or SceneHDR.");
                     }
 
-                    const Screenshot::FCaptureResult Captured = Screenshot::CaptureActiveWorld(Source, In.OutputPath);
+                    Screenshot::FCaptureResult Captured;
+                    if (In.Tab.empty())
+                    {
+                        Captured = Screenshot::CaptureActiveWorld(Source, In.OutputPath);
+                    }
+                    else
+                    {
+                        FString Error;
+                        CWorld* World = SessionOps::GetTabWorld(FStringView(In.Tab), Error);
+                        IRenderScene* Scene = World != nullptr ? World->GetRenderer() : nullptr;
+                        if (Scene == nullptr)
+                        {
+                            return Agent::FToolResult::Error(Error.empty() ? FString("That tab's world has no renderer right now.") : Error);
+                        }
+                        Captured = Screenshot::Capture(Scene, Source, In.OutputPath);
+                    }
                     if (!Captured.bSuccess)
                     {
                         // A world with no viewport showing it has had its renderer reclaimed, so there is nothing to read back.
@@ -737,6 +752,95 @@ namespace Lumina::MCP
                 });
         }
 
+        void FillWindowState(FWindow& Window, SWindowState& Out)
+        {
+            const FUIntVector2 Extent = Window.GetExtent();
+            Out.Width  = (int32)Extent.x;
+            Out.Height = (int32)Extent.y;
+            Window.GetWindowPosition(Out.X, Out.Y);
+            Out.bMinimized = Window.IsWindowMinimized();
+            Out.bMaximized = Window.IsWindowMaximized();
+        }
+
+        void RegisterWindow(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SWindowParams, SWindowState>(
+                Owner, "editor.window",
+                "Read or change the editor's main window: Query, Resize (Width, Height), Move (X, Y), Minimize, Restore "
+                "or Maximize. A change lands on the OS window at once; the swapchain and viewports follow on the next frames.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SWindowParams& In, SWindowState& Out)
+                {
+                    FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
+                    if (Window == nullptr)
+                    {
+                        return Agent::FToolResult::Error("There is no main window, which a headless editor does not have.");
+                    }
+
+                    if (In.Action == "Resize")
+                    {
+                        if (In.Width <= 0 || In.Height <= 0)
+                        {
+                            return Agent::FToolResult::Error("Resize needs a positive Width and Height; use Minimize for a zero-size window.");
+                        }
+                        if (Window->IsWindowMaximized() || Window->IsWindowMinimized())
+                        {
+                            Window->Restore();
+                        }
+                        Window->SetWindowSize(In.Width, In.Height);
+                    }
+                    else if (In.Action == "Move")
+                    {
+                        Window->SetWindowPosition(In.X, In.Y);
+                    }
+                    else if (In.Action == "Minimize")
+                    {
+                        Window->Minimize();
+                    }
+                    else if (In.Action == "Restore")
+                    {
+                        Window->Restore();
+                    }
+                    else if (In.Action == "Maximize")
+                    {
+                        Window->Maximize();
+                    }
+                    else if (In.Action != "Query")
+                    {
+                        return Agent::FToolResult::Error("Action has to be Query, Resize, Move, Minimize, Restore or Maximize.");
+                    }
+
+                    FillWindowState(*Window, Out);
+                    return Agent::FToolResult::Ok(Lumina::Format("{}x{} at ({}, {}){}{}.", Out.Width, Out.Height, Out.X, Out.Y,
+                        Out.bMinimized ? ", minimized" : "", Out.bMaximized ? ", maximized" : ""));
+                });
+        }
+
+        void RegisterFloatTab(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SFloatTabParams, SFloatTabResult>(
+                Owner, "editor.float_tab",
+                "Undock a tab and place it at a screen rect. Outside the main window it becomes its own OS window with its "
+                "own swapchain; over the main window it merges back. Lands over the next two frames.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SFloatTabParams& In, SFloatTabResult& Out)
+                {
+                    if (In.Width <= 0 || In.Height <= 0)
+                    {
+                        return Agent::FToolResult::Error("Width and Height have to be positive.");
+                    }
+
+                    FString Error;
+                    Out.bQueued = SessionOps::FloatTab(FStringView(In.Tab), FVector2((float)In.X, (float)In.Y),
+                                                       FVector2((float)In.Width, (float)In.Height), Error);
+                    if (!Out.bQueued)
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    return Agent::FToolResult::Ok(Lumina::Format("Floating {} at ({}, {}), {}x{}.", In.Tab, In.X, In.Y, In.Width, In.Height));
+                });
+        }
+
         void RegisterSendMouse(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSendMouseParams, SSendMouseResult>(
@@ -909,6 +1013,8 @@ namespace Lumina::MCP
         RegisterConsoleExec(Owner);
         RegisterScriptReload(Owner);
         RegisterSendMouse(Owner);
+        RegisterWindow(Owner);
+        RegisterFloatTab(Owner);
     }
 
     void UnregisterEditorSessionTools()

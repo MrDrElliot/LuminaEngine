@@ -212,6 +212,17 @@ namespace Lumina
         return nullptr;
     }
     
+    // Entities were saved as plain 32-bit numbers before they had a kind of their own, and the packed bits match.
+    static bool IsEntityRetag(EPropertyTypeFlags PropertyType, EPropertyTypeFlags TagType)
+    {
+        const auto IsPacked32 = [](EPropertyTypeFlags Type)
+        {
+            return Type == EPropertyTypeFlags::Int32 || Type == EPropertyTypeFlags::UInt32;
+        };
+        return (PropertyType == EPropertyTypeFlags::Entity && IsPacked32(TagType))
+            || (TagType == EPropertyTypeFlags::Entity && IsPacked32(PropertyType));
+    }
+
     static bool ReadNumericValue(FArchive& Ar, EPropertyTypeFlags Type, double& OutValue)
     {
         switch (Type)
@@ -373,6 +384,10 @@ namespace Lumina
                     {
                         void* ValuePtr = FoundProperty->GetValuePtr<void>(Data);
                         FoundProperty->Serialize(Ar, ValuePtr);
+                    }
+                    else if (IsEntityRetag(FoundProperty->GetType(), Tag.Type))
+                    {
+                        FoundProperty->Serialize(Ar, FoundProperty->GetValuePtr<void>(Data));
                     }
                     else if (IsPropertyNumeric(FoundProperty->GetType()) && IsPropertyNumeric(Tag.Type))
                     {

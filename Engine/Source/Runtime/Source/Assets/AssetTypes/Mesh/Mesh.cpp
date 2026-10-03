@@ -48,6 +48,12 @@ namespace Lumina
         GenerateGPUBuffers();
     }
 
+    void CMesh::OnReferencesReplaced()
+    {
+        // A slot material that was nulled is still what every resolve entry for this mesh draws with.
+        FMeshResolveCache::InvalidateDependency(this);
+    }
+
     void CMesh::OnDestroy()
     {
         Super::OnDestroy();

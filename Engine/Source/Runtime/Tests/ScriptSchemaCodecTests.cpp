@@ -73,7 +73,6 @@ namespace
         {
             const size_t L = Open(EScriptSchemaRecord::Type);
             U8((uint8)Kind);
-            U8(0);          // not an entity
             U8(0);          // not an input action
             Close(L);
         }
@@ -83,7 +82,6 @@ namespace
         {
             const size_t L = Open(EScriptSchemaRecord::Type);
             U8((uint8)EPropertyTypeFlags::Optional);
-            U8(0);          // not an entity
             U8(0);          // not an input action
             ScalarType(Payload);
             Close(L);

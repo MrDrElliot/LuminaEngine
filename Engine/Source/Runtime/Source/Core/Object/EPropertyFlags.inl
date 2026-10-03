@@ -13,7 +13,6 @@ LE_PROPERTY_FLAG(Private,             4)
 LE_PROPERTY_FLAG(Protected,           5)
 LE_PROPERTY_FLAG(SubField,            6)   // an inner of a container, not a member in its own right
 LE_PROPERTY_FLAG(Trivial,             7)
-LE_PROPERTY_FLAG(EntityHandle,        8)   // a raw entity id prefab instancing has to remap
 LE_PROPERTY_FLAG(Builtin,             9)
 LE_PROPERTY_FLAG(BulkSerialize,      10)
 LE_PROPERTY_FLAG(EditorOnly,         11)   // stripped from cooked packages

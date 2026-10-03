@@ -843,6 +843,27 @@ namespace Lumina
 
             FocusTargetWindowName.clear();
         }
+
+        if (!PendingFloat.WindowName.empty())
+        {
+            ImGuiWindow* Window = ImGui::FindWindowByName(PendingFloat.WindowName.c_str());
+            if (Window == nullptr)
+            {
+                PendingFloat = {};
+            }
+            else if (Window->DockNode != nullptr && !PendingFloat.bUndockQueued)
+            {
+                // The undock lands in the next NewFrame, so the placement waits a frame for it.
+                ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), Window);
+                PendingFloat.bUndockQueued = true;
+            }
+            else
+            {
+                ImGui::SetWindowPos(Window, ImVec2(PendingFloat.Position.x, PendingFloat.Position.y), ImGuiCond_Always);
+                ImGui::SetWindowSize(Window, ImVec2(PendingFloat.Size.x, PendingFloat.Size.y), ImGuiCond_Always);
+                PendingFloat = {};
+            }
+        }
         
         if (bShowDearImGuiDemoWindow)
         {
@@ -1583,6 +1604,18 @@ namespace Lumina
         }
 
         FocusTargetWindowName = FString(Tool->GetToolName().c_str());
+        return true;
+    }
+
+    bool FEditorUI::FloatTab(FStringView Name, const FVector2& ScreenPosition, const FVector2& Size, FString& OutError)
+    {
+        FEditorTool* Tool = FindTab(Name, OutError);
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+
+        PendingFloat = FFloatRequest{ FString(Tool->GetToolName().c_str()), ScreenPosition, Size };
         return true;
     }
 
@@ -3621,7 +3654,18 @@ namespace Lumina
     
         ImGui::Separator();
 
-        DrawToolMenuItem<FProjectPackagerEditorTool>(LE_ICON_PACKAGE_VARIANT " Package Project...", this);
+        // Packaging compiles the game target, which an installed build has no sources or toolchain for.
+        if (Paths::IsInstalledBuild())
+        {
+            ImGui::BeginDisabled();
+            ImGui::MenuItem(LE_ICON_PACKAGE_VARIANT " Package Project...");
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("Packaging a game needs a source build of the engine.");
+        }
+        else
+        {
+            DrawToolMenuItem<FProjectPackagerEditorTool>(LE_ICON_PACKAGE_VARIANT " Package Project...", this);
+        }
 
         ImGui::EndMenu();
     }
@@ -3932,12 +3976,24 @@ namespace Lumina
             ImGui::BeginChild("##NewProjBody", ImVec2(0, -52), false);
 
             DrawSectionHeader("TEMPLATE");
-            DrawProjectRow(
-                LE_ICON_CUBE,
-                "Blank Project (C++)",
-                "Empty C++ module + C# scripting. F5 in the generated .slnx launches the editor with the project loaded.",
-                kProjDialogAccentBlue,
-                /*bCompact=*/false);
+            if (Paths::IsInstalledBuild())
+            {
+                DrawProjectRow(
+                    LE_ICON_CUBE,
+                    "Blank Project",
+                    "C# scripts and content. Opens straight away, with nothing to build.",
+                    kProjDialogAccentBlue,
+                    /*bCompact=*/false);
+            }
+            else
+            {
+                DrawProjectRow(
+                    LE_ICON_CUBE,
+                    "Blank Project (C++)",
+                    "Empty C++ module + C# scripting. F5 in the generated .slnx launches the editor with the project loaded.",
+                    kProjDialogAccentBlue,
+                    /*bCompact=*/false);
+            }
 
             DrawSectionHeader("PROJECT NAME");
             ImGui::PushStyleColor(ImGuiCol_FrameBg,        ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
@@ -4027,9 +4083,17 @@ namespace Lumina
                 if (GEditorEngine->CreateProject(NewProjectName, NewProjectPath, ProjectFile, Error))
                 {
                     LastError.clear();
+                    PushRecentProject(ProjectFile.c_str());
+
+                    // Its template carries no C++ module, so there is no solution to wait for.
+                    if (Paths::IsInstalledBuild())
+                    {
+                        GEditorEngine->LoadProject(ProjectFile);
+                        OnProjectLoaded();
+                        return true;
+                    }
 
                     GEditorEngine->GenerateProjectFiles(VFS::Parent(ProjectFile));
-                    PushRecentProject(ProjectFile.c_str());
 
                     // Chains into the Project Created dialog, since the editor still has no project loaded.
                     const FString ProjectFileCopy(ProjectFile.c_str(), ProjectFile.size());

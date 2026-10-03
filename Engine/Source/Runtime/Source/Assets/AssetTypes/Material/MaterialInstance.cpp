@@ -801,6 +801,13 @@ namespace Lumina
         return false;
     }
 
+    void CMaterialInstance::OnReferencesReplaced()
+    {
+        // A nulled override or parent stays baked in the block until it is rebuilt, and surfaces keep the old resolve.
+        RefreshSubtree();
+        FMeshResolveCache::InvalidateDependency(this);
+    }
+
     bool CMaterialInstance::RefreshTextureBindings(const CTexture* ChangedTexture)
     {
         bool bReferences = (ChangedTexture == nullptr);

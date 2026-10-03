@@ -57,6 +57,7 @@ public static class Program
                 "deps" => AnalyzeMode.RunDependencies(Arguments, Directories),
                 "unityconflicts" => AnalyzeMode.RunUnityConflicts(Arguments, Directories),
                 "setup" => await SetupMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
+                "package" => await PackageMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
                 "generateprojectfiles" or "genprojects" => ProjectFilesMode.Run(Arguments, Directories),
                 _ => UnknownMode(Mode),
             };
@@ -107,6 +108,7 @@ public static class Program
               Deps <Target>             Compare declared module dependencies against reached ones
               UnityConflicts <Target>   Find file-scope names that collide when unity merges two sources
               GenerateProjectFiles      Write IDE project and solution files
+              Package                   Build and zip a prebuilt editor that runs without sources or a toolchain
 
             Profile options:
               -Seconds=<n>              Capture window, default 15
@@ -178,6 +180,14 @@ public static class Program
               -RadeonGpuDetective=<mode> auto | on | off  (AMD crash analysis)
               -VerboseLogging=<mode>    auto | on | off
               -ForceInlineHint=<mode>   auto | on | off   (off lets the optimizer decide)
+
+            Package options (output in Saved/Packages unless -Output is given):
+              -Configuration=<name>     Development (default) or Shipping
+              -Output=<dir>             Where the staged folder and the .zip are written
+              -NoBuild                  Package what is already built
+              -NoGame                   Leave out the standalone game binaries that Play Standalone runs
+              -NoZip                    Stage the folder without compressing it
+              -Symbols                  Include .pdb files beside the binaries
 
             Setup options:
               -Force                    Re-download the dependency bundle even if External/ exists

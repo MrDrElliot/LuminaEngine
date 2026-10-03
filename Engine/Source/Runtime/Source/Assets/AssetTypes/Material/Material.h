@@ -199,6 +199,7 @@ namespace Lumina
         EMaterialShadingModel GetShadingModel() override { return ShadingModel; }
 
         void PostPropertyChange(FProperty* ChangedProperty) override;
+        void OnReferencesReplaced() override;
 
         /** Folds settings the current domain cannot draw back to their defaults; see MaterialDomain. */
         void NormalizeRenderStateForDomain();

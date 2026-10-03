@@ -24,8 +24,8 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Pivot the arm orbits. Unset = orbit the camera entity's own location. */
-        PROPERTY(Editable, Entity, Category = "Camera|Spring Arm")
-        uint32 Target = (static_cast<ECS::FEntity>(ECS::NullEntity)).Value;
+        PROPERTY(Editable, Category = "Camera|Spring Arm")
+        ECS::FEntity Target = ECS::NullEntity;
 
         /** World-space offset added to the pivot (e.g. raise the focus to head height). */
         PROPERTY(Editable, Category = "Camera|Spring Arm")
@@ -63,7 +63,7 @@ namespace Lumina
         FUNCTION()
         void SetTarget(ECS::FEntity Entity)
         {
-            Target = (Entity).Value;
+            Target = Entity;
             bInitialized = false;
         }
 

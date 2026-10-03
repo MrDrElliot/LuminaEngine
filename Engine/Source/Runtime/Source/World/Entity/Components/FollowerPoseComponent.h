@@ -4,6 +4,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Platform/GenericPlatform.h"
+#include "World/ECS/Entity.h"
 #include "FollowerPoseComponent.generated.h"
 
 namespace Lumina
@@ -14,11 +15,9 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        static constexpr uint32 NoLeader = 0xFFFFFFFFu;
-
         /** Entity whose pose this mesh copies. It must carry a skeletal mesh that something animates. */
-        PROPERTY(Editable, Entity, Category = "Follower Pose")
-        uint32 Leader = NoLeader;
+        PROPERTY(Editable, Category = "Follower Pose")
+        ECS::FEntity Leader = ECS::NullEntity;
 
         /** Bones the leader has no match for keep their bind pose rather than following anything. */
         PROPERTY(Editable, Category = "Follower Pose")

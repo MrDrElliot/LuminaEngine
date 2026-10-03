@@ -332,18 +332,34 @@ namespace Lumina
         }
         TerrainGPUStates.clear();
 
+        // Through the same release as a dying emitter, so a buffer added to the state cannot be missed here.
         for (auto& [Entity, States] : ParticleGPUStates)
         {
             for (FParticleGPUState& State : States)
             {
-                if (State.ParticleBuffer)     { RHI::Retire(State.ParticleBuffer); }
-                if (State.SpawnCounterBuffer) { RHI::Retire(State.SpawnCounterBuffer); }
-                if (State.AttributeBuffer)    { RHI::Retire(State.AttributeBuffer); }
-                if (State.SortIndexBuffer)    { RHI::Retire(State.SortIndexBuffer); }
-                if (State.SortDrawArgsBuffer) { RHI::Retire(State.SortDrawArgsBuffer); }
+                ReleaseParticleState(State);
             }
         }
         ParticleGPUStates.clear();
+
+        for (auto& [Size, Pooled] : ParticleBufferPool)
+        {
+            for (RHI::FGPUAllocation& Allocation : Pooled)
+            {
+                FreeBuffer(Allocation);
+            }
+        }
+        ParticleBufferPool.clear();
+        ParticlePoolBytes = 0;
+
+        FreeBuffer(StreamingFeedbackBuffer);
+        for (RHI::FGPUAllocation& Readback : StreamingFeedbackReadback)
+        {
+            FreeBuffer(Readback);
+        }
+
+        FreeBuffer(PrevBoneArenaBuffer);
+        FreeBuffer(PrevRetainedTransformBuffer);
 
         for (FParticleCollisionReadback& Readback : ParticleCollisionReadback)
         {
@@ -1548,7 +1564,7 @@ namespace Lumina
         EnsureOptionalViewImages(View);
     }
 
-    void FDefaultSceneRenderer::InitViewImages(FSceneView& View, uint32 ReuseOutputSlot)
+    void FDefaultSceneRenderer::InitViewImages(FSceneView& View)
     {
         const FUIntVector2 Extent = View.Size;
 
@@ -1566,7 +1582,7 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
                       RHI::EImageUsageFlags::TransferDst | RHI::EImageUsageFlags::TransferSrc;
-        View.Output = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ false, ReuseOutputSlot);
+        View.Output = CreateSceneImage(Desc);
 
         // Storage as well, because the deferred lighting pass writes HDR from compute.
         Desc.Format = EFormat::RGBA16_FLOAT;
@@ -1906,11 +1922,9 @@ namespace Lumina
     {
         FSceneView& Primary = SceneViews[0];
 
-        // Output's heap slot survives the resize; only the texture behind it is replaced.
-        const uint32 OutputSlot = DetachSampledSlot(Primary.Output);
-
+        // A fresh output slot, since this frame's UI draw data already names the old one and must keep sampling it.
         ReleaseViewImages(Primary);
-        InitViewImages(Primary, OutputSlot);
+        InitViewImages(Primary);
     }
 
     void FDefaultSceneRenderer::EnsureStreamingFeedbackBuffer()

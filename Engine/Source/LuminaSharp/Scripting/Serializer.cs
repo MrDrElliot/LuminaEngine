@@ -177,15 +177,13 @@ internal static class Serializer
     }
 
     // Type descriptor; parsed in lockstep by the native ReadType. The kind is the shared reflected taxonomy
-    // (EPropertyType); the entity byte rides alongside because an entity is a plain UInt32 with no kind of its
-    // own. A Struct always writes its NativeName (empty for a C#-defined script struct) so the reader tells the
-    // two apart from one uniform shape.
+    // (EPropertyType). A Struct always writes its NativeName (empty for a C#-defined script struct) so the reader
+    // tells the two apart from one uniform shape.
     private static void WriteType(BinaryWriter Writer, ScriptType Type)
     {
         using var Frame = new Record(Writer, ERecord.Type);
 
         Writer.Write((byte)Type.Kind);
-        Writer.Write((byte)(Type.IsEntity ? 1 : 0));
         Writer.Write((byte)(Type.IsInputAction ? 1 : 0));
         switch (Type.Kind)
         {
@@ -381,7 +379,7 @@ internal static class Serializer
         {
             return 0L;
         }
-        if (Type.IsEntity)
+        if (Type.Kind == EPropertyType.Entity)
         {
             return Value is Entity Ent ? Ent.Id : 0L;
         }
@@ -758,7 +756,7 @@ internal static class Serializer
 
     private static object DecodeInt(long Value, ScriptType Type)
     {
-        if (Type.IsEntity)
+        if (Type.Kind == EPropertyType.Entity)
         {
             return new Entity(unchecked((uint)Value));
         }

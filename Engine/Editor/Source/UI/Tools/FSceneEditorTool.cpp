@@ -1430,7 +1430,7 @@ namespace Lumina
             {
                 for (int32 i = (int32)Folder.Entities.size() - 1; i >= 0; --i)
                 {
-                    if (!Registry.IsValid(static_cast<ECS::FEntity>(Folder.Entities[i])))
+                    if (!Registry.IsValid(Folder.Entities[i]))
                     {
                         Folder.Entities.erase(Folder.Entities.begin() + i);
                     }
@@ -1484,9 +1484,8 @@ namespace Lumina
             Display.TooltipSubtitle = "Outliner folder, organization only";
             Display.bTooltipBuilt = true;
 
-            for (uint32 Handle : Folder->Entities)
+            for (ECS::FEntity Member : Folder->Entities)
             {
-                const ECS::FEntity Member = static_cast<ECS::FEntity>(Handle);
                 if (Registry.IsValid(Member))
                 {
                     EntityFolderCache[Member] = Folder->ID;
@@ -1542,9 +1541,8 @@ namespace Lumina
                 continue;
             }
 
-            for (uint32 Handle : Folder->Entities)
+            for (ECS::FEntity Member : Folder->Entities)
             {
-                const ECS::FEntity Member = static_cast<ECS::FEntity>(Handle);
                 if (Registry.IsValid(Member))
                 {
                     OutEntities.push_back(Member);

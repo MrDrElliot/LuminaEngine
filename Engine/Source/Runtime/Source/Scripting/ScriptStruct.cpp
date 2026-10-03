@@ -172,10 +172,6 @@ namespace Lumina
         // Shared so a field and a container element of the same kind are tagged identically.
         FKindTag KindTag(const FScriptExportType& Type)
         {
-            if (Type.bEntity)
-            {
-                return FKindTag{ "Entity" };
-            }
             if (Type.bInputAction)
             {
                 return FKindTag{ "Picker", "InputAction" };
@@ -1641,7 +1637,6 @@ namespace Lumina::Scripting
                 return;
             }
             Out += Format("{}", (int32)Type->Kind).c_str();
-            if (Type->bEntity)      { Out += "e"; }
             if (Type->bInputAction) { Out += "a"; }
             if (!Type->EnumName.IsNone())    { Out += "#"; Out += Type->EnumName.ToString(); }
             if (!Type->NativeName.IsNone())  { Out += "@"; Out += Type->NativeName.ToString(); }

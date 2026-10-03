@@ -76,7 +76,7 @@ namespace Lumina
         for (ECS::FEntity Entity : FollowView)
         {
             SCameraFollowComponent& Follow = FollowView.Get<SCameraFollowComponent>(Entity);
-            const ECS::FEntity Target = (ECS::FEntity)Follow.Target;
+            const ECS::FEntity Target = Follow.Target;
             if (!Registry.IsValid(Target) || !Registry.HasAll<STransformComponent>(Target))
             {
                 continue;
@@ -137,7 +137,7 @@ namespace Lumina
             SSpringArmComponent&        Arm   = ArmView.Get<SSpringArmComponent>(Entity);
             const STransformComponent&  Xform = ArmView.Get<STransformComponent>(Entity);
 
-            const ECS::FEntity Target = (ECS::FEntity)Arm.Target;
+            const ECS::FEntity Target = Arm.Target;
             const bool bHasTarget = Registry.IsValid(Target) && Registry.HasAll<STransformComponent>(Target);
 
             FVector3 PivotBase;

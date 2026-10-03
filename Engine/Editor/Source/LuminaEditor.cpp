@@ -24,8 +24,9 @@ namespace Lumina
     bool FEditorEngine::Init()
     {
         // Heals a missing or stale LUMINA_DIR for shells, the IDE and external game builds that need it.
+        // An installed build has no build tools to serve, and would point an engineer's source builds at itself.
         const FString& EngineRoot = Paths::GetEngineInstallDirectory();
-        if (!EngineRoot.empty())
+        if (!EngineRoot.empty() && !Paths::IsInstalledBuild())
         {
             Platform::SetEnvVariable("LUMINA_DIR", EngineRoot);
             if (Platform::PersistUserEnvVariable("LUMINA_DIR", EngineRoot))

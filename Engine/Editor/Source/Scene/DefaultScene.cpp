@@ -250,7 +250,7 @@ namespace Lumina::DefaultScene
                 TextComponent.bDepthTest      = true;
             };
 
-            // Bloom thresholds at 0.5, so only the wordmark is pushed far enough to glow.
+            // The wordmark runs above 1.0 so it still reads as the brightest thing on the stage once tonemapped.
             SpawnText("Wordmark", "LUMINA", kWordmarkY, 2.2f, FVector3(0.62f, 0.86f, 1.0f), 2.5f);
             SpawnText("Tagline", "Create or open a level to start building", kTaglineY, 0.32f, FVector3(0.85f, 0.9f, 1.0f), 0.9f);
         }

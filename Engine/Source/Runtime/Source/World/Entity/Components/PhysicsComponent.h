@@ -515,7 +515,7 @@ namespace Lumina
         EPhysicsConstraintType Type = EPhysicsConstraintType::Point;
 
         /** The body this entity is jointed to. Leave as the null entity to anchor to the world. */
-        PROPERTY(Editable, Entity, Category = "Constraint")
+        PROPERTY(Editable, Category = "Constraint")
         ECS::FEntity TargetEntity = ECS::NullEntity;
 
         /** Pivot in this entity's local space (Point/Hinge/Slider/Cone). The world anchor tracks the body. */

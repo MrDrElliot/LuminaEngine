@@ -471,6 +471,11 @@ namespace Lumina::Reflection::Visitor
 			NewProperty = CreateProperty<FReflectedInt64Property>(FieldInfo);
 		}
 		break;
+		case EPropertyTypeFlags::Entity:
+		{
+			NewProperty = CreateProperty<FReflectedEntityProperty>(FieldInfo);
+		}
+		break;
 		case EPropertyTypeFlags::Float:
 		{
 			NewProperty = CreateProperty<FReflectedFloatProperty>(FieldInfo);
@@ -886,6 +891,7 @@ namespace Lumina::Reflection::Visitor
 		case EPropertyTypeFlags::UInt16:
 		case EPropertyTypeFlags::UInt32:
 		case EPropertyTypeFlags::UInt64:
+		case EPropertyTypeFlags::Entity:
 		case EPropertyTypeFlags::Float:
 		case EPropertyTypeFlags::Double:
 		case EPropertyTypeFlags::Bool:

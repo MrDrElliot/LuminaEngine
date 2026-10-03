@@ -79,6 +79,7 @@ namespace Lumina::Reflection
             case EPropertyTypeFlags::UInt8:
             case EPropertyTypeFlags::UInt16:
             case EPropertyTypeFlags::UInt32:
+            case EPropertyTypeFlags::Entity:
             case EPropertyTypeFlags::UInt64:
             case EPropertyTypeFlags::Float:
             case EPropertyTypeFlags::Double:
@@ -249,6 +250,7 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::UInt8:
         case EPropertyTypeFlags::UInt16:
         case EPropertyTypeFlags::UInt32:
+        case EPropertyTypeFlags::Entity:
         case EPropertyTypeFlags::UInt64:
         case EPropertyTypeFlags::Float:
         case EPropertyTypeFlags::Double:
@@ -356,7 +358,8 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::Int64:   return Format("{}", *static_cast<int64*>(Value)).c_str();
         case EPropertyTypeFlags::UInt8:   return Format("{}", (uint32)*static_cast<uint8*>(Value)).c_str();
         case EPropertyTypeFlags::UInt16:  return Format("{}", (uint32)*static_cast<uint16*>(Value)).c_str();
-        case EPropertyTypeFlags::UInt32:  return Format("{}", *static_cast<uint32*>(Value)).c_str();
+        case EPropertyTypeFlags::UInt32:
+        case EPropertyTypeFlags::Entity:  return Format("{}", *static_cast<uint32*>(Value)).c_str();
         case EPropertyTypeFlags::UInt64:  return Format("{}", *static_cast<uint64*>(Value)).c_str();
 
         // to_string on a float emits six trailing zeroes, making a table of whole numbers unreadable.
@@ -415,7 +418,8 @@ namespace Lumina::Reflection
         case EPropertyTypeFlags::Int64:   return ParseSigned(Text, *static_cast<int64*>(Value));
         case EPropertyTypeFlags::UInt8:   return ParseUnsigned(Text, *static_cast<uint8*>(Value));
         case EPropertyTypeFlags::UInt16:  return ParseUnsigned(Text, *static_cast<uint16*>(Value));
-        case EPropertyTypeFlags::UInt32:  return ParseUnsigned(Text, *static_cast<uint32*>(Value));
+        case EPropertyTypeFlags::UInt32:
+        case EPropertyTypeFlags::Entity:  return ParseUnsigned(Text, *static_cast<uint32*>(Value));
         case EPropertyTypeFlags::UInt64:  return ParseUnsigned(Text, *static_cast<uint64*>(Value));
         case EPropertyTypeFlags::Float:   return ParseFloating(Text, *static_cast<float*>(Value));
         case EPropertyTypeFlags::Double:  return ParseFloating(Text, *static_cast<double*>(Value));

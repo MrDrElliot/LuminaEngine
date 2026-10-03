@@ -102,7 +102,12 @@ namespace Lumina
 
         Object->VisitAdditionalObjectReferences(Hard);
 
-        return NumReplaced - Before;
+        const uint32 Replaced = NumReplaced - Before;
+        if (Replaced > 0)
+        {
+            Object->OnReferencesReplaced();
+        }
+        return Replaced;
     }
 
     uint32 FObjectReferenceReplacer::ApplyToAllObjects()

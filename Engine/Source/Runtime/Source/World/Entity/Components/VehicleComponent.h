@@ -3,6 +3,7 @@
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectMacros.h"
+#include "World/ECS/Entity.h"
 #include "VehicleComponent.generated.h"
 
 namespace Lumina
@@ -44,8 +45,8 @@ namespace Lumina
         bool bHandbrake = false;
 
         // Optional child entity posed each frame with the wheel's suspension, steering and spin.
-        PROPERTY(Editable, Entity, Category = "Wheel")
-        uint32 Visual = 0xFFFFFFFF;
+        PROPERTY(Editable, Category = "Wheel")
+        ECS::FEntity Visual = ECS::NullEntity;
 
         PROPERTY(ReadOnly, Category = "Wheel|State")
         bool bGrounded = false;
@@ -60,8 +61,8 @@ namespace Lumina
         PROPERTY(ReadOnly, Category = "Wheel|State")
         FVector3 ContactNormal = FVector3(0.0f, 1.0f, 0.0f);
 
-        PROPERTY(ReadOnly, Entity, Category = "Wheel|State")
-        uint32 GroundEntity = 0xFFFFFFFF;
+        PROPERTY(ReadOnly, Category = "Wheel|State")
+        ECS::FEntity GroundEntity = ECS::NullEntity;
 
         // Speed the tire slides at once its grip is exceeded, for skid marks and tire squeal.
         PROPERTY(ReadOnly, Category = "Wheel|State", Units = "m/s")
@@ -191,7 +192,7 @@ namespace Lumina
             Wheel.bSteer           = bSteer;
             Wheel.bDrive           = bDrive;
             Wheel.bHandbrake       = bInHandbrake;
-            Wheel.Visual           = Visual;
+            Wheel.Visual           = ECS::FEntity::FromPacked(Visual);
         }
     };
 }

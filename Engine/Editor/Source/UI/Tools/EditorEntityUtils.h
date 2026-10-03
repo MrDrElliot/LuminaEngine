@@ -28,7 +28,7 @@ namespace Lumina::EditorEntityUtils
 
     /** Standard filter for CWorld::DuplicateEntity, drops the editor-only set above
      *  so duplicates don't carry the source's selection / clipboard / dirty flags. */
-    bool DefaultDuplicateFilter(const ECS::FComponentTypeInfo& Type);
+    EDITOR_API bool DefaultDuplicateFilter(const ECS::FComponentTypeInfo& Type);
 
     /** Translate → Rotate → Scale → Translate. */
     void CycleGizmoOp(ImGuizmo::OPERATION& InOutOp);

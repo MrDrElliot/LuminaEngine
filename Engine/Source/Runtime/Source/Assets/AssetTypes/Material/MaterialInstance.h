@@ -108,6 +108,7 @@ namespace Lumina
 
         /** Editing the shading-model override has to re-stamp and re-upload the flags to be visible. */
         void PostPropertyChange(FProperty* ChangedProperty) override;
+        void OnReferencesReplaced() override;
 
         /** Idempotent, and not just a PostLoad concern: an instance built at runtime never registers there. */
         void EnsureRegisteredWithParent();

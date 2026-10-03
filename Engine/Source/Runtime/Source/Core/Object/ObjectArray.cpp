@@ -581,7 +581,8 @@ namespace Lumina
 
     int32 FCObjectArray::GetNumAliveObjects() const
     {
-        return ChunkedArray.GetNumElements() - (int32)FreeIndices.size();
+        // Quarantined slots hold no object either, they are just held back from reuse for a while.
+        return ChunkedArray.GetNumElements() - (int32)FreeIndices.size() - (int32)QuarantinedIndices.size();
     }
 
     int32 FCObjectArray::GetMaxObjects() const

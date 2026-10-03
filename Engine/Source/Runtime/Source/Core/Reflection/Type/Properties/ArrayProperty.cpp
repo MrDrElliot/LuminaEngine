@@ -43,7 +43,7 @@ namespace Lumina
 
         bool IsPlainNumeric(EPropertyTypeFlags Type)
         {
-            return Type >= EPropertyTypeFlags::Int8 && Type <= EPropertyTypeFlags::Bool;
+            return (Type >= EPropertyTypeFlags::Int8 && Type <= EPropertyTypeFlags::Bool) || Type == EPropertyTypeFlags::Entity;
         }
 
         // Every leaf of a struct made only of numbers, or false when any field needs its own serializer.
@@ -152,7 +152,8 @@ namespace Lumina
             case EPropertyTypeFlags::Int64:  { int64  V; memcpy(&V, Source, sizeof(V)); return (double)V; }
             case EPropertyTypeFlags::UInt8:  { uint8  V; memcpy(&V, Source, sizeof(V)); return V; }
             case EPropertyTypeFlags::UInt16: { uint16 V; memcpy(&V, Source, sizeof(V)); return V; }
-            case EPropertyTypeFlags::UInt32: { uint32 V; memcpy(&V, Source, sizeof(V)); return V; }
+            case EPropertyTypeFlags::UInt32:
+            case EPropertyTypeFlags::Entity: { uint32 V; memcpy(&V, Source, sizeof(V)); return V; }
             case EPropertyTypeFlags::UInt64: { uint64 V; memcpy(&V, Source, sizeof(V)); return (double)V; }
             case EPropertyTypeFlags::Float:  { float  V; memcpy(&V, Source, sizeof(V)); return V; }
             case EPropertyTypeFlags::Double: { double V; memcpy(&V, Source, sizeof(V)); return V; }
@@ -179,6 +180,7 @@ namespace Lumina
             case EPropertyTypeFlags::UInt8:  StorePlainNumber<uint8>(Dest, Value);  break;
             case EPropertyTypeFlags::UInt16: StorePlainNumber<uint16>(Dest, Value); break;
             case EPropertyTypeFlags::UInt32: StorePlainNumber<uint32>(Dest, Value); break;
+            case EPropertyTypeFlags::Entity: StorePlainNumber<uint32>(Dest, static_cast<double>(static_cast<uint32>(static_cast<int64>(Value)))); break;
             case EPropertyTypeFlags::UInt64: StorePlainNumber<uint64>(Dest, Value); break;
             case EPropertyTypeFlags::Float:  StorePlainNumber<float>(Dest, Value);  break;
             case EPropertyTypeFlags::Double: StorePlainNumber<double>(Dest, Value); break;

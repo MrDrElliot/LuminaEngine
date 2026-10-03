@@ -88,6 +88,7 @@ namespace Lumina
                 Add<FUInt16Property, FNumericPropertyParams, uint16>(EPropertyTypeFlags::UInt16, true, true);
                 Add<FUInt32Property, FNumericPropertyParams, uint32>(EPropertyTypeFlags::UInt32, true, true);
                 Add<FUInt64Property, FNumericPropertyParams, uint64>(EPropertyTypeFlags::UInt64, true, true);
+                Add<FEntityProperty, FNumericPropertyParams, uint32>(EPropertyTypeFlags::Entity, true, true);
                 Add<FFloatProperty,  FNumericPropertyParams, float> (EPropertyTypeFlags::Float,  true, true);
                 Add<FDoubleProperty, FNumericPropertyParams, double>(EPropertyTypeFlags::Double, true, true);
 

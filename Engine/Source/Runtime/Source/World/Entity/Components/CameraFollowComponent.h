@@ -15,8 +15,8 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Entity the camera follows. Unset = component idles. */
-        PROPERTY(Editable, Entity, Category = "Camera|Follow")
-        uint32 Target = static_cast<uint32>((static_cast<ECS::FEntity>(ECS::NullEntity)).Value);
+        PROPERTY(Editable, Category = "Camera|Follow")
+        ECS::FEntity Target = ECS::NullEntity;
 
         /** Offset from the target. Local to the target's orientation unless bWorldSpaceOffset. */
         PROPERTY(Editable, Category = "Camera|Follow")
@@ -46,7 +46,7 @@ namespace Lumina
         FUNCTION()
         void SetTarget(ECS::FEntity Entity)
         {
-            Target = static_cast<uint32>((Entity).Value);
+            Target = Entity;
             bInitialized = false;
         }
 
@@ -54,7 +54,7 @@ namespace Lumina
         FUNCTION()
         void ClearTarget()
         {
-            Target = static_cast<uint32>((static_cast<ECS::FEntity>(ECS::NullEntity)).Value);
+            Target = ECS::NullEntity;
             bInitialized = false;
         }
 

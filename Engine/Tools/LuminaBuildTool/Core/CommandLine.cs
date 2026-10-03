@@ -56,6 +56,20 @@ public sealed class CommandLine
 
     public IReadOnlyList<string> Arguments => Positionals;
 
+    // A copy with one option set, for a mode that drives another mode with an adjusted request.
+    public CommandLine WithOption(string Name, string Value)
+    {
+        CommandLine Copy = new(Array.Empty<string>());
+        Copy.Positionals.AddRange(Positionals);
+        Copy.Forwarded.AddRange(Forwarded);
+        foreach ((string Key, string Existing) in Options)
+        {
+            Copy.Options[Key] = Existing;
+        }
+        Copy.Options[Name] = Value;
+        return Copy;
+    }
+
     /// <summary>Arguments that followed a bare "--", passed through untouched.</summary>
     public IReadOnlyList<string> ForwardedArguments => Forwarded;
 

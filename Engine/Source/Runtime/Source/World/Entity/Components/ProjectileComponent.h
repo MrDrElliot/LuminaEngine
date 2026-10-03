@@ -65,7 +65,7 @@ namespace Lumina
         bool bDestroyOnHit = true;
 
         /** Entity that fired this projectile; the sweep ignores it so it never hits its own shooter. */
-        PROPERTY(Editable, Entity, Category = "Projectile")
+        PROPERTY(Editable, Category = "Projectile")
         ECS::FEntity Instigator = ECS::NullEntity;
 
         /** Fired once when the projectile hits something. */

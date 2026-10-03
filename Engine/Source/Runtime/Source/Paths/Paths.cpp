@@ -41,6 +41,7 @@ namespace Lumina::Paths
         const char* EngineInstallDirectoryName      = "EngineInstallDirectory";
         const char* EngineDirectoryName             = "EngineDirectory";
 
+        bool bInstalledBuild = false;
     }
 
     void InitializePaths()
@@ -48,13 +49,20 @@ namespace Lumina::Paths
         FString LuminaDir = Platform::GetEnvVariable("LUMINA_DIR");
         Normalize(LuminaDir);
 
-        // The exe lives two directories below the root, and without this every resource path is malformed.
-        if (LuminaDir.empty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources"))
-        {
-            FString ExePath = Platform::GetCurrentProcessPath();
-            Normalize(ExePath);
+        FString ExePath = Platform::GetCurrentProcessPath();
+        Normalize(ExePath);
 
-            FString Candidate = Parent(Parent(Parent(ExePath, true), true), true);
+        // The exe lives two directories below the root, and without this every resource path is malformed.
+        const FString Candidate = Parent(Parent(Parent(ExePath, true), true), true);
+
+        // An installed build must not run against whatever source tree LUMINA_DIR names on this machine.
+        bInstalledBuild = !Candidate.empty() && Filesystem::Exists(Candidate + "/" + InstalledBuildMarker);
+        if (bInstalledBuild)
+        {
+            LuminaDir = Candidate;
+        }
+        else if (LuminaDir.empty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources"))
+        {
             if (!Candidate.empty() && Filesystem::Exists(Candidate + "/Engine/Resources"))
             {
                 LOG_DISPLAY("LUMINA_DIR unset or invalid; using executable-relative engine root: {}", Candidate.c_str());
@@ -245,6 +253,11 @@ namespace Lumina::Paths
     const FString& GetEngineInstallDirectory()
     {
         return CachedDirectories[EngineInstallDirectoryName];
+    }
+
+    bool IsInstalledBuild()
+    {
+        return bInstalledBuild;
     }
 
     namespace

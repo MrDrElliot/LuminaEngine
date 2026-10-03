@@ -1392,7 +1392,7 @@ namespace Lumina
                     FScriptSnapshot Scripts;
                     SnapshotScripts(Registry, Entity, Scripts);
 
-                    Context.Entity = Entity.GetPacked();
+                    Context.Entity = Entity;
                     for (TObjectPtr<CEntityScript>& Held : Scripts)
                     {
                         CEntityScript* Script = Held.Get();

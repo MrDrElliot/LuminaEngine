@@ -5,16 +5,21 @@
 #include "Agent/AgentPropertyPath.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
+#include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "MCPTextMatch.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/ObjectCore.h"
 #include "Scripting/EntityScript.h"
 #include "Session/SessionOps.h"
+#include "UI/Tools/EditorEntityUtils.h"
 #include "Scene/SceneOps.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
+#include "World/Entity/Components/RelationshipComponent.h"
+#include "Assets/AssetTypes/Prefabs/Prefab.h"
+#include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "World/World.h"
 
 namespace Lumina::MCP
@@ -59,6 +64,23 @@ namespace Lumina::MCP
                     ? Written
                     : nlohmann::json::object();
             });
+
+            // Scripts are subobjects the component only points at, so their values are listed under their own class.
+            if (const SEntityScriptComponent* Scripts = Registry.TryGet<SEntityScriptComponent>(Entity))
+            {
+                for (const TObjectPtr<CEntityScript>& Held : Scripts->Scripts)
+                {
+                    CEntityScript* Script = Held.Get();
+                    if (Script == nullptr || Script->GetClass() == nullptr)
+                    {
+                        continue;
+                    }
+
+                    nlohmann::json Written;
+                    Components[std::string(Script->GetClass()->GetName().ToString().c_str())] =
+                        Agent::WriteStruct(Script->GetClass(), Script, Written).IsValid() ? Written : nlohmann::json::object();
+                }
+            }
 
             return FString(Components.dump(2).c_str());
         }
@@ -135,6 +157,16 @@ namespace Lumina::MCP
                         SEntityInfo Info;
                         Info.Id   = Agent::FEntityTokens::Mint(Registry, Entity);
                         Info.Name = Name;
+                        if (const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Entity);
+                            Relationship != nullptr && Relationship->Parent != ECS::NullEntity && Registry.IsValid(Relationship->Parent))
+                        {
+                            Info.Parent = Agent::FEntityTokens::Mint(Registry, Relationship->Parent);
+                        }
+                        if (const SPrefabInstanceComponent* Instance = Registry.TryGet<SPrefabInstanceComponent>(Entity))
+                        {
+                            Info.Prefab      = Instance->SourcePrefab ? FString(Instance->SourcePrefab->GetName().c_str()) : FString("<missing>");
+                            Info.bPrefabRoot = Instance->bIsRoot;
+                        }
 
                         Out.Entities.push_back(Move(Info));
                     }
@@ -309,6 +341,38 @@ namespace Lumina::MCP
                 });
         }
 
+        // Entity fields store a raw handle, so the ids every other tool hands out are swapped in for it here.
+        bool ResolveEntityTokens(const ECS::FRegistry& Registry, FProperty* Property, nlohmann::json& Value, FString& OutError)
+        {
+            if (Property->GetType() == EPropertyTypeFlags::Vector && Value.is_array())
+            {
+                FProperty* Inner = static_cast<FArrayProperty*>(Property)->GetInternalProperty();
+                for (nlohmann::json& Element : Value)
+                {
+                    if (Inner != nullptr && !ResolveEntityTokens(Registry, Inner, Element, OutError))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            if (!Property->IsA(EPropertyTypeFlags::Entity) || !Value.is_string())
+            {
+                return true;
+            }
+
+            const std::string Token = Value.get<std::string>();
+            ECS::FEntity Resolved = ECS::NullEntity;
+            if (!Token.empty() && !Agent::FEntityTokens::Resolve(Registry, FStringView(Token.c_str()), Resolved, OutError))
+            {
+                return false;
+            }
+
+            Value = static_cast<uint32>(Resolved);
+            return true;
+        }
+
         /** The script attached to Entity whose class matches Name, full or short. Null when none does. */
         CEntityScript* FindEntityScriptByName(ECS::FRegistry& Registry, ECS::FEntity Entity, FStringView Name)
         {
@@ -451,13 +515,18 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    const nlohmann::json Value = nlohmann::json::parse(
+                    nlohmann::json Value = nlohmann::json::parse(
                         In.Value.c_str(), In.Value.c_str() + In.Value.size(), nullptr, false);
 
                     if (Value.is_discarded())
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
                             "Value is not JSON. Strings need quotes, so \"Torch\" rather than Torch."));
+                    }
+
+                    if (!ResolveEntityTokens(Registry, Target.Property, Value, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
                     }
 
                     // Checked first, because opening the transaction snapshots the whole registry.
@@ -484,6 +553,7 @@ namespace Lumina::MCP
                         if (Ops == nullptr)
                         {
                             Apply();
+                            CPrefab::RecaptureComponentOverrides(Registry, Entity, SEntityScriptComponent::StaticStruct());
                             return;
                         }
 
@@ -578,6 +648,108 @@ namespace Lumina::MCP
 
         void RegisterDestroyEntities(FStringView Owner)
         {
+            Agent::FToolRegistry::Get().Register<SDuplicateEntityParams, SDuplicateEntityResult>(
+                Owner, "entity.duplicate",
+                "Duplicate an entity with its components, scripts and children, as the editor's Duplicate does, as one undo step.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SDuplicateEntityParams& In, SDuplicateEntityResult& Out)
+                {
+                    FString SceneError;
+                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    CWorld* World = SessionOps::GetSceneWorld(SceneError);
+                    if (ScenePtr == nullptr || World == nullptr)
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+
+                    if (SessionOps::IsSimulating())
+                    {
+                        return Agent::FToolResult::Error("Stop play-in-editor first.");
+                    }
+
+                    ECS::FRegistry& Registry = *ScenePtr;
+                    ECS::FEntity Source = ECS::NullEntity;
+                    FString Error;
+                    if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Source, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    // The editor refuses the same, since a copy of one member would sit half inside the instance.
+                    if (const SPrefabInstanceComponent* Instance = Registry.TryGet<SPrefabInstanceComponent>(Source);
+                        Instance != nullptr && !Instance->bIsRoot)
+                    {
+                        return Agent::FToolResult::Error("That entity is part of a prefab instance; duplicate the instance root instead.");
+                    }
+
+                    ECS::FEntity Copy = ECS::NullEntity;
+                    if (!SessionOps::RunCreationTransacted("Duplicate (agent)", [&]()
+                    {
+                        World->DuplicateEntity(Copy, Source, &EditorEntityUtils::DefaultDuplicateFilter);
+                    }, SceneError))
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+
+                    if (Copy == ECS::NullEntity || !Registry.IsValid(Copy))
+                    {
+                        return Agent::FToolResult::Error("The duplicate was not created.");
+                    }
+
+                    Out.Entity = Agent::FEntityTokens::Mint(Registry, Copy);
+                    return Agent::FToolResult::Ok(Lumina::Format("Duplicated {} as {}.", In.Entity, Out.Entity));
+                });
+
+            Agent::FToolRegistry::Get().Register<SSetParentParams, SSetParentResult>(
+                Owner, "entity.set_parent",
+                "Parent an entity under another, or move it to the world root with an empty Parent, as one undo step.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSetParentParams& In, SSetParentResult& Out)
+                {
+                    FString SceneError;
+                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    if (ScenePtr == nullptr)
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+
+                    if (SessionOps::IsSimulating())
+                    {
+                        return Agent::FToolResult::Error("Stop play-in-editor first.");
+                    }
+
+                    ECS::FRegistry& Registry = *ScenePtr;
+                    ECS::FEntity Child  = ECS::NullEntity;
+                    ECS::FEntity Parent = ECS::NullEntity;
+                    FString Error;
+                    if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Child, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    if (!In.Parent.empty() && !Agent::FEntityTokens::Resolve(Registry, FStringView(In.Parent), Parent, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    if (Parent == Child || (Parent != ECS::NullEntity && ECS::Utils::IsDescendantOf(Registry, Parent, Child)))
+                    {
+                        return Agent::FToolResult::Error("The new parent is inside the entity's own subtree, which would make a cycle.");
+                    }
+
+                    if (!SessionOps::RunTransacted("Reparent Entity (agent)", [&]()
+                    {
+                        ECS::Utils::ReparentEntity(Registry, Child, Parent, In.bKeepWorldTransform);
+                    }, SceneError))
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+
+                    Out.bReparented = true;
+                    return Agent::FToolResult::Ok(In.Parent.empty()
+                        ? Lumina::Format("Moved {} to the world root.", In.Entity)
+                        : Lumina::Format("Parented {} under {}.", In.Entity, In.Parent));
+                });
+
             Agent::FToolRegistry::Get().Register<SDestroyEntitiesParams, SDestroyEntitiesResult>(
                 Owner, "entity.destroy",
                 "Destroy entities and their children, as one undo step.",

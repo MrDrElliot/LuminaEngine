@@ -101,6 +101,7 @@ namespace Lumina::Scripting
             case EPropertyTypeFlags::UInt16:
             case EPropertyTypeFlags::UInt32:
             case EPropertyTypeFlags::UInt64:
+            case EPropertyTypeFlags::Entity:
                 static_cast<FNumericProperty*>(Property)->SetIntPropertyValue(ValuePtr, (uint64)Value.AsInt);
                 break;
             case EPropertyTypeFlags::Float:

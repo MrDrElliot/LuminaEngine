@@ -524,9 +524,28 @@ public sealed class TargetAssembler
         PluginDescriptor? Plugin = Target.EnabledPlugins
             .FirstOrDefault(P => string.Equals(P.Name, Module.Rules.PluginName, StringComparison.OrdinalIgnoreCase));
 
-        return Plugin is null
+        if (Plugin is not null)
+        {
+            return Path.Combine(Plugin.BinariesDirectory, Info.PlatformName);
+        }
+
+        // A suite links plugin modules without enabling the plugin, and a copy beside the editor would shadow the real one.
+        string? PluginRoot = FindPluginRoot(Module.Rules.ModuleDirectory);
+        return PluginRoot is null
             ? Target.BinariesDirectory
-            : Path.Combine(Plugin.BinariesDirectory, Info.PlatformName);
+            : Path.Combine(PluginRoot, "Binaries", Info.PlatformName);
+    }
+
+    private static string? FindPluginRoot(string ModuleDirectory)
+    {
+        for (DirectoryInfo? Directory = new(ModuleDirectory); Directory is not null; Directory = Directory.Parent)
+        {
+            if (Directory.EnumerateFiles("*.lplugin").Any())
+            {
+                return Directory.FullName;
+            }
+        }
+        return null;
     }
 
     // Environment propagation.

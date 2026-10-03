@@ -28,8 +28,8 @@ namespace Lumina
         FName Name;
 
         /** Members, as entity integral ids. Only entities without an entity parent are filed here. */
-        PROPERTY(Entity)
-        TVector<uint32> Entities;
+        PROPERTY()
+        TVector<ECS::FEntity> Entities;
     };
 
     // Outliner-only grouping, stored on the world's singleton entity, which is itself hidden from the outliner.
@@ -152,7 +152,7 @@ namespace Lumina
             }
 
             const uint32 NewParent = Folder->ParentID;
-            TVector<uint32> Orphans = Folder->Entities;
+            TVector<ECS::FEntity> Orphans = Folder->Entities;
 
             for (FSceneFolder& Other : Folders)
             {
@@ -179,12 +179,11 @@ namespace Lumina
 
         NODISCARD uint32 FindEntityFolder(ECS::FEntity Entity) const
         {
-            const uint32 Handle = static_cast<uint32>((Entity).Value);
             for (const FSceneFolder& Folder : Folders)
             {
-                for (uint32 Member : Folder.Entities)
+                for (ECS::FEntity Member : Folder.Entities)
                 {
-                    if (Member == Handle)
+                    if (Member == Entity)
                     {
                         return Folder.ID;
                     }
@@ -211,18 +210,17 @@ namespace Lumina
 
             if (FSceneFolder* Folder = Find(FolderID))
             {
-                Folder->Entities.push_back(static_cast<uint32>((Entity).Value));
+                Folder->Entities.push_back(Entity);
             }
         }
 
         void RemoveEntity(ECS::FEntity Entity)
         {
-            const uint32 Handle = static_cast<uint32>((Entity).Value);
             for (FSceneFolder& Folder : Folders)
             {
                 for (auto It = Folder.Entities.begin(); It != Folder.Entities.end(); ++It)
                 {
-                    if (*It == Handle)
+                    if (*It == Entity)
                     {
                         Folder.Entities.erase(It);
                         return;

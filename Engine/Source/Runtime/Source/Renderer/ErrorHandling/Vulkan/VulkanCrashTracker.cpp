@@ -193,6 +193,9 @@ namespace Lumina::RHI
             FWriteScopeLock Lock(ShaderRegistryMutex);
             RegisteredShaders.clear();
             DebugNameToHash.clear();
+            RegistrationOrder.clear();
+            RegistrationHead = 0;
+            RegisteredBytes  = 0;
         }
         {
             FWriteScopeLock Lock(ShaderDebugInfoMutex);
@@ -659,9 +662,49 @@ namespace Lumina::RHI
             {
                 DebugNameToHash[Entry.DebugName] = BinaryHash.hash;
             }
+
+            if (auto Existing = RegisteredShaders.find(BinaryHash.hash); Existing != RegisteredShaders.end())
+            {
+                RegisteredBytes -= Existing->second.Binary.size();
+            }
+
+            Entry.Sequence = ++NextSequence;
+            RegisteredBytes += Entry.Binary.size();
+            RegistrationOrder.push_back(FShaderRegistration{ BinaryHash.hash, Entry.Sequence });
             RegisteredShaders[BinaryHash.hash] = Move(Entry);
+
+            EvictOldShadersLocked();
         }
         #endif
+    }
+
+    void FVulkanCrashTracker::EvictOldShadersLocked()
+    {
+        while (RegisteredBytes > kShaderRegistryBudgetBytes && RegistrationHead < RegistrationOrder.size())
+        {
+            const FShaderRegistration Oldest = RegistrationOrder[RegistrationHead++];
+
+            // A later registration of the same binary superseded this one, so it is not the oldest copy.
+            auto It = RegisteredShaders.find(Oldest.Hash);
+            if (It == RegisteredShaders.end() || It->second.Sequence != Oldest.Sequence)
+            {
+                continue;
+            }
+
+            RegisteredBytes -= It->second.Binary.size();
+            // A recompile under the same name points it at the newer binary, which keeps the mapping.
+            if (auto Name = DebugNameToHash.find(It->second.DebugName); Name != DebugNameToHash.end() && Name->second == Oldest.Hash)
+            {
+                DebugNameToHash.erase(Name);
+            }
+            RegisteredShaders.erase(It);
+        }
+
+        if (RegistrationHead > 4096 && RegistrationHead * 2 > RegistrationOrder.size())
+        {
+            RegistrationOrder.erase(RegistrationOrder.begin(), RegistrationOrder.begin() + (ptrdiff_t)RegistrationHead);
+            RegistrationHead = 0;
+        }
     }
 
 #if WITH_AFTERMATH

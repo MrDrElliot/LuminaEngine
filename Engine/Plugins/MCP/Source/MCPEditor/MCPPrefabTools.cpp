@@ -7,6 +7,7 @@
 #include "Assets/AssetRef.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
+#include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Session/SessionOps.h"
@@ -262,7 +263,44 @@ namespace Lumina::MCP
                     }
 
                     CWorld* World = SessionOps::GetSceneWorld(SceneError);
-                    Prefab->CaptureFromWorld(World, Root);
+
+                    // The prefab's own root name, so capturing a placed instance does not rename the asset's root after it.
+                    FName PreviousRootName;
+                    Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
+                    {
+                        const FRelationshipComponent* Rel = Prefab->Registry.TryGet<FRelationshipComponent>(E);
+                        const SNameComponent* Name = Prefab->Registry.TryGet<SNameComponent>(E);
+                        if ((Rel == nullptr || Rel->Parent == ECS::NullEntity) && Name != nullptr)
+                        {
+                            PreviousRootName = Name->Name;
+                        }
+                    });
+
+                    const SPrefabInstanceComponent* Instance = Registry.TryGet<SPrefabInstanceComponent>(Root);
+                    const bool bPushingInstanceBack = Instance != nullptr && Instance->bIsRoot && Instance->SourcePrefab.Get() == Prefab;
+
+                    // A plain source becomes the prefab's first instance, so a later capture from it still matches the others.
+                    bool bPlainSource = Instance == nullptr;
+                    ECS::Utils::ForEachDescendant(Registry, Root, [&](ECS::FEntity E)
+                    {
+                        bPlainSource = bPlainSource && !Registry.HasAll<SPrefabInstanceComponent>(E);
+                    });
+                    Prefab->CaptureFromWorld(World, Root, bPushingInstanceBack || bPlainSource);
+
+                    if (bPushingInstanceBack && !PreviousRootName.IsNone())
+                    {
+                        Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
+                        {
+                            const FRelationshipComponent* Rel = Prefab->Registry.TryGet<FRelationshipComponent>(E);
+                            if (Rel == nullptr || Rel->Parent == ECS::NullEntity)
+                            {
+                                if (SNameComponent* Name = Prefab->Registry.TryGet<SNameComponent>(E))
+                                {
+                                    Name->Name = PreviousRootName;
+                                }
+                            }
+                        });
+                    }
 
                     // Anchor the captured root at origin so the prefab opens centered in its editor.
                     Prefab->Registry.ForEachEntity([&](ECS::FEntity E)

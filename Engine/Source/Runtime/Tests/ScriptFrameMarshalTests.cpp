@@ -102,9 +102,7 @@ namespace
 
     Scripting::FScriptExportField EntityField(const char* Name)
     {
-        Scripting::FScriptExportField Field = ScalarField(Name, EPropertyTypeFlags::UInt32);
-        Field.Type->bEntity = true;
-        return Field;
+        return ScalarField(Name, EPropertyTypeFlags::Entity);
     }
 
     Scripting::FScriptExportField ByteEnumField(const char* Name, const char* EnumName)

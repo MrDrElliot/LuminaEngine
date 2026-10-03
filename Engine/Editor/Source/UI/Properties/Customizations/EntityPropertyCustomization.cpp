@@ -19,9 +19,6 @@ namespace Lumina
 {
     namespace
     {
-        // Integral id of an unset entity reference.
-        const uint32 GNoneEntityId = static_cast<uint32>((static_cast<ECS::FEntity>(ECS::NullEntity)).Value);
-
         FFixedString MakeEntityLabel(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             FFixedString Label;
@@ -33,7 +30,7 @@ namespace Lumina
             {
                 Label.append("Entity");
             }
-            AppendFormat(Label, " ({})", static_cast<uint32>((Entity).Value));
+            AppendFormat(Label, " ({})", Entity.Value);
             return Label;
         }
     }
@@ -59,7 +56,7 @@ namespace Lumina
         if (World == nullptr)
         {
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-            int Value = static_cast<int>(CachedValue);
+            int Value = static_cast<int>(CachedValue.Value);
             ImGui::BeginDisabled(true);
             ImGui::InputInt("##entity", &Value, 0, 0, ImGuiInputTextFlags_ReadOnly);
             ImGui::EndDisabled();
@@ -74,7 +71,7 @@ namespace Lumina
         uint32 PickedEntity = 0;
         if (PickBroker && PickBroker->ConsumeResult(Token, PickedEntity))
         {
-            CachedValue = PickedEntity;
+            CachedValue = ECS::FEntity::FromPacked(PickedEntity);
             bChanged = true;
         }
 
@@ -84,8 +81,8 @@ namespace Lumina
         TVector<ECS::FEntity> Candidates;
         Candidates.push_back(ECS::NullEntity);
 
-        const ECS::FEntity CurrentEntity = static_cast<ECS::FEntity>(CachedValue);
-        const bool bHasCurrent = (CachedValue != GNoneEntityId) && Registry.IsValid(CurrentEntity);
+        const ECS::FEntity CurrentEntity = CachedValue;
+        const bool bHasCurrent = CurrentEntity != ECS::NullEntity && Registry.IsValid(CurrentEntity);
 
         int32 CurrentIndex = 0; // default to None
         for (ECS::FEntity Entity : Registry.View<SNameComponent>(ECS::TExclude<FHideInSceneOutliner>{}))
@@ -118,7 +115,7 @@ namespace Lumina
 
         if (Picked != INDEX_NONE)
         {
-            CachedValue = (Picked == 0) ? GNoneEntityId : static_cast<uint32>((Candidates[Picked]).Value);
+            CachedValue = Candidates[Picked];
             bChanged = true;
         }
 

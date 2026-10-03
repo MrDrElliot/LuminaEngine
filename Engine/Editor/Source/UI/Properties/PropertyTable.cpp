@@ -849,13 +849,8 @@ namespace Lumina
         case EPropertyTypeFlags::Int64:  return FNumericPropertyCustomization<int64,  ImGuiDataType_S64>::MakeInstance();
         case EPropertyTypeFlags::UInt8:  return FNumericPropertyCustomization<uint8,  ImGuiDataType_U8>::MakeInstance();
         case EPropertyTypeFlags::UInt16: return FNumericPropertyCustomization<uint16, ImGuiDataType_U16>::MakeInstance();
-        case EPropertyTypeFlags::UInt32:
-            // A uint32 tagged PROPERTY(Entity) draws the picker instead of a raw number.
-            if (Prop->HasMetadata("Entity"))
-            {
-                return FEntityPropertyCustomization::MakeInstance();
-            }
-            return FNumericPropertyCustomization<uint32, ImGuiDataType_U32>::MakeInstance();
+        case EPropertyTypeFlags::UInt32: return FNumericPropertyCustomization<uint32, ImGuiDataType_U32>::MakeInstance();
+        case EPropertyTypeFlags::Entity: return FEntityPropertyCustomization::MakeInstance();
         case EPropertyTypeFlags::UInt64: return FNumericPropertyCustomization<uint64, ImGuiDataType_U64>::MakeInstance();
         case EPropertyTypeFlags::Float:  return FNumericPropertyCustomization<float,  ImGuiDataType_Float>::MakeInstance();
         case EPropertyTypeFlags::Double: return FNumericPropertyCustomization<double, ImGuiDataType_Double>::MakeInstance();

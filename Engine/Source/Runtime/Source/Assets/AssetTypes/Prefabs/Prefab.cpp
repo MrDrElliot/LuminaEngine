@@ -66,6 +66,92 @@ namespace Lumina
             return CPrefab::IsInstanceTrackingComponent(ID);
         }
         
+        CClass* AsScriptClass(CStruct* Type)
+        {
+            if (Type == nullptr || !Type->IsA<CClass>())
+            {
+                return nullptr;
+            }
+            CClass* Class = static_cast<CClass*>(Type);
+            return Class->IsChildOf(CEntityScript::StaticClass()) ? Class : nullptr;
+        }
+
+        CEntityScript* FindScriptOfClass(const SEntityScriptComponent& Component, const CClass* Class)
+        {
+            for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
+            {
+                if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->GetClass() == Class)
+                {
+                    return Script;
+                }
+            }
+            return nullptr;
+        }
+
+        // A script field's override path is its class name then the field, so scripts on one entity never collide.
+        FString ScriptPathPrefix(const CClass* Class)
+        {
+            return FString(Class->GetName().ToString().c_str()) + ".";
+        }
+
+        void CollectScriptOverrides(const SEntityScriptComponent& Instance, const SEntityScriptComponent& Prefab, TVector<FName>& OutPaths)
+        {
+            for (const TObjectPtr<CEntityScript>& Held : Instance.Scripts)
+            {
+                CEntityScript* InstanceScript = Held.Get();
+                CEntityScript* PrefabScript = InstanceScript != nullptr ? FindScriptOfClass(Prefab, InstanceScript->GetClass()) : nullptr;
+                if (PrefabScript == nullptr)
+                {
+                    continue;
+                }
+
+                TVector<FName> Leaves;
+                PrefabOverride::CollectOverriddenLeaves(InstanceScript->GetClass(), InstanceScript, PrefabScript, Leaves);
+                const FString Prefix = ScriptPathPrefix(InstanceScript->GetClass());
+                for (const FName& Leaf : Leaves)
+                {
+                    OutPaths.push_back(FName((Prefix + Leaf.c_str()).c_str()));
+                }
+            }
+        }
+
+        // In place, so a live script keeps running and only the fields nobody overrode follow the prefab.
+        void ApplyInheritedScriptLeaves(ECS::FRegistry& Registry, ECS::FEntity Entity, const SEntityScriptComponent& Prefab, const THashSet<FName>& OverriddenPaths)
+        {
+            for (const TObjectPtr<CEntityScript>& Held : Prefab.Scripts)
+            {
+                CEntityScript* PrefabScript = Held.Get();
+                if (PrefabScript == nullptr)
+                {
+                    continue;
+                }
+
+                CClass* Class = PrefabScript->GetClass();
+                const SEntityScriptComponent* Current = Registry.TryGet<SEntityScriptComponent>(Entity);
+                CEntityScript* InstanceScript = Current != nullptr ? FindScriptOfClass(*Current, Class) : nullptr;
+                if (InstanceScript == nullptr)
+                {
+                    InstanceScript = EntityScripts::Attach(Registry, Entity, Class);
+                    if (InstanceScript == nullptr)
+                    {
+                        continue;
+                    }
+                }
+
+                const FString Prefix = ScriptPathPrefix(Class);
+                THashSet<FName> ClassPaths;
+                for (const FName& Path : OverriddenPaths)
+                {
+                    const FStringView Full(Path.c_str());
+                    if (Full.starts_with(FStringView(Prefix)))
+                    {
+                        ClassPaths.insert(FName(FString(Full.substr(Prefix.size())).c_str()));
+                    }
+                }
+                PrefabOverride::ApplyInheritedLeaves(Class, InstanceScript, PrefabScript, ClassPaths);
+            }
+        }
+
         void* FindReflectedComponentPtr(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* Struct)
         {
             if (Struct == nullptr || !Registry.IsValid(Entity))
@@ -550,6 +636,7 @@ namespace Lumina
 
         // This subsumes the old root-only case and keeps gizmo edits, which bypass the property hook.
         const uint32 TransformID = ECS::GetComponentTypeID<STransformComponent>();
+        const uint32 NameID = ECS::GetComponentTypeID<SNameComponent>();
         const uint32 ScriptComponentID = ECS::GetComponentTypeID<SEntityScriptComponent>();
 
         // EmplaceOrReplace raises OnUpdate rather than OnDestroy, so a script's OnDetach is skipped.
@@ -626,6 +713,17 @@ namespace Lumina
                     continue;
                 }
 
+                // A placed root carries the name its level gave it, so like its transform it is only ever seeded.
+                if (ID == NameID && WorldE == InstanceRoot)
+                {
+                    PrefabComponentIDs.insert(ID);
+                    if (!WorldRegistry.HasAll<SNameComponent>(WorldE))
+                    {
+                        Ops->EmplaceCopy(WorldRegistry, WorldE, SrcCompPtr);
+                    }
+                    continue;
+                }
+
                 // A node with no ledger refreshes exactly as before.
                 if (!bNodeHasLedger)
                 {
@@ -660,6 +758,13 @@ namespace Lumina
                     {
                         DstCompPtr = WorldStorage->GetRaw(WorldE);
                     }
+                }
+
+                if (ID == ScriptComponentID && CompOverrides != nullptr && DstCompPtr != nullptr)
+                {
+                    ApplyInheritedScriptLeaves(WorldRegistry, WorldE, *static_cast<const SEntityScriptComponent*>(SrcCompPtr), *CompOverrides);
+                    bEntityHasOverrides = true;
+                    continue;
                 }
 
                 // Otherwise replace wholesale, which also adds a missing inherited component.
@@ -933,7 +1038,7 @@ namespace Lumina
         return true;
     }
 
-    void CPrefab::CaptureFromWorld(CWorld* SourceWorld, ECS::FEntity RootEntity)
+    void CPrefab::CaptureFromWorld(CWorld* SourceWorld, ECS::FEntity RootEntity, bool bAdoptSourceAsInstance)
     {
         if (SourceWorld == nullptr)
         {
@@ -952,6 +1057,17 @@ namespace Lumina
         ECS::Utils::ForEachDescendant(WorldRegistry, RootEntity, [&](ECS::FEntity E)
         {
             EntitiesToCapture.push_back(E);
+        });
+
+        // Placed instances key their root by this, so an untagged source must not mint a new one for it.
+        FName PreviousRootID;
+        Registry.View<SPrefabComponent>().ForEach([&](ECS::FEntity PrefabE, const SPrefabComponent& PrefabComp)
+        {
+            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(PrefabE);
+            if ((Rel == nullptr || Rel->Parent == ECS::NullEntity) && PreviousRootID.IsNone())
+            {
+                PreviousRootID = PrefabComp.StableID;
+            }
         });
 
         // CopyRegistry remaps hierarchy and handle fields, and skips nested instance tracking.
@@ -974,11 +1090,30 @@ namespace Lumina
             {
                 StableID = Inst->StableID;
             }
+            if (StableID.IsNone() && SrcE == RootEntity)
+            {
+                StableID = PreviousRootID;
+            }
             if (StableID.IsNone())
             {
                 StableID = GenerateStableID();
             }
             Registry.EmplaceOrReplace<SPrefabComponent>(It->second).StableID = StableID;
+
+            // An untagged source node would read as missing to the next refresh, which spawns a duplicate beside it.
+            if (bAdoptSourceAsInstance)
+            {
+                SPrefabInstanceComponent& Instance = WorldRegistry.GetOrEmplace<SPrefabInstanceComponent>(SrcE);
+                Instance.SourcePrefab = this;
+                Instance.StableID     = StableID;
+                Instance.bIsRoot      = (SrcE == RootEntity);
+            }
+        }
+
+        // The source now is the prefab, so leaves it had overridden are no longer divergent.
+        if (bAdoptSourceAsInstance)
+        {
+            WorldRegistry.Remove<SPrefabOverrideComponent>(RootEntity);
         }
 
         if (CPackage* Package = GetPackage())
@@ -1646,6 +1781,12 @@ namespace Lumina
             return;
         }
 
+        // A script field edit names the script's class, but the override belongs to the component holding the script.
+        if (AsScriptClass(ComponentType) != nullptr)
+        {
+            ComponentType = SEntityScriptComponent::StaticStruct();
+        }
+
         const SPrefabInstanceComponent* Inst = Registry.TryGet<SPrefabInstanceComponent>(Entity);
         if (Inst == nullptr || Inst->SourcePrefab == nullptr)
         {
@@ -1670,7 +1811,14 @@ namespace Lumina
         TVector<FName> NewPaths;
         if (InstPtr != nullptr && PrefPtr != nullptr)
         {
-            PrefabOverride::CollectOverriddenLeaves(ComponentType, InstPtr, PrefPtr, NewPaths);
+            if (ComponentType == SEntityScriptComponent::StaticStruct())
+            {
+                CollectScriptOverrides(*static_cast<const SEntityScriptComponent*>(InstPtr), *static_cast<const SEntityScriptComponent*>(PrefPtr), NewPaths);
+            }
+            else
+            {
+                PrefabOverride::CollectOverriddenLeaves(ComponentType, InstPtr, PrefPtr, NewPaths);
+            }
         }
 
         SPrefabOverrideComponent& Ledger = Registry.GetOrEmplace<SPrefabOverrideComponent>(Root);

@@ -172,6 +172,11 @@ namespace Lumina::Agent
                 Out["type"] = "integer";
                 break;
 
+            case EPropertyTypeFlags::Entity:
+                Out["type"] = "integer";
+                Out["description"] = "A packed entity handle. entity.set_property also takes an entity id.";
+                break;
+
             case EPropertyTypeFlags::Float:
             case EPropertyTypeFlags::Double:
                 Out["type"] = "number";

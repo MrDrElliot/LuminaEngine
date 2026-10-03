@@ -1420,19 +1420,13 @@ namespace Lumina::ECS::Utils
             }
         }
 
-        // The reflector types a raw uint32 handle UInt32 and an ECS::FEntity one Int32, both 4 bytes wide.
-        bool IsPackedEntityHandle(const FProperty* Property)
-        {
-            return Property->IsA(EPropertyTypeFlags::UInt32) || Property->IsA(EPropertyTypeFlags::Int32);
-        }
-
         // One pass over the flattened list, NOT one per super, since Link already folded the supers in.
         template<typename Visitor>
         void ForEachEntityRefInStruct(CStruct* Struct, void* Data, Visitor& Visit)
         {
             for (FProperty* Property : Struct->GetProperties())
             {
-                if (IsPackedEntityHandle(Property) && Property->IsEntityHandle())
+                if (Property->IsA(EPropertyTypeFlags::Entity))
                 {
                     uint32 Value = 0;
                     Property->GetValue(Data, &Value);
@@ -1457,7 +1451,7 @@ namespace Lumina::ECS::Utils
 
                     void* ArrayPtr = Property->GetValuePtr<void>(Data);
 
-                    if (IsPackedEntityHandle(Inner) && Property->IsEntityHandle())
+                    if (Inner->IsA(EPropertyTypeFlags::Entity))
                     {
                         ArrayProperty->ForEach<uint32>(ArrayPtr, [&](uint32* Elem, SIZE_T)
                         {

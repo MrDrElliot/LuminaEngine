@@ -49,12 +49,12 @@ namespace Lumina
                 }
 
                 const SFollowerPoseComponent* Follower = Registry.TryGet<SFollowerPoseComponent>(Cursor);
-                if (Follower == nullptr || Follower->Leader == SFollowerPoseComponent::NoLeader)
+                if (Follower == nullptr || Follower->Leader == ECS::NullEntity)
                 {
                     return Cursor;
                 }
 
-                const ECS::FEntity Next = (ECS::FEntity)Follower->Leader;
+                const ECS::FEntity Next = Follower->Leader;
                 if (Next == Cursor)
                 {
                     return ECS::NullEntity;
@@ -876,12 +876,12 @@ namespace Lumina
                 {
 
 
-                    if (Follower.Leader == SFollowerPoseComponent::NoLeader)
+                    if (Follower.Leader == ECS::NullEntity)
                     {
                         return;
                     }
 
-                    const ECS::FEntity LeaderEntity = ResolveLeaderRoot(Registry, (ECS::FEntity)Follower.Leader);
+                    const ECS::FEntity LeaderEntity = ResolveLeaderRoot(Registry, Follower.Leader);
                     if (LeaderEntity == ECS::NullEntity || LeaderEntity == Entity)
                     {
                         return;

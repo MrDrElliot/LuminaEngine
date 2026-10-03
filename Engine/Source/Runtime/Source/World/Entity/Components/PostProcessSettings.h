@@ -120,7 +120,7 @@ namespace Lumina
 
         /** Bloom strength; 0 skips bloom passes entirely. 0.04-0.12 cinematic, >0.3 stylized. */
         PROPERTY(Editable, Category = "Post Process|Bloom", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.005f)
-        float BloomIntensity = 0.45f;
+        float BloomIntensity = 0.0f;
 
         /** Brightness threshold in linear scene units (pre-tone-map). ~1.0 catches sun/lights without leaking mids. */
         PROPERTY(Editable, Category = "Post Process|Bloom", ClampMin = 0.0f, ClampMax = 16.0f, Delta = 0.05f)

@@ -4,6 +4,7 @@
 #include "Core/Math/Math.h"
 #include "Physics/PhysicsTypes.h"
 #include "Platform/GenericPlatform.h"
+#include "World/ECS/Entity.h"
 
 namespace Lumina
 {
@@ -28,7 +29,7 @@ namespace Lumina
 
         FVector3    GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
         FVector3    GroundVelocity = FVector3(0.0f);
-        uint32      GroundEntity = 0xFFFFFFFFu;
+        ECS::FEntity GroundEntity = ECS::NullEntity;
         bool        bGrounded = false;
 
         float       StickToFloorDistance = 0.5f;

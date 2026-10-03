@@ -75,6 +75,9 @@ namespace Lumina
         /** Property modified externally (e.g. editor). */
         RUNTIME_API virtual void PostPropertyChange(FProperty* ChangedProperty) {}
 
+        // A reference sweep (delete, replace) rewrote at least one object this one points at, so state derived from it is stale.
+        RUNTIME_API virtual void OnReferencesReplaced() {}
+
         RUNTIME_API virtual bool Rename(const FName& NewName, CPackage* NewPackage = nullptr);
 
         /** Templates a new object from this one; copies reflected properties only. */

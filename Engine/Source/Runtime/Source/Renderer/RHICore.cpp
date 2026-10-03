@@ -83,8 +83,8 @@ namespace Lumina::RHI
 
     static void InitializeCore()
     {
-        // Sized for whole-project thumbnail browsing; CreateTextureHeap clamps it to the device.
-        GCore.GlobalHeap = CreateTextureHeap(kMaxSampledTextureHeapSize, 1024, 64);
+        // Both at the device cap, since thumbnails fill the sampled half and every renderer's mip UAVs fill the storage half.
+        GCore.GlobalHeap = CreateTextureHeap(kMaxSampledTextureHeapSize, kMaxStorageTextureHeapSize, 64);
 
         for (FSemaphoreH& Timeline : GCore.QueueTimeline)
         {
@@ -498,6 +498,7 @@ namespace Lumina::RHI
             }
         }
         
+        RHI::ApplyDeferredHeapWrites(Slot);
         DrainRetireQueue(Slot);
         RHI::RetireSlot(Slot);
 

@@ -144,7 +144,6 @@ namespace Lumina::Scripting
 
             auto Type = MakeShared<FScriptExportType>();
             Type->Kind = static_cast<EPropertyTypeFlags>(R.U8());
-            Type->bEntity = R.U8() != 0;
             Type->bInputAction = R.U8() != 0;
             switch (Type->Kind)
             {

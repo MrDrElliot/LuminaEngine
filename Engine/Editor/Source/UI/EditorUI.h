@@ -108,6 +108,9 @@ namespace Lumina
         // Closes as the tab's X would; false with a reason for the world editor or an unsaved tab kept.
         bool CloseTab(FStringView Name, bool bDiscardUnsaved, FString& OutError);
 
+        // Undocks the tab and places it at a screen rect, which outside the main window gives it its own OS window.
+        bool FloatTab(FStringView Name, const FVector2& ScreenPosition, const FVector2& Size, FString& OutError);
+
         // Find an active tool by its singleton-style unique type id, or nullptr if not present.
         template<typename T>
         requires std::is_base_of_v<FEditorTool, T>
@@ -358,6 +361,15 @@ namespace Lumina
 
         FEditorTool*                                    LastActiveTool = nullptr;
         FString                                         FocusTargetWindowName; // If this is set we need to switch focus to this window
+
+        struct FFloatRequest
+        {
+            FString  WindowName;
+            FVector2 Position;
+            FVector2 Size;
+            bool     bUndockQueued = false;
+        };
+        FFloatRequest                                   PendingFloat;
 
         THashMap<CObject*, FEditorTool*>                ActiveAssetTools;
         THashMap<FString, FEditorTool*>                 ActiveFileTools;

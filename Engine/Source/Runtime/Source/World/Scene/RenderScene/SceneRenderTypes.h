@@ -271,8 +271,7 @@ namespace Lumina
         uint32 GetNumMips() const { return Desc.MipCount; }
     };
 
-    inline FSceneImage CreateSceneImage(const RHI::FTextureDesc& Desc, bool bSampled = true, bool bMipUAVs = false,
-                                        uint32 ReuseSampledSlot = RHI::kInvalidHeapSlot)
+    inline FSceneImage CreateSceneImage(const RHI::FTextureDesc& Desc, bool bSampled = true, bool bMipUAVs = false)
     {
         FSceneImage Out;
         Out.Desc    = Desc;
@@ -280,15 +279,7 @@ namespace Lumina
         Out.bOwned  = true;
         if (bSampled)
         {
-            if (ReuseSampledSlot != RHI::kInvalidHeapSlot)
-            {
-                RHI::HeapRepointTexture(RHI::GetGlobalHeap(), ReuseSampledSlot, Out.Texture);
-                Out.SampledSlot = ReuseSampledSlot;
-            }
-            else
-            {
-                Out.SampledSlot = RHI::HeapWriteTexture(RHI::GetGlobalHeap(), Out.Texture);
-            }
+            Out.SampledSlot = RHI::HeapWriteTexture(RHI::GetGlobalHeap(), Out.Texture);
         }
         if (bMipUAVs)
         {
@@ -306,13 +297,6 @@ namespace Lumina
         FSceneImage Copy = Owner;
         Copy.bOwned = false;
         return Copy;
-    }
-
-    NODISCARD inline uint32 DetachSampledSlot(FSceneImage& Image)
-    {
-        const uint32 Slot = Image.SampledSlot;
-        Image.SampledSlot = RHI::kInvalidHeapSlot;
-        return Slot;
     }
 
     // Hands the texture and its heap slots to the RHI's retirement queue and clears the source.

@@ -6,6 +6,7 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/StringFormat.h"
 #include "Containers/Vector.h"
+#include "Core/Templates/NumericLimits.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Object/InstancedStruct.h"
@@ -94,6 +95,7 @@ namespace Lumina::Agent
             case EPropertyTypeFlags::UInt16:
             case EPropertyTypeFlags::UInt32:
             case EPropertyTypeFlags::UInt64:
+            case EPropertyTypeFlags::Entity:
                 {
                     char* End = nullptr;
                     const long long Parsed = std::strtoll(Key.c_str(), &End, 10);
@@ -327,6 +329,25 @@ namespace Lumina::Agent
             return true;
         }
 
+        // A value past the field's width would otherwise be stored truncated, so 300 in an int8 lands as 44.
+        template<typename T>
+        bool ValidateInteger(const nlohmann::json& Value, FStringView Path, FString& OutError)
+        {
+            const bool bFits = Value.is_number_unsigned()
+                ? Value.get<uint64>() <= static_cast<uint64>(TNumericLimits<T>::Max())
+                : Value.is_number_integer()
+                    && Value.get<int64>() >= static_cast<int64>(TNumericLimits<T>::Min())
+                    && (std::is_signed_v<T> || Value.get<int64>() >= 0)
+                    && (sizeof(T) == sizeof(int64) || Value.get<int64>() <= static_cast<int64>(TNumericLimits<T>::Max()));
+
+            if (!bFits)
+            {
+                OutError = Lumina::Format("'{}' has to be a whole number from {} to {}.", Path,
+                    static_cast<int64>(TNumericLimits<T>::Min()), static_cast<uint64>(TNumericLimits<T>::Max()));
+            }
+            return bFits;
+        }
+
         bool ValidateEnum(FEnumProperty* Property, const nlohmann::json& Value, FStringView Path, FString& OutError)
         {
             CEnum* Enum = Property->GetEnum();
@@ -374,15 +395,15 @@ namespace Lumina::Agent
 
             switch (Property->GetType())
             {
-            case EPropertyTypeFlags::Int8:
-            case EPropertyTypeFlags::Int16:
-            case EPropertyTypeFlags::Int32:
-            case EPropertyTypeFlags::Int64:
-            case EPropertyTypeFlags::UInt8:
-            case EPropertyTypeFlags::UInt16:
-            case EPropertyTypeFlags::UInt32:
-            case EPropertyTypeFlags::UInt64:
-                return Expect(Value.is_number_integer(), "a whole number");
+            case EPropertyTypeFlags::Int8:   return ValidateInteger<int8>(Value, Path, OutError);
+            case EPropertyTypeFlags::Int16:  return ValidateInteger<int16>(Value, Path, OutError);
+            case EPropertyTypeFlags::Int32:  return ValidateInteger<int32>(Value, Path, OutError);
+            case EPropertyTypeFlags::Int64:  return ValidateInteger<int64>(Value, Path, OutError);
+            case EPropertyTypeFlags::UInt8:  return ValidateInteger<uint8>(Value, Path, OutError);
+            case EPropertyTypeFlags::UInt16: return ValidateInteger<uint16>(Value, Path, OutError);
+            case EPropertyTypeFlags::UInt32: return ValidateInteger<uint32>(Value, Path, OutError);
+            case EPropertyTypeFlags::UInt64: return ValidateInteger<uint64>(Value, Path, OutError);
+            case EPropertyTypeFlags::Entity: return ValidateInteger<uint32>(Value, Path, OutError);
 
             case EPropertyTypeFlags::Float:
             case EPropertyTypeFlags::Double:

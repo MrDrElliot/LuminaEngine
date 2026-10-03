@@ -520,9 +520,17 @@ namespace Lumina::RHI
         operator VkImageView() const { return DefaultImageView; }
     };
     
+    // A live slot's new view, held until that copy's frame slot has waited out every reader of the old one.
+    struct FDeferredSampledWrite
+    {
+        uint32      Slot = kInvalidHeapSlot;
+        VkImageView View = VK_NULL_HANDLE;
+    };
+
     struct FTextureHeap
     {
-        VkDescriptorSet     DescriptorSet;
+        // One copy per frame slot, so a slot can change texture without rewriting a set an in-flight frame reads.
+        VkDescriptorSet     DescriptorSets[kFramesInFlight];
         VkDescriptorPool    DescriptorPool;
         FHandleAllocator    SamplerSlots;
         FHandleAllocator    SampledImageSlots;
@@ -532,6 +540,8 @@ namespace Lumina::RHI
         TVector<FTextureH>   SampledOwners;
         TVector<VkImageView> RWImageViews;
         VkImageView          FallbackView = VK_NULL_HANDLE;
+
+        TVector<FDeferredSampledWrite> DeferredWrites[kFramesInFlight];
     };
     
     struct FSemaphore
@@ -1589,15 +1599,15 @@ namespace Lumina::RHI
     {
         {
             .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            .descriptorCount = GDevice->SampledHeapCapacity
+            .descriptorCount = GDevice->SampledHeapCapacity * kFramesInFlight
         },
         {
             .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            .descriptorCount = GDevice->StorageHeapCapacity
+            .descriptorCount = GDevice->StorageHeapCapacity * kFramesInFlight
         },
         {
             .type = VK_DESCRIPTOR_TYPE_SAMPLER,
-            .descriptorCount = kMaxNumSamplers
+            .descriptorCount = kMaxNumSamplers * kFramesInFlight
         }
     };
     
@@ -1640,7 +1650,7 @@ namespace Lumina::RHI
         .sType          = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .pNext          = nullptr,
         .flags          = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets        = kMaxNumTextureHeaps,
+        .maxSets        = kMaxNumTextureHeaps * kFramesInFlight,
         .poolSizeCount  = std::size(Pools),
         .pPoolSizes     = Pools
     };
@@ -1795,7 +1805,7 @@ namespace Lumina::RHI
     
     GDevice->TextureHeaps.SetDtor([](FTextureHeap* Heap)
     {
-        vkFreeDescriptorSets(*GDevice, Heap->DescriptorPool, 1, &Heap->DescriptorSet);
+        vkFreeDescriptorSets(*GDevice, Heap->DescriptorPool, kFramesInFlight, Heap->DescriptorSets);
 
         // Sampled slots reference texture-owned views; only RW views and samplers are heap-owned.
         for (VkImageView View : Heap->RWImageViews)
@@ -3028,6 +3038,46 @@ namespace Lumina::RHI
             VK_CHECK(vkResetCommandPool(*GDevice, Ring.Pool, 0));
             Ring.Used = 0;
         }
+    }
+
+    // After the slot's timelines are waited and before its retire queue drains, so no deferred view is freed first.
+    void ApplyDeferredHeapWrites(uint32 Slot)
+    {
+        const uint32 Copy = Slot % kFramesInFlight;
+
+        FScopeLock Lock(GDevice->HeapMutex);
+        GDevice->TextureHeaps.ForEachLive([&](FTextureHeap& HeapData)
+        {
+            TVector<FDeferredSampledWrite>& Pending = HeapData.DeferredWrites[Copy];
+            if (Pending.empty())
+            {
+                return;
+            }
+
+            FMemMark Mark;
+            auto* Infos  = Mark.AllocArray<VkDescriptorImageInfo>((uint32)Pending.size());
+            auto* Writes = Mark.AllocArray<VkWriteDescriptorSet>((uint32)Pending.size());
+            for (size_t i = 0; i < Pending.size(); ++i)
+            {
+                Infos[i] = VkDescriptorImageInfo{ VK_NULL_HANDLE, Pending[i].View, VK_IMAGE_LAYOUT_GENERAL };
+                Writes[i] = VkWriteDescriptorSet
+                {
+                    .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .pNext              = nullptr,
+                    .dstSet             = HeapData.DescriptorSets[Copy],
+                    .dstBinding         = kImageBindingSlot,
+                    .dstArrayElement    = Pending[i].Slot,
+                    .descriptorCount    = 1,
+                    .descriptorType     = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                    .pImageInfo         = &Infos[i],
+                    .pBufferInfo        = nullptr,
+                    .pTexelBufferView   = nullptr
+                };
+            }
+
+            vkUpdateDescriptorSets(*GDevice, (uint32)Pending.size(), Writes, 0, nullptr);
+            Pending.clear();
+        });
     }
 
     // Called once this slot's timelines are waited, when everything recorded into it is known done.
@@ -4848,21 +4898,23 @@ namespace Lumina::RHI
         TextureCount   = Math::Min(TextureCount, GDevice->SampledHeapCapacity);
         RWTextureCount = Math::Min(RWTextureCount, GDevice->StorageHeapCapacity);
         LUMINA_MEMORY_SCOPE("RHI");
+        VkDescriptorSetLayout Layouts[kFramesInFlight];
+        for (VkDescriptorSetLayout& Layout : Layouts)
+        {
+            Layout = GDevice->DescriptorLayout;
+        }
+
         VkDescriptorSetAllocateInfo Info
         {
             .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .pNext              = nullptr,
             .descriptorPool     = GDevice->DescriptorPool,
-            .descriptorSetCount = 1,
-            .pSetLayouts        = &GDevice->DescriptorLayout
+            .descriptorSetCount = kFramesInFlight,
+            .pSetLayouts        = Layouts
         };
-        
-        VkDescriptorSet DescriptorSet;
-        vkAllocateDescriptorSets(*GDevice, &Info, &DescriptorSet);
 
-        return GDevice->TextureHeaps.Emplace(FTextureHeap
+        FTextureHeap Heap
         {
-            .DescriptorSet          = DescriptorSet,
             .DescriptorPool         = GDevice->DescriptorPool,
             .SamplerSlots           = FHandleAllocator{SamplerCount},
             .SampledImageSlots      = FHandleAllocator{TextureCount},
@@ -4870,7 +4922,10 @@ namespace Lumina::RHI
             .Samplers               = TVector<VkSampler>{SamplerCount, nullptr},
             .SampledOwners          = TVector<FTextureH>{TextureCount, FTextureH{}},
             .RWImageViews           = TVector<VkImageView>{RWTextureCount, nullptr}
-        });
+        };
+        vkAllocateDescriptorSets(*GDevice, &Info, Heap.DescriptorSets);
+
+        return GDevice->TextureHeaps.Emplace(Move(Heap));
     }
 
 #if USING(WITH_EDITOR)
@@ -4889,27 +4944,75 @@ namespace Lumina::RHI
 #endif
 
     // Caller holds HeapMutex.
+    static void DropDeferredSampledWrite(FTextureHeap& HeapData, uint32 Slot)
+    {
+        for (TVector<FDeferredSampledWrite>& Writes : HeapData.DeferredWrites)
+        {
+            for (size_t i = 0; i < Writes.size(); ++i)
+            {
+                if (Writes[i].Slot == Slot)
+                {
+                    Writes[i] = Writes.back();
+                    Writes.pop_back();
+                    break;
+                }
+            }
+        }
+    }
+
+    // Caller holds HeapMutex. Every copy at once, so only for a slot no in-flight frame reads.
     static void WriteHeapDescriptor(FTextureHeap& HeapData, uint32 Binding, uint32 Slot, VkDescriptorType Type, const VkDescriptorImageInfo& ImageInfo)
     {
-        VkWriteDescriptorSet Write
+        if (Binding == kImageBindingSlot)
         {
-            .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext              = nullptr,
-            .dstSet             = HeapData.DescriptorSet,
-            .dstBinding         = Binding,
-            .dstArrayElement    = Slot,
-            .descriptorCount    = 1,
-            .descriptorType     = Type,
-            .pImageInfo         = &ImageInfo,
-            .pBufferInfo        = nullptr,
-            .pTexelBufferView   = nullptr
-        };
+            DropDeferredSampledWrite(HeapData, Slot);
+        }
 
-        vkUpdateDescriptorSets(*GDevice, 1, &Write, 0, nullptr);
+        VkWriteDescriptorSet Writes[kFramesInFlight];
+        for (uint32 Copy = 0; Copy < kFramesInFlight; ++Copy)
+        {
+            Writes[Copy] = VkWriteDescriptorSet
+            {
+                .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext              = nullptr,
+                .dstSet             = HeapData.DescriptorSets[Copy],
+                .dstBinding         = Binding,
+                .dstArrayElement    = Slot,
+                .descriptorCount    = 1,
+                .descriptorType     = Type,
+                .pImageInfo         = &ImageInfo,
+                .pBufferInfo        = nullptr,
+                .pTexelBufferView   = nullptr
+            };
+        }
+
+        vkUpdateDescriptorSets(*GDevice, kFramesInFlight, Writes, 0, nullptr);
+    }
+
+    // Caller holds HeapMutex. Each copy takes the view at its own frame slot's next BeginFrame.
+    static void DeferSampledWrite(FTextureHeap& HeapData, uint32 Slot, VkImageView View)
+    {
+        for (TVector<FDeferredSampledWrite>& Writes : HeapData.DeferredWrites)
+        {
+            bool bReplaced = false;
+            for (FDeferredSampledWrite& Pending : Writes)
+            {
+                if (Pending.Slot == Slot)
+                {
+                    Pending.View = View;
+                    bReplaced    = true;
+                    break;
+                }
+            }
+            if (!bReplaced)
+            {
+                Writes.push_back(FDeferredSampledWrite{ Slot, View });
+            }
+        }
     }
 
     // Caller holds HeapMutex. Slot must already be marked occupied.
-    static void PointSampledSlotAt(FTextureHeap& HeapData, uint32 Slot, FTextureH Texture)
+    static void PointSampledSlotAt(FTextureHeap& HeapData, uint32 Slot, FTextureH Texture, bool bSlotMayBeInFlight)
     {
         // A destroyed texture's entry still holds its freed view, which the GPU would sample long after the memory is gone.
         if (!GDevice->Textures.IsLive(Texture))
@@ -4927,6 +5030,12 @@ namespace Lumina::RHI
         TextureData.BoundSampledSlot = Slot;
 #endif
         HeapData.SampledOwners[Slot] = Texture;
+
+        if (bSlotMayBeInFlight)
+        {
+            DeferSampledWrite(HeapData, Slot, TextureData.DefaultImageView);
+            return;
+        }
 
         const VkDescriptorImageInfo ImageInfo
         {
@@ -4955,7 +5064,7 @@ namespace Lumina::RHI
             return FHandleAllocator::kInvalidHandle;
         }
 
-        PointSampledSlotAt(HeapData, Slot, Texture);
+        PointSampledSlotAt(HeapData, Slot, Texture, false);
 
         return Slot;
     }
@@ -4976,7 +5085,7 @@ namespace Lumina::RHI
         }
 
         HeapData.SampledImageSlots.MarkAllocated(Slot);
-        PointSampledSlotAt(HeapData, Slot, Texture);
+        PointSampledSlotAt(HeapData, Slot, Texture, true);
     }
 
     uint32 HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip)
@@ -5003,6 +5112,7 @@ namespace Lumina::RHI
         const uint32 Slot = HeapData.RWImageSlots.Alloc();
         if (Slot == FHandleAllocator::kInvalidHandle)
         {
+            vkDestroyImageView(*GDevice, View, Vulkan::HostAllocator());
             LOG_ERROR("RHI: RW texture heap exhausted ({} slots); storage view not registered.", HeapData.RWImageSlots.GetCapacity());
             return FHandleAllocator::kInvalidHandle;
         }
@@ -5086,13 +5196,18 @@ namespace Lumina::RHI
                 .imageLayout    = VK_IMAGE_LAYOUT_UNDEFINED
             });
 
-            if (!SeedInfos.empty())
+            for (VkDescriptorSet Set : HeapData.DescriptorSets)
             {
+                if (SeedInfos.empty())
+                {
+                    break;
+                }
+
                 const VkWriteDescriptorSet Write
                 {
                     .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .pNext              = nullptr,
-                    .dstSet             = HeapData.DescriptorSet,
+                    .dstSet             = Set,
                     .dstBinding         = kSamplerBindingSlot,
                     .dstArrayElement    = 1,
                     .descriptorCount    = (uint32)SeedInfos.size(),
@@ -5132,21 +5247,24 @@ namespace Lumina::RHI
                 return;
             }
 
-            const VkWriteDescriptorSet Write
+            for (VkDescriptorSet Set : HeapData.DescriptorSets)
             {
-                .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .pNext              = nullptr,
-                .dstSet             = HeapData.DescriptorSet,
-                .dstBinding         = kImageBindingSlot,
-                .dstArrayElement    = First,
-                .descriptorCount    = (uint32)ImageInfos.size(),
-                .descriptorType     = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                .pImageInfo         = ImageInfos.data(),
-                .pBufferInfo        = nullptr,
-                .pTexelBufferView   = nullptr
-            };
+                const VkWriteDescriptorSet Write
+                {
+                    .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .pNext              = nullptr,
+                    .dstSet             = Set,
+                    .dstBinding         = kImageBindingSlot,
+                    .dstArrayElement    = First,
+                    .descriptorCount    = (uint32)ImageInfos.size(),
+                    .descriptorType     = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                    .pImageInfo         = ImageInfos.data(),
+                    .pBufferInfo        = nullptr,
+                    .pTexelBufferView   = nullptr
+                };
 
-            vkUpdateDescriptorSets(*GDevice, 1, &Write, 0, nullptr);
+                vkUpdateDescriptorSets(*GDevice, 1, &Write, 0, nullptr);
+            }
             ImageInfos.clear();
         };
 
@@ -5205,7 +5323,15 @@ namespace Lumina::RHI
             return;
         }
 
-        PointSampledSlotAtFallback(HeapData, Slot);
+#if USING(WITH_EDITOR)
+        ClearOwnerBackReference(HeapData, Slot);
+#endif
+        HeapData.SampledOwners[Slot] = {};
+
+        if (HeapData.FallbackView != VK_NULL_HANDLE)
+        {
+            DeferSampledWrite(HeapData, Slot, HeapData.FallbackView);
+        }
     }
 
     void HeapFreeTexture(FTextureHeapH Heap, uint32 Slot)
@@ -6910,7 +7036,8 @@ namespace Lumina::RHI
     void CmdSetTextureHeap(FCmdListH CL, FTextureHeapH Heap)
     {
         const FCommandList& List = GDevice->CommandLists[CL];
-        auto* DescriptorSet = GDevice->TextureHeaps[Heap].DescriptorSet;
+        const uint32 Copy = GDevice->CurrentRetireSlot.load(std::memory_order_acquire) % kFramesInFlight;
+        auto* DescriptorSet = GDevice->TextureHeaps[Heap].DescriptorSets[Copy];
 
         if (List.Queue == EQueueType::Transfer)
         {

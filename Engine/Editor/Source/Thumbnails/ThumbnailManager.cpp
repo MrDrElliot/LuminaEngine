@@ -41,6 +41,17 @@ namespace Lumina
 
     static CThumbnailManager* ThumbnailManagerSingleton = nullptr;
 
+    // Callers key records by the asset path with or without its extension, so both spellings name one package.
+    static bool IsSamePackagePath(FStringView A, FStringView B)
+    {
+        constexpr FStringView Extension = ".lasset";
+        auto Stem = [&](FStringView Path)
+        {
+            return Path.ends_with(Extension) ? Path.substr(0, Path.size() - Extension.size()) : Path;
+        };
+        return Stem(A) == Stem(B);
+    }
+
     CThumbnailManager::CThumbnailManager()
     {
     }
@@ -746,16 +757,29 @@ namespace Lumina
     void CThumbnailManager::OnPackageDestroyed(FName Package)
     {
         FGuid GUID;
+        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Package.c_str()))
+        {
+            GUID = Data->AssetGUID;
+        }
+
+        // Every record naming this package goes, whichever spelling its caller used, or its texture outlives the asset.
         {
             FWriteScopeLock Lock(ThumbnailLock);
-            auto It = Thumbnails.find(Package);
-            if (It != Thumbnails.end())
+            for (auto It = Thumbnails.begin(); It != Thumbnails.end(); )
             {
-                if (It->second)
+                const FThumbnailRecord* Record = It->second.get();
+                const bool bSameAsset = GUID.IsValid() && Record != nullptr && Record->GUID == GUID;
+                if (!bSameAsset && !IsSamePackagePath(FStringView(It->first.c_str()), FStringView(Package.c_str())))
                 {
-                    GUID = It->second->GUID;
+                    ++It;
+                    continue;
                 }
-                Thumbnails.erase(It);
+
+                if (!GUID.IsValid() && Record != nullptr)
+                {
+                    GUID = Record->GUID;
+                }
+                It = Thumbnails.erase(It);
             }
         }
 

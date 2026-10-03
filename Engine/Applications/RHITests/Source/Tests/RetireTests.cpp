@@ -91,34 +91,6 @@ namespace Lumina::RHITests
         Ctx.PumpFrames(RHI::kFramesInFlight * 3);
     }
 
-    // The descriptor must stop pointing at the texture when it is retired, not when the queue drains.
-    RHI_TEST(Retire, SampledSlotUnbindsBeforeDrain)
-    {
-        const RHI::FTextureH Texture = RHI::CreateTexture(MakeSampledDesc(64));
-        RHI_REQUIRE(RHI::IsValid(Texture));
-        RHI::SetDebugName(Texture, "RHITests.UnbindBeforeDrain");
-
-        const uint32 Slot = RHI::HeapWriteTexture(RHI::GetGlobalHeap(), Texture);
-        RHI_REQUIRE(Slot != RHI::kInvalidHeapSlot);
-
-        RHI::RetireSampledSlot(Slot);
-        RHI::Retire(Texture);
-
-        // With the unbind deferred, this list would bind a retired texture and still be in flight.
-        for (uint32 i = 0; i < RHI::kFramesInFlight * 2; ++i)
-        {
-            const RHI::FCmdListH CL = Ctx.OpenCL();
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                RHI::EStageFlags::Transfer,
-                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
-            RHI::Submit(RHI::EQueueType::Graphics, TSpan{ &CL, 1 });
-            Ctx.PumpFrames(1);
-        }
-
-        Ctx.PumpFrames(RHI::kFramesInFlight * 2);
-    }
-
     RHI_TEST(Retire, RetireOfInvalidHandlesIsIgnored)
     {
         RHI::Retire(RHI::FGPUAllocation{});

@@ -255,6 +255,39 @@ namespace Lumina::SessionOps
         return UI->FocusTab(Name, OutError);
     }
 
+    CWorld* GetTabWorld(FStringView Name, FString& OutError)
+    {
+        FEditorUI* UI = FindUI();
+        if (UI == nullptr)
+        {
+            OutError = GNoSceneEditor;
+            return nullptr;
+        }
+
+        FEditorTool* Tool = UI->FindTab(Name, OutError);
+        if (Tool == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (Tool->GetWorld() == nullptr)
+        {
+            OutError = Lumina::Format("'{}' has no world to capture.", Name);
+        }
+        return Tool->GetWorld();
+    }
+
+    bool FloatTab(FStringView Name, const FVector2& ScreenPosition, const FVector2& Size, FString& OutError)
+    {
+        FEditorUI* UI = FindUI();
+        if (UI == nullptr)
+        {
+            OutError = GNoSceneEditor;
+            return false;
+        }
+        return UI->FloatTab(Name, ScreenPosition, Size, OutError);
+    }
+
     bool BrowseContentFolder(FStringView Folder, FStringView Search, FString& OutError)
     {
         FEditorUI* UI = FindUI();
