@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Microsoft.CodeAnalysis;
 
 namespace LuminaSharp;
@@ -26,6 +27,24 @@ internal sealed class ScriptAssemblyUnit
     /// <summary>A prebuilt managed assembly to load as-is (when there are no <see cref="Sources"/>); null/empty
     /// for a compile-from-source unit.</summary>
     public string? DllPath;
+}
+
+// A generation built and loaded off the game thread, waiting for the frame start that swaps it in.
+internal sealed class FCompiledGeneration
+{
+    public required List<(ScriptAssemblyUnit Unit, FScriptImage Image)> Pending;
+
+    // Null for a generation with no units. Nothing runs in it until Commit, so it can be dropped unused.
+    public ScriptLoadContext? Context;
+
+    public List<(string UnitName, Assembly Loaded)> Assemblies = new();
+
+    public void Abandon()
+    {
+        Context?.Unload();
+        Context = null;
+        Assemblies.Clear();
+    }
 }
 
 /// <summary>
@@ -58,7 +77,28 @@ internal sealed class ScriptManager
     // EntitySystem subclasses in the current generation, for editor diagnostics.
     public int EntitySystemCount { get; private set; }
 
+    // Roslyn's cached references and the on-disk compile keys are shared, so two builds must never overlap.
+    private static readonly object BuildLock = new();
+
+    // Names each context as it is built, which can be before the generation it becomes is known.
+    private static int ContextSerial;
+
     public bool LoadOrReload(IReadOnlyList<ScriptAssemblyUnit> Units)
+    {
+        FCompiledGeneration? Compiled = BuildGeneration(Units);
+        return Compiled != null && Commit(Compiled);
+    }
+
+    // Touches nothing the live generation uses, so it runs on any thread while the current scripts keep running.
+    public static FCompiledGeneration? BuildGeneration(IReadOnlyList<ScriptAssemblyUnit> Units)
+    {
+        lock (BuildLock)
+        {
+            return BuildGenerationLocked(Units);
+        }
+    }
+
+    private static FCompiledGeneration? BuildGenerationLocked(IReadOnlyList<ScriptAssemblyUnit> Units)
     {
         // Order units so every dependency is compiled before its dependents (its emitted image becomes a
         // metadata reference for them). Cycles are broken + logged rather than fatal.
@@ -86,7 +126,7 @@ internal sealed class ScriptManager
                     {
                         Native.Log(ELogLevel.Error,
                             $"Script reload aborted: compilation of '{Unit.Name}' failed; keeping current scripts.");
-                        return false;
+                        return null;
                     }
                     Image = Compiled.Value;
 
@@ -106,7 +146,7 @@ internal sealed class ScriptManager
                 {
                     Native.Log(ELogLevel.Error,
                         $"Script reload aborted: failed to read prebuilt assembly '{Unit.DllPath}': {Exception.Message}");
-                    return false;
+                    return null;
                 }
             }
             else
@@ -118,23 +158,21 @@ internal sealed class ScriptManager
             Pending.Add((Unit, Image));
         }
 
-        UnloadCurrent();
-
-        // Even an EMPTY generation must advance the counter: live native bridges gate their rebind on it,
-        // and UnloadCurrent just freed their GCHandles. Without a bump they would keep dispatching into
-        // the unloaded generation instead of rebinding to nothing and falling back to native behavior.
-        Generation++;
-
-        if (Pending.Count == 0)
+        var Built = new FCompiledGeneration { Pending = Pending };
+        if (Pending.Count > 0)
         {
-            Native.Log(ELogLevel.Info, "No C# scripts found.");
-            return true;
+            LoadIntoNewContext(Built);
         }
+        return Built;
+    }
 
-        var NewContext = new ScriptLoadContext($"GameScripts.Gen{Generation}");
+    // Loading a freshly compiled image costs tens of milliseconds, and a context nobody uses yet can take it off the game thread.
+    private static void LoadIntoNewContext(FCompiledGeneration Built)
+    {
+        var NewContext = new ScriptLoadContext($"GameScripts.Gen{Interlocked.Increment(ref ContextSerial)}");
 
         // Registered before any unit loads, so a script's first bind to a package assembly resolves in this context.
-        foreach ((ScriptAssemblyUnit Unit, FScriptImage _) in Pending)
+        foreach ((ScriptAssemblyUnit Unit, FScriptImage _) in Built.Pending)
         {
             foreach (string Reference in Unit.References)
             {
@@ -145,16 +183,39 @@ internal sealed class ScriptManager
         // Load in dependency order: each unit is registered before any dependent loads, so a dependent's
         // sibling reference resolves to the in-ALC assembly (see ScriptLoadContext.Load). LoadFromStream
         // (not a path) keeps the file unlocked so the collectible context unloads cleanly on reload.
-        var AllTypes = new List<Type>();
-        foreach ((ScriptAssemblyUnit Unit, FScriptImage Image) in Pending)
+        foreach ((ScriptAssemblyUnit Unit, FScriptImage Image) in Built.Pending)
         {
-            Assembly Loaded = NewContext.LoadScriptAssembly(Unit.Name, Image);
-            // Run module initializers now (deterministically) so a plugin's [ModuleInitializer] export
-            // registration into ManagedExportRegistry happens at load, not lazily on first type use.
-            RuntimeHelpers.RunModuleConstructor(Loaded.ManifestModule.ModuleHandle);
-            AllTypes.AddRange(SafeGetTypes(Loaded, Unit.Name));
+            Built.Assemblies.Add((Unit.Name, NewContext.LoadScriptAssembly(Unit.Name, Image)));
         }
-        Context = NewContext;
+        Built.Context = NewContext;
+    }
+
+    // Swaps the built images in, so it runs on the game thread between frames.
+    public bool Commit(FCompiledGeneration Compiled)
+    {
+        List<(ScriptAssemblyUnit Unit, FScriptImage Image)> Pending = Compiled.Pending;
+
+        UnloadCurrent();
+
+        // Even an EMPTY generation must advance the counter: live native bridges gate their rebind on it,
+        // and UnloadCurrent just freed their GCHandles. Without a bump they would keep dispatching into
+        // the unloaded generation instead of rebinding to nothing and falling back to native behavior.
+        Generation++;
+
+        if (Pending.Count == 0 || Compiled.Context == null)
+        {
+            Native.Log(ELogLevel.Info, "No C# scripts found.");
+            return true;
+        }
+
+        // Module initializers register exports that UnloadCurrent clears, so they wait for the swap rather than the load.
+        var AllTypes = new List<Type>();
+        foreach ((string UnitName, Assembly Loaded) in Compiled.Assemblies)
+        {
+            RuntimeHelpers.RunModuleConstructor(Loaded.ManifestModule.ModuleHandle);
+            AllTypes.AddRange(SafeGetTypes(Loaded, UnitName));
+        }
+        Context = Compiled.Context;
 
         LoadedTypeCount = AllTypes.Count;
         var Library = new TypeLibrary(AllTypes);

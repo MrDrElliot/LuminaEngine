@@ -1083,12 +1083,16 @@ namespace Lumina::DotNet
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled);
     }
 
+    void DiscardBackgroundCompile();
+
     void Shutdown()
     {
         if (!bInitialized)
         {
             return;
         }
+
+        DiscardBackgroundCompile();
 
         // After this the table is empty and clearing the free function makes any later set a no-op.
         Lumina::ManagedInstances::ReleaseAll();
@@ -1117,25 +1121,46 @@ namespace Lumina::DotNet
         GManaged.Tick();
     }
 
-    // Returns the managed load result, where zero is success and a negative could not run.
-    int32 LoadScriptUnitsCore(const TVector<FScriptUnit>& UnitList, bool bEditorFollowups)
+    // One unit's gathered sources, which own the strings the marshaled views point at.
+    struct FSourceBucket
     {
-        if (!bInitialized || GManaged.LoadScripts == nullptr)
-        {
-            return -1;
-        }
+        FString                  Name;
+        FString                  Deps;     // ';'-joined sibling unit names
+        TVector<FGatheredSource> Sources;
+        FString                  DllPath;  // emit target, or load source
+        FString                  References; // ';'-joined third-party assembly paths
+    };
 
-        // The canonical path is the emit target with sources, or the load source for a prebuilt DLL.
-        struct FSourceBucket
-        {
-            FString                  Name;
-            FString                  Deps;     // ';'-joined sibling unit names
-            TVector<FGatheredSource> Sources;  // owns the path/text strings the marshaled views point at
-            FString                  DllPath;  // emit target, or load source
-            FString                  References; // ';'-joined third-party assembly paths
-        };
-
+    // Everything a load needs from disk, kept until the swap so the post-load steps can see what was built.
+    struct FScriptLoadRequest
+    {
         TVector<FSourceBucket> Buckets;
+        size_t                 TotalFiles = 0;
+        bool                   bEditorFollowups = false;
+    };
+
+    // A background compile in flight, which ProcessPendingScriptReload swaps in once managed reports it done.
+    bool               GCompileInFlight = false;
+    FScriptLoadRequest GCompileRequest;
+
+    TManagedExport<int32 (*)(const FSourceAssembly*, int32)> GBeginScriptCompile("BeginScriptCompile");
+    TManagedExport<int32 (*)()>                              GPollScriptCompile("PollScriptCompile");
+    TManagedExport<int32 (*)()>                              GCommitScriptCompile("CommitScriptCompile");
+    TManagedExport<void (*)()>                               GDiscardScriptCompile("DiscardScriptCompile");
+
+    enum class EScriptCompileState : int32
+    {
+        None      = 0,
+        Compiling = 1,
+        Ready     = 2,
+        Failed    = 3,
+    };
+
+    void GatherScriptLoad(const TVector<FScriptUnit>& UnitList, bool bEditorFollowups, FScriptLoadRequest& Out)
+    {
+        Out = FScriptLoadRequest{};
+        Out.bEditorFollowups = bEditorFollowups;
+
         for (const FScriptUnit& Unit : UnitList)
         {
             FSourceBucket Bucket;
@@ -1185,19 +1210,27 @@ namespace Lumina::DotNet
                 Bucket.References += Unit.References[Index];
             }
 
-            Buckets.push_back(std::move(Bucket));
+            Out.Buckets.push_back(std::move(Bucket));
         }
 
-        // Marshal. Each bucket's FSourceFile array must outlive the call, so keep one per bucket alive here.
-        TVector<TVector<FSourceFile>> PerBucketFiles;
-        PerBucketFiles.resize(Buckets.size());
-        TVector<FSourceAssembly>      Units;
-        Units.reserve(Buckets.size());
-        size_t TotalFiles = 0;
-
-        for (size_t Index = 0; Index < Buckets.size(); ++Index)
+        for (const FSourceBucket& Bucket : Out.Buckets)
         {
-            FSourceBucket&         Bucket = Buckets[Index];
+            Out.TotalFiles += Bucket.Sources.size();
+        }
+    }
+
+    // Views into the request's strings, valid only for the duration of Call.
+    template<typename TCall>
+    int32 WithMarshaledUnits(const FScriptLoadRequest& Request, TCall&& Call)
+    {
+        TVector<TVector<FSourceFile>> PerBucketFiles;
+        PerBucketFiles.resize(Request.Buckets.size());
+        TVector<FSourceAssembly>      Units;
+        Units.reserve(Request.Buckets.size());
+
+        for (size_t Index = 0; Index < Request.Buckets.size(); ++Index)
+        {
+            const FSourceBucket&   Bucket = Request.Buckets[Index];
             TVector<FSourceFile>&  Files  = PerBucketFiles[Index];
             Files.reserve(Bucket.Sources.size());
             for (const FGatheredSource& S : Bucket.Sources)
@@ -1222,12 +1255,14 @@ namespace Lumina::DotNet
             Unit.References    = Bucket.References.c_str();
             Unit.ReferencesLen = (int32)Bucket.References.size();
             Units.push_back(Unit);
-            TotalFiles += Files.size();
         }
 
-        LOG_DISPLAY("C#: {} {} script unit(s), {} file(s)...",
-            bEditorFollowups ? "compiling" : "loading", Units.size(), TotalFiles);
+        return Call(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
+    }
 
+    // Releases what the outgoing generation holds, returning the generation it replaces.
+    int32 PrepareGenerationSwap()
+    {
         // A queued Task.Run body is user code holding a strong handle, so let it finish before the teardown.
         GTaskSystem->WaitForAll();
 
@@ -1240,11 +1275,15 @@ namespace Lumina::DotNet
         ClearAllManagedDelegateBindings();
 
         // Zero until the first load completes, which is what tells a fresh start from a replacement.
-        const int32 PreviousGeneration = GCachedGeneration;
+        return GCachedGeneration;
+    }
 
-        const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
+    int32 FinishGenerationSwap(const FScriptLoadRequest& Request, int32 Result, int32 PreviousGeneration)
+    {
+        const bool bEditorFollowups = Request.bEditorFollowups;
+        const size_t TotalFiles = Request.TotalFiles;
+        const TVector<FSourceBucket>& Buckets = Request.Buckets;
 
-        // The compile is synchronous, so the outcome is reported as a toast rather than a progress modal.
         if (Result != 0)
         {
             LOG_ERROR("C# script load/reload returned error {}.", Result);
@@ -1303,11 +1342,109 @@ namespace Lumina::DotNet
         return Result;
     }
 
-    void ReloadScripts()
+    void RecordFinishedReload(int32 Result)
     {
-        const int32 Result = LoadScriptUnitsCore(BuildScriptUnits(), /*bEditorFollowups*/true);
         GLastScriptReloadResult.store(Result, Atomic::MemoryOrderRelease);
         GScriptReloadsFinished.fetch_add(1, Atomic::MemoryOrderAcqRel);
+    }
+
+    // Blocking paths supersede a background compile, whose waiter still has to see a reload finish.
+    void DiscardBackgroundCompile()
+    {
+        if (!GCompileInFlight)
+        {
+            return;
+        }
+
+        if (GDiscardScriptCompile)
+        {
+            GDiscardScriptCompile.Get()();
+        }
+        GCompileInFlight = false;
+        GCompileRequest = FScriptLoadRequest{};
+        RecordFinishedReload(-1);
+    }
+
+    // Returns the managed load result, where zero is success and a negative could not run.
+    int32 LoadScriptUnitsCore(const TVector<FScriptUnit>& UnitList, bool bEditorFollowups)
+    {
+        if (!bInitialized || GManaged.LoadScripts == nullptr)
+        {
+            return -1;
+        }
+
+        DiscardBackgroundCompile();
+
+        FScriptLoadRequest Request;
+        GatherScriptLoad(UnitList, bEditorFollowups, Request);
+
+        LOG_DISPLAY("C#: {} {} script unit(s), {} file(s)...",
+            bEditorFollowups ? "compiling" : "loading", Request.Buckets.size(), Request.TotalFiles);
+
+        const int32 PreviousGeneration = PrepareGenerationSwap();
+        const int32 Result = WithMarshaledUnits(Request, [](const FSourceAssembly* Units, int32 Count)
+        {
+            return GManaged.LoadScripts(Units, Count);
+        });
+        return FinishGenerationSwap(Request, Result, PreviousGeneration);
+    }
+
+    void ReloadScripts()
+    {
+        RecordFinishedReload(LoadScriptUnitsCore(BuildScriptUnits(), /*bEditorFollowups*/true));
+    }
+
+    // Gathers sources now and hands them to a worker, so the frame that asked for the reload does not wait on Roslyn.
+    bool BeginBackgroundReload()
+    {
+        if (!bInitialized || !GBeginScriptCompile)
+        {
+            return false;
+        }
+
+        GatherScriptLoad(BuildScriptUnits(), /*bEditorFollowups*/true, GCompileRequest);
+        LOG_DISPLAY("C#: compiling {} script unit(s), {} file(s) in the background...",
+            GCompileRequest.Buckets.size(), GCompileRequest.TotalFiles);
+
+        const int32 Started = WithMarshaledUnits(GCompileRequest, [](const FSourceAssembly* Units, int32 Count)
+        {
+            return GBeginScriptCompile.Get()(Units, Count);
+        });
+
+        if (Started != 0)
+        {
+            GCompileRequest = FScriptLoadRequest{};
+            return false;
+        }
+
+        GCompileInFlight = true;
+        return true;
+    }
+
+    void FinishBackgroundReload()
+    {
+        const EScriptCompileState State = static_cast<EScriptCompileState>(GPollScriptCompile.Get()());
+        if (State == EScriptCompileState::Compiling)
+        {
+            return;
+        }
+
+        GCompileInFlight = false;
+        FScriptLoadRequest Request = Move(GCompileRequest);
+        GCompileRequest = FScriptLoadRequest{};
+
+        // The live generation was never touched, so a failed compile leaves every script and binding running.
+        if (State != EScriptCompileState::Ready)
+        {
+            LOG_ERROR("C# script compile failed; the running scripts were kept.");
+            ImGuiX::Notifications::NotifyError("Script compile failed ({} file(s)), see the Output Log.", Request.TotalFiles);
+            RecordFinishedReload(4);
+            return;
+        }
+
+        const int32 PreviousGeneration = PrepareGenerationSwap();
+        const int32 Result = GCommitScriptCompile.Get()();
+        RecordFinishedReload(FinishGenerationSwap(Request, Result, PreviousGeneration));
     }
 
     int32 GetFinishedScriptReloads()
@@ -1451,6 +1588,13 @@ namespace Lumina::DotNet
 
     void ProcessPendingScriptReload()
     {
+        // One compile at a time; a request that arrives meanwhile stays latched for the frame after the swap.
+        if (GCompileInFlight)
+        {
+            FinishBackgroundReload();
+            return;
+        }
+
         if (!GScriptReloadRequested.load(Atomic::MemoryOrderAcquire))
         {
             return;
@@ -1462,7 +1606,12 @@ namespace Lumina::DotNet
         }
 
         GScriptReloadRequested.store(false, Atomic::MemoryOrderRelease);
-        ReloadScripts();
+
+        // Without the exports, an older managed build still reloads, just on this frame.
+        if (!BeginBackgroundReload())
+        {
+            ReloadScripts();
+        }
     }
 
     void LoadCookedScripts()

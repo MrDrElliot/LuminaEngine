@@ -16,6 +16,9 @@ public static unsafe partial class Host
     public const string NativeLibrary = "LuminaNative";
 
     private static ScriptManager? Scripts;
+
+    // A reload compiling on a worker thread, which the game thread swaps in once it finishes.
+    private static System.Threading.Tasks.Task<FCompiledGeneration?>? PendingCompile;
     private static IntPtr NativeModule;
     private static readonly Dictionary<string, IntPtr> ModuleHandles = new();
 
@@ -474,6 +477,44 @@ public static unsafe partial class Host
         }
     }
 
+    // Copied out of native memory here, since the buffers are freed as soon as the export returns.
+    private static List<ScriptAssemblyUnit> ReadUnits(FSourceAssembly* Units, int Count)
+    {
+        var List = new List<ScriptAssemblyUnit>(Count < 0 ? 0 : Count);
+        for (int Index = 0; Index < Count; Index++)
+        {
+            ref FSourceAssembly Unit = ref Units[Index];
+
+            string DepsJoined = Interop.GetString(Unit.Deps, Unit.DepsLength);
+            string[] Deps = DepsJoined.Length == 0
+                ? Array.Empty<string>()
+                : DepsJoined.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var Sources = new List<(string, string)>(Unit.SourceCount < 0 ? 0 : Unit.SourceCount);
+            for (int S = 0; S < Unit.SourceCount; S++)
+            {
+                ref FSourceFile Source = ref Unit.Sources[S];
+                Sources.Add((Interop.GetString(Source.Path, Source.PathLength), Interop.GetString(Source.Text, Source.TextLength)));
+            }
+
+            string ReferencesJoined = Interop.GetString(Unit.References, Unit.ReferencesLength);
+            string[] References = ReferencesJoined.Length == 0
+                ? Array.Empty<string>()
+                : ReferencesJoined.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            string DllPath = Interop.GetString(Unit.DllPath, Unit.DllPathLength);
+            List.Add(new ScriptAssemblyUnit
+            {
+                Name = Interop.GetString(Unit.Name, Unit.NameLength),
+                Dependencies = Deps,
+                Sources = Sources,
+                DllPath = DllPath.Length == 0 ? null : DllPath,
+                References = References,
+            });
+        }
+        return List;
+    }
+
     // Native passes script sources bucketed per compilation unit with each unit's deps; each bucket becomes one assembly in the shared collectible ALC.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
@@ -486,45 +527,119 @@ public static unsafe partial class Host
                 return 1;
             }
 
-            var List = new List<ScriptAssemblyUnit>(Count < 0 ? 0 : Count);
-            for (int Index = 0; Index < Count; Index++)
-            {
-                ref FSourceAssembly Unit = ref Units[Index];
-
-                string DepsJoined = Interop.GetString(Unit.Deps, Unit.DepsLength);
-                string[] Deps = DepsJoined.Length == 0
-                    ? Array.Empty<string>()
-                    : DepsJoined.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-                var Sources = new List<(string, string)>(Unit.SourceCount < 0 ? 0 : Unit.SourceCount);
-                for (int S = 0; S < Unit.SourceCount; S++)
-                {
-                    ref FSourceFile Source = ref Unit.Sources[S];
-                    Sources.Add((Interop.GetString(Source.Path, Source.PathLength), Interop.GetString(Source.Text, Source.TextLength)));
-                }
-
-                string ReferencesJoined = Interop.GetString(Unit.References, Unit.ReferencesLength);
-                string[] References = ReferencesJoined.Length == 0
-                    ? Array.Empty<string>()
-                    : ReferencesJoined.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-                string DllPath = Interop.GetString(Unit.DllPath, Unit.DllPathLength);
-                List.Add(new ScriptAssemblyUnit
-                {
-                    Name = Interop.GetString(Unit.Name, Unit.NameLength),
-                    Dependencies = Deps,
-                    Sources = Sources,
-                    DllPath = DllPath.Length == 0 ? null : DllPath,
-                    References = References,
-                });
-            }
-            return Scripts.LoadOrReload(List) ? 0 : 4;
+            // A blocking load supersedes a background one, whose units may already be stale.
+            DiscardPendingCompile();
+            return Scripts.LoadOrReload(ReadUnits(Units, Count)) ? 0 : 4;
         }
         catch (Exception Exception)
         {
             Interop.LogException(Exception);
             return 3;
         }
+    }
+
+    // Starts compiling on a worker thread, so the editor keeps drawing frames while Roslyn runs.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int BeginScriptCompile(FSourceAssembly* Units, int Count)
+    {
+        try
+        {
+            if (Scripts == null)
+            {
+                return 1;
+            }
+
+            DiscardPendingCompile();
+            List<ScriptAssemblyUnit> Read = ReadUnits(Units, Count);
+            PendingCompile = System.Threading.Tasks.Task.Run<FCompiledGeneration?>(() =>
+            {
+                try
+                {
+                    return ScriptManager.BuildGeneration(Read);
+                }
+                catch (Exception Exception)
+                {
+                    Interop.LogException(Exception);
+                    return null;
+                }
+            });
+            return 0;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            return 3;
+        }
+    }
+
+    // 0 nothing pending, 1 still compiling, 2 ready to commit, 3 the compile failed and was dropped.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int PollScriptCompile()
+    {
+        System.Threading.Tasks.Task<FCompiledGeneration?>? Pending = PendingCompile;
+        if (Pending == null)
+        {
+            return 0;
+        }
+        if (!Pending.IsCompleted)
+        {
+            return 1;
+        }
+        if (Pending.Result == null)
+        {
+            PendingCompile = null;
+            return 3;
+        }
+        return 2;
+    }
+
+    // Swaps the finished generation in, on the game thread at a frame boundary.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int CommitScriptCompile()
+    {
+        try
+        {
+            System.Threading.Tasks.Task<FCompiledGeneration?>? Pending = PendingCompile;
+            PendingCompile = null;
+            if (Scripts == null || Pending == null)
+            {
+                Pending?.Result?.Abandon();
+                return 1;
+            }
+
+            FCompiledGeneration? Compiled = Pending.Result;
+            return Compiled != null && Scripts.Commit(Compiled) ? 0 : 4;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            return 3;
+        }
+    }
+
+    // Drops a background compile without loading it, waiting so no compile outlives the request that started it.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void DiscardScriptCompile()
+    {
+        try
+        {
+            DiscardPendingCompile();
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    private static void DiscardPendingCompile()
+    {
+        System.Threading.Tasks.Task<FCompiledGeneration?>? Pending = PendingCompile;
+        PendingCompile = null;
+        Pending?.Result?.Abandon();
     }
 
     [ManagedExport]
@@ -548,6 +663,7 @@ public static unsafe partial class Host
     {
         try
         {
+            DiscardPendingCompile();
             Scripts?.Shutdown();
             Scripts = null;
             ObjectReference.OnHostShutdown();
