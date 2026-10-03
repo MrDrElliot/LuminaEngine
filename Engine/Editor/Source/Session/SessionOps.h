@@ -106,6 +106,9 @@ namespace Lumina::SessionOps
     // Opens the asset or focuses its existing tab, reporting which tab it landed in.
     EDITOR_API bool OpenAsset(const FGuid& AssetGUID, FString& OutTabId, FString& OutError);
 
+    // Shows a content folder in the content browser, with Search in its search box (empty clears it).
+    EDITOR_API bool BrowseContentFolder(FStringView Folder, FStringView Search, FString& OutError);
+
     //~ Saving and quitting.
 
     // Package paths with unsaved changes, skipping deleted assets still awaiting their destroy.

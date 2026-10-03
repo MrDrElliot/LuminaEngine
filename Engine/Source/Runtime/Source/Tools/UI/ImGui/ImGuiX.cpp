@@ -710,6 +710,12 @@ namespace Lumina::ImGuiX
         return Result;
     }
 
+    // True while the combo's list is showing, which is the only time it needs its candidates.
+    static bool IsComboListOpen(const char* StrId)
+    {
+        return ImGui::IsPopupOpen(ImHashStr("##ComboPopup", 0, ImGui::GetID(StrId)), ImGuiPopupFlags_None);
+    }
+
     bool AssetReferenceCombo(const char* StrId, CClass* FilterClass, FGuid& InOutGUID, const char* ItemIcon)
     {
         if (FilterClass == nullptr)
@@ -717,16 +723,31 @@ namespace Lumina::ImGuiX
             return false;
         }
 
-        // Every asset whose class is-a FilterClass, sorted by name.
-        TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([FilterClass](const FAssetData& Data)
+        // A closed combo only shows the current asset, so the registry scan waits until the list is open.
+        if (!IsComboListOpen(StrId))
         {
-            CClass* DataClass = FindObject<CClass>(Data.AssetClass);
-            return DataClass != nullptr && DataClass->IsChildOf(FilterClass);
+            const FAssetData* Current = InOutGUID.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(InOutGUID) : nullptr;
+            const char* ClosedPreview = Current != nullptr ? Current->AssetName.c_str() : "Select an asset...";
+            SearchableCombo(StrId, ClosedPreview, 0, Current != nullptr ? 0 : INDEX_NONE, [](int32) { return FFixedString(); }, ItemIcon);
+            return false;
+        }
+
+        // Every asset whose class is-a FilterClass, sorted by name, with the class test memoized since a project has few classes.
+        THashMap<FName, bool> ClassMatches;
+        TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([FilterClass, &ClassMatches](const FAssetData& Data)
+        {
+            auto Known = ClassMatches.find(Data.AssetClass);
+            if (Known == ClassMatches.end())
+            {
+                CClass* DataClass = FindObject<CClass>(Data.AssetClass);
+                Known = ClassMatches.emplace(Data.AssetClass, DataClass != nullptr && DataClass->IsChildOf(FilterClass)).first;
+            }
+            return Known->second;
         });
 
         Algo::Sort(Assets, [](const FAssetData* A, const FAssetData* B)
         {
-            return A->AssetName.ToString() < B->AssetName.ToString();
+            return strcmp(A->AssetName.c_str(), B->AssetName.c_str()) < 0;
         });
 
         int32 CurrentIndex = INDEX_NONE;
@@ -754,6 +775,16 @@ namespace Lumina::ImGuiX
 
     bool ClassCombo(const char* StrId, CClass* BaseClass, CClass*& InOutClass, bool bAllowNone, const char* ItemIcon)
     {
+        // A closed combo only shows the current class, so the object walk waits until the list is open.
+        if (!IsComboListOpen(StrId))
+        {
+            const FFixedString ClosedPreview = InOutClass ? FFixedString(InOutClass->GetName().c_str())
+                                                          : FFixedString(bAllowNone ? "None" : "Select a class...");
+            SearchableCombo(StrId, ClosedPreview.c_str(), 0, (InOutClass != nullptr || bAllowNone) ? 0 : INDEX_NONE,
+                [](int32) { return FFixedString(); }, ItemIcon);
+            return false;
+        }
+
         TVector<CClass*> Candidates;
         for (TObjectIterator<CClass> It; It; ++It)
         {
@@ -802,6 +833,16 @@ namespace Lumina::ImGuiX
 
     bool StructCombo(const char* StrId, CStruct* BaseStruct, CStruct*& InOutStruct, bool bAllowNone, const char* ItemIcon)
     {
+        // A closed combo only shows the current struct, so the object walk waits until the list is open.
+        if (!IsComboListOpen(StrId))
+        {
+            const FFixedString ClosedPreview = InOutStruct ? FFixedString(InOutStruct->GetName().c_str())
+                                                           : FFixedString(bAllowNone ? "None" : "Select a type...");
+            SearchableCombo(StrId, ClosedPreview.c_str(), 0, (InOutStruct != nullptr || bAllowNone) ? 0 : INDEX_NONE,
+                [](int32) { return FFixedString(); }, ItemIcon);
+            return false;
+        }
+
         TVector<CStruct*> Candidates;
         for (TObjectIterator<CStruct> It; It; ++It)
         {

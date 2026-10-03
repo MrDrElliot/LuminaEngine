@@ -357,6 +357,11 @@ namespace Lumina
         PendingRevealIndex = -1;
         SelectionAnchorIndex = -1;
 
+        // The allocator only rewinds, so an item's own heap memory (paths, labels) is released here or never.
+        for (FTileViewItem* Item : ListItems)
+        {
+            Item->~FTileViewItem();
+        }
         Allocator.Reset();
         ListItems.clear();
     }

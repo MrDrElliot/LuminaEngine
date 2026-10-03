@@ -1796,6 +1796,26 @@ namespace Lumina
         ContentBrowser->BrowseToAsset(VirtualPath);
     }
 
+    bool FEditorUI::BrowseToFolder(FStringView Folder, FStringView Search)
+    {
+        if (ContentBrowser == nullptr || Folder.empty())
+        {
+            return false;
+        }
+
+        if (FFooterDrawer* Drawer = FindDrawerForTool(ContentBrowser))
+        {
+            ShowDrawer(*Drawer);
+        }
+        else
+        {
+            FocusTargetWindowName = ContentBrowser->GetToolName().c_str();
+        }
+
+        ContentBrowser->BrowseToFolder(Folder, Search);
+        return true;
+    }
+
     const FAssetData* FEditorUI::GetContentBrowserSelectedAsset() const
     {
         return ContentBrowser != nullptr ? ContentBrowser->GetSelectedAsset() : nullptr;

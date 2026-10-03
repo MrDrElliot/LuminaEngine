@@ -74,6 +74,7 @@ namespace Lumina
         void OpenAssetEditor(const FGuid& AssetGUID) override;
         void OpenFileEditor(FStringView VirtualPath) override;
         void BrowseToAsset(FStringView VirtualPath) override;
+        bool BrowseToFolder(FStringView Folder, FStringView Search);
         const FAssetData* GetContentBrowserSelectedAsset() const override;
         void OnDestroyAsset(CObject* InAsset) override;
 

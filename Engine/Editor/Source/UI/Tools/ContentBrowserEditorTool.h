@@ -71,9 +71,11 @@ namespace Lumina
         {
         public:
 
-            FContentBrowserTileViewItem(FTileViewItem* InParent, const VFS::FFileInfo& InInfo, bool bInProtected)
+            // Refers into the browser's folder listing, which is only rebuilt after every tile is gone.
+            FContentBrowserTileViewItem(FTileViewItem* InParent, const VFS::FFileInfo& InInfo, bool bInProtected, FName InTypeLabel)
                 : FTileViewItem(InParent)
                 , bProtected(bInProtected)
+                , TypeLabel(InTypeLabel)
                 , FileInfo(InInfo)
                 , IconKind(ClassifyIcon(InInfo))
             {
@@ -135,7 +137,8 @@ namespace Lumina
                 if (Info.IsDirectory()) { return EIconKind::Directory; }
                 if (Info.IsLAsset())    { return EIconKind::Asset; }
 
-                const FString Ext = Info.GetExt();
+                const size_t Dot = Info.Name.find_last_of('.');
+                const FStringView Ext = Dot == FString::npos ? FStringView() : FStringView(Info.Name.c_str() + Dot, Info.Name.size() - Dot);
                 if (Ext == ".rml")  { return EIconKind::Markup; }
                 if (Ext == ".rcss") { return EIconKind::Stylesheet; }
                 if (Ext == ".wav")  { return EIconKind::Audio; }
@@ -143,10 +146,10 @@ namespace Lumina
                 return EIconKind::Generic;
             }
 
-            bool            bProtected = false;
-            FName           TypeLabel;
-            VFS::FFileInfo  FileInfo;
-            EIconKind       IconKind = EIconKind::Generic;
+            bool                    bProtected = false;
+            FName                   TypeLabel;
+            const VFS::FFileInfo&   FileInfo;
+            EIconKind               IconKind = EIconKind::Generic;
         };
 
         LUMINA_SINGLETON_EDITOR_TOOL(FContentBrowserEditorTool)
@@ -160,8 +163,16 @@ namespace Lumina
         
         void RefreshContentBrowser();
 
+        // Re-applies the search and type filter to the folder already read, without walking it again.
+        void RefilterContentBrowser();
+
         /** Navigates to the folder holding VirtualPath, then selects and scrolls to its tile. */
         void BrowseToAsset(FStringView VirtualPath);
+
+        // Shows Folder with Search typed into the search box, the way a user browsing there would.
+        void BrowseToFolder(FStringView Folder, FStringView Search);
+
+        NODISCARD FStringView GetBrowsedFolder() const { return FStringView(SelectedPath.c_str(), SelectedPath.size()); }
 
         // Selects the asset and opens its inline rename as soon as its tile appears. Called right after
         // creating one, so a new asset lands ready to be named instead of keeping the factory default.
@@ -320,10 +331,19 @@ namespace Lumina
         // Substring match over the tile name, case-insensitive. Empty shows everything.
         FFixedString                SearchText;
 
+        // The browsed folder as last read from disk, sorted and labeled, which the tiles refer into.
+        struct FListingEntry
+        {
+            VFS::FFileInfo Info;
+            FName          TypeLabel;
+            FName          AssetClass;
+        };
+        TVector<FListingEntry>      Listing;
+        FFixedString                ListingFolder;
+        bool                        bListingStale = true;
+
         // Rebuilds FilterState from the asset registry, preserving existing choices.
         void RefreshFilterClasses();
-
-        NODISCARD bool PassesFilters(const VFS::FFileInfo& FileInfo, FStringView TypeLabel) const;
 
         // "CStaticMesh" -> "STATICMESH"; a loose file -> its extension. Empty for directories.
         NODISCARD static FFixedString MakeTypeLabel(const VFS::FFileInfo& FileInfo);

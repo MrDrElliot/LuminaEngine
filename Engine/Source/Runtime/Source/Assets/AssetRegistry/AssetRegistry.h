@@ -99,6 +99,9 @@ namespace Lumina
 
 		FAssetData* GetAssetByGUID(const FGuid& GUID) const;
 		FAssetData* GetAssetByPath(FStringView Path) const;
+
+		// One lock for the whole batch, since a folder of thousands looked up one by one mostly waits on the lock.
+		void GetAssetsByPath(TSpan<const FStringView> Paths, TSpan<const FAssetData*> OutAssets) const;
 		TVector<FAssetData*> FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate) const;
 
 		// --- Text assets (.luau/.rml/.rcss): GUID identity sourced from hidden .lmeta sidecars. ---

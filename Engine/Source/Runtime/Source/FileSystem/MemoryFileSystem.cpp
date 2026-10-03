@@ -308,7 +308,7 @@ namespace Lumina::VFS
         // A no-op, since in-memory entries have no shell representation.
     }
 
-    void FMemoryFileSystem::EmitFileInfo(const FFixedString& Key, const FEntry& Entry, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FMemoryFileSystem::EmitFileInfo(const FFixedString& Key, const FEntry& Entry, const TFunction<void(FFileInfo&)>& Callback) const
     {
         FStringView KeyView(Key.data(), Key.size());
 
@@ -325,7 +325,7 @@ namespace Lumina::VFS
         Callback(Info);
     }
 
-    void FMemoryFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FMemoryFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         FFixedString Key = NormalizeKey(Path);
         FStringView Prefix(Key.data(), Key.size());
@@ -345,7 +345,7 @@ namespace Lumina::VFS
         }
     }
 
-    void FMemoryFileSystem::RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FMemoryFileSystem::RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         FFixedString Key = NormalizeKey(Path);
         FStringView Prefix(Key.data(), Key.size());

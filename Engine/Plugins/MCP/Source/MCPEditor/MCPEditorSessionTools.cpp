@@ -338,6 +338,21 @@ namespace Lumina::MCP
                     return Agent::FToolResult::Ok(Lumina::Format("Open in tab '{}'.", Out.Tab));
                 });
 
+            Agent::FToolRegistry::Get().Register<SBrowseFolderParams, SBrowseFolderResult>(
+                Owner, "contentbrowser.browse",
+                "Show a folder in the content browser, optionally with text in its search box. The tiles build on the next frame.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+                [](const SBrowseFolderParams& In, SBrowseFolderResult& Out)
+                {
+                    FString Error;
+                    Out.bDone = SessionOps::BrowseContentFolder(FStringView(In.Folder), FStringView(In.Search), Error);
+                    if (!Out.bDone)
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    return Agent::FToolResult::Ok(Lumina::Format("Browsing '{}'.", In.Folder));
+                });
+
             Agent::FToolRegistry::Get().Register<STabNameParams, STabActionResult>(
                 Owner, "editor.focus_tab",
                 "Bring a tab to the front. Focus lands on the next frame.",

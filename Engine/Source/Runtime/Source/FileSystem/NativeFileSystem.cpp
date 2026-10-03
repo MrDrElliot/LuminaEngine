@@ -164,7 +164,7 @@ namespace Lumina::VFS
         Platform::LaunchURL(UTF8_TO_TCHAR(ResolveVirtualPath(Path).c_str()));
     }
 
-    void FNativeFileSystem::Iterate(FStringView Path, bool bRecursive, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FNativeFileSystem::Iterate(FStringView Path, bool bRecursive, const TFunction<void(FFileInfo&)>& Callback) const
     {
         const FPathString ResolvedPath = ResolveVirtualPath(Path);
         if (ResolvedPath.empty())
@@ -209,12 +209,12 @@ namespace Lumina::VFS
         }
     }
 
-    void FNativeFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FNativeFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         Iterate(Path, false, Callback);
     }
 
-    void FNativeFileSystem::RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FNativeFileSystem::RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         Iterate(Path, true, Callback);
     }

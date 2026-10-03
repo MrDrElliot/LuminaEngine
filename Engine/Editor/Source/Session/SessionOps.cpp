@@ -255,6 +255,17 @@ namespace Lumina::SessionOps
         return UI->FocusTab(Name, OutError);
     }
 
+    bool BrowseContentFolder(FStringView Folder, FStringView Search, FString& OutError)
+    {
+        FEditorUI* UI = FindUI();
+        if (UI == nullptr || !UI->BrowseToFolder(Folder, Search))
+        {
+            OutError = "The content browser is not open.";
+            return false;
+        }
+        return true;
+    }
+
     bool CloseTab(FStringView Name, bool bDiscardUnsaved, FString& OutError)
     {
         FEditorUI* UI = FindUI();

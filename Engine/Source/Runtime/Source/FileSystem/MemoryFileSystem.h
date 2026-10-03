@@ -41,8 +41,8 @@ namespace Lumina::VFS
 
         void PlatformOpen(FStringView Path) const override;
 
-        void DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const override;
-        void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const override;
+        void DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const override;
+        void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const override;
 
         FStringView GetAliasPath() const override { return AliasPath; }
         FStringView GetBasePath() const override { return AliasPath; }
@@ -58,7 +58,7 @@ namespace Lumina::VFS
 
         FFixedString NormalizeKey(FStringView Path) const;
         void EnsureDirectoryChain(FStringView VirtualPath);
-        void EmitFileInfo(const FFixedString& Key, const FEntry& Entry, const TFunction<void(const FFileInfo&)>& Callback) const;
+        void EmitFileInfo(const FFixedString& Key, const FEntry& Entry, const TFunction<void(FFileInfo&)>& Callback) const;
 
         FFixedString                        AliasPath;
         THashMap<FFixedString, FEntry>      Entries;

@@ -550,6 +550,30 @@ namespace Lumina
         return It == PathIndex.end() ? nullptr : It->second;
     }
 
+    void FAssetRegistry::GetAssetsByPath(TSpan<const FStringView> Paths, TSpan<const FAssetData*> OutAssets) const
+    {
+        LUMINA_PROFILE_SCOPE();
+        DEBUG_ASSERT(Paths.size() == OutAssets.size());
+
+        // The index can be invalidated between the rebuild and the read, so the read retries until it sees a valid one.
+        while (true)
+        {
+            {
+                FReadScopeLock Lock(AssetsMutex);
+                if (bPathIndexValid)
+                {
+                    for (size_t Index = 0; Index < Paths.size(); ++Index)
+                    {
+                        auto Found = PathIndex.find(VFS::RemoveExtension(Paths[Index]));
+                        OutAssets[Index] = Found == PathIndex.end() ? nullptr : Found->second;
+                    }
+                    return;
+                }
+            }
+            EnsurePathIndex();
+        }
+    }
+
     TVector<FAssetData*> FAssetRegistry::FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate) const
     {
         FReadScopeLock Lock(AssetsMutex);

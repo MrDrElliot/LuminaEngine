@@ -20,6 +20,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "TaskSystem/ParallelSort.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/Dialogs/Dialogs.h"
@@ -896,6 +897,7 @@ namespace Lumina
 
     void FContentBrowserEditorTool::RefreshContentBrowser()
     {
+        bListingStale = true;
         ContentBrowserTileView.MarkTreeDirty();
         DirectoryListView.MarkTreeDirty();
     }
@@ -963,6 +965,22 @@ namespace Lumina
 
         // Force a rebuild even when the folder is already the selected one, the tile still has to be found.
         RefreshContentBrowser();
+    }
+
+    void FContentBrowserEditorTool::RefilterContentBrowser()
+    {
+        ContentBrowserTileView.MarkTreeDirty();
+    }
+
+    void FContentBrowserEditorTool::BrowseToFolder(FStringView Folder, FStringView Search)
+    {
+        SearchText.assign(Search.data(), Search.size());
+        if (Folder == FStringView(SelectedPath.c_str(), SelectedPath.size()))
+        {
+            RefilterContentBrowser();
+            return;
+        }
+        NavigateTo(Folder);
     }
 
     void FContentBrowserEditorTool::QueueRenameAfterCreate(FStringView VirtualPath)
@@ -1265,65 +1283,142 @@ namespace Lumina
 
         ContentBrowserTileViewContext.RebuildTreeFunction = [this] (FTileViewWidget* Tree)
         {
-            // Resolved ONCE per entry, since both the filter test and the tile need the same type label.
-            struct FBrowseEntry
+            // A search or filter change reuses the folder as read, so only navigation and file changes walk it again.
+            if (bListingStale || FStringView(ListingFolder.c_str(), ListingFolder.size()) != FStringView(SelectedPath.c_str(), SelectedPath.size()))
             {
-                VFS::FFileInfo Info;
-                FFixedString   TypeLabel;
-            };
+                LUMINA_PROFILE_SECTION("ContentBrowser Listing Read");
 
-            TVector<FBrowseEntry> SortedPaths;
-
-            VFS::DirectoryIterator(SelectedPath, [&](const VFS::FFileInfo& FileInfo)
-            {
-                if (FileInfo.IsDirectory())
+                // Thousands of paths take a while to free, and nothing waits on that, so a worker does it.
+                if (!Listing.empty())
                 {
-                    // Hide dot-entries (e.g. the .lmeta sidecar tree) and build/IDE folders.
-                    if (ShouldHideDirectory(FileInfo))
+                    Task::AsyncTask(1, 1, [Retired = Move(Listing)](uint32, uint32, uint32) mutable { Retired.clear(); }, ETaskPriority::Low);
+                    Listing = {};
+                }
+                ListingFolder = SelectedPath;
+                bListingStale = false;
+
+                static const FName FolderLabel("FOLDER");
+                static const FName UnregisteredLabel("ASSET");
+
+                VFS::DirectoryIterator(SelectedPath, [&](VFS::FFileInfo& FileInfo)
+                {
+                    FName TypeLabel;
+                    if (FileInfo.IsDirectory())
                     {
-                        return;
+                        // Hide dot-entries (e.g. the .lmeta sidecar tree) and build/IDE folders.
+                        if (ShouldHideDirectory(FileInfo))
+                        {
+                            return;
+                        }
+                        TypeLabel = FolderLabel;
+                    }
+                    else
+                    {
+                        const size_t Dot = FileInfo.Name.find_last_of('.');
+                        const FStringView Ext = Dot == FString::npos ? FStringView() : FStringView(FileInfo.Name.c_str() + Dot, FileInfo.Name.size() - Dot);
+
+                        // Only extensions the engine authors or consumes are surfaced, and the rest stay hidden.
+                        if (!IsBrowsableFileExtension(Ext))
+                        {
+                            return;
+                        }
+
+                        // An asset's label comes from its class, which the registry pass below fills in.
+                        if (!FileInfo.IsLAsset())
+                        {
+                            const FFixedString Label = MakeTypeLabel(FileInfo);
+                            TypeLabel = Label.empty() ? NAME_None : FName(Label.c_str());
+                        }
+                    }
+
+                    Listing.push_back(FListingEntry{ Move(FileInfo), TypeLabel, NAME_None });
+                });
+
+                // Looked up as one batch, since thousands of threads or calls on the registry lock cost more than the lookups.
+                TVector<FStringView> AssetPaths;
+                TVector<uint32>      AssetEntries;
+                for (uint32 Index = 0; Index < (uint32)Listing.size(); ++Index)
+                {
+                    const VFS::FFileInfo& Info = Listing[Index].Info;
+                    if (Info.IsLAsset())
+                    {
+                        AssetPaths.push_back(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
+                        AssetEntries.push_back(Index);
                     }
                 }
-                else
+                TVector<const FAssetData*> AssetData(AssetPaths.size(), nullptr);
+                FAssetRegistry::Get().GetAssetsByPath(AssetPaths, AssetData);
+                for (size_t Found = 0; Found < AssetData.size(); ++Found)
                 {
-                    // Only extensions the engine authors or consumes are surfaced, and the rest stay hidden.
-                    if (!IsBrowsableFileExtension(FileInfo.GetExt()))
+                    Listing[AssetEntries[Found]].AssetClass = AssetData[Found] != nullptr ? AssetData[Found]->AssetClass : NAME_None;
+                }
+
+                // A folder repeats a handful of classes thousands of times, so each label is built and interned once.
+                THashMap<FName, FName> ClassLabels;
+                for (FListingEntry& Entry : Listing)
+                {
+                    if (!Entry.Info.IsLAsset())
                     {
-                        return;
+                        continue;
                     }
+                    if (Entry.AssetClass.IsNone())
+                    {
+                        Entry.TypeLabel = UnregisteredLabel;
+                        continue;
+                    }
+
+                    auto Cached = ClassLabels.find(Entry.AssetClass);
+                    if (Cached == ClassLabels.end())
+                    {
+                        const FFixedString Label = UpperTypeTag(Entry.AssetClass);
+                        Cached = ClassLabels.emplace(Entry.AssetClass, Label.empty() ? NAME_None : FName(Label.c_str())).first;
+                    }
+                    Entry.TypeLabel = Cached->second;
                 }
 
-                FFixedString TypeLabel = MakeTypeLabel(FileInfo);
-                if (!PassesFilters(FileInfo, FStringView(TypeLabel.c_str(), TypeLabel.size())))
+                Task::ParallelSort(Listing.begin(), Listing.end(), [](const FListingEntry& LHS, const FListingEntry& RHS)
                 {
-                    return;
-                }
+                    if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
+                    {
+                        return LHS.Info.IsDirectory();
+                    }
+                    return LHS.Info.Name < RHS.Info.Name;
+                });
+            }
 
-                SortedPaths.push_back(FBrowseEntry{ FileInfo, Move(TypeLabel) });
-            });
-            
-            Algo::Sort(SortedPaths, [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
-            {
-                if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
-                {
-                    return LHS.Info.IsDirectory();
-                }
+            LUMINA_PROFILE_SECTION("ContentBrowser Tiles Filter+Add");
+            const FStringView Search(SearchText.c_str(), SearchText.size());
 
-                return LHS.Info.Name < RHS.Info.Name;
-            });
-            
             // Extension-insensitive, so a package path still matches however the VFS spelled the entry.
             const FStringView BrowseTarget = VFS::RemoveExtension(FStringView(PendingBrowseToPath.c_str(), PendingBrowseToPath.size()));
             const FStringView RenameTarget = VFS::RemoveExtension(FStringView(PendingRenamePath.c_str(), PendingRenamePath.size()));
             FTileViewItem*               BrowseItem = nullptr;
             FContentBrowserTileViewItem* RenameItem = nullptr;
 
-            for (const FBrowseEntry& Entry : SortedPaths)
+            for (const FListingEntry& Entry : Listing)
             {
-                const VFS::FFileInfo& Info = Entry.Info;
-                const bool bProtected = AssetOps::IsProtectedRoot(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
-                FContentBrowserTileViewItem* NewItem = ContentBrowserTileView.AddItemToTree<FContentBrowserTileViewItem>(nullptr, Info, bProtected);
-                NewItem->SetTypeLabel(Entry.TypeLabel);
+                if (!Entry.AssetClass.IsNone())
+                {
+                    auto Filter = FilterState.find(Entry.AssetClass);
+                    if (Filter != FilterState.end() && !Filter->second)
+                    {
+                        continue;
+                    }
+                }
+
+                // Folders are navigation, so only a name search hides them, and type is searchable for everything else.
+                if (!Search.empty())
+                {
+                    const FStringView Name = VFS::FileName(Entry.Info.PathSource, true);
+                    const bool bTypeMatches = !Entry.Info.IsDirectory() && !Entry.TypeLabel.IsNone() && ImGuiX::PassSearchFilter(Search, FStringView(Entry.TypeLabel.c_str()));
+                    if (!ImGuiX::PassSearchFilter(Search, Name) && !bTypeMatches)
+                    {
+                        continue;
+                    }
+                }
+
+                const bool bProtected = AssetOps::IsProtectedRoot(FStringView(Entry.Info.VirtualPath.c_str(), Entry.Info.VirtualPath.size()));
+                FContentBrowserTileViewItem* NewItem = ContentBrowserTileView.AddItemToTree<FContentBrowserTileViewItem>(nullptr, Entry.Info, bProtected, Entry.TypeLabel);
 
                 const FStringView ItemPath = VFS::RemoveExtension(NewItem->GetVirtualPath());
                 if (!BrowseTarget.empty() && ItemPath == BrowseTarget)
@@ -1486,6 +1581,7 @@ namespace Lumina
             }
 
             // Probe for at least one visible subdirectory; if any exists, mark lazy so the arrow appears.
+            LUMINA_PROFILE_SECTION("ContentBrowser Folder Probe");
             bool bHasSubdirs = false;
             VFS::DirectoryIterator(Info.VirtualPath, [&](const VFS::FFileInfo& Child)
             {
@@ -1503,6 +1599,7 @@ namespace Lumina
 
         DirectoryContext.RebuildTreeFunction = [this, AddFolderNode](FTreeListView& Tree)
         {
+            LUMINA_PROFILE_SECTION("ContentBrowser Folder Tree Rebuild");
             // Roots are always built; their immediate children are loaded on first expand.
             auto AddRoot = [&](const char* Path, const char* Label)
             {
@@ -1817,36 +1914,6 @@ namespace Lumina
         }
     }
 
-    bool FContentBrowserEditorTool::PassesFilters(const VFS::FFileInfo& FileInfo, FStringView TypeLabel) const
-    {
-        // Folders are navigation, so they stay under a type filter and only a name search hides them.
-        const bool bDirectory = FileInfo.IsDirectory();
-
-        if (!bDirectory && FileInfo.IsLAsset())
-        {
-            const FStringView Path(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
-            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
-            {
-                auto It = FilterState.find(Data->AssetClass);
-                if (It != FilterState.end() && !It->second)
-                {
-                    return false;
-                }
-            }
-        }
-
-        if (SearchText.empty())
-        {
-            return true;
-        }
-
-        const FStringView Search(SearchText.c_str(), SearchText.size());
-        const FStringView Name = VFS::FileName(FileInfo.PathSource, true);
-
-        // Type is searchable too, so "texture" narrows to textures without opening the filter menu.
-        return ImGuiX::PassSearchFilter(Search, Name) || (!bDirectory && ImGuiX::PassSearchFilter(Search, TypeLabel));
-    }
-
     void FContentBrowserEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
         // Search first, since it is reached for most often and reads as part of the path bar.
@@ -1860,7 +1927,7 @@ namespace Lumina
             if (ImGui::InputTextWithHint("##ContentSearch", LE_ICON_MAGNIFY " Search...", Buffer, sizeof(Buffer)))
             {
                 SearchText = Buffer;
-                RefreshContentBrowser();
+                RefilterContentBrowser();
             }
         }
 
@@ -1870,7 +1937,7 @@ namespace Lumina
             if (ImGui::SmallButton(LE_ICON_CLOSE "##ClearSearch"))
             {
                 SearchText.clear();
-                RefreshContentBrowser();
+                RefilterContentBrowser();
             }
         }
 
@@ -1906,13 +1973,13 @@ namespace Lumina
             if (ImGui::SmallButton("Show All"))
             {
                 for (auto& [Name, State] : FilterState) { State = true; }
-                RefreshContentBrowser();
+                RefilterContentBrowser();
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Hide All"))
             {
                 for (auto& [Name, State] : FilterState) { State = false; }
-                RefreshContentBrowser();
+                RefilterContentBrowser();
             }
 
             ImGui::Separator();
@@ -1939,7 +2006,7 @@ namespace Lumina
                 bool& State = FilterState[Name];
                 if (ImGui::Checkbox(FriendlyClassName(Name).c_str(), &State))
                 {
-                    RefreshContentBrowser();
+                    RefilterContentBrowser();
                 }
             }
 

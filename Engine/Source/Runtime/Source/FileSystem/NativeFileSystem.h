@@ -35,15 +35,15 @@ namespace Lumina::VFS
 
         void PlatformOpen(FStringView Path) const override;
 
-        void DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const override;
-        void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const override;
+        void DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const override;
+        void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const override;
 
         FStringView GetAliasPath() const override { return AliasPath; }
         FStringView GetBasePath() const override { return BasePath; }
 
     private:
 
-        void Iterate(FStringView Path, bool bRecursive, const TFunction<void(const FFileInfo&)>& Callback) const;
+        void Iterate(FStringView Path, bool bRecursive, const TFunction<void(FFileInfo&)>& Callback) const;
 
         FFixedString AliasPath;
         FFixedString BasePath;

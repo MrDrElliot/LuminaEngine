@@ -355,6 +355,29 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SBrowseFolderParams
+    {
+        GENERATED_BODY()
+
+        /** Content folder to show, such as /Game/Content/Items. */
+        PROPERTY()
+        FString Folder;
+
+        /** Typed into the search box, as a user filtering the folder would. Empty clears it. */
+        PROPERTY()
+        FString Search;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SBrowseFolderResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bDone = false;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API STabNameParams
     {
         GENERATED_BODY()

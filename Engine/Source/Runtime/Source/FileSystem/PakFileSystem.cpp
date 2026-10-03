@@ -125,7 +125,7 @@ namespace Lumina::VFS
         return Archive ? Archive->EntrySize(Path) : 0;
     }
 
-    void FPakFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FPakFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         if (!Archive)
         {
@@ -178,7 +178,7 @@ namespace Lumina::VFS
         });
     }
 
-    void FPakFileSystem::RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const
+    void FPakFileSystem::RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback) const
     {
         if (!Archive)
         {

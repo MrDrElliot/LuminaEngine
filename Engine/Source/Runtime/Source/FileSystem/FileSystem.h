@@ -32,8 +32,9 @@ namespace Lumina::VFS
     // (the mount list is append-only and DirectoryIterator visits every entry).
     RUNTIME_API void Unmount(FStringView Alias);
 
-    RUNTIME_API void DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback);
-    RUNTIME_API void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback);
+    // The info is the walk's own copy, so a callback that keeps it may move from it.
+    RUNTIME_API void DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback);
+    RUNTIME_API void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback);
 
     RUNTIME_API bool IsEmpty(FStringView Directory);
     RUNTIME_API FStringView RemoveExtension(FStringView Path);

@@ -362,7 +362,7 @@ namespace Lumina::VFS
         });
     }
 
-    void DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback)
+    void DirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback)
     {
         Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
         {
@@ -370,7 +370,7 @@ namespace Lumina::VFS
         });
     }
 
-    void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback)
+    void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(FFileInfo&)>& Callback)
     {
         Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
         {
