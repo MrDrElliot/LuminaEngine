@@ -126,7 +126,7 @@ namespace Lumina
 
         /** RGB color of the directional light. Multiplied by the temperature tint when bUseTemperature is set. */
         PROPERTY(Editable, Color, Category = "Light")
-        FVector3 Color = FVector3(1.0f, 0.86f, 0.70f);
+        FVector3 Color = FVector3(1.0f, 0.92f, 0.82f);
 
         /** Normalized world-space direction pointing FROM the surface TOWARD the sun (the to-light vector). The default (0, 0.3, 0.8) places the sun above the horizon. */
         PROPERTY(Editable, Category = "Light")
@@ -134,7 +134,7 @@ namespace Lumina
 
         /** Brightness multiplier of the directional light. */
         PROPERTY(Editable, Category = "Light", ClampMin = 0.0f)
-        float Intensity = 2.25f;
+        float Intensity = 2.4f;
 
         /** When true, Color is tinted by a physical black-body color from Temperature. */
         PROPERTY(Editable, Category = "Light|Temperature")
@@ -235,7 +235,7 @@ namespace Lumina
 
         /** When true, the sun scatters through participating media (god rays / light shafts). */
         PROPERTY(Editable, Category = "Advanced")
-        bool bVolumetric = false;
+        bool bVolumetric = true;
 
         /** Strength of the volumetric scattering contribution. */
         PROPERTY(Editable, Category = "Advanced")

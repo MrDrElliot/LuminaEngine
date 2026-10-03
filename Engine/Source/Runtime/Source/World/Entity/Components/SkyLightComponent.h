@@ -28,7 +28,7 @@ namespace Lumina
 
         /** Ambient brightness; also scales IBL ambient. With a constant AmbientColor, >0.3 over-fills shadows. */
         PROPERTY(Editable, Category = "Sky Light", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.001f)
-        float Intensity = 0.4f;
+        float Intensity = 0.5f;
 
         /** When true, AmbientColor is auto-derived from the active sky; Intensity still scales. */
         PROPERTY(Editable, Category = "Sky Light")

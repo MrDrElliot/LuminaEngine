@@ -37,19 +37,19 @@ namespace Lumina
 
         /** Wind strength: scales wave speed. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f)
-        float WindSpeed = 8.0f;
+        float WindSpeed = 1.0f;
 
         /** Crest-to-trough half height of the dominant wave. Clamped against WaveLength at the Stokes breaking limit. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f, Delta = 0.01f, Units = "m")
-        float WaveAmplitude = 0.85f;
+        float WaveAmplitude = 0.012f;
 
         /** Gerstner steepness (0 = rolling swell, 1 = sharp peaks). Also drives how readily crests whitecap. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f, ClampMax = 1.0f)
-        float Choppiness = 0.65f;
+        float Choppiness = 0.1f;
 
         // Wavelength of the dominant wave, each successive wave 0.86x shorter.
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.5f, Units = "m")
-        float WaveLength = 24.0f;
+        float WaveLength = 3.5f;
 
         // Swell octaves the surface geometry carries, doubled into the series; finer ripples are shaded on top regardless.
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 1, ClampMax = 8)
@@ -74,15 +74,15 @@ namespace Lumina
 
         /** Tint of shallow water (where the bed is close to the surface). */
         PROPERTY(Editable, Color, Category = "Water|Color")
-        FVector3 ShallowColor = FVector3(0.10f, 0.55f, 0.65f);
+        FVector3 ShallowColor = FVector3(0.05f, 0.09f, 0.07f);
 
         /** Tint approached as the water column deepens. */
         PROPERTY(Editable, Color, Category = "Water|Color")
-        FVector3 DeepColor = FVector3(0.02f, 0.12f, 0.28f);
+        FVector3 DeepColor = FVector3(0.008f, 0.025f, 0.03f);
 
         /** Water-column depth over which the color fades shallow -> deep. */
         PROPERTY(Editable, Category = "Water|Color", ClampMin = 0.01f, Units = "m")
-        float DepthFadeDistance = 6.0f;
+        float DepthFadeDistance = 3.0f;
 
         /** Beer-Lambert absorption strength applied to the refracted scene. */
         PROPERTY(Editable, Category = "Water|Color", ClampMin = 0.0f)
@@ -99,7 +99,7 @@ namespace Lumina
 
         /** Surface roughness: blurs the reflection (sky prefilter mip) and softens the sun glint. */
         PROPERTY(Editable, Category = "Water|Reflection", ClampMin = 0.0f, ClampMax = 1.0f)
-        float Roughness = 0.04f;
+        float Roughness = 0.02f;
 
         /** Schlick Fresnel exponent (higher = reflection only at grazing angles). */
         PROPERTY(Editable, Category = "Water|Reflection", ClampMin = 1.0f, ClampMax = 8.0f)
@@ -125,15 +125,15 @@ namespace Lumina
 
         /** Overall foam strength multiplier. */
         PROPERTY(Editable, Category = "Water|Foam", ClampMin = 0.0f)
-        float FoamIntensity = 1.0f;
+        float FoamIntensity = 0.4f;
 
         /** Water-column depth over which shoreline foam appears (foam where water meets geometry). */
         PROPERTY(Editable, Category = "Water|Foam", ClampMin = 0.0f, Units = "m")
-        float ShorelineFoamWidth = 1.5f;
+        float ShorelineFoamWidth = 0.35f;
 
         /** How readily a compressing crest whitecaps (1 = any compression foams, 0 = only fully folded). */
         PROPERTY(Editable, Category = "Water|Foam", ClampMin = 0.0f, ClampMax = 1.0f)
-        float CrestFoamAmount = 0.7f;
+        float CrestFoamAmount = 0.0f;
 
         /** Optional foam texture, scrolled with the wind. */
         PROPERTY(Editable, Category = "Water|Foam")

@@ -1081,10 +1081,11 @@ struct FSceneGlobalData
     float             DeltaTime;
     float             NearPlane;
     float             FarPlane;
+    // This frame's projection jitter in UV units, so motion vectors measure from where a surface really is.
+    float             TemporalJitterU;
+    float             TemporalJitterV;
     // Rounds the scalar run back to a 16-byte boundary, which the buffer layout rules require.
     float             _TimePad0;
-    float             _TimePad1;
-    float             _TimePad2;
     FGTAOSettings     GTAOSettings;
     FCullData         CullData;
     FParallaxSettings ParallaxSettings;

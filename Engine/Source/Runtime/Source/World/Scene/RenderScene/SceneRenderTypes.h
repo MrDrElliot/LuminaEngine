@@ -1287,10 +1287,11 @@ namespace Lumina
         float           DeltaTime;
         float           NearPlane;
         float           FarPlane;
+        // This frame's projection jitter in UV units, so motion vectors measure from where a surface really is.
+        float           TemporalJitterU = 0.0f;
+        float           TemporalJitterV = 0.0f;
         // Rounds the scalar run back to a 16-byte boundary, which the buffer layout rules require.
         float           _TimePad0 = 0.0f;
-        float           _TimePad1 = 0.0f;
-        float           _TimePad2 = 0.0f;
 
         FGTAOSettings   GTAOSettings;
         FCullData       CullData;

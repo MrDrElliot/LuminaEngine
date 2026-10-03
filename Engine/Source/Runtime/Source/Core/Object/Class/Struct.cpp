@@ -240,6 +240,24 @@ namespace Lumina
         default:                         return false;
         }
     }
+
+    static void SetConvertedNumericValue(const FProperty& Property, void* Data, double Value)
+    {
+        switch (Property.GetType())
+        {
+        case EPropertyTypeFlags::Int8:   Property.SetValue(Data, static_cast<int8>(Value)); break;
+        case EPropertyTypeFlags::Int16:  Property.SetValue(Data, static_cast<int16>(Value)); break;
+        case EPropertyTypeFlags::Int32:  Property.SetValue(Data, static_cast<int32>(Value)); break;
+        case EPropertyTypeFlags::Int64:  Property.SetValue(Data, static_cast<int64>(Value)); break;
+        case EPropertyTypeFlags::UInt8:  Property.SetValue(Data, static_cast<uint8>(Value)); break;
+        case EPropertyTypeFlags::UInt16: Property.SetValue(Data, static_cast<uint16>(Value)); break;
+        case EPropertyTypeFlags::UInt32: Property.SetValue(Data, static_cast<uint32>(Value)); break;
+        case EPropertyTypeFlags::UInt64: Property.SetValue(Data, static_cast<uint64>(Value)); break;
+        case EPropertyTypeFlags::Float:  Property.SetValue(Data, static_cast<float>(Value)); break;
+        case EPropertyTypeFlags::Double: Property.SetValue(Data, Value); break;
+        default:                         break;
+        }
+    }
     
     void CStruct::SerializeTaggedProperties(FArchive& Ar, void* Data) const
     {
@@ -398,7 +416,7 @@ namespace Lumina
                         }
                         else if (IsValueValidForType(OldValue, FoundProperty->GetType()))
                         {
-                            FoundProperty->SetValue(Data, OldValue);
+                            SetConvertedNumericValue(*FoundProperty, Data, OldValue);
 
                             LOG_WARN("Property '{}' type changed from '{}' to '{}', converted value to new type.",
                             Tag.Name, PropertyTypeToString(Tag.Type), PropertyTypeToString(FoundProperty->GetType()));

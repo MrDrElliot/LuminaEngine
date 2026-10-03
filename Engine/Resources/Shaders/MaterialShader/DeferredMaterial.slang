@@ -161,7 +161,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             if (PrevClip.w > 0.0)
             {
                 const float2 PrevUV = (PrevClip.xy / PrevClip.w) * 0.5 + 0.5;
-                Motion = PrevUV - ((float2(Texel) + 0.5) / ScreenSize);
+                Motion = PrevUV - ((float2(Texel) + 0.5) / ScreenSize - GetTemporalJitterUV());
             }
 
             gRWTextures2D[Pass().VelocityUAV][int2(Texel)] = float4(Motion, 0.0, 0.0);

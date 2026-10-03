@@ -435,7 +435,7 @@ namespace Lumina
                 R.LODMeshletOffset[LOD]  = Surface.LODMeshletOffset[LOD];
                 R.LODMeshletCount[LOD]   = Surface.LODMeshletCount[LOD];
                 // Thresholds are non-negative, so squaring preserves their ordering.
-                const float Threshold = Surface.LODScreenThreshold[LOD];
+                const float Threshold = Surface.LODScreenThreshold[LOD] * Mesh->LODDistanceScale;
                 R.LODScreenThresholdSq[LOD] = Threshold * Threshold;
             }
 

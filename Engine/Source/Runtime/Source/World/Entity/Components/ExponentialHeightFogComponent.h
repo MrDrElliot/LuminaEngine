@@ -19,11 +19,11 @@ namespace Lumina
 
         /** Horizontal distance at FogBaseHeight where fog reaches ~98% opacity. Lower = thicker. */
         PROPERTY(Editable, Category = "Fog", ClampMin = 1.0f, Delta = 10.0f, Units = "m")
-        float FogVisibilityDistance = 3000.0f;
+        float FogVisibilityDistance = 2500.0f;
 
         /** How quickly density drops with altitude; larger = thinner aloft, sharper layer. */
         PROPERTY(Editable, Category = "Fog", ClampMin = 0.0f, ClampMax = 4.0f, Delta = 0.001f)
-        float FogHeightFalloff = 0.25f;
+        float FogHeightFalloff = 0.2f;
 
         /** World-space Y at which FogDensity applies (the base of the fog layer). */
         PROPERTY(Editable, Category = "Fog", Units = "m")
@@ -35,15 +35,15 @@ namespace Lumina
 
         /** Upper bound on fog opacity so distant geometry never fully disappears. */
         PROPERTY(Editable, Category = "Fog", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.001f)
-        float FogMaxOpacity = 0.5f;
+        float FogMaxOpacity = 0.12f;
 
         /** Base fog color (HDR; values >1 feed bloom). */
         PROPERTY(Editable, Color, Category = "Fog")
-        FVector3 FogInscatteringColor = FVector3(0.45f, 0.55f, 0.70f);
+        FVector3 FogInscatteringColor = FVector3(0.5f, 0.58f, 0.68f);
 
         /** Fog albedo blended in when looking toward the sun (warm haze glow around the sun). */
         PROPERTY(Editable, Color, Category = "Directional Inscatter")
-        FVector3 DirectionalInscatteringColor = FVector3(1.0f, 0.78f, 0.55f);
+        FVector3 DirectionalInscatteringColor = FVector3(0.7f, 0.6f, 0.48f);
 
         /** Tightness of the sun-facing inscatter lobe; larger = smaller, sharper glow. */
         PROPERTY(Editable, Category = "Directional Inscatter", ClampMin = 1.0f, ClampMax = 64.0f)
@@ -62,7 +62,7 @@ namespace Lumina
         /** Brightness multiplier on the fog's in-scattered light (volumetric and analytic alike).
         Decoupled from FogDensity, so raise this to make fog glow without thickening it. */
         PROPERTY(Editable, Category = "Volumetric", ClampMin = 0.0f)
-        float VolumetricScatteringIntensity = 3.0f;
+        float VolumetricScatteringIntensity = 0.8f;
 
         /** Phase asymmetry for sun scattering (0 = isotropic, ~0.6 = forward god rays). Blended
         with an isotropic floor so shafts stay visible side-on, not only sun-facing. */
@@ -72,7 +72,7 @@ namespace Lumina
         /** Far plane of the shadowed froxel volume; the analytic fog takes over beyond it.
         Bigger = shafts reach farther but each froxel covers more space (softer detail). */
         PROPERTY(Editable, Category = "Volumetric", ClampMin = 1.0f, Units = "m")
-        float VolumetricMaxDistance = 200.0f;
+        float VolumetricMaxDistance = 150.0f;
 
         /** Bounces of higher-order scattering to approximate. 1 = single scattering only (default, and
         free). Raising it stops thick fog reading as flat gray: each extra octave adds a dimmer, more

@@ -21,6 +21,11 @@ struct FData
     uint  _Pad0;
 };
 
+// Below this much motion a pixel's history is the other subsample of the same surface, not something stale.
+static const float kStillMotionPixels = 0.05;
+// Motion over which the clamp ramps to full strength, so disocclusions behind a moving edge still get rejected.
+static const float kFullClampMotionPixels = 0.5;
+
 float3 SampleOffset(uint Index, float2 UV, float2 Offset)
 {
     return gTextures2D[Index].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV + Offset, 0.0).rgb;
@@ -93,7 +98,10 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
         float3 BoundsMax;
         NeighborhoodBounds(Data.CurrentIndex, Input.UV, TexelSize, Data.ClampGamma, BoundsMin, BoundsMax);
 
-        History = clamp(History, BoundsMin, BoundsMax);
+        // Each parity clamps against its own jittered neighborhood, so clamping a still pixel makes the frames disagree.
+        const float MotionPixels = length(Velocity / TexelSize);
+        const float ClampAmount  = saturate((MotionPixels - kStillMotionPixels) / kFullClampMotionPixels);
+        History = lerp(History, clamp(History, BoundsMin, BoundsMax), ClampAmount);
     }
 
     return float4(lerp(Current.rgb, History, Data.HistoryWeight), Current.a);

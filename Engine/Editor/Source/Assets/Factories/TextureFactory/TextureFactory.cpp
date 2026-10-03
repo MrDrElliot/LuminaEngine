@@ -499,6 +499,211 @@ namespace Lumina
         }
     }
 
+    static float CoverageAtScale(const TVector<float>& Alpha, float Scale, float Cutoff)
+    {
+        size_t Passing = 0;
+        for (float A : Alpha)
+        {
+            Passing += (A * Scale >= Cutoff) ? 1 : 0;
+        }
+        return Alpha.empty() ? 0.0f : float(Passing) / float(Alpha.size());
+    }
+
+    // Coverage only rises with the scale, so bisection finds the scale that restores the target.
+    static float FindCoverageScale(const TVector<float>& Alpha, float Cutoff, float TargetCoverage)
+    {
+        constexpr float MaxScale = 16.0f;
+        float Low = 0.0f;
+        float High = MaxScale;
+        for (int32 Step = 0; Step < 20; ++Step)
+        {
+            const float Mid = (Low + High) * 0.5f;
+            if (CoverageAtScale(Alpha, Mid, Cutoff) < TargetCoverage)
+            {
+                Low = Mid;
+            }
+            else
+            {
+                High = Mid;
+            }
+        }
+        return High;
+    }
+
+    // Cutout art usually leaves white or black behind its mask, which filtering drags into the visible edge, so hidden texels take the color of the nearest visible ones.
+    static void BleedColorIntoCutout(TVector<uint8>& Pixels, FUIntVector2 Dimensions, float Cutoff)
+    {
+        struct FLevel
+        {
+            uint32 Width = 0;
+            uint32 Height = 0;
+            TVector<FVector4> Texels;
+        };
+
+        const uint8 Threshold = (uint8)Math::Clamp((int32)std::lround(Cutoff * 255.0f), 1, 255);
+        TVector<FLevel> Levels;
+        FLevel& Base = Levels.emplace_back();
+        Base.Width = Dimensions.x;
+        Base.Height = Dimensions.y;
+        Base.Texels.resize((size_t)Base.Width * Base.Height);
+        bool bAnyHidden = false;
+        for (size_t i = 0; i < Base.Texels.size(); ++i)
+        {
+            const uint8* Texel = &Pixels[i * 4];
+            const float Weight = Texel[3] >= Threshold ? 1.0f : 0.0f;
+            bAnyHidden |= Weight == 0.0f;
+            Base.Texels[i] = FVector4(Texel[0] * Weight, Texel[1] * Weight, Texel[2] * Weight, Weight);
+        }
+        if (!bAnyHidden)
+        {
+            return;
+        }
+
+        // Pull, so each coarser texel averages whatever visible color lies under it.
+        while (Levels.back().Width > 1 || Levels.back().Height > 1)
+        {
+            const FLevel& Fine = Levels.back();
+            FLevel Coarse;
+            Coarse.Width = Math::Max(1u, Fine.Width / 2);
+            Coarse.Height = Math::Max(1u, Fine.Height / 2);
+            Coarse.Texels.resize((size_t)Coarse.Width * Coarse.Height);
+            for (uint32 Y = 0; Y < Coarse.Height; ++Y)
+            {
+                for (uint32 X = 0; X < Coarse.Width; ++X)
+                {
+                    FVector4 Sum(0.0f);
+                    for (uint32 Tap = 0; Tap < 4; ++Tap)
+                    {
+                        const uint32 SX = Math::Min(X * 2 + (Tap & 1), Fine.Width - 1);
+                        const uint32 SY = Math::Min(Y * 2 + (Tap >> 1), Fine.Height - 1);
+                        Sum += Fine.Texels[(size_t)SY * Fine.Width + SX];
+                    }
+                    Coarse.Texels[(size_t)Y * Coarse.Width + X] = Sum;
+                }
+            }
+            Levels.push_back(Move(Coarse));
+        }
+
+        // Push, so an empty texel inherits the nearest coarser level that saw any color.
+        for (size_t L = Levels.size() - 1; L-- > 0;)
+        {
+            FLevel& Fine = Levels[L];
+            const FLevel& Coarse = Levels[L + 1];
+            for (uint32 Y = 0; Y < Fine.Height; ++Y)
+            {
+                for (uint32 X = 0; X < Fine.Width; ++X)
+                {
+                    FVector4& Texel = Fine.Texels[(size_t)Y * Fine.Width + X];
+                    if (Texel.w <= 0.0f)
+                    {
+                        const FVector4& Parent = Coarse.Texels[(size_t)Math::Min(Y / 2, Coarse.Height - 1) * Coarse.Width + Math::Min(X / 2, Coarse.Width - 1)];
+                        Texel = Parent.w > 0.0f ? Parent / Parent.w : Parent;
+                    }
+                }
+            }
+        }
+
+        for (size_t i = 0; i < Base.Texels.size(); ++i)
+        {
+            uint8* Texel = &Pixels[i * 4];
+            if (Texel[3] < Threshold && Levels[0].Texels[i].w > 0.0f)
+            {
+                const FVector4& Filled = Levels[0].Texels[i];
+                Texel[0] = (uint8)Math::Clamp((int32)std::lround(Filled.x / Filled.w), 0, 255);
+                Texel[1] = (uint8)Math::Clamp((int32)std::lround(Filled.y / Filled.w), 0, 255);
+                Texel[2] = (uint8)Math::Clamp((int32)std::lround(Filled.z / Filled.w), 0, 255);
+            }
+        }
+    }
+
+    // A box-filtered chain down to 1x1, each level's alpha scaled so an alpha test keeps mip 0's coverage.
+    static void BuildCoveragePreservingMips(const TVector<uint8>& Pixels, FUIntVector2 Dimensions, bool bSRGB, float Cutoff,
+                                            basisu::vector<basisu::image>& OutMips)
+    {
+        float ToLinear[256];
+        for (int32 i = 0; i < 256; ++i)
+        {
+            const float C = float(i) / 255.0f;
+            ToLinear[i] = bSRGB ? (C <= 0.04045f ? C / 12.92f : std::pow((C + 0.055f) / 1.055f, 2.4f)) : C;
+        }
+        auto ToStored = [bSRGB](float C) -> uint8
+        {
+            C = Math::Clamp(C, 0.0f, 1.0f);
+            if (bSRGB)
+            {
+                C = C <= 0.0031308f ? C * 12.92f : 1.055f * std::pow(C, 1.0f / 2.4f) - 0.055f;
+            }
+            return (uint8)std::lround(Math::Clamp(C, 0.0f, 1.0f) * 255.0f);
+        };
+
+        uint32 Width = Dimensions.x;
+        uint32 Height = Dimensions.y;
+        TVector<FVector3> Color((size_t)Width * Height);
+        TVector<float> Alpha((size_t)Width * Height);
+        for (size_t i = 0; i < Color.size(); ++i)
+        {
+            const uint8* Texel = &Pixels[i * 4];
+            Color[i] = FVector3(ToLinear[Texel[0]], ToLinear[Texel[1]], ToLinear[Texel[2]]);
+            Alpha[i] = Texel[3] / 255.0f;
+        }
+
+        const float TargetCoverage = CoverageAtScale(Alpha, 1.0f, Cutoff);
+        TVector<uint8> Stored;
+
+        while (Width > 1 || Height > 1)
+        {
+            const uint32 NextWidth = Math::Max(1u, Width / 2);
+            const uint32 NextHeight = Math::Max(1u, Height / 2);
+            TVector<FVector3> NextColor((size_t)NextWidth * NextHeight);
+            TVector<float> NextAlpha((size_t)NextWidth * NextHeight);
+
+            for (uint32 Y = 0; Y < NextHeight; ++Y)
+            {
+                const uint32 Y0 = Math::Min(Y * 2, Height - 1);
+                const uint32 Y1 = Math::Min(Y * 2 + 1, Height - 1);
+                for (uint32 X = 0; X < NextWidth; ++X)
+                {
+                    const uint32 X0 = Math::Min(X * 2, Width - 1);
+                    const uint32 X1 = Math::Min(X * 2 + 1, Width - 1);
+                    const size_t Taps[4] = { (size_t)Y0 * Width + X0, (size_t)Y0 * Width + X1, (size_t)Y1 * Width + X0, (size_t)Y1 * Width + X1 };
+
+                    // Weighting color by alpha keeps the invisible texels around a cutout from bleeding into its edge.
+                    FVector3 Weighted(0.0f);
+                    FVector3 Plain(0.0f);
+                    float AlphaSum = 0.0f;
+                    for (size_t Tap : Taps)
+                    {
+                        Weighted += Color[Tap] * Alpha[Tap];
+                        Plain += Color[Tap];
+                        AlphaSum += Alpha[Tap];
+                    }
+
+                    const size_t Out = (size_t)Y * NextWidth + X;
+                    NextColor[Out] = AlphaSum > 1e-4f ? Weighted / AlphaSum : Plain * 0.25f;
+                    NextAlpha[Out] = AlphaSum * 0.25f;
+                }
+            }
+
+            Width = NextWidth;
+            Height = NextHeight;
+            Color = Move(NextColor);
+            Alpha = Move(NextAlpha);
+
+            const float Scale = FindCoverageScale(Alpha, Cutoff, TargetCoverage);
+            Stored.resize(Color.size() * 4);
+            for (size_t i = 0; i < Color.size(); ++i)
+            {
+                Stored[i * 4 + 0] = ToStored(Color[i].x);
+                Stored[i * 4 + 1] = ToStored(Color[i].y);
+                Stored[i * 4 + 2] = ToStored(Color[i].z);
+                Stored[i * 4 + 3] = (uint8)std::lround(Math::Clamp(Alpha[i] * Scale, 0.0f, 1.0f) * 255.0f);
+            }
+
+            OutMips.push_back(basisu::image());
+            OutMips.back().init(Stored.data(), Width, Height, 4);
+        }
+    }
+
     static bool CookTexturePixels(CTexture* Texture, TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0, bool bCreateGPUResource = true)
     {
         const uint64 RequiredBytes = (uint64)Dimensions.x * Dimensions.y * 4;
@@ -529,7 +734,20 @@ namespace Lumina
         Params.m_uastc                      = true;
         Params.m_print_stats                = false;
         Params.m_status_output              = false;   // silence the per-slice progress spam during cook
-        Params.m_mip_gen                    = Texture->GetResolvedPolicy().bGenerateMips;
+        const bool bGenerateMips = Texture->GetResolvedPolicy().bGenerateMips;
+        const bool bCoverageMips = bGenerateMips && Texture->bPreserveAlphaCoverage && !Texture->bCompressWithoutAlpha;
+        if (Texture->bPreserveAlphaCoverage && !Texture->bCompressWithoutAlpha)
+        {
+            BleedColorIntoCutout(Pixels, Dimensions, Texture->AlphaCoverageCutoff);
+            Params.m_source_images[0].init(Pixels.data(), Dimensions.x, Dimensions.y, 4);
+        }
+        if (bCoverageMips)
+        {
+            Params.m_source_mipmap_images.resize(1);
+            BuildCoveragePreservingMips(Pixels, Dimensions, bIsSRGB, Texture->AlphaCoverageCutoff, Params.m_source_mipmap_images[0]);
+        }
+
+        Params.m_mip_gen                    = bGenerateMips && !bCoverageMips;
         Params.m_mip_fast                   = true;
         Params.m_multithreading             = (TotalEncodeThreads > 1);
         Params.m_create_ktx2_file           = false;
@@ -1159,6 +1377,12 @@ namespace Lumina
 
         Texture->SourceFile.Reset();
         Texture->SourceFile.Bytes = Move(SourceBytes);
+
+        if (Request.AlphaCoverageCutoff > 0.0f)
+        {
+            Texture->bPreserveAlphaCoverage = true;
+            Texture->AlphaCoverageCutoff    = Request.AlphaCoverageCutoff;
+        }
 
         PrepareSource(Texture, MaybeResult.value());
 

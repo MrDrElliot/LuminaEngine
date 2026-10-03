@@ -40,6 +40,10 @@ namespace Lumina
         // Adds a heightfield collider so characters and bodies stand on it.
         PROPERTY()
         bool bCollision = true;
+
+        // OS paths of 8-bit images, one per paint layer in order, whose red channel becomes that layer's weight.
+        PROPERTY()
+        TVector<FString> LayerWeightmapPaths;
     };
 
     REFLECT()

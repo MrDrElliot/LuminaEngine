@@ -319,6 +319,13 @@ namespace Lumina
         PROPERTY(Editable, Category = "Level Of Detail", ClampMin = 0, RequiresRecook)
         uint32 MaxTextureSize = 0;
 
+        // Rescales each mip's alpha so an alpha test at AlphaCoverageCutoff passes as many texels as mip 0, so cutout foliage keeps its density at range.
+        PROPERTY(Editable, Category = "Level Of Detail", RequiresRecook)
+        bool bPreserveAlphaCoverage = false;
+
+        PROPERTY(Editable, Category = "Level Of Detail", ClampMin = 0.01f, ClampMax = 0.99f, RequiresRecook)
+        float AlphaCoverageCutoff = 0.5f;
+
         // Keeps the whole chain resident and out of the streamer. Costs GPU memory, removes all pop-in.
         PROPERTY(Editable, Category = "Level Of Detail")
         bool bNeverStream = false;

@@ -17,7 +17,7 @@ namespace Lumina
 
         /** Fraction of sky covered. Low values give scattered puffs, high gives overcast. */
         PROPERTY(Editable, Category = "Clouds", ClampMin = 0.0f, ClampMax = 1.0f)
-        float Coverage = 0.35f;
+        float Coverage = 0.3f;
 
         /** Optical density of the cloud medium; higher is thicker and darker inside. */
         PROPERTY(Editable, Category = "Clouds", ClampMin = 0.0f, Delta = 0.01f)

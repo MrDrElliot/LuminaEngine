@@ -587,6 +587,8 @@ float4x4 GetInverseCameraView()     { return Scene().CameraView.InverseCameraVie
 float4x4 GetCameraProjection()      { return Scene().CameraView.CameraProjection;   }
 float4x4 GetInverseCameraProjection(){ return Scene().CameraView.InverseCameraProjection; }
 float4x4 GetPrevViewProjection()    { return Scene().CameraView.PrevViewProjection;    }
+// A jittered pixel center minus this is the surface's unjittered UV, which is what the unjittered previous matrix pairs with.
+float2   GetTemporalJitterUV()      { return float2(Scene().TemporalJitterU, Scene().TemporalJitterV); }
 
 // [3][3] is 0 for a perspective projection and 1 for an orthographic one, so the mode needs no
 // extra plumbing in the scene struct. Diagonal, so it reads the same under either matrix convention.

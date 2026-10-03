@@ -6,6 +6,7 @@
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Core/Object/Cast.h"
 #include "Session/SessionOps.h"
+#include "Tools/Import/ImportHelpers.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "UI/Tools/TerrainEditMode.h"
 #include "World/ECS/Registry.h"
@@ -23,6 +24,60 @@ namespace Lumina::MCP
         {
             const int32 Quads = Value - 1;
             return Quads >= 32 && (Quads & (Quads - 1)) == 0;
+        }
+
+        // Nearest-sampled onto the terrain grid, so any image size works and a matching size is exact.
+        bool ImportLayerWeights(STerrainComponent& Terrain, const TVector<FString>& Paths, FString& OutError)
+        {
+            if (Paths.empty())
+            {
+                return true;
+            }
+
+            while (Terrain.Layers.size() < Paths.size())
+            {
+                Terrain.Layers.emplace_back().Name = Lumina::Format("Layer {}", Terrain.Layers.size());
+            }
+
+            const int32 Res = Terrain.Resolution;
+            const size_t Samples = (size_t)Res * (size_t)Res;
+            Terrain.LayerWeights.assign(Samples * Terrain.Layers.size(), uint8(0));
+
+            for (size_t Layer = 0; Layer < Paths.size(); ++Layer)
+            {
+                TOptional<Import::Textures::FTextureImportResult> Image = Import::Textures::ImportTexture(FStringView(Paths[Layer]), false);
+                if (!Image.has_value() || Image->Dimensions.x == 0 || Image->Dimensions.y == 0)
+                {
+                    OutError = Lumina::Format("Could not read the weightmap '{}'.", Paths[Layer]);
+                    return false;
+                }
+
+                const uint32 Width = Image->Dimensions.x;
+                const uint32 Height = Image->Dimensions.y;
+                const size_t TexelBytes = Image->Pixels.size() / ((size_t)Width * Height);
+                const bool b16Bit = Image->Format == EFormat::R16_UNORM || Image->Format == EFormat::RG16_UNORM || Image->Format == EFormat::RGBA16_UNORM;
+                if (TexelBytes == 0)
+                {
+                    OutError = Lumina::Format("'{}' decoded to no pixels.", Paths[Layer]);
+                    return false;
+                }
+
+                // Little-endian, so a 16-bit sample's high byte is the second one.
+                const size_t ByteOffset = b16Bit ? 1 : 0;
+                uint8* Out = Terrain.LayerWeights.data() + Layer * Samples;
+                for (int32 Z = 0; Z < Res; ++Z)
+                {
+                    const uint32 SrcY = Math::Min((uint32)((uint64)Z * Height / Res), Height - 1);
+                    for (int32 X = 0; X < Res; ++X)
+                    {
+                        const uint32 SrcX = Math::Min((uint32)((uint64)X * Width / Res), Width - 1);
+                        Out[(size_t)Z * Res + X] = Image->Pixels[((size_t)SrcY * Width + SrcX) * TexelBytes + ByteOffset];
+                    }
+                }
+            }
+
+            Terrain.CPUState.bFullWeightsDirty = true;
+            return true;
         }
 
         void RegisterCreateTerrain(FStringView Owner)
@@ -79,6 +134,11 @@ namespace Lumina::MCP
 
                         if (!FTerrainEditMode::ImportHeightmap(Terrain, In.HeightmapPath.c_str(), ImportError,
                                                                Out.SourceWidth, Out.SourceHeight))
+                        {
+                            return;
+                        }
+
+                        if (!ImportLayerWeights(Terrain, In.LayerWeightmapPaths, ImportError))
                         {
                             return;
                         }
@@ -235,26 +295,38 @@ namespace Lumina::MCP
                     }
 
                     const FName EntityName(In.Name.empty() ? "Foliage" : In.Name.c_str());
-                    TVector<ECS::FEntity> Stale;
-                    World->View<SFoliageComponent>().ForEach([&](ECS::FEntity Entity, SFoliageComponent&)
+                    ECS::FEntity Created = ECS::NullEntity;
+
+                    // Transacted like any other creation, so the level is marked dirty and the import survives a save.
+                    SessionOps::RunCreationTransacted("Import Foliage (agent)", [&]()
                     {
-                        const SNameComponent* Name = World->TryGetComponent<SNameComponent>(Entity);
-                        if (Name != nullptr && Name->Name == EntityName)
+                        TVector<ECS::FEntity> Stale;
+                        World->View<SFoliageComponent>().ForEach([&](ECS::FEntity Entity, SFoliageComponent&)
                         {
-                            Stale.push_back(Entity);
+                            const SNameComponent* Name = World->TryGetComponent<SNameComponent>(Entity);
+                            if (Name != nullptr && Name->Name == EntityName)
+                            {
+                                Stale.push_back(Entity);
+                            }
+                        });
+                        for (ECS::FEntity Entity : Stale)
+                        {
+                            World->DestroyEntity(Entity);
                         }
-                    });
-                    for (ECS::FEntity Entity : Stale)
+
+                        Created = World->ConstructEntity(EntityName);
+                        SFoliageComponent& Foliage = World->EmplaceComponent<SFoliageComponent>(Created);
+                        Foliage.Types     = Move(Types);
+                        Foliage.Instances = Move(Instances);
+                        MarkFoliageChanged(*World, Created, Foliage);
+                    }, SceneError);
+
+                    if (Created == ECS::NullEntity)
                     {
-                        World->DestroyEntity(Entity);
+                        return Agent::FToolResult::Error(SceneError.empty() ? FString("The world refused to create the foliage.") : SceneError);
                     }
 
-                    const ECS::FEntity Created = World->ConstructEntity(EntityName);
-                    SFoliageComponent& Foliage = World->EmplaceComponent<SFoliageComponent>(Created);
-                    Foliage.Types     = Move(Types);
-                    Foliage.Instances = Move(Instances);
-                    MarkFoliageChanged(*World, Created, Foliage);
-
+                    const SFoliageComponent& Foliage = World->GetComponent<SFoliageComponent>(Created);
                     Out.Entity    = Agent::FEntityTokens::Mint(*Registry, Created);
                     Out.Types     = (int32)Foliage.Types.size();
                     Out.Instances = (int32)Foliage.Instances.size();

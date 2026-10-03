@@ -1486,6 +1486,15 @@ namespace Lumina
                 Progress->UpdateMessage("Importing textures...");
             }
 
+            for (const FMeshImportMaterial& Material : SourceData.Materials)
+            {
+                if (Material.AlphaMode == EImportAlphaMode::Mask && Material.BaseColorImage != INDEX_NONE
+                    && Material.BaseColorImage < (int32)SourceData.Images.size())
+                {
+                    SourceData.Images[Material.BaseColorImage].AlphaCoverageCutoff = Material.AlphaCutoff;
+                }
+            }
+
             struct FTextureWork
             {
                 FFixedString PackagePath;
@@ -1536,6 +1545,7 @@ namespace Lumina
                 // Embedded payloads have no file, so the key only feeds the color-space heuristic and is not stored.
                 CookRequest.SourcePath         = Image.ResolvedPath.empty() ? Image.Key : Image.ResolvedPath;
                 CookRequest.ColorSpace         = Image.IntendedColorSpace;
+                CookRequest.AlphaCoverageCutoff = Image.AlphaCoverageCutoff;
                 // This loop already saturates the cores, so a full basisu pool per texture would oversubscribe.
                 CookRequest.EncodeThreadBudget = 1;
                 // Creating a GPU image here would queue a copy against an image this import destroys first.

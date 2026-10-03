@@ -113,6 +113,9 @@ namespace Lumina::Import
             ETextureColorSpace ColorSpace         = ETextureColorSpace::Auto;
             uint32             EncodeThreadBudget = 0;
 
+            // Above zero, the texture preserves alpha-test coverage at this cutoff through its mips.
+            float              AlphaCoverageCutoff = 0.0f;
+
             /**
              * Whether to also create the GPU image and upload the cooked mips. An importer wants this off:
              * the package only needs the CPU mip chain, CTexture::PostLoad creates the image on first real
@@ -183,6 +186,9 @@ namespace Lumina::Import
 
             /** Semantic role from the mesh importer; Auto defers to the filename heuristic. */
             ETextureColorSpace IntendedColorSpace = ETextureColorSpace::Auto;
+
+            // Set when a masked material reads this image's alpha, to that material's cutoff.
+            float AlphaCoverageCutoff = 0.0f;
 
             // Total basisu encode threads for this texture (includes the calling thread; 1 = single-threaded).
             // 0 = auto. A batch cooking many textures at once passes 1 so each doesn't spawn its own pool.

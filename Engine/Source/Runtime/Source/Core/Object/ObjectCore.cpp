@@ -369,11 +369,11 @@ namespace Lumina
         case EPropertyTypeFlags::Int8:   return Value >= INT8_MIN && Value <= INT8_MAX;
         case EPropertyTypeFlags::Int16:  return Value >= INT16_MIN && Value <= INT16_MAX;
         case EPropertyTypeFlags::Int32:  return Value >= INT32_MIN && Value <= INT32_MAX;
-        case EPropertyTypeFlags::Int64:  return Value >= (double)INT64_MIN && Value <= (double)INT64_MAX;
+        case EPropertyTypeFlags::Int64:  return Value >= (double)INT64_MIN && Value < 9223372036854775808.0;
         case EPropertyTypeFlags::UInt8:  return Value >= 0 && Value <= UINT8_MAX;
         case EPropertyTypeFlags::UInt16: return Value >= 0 && Value <= UINT16_MAX;
         case EPropertyTypeFlags::UInt32: return Value >= 0 && Value <= UINT32_MAX;
-        case EPropertyTypeFlags::UInt64: return Value >= 0 && Value <= (double)UINT64_MAX;
+        case EPropertyTypeFlags::UInt64: return Value >= 0 && Value < 18446744073709551616.0;
         case EPropertyTypeFlags::Float:
         case EPropertyTypeFlags::Double: return true;
         default:                         return false;

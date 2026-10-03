@@ -48,15 +48,27 @@ float3 Tonemap_AGX_Base(float3 X)
     static const float MIN_EV = -12.47393;
     static const float MAX_EV =  4.026069;
 
+    // The reference matrices are GLSL column-major, so they multiply as a row vector here.
     X = max(X, 0.0);
-    X = mul(AGX_IN, X);
+    X = mul(X, AGX_IN);
     X = clamp(log2(X), MIN_EV, MAX_EV);
     X = (X - MIN_EV) / (MAX_EV - MIN_EV);
     return AGX_Polynomial(X);
 }
 
-// "Look" stage applied in the AGX log space after the polynomial sigmoid
-// but before EOTF. Slope, power and offset are per-channel CDL-style.
+// The polynomial lands in a 2.2-encoded space, so this returns it to linear for the display encode that follows.
+float3 AGX_Eotf(float3 X)
+{
+    static const float3x3 AGX_OUT = float3x3(
+        1.19687900512017, -0.0528968517574562, -0.0529716355144438,
+        -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
+        -0.0990297440797205, -0.0989611768448433, 1.15107367264116);
+
+    X = mul(X, AGX_OUT);
+    return pow(max(X, 0.0), 2.2);
+}
+
+// CDL-style look on the encoded sigmoid output, ahead of the EOTF as the reference orders it.
 float3 AGX_Look(float3 X, float3 Slope, float3 Power, float Saturation)
 {
     float Luma = Luminance(X);
@@ -66,19 +78,19 @@ float3 AGX_Look(float3 X, float3 Slope, float3 Power, float Saturation)
 
 float3 Tonemap_AGX(float3 X)
 {
-    return Tonemap_AGX_Base(X);
+    return AGX_Eotf(Tonemap_AGX_Base(X));
 }
 
 float3 Tonemap_AGX_Punchy(float3 X)
 {
     X = Tonemap_AGX_Base(X);
-    return AGX_Look(X, float3(1.0), float3(1.35), 1.4);
+    return AGX_Eotf(AGX_Look(X, float3(1.0), float3(1.35), 1.4));
 }
 
 float3 Tonemap_AGX_Golden(float3 X)
 {
     X = Tonemap_AGX_Base(X);
-    return AGX_Look(X, float3(1.0, 0.9, 0.5), float3(0.8), 0.8);
+    return AGX_Eotf(AGX_Look(X, float3(1.0, 0.9, 0.5), float3(0.8), 0.8));
 }
 
 float3 ApplyTonemap(float3 X, uint Mode)

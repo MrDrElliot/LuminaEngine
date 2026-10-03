@@ -33,7 +33,7 @@ namespace Lumina
         
         /** Exposure compensation in stops (EV); +1 doubles, -1 halves. With auto-exposure on, this biases the adapted result. */
         PROPERTY(Editable, Category = "Post Process|Exposure", ClampMin = -8.0f, ClampMax = 8.0f)
-        float ExposureCompensation = 0.0f;
+        float ExposureCompensation = 1.0f;
 
         /** When true, exposure adapts to scene luminance over time; ExposureCompensation then acts as a bias on top. */
         PROPERTY(Editable, Category = "Post Process|Exposure")
@@ -70,11 +70,11 @@ namespace Lumina
 
         /** Contrast around mid-gray (0.18); 1.0 = no change. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.0f, ClampMax = 2.0f)
-        float Contrast = 1.08f;
+        float Contrast = 1.05f;
 
         /** 0 = grayscale, 1 = unchanged. Rec.709 luma. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.0f, ClampMax = 4.0f)
-        float Saturation = 1.1f;
+        float Saturation = 1.0f;
 
         /** Display-space gamma; 1.0 = no change. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.1f, ClampMax = 4.0f)
@@ -104,7 +104,7 @@ namespace Lumina
 
         /** Corner darkening; 0 = off. */
         PROPERTY(Editable, Category = "Post Process|Vignette", ClampMin = 0.0f, ClampMax = 1.0f)
-        float VignetteIntensity = 0.3f;
+        float VignetteIntensity = 0.25f;
 
         /** 0 = elliptical (matches aspect), 1 = circular. */
         PROPERTY(Editable, Category = "Post Process|Vignette", ClampMin = 0.0f, ClampMax = 1.0f)

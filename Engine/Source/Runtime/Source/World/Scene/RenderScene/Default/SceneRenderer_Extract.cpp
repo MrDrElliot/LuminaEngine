@@ -103,6 +103,12 @@ namespace Lumina
 
         {
             FSceneView& PrimaryView = SceneViews[0];
+
+            // Motion is measured between unjittered positions, so the history matrix must not carry a jitter.
+            PrimaryView.PendingViewProjection = SceneGlobalData.CameraData.Projection * SceneGlobalData.CameraData.View;
+            SceneGlobalData.TemporalJitterU = 0.0f;
+            SceneGlobalData.TemporalJitterV = 0.0f;
+
             if (IsTemporalAAEnabledFor(PrimaryView))
             {
                 // A bailed extract must not flip parity, or the resolve blends a slot against itself.
@@ -112,6 +118,8 @@ namespace Lumina
                 const FVector2 Jitter = GetTemporalJitterNDC(PrimaryView, PrimaryView.PendingTemporalFrameIndex);
                 SceneGlobalData.CameraData.Projection[2][0] += Jitter.x;
                 SceneGlobalData.CameraData.Projection[2][1] += Jitter.y;
+                SceneGlobalData.TemporalJitterU = Jitter.x * 0.5f;
+                SceneGlobalData.TemporalJitterV = Jitter.y * 0.5f;
 
                 // Every depth-reconstructing pass reads this, so it has to match the jitter that was rendered.
                 SceneGlobalData.CameraData.InverseProjection = Math::Inverse(SceneGlobalData.CameraData.Projection);
@@ -126,7 +134,6 @@ namespace Lumina
             }
 
             SceneGlobalData.CameraData.PrevViewProjection = PrimaryView.PrevViewProjection;
-            PrimaryView.PendingViewProjection = SceneGlobalData.CameraData.Projection * SceneGlobalData.CameraData.View;
         }
         SceneGlobalData.ScreenSize                      = FUIntVector4(PrimarySize.x, PrimarySize.y, 0, 0);
         SceneGlobalData.GridSize                        = ComputeClusterGrid(PrimarySize);

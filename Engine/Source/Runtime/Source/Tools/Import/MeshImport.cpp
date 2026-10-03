@@ -709,6 +709,7 @@ namespace Lumina::Import::Mesh
 
         TVector<FSurfaceMeshletResult> Results(LODCount * NumSurfaces);
         TVector<size_t> CellIndexCount(LODCount * NumSurfaces, 0u);
+        TVector<uint8> CellSloppy(LODCount * NumSurfaces, 0u);
 
         Task::ParallelFor(LODCount * NumSurfaces, [&](uint32 Cell)
         {
@@ -775,6 +776,19 @@ namespace Lumina::Import::Mesh
                         TargetIndices, Cfg.TargetError,
                         meshopt_SimplifyLockBorder | meshopt_SimplifySparse,
                         &ResultError);
+
+                // Leaf cards are separate quads whose every edge is a border, so edge collapse cannot touch them and only clustering reduces them.
+                if (!Cfg.bSloppy && NewCount > TargetIndices * 2)
+                {
+                    NewCount = meshopt_simplifySloppy(
+                        Simplified.data(),
+                        SurfaceIndices, Section.IndexCount,
+                        VertexPositions, NumVertices, PositionStride,
+                        nullptr,
+                        TargetIndices, Cfg.TargetError,
+                        &ResultError);
+                    CellSloppy[Cell] = 1u;
+                }
             }
 
             CellIndexCount[Cell] = NewCount;
@@ -831,7 +845,7 @@ namespace Lumina::Import::Mesh
                 }
 
                 // Measured against the last ACCEPTED level, so skipping one keeps the bar where it was.
-                if (!Cfg.bSloppy && (float)NewCount > (float)LastIndexCount * 0.95f)
+                if (!Cfg.bSloppy && CellSloppy[Cell] == 0u && (float)NewCount > (float)LastIndexCount * 0.95f)
                 {
                     continue;
                 }

@@ -42,12 +42,12 @@ float2 FragmentMain(FragmentInput Input) : SV_Target0
         const float3 WorldRay = mul((float3x3)GetInverseCameraView(), ViewRay);
 
         // Zero w drops the translation column, which is what a point at infinity should ignore.
-        return VelocityFromClip(mul(GetPrevViewProjection(), float4(WorldRay, 0.0)), Input.UV);
+        return VelocityFromClip(mul(GetPrevViewProjection(), float4(WorldRay, 0.0)), Input.UV - GetTemporalJitterUV());
     }
 
-    // Both matrices carry this frame's jitter, so the unprojection is exact for the depth that was rendered.
+    // The inverse carries this frame's jitter, so the unprojection is exact for the depth that was rendered.
     const float3 ViewPos  = ReconstructViewPos(Input.UV, Raw, GetInverseCameraProjection());
     const float4 WorldPos = mul(GetInverseCameraView(), float4(ViewPos, 1.0));
 
-    return VelocityFromClip(mul(GetPrevViewProjection(), WorldPos), Input.UV);
+    return VelocityFromClip(mul(GetPrevViewProjection(), WorldPos), Input.UV - GetTemporalJitterUV());
 }
