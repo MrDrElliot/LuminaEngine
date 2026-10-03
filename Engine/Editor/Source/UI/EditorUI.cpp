@@ -67,6 +67,8 @@
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Config/Config.h"
+#include "Config/GameUserSettings.h"
+#include "Config/Scalability.h"
 #include "Core/Application/Application.h"
 #include "Core/Module/ModuleManager.h"
 #include "Core/Object/Cast.h"
@@ -608,8 +610,17 @@ namespace Lumina
         ContentBrowser = CreateTool<FContentBrowserEditorTool>(this);
 
         // Spawns and destroys extra-player Game Preview tools as the world editor starts and stops play.
-        (void)WorldEditorTool->GetOnPreviewStartRequestedDelegate().AddLambda([this]() { CreateGameViewportTool(); });
-        (void)WorldEditorTool->GetOnPreviewStopRequestedDelegate().AddLambda([this]() { DestroyGameViewportTool(); });
+        // Play shows the player's saved quality, and stopping hands the editor its project values back.
+        (void)WorldEditorTool->GetOnPreviewStartRequestedDelegate().AddLambda([this]()
+        {
+            CreateGameViewportTool();
+            CGameUserSettings::Get().ApplyQuality();
+        });
+        (void)WorldEditorTool->GetOnPreviewStopRequestedDelegate().AddLambda([this]()
+        {
+            DestroyGameViewportTool();
+            Scalability::RestoreProjectValues();
+        });
 
         // They start undocked, living in the bottom status bar instead of a dock split.
         FooterDrawers.push_back({ ContentBrowser, LE_ICON_FOLDER,       "Content Browser", ImGuiMod_Ctrl | ImGuiKey_Space });

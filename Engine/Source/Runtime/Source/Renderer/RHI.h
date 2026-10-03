@@ -691,6 +691,8 @@ namespace Lumina::RHI
     RUNTIME_API void        HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture);
     RUNTIME_API uint32      HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip = 0);
     RUNTIME_API uint32      HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc);
+    // Swaps the sampler behind a live slot, each frame copy at its next BeginFrame, and retires the old one.
+    RUNTIME_API void        HeapRewriteSampler(FTextureHeapH Heap, uint32 Slot, const FSamplerDesc& Desc);
     RUNTIME_API void        HeapSetFallbackTexture(FTextureHeapH Heap, FTextureH Texture);
     RUNTIME_API void        HeapUnbindTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeTexture(FTextureHeapH Heap, uint32 Slot);

@@ -30,11 +30,19 @@
     </div>
 
     <div class="kv">
+        <span>VSync</span>
+        <input type="checkbox" data-checked="VSync"/>
+    </div>
+
+    <div class="kv">
         <span>Quality</span>
         <select data-value="Quality">
+            <option value="default">Project default</option>
             <option value="low">Low</option>
+            <option value="medium">Medium</option>
             <option value="high">High</option>
             <option value="ultra">Ultra</option>
+            <option value="custom">Custom</option>
         </select>
     </div>
 
@@ -42,6 +50,7 @@
 
     <div class="row" style="justify-content: flex-end;">
         <div class="btn ghost" data-event-click="ApplyPreset('low')">Low preset</div>
+        <div class="btn ghost" data-event-click="RevertSettings()">Revert</div>
         <div class="btn primary" data-event-click="CloseSettings()">Done</div>
     </div>
 

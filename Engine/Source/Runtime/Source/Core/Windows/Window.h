@@ -1,6 +1,8 @@
 #pragma once
 
 #include "WindowTypes.h"
+#include "WindowMode.h"
+#include "Containers/Vector.h"
 #include "WindowInput.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/SmartPtr.h"
@@ -45,6 +47,13 @@ namespace Lumina
 		RUNTIME_API void SetWindowPosition(int X, int Y);
 
 		RUNTIME_API void SetWindowSize(int X, int Y);
+
+		// A zero Resolution means the monitor's own; RefreshRate only matters in exclusive Fullscreen, where zero picks the highest.
+		RUNTIME_API void SetWindowMode(EWindowMode Mode, FUIntVector2 Resolution = FUIntVector2(0), int32 RefreshRate = 0);
+		RUNTIME_API EWindowMode GetWindowMode() const;
+
+		// Every resolution and refresh rate the window's current monitor offers, widest first.
+		RUNTIME_API TVector<SDisplayMode> GetDisplayModes() const;
 
 		RUNTIME_API void SetTitle(const FString& Title);
 		RUNTIME_API void SetTitleBarHovered(bool bHovered);

@@ -11,6 +11,7 @@
 #include "Core/Application/Application.h"
 #include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Config/EngineSettings.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Windows/Window.h"
 #include "Core/Profiler/Profile.h"
@@ -291,6 +292,9 @@ namespace Lumina
 
             ApplyPendingResize();
 
+            // Read every frame like the other renderer settings, and a no-op unless the value moved.
+            RHI::SetMaxAnisotropy((float)GetDefault<CRendererSettings>()->MaxAnisotropy);
+
             GWorldManager->RenderWorlds(ThisFrameIndex);
 
             RHI::FTextureH SwapImage;
@@ -400,14 +404,17 @@ namespace Lumina
         }
 
         const FUIntVector2 Extent((uint32)(Packed >> 32), (uint32)(Packed & 0xFFFFFFFFull));
-        if (Extent == SwapchainTarget.GetExtent())
+
+        // Against what the views were told, since a rebuild for another reason can already have taken the new size.
+        if (Extent == BroadcastExtent)
         {
             return;
         }
-        
+
         LUMINA_PROFILE_SCOPE();
 
         SwapchainTarget.Resize(Extent);
+        BroadcastExtent = Extent;
         OnSwapchainResized.Broadcast(FVector2(Extent));
     }
 }

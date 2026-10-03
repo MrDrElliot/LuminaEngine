@@ -66,6 +66,9 @@ namespace Lumina
         /** Cooked-runtime: post-init half, asset discovery, project DLL, game instance, startup map. */
         RUNTIME_API bool StartCookedGame();
 
+        // The player's saved window, vsync, frame limit and quality, applied before the first level renders.
+        RUNTIME_API void ApplyUserSettings();
+
         #if WITH_EDITOR
         RUNTIME_API virtual IDevelopmentToolUI* CreateDevelopmentTools() = 0;
         RUNTIME_API IDevelopmentToolUI* GetDevelopmentToolsUI() const { return DeveloperToolUI.Get(); }
@@ -106,6 +109,10 @@ namespace Lumina
         // A tool's temporary frame rate cap, which wins over the saved setting until set back to a negative value.
         RUNTIME_API void SetFrameRateCapOverride(int32 Cap) { FrameRateCapOverride = Cap; }
         RUNTIME_API int32 GetFrameRateCapOverride() const { return FrameRateCapOverride; }
+
+        // The player's own cap from their settings, below a tool's override and above the project's MaxFPS. Negative clears it.
+        RUNTIME_API void SetUserFrameRateLimit(int32 Cap) { UserFrameRateLimit = Cap; }
+        RUNTIME_API int32 GetUserFrameRateLimit() const { return UserFrameRateLimit; }
 
         // The cap this frame paces to, where 0 means uncapped.
         RUNTIME_API int32 GetMaxFrameRate() const;
@@ -181,6 +188,7 @@ namespace Lumina
         double                  LevelStartSeconds = 0.0;
 
         int32                   FrameRateCapOverride = -1;
+        int32                   UserFrameRateLimit = -1;
 
         static constexpr uint32 kCacheTrimDelayFrames = 120;
         uint32                  CacheTrimCountdown = 0;

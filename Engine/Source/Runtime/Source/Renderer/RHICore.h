@@ -97,6 +97,10 @@ namespace Lumina::RHI
      *  express that; the fence already does. */
     RUNTIME_API void RetireCallback(TFunction<void()> Callback);
 
+    // Rebuilds the anisotropic stock samplers in place, so every texture using them follows. Clamped to 1 to 16 and to the device.
+    RUNTIME_API void SetMaxAnisotropy(float Anisotropy);
+    RUNTIME_API float GetMaxAnisotropy();
+
     FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc);
     FPipelineH CreateComputePipeline(const FName& ComputeShader);
 

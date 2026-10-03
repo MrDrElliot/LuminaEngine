@@ -521,10 +521,12 @@ namespace Lumina::RHI
     };
     
     // A live slot's new view, held until that copy's frame slot has waited out every reader of the old one.
+    // A sampled image slot, or with Sampler set a sampler slot, waiting for its frame copy to go idle.
     struct FDeferredSampledWrite
     {
         uint32      Slot = kInvalidHeapSlot;
         VkImageView View = VK_NULL_HANDLE;
+        VkSampler   Sampler = VK_NULL_HANDLE;
     };
 
     struct FTextureHeap
@@ -3059,16 +3061,19 @@ namespace Lumina::RHI
             auto* Writes = Mark.AllocArray<VkWriteDescriptorSet>((uint32)Pending.size());
             for (size_t i = 0; i < Pending.size(); ++i)
             {
-                Infos[i] = VkDescriptorImageInfo{ VK_NULL_HANDLE, Pending[i].View, VK_IMAGE_LAYOUT_GENERAL };
+                const bool bSampler = Pending[i].Sampler != VK_NULL_HANDLE;
+                Infos[i] = bSampler
+                    ? VkDescriptorImageInfo{ Pending[i].Sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED }
+                    : VkDescriptorImageInfo{ VK_NULL_HANDLE, Pending[i].View, VK_IMAGE_LAYOUT_GENERAL };
                 Writes[i] = VkWriteDescriptorSet
                 {
                     .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .pNext              = nullptr,
                     .dstSet             = HeapData.DescriptorSets[Copy],
-                    .dstBinding         = kImageBindingSlot,
+                    .dstBinding         = (uint32)(bSampler ? kSamplerBindingSlot : kImageBindingSlot),
                     .dstArrayElement    = Pending[i].Slot,
                     .descriptorCount    = 1,
-                    .descriptorType     = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                    .descriptorType     = bSampler ? VK_DESCRIPTOR_TYPE_SAMPLER : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                     .pImageInfo         = &Infos[i],
                     .pBufferInfo        = nullptr,
                     .pTexelBufferView   = nullptr
@@ -4944,13 +4949,14 @@ namespace Lumina::RHI
 #endif
 
     // Caller holds HeapMutex.
-    static void DropDeferredSampledWrite(FTextureHeap& HeapData, uint32 Slot)
+    // Sampler slots number separately from image slots, so only a pending write of the same kind is replaced.
+    static void DropDeferredWrite(FTextureHeap& HeapData, uint32 Slot, bool bSampler)
     {
         for (TVector<FDeferredSampledWrite>& Writes : HeapData.DeferredWrites)
         {
             for (size_t i = 0; i < Writes.size(); ++i)
             {
-                if (Writes[i].Slot == Slot)
+                if (Writes[i].Slot == Slot && (Writes[i].Sampler != VK_NULL_HANDLE) == bSampler)
                 {
                     Writes[i] = Writes.back();
                     Writes.pop_back();
@@ -4963,9 +4969,9 @@ namespace Lumina::RHI
     // Caller holds HeapMutex. Every copy at once, so only for a slot no in-flight frame reads.
     static void WriteHeapDescriptor(FTextureHeap& HeapData, uint32 Binding, uint32 Slot, VkDescriptorType Type, const VkDescriptorImageInfo& ImageInfo)
     {
-        if (Binding == kImageBindingSlot)
+        if (Binding == kImageBindingSlot || Binding == kSamplerBindingSlot)
         {
-            DropDeferredSampledWrite(HeapData, Slot);
+            DropDeferredWrite(HeapData, Slot, Binding == kSamplerBindingSlot);
         }
 
         VkWriteDescriptorSet Writes[kFramesInFlight];
@@ -4997,7 +5003,7 @@ namespace Lumina::RHI
             bool bReplaced = false;
             for (FDeferredSampledWrite& Pending : Writes)
             {
-                if (Pending.Slot == Slot)
+                if (Pending.Slot == Slot && Pending.Sampler == VK_NULL_HANDLE)
                 {
                     Pending.View = View;
                     bReplaced    = true;
@@ -5007,6 +5013,26 @@ namespace Lumina::RHI
             if (!bReplaced)
             {
                 Writes.push_back(FDeferredSampledWrite{ Slot, View });
+            }
+        }
+    }
+
+    // Caller holds HeapMutex. Each copy takes the sampler at its own frame slot's next BeginFrame.
+    static void DeferSamplerWrite(FTextureHeap& HeapData, uint32 Slot, VkSampler Sampler)
+    {
+        for (TVector<FDeferredSampledWrite>& Writes : HeapData.DeferredWrites)
+        {
+            auto Existing = Algo::FindIf(Writes, [Slot](const FDeferredSampledWrite& Pending)
+            {
+                return Pending.Slot == Slot && Pending.Sampler != VK_NULL_HANDLE;
+            });
+            if (Existing != Writes.end())
+            {
+                Existing->Sampler = Sampler;
+            }
+            else
+            {
+                Writes.push_back(FDeferredSampledWrite{ Slot, VK_NULL_HANDLE, Sampler });
             }
         }
     }
@@ -5131,9 +5157,10 @@ namespace Lumina::RHI
         return Slot;
     }
 
-    uint32 HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc)
+    // A request past what the device supports is clamped rather than refused, so one setting fits every GPU.
+    static VkSampler CreateVkSampler(const FSamplerDesc& Desc)
     {
-        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+        const float Anisotropy = Math::Clamp(Desc.MaxAnisotropy, 1.0f, GDevice->Properties.limits.maxSamplerAnisotropy);
 
         VkSamplerReductionModeCreateInfo ReductionInfo
         {
@@ -5154,8 +5181,8 @@ namespace Lumina::RHI
             .addressModeV            = ToVkAddressMode(Desc.AddressV),
             .addressModeW            = ToVkAddressMode(Desc.AddressW),
             .mipLodBias              = Desc.MipBias,
-            .anisotropyEnable        = Desc.MaxAnisotropy > 1.0f,
-            .maxAnisotropy           = Desc.MaxAnisotropy,
+            .anisotropyEnable        = Anisotropy > 1.0f,
+            .maxAnisotropy           = Anisotropy,
             .compareEnable           = Desc.CompareOp != EOp::Never,
             .compareOp               = ToVkCompareOp(Desc.CompareOp),
             .minLod                  = 0.0f,
@@ -5163,6 +5190,15 @@ namespace Lumina::RHI
             .borderColor             = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
             .unnormalizedCoordinates = false,
         };
+
+        VkSampler Sampler = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateSampler(*GDevice, &SamplerInfo, Vulkan::HostAllocator(), &Sampler));
+        return Sampler;
+    }
+
+    uint32 HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc)
+    {
+        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
         const uint32 Slot = HeapData.SamplerSlots.Alloc();
@@ -5172,8 +5208,7 @@ namespace Lumina::RHI
             return FHandleAllocator::kInvalidHandle;
         }
 
-        VkSampler Sampler = VK_NULL_HANDLE;
-        VK_CHECK(vkCreateSampler(*GDevice, &SamplerInfo, Vulkan::HostAllocator(), &Sampler));
+        VkSampler Sampler = CreateVkSampler(Desc);
 
         HeapData.Samplers[Slot] = Sampler;
 
@@ -5386,6 +5421,33 @@ namespace Lumina::RHI
             HeapData.RWImageViews[Slot] = VK_NULL_HANDLE;
         }
         HeapData.RWImageSlots.Free(Slot);
+    }
+
+    void HeapRewriteSampler(FTextureHeapH Heap, uint32 Slot, const FSamplerDesc& Desc)
+    {
+        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+        const VkSampler Sampler = CreateVkSampler(Desc);
+
+        VkSampler Replaced = VK_NULL_HANDLE;
+        {
+            FScopeLock Lock(GDevice->HeapMutex);
+            if (Slot >= HeapData.Samplers.size() || HeapData.Samplers[Slot] == VK_NULL_HANDLE)
+            {
+                vkDestroySampler(*GDevice, Sampler, Vulkan::HostAllocator());
+                return;
+            }
+
+            Replaced = HeapData.Samplers[Slot];
+            HeapData.Samplers[Slot] = Sampler;
+
+            // An in-flight frame still samples through the old one, so each copy switches at its own frame start.
+            DeferSamplerWrite(HeapData, Slot, Sampler);
+        }
+
+        RetireCallback([Replaced]()
+        {
+            vkDestroySampler(*GDevice, Replaced, Vulkan::HostAllocator());
+        });
     }
 
     void HeapFreeSampler(FTextureHeapH Heap, uint32 Slot)

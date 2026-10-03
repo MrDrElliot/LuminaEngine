@@ -11,6 +11,7 @@
 #include "Networking/INetworkRuntime.h"
 #include "Config/Config.h"
 #include "Config/EngineSettings.h"
+#include "Config/GameUserSettings.h"
 #include "Core/Application/Application.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Threading/Thread.h"
@@ -511,7 +512,11 @@ namespace Lumina
 
     int32 FEngine::GetMaxFrameRate() const
     {
-        return FrameRateCapOverride >= 0 ? FrameRateCapOverride : GetDefault<CRendererSettings>()->MaxFPS;
+        if (FrameRateCapOverride >= 0)
+        {
+            return FrameRateCapOverride;
+        }
+        return UserFrameRateLimit >= 0 ? UserFrameRateLimit : GetDefault<CRendererSettings>()->MaxFPS;
     }
 
     void FEngine::MarkLoopStart()
@@ -1053,10 +1058,19 @@ namespace Lumina
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
         RefreshWindowTitle();
+        ApplyUserSettings();
         CreateGameInstance();
         LoadStartupMap();
 
         OnProjectLoaded.Broadcast();
+    }
+
+    void FEngine::ApplyUserSettings()
+    {
+        // The editor owns its window, and a play session applies quality on its own start instead.
+        #if !USING(WITH_EDITOR)
+        CGameUserSettings::Get().Apply();
+        #endif
     }
 
     void FEngine::CreateGameInstance()
@@ -1572,6 +1586,7 @@ namespace Lumina
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
         RefreshWindowTitle();
+        ApplyUserSettings();
         CreateGameInstance();
         LoadStartupMap();
         return true;

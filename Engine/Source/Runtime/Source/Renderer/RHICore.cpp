@@ -79,6 +79,17 @@ namespace Lumina::RHI
 
     static FCoreState GCore;
 
+    // What the anisotropic stock samplers were last built with, so a setting read every frame rebuilds only on change.
+    static float GMaxAnisotropy = 16.0f;
+
+    static FSamplerDesc AnisotropicDesc(EAddressMode Address)
+    {
+        FSamplerDesc Desc{};
+        Desc.MaxAnisotropy = GMaxAnisotropy;
+        Desc.AddressU = Desc.AddressV = Desc.AddressW = Address;
+        return Desc;
+    }
+
     static void DestroyRetired(const FRetireItem& Item);
 
     static void InitializeCore()
@@ -129,12 +140,8 @@ namespace Lumina::RHI
         Desc.AddressU = Desc.AddressV = Desc.AddressW = EAddressMode::ClampToEdge;
         AddSampler(EStockSampler::PointClamp, Desc);
 
-        Desc = Linear;
-        Desc.MaxAnisotropy = 16.0f;
-        AddSampler(EStockSampler::AnisoWrap, Desc);
-
-        Desc.AddressU = Desc.AddressV = Desc.AddressW = EAddressMode::ClampToEdge;
-        AddSampler(EStockSampler::AnisoClamp, Desc);
+        AddSampler(EStockSampler::AnisoWrap, AnisotropicDesc(EAddressMode::Repeat));
+        AddSampler(EStockSampler::AnisoClamp, AnisotropicDesc(EAddressMode::ClampToEdge));
 
         Desc = Linear;
         Desc.AddressU = Desc.AddressV = Desc.AddressW = EAddressMode::ClampToEdge;
@@ -154,14 +161,30 @@ namespace Lumina::RHI
         Desc.AddressU = Desc.AddressV = Desc.AddressW = EAddressMode::MirroredRepeat;
         AddSampler(EStockSampler::PointMirror, Desc);
 
-        Desc = Linear;
-        Desc.MaxAnisotropy = 16.0f;
-        Desc.AddressU = Desc.AddressV = Desc.AddressW = EAddressMode::MirroredRepeat;
-        AddSampler(EStockSampler::AnisoMirror, Desc);
+        AddSampler(EStockSampler::AnisoMirror, AnisotropicDesc(EAddressMode::MirroredRepeat));
 
         GCore.bInitialized = true;
 
         Textures::Initialize();
+    }
+
+    float GetMaxAnisotropy()
+    {
+        return GMaxAnisotropy;
+    }
+
+    void SetMaxAnisotropy(float Anisotropy)
+    {
+        Anisotropy = Math::Clamp(Anisotropy, 1.0f, 16.0f);
+        if (!GCore.bInitialized || Anisotropy == GMaxAnisotropy)
+        {
+            return;
+        }
+
+        GMaxAnisotropy = Anisotropy;
+        HeapRewriteSampler(GCore.GlobalHeap, (uint32)EStockSampler::AnisoWrap, AnisotropicDesc(EAddressMode::Repeat));
+        HeapRewriteSampler(GCore.GlobalHeap, (uint32)EStockSampler::AnisoClamp, AnisotropicDesc(EAddressMode::ClampToEdge));
+        HeapRewriteSampler(GCore.GlobalHeap, (uint32)EStockSampler::AnisoMirror, AnisotropicDesc(EAddressMode::MirroredRepeat));
     }
 
     static void ShutdownCore()

@@ -321,6 +321,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.25f, ClampMax = 16.0f, Delta = 0.25f)
         float LODDistanceScale = 1.0f;
 
+        // Sharpens textures seen at a glancing angle, such as floors and roads, for a little bandwidth. 1 turns it off.
+        PROPERTY(Editable, Category = "Textures", ClampMin = 1, ClampMax = 16)
+        int32 MaxAnisotropy = 16;
+
         /** Trace reflections against the depth buffer, falling back to the prefiltered cube off-screen. */
         PROPERTY(Editable, Category = "Screen Space Reflections")
         bool bScreenSpaceReflections = false;

@@ -62,6 +62,14 @@ namespace Lumina
 		bool			bFirstMouseUpdate = true;
 		bool			bInitialized = false;
 		bool			bTitleBarHovered = false;
+
+		EWindowMode		Mode = EWindowMode::Windowed;
+
+		// Where the window sat before it went fullscreen, so returning to Windowed puts it back.
+		int				WindowedX = 0;
+		int				WindowedY = 0;
+		int				WindowedWidth = 0;
+		int				WindowedHeight = 0;
 	};
 
 	FWindowResizeDelegate FWindow::OnWindowResized;
@@ -390,6 +398,122 @@ namespace Lumina
 	void FWindow::SetWindowSize(int X, int Y)
 	{
 		glfwSetWindowSize(Impl->Window, X, Y);
+	}
+
+	void FWindow::SetWindowMode(EWindowMode Mode, FUIntVector2 Resolution, int32 RefreshRate)
+	{
+		GLFWwindow* Window = Impl->Window;
+		GLFWmonitor* Monitor = glfwGetWindowMonitor(Window);
+		if (Monitor == nullptr)
+		{
+			Monitor = GetCurrentMonitor(Window);
+		}
+		if (Monitor == nullptr)
+		{
+			Monitor = glfwGetPrimaryMonitor();
+		}
+		const GLFWvidmode* Desktop = glfwGetVideoMode(Monitor);
+		if (Desktop == nullptr)
+		{
+			return;
+		}
+
+		if (Impl->Mode == EWindowMode::Windowed)
+		{
+			glfwGetWindowPos(Window, &Impl->WindowedX, &Impl->WindowedY);
+			glfwGetWindowSize(Window, &Impl->WindowedWidth, &Impl->WindowedHeight);
+		}
+
+		const int Width  = Resolution.x != 0 ? (int)Resolution.x : Desktop->width;
+		const int Height = Resolution.y != 0 ? (int)Resolution.y : Desktop->height;
+
+		int MonitorX = 0;
+		int MonitorY = 0;
+		glfwGetMonitorPos(Monitor, &MonitorX, &MonitorY);
+
+		switch (Mode)
+		{
+		case EWindowMode::Fullscreen:
+			glfwSetWindowMonitor(Window, Monitor, 0, 0, Width, Height, RefreshRate > 0 ? RefreshRate : GLFW_DONT_CARE);
+			break;
+
+		case EWindowMode::BorderlessFullscreen:
+			glfwSetWindowAttrib(Window, GLFW_DECORATED, GLFW_FALSE);
+			glfwSetWindowMonitor(Window, nullptr, MonitorX, MonitorY, Desktop->width, Desktop->height, GLFW_DONT_CARE);
+			break;
+
+		case EWindowMode::Windowed:
+		{
+			// An explicit size is centered on the monitor, and no size returns to where the window last was.
+			const bool bExplicit = Resolution.x != 0 && Resolution.y != 0;
+			const int TargetWidth  = bExplicit ? Width : (Impl->WindowedWidth > 0 ? Impl->WindowedWidth : Desktop->width - 300);
+			const int TargetHeight = bExplicit ? Height : (Impl->WindowedHeight > 0 ? Impl->WindowedHeight : Desktop->height - 300);
+			const int TargetX = bExplicit || Impl->WindowedWidth == 0 ? MonitorX + (Desktop->width - TargetWidth) / 2 : Impl->WindowedX;
+			const int TargetY = bExplicit || Impl->WindowedHeight == 0 ? MonitorY + (Desktop->height - TargetHeight) / 2 : Impl->WindowedY;
+
+			// Decorated first, since adding the frame afterward resizes the client area off the requested size.
+			glfwSetWindowAttrib(Window, GLFW_DECORATED, GLFW_TRUE);
+			glfwSetWindowMonitor(Window, nullptr, TargetX, TargetY, TargetWidth, TargetHeight, GLFW_DONT_CARE);
+			glfwSetWindowSize(Window, TargetWidth, TargetHeight);
+			break;
+		}
+		}
+
+		Impl->Mode = Mode;
+	}
+
+	EWindowMode FWindow::GetWindowMode() const
+	{
+		return Impl->Mode;
+	}
+
+	TVector<SDisplayMode> FWindow::GetDisplayModes() const
+	{
+		TVector<SDisplayMode> Modes;
+
+		GLFWmonitor* Monitor = glfwGetWindowMonitor(Impl->Window);
+		if (Monitor == nullptr)
+		{
+			Monitor = GetCurrentMonitor(Impl->Window);
+		}
+		if (Monitor == nullptr)
+		{
+			Monitor = glfwGetPrimaryMonitor();
+		}
+
+		int Count = 0;
+		const GLFWvidmode* VideoModes = Monitor != nullptr ? glfwGetVideoModes(Monitor, &Count) : nullptr;
+		for (int Index = 0; Index < Count; ++Index)
+		{
+			SDisplayMode Mode;
+			Mode.Width = VideoModes[Index].width;
+			Mode.Height = VideoModes[Index].height;
+			Mode.RefreshRate = VideoModes[Index].refreshRate;
+
+			// The same size and rate repeats once per bit depth, which a settings menu has no use for.
+			const bool bSeen = Algo::AnyOf(Modes, [&Mode](const SDisplayMode& Existing)
+			{
+				return Existing.Width == Mode.Width && Existing.Height == Mode.Height && Existing.RefreshRate == Mode.RefreshRate;
+			});
+			if (!bSeen)
+			{
+				Modes.push_back(Mode);
+			}
+		}
+
+		Algo::Sort(Modes, [](const SDisplayMode& A, const SDisplayMode& B)
+		{
+			if (A.Width != B.Width)
+			{
+				return A.Width > B.Width;
+			}
+			if (A.Height != B.Height)
+			{
+				return A.Height > B.Height;
+			}
+			return A.RefreshRate > B.RefreshRate;
+		});
+		return Modes;
 	}
 
 	void FWindow::SetTitle(const FString& Title)

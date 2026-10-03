@@ -129,6 +129,9 @@ namespace Lumina
 
         std::atomic<uint64>                 PendingResizeExtent = 0;
 
+        // The size the scene views were last told, which a rebuild for another reason never updates.
+        FUIntVector2                        BroadcastExtent = FUIntVector2(0, 0);
+
         uint8                               CurrentFrameIndex = 0;
 
         // Set by WaitForFrameSlot, cleared by the FrameEnd that consumes it.

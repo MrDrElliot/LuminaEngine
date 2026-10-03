@@ -24,8 +24,9 @@ public sealed class MenuExample : EntityScript
 
         private string _Title = "Settings";
         private int _Volume = 70;
-        private bool _Fullscreen = true;
-        private string _Quality = "high";
+        private bool _Fullscreen = CGameUserSettingsLibrary.GetWindowMode() != EWindowMode.Windowed;
+        private bool _VSync = CGameUserSettingsLibrary.GetVSync();
+        private string _Quality = QualityName(CGameUserSettingsLibrary.GetOverallQuality());
 
         [Bind] public string Tagline { get => _Tagline; set => Set(ref _Tagline, value); }
         [Bind] public string Profile { get => _Profile; set => Set(ref _Profile, value); }
@@ -41,8 +42,47 @@ public sealed class MenuExample : EntityScript
         [Bind] public string Title => _Title;
 
         [Bind] public int Volume { get => _Volume; set { Set(ref _Volume, value); Debug.Log($"[Menu] Volume -> {value}"); } }
-        [Bind] public bool Fullscreen { get => _Fullscreen; set { Set(ref _Fullscreen, value); Debug.Log($"[Menu] Fullscreen -> {value}"); } }
-        [Bind] public string Quality { get => _Quality; set { Set(ref _Quality, value); Debug.Log($"[Menu] Quality -> {value}"); } }
+        // Each choice applies at once so the player sees it, and Done is what keeps it.
+        [Bind]
+        public bool Fullscreen
+        {
+            get => _Fullscreen;
+            set
+            {
+                Set(ref _Fullscreen, value);
+                CGameUserSettingsLibrary.SetWindowMode(value ? EWindowMode.BorderlessFullscreen : EWindowMode.Windowed);
+                CGameUserSettingsLibrary.ApplySettings();
+            }
+        }
+
+        [Bind]
+        public bool VSync
+        {
+            get => _VSync;
+            set
+            {
+                Set(ref _VSync, value);
+                CGameUserSettingsLibrary.SetVSync(value);
+                CGameUserSettingsLibrary.ApplySettings();
+            }
+        }
+
+        [Bind]
+        public string Quality
+        {
+            get => _Quality;
+            set
+            {
+                Set(ref _Quality, value);
+                if (Enum.TryParse(value, true, out EQualityLevel Level) && Level != EQualityLevel.Custom)
+                {
+                    CGameUserSettingsLibrary.SetOverallQuality(Level);
+                    CGameUserSettingsLibrary.ApplySettings();
+                }
+            }
+        }
+
+        private static string QualityName(EQualityLevel Level) => Level.ToString().ToLowerInvariant();
 
         public Action? OnOpenSettings;
         public Action? OnCloseSettings;
@@ -64,7 +104,21 @@ public sealed class MenuExample : EntityScript
         }
 
         [BindCommand] public void OpenSettings() => OnOpenSettings?.Invoke();
-        [BindCommand] public void CloseSettings() => OnCloseSettings?.Invoke();
+        [BindCommand]
+        public void CloseSettings()
+        {
+            CGameUserSettingsLibrary.SaveSettings();
+            OnCloseSettings?.Invoke();
+        }
+
+        [BindCommand]
+        public void RevertSettings()
+        {
+            CGameUserSettingsLibrary.RevertSettings();
+            Set(ref _Fullscreen, CGameUserSettingsLibrary.GetWindowMode() != EWindowMode.Windowed, nameof(Fullscreen));
+            Set(ref _VSync, CGameUserSettingsLibrary.GetVSync(), nameof(VSync));
+            Set(ref _Quality, QualityName(CGameUserSettingsLibrary.GetOverallQuality()), nameof(Quality));
+        }
         [BindCommand] public void Confirm() => Confirming = true;
         [BindCommand] public void Cancel() => Confirming = false;
         [BindCommand] public void Quit() { Confirming = false; OnQuit?.Invoke(); }
