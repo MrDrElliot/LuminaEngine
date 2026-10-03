@@ -1410,9 +1410,8 @@ namespace Lumina
         FDemandWindow                                       DrawListDemand;
         uint32                                              PreSkinnedVertexCapacity = 0;
         uint32                                              MeshSubDrawsPerSlice = 1;
-        // A bit per already-reported count. The value alternates with the frame ring, so logging on
-        // change restates the same two facts every frame.
-        uint8                                               LoggedSubDrawMask = 0;
+        // Logs only a new peak, since the value alternates with the frame ring.
+        uint32                                              LoggedSubDrawPeak = 0;
         uint32                                              LastBlocksRequested = 0;
         uint32                                              LastPreSkinRequested = 0;
         uint32                                              LastPreSkinOverflowed = 0;

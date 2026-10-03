@@ -328,24 +328,22 @@ namespace Lumina
             // Read after the resize, because last frame's value describes the other ring slot's buffer.
             const uint32 MaxGroups = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
             const uint32 WantedSubDraws = (DrawListCapacity == 0u) ? 1u : (((DrawListCapacity - 1u) / MaxGroups) + 1u);
-            MeshSubDrawsPerSlice   = Math::Clamp(WantedSubDraws, 1u, 8u);
-
-            const uint8 SubDrawBit = (uint8)(1u << (MeshSubDrawsPerSlice - 1u));
-            if ((LoggedSubDrawMask & SubDrawBit) == 0u)
-            {
-                LoggedSubDrawMask |= SubDrawBit;
-                LOG_INFO("Meshlet sub-draws per slice: {} (draw-list capacity {}, mesh workgroup limit {}). "
-                         "A slice needing more than {} sub-draws has the remainder dropped.",
-                         MeshSubDrawsPerSlice, DrawListCapacity, MaxGroups, MeshSubDrawsPerSlice);
-            }
-
-            // Mesh draw args are MeshSubDrawsPerSlice per bucket and slice, 12B stride.
+            const SIZE_T NumBucketSlices = NumArgSlots * (SIZE_T)kMeshletSliceCount;
             const SIZE_T MeshDrawArgsSize = Math::Max<SIZE_T>(
                 sizeof(RHI::FDrawMeshTasksIndirectArguments),
-                NumArgSlots * (SIZE_T)kMeshletSliceCount * (SIZE_T)MeshSubDrawsPerSlice
+                NumBucketSlices * (SIZE_T)WantedSubDraws
                     * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
             ReserveBuffer(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize);
+            const uint32 AllocatedArgSlots = MeshDrawArgsRing[Slot].CapacityOf<RHI::FDrawMeshTasksIndirectArguments>();
+            MeshSubDrawsPerSlice = (uint32)Math::Min<SIZE_T>(WantedSubDraws, AllocatedArgSlots / NumBucketSlices);
+
+            if (MeshSubDrawsPerSlice > LoggedSubDrawPeak)
+            {
+                LoggedSubDrawPeak = MeshSubDrawsPerSlice;
+                LOG_INFO("Meshlet sub-draws per slice: {} (draw-list capacity {}, mesh workgroups per draw {}).",
+                         MeshSubDrawsPerSlice, DrawListCapacity, MaxGroups);
+            }
             
             // Windowed peak, not the last readback: that count lags kFramesInFlight and collapses the
             // allocation the moment the camera looks at something empty.
@@ -403,12 +401,13 @@ namespace Lumina
             const bool bPreSkinCapped = LastPreSkinOverflowed && LastPreSkinRequested > GetMaxPreSkinnedVertices();
 
             static uint32 OverflowLogCounter = 0;
-            if (LastVisibleOverflowed || LastDrawListOverflowed || bPreSkinCapped)
+            if (LastVisibleOverflowed || LastDrawListOverflowed || LastBlocksOverflowed || bPreSkinCapped)
             {
                 if ((OverflowLogCounter++ % 60u) == 0u)
                 {
                     if (LastVisibleOverflowed)  { LogOverflow("visible-instance buffer", LastVisibleInstances, FrameVisibleInstanceCapacity); }
                     if (LastDrawListOverflowed) { LogOverflow("meshlet draw list",       LastDrawListRequired, DrawListCapacity); }
+                    if (LastBlocksOverflowed)   { LogOverflow("meshlet block list",      LastBlocksRequested,  BlockListCapacity); }
                     if (bPreSkinCapped)
                     {
                         const uint64 WantedMiB = ((uint64)LastPreSkinRequested * sizeof(FPreSkinnedVertex)) >> 20;
@@ -1240,6 +1239,11 @@ namespace Lumina
     void FDefaultSceneRenderer::DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
                                                const FMeshletPassContext& Ctx)
     {
+        if (MeshSubDrawsPerSlice == 0u)
+        {
+            return;
+        }
+
         const uint32 NumDrawsPerView = RenderFrame->Views.NumDrawsPerView;
         const uint32 ArgIndex = Ctx.CullViewIndex * NumDrawsPerView + Batch.IndirectDrawOffset;
         const uint32 Slice    = (uint32)Ctx.Slice;

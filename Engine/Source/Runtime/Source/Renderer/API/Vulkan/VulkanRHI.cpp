@@ -1098,6 +1098,9 @@ namespace Lumina::RHI
 
         /// maxMeshWorkGroupCount[0] as reported, before the overflow clamp the caller applies.
         uint32  MaxMeshWorkGroupCount = 0;
+
+        // An indirect draw must also respect this, and some drivers report it below the per-axis limit.
+        uint32  MaxMeshWorkGroupTotalCount = 0;
     };
     
     static FDeviceSuitability EvaluateDeviceSuitability(VkPhysicalDevice Gpu, const FDeviceDesc& DeviceDesc,
@@ -1252,17 +1255,18 @@ namespace Lumina::RHI
             {
                 // A device reporting the maximum there is the signature of an overflow that rendered nothing.
                 LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
-                            "out components {}, out memory {} B, max workgroup count {}. "
+                            "out components {}, out memory {} B, max workgroup count {} (total {}). "
                             "Subgroup {}-{}, mesh workgroup is {} threads{}.",
                             MeshProps.maxMeshWorkGroupSize[0], MeshProps.maxMeshWorkGroupInvocations,
                             MeshProps.maxMeshOutputVertices, MeshProps.maxMeshOutputPrimitives,
                             MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize,
-                            MeshProps.maxMeshWorkGroupCount[0],
+                            MeshProps.maxMeshWorkGroupCount[0], MeshProps.maxMeshWorkGroupTotalCount,
                             SubgroupProps.minSubgroupSize, SubgroupProps.maxSubgroupSize, kMeshWorkGroupSize,
                             Result.MeshRequiredSubgroupSize != 0 ? " (subgroup size pinned)" : "");
             }
 
-            Result.MaxMeshWorkGroupCount = MeshProps.maxMeshWorkGroupCount[0];
+            Result.MaxMeshWorkGroupCount      = MeshProps.maxMeshWorkGroupCount[0];
+            Result.MaxMeshWorkGroupTotalCount = MeshProps.maxMeshWorkGroupTotalCount;
             return {};
         }();
 
@@ -2286,9 +2290,8 @@ namespace Lumina::RHI
 
         // A driver reporting the maximum means no limit, but every derived divide then overflows.
         constexpr uint32 kMaxMeshGroupsPerDraw = 1u << 24;
-        GDevice->MaxMeshWorkGroupCountX = (Chosen.MaxMeshWorkGroupCount < kMaxMeshGroupsPerDraw)
-                                        ? Chosen.MaxMeshWorkGroupCount
-                                        : kMaxMeshGroupsPerDraw;
+        GDevice->MaxMeshWorkGroupCountX = Math::Min(kMaxMeshGroupsPerDraw,
+                                          Math::Min(Chosen.MaxMeshWorkGroupCount, Chosen.MaxMeshWorkGroupTotalCount));
     }
 
     // Aliases compute and transfer onto graphics when the device exposes no dedicated family.
