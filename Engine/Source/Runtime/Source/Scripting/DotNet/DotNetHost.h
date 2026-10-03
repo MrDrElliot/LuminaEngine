@@ -188,6 +188,9 @@ namespace Lumina::DotNet
         TVector<FString> OverriddenEvents;
         // EScriptUpdatePhase from the class's [UpdatePhase]; type-uniform, so it rides on the minted CClass.
         uint8   UpdatePhase = 0;
+
+        // The class carries [ParallelUpdate].
+        bool    bParallelUpdate = false;
     };
 
     // One `[Alias]` on a C# script class: the name it used to have, and the name it has now.

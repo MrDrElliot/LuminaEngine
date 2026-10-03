@@ -20,6 +20,12 @@ public sealed class UpdatePhaseAttribute : System.Attribute
     }
 }
 
+// Promises OnUpdate and OnFixedUpdate touch only this entity and change no structure, so the driver runs it in parallel.
+[System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
+public sealed class ParallelUpdateAttribute : System.Attribute
+{
+}
+
 /// <summary>
 /// Base class for a script attached to a single entity.
 ///

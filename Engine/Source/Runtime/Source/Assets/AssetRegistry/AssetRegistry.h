@@ -2,6 +2,7 @@
 
 #include "AssetData.h"
 #include "TextAssetTypes.h"
+#include "Containers/Span.h"
 #include "Core/Delegates/Delegate.h"
 #include "Core/Threading/Thread.h"
 #include "Memory/SmartPtr.h"

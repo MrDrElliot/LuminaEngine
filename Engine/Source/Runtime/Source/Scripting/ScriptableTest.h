@@ -4,6 +4,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Templates/Optional.h"
+#include "Core/Threading/Thread.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
@@ -78,6 +79,35 @@ namespace Lumina
         int32 FixedUpdateCount = 0;
         int32 DetachCount = 0;
         float AccumulatedTime = 0.0f;
+    };
+
+    // Opted into the parallel pass, recording the thread that ran it so a test can tell the pass fanned out.
+    REFLECT(ParallelUpdate)
+    class RUNTIME_API CParallelEntityScriptTest : public CEntityScriptTest
+    {
+        GENERATED_BODY()
+    public:
+
+        void OnUpdate(float Dt) override
+        {
+            CEntityScriptTest::OnUpdate(Dt);
+            LastThreadID = Threading::GetThreadID();
+            if (UpdateHook != nullptr)
+            {
+                UpdateHook(*this, HookContext);
+            }
+        }
+
+        void OnFixedUpdate(float Dt) override
+        {
+            CEntityScriptTest::OnFixedUpdate(Dt);
+            LastThreadID = Threading::GetThreadID();
+        }
+
+        // Lets a test break the promise from inside the parallel pass. Unreflected, so a clone never carries it over.
+        void (*UpdateHook)(CParallelEntityScriptTest&, void*) = nullptr;
+
+        uint64 LastThreadID = 0;
     };
 
     /** Throwaway owner of a strong reference, so a test can assign out of the object being released. */

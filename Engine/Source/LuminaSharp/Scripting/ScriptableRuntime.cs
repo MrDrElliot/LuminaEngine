@@ -45,7 +45,7 @@ internal sealed class ScriptableRuntime
             return;
         }
 
-        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, byte*, int, byte, void>)Sink;
+        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, byte*, int, byte, byte, void>)Sink;
         Span<byte> NameScratch = stackalloc byte[256];
         Span<byte> BaseScratch = stackalloc byte[256];
         Span<byte> OverrideScratch = stackalloc byte[1024];
@@ -67,7 +67,8 @@ internal sealed class ScriptableRuntime
             try
             {
                 Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length,
-                    Overrides.Pointer, Overrides.Length, GetUpdatePhase(Type));
+                    Overrides.Pointer, Overrides.Length, GetUpdatePhase(Type),
+                    (byte)(Type.IsDefined(typeof(ParallelUpdateAttribute), inherit: true) ? 1 : 0));
             }
             finally
             {

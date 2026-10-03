@@ -13,6 +13,8 @@
 #include "ScriptReshapeTestUtil.h"
 #include "Scripting/ScriptableTest.h"
 #include "Scripting/ScriptStruct.h"
+#include "Core/Threading/Thread.h"
+#include "Containers/HashTable.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
@@ -389,6 +391,118 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
     TObjectPtr<CEntityScript> PinnedNative(Native);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Native->DetachCount, 1);
+}
+
+namespace
+{
+    CParallelEntityScriptTest* AttachParallelTestScript(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        return static_cast<CParallelEntityScriptTest*>(
+            EntityScripts::Attach(Registry, Entity, CParallelEntityScriptTest::StaticClass()));
+    }
+
+    constexpr int32 kParallelTestEntities = 4096;
+}
+
+// REFLECT(ParallelUpdate) scripts run across the workers, each exactly once per pass.
+TEST(EntityScriptUnification, ParallelUpdateScriptsRunOncePerPassAcrossThreads)
+{
+    ECS::FRegistry Registry{};
+    TVector<CParallelEntityScriptTest*> Scripts;
+    for (int32 Index = 0; Index < kParallelTestEntities; ++Index)
+    {
+        Scripts.push_back(AttachParallelTestScript(Registry, Registry.Create()));
+        ASSERT_NE(Scripts.back(), nullptr);
+    }
+
+    EntityScripts::Tick(Registry, 0.5f);
+    EntityScripts::Tick(Registry, 0.5f);
+    EntityScripts::TickFixed(Registry, 0.5f);
+
+    THashSet<uint64> Threads;
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        EXPECT_EQ(Script->ReadyCount, 1);
+        EXPECT_EQ(Script->UpdateCount, 2) << "every promising script updates once per pass, no more and no fewer";
+        EXPECT_EQ(Script->FixedUpdateCount, 1);
+        Threads.insert(Script->LastThreadID);
+    }
+    if (Threading::GetNumThreads() > 1)
+    {
+        EXPECT_GT(Threads.size(), 1u) << "thousands of promising scripts should have spread across the workers";
+    }
+}
+
+// One script that made no promise keeps its whole entity on the serial path, so the pair still runs in order.
+TEST(EntityScriptUnification, AnEntityWithAnUnpromisedScriptStaysSerial)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Mixed = Registry.Create();
+    CParallelEntityScriptTest* Promised = AttachParallelTestScript(Registry, Mixed);
+    CEntityScriptTest*         Plain    = AttachTestScript(Registry, Mixed);
+    ASSERT_NE(Promised, nullptr);
+    ASSERT_NE(Plain, nullptr);
+
+    for (int32 Index = 0; Index < kParallelTestEntities; ++Index)
+    {
+        ASSERT_NE(AttachParallelTestScript(Registry, Registry.Create()), nullptr);
+    }
+
+    EntityScripts::Tick(Registry, 0.5f);
+    EntityScripts::Tick(Registry, 0.5f);
+
+    EXPECT_EQ(Promised->UpdateCount, 2);
+    EXPECT_EQ(Plain->UpdateCount, 2);
+    EXPECT_EQ(Promised->LastThreadID, Threading::GetThreadID()) << "the mixed entity ran on the ticking thread";
+}
+
+// The C# attribute reaches the driver as a flag on the minted class.
+TEST(EntityScriptUnification, AMintedClassOptsInThroughItsFlag)
+{
+    ECS::FRegistry Registry{};
+    TVector<CEntityScriptTest*> Scripts;
+    for (int32 Index = 0; Index < kParallelTestEntities; ++Index)
+    {
+        Scripts.push_back(AttachMintedTestScript(Registry, Registry.Create(), "EntityScript_GTestParallel"));
+        ASSERT_NE(Scripts.back(), nullptr);
+    }
+
+    CScriptClass* Class = ToScriptClass(Scripts.front()->GetClass());
+    ASSERT_NE(Class, nullptr);
+    Class->bScriptParallelUpdate = true;
+
+    EntityScripts::Tick(Registry, 0.5f);
+    EntityScripts::Tick(Registry, 0.5f);
+
+    Class->bScriptParallelUpdate = false;
+    for (CEntityScriptTest* Script : Scripts)
+    {
+        EXPECT_EQ(Script->UpdateCount, 2);
+    }
+}
+
+// Breaking the promise mid-pass cannot skip or repeat anyone, because each chunk's remainder runs serially.
+TEST(EntityScriptUnification, AStructuralChangeMidPassHandsTheRestToTheSerialPath)
+{
+    ECS::FRegistry Registry{};
+    TVector<CParallelEntityScriptTest*> Scripts;
+    for (int32 Index = 0; Index < kParallelTestEntities; ++Index)
+    {
+        Scripts.push_back(AttachParallelTestScript(Registry, Registry.Create()));
+        ASSERT_NE(Scripts.back(), nullptr);
+    }
+    EntityScripts::Tick(Registry, 0.5f);
+
+    Scripts[kParallelTestEntities / 2]->UpdateHook = [](CParallelEntityScriptTest&, void*)
+    {
+        EntityScripts::NoteStructureChange();
+    };
+    EntityScripts::Tick(Registry, 0.5f);
+
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        EXPECT_EQ(Script->UpdateCount, 2) << "every script still updates exactly once in the interrupted pass";
+    }
 }
 
 // A class that is not a CEntityScript must be refused rather than attached and later dispatched to.

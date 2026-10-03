@@ -82,6 +82,9 @@ namespace Lumina
         /** EScriptUpdatePhase for a minted entity-script class, from its C# [UpdatePhase]. */
         uint8 ScriptUpdatePhase = 0;
 
+        // From the C# [ParallelUpdate], the managed spelling of REFLECT(ParallelUpdate).
+        bool bScriptParallelUpdate = false;
+
         /** Every property appended from the script type's schema, in layout order. They live past the C++
          *  shim the class was minted from. */
         TVector<FProperty*> ScriptProperties;

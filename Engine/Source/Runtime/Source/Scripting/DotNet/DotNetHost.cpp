@@ -286,7 +286,7 @@ namespace Lumina::DotNet
 
         // Sink the managed EnumerateScriptables calls once per Scriptable C# type; Ctx is the out desc vector.
         void LmScriptableSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen,
-            const char* Overrides, int OverridesLen, uint8 UpdatePhase)
+            const char* Overrides, int OverridesLen, uint8 UpdatePhase, uint8 ParallelUpdate)
         {
             auto* Out = static_cast<TVector<FScriptableTypeDesc>*>(Ctx);
             if (Out == nullptr || Name == nullptr || NameLen <= 0)
@@ -319,7 +319,8 @@ namespace Lumina::DotNet
                 }
             }
 
-            Desc.UpdatePhase = UpdatePhase;
+            Desc.UpdatePhase     = UpdatePhase;
+            Desc.bParallelUpdate = ParallelUpdate != 0;
             Out->emplace_back(std::move(Desc));
         }
 
@@ -1648,6 +1649,7 @@ namespace Lumina::DotNet
             Definition.NativeBaseName = Desc.NativeBaseName;
             Definition.OverriddenEvents = Desc.OverriddenEvents;
             Definition.UpdatePhase    = Desc.UpdatePhase;
+            Definition.bParallelUpdate = Desc.bParallelUpdate;
 
             // The one crossing for this type's schema. Consumers read it from here.
             TVector<Scripting::FScriptPropertyEntry> UnusedDefaults;

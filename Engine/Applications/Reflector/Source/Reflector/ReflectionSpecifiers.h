@@ -45,6 +45,7 @@ namespace Lumina::Reflection
     X(System,               Flag,   Runtime,   "Marks the struct as an ECS system and registers it with the system registry.") \
     X(Event,                Flag,   Runtime,   "Documents the struct as an ECS event. The dispatcher is type-driven, so this emits no registration.") \
     X(BitMask,              Flag,   Runtime,   "Marks an enum as a set of bit flags. CEnum::IsBitmaskEnum() reports it and the editor draws checkboxes.") \
+    X(ParallelUpdate,       Flag,   Runtime,   "An entity script's promise that its OnUpdate and OnFixedUpdate read and write only its own entity, so the driver runs it in parallel with other such scripts. Inherited by subclasses.") \
     X(ConfigFile,           Value,  Runtime,   "Backs the class with the named config file. The config system loads and saves its properties there.") \
     X(Category,             Value,  Editor,    "Groups the type under a named heading in the component picker and the settings list.") \
     X(DisplayName,          Value,  Editor,    "Overrides the label shown for the type in editor UI.") \
