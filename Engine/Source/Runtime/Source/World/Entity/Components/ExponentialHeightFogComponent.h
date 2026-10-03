@@ -23,7 +23,7 @@ namespace Lumina
 
         /** How quickly density drops with altitude; larger = thinner aloft, sharper layer. */
         PROPERTY(Editable, Category = "Fog", ClampMin = 0.0f, ClampMax = 4.0f, Delta = 0.001f)
-        float FogHeightFalloff = 0.2f;
+        float FogHeightFalloff = 0.25f;
 
         /** World-space Y at which FogDensity applies (the base of the fog layer). */
         PROPERTY(Editable, Category = "Fog", Units = "m")
@@ -35,15 +35,15 @@ namespace Lumina
 
         /** Upper bound on fog opacity so distant geometry never fully disappears. */
         PROPERTY(Editable, Category = "Fog", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.001f)
-        float FogMaxOpacity = 1.0f;
+        float FogMaxOpacity = 0.5f;
 
         /** Base fog color (HDR; values >1 feed bloom). */
         PROPERTY(Editable, Color, Category = "Fog")
-        FVector3 FogInscatteringColor = FVector3(0.5f, 0.6f, 0.7f);
+        FVector3 FogInscatteringColor = FVector3(0.45f, 0.55f, 0.70f);
 
         /** Fog albedo blended in when looking toward the sun (warm haze glow around the sun). */
         PROPERTY(Editable, Color, Category = "Directional Inscatter")
-        FVector3 DirectionalInscatteringColor = FVector3(1.0f, 0.9f, 0.7f);
+        FVector3 DirectionalInscatteringColor = FVector3(1.0f, 0.78f, 0.55f);
 
         /** Tightness of the sun-facing inscatter lobe; larger = smaller, sharper glow. */
         PROPERTY(Editable, Category = "Directional Inscatter", ClampMin = 1.0f, ClampMax = 64.0f)

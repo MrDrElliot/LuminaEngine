@@ -183,6 +183,71 @@ namespace Lumina
         return IsGTAOHalfResolution() ? FUIntVector2((ViewExtent.x + 1u) / 2u, (ViewExtent.y + 1u) / 2u) : ViewExtent;
     }
 
+    struct FSunShadowFilter
+    {
+        uint32 Taps;
+        float  RadiusTexels;  // in texels of the nearest cascade
+    };
+
+    // Godot's Soft Low, Medium, High and Ultra directional filters.
+    inline FSunShadowFilter GetSunShadowFilter()
+    {
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        switch (Settings != nullptr ? Settings->ShadowQuality : EShadowQuality::High)
+        {
+        case EShadowQuality::Low:    return { 4u,  2.0f };
+        case EShadowQuality::Medium: return { 8u,  2.0f };
+        case EShadowQuality::High:   return { 16u, 3.0f };
+        case EShadowQuality::Ultra:  return { 32u, 4.0f };
+        }
+        return { 16u, 3.0f };
+    }
+
+    inline ESSRQuality GetSSRQuality()
+    {
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        return Settings != nullptr ? Settings->SSRQuality : ESSRQuality::Medium;
+    }
+
+    // Screen pixels per trace texel along each axis.
+    inline uint32 GetSSRTraceScale()
+    {
+        return GetSSRQuality() >= ESSRQuality::High ? 1u : 2u;
+    }
+
+    // Hi-Z steps per ray, each either descending into a cell or skipping across one.
+    inline uint32 GetSSRMaxIterations()
+    {
+        switch (GetSSRQuality())
+        {
+        case ESSRQuality::Low:    return 32u;
+        case ESSRQuality::Medium: return 64u;
+        case ESSRQuality::High:   return 64u;
+        case ESSRQuality::Ultra:  return 128u;
+        }
+        return 64u;
+    }
+
+    inline FUIntVector2 GetSSRTraceExtent(const FUIntVector2& ViewExtent)
+    {
+        const uint32 Scale = GetSSRTraceScale();
+        return FUIntVector2(Math::Max((ViewExtent.x + Scale - 1u) / Scale, 1u), Math::Max((ViewExtent.y + Scale - 1u) / Scale, 1u));
+    }
+
+    // Past this the coarsest cells are a handful of texels, which neither the Hi-Z walk nor the blur gains from.
+    inline constexpr uint32 SSRMaxMipLevels = 9;
+
+    inline uint32 GetSSRMipCount(const FUIntVector2& TraceExtent)
+    {
+        const uint32 Largest = Math::Max(Math::Max(TraceExtent.x, TraceExtent.y), 1u);
+        uint32 Levels = 1;
+        while ((Largest >> Levels) > 0u && Levels < SSRMaxMipLevels)
+        {
+            ++Levels;
+        }
+        return Levels;
+    }
+
     // A zero grain would ask for an unbounded task split; floor it.
 
     struct FScopedGPUMarker

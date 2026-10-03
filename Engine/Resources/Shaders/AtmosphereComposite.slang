@@ -7,7 +7,7 @@
 #include "Includes/CloudCommon.slang"
 #include "Includes/GlobalRHIStorage.slang"
 
-// Reflections, aerial perspective, clouds and fog in one HDR read-modify-write, in the order the old passes ran.
+// Aerial perspective, clouds and fog in one HDR read-modify-write, in the order the old passes ran.
 
 static const uint kAtmosphereTermOff = 0xFFFFFFFFu;
 
@@ -37,11 +37,6 @@ struct FPushConstants
     uint  FogShaftDepthIndex;        // raw depth each half-res shaft texel was marched against
     uint  CloudDepthIndex;           // raw depth each half-res cloud texel was marched against
     float CloudFloor;                // altitude of the cloud layer's base
-
-    uint  SSRTraceIndex;             // kAtmosphereTermOff disables screen-space reflections
-    uint  SSRTraceW;
-    uint  SSRTraceH;
-    uint  _Pad0;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -56,52 +51,6 @@ void ComposeTerm(inout FHDRTerm Total, float3 Scale, float3 Offset)
 {
     Total.Scale  *= Scale;
     Total.Offset  = Total.Offset * Scale + Offset;
-}
-
-// Relative view-depth difference at which a trace texel's weight halves.
-static const float kSSRDepthSigma = 0.05;
-
-// The four nearest half-resolution trace texels, weighted by how well the depth each traced from matches this pixel's.
-float3 UpsampleReflectionDelta(int2 Pixel, float Depth)
-{
-    const float2 TracePos = (float2(Pixel) + 0.5) * 0.5 - 0.5;
-    const int2   Base     = int2(floor(TracePos));
-    const float2 F        = TracePos - float2(Base);
-    const int2   MaxTap   = int2(Pass().SSRTraceW, Pass().SSRTraceH) - 1;
-
-    float3 Delta[4];
-    int2   Taps[4];
-    bool   bAny = false;
-    [unroll]
-    for (int i = 0; i < 4; ++i)
-    {
-        Taps[i]  = clamp(Base + int2(i & 1, i >> 1), int2(0, 0), MaxTap);
-        Delta[i] = gTextures2D[Pass().SSRTraceIndex].Load(int3(Taps[i], 0)).rgb;
-        bAny     = bAny || any(Delta[i] != 0.0);
-    }
-
-    // Most of the screen is too rough to reflect, so the depth fetches are skipped there.
-    if (!bAny || Depth <= 0.0)
-    {
-        return float3(0.0);
-    }
-
-    const float Z         = LinearizeSceneDepth(Depth);
-    const float InvSigmaZ = 1.0 / (kSSRDepthSigma * Z);
-
-    float3 Sum       = float3(0.0);
-    float  SumWeight = 0.0;
-    [unroll]
-    for (int i = 0; i < 4; ++i)
-    {
-        // The trace stood each 2x2 block on its top-left pixel.
-        const float  TapZ   = LinearizeSceneDepth(gTextures2D[Pass().DepthIndex].Load(int3(Taps[i] * 2, 0)).r);
-        const float2 Bilin  = lerp(1.0 - F, F, float2(i & 1, i >> 1));
-        const float  Weight = Bilin.x * Bilin.y / (1.0 + abs(TapZ - Z) * InvSigmaZ);
-        Sum       += Delta[i] * Weight;
-        SumWeight += Weight;
-    }
-    return Sum / max(SumWeight, 1e-6);
 }
 
 FHDRTerm AerialPerspectiveTerm(float2 UV, float Depth)
@@ -246,7 +195,6 @@ float4 UpsampleFogShafts(float2 UV, float Depth)
 [vk::constant_id(15)] const uint SPEC_ATMOS_FOG        = 1;
 [vk::constant_id(16)] const uint SPEC_ATMOS_VOLUMETRIC = 1;
 [vk::constant_id(17)] const uint SPEC_ATMOS_SHAFTS     = 1;
-[vk::constant_id(18)] const uint SPEC_ATMOS_SSR        = 1;
 
 float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
 {
@@ -371,12 +319,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     FHDRTerm Total;
     Total.Scale  = float3(1.0);
     Total.Offset = float3(0.0);
-
-    // Reflections replace part of the surface's own shading, so they land before anything in front of it.
-    if (SPEC_ATMOS_SSR != 0 && Pass().SSRTraceIndex != kAtmosphereTermOff)
-    {
-        ComposeTerm(Total, float3(1.0), UpsampleReflectionDelta(P, Depth));
-    }
 
     // Sky already carries the full atmosphere integral, and reverse-Z leaves it at depth 0.
     if (SPEC_ATMOS_AERIAL != 0 && Pass().AerialInScatterIndex != kAtmosphereTermOff && Depth > 0.0)

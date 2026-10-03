@@ -3554,13 +3554,18 @@ namespace Lumina
         }
         CascadeMinTexels = Math::Max(DirectionalLight.CascadeMinTexels, 0.0f);
 
+        // A hard edge needs only the center tap, so a blur of zero drops the rest.
+        const FSunShadowFilter Filter       = GetSunShadowFilter();
+        const float            FilterRadius = Filter.RadiusTexels * Math::Max(DirectionalLight.ShadowBlur, 0.0f);
+        const uint32           FilterTaps   = FilterRadius > 0.0f ? Filter.Taps : 1u;
+
         // Shadow tuning forwarded to the lit pixel shaders via the light buffer.
         LightData.ShadowParams  = FVector4(DirectionalLight.ShadowNormalBias,
                                             DirectionalLight.ShadowDepthBias,
-                                            DirectionalLight.ShadowFilterRadius,
+                                            FilterRadius,
                                             DirectionalLight.CascadeBlend);
         LightData.ShadowParams2 = FVector4(DirectionalLight.ShadowDistanceFade,
-                                            float(DirectionalLight.ShadowSampleCount),
+                                            float(FilterTaps),
                                             0.0f,
                                             0.0f);
 

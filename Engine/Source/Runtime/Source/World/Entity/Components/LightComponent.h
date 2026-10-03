@@ -126,7 +126,7 @@ namespace Lumina
 
         /** RGB color of the directional light. Multiplied by the temperature tint when bUseTemperature is set. */
         PROPERTY(Editable, Color, Category = "Light")
-        FVector3 Color = FVector3(1.0f);
+        FVector3 Color = FVector3(1.0f, 0.86f, 0.70f);
 
         /** Normalized world-space direction pointing FROM the surface TOWARD the sun (the to-light vector). The default (0, 0.3, 0.8) places the sun above the horizon. */
         PROPERTY(Editable, Category = "Light")
@@ -134,7 +134,7 @@ namespace Lumina
 
         /** Brightness multiplier of the directional light. */
         PROPERTY(Editable, Category = "Light", ClampMin = 0.0f)
-        float Intensity = 1.5f;
+        float Intensity = 2.25f;
 
         /** When true, Color is tinted by a physical black-body color from Temperature. */
         PROPERTY(Editable, Category = "Light|Temperature")
@@ -210,13 +210,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.01f, Delta = 0.0001f)
         float ShadowDepthBias = 0.0f;
 
-        /** PCF filter radius in texels of the nearest cascade, held at that world size in the farther ones. 0 = hard. */
-        PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 8.0f, Delta = 0.1f)
-        float ShadowFilterRadius = 2.0f;
-
-        /** PCF taps per pixel. 4 matches Godot's default Soft Low; more smooths the edge at a linear cost. */
-        PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 1, ClampMax = 16)
-        int32 ShadowSampleCount = 4;
+        // Scales the filter width the renderer's Shadow Quality sets, so one sun can be softer or harder. Zero is a hard edge.
+        PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 8.0f, Delta = 0.05f)
+        float ShadowBlur = 1.0f;
 
         /** Fraction of each cascade that cross-fades into the next. 0 is off; pixels in the band sample two cascades. */
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.01f)

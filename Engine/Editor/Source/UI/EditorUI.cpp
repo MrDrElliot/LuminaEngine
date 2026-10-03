@@ -140,6 +140,7 @@
 #include "Tools/AssetEditors/DataTable/DataTableEditorTool.h"
 #include "Thumbnails/AssetTilePainters.h"
 #include "Tools/EditorEntityUtils.h"
+#include "Scene/DefaultScene.h"
 #include "Tools/AssetEditors/AudioGraph/AudioGraphEditorTool.h"
 #include "Tools/AssetEditors/AudioStream/AudioStreamEditorTool.h"
 #include "Tools/AssetEditors/AnimationMontage/AnimationMontageEditorTool.h"
@@ -640,7 +641,7 @@ namespace Lumina
         // The default scene references engine content by path, so it waits until a project load populates the registry.
         if (WorldEditorTool->GetWorld() == World)
         {
-            EditorEntityUtils::PopulateDefaultScene(World.Get());
+            DefaultScene::PopulateWelcomeScene(World.Get());
         }
     }
 

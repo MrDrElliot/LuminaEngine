@@ -869,63 +869,39 @@ namespace Lumina
         }
     }
 
-    void CMaterial::CreateDefaultMaterial()
+    CMaterial* CMaterial::CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const FMaterialParameter> InParameters)
     {
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
         if (ShaderCompiler == nullptr)
         {
             LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
-                     "the default material was not created.");
-            return;
+                     "the built-in material '{}' was not created.", Name.c_str());
+            return nullptr;
         }
 
-        ShaderCompiler->Flush();
+        CMaterial* Material = NewObject<CMaterial>(nullptr, Name);
+        Material->AddToRoot();
+        Material->Parameters.assign(InParameters.begin(), InParameters.end());
 
-        if (DefaultMaterial)
-        {
-            // The root set holds the only strong reference, so unrooting is what destroys it.
-            DefaultMaterial->RemoveFromRoot();
-            DefaultMaterial = nullptr;
-        }
-        
-        DefaultMaterial = NewObject<CMaterial>(nullptr, "DefaultMaterial");
-        DefaultMaterial->AddToRoot();
-        
         FString LoadedPixelString;
         if (!VFS::ReadFile(LoadedPixelString, "/Engine/Resources/Shaders/MaterialShader/BasePixelPass.slang"))
         {
             LOG_ERROR("Failed to find BasePixelPass.slang!");
-            return;
+            return Material;
         }
 
         const char* Token = "$MATERIAL_INPUTS";
-        size_t PixelPos = LoadedPixelString.find(Token);
-
-        FString PixelReplacement;
-        
-        // Starts from the shared neutral surface, so a new field is never left uninitialized here.
-        PixelReplacement += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
-        // Procedural geometry colors itself per vertex, and an imported mesh without a color stream reads white.
-        PixelReplacement += "\tMaterial.Diffuse               = VertexColor.rgb;\n";
-        PixelReplacement += "\tMaterial.Metallic              = 0.0;\n";
-        PixelReplacement += "\tMaterial.Roughness             = 1.0;\n";
-        PixelReplacement += "\tMaterial.Specular              = 0.5;\n";
-        PixelReplacement += "\tMaterial.Emissive              = float3(0.0);\n";
-        PixelReplacement += "\tMaterial.AmbientOcclusion      = 1.0;\n";
-        PixelReplacement += "\tMaterial.Normal                = float3(0.0, 0.0, 1.0);\n";
-        PixelReplacement += "\tMaterial.Opacity               = 1.0;\n";
-        
-        if (PixelPos != FString::npos)
+        if (LoadedPixelString.find(Token) != FString::npos)
         {
-            ReplaceAllTokens(LoadedPixelString, Token, PixelReplacement);
+            ReplaceAllTokens(LoadedPixelString, Token, PixelInputs);
         }
         else
         {
             LOG_ERROR("Missing [$MATERIAL_INPUTS] in base shader!");
         }
-        
+
         const char* VertexToken = "$MATERIAL_VERTEX_INPUTS";
-        // The default material moves no vertices, so its WPO is a no-op.
+        // A built-in material moves no vertices, so its WPO is a no-op.
         const FString VertexReplacement = "\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n";
 
         {
@@ -945,14 +921,15 @@ namespace Lumina
                 FString Source;
                 if (!VFS::ReadFile(Source, FString("/Engine/Resources/Shaders/MaterialShader/") + Stage.Path))
                 {
-                    LOG_ERROR("Failed to read '{}' for the default material; nothing will render.", Stage.Path);
+                    LOG_ERROR("Failed to read '{}' for built-in material '{}'; nothing will render with it.",
+                              Stage.Path, Name.c_str());
                     continue;
                 }
 
                 if (Source.find(VertexToken) == FString::npos)
                 {
-                    LOG_ERROR("'{}' is missing [{}]; the default material cannot build one of its stages.",
-                              Stage.Path, VertexToken);
+                    LOG_ERROR("'{}' is missing [{}]; built-in material '{}' cannot build one of its stages.",
+                              Stage.Path, VertexToken, Name.c_str());
                     continue;
                 }
                 ReplaceAllTokens(Source, VertexToken, VertexReplacement);
@@ -965,9 +942,9 @@ namespace Lumina
                 }
 
                 const EMaterialShaderStage Out = Stage.Stage;
-                ShaderCompiler->CompilerShaderRaw(Move(Source), Move(Options), [Out](const FShaderHeader& Header) mutable
+                ShaderCompiler->CompilerShaderRaw(Move(Source), Move(Options), [Material, Out](const FShaderHeader& Header) mutable
                 {
-                    DefaultMaterial->SetStageBinaries(Out, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+                    Material->SetStageBinaries(Out, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
                 });
             }
         }
@@ -975,36 +952,36 @@ namespace Lumina
         {
             FShaderCompileOptions PixelOptions;
             PixelOptions.TemplateVirtualPath = "/Engine/Resources/Shaders/MaterialShader/BasePixelPass.slang";
-            ShaderCompiler->CompilerShaderRaw(Move(LoadedPixelString), Move(PixelOptions), [](const FShaderHeader& Header) mutable
+            ShaderCompiler->CompilerShaderRaw(Move(LoadedPixelString), Move(PixelOptions), [Material](const FShaderHeader& Header) mutable
             {
-                DefaultMaterial->SetStageBinaries(EMaterialShaderStage::Pixel, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+                Material->SetStageBinaries(EMaterialShaderStage::Pixel, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
             });
         }
 
         {
-            // The deferred compute shader needs BOTH tokens, the WPO reconstruction and the pixel graph.
+            // The deferred compute shader needs both tokens, the WPO reconstruction and the pixel graph.
             FString LoadedDeferredString;
             if (!VFS::ReadFile(LoadedDeferredString, "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang"))
             {
-                LOG_ERROR("Failed to read DeferredMaterial.slang for the default material; nothing will render.");
+                LOG_ERROR("Failed to read DeferredMaterial.slang for built-in material '{}'; nothing will render with it.",
+                          Name.c_str());
             }
             else
             {
                 ReplaceAllTokens(LoadedDeferredString, VertexToken, VertexReplacement);
-                size_t DefPPos = LoadedDeferredString.find(Token);
-                if (DefPPos == FString::npos)
+                if (LoadedDeferredString.find(Token) == FString::npos)
                 {
-                    LOG_ERROR("DeferredMaterial.slang is missing [{}]; the default material cannot build its "
-                              "deferred stage.", Token);
+                    LOG_ERROR("DeferredMaterial.slang is missing [{}]; built-in material '{}' cannot build its "
+                              "deferred stage.", Token, Name.c_str());
                 }
                 else
                 {
-                    ReplaceAllTokens(LoadedDeferredString, Token, PixelReplacement);
+                    ReplaceAllTokens(LoadedDeferredString, Token, PixelInputs);
                     FShaderCompileOptions DeferredOptions;
                     DeferredOptions.TemplateVirtualPath = "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang";
-                    ShaderCompiler->CompilerShaderRaw(Move(LoadedDeferredString), Move(DeferredOptions), [](const FShaderHeader& Header) mutable
+                    ShaderCompiler->CompilerShaderRaw(Move(LoadedDeferredString), Move(DeferredOptions), [Material](const FShaderHeader& Header) mutable
                     {
-                        DefaultMaterial->SetStageBinaries(EMaterialShaderStage::Deferred, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+                        Material->SetStageBinaries(EMaterialShaderStage::Deferred, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
                     });
                 }
             }
@@ -1012,8 +989,44 @@ namespace Lumina
 
         ShaderCompiler->Flush();
 
-        DefaultMaterial->PostLoad();
-        ReportDefaultMaterialReadiness(DefaultMaterial, "default material");
+        Material->PostLoad();
+        ReportDefaultMaterialReadiness(Material, Name.c_str());
+        return Material;
+    }
+
+    void CMaterial::CreateDefaultMaterial()
+    {
+        if (GShaderCompiler == nullptr)
+        {
+            LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
+                     "the default material was not created.");
+            return;
+        }
+
+        // A compile still in flight writes into the material it was started for, so it lands before the unroot.
+        GShaderCompiler->Flush();
+
+        if (DefaultMaterial)
+        {
+            // The root set holds the only strong reference, so unrooting is what destroys it.
+            DefaultMaterial->RemoveFromRoot();
+            DefaultMaterial = nullptr;
+        }
+
+        FString PixelInputs;
+        // Starts from the shared neutral surface, so a new field is never left uninitialized here.
+        PixelInputs += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
+        // Procedural geometry colors itself per vertex, and an imported mesh without a color stream reads white.
+        PixelInputs += "\tMaterial.Diffuse               = VertexColor.rgb;\n";
+        PixelInputs += "\tMaterial.Metallic              = 0.0;\n";
+        PixelInputs += "\tMaterial.Roughness             = 1.0;\n";
+        PixelInputs += "\tMaterial.Specular              = 0.5;\n";
+        PixelInputs += "\tMaterial.Emissive              = float3(0.0);\n";
+        PixelInputs += "\tMaterial.AmbientOcclusion      = 1.0;\n";
+        PixelInputs += "\tMaterial.Normal                = float3(0.0, 0.0, 1.0);\n";
+        PixelInputs += "\tMaterial.Opacity               = 1.0;\n";
+
+        DefaultMaterial = CreateBuiltinMaterial("DefaultMaterial", PixelInputs);
     }
 
     void CMaterial::CreateDefaultTerrainMaterial()

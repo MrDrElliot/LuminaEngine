@@ -507,6 +507,9 @@ namespace Lumina
             GTAODenoise,
             GTAOBlur,
             SSRTrace,
+            SSRPyramid,
+            SSRSurface,
+            SSRMipLevel,
             FogShaft,
             FogShaftDepth,
             Cascade,
@@ -1241,9 +1244,6 @@ namespace Lumina
             float  AerialIntensity          = 0.0f;
             uint32 CloudScatterIndex        = ~0u;
             uint32 CloudDepthIndex          = ~0u;
-            uint32 SSRTraceIndex            = ~0u;
-            uint32 SSRTraceW                = 0;
-            uint32 SSRTraceH                = 0;
             uint32 FogShaftIndex            = ~0u;
             uint32 FogShaftDepthIndex       = ~0u;
         };

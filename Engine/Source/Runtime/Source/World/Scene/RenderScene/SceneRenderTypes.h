@@ -640,7 +640,7 @@ namespace Lumina
 
     struct alignas(16) FGPUGlyph
     {
-        FVector3 Origin;   float Pad0;   // world anchor (entity origin)
+        FVector3 Origin;   float Intensity;   // world anchor (entity origin), HDR color scale
         FVector3 Right;    float Pad1;   // world right axis * worldEmSize
         FVector3 Up;       float Pad2;   // world up axis * worldEmSize
         FVector4 UVRect;                 // u0, v0, u1, v1

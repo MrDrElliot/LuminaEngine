@@ -48,6 +48,7 @@
 #include "SequencerEditMode.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "UI/Tools/EditorEntityUtils.h"
+#include "Scene/DefaultScene.h"
 #include "UI/Properties/PropertyEditContexts.h"
 #include "World/WorldManager.h"
 #include "World/Entity/Components/Component.h"
@@ -3971,7 +3972,9 @@ namespace Lumina
 
     void FWorldEditorTool::GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const
     {
-        EditorEntityUtils::GetDefaultScenePreviewPose(OutLocation, OutTarget);
+        const DefaultScene::FCameraPose Pose = DefaultScene::GetWelcomeCameraPose();
+        OutLocation = Pose.Location;
+        OutTarget   = Pose.Target;
     }
 
     void FWorldEditorTool::UnbindRegistryObservers()

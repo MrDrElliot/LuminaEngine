@@ -173,7 +173,7 @@ namespace Lumina
             {
                 FGPUGlyph& G = GlyphInstances.emplace_back();
                 G.Origin    = Origin;
-                G.Pad0      = 0.0f;
+                G.Intensity = TextComponent.Intensity;
                 G.Right     = RightScaled;
                 G.Pad1      = 0.0f;
                 G.Up        = UpScaled;

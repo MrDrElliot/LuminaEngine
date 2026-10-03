@@ -1358,13 +1358,8 @@ namespace Lumina
             uint32 FogShaftDepthIndex; // bindless 2D SRV of the depth each shaft texel was marched against
             uint32 CloudDepthIndex;    // bindless 2D SRV of the depth each cloud texel was marched against
             float  CloudFloor;         // altitude of the cloud layer's base, so the composite can skip clouds below reach
-
-            uint32 SSRTraceIndex;    // bindless 2D SRV of the half-resolution reflection delta, ~0u when SSR is off
-            uint32 SSRTraceW;
-            uint32 SSRTraceH;
-            uint32 _Pad0;
         };
-        static_assert(sizeof(FAtmosphereCompositePushConstants) == 96,
+        static_assert(sizeof(FAtmosphereCompositePushConstants) == 80,
             "FAtmosphereCompositePushConstants must match AtmosphereComposite.slang::FPushConstants.");
 
         constexpr uint32 AtmosphereTileSize = 8;
@@ -1707,9 +1702,8 @@ namespace Lumina
         const bool bFog    = Frame.Volumetrics.bHasFog;
         const bool bAerial = AtmosphereTerms.AerialInScatterIndex != ~0u;
         const bool bClouds = AtmosphereTerms.CloudScatterIndex != ~0u;
-        const bool bSSR    = AtmosphereTerms.SSRTraceIndex != ~0u;
 
-        if (!bFog && !bAerial && !bClouds && !bSSR)
+        if (!bFog && !bAerial && !bClouds)
         {
             return;
         }
@@ -1760,9 +1754,6 @@ namespace Lumina
         PC.FogShaftDepthIndex = AtmosphereTerms.FogShaftDepthIndex;
 
         PC.CloudFloor         = Math::Max(Frame.Volumetrics.Clouds.LayerBottom, 100.0f);
-        PC.SSRTraceIndex      = AtmosphereTerms.SSRTraceIndex;
-        PC.SSRTraceW          = AtmosphereTerms.SSRTraceW;
-        PC.SSRTraceH          = AtmosphereTerms.SSRTraceH;
 
         auto Spec = [](uint32 Id, bool bOn)
         {
@@ -1775,9 +1766,8 @@ namespace Lumina
             Spec(15u, PC.bFog != 0u),
             Spec(16u, PC.bVolumetric != 0u),
             Spec(17u, PC.FogShaftIndex != ~0u),
-            Spec(18u, bSSR),
         };
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS, TSpan<const RHI::FSpecializationConstant>(CompositeConsts, 6)));
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS, TSpan<const RHI::FSpecializationConstant>(CompositeConsts, std::size(CompositeConsts))));
 
         RHI::CmdDispatch(CL, MakeArgs(PC),
                          RenderUtils::GetGroupCount(Width,  AtmosphereTileSize),
@@ -2486,8 +2476,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScreenSpaceReflectionsPass(RHI::FCmdListH CL)
     {
-        AtmosphereTerms.SSRTraceIndex = ~0u;
-
         const CRendererSettings* RS = GetDefault<CRendererSettings>();
         if (RS == nullptr || !RS->bScreenSpaceReflections || RS->SSRIntensity <= 0.0f)
         {
@@ -2499,98 +2487,260 @@ namespace Lumina
             return;
         }
 
-        static const FShaderH SSRCS = FShaderLibrary::Get("ScreenSpaceReflections.slang");
-        if (!SSRCS)
+        static const FShaderH DownsampleCS = FShaderLibrary::Get("SSRDownsample.slang");
+        static const FShaderH PyramidCS    = FShaderLibrary::Get("SSRHiZ.slang");
+        static const FShaderH TraceCS      = FShaderLibrary::Get("ScreenSpaceReflections.slang");
+        static const FShaderH FilterCS     = FShaderLibrary::Get("SSRFilter.slang");
+        static const FShaderH ResolveCS    = FShaderLibrary::Get("SSRResolve.slang");
+        if (!DownsampleCS || !PyramidCS || !TraceCS || !FilterCS || !ResolveCS)
         {
             return;
         }
 
-        const FSceneImage& Trace = GetNamedImage(ENamedImage::SSRTrace);
-        if (!Trace.IsValid())
+        const FSceneImage& Chain    = GetNamedImage(ENamedImage::SSRTrace);
+        const FSceneImage& Pyramid  = GetNamedImage(ENamedImage::SSRPyramid);
+        const FSceneImage& Surface  = GetNamedImage(ENamedImage::SSRSurface);
+        const FSceneImage& MipLevel = GetNamedImage(ENamedImage::SSRMipLevel);
+        if (!Chain.IsValid() || !Pyramid.IsValid() || !Surface.IsValid() || !MipLevel.IsValid())
         {
             return;
         }
 
         // Only GBuffer pixels reflect, and the slot table that identifies them exists once classify has run.
-        const FMaterialClassifyLayout Layout = MaterialClassifyLayout;
-        if (Layout.NumSlots == 0u)
+        if (MaterialClassifyLayout.NumSlots == 0u)
+        {
+            return;
+        }
+
+        const FSceneImage& HDR   = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
+        const int32 HDRUAV = HDR.GetMipUAVIndex(0);
+        if (HDRUAV < 0)
         {
             return;
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Screen Space Reflections", tracy::Color::Cyan3);
 
-        const FSceneImage& HDR   = GetNamedImage(ENamedImage::HDR);
-        const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
+        const uint32 ScreenW  = HDR.GetSizeX();
+        const uint32 ScreenH  = HDR.GetSizeY();
+        const uint32 TraceW   = Chain.GetSizeX();
+        const uint32 TraceH   = Chain.GetSizeY();
+        const uint32 Scale    = GetSSRTraceScale();
+        const uint32 MipCount = Math::Min(Chain.GetNumMips(), Pyramid.GetNumMips());
 
-        const int32 TraceUAV = Trace.GetMipUAVIndex(0);
-        if (TraceUAV < 0)
+        const uint32 GBufferA  = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
+        const uint32 GBufferB  = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
+        const uint32 GBufferC  = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
+        const uint32 GBufferD  = (uint32)GetNamedImage(ENamedImage::GBufferD).GetResourceID();
+        const uint32 SlotImage = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
+
+        const auto ComputeToCompute = [CL]()
         {
-            return;
-        }
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        };
 
         // Lighting and the forward passes before this wrote HDR, which the trace samples as scene color.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute | RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
-        struct FSSRPushConstants
         {
-            uint32      GBufferAIndex;
-            uint32      GBufferBIndex;
-            uint32      GBufferCIndex;
-            uint32      GBufferDIndex;
+            struct FDownsamplePushConstants
+            {
+                uint32 GBufferAIndex;
+                uint32 GBufferBIndex;
+                uint32 GBufferCIndex;
+                uint32 GBufferDIndex;
 
-            uint32      DepthIndex;
-            uint32      OutputUAV;
-            uint32      SceneColorIndex;
-            uint32      SlotImageIndex;
+                uint32 DepthIndex;
+                uint32 SlotImageIndex;
+                uint32 OutDepthUAV;
+                uint32 OutSurfaceUAV;
 
-            uint32      ScreenW;
-            uint32      ScreenH;
-            uint32      TraceW;
-            uint32      TraceH;
+                uint32 ScreenW;
+                uint32 ScreenH;
+                uint32 TraceW;
+                uint32 TraceH;
 
-            uint32      MaxSteps;
-            float       MaxDistance;
-            float       Thickness;
-            float       Intensity;
+                uint32 Scale;
+                uint32 _Pad0;
+                uint32 _Pad1;
+                uint32 _Pad2;
+            } PC = {};
+            static_assert(sizeof(FDownsamplePushConstants) == 64, "FDownsamplePushConstants must match SSRDownsample.slang FSSRDownsampleArgs.");
 
-            float       RoughnessFade;
-            uint32      _Pad0;
-            uint32      _Pad1;
-            uint32      _Pad2;
-        } PC = {};
-        static_assert(sizeof(FSSRPushConstants) == 80, "FSSRPushConstants must match ScreenSpaceReflections.slang FSSRArgs.");
+            PC.GBufferAIndex  = GBufferA;
+            PC.GBufferBIndex  = GBufferB;
+            PC.GBufferCIndex  = GBufferC;
+            PC.GBufferDIndex  = GBufferD;
+            PC.DepthIndex     = (uint32)Depth.GetResourceID();
+            PC.SlotImageIndex = SlotImage;
+            PC.OutDepthUAV    = (uint32)Pyramid.GetMipUAVIndex(0);
+            PC.OutSurfaceUAV  = (uint32)Surface.GetMipUAVIndex(0);
+            PC.ScreenW        = ScreenW;
+            PC.ScreenH        = ScreenH;
+            PC.TraceW         = TraceW;
+            PC.TraceH         = TraceH;
+            PC.Scale          = Scale;
 
-        PC.GBufferAIndex   = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
-        PC.GBufferBIndex   = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
-        PC.GBufferCIndex   = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
-        PC.GBufferDIndex   = (uint32)GetNamedImage(ENamedImage::GBufferD).GetResourceID();
-        PC.DepthIndex      = (uint32)Depth.GetResourceID();
-        PC.OutputUAV       = (uint32)TraceUAV;
-        PC.SceneColorIndex = (uint32)HDR.GetResourceID();
-        PC.SlotImageIndex  = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
-        PC.ScreenW         = HDR.GetSizeX();
-        PC.ScreenH         = HDR.GetSizeY();
-        PC.TraceW          = Trace.GetSizeX();
-        PC.TraceH          = Trace.GetSizeY();
-        PC.MaxSteps        = (uint32)Math::Clamp(RS->SSRMaxSteps, 4, 128);
-        PC.MaxDistance     = Math::Max(RS->SSRMaxDistance, 1.0f);
-        PC.Thickness       = Math::Max(RS->SSRThickness, 0.01f);
-        PC.Intensity       = Math::Clamp(RS->SSRIntensity, 0.0f, 1.0f);
-        PC.RoughnessFade   = Math::Clamp(RS->SSRRoughnessFade, 0.0f, 1.0f);
+            DispatchCompute(CL, DownsampleCS, PC, RenderUtils::GetGroupCount(TraceW, 8u), RenderUtils::GetGroupCount(TraceH, 8u), 1u);
+            ComputeToCompute();
+        }
 
-        DispatchCompute(CL, SSRCS, PC, RenderUtils::GetGroupCount(PC.TraceW, 8u), RenderUtils::GetGroupCount(PC.TraceH, 8u), 1u);
+        // Shared by SSRHiZ.slang and SSRFilter.slang, which both build one level of a chain from the level below.
+        struct FChainLevelPushConstants
+        {
+            uint32 ChainIndex;
+            uint32 SourceMip;
+            uint32 DestUAV;
+            uint32 DestMip;
 
-        // The atmosphere composite adds the upsampled delta in the same HDR read-modify-write as fog.
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            uint32 SourceW;
+            uint32 SourceH;
+            uint32 DestW;
+            uint32 DestH;
+        };
+        static_assert(sizeof(FChainLevelPushConstants) == 32, "FChainLevelPushConstants must match FSSRChainLevelArgs.");
 
-        AtmosphereTerms.SSRTraceIndex = (uint32)Trace.GetResourceID();
-        AtmosphereTerms.SSRTraceW     = PC.TraceW;
-        AtmosphereTerms.SSRTraceH     = PC.TraceH;
+        for (uint32 Mip = 1; Mip < MipCount; ++Mip)
+        {
+            FChainLevelPushConstants PC = {};
+            PC.ChainIndex = (uint32)Pyramid.GetResourceID();
+            PC.SourceMip  = Mip - 1u;
+            PC.DestUAV    = (uint32)Pyramid.GetMipUAVIndex(Mip);
+            PC.DestMip    = Mip;
+            PC.SourceW    = Math::Max(TraceW >> (Mip - 1u), 1u);
+            PC.SourceH    = Math::Max(TraceH >> (Mip - 1u), 1u);
+            PC.DestW      = Math::Max(TraceW >> Mip, 1u);
+            PC.DestH      = Math::Max(TraceH >> Mip, 1u);
+
+            DispatchCompute(CL, PyramidCS, PC, RenderUtils::GetGroupCount(PC.DestW, 8u), RenderUtils::GetGroupCount(PC.DestH, 8u), 1u);
+            ComputeToCompute();
+        }
+
+        {
+            struct FTracePushConstants
+            {
+                uint32 PyramidIndex;
+                uint32 SurfaceIndex;
+                uint32 SceneColorIndex;
+                uint32 OutColorUAV;
+
+                uint32 OutMipUAV;
+                uint32 TraceW;
+                uint32 TraceH;
+                uint32 MipCount;
+
+                uint32 MaxIterations;
+                float  DepthTolerance;
+                float  FadeIn;
+                float  FadeOut;
+
+                float  MaxRoughness;
+                uint32 DepthIndex;
+                uint32 ScreenW;
+                uint32 ScreenH;
+
+                uint32 Scale;
+                uint32 _Pad0;
+                uint32 _Pad1;
+                uint32 _Pad2;
+            } PC = {};
+            static_assert(sizeof(FTracePushConstants) == 80, "FTracePushConstants must match ScreenSpaceReflections.slang FSSRTraceArgs.");
+
+            PC.PyramidIndex    = (uint32)Pyramid.GetResourceID();
+            PC.SurfaceIndex    = (uint32)Surface.GetResourceID();
+            PC.SceneColorIndex = (uint32)HDR.GetResourceID();
+            PC.OutColorUAV     = (uint32)Chain.GetMipUAVIndex(0);
+            PC.OutMipUAV       = (uint32)MipLevel.GetMipUAVIndex(0);
+            PC.TraceW          = TraceW;
+            PC.TraceH          = TraceH;
+            PC.MipCount        = MipCount;
+            PC.MaxIterations   = GetSSRMaxIterations();
+            PC.DepthTolerance  = Math::Max(RS->SSRDepthTolerance, 0.01f);
+            PC.FadeIn          = Math::Max(RS->SSRFadeIn, 0.0f);
+            PC.FadeOut         = Math::Max(RS->SSRFadeOut, 0.0f);
+            PC.MaxRoughness    = Math::Clamp(RS->SSRMaxRoughness, 0.0f, 1.0f);
+            PC.DepthIndex      = (uint32)Depth.GetResourceID();
+            PC.ScreenW         = ScreenW;
+            PC.ScreenH         = ScreenH;
+            PC.Scale           = Scale;
+
+            DispatchCompute(CL, TraceCS, PC, RenderUtils::GetGroupCount(TraceW, 8u), RenderUtils::GetGroupCount(TraceH, 8u), 1u);
+            ComputeToCompute();
+        }
+
+        for (uint32 Mip = 1; Mip < MipCount; ++Mip)
+        {
+            FChainLevelPushConstants PC = {};
+            PC.ChainIndex = (uint32)Chain.GetResourceID();
+            PC.SourceMip  = Mip - 1u;
+            PC.DestUAV    = (uint32)Chain.GetMipUAVIndex(Mip);
+            PC.DestMip    = Mip;
+            PC.SourceW    = Math::Max(TraceW >> (Mip - 1u), 1u);
+            PC.SourceH    = Math::Max(TraceH >> (Mip - 1u), 1u);
+            PC.DestW      = Math::Max(TraceW >> Mip, 1u);
+            PC.DestH      = Math::Max(TraceH >> Mip, 1u);
+
+            DispatchCompute(CL, FilterCS, PC, RenderUtils::GetGroupCount(PC.DestW, 8u), RenderUtils::GetGroupCount(PC.DestH, 8u), 1u);
+            ComputeToCompute();
+        }
+
+        {
+            struct FResolvePushConstants
+            {
+                uint32 GBufferAIndex;
+                uint32 GBufferBIndex;
+                uint32 GBufferCIndex;
+                uint32 GBufferDIndex;
+
+                uint32 DepthIndex;
+                uint32 SlotImageIndex;
+                uint32 PyramidIndex;
+                uint32 SurfaceIndex;
+
+                uint32 ChainIndex;
+                uint32 MipLevelIndex;
+                uint32 HDRUAV;
+                uint32 Scale;
+
+                uint32 ScreenW;
+                uint32 ScreenH;
+                uint32 TraceW;
+                uint32 TraceH;
+
+                float  Intensity;
+                float  MaxRoughness;
+                uint32 _Pad1;
+                uint32 _Pad2;
+            } PC = {};
+            static_assert(sizeof(FResolvePushConstants) == 80, "FResolvePushConstants must match SSRResolve.slang FSSRResolveArgs.");
+
+            PC.GBufferAIndex  = GBufferA;
+            PC.GBufferBIndex  = GBufferB;
+            PC.GBufferCIndex  = GBufferC;
+            PC.GBufferDIndex  = GBufferD;
+            PC.DepthIndex     = (uint32)Depth.GetResourceID();
+            PC.SlotImageIndex = SlotImage;
+            PC.PyramidIndex   = (uint32)Pyramid.GetResourceID();
+            PC.SurfaceIndex   = (uint32)Surface.GetResourceID();
+            PC.ChainIndex     = (uint32)Chain.GetResourceID();
+            PC.MipLevelIndex  = (uint32)MipLevel.GetResourceID();
+            PC.HDRUAV         = (uint32)HDRUAV;
+            PC.Scale          = Scale;
+            PC.ScreenW        = ScreenW;
+            PC.ScreenH        = ScreenH;
+            PC.TraceW         = TraceW;
+            PC.TraceH         = TraceH;
+            PC.Intensity      = Math::Clamp(RS->SSRIntensity, 0.0f, 1.0f);
+            PC.MaxRoughness   = Math::Clamp(RS->SSRMaxRoughness, 0.0f, 1.0f);
+
+            DispatchCompute(CL, ResolveCS, PC, RenderUtils::GetGroupCount(ScreenW, 8u), RenderUtils::GetGroupCount(ScreenH, 8u), 1u);
+            ComputeToCompute();
+        }
     }
 
     void FDefaultSceneRenderer::AerialPerspectivePass(RHI::FCmdListH CL)

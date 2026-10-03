@@ -1205,6 +1205,9 @@ namespace Lumina
         case ENamedImage::GTAODenoise:        return "Scene.GTAODenoise";
         case ENamedImage::GTAOBlur:           return "Scene.GTAOBlur";
         case ENamedImage::SSRTrace:           return "Scene.SSRTrace";
+        case ENamedImage::SSRPyramid:         return "Scene.SSRPyramid";
+        case ENamedImage::SSRSurface:         return "Scene.SSRSurface";
+        case ENamedImage::SSRMipLevel:        return "Scene.SSRMipLevel";
         case ENamedImage::FogShaft:           return "Scene.FogShaft";
         case ENamedImage::FogShaftDepth:      return "Scene.FogShaftDepth";
         case ENamedImage::Cascade:            return "Scene.Cascade";
@@ -1294,6 +1297,9 @@ namespace Lumina
         case ENamedImage::GTAODenoise:
         case ENamedImage::GTAOBlur:
         case ENamedImage::SSRTrace:
+        case ENamedImage::SSRPyramid:
+        case ENamedImage::SSRSurface:
+        case ENamedImage::SSRMipLevel:
         case ENamedImage::FogShaft:
         case ENamedImage::FogShaftDepth:
             return true;
@@ -1371,12 +1377,29 @@ namespace Lumina
             return true;
         }
 
-        // Half resolution, the trace's reflection delta before SSRComposite upsamples it into HDR.
+        // At the trace resolution, the traced reflection and the blur chain the resolve picks a level from by roughness.
         case ENamedImage::SSRTrace:
-            OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
-            OutDesc.Format    = EFormat::RGBA16_FLOAT;
+        // At the trace resolution, the closest depth of each block and the coarser cells the trace skips empty space with.
+        case ENamedImage::SSRPyramid:
+        {
+            const FUIntVector2 Size = GetSSRTraceExtent(Extent);
+            OutDesc.Dimension = FUIntVector3(Size.x, Size.y, 1);
+            OutDesc.Format    = (Image == ENamedImage::SSRTrace) ? EFormat::RGBA16_FLOAT : EFormat::R32_FLOAT;
+            OutDesc.MipCount  = GetSSRMipCount(Size);
             OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             return true;
+        }
+
+        // At the trace resolution, the normal and roughness of the pixel each pyramid texel kept, and each texel's blur level.
+        case ENamedImage::SSRSurface:
+        case ENamedImage::SSRMipLevel:
+        {
+            const FUIntVector2 Size = GetSSRTraceExtent(Extent);
+            OutDesc.Dimension = FUIntVector3(Size.x, Size.y, 1);
+            OutDesc.Format    = (Image == ENamedImage::SSRMipLevel) ? EFormat::R16_FLOAT : EFormat::RGBA16_FLOAT;
+            OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            return true;
+        }
 
         // Half resolution, the far-field fog segment AtmosphereComposite upsamples by the depth each texel marched against.
         case ENamedImage::FogShaft:
@@ -1433,7 +1456,7 @@ namespace Lumina
             FSceneImage& Slot = View.Images[(int)Image];
             if (Slot.IsValid())
             {
-                // GTAO's trace resolution follows its quality level, so a level change resizes those targets here.
+                // GTAO's and SSR's trace resolutions follow their quality levels, so a level change resizes those targets here.
                 if (Slot.GetSizeX() == Desc.Dimension.x && Slot.GetSizeY() == Desc.Dimension.y)
                 {
                     return;
@@ -1447,10 +1470,9 @@ namespace Lumina
 
         Want(ENamedImage::Accum,           bTranslucency);
         Want(ENamedImage::Revealage,       bTranslucency);
-        // SSR needs the same scene-color snapshot the water pass refracts through.
         const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>();
         const bool bSSR = RendererSettings != nullptr && RendererSettings->bScreenSpaceReflections;
-        Want(ENamedImage::WaterRefraction, bWater || bSSR);
+        Want(ENamedImage::WaterRefraction, bWater);
         Want(ENamedImage::SceneDepthCopy,  bWater);
         Want(ENamedImage::DBufferA,        bDecals);
         Want(ENamedImage::DBufferB,        bDecals);
@@ -1471,6 +1493,9 @@ namespace Lumina
         Want(ENamedImage::GTAODenoise,      bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::GTAOBlur,         bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::SSRTrace,         bSSR,  /*bMipUAVs*/ true);
+        Want(ENamedImage::SSRPyramid,       bSSR,  /*bMipUAVs*/ true);
+        Want(ENamedImage::SSRSurface,       bSSR,  /*bMipUAVs*/ true);
+        Want(ENamedImage::SSRMipLevel,      bSSR,  /*bMipUAVs*/ true);
 
         const bool bFogShafts = Frame.Volumetrics.bHasFog && Frame.Volumetrics.FarShaftSteps > 0u;
         Want(ENamedImage::FogShaft,         bFogShafts, /*bMipUAVs*/ true);

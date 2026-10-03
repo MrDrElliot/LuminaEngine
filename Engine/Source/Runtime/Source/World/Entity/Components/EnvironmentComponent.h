@@ -92,7 +92,7 @@ namespace Lumina
 
         /** Exposure on dynamic sky scattering before write. */
         PROPERTY(Editable, Category = "Sky|Dynamic", ClampMin = 0.05f, ClampMax = 8.0f)
-        float SkyExposure = 0.5f;
+        float SkyExposure = 0.25f;
 
         /** Mie phase asymmetry (0 = isotropic, ~0.76 = strong forward scatter). */
         PROPERTY(Editable, Category = "Sky|Dynamic", ClampMin = -0.99f, ClampMax = 0.99f)

@@ -8,7 +8,7 @@
 // Must match FGPUGlyph in SceneRenderTypes.h (scalar layout, 96B).
 struct FGPUGlyph
 {
-    float3 Origin;   float _p0;   // world anchor (entity origin)
+    float3 Origin;   float Intensity;   // world anchor (entity origin), HDR color scale
     float3 Right;    float _p1;   // world right axis * worldEmSize
     float3 Up;       float _p2;   // world up axis * worldEmSize
     float4 UVRect;                // u0, v0 (top-left), u1, v1 (bottom-right)

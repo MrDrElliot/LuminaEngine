@@ -1,7 +1,7 @@
 ﻿#include "EditorPCH.h"
 #include "WorldFactory.h"
 
-#include "UI/Tools/EditorEntityUtils.h"
+#include "Scene/DefaultScene.h"
 
 
 namespace Lumina
@@ -10,7 +10,7 @@ namespace Lumina
     {
         CWorld* World = NewObject<CWorld>(Package, Name);
 
-        EditorEntityUtils::PopulateDefaultScene(World);
+        DefaultScene::PopulateStarterLevel(World);
 
         return World;
     }

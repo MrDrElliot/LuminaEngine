@@ -46,13 +46,17 @@ if (-not $HasPassword -and -not $HasSecret)
 
 # Single source of truth for the version, same header the runtime compiles against.
 $VersionHeader = Join-Path $RepoRoot "Engine\Source\Runtime\Source\Lumina.h"
-$VersionMatch = Select-String -Path $VersionHeader -Pattern '#define\s+LUMINA_VERSION\s+"([^"]+)"'
-if ($null -eq $VersionMatch)
+$VersionParts = foreach ($Part in "MAJOR", "MINOR", "PATCH")
 {
-    throw "Could not read LUMINA_VERSION from $VersionHeader."
+    $PartMatch = Select-String -Path $VersionHeader -Pattern "#define\s+LUMINA_VERSION_$Part\s+(\d+)"
+    if ($null -eq $PartMatch)
+    {
+        throw "Could not read LUMINA_VERSION_$Part from $VersionHeader."
+    }
+    $PartMatch.Matches[0].Groups[1].Value
 }
 
-$Version = "$($VersionMatch.Matches[0].Groups[1].Value)-$Configuration"
+$Version = "$($VersionParts -join '.')-$Configuration"
 
 # Mirrors WindowsCrashReporter.cpp ReadGitCommit exactly: HEAD, resolve the ref, first 8 chars.
 # The runtime appends the commit so reports from source builds are attributable, and BugSplat pairs

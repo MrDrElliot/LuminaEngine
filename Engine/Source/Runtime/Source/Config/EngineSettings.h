@@ -227,6 +227,26 @@ namespace Lumina
         Ultra,
     };
 
+    // How many taps the sun's soft shadow filter takes and how wide it reaches, matching Godot's soft shadow levels.
+    REFLECT()
+    enum class EShadowQuality : uint8
+    {
+        Low,
+        Medium,
+        High,
+        Ultra,
+    };
+
+    // Low and Medium trace at half resolution, High and Ultra at full; each step up also walks further per ray.
+    REFLECT()
+    enum class ESSRQuality : uint8
+    {
+        Low,
+        Medium,
+        High,
+        Ultra,
+    };
+
     // S2x and 4x are absent because both add 2x MSAA, which a visibility-buffer deferred path does not run.
     REFLECT()
     enum class ESMAAMode : uint8
@@ -293,29 +313,37 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows", ClampMin = 128, ClampMax = 1024)
         int32 PointShadowResolution = 512;
 
+        // Sun shadow filtering; a low sun stretches each shadow texel along the ground, which only more taps hide.
+        PROPERTY(Editable, Category = "Shadows")
+        EShadowQuality ShadowQuality = EShadowQuality::High;
+
         // Multiplies every mesh's imported LOD switch distances, so a close third-person camera can push them out.
         PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.25f, ClampMax = 16.0f, Delta = 0.25f)
         float LODDistanceScale = 1.0f;
 
         /** Trace reflections against the depth buffer, falling back to the prefiltered cube off-screen. */
         PROPERTY(Editable, Category = "Screen Space Reflections")
-        bool bScreenSpaceReflections = true;
+        bool bScreenSpaceReflections = false;
 
-        /** Ray-march steps per pixel; higher resolves thinner geometry but costs proportionally. */
-        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 4, ClampMax = 128)
-        int32 SSRMaxSteps = 32;
+        // Full resolution removes the half-resolution edge on near-mirror surfaces and costs roughly four times the trace.
+        PROPERTY(Editable, Category = "Screen Space Reflections")
+        ESSRQuality SSRQuality = ESSRQuality::Medium;
 
-        /** How far a reflection ray travels before giving up and falling back to the cube. */
-        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 1.0f, Units = "m")
-        float SSRMaxDistance = 40.0f;
-
-        /** Assumed depth of screen geometry; too small drops hits, too large reflects hidden surfaces. */
+        // How far behind a surface a ray may pass and still count as hitting it; too large reflects hidden surfaces.
         PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.01f, Units = "m")
-        float SSRThickness = 0.5f;
+        float SSRDepthTolerance = 0.2f;
 
-        /** Roughness at which SSR has fully handed back to the cube. Mirror-only without temporal reuse. */
+        // Exponent on the screen distance a ray covers, which eases contact reflections in. Zero disables it.
+        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 8.0f)
+        float SSRFadeIn = 0.15f;
+
+        // Exponent on the screen distance left, which eases out rays that cross most of the screen. Zero disables it.
+        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 8.0f)
+        float SSRFadeOut = 2.0f;
+
+        // Roughness above which the prefiltered environment takes over entirely; the hand-off starts at three quarters of it.
         PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 1.0f)
-        float SSRRoughnessFade = 0.4f;
+        float SSRMaxRoughness = 0.6f;
 
         /** Overall strength of the traced reflection against the prefiltered fallback. */
         PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 1.0f)

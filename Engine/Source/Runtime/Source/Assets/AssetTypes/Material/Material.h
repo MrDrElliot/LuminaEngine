@@ -123,6 +123,9 @@ namespace Lumina
         static CMaterial* GetDefaultTerrainMaterial();
 
         static void CreateDefaultMaterial();
+
+        // Compiles a rooted material from a pixel-inputs snippet; the caller owns the root reference.
+        static CMaterial* CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const FMaterialParameter> InParameters = {});
         static void CreateDefaultTerrainMaterial();
 
         /** Copy Spirv into the stage's serialized blob (no-op self-copy safe) and (re)commit its

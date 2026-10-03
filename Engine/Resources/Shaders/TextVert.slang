@@ -27,6 +27,7 @@ VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex
     VertexOutput Output;
     Output.UV       = float2(U, V);
     Output.Color    = UnpackColor(Glyph.Color);
+    Output.Color.rgb *= Glyph.Intensity;
     Output.EntityID = Glyph.EntityID;
     Output.Position = WorldToClip(WorldPos);
     return Output;

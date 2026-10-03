@@ -69,6 +69,10 @@ namespace Lumina
         PROPERTY(Editable, Color, Category = "Text")
         FVector4 Color = FVector4(1.0f);
 
+        // Scales Color past the 0 to 1 a packed color holds, so text above 1 glows through bloom.
+        PROPERTY(Editable, Category = "Text", ClampMin = 0.0f)
+        float Intensity = 1.0f;
+
         PROPERTY(Editable, Category = "Text")
         ETextHorizontalAlign HorizontalAlign = ETextHorizontalAlign::Center;
 
@@ -99,6 +103,9 @@ namespace Lumina
 
         FUNCTION()
         void SetColor(const FVector4& InColor) { Color = InColor; }
+
+        FUNCTION()
+        void SetIntensity(float InIntensity) { Intensity = InIntensity; }
 
         FUNCTION()
         void SetBillboard(bool bInBillboard) { bBillboard = bInBillboard; }

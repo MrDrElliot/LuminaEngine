@@ -29,7 +29,7 @@ namespace Lumina
 
         /** Tone mapper applied after grading. */
         PROPERTY(Editable, Category = "Post Process")
-        EToneMapper ToneMapper = EToneMapper::ACES;
+        EToneMapper ToneMapper = EToneMapper::AGX;
         
         /** Exposure compensation in stops (EV); +1 doubles, -1 halves. With auto-exposure on, this biases the adapted result. */
         PROPERTY(Editable, Category = "Post Process|Exposure", ClampMin = -8.0f, ClampMax = 8.0f)
@@ -70,11 +70,11 @@ namespace Lumina
 
         /** Contrast around mid-gray (0.18); 1.0 = no change. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.0f, ClampMax = 2.0f)
-        float Contrast = 1.0f;
+        float Contrast = 1.08f;
 
         /** 0 = grayscale, 1 = unchanged. Rec.709 luma. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.0f, ClampMax = 4.0f)
-        float Saturation = 1.0f;
+        float Saturation = 1.1f;
 
         /** Display-space gamma; 1.0 = no change. */
         PROPERTY(Editable, Category = "Post Process|Tone", ClampMin = 0.1f, ClampMax = 4.0f)
@@ -104,7 +104,7 @@ namespace Lumina
 
         /** Corner darkening; 0 = off. */
         PROPERTY(Editable, Category = "Post Process|Vignette", ClampMin = 0.0f, ClampMax = 1.0f)
-        float VignetteIntensity = 0.0f;
+        float VignetteIntensity = 0.3f;
 
         /** 0 = elliptical (matches aspect), 1 = circular. */
         PROPERTY(Editable, Category = "Post Process|Vignette", ClampMin = 0.0f, ClampMax = 1.0f)
@@ -112,7 +112,7 @@ namespace Lumina
 
         /** Falloff width; 0 = hard ring, 1 = soft. */
         PROPERTY(Editable, Category = "Post Process|Vignette", ClampMin = 0.01f, ClampMax = 1.0f)
-        float VignetteSmoothness = 0.5f;
+        float VignetteSmoothness = 0.55f;
 
         /** Vignette tint. */
         PROPERTY(Editable, Color, Category = "Post Process|Vignette")
@@ -120,11 +120,11 @@ namespace Lumina
 
         /** Bloom strength; 0 skips bloom passes entirely. 0.04-0.12 cinematic, >0.3 stylized. */
         PROPERTY(Editable, Category = "Post Process|Bloom", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.005f)
-        float BloomIntensity = 0.0f;
+        float BloomIntensity = 0.45f;
 
         /** Brightness threshold in linear scene units (pre-tone-map). ~1.0 catches sun/lights without leaking mids. */
         PROPERTY(Editable, Category = "Post Process|Bloom", ClampMin = 0.0f, ClampMax = 16.0f, Delta = 0.05f)
-        float BloomThreshold = 1.0f;
+        float BloomThreshold = 0.5f;
 
         /** Soft-knee width; 0 = hard cutoff, 0.5 = standard cinematic soft knee. */
         PROPERTY(Editable, Category = "Post Process|Bloom", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
@@ -133,7 +133,7 @@ namespace Lumina
         /** How far the wide halo spreads: each coarser bloom octave contributes Scatter x the
         previous one. ~0.85 cinematic, 1 = flat sum of all octaves, low = tight glow only. */
         PROPERTY(Editable, Category = "Post Process|Bloom", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
-        float BloomScatter = 0.85f;
+        float BloomScatter = 0.8f;
 
         /** Bloom tint. */
         PROPERTY(Editable, Color, Category = "Post Process|Bloom")
