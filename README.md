@@ -12,7 +12,7 @@
 [![Vulkan](https://img.shields.io/badge/Vulkan-renderer-red)](https://www.vulkan.org/)
 [![Discord](https://img.shields.io/discord/1193738186892005387?label=Discord&logo=discord)](https://discord.gg/xQSB7CRzQE)
 
-[Website](https://luminagameengine.com) &bull; [Discord](https://discord.gg/xQSB7CRzQE) &bull; [Documentation](https://luminagameengine.com/getting-started/introduction/)
+[Website](https://luminagameengine.com) &bull; [Discord](https://discord.gg/xQSB7CRzQE) &bull; [Documentation](https://luminagameengine.com/getting-started/introduction/) &bull; [Support](#support)
 
 </div>
 
@@ -42,6 +42,7 @@
   - [Contributing](#contributing)
     - [Workflow](#workflow)
     - [Requirements](#requirements-1)
+  - [Support](#support)
   - [Third-Party Dependencies](#third-party-dependencies)
   - [Acknowledgments](#acknowledgments)
   - [License](#license)
@@ -501,6 +502,20 @@ documentation improvements.
 - Adherence to existing architecture patterns
 - Tests where appropriate
 - Updated documentation as needed
+
+---
+
+## Support
+
+Lumina is a passion project built and maintained in the open. If you find it
+useful, [support Lumina on Patreon](https://www.patreon.com/c/DrElliot).
+Your support helps sustain work on the engine, documentation, and future
+releases.
+
+You can also help by [contributing code or documentation](CONTRIBUTING.md),
+[reporting bugs or sharing ideas](https://github.com/MrDrElliot/LuminaEngine/issues),
+and telling other developers about Lumina. Every form of support helps the
+project grow. Thank you for being part of it.
 
 ---
 
