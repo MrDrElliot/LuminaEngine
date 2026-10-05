@@ -53,13 +53,10 @@ void ComposeTerm(inout FHDRTerm Total, float3 Scale, float3 Offset)
     Total.Offset  = Total.Offset * Scale + Offset;
 }
 
-FHDRTerm AerialPerspectiveTerm(float2 UV, float Depth)
+FHDRTerm AerialPerspectiveTerm(float2 UV, float3 ViewPos)
 {
-    float3 ViewPos  = ReconstructViewPos(UV, Depth, GetInverseCameraProjection());
-    float3 WorldPos = mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz;
-
     // Inverse of the LUT's squared slice spacing; a linear lookup here reads the wrong slice.
-    float RayDist = length(WorldPos - GetCameraPosition());
+    float RayDist = length(ViewPos);
     float W       = saturate(sqrt(RayDist / max(Pass().AerialRange, 1.0)));
 
     float3 UVW       = float3(UV, W);
@@ -196,7 +193,7 @@ float4 UpsampleFogShafts(float2 UV, float Depth)
 [vk::constant_id(16)] const uint SPEC_ATMOS_VOLUMETRIC = 1;
 [vk::constant_id(17)] const uint SPEC_ATMOS_SHAFTS     = 1;
 
-float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
+float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth, float3 SurfaceViewPos)
 {
     FExponentialHeightFogParams uFog = Scene().FogParams;
 
@@ -213,7 +210,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth)
     float ViewDist;                                                 // view-Z distance to the surface
     if (!bSky)
     {
-        ViewDist = ReconstructViewPos(UV, Depth, GetInverseCameraProjection()).z;
+        ViewDist = SurfaceViewPos.z;
     }
     else
     {
@@ -320,10 +317,13 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     Total.Scale  = float3(1.0);
     Total.Offset = float3(0.0);
 
+    // Shared by every term below; sky has no surface and never reads it.
+    const float3 ViewPos = Depth > 0.0 ? ReconstructViewPos(UV, Depth, GetInverseCameraProjection()) : float3(0.0, 0.0, 0.0);
+
     // Sky already carries the full atmosphere integral, and reverse-Z leaves it at depth 0.
     if (SPEC_ATMOS_AERIAL != 0 && Pass().AerialInScatterIndex != kAtmosphereTermOff && Depth > 0.0)
     {
-        const FHDRTerm Aerial = AerialPerspectiveTerm(UV, Depth);
+        const FHDRTerm Aerial = AerialPerspectiveTerm(UV, ViewPos);
         ComposeTerm(Total, Aerial.Scale, Aerial.Offset);
     }
 
@@ -331,7 +331,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float PlanetCurvatureMargin = 0.99;
     const float CloudGap       = max(Pass().CloudFloor - GetCameraPosition().y, 0.0) * PlanetCurvatureMargin;
     const bool  bCloudReachable = Depth <= 0.0
-        || length(ReconstructViewPos(UV, Depth, GetInverseCameraProjection())) >= CloudGap;
+        || length(ViewPos) >= CloudGap;
     if (SPEC_ATMOS_CLOUDS != 0 && Pass().CloudScatterIndex != kAtmosphereTermOff && bCloudReachable)
     {
         float4 Cloud = UpsampleClouds(UV, Depth);
@@ -343,7 +343,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     if (SPEC_ATMOS_FOG != 0 && Pass().bFog != 0)
     {
-        float4 Fog = IntegrateFog(UV, PixelPos, Depth);
+        float4 Fog = IntegrateFog(UV, PixelPos, Depth, ViewPos);
         ComposeTerm(Total, float3(1.0 - Fog.a), Fog.rgb);
     }
 

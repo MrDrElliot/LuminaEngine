@@ -1005,6 +1005,22 @@ namespace Lumina::ECS::Utils
         {
             State->DirtyBodies.Enqueue(Entity);
         }
+        // Read before writing, since parallel writers storing to one line every call serialize on it.
+        if (!State->bAnyDirty.load(std::memory_order_relaxed))
+        {
+            State->bAnyDirty.store(true, std::memory_order_relaxed);
+        }
+    }
+
+    void QueueDirtyTransforms(FTransformDirtyGate* Gate, const ECS::FEntity* Entities, size_t Count)
+    {
+        if (Gate == nullptr || Count == 0)
+        {
+            return;
+        }
+
+        FTransformDirtyState* State = static_cast<FTransformDirtyState*>(Gate);
+        State->DirtyTransforms.EnqueueBulk(Entities, Count);
         State->bAnyDirty.store(true, std::memory_order_relaxed);
     }
 

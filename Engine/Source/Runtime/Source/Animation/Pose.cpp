@@ -9,9 +9,22 @@
 
 namespace Lumina
 {
+    uint64 FSkeletonResource::ComputeBoneLayoutHash() const
+    {
+        uint64 Hash = 0xcbf29ce484222325ull ^ (uint64)Bones.size();
+        for (const FBoneInfo& Bone : Bones)
+        {
+            Hash = (Hash ^ (uint64)Bone.Name.GetID()) * 0x100000001b3ull;
+            Hash ^= Hash >> 29;
+        }
+        // Zero means not yet computed, so a real layout never hashes to it.
+        return Hash != 0 ? Hash : 1;
+    }
+
     void FSkeletonResource::BuildBindPoseCache()
     {
         const int32 NumBones = GetNumBones();
+        BoneLayoutHash = ComputeBoneLayoutHash();
         BindLocalTranslations.resize(NumBones);
         BindLocalRotations.resize(NumBones);
         BindLocalScales.resize(NumBones);
@@ -489,8 +502,6 @@ namespace Lumina
 
     void AnimPose::MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
         OutDelta.SetNumBones(NumBones);
         OutDelta.AdditiveSpace = EPoseAdditiveSpace::LocalSpace;
@@ -531,8 +542,6 @@ namespace Lumina
 
     void AnimPose::MakeAdditiveFromBase(const FPose& Src, const FPose& Base, FPose& OutDelta, int32 NumActiveBones)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = Src.GetNumBones();
         OutDelta.SetNumBones(NumBones);
         OutDelta.AdditiveSpace = EPoseAdditiveSpace::LocalSpace;
@@ -574,8 +583,6 @@ namespace Lumina
 
     void AnimPose::MakeAdditiveMeshSpace(const FPose& Src, const FPose& Base, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
         OutDelta.SetNumBones(NumBones);
         OutDelta.AdditiveSpace = EPoseAdditiveSpace::MeshSpace;
@@ -624,8 +631,6 @@ namespace Lumina
 
     void AnimPose::ApplyAdditive(const FPose& Base, const FPose& Delta, float Alpha, FPose& Out, int32 NumActiveBones)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = Base.GetNumBones();
         Out.SetNumBones(NumBones);
 
@@ -695,8 +700,6 @@ namespace Lumina
 
     void AnimPose::ApplyAdditiveMeshSpace(const FPose& Base, const FPose& Delta, float Alpha, const FSkeletonResource* Skeleton, FPose& Out, int32 NumActiveBones)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = Base.GetNumBones();
         Out.SetNumBones(NumBones);
 
@@ -791,8 +794,6 @@ namespace Lumina
                                       const FVector3& InS,
                                       float Alpha)
     {
-        LUMINA_PROFILE_SCOPE();
-
         if (Skeleton == nullptr || BoneIndex < 0 || BoneIndex >= Skeleton->GetNumBones())
         {
             return;
@@ -935,8 +936,6 @@ namespace Lumina
     void AnimPose::FABRIK(FPose& Pose, const FSkeletonResource* Skeleton, int32 RootIdx, int32 TipIdx,
                           const FVector3& Target, int32 Iterations, float Alpha)
     {
-        LUMINA_PROFILE_SCOPE();
-
         if (Skeleton == nullptr) return;
         const int32 NumBones = Skeleton->GetNumBones();
         if (Pose.GetNumBones() != NumBones) return;
@@ -1079,8 +1078,6 @@ namespace Lumina
     void AnimPose::LookAt(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
                           const FVector3& Target, const FVector3& LocalForward, float MaxAngleRadians, float Alpha)
     {
-        LUMINA_PROFILE_SCOPE();
-
         if (Skeleton == nullptr) return;
         const int32 NumBones = Skeleton->GetNumBones();
         if (Pose.GetNumBones() != NumBones) return;
@@ -1137,8 +1134,6 @@ namespace Lumina
                           int32 FootIdx, const FVector3& Offset, const FVector3& GroundNormal,
                           const FVector3& FootUpAxis, float NormalAlpha, float Alpha)
     {
-        LUMINA_PROFILE_SCOPE();
-
         if (Skeleton == nullptr) return;
         const int32 NumBones = Skeleton->GetNumBones();
         if (Pose.GetNumBones() != NumBones) return;
@@ -1224,8 +1219,6 @@ namespace Lumina
                              int32 RootIdx, int32 MidIdx, int32 EndIdx,
                              const FVector3& Target, const FVector3& Pole, float Alpha)
     {
-        LUMINA_PROFILE_SCOPE();
-
         if (Skeleton == nullptr) return;
         const int32 NumBones = Skeleton->GetNumBones();
         if (Pose.GetNumBones() != NumBones) return;
@@ -1330,8 +1323,6 @@ namespace Lumina
 
     void AnimPose::ToSkinningMatrices(const FPose& Pose, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutMatrices)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
         OutMatrices.resize(NumBones);
 

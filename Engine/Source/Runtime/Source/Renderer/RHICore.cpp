@@ -12,6 +12,7 @@
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "Core/Profiler/Profile.h"
+#include "TaskSystem/TaskSystem.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -73,6 +74,10 @@ namespace Lumina::RHI
 
         TVector<FRetireItem> RetireQueues[kFramesInFlight];
         FMutex               RetireMutex;
+
+        FTaskHandle          PendingPresent;
+        FMutex               PendingPresentMutex;
+        TAtomic<bool>        bPresentRejected{false};
 
         bool                bInitialized = false;
     };
@@ -490,6 +495,7 @@ namespace Lumina::RHI
 
     void FreeDevice()
     {
+        WaitPendingPresent();
         ShutdownCore();
         Internal::FreeDevice();
     }
@@ -713,31 +719,74 @@ namespace Lumina::RHI
         return GCore.QueueTimeline[(uint32)Queue];
     }
 
-    bool Present(FSwapchainH Swapchain, FCmdListH CommandList)
+    // Slot is the frame the list was recorded in, which an async present must not read back after BeginFrame moved on.
+    static bool PresentOnSlot(FSwapchainH Swapchain, FCmdListH CommandList, uint32 Slot)
     {
         // Present submits and presents on the graphics queue, so it rides that queue's timeline.
         constexpr uint32 GraphicsIndex = (uint32)EQueueType::Graphics;
 
-        FScopeLock Lock(GCore.SubmitMutex);
-
-        const uint64 Value = GCore.QueueCounter[GraphicsIndex].fetch_add(1, std::memory_order_release) + 1;
-
-        // A frame that renders no world never reaches RHI::Submit, so this is the only place its uploads get waited on.
-        uint64 TransferWait = 0;
-        if (GCore.PendingTransferWait != 0 && !GCore.bQueueTookTransferWait[GraphicsIndex])
         {
-            TransferWait = GCore.PendingTransferWait;
-            GCore.bQueueTookTransferWait[GraphicsIndex] = true;
+            FScopeLock Lock(GCore.SubmitMutex);
+
+            const uint64 Value = GCore.QueueCounter[GraphicsIndex].fetch_add(1, std::memory_order_release) + 1;
+
+            // A frame that renders no world never reaches RHI::Submit, so this is the only place its uploads get waited on.
+            uint64 TransferWait = 0;
+            if (GCore.PendingTransferWait != 0 && !GCore.bQueueTookTransferWait[GraphicsIndex])
+            {
+                TransferWait = GCore.PendingTransferWait;
+                GCore.bQueueTookTransferWait[GraphicsIndex] = true;
+            }
+
+            SubmitSwapchainFrame(Swapchain, CommandList, GCore.QueueTimeline[GraphicsIndex], Value,
+                                 GCore.QueueTimeline[(uint32)EQueueType::Transfer], TransferWait);
+
+            GCore.SlotWaitValue[Slot][GraphicsIndex] = Value;
+            GCore.SlotCommandLists[Slot].push_back(CommandList);
         }
 
-        // PresentSwapchain submits CommandList (wait acquire, signal present + this frame value), presents.
-        const bool bOk = PresentSwapchain(Swapchain, CommandList, GCore.QueueTimeline[GraphicsIndex], Value,
-                                          GCore.QueueTimeline[(uint32)EQueueType::Transfer], TransferWait);
+        // Outside the submit lock, since the driver's present call is slow and orders nothing the timelines track.
+        return QueueSwapchainPresent(Swapchain);
+    }
+
+    bool Present(FSwapchainH Swapchain, FCmdListH CommandList)
+    {
+        WaitPendingPresent();
+        return PresentOnSlot(Swapchain, CommandList, GCore.CurrentSlot.load(std::memory_order_relaxed));
+    }
+
+    void PresentAsync(FSwapchainH Swapchain, FCmdListH CommandList)
+    {
+        WaitPendingPresent();
 
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
-        GCore.SlotWaitValue[Slot][GraphicsIndex] = Value;
-        GCore.SlotCommandLists[Slot].push_back(CommandList);
-        return bOk;
+        FTaskHandle Task = Task::AsyncTask(1, 1, [Swapchain, CommandList, Slot](uint32, uint32, uint32)
+        {
+            LUMINA_PROFILE_SECTION("Async Present");
+            if (!PresentOnSlot(Swapchain, CommandList, Slot))
+            {
+                GCore.bPresentRejected.store(true, std::memory_order_release);
+            }
+        }, ETaskPriority::High);
+
+        FScopeLock Lock(GCore.PendingPresentMutex);
+        GCore.PendingPresent = Move(Task);
+    }
+
+    void WaitPendingPresent()
+    {
+        FScopeLock Lock(GCore.PendingPresentMutex);
+        if (GCore.PendingPresent)
+        {
+            LUMINA_PROFILE_SECTION("Wait Pending Present");
+            GCore.PendingPresent->Wait();
+            GCore.PendingPresent = nullptr;
+        }
+    }
+
+    bool TakePresentRejected()
+    {
+        return GCore.bPresentRejected.exchange(false, std::memory_order_acq_rel);
     }
 
     FTextureHeapH GetGlobalHeap()

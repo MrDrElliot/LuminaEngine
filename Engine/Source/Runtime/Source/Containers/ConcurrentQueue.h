@@ -34,12 +34,25 @@ namespace Lumina
 
         bool TryEnqueue(T&& Item) { EnqueueInternal(Move(Item)); return true; }
 
+        // Whatever the ring cannot take spills under one lock, since a per-item lock is the whole cost of a large burst.
         void EnqueueBulk(const T* Items, size_t Count)
         {
-            for (size_t i = 0; i < Count; ++i)
+            size_t Index = 0;
+            if (SpillCount.load(Atomic::MemoryOrderAcquire) == 0)
             {
-                EnqueueInternal(Items[i]);
+                while (Index < Count && Ring.TryEnqueue(Items[Index]))
+                {
+                    ++Index;
+                }
             }
+            if (Index == Count)
+            {
+                return;
+            }
+
+            FScopeLock Lock(SpillLock);
+            Spill.insert(Spill.end(), Items + Index, Items + Count);
+            SpillCount.store((uint32)(Spill.size() - SpillHead), Atomic::MemoryOrderRelease);
         }
 
         bool TryDequeue(T& Out)
@@ -57,13 +70,29 @@ namespace Lumina
             return DequeueFromSpill(Out);
         }
 
+        // The ring holds the older items, so it drains first and the spill follows under a single lock.
         size_t DequeueBulk(T* Out, size_t MaxCount)
         {
             size_t Count = 0;
-            while (Count < MaxCount && TryDequeue(Out[Count]))
+            while (Count < MaxCount && Ring.TryDequeue(Out[Count]))
             {
                 ++Count;
             }
+            if (Count == MaxCount || SpillCount.load(Atomic::MemoryOrderAcquire) == 0)
+            {
+                return Count;
+            }
+
+            FScopeLock Lock(SpillLock);
+            const size_t Available = Spill.size() - SpillHead;
+            const size_t Take = (MaxCount - Count) < Available ? (MaxCount - Count) : Available;
+            for (size_t i = 0; i < Take; ++i)
+            {
+                Out[Count + i] = Move(Spill[SpillHead + i]);
+            }
+            SpillHead += Take;
+            Count += Take;
+            CompactSpill();
             return Count;
         }
 
@@ -104,8 +133,13 @@ namespace Lumina
 
             Out = Move(Spill[SpillHead]);
             ++SpillHead;
+            CompactSpill();
+            return true;
+        }
 
-            // Compacted by index rather than erased from the front, which would be a copy per dequeue.
+        // Compacted by index rather than erased from the front, which would be a copy per dequeue. Caller holds SpillLock.
+        void CompactSpill()
+        {
             if (SpillHead >= Spill.size())
             {
                 Spill.clear();
@@ -118,7 +152,6 @@ namespace Lumina
             }
 
             SpillCount.store((uint32)(Spill.size() - SpillHead), Atomic::MemoryOrderRelease);
-            return true;
         }
 
         TBoundedQueue<T, EQueueConcurrency::MPMC> Ring;

@@ -9,6 +9,7 @@
 #include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
+#include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 #include "Platform/GenericPlatform.h"
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
@@ -332,7 +333,10 @@ namespace Lumina
         void                        ClearDirtyInstanceSlots()     { DirtyInstanceSlots.clear(); DirtyStaticSlots.clear(); }
         // True after a reset or when most slots changed at once, so the whole array is re-sent.
         bool                        NeedsFullInstanceUpload() const { return bFullInstanceUpload; }
-        void                        ClearFullInstanceUpload()       { bFullInstanceUpload = false; }
+        // The partial paths send only the dirty slots, so re-sending all of them pays once nearly every slot changed.
+        static constexpr bool       ShouldResendAllInstances(SIZE_T DirtySlots, SIZE_T SlotCount) { return DirtySlots * 8 >= SlotCount * 7; }
+        bool                        NeedsFullStaticUpload() const   { return bFullStaticUpload; }
+        void                        ClearFullInstanceUpload()       { bFullInstanceUpload = false; bFullStaticUpload = false; }
 
         void                                NotifyResolveTableChanged() { bResolveTableChanged = true; }
 
@@ -575,7 +579,12 @@ namespace Lumina
         TVector<uint32>             TransformRecords;
         TVector<uint32>             StructuralRecords;
 
-        TVector<TVector<uint32>>    ParallelDirtySlots;
+        // One cache line per worker, since neighboring vectors bounced the line on every push.
+        struct CACHE_ALIGN FDirtySlotBucket
+        {
+            TVector<uint32> Slots;
+        };
+        TVector<FDirtySlotBucket>   ParallelDirtySlots;
 
         // Folds the per-worker lists back into DirtyInstanceSlots, or gives up and re-sends everything.
         void MergeParallelDirtySlots();
@@ -590,6 +599,8 @@ namespace Lumina
         // One past the highest bone ever handed out. The arena's size, and it only grows.
         TVector<uint32>                     DirtyStaticSlots;     // static payload
         bool                                bFullInstanceUpload = true;
+        // Tracked apart from the transforms, so a moving crowd does not re-send payload that never changed.
+        bool                                bFullStaticUpload = true;
 
         TVector<FSurfaceDescGPU>            SurfaceDescs;
         THashMap<uint64, TVector<uint32>>   SurfaceDescByHash;

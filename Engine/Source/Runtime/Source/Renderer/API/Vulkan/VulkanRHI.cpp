@@ -623,6 +623,7 @@ namespace Lumina::RHI
         uint32                 AcquireIndex;
         uint32                 CurrentImageIndex;
         VkSemaphore            CurrentAcquire;
+        FPresentSync           SubmittedSync;      // signaled by the frame submit, waited by the present after it
     };
 
     struct FDeviceImpl
@@ -678,6 +679,8 @@ namespace Lumina::RHI
             uint32                   Used = 0;
         };
         FTransientRing                  TransientRings[3][kFramesInFlight];
+        // Apart from the queue locks, so a slot reset does not wait out a present holding the graphics queue.
+        FMutex                          TransientRingMutexes[3];
         // Published after the reset, so a concurrent submit never records into the ring being reset.
         TAtomic<uint32>                 CurrentRetireSlot{0};
 
@@ -3088,10 +3091,10 @@ namespace Lumina::RHI
     // Called once this slot's timelines are waited, when everything recorded into it is known done.
     void RetireSlot(uint32 Slot)
     {
-        FAllQueuesLock QueueLock;
-        for (auto& QueueRings : GDevice->TransientRings)
+        for (uint32 QueueIndex = 0; QueueIndex < 3; ++QueueIndex)
         {
-            ResetTransientRing(QueueRings[Slot]);
+            FScopeLock RingLock(GDevice->TransientRingMutexes[QueueIndex]);
+            ResetTransientRing(GDevice->TransientRings[QueueIndex][Slot]);
         }
 
         GDevice->CurrentRetireSlot.store(Slot, std::memory_order_release);
@@ -3099,6 +3102,7 @@ namespace Lumina::RHI
 
     void WaitDeviceIdle()
     {
+        WaitPendingPresent();
         FAllQueuesLock QueueLock;
         vkDeviceWaitIdle(*GDevice);
 
@@ -5779,6 +5783,7 @@ namespace Lumina::RHI
 
     void RecreateSwapchain(FSwapchainH Swapchain, const FUIntVector2& Extent)
     {
+        WaitPendingPresent();
         FAllQueuesLock QueueLock;
 
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
@@ -5921,6 +5926,7 @@ namespace Lumina::RHI
             return VK_NULL_HANDLE;
         }
 
+        FScopeLock RingLock(GDevice->TransientRingMutexes[(uint32)Queue]);
         const uint32 Slot = GDevice->CurrentRetireSlot.load(std::memory_order_acquire);
         FDeviceImpl::FTransientRing& Ring = GDevice->TransientRings[(uint32)Queue][Slot];
 
@@ -5979,8 +5985,8 @@ namespace Lumina::RHI
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
     }
 
-    bool PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue,
-                          FSemaphoreH ExtraWait, uint64 ExtraWaitValue)
+    void SubmitSwapchainFrame(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue,
+                              FSemaphoreH ExtraWait, uint64 ExtraWaitValue)
     {
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
         FCommandList& CL = GDevice->CommandLists[FinalCommandList];
@@ -6015,9 +6021,7 @@ namespace Lumina::RHI
             ? TakePresentSync(SC)
             : FPresentSync{ SC.PresentSemaphores[SC.CurrentImageIndex], VK_NULL_HANDLE };
         const VkSemaphore PresentSem = Sync.Semaphore;
-        const VkFence PresentFence = Sync.Fence;
 
-        // Present submits and presents on the graphics queue, so it takes that queue's lock.
         FScopeLock SubmitLock(QueueLockFor(EQueueType::Graphics));
 
         VkCommandBuffer TransitionBuffer = DrainPendingImageInits(EQueueType::Graphics);
@@ -6075,6 +6079,18 @@ namespace Lumina::RHI
 
         VkQueue GraphicsQueue = GDevice->Queues[(uint32)EQueueType::Graphics];
         VK_CHECK(vkQueueSubmit2(GraphicsQueue, 1, &Submit, VK_NULL_HANDLE));
+        SC.SubmittedSync = Sync;
+    }
+
+    bool QueueSwapchainPresent(FSwapchainH Swapchain)
+    {
+        FSwapchain& SC = GDevice->Swapchains[Swapchain];
+        const FPresentSync Sync = SC.SubmittedSync;
+        const VkSemaphore PresentSem = Sync.Semaphore;
+        const VkFence PresentFence = Sync.Fence;
+
+        FScopeLock PresentLock(QueueLockFor(EQueueType::Graphics));
+        VkQueue GraphicsQueue = GDevice->Queues[(uint32)EQueueType::Graphics];
 
         const VkSwapchainPresentFenceInfoKHR PresentFenceInfo
         {

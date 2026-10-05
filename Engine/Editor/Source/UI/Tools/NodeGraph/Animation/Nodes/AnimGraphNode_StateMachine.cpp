@@ -120,6 +120,13 @@ namespace Lumina
         // Machine-relative, since a nested machine's entries belong to its own owner.
         const uint16 MachineClockFirst = (uint16)Compiler.GetClockSlots().size();
 
+        uint16 NumStateNodes = 0;
+        for (const auto& NodeRef : SMGraph->Nodes)
+        {
+            NumStateNodes += Cast<CAnimGraphNode_State>(NodeRef.Get()) != nullptr ? 1 : 0;
+        }
+        const uint32 EnterOp = Compiler.EmitEnterStateMachine(NumStateNodes);
+
         for (const auto& NodeRef : SMGraph->Nodes)
         {
             CEdGraphNode* Node = NodeRef.Get();
@@ -153,7 +160,9 @@ namespace Lumina
 
             const uint16 ClockSlotFirst   = (uint16)Compiler.GetClockSlots().size() - MachineClockFirst;
             const uint16 ChildMachineFirst = Compiler.GetStateMachineCount();
+            const int32 StateIndex = (int32)StateMachine.StatePoseRegisters.size();
 
+            Compiler.BeginStateCode(EnterOp, (uint16)StateIndex);
             Compiler.BeginStateCapture();
 
             uint16 PoseReg = 0;
@@ -163,7 +172,7 @@ namespace Lumina
                 PoseReg = Compiler.EmitRefPose();
             }
 
-            const int32 StateIndex = (int32)StateMachine.StatePoseRegisters.size();
+            Compiler.EndStateCode(EnterOp, (uint16)StateIndex);
             StateMachine.StatePoseRegisters.push_back(PoseReg);
             StateMachine.StateFinishedRegisters.push_back(Compiler.EndStateCapture());
 
@@ -477,6 +486,7 @@ namespace Lumina
         StateMachine.TimeInStateSlot  = Compiler.AllocStateSlot();
         StateMachine.DurationSlot     = Compiler.AllocStateSlot();
 
+        Compiler.FinishStateMachineCode(EnterOp);
         const uint16 ResultReg    = Compiler.EmitEvalStateMachine(Move(StateMachine));
         const uint16 MachineIndex = Compiler.GetStateMachineCount() - 1;
 

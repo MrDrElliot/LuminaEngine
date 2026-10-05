@@ -54,6 +54,15 @@ namespace Lumina::RHI
     // Unexported on purpose, since FSwapchainTarget is what handles a rejected present.
     bool Present(FSwapchainH Swapchain, FCmdListH FinalCommandList);
 
+    // Hands the submit and present to a worker, so the driver's present cost overlaps the next frame's update.
+    void PresentAsync(FSwapchainH Swapchain, FCmdListH FinalCommandList);
+
+    // Anything that needs the present's images idle or the swapchain untouched waits here first.
+    RUNTIME_API void WaitPendingPresent();
+
+    // True once after an async present was rejected, so the swapchain owner rebuilds.
+    bool TakePresentRejected();
+
     RUNTIME_API FTextureHeapH GetGlobalHeap();
     
     RUNTIME_API FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment = kDefaultAlign);

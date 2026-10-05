@@ -344,9 +344,9 @@ namespace Lumina
 
     uint16 FAnimationGraphCompiler::EmitSmoothScalar(uint16 ValueReg, uint16 HalfLifeReg)
     {
-        // Not clock slots; winding a smoother back to zero while its state is inactive would pop on entry.
+        // The value persists, but the seed winds back with its state's clocks so re-entry snaps to the input.
         const uint16 ValueSlot  = AllocStateSlot();
-        const uint16 SeededSlot = AllocStateSlot();
+        const uint16 SeededSlot = AllocClockSlot();
         const uint16 Dst        = AllocScalarReg();
 
         WriteOp(EAnimOp::SmoothScalar);
@@ -805,6 +805,86 @@ namespace Lumina
         return Index;
     }
 
+    namespace
+    {
+        constexpr SIZE_T kEnterSmIdxOffset     = 1;
+        constexpr SIZE_T kEnterNumStatesOffset = 3;
+        constexpr SIZE_T kEnterStatesEndOffset = 5;
+        constexpr SIZE_T kEnterTableOffset     = 9;
+
+        SIZE_T StateCodeEntry(uint32 EnterOp, uint16 StateIndex, bool bEnd)
+        {
+            return EnterOp + kEnterTableOffset + ((SIZE_T)StateIndex * 2 + (bEnd ? 1 : 0)) * sizeof(uint32);
+        }
+    }
+
+    uint32 FAnimationGraphCompiler::EmitEnterStateMachine(uint16 NumStates)
+    {
+        const uint32 EnterOp = (uint32)Bytecode.size();
+        WriteOp(EAnimOp::EnterStateMachine);
+        Write((uint16)0);
+        Write(NumStates);
+        Write((uint32)0);
+        for (uint16 i = 0; i < NumStates; ++i)
+        {
+            Write((uint32)0);
+            Write((uint32)0);
+        }
+
+        WriteAt(EnterOp + kEnterStatesEndOffset, (uint32)Bytecode.size());
+        EnterStateMachineOps.push_back(EnterOp);
+        return EnterOp;
+    }
+
+    void FAnimationGraphCompiler::BeginStateCode(uint32 EnterOp, uint16 StateIndex)
+    {
+        StateScopes.push_back(++NextStateScope);
+        if (StateIndex < ReadAt<uint16>(EnterOp + kEnterNumStatesOffset))
+        {
+            WriteAt(StateCodeEntry(EnterOp, StateIndex, false), (uint32)Bytecode.size());
+        }
+    }
+
+    void FAnimationGraphCompiler::EndStateCode(uint32 EnterOp, uint16 StateIndex)
+    {
+        if (!StateScopes.empty())
+        {
+            StateScopes.pop_back();
+        }
+
+        if (StateIndex < ReadAt<uint16>(EnterOp + kEnterNumStatesOffset))
+        {
+            WriteAt(StateCodeEntry(EnterOp, StateIndex, true), (uint32)Bytecode.size());
+            WriteAt(EnterOp + kEnterStatesEndOffset, (uint32)Bytecode.size());
+        }
+    }
+
+    void FAnimationGraphCompiler::FinishStateMachineCode(uint32 EnterOp)
+    {
+        WriteAt(EnterOp + kEnterSmIdxOffset, (uint16)StateMachines.size());
+    }
+
+    bool FAnimationGraphCompiler::TryGetCachedPose(const FName& Name, uint16& OutRegister)
+    {
+        auto It = CachedPoses.find(Name);
+        if (It == CachedPoses.end())
+        {
+            return false;
+        }
+        OutRegister = It->second;
+
+        // A reader outside the writing state would see nothing once that state is skipped.
+        auto ScopeIt = CachedPoseScopes.find(Name);
+        if (ScopeIt != CachedPoseScopes.end())
+        {
+            const TVector<uint32>& WriterScopes = ScopeIt->second;
+            const bool bReaderInside = WriterScopes.size() <= StateScopes.size() &&
+                std::equal(WriterScopes.begin(), WriterScopes.end(), StateScopes.begin());
+            bCachedPoseLeavesItsState |= !bReaderInside;
+        }
+        return true;
+    }
+
     uint16 FAnimationGraphCompiler::EmitEvalStateMachine(FAnimGraphStateMachine&& StateMachine)
     {
         const uint16 SmIndex = (uint16)StateMachines.size();
@@ -879,6 +959,15 @@ namespace Lumina
         if (!bEmittedOutput)
         {
             EmitHalt();
+        }
+
+        // An end before the table makes the VM run every state in order, which keeps a shared cached pose fed.
+        if (bCachedPoseLeavesItsState)
+        {
+            for (const uint32 EnterOp : EnterStateMachineOps)
+            {
+                WriteAt(EnterOp + kEnterStatesEndOffset, (uint32)0);
+            }
         }
 
         OutGraph->Bytecode            = Bytecode;

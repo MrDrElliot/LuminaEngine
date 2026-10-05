@@ -345,6 +345,7 @@ namespace Lumina
                 struct FRetainedUpload
                 {
                     bool                        bFull = false;
+                    bool                        bFullStatic = false;
                     uint32                      SlotCount = 0;
 
                     TVector<uint32>             DirtySlots;
@@ -499,6 +500,7 @@ namespace Lumina
             PostProcessScratch,
             SMAAEdges,
             SMAABlend,
+            SMAAEdgeMask,
             SMAAArea,
             SMAASearch,
             GTAOWorkingDepth,
@@ -1092,12 +1094,17 @@ namespace Lumina
 
         // Same staging as WriteBuffer, deferred so writes sharing a destination collapse into one copy
         // command. Stage all of one buffer's runs before starting the next, or nothing groups.
-        void StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size);
+        void StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size, bool bFillBeforeSubmit = false);
         void FlushStagedWrites(RHI::FCmdListH CL);
+
+        // The GPU reads staging only once the list is submitted, so these PCIe-bound fills overlap the rest of the recording.
+        void LaunchDeferredStageFills();
+        void WaitDeferredStageFills();
+        void RunDeferredStageFills(uint32 NumFills);
 
         // Scattered (Start, Count) runs of one array, into a single ring block and one copy command.
         void WriteBufferRuns(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Src, uint64 Stride,
-                             const TVector<FUIntVector2>& Runs);
+                             const TVector<FUIntVector2>& Runs, bool bFillBeforeSubmit = false);
 
         // Stages each listed element compactly and scatters it to its slot on the GPU, for a fragmented dirty set.
         void WriteBufferScatter(RHI::FCmdListH CL, RHI::GPUPtr Dst, uint64 DstBytes, const void* Src, uint64 Stride,
@@ -1256,6 +1263,16 @@ namespace Lumina
         FSceneRoot                                                      SceneRootShared = {};
         RHI::FSceneBindings                                             SceneBindings = {};
         TVector<RHI::FBufferCopy>                                       StagedWrites;
+
+        struct FDeferredStageFill
+        {
+            uint8*          Dest;
+            const uint8*    Source;
+            uint64          Bytes;
+        };
+        TVector<FDeferredStageFill>                                     DeferredStageFills;
+        FTaskHandle                                                     DeferredStageFillTask;
+        std::atomic<uint32>                                             DeferredFillCursor{0};
         TVector<RHI::FBufferCopy>                                       UploadCopyScratch;
         TVector<uint64>                                                 UploadCursorScratch;
         uint64                                                          CurrentSceneRootAddr = 0;

@@ -2201,14 +2201,16 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("Environment Pass", tracy::Color::Green3);
 
-        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderH PixelShader = FShaderLibrary::Get("Environment.slang");
+        static const FString   FarPlaneDefine = "FULLSCREEN_AT_FAR_PLANE";
+        static const FShaderH VertexShader   = FShaderLibrary::Get("FullscreenQuad.slang", TSpan<const FString>(&FarPlaneDefine, 1));
+        static const FShaderH PixelShader    = FShaderLibrary::Get("Environment.slang");
         if (!VertexShader || !PixelShader)
         {
             return;
         }
 
         const FSceneImage& ColorRT = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& DepthRT = GetNamedImage(ENamedImage::DepthAttachment);
         const FSceneImage& SkyCube = GetNamedImage(ENamedImage::SkyCube);
         const FUIntVector2 Extent  = GetNamedImage(ENamedImage::HDR).GetExtent();
 
@@ -2222,12 +2224,20 @@ namespace Lumina
         Color.StoreOp        = RHI::EStoreOp::Store;
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-        Pass.RenderArea       = Extent;
+        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.DepthAttachment.Texture = DepthRT.Texture;
+        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
+        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
+        Pass.RenderArea              = Extent;
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Extent);
-        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
+
+        // Only pixels still at the cleared far plane show sky; every other one is shaded over by the passes after this.
+        RHI::FDepthStencilDesc DepthDesc;
+        DepthDesc.DepthMode = RHI::EDepthFlags::Read;
+        DepthDesc.DepthTest = RHI::EOp::Equal;
+        RHI::CmdSetDepthStencil(CL, DepthDesc);
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         // Mirrors the bit-cast the extract does into Misc.x; specializing on it strips the other modes.
@@ -2238,6 +2248,7 @@ namespace Lumina
         Key.VS          = VertexShader;
         Key.PS          = PixelShader;
         Key.SkyMode     = (SkyModeBits <= GSkyMode_HDRI) ? (uint8)SkyModeBits : (uint8)GSkyMode_Runtime;
+        Key.DepthFormat = DepthRT.Desc.Format;
         Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 

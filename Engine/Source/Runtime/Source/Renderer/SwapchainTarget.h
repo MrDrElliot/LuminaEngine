@@ -30,6 +30,10 @@ namespace Lumina::RHI
         // Submits CL and presents the image Acquire returned, rebuilding if the present was rejected.
         bool Present(FCmdListH CL);
 
+        // Present on a worker; FinishPresent joins it and rebuilds when it was rejected.
+        void PresentAsync(FCmdListH CL);
+        void FinishPresent();
+
         // Moves the acquired image into a renderable layout. Recorded before the first pass.
         void BarrierToRender(FCmdListH CL);
 

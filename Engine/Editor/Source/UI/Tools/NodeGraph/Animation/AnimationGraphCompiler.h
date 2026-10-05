@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
+#include "Memory/Memcpy.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/SkeletonResource.h"
 
@@ -96,6 +97,14 @@ namespace Lumina
 
         const TVector<uint16>& GetClockSlots() const { return ClockSlots; }
 
+        // Lets the VM run only a machine's current state, with each state's bytecode bracketed by Begin and End.
+        uint32 EmitEnterStateMachine(uint16 NumStates);
+        void BeginStateCode(uint32 EnterOp, uint16 StateIndex);
+        void EndStateCode(uint32 EnterOp, uint16 StateIndex);
+
+        // Call right before EmitEvalStateMachine, whose machine index it records.
+        void FinishStateMachineCode(uint32 EnterOp);
+
         // Value-producing emitters return the destination register they allocated; callers thread that
         // index into downstream emitters.
         uint16 EmitLoadConst(float Value);
@@ -126,18 +135,13 @@ namespace Lumina
         // written on separate nodes address the same buffer.
         uint16 AddPoseSnapshot(const FName& Name);
 
-        void SetCachedPose(const FName& Name, uint16 PoseRegister) { CachedPoses[Name] = PoseRegister; }
-
-        bool TryGetCachedPose(const FName& Name, uint16& OutRegister) const
+        void SetCachedPose(const FName& Name, uint16 PoseRegister)
         {
-            auto It = CachedPoses.find(Name);
-            if (It == CachedPoses.end())
-            {
-                return false;
-            }
-            OutRegister = It->second;
-            return true;
+            CachedPoses[Name] = PoseRegister;
+            CachedPoseScopes[Name] = StateScopes;
         }
+
+        bool TryGetCachedPose(const FName& Name, uint16& OutRegister);
 
         const THashMap<FName, uint16>& GetCachedPoses() const { return CachedPoses; }
 
@@ -299,6 +303,20 @@ namespace Lumina
 
         void WriteOp(EAnimOp Op) { Bytecode.push_back((uint8)Op); }
 
+        template <typename T>
+        void WriteAt(SIZE_T Offset, const T& Value)
+        {
+            Memory::Memcpy(Bytecode.data() + Offset, &Value, sizeof(T));
+        }
+
+        template <typename T>
+        T ReadAt(SIZE_T Offset) const
+        {
+            T Value;
+            Memory::Memcpy(&Value, Bytecode.data() + Offset, sizeof(T));
+            return Value;
+        }
+
         TVector<uint8>                          Bytecode;
         TVector<TObjectPtr<CAnimation>>         Clips;
         TVector<TObjectPtr<CBlendSpace>>        BlendSpaces;
@@ -315,6 +333,7 @@ namespace Lumina
         TVector<FAnimGraphBoneMask>             BoneMasks;
         THashMap<FName, int32>                  BoneMaskNameToIndex;
         THashMap<FName, uint16>                 CachedPoses;
+        THashMap<FName, TVector<uint32>>        CachedPoseScopes;
         TVector<FAnimGraphStateMachine>         StateMachines;
         TVector<EdNodeGraph::FError>            Errors;
         TVector<EdNodeGraph::FError>            Warnings;
@@ -332,6 +351,12 @@ namespace Lumina
         uint16 NextDeadBlendNode = 0;
 
         TVector<uint16> ClockSlots;
+
+        // Innermost last, so a cached pose read outside the state that wrote it can be caught.
+        TVector<uint32> StateScopes;
+        uint32 NextStateScope = 0;
+        TVector<uint32> EnterStateMachineOps;
+        bool bCachedPoseLeavesItsState = false;
 
         bool bEmittedOutput = false;
     };

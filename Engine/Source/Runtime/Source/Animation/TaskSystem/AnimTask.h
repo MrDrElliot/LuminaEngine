@@ -106,6 +106,9 @@ namespace Lumina
 
         // Rising edge of a node's Request input; unused by a state machine, which starts from a transition.
         float PrevRequest = 0.0f;
+
+        // Graph update that last ran this record, so one that sat in a skipped state can tell it missed time.
+        uint32 LastUpdate = 0;
     };
 
     // Dead blending (Boulic-style extrapolation, UE5-style node). Where inertialization decays an offset
@@ -135,6 +138,7 @@ namespace Lumina
         bool bHasCurveHistory = false;
 
         float PrevRequest = 0.0f;
+        uint32 LastUpdate = 0;
     };
 
     // A recorded pose operation. Dependencies are indices of earlier tasks in the same list, so

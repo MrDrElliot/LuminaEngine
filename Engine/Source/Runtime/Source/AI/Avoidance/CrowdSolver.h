@@ -12,6 +12,8 @@ namespace Lumina::Avoidance
     {
         inline constexpr uint8 Solve       = 1 << 0;
         inline constexpr uint8 Passthrough = 1 << 1;
+        // Ignored by the solve; marks an agent whose result is checked against the navmesh afterwards.
+        inline constexpr uint8 NavClamp    = 1 << 2;
     }
 
     // Reused across ticks, so a steady crowd allocates nothing after the first solve.

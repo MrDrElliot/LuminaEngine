@@ -22,6 +22,25 @@ FMaterialClassifyArgs* Pass() { return GetPassArgs<FMaterialClassifyArgs>(); }
 
 groupshared uint gTileSlotMask[MATERIAL_MAX_SLOTS / 32u];
 
+// The first wave of the tile to claim its slot appends the tile, so each (tile, slot) pair is listed once.
+void ClaimTileSlot(uint Slot, uint2 Tile)
+{
+    const uint Bit = 1u << (Slot & 31u);
+    uint Previous;
+    InterlockedOr(gTileSlotMask[Slot >> 5u], Bit, Previous);
+    if ((Previous & Bit) != 0u)
+    {
+        return;
+    }
+
+    uint Index;
+    InterlockedAdd(SpanAt(&Pass().Counts, Slot)[0], 1u, Index);
+    if (Index < Pass().TileStride)
+    {
+        SpanSet(&Pass().TileList, Slot * Pass().TileStride + Index, PackVisPixel(Tile));
+    }
+}
+
 [shader("compute")]
 [numthreads(MATERIAL_CLASSIFY_TILE, MATERIAL_CLASSIFY_TILE, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GroupID : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
@@ -48,19 +67,19 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GroupID : SV_GroupID, u
         return;
     }
 
-    // The first pixel of the tile to claim its slot appends the tile, so each (tile, slot) pair is listed once.
-    const uint Bit = 1u << (Slot & 31u);
-    uint Previous;
-    InterlockedOr(gTileSlotMask[Slot >> 5u], Bit, Previous);
-    if ((Previous & Bit) != 0u)
+    // One lane per distinct slot in the wave claims it, since lanes hitting one shared word serialize.
+    [loop]
+    while (true)
     {
-        return;
-    }
-
-    uint Index;
-    InterlockedAdd(SpanAt(&Pass().Counts, Slot)[0], 1u, Index);
-    if (Index < Pass().TileStride)
-    {
-        SpanSet(&Pass().TileList, Slot * Pass().TileStride + Index, PackVisPixel(GroupID.xy));
+        const uint Leader = WaveReadLaneFirst(Slot);
+        if (Slot != Leader)
+        {
+            continue;
+        }
+        if (WaveIsFirstLane())
+        {
+            ClaimTileSlot(Slot, GroupID.xy);
+        }
+        break;
     }
 }

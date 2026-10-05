@@ -112,6 +112,9 @@ namespace Lumina
 
         // Turns one bone about a component-space axis by a runtime angle, as a BoneTransform task.
         AxisRotateBone,         // src:pReg, alpha:sReg, angle:sReg, axis:vec3, boneIdx:uint16, dst:pReg
+
+        // Lets the VM run only a machine's current state. Operands are smIdx uint16, numStates uint16, statesEnd uint32, then begin and end uint32 per state.
+        EnterStateMachine,
     };
 
     // MakeAdditiveEx base operand meaning "no base pose supplied".
@@ -215,6 +218,9 @@ namespace Lumina
         TVector<FAnimDeadBlend>    DeadBlends;        // per Dead Blending node
         TVector<FPose>             PoseSnapshots;     // per named snapshot slot
         TVector<FAnimSyncGroup> SyncGroups;       // shared phase per sync group
+
+        // Counts BuildTasks calls, so a record inside a skipped state sees the updates it missed.
+        uint32 UpdateSerial = 0;
 
         // Curve values the output pose carried this update, indexed by CAnimationGraph::CurveNames.
         TVector<float> CurveValues;

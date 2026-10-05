@@ -745,6 +745,7 @@ namespace Lumina
 
         const FSceneImage& Output     = GetNamedImage(ENamedImage::SMAAEdges);
         const FSceneImage& InputColor = GetNamedImage(ENamedImage::LDR);
+        const FSceneImage& EdgeMask   = GetNamedImage(ENamedImage::SMAAEdgeMask);
 
         RHI::FRenderAttachment Color;
         Color.Texture = Output.Texture;
@@ -752,17 +753,27 @@ namespace Lumina
         Color.StoreOp = RHI::EStoreOp::Store;
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-        Pass.RenderArea       = Output.GetExtent();
+        Pass.ColorAttachments         = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.DepthAttachment.Texture  = EdgeMask.Texture;
+        Pass.DepthAttachment.LoadOp   = RHI::ELoadOp::Clear;
+        Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
+        Pass.DepthAttachment.Color[0] = 0.0f;
+        Pass.RenderArea               = Output.GetExtent();
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
+
+        // The edge shader discards edgeless pixels, so only edges stamp the fullscreen triangle's depth of 1.
+        RHI::FDepthStencilDesc DepthDesc;
+        DepthDesc.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
+        DepthDesc.DepthTest = RHI::EOp::Always;
+        RHI::CmdSetDepthStencil(CL, DepthDesc);
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
-        Key.VS = VertexShader;
-        Key.PS = PixelShader;
+        Key.VS          = VertexShader;
+        Key.PS          = PixelShader;
+        Key.DepthFormat = EdgeMask.Desc.Format;
         Key.ColorTargets.push_back({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
@@ -789,6 +800,7 @@ namespace Lumina
         const FSceneImage& EdgesTex  = GetNamedImage(ENamedImage::SMAAEdges);
         const FSceneImage& AreaTex   = GetNamedImage(ENamedImage::SMAAArea);
         const FSceneImage& SearchTex = GetNamedImage(ENamedImage::SMAASearch);
+        const FSceneImage& EdgeMask  = GetNamedImage(ENamedImage::SMAAEdgeMask);
 
         RHI::FRenderAttachment Color;
         Color.Texture = Output.Texture;
@@ -796,17 +808,26 @@ namespace Lumina
         Color.StoreOp = RHI::EStoreOp::Store;
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
-        Pass.RenderArea       = Output.GetExtent();
+        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.DepthAttachment.Texture = EdgeMask.Texture;
+        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
+        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Discard;
+        Pass.RenderArea              = Output.GetExtent();
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Output.GetExtent());
-        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
+
+        // Edgeless pixels keep the cleared zero weights, which is what the shader would have written for them.
+        RHI::FDepthStencilDesc DepthDesc;
+        DepthDesc.DepthMode = RHI::EDepthFlags::Read;
+        DepthDesc.DepthTest = RHI::EOp::Equal;
+        RHI::CmdSetDepthStencil(CL, DepthDesc);
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         FGraphicsPipelineKey Key;
-        Key.VS = VertexShader;
-        Key.PS = PixelShader;
+        Key.VS          = VertexShader;
+        Key.PS          = PixelShader;
+        Key.DepthFormat = EdgeMask.Desc.Format;
         Key.ColorTargets.push_back({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 

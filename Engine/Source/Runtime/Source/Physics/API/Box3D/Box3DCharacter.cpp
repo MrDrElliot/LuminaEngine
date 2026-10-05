@@ -43,6 +43,9 @@ namespace Lumina::Physics
         constexpr uint32 kCharacterParallelThreshold = 16;
         constexpr uint32 kCharacterParallelGrain = 4;
 
+        // The latch is a few dozen nanoseconds per character, so it only fans out for a crowd.
+        constexpr uint32 kCharacterLatchParallelThreshold = 2048;
+
         // Gathered per move iteration; the extras are only needed to push whatever the mover leaned on.
         struct FMoverPlanes
         {
@@ -96,6 +99,26 @@ namespace Lumina::Physics
         bool MoverCastFilter(b3ShapeId ShapeId, void* Context)
         {
             return MoverAcceptsShape(*static_cast<const FMoverPlanes*>(Context), ShapeId);
+        }
+
+        // Places the proxy on the character by the next world step, written per body so it runs inside the fan-out.
+        void DriveProxy(FPhysicsCharacterHandle& Character, float FixedDt)
+        {
+            const b3WorldTransform Target{ Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation) };
+            b3Body_SetTargetTransform(Character.ProxyBody, Target, FixedDt, false);
+            Character.bProxyInMotion = true;
+        }
+
+        // Teleports and seating place the proxy at once, so a velocity left from a target transform must not carry it on.
+        void PlaceProxy(FPhysicsCharacterHandle& Character)
+        {
+            b3Body_SetTransform(Character.ProxyBody, Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation));
+            if (Character.bProxyInMotion)
+            {
+                b3Body_SetLinearVelocity(Character.ProxyBody, b3Vec3_zero);
+                b3Body_SetAngularVelocity(Character.ProxyBody, b3Vec3_zero);
+                Character.bProxyInMotion = false;
+            }
         }
 
         // A resting character runs none of the world queries below, so everything that could move it wakes it here.
@@ -222,9 +245,23 @@ namespace Lumina::Physics
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        Registry.View<SCharacterControllerComponent, SCharacterMovementComponent>().ForEach(
-            [&](SCharacterControllerComponent& Controller, SCharacterMovementComponent& Movement)
+        auto Controllers = Registry.GetStorage<SCharacterControllerComponent>();
+        auto Movements   = Registry.GetStorage<SCharacterMovementComponent>();
+        const ECS::FEntity* ControllerEntities = Controllers.GetDenseData();
+        const uint32 NumControllers = (uint32)Controllers.GetDenseSize();
+
+        // Each entity's latch touches only its own two components, so a crowd fans out over the dense controller pool.
+        const auto Latch = [&](uint32 DenseIndex)
         {
+            const ECS::FEntity Entity = ControllerEntities[DenseIndex];
+            SCharacterMovementComponent* FoundMovement = Entity.IsTombstone() ? nullptr : Movements.TryGet(Entity);
+            if (FoundMovement == nullptr)
+            {
+                return;
+            }
+            SCharacterControllerComponent& Controller = Controllers.GetAtDense(DenseIndex);
+            SCharacterMovementComponent& Movement = *FoundMovement;
+
             if (Math::LengthSquared(Controller.MoveInput) > LE_SMALL_NUMBER || Math::LengthSquared(Controller.WorldMoveInput) > LE_SMALL_NUMBER)
             {
                 const FVector3 Forward = RenderUtils::GetForwardVector(Controller.LookInput.x, 0.0f);
@@ -277,7 +314,19 @@ namespace Lumina::Physics
                 Movement.PendingTeleportLocation = Controller.PendingTeleportLocation;
                 Movement.bPendingTeleport = true;
             }
-        });
+        };
+
+        if (NumControllers > kCharacterLatchParallelThreshold)
+        {
+            Task::ParallelFor(NumControllers, Latch);
+        }
+        else
+        {
+            for (uint32 DenseIndex = 0; DenseIndex < NumControllers; ++DenseIndex)
+            {
+                Latch(DenseIndex);
+            }
+        }
     }
 
     void FBox3DPhysicsScene::UpdateCharacters(float FixedDt)
@@ -308,6 +357,11 @@ namespace Lumina::Physics
                 const bool bPollDue = ((CharacterStepCounter + (uint64)(Entity).Value) & kRestPollMask) == 0;
                 if (!bPollDue && !ShouldWakeResting(Character, Movement))
                 {
+                    // The last step's target transform has landed the proxy, so it stops here instead of drifting on.
+                    if (Character.bProxyInMotion)
+                    {
+                        PlaceProxy(Character);
+                    }
                     ++RestingCount;
                     return;
                 }
@@ -337,7 +391,7 @@ namespace Lumina::Physics
 
                 // Reseeds the interp snapshot so the render transform does not streak across the jump.
                 Physics.LastBodyPosition = Character.Position;
-                b3Body_SetTransform(Character.ProxyBody, Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation));
+                PlaceProxy(Character);
                 return;
             }
 
@@ -369,8 +423,7 @@ namespace Lumina::Physics
                     Physics.LastBodyPosition = Character.Position;
                     Physics.LastBodyRotation = Character.Rotation;
 
-                    b3Body_SetTransform(Character.ProxyBody, Box3DUtils::ToB3Vec3(Character.Position),
-                        Box3DUtils::ToB3Quat(Character.Rotation));
+                    PlaceProxy(Character);
                     return;
                 }
 
@@ -415,6 +468,7 @@ namespace Lumina::Physics
             Task::ParallelFor(WorkCount, [&](uint32 Index, uint32 Thread)
             {
                 StepCharacter(CharacterWorkScratch[Index], FixedDt, Thread);
+                DriveProxy(*CharacterWorkScratch[Index].Physics->Character, FixedDt);
             },
             kCharacterParallelGrain);
         }
@@ -423,16 +477,11 @@ namespace Lumina::Physics
             for (uint32 Index = 0; Index < WorkCount; ++Index)
             {
                 StepCharacter(CharacterWorkScratch[Index], FixedDt, 0);
+                DriveProxy(*CharacterWorkScratch[Index].Physics->Character, FixedDt);
             }
         }
 
-        // Box3D body writes touch shared world arrays, so the proxy sync and the pushes land after the fan-out.
-        for (const FCharacterWork& Work : CharacterWorkScratch)
-        {
-            const FPhysicsCharacterHandle& Character = *Work.Physics->Character;
-            b3Body_SetTransform(Character.ProxyBody, Box3DUtils::ToB3Vec3(Character.Position),
-                Box3DUtils::ToB3Quat(Character.Rotation));
-        }
+        // Pushes go through Box3D's shared body arrays, so they land after the fan-out.
 
         for (const FCharacterPushBucket& Bucket : CharacterPushScratch)
         {
@@ -622,6 +671,8 @@ namespace Lumina::Physics
         const b3PlaneSolverResult Solved = b3SolvePlanes(Remaining, Gathered.Planes, Gathered.Count);
         Position = b3Add(Position, Solved.delta);
 
+        // A solve that barely moved the capsule leaves the planes just gathered still valid for the first recovery pass.
+        bool bPlanesCurrent = b3LengthSquared(Solved.delta) < kMoveTolerance * kMoveTolerance * 0.01f;
 
         // Overlap is resolved against a zero target so it can never become motion, which is what made the
         // solve delta walk the character downhill when it was cast. A capsule spawned inside geometry needs
@@ -629,7 +680,11 @@ namespace Lumina::Physics
         bool bPushedOut = false;
         for (int32 Recovery = 0; Recovery < Character.MaxCollisionIterations; ++Recovery)
         {
-            GatherAt(Position);
+            if (!bPlanesCurrent)
+            {
+                GatherAt(Position);
+            }
+            bPlanesCurrent = false;
             bPushedOut = false;
 
             const b3PlaneSolverResult Push = b3SolvePlanes(b3Vec3_zero, Gathered.Planes, Gathered.Count);

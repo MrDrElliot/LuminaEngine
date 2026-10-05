@@ -55,26 +55,39 @@ namespace Lumina
 
     const FAnimationResource::FResolvedSkeleton* FAnimationResource::GetResolvedSkeleton(const FSkeletonResource* Skeleton)
     {
+        // A skeleton built without its bind cache hashes here, which only costs that rare caller.
+        const uint64 Key = Skeleton->BoneLayoutHash != 0 ? Skeleton->BoneLayoutHash : Skeleton->ComputeBoneLayoutHash();
+
         const FResolvedSkeleton* Active = ActiveResolvedSkeleton.load(std::memory_order_acquire);
-        if (Active && Active->Skeleton == Skeleton && Active->Generation == Skeleton->BindPoseGeneration)
+        if (Active && Active->LayoutKey == Key)
         {
             return Active;
+        }
+
+        // Every character can carry its own merged skeleton, so a miss here must not take the lock.
+        if (const FResolvedTable* Table = PublishedResolved.load(std::memory_order_acquire))
+        {
+            for (const FResolvedSkeleton* Resolved : *Table)
+            {
+                if (Resolved->LayoutKey == Key)
+                {
+                    return Resolved;
+                }
+            }
         }
 
         FScopeLock Lock(ResolveMutex);
 
         for (const TUniquePtr<FResolvedSkeleton>& Resolved : ResolvedSkeletons)
         {
-            if (Resolved->Skeleton == Skeleton && Resolved->Generation == Skeleton->BindPoseGeneration)
+            if (Resolved->LayoutKey == Key)
             {
-                ActiveResolvedSkeleton.store(Resolved.get(), std::memory_order_release);
                 return Resolved.get();
             }
         }
 
         TUniquePtr<FResolvedSkeleton> NewSet = MakeUnique<FResolvedSkeleton>();
-        NewSet->Skeleton   = Skeleton;
-        NewSet->Generation = Skeleton->BindPoseGeneration;
+        NewSet->LayoutKey = Key;
 
         const int32 NumBones = Skeleton->GetNumBones();
         NewSet->SkeletonToCompressed.assign(NumBones, INDEX_NONE);
@@ -102,6 +115,16 @@ namespace Lumina
 
         const FResolvedSkeleton* Result = NewSet.get();
         ResolvedSkeletons.push_back(std::move(NewSet));
+
+        // Old tables stay alive, since a reader may still be scanning one.
+        TUniquePtr<FResolvedTable> Table = MakeUnique<FResolvedTable>();
+        for (const TUniquePtr<FResolvedSkeleton>& Resolved : ResolvedSkeletons)
+        {
+            Table->push_back(Resolved.get());
+        }
+        PublishedResolved.store(Table.get(), std::memory_order_release);
+        ResolvedTables.push_back(std::move(Table));
+
         ActiveResolvedSkeleton.store(Result, std::memory_order_release);
         return Result;
     }
@@ -139,7 +162,9 @@ namespace Lumina
     {
         FScopeLock Lock(ResolveMutex);
         ActiveResolvedSkeleton.store(nullptr, std::memory_order_release);
+        PublishedResolved.store(nullptr, std::memory_order_release);
         ResolvedSkeletons.clear();
+        ResolvedTables.clear();
     }
 
     CAnimation::CAnimation()
@@ -194,8 +219,6 @@ namespace Lumina
 
     void CAnimation::SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = InSkeleton->GetNumBones();
         OutBoneTransforms.resize(NumBones);
 
@@ -332,8 +355,6 @@ namespace Lumina
 
     void CAnimation::SampleAdditiveDelta(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutDelta, int32 MaxBones) const
     {
-        LUMINA_PROFILE_SCOPE();
-
         // Per-thread scratch, since the executor samples inside a ParallelFor.
         thread_local FPose SourceScratch;
         thread_local FPose BaseScratch;
@@ -368,8 +389,6 @@ namespace Lumina
 
     void CAnimation::SampleRawLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones) const
     {
-        LUMINA_PROFILE_SCOPE();
-
         const int32 NumBones = InSkeleton->GetNumBones();
         OutPose.SetNumBones(NumBones);
         OutPose.AdditiveSpace = EPoseAdditiveSpace::None;

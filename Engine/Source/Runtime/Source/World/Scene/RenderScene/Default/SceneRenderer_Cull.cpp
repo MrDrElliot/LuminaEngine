@@ -855,7 +855,7 @@ namespace Lumina
             // Retained state is zeroed on growth because a free slot IS zero; the CPU writes zero on free too.
             ReserveBuffer(CL, RetainedCullEntryBuffer, CullBytes,      /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ true);
             ReserveBuffer(CL, RetainedTransformBuffer, TransformBytes, /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ true);
-            ReserveBuffer(CL, RetainedStaticBuffer,    StaticBytes,    /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ true);
+            ReserveBuffer(CL, RetainedStaticBuffer,    StaticBytes,    /*bAllowShrink*/ Upload.bFullStatic, /*bPreserveContents*/ true);
 
             // Flipped so last frame's set stays readable all frame; both dispatches take their phase from it.
             InstanceVisibilityWriteIndex ^= 1u;
@@ -881,37 +881,35 @@ namespace Lumina
                                     && RetainedStaticBuffer.CapacityOf<FInstanceStatic>()    >= RetainedSlots;
             if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedSlots > 0 && bRetainedFits)
             {
+                // Contiguous slots are contiguous in the source arrays, so each run is one copy.
+                auto CollectRuns = [](const TVector<uint32>& Slots, TVector<FUIntVector2>& Runs)
+                {
+                    Runs.clear();
+                    const SIZE_T NumDirty = Slots.size();
+                    for (SIZE_T i = 0; i < NumDirty; )
+                    {
+                        SIZE_T j = i + 1;
+                        while (j < NumDirty && Slots[j] == Slots[j - 1] + 1u)
+                        {
+                            ++j;
+                        }
+                        Runs.push_back(FUIntVector2{ Slots[i], (uint32)(j - i) });
+                        i = j;
+                    }
+                };
+
                 if (Upload.bFull)
                 {
                     LUMINA_PROFILE_SECTION_COLORED("FULL resend", tracy::Color::Red3);
 
                     StageWrite(RetainedCullEntryBuffer.Gpu,
-                               SrcCullEntries, (SIZE_T)RetainedSlots * sizeof(FInstanceCullEntry));
+                               SrcCullEntries, (SIZE_T)RetainedSlots * sizeof(FInstanceCullEntry), true);
                     StageWrite(RetainedTransformBuffer.Gpu,
-                               SrcTransforms, (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
-                    StageWrite(RetainedStaticBuffer.Gpu,
-                               SrcStatic, (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
+                               SrcTransforms, (SIZE_T)RetainedSlots * sizeof(FTransform3x4), true);
                     FlushStagedWrites(CL);
                 }
                 else
                 {
-                    // Contiguous slots are contiguous in the source arrays, so each run is one copy.
-                    auto CollectRuns = [](const TVector<uint32>& Slots, TVector<FUIntVector2>& Runs)
-                    {
-                        Runs.clear();
-                        const SIZE_T NumDirty = Slots.size();
-                        for (SIZE_T i = 0; i < NumDirty; )
-                        {
-                            SIZE_T j = i + 1;
-                            while (j < NumDirty && Slots[j] == Slots[j - 1] + 1u)
-                            {
-                                ++j;
-                            }
-                            Runs.push_back(FUIntVector2{ Slots[i], (uint32)(j - i) });
-                            i = j;
-                        }
-                    };
-
                     // Both buffers share the slot list, so one run scan feeds both writes.
                     CollectRuns(Upload.DirtySlots, RetainedRunScratch);
 
@@ -939,13 +937,23 @@ namespace Lumina
                     }
                     else
                     {
-                        WriteBufferRuns(CL, RetainedCullEntryBuffer.Gpu, SrcCullEntries, sizeof(FInstanceCullEntry), RetainedRunScratch);
-                        WriteBufferRuns(CL, RetainedTransformBuffer.Gpu, SrcTransforms,  sizeof(FTransform3x4),      RetainedRunScratch);
+                        WriteBufferRuns(CL, RetainedCullEntryBuffer.Gpu, SrcCullEntries, sizeof(FInstanceCullEntry), RetainedRunScratch, true);
+                        WriteBufferRuns(CL, RetainedTransformBuffer.Gpu, SrcTransforms,  sizeof(FTransform3x4),      RetainedRunScratch, true);
                     }
 
-                    CollectRuns(Upload.DirtyStaticSlots, RetainedRunScratch);
-                    WriteBufferRuns(CL, RetainedStaticBuffer.Gpu, SrcStatic, sizeof(FInstanceStatic), RetainedRunScratch);
                 }
+
+                if (Upload.bFullStatic)
+                {
+                    StageWrite(RetainedStaticBuffer.Gpu, SrcStatic, (SIZE_T)RetainedSlots * sizeof(FInstanceStatic), true);
+                    FlushStagedWrites(CL);
+                }
+                else
+                {
+                    CollectRuns(Upload.DirtyStaticSlots, RetainedRunScratch);
+                    WriteBufferRuns(CL, RetainedStaticBuffer.Gpu, SrcStatic, sizeof(FInstanceStatic), RetainedRunScratch, true);
+                }
+                LaunchDeferredStageFills();
             }
             const uint32 CullCap      = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>();
             const uint32 TransformCap = RetainedTransformBuffer.CapacityOf<FTransform3x4>();

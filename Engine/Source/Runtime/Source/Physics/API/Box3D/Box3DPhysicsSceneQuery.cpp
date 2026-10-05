@@ -170,10 +170,9 @@ namespace Lumina::Physics
         return INDEX_NONE;
     }
 
+    // Queries carry no zone, since gameplay runs thousands a frame on every worker and fiber builds serialize Tracy events.
     TOptional<SRayResult> FBox3DPhysicsScene::CastRay(const SRayCastSettings& Settings)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const FVector3 Delta = Settings.End - Settings.Start;
         const float Length = Math::Length(Delta);
         if (Length <= LE_SMALL_NUMBER)
@@ -218,8 +217,6 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::CastRayAll(const SRayCastSettings& Settings, TVector<SRayResult>& OutHits)
     {
-        LUMINA_PROFILE_SCOPE();
-
         OutHits.clear();
 
         const FVector3 Delta = Settings.End - Settings.Start;
@@ -248,8 +245,6 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::CastSphere(const SSphereCastSettings& Settings, TVector<SRayResult>& OutHits)
     {
-        LUMINA_PROFILE_SCOPE();
-
         OutHits.clear();
 
         const FVector3 Delta = Settings.End - Settings.Start;
@@ -282,8 +277,6 @@ namespace Lumina::Physics
 
     TOptional<SRayResult> FBox3DPhysicsScene::CastSphereClosest(const SSphereCastSettings& Settings)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const FVector3 Delta = Settings.End - Settings.Start;
         const float Length = Math::Length(Delta);
         if (Length <= LE_SMALL_NUMBER)
@@ -317,8 +310,6 @@ namespace Lumina::Physics
 
     int32 FBox3DPhysicsScene::OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
     {
-        LUMINA_PROFILE_SCOPE();
-
         const b3Vec3 Origin{ 0.0f, 0.0f, 0.0f };
         const b3ShapeProxy Proxy{ &Origin, 1, Radius };
 
@@ -334,8 +325,6 @@ namespace Lumina::Physics
 
     int32 FBox3DPhysicsScene::OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
     {
-        LUMINA_PROFILE_SCOPE();
-
         b3Vec3 Corners[8];
         for (int32 i = 0; i < 8; ++i)
         {
@@ -357,8 +346,6 @@ namespace Lumina::Physics
 
     int32 FBox3DPhysicsScene::CollidePoint(const FVector3& Point, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
     {
-        LUMINA_PROFILE_SCOPE();
-
         // A zero-radius point proxy is the containment test, with no sweep.
         const b3Vec3 Origin{ 0.0f, 0.0f, 0.0f };
         const b3ShapeProxy Proxy{ &Origin, 1, 0.0f };

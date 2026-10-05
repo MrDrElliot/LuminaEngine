@@ -295,6 +295,7 @@ namespace Lumina
 
         State.SyncGroups.assign(Graph->NumSyncGroups, FAnimSyncGroup());
         State.CurveValues.assign(Graph->CurveNames.size(), 0.0f);
+        State.UpdateSerial = 0;
 
         // Defaults live on the graph's parameter struct, which the update pull reads every frame.
         State.ObjectParameters.assign(Graph->ObjectParameters.size(), nullptr);
@@ -345,6 +346,8 @@ namespace Lumina
         {
             InitState(Graph, State);
         }
+
+        ++State.UpdateSerial;
 
         // Latch last update's blended durations and tracks, and re-arm the shared playheads.
         for (FAnimSyncGroup& Group : State.SyncGroups)
@@ -708,12 +711,134 @@ namespace Lumina
             }
         };
 
+        const auto MachineIsValid = [&](uint16 SmIdx) -> bool
+        {
+            if (SmIdx >= Graph->StateMachines.size() || SmIdx >= State.Inertializers.size())
+            {
+                return false;
+            }
+            const FAnimGraphStateMachine& SM = Graph->StateMachines[SmIdx];
+            return !SM.StatePoseRegisters.empty() && SM.CurrentStateSlot < NumState &&
+                   SM.FromStateSlot < NumState && SM.TimeInStateSlot < NumState;
+        };
+
+        struct FMachineDecision
+        {
+            int32 Current = 0;
+            int32 From    = -1;
+            bool  bStart  = false;
+            bool  bValid  = false;
+        };
+
+        // Decided once the current state has run, so the edge can read its curves and finished flag.
+        thread_local TVector<FMachineDecision> Decisions;
+        Decisions.assign(Graph->StateMachines.size(), FMachineDecision());
+
+        const auto DecideTransition = [&](uint16 SmIdx) -> FMachineDecision
+        {
+            const FAnimGraphStateMachine& SM = Graph->StateMachines[SmIdx];
+            const int32 NumStates = (int32)SM.StatePoseRegisters.size();
+            FAnimInertializer& Inert = State.Inertializers[SmIdx];
+
+            FMachineDecision Out;
+            Out.bValid  = true;
+            Out.Current = Math::Clamp((int32)State.StateSlots[SM.CurrentStateSlot], 0, NumStates - 1);
+            Out.From    = (int32)State.StateSlots[SM.FromStateSlot];
+
+            // A machine that sat in a skipped state missed the updates that would have finished its blend.
+            if (Inert.LastUpdate + 1 != State.UpdateSerial)
+            {
+                Inert.bActive = false;
+                Out.From = -1;
+            }
+
+            // Terms read the state we are in now, so this is gathered before any edge fires.
+            Detail::FTransitionContext TransitionContext;
+            TransitionContext.TimeInState = State.StateSlots[SM.TimeInStateSlot];
+            TransitionContext.Curves      = CurvesOf(SM.StatePoseRegisters[Out.Current]);
+            TransitionContext.NumCurves   = NumCurves;
+            if (Out.Current < (int32)SM.StateFinishedRegisters.size())
+            {
+                TransitionContext.ClipFinished = ReadScalar(SM.StateFinishedRegisters[Out.Current], 0.0f);
+            }
+
+            // Any matching edge when stable, only interruptible ones mid-transition, first passing edge wins.
+            const bool bTransitioning = Out.From >= 0;
+            for (const FAnimGraphTransition& Transition : SM.Transitions)
+            {
+                if (bTransitioning && !Transition.bCanInterrupt)
+                {
+                    continue;
+                }
+                const bool bFromMatches = (Transition.FromState == Out.Current) || (Transition.FromState < 0);
+                if (!bFromMatches ||
+                    Transition.ToState == Out.Current ||
+                    Transition.ToState < 0 ||
+                    Transition.ToState >= NumStates)
+                {
+                    continue;
+                }
+                if (Detail::EvalTransitionCondition(Transition, Graph, State.Parameters, TransitionContext))
+                {
+                    Out.From       = Out.Current;
+                    Out.Current    = Transition.ToState;
+                    Inert.Duration = Math::Max(Transition.BlendDuration, 0.0f);
+                    Out.bStart     = true;
+                    break;
+                }
+            }
+            return Out;
+        };
+
         Detail::FByteReader Reader;
         Reader.Data = Graph->Bytecode.data();
         Reader.Size = Graph->Bytecode.size();
 
+        // A machine whose states carry their bytecode ranges runs only the one it is in, then returns here.
+        struct FMachineFrame
+        {
+            uint16 SmIdx      = 0;
+            bool   bRanTarget = false;
+            SIZE_T ReturnAt   = 0;
+            SIZE_T StatesEnd  = 0;
+            SIZE_T Table      = 0;
+        };
+
+        thread_local TVector<FMachineFrame> MachineFrames;
+        MachineFrames.clear();
+
+        const auto StateCodeOffset = [&](SIZE_T Table, int32 StateIndex, bool bEnd) -> SIZE_T
+        {
+            uint32 Offset = 0;
+            Memory::Memcpy(&Offset, Reader.Data + Table + ((SIZE_T)StateIndex * 2 + (bEnd ? 1 : 0)) * sizeof(uint32), sizeof(uint32));
+            return Offset;
+        };
+
         while (!Reader.AtEnd())
         {
+            if (!MachineFrames.empty() && Reader.Cursor == MachineFrames.back().ReturnAt)
+            {
+                FMachineFrame& Frame = MachineFrames.back();
+                if (!Frame.bRanTarget)
+                {
+                    const FMachineDecision Decision = DecideTransition(Frame.SmIdx);
+                    Decisions[Frame.SmIdx] = Decision;
+
+                    // The state entered this update shows this update, as it would had every state run.
+                    if (Decision.bStart)
+                    {
+                        Frame.bRanTarget = true;
+                        Frame.ReturnAt   = StateCodeOffset(Frame.Table, Decision.Current, true);
+                        Reader.Cursor    = StateCodeOffset(Frame.Table, Decision.Current, false);
+                        continue;
+                    }
+                }
+
+                Reader.Cursor = Frame.StatesEnd;
+                MachineFrames.pop_back();
+                continue;
+            }
+
             const EAnimOp Op = (EAnimOp)Reader.Read<uint8>();
 
             switch (Op)
@@ -1664,9 +1789,17 @@ namespace Lumina
                 }
 
                 FAnimInertializer& Inert = State.NodeInertializers[Index];
+                const float RequestValue = ReadScalar(Request, 0.0f);
+
+                // Missed updates mean a skipped state, so its blend counts as over and its request as already seen.
+                if (Inert.LastUpdate + 1 != State.UpdateSerial)
+                {
+                    Inert.bActive     = false;
+                    Inert.PrevRequest = RequestValue;
+                }
+                Inert.LastUpdate = State.UpdateSerial;
 
                 // Rising edge, so holding the request high smooths once instead of every frame.
-                const float RequestValue = ReadScalar(Request, 0.0f);
                 const bool bStart = RequestValue > 0.5f && Inert.PrevRequest <= 0.5f;
                 Inert.PrevRequest = RequestValue;
 
@@ -1722,8 +1855,15 @@ namespace Lumina
                 }
 
                 FAnimDeadBlend& Dead = State.DeadBlends[Index];
-
                 const float RequestValue = ReadScalar(Request, 0.0f);
+
+                if (Dead.LastUpdate + 1 != State.UpdateSerial)
+                {
+                    Dead.bActive     = false;
+                    Dead.PrevRequest = RequestValue;
+                }
+                Dead.LastUpdate = State.UpdateSerial;
+
                 const bool bStart = RequestValue > 0.5f && Dead.PrevRequest <= 0.5f;
                 Dead.PrevRequest = RequestValue;
 
@@ -1782,6 +1922,48 @@ namespace Lumina
                 break;
             }
 
+            case EAnimOp::EnterStateMachine:
+            {
+                const uint16 SmIdx     = Reader.Read<uint16>();
+                const uint16 NumRanges = Reader.Read<uint16>();
+                const SIZE_T StatesEnd = Reader.Read<uint32>();
+                const SIZE_T Table     = Reader.Cursor;
+                Reader.Cursor += (SIZE_T)NumRanges * 2 * sizeof(uint32);
+
+                // Anything that does not line up falls through and runs every state in order, which is always correct.
+                if (NumRanges == 0 || !MachineIsValid(SmIdx) ||
+                    NumRanges != Graph->StateMachines[SmIdx].StatePoseRegisters.size() ||
+                    Reader.Cursor > StatesEnd || StatesEnd > Reader.Size)
+                {
+                    break;
+                }
+
+                bool bRangesValid = true;
+                for (int32 StateIndex = 0; StateIndex < NumRanges && bRangesValid; ++StateIndex)
+                {
+                    const SIZE_T Begin = StateCodeOffset(Table, StateIndex, false);
+                    const SIZE_T End   = StateCodeOffset(Table, StateIndex, true);
+                    bRangesValid = Begin >= Reader.Cursor && Begin <= End && End <= StatesEnd;
+                }
+                if (!bRangesValid)
+                {
+                    break;
+                }
+
+                const FAnimGraphStateMachine& SM = Graph->StateMachines[SmIdx];
+                const int32 Current = Math::Clamp((int32)State.StateSlots[SM.CurrentStateSlot], 0, (int32)NumRanges - 1);
+
+                FMachineFrame Frame;
+                Frame.SmIdx     = SmIdx;
+                Frame.ReturnAt  = StateCodeOffset(Table, Current, true);
+                Frame.StatesEnd = StatesEnd;
+                Frame.Table     = Table;
+                MachineFrames.push_back(Frame);
+
+                Reader.Cursor = StateCodeOffset(Table, Current, false);
+                break;
+            }
+
             case EAnimOp::EvalStateMachine:
             {
                 const uint16 SmIdx = Reader.Read<uint16>();
@@ -1808,8 +1990,7 @@ namespace Lumina
                 }
 
                 // Out-of-range slot = corrupt/version-mismatched bytecode; fall back to bind pose.
-                if (SM.CurrentStateSlot >= NumState || SM.FromStateSlot >= NumState || SM.TimeInStateSlot >= NumState ||
-                    SmIdx >= State.Inertializers.size())
+                if (!MachineIsValid(SmIdx))
                 {
                     SetPoseTask(Dst, OutTasks.Add(RefTask));
                     SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
@@ -1820,45 +2001,13 @@ namespace Lumina
 
                 FAnimInertializer& Inert = State.Inertializers[SmIdx];
 
-                int32 Current = Math::Clamp((int32)State.StateSlots[SM.CurrentStateSlot], 0, NumStates - 1);
-                int32 From    = (int32)State.StateSlots[SM.FromStateSlot];
+                const FMachineDecision Decision = Decisions[SmIdx].bValid ? Decisions[SmIdx] : DecideTransition(SmIdx);
+                Decisions[SmIdx].bValid = false;
+                Inert.LastUpdate = State.UpdateSerial;
 
-                // Terms read the state we are in now, so this is gathered before any edge fires.
-                Detail::FTransitionContext TransitionContext;
-                TransitionContext.TimeInState = State.StateSlots[SM.TimeInStateSlot];
-                TransitionContext.Curves      = CurvesOf(SM.StatePoseRegisters[Current]);
-                TransitionContext.NumCurves   = NumCurves;
-                if (Current < (int32)SM.StateFinishedRegisters.size())
-                {
-                    TransitionContext.ClipFinished = ReadScalar(SM.StateFinishedRegisters[Current], 0.0f);
-                }
-
-                // Any matching edge when stable, only interruptible ones mid-transition, first passing edge wins.
-                const bool bTransitioning = From >= 0;
-                bool bStart = false;
-                for (const FAnimGraphTransition& Transition : SM.Transitions)
-                {
-                    if (bTransitioning && !Transition.bCanInterrupt)
-                    {
-                        continue;
-                    }
-                    const bool bFromMatches = (Transition.FromState == Current) || (Transition.FromState < 0);
-                    if (!bFromMatches ||
-                        Transition.ToState == Current ||
-                        Transition.ToState < 0 ||
-                        Transition.ToState >= NumStates)
-                    {
-                        continue;
-                    }
-                    if (Detail::EvalTransitionCondition(Transition, Graph, State.Parameters, TransitionContext))
-                    {
-                        From           = Current;
-                        Current        = Transition.ToState;
-                        Inert.Duration = Math::Max(Transition.BlendDuration, 0.0f);
-                        bStart         = true;
-                        break;
-                    }
-                }
+                int32 Current = Decision.Current;
+                int32 From    = Decision.From;
+                const bool bStart = Decision.bStart;
 
                 const uint16 CurReg = SM.StatePoseRegisters[Current];
 
@@ -1914,7 +2063,7 @@ namespace Lumina
                 State.StateSlots[SM.FromStateSlot]     = (float)From;
                 State.StateSlots[SM.TimeInStateSlot]   = bStart ? 0.0f : State.StateSlots[SM.TimeInStateSlot] + DeltaTime;
 
-                // Clocks advance whether or not the state is active, so a finished play-once never replays.
+                // Inactive states hold their clocks at zero, so a finished play-once replays on re-entry.
                 const int32 NumClockRanges = (int32)Math::Min(SM.StateClockSlotFirst.size(), SM.StateClockSlotEnd.size());
                 const uint16 NumClockSlots = (uint16)SM.ClockSlots.size();
                 const int32 NumChildRanges = (int32)Math::Min(SM.StateChildMachineFirst.size(), SM.StateChildMachineEnd.size());

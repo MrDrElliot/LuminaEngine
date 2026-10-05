@@ -654,16 +654,13 @@ namespace Lumina
 
         const uint32 DeviceCapacity = RetainedDeviceCapacity.load(std::memory_order_acquire);
         // Growth keeps the device contents, so only a device holding nothing valid needs everything again.
-        Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || DeviceCapacity == 0;
+        const bool bDeviceEmpty = DeviceCapacity == 0;
+        Out.bFull       = ScenePrimitives.NeedsFullInstanceUpload() || bDeviceEmpty
+                       || FScenePrimitiveSet::ShouldResendAllInstances(ScenePrimitives.GetDirtyInstanceSlots().size(), SlotCount);
+        Out.bFullStatic = ScenePrimitives.NeedsFullStaticUpload() || bDeviceEmpty
+                       || ScenePrimitives.GetDirtyStaticSlots().size() * 4 >= (SIZE_T)SlotCount;
 
-        if (!Out.bFull
-            && (ScenePrimitives.GetDirtyInstanceSlots().size() * 4 >= (SIZE_T)SlotCount
-                || ScenePrimitives.GetDirtyStaticSlots().size() * 4 >= (SIZE_T)SlotCount))
-        {
-            Out.bFull = true;
-        }
-
-        if (!Out.bFull)
+        if (!Out.bFull || !Out.bFullStatic)
         {
             // A bitmap over the slot range yields the sorted, unique list in linear time, where a sort did not.
             DirtySlotBits.resize(((SIZE_T)SlotCount + 63u) / 64u);
@@ -692,21 +689,29 @@ namespace Lumina
                 }
             };
 
-            Collect(ScenePrimitives.GetDirtyInstanceSlots(), Out.DirtySlots);
-            Collect(ScenePrimitives.GetDirtyStaticSlots(),   Out.DirtyStaticSlots);
-
-            if (Out.DirtySlots.size() * 4 >= (SIZE_T)SlotCount
-                || Out.DirtyStaticSlots.size() * 4 >= (SIZE_T)SlotCount)
+            if (!Out.bFull)
             {
-                Out.bFull = true;
-                Out.DirtySlots.clear();
-                Out.DirtyStaticSlots.clear();
+                Collect(ScenePrimitives.GetDirtyInstanceSlots(), Out.DirtySlots);
+                if (FScenePrimitiveSet::ShouldResendAllInstances(Out.DirtySlots.size(), SlotCount))
+                {
+                    Out.bFull = true;
+                    Out.DirtySlots.clear();
+                }
+            }
+            if (!Out.bFullStatic)
+            {
+                Collect(ScenePrimitives.GetDirtyStaticSlots(), Out.DirtyStaticSlots);
+                if (Out.DirtyStaticSlots.size() * 4 >= (SIZE_T)SlotCount)
+                {
+                    Out.bFullStatic = true;
+                    Out.DirtyStaticSlots.clear();
+                }
             }
         }
 
         // Interned; a full instance re-send also re-sends these, since a replaced device buffer loses them.
         Out.SurfaceDescCount        = ScenePrimitives.GetSurfaceDescCount();
-        Out.bSurfaceDescsChanged    = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull;
+        Out.bSurfaceDescsChanged    = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull || Out.bFullStatic;
         Out.MaxSurfaceDescMeshlets  = ScenePrimitives.GetMaxSurfaceDescMeshlets();
 
         // Channel consumed, since the decisions above are now owned by this frame.

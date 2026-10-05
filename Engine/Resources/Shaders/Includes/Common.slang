@@ -844,11 +844,12 @@ static const uint WIDGET_FLAG_BILLBOARD = 1u;
 // lighting loop. ShadowDataIndex points into the cold FLightShadowData[] table, or INDEX_NONE.
 struct FLight
 {
+    // Position and Radius share the first 16 bytes, so the clustered loop culls on one load.
     float3 Position;
-    uint   Color;
+    float  Radius;
 
     float3 Direction;   // to-light: FROM surface TOWARD the light (sun & spot)
-    float  Radius;
+    uint   Color;
 
     float  Intensity;
     float  Falloff;

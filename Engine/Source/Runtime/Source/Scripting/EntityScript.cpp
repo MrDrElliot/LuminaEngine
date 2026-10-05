@@ -334,6 +334,37 @@ namespace Lumina
             Task::ParallelFor(NumChunks, RunChunk, 1);
         }
 
+        // Phase, opt-in and override are class data, so a run of one class resolves them once.
+        struct FClassFacts
+        {
+            const CClass*      Class     = nullptr;
+            bool               bParallel = false;
+            bool               bManaged  = false;
+            EScriptUpdatePhase Phase     = EScriptUpdatePhase::PrePhysics;
+
+            void See(const CEntityScript* Script);
+        };
+
+        enum class EClaimResult : uint8
+        {
+            Skipped,
+            Claimed,
+            NeedsInstance,
+        };
+
+        struct FClaimChunk
+        {
+            TVector<void*>          Handles;
+            TVector<CEntityScript*> Scripts;
+            TVector<ECS::FEntity>   Entities;
+            uint32                  PostPhysics = 0;
+            uint32                  Ran         = 0;
+        };
+
+        // Above this many entities the claim and the run share one pass, cut into chunks of this size.
+        constexpr uint32 kParallelClaimMinEntities = 2048;
+        constexpr uint32 kParallelClaimChunk       = 512;
+
         class FParallelScriptPassScope
         {
         public:
@@ -362,6 +393,7 @@ namespace Lumina
             TVector<ECS::FEntity>   ParallelEntities;
             TVector<uint32>         ChunkStarts;
             TVector<uint32>         ChunkRan;
+            TVector<FClaimChunk>    ClaimChunks;
         };
 
         // A nested tick falls back to its own storage rather than walking the outer pass's buffers.
@@ -456,12 +488,179 @@ namespace Lumina
         {
             Out.clear();
 
+            // With nothing excluded and no holes the view is the pool itself, copied back to front in its walk order.
+            const auto Pool     = Registry.FindStorage<SEntityScriptComponent>();
+            const auto Disabled = Registry.FindStorage<SDisabledTag>();
+            const auto Paused   = Registry.FindStorage<SScriptDisabledTag>();
+            if (Pool && !Pool->HasTombstones() && (!Disabled || Disabled->IsEmpty()) && (!Paused || Paused->IsEmpty()))
+            {
+                const ECS::FEntity* Dense = Pool->GetDenseData();
+                const size_t        Num   = Pool->GetDenseSize();
+                Out.resize(Num);
+                for (size_t Index = 0; Index < Num; ++Index)
+                {
+                    Out[Index] = Dense[Num - 1u - Index];
+                }
+                return;
+            }
+
             auto View = Registry.View<SEntityScriptComponent>(ECS::TExclude<SDisabledTag, SScriptDisabledTag>{});
             Out.reserve(View.Num());
             for (ECS::FEntity Entity : View)
             {
                 Out.push_back(Entity);
             }
+        }
+
+        void FClassFacts::See(const CEntityScript* Script)
+        {
+            if (Script->GetClass() != Class)
+            {
+                Class     = Script->GetClass();
+                bParallel = IsParallelUpdate(Class);
+                bManaged  = HasManagedUpdate(Class);
+                Phase     = ScriptPhase(Script);
+            }
+        }
+
+        // Queues the entity's ticking scripts when all of them promised to touch nothing else and owe no lifecycle.
+        EClaimResult ClaimEntity(ECS::FRegistry& Registry, ECS::FEntity Entity, EScriptUpdatePhase Phase, bool bDrainLifecycle,
+                                 bool bMayCreateInstances, FClassFacts& Facts, TVector<void*>& OutHandles,
+                                 TVector<CEntityScript*>& OutScripts, TVector<ECS::FEntity>& OutEntities, uint32& OutPostPhysics)
+        {
+            const SEntityScriptComponent* Component = (Entity != ECS::NullEntity && Registry.IsValid(Entity))
+                ? Registry.TryGet<SEntityScriptComponent>(Entity) : nullptr;
+            if (Component == nullptr)
+            {
+                return EClaimResult::Skipped;
+            }
+
+            bool   bAnyTicking     = false;
+            uint32 PostPhysicsHere = 0;
+            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            {
+                const CEntityScript* Script = Held.Get();
+                if (Script == nullptr || (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!Script->IsFaulted() && !Script->IsReady()))))
+                {
+                    return EClaimResult::Skipped;
+                }
+                Facts.See(Script);
+                PostPhysicsHere += (Facts.Phase == EScriptUpdatePhase::PostPhysics) ? 1u : 0u;
+                if (!Script->ShouldTick() || Facts.Phase != Phase)
+                {
+                    continue;
+                }
+                if (!Facts.bParallel)
+                {
+                    return EClaimResult::Skipped;
+                }
+                bAnyTicking = true;
+            }
+            if (!bAnyTicking)
+            {
+                return EClaimResult::Skipped;
+            }
+
+            const size_t Start = OutScripts.size();
+            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            {
+                CEntityScript* Script = Held.Get();
+                Facts.See(Script);
+                if (!Script->ShouldTick() || Facts.Phase != Phase)
+                {
+                    continue;
+                }
+
+                void* Handle = nullptr;
+                if (Facts.bManaged)
+                {
+                    const uint32 Generation = ManagedInstances::GetHandleGeneration();
+                    Handle = Script->CachedHandleGeneration == Generation ? Script->CachedManagedHandle : nullptr;
+                    if (Handle == nullptr)
+                    {
+                        // Creating one runs a managed constructor, which only the serial pass may do.
+                        if (!bMayCreateInstances)
+                        {
+                            OutHandles.resize(Start);
+                            OutScripts.resize(Start);
+                            OutEntities.resize(Start);
+                            return EClaimResult::NeedsInstance;
+                        }
+                        Handle = Scriptable::GetOrCreateInstance(Script);
+                        Script->CachedManagedHandle    = Handle;
+                        Script->CachedHandleGeneration = Generation;
+                    }
+                    if (Handle == nullptr)
+                    {
+                        OutHandles.resize(Start);
+                        OutScripts.resize(Start);
+                        OutEntities.resize(Start);
+                        return EClaimResult::Skipped;
+                    }
+                }
+                OutHandles.push_back(Handle);
+                OutScripts.push_back(Script);
+                OutEntities.push_back(Entity);
+            }
+
+            OutPostPhysics += PostPhysicsHere;
+            return EClaimResult::Claimed;
+        }
+
+        // Runs claimed scripts in order until the structure epoch moves, returning how many ran.
+        uint32 RunClaimedSpan(void* const* Handles, CEntityScript* const* Scripts, uint32 Count, float DeltaTime, uint32 ClaimEpoch)
+        {
+            auto* Dispatch = GDispatchUpdates.Get();
+            const uint32* EpochAddress = reinterpret_cast<const uint32*>(&GStructureEpoch);
+
+            uint32 Index = 0;
+            while (Index < Count && GStructureEpoch.load(std::memory_order_relaxed) == ClaimEpoch)
+            {
+                if (Handles[Index] == nullptr)
+                {
+                    CEntityScript* Script = Scripts[Index];
+                    LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
+                    Script->OnUpdate(DeltaTime);
+                    ++Index;
+                    continue;
+                }
+                if (Dispatch == nullptr)
+                {
+                    break;
+                }
+
+                uint32 RunEnd = Index;
+                while (RunEnd < Count && Handles[RunEnd] != nullptr)
+                {
+                    ++RunEnd;
+                }
+                LUMINA_PROFILE_SECTION_NAMED(Scripts[Index]->GetClass()->GetName().c_str());
+                const uint32 Ran = (uint32)Dispatch(const_cast<void**>(Handles) + Index, (int32)(RunEnd - Index), DeltaTime, EpochAddress);
+                Index += Ran;
+                if (Index < RunEnd)
+                {
+                    break;
+                }
+            }
+            return Index;
+        }
+
+        // Claims every entity whose ticking scripts promised to touch nothing else, creating managed instances as needed.
+        uint32 ClaimEntitiesSerial(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Entities, EScriptUpdatePhase Phase,
+                                   bool bDrainLifecycle, FTickScratch& Scratch)
+        {
+            const uint32 NumEntities = (uint32)Entities.size();
+            uint32      PostPhysics = 0;
+            FClassFacts Facts;
+            for (uint32 EntityIndex = 0; EntityIndex < NumEntities; ++EntityIndex)
+            {
+                if (ClaimEntity(Registry, Entities[EntityIndex], Phase, bDrainLifecycle, true, Facts,
+                                Scratch.ParallelHandles, Scratch.ParallelScripts, Scratch.ParallelEntities, PostPhysics) == EClaimResult::Claimed)
+                {
+                    Scratch.Claimed[EntityIndex] = 1;
+                }
+            }
+            return PostPhysics;
         }
     }
 
@@ -763,197 +962,117 @@ namespace Lumina
             ParallelEntities.clear();
 
             const uint32 ClaimEpoch = GStructureEpoch.load(std::memory_order_relaxed);
-            uint32 ClaimedPostPhysics = 0;
+
+            // Whatever a parallel run did not get to goes the checked serial way, finishing an interrupted entity first.
+            auto FinishRemainder = [&](const TVector<ECS::FEntity>& RunEntities, const TVector<CEntityScript*>& RunScripts, uint32 Begin, uint32 Ran, uint32 End)
             {
-                const CClass*      ClassSeen     = nullptr;
-                bool               bSeenParallel = false;
-                bool               bSeenManaged  = false;
-                EScriptUpdatePhase SeenPhase     = EScriptUpdatePhase::PrePhysics;
-                auto SeeClass = [&](const CEntityScript* Script)
+                uint32 Index = Begin + Ran;
+                if (Index >= End)
                 {
-                    if (Script->GetClass() != ClassSeen)
-                    {
-                        ClassSeen     = Script->GetClass();
-                        bSeenParallel = IsParallelUpdate(ClassSeen);
-                        bSeenManaged  = HasManagedUpdate(ClassSeen);
-                        SeenPhase     = ScriptPhase(Script);
-                    }
-                };
-
-                for (size_t EntityIndex = 0; EntityIndex < Entities.size(); ++EntityIndex)
-                {
-                    const ECS::FEntity Entity = Entities[EntityIndex];
-                    const SEntityScriptComponent* Component = (Entity != ECS::NullEntity && Registry.IsValid(Entity))
-                        ? Registry.TryGet<SEntityScriptComponent>(Entity) : nullptr;
-                    if (Component == nullptr)
-                    {
-                        continue;
-                    }
-
-                    // Owed lifecycle, or any ticking script that made no promise, keeps the entity on the checked path.
-                    bool   bEligible       = true;
-                    bool   bAnyTicking     = false;
-                    uint32 PostPhysicsHere = 0;
-                    for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
-                    {
-                        const CEntityScript* Script = Held.Get();
-                        if (Script == nullptr || (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!Script->IsFaulted() && !Script->IsReady()))))
-                        {
-                            bEligible = false;
-                            break;
-                        }
-                        SeeClass(Script);
-                        PostPhysicsHere += (SeenPhase == EScriptUpdatePhase::PostPhysics) ? 1u : 0u;
-                        if (!Script->ShouldTick() || SeenPhase != Phase)
-                        {
-                            continue;
-                        }
-                        if (!bSeenParallel)
-                        {
-                            bEligible = false;
-                            break;
-                        }
-                        bAnyTicking = true;
-                    }
-                    if (!bEligible || !bAnyTicking)
-                    {
-                        continue;
-                    }
-
-                    const size_t Start = ParallelScripts.size();
-                    bool bQueued = true;
-                    for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
-                    {
-                        CEntityScript* Script = Held.Get();
-                        SeeClass(Script);
-                        if (!Script->ShouldTick() || SeenPhase != Phase)
-                        {
-                            continue;
-                        }
-
-                        void* Handle = nullptr;
-                        if (bSeenManaged)
-                        {
-                            const uint32 Generation = ManagedInstances::GetHandleGeneration();
-                            Handle = Script->CachedHandleGeneration == Generation ? Script->CachedManagedHandle : nullptr;
-                            if (Handle == nullptr)
-                            {
-                                Handle = Scriptable::GetOrCreateInstance(Script);
-                                Script->CachedManagedHandle    = Handle;
-                                Script->CachedHandleGeneration = Generation;
-                            }
-                            if (Handle == nullptr)
-                            {
-                                bQueued = false;
-                                break;
-                            }
-                        }
-                        ParallelHandles.push_back(Handle);
-                        ParallelScripts.push_back(Script);
-                        ParallelEntities.push_back(Entity);
-                    }
-
-                    if (!bQueued)
-                    {
-                        ParallelHandles.resize(Start);
-                        ParallelScripts.resize(Start);
-                        ParallelEntities.resize(Start);
-                        continue;
-                    }
-                    Claimed[EntityIndex] = 1;
-                    ClaimedPostPhysics += PostPhysicsHere;
+                    return;
                 }
-            }
+                if (Ran > 0)
+                {
+                    const ECS::FEntity Interrupted = RunEntities[Index - 1];
+                    for (; Index < End && RunEntities[Index] == Interrupted; ++Index)
+                    {
+                        CEntityScript* Script = RunScripts[Index];
+                        if (IsStillAttached(Registry, Interrupted, Script) && Script->ShouldTick() && ScriptPhase(Script) == Phase)
+                        {
+                            LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
+                            Script->OnUpdate(DeltaTime);
+                        }
+                    }
+                }
+                for (ECS::FEntity Previous = ECS::NullEntity; Index < End; ++Index)
+                {
+                    if (RunEntities[Index] != Previous)
+                    {
+                        Previous = RunEntities[Index];
+                        RunEntity(Previous);
+                    }
+                }
+            };
 
-            // A managed constructor run while claiming may have changed things, which leaves every claim suspect.
-            if (GStructureEpoch.load(std::memory_order_relaxed) != ClaimEpoch)
-            {
-                Claimed.assign(Entities.size(), 0);
-                ParallelHandles.clear();
-                ParallelScripts.clear();
-                ParallelEntities.clear();
-                ClaimedPostPhysics = 0;
-            }
-            PostPhysicsScripts += ClaimedPostPhysics;
-
-            if (!ParallelScripts.empty())
+            const uint32 NumThreads = (GTaskSystem != nullptr) ? GTaskSystem->GetNumTaskThreads() : 0u;
+            if ((uint32)Entities.size() >= kParallelClaimMinEntities && NumThreads > 1)
             {
                 LUMINA_PROFILE_SECTION("Parallel Entity Scripts");
 
-                TVector<uint32>& ChunkStarts = Scratch.ChunkStarts;
-                TVector<uint32>& ChunkRan    = Scratch.ChunkRan;
-                BuildEntityChunks(ParallelEntities, ChunkStarts);
-                const uint32 NumChunks = (uint32)ChunkStarts.size() - 1;
-                ChunkRan.assign(NumChunks, 0);
+                // Each chunk claims its own entities and runs them at once, which no other chunk reads.
+                const uint32 NumEntities = (uint32)Entities.size();
+                const uint32 NumChunks   = (NumEntities + kParallelClaimChunk - 1) / kParallelClaimChunk;
+                if ((uint32)Scratch.ClaimChunks.size() < NumChunks)
+                {
+                    Scratch.ClaimChunks.resize(NumChunks);
+                }
 
-                auto* Dispatch = GDispatchUpdates.Get();
-                const uint32* EpochAddress = reinterpret_cast<const uint32*>(&GStructureEpoch);
-                RunChunks((uint32)ParallelScripts.size(), NumChunks, [&](uint32 Chunk)
+                Task::ParallelFor(NumChunks, [&](uint32 Chunk)
                 {
                     FParallelScriptPassScope PassScope;
-                    const uint32 Begin = ChunkStarts[Chunk];
-                    const uint32 End   = ChunkStarts[Chunk + 1];
-                    uint32 Index = Begin;
-                    while (Index < End && GStructureEpoch.load(std::memory_order_relaxed) == ClaimEpoch)
+                    FClaimChunk& Out = Scratch.ClaimChunks[Chunk];
+                    Out.Handles.clear();
+                    Out.Scripts.clear();
+                    Out.Entities.clear();
+                    Out.PostPhysics = 0;
+                    Out.Ran         = 0;
+
+                    FClassFacts  Facts;
+                    const uint32 End = Math::Min(NumEntities, (Chunk + 1) * kParallelClaimChunk);
+                    for (uint32 EntityIndex = Chunk * kParallelClaimChunk; EntityIndex < End; ++EntityIndex)
                     {
-                        if (ParallelHandles[Index] == nullptr)
-                        {
-                            CEntityScript* Script = ParallelScripts[Index];
-                            LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
-                            Script->OnUpdate(DeltaTime);
-                            ++Index;
-                            continue;
-                        }
-                        if (Dispatch == nullptr)
-                        {
-                            break;
-                        }
-
-                        uint32 RunEnd = Index;
-                        while (RunEnd < End && ParallelHandles[RunEnd] != nullptr)
-                        {
-                            ++RunEnd;
-                        }
-                        LUMINA_PROFILE_SECTION_NAMED(ParallelScripts[Index]->GetClass()->GetName().c_str());
-                        const uint32 Ran = (uint32)Dispatch(ParallelHandles.data() + Index, (int32)(RunEnd - Index), DeltaTime, EpochAddress);
-                        Index += Ran;
-                        if (Index < RunEnd)
-                        {
-                            break;
-                        }
+                        // An entity still owed a managed instance runs on the serial path, which may create one.
+                        const EClaimResult Result = ClaimEntity(Registry, Entities[EntityIndex], Phase, bDrainLifecycle, false,
+                                                                Facts, Out.Handles, Out.Scripts, Out.Entities, Out.PostPhysics);
+                        Claimed[EntityIndex] = Result == EClaimResult::Claimed ? 1u : 0u;
                     }
-                    ChunkRan[Chunk] = Index - Begin;
-                });
 
-                // Whatever a chunk did not get to goes the checked serial way, finishing an interrupted entity first.
+                    Out.Ran = RunClaimedSpan(Out.Handles.data(), Out.Scripts.data(), (uint32)Out.Scripts.size(), DeltaTime, ClaimEpoch);
+                }, 1);
+
                 for (uint32 Chunk = 0; Chunk < NumChunks; ++Chunk)
                 {
-                    const uint32 End = ChunkStarts[Chunk + 1];
-                    uint32 Index = ChunkStarts[Chunk] + ChunkRan[Chunk];
-                    if (Index >= End)
+                    const FClaimChunk& In = Scratch.ClaimChunks[Chunk];
+                    PostPhysicsScripts += In.PostPhysics;
+                    FinishRemainder(In.Entities, In.Scripts, 0u, In.Ran, (uint32)In.Scripts.size());
+                }
+            }
+            else
+            {
+                uint32 ClaimedPostPhysics = ClaimEntitiesSerial(Registry, Entities, Phase, bDrainLifecycle, Scratch);
+
+                // A managed constructor run while claiming may have changed things, which leaves every claim suspect.
+                if (GStructureEpoch.load(std::memory_order_relaxed) != ClaimEpoch)
+                {
+                    Claimed.assign(Entities.size(), 0);
+                    ParallelHandles.clear();
+                    ParallelScripts.clear();
+                    ParallelEntities.clear();
+                    ClaimedPostPhysics = 0;
+                }
+                PostPhysicsScripts += ClaimedPostPhysics;
+
+                if (!ParallelScripts.empty())
+                {
+                    LUMINA_PROFILE_SECTION("Parallel Entity Scripts");
+
+                    TVector<uint32>& ChunkStarts = Scratch.ChunkStarts;
+                    TVector<uint32>& ChunkRan    = Scratch.ChunkRan;
+                    BuildEntityChunks(ParallelEntities, ChunkStarts);
+                    const uint32 NumChunks = (uint32)ChunkStarts.size() - 1;
+                    ChunkRan.assign(NumChunks, 0);
+
+                    RunChunks((uint32)ParallelScripts.size(), NumChunks, [&](uint32 Chunk)
                     {
-                        continue;
-                    }
-                    if (ChunkRan[Chunk] > 0)
+                        FParallelScriptPassScope PassScope;
+                        const uint32 Begin = ChunkStarts[Chunk];
+                        ChunkRan[Chunk] = RunClaimedSpan(ParallelHandles.data() + Begin, ParallelScripts.data() + Begin,
+                                                         ChunkStarts[Chunk + 1] - Begin, DeltaTime, ClaimEpoch);
+                    });
+
+                    for (uint32 Chunk = 0; Chunk < NumChunks; ++Chunk)
                     {
-                        const ECS::FEntity Interrupted = ParallelEntities[Index - 1];
-                        for (; Index < End && ParallelEntities[Index] == Interrupted; ++Index)
-                        {
-                            CEntityScript* Script = ParallelScripts[Index];
-                            if (IsStillAttached(Registry, Interrupted, Script) && Script->ShouldTick() && ScriptPhase(Script) == Phase)
-                            {
-                                LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
-                                Script->OnUpdate(DeltaTime);
-                            }
-                        }
-                    }
-                    for (ECS::FEntity Previous = ECS::NullEntity; Index < End; ++Index)
-                    {
-                        if (ParallelEntities[Index] != Previous)
-                        {
-                            Previous = ParallelEntities[Index];
-                            RunEntity(Previous);
-                        }
+                        FinishRemainder(ParallelEntities, ParallelScripts, ChunkStarts[Chunk], ChunkRan[Chunk], ChunkStarts[Chunk + 1]);
                     }
                 }
             }

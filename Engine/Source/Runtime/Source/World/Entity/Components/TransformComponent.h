@@ -317,6 +317,21 @@ namespace Lumina
             MarkMoved(false);
         }
 
+        // For a parallel writer that batches the dirty enqueue itself; true when this entity still has to be queued.
+        bool SetFromPhysicsUnqueued(const FVector3& Location, const FQuat& Rotation)
+        {
+            if (bIsFlat)
+            {
+                SetFromPhysics(Location, Rotation);
+                return false;
+            }
+            LocalTransform.SetLocation(Location);
+            LocalTransform.SetRotation(Rotation);
+            const bool bNeedsQueue = !bWorldDirty;
+            bWorldDirty = true;
+            return bNeedsQueue;
+        }
+
         void SetRaw(const FVector3& Location, const FQuat& Rotation, const FVector3& Scale)
         {
             LocalTransform.SetLocation(Location);

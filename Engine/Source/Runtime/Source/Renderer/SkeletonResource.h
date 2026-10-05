@@ -49,6 +49,10 @@ namespace Lumina
 
         uint32                  BindPoseGeneration = 0;
 
+        // Bone count and names in order, so skeletons merged from one base share every clip's bone mapping.
+        uint64                  BoneLayoutHash = 0;
+        uint64 ComputeBoneLayoutHash() const;
+
         // Transient import-dialog flag; not serialized.
         bool                    bShouldImport = true;
 

@@ -290,6 +290,9 @@ namespace Lumina
             }
             bFrameSlotWaited = false;
 
+            // Before the scene renders, so last frame's present blit reaches the queue ahead of this frame's work.
+            SwapchainTarget.FinishPresent();
+
             ApplyPendingResize();
 
             // Read every frame like the other renderer settings, and a no-op unless the value moved.
@@ -357,7 +360,11 @@ namespace Lumina
 
             {
                 LUMINA_PROFILE_SECTION_COLORED("Present", tracy::Color::Orange4);
+                #if WITH_EDITOR
                 SwapchainTarget.Present(CL);
+                #else
+                SwapchainTarget.PresentAsync(CL);
+                #endif
             }
 
             #if WITH_EDITOR

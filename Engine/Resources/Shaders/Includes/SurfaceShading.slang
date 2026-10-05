@@ -65,6 +65,12 @@ half3 FresnelSchlickHalf(half CosTheta, half3 F0)
 // bitangent across UV mirrors. The frame lives in ParallaxOcclusion.slang so POM and decode share it.
 float3 GetWorldNormal(float3 FragNormal, float4 FragTangent, float3 TangentSpaceNormal)
 {
+    // The frame's third row is the normal itself, so a flat map lands on it; a constant flat map folds the frame away.
+    if (all(TangentSpaceNormal == float3(0.0, 0.0, 1.0)))
+    {
+        return FragNormal;
+    }
+
     bool bDegenerate;
     float3x3 TBN = BuildTangentFrame(FragNormal, FragTangent, bDegenerate);
     if (bDegenerate)
@@ -418,8 +424,8 @@ float3 EvaluateTransmission(FShadingContext S, float3 L, float3 Radiance, float3
 
 // L is supplied by the caller for every light type, so the directional normalize happens once at the
 // call site. Diffuse and specular return separately so translucency keeps reflections un-premultiplied.
-void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, float Distance,
-                                    out float3 OutDiffuse, out float3 OutSpecular)
+void EvaluateRadianceContributionSplit(FLight Light, FShadingContext S, float3 L, float3 Radiance,
+                                       out float3 OutDiffuse, out float3 OutSpecular)
 {
     OutDiffuse  = float3(0.0);
     OutSpecular = float3(0.0);
@@ -430,7 +436,6 @@ void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, f
         return;
     }
 
-    float3 Radiance = ComputeLightRadiance(Light, L, Distance);
     float3 H        = normalize(S.V + L);
 
     // Rebuilt per light rather than cached, because branching on the floor cost 75 more instructions.
@@ -455,11 +460,22 @@ void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, f
     OutSpecular = Spec * Radiance * NdotLf;
 }
 
-float3 EvaluateLightContribution(FLight Light, FShadingContext S, float3 L, float Distance)
+void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, float Distance,
+                                    out float3 OutDiffuse, out float3 OutSpecular)
+{
+    EvaluateRadianceContributionSplit(Light, S, L, ComputeLightRadiance(Light, L, Distance), OutDiffuse, OutSpecular);
+}
+
+float3 EvaluateRadianceContribution(FLight Light, FShadingContext S, float3 L, float3 Radiance)
 {
     float3 Diffuse, Specular;
-    EvaluateLightContributionSplit(Light, S, L, Distance, Diffuse, Specular);
+    EvaluateRadianceContributionSplit(Light, S, L, Radiance, Diffuse, Specular);
     return Diffuse + Specular;
+}
+
+float3 EvaluateLightContribution(FLight Light, FShadingContext S, float3 L, float Distance)
+{
+    return EvaluateRadianceContribution(Light, S, L, ComputeLightRadiance(Light, L, Distance));
 }
 
 // Result of shading a surface: the lit HDR color plus the material alpha. Callers pack their own
@@ -701,20 +717,15 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                 continue;
             }
 
-            // Cheap culls read only Position/Radius; the full 64B light is fetched only once some lane wants it.
-            const FLight Culled = loadAligned<16>(LightArray + LightIndex);
-            float3 LightPos = Culled.Position;
-            float  Radius   = Culled.Radius;
-
-            float3 LightToFrag = LightPos - WorldPosition;
-            float  DistSq      = dot(LightToFrag, LightToFrag);
-            float  InvDist     = rsqrt(max(DistSq, 1e-8));
-            float3 L           = LightToFrag * InvDist;
+            // Position and Radius alone decide the cull; the rest of the light is fetched only once some lane wants it.
+            const float4 PositionRadius = loadAligned<16>(reinterpret<float4*>(LightArray + LightIndex));
+            const float3 LightToFrag    = PositionRadius.xyz - WorldPosition;
+            const float  DistSq         = dot(LightToFrag, LightToFrag);
 
             // A listed light may reach only this pixel's back face, which contributes nothing except through foliage.
-            const bool bBackFacing = dot(N, L) <= 0.0;
+            const bool bBackFacing = dot(N, LightToFrag) <= 0.0;
             const bool bLit        = bLaneListed
-                                  && (DistSq < Radius * Radius)
+                                  && (DistSq < PositionRadius.w * PositionRadius.w)
                                   && (!bBackFacing || bFoliage);
 
 #ifdef SHADING_COMPUTE
@@ -726,12 +737,17 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                 continue;
             }
 
-            FLight Light       = Culled;
-            float  DistToLight = DistSq * InvDist;
+            const FLight Light       = loadAligned<16>(LightArray + LightIndex);
+            const float  InvDist     = rsqrt(max(DistSq, 1e-8));
+            const float3 L           = LightToFrag * InvDist;
+            const float  DistToLight = DistSq * InvDist;
 
             // A lane outside the falloff or the spot cone gets nothing from this light, so it takes neither a shadow nor a BRDF.
-            if (bLit && LightAttenuation(Light, L, DistToLight) > 0.0)
+            const float Attenuation = LightAttenuation(Light, L, DistToLight);
+            if (bLit && Attenuation > 0.0)
             {
+                const float3 Radiance = GetLightColor(Light).rgb * Light.Intensity * Attenuation;
+
                 float Shadow = 1.0;
                 if (SPEC_LOCAL_SHADOWS != 0 && Light.ShadowDataIndex != INDEX_NONE)
                 {
@@ -748,24 +764,23 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                 {
                     if (bFoliage)
                     {
-                        Lo += EvaluateTransmission(Ctx, L, ComputeLightRadiance(Light, L, DistToLight),
-                                                   G.Transmission, G.Thickness) * Shadow;
+                        Lo += EvaluateTransmission(Ctx, L, Radiance, G.Transmission, G.Thickness) * Shadow;
                     }
 
 #ifdef TRANSLUCENT
                     float3 LightDiffuse, LightSpec;
-                    EvaluateLightContributionSplit(Light, Ctx, L, DistToLight, LightDiffuse, LightSpec);
+                    EvaluateRadianceContributionSplit(Light, Ctx, L, Radiance, LightDiffuse, LightSpec);
                     Lo     += LightDiffuse * Shadow;
                     LoSpec += LightSpec * Shadow;
 #else
-                    float3 LightBase = EvaluateLightContribution(Light, Ctx, L, DistToLight);
+                    float3 LightBase = EvaluateRadianceContribution(Light, Ctx, L, Radiance);
 
                     if (Coat > 0.0)
                     {
                         float CoatF;
                         const float CoatSpec = EvaluateClearcoatLobe(N, V, L, G.ClearcoatRoughness, CoatF);
                         LightBase *= (1.0 - Coat * CoatF);
-                        LoCoat    += ComputeLightRadiance(Light, L, DistToLight) * (CoatSpec * Coat) * Shadow;
+                        LoCoat    += Radiance * (CoatSpec * Coat) * Shadow;
                     }
 
                     Lo += LightBase * Shadow;

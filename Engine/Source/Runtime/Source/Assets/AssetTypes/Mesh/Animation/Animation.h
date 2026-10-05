@@ -168,8 +168,8 @@ namespace Lumina
         // Resolved once per (skeleton, bind generation) and never mutated after, so sampling inside ParallelFor needs no lock.
         struct FResolvedSkeleton
         {
-            const FSkeletonResource* Skeleton = nullptr;
-            uint32 Generation = 0;
+            // The skeleton's bone layout hash, which is all the mapping below depends on.
+            uint64 LayoutKey = 0;
 
             TVector<int32> CompressedBones;
 
@@ -218,9 +218,15 @@ namespace Lumina
 
     private:
 
+        using FResolvedTable = TVector<const FResolvedSkeleton*>;
+
         std::atomic<const FResolvedSkeleton*> ActiveResolvedSkeleton{ nullptr };
+
+        // Republished whole on every addition, so readers scan it without the lock.
+        std::atomic<const FResolvedTable*> PublishedResolved{ nullptr };
         FMutex ResolveMutex;
         TVector<TUniquePtr<FResolvedSkeleton>> ResolvedSkeletons;
+        TVector<TUniquePtr<FResolvedTable>> ResolvedTables;
     };
     
     

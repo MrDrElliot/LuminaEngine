@@ -497,11 +497,12 @@ namespace Lumina
     // Hot per-light data. Keeping it at 64 bytes cuts the L2 footprint of the inner loop ~10x.
     struct FLight
     {
+        // Position and Radius share the first 16 bytes, so the clustered loop culls on one load.
         FVector3        Position;
-        uint32          Color;
+        float           Radius;
 
         FVector3        Direction;   // to-light: FROM surface TOWARD the light (sun & spot)
-        float           Radius;
+        uint32          Color;
 
         float           Intensity;
         float           Falloff;

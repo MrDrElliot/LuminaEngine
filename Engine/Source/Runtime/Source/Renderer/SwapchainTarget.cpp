@@ -22,6 +22,9 @@ namespace Lumina::RHI
 
     void FSwapchainTarget::Shutdown()
     {
+        // A rejected last present needs no rebuild of a swapchain that is going away.
+        WaitPendingPresent();
+        TakePresentRejected();
         if (IsValid(Swapchain))
         {
             // Recording is synchronous, so only submitted work can still name these images.
@@ -108,6 +111,20 @@ namespace Lumina::RHI
             Recreate();
         }
         return bPresented;
+    }
+
+    void FSwapchainTarget::PresentAsync(FCmdListH CL)
+    {
+        RHI::PresentAsync(Swapchain, CL);
+    }
+
+    void FSwapchainTarget::FinishPresent()
+    {
+        WaitPendingPresent();
+        if (TakePresentRejected())
+        {
+            Recreate();
+        }
     }
 
     void FSwapchainTarget::BarrierToRender(FCmdListH CL)

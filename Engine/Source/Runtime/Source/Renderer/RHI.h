@@ -622,8 +622,10 @@ namespace Lumina::RHI
     RUNTIME_API FUIntVector2 GetSwapchainExtent(FSwapchainH Swapchain);
     RUNTIME_API EFormat      GetSwapchainFormat(FSwapchainH Swapchain);
     RUNTIME_API void         CmdSwapchainBarrierToRender(FCmdListH CL, FSwapchainH Swapchain);
-    RUNTIME_API bool         PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue,
-                                              FSemaphoreH ExtraWait = {}, uint64 ExtraWaitValue = 0);
+    // Split so the submit can sit inside the caller's ordering lock and the slow present call outside it.
+    RUNTIME_API void         SubmitSwapchainFrame(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue,
+                                                  FSemaphoreH ExtraWait = {}, uint64 ExtraWaitValue = 0);
+    RUNTIME_API bool         QueueSwapchainPresent(FSwapchainH Swapchain);
 
     struct FPipelineStat
     {

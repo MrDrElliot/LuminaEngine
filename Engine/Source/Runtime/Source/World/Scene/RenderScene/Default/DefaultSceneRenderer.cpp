@@ -871,6 +871,7 @@ namespace Lumina
             RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
         SnapshotMotionState(CL);
 
+        WaitDeferredStageFills();
         RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
 
         if (FramesComposited == 0)
@@ -1213,6 +1214,7 @@ namespace Lumina
         case ENamedImage::PostProcessScratch: return "Scene.PostProcessScratch";
         case ENamedImage::SMAAEdges:          return "Scene.SMAAEdges";
         case ENamedImage::SMAABlend:          return "Scene.SMAABlend";
+        case ENamedImage::SMAAEdgeMask:       return "Scene.SMAAEdgeMask";
         case ENamedImage::SMAAArea:           return "Scene.SMAAArea";
         case ENamedImage::SMAASearch:         return "Scene.SMAASearch";
         case ENamedImage::GTAOWorkingDepth:   return "Scene.GTAOWorkingDepth";
@@ -1604,6 +1606,11 @@ namespace Lumina
 
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::SMAABlend] = CreateSceneImage(Desc);
+
+        // Depth set only where an edge was found, so the blend-weight pass early-Z rejects every other pixel.
+        Desc.Format = EFormat::D16;
+        Desc.Usage  = RHI::EImageUsageFlags::DepthAttachment;
+        View.Images[(int)ENamedImage::SMAAEdgeMask] = CreateSceneImage(Desc, /*bSampled*/ false);
 
         // Scene depth; transfer-dst for the no-occluder clear, transfer-src for the copy the water samples.
         Desc.Format = EFormat::D32;
@@ -2232,7 +2239,7 @@ namespace Lumina
     }
 
     void FDefaultSceneRenderer::WriteBufferRuns(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Src, uint64 Stride,
-                                               const TVector<FUIntVector2>& Runs)
+                                               const TVector<FUIntVector2>& Runs, bool bFillBeforeSubmit)
     {
         uint64 Total = 0;
         for (const FUIntVector2& Run : Runs)
@@ -2284,7 +2291,20 @@ namespace Lumina
 
         constexpr uint64 ParallelUploadBytes = 256u * 1024u;
         const uint32 NumRuns = (uint32)Runs.size();
-        if (Total >= ParallelUploadBytes && NumRuns > 1u)
+        if (bFillBeforeSubmit)
+        {
+            for (uint32 i = 0; i < NumRuns; ++i)
+            {
+                const uint64 Bytes = (uint64)Runs[i].y * Stride;
+                const uint8* RunSource = (const uint8*)Src + (uint64)Runs[i].x * Stride;
+                for (uint64 Offset = 0; Offset < Bytes; Offset += ParallelUploadBytes)
+                {
+                    DeferredStageFills.push_back({ StagingBytes + Cursors[i] + Offset, RunSource + Offset,
+                                                   Math::Min(ParallelUploadBytes, Bytes - Offset) });
+                }
+            }
+        }
+        else if (Total >= ParallelUploadBytes && NumRuns > 1u)
         {
             const uint32 MinRunsPerTask = Math::Max(1u, (uint32)(NumRuns * (ParallelUploadBytes / 8u) / Total));
             Task::ParallelFor(NumRuns, [&CopyRuns](const Task::FParallelRange& Range)
@@ -2355,7 +2375,7 @@ namespace Lumina
         DispatchCompute(CL, ScatterCS, PC, RenderUtils::GetGroupCount(Count, 64u), 1u, 1u);
     }
 
-    void FDefaultSceneRenderer::StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size)
+    void FDefaultSceneRenderer::StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size, bool bFillBeforeSubmit)
     {
         if (Size == 0)
         {
@@ -2399,7 +2419,15 @@ namespace Lumina
             }
             const uint8* Piece = Source + PieceOffset;
 
-            if (PieceBytes >= ParallelStageBytes)
+            if (bFillBeforeSubmit)
+            {
+                constexpr uint64 DeferredFillBytes = 256u * 1024u;
+                for (uint64 Offset = 0; Offset < PieceBytes; Offset += DeferredFillBytes)
+                {
+                    DeferredStageFills.push_back({ Dest + Offset, Piece + Offset, Math::Min(DeferredFillBytes, PieceBytes - Offset) });
+                }
+            }
+            else if (PieceBytes >= ParallelStageBytes)
             {
                 const uint32 NumChunks = (uint32)((PieceBytes + StageChunkBytes - 1u) / StageChunkBytes);
                 Task::ParallelFor(NumChunks, [Dest, Piece, PieceBytes, ChunkBytes = StageChunkBytes](const Task::FParallelRange& Range)
@@ -2423,6 +2451,46 @@ namespace Lumina
     {
         RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(StagedWrites.data(), StagedWrites.size()));
         StagedWrites.clear();
+    }
+
+    void FDefaultSceneRenderer::LaunchDeferredStageFills()
+    {
+        if (DeferredStageFills.empty() || DeferredStageFillTask)
+        {
+            return;
+        }
+        // Two workers already saturate the PCIe write path, and each further one costs the submitter a wake.
+        constexpr uint32 kFillWorkers = 2;
+        const uint32 NumFills = (uint32)DeferredStageFills.size();
+        DeferredFillCursor.store(0, std::memory_order_relaxed);
+
+        DeferredStageFillTask = Task::AsyncTask(kFillWorkers, 1, [this, NumFills](uint32, uint32, uint32)
+        {
+            RunDeferredStageFills(NumFills);
+        }, ETaskPriority::High);
+    }
+
+    void FDefaultSceneRenderer::RunDeferredStageFills(uint32 NumFills)
+    {
+        for (uint32 i = DeferredFillCursor.fetch_add(1, std::memory_order_relaxed); i < NumFills;
+             i = DeferredFillCursor.fetch_add(1, std::memory_order_relaxed))
+        {
+            const FDeferredStageFill& Fill = DeferredStageFills[i];
+            Memory::Memcpy(Fill.Dest, Fill.Source, Fill.Bytes);
+        }
+    }
+
+    void FDefaultSceneRenderer::WaitDeferredStageFills()
+    {
+        if (DeferredStageFillTask)
+        {
+            LUMINA_PROFILE_SECTION("Wait Deferred Stage Fills");
+            // Fills no worker has claimed yet run here, since busy workers can leave them queued past the submit.
+            RunDeferredStageFills((uint32)DeferredStageFills.size());
+            DeferredStageFillTask->Wait();
+            DeferredStageFillTask = nullptr;
+        }
+        DeferredStageFills.clear();
     }
 
     void FDefaultSceneRenderer::ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink,

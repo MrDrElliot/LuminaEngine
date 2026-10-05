@@ -727,11 +727,10 @@ namespace Lumina
         }
 
         const SIZE_T SlotCount = RetainedCullEntries.size();
-        if (SlotCount > 1024 && DirtyInstanceSlots.size() * 4 >= SlotCount)
+        if (SlotCount > 1024 && ShouldResendAllInstances(DirtyInstanceSlots.size(), SlotCount))
         {
             bFullInstanceUpload = true;
             DirtyInstanceSlots.clear();
-            DirtyStaticSlots.clear();
             return;
         }
 
@@ -740,7 +739,7 @@ namespace Lumina
 
     void FScenePrimitiveSet::MarkStaticDirty(uint32 Slot)
     {
-        if (bFullInstanceUpload)
+        if (bFullStaticUpload)
         {
             return;
         }
@@ -748,8 +747,7 @@ namespace Lumina
         const SIZE_T SlotCount = RetainedCullEntries.size();
         if (SlotCount > 1024 && DirtyStaticSlots.size() * 4 >= SlotCount)
         {
-            bFullInstanceUpload = true;
-            DirtyInstanceSlots.clear();
+            bFullStaticUpload = true;
             DirtyStaticSlots.clear();
             return;
         }
@@ -2103,6 +2101,7 @@ namespace Lumina
         DirtyInstanceSlots.clear();
         DirtyStaticSlots.clear();
         bFullInstanceUpload = true;
+        bFullStaticUpload   = true;
         SurfaceDescs.clear();
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
@@ -2444,12 +2443,13 @@ namespace Lumina
             return;
         }
 
-        if (!Pools.Transform->Contains(Entity))
+        const STransformComponent* Transform = Pools.Transform->TryGet(Entity);
+        if (Transform == nullptr)
         {
             return;
         }
 
-        const FMatrix4 Matrix = Pools.Transform->Get(Entity).GetWorldMatrixCached();
+        const FMatrix4 Matrix = Transform->GetWorldMatrixCached();
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
@@ -2542,14 +2542,14 @@ namespace Lumina
         {
             ParallelDirtySlots.resize(NumSlots);
         }
-        for (TVector<uint32>& Bucket : ParallelDirtySlots)
+        for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
         {
-            Bucket.clear();
+            Bucket.Slots.clear();
         }
 
         Task::ParallelFor(Count, [&ApplyOne, Moved, this](const Task::FParallelRange& Range)
         {
-            TVector<uint32>& Bucket = ParallelDirtySlots[Range.Thread];
+            TVector<uint32>& Bucket = ParallelDirtySlots[Range.Thread].Slots;
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {
                 ApplyOne(Moved[i], &Bucket);
@@ -2562,9 +2562,9 @@ namespace Lumina
     void FScenePrimitiveSet::MergeParallelDirtySlots()
     {
         SIZE_T Total = 0;
-        for (const TVector<uint32>& Bucket : ParallelDirtySlots)
+        for (const FDirtySlotBucket& Bucket : ParallelDirtySlots)
         {
-            Total += Bucket.size();
+            Total += Bucket.Slots.size();
         }
 
         if (Total == 0 || bFullInstanceUpload)
@@ -2573,18 +2573,17 @@ namespace Lumina
         }
 
         const SIZE_T SlotCount = RetainedCullEntries.size();
-        if (SlotCount > 1024 && (DirtyInstanceSlots.size() + Total) * 4 >= SlotCount)
+        if (SlotCount > 1024 && ShouldResendAllInstances(DirtyInstanceSlots.size() + Total, SlotCount))
         {
             bFullInstanceUpload = true;
             DirtyInstanceSlots.clear();
-            DirtyStaticSlots.clear();
             return;
         }
 
         ReserveGeometric(DirtyInstanceSlots, DirtyInstanceSlots.size() + Total);
-        for (const TVector<uint32>& Bucket : ParallelDirtySlots)
+        for (const FDirtySlotBucket& Bucket : ParallelDirtySlots)
         {
-            DirtyInstanceSlots.insert(DirtyInstanceSlots.end(), Bucket.begin(), Bucket.end());
+            DirtyInstanceSlots.insert(DirtyInstanceSlots.end(), Bucket.Slots.begin(), Bucket.Slots.end());
         }
     }
 
@@ -2622,14 +2621,14 @@ namespace Lumina
         {
             ParallelDirtySlots.resize(NumSlots);
         }
-        for (TVector<uint32>& Bucket : ParallelDirtySlots)
+        for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
         {
-            Bucket.clear();   // keeps capacity, so this settles into zero allocations per frame
+            Bucket.Slots.clear();   // keeps capacity, so this settles into zero allocations per frame
         }
 
         Task::ParallelFor(Count, [this, &Pools](const Task::FParallelRange& Range)
         {
-            TVector<uint32>& Bucket = ParallelDirtySlots[Range.Thread];
+            TVector<uint32>& Bucket = ParallelDirtySlots[Range.Thread].Slots;
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {
                 ApplyTransformRecord(Pools, TransformRecords[i], &Bucket);
@@ -2818,6 +2817,7 @@ namespace Lumina
         DirtyInstanceSlots.clear();
         DirtyStaticSlots.clear();
         bFullInstanceUpload = true;
+        bFullStaticUpload   = true;
         SurfaceDescs.clear();
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;

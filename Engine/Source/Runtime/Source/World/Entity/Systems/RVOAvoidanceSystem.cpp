@@ -157,6 +157,7 @@ namespace Lumina
             uint8 Flags = 0;
             Flags |= bSolve ? Avoidance::CrowdFlag::Solve : 0;
             Flags |= (Agent.bIgnoreNeighbors || !bSolveEnabled) ? Avoidance::CrowdFlag::Passthrough : 0;
+            Flags |= (bSolve && Agent.bClampToNavMesh) ? Avoidance::CrowdFlag::NavClamp : 0;
 
             Agents.PosX[(size_t)i]           = Position.x;
             Agents.PosZ[(size_t)i]           = Position.z;
@@ -205,11 +206,7 @@ namespace Lumina
         {
             for (int32 i = 0; i < Count; ++i)
             {
-                if ((Agents.Flags[(size_t)i] & Avoidance::CrowdFlag::Solve) == 0)
-                {
-                    continue;
-                }
-                if (AgentStorage.Get(State.Entities[(size_t)i]).bClampToNavMesh)
+                if ((Agents.Flags[(size_t)i] & Avoidance::CrowdFlag::NavClamp) != 0)
                 {
                     State.NavClampList.push_back(i);
                 }
@@ -268,17 +265,31 @@ namespace Lumina
 
         auto ControllerStorage = Context.GetRegistry().GetStorage<SCharacterControllerComponent>();
 
-        int32 Solved = 0;
-        for (int32 i = 0; i < Count; ++i)
+        std::atomic<int32> SolvedTotal{0};
+
+        const auto DrawAgentDebug = [&](int32 i, const SRVOAgentComponent& Agent)
+        {
+            const FVector3 Base = TransformStorage.Get(State.Entities[(size_t)i]).GetWorldLocationCached() + GDebugLift;
+
+            Context.DrawDebugLine(Base,
+                Base + FVector3(Agents.PrefVelX[(size_t)i], 0.0f, Agents.PrefVelZ[(size_t)i]) * 0.5f,
+                GPreferredColor, 1.5f, -1.0f);
+
+            Context.DrawDebugLine(Base, Base + Agent.AvoidanceVelocity * 0.5f, GSolvedColor, 2.0f, -1.0f);
+        };
+
+        // Every write lands on the agent's own components, so a crowd scatters in parallel; debug lines stay serial.
+        const auto Scatter = [&](int32 i, bool bAllowDebug) -> int32
         {
             const ECS::FEntity  Entity = State.Entities[(size_t)i];
             SRVOAgentComponent& Agent  = AgentStorage.Get(Entity);
 
+            int32 SolvedHere = 0;
             if ((Agents.Flags[(size_t)i] & Avoidance::CrowdFlag::Solve) != 0)
             {
                 Agent.AvoidanceVelocity = FVector3(Agents.OutVelX[(size_t)i], 0.0f, Agents.OutVelZ[(size_t)i]);
                 Agent.LastNeighborCount = Agents.OutNeighbors[(size_t)i];
-                ++Solved;
+                SolvedHere = 1;
             }
 
             if (Agent.bDriveCharacterController)
@@ -299,20 +310,57 @@ namespace Lumina
                 }
             }
 
-            if (Agent.bDrawDebug || bForceDebug)
+            if (bAllowDebug && (Agent.bDrawDebug || bForceDebug))
             {
-                const FVector3 Base = TransformStorage.Get(Entity).GetWorldLocationCached() + GDebugLift;
+                DrawAgentDebug(i, Agent);
+            }
+            return SolvedHere;
+        };
 
-                Context.DrawDebugLine(Base,
-                    Base + FVector3(Agents.PrefVelX[(size_t)i], 0.0f, Agents.PrefVelZ[(size_t)i]) * 0.5f,
-                    GPreferredColor, 1.5f, -1.0f);
+        // A per-agent debug flag is only known by looking, so the forced CVar is the one case that stays serial up front.
+        if (bForceDebug || Count < Avoidance::kCrowdParallelThreshold || GTaskSystem == nullptr)
+        {
+            int32 Solved = 0;
+            for (int32 i = 0; i < Count; ++i)
+            {
+                Solved += Scatter(i, true);
+            }
+            SolvedTotal.store(Solved, std::memory_order_relaxed);
+        }
+        else
+        {
+            std::atomic<bool> bAnyDebug{false};
+            Task::ParallelFor((uint32)Count, [&](const Task::FParallelRange& Range)
+            {
+                int32 Solved = 0;
+                bool  bDebug = false;
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    Solved += Scatter((int32)i, false);
+                    bDebug |= AgentStorage.Get(State.Entities[i]).bDrawDebug;
+                }
+                SolvedTotal.fetch_add(Solved, std::memory_order_relaxed);
+                if (bDebug)
+                {
+                    bAnyDebug.store(true, std::memory_order_relaxed);
+                }
+            }, kExtractGrain);
 
-                Context.DrawDebugLine(Base, Base + Agent.AvoidanceVelocity * 0.5f, GSolvedColor, 2.0f, -1.0f);
+            if (bAnyDebug.load(std::memory_order_relaxed))
+            {
+                for (int32 i = 0; i < Count; ++i)
+                {
+                    const SRVOAgentComponent& Agent = AgentStorage.Get(State.Entities[(size_t)i]);
+                    if (Agent.bDrawDebug)
+                    {
+                        DrawAgentDebug(i, Agent);
+                    }
+                }
             }
         }
 
         State.LastAgentCount  = Count;
-        State.LastSolvedCount = Solved;
+        State.LastSolvedCount = SolvedTotal.load(std::memory_order_relaxed);
     }
 
     namespace Avoidance

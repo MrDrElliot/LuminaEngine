@@ -521,15 +521,29 @@ namespace Lumina::Physics
         bInterpCharacterTail = true;
 
         // Characters are driven by the mover rather than the solver, so they never raise move events.
-        Registry.View<SCharacterPhysicsComponent>().ForEach([&](ECS::FEntity Entity, SCharacterPhysicsComponent& Component)
+        auto CharacterStorage = Registry.GetStorage<SCharacterPhysicsComponent>();
+        const uint32 Base = InterpBodySlots;
+        const uint32 NumCharacters = (uint32)CharacterStorage.GetDenseSize();
+        InterpStaging.Resize((size_t)Base + NumCharacters);
+        const ECS::FEntity* CharacterEntities = CharacterStorage.GetDenseData();
+
+        // One slot per dense entry, filled in parallel, with holes and unbuilt characters left as Skip.
+        const auto StageCharacter = [&](uint32 DenseIndex)
         {
-            if (!Component.Character)
+            const uint32 Slot = Base + DenseIndex;
+            const ECS::FEntity Entity = CharacterEntities[DenseIndex];
+            SCharacterPhysicsComponent* Found = Entity.IsTombstone() ? nullptr : &CharacterStorage.GetAtDense(DenseIndex);
+            if (Found == nullptr || !Found->Character)
             {
+                InterpStaging.Entities[Slot] = Entity;
+                InterpStaging.Flags[Slot] = EInterpFlag::Skip;
+                InterpStaging.PrevPos[Slot] = InterpStaging.CurrPos[Slot] = FVector3(0.0f);
+                InterpStaging.PrevQx[Slot] = InterpStaging.PrevQy[Slot] = InterpStaging.PrevQz[Slot] = 0.0f;
+                InterpStaging.CurrQx[Slot] = InterpStaging.CurrQy[Slot] = InterpStaging.CurrQz[Slot] = 0.0f;
+                InterpStaging.PrevQw[Slot] = InterpStaging.CurrQw[Slot] = 1.0f;
                 return;
             }
-
-            const uint32 Slot = (uint32)InterpStaging.Entities.size();
-            InterpStaging.PushBack();
+            SCharacterPhysicsComponent& Component = *Found;
 
             const FVector3 CurrentPosition = Component.Character->Position;
             FQuat CurrentRotation = Component.Character->Rotation;
@@ -556,7 +570,18 @@ namespace Lumina::Physics
             InterpStaging.CurrQy[Slot] = CurrentRotation.y;
             InterpStaging.CurrQz[Slot] = CurrentRotation.z;
             InterpStaging.CurrQw[Slot] = CurrentRotation.w;
-        });
+        };
+        if (NumCharacters > InterpParallelThreshold)
+        {
+            Task::ParallelFor(NumCharacters, StageCharacter);
+        }
+        else
+        {
+            for (uint32 DenseIndex = 0; DenseIndex < NumCharacters; ++DenseIndex)
+            {
+                StageCharacter(DenseIndex);
+            }
+        }
 
         const uint32 Total = (uint32)InterpStaging.Entities.size();
         if (Total == 0)
@@ -603,38 +628,86 @@ namespace Lumina::Physics
         const auto PendingTeleport = Registry.GetStorage<FNeedsPhysicsBodyUpdate>();
 
         InterpApplied.clear();
-        InterpApplied.reserve(Count);
         InterpAppliedParented.clear();
 
-        // Structural work stays serial, so the passes below only write components that already exist.
-        for (uint32 i = 0; i < Count; ++i)
+        enum : uint8 { kInterpSkip = 0, kInterpFlat = 1, kInterpParented = 2, kInterpKill = 3 };
+        InterpCategory.resize(Count);
+        std::atomic<uint32> KillCount{0};
+        std::atomic<uint32> ParentedCount{0};
+
+        // Reads only, so it fans out; a kill is structural and is handled serially below.
+        const auto Classify = [&](uint32 i)
         {
             const EInterpFlag Flag = InterpStaging.Flags[i];
             const ECS::FEntity Entity = InterpStaging.Entities[i];
-
-            if (Flag == EInterpFlag::Skip || !Registry.IsValid(Entity))
+            uint8 Category = kInterpSkip;
+            if (Flag != EInterpFlag::Skip && Registry.IsValid(Entity))
             {
-                continue;
+                if (Flag == EInterpFlag::BelowKill)
+                {
+                    Category = kInterpKill;
+                    KillCount.fetch_add(1, std::memory_order_relaxed);
+                }
+                // An authored move outranks the body pose until the teleport reaches the body.
+                else if (TransformStorage.Contains(Entity) && !PendingTeleport.Contains(Entity))
+                {
+                    Category = TransformStorage.Get(Entity).bIsFlat ? kInterpFlat : kInterpParented;
+                    if (Category == kInterpParented)
+                    {
+                        ParentedCount.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
             }
-
-            if (Flag == EInterpFlag::BelowKill)
+            InterpCategory[i] = Category;
+        };
+        if (Count > InterpParallelThreshold)
+        {
+            Task::ParallelFor(Count, Classify);
+        }
+        else
+        {
+            for (uint32 i = 0; i < Count; ++i)
             {
-                Registry.Destroy(Entity);
-                continue;
+                Classify(i);
             }
-
-            // An authored move outranks the body pose until the teleport reaches the body.
-            if (!TransformStorage.Contains(Entity) || PendingTeleport.Contains(Entity))
-            {
-                continue;
-            }
-
-            (TransformStorage.Get(Entity).bIsFlat ? InterpApplied : InterpAppliedParented).push_back(i);
         }
 
-        auto WritePose = [&](uint32 i)
+        // A destroy can take later entries with it, so a frame with a kill walks the list serially as before.
+        const bool bAnyKill = KillCount.load(std::memory_order_relaxed) != 0;
+        if (bAnyKill)
         {
-            STransformComponent& Transform = TransformStorage.Get(InterpStaging.Entities[i]);
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                const ECS::FEntity Entity = InterpStaging.Entities[i];
+                if (InterpCategory[i] == kInterpSkip || !Registry.IsValid(Entity))
+                {
+                    continue;
+                }
+                if (InterpCategory[i] == kInterpKill)
+                {
+                    Registry.Destroy(Entity);
+                    continue;
+                }
+                (InterpCategory[i] == kInterpFlat ? InterpApplied : InterpAppliedParented).push_back(i);
+            }
+        }
+
+        // Deferred is set for a parented pose written in parallel, which collects its dirty enqueue for one bulk call.
+        auto WritePose = [&](uint32 i, TVector<ECS::FEntity>* Deferred = nullptr)
+        {
+            const ECS::FEntity Entity = InterpStaging.Entities[i];
+            STransformComponent& Transform = TransformStorage.Get(Entity);
+            const auto SetPose = [&](const FVector3& Location, const FQuat& Rotation)
+            {
+                if (Deferred == nullptr)
+                {
+                    Transform.SetFromPhysics(Location, Rotation);
+                }
+                else if (Transform.SetFromPhysicsUnqueued(Location, Rotation))
+                {
+                    Deferred->push_back(Entity);
+                }
+            };
             const FQuat Previous(InterpStaging.PrevQw[i], InterpStaging.PrevQx[i], InterpStaging.PrevQy[i], InterpStaging.PrevQz[i]);
             const FQuat Current(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]);
 
@@ -643,39 +716,83 @@ namespace Lumina::Physics
             {
                 if (Transform.LocalTransform.GetLocation() != InterpStaging.CurrPos[i] || Transform.LocalTransform.GetRotation() != Current)
                 {
-                    Transform.SetFromPhysics(InterpStaging.CurrPos[i], Current);
+                    SetPose(InterpStaging.CurrPos[i], Current);
                 }
                 return;
             }
 
-            Transform.SetFromPhysics(InterpStaging.LerpPos[i],
+            SetPose(InterpStaging.LerpPos[i],
                 FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i], InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
         };
 
-        const uint32 FlatCount = (uint32)InterpApplied.size();
-        const auto WriteFlat = [&](uint32 Index)
+        const uint32 NumParented = ParentedCount.load(std::memory_order_relaxed);
+        if (bAnyKill)
         {
-            WritePose(InterpApplied[Index]);
-        };
-        if (FlatCount > InterpParallelThreshold)
-        {
-            Task::ParallelFor(FlatCount, WriteFlat);
-        }
-        else
-        {
-            for (uint32 Index = 0; Index < FlatCount; ++Index)
+            const uint32 FlatCount = (uint32)InterpApplied.size();
+            const auto WriteFlat = [&](uint32 Index)
             {
-                WriteFlat(Index);
+                WritePose(InterpApplied[Index]);
+            };
+            if (FlatCount > InterpParallelThreshold)
+            {
+                Task::ParallelFor(FlatCount, WriteFlat);
             }
-        }
-
-        // The resolve carries a parented body's pose down to everything attached to it.
-        if (!InterpAppliedParented.empty())
-        {
+            else
+            {
+                for (uint32 Index = 0; Index < FlatCount; ++Index)
+                {
+                    WriteFlat(Index);
+                }
+            }
             for (uint32 i : InterpAppliedParented)
             {
                 WritePose(i);
             }
+        }
+        else if (Count > InterpParallelThreshold)
+        {
+            const uint32 ThreadSlots = Math::Max(GTaskSystem->GetNumTaskThreads(), 1u);
+            if ((uint32)InterpDeferred.size() < ThreadSlots)
+            {
+                InterpDeferred.resize(ThreadSlots);
+            }
+            for (FInterpDeferBucket& Bucket : InterpDeferred)
+            {
+                Bucket.Entities.clear();
+            }
+
+            Task::ParallelFor(Count, [&](uint32 i, uint32 Thread)
+            {
+                if (InterpCategory[i] == kInterpFlat)
+                {
+                    WritePose(i);
+                }
+                else if (InterpCategory[i] == kInterpParented)
+                {
+                    WritePose(i, &InterpDeferred[Thread].Entities);
+                }
+            });
+
+            ECS::Utils::FTransformDirtyGate* Gate = ECS::Utils::EnsureTransformDirtyGate(Registry);
+            for (const FInterpDeferBucket& Bucket : InterpDeferred)
+            {
+                ECS::Utils::QueueDirtyTransforms(Gate, Bucket.Entities.data(), Bucket.Entities.size());
+            }
+        }
+        else
+        {
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                if (InterpCategory[i] == kInterpFlat || InterpCategory[i] == kInterpParented)
+                {
+                    WritePose(i);
+                }
+            }
+        }
+
+        // The resolve carries a parented body's pose down to everything attached to it.
+        if (!InterpAppliedParented.empty() || (!bAnyKill && NumParented != 0))
+        {
             ECS::Utils::ResolveAllDirtyTransforms(Registry);
         }
     }

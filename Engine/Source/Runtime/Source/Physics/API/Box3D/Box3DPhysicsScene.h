@@ -575,6 +575,11 @@ namespace Lumina::Physics
                 CurrQx.emplace_back(); CurrQy.emplace_back(); CurrQz.emplace_back(); CurrQw.emplace_back();
             }
 
+            void Resize(size_t Count)
+            {
+                Truncate(Count);
+            }
+
             void EnsureLerpCapacity()
             {
                 const size_t N = Entities.size();
@@ -606,6 +611,14 @@ namespace Lumina::Physics
         bool                                    bInterpCharacterTail = false;
         TVector<uint32>                         InterpApplied;
         TVector<uint32>                         InterpAppliedParented;
+        TVector<uint8>                          InterpCategory;
+
+        // Parented poses written in parallel, queued for the resolve in one bulk call per frame.
+        struct CACHE_ALIGN FInterpDeferBucket
+        {
+            TVector<ECS::FEntity> Entities;
+        };
+        TVector<FInterpDeferBucket>             InterpDeferred;
 
         // Body handle to staging slot for this frame, reset through StagedBodyHandles so it stays O(moved).
         TVector<uint32>                         BodyStagingSlot;

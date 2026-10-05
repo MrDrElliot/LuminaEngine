@@ -66,6 +66,83 @@ namespace
         Out.ClockSlotEnd  = (uint16)Compiler.GetClockSlots().size();
         return Out;
     }
+
+    struct FTwoStateGraph
+    {
+        CAnimationGraph* Graph = nullptr;
+        CAnimation*      ClipA = nullptr;
+        CAnimation*      ClipB = nullptr;
+        int32            GoParam = INDEX_NONE;
+    };
+
+    // Two play-once states that swap on a Go parameter, optionally bracketed so the VM can skip the inactive one.
+    FTwoStateGraph CompileTwoStateGraph(bool bSkipInactive, bool bShareCachedPoseAcrossStates = false)
+    {
+        FTwoStateGraph Out;
+        Out.ClipA = MakeStateClip(1.0f);
+        Out.ClipB = MakeStateClip(2.0f);
+
+        FAnimationGraphCompiler Compiler;
+        const uint32 EnterOp = bSkipInactive ? Compiler.EmitEnterStateMachine(2) : 0;
+
+        if (bSkipInactive) { Compiler.BeginStateCode(EnterOp, 0); }
+        const FTestState A = CompilePlayOnceState(Compiler, Out.ClipA);
+        if (bShareCachedPoseAcrossStates) { Compiler.SetCachedPose(FName("Shared"), A.PoseRegister); }
+        if (bSkipInactive) { Compiler.EndStateCode(EnterOp, 0); }
+
+        if (bSkipInactive) { Compiler.BeginStateCode(EnterOp, 1); }
+        const FTestState B = CompilePlayOnceState(Compiler, Out.ClipB);
+        if (bShareCachedPoseAcrossStates)
+        {
+            uint16 SharedRegister = 0;
+            EXPECT_TRUE(Compiler.TryGetCachedPose(FName("Shared"), SharedRegister));
+        }
+        if (bSkipInactive) { Compiler.EndStateCode(EnterOp, 1); }
+
+        FAnimGraphStateMachine Machine;
+        Machine.EntryState          = 0;
+        Machine.StatePoseRegisters  = { A.PoseRegister, B.PoseRegister };
+        Machine.ClockSlots          = Compiler.GetClockSlots();
+        Machine.StateClockSlotFirst = { A.ClockSlotFirst, B.ClockSlotFirst };
+        Machine.StateClockSlotEnd   = { A.ClockSlotEnd, B.ClockSlotEnd };
+        Machine.CurrentStateSlot    = Compiler.AllocStateSlot();
+        Machine.FromStateSlot       = Compiler.AllocStateSlot();
+        Machine.TimeInStateSlot     = Compiler.AllocStateSlot();
+        Machine.DurationSlot        = Compiler.AllocStateSlot();
+
+        FAnimGraphTransition ToB;
+        ToB.FromState     = 0;
+        ToB.ToState       = 1;
+        ToB.Terms         = { MakeTerm(EAnimTransitionSource::Parameter, FName("Go"), EAnimTransitionCompare::Greater, 0.5f) };
+        ToB.BlendDuration = 0.1f;
+        Machine.Transitions.push_back(ToB);
+
+        FAnimGraphTransition ToA = ToB;
+        ToA.FromState = 1;
+        ToA.ToState   = 0;
+        ToA.Terms[0].Compare = EAnimTransitionCompare::Less;
+        Machine.Transitions.push_back(ToA);
+
+        Out.GoParam = Compiler.AddParameter(FName("Go"), EAnimGraphParamType::Float, 0.0f);
+        if (bSkipInactive) { Compiler.FinishStateMachineCode(EnterOp); }
+        Compiler.EmitOutput(Compiler.EmitEvalStateMachine(Move(Machine)));
+
+        Out.Graph = NewObject<CAnimationGraph>();
+        Compiler.BuildGraph(Out.Graph);
+        return Out;
+    }
+
+    bool SamplesClip(const FAnimTaskList& Tasks, const CAnimation* Clip)
+    {
+        for (const FAnimTask& Task : Tasks.Tasks)
+        {
+            if (Task.Type == EAnimTaskType::SampleClip && Task.Clip == Clip)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 // Clocks advance while a state is inactive, so a finished play-once must be wound back to replay.
@@ -273,6 +350,92 @@ TEST(AnimationStateMachine, NestedMachineKeepsItsStateWhileItsOwnerIsInactive)
     }
     EXPECT_NEAR(State.StateSlots[InnerCurrentStateSlot], 1.0f, 1e-4f)
         << "an inactive owner must not reset its nested machine";
+}
+
+// Skipping inactive states is an optimization, so every clock, state and shown sample must match running them all.
+TEST(AnimationStateMachine, SkippingInactiveStatesMatchesRunningThemAll)
+{
+    const FTwoStateGraph Full    = CompileTwoStateGraph(false);
+    const FTwoStateGraph Skipped = CompileTwoStateGraph(true);
+
+    FSkeletonResource Skeleton;
+    MakeOneBoneSkeleton(Skeleton);
+
+    FAnimGraphVMState FullState;
+    FAnimGraphVMState SkippedState;
+    FAnimTaskList FullTasks;
+    FAnimTaskList SkippedTasks;
+    FAnimGraphRootMotion RootMotion;
+    FAnimationGraphVM::InitState(Full.Graph, FullState);
+    FAnimationGraphVM::InitState(Skipped.Graph, SkippedState);
+
+    const float GoPattern[] = { 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f };
+    int32 Tick = 0;
+    for (const float Go : GoPattern)
+    {
+        for (int32 Step = 0; Step < 9; ++Step, ++Tick)
+        {
+            FullState.Parameters[Full.GoParam]       = Go;
+            SkippedState.Parameters[Skipped.GoParam] = Go;
+            FAnimationGraphVM::BuildTasks(Full.Graph, &Skeleton, 0.05f, FullState, FullTasks, RootMotion);
+            FAnimationGraphVM::BuildTasks(Skipped.Graph, &Skeleton, 0.05f, SkippedState, SkippedTasks, RootMotion);
+
+            ASSERT_EQ(FullState.StateSlots.size(), SkippedState.StateSlots.size());
+            for (SIZE_T Slot = 0; Slot < FullState.StateSlots.size(); ++Slot)
+            {
+                EXPECT_NEAR(FullState.StateSlots[Slot], SkippedState.StateSlots[Slot], 1e-5f) << "slot " << Slot << " tick " << Tick;
+            }
+
+            const FAnimTask& FullShown    = FullTasks.Tasks[FullTasks.Tasks[FullTasks.OutputTask].DepA];
+            const FAnimTask& SkippedShown = SkippedTasks.Tasks[SkippedTasks.Tasks[SkippedTasks.OutputTask].DepA];
+            EXPECT_EQ(FullShown.Clip == Full.ClipA, SkippedShown.Clip == Skipped.ClipA) << "tick " << Tick;
+            EXPECT_NEAR(FullShown.Time, SkippedShown.Time, 1e-5f) << "tick " << Tick;
+            EXPECT_EQ(FullTasks.Tasks[FullTasks.OutputTask].bCapture, SkippedTasks.Tasks[SkippedTasks.OutputTask].bCapture) << "tick " << Tick;
+        }
+    }
+}
+
+// The inactive state records nothing, which is the whole point of skipping it.
+TEST(AnimationStateMachine, AnInactiveStateRecordsNoTasks)
+{
+    const FTwoStateGraph Skipped = CompileTwoStateGraph(true);
+
+    FSkeletonResource Skeleton;
+    MakeOneBoneSkeleton(Skeleton);
+
+    FAnimGraphVMState State;
+    FAnimTaskList Tasks;
+    FAnimGraphRootMotion RootMotion;
+
+    FAnimationGraphVM::BuildTasks(Skipped.Graph, &Skeleton, 0.05f, State, Tasks, RootMotion);
+    EXPECT_TRUE(SamplesClip(Tasks, Skipped.ClipA));
+    EXPECT_FALSE(SamplesClip(Tasks, Skipped.ClipB));
+
+    // The update that takes the edge runs the state it enters, so the new clip shows at once.
+    State.Parameters[Skipped.GoParam] = 1.0f;
+    FAnimationGraphVM::BuildTasks(Skipped.Graph, &Skeleton, 0.05f, State, Tasks, RootMotion);
+    EXPECT_TRUE(SamplesClip(Tasks, Skipped.ClipB));
+    EXPECT_EQ(Tasks.Tasks[Tasks.Tasks[Tasks.OutputTask].DepA].Clip, Skipped.ClipB);
+
+    FAnimationGraphVM::BuildTasks(Skipped.Graph, &Skeleton, 0.05f, State, Tasks, RootMotion);
+    EXPECT_FALSE(SamplesClip(Tasks, Skipped.ClipA));
+}
+
+// A cached pose read outside the state that saves it needs that state to run, so the graph runs every state.
+TEST(AnimationStateMachine, ACachedPoseSharedAcrossStatesKeepsEveryStateRunning)
+{
+    const FTwoStateGraph Shared = CompileTwoStateGraph(true, true);
+
+    FSkeletonResource Skeleton;
+    MakeOneBoneSkeleton(Skeleton);
+
+    FAnimGraphVMState State;
+    FAnimTaskList Tasks;
+    FAnimGraphRootMotion RootMotion;
+
+    FAnimationGraphVM::BuildTasks(Shared.Graph, &Skeleton, 0.05f, State, Tasks, RootMotion);
+    EXPECT_TRUE(SamplesClip(Tasks, Shared.ClipA));
+    EXPECT_TRUE(SamplesClip(Tasks, Shared.ClipB));
 }
 
 #endif

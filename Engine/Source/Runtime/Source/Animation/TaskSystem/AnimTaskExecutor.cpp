@@ -103,8 +103,6 @@ namespace Lumina
         // The same curve, 8 bones at a time, and every branch above becomes a select.
         void InertEvalChannels(FInertChannelSet& Set, float Duration, float T)
         {
-            LUMINA_PROFILE_SCOPE();
-
             const int32 N = Set.NumLanes();
             if (N == 0)
             {
@@ -175,8 +173,6 @@ namespace Lumina
         void InertCapture(FAnimInertializer& In, const FPose& Source, const FPose& SourcePrev,
                           const FPose& Target, float Dt, bool bHasVel, int32 NumActiveBones)
         {
-            LUMINA_PROFILE_SCOPE();
-
             const int32 N = (NumActiveBones >= 0 && NumActiveBones < Target.GetNumBones())
                 ? NumActiveBones
                 : Target.GetNumBones();
@@ -252,8 +248,6 @@ namespace Lumina
         // Writes Target plus the decaying offset at time T, and Out may alias Target.
         void InertApply(FAnimInertializer& In, const FPose& Target, FPose& Out, float T)
         {
-            LUMINA_PROFILE_SCOPE();
-
             const int32 N = Target.GetNumBones();
             Out.SetNumBones(N);
             Out.AdditiveSpace = Target.AdditiveSpace;
@@ -304,8 +298,6 @@ namespace Lumina
         void DeadBlendCapture(FAnimDeadBlend& Dead, const FPose& Source, const FPose& SourcePrev,
                               const FPose& Target, float Dt, bool bHasVel, int32 NumActiveBones)
         {
-            LUMINA_PROFILE_SCOPE();
-
             const int32 N = (NumActiveBones >= 0 && NumActiveBones < Target.GetNumBones())
                 ? NumActiveBones
                 : Target.GetNumBones();
@@ -359,8 +351,6 @@ namespace Lumina
         // The extrapolated source cross-fades into Target, so a fast source keeps moving through the seam.
         void DeadBlendApply(const FAnimDeadBlend& Dead, const FPose& Target, FPose& Out, float T)
         {
-            LUMINA_PROFILE_SCOPE();
-
             const int32 NumBones = Target.GetNumBones();
             Out.SetNumBones(NumBones);
             Out.AdditiveSpace = Target.AdditiveSpace;
@@ -445,6 +435,7 @@ namespace Lumina
         return true;
     }
 
+    // One zone per mesh and none per task, since fiber builds push every Tracy event through one lock.
     bool Anim::ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices, FAnimTaskSnapshot* OutSnapshot)
     {
         LUMINA_PROFILE_SCOPE();
@@ -534,10 +525,14 @@ namespace Lumina
         // Result landed in storage the next frame still reads, so no consumer may work in place over it.
         thread_local TVector<uint8> Retained;
 
+        // Which inputs a task actually reads, so a blend that resolves to one side never runs the other.
+        thread_local TVector<uint8> UsesDeps;
+
         Needed.assign(NumTasks, 0);
         UseCount.assign(NumTasks, 0);
         ResultBuf.assign(NumTasks, FAnimTask::NoTask);
         Retained.assign(NumTasks, 0);
+        UsesDeps.assign(NumTasks, 0);
 
         Needed[List.OutputTask] = 1;
         for (int32 i = List.OutputTask; i >= 0; --i)
@@ -547,12 +542,37 @@ namespace Lumina
                 continue;
             }
             const FAnimTask& Task = List.Tasks[i];
-            if (Task.DepA >= 0 && Task.DepA < i)
+            bool bUseA = Task.DepA >= 0 && Task.DepA < i;
+            bool bUseB = Task.DepB >= 0 && Task.DepB < i;
+
+            // A state machine at rest blends with a weight of exactly 0 or 1, and a layer can blend a pose with itself.
+            if (bUseA && bUseB)
+            {
+                if (Task.Type == EAnimTaskType::Blend && Task.Alpha <= 0.0f)
+                {
+                    bUseB = false;
+                }
+                else if (Task.Type == EAnimTaskType::Blend && Task.Alpha >= 1.0f)
+                {
+                    bUseA = false;
+                }
+                else if (Task.Type == EAnimTaskType::BlendMasked && Task.DepA == Task.DepB)
+                {
+                    bUseB = false;
+                }
+                else if (Task.Type == EAnimTaskType::ApplyAdditive && Task.Alpha <= 0.0f)
+                {
+                    bUseB = false;
+                }
+            }
+
+            UsesDeps[i] = (bUseA ? 1u : 0u) | (bUseB ? 2u : 0u);
+            if (bUseA)
             {
                 Needed[Task.DepA] = 1;
                 ++UseCount[Task.DepA];
             }
-            if (Task.DepB >= 0 && Task.DepB < i)
+            if (bUseB)
             {
                 Needed[Task.DepB] = 1;
                 ++UseCount[Task.DepB];
@@ -578,8 +598,10 @@ namespace Lumina
 
             const FAnimTask& Task = List.Tasks[i];
 
-            const int16 BufA = (Task.DepA >= 0 && Task.DepA < i) ? ResultBuf[Task.DepA] : FAnimTask::NoTask;
-            const int16 BufB = (Task.DepB >= 0 && Task.DepB < i) ? ResultBuf[Task.DepB] : FAnimTask::NoTask;
+            const bool  bUsesA = (UsesDeps[i] & 1u) != 0;
+            const bool  bUsesB = (UsesDeps[i] & 2u) != 0;
+            const int16 BufA = bUsesA ? ResultBuf[Task.DepA] : FAnimTask::NoTask;
+            const int16 BufB = bUsesB ? ResultBuf[Task.DepB] : FAnimTask::NoTask;
 
             // Stealing writes in place with zero copy, otherwise a fresh buffer leaves the shared result alone.
             const bool bStealA = BufA != FAnimTask::NoTask && UseCount[Task.DepA] == 1 && !Retained[Task.DepA];
@@ -589,7 +611,6 @@ namespace Lumina
             {
             case EAnimTaskType::ReferencePose:
             {
-                LUMINA_PROFILE_SECTION("Anim RefPose");
                 Dst = Pool.Acquire();
                 Pool.Get(Dst).ResetToBindPose(Skeleton);
                 break;
@@ -613,7 +634,20 @@ namespace Lumina
             case EAnimTaskType::Blend:
             case EAnimTaskType::BlendMasked:
             {
-                LUMINA_PROFILE_SECTION("Anim Blend");
+                // Pruned to one side above, so the result is that side as it stands.
+                const bool bPassA = bUsesA && !bUsesB && Task.DepB >= 0 && Task.DepB < i && BufA != FAnimTask::NoTask;
+                const bool bPassB = bUsesB && !bUsesA && Task.DepA >= 0 && Task.DepA < i && BufB != FAnimTask::NoTask;
+                if (bPassA || bPassB)
+                {
+                    const int16 Kept = bPassA ? BufA : BufB;
+                    const int16 KeptTask = bPassA ? Task.DepA : Task.DepB;
+                    Dst = (UseCount[KeptTask] == 1 && !Retained[KeptTask]) ? Kept : Pool.Acquire();
+                    if (Dst != Kept)
+                    {
+                        Pool.Get(Dst) = Pool.Get(Kept);
+                    }
+                    break;
+                }
                 if (BufA == FAnimTask::NoTask || BufB == FAnimTask::NoTask)
                 {
                     Dst = Pool.Acquire();
@@ -694,7 +728,6 @@ namespace Lumina
 
             case EAnimTaskType::Inertialize:
             {
-                LUMINA_PROFILE_SECTION("Anim Inertialize");
                 if (BufA == FAnimTask::NoTask)
                 {
                     Dst = Pool.Acquire();
@@ -744,7 +777,6 @@ namespace Lumina
 
             case EAnimTaskType::SavePoseSnapshot:
             {
-                LUMINA_PROFILE_SECTION("Anim SavePoseSnapshot");
                 if (BufA == FAnimTask::NoTask)
                 {
                     Dst = Pool.Acquire();
@@ -767,7 +799,6 @@ namespace Lumina
 
             case EAnimTaskType::LoadPoseSnapshot:
             {
-                LUMINA_PROFILE_SECTION("Anim LoadPoseSnapshot");
                 Dst = Pool.Acquire();
 
                 // A slot nothing has saved into yet reads as the bind pose rather than as garbage.
@@ -784,7 +815,6 @@ namespace Lumina
 
             case EAnimTaskType::DeadBlend:
             {
-                LUMINA_PROFILE_SECTION("Anim DeadBlend");
                 if (BufA == FAnimTask::NoTask)
                 {
                     Dst = Pool.Acquire();
@@ -837,7 +867,6 @@ namespace Lumina
             case EAnimTaskType::FootIK:
             case EAnimTaskType::TranslateBone:
             {
-                LUMINA_PROFILE_SECTION("Anim BoneOp");
                 if (BufA == FAnimTask::NoTask)
                 {
                     Dst = Pool.Acquire();
@@ -889,11 +918,11 @@ namespace Lumina
             ResultBuf[i] = Dst;
 
             // Retire consumed dependencies; a stolen buffer is now owned by this task.
-            if (Task.DepA >= 0 && Task.DepA < i && --UseCount[Task.DepA] == 0 && BufA != Dst && BufA != FAnimTask::NoTask)
+            if (bUsesA && --UseCount[Task.DepA] == 0 && BufA != Dst && BufA != FAnimTask::NoTask)
             {
                 Pool.Release(BufA);
             }
-            if (Task.DepB >= 0 && Task.DepB < i && --UseCount[Task.DepB] == 0 && BufB != Dst && BufB != FAnimTask::NoTask)
+            if (bUsesB && --UseCount[Task.DepB] == 0 && BufB != Dst && BufB != FAnimTask::NoTask)
             {
                 Pool.Release(BufB);
             }

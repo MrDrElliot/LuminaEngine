@@ -43,6 +43,8 @@ namespace Lumina
 
         // A grounded, motionless character on static ground skips its collide-and-solve until woken.
         bool        bResting = false;
+        // The proxy was last driven by a target transform, so its velocity must be cleared once it arrives.
+        bool        bProxyInMotion = false;
         b3BodyId    RestGroundBody{};
         float       RestLookYaw = 0.0f;
 
