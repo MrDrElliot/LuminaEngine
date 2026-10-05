@@ -140,23 +140,33 @@ public readonly unsafe partial struct EntityRegistry
     private Lumina.CWorld World => Wrapper<Lumina.CWorld>.ForObject((IntPtr)WorldHandle)!;
 
     /// The class handle for a script type, resolved once per type rather than marshalled as a name per call.
-    private static Lumina.TSubclassOf<Lumina.CEntityScript> ClassOf<T>() where T : EntityScript
+    private static Lumina.TSubclassOf<Lumina.CEntityScript> ClassOf<T>() where T : Lumina.CEntityScript
         => NativeClass<T>.Of.AsBase<Lumina.CEntityScript>();
 
     /// The first live script of type T on the entity, or null. Re-fetch per use; do not cache across frames (a stored ref outlives a destroyed script).
-    public T? GetScript<T>(Entity Entity) where T : EntityScript
+    public T? GetScript<T>(Entity Entity) where T : Lumina.CEntityScript
     {
-        return Lumina.CEntityScriptLibrary.FindScript(World, Entity, ClassOf<T>()) as T;
+        return AsScript<T>(Lumina.CEntityScriptLibrary.FindScript(World, Entity, ClassOf<T>()));
+    }
+
+    // A C++ script has no managed instance of its own, so it arrives as its base wrapper and is rewrapped as T.
+    private static T? AsScript<T>(Lumina.CEntityScript? Script) where T : Lumina.CEntityScript
+    {
+        if (Script is T Typed)
+        {
+            return Typed;
+        }
+        return Script is null ? null : Wrapper<T>.ForObject(Script.Handle);
     }
 
     /// Every live script of type T on the entity (empty if none). A fresh list per call.
-    public System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : EntityScript
+    public System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : Lumina.CEntityScript
     {
         Lumina.CEntityScript[] Scripts = Lumina.CEntityScriptLibrary.FindScripts(World, Entity, ClassOf<T>());
         var Result = new System.Collections.Generic.List<T>(Scripts.Length);
         foreach (Lumina.CEntityScript Script in Scripts)
         {
-            if (Script is T Typed)
+            if (AsScript<T>(Script) is T Typed)
             {
                 Result.Add(Typed);
             }
@@ -165,9 +175,9 @@ public readonly unsafe partial struct EntityRegistry
     }
 
     /// Attach a new script of type T to the entity and return the live instance (null on failure).
-    public T? AddScript<T>(Entity Entity) where T : EntityScript
+    public T? AddScript<T>(Entity Entity) where T : Lumina.CEntityScript
     {
-        return Lumina.CEntityScriptLibrary.AddScript(World, Entity, ClassOf<T>()) as T;
+        return AsScript<T>(Lumina.CEntityScriptLibrary.AddScript(World, Entity, ClassOf<T>()));
     }
 
     /// Attach a script of the given class to the entity and return the live instance (null on failure).
@@ -183,14 +193,14 @@ public readonly unsafe partial struct EntityRegistry
     }
 
     /// Remove the first script of type T from the entity. Returns true if one was removed.
-    public bool RemoveScript<T>(Entity Entity) where T : EntityScript
+    public bool RemoveScript<T>(Entity Entity) where T : Lumina.CEntityScript
     {
         Lumina.CEntityScript? Script = Lumina.CEntityScriptLibrary.FindScript(World, Entity, ClassOf<T>());
         return Script is not null && Lumina.CEntityScriptLibrary.RemoveScript(World, Entity, Script);
     }
 
-    /// True if the entity has a C# script assignable to T.
-    public bool HasScript<T>(Entity Entity) where T : EntityScript
+    /// True if the entity has a script assignable to T, in either language.
+    public bool HasScript<T>(Entity Entity) where T : Lumina.CEntityScript
     {
         return GetScript<T>(Entity) != null;
     }

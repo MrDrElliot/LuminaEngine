@@ -18,7 +18,8 @@ namespace Lumina
         RUNTIME_API ~FInputViewport();
         LE_NO_COPYMOVE(FInputViewport);
 
-        RUNTIME_API void   SetWorld(CWorld* InWorld) { World = InWorld; }
+        // A new world brings a new UI context that has never seen the cursor, so the move dedupe starts over.
+        RUNTIME_API void   SetWorld(CWorld* InWorld) { World = InWorld; LastRmlMouseX = -1.0; LastRmlMouseY = -1.0; }
         RUNTIME_API CWorld* GetWorld() const { return World; }
 
         RUNTIME_API void SetWindowRect(int MinX, int MinY, int MaxX, int MaxY);

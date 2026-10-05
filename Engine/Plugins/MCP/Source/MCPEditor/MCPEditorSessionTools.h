@@ -59,6 +59,10 @@ namespace Lumina
         // Package paths that refused to save and are still dirty.
         PROPERTY()
         TVector<FString> Failed;
+
+        // True when the open level is a transient world with no package, which no save reaches.
+        PROPERTY()
+        bool bWorldUnsaved = false;
     };
 
     REFLECT()

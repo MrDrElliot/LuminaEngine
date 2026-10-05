@@ -250,6 +250,15 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
+                    FString WorldError;
+                    CWorld* SceneWorld = SessionOps::GetSceneWorld(WorldError);
+                    Out.bWorldUnsaved = SceneWorld != nullptr && SceneWorld->GetPackage() == nullptr;
+                    if (Out.bWorldUnsaved)
+                    {
+                        return Agent::FToolResult::Ok(Lumina::Format("Saved {} package(s), but the open level is a transient world with no package, so its "
+                            "entities were not saved. Open a world asset with editor.open_asset and build the level there.", Saved));
+                    }
+
                     return Agent::FToolResult::Ok(Saved == 0 ? FString("Nothing to save.") : Lumina::Format("Saved {} package(s).", Saved));
                 });
 

@@ -2326,12 +2326,20 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
     MODULEENTRY32W Entry;
     Entry.dwSize = sizeof(Entry);
     void* Result = nullptr;
+    void* MatchingExecutable = nullptr;
+    const HMODULE Executable = ::GetModuleHandleW(nullptr);
     if (::Module32FirstW(Snap, &Entry))
     {
         do
         {
             if (Matches(Entry.szModule))
             {
+                // A packaged game's exe carries the project's name, so the module's own library has to win over it.
+                if (Entry.hModule == Executable)
+                {
+                    MatchingExecutable = Entry.hModule;
+                    continue;
+                }
                 Result = Entry.hModule;
                 break;
             }
@@ -2339,6 +2347,10 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
         while (::Module32NextW(Snap, &Entry));
     }
     ::CloseHandle(Snap);
+    if (Result == nullptr)
+    {
+        Result = MatchingExecutable;
+    }
 #ifdef LUMINA_MONOLITHIC
     if (Result == nullptr)
     {

@@ -353,9 +353,14 @@ namespace Lumina::MCP
             {
                 return false;
             }
-            if (!Importer->ReimportAsset(Asset, FImportRequest{ FFixedString(SourcePath.c_str()), FFixedString() }, nullptr))
+            // Reimport reads the importer's parsed source, as the content browser's reimport does after its parse step.
+            const FImportRequest Request{ FFixedString(SourcePath.c_str()), FFixedString() };
+            FString ParseError;
+            const bool bReimported = Importer->ParseSource(Request, ParseError, nullptr) && Importer->ReimportAsset(Asset, Request, nullptr);
+            Importer->ReleaseSourceData();
+            if (!bReimported)
             {
-                Out.Failed.push_back(FileName + ": the reimport failed and the asset was left unchanged");
+                Out.Failed.push_back(FileName + ": the reimport failed and the asset was left unchanged" + (ParseError.empty() ? FString() : FString(" (") + ParseError + ")"));
                 return true;
             }
             CPackage* Package = Asset->GetPackage();

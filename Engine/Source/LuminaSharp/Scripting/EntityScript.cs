@@ -103,31 +103,31 @@ public abstract class EntityScript : Lumina.CEntityScript
     protected T? GetSubsystem<T>() where T : NativeObject => World.GetSubsystem<T>();
 
     /// <summary>Get the script of type T on another entity (or this one), or null.</summary>
-    protected T? GetScript<T>(Entity Target) where T : EntityScript
+    protected T? GetScript<T>(Entity Target) where T : Lumina.CEntityScript
     {
         return Registry.GetScript<T>(Target);
     }
 
     /// <summary>Get the script of type T on this entity, or null.</summary>
-    protected T? GetScript<T>() where T : EntityScript
+    protected T? GetScript<T>() where T : Lumina.CEntityScript
     {
         return Registry.GetScript<T>(Entity);
     }
 
     /// <summary>Every script of type T on this entity.</summary>
-    protected System.Collections.Generic.List<T> GetScripts<T>() where T : EntityScript
+    protected System.Collections.Generic.List<T> GetScripts<T>() where T : Lumina.CEntityScript
     {
         return Registry.GetScripts<T>(Entity);
     }
 
     /// <summary>Attach a new script of type T to this entity and return it (null on failure).</summary>
-    protected T? AddScript<T>() where T : EntityScript
+    protected T? AddScript<T>() where T : Lumina.CEntityScript
     {
         return Registry.AddScript<T>(Entity);
     }
 
     /// <summary>Remove the first script of type T from this entity. Returns true if one was removed.</summary>
-    protected bool RemoveScript<T>() where T : EntityScript
+    protected bool RemoveScript<T>() where T : Lumina.CEntityScript
     {
         return Registry.RemoveScript<T>(Entity);
     }

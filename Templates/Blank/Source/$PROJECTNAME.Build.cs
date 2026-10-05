@@ -6,7 +6,7 @@ public class $PROJECTNAME : LuminaGameModuleRules
         : base(Target)
     {
         // Generated bindings go to this project's own script assembly rather than LuminaSharp.
-        CSharpBindingsDirectory = ModulePath("Game/Scripts/Generated");
+        CSharpBindingsDirectory = ModulePath("../Game/Scripts/Generated");
 
         // Add extra engine or third-party modules here, for example:
         // PrivateDependencyModuleNames.Add("Box3D");
