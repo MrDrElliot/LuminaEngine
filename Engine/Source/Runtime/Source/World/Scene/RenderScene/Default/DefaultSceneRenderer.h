@@ -664,6 +664,9 @@ namespace Lumina
         #endif
         const FShadowAtlas* GetShadowAtlas() const override { return &ShadowAtlas; }
 
+        RHI::FPipelineH GetCallbackPipeline(const FRenderPipelineDesc& Desc, TSpan<const RHI::FColorTarget> ColorTargets, EFormat DepthFormat) override;
+        RHI::FPipelineH GetCallbackComputePipeline(FShaderH ComputeShader) override;
+
     private:
         
         void InitBuffers();
@@ -686,6 +689,20 @@ namespace Lumina
         FSceneView& AddSceneView(const FUIntVector2& Size, bool bPrimary);
         
         void RenderCaptureView(RHI::FCmdListH CL);
+
+        //~ Render callbacks, which run on the primary view only.
+
+        FRenderContext MakeRenderContext(RHI::FCmdListH CL, ERenderStage Stage);
+        void RunRenderCallbacks(RHI::FCmdListH CL, ERenderStage Stage);
+        void CustomDepthPass(RHI::FCmdListH CL);
+        void RunShadowRenderCallbacks(RHI::FCmdListH CL, EShadowViewType Type, uint32 Index, const FMatrix4& ViewProjection,
+                                      const RHI::FRect& Tile, EFormat DepthFormat);
+        bool HasRenderCallbacks(ERenderStage Stage) const;
+        void PrepareSceneColorForCallbacks(RHI::FCmdListH CL);
+
+        // Set when a scene with nothing else writing HDR had it cleared for callbacks, so later passes load it.
+        bool bSceneColorClearedForCallbacks = false;
+        void RestoreAfterRenderCallbacks(RHI::FCmdListH CL);
 
         FSceneGlobalData MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals);
 

@@ -34,7 +34,7 @@ namespace Lumina
 
     void FPluginManager::DiscoverProjectPlugins(FStringView ProjectDir)
     {
-        if (ProjectDir.empty())
+        if (ProjectDir.empty() || FStringView(ProjectDirectory) == ProjectDir)
         {
             return;
         }
@@ -425,6 +425,8 @@ namespace Lumina
 
     void FPluginManager::LoadModulesForPhase(EPluginLoadingPhase Phase)
     {
+        PhaseFired[(int32)Phase] = true;
+
         if (bLoadOrderDirty)
         {
             CachedLoadOrder = BuildLoadOrder();
@@ -441,8 +443,22 @@ namespace Lumina
 
             for (const FPluginModuleDescriptor& Module : Plugin->GetDescriptor().Modules)
             {
-                if (Module.LoadingPhase != Phase)               continue;
+                // A plugin discovered after its module's phase fired catches up here, but only once.
+                const bool bLate = Module.LoadingPhase != Phase && PhaseFired[(int32)Module.LoadingPhase];
+                if (Module.LoadingPhase != Phase && !bLate)     continue;
                 if (!IsModuleApplicable(Module))                continue;
+                if (bLate && !AttemptedModules.insert(FName(Module.Name)).second)
+                {
+                    continue;
+                }
+                AttemptedModules.insert(FName(Module.Name));
+                const bool bLoaded = Algo::AnyOf(Plugin->GetLoadedModules(),
+                    [&Module](const FLoadedPluginModule& Existing) { return Existing.Descriptor.Name == Module.Name && Existing.bStartupCalled; });
+                if (bLate && !bLoaded)
+                {
+                    LOG_INFO("[PluginManager] Plugin '{}' module '{}' asked for phase {}, which had already run; loading it at {}.",
+                        Plugin->GetName(), Module.Name, LexToString(Module.LoadingPhase), LexToString(Phase));
+                }
                 LoadPluginModule(*Plugin, Module);
             }
         }

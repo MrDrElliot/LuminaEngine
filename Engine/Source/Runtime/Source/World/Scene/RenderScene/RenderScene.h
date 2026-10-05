@@ -2,6 +2,7 @@
 
 #include "World/ECS/Registry.h"
 #include "SceneRenderTypes.h"
+#include "RenderCallbacks.h"
 #include "Platform/GenericPlatform.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/RHIFwd.h"
@@ -69,6 +70,12 @@ namespace Lumina
         virtual int32 RegisterCaptureView(const FUIntVector2& Size) { return -1; }
         virtual bool  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) { return false; }
         virtual int32 GetCaptureDisplayResourceID(int32 Handle) const { return -1; }
+
+        //~ Render callbacks ----------------------------------------------------------------
+
+        // A renderer that runs render callbacks builds their pipelines here, and the default creates none.
+        virtual RHI::FPipelineH GetCallbackPipeline(const FRenderPipelineDesc& Desc, TSpan<const RHI::FColorTarget> ColorTargets, EFormat DepthFormat) { return {}; }
+        virtual RHI::FPipelineH GetCallbackComputePipeline(FShaderH ComputeShader) { return {}; }
 
         //~ Debug draw (IPrimitiveDrawInterface) --------------------------------------------
 

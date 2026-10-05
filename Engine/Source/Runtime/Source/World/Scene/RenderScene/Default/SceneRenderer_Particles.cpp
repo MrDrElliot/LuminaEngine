@@ -1022,7 +1022,7 @@ namespace Lumina
 
         const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment
             || !Frame.Extracts.TerrainExtracts.empty() || !Frame.Primitives.SolidBatches.empty()
-            || !Frame.Primitives.LineBatches.empty();
+            || !Frame.Primitives.LineBatches.empty() || bSceneColorClearedForCallbacks;
 
         RHI::FRenderAttachment Color;
         Color.Texture  = HDR.Texture;

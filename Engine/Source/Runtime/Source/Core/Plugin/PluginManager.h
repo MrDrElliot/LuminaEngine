@@ -91,5 +91,11 @@ namespace Lumina
         bool              bLoadOrderDirty = true;
 
         FString           ProjectDirectory; // last DiscoverProjectPlugins arg
+
+        // Phases LoadModulesForPhase has run, so a module discovered after its own phase still loads.
+        bool              PhaseFired[(int32)EPluginLoadingPhase::Count] = {};
+
+        // Modules already tried, so one that failed is not retried at every later phase.
+        THashSet<FName>   AttemptedModules;
     };
 }

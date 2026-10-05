@@ -298,6 +298,17 @@ namespace Lumina
         DrawMeshletBatch(CL, Batch, Ctx);
     }
 
+    namespace
+    {
+        RHI::FRect AtlasTileRect(const FShadowTile& Tile)
+        {
+            const int32 TilePixelX = (int32)(Tile.UVOffset.x * GShadowAtlasResolution);
+            const int32 TilePixelY = (int32)(Tile.UVOffset.y * GShadowAtlasResolution);
+            const int32 TileSize   = (int32)(Tile.UVScale.x * GShadowAtlasResolution);
+            return RHI::FRect{ TilePixelX, TilePixelX + TileSize, TilePixelY, TilePixelY + TileSize };
+        }
+    }
+
     void FDefaultSceneRenderer::PointShadowPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
@@ -378,8 +389,38 @@ namespace Lumina
             }
         }
 
+        const bool bShadowCallbacks = HasRenderCallbacks(ERenderStage::ShadowDepth);
+        if (bShadowCallbacks)
+        {
+            const EFormat AtlasFormat = ShadowAtlas.GetImage().Desc.Format;
+            for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
+            {
+                if (PointShadowCullViewBases[LightIdx] == ~0u)
+                {
+                    continue;
+                }
+
+                const FLightShadowData& ShadowData = Frame.Lighting.Shadows[PointShadows[LightIdx].ShadowDataIndex];
+                for (int32 Face = 0; Face < 6; ++Face)
+                {
+                    const int32 ShadowMapIndex = ShadowData.Shadow[Face].ShadowMapIndex;
+                    if (ShadowMapIndex == INDEX_NONE)
+                    {
+                        continue;
+                    }
+
+                    RunShadowRenderCallbacks(CL, EShadowViewType::PointFace, (uint32)Face, ShadowData.ViewProjection[Face],
+                                             AtlasTileRect(AtlasTiles[ShadowMapIndex]), AtlasFormat);
+                }
+            }
+        }
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
+        if (bShadowCallbacks)
+        {
+            RestoreAfterRenderCallbacks(CL);
+        }
     }
 
     void FDefaultSceneRenderer::SpotShadowPass(RHI::FCmdListH CL)
@@ -453,8 +494,30 @@ namespace Lumina
             }
         }
 
+        const bool bShadowCallbacks = HasRenderCallbacks(ERenderStage::ShadowDepth);
+        if (bShadowCallbacks)
+        {
+            const EFormat AtlasFormat = ShadowAtlas.GetImage().Desc.Format;
+            for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
+            {
+                if (SpotShadowCullViewBases[SpotIdx] == ~0u)
+                {
+                    continue;
+                }
+
+                const FLightShadow& Shadow = SpotShadows[SpotIdx];
+                RunShadowRenderCallbacks(CL, EShadowViewType::Spot, SpotIdx,
+                                         Frame.Lighting.Shadows[Shadow.ShadowDataIndex].ViewProjection[0],
+                                         AtlasTileRect(AtlasTiles[Shadow.ShadowMapIndex]), AtlasFormat);
+            }
+        }
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
+        if (bShadowCallbacks)
+        {
+            RestoreAfterRenderCallbacks(CL);
+        }
     }
 
     void FDefaultSceneRenderer::CascadedShowPass(RHI::FCmdListH CL, uint32 CascadeViewBase)
@@ -521,8 +584,27 @@ namespace Lumina
 
         ParticleShadowCasters(CL, SunShadowDataIndex);
 
+        const bool bShadowCallbacks = HasRenderCallbacks(ERenderStage::ShadowDepth);
+        if (bShadowCallbacks)
+        {
+            const EFormat CascadeFormat = GetNamedImage(ENamedImage::Cascade).Desc.Format;
+            const FLightShadowData& SunShadow = Frame.Lighting.Shadows[SunShadowDataIndex];
+            for (uint32 c = 0; c < (uint32)NumCascades; ++c)
+            {
+                const int32 TileX = GCSMCascadeOriginX[c];
+                const int32 TileY = GCSMCascadeOriginY[c];
+                const int32 TileW = GCSMCascadeSizes[c];
+                RunShadowRenderCallbacks(CL, EShadowViewType::Cascade, c, SunShadow.ViewProjection[c],
+                                         RHI::FRect{ TileX, TileX + TileW, TileY, TileY + TileW }, CascadeFormat);
+            }
+        }
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
+        if (bShadowCallbacks)
+        {
+            RestoreAfterRenderCallbacks(CL);
+        }
     }
 
     void FDefaultSceneRenderer::DecalPass(RHI::FCmdListH CL)
@@ -1428,7 +1510,7 @@ namespace Lumina
             RenderParams.MeshletsPerChunkSide = MeshletsPerChunkSide;
             RenderParams.MeshletQuadSide      = GTerrainMeshletQuads;
 
-            const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment;
+            const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment || bSceneColorClearedForCallbacks;
             const FSceneImage& ColorRT  = GetNamedImage(ENamedImage::HDR);
             const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
 

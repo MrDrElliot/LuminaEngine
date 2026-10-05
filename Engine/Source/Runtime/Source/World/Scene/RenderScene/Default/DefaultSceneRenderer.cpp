@@ -508,6 +508,9 @@ namespace Lumina
                 CompileDrawCommands_Render(CL);
             }
 
+            PrepareSceneColorForCallbacks(CL);
+            RunRenderCallbacks(CL, ERenderStage::FrameStart);
+
             {
                 SCENE_GPU_SCOPE(CL, "Sky Cube Capture");
                 SkyCubeCapturePass(CL);
@@ -543,6 +546,9 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "Terrain Depth");
                     TerrainDepthPrePass(CL);
                 }
+
+                // Before the pyramid, so custom geometry occludes the late cull like terrain does.
+                CustomDepthPass(CL);
                 
                 if (!FrameSettings.bFreezeCulling)
                 {
@@ -651,6 +657,8 @@ namespace Lumina
                 #if !defined(LE_SHIPPING)
                 VelocityDebugPass(CL);
                 #endif
+
+                RunRenderCallbacks(CL, ERenderStage::AfterOpaque);
                 
                 {
                     SCENE_GPU_SCOPE(CL, "Screen Space Reflections");
@@ -762,6 +770,8 @@ namespace Lumina
                 }
                 #endif
 
+                RunRenderCallbacks(CL, ERenderStage::AfterTranslucency);
+
                 {
                     SCENE_GPU_SCOPE(CL, "Underwater");
                     UnderwaterPass(CL);
@@ -792,6 +802,8 @@ namespace Lumina
                     PostProcessMaterialPass(CL);
                 }
 
+                RunRenderCallbacks(CL, ERenderStage::AfterPostProcess);
+
                 if (GetSMAAMode() != ESMAAMode::Off)
                 {
                     SCENE_GPU_SCOPE(CL, "SMAA");
@@ -814,6 +826,8 @@ namespace Lumina
                     SelectionOutlinePass(CL);
                 }
                 #endif
+
+                RunRenderCallbacks(CL, ERenderStage::Overlay);
 
                 {
                     SCENE_GPU_SCOPE(CL, "Widgets");

@@ -270,19 +270,35 @@ namespace Lumina
         BootMark("DiscoverEnginePlugins");
 
         // Falls back to the stored startup project, so a bare launch respects plugin enable and disable.
+        FString StartupProject;
+        bool bStartupProjectFromCommandLine = false;
+        if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
         {
-            FString PreloadLproj;
-            if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
-            {
-                const FFixedString& V = ProjectArg.value();
-                PreloadLproj.assign(V.c_str(), V.size());
-            }
-            else
-            {
-                PreloadLproj = ReadStartupProjectFromDisk();
-            }
-            PreloadProjectPluginOverrides(PreloadLproj);
+            const FFixedString& V = ProjectArg.value();
+            StartupProject.assign(V.c_str(), V.size());
+            bStartupProjectFromCommandLine = true;
         }
+        else
+        {
+            StartupProject = ReadStartupProjectFromDisk();
+        }
+
+        bool bOpenStartupProject = bStartupProjectFromCommandLine;
+        #if WITH_EDITOR
+        // Only the editor reopens the stored project on a bare launch, which a packaged game must never do.
+        bOpenStartupProject |= !StartupProject.empty() && Filesystem::Exists(StartupProject);
+        #endif
+
+        // The project's own plugins have to be known before its overrides apply, or each one reads as missing.
+        if (bOpenStartupProject)
+        {
+            const FString Descriptor = ResolveProjectDescriptor(StartupProject);
+            if (!Descriptor.empty())
+            {
+                FPluginManager::Get().DiscoverProjectPlugins(VFS::Parent(Paths::Normalize(Descriptor)));
+            }
+        }
+        PreloadProjectPluginOverrides(StartupProject);
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Earliest);
         BootMark("Phase Earliest");
@@ -299,7 +315,11 @@ namespace Lumina
             Filesystem::MakeDirectoryTree(IntermediatesDir);
             VFS::Mount<VFS::FNativeFileSystem>("/Intermediates", IntermediatesDir);
         }
-        
+
+        // Before any subsystem starts, so project plugins load in their own phases and boot sees /Game and /Config.
+        const bool bStartupProjectMounted = bOpenStartupProject && MountProject(StartupProject);
+        BootMark("MountProject");
+
         FCoreDelegates::OnPreEngineInit.BroadcastAndClear();
         BootMark("OnPreEngineInit");
 
@@ -406,11 +426,11 @@ namespace Lumina
         ProcessNewlyLoadedCObjects();
         BootMark("Phase EngineInit");
 
-        if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
+        if (bStartupProjectMounted)
         {
-            LoadProject(ProjectArg.value());
+            StartProject();
         }
-        BootMark("LoadProject");
+        BootMark("StartProject");
 
         #if USING(WITH_EDITOR)
         GConfig->DiscoverAndLoadSettings();
@@ -885,17 +905,25 @@ namespace Lumina
 
     void FEngine::LoadProject(FStringView Path)
     {
+        if (MountProject(Path))
+        {
+            StartProject();
+        }
+    }
+
+    bool FEngine::MountProject(FStringView Path)
+    {
         using Json = nlohmann::json;
-        
+
         const FString Descriptor = ResolveProjectDescriptor(Path);
 
         FString JsonData;
         if (Descriptor.empty() || !FileHelper::LoadFileIntoString(JsonData, Descriptor))
         {
             LOG_ERROR("Could not read a project descriptor at '{}'.", Path);
-            return;
+            return false;
         }
-        
+
         Json Data;
         try
         {
@@ -904,13 +932,13 @@ namespace Lumina
         catch (const std::exception& Ex)
         {
             LOG_ERROR("Failed to parse project file '{}': {}", Path, Ex.what());
-            return;
+            return false;
         }
 
         if (!Data.is_object() || !Data.contains("ProjectID") || !Data.contains("Name"))
         {
             LOG_ERROR("Project file '{}' is missing required fields (ProjectID/Name).", Path);
-            return;
+            return false;
         }
 
         ProjectPath                     .assign(VFS::Parent(Paths::Normalize(Descriptor)));
@@ -946,11 +974,9 @@ namespace Lumina
         VFS::Mount<VFS::FNativeFileSystem>("/Config", ConfigDir);
 
         GConfig->LoadPath("/Config");
-        
-        GConfig->DiscoverAndLoadSettings();
-        
+
         FPluginManager::Get().DiscoverProjectPlugins(ProjectPath);
-        
+
         if (auto It = Data.find("Plugins"); It != Data.end() && It->is_array())
         {
             TVector<FProjectPluginOverride> Overrides;
@@ -976,35 +1002,46 @@ namespace Lumina
             FPluginManager::Get().ApplyProjectOverrides(Overrides);
         }
         
+        LegacyCookRoots.clear();
         if (auto It = Data.find("CookRoots"); It != Data.end() && It->is_array())
         {
-            CProjectSettings* ProjectSettings = GetMutableDefault<CProjectSettings>();
-            if (ProjectSettings->CookRoots.empty() && !It->empty())
+            for (const auto& R : *It)
             {
-                TVector<TSoftObjectPtr<CWorld>> Migrated;
-                Migrated.reserve(It->size());
-                for (const auto& R : *It)
+                if (R.is_string())
                 {
-                    if (R.is_string())
-                    {
-                        Migrated.emplace_back(FStringView(R.get<std::string>().c_str()));
-                    }
-                    else if (R.is_object())
-                    {
-                        if (auto AIt = R.find("Asset"); AIt != R.end() && AIt->is_string())
-                        {
-                            Migrated.emplace_back(FStringView(AIt->get<std::string>().c_str()));
-                        }
-                    }
+                    LegacyCookRoots.emplace_back(R.get<std::string>().c_str());
                 }
-                if (!Migrated.empty())
+                else if (R.is_object())
                 {
-                    LOG_INFO("LoadProject: migrating {} cook root(s) from .lproject to Project settings", Migrated.size());
-                    ProjectSettings->CookRoots = Move(Migrated);
-                    GConfig->SaveSettings(CProjectSettings::StaticClass());
+                    if (auto AIt = R.find("Asset"); AIt != R.end() && AIt->is_string())
+                    {
+                        LegacyCookRoots.emplace_back(AIt->get<std::string>().c_str());
+                    }
                 }
             }
         }
+
+        return true;
+    }
+
+    void FEngine::StartProject()
+    {
+        GConfig->DiscoverAndLoadSettings();
+
+        CProjectSettings* ProjectSettings = GetMutableDefault<CProjectSettings>();
+        if (ProjectSettings->CookRoots.empty() && !LegacyCookRoots.empty())
+        {
+            TVector<TSoftObjectPtr<CWorld>> Migrated;
+            Migrated.reserve(LegacyCookRoots.size());
+            for (const FString& Root : LegacyCookRoots)
+            {
+                Migrated.emplace_back(FStringView(Root.c_str(), Root.size()));
+            }
+            LOG_INFO("LoadProject: migrating {} cook root(s) from .lproject to Project settings", Migrated.size());
+            ProjectSettings->CookRoots = Move(Migrated);
+            GConfig->SaveSettings(CProjectSettings::StaticClass());
+        }
+        LegacyCookRoots.clear();
         
         // The project's module DLL lives in its OWN Binaries, exactly like a template project.
         const FFixedString DLLPath = Paths::Combine(ProjectPath, "Binaries", LUMINA_PLATFORM_NAME,

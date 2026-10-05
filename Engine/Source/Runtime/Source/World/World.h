@@ -593,6 +593,16 @@ namespace Lumina
 
         IRenderScene* GetRenderer() const { return RenderScene.get(); }
 
+        // Records Callback into this world's frame at every stage in Stages, until removed.
+        FRenderCallbackHandle AddRenderCallback(ERenderStage Stages, FRenderCallback Callback, FName Name = "RenderCallback")
+        {
+            return RenderCallbacks.Add(Stages, Move(Callback), Name);
+        }
+
+        void RemoveRenderCallback(FRenderCallbackHandle& Handle) { RenderCallbacks.Remove(Handle); }
+
+        FRenderCallbackList& GetRenderCallbacks() { return RenderCallbacks; }
+
         // Creates/destroys this world's renderer (through RenderSceneFactory). Both are idempotent; the
         // world lifecycle calls them itself, but renderer swaps (e.g. a C# RenderScene hot reload) may
         // destroy and recreate on a live world.
@@ -710,6 +720,7 @@ namespace Lumina
         FSystemContext                                      SystemContext;
         
         TUniquePtr<IRenderScene>                            RenderScene;
+        FRenderCallbackList                                 RenderCallbacks;
         TUniquePtr<Physics::IPhysicsScene>                  PhysicsScene;
         TUniquePtr<FWorldUIContext>                         UIContext;
         

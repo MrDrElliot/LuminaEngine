@@ -96,7 +96,8 @@ namespace Lumina
 
         const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment
             || !Frame.Extracts.TerrainExtracts.empty() || !Frame.Primitives.SolidBatches.empty()
-            || !Frame.Primitives.LineBatches.empty() || !Frame.Extracts.ParticleExtracts.empty();
+            || !Frame.Primitives.LineBatches.empty() || !Frame.Extracts.ParticleExtracts.empty()
+            || bSceneColorClearedForCallbacks;
 
         RHI::FRenderAttachment Colors[2];
         uint32 NumColors = 1;
@@ -608,7 +609,8 @@ namespace Lumina
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
 
         const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment
-            || !Frame.Extracts.TerrainExtracts.empty() || !Frame.Primitives.SolidBatches.empty();
+            || !Frame.Extracts.TerrainExtracts.empty() || !Frame.Primitives.SolidBatches.empty()
+            || bSceneColorClearedForCallbacks;
 
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;
@@ -721,7 +723,8 @@ namespace Lumina
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
 
         // First HDR writer in the frame clears and later ones load; base pass and terrain come first.
-        const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment || !Frame.Extracts.TerrainExtracts.empty();
+        const bool bHDRWasWritten = !DrawCommands.empty() || FrameFlags.bHasEnvironment || !Frame.Extracts.TerrainExtracts.empty()
+            || bSceneColorClearedForCallbacks;
 
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;

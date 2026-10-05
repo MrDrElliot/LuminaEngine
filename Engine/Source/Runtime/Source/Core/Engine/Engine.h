@@ -54,7 +54,7 @@ namespace Lumina
 
         RUNTIME_API void SetEngineViewportSize(const FUIntVector2& InSize);
         
-        /** Used to optionally load a project as a DLL from the command line */
+        /** Opens a project at runtime, which is MountProject followed by StartProject. */
         RUNTIME_API virtual void LoadProject(FStringView Path);
 
         /** Cooked-runtime entry: mounts .pak next to exe, loads config/scripts/DLL, spawns game instance, loads startup map. */
@@ -161,6 +161,12 @@ namespace Lumina
         double                        TitleSampleStart = 0.0;
         uint32                        TitleSampleFrames = 0;
 
+        // The half of opening a project that needs no engine subsystem, so a startup project runs it before any starts.
+        RUNTIME_API bool MountProject(FStringView Path);
+
+        // Settings, the project module, assets, scripts and the game instance, once the engine is up.
+        RUNTIME_API void StartProject();
+
         /** Drains a queued Travel request; called at FrameStart. */
         RUNTIME_API void ProcessPendingTravel();
 
@@ -217,6 +223,9 @@ namespace Lumina
         FString                     ProjectName;
         FFixedString                ProjectPath;
         TObjectPtr<CGameInstance>   GameInstance;
+
+        // Read by MountProject, applied by StartProject once project settings are writable.
+        TVector<FString>            LegacyCookRoots;
 
 
         FProjectLoadedDelegate  OnProjectLoaded;
