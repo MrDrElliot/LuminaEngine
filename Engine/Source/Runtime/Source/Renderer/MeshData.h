@@ -315,10 +315,15 @@ namespace Lumina
         // how "carries no palette" is spelled now that the slab aims the bone pointers at the null page.
         uint32 BonePaletteCount;
 
-        // Pads the stride to 128. Slang adds no tail padding of its own, so FMeshletHeader restates this.
         uint32 _LocalBoundsPad1;
+
+        // Each vertex's quantized position alone, 8 bytes, so a position-only pass fetches a quarter of the bytes.
+        uint64 PositionsAddress;                    // uint2*
+
+        // Slang adds no tail padding of its own, so FMeshletHeader restates this.
+        uint64 _PositionsPad;
     };
-    static_assert(sizeof(FMeshletHeaderGPU) == 128, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+    static_assert(sizeof(FMeshletHeaderGPU) == 144, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 
     namespace MeshletHeaderSlab
     {
@@ -389,6 +394,7 @@ namespace Lumina
             RHI::GPUPtr MeshletSphereBuffer   = 0;
             RHI::GPUPtr MeshletConeBuffer     = 0;
             RHI::GPUPtr MeshletVertexBuffer   = 0;
+            RHI::GPUPtr MeshletPositionBuffer = 0;
             RHI::GPUPtr MeshletTriangleBuffer = 0;
             RHI::GPUPtr MeshletBonePaletteBuffer = 0;
             RHI::GPUPtr MeshletBoneIndexBuffer   = 0;
@@ -439,6 +445,7 @@ namespace Lumina
                 MeshletSphereBuffer   = 0;
                 MeshletConeBuffer     = 0;
                 MeshletVertexBuffer   = 0;
+                MeshletPositionBuffer = 0;
                 MeshletTriangleBuffer = 0;
                 MeshletBonePaletteBuffer = 0;
                 MeshletBoneIndexBuffer   = 0;
@@ -465,6 +472,7 @@ namespace Lumina
                 MeshletSphereBuffer   = Other.MeshletSphereBuffer;
                 MeshletConeBuffer     = Other.MeshletConeBuffer;
                 MeshletVertexBuffer   = Other.MeshletVertexBuffer;
+                MeshletPositionBuffer = Other.MeshletPositionBuffer;
                 MeshletTriangleBuffer = Other.MeshletTriangleBuffer;
                 MeshletBonePaletteBuffer = Other.MeshletBonePaletteBuffer;
                 MeshletBoneIndexBuffer   = Other.MeshletBoneIndexBuffer;
@@ -477,6 +485,7 @@ namespace Lumina
                 Other.MeshletSphereBuffer   = 0;
                 Other.MeshletConeBuffer     = 0;
                 Other.MeshletVertexBuffer   = 0;
+                Other.MeshletPositionBuffer = 0;
                 Other.MeshletTriangleBuffer = 0;
                 Other.MeshletBonePaletteBuffer = 0;
                 Other.MeshletBoneIndexBuffer   = 0;

@@ -69,6 +69,13 @@ void MeshMain(
         // block in MeshletVisBuffer.slang.
         const float4x4 ModelMatrix  = Ref.ModelMatrix;
         const float3x3 NormalMatrix = CalculateNormalMatrix(ModelMatrix);
+#if defined(MESHLET_MESH_BASE) || defined(MESHLET_MESH_MASKED_SHADOW)
+        const float4x4 CameraView   = GetCameraView();
+        const float4x4 CameraProj   = GetCameraProjection();
+#endif
+#ifndef MESHLET_MESH_BASE
+        const float4x4 ShadowViewProj = GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex);
+#endif
 
         [ForceUnroll]
         for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
@@ -90,19 +97,17 @@ void MeshMain(
             const float3 FinalWorldPos = WorldPos.xyz;
 
 #ifdef MESHLET_MESH_BASE
-            FMeshVertexOutput VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
+            FMeshVertexOutput VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, CameraView, CameraProj);
             Clip[v] = VOut.Position;   // taken from the output so the two cannot drift
 #elif defined(MESHLET_MESH_MASKED_SHADOW)
             // Interpolants come from the camera basis because the opacity graph reads view-space values;
             // only the clip position is the light's, and it overwrites what MakeBaseVertexOutput wrote.
-            FMeshVertexOutput VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
-            Clip[v] = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),
-                          float4(FinalWorldPos, 1.0));
+            FMeshVertexOutput VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, CameraView, CameraProj);
+            Clip[v] = mul(ShadowViewProj, float4(FinalWorldPos, 1.0));
             VOut.Position = Clip[v];
 #else
             FMeshVertexOutput VOut = (FMeshVertexOutput)0;
-            Clip[v] = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),
-                          float4(FinalWorldPos, 1.0));
+            Clip[v] = mul(ShadowViewProj, float4(FinalWorldPos, 1.0));
             VOut.Position = Clip[v];
 #endif
 

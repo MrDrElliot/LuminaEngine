@@ -77,6 +77,12 @@ GPUSpan<FMaterialUniforms>*   Materials()             { return &GetSceneRoot().M
 GPUSpan<FMaterialCollection>* Collections()           { return &GetSceneRoot().Collections; }
 GPUSpan<FBillboardInstance>*  Billboards()            { return &GetSceneRoot().Billboards; }
 GPUSpan<FCullView>*           CullViews()             { return &GetSceneRoot().CullViews; }
+
+// One word, where SpanGet would fetch all 128 bytes of the view to test a flag.
+bool CullViewHasFlag(uint ViewIndex, uint Flag)
+{
+    return (asuint(SpanAt(CullViews(), ViewIndex).ViewOriginAndFlags.w) & Flag) == Flag;
+}
 GPUSpan<FMeshletHeader>*      MeshletHeaders()        { return &GetSceneRoot().MeshletHeaders; }
 
 // Both instance structs carry a header SLOT, but every consumer wants the header. Extensions rather than
@@ -216,9 +222,30 @@ float3 FireflyUntonemap(float3 C) { return C / max(1.0 - Luminance(C), 1e-4); }
 
 // Vertex loaders.
 
+float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
+{
+    return DecodeMeshletPosition(M, loadAligned<8>(Header.Positions + M.VertexOffset + VertexLocalIdx));
+}
+
+// Field by field through the pointer, so whatever a pass leaves unused is never fetched at all.
 FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
-    FMeshletVertex V = reinterpret<FMeshletVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
+    FMeshletVertex* V = reinterpret<FMeshletVertex*>(Header.Vertices) + (M.VertexOffset + VertexLocalIdx);
+
+    FVertexData Data;
+    Data.Position = LoadStaticPosition(Header, M, VertexLocalIdx);
+    Data.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
+    Data.Tangent  = UnpackTangent(V.Tangent);
+    Data.UV       = UnpackUV(V.UV);
+    Data.UV1      = UnpackUV(V.UV1);
+    Data.Color    = UnpackColor(V.Color);
+    return Data;
+}
+
+// One load of the whole vertex, for a pass that consumes every attribute and would otherwise issue many narrow ones.
+FVertexData LoadStaticVertexWhole(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
+{
+    const FMeshletVertex V = reinterpret<FMeshletVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
     FVertexData Data;
     Data.Position = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
@@ -247,12 +274,6 @@ FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
 FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
 {
     return DecodePreSkinnedVertex(SpanGetAligned(PreSkinnedVertices(), SkinnedVertexBase + M.VertexOffset + VertexLocalIdx));
-}
-
-float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
-{
-    FMeshletVertex V = reinterpret<FMeshletVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
-    return DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
 }
 
 float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)

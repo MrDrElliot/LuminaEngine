@@ -114,7 +114,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         [unroll]
         for (int k = 0; k < 3; ++k)
         {
-            FVertexData VertexData = LoadMeshletVertexData(T.Ref, T.Tri[k]);
+            FVertexData VertexData = LoadMeshletVertexData(T.Ref, T.Tri[k], true);
             W[k] = TransformMeshletVertex(VertexData, ModelMatrix, NormalMatrixWS);
 
             // Pose only; the offset the graph adds is applied below, once it has been evaluated at t-1.

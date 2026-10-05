@@ -326,6 +326,7 @@ namespace Lumina
             Header.MeshletsAddress          = MB.MeshletBuffer;
             Header.SpheresAddress           = MB.MeshletSphereBuffer;
             Header.VerticesAddress          = MB.MeshletVertexBuffer;
+            Header.PositionsAddress         = MB.MeshletPositionBuffer;
             Header.TrianglesAddress         = MB.MeshletTriangleBuffer;
             Header.DistanceFieldIndex       = bHasField ? MB.DistanceFieldTexture.SampledSlot : DistanceField::kInvalidIndex;
             Header.DistanceFieldFlags       = Volume.bTwoSided ? (uint32)EDistanceFieldFlags::TwoSided : 0u;
@@ -416,6 +417,7 @@ namespace Lumina
         const uint64 SphereBytes   = sizeof(FMeshletSphere) * MData.MeshletSpheres.size();
         const uint64 ConeBytes     = sizeof(FMeshletCone)   * MData.MeshletCones.size();
         const uint64 VertexBytes   = VertCount              * VertStride;
+        const uint64 PositionBytes = VertCount              * sizeof(uint32) * 2;
         const uint64 TriangleBytes = sizeof(uint32)         * MData.MeshletTriangles.size();
         const uint64 PaletteBytes  = sizeof(FMeshletBonePalette) * MData.MeshletBonePalettes.size();
         const uint64 BoneIdxBytes  = sizeof(uint32)         * MData.MeshletBoneIndices.size();
@@ -440,6 +442,7 @@ namespace Lumina
         const uint64 SphereOffset   = Reserve(SphereBytes);
         const uint64 ConeOffset     = Reserve(ConeBytes);
         const uint64 VertexOffset   = Reserve(VertexBytes);
+        const uint64 PositionOffset = Reserve(PositionBytes);
         const uint64 TriangleOffset = Reserve(TriangleBytes);
         const uint64 PaletteOffset  = Reserve(PaletteBytes);
         const uint64 BoneIdxOffset  = Reserve(BoneIdxBytes);
@@ -459,6 +462,18 @@ namespace Lumina
         RHI::UploadBuffer(Block, MData.MeshletSpheres.data(),   SphereBytes,   SphereOffset);
         RHI::UploadBuffer(Block, MData.MeshletCones.data(),     ConeBytes,     ConeOffset);
         RHI::UploadBuffer(Block, VertSrc,                       VertexBytes,   VertexOffset);
+
+        {
+            // X and Y share a word and Z has the other, matching DecodeMeshletPosition's uint2 overload.
+            TVector<uint32> Positions((SIZE_T)VertCount * 2);
+            for (uint64 i = 0; i < VertCount; ++i)
+            {
+                const FMeshletVertex& V = bSkinned ? MData.MeshletSkinnedVertices[i] : MData.MeshletVertices[i];
+                Positions[i * 2 + 0] = (uint32)V.PositionX | ((uint32)V.PositionY << 16);
+                Positions[i * 2 + 1] = (uint32)V.PositionZ;
+            }
+            RHI::UploadBuffer(Block, Positions.data(), PositionBytes, PositionOffset);
+        }
         RHI::UploadBuffer(Block, MData.MeshletTriangles.data(), TriangleBytes, TriangleOffset);
 
         if (PaletteBytes != 0 && BoneIdxBytes != 0)
@@ -474,6 +489,7 @@ namespace Lumina
         MB.MeshletSphereBuffer   = Block.Gpu + SphereOffset;
         MB.MeshletConeBuffer     = Block.Gpu + ConeOffset;
         MB.MeshletVertexBuffer   = Block.Gpu + VertexOffset;
+        MB.MeshletPositionBuffer = Block.Gpu + PositionOffset;
         MB.MeshletTriangleBuffer = Block.Gpu + TriangleOffset;
 
         // Null for a static mesh; SkinVertex reads that as bind pose rather than misreading the indices.

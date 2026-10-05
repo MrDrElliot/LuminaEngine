@@ -307,7 +307,7 @@ FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 Scree
     [unroll]
     for (int k = 0; k < 3; ++k)
     {
-        W[k]        = TransformMeshletVertex(LoadMeshletVertexData(T.Ref, T.Tri[k]), ModelMatrix, NormalMatrixWS);
+        W[k]        = TransformMeshletVertex(LoadMeshletVertexData(T.Ref, T.Tri[k], true), ModelMatrix, NormalMatrixWS);
         WorldPos[k] = W[k].WorldPos;
     }
 

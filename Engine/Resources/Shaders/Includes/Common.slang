@@ -377,6 +377,12 @@ float3 DecodeMeshletPosition(FMeshlet M, uint16_t PosX, uint16_t PosY, uint16_t 
         float(UnpackMeshletAnchor(M.PackedAnchorZ) + Oz) * Scale);
 }
 
+// The dense position stream's 8-byte form of the same three offsets.
+float3 DecodeMeshletPosition(FMeshlet M, uint2 Packed)
+{
+    return DecodeMeshletPosition(M, (uint16_t)(Packed.x & 0xFFFFu), (uint16_t)(Packed.x >> 16), (uint16_t)(Packed.y & 0xFFFFu));
+}
+
 // Mirror of Lumina::FMeshletBounds. Sphere + cone drive culling.
 struct FMeshletSphere
 {
@@ -488,8 +494,13 @@ struct FMeshletHeader
     // Entries in BonePalettes. Zero on a static mesh, which is how "carries no palette" is spelled.
     uint            BonePaletteCount;
 
-    // Pads the stride to 128 so the Slang and C++ layouts agree; FMeshletHeaderGPU is alignas(16).
     uint            _LocalBoundsPad1;
+
+    // Each vertex's quantized position alone, X and Y in .x and Z in .y. See DecodeMeshletPosition.
+    uint2*          Positions;
+
+    // Pads the stride to 144 so the Slang and C++ layouts agree; FMeshletHeaderGPU is alignas(16).
+    uint64_t        _PositionsPad;
 
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }

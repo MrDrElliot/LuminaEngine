@@ -141,8 +141,7 @@ FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint
         return Empty;
     }
 
-    const FCullView View = SpanGetAligned(CullViews(), MeshletPass().CullViewIndex);
-    return ResolveMeshlet(OutSlot, View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
+    return ResolveMeshlet(OutSlot, CullViewHasFlag(MeshletPass().CullViewIndex, CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
 }
 
 
@@ -150,7 +149,8 @@ FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint
 // 2=dynamic (per-instance runtime branch, used by mixed batches and by passes that don't specialize, e.g. deferred).
 [vk::constant_id(5)] const uint SPEC_SKINNED = 2;
 
-FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx)
+// bWholeVertex is a constant at every call site, so the unused static loader compiles out.
+FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx, bool bWholeVertex = false)
 {
     bool bSkinned;
     if      (SPEC_SKINNED == 0u) { bSkinned = false; }
@@ -166,7 +166,8 @@ FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx)
         }
         return LoadSkinnedVertex(Ref.M, LocalVertIdx, Ref.SkinnedVertexBase);
     }
-    return LoadStaticVertex(Ref.Header, Ref.M, LocalVertIdx);
+    return bWholeVertex ? LoadStaticVertexWhole(Ref.Header, Ref.M, LocalVertIdx)
+                        : LoadStaticVertex(Ref.Header, Ref.M, LocalVertIdx);
 }
 
 // One packed dword = three 8-bit local vertex indices. unpack_u8u32, not shift+mask: the hand-rolled

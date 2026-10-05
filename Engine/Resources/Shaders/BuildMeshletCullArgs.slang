@@ -70,7 +70,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         for (uint i = First; i < Last; ++i)
         {
             FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
-            const bool bCulled = !bLate || SpanGetAligned(CullViews(), i / NumDraws).HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
+            const bool bCulled = !bLate || CullViewHasFlag(i / NumDraws, CULL_VIEW_FLAG_MESHLET_HIZ);
             // Blocks are dense inside a bucket but sparse across the arena, so the flat dispatch needs its own prefix.
             Local += bCulled ? min(Bucket.BlockCursor, Bucket.BlockCapacity) : 0u;
         }
@@ -81,7 +81,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         for (uint i = First; i < Last; ++i)
         {
             FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
-            const bool bCulled = !bLate || SpanGetAligned(CullViews(), i / NumDraws).HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
+            const bool bCulled = !bLate || CullViewHasFlag(i / NumDraws, CULL_VIEW_FLAG_MESHLET_HIZ);
 
             Bucket.CullWorkBase = Running;
             Running += bCulled ? min(Bucket.BlockCursor, Bucket.BlockCapacity) : 0u;
