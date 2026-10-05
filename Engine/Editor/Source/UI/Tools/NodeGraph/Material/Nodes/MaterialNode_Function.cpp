@@ -130,6 +130,45 @@ namespace Lumina
         RebuildPins();
     }
 
+    bool CMaterialExpression_MaterialFunctionCall::NeedsPinRebuild() const
+    {
+        const CMaterialFunction* Fn = Function.Get();
+        if (!bPinsBuilt || Fn != CachedFunction)
+        {
+            return true;
+        }
+
+        const size_t InputCount = Fn != nullptr ? Fn->GetInputs().size() : 0;
+        const size_t OutputCount = Fn != nullptr ? Fn->GetOutputs().size() : 0;
+        if (FunctionInputPins.size() != InputCount || FunctionOutputPins.size() != OutputCount ||
+            CachedInputTypes.size() != InputCount || CachedOutputTypes.size() != OutputCount)
+        {
+            return true;
+        }
+
+        for (size_t Index = 0; Index < InputCount; ++Index)
+        {
+            const FMaterialFunctionInput& Input = Fn->GetInputs()[Index];
+            const CMaterialInput* Pin = FunctionInputPins[Index];
+            if (Pin == nullptr || Pin->GetPinName() != Input.Name.c_str() || CachedInputTypes[Index] != Input.Type)
+            {
+                return true;
+            }
+        }
+
+        for (size_t Index = 0; Index < OutputCount; ++Index)
+        {
+            const FMaterialFunctionOutput& Output = Fn->GetOutputs()[Index];
+            const CMaterialOutput* Pin = FunctionOutputPins[Index];
+            if (Pin == nullptr || Pin->GetPinName() != Output.Name.c_str() || CachedOutputTypes[Index] != Output.Type)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     void CMaterialExpression_MaterialFunctionCall::RebuildPins()
     {
         // Snapshotted by direction and pin name, so a rebuild keeps wires whose pin still exists.
@@ -173,6 +212,8 @@ namespace Lumina
 
         FunctionInputPins.clear();
         FunctionOutputPins.clear();
+        CachedInputTypes.clear();
+        CachedOutputTypes.clear();
 
         if (CMaterialFunction* Fn = Function.Get())
         {
@@ -184,6 +225,7 @@ namespace Lumina
                 Pin->SetInputType(T);
                 Pin->SetComponentMask(FullMaskForType(T));
                 FunctionInputPins.push_back(Pin);
+                CachedInputTypes.push_back(In.Type);
             }
 
             for (const FMaterialFunctionOutput& Out : Fn->GetOutputs())
@@ -195,6 +237,7 @@ namespace Lumina
                 Pin->SetComponentMask(FullMaskForType(T));
                 Pin->SetShouldDrawEditor(false);
                 FunctionOutputPins.push_back(Pin);
+                CachedOutputTypes.push_back(Out.Type);
             }
         }
 
@@ -229,9 +272,16 @@ namespace Lumina
     void CMaterialExpression_MaterialFunctionCall::DrawNodeTitleBar()
     {
         // Runs before this node's pins are drawn, so newly built pins appear immediately.
-        if (!bPinsBuilt || Function.Get() != CachedFunction)
+        if (NeedsPinRebuild())
         {
             RebuildPins();
+            if (CEdNodeGraph* Graph = GetOwningGraph())
+            {
+                if (CPackage* Package = Graph->GetPackage())
+                {
+                    Package->MarkDirty();
+                }
+            }
         }
         Super::DrawNodeTitleBar();
     }

@@ -1,12 +1,19 @@
 #include "MaterialGraphCompile.h"
 #include "Containers/StringFormat.h"
 #include "MaterialNodeGraph.h"
+#include "MaterialFunctionGraph.h"
 #include "Nodes/MaterialNode_Grass.h"
+#include "Nodes/MaterialNode_Function.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
+#include "Assets/AssetManager/AssetManager.h"
+#include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Object/Cast.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/CoreEditorDelegates.h"
 #include "Memory/Memory.h"
 #include "Paths/Paths.h"
 #include "Renderer/MaterialTypes.h"
@@ -19,6 +26,42 @@ namespace Lumina
 {
     namespace
     {
+        void RefreshFunctionCallPins(CMaterialNodeGraph* Graph, THashSet<FGuid>& VisitedFunctions)
+        {
+            for (const TObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+            {
+                CMaterialExpression_MaterialFunctionCall* Call = Cast<CMaterialExpression_MaterialFunctionCall>(Node.Get());
+                if (Call == nullptr)
+                {
+                    continue;
+                }
+
+                if (Call->NeedsPinRebuild())
+                {
+                    Call->RebuildPins();
+                    if (CPackage* Package = Graph->GetPackage())
+                    {
+                        Package->MarkDirty();
+                    }
+                }
+
+                CMaterialFunction* Function = Call->Function.Get();
+                if (Function == nullptr || !VisitedFunctions.insert(Function->GetGUID()).second)
+                {
+                    continue;
+                }
+
+                CPackage* FunctionPackage = Function->GetPackage();
+                CMaterialNodeGraph* FunctionGraph = FunctionPackage != nullptr
+                    ? Cast<CMaterialNodeGraph>(FunctionPackage->LoadObjectByName(FName(GMaterialFunctionGraphObjectName)))
+                    : nullptr;
+                if (FunctionGraph != nullptr)
+                {
+                    RefreshFunctionCallPins(FunctionGraph, VisitedFunctions);
+                }
+            }
+        }
+
         // GrassOutput nodes sit outside the emit closure, so the only way their data reaches the asset is
         // a direct scan of the graph. Assign rather than merge: a removed node must drop its species.
         void CollectGrassOutputs(CMaterial* Material, CMaterialNodeGraph* Graph)
@@ -136,6 +179,8 @@ namespace Lumina
             Material->ClearPermutation(Target.Key);
         }
 
+        THashSet<FGuid> VisitedFunctions;
+        RefreshFunctionCallPins(Graph, VisitedFunctions);
         Graph->CompileGraph(Compiler);
 
         if (!Target.bPermutation)
@@ -465,16 +510,22 @@ namespace Lumina
     namespace
     {
         // Dispatches then POLLS across frames, since Flush would park the game thread for the compile.
-        struct FPendingStaleRecompile
+        struct FPendingMaterialRecompile
         {
             // The per-stage commit callbacks capture the material RAW, so this ref has to outlive the wait.
             TObjectPtr<CMaterial>         Material;
             // Finish reads bound textures and parameters back off it, so it outlives the dispatch.
             TUniquePtr<FMaterialCompiler> Compiler;
             FMaterialGraphCompileResult   Result;
+            TObjectPtr<CMaterialNodeGraph> Graph;
+            uint64                        GraphContentVersion = 0;
+            bool                          bFunctionChange = false;
+            bool                          bSaveWhenComplete = false;
         };
 
-        FPendingStaleRecompile GPendingStaleRecompile;
+        FPendingMaterialRecompile GPendingMaterialRecompile;
+        TVector<FGuid> GFunctionRecompileQueue;
+        THashSet<FGuid> GQueuedFunctionMaterials;
 
         struct FPendingPermutationCompile
         {
@@ -506,6 +557,37 @@ namespace Lumina
             Graph->SetMaterial(Material);
             Graph->ValidateGraph();
             return Graph;
+        }
+    }
+
+    void QueueMaterialFunctionRecompiles(const FGuid& FunctionGUID)
+    {
+        FAssetRegistry& Registry = FAssetRegistry::Get();
+        const FName MaterialClass = CMaterial::StaticClass()->GetName();
+        const FName FunctionClass = CMaterialFunction::StaticClass()->GetName();
+
+        TVector<FGuid> Functions;
+        THashSet<FGuid> SeenFunctions;
+        Functions.push_back(FunctionGUID);
+        SeenFunctions.insert(FunctionGUID);
+
+        for (size_t Index = 0; Index < Functions.size(); ++Index)
+        {
+            for (const FAssetData* Referencer : Registry.GetReferencersOf(Functions[Index]))
+            {
+                if (Referencer->AssetClass == FunctionClass)
+                {
+                    if (SeenFunctions.insert(Referencer->AssetGUID).second)
+                    {
+                        Functions.push_back(Referencer->AssetGUID);
+                    }
+                }
+                else if (Referencer->AssetClass == MaterialClass &&
+                         GQueuedFunctionMaterials.insert(Referencer->AssetGUID).second)
+                {
+                    GFunctionRecompileQueue.push_back(Referencer->AssetGUID);
+                }
+            }
         }
     }
 
@@ -611,10 +693,10 @@ namespace Lumina
         GPendingPermutation.Target   = Move(Target);
     }
 
-    void ProcessStaleMaterialRecompiles()
+    void ProcessMaterialRecompiles()
     {
         // One material at a time keeps the swarm's work bounded and the poll below unambiguous.
-        if (GPendingStaleRecompile.Compiler != nullptr)
+        if (GPendingMaterialRecompile.Compiler != nullptr)
         {
             // Global across every compile, so an unrelated burst delays this finish but never commits wrong.
             if (GShaderCompiler->HasPendingRequests())
@@ -622,32 +704,77 @@ namespace Lumina
                 return;
             }
 
-            CMaterial* Material = GPendingStaleRecompile.Material.Get();
-            FinishMaterialGraphCompile(Material, *GPendingStaleRecompile.Compiler, GPendingStaleRecompile.Result);
+            CMaterial* Material = GPendingMaterialRecompile.Material.Get();
+            FinishMaterialGraphCompile(Material, *GPendingMaterialRecompile.Compiler, GPendingMaterialRecompile.Result);
+            const bool bGraphUnchanged = GPendingMaterialRecompile.Graph != nullptr &&
+                GPendingMaterialRecompile.Graph->GetTreeContentVersion() == GPendingMaterialRecompile.GraphContentVersion;
+            if (GPendingMaterialRecompile.bFunctionChange && bGraphUnchanged)
+            {
+                GPendingMaterialRecompile.Graph->MarkCompiled();
+            }
 
             // Read before the reset, since the material may be the only thing still naming the package.
             CPackage* Package = (Material != nullptr) ? Material->GetPackage() : nullptr;
             const FString Name = (Material != nullptr) ? FString(Material->GetName().c_str()) : FString("<destroyed>");
-            const bool bSuccess = GPendingStaleRecompile.Result.bSuccess;
+            const bool bSuccess = GPendingMaterialRecompile.Result.bSuccess;
+            const bool bFunctionChange = GPendingMaterialRecompile.bFunctionChange;
+            const bool bSaveWhenComplete = GPendingMaterialRecompile.bSaveWhenComplete;
+            const bool bSuperseded = Material != nullptr && GQueuedFunctionMaterials.contains(Material->GetGUID());
 
-            GPendingStaleRecompile = {};
+            GPendingMaterialRecompile = {};
 
             if (bSuccess && Package != nullptr)
             {
-                // Dirtied so the user can save and stop paying the recompile every session, but never auto-saved.
                 Package->MarkDirty();
-                ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled (shader templates changed) - save to keep", Name.c_str());
+                if (bSaveWhenComplete && bGraphUnchanged && !bSuperseded)
+                {
+                    FCoreEditorDelegates::OnAssetPreSave.Broadcast(Material);
+                    if (CPackage::SavePackage(Package, Package->GetPackagePath()))
+                    {
+                        FAssetRegistry::Get().AssetSaved(Material);
+                        FCoreEditorDelegates::OnAssetSaved.Broadcast(Material);
+                        LOG_INFO("Material '{0}' recompiled and saved after a material function changed", Name.c_str());
+                    }
+                    else
+                    {
+                        ImGuiX::Notifications::NotifyError("Material '{0}' recompiled but could not be saved", Name.c_str());
+                    }
+                }
+                else if (bFunctionChange)
+                {
+                    ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled after a material function changed; save to keep", Name.c_str());
+                }
+                else
+                {
+                    ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled (shader templates changed) - save to keep", Name.c_str());
+                }
             }
             else
             {
-                ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile against the current shader templates", Name.c_str());
+                ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile", Name.c_str());
             }
             return;
         }
 
-        // Spread out, or a template edit that staled many materials becomes one long hitch.
-        TObjectPtr<CMaterial> Material = CMaterial::PopStaleTemplateMaterial();
-        if (!Material.IsValid() || Material->CompiledTemplateHash == CMaterial::GetShaderTemplateHash())
+        const bool bFunctionChange = !GFunctionRecompileQueue.empty();
+        TObjectPtr<CMaterial> Material;
+        if (bFunctionChange)
+        {
+            const FGuid MaterialGUID = GFunctionRecompileQueue.back();
+            GFunctionRecompileQueue.pop_back();
+            GQueuedFunctionMaterials.erase(MaterialGUID);
+            const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(MaterialGUID);
+            if (Data != nullptr)
+            {
+                Material = Cast<CMaterial>(FAssetManager::Get().LoadAssetSynchronous(Data->Path, MaterialGUID));
+            }
+        }
+        else
+        {
+            Material = CMaterial::PopStaleTemplateMaterial();
+        }
+
+        if (!Material.IsValid() || (!bFunctionChange && Material->CompiledTemplateHash == CMaterial::GetShaderTemplateHash()))
         {
             return;
         }
@@ -655,9 +782,11 @@ namespace Lumina
         CMaterialNodeGraph* Graph = LoadMaterialGraph(Material.Get());
         if (Graph == nullptr)
         {
-            LOG_WARN("Material '{0}' was compiled against older shader templates but has no saved graph to recompile from", Material->GetName().c_str());
+            LOG_WARN("Material '{0}' has no saved graph to recompile from", Material->GetName().c_str());
             return;
         }
+
+        const bool bSaveWhenComplete = bFunctionChange && !Material->GetPackage()->IsDirty() && !Graph->NeedsCompile();
 
         TUniquePtr<FMaterialCompiler> Compiler = MakeUnique<FMaterialCompiler>();
         FMaterialGraphCompileResult   Result;
@@ -665,12 +794,20 @@ namespace Lumina
         // A graph that failed up front has nothing to wait for and would hold the slot until unrelated work.
         if (!BeginMaterialGraphCompile(Material.Get(), Graph, *Compiler, Result))
         {
-            ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile against the current shader templates", Material->GetName().c_str());
+            if (bFunctionChange)
+            {
+                Graph->MarkCompiled();
+            }
+            ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile", Material->GetName().c_str());
             return;
         }
 
-        GPendingStaleRecompile.Material = Material;
-        GPendingStaleRecompile.Compiler = Move(Compiler);
-        GPendingStaleRecompile.Result   = Move(Result);
+        GPendingMaterialRecompile.Material        = Material;
+        GPendingMaterialRecompile.Compiler        = Move(Compiler);
+        GPendingMaterialRecompile.Result          = Move(Result);
+        GPendingMaterialRecompile.Graph           = Graph;
+        GPendingMaterialRecompile.GraphContentVersion = Graph->GetTreeContentVersion();
+        GPendingMaterialRecompile.bFunctionChange = bFunctionChange;
+        GPendingMaterialRecompile.bSaveWhenComplete = bSaveWhenComplete;
     }
 }

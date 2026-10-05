@@ -67,14 +67,9 @@ namespace Lumina
     // Inverts Key back into switch values; false when the manifest can express no such combination.
     EDITOR_API bool MakeMaterialPermutationTarget(const CMaterial* Material, uint64 Key, FMaterialCompileTarget& OutTarget);
 
-    // Editor-tick drain for CMaterial's stale-template queue (materials whose serialized shaders were
-    // built against older templates, detected in PostLoad by CompiledTemplateHash mismatch). Call once per
-    // frame (EditorUI::OnUpdate); no-op when the queue is empty and nothing is in flight.
-    //
-    // Recompiles at most ONE material at a time, via Begin/Finish above: the dispatch happens on one call
-    // and the commit on a later one, so a ~600ms multi-stage compile costs the frame its dispatch rather
-    // than the whole compile. Marks the package dirty and toasts on the finishing call.
-    EDITOR_API void ProcessStaleMaterialRecompiles();
+    EDITOR_API void ProcessMaterialRecompiles();
+
+    EDITOR_API void QueueMaterialFunctionRecompiles(const FGuid& FunctionGUID);
 
     // Blocking recompile of a material saved against older shader templates, so a cook never ships stages the game cannot use.
     EDITOR_API bool RecompileMaterialIfStale(CMaterial* Material, FString& OutError);

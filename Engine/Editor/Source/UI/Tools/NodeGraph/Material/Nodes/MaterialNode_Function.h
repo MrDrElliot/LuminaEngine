@@ -118,6 +118,7 @@ namespace Lumina
         // (Re)creates input/output pins from the current Function's signature, preserving any existing
         // connections that still match by pin name. Pin IDs are name-hashed so they survive save/load.
         void RebuildPins();
+        bool NeedsPinRebuild() const;
 
         // The input/output pins, in signature order. Parallel to Function's Inputs/Outputs.
         TVector<CMaterialInput*>  FunctionInputPins;
@@ -127,6 +128,8 @@ namespace Lumina
 
         // Detects a Function change (or first build) so DrawNodeTitleBar can rebuild pins lazily.
         CMaterialFunction* CachedFunction = nullptr;
+        TVector<EMaterialValueType> CachedInputTypes;
+        TVector<EMaterialValueType> CachedOutputTypes;
         bool               bPinsBuilt = false;
     };
 }

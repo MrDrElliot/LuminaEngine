@@ -7,6 +7,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
+#include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Function.h"
 #include "UI/Tools/EditorToolContext.h"
@@ -112,7 +113,6 @@ namespace Lumina
     {
         if (ImGui::MenuItem(LE_ICON_RECEIPT_TEXT " Compile"))
         {
-            CompileAndSyncSignature();
             OnSave();
         }
     }
@@ -254,9 +254,12 @@ namespace Lumina
 
     void FMaterialFunctionEditorTool::OnSave()
     {
-        // Always resync the signature from the graph before the asset is written.
         CompileAndSyncSignature();
         FAssetEditorTool::OnSave();
+        if (Asset != nullptr && Asset->GetPackage() != nullptr && !Asset->GetPackage()->IsDirty())
+        {
+            QueueMaterialFunctionRecompiles(Asset->GetGUID());
+        }
     }
 
     void FMaterialFunctionEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const

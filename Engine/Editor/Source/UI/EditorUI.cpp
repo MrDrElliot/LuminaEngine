@@ -1027,7 +1027,7 @@ namespace Lumina
         CThumbnailManager::Get().ProcessRenderQueue();
 
         // Queued in CMaterial::PostLoad when an asset's baked shaders predate the current templates.
-        ProcessStaleMaterialRecompiles();
+        ProcessMaterialRecompiles();
         ProcessMaterialPermutationRequests();
     }
 
