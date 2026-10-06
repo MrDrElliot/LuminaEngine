@@ -11,6 +11,24 @@
 
 namespace Lumina::ECS
 {
+    struct FEntityAllocState;
+
+    // Moving it hands the source a fresh state, so a moved-from registry can still create entities.
+    struct RUNTIME_API FEntityAllocHolder
+    {
+        FEntityAllocHolder();
+        ~FEntityAllocHolder();
+        FEntityAllocHolder(FEntityAllocHolder&& Other) noexcept;
+        FEntityAllocHolder& operator = (FEntityAllocHolder&& Other) noexcept;
+        FEntityAllocHolder(const FEntityAllocHolder&) = delete;
+        FEntityAllocHolder& operator = (const FEntityAllocHolder&) = delete;
+
+        FORCEINLINE FEntityAllocState* operator->() const { return State.Get(); }
+        void Swap(FEntityAllocHolder& Other) noexcept;
+
+        TUniquePtr<FEntityAllocState> State;
+    };
+
     // One world's entities and component pools. Storages are keyed by dense type id, so lookup is an index.
     class FRegistry
     {
@@ -34,6 +52,15 @@ namespace Lumina::ECS
         NODISCARD RUNTIME_API FEntity Create(FEntity Hint);
 
         RUNTIME_API void Destroy(FEntity Entity);
+
+        // Thread-safe. The handle is not valid until MaterializeReserved, so a deferred create can be targeted before it exists.
+        NODISCARD RUNTIME_API FEntity ReserveEntity();
+
+        // Makes a reserved handle live and fires the created signal, exactly as Create would have.
+        RUNTIME_API void MaterializeReserved(FEntity Entity);
+
+        // Returns a reservation that will never be materialized to the free list.
+        RUNTIME_API void ReleaseReserved(FEntity Entity);
 
         NODISCARD FORCEINLINE bool IsValid(FEntity Entity) const
         {
@@ -337,8 +364,15 @@ namespace Lumina::ECS
         NODISCARD static uint64 MakeNamedStorageKey(FComponentTypeID TypeID, const FName& Name);
         RUNTIME_API void DetachFromAllStorages(FEntity Entity);
 
-        // Slot index maps to a record whose version is current. A dead slot links the next free index.
+        // Caller holds the allocation lock.
+        uint32 TakeSlotLocked(uint32& OutVersion);
+        void EnsureRecordLocked(uint32 Index);
+
+        // A dead slot links the next free index, and a reserved one holds NoFreeSlot so it is neither live nor free.
         TVector<FEntity> EntityRecords;
+
+        // Behind a pointer so the registry stays movable.
+        FEntityAllocHolder AllocState;
 
         static constexpr uint32 NoFreeSlot = FEntity::IndexMask;
         uint32 FreeEntityHead = NoFreeSlot;

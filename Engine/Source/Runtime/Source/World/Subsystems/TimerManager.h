@@ -8,6 +8,8 @@
 
 namespace Lumina
 {
+    namespace ECS { class FCommandBus; }
+
     // Opaque handle from FTimerManager::SetTimer; safe across frames. The underlying ECS::FEntity is
     // generational, so a stale handle reports invalid via IsTimerActive even after the slot is recycled.
     struct FTimerHandle
@@ -47,9 +49,14 @@ namespace Lumina
 
         void SetTimerPaused(FTimerHandle Handle, bool bPause);
 
-        void Tick(float DeltaTime);
+        // With a bus, due timers fire at its next flush instead of inside the tick, so the tick itself shares the frame.
+        void Tick(float DeltaTime, ECS::FCommandBus* Bus = nullptr);
 
     private:
+
+        // Runs a due timer exactly as the tick used to, then re-arms or destroys it.
+        void FireTimer(ECS::FEntity Entity);
+
 
         struct FTimer
         {

@@ -22,26 +22,53 @@ struct FBuildMeshletBlocksArgs
 };
 FBuildMeshletBlocksArgs* Pass() { return GetPassArgs<FBuildMeshletBlocksArgs>(); }
 
-// Reserves a run's worst-case draws and its blocks together, undoing both when either does not fit.
+// Claims Count units only while they fit, so a refused run never moves the counter and everything below it stays written.
+bool ClaimWithin(uint* Counter, uint Capacity, uint Count, out uint Old)
+{
+    Old = 0u;
+    uint Current;
+    InterlockedAdd(Counter[0], 0u, Current);
+
+    // Bounded, since a run that keeps losing the race on a full bucket would not fit anyway.
+    for (uint Attempt = 0u; Attempt < 16u; ++Attempt)
+    {
+        if (Current > Capacity || Capacity - Current < Count)
+        {
+            return false;
+        }
+
+        uint Seen;
+        InterlockedCompareExchange(Counter[0], Current, Current + Count, Seen);
+        if (Seen == Current)
+        {
+            Old = Current;
+            return true;
+        }
+        Current = Seen;
+    }
+    return false;
+}
+
+// A bucket whose whole demand fits takes the plain append, which cannot fail since demand rounds each run's blocks the same way.
 bool TryReserveRun(FRenderBucket* Bucket, uint Count, out uint Slot)
 {
     Slot = 0u;
     const uint Blocks = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
 
-    uint OldDraw;
-    InterlockedAdd(Bucket.DrawBudgetCursor, Count, OldDraw);
-    if (OldDraw > Bucket.DrawCapacity || Bucket.DrawCapacity - OldDraw < Count)
+    if (Bucket.DrawDemand <= Bucket.DrawCapacity && Bucket.BlockDemand <= Bucket.BlockCapacity)
     {
-        InterlockedAdd(Bucket.DrawBudgetCursor, 0u - Count);
-        return false;
+        uint OldBlock;
+        InterlockedAdd(Bucket.BlockCursor, Blocks, OldBlock);
+        Slot = Bucket.BlockBase + OldBlock;
+        return true;
     }
 
+    // Draw budget a refused block claim already took stays spent, which only makes later runs in this short bucket more conservative.
+    uint OldDraw;
     uint OldBlock;
-    InterlockedAdd(Bucket.BlockCursor, Blocks, OldBlock);
-    if (OldBlock > Bucket.BlockCapacity || Bucket.BlockCapacity - OldBlock < Blocks)
+    if (!ClaimWithin(&Bucket.DrawBudgetCursor, Bucket.DrawCapacity, Count, OldDraw)
+        || !ClaimWithin(&Bucket.BlockCursor, Bucket.BlockCapacity, Blocks, OldBlock))
     {
-        InterlockedAdd(Bucket.BlockCursor, 0u - Blocks);
-        InterlockedAdd(Bucket.DrawBudgetCursor, 0u - Count);
         return false;
     }
 

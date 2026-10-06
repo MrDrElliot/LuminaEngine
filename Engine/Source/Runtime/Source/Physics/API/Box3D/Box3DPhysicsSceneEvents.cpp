@@ -220,31 +220,32 @@ namespace Lumina::Physics
             return;
         }
 
-        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FCommandBus& Bus = World->GetCommandBus();
 
+        // Recorded on the bus, so a listener that spawns or destroys runs at the world's sync point like any other structural change.
         auto Deliver = [&](ECS::FEntity Self, ECS::FEntity Other, const FContactRecord& Record, bool bFlipNormal, bool bIsAdded, bool bIsOverlap)
         {
-            if (Self == ECS::NullEntity || !Registry.IsValid(Self))
+            if (Self == ECS::NullEntity)
             {
                 return;
             }
 
-            SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Self);
-            if (Body == nullptr)
+            Bus.Enqueue([Self, Event = BuildCollisionEvent(Self, Other, Record, bFlipNormal), bIsAdded, bIsOverlap](ECS::FRegistry& Registry)
             {
-                return;
-            }
+                SRigidBodyComponent* Body = Registry.IsValid(Self) ? Registry.TryGet<SRigidBodyComponent>(Self) : nullptr;
+                if (Body == nullptr)
+                {
+                    return;
+                }
 
-            TScriptDelegate<SCollisionEvent>& Delegate = bIsOverlap
-                ? (bIsAdded ? Body->OnOverlapBegin : Body->OnOverlapEnd)
-                : (bIsAdded ? Body->OnContactBegin : Body->OnContactEnd);
-
-            if (!Delegate.IsBound())
-            {
-                return;
-            }
-
-            Delegate.Broadcast(BuildCollisionEvent(Self, Other, Record, bFlipNormal));
+                TScriptDelegate<SCollisionEvent>& Delegate = bIsOverlap
+                    ? (bIsAdded ? Body->OnOverlapBegin : Body->OnOverlapEnd)
+                    : (bIsAdded ? Body->OnContactBegin : Body->OnContactEnd);
+                if (Delegate.IsBound())
+                {
+                    Delegate.Broadcast(Event);
+                }
+            });
         };
 
         for (const FContactRecord& Record : ContactDrainScratch)
@@ -266,23 +267,24 @@ namespace Lumina::Physics
             return;
         }
 
-        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        ECS::FCommandBus& Bus = World->GetCommandBus();
         for (const FActivationRecord& Record : ActivationDrainScratch)
         {
-            if (Record.Entity == ECS::NullEntity || !Registry.IsValid(Record.Entity))
-            {
-                continue;
-            }
-
-            SRigidBodyComponent* Body = Registry.TryGet<SRigidBodyComponent>(Record.Entity);
-            if (Body == nullptr)
+            if (Record.Entity == ECS::NullEntity)
             {
                 continue;
             }
 
             // OnWake also fires on spawn, when the body first becomes active.
-            FScriptDelegate& Delegate = Record.bActivated ? Body->OnWake : Body->OnSleep;
-            Delegate.Broadcast();
+            Bus.Enqueue([Entity = Record.Entity, bActivated = Record.bActivated](ECS::FRegistry& Registry)
+            {
+                SRigidBodyComponent* Body = Registry.IsValid(Entity) ? Registry.TryGet<SRigidBodyComponent>(Entity) : nullptr;
+                if (Body != nullptr)
+                {
+                    FScriptDelegate& Delegate = bActivated ? Body->OnWake : Body->OnSleep;
+                    Delegate.Broadcast();
+                }
+            });
         }
 
         ActivationDrainScratch.clear();

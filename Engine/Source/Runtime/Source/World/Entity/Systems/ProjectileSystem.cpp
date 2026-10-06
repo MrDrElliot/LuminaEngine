@@ -14,6 +14,8 @@ namespace Lumina
     void SProjectileSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
+        Writes<SProjectileComponent, STransformComponent>();
+        Reads<SystemResource::PhysicsQuery>();
     }
 
     void SProjectileSystem::OnUpdate()
@@ -98,7 +100,15 @@ namespace Lumina
                 Event.Point = Hit->Location;
                 Event.Normal = Hit->Normal;
                 Event.Damage = Projectile.Damage;
-                Projectile.OnHit.Broadcast(Event);
+
+                // Listeners may change the world, so they run at the sync point, before the deferred destroy below.
+                Context.GetCommandBus().Enqueue([Entity, Event](ECS::FRegistry& Registry)
+                {
+                    if (SProjectileComponent* HitProjectile = Registry.IsValid(Entity) ? Registry.TryGet<SProjectileComponent>(Entity) : nullptr)
+                    {
+                        HitProjectile->OnHit.Broadcast(Event);
+                    }
+                });
 
                 Projectile.bHasHit = true;
                 Projectile.Velocity = FVector3(0.0f);

@@ -202,6 +202,7 @@ namespace Lumina
 
     CWorld::CWorld()
         : SingletonEntity(ECS::NullEntity)
+        , CommandBus(EntityRegistry)
         , SystemContext(this)
         , LineBatcherComponent(nullptr)
         , TriangleBatcherComponent(nullptr)
@@ -311,6 +312,8 @@ namespace Lumina
 
         if (RegistryPending.NumEntities() != 0)
         {
+            // Pending commands name entities of the registry being swapped out.
+            CommandBus.Discard();
             EntityRegistry.Swap(RegistryPending);
         }
         RegistryPending = {};
@@ -1072,6 +1075,13 @@ namespace Lumina
     void CWorld::DestroyEntity(ECS::FEntity Entity)
     {
         LUMINA_PROFILE_SCOPE();
+
+        // A parallel system or worker would destroy under other readers, so it waits for the sync point.
+        if (ECS::FCommandBus::ShouldDefer())
+        {
+            CommandBus.Destroy(Entity);
+            return;
+        }
         EntityRegistry.Destroy(Entity);
     }
 
@@ -1487,35 +1497,29 @@ namespace Lumina
 
     namespace
     {
-        // List-scheduling assigns each system to the lowest-indexed batch it does not conflict with.
+        // A system lands in the first batch after the last one holding anything it conflicts with, so priority order holds between conflicting systems.
         TVector<TVector<uint16>> ComputeSystemBatches(const TVector<CWorld::FStageSlot>& Systems)
         {
             TVector<TVector<uint16>> Batches;
             for (uint16 s = 0; s < (uint16)Systems.size(); ++s)
             {
-                int32 Chosen = -1;
-                for (uint16 b = 0; b < (uint16)Batches.size() && Chosen < 0; ++b)
+                size_t Earliest = 0;
+                for (size_t b = Batches.size(); b-- > 0 && Earliest == 0;)
                 {
-                    bool bConflicts = false;
                     for (uint16 Member : Batches[b])
                     {
                         if (FSystemAccess::Conflicts(Systems[s].System->GetAccess(), Systems[Member].System->GetAccess()))
                         {
-                            bConflicts = true;
+                            Earliest = b + 1;
                             break;
                         }
                     }
-                    if (!bConflicts)
-                    {
-                        Chosen = (int32)b;
-                    }
                 }
-                if (Chosen < 0)
+                if (Earliest == Batches.size())
                 {
-                    Chosen = (int32)Batches.size();
                     Batches.emplace_back();
                 }
-                Batches[(size_t)Chosen].push_back(s);
+                Batches[Earliest].push_back(s);
             }
             return Batches;
         }
@@ -1913,11 +1917,16 @@ namespace Lumina
         {
             // Named per system, so one that has no zones of its own still shows up in a capture.
             LUMINA_PROFILE_SECTION_NAMED(S.System->GetClass()->GetName().c_str());
+
+            // A system that declared its access shares the frame, so its structural changes wait for the batch to end.
+            const ECS::FCommandBus::FDeferScope Defer(!S.System->GetAccess().bExclusive);
             SetExecutingSystemAccess(&S.System->GetAccess());
             S.System->OnUpdate();
             SetExecutingSystemAccess(nullptr);
         };
-        
+
+        FlushCommands();
+
         const TVector<TVector<uint16>>& Batches = SystemBatches[(uint32)Context.GetUpdateStage()];
         for (const TVector<uint16>& Batch : Batches)
         {
@@ -1947,6 +1956,17 @@ namespace Lumina
                     RunOne(Stage[Batch[Index]]);
                 }, 1);
             }
+
+            FlushCommands();
+        }
+    }
+
+    void CWorld::FlushCommands()
+    {
+        if (CommandBus.HasPending())
+        {
+            LUMINA_PROFILE_SCOPE();
+            CommandBus.Flush();
         }
     }
 }

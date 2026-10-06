@@ -134,6 +134,7 @@ namespace Lumina
 
             // Dispatched on the thread that stepped it, so the queue never outlives its frame.
             World->DispatchPhysicsEvents();
+            World->FlushCommands();
         }
     }
 

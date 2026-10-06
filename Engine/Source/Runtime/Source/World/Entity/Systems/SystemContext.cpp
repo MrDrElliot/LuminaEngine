@@ -30,6 +30,7 @@ namespace Lumina
         : World(InWorld)
         , Registry(InWorld->EntityRegistry)
         , Dispatcher(InWorld->SingletonDispatcher)
+        , CommandBus(InWorld->CommandBus)
     {}
 
 
@@ -212,6 +213,22 @@ namespace Lumina
         Registry.Emplace<STransformComponent>(EntityID);
         Registry.Emplace<SNameComponent>(EntityID, EntityName);
         Registry.EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
+        return EntityID;
+    }
+
+    ECS::FEntity FSystemContext::CreateDeferred(const FTransform& Transform, FName EntityName) const
+    {
+        const ECS::FEntity EntityID = CommandBus.Create();
+        CommandBus.Enqueue([EntityID, Transform, EntityName](ECS::FRegistry& InRegistry)
+        {
+            if (!InRegistry.IsValid(EntityID))
+            {
+                return;
+            }
+            InRegistry.EmplaceOrReplace<STransformComponent>(EntityID).SetWorldTransform(Transform);
+            InRegistry.EmplaceOrReplace<SNameComponent>(EntityID, EntityName);
+            InRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(EntityID);
+        });
         return EntityID;
     }
 

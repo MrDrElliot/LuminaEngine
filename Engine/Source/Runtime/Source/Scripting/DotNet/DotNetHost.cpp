@@ -2044,7 +2044,21 @@ LUMINA_DOTNET_EXPORT(int, RemoveComponent)(uint64 World, uint32 Entity, const vo
 {
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    return (R && O) ? O->Remove(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : 0;
+    if (R == nullptr || O == nullptr)
+    {
+        return 0;
+    }
+
+    // A parallel script removes at the sync point, and reports success since the removal is now owed.
+    if (Lumina::ECS::FCommandBus::ShouldDefer())
+    {
+        reinterpret_cast<Lumina::CWorld*>(World)->GetCommandBus().Enqueue([O, Target = static_cast<Lumina::ECS::FEntity>(Entity)](Lumina::ECS::FRegistry& Registry)
+        {
+            O->Remove(Registry, Target);
+        });
+        return 1;
+    }
+    return O->Remove(*R, static_cast<Lumina::ECS::FEntity>(Entity));
 }
 
 // Allocates the listener, whose address is the disconnect key, and returns it as an opaque handle.

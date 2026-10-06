@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "TimerManager.h"
+#include "World/ECS/CommandBus.h"
 #include "World/ECS/Registry.h"
 
 #include <algorithm>
@@ -134,7 +135,56 @@ namespace Lumina
         Registry.Get<FTimer>(Handle.Handle).bPaused = bPause;
     }
 
-    void FTimerManager::Tick(float DeltaTime)
+    void FTimerManager::FireTimer(ECS::FEntity Entity)
+    {
+        if (!Registry.IsValid(Entity))
+        {
+            return;
+        }
+
+        FTimer& Timer = Registry.Get<FTimer>(Entity);
+        if (Timer.bPaused || Timer.bPendingDestroy || Timer.Remaining > 0.0f)
+        {
+            return;
+        }
+
+        // Swap-out callbacks so re-entrant SetTimer/ClearTimer from within the callback is well-defined.
+        FTimerCallback NativeCallback = std::move(Timer.NativeCallback);
+        const bool     bLoop          = Timer.bLoop;
+        const float    Rate           = Timer.Rate;
+
+        if (!bLoop)
+        {
+            Timer.bPendingDestroy = true;
+        }
+
+        if (NativeCallback)
+        {
+            NativeCallback();
+        }
+
+        if (!Registry.IsValid(Entity))
+        {
+            return;
+        }
+
+        FTimer& Live = Registry.Get<FTimer>(Entity);
+        if (bLoop && !Live.bPendingDestroy)
+        {
+            Live.NativeCallback = std::move(NativeCallback);
+            Live.Remaining     += Rate;
+            if (Live.Remaining <= 0.0f)
+            {
+                Live.Remaining = Rate;
+            }
+        }
+        else if (Live.bPendingDestroy)
+        {
+            Registry.Destroy(Entity);
+        }
+    }
+
+    void FTimerManager::Tick(float DeltaTime, ECS::FCommandBus* Bus)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -172,6 +222,12 @@ namespace Lumina
             Timer.Remaining -= DeltaTime;
             if (Timer.Remaining > 0.0f)
             {
+                continue;
+            }
+
+            if (Bus != nullptr)
+            {
+                Bus->Enqueue([this, Entity]() { FireTimer(Entity); });
                 continue;
             }
 

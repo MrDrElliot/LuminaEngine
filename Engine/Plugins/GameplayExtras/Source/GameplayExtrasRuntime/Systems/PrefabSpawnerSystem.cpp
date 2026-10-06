@@ -32,10 +32,12 @@ namespace Lumina
         }
     }
 
-    // Instantiate does structural changes and fires construct hooks no declaration can describe.
+    // Instantiate runs at the sync point, since it creates entities and fires construct hooks, so only the timers are declared.
     void SPrefabSpawnerSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Low);
+        Writes<SPrefabSpawnerComponent>();
+        Reads<STransformComponent>();
     }
 
     void SPrefabSpawnerSystem::OnStartup()
@@ -77,24 +79,13 @@ namespace Lumina
 
         const float DeltaTime = static_cast<float>(Context.GetDeltaTime());
 
-        ECS::FRegistry& Registry = Context.GetRegistry();
-
-        TVector<ECS::FEntity> Spawners;
-        GatherSpawners(Context, Spawners);
-
-        for (ECS::FEntity Entity : Spawners)
+        CWorld* World = Context.GetWorld();
+        ECS::FCommandBus& Bus = Context.GetCommandBus();
+        auto View = Context.CreateView<SPrefabSpawnerComponent, STransformComponent>();
+        for (ECS::FEntity Entity : View)
         {
-            if (!Registry.IsValid(Entity))
-            {
-                continue;
-            }
-
-            SPrefabSpawnerComponent* SpawnComponent = Registry.TryGet<SPrefabSpawnerComponent>(Entity);
-            const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
-            if (SpawnComponent == nullptr || Transform == nullptr)
-            {
-                continue;
-            }
+            SPrefabSpawnerComponent* SpawnComponent = &View.Get<SPrefabSpawnerComponent>(Entity);
+            const STransformComponent* Transform = &View.Get<STransformComponent>(Entity);
 
             if (Math::Max(SpawnComponent->SpawnTimeRange.x, SpawnComponent->SpawnTimeRange.y) <= 0.0f)
             {
@@ -114,17 +105,16 @@ namespace Lumina
                 continue;
             }
 
-            const FVector2 Range = SpawnComponent->SpawnTimeRange;
             const float Remainder = SpawnComponent->TimeUntilNextSpawn;
+            SpawnComponent->TimeUntilNextSpawn = Math::Max(DrawSpawnInterval(SpawnComponent->SpawnTimeRange) + Remainder, 0.0001f);
 
-            SpawnComponent->Spawn(Context.GetWorld(), Transform->GetWorldTransform());
-
-            // Re-resolved, since the spawn may have reallocated the spawner pool.
-            SpawnComponent = Registry.TryGet<SPrefabSpawnerComponent>(Entity);
-            if (SpawnComponent != nullptr)
+            Bus.Enqueue([World, Entity, At = Transform->GetWorldTransform()](ECS::FRegistry& Registry)
             {
-                SpawnComponent->TimeUntilNextSpawn = Math::Max(DrawSpawnInterval(Range) + Remainder, 0.0001f);
-            }
+                if (const SPrefabSpawnerComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<SPrefabSpawnerComponent>(Entity) : nullptr)
+                {
+                    Live->Spawn(World, At);
+                }
+            });
         }
     }
 

@@ -2,6 +2,7 @@
 
 #include "World/ECS/Registry.h"
 #include "World/ECS/EventDispatcher.h"
+#include "World/ECS/CommandBus.h"
 
 #include "Containers/BoundedQueue.h"
 #include "Core/Object/Object.h"
@@ -718,12 +719,24 @@ namespace Lumina
         // Called at the top of Update() so it never runs inside a system batch. No-op unless bSystemsDirty.
         void ApplyPendingSystemChanges();
 
+    public:
+
+        // Applies what systems, scripts and worker threads recorded on the command bus. Main thread, outside any batch.
+        void FlushCommands();
+
+        ECS::FCommandBus& GetCommandBus() { return CommandBus; }
+
+    private:
+
     private:
         
         ECS::FRegistry                                     RegistryPending;
         ECS::FRegistry                                     EntityRegistry;
         ECS::FEventDispatcher                              SingletonDispatcher;
         ECS::FEntity                                       SingletonEntity;
+
+        // After the registry it records against, before the context that hands it out.
+        ECS::FCommandBus                                   CommandBus;
 
         FSystemContext                                      SystemContext;
         

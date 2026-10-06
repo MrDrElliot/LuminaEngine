@@ -11,6 +11,7 @@ namespace Lumina::SystemResource
     struct Input {};            // mutates shared input state (layer stack, mouse/input mode)
     struct Significance {};     // publishes the per-entity significance scores
     struct Kinematics {};       // publishes the per-entity velocities
+    struct Timers {};           // creates, clears or ticks timers in the world's timer manager
 }
 
 namespace Lumina
@@ -26,4 +27,5 @@ namespace Lumina
     template<> inline constexpr bool TIsSystemResource<SystemResource::Input>           = true;
     template<> inline constexpr bool TIsSystemResource<SystemResource::Significance>    = true;
     template<> inline constexpr bool TIsSystemResource<SystemResource::Kinematics>      = true;
+    template<> inline constexpr bool TIsSystemResource<SystemResource::Timers>          = true;
 }

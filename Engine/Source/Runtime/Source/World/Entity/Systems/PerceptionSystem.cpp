@@ -23,6 +23,10 @@ namespace Lumina
     void SPerceptionSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::High);
+
+        // Perception events fire at the batch's sync point, so the senses only touch these.
+        Writes<SPerceptionComponent>();
+        Reads<SAIStimuliSourceComponent, STransformComponent, SystemResource::PhysicsQuery, SystemResource::Significance>();
     }
 
     FOnPerceptionUpdated SPerceptionSystem::OnTargetPerceived;
@@ -179,7 +183,7 @@ namespace Lumina
             }
         }
 
-        void FirePerceptionEvent(const FSystemContext& Context, ECS::FEntity Perceiver, const FPerceivedTarget& Target, bool bSensed)
+        void FirePerceptionEventNow(const FSystemContext& Context, ECS::FEntity Perceiver, const FPerceivedTarget& Target, bool bSensed)
         {
             if (bSensed)
             {
@@ -213,6 +217,15 @@ namespace Lumina
             Payload.Strength  = Target.LastStrength;
 
             Delegate.Broadcast(Payload);
+        }
+
+        // Listeners are free to change the world, so every perception broadcast waits for the sync point.
+        void FirePerceptionEvent(const FSystemContext& Context, ECS::FEntity Perceiver, const FPerceivedTarget& Target, bool bSensed)
+        {
+            Context.GetCommandBus().Enqueue([InContext = &Context, Perceiver, Target, bSensed]()
+            {
+                FirePerceptionEventNow(*InContext, Perceiver, Target, bSensed);
+            });
         }
 
         void DrawPerceptionDebug(const FSystemContext& Context, const SPerceptionComponent& Comp,
@@ -263,8 +276,7 @@ namespace Lumina
         }
         const int32 NumPerceivers = (int32)Perceivers.size();
 
-        // Bulk-resolve before the parallel body; the body never mutates a transform.
-        ECS::Utils::ResolveAllDirtyTransforms(Context.GetRegistry());
+        // The scheduler resolves dirty transforms before every batch, and the body never mutates one.
 
         ECS::FRegistry& Registry = Context.GetRegistry();
         

@@ -2,6 +2,7 @@
 
 #include "World/ECS/Registry.h"
 #include "World/ECS/EventDispatcher.h"
+#include "World/ECS/CommandBus.h"
 
 #include "Core/UpdateStage.h"
 #include "Physics/PhysicsTypes.h"
@@ -50,10 +51,25 @@ namespace Lumina
             return Dispatcher.Sink<T>();
         }
 
+        // A parallel system's event waits for the batch to end, since listeners are free to change the world.
         template<typename T, typename ... TArgs>
         void DispatchEvent(TArgs&&... Args) const
         {
+            if (ECS::FCommandBus::ShouldDefer())
+            {
+                CommandBus.Enqueue([InDispatcher = &Dispatcher, Event = T(Forward<TArgs>(Args)...)]() mutable
+                {
+                    InDispatcher->Trigger<T>(Event);
+                });
+                return;
+            }
             Dispatcher.Trigger<T>(Forward<TArgs>(Args)...);
+        }
+
+        // Deferred adds, removes and patches, applied at the next sync point in record order.
+        NODISCARD ECS::FCommandBus& GetCommandBus() const
+        {
+            return CommandBus;
         }
         
         template<typename... Ts, typename... TArgs>
@@ -196,8 +212,18 @@ namespace Lumina
         RUNTIME_API ECS::FEntity Create(const FTransform& Transform, FName EntityName = "Entity") const;
         RUNTIME_API ECS::FEntity Create(FVector3 Location, FName EntityName = "Entity") const;
         RUNTIME_API ECS::FEntity Create(FName EntityName = "Entity") const;
+
+        // Usable as a command target at once, and live with its name and transform at the next sync point.
+        RUNTIME_API ECS::FEntity CreateDeferred(const FTransform& Transform = FTransform(), FName EntityName = "Entity") const;
+
+        // A parallel system or worker thread destroys at the next sync point instead of under other readers.
         void Destroy(ECS::FEntity Entity) const
         {
+            if (ECS::FCommandBus::ShouldDefer())
+            {
+                CommandBus.Destroy(Entity);
+                return;
+            }
             ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::EntityStructure>()), true, "Write<SystemResource::EntityStructure>");
             Registry.Destroy(Entity);
         }
@@ -216,6 +242,7 @@ namespace Lumina
         CWorld*                 World = nullptr;
         ECS::FRegistry&         Registry;
         ECS::FEventDispatcher&       Dispatcher;
+        ECS::FCommandBus&       CommandBus;
         EUpdateStage            UpdateStage = EUpdateStage::FrameStart;
     };
     

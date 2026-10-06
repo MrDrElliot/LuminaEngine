@@ -30,6 +30,10 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Low);
         RequireUpdate(EUpdateStage::PostPhysics);
+
+        // Ragdoll bodies are built and torn down at the sync point, so only the pose side is declared.
+        Writes<SRagdollComponent, SSkeletalMeshComponent, STransformComponent>();
+        Reads<FRelationshipComponent, SystemResource::PhysicsQuery>();
     }
 
     void SRagdollSystem::OnUpdate()
@@ -84,23 +88,41 @@ namespace Lumina
                         Globals[i] = (*Source)[i] * Math::Inverse(Skeleton->GetBone(i).InvBindMatrix);
                     }
 
-                    Physics::FRagdollDesc Desc;
-                    Desc.Entity = Entity;
-                    Desc.Asset = Ragdoll.PhysicsAsset.Get();
-                    Desc.Skeleton = Skeleton;
-                    Desc.ComponentBoneGlobals = &Globals;
-                    Desc.EntityToWorld = Transform.GetWorldMatrix();
-                    Desc.CollisionGroupID = Scene->AllocateRagdollGroupID();
+                    SystemContext.GetCommandBus().Enqueue([Scene, Entity, Skeleton, Globals = Move(Globals),
+                                                           EntityToWorld = Transform.GetWorldMatrix()](ECS::FRegistry& Registry)
+                    {
+                        SRagdollComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<SRagdollComponent>(Entity) : nullptr;
+                        if (Live == nullptr || Live->State != ERagdollState::Simulated || Live->RealizedState == ERagdollState::Simulated)
+                        {
+                            return;
+                        }
 
-                    Ragdoll.Ragdoll = Scene->CreateRagdoll(Desc);
-                    Ragdoll.RealizedState = Ragdoll.Ragdoll ? ERagdollState::Simulated : ERagdollState::Inactive;
+                        Physics::FRagdollDesc Desc;
+                        Desc.Entity = Entity;
+                        Desc.Asset = Live->PhysicsAsset.Get();
+                        Desc.Skeleton = Skeleton;
+                        Desc.ComponentBoneGlobals = &Globals;
+                        Desc.EntityToWorld = EntityToWorld;
+                        Desc.CollisionGroupID = Scene->AllocateRagdollGroupID();
+
+                        Live->Ragdoll = Scene->CreateRagdoll(Desc);
+                        Live->RealizedState = Live->Ragdoll ? ERagdollState::Simulated : ERagdollState::Inactive;
+                    });
                 }
                 // Simulated to Inactive, so tear the bodies down.
                 else if (Ragdoll.State == ERagdollState::Inactive && Ragdoll.RealizedState == ERagdollState::Simulated)
                 {
-                    Scene->DestroyRagdoll(Ragdoll.Ragdoll);
-                    Ragdoll.Ragdoll = nullptr;
-                    Ragdoll.RealizedState = ERagdollState::Inactive;
+                    SystemContext.GetCommandBus().Enqueue([Scene, Entity](ECS::FRegistry& Registry)
+                    {
+                        SRagdollComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<SRagdollComponent>(Entity) : nullptr;
+                        if (Live == nullptr || Live->RealizedState != ERagdollState::Simulated)
+                        {
+                            return;
+                        }
+                        Scene->DestroyRagdoll(Live->Ragdoll);
+                        Live->Ragdoll = nullptr;
+                        Live->RealizedState = ERagdollState::Inactive;
+                    });
                 }
             }
         }

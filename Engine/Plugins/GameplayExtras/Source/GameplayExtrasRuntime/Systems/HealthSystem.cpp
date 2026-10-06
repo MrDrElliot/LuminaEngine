@@ -7,10 +7,11 @@
 
 namespace Lumina
 {
-    // Heal broadcasts, and a listener may do anything, so this cannot claim a narrow component set.
+    // Heal broadcasts into script, so it runs at the sync point and the countdown is all this system touches.
     void SHealthSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Low);
+        Writes<SHealthComponent>();
     }
 
     void SHealthSystem::OnUpdate()
@@ -28,36 +29,31 @@ namespace Lumina
             return;
         }
 
-        // Snapshotted because Heal broadcasts into script code that can add or destroy entities.
-        TVector<ECS::FEntity> Regenerating;
+        ECS::FCommandBus& Bus = Context.GetCommandBus();
+        auto View = Context.CreateView<SHealthComponent>();
+        for (ECS::FEntity Entity : View)
         {
-            auto View = Context.CreateView<SHealthComponent>();
-            for (ECS::FEntity Entity : View)
+            SHealthComponent& Health = View.Get<SHealthComponent>(Entity);
+            if (Health.bDead || !Health.RegenPerSecond.IsSet())
             {
-                const SHealthComponent& Health = View.Get<SHealthComponent>(Entity);
-                if (!Health.bDead && Health.RegenPerSecond.IsSet())
+                continue;
+            }
+
+            if (Health.RegenCooldown > 0.0f)
+            {
+                Health.RegenCooldown -= DeltaTime;
+                continue;
+            }
+
+            const float Amount = Health.RegenPerSecond.GetValue() * DeltaTime;
+            Bus.Enqueue([Entity, Amount](ECS::FRegistry& Registry)
+            {
+                SHealthComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<SHealthComponent>(Entity) : nullptr;
+                if (Live != nullptr && !Live->bDead)
                 {
-                    Regenerating.push_back(Entity);
+                    Live->Heal(Amount, ECS::NullEntity);
                 }
-            }
-        }
-
-        ECS::FRegistry& Registry = Context.GetRegistry();
-        for (const ECS::FEntity Entity : Regenerating)
-        {
-            SHealthComponent* Health = Registry.TryGet<SHealthComponent>(Entity);
-            if (Health == nullptr || Health->bDead || !Health->RegenPerSecond.IsSet())
-            {
-                continue;
-            }
-
-            if (Health->RegenCooldown > 0.0f)
-            {
-                Health->RegenCooldown -= DeltaTime;
-                continue;
-            }
-
-            Health->Heal(Health->RegenPerSecond.GetValue() * DeltaTime, ECS::NullEntity);
+            });
         }
     }
 }

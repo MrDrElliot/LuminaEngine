@@ -85,35 +85,123 @@ namespace Lumina::ECS
 
 
 
+    // Slots past EntityRecords.size() up to NextAppendIndex are handed out but not yet stored, so a reservation never reallocates the records a reader may be walking.
+    struct FEntityAllocState
+    {
+        FMutex Mutex;
+        uint32 NextAppendIndex = 0;
+    };
+
+    FEntityAllocHolder::FEntityAllocHolder() : State(MakeUnique<FEntityAllocState>()) {}
+    FEntityAllocHolder::~FEntityAllocHolder() = default;
+
+    FEntityAllocHolder::FEntityAllocHolder(FEntityAllocHolder&& Other) noexcept
+        : State(Move(Other.State))
+    {
+        Other.State = MakeUnique<FEntityAllocState>();
+    }
+
+    FEntityAllocHolder& FEntityAllocHolder::operator = (FEntityAllocHolder&& Other) noexcept
+    {
+        State = Move(Other.State);
+        Other.State = MakeUnique<FEntityAllocState>();
+        return *this;
+    }
+
+    void FEntityAllocHolder::Swap(FEntityAllocHolder& Other) noexcept
+    {
+        TUniquePtr<FEntityAllocState> Mine = Move(State);
+        State = Move(Other.State);
+        Other.State = Move(Mine);
+    }
+
     FRegistry::FRegistry() = default;
     FRegistry::~FRegistry() = default;
 
     FRegistry::FRegistry(FRegistry&& Other) noexcept = default;
     FRegistry& FRegistry::operator = (FRegistry&& Other) noexcept = default;
 
-    FEntity FRegistry::Create()
+    uint32 FRegistry::TakeSlotLocked(uint32& OutVersion)
     {
-        if (FreeEntityHead == NoFreeSlot)
+        if (FreeEntityHead != NoFreeSlot)
         {
-            const uint32 Index = static_cast<uint32>(EntityRecords.size());
-            ASSERT(Index <= FEntity::MaxIndex);
-
-            const FEntity Created(Index, 0);
-            EntityRecords.push_back(Created);
-            ++LiveEntityCount;
-            EntityCreated.Broadcast(*this, Created);
-            return Created;
+            const uint32 Index = FreeEntityHead;
+            FEntity& Record = EntityRecords[Index];
+            FreeEntityHead = Record.GetIndex();
+            OutVersion = Record.GetVersion();
+            Record = FEntity(NoFreeSlot, OutVersion);
+            return Index;
         }
 
-        const uint32 Index = FreeEntityHead;
-        FEntity& Record = EntityRecords[Index];
+        const uint32 Index = Math::Max(AllocState->NextAppendIndex, static_cast<uint32>(EntityRecords.size()));
+        ASSERT(Index <= FEntity::MaxIndex);
+        AllocState->NextAppendIndex = Index + 1u;
+        OutVersion = 0u;
+        return Index;
+    }
 
-        FreeEntityHead = Record.GetIndex();
-        Record = FEntity(Index, Record.GetVersion());
+    void FRegistry::EnsureRecordLocked(uint32 Index)
+    {
+        if (Index >= EntityRecords.size())
+        {
+            // The slots in between belong to reservations other threads still hold, so they stay unlinked.
+            EntityRecords.resize(Index + 1u, FEntity(NoFreeSlot, 0u));
+        }
+    }
+
+    FEntity FRegistry::Create()
+    {
+        FEntity Created;
+        {
+            TScopeLock<FMutex> Lock(AllocState->Mutex);
+            uint32 Version = 0u;
+            const uint32 Index = TakeSlotLocked(Version);
+            EnsureRecordLocked(Index);
+            Created = FEntity(Index, Version);
+            EntityRecords[Index] = Created;
+        }
 
         ++LiveEntityCount;
-        EntityCreated.Broadcast(*this, Record);
-        return Record;
+        EntityCreated.Broadcast(*this, Created);
+        return Created;
+    }
+
+    FEntity FRegistry::ReserveEntity()
+    {
+        TScopeLock<FMutex> Lock(AllocState->Mutex);
+        uint32 Version = 0u;
+        const uint32 Index = TakeSlotLocked(Version);
+        return FEntity(Index, Version);
+    }
+
+    void FRegistry::MaterializeReserved(FEntity Entity)
+    {
+        const uint32 Index = Entity.GetIndex();
+        {
+            TScopeLock<FMutex> Lock(AllocState->Mutex);
+            EnsureRecordLocked(Index);
+            if (EntityRecords[Index].GetIndex() != NoFreeSlot)
+            {
+                return;
+            }
+            EntityRecords[Index] = Entity;
+        }
+
+        ++LiveEntityCount;
+        EntityCreated.Broadcast(*this, Entity);
+    }
+
+    void FRegistry::ReleaseReserved(FEntity Entity)
+    {
+        const uint32 Index = Entity.GetIndex();
+        TScopeLock<FMutex> Lock(AllocState->Mutex);
+        EnsureRecordLocked(Index);
+        if (EntityRecords[Index].GetIndex() != NoFreeSlot)
+        {
+            return;
+        }
+        EntityRecords[Index] = FEntity(FreeEntityHead, Entity.GetVersion());
+        FreeEntityHead = Index;
     }
 
     FEntity FRegistry::Create(FEntity Hint)
@@ -128,6 +216,8 @@ namespace Lumina::ECS
 
         if (Index >= EntityRecords.size())
         {
+            TScopeLock<FMutex> Lock(AllocState->Mutex);
+
             // Everything between the end and the hint becomes free, linked head-first so Create reuses it.
             const uint32 FirstNew = static_cast<uint32>(EntityRecords.size());
             EntityRecords.resize(Index + 1u);
@@ -139,6 +229,7 @@ namespace Lumina::ECS
             }
 
             EntityRecords[Index] = Hint;
+            AllocState->NextAppendIndex = Math::Max(AllocState->NextAppendIndex, Index + 1u);
             ++LiveEntityCount;
             EntityCreated.Broadcast(*this, Hint);
             return Hint;
@@ -185,10 +276,12 @@ namespace Lumina::ECS
         DetachFromAllStorages(Entity);
 
         const uint32 Index = Entity.GetIndex();
-        FEntity& Record = EntityRecords[Index];
-
-        Record = FEntity(FreeEntityHead, Record.GetNextVersion());
-        FreeEntityHead = Index;
+        {
+            TScopeLock<FMutex> Lock(AllocState->Mutex);
+            FEntity& Record = EntityRecords[Index];
+            Record = FEntity(FreeEntityHead, Record.GetNextVersion());
+            FreeEntityHead = Index;
+        }
         --LiveEntityCount;
     }
 
@@ -215,6 +308,7 @@ namespace Lumina::ECS
         EntityRecords.clear();
         FreeEntityHead = NoFreeSlot;
         LiveEntityCount = 0;
+        AllocState->NextAppendIndex = 0u;
     }
 
     void FRegistry::Reserve(size_t EntityCount)
@@ -242,6 +336,8 @@ namespace Lumina::ECS
         const uint32 FreeHead = FreeEntityHead;
         FreeEntityHead = Other.FreeEntityHead;
         Other.FreeEntityHead = FreeHead;
+
+        AllocState.Swap(Other.AllocState);
 
         const size_t LiveCount = LiveEntityCount;
         LiveEntityCount = Other.LiveEntityCount;

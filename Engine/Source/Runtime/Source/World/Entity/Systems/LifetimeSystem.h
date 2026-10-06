@@ -19,6 +19,9 @@ namespace Lumina
         void Configure() override
         {
             RequireUpdate(EUpdateStage::FrameEnd);
+
+            // The destroy defers to the end of the batch, so only the countdown needs declaring.
+            Writes<SLifetimeComponent>();
         }
         
         void OnUpdate() override
