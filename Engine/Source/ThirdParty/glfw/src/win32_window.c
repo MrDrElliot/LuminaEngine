@@ -74,6 +74,49 @@ static DWORD getWindowExStyle(const _GLFWwindow* window)
     return style;
 }
 
+// Lumina patch, the client of a custom titlebar window fills the caption so only these borders sit outside it
+static GLFWbool hasCustomFrame(const _GLFWwindow* window)
+{
+    return !window->monitor && window->decorated && window->resizable && !window->titlebar;
+}
+
+static void getCustomFrameBorder(int* x, int* y)
+{
+    *x = GetSystemMetrics(SM_CXFRAME);
+    *y = GetSystemMetrics(SM_CYFRAME);
+}
+
+// Grows a content rect to the full window rect, which AdjustWindowRectEx gets wrong for a custom frame
+static void adjustWindowRectForDpi(const _GLFWwindow* window, RECT* rect, DWORD style, DWORD exStyle, UINT dpi)
+{
+    if (hasCustomFrame(window))
+    {
+        int borderX, borderY;
+        getCustomFrameBorder(&borderX, &borderY);
+        rect->left -= borderX;
+        rect->right += borderX;
+        rect->bottom += borderY;
+        return;
+    }
+
+    if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
+        AdjustWindowRectExForDpi(rect, style, FALSE, exStyle, dpi);
+    else
+        AdjustWindowRectEx(rect, style, FALSE, exStyle);
+}
+
+static UINT getWindowDpi(const _GLFWwindow* window)
+{
+    if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
+        return GetDpiForWindow(window->win32.handle);
+    return USER_DEFAULT_SCREEN_DPI;
+}
+
+static void adjustWindowRect(const _GLFWwindow* window, RECT* rect)
+{
+    adjustWindowRectForDpi(window, rect, getWindowStyle(window), getWindowExStyle(window), getWindowDpi(window));
+}
+
 // Returns the image whose area most closely matches the desired one
 //
 static const GLFWimage* chooseImage(int count, const GLFWimage* images,
@@ -188,17 +231,15 @@ static HICON createIcon(const GLFWimage* image,
 
 // Translate content area size to full window size according to styles and DPI
 //
-static void getFullWindowSize(DWORD style, DWORD exStyle,
+static void getFullWindowSize(const _GLFWwindow* window,
+                              DWORD style, DWORD exStyle,
                               int contentWidth, int contentHeight,
                               int* fullWidth, int* fullHeight,
                               UINT dpi)
 {
     RECT rect = { 0, 0, contentWidth, contentHeight };
 
-    if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-        AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle, dpi);
-    else
-        AdjustWindowRectEx(&rect, style, FALSE, exStyle);
+    adjustWindowRectForDpi(window, &rect, style, exStyle, dpi);
 
     *fullWidth = rect.right - rect.left;
     *fullHeight = rect.bottom - rect.top;
@@ -215,7 +256,7 @@ static void applyAspectRatio(_GLFWwindow* window, int edge, RECT* area)
     if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
         dpi = GetDpiForWindow(window->win32.handle);
 
-    getFullWindowSize(getWindowStyle(window), getWindowExStyle(window),
+    getFullWindowSize(window, getWindowStyle(window), getWindowExStyle(window),
                       0, 0, &xoff, &yoff, dpi);
 
     if (edge == WMSZ_LEFT  || edge == WMSZ_BOTTOMLEFT ||
@@ -355,14 +396,7 @@ static void updateWindowStyles(const _GLFWwindow* window)
 
     GetClientRect(window->win32.handle, &rect);
 
-    if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-    {
-        AdjustWindowRectExForDpi(&rect, style, FALSE,
-                                 getWindowExStyle(window),
-                                 GetDpiForWindow(window->win32.handle));
-    }
-    else
-        AdjustWindowRectEx(&rect, style, FALSE, getWindowExStyle(window));
+    adjustWindowRectForDpi(window, &rect, style, getWindowExStyle(window), getWindowDpi(window));
 
     ClientToScreen(window->win32.handle, (POINT*) &rect.left);
     ClientToScreen(window->win32.handle, (POINT*) &rect.right);
@@ -1008,7 +1042,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
 
 		case WM_NCCALCSIZE:
 		{
-			if (_glfw.hints.window.titlebar || !hasThickFrame || !wParam)
+			if (window->titlebar || !hasThickFrame || !wParam)
 				break;
 
 			NCCALCSIZE_PARAMS* params = (NCCALCSIZE_PARAMS*)lParam;
@@ -1034,8 +1068,8 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
 
             // Shrink client area by border thickness so we can
             // resize window and see borders
-			const int resizeBorderX = GetSystemMetrics(SM_CXFRAME);
-			const int resizeBorderY = GetSystemMetrics(SM_CYFRAME);
+			int resizeBorderX, resizeBorderY;
+			getCustomFrameBorder(&resizeBorderX, &resizeBorderY);
 
 			requestedClientRect->right -= resizeBorderX;
 			requestedClientRect->left += resizeBorderX;
@@ -1156,7 +1190,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
             if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
                 dpi = GetDpiForWindow(window->win32.handle);
 
-            getFullWindowSize(getWindowStyle(window), getWindowExStyle(window),
+            getFullWindowSize(window, getWindowStyle(window), getWindowExStyle(window),
                               0, 0, &xoff, &yoff, dpi);
 
             if (window->minwidth != GLFW_DONT_CARE &&
@@ -1178,7 +1212,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
             // but still WS_THICKFRAME). Without this, Windows maximizes a
             // thick-frame window to monitor + 2*frameBorder at -frameBorder, so the
             // invisible frame bleeds past the monitor onto an adjacent display.
-            if (!window->decorated || (!_glfw.hints.window.titlebar && hasThickFrame))
+            if (!window->decorated || (!window->titlebar && hasThickFrame))
             {
                 MONITORINFO mi;
                 const HMONITOR mh = MonitorFromWindow(window->win32.handle,
@@ -1238,12 +1272,12 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
                 RECT source = {0}, target = {0};
                 SIZE* size = (SIZE*) lParam;
 
-                AdjustWindowRectExForDpi(&source, getWindowStyle(window),
-                                         FALSE, getWindowExStyle(window),
-                                         GetDpiForWindow(window->win32.handle));
-                AdjustWindowRectExForDpi(&target, getWindowStyle(window),
-                                         FALSE, getWindowExStyle(window),
-                                         LOWORD(wParam));
+                adjustWindowRectForDpi(window, &source, getWindowStyle(window),
+                                       getWindowExStyle(window),
+                                       GetDpiForWindow(window->win32.handle));
+                adjustWindowRectForDpi(window, &target, getWindowStyle(window),
+                                       getWindowExStyle(window),
+                                       LOWORD(wParam));
 
                 size->cx += (target.right - target.left) -
                             (source.right - source.left);
@@ -1326,7 +1360,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
 
         case WM_ACTIVATE:
         {
-            if (_glfw.hints.window.titlebar)
+            if (window->titlebar)
                 break;
 
 			RECT title_bar_rect = { 0 };
@@ -1334,7 +1368,7 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg,
         }
         case WM_NCHITTEST:
         {
-            if (_glfw.hints.window.titlebar || !hasThickFrame)
+            if (window->titlebar || !hasThickFrame)
                 break;
 
             //
@@ -1418,7 +1452,7 @@ static int createNativeWindow(_GLFWwindow* window,
         if (wndconfig->maximized)
             style |= WS_MAXIMIZE;
 
-        getFullWindowSize(style, exStyle,
+        getFullWindowSize(window, style, exStyle,
                           wndconfig->width, wndconfig->height,
                           &fullWidth, &fullHeight,
                           USER_DEFAULT_SCREEN_DPI);
@@ -1486,13 +1520,7 @@ static int createNativeWindow(_GLFWwindow* window,
         ClientToScreen(window->win32.handle, (POINT*) &rect.left);
         ClientToScreen(window->win32.handle, (POINT*) &rect.right);
 
-        if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-        {
-            AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle,
-                                     GetDpiForWindow(window->win32.handle));
-        }
-        else
-            AdjustWindowRectEx(&rect, style, FALSE, exStyle);
+        adjustWindowRectForDpi(window, &rect, style, exStyle, getWindowDpi(window));
 
         // Only update the restored window rect as the window may be maximized
         GetWindowPlacement(window->win32.handle, &wp);
@@ -1690,17 +1718,7 @@ void _glfwSetWindowPosWin32(_GLFWwindow* window, int xpos, int ypos)
 {
     RECT rect = { xpos, ypos, xpos, ypos };
 
-    if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-    {
-        AdjustWindowRectExForDpi(&rect, getWindowStyle(window),
-                                 FALSE, getWindowExStyle(window),
-                                 GetDpiForWindow(window->win32.handle));
-    }
-    else
-    {
-        AdjustWindowRectEx(&rect, getWindowStyle(window),
-                           FALSE, getWindowExStyle(window));
-    }
+    adjustWindowRect(window, &rect);
 
     SetWindowPos(window->win32.handle, NULL, rect.left, rect.top, 0, 0,
                  SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
@@ -1731,17 +1749,7 @@ void _glfwSetWindowSizeWin32(_GLFWwindow* window, int width, int height)
     {
         RECT rect = { 0, 0, width, height };
 
-        if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-        {
-            AdjustWindowRectExForDpi(&rect, getWindowStyle(window),
-                                     FALSE, getWindowExStyle(window),
-                                     GetDpiForWindow(window->win32.handle));
-        }
-        else
-        {
-            AdjustWindowRectEx(&rect, getWindowStyle(window),
-                               FALSE, getWindowExStyle(window));
-        }
+        adjustWindowRect(window, &rect);
 
         SetWindowPos(window->win32.handle, HWND_TOP,
                      0, 0, rect.right - rect.left, rect.bottom - rect.top,
@@ -1798,17 +1806,7 @@ void _glfwGetWindowFrameSizeWin32(_GLFWwindow* window,
     _glfwGetWindowSizeWin32(window, &width, &height);
     SetRect(&rect, 0, 0, width, height);
 
-    if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-    {
-        AdjustWindowRectExForDpi(&rect, getWindowStyle(window),
-                                 FALSE, getWindowExStyle(window),
-                                 GetDpiForWindow(window->win32.handle));
-    }
-    else
-    {
-        AdjustWindowRectEx(&rect, getWindowStyle(window),
-                           FALSE, getWindowExStyle(window));
-    }
+    adjustWindowRect(window, &rect);
 
     if (left)
         *left = -rect.left;
@@ -1884,17 +1882,7 @@ void _glfwSetWindowMonitorWin32(_GLFWwindow* window,
         {
             RECT rect = { xpos, ypos, xpos + width, ypos + height };
 
-            if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-            {
-                AdjustWindowRectExForDpi(&rect, getWindowStyle(window),
-                                         FALSE, getWindowExStyle(window),
-                                         GetDpiForWindow(window->win32.handle));
-            }
-            else
-            {
-                AdjustWindowRectEx(&rect, getWindowStyle(window),
-                                   FALSE, getWindowExStyle(window));
-            }
+            adjustWindowRect(window, &rect);
 
             SetWindowPos(window->win32.handle, HWND_TOP,
                          rect.left, rect.top,
@@ -1955,17 +1943,7 @@ void _glfwSetWindowMonitorWin32(_GLFWwindow* window,
         else
             after = HWND_NOTOPMOST;
 
-        if (_glfwIsWindows10AnniversaryUpdateOrGreaterWin32())
-        {
-            AdjustWindowRectExForDpi(&rect, getWindowStyle(window),
-                                     FALSE, getWindowExStyle(window),
-                                     GetDpiForWindow(window->win32.handle));
-        }
-        else
-        {
-            AdjustWindowRectEx(&rect, getWindowStyle(window),
-                               FALSE, getWindowExStyle(window));
-        }
+        adjustWindowRect(window, &rect);
 
         SetWindowPos(window->win32.handle, after,
                      rect.left, rect.top,

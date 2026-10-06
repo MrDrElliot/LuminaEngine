@@ -5,6 +5,7 @@
 
 #include "ModuleAPI.h"
 #include "Memory/SmartPtr.h"
+#include "Containers/Vector.h"
 #include "Networking/NetworkTypes.h"
 
 // The ECS registry is reached through its own header, and it is already in the
@@ -13,6 +14,7 @@
 namespace Lumina
 {
     class CWorld;
+    class CEntityScript;
     class INetworkTransport;
 
     // Everything the engine asks of networking, and the whole of it. The engine calls through this
@@ -58,6 +60,33 @@ namespace Lumina
         // An entity's parent changed. Replication may need to observe it; the engine does not know
         // whether it does.
         virtual void OnEntityAttachmentChanged(CWorld* World, ECS::FEntity Entity) {}
+
+        //~ The gameplay surface scripts reach through. A world with no netcode answers as standalone.
+
+        // This peer's connection id, 0 on the host and on a standalone world.
+        virtual uint32 GetLocalConnectionId(const CWorld* World) const { return 0; }
+
+        // Server, the remote connections that finished joining, in join order.
+        virtual void GetConnectionIds(const CWorld* World, TVector<uint32>& OutIds) const {}
+
+        virtual bool IsEntityNetworked(const CWorld* World, ECS::FEntity Entity) const { return false; }
+
+        // The connection that controls Entity, 0 when the host does.
+        virtual uint32 GetEntityOwner(const CWorld* World, ECS::FEntity Entity) const { return 0; }
+
+        // Server only, so a client asking is refused rather than silently diverging.
+        virtual bool SetEntityOwner(CWorld* World, ECS::FEntity Entity, uint32 ConnectionId) { return false; }
+
+        // A replicated field on Entity changed, so the server diffs it on the next send.
+        virtual void MarkEntityDirty(CWorld* World, ECS::FEntity Entity) {}
+
+        // The id both peers know an entity by, 0 when it has none.
+        virtual uint32 EntityToNetId(const CWorld* World, ECS::FEntity Entity) const { return 0; }
+        virtual ECS::FEntity NetIdToEntity(const CWorld* World, uint32 NetId) const { return ECS::NullEntity; }
+
+        // Queues an RPC whose arguments the script already serialized. False when it could not be routed.
+        virtual bool SendScriptRpc(CEntityScript* Script, uint32 RpcId, ERpcTarget Target, uint8 Flags,
+            const uint8* Payload, uint32 PayloadSize) { return false; }
     };
 
     // Null until something installs one, which is a supported state and not an error.

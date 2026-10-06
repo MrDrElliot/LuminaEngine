@@ -2,6 +2,7 @@
 
 #include "Containers/Vector.h"
 #include "Events/EventProcessor.h"
+#include "Events/MouseCodes.h"
 #include "Memory/SmartPtr.h"
 
 namespace Lumina
@@ -81,6 +82,9 @@ namespace Lumina
 
         RUNTIME_API FInputViewport* FindViewportForWorld(const CWorld* World) const;
 
+        // Points every viewport showing OldWorld at NewWorld, for a level travel that swapped one world for another.
+        RUNTIME_API void ReplaceWorld(const CWorld* OldWorld, CWorld* NewWorld);
+
         RUNTIME_API void SetActiveViewport(FInputViewport* Viewport);
         RUNTIME_API void SetHoveredViewport(FInputViewport* Viewport);
         RUNTIME_API void SetFocusedViewport(FInputViewport* Viewport);
@@ -100,6 +104,8 @@ namespace Lumina
         FInputViewportRegistry();
 
         void ApplyActiveCursorMode();
+        EMouseMode GetActiveEffectiveMouseMode() const;
+        bool IsActiveCursorCaptured() const;
 
         TVector<FInputViewport*> Viewports;
         FInputViewport* ActiveViewport  = nullptr;

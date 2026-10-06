@@ -3,6 +3,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
 #include "Memory/MemoryTracking.h"
+#include "Core/Engine/Engine.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
 #include "Renderer/RHIUpload.h"
@@ -183,12 +184,16 @@ namespace Lumina
         // Opening fifteen 4K textures costs fifteen 256px images until something asks for more.
         TextureResource->ResidentFirstMip = TextureResource->ImageDescription.FirstInlineMip;
 
-        (void)ApplyMipResidency(TextureResource->ResidentFirstMip);
-
-        // Registration states whether this texture STREAMS, and an unregistered one never drains its fill.
-        if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
+        // A headless process has no RHI, so there is nothing to upload or stream.
+        if (!GIsHeadless)
         {
-            Streaming->RegisterTexture(this);
+            (void)ApplyMipResidency(TextureResource->ResidentFirstMip);
+
+            // Registration states whether this texture STREAMS, and an unregistered one never drains its fill.
+            if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
+            {
+                Streaming->RegisterTexture(this);
+            }
         }
 
 #if !USING(WITH_EDITOR)

@@ -507,6 +507,18 @@ namespace Lumina
         return Count;
     }
 
+    void CStruct::GetNetReplicatedProperties(TVector<FProperty*>& Out) const
+    {
+        Out.clear();
+        for (FProperty* Current : AllProperties)
+        {
+            if (IsNetReplicatedField(Current))
+            {
+                Out.push_back(Current);
+            }
+        }
+    }
+
     void CStruct::NetSerializeReplicatedFlat(const FNetArchive& HookSource, void* Data,
                                              TVector<uint8>& OutBytes, TVector<uint32>& OutOffsets) const
     {
@@ -538,6 +550,108 @@ namespace Lumina
             // Each field ends whole-byte, which is exactly what NetReadReplicatedMasked skips to.
             Tmp.AlignToByte();
             OutOffsets.push_back(static_cast<uint32>(Tmp.Tell()));
+        }
+    }
+
+    void CStruct::NetWriteAllDelta(FNetArchive& Ar, void* Data, void* Defaults) const
+    {
+        if (StructOps && StructOps->HasNetSerializer())
+        {
+            StructOps->NetSerialize(Ar, Data);
+            return;
+        }
+
+        static thread_local TVector<uint8> Mask;
+        static thread_local TVector<uint8> Changed;
+        static thread_local TVector<uint8> Current;
+        static thread_local TVector<uint8> Default;
+        Mask.clear();
+        Changed.clear();
+
+        uint32 Index = 0;
+        for (FProperty* Property : AllProperties)
+        {
+            if (!Property->ShouldSerialize())
+            {
+                continue;
+            }
+
+            auto Flatten = [&Ar, Property](void* Source, TVector<uint8>& Out)
+            {
+                Out.clear();
+                FNetArchive Tmp(Out);
+                Tmp.EntityToNetGUID    = Ar.EntityToNetGUID;
+                Tmp.NetGUIDToEntity    = Ar.NetGUIDToEntity;
+                Tmp.ObjectToNetIndex   = Ar.ObjectToNetIndex;
+                Tmp.NetIndexToObject   = Ar.NetIndexToObject;
+                Tmp.AssetRefToNetIndex = Ar.AssetRefToNetIndex;
+                Tmp.NetIndexToAssetRef = Ar.NetIndexToAssetRef;
+                Tmp.NameToNetIndex     = Ar.NameToNetIndex;
+                Tmp.NetIndexToName     = Ar.NetIndexToName;
+                Property->NetSerialize(Tmp, Property->GetValuePtr<void>(Source));
+                Tmp.AlignToByte();
+            };
+            Flatten(Data, Current);
+            Flatten(Defaults, Default);
+
+            if ((Index >> 3) >= Mask.size())
+            {
+                Mask.push_back(0);
+            }
+            if (Current.size() != Default.size() || Memory::Memcmp(Current.data(), Default.data(), Current.size()) != 0)
+            {
+                Mask[Index >> 3] |= static_cast<uint8>(1u << (Index & 7));
+                Changed.insert(Changed.end(), Current.begin(), Current.end());
+            }
+            ++Index;
+        }
+
+        Ar.AlignToByte();
+        if (!Mask.empty())
+        {
+            Ar.Serialize(Mask.data(), static_cast<int64>(Mask.size()));
+        }
+        if (!Changed.empty())
+        {
+            Ar.Serialize(Changed.data(), static_cast<int64>(Changed.size()));
+        }
+    }
+
+    void CStruct::NetReadAllDelta(FNetArchive& Ar, void* Data) const
+    {
+        if (StructOps && StructOps->HasNetSerializer())
+        {
+            StructOps->NetSerialize(Ar, Data);
+            return;
+        }
+
+        uint32 Fields = 0;
+        for (FProperty* Property : AllProperties)
+        {
+            Fields += Property->ShouldSerialize() ? 1u : 0u;
+        }
+
+        static thread_local TVector<uint8> Mask;
+        Mask.assign((Fields + 7) / 8, 0);
+        Ar.AlignToByte();
+        if (!Mask.empty())
+        {
+            Ar.Serialize(Mask.data(), static_cast<int64>(Mask.size()));
+        }
+
+        uint32 Index = 0;
+        for (FProperty* Property : AllProperties)
+        {
+            if (!Property->ShouldSerialize())
+            {
+                continue;
+            }
+            if (Mask[Index >> 3] & (1u << (Index & 7)))
+            {
+                Property->NetSerialize(Ar, Property->GetValuePtr<void>(Data));
+                Ar.AlignToByte();
+            }
+            ++Index;
         }
     }
 

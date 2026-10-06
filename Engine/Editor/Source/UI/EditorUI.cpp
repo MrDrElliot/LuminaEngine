@@ -1,4 +1,6 @@
 ﻿#include "EditorUI.h"
+#include "World/WorldContext.h"
+#include "Core/Console/ConsoleVariable.h"
 #include "Platform/Time/PlatformTime.h"
 #include <string>
 #include "Core/CoreEditorDelegates.h"
@@ -178,6 +180,10 @@
 
 namespace Lumina
 {
+    // Lets one person test multiplayer gameplay, since the extra players then drive themselves like load-test bots.
+    static TConsoleVar<bool> CVarPIEClientBots("Net.PIEClientBots", false,
+        "Play-in-editor players past the first run as bots instead of reading input.");
+
     // Mirrors ContentBrowserEditorTool's painted rows so the dialogs match the editor.
     namespace
     {
@@ -419,26 +425,32 @@ namespace Lumina
         }
     }
 
-    bool FEditorUI::OnEvent(FEvent& Event)
+    bool FEditorUI::OnShortcutEvent(FEvent& Event)
     {
-        if (Event.IsA<FKeyPressedEvent>())
+        if (!Event.IsA<FKeyPressedEvent>())
         {
-            FKeyPressedEvent& Key = Event.As<FKeyPressedEvent>();
-            if (Key.GetKeyCode() == EKey::F1 && Key.IsShiftDown() && !Key.IsRepeat()
-                && WorldEditorTool != nullptr && WorldEditorTool->HasSimulatingWorld())
-            {
-                FInputViewportRegistry& Reg = FInputViewportRegistry::Get();
-                Reg.SetGameInputFocused(!Reg.IsGameInputFocused());
-                return true;
-            }
-
-            if (Key.GetKeyCode() == EKey::F8 && !Key.IsRepeat() && WorldEditorTool != nullptr)
-            {
-                WorldEditorTool->SetEjectedFromPlay(!WorldEditorTool->IsEjectedFromPlay());
-                return true;
-            }
+            return false;
         }
 
+        FKeyPressedEvent& Key = Event.As<FKeyPressedEvent>();
+        if (Key.GetKeyCode() == EKey::F1 && Key.IsShiftDown() && !Key.IsRepeat()
+            && WorldEditorTool != nullptr && WorldEditorTool->HasSimulatingWorld())
+        {
+            FInputViewportRegistry& Reg = FInputViewportRegistry::Get();
+            Reg.SetGameInputFocused(!Reg.IsGameInputFocused());
+            return true;
+        }
+
+        if (Key.GetKeyCode() == EKey::F8 && !Key.IsRepeat() && WorldEditorTool != nullptr)
+        {
+            WorldEditorTool->SetEjectedFromPlay(!WorldEditorTool->IsEjectedFromPlay());
+            return true;
+        }
+        return false;
+    }
+
+    bool FEditorUI::OnEvent(FEvent& Event)
+    {
         // Consume what ImGui owns so it does not fall through, and pass everything else to tools.
         const bool bIsMouseEvent =
                Event.IsA<FMouseMovedEvent>()
@@ -513,6 +525,9 @@ namespace Lumina
 
         // Editor owns input until the user hits Play (the registry flag defaults true so packaged builds work).
         FInputViewportRegistry::Get().SetGameInputFocused(false);
+
+        ShortcutLayer.Owner = this;
+        GApp->GetEventProcessor().RegisterEventHandler(&ShortcutLayer, (int32)EInputLayer::EditorShortcuts);
 
         RegisterBuiltinEditorTools();
         RegisterBuiltinAssetActions();
@@ -659,6 +674,7 @@ namespace Lumina
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
     {
         FObjectReferenceProviders::Unregister(this);
+        GApp->GetEventProcessor().UnregisterEventHandler(&ShortcutLayer);
 
         if (AssetDataChangedHandle.IsValid())
         {
@@ -858,15 +874,27 @@ namespace Lumina
         if (!PendingFloat.WindowName.empty())
         {
             ImGuiWindow* Window = ImGui::FindWindowByName(PendingFloat.WindowName.c_str());
+            ImGuiDockNode* Root = (Window != nullptr && Window->DockNode != nullptr) ? ImGui::DockNodeGetRootNode(Window->DockNode) : nullptr;
             if (Window == nullptr)
             {
                 PendingFloat = {};
             }
-            else if (Window->DockNode != nullptr && !PendingFloat.bUndockQueued)
+            else if (Root != nullptr && !Root->IsDockSpace())
+            {
+                // An always-tab-bar window floats in a node of its own, and the node owns the placement.
+                ImGui::DockBuilderSetNodePos(Root->ID, ImVec2(PendingFloat.Position.x, PendingFloat.Position.y));
+                ImGui::DockBuilderSetNodeSize(Root->ID, ImVec2(PendingFloat.Size.x, PendingFloat.Size.y));
+                PendingFloat = {};
+            }
+            else if (Root != nullptr && !PendingFloat.bUndockQueued)
             {
                 // The undock lands in the next NewFrame, so the placement waits a frame for it.
                 ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), Window);
                 PendingFloat.bUndockQueued = true;
+            }
+            else if (Root != nullptr)
+            {
+                PendingFloat = {};
             }
             else
             {
@@ -2741,10 +2769,10 @@ namespace Lumina
                             if (SceneRenderer != nullptr)
                             {
                                 // ImGui works in physical pixels here, so the content region is already the right unit.
-                                const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
-                                SceneRenderer->SetPrimaryViewSize(FUIntVector2(
-                                    (uint32)Math::Max(ViewportAvail.x, 64.0f),
-                                    (uint32)Math::Max(ViewportAvail.y, 64.0f)));
+                                ImVec2 ViewportMin;
+                                ImVec2 ViewportAvail;
+                                FEditorTool::GetViewportImageRect(ViewportMin, ViewportAvail);
+                                SceneRenderer->SetPrimaryViewSize(FUIntVector2((uint32)ViewportAvail.x, (uint32)ViewportAvail.y));
 
                                 ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
                             }
@@ -2774,10 +2802,10 @@ namespace Lumina
                             if (SceneRenderer != nullptr)
                             {
                                 // ImGui works in physical pixels here, so the content region is already the right unit.
-                                const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
-                                SceneRenderer->SetPrimaryViewSize(FUIntVector2(
-                                    (uint32)Math::Max(ViewportAvail.x, 64.0f),
-                                    (uint32)Math::Max(ViewportAvail.y, 64.0f)));
+                                ImVec2 ViewportMin;
+                                ImVec2 ViewportAvail;
+                                FEditorTool::GetViewportImageRect(ViewportMin, ViewportAvail);
+                                SceneRenderer->SetPrimaryViewSize(FUIntVector2((uint32)ViewportAvail.x, (uint32)ViewportAvail.y));
 
                                 ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
                             }
@@ -2846,6 +2874,14 @@ namespace Lumina
             {
                 LOG_WARN("Failed to start PIE world for player {}", PlayerIndex + 1);
                 continue;
+            }
+
+            if (CVarPIEClientBots.GetValue())
+            {
+                if (FWorldContext* BotContext = GWorldManager->FindContext(PreviewWorld))
+                {
+                    BotContext->bBot = true;
+                }
             }
 
             // The tool owns the world, and PlayerIndex is the client number with player 1 in the main viewport.
@@ -3836,7 +3872,14 @@ namespace Lumina
         {
             Platform::LaunchURL(TEXT("https://github.com/MrDrElliot/LuminaEngine/issues"));
         }
-    
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(LE_ICON_PATREON " Support Lumina on Patreon"))
+        {
+            Platform::LaunchURL(TEXT("https://www.patreon.com/c/DrElliot"));
+        }
+
         ImGui::Separator();
         
         // About + Contributors are now tabs of the same tool, so a single menu entry covers both.

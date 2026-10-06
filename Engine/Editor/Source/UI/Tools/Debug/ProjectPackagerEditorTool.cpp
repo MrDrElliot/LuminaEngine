@@ -149,6 +149,17 @@ namespace Lumina
         }
     }
 
+    FString FProjectPackagerEditorTool::PackageName() const
+    {
+        return FProjectPackager::GetPackageName(GEngine->GetProjectName(), bServer);
+    }
+
+    FString FProjectPackagerEditorTool::DefaultOutputDir(bool bForServer) const
+    {
+        return FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/"
+            + FProjectPackager::GetPackageName(GEngine->GetProjectName(), bForServer);
+    }
+
     void FProjectPackagerEditorTool::RunCookOnly()
     {
         if (Stage != EStage::Idle && Stage != EStage::Done)
@@ -164,15 +175,13 @@ namespace Lumina
         ClearLog();
         Stage = EStage::Cooking;
 
-        const FString ProjectName(GEngine->GetProjectName().data(), GEngine->GetProjectName().size());
+        const FString Package = PackageName();
 
-        FString PakDir = OutputDir.empty()
-            ? FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/" + ProjectName
-            : OutputDir;
+        FString PakDir = OutputDir.empty() ? DefaultOutputDir(bServer) : OutputDir;
 
         Filesystem::MakeDirectoryTree(PakDir);
 
-        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(ProjectName.c_str(), ProjectName.size()));
+        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(Package.c_str(), Package.size()));
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = bExtractScriptsLoose;
@@ -235,14 +244,13 @@ namespace Lumina
         Stage = EStage::Cooking;
 
         const FString ProjectName(GEngine->GetProjectName().data(), GEngine->GetProjectName().size());
+        const FString Package = PackageName();
 
-        FString PakDir = OutputDir.empty()
-            ? FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/" + ProjectName
-            : OutputDir;
+        FString PakDir = OutputDir.empty() ? DefaultOutputDir(bServer) : OutputDir;
 
         Filesystem::MakeDirectoryTree(PakDir);
 
-        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(ProjectName.c_str(), ProjectName.size()));
+        const FString PakPath = FProjectPackager::GetPakPath(FStringView(PakDir.c_str(), PakDir.size()), FStringView(Package.c_str(), Package.size()));
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = bExtractScriptsLoose;
@@ -288,6 +296,7 @@ namespace Lumina
         Opts.ProjectDirectory               = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size());
         Opts.bBuildExecutable               = true;
         Opts.bExtractScriptsAsLooseFiles    = bExtractScriptsLoose;
+        Opts.bServer                        = bServer;
         Opts.ExtraFiles                     = ExtraFiles;
         Opts.ExtraDirectories               = ExtraDirectories;
         Opts.BuildConfiguration             = (ConfigIndex == 0) ? FString("Shipping")
@@ -334,9 +343,7 @@ namespace Lumina
         // Lazy-init defaults so they reflect the current project.
         if (OutputDir.empty())
         {
-            const FString ProjectName(GEngine->GetProjectName().data(), GEngine->GetProjectName().size());
-            OutputDir = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size())
-                + "/Build/" + ProjectName;
+            OutputDir = DefaultOutputDir(bServer);
         }
 
         // Project + cook-roots summary.
@@ -398,6 +405,19 @@ namespace Lumina
         const char* Configs[] = { "Shipping", "Development", "Debug" };
         ImGui::SetNextItemWidth(220.0f);
         ImGui::Combo("##cfg", &ConfigIndex, Configs, IM_ARRAYSIZE(Configs));
+
+        ImGui::Spacing();
+
+        const bool bWasServer = bServer;
+        if (ImGui::Checkbox("Dedicated server", &bServer) && OutputDir == DefaultOutputDir(bWasServer))
+        {
+            OutputDir = DefaultOutputDir(bServer);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Builds the Server target as %s.exe, a headless host that\n"
+                              "loads the startup map and listens without -server.", PackageName().c_str());
+        }
 
         ImGui::Spacing();
 

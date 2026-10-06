@@ -44,6 +44,10 @@ namespace Lumina
         // Content folders that always ship, for assets a game loads by names it builds at runtime, such as /Game/Content/NPCs.
         PROPERTY(Editable, Category = "Maps")
         TVector<FString> CookFolders;
+
+        // Frames per second for a process with no window, such as a dedicated server or bot clients. -tickrate overrides it.
+        PROPERTY(Editable, Category = "Server", ClampMin = 1, ClampMax = 1000)
+        int32 HeadlessTickRate = 60;
     };
 
     // Texture streaming budget and policy. Project-scoped rather than per-user: the pool size a project

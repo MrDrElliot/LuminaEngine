@@ -231,6 +231,7 @@ namespace Lumina
                     FPendingScript Held;
                     Held.ClassName   = ClassName;
                     Held.FileVersion = Ar.GetFileVersion();
+                    Held.MakeReader  = Ar.GetDeferredReaderFactory();
                     Held.Bytes.resize((size_t)Math::Max<int64>(ScriptSize, 0));
                     if (ScriptSize > 0)
                     {
@@ -1459,7 +1460,12 @@ namespace Lumina
                         continue;
                     }
 
-                    if (!Held.Bytes.empty())
+                    if (!Held.Bytes.empty() && Held.MakeReader)
+                    {
+                        TUniquePtr<FArchive> Reader = Held.MakeReader(Held.Bytes);
+                        ScriptClass->SerializeTaggedProperties(*Reader, Script);
+                    }
+                    else if (!Held.Bytes.empty())
                     {
                         FMemoryReader Reader(Held.Bytes);
                         Reader.SetFileVersion(Held.FileVersion);

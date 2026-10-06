@@ -478,7 +478,8 @@ internal sealed class TypeLibrary
         foreach (FieldInfo Field in Type.GetFields(Flags))
         {
             PropertyAttribute? Meta = Field.GetCustomAttribute<PropertyAttribute>();
-            bool bSerializeOnly = Meta == null && Field.GetCustomAttribute<SerializeAttribute>() != null;
+            bool bSync = Field.GetCustomAttribute<SyncAttribute>() != null;
+            bool bSerializeOnly = Meta == null && (bSync || Field.GetCustomAttribute<SerializeAttribute>() != null);
             if ((Meta == null && !bSerializeOnly) || Field.GetCustomAttribute<HideAttribute>() != null)
             {
                 continue;
@@ -498,6 +499,7 @@ internal sealed class TypeLibrary
                 Hidden = bSerializeOnly,
                 Aliases = GatherAliases(Field),
                 SkipHotReload = bClassSkip || Field.GetCustomAttribute<SkipHotReloadAttribute>() != null,
+                ExtraFlags = bSync ? EPropertyFlags.Replicated : EPropertyFlags.None,
                 Get = Field.GetValue,
                 Set = Field.SetValue,
             });
@@ -511,7 +513,8 @@ internal sealed class TypeLibrary
             }
 
             PropertyAttribute? Meta = Property.GetCustomAttribute<PropertyAttribute>();
-            bool bSerializeOnly = Meta == null && Property.GetCustomAttribute<SerializeAttribute>() != null;
+            bool bSync = Property.GetCustomAttribute<SyncAttribute>() != null;
+            bool bSerializeOnly = Meta == null && (bSync || Property.GetCustomAttribute<SerializeAttribute>() != null);
             if ((Meta == null && !bSerializeOnly) || Property.GetCustomAttribute<HideAttribute>() != null)
             {
                 continue;
@@ -542,6 +545,7 @@ internal sealed class TypeLibrary
                 Hidden = bSerializeOnly,
                 Aliases = GatherAliases(Property),
                 SkipHotReload = bClassSkip || Property.GetCustomAttribute<SkipHotReloadAttribute>() != null,
+                ExtraFlags = bSync ? EPropertyFlags.Replicated : EPropertyFlags.None,
                 Get = Property.GetValue,
                 // Never Property.SetValue for a view: there is no setter to call, and reaching for one throws.
                 Set = bNativeOwnedView ? (Instance, Value) => { } : Property.SetValue,

@@ -10,6 +10,8 @@
 #include "Containers/HashTable.h"
 #include "Core/Threading/Thread.h"
 #include "Renderer/ShaderHandle.h"
+#include "Core/Threading/Sync.h"
+#include <atomic>
 
 namespace Lumina
 {
@@ -40,6 +42,9 @@ namespace Lumina
         void Reset() { *this = FSharedRenderResources{}; }
     };
 
+    // Builds one pipeline from its own copy of the shader code, so it can finish after the shader entries are gone.
+    using FPipelineBuild = TMoveOnlyFunction<RHI::FPipelineH()>;
+
     // A pipeline depends only on its shaders and raster state, so every scene renderer shares one set and a new world reuses them.
     struct FScenePipelineCache
     {
@@ -52,9 +57,38 @@ namespace Lumina
         FSharedMutex             Mutex;
         THashMap<uint64, FEntry> Entries;
 
+        RUNTIME_API RHI::FPipelineH Find(uint64 Hash);
+
+        // True while a build for Hash is queued or running, so a caller can skip copying the shader code again.
+        RUNTIME_API bool IsPending(uint64 Hash);
+
+        // Queues Build on a worker unless one is already queued or done, and returns the pipeline only if it is ready.
+        RUNTIME_API RHI::FPipelineH Request(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build);
+
+        // Returns the pipeline, building it on this thread unless another thread is already doing so.
+        RUNTIME_API RHI::FPipelineH BuildNow(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build);
+
         // Retires every pipeline built from a shader that no longer resolves, which a recompile leaves behind.
         RUNTIME_API void PurgeStale();
         void ReleaseAll();
+
+    private:
+        struct FPendingBuild;
+        struct FPumpJob;
+
+        TSharedPtr<FPendingBuild> AddPending(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build, bool bQueued);
+        RHI::FPipelineH RunBuild(uint64 Hash, FPendingBuild& Pending);
+        void Pump();
+        void RunQueued(FPendingBuild& Pending);
+        void WaitForBuilds();
+
+        // Guarded by Mutex.
+        THashMap<uint64, TSharedPtr<FPendingBuild>> PendingBuilds;
+
+        FMutex                                QueueMutex;
+        TVector<TSharedPtr<FPendingBuild>>    Queue;
+        uint32                                InFlight = 0;
+        std::atomic<uint32>                   BuiltSinceSave{ 0 };
     };
 
     class FRenderManager

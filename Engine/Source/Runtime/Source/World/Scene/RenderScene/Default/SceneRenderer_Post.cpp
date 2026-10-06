@@ -608,6 +608,17 @@ namespace Lumina
                 continue;
             }
 
+            FGraphicsPipelineKey Key;
+            Key.VS = VS;
+            Key.PS = PS;
+            Key.ColorTargets.push_back({ Dest->Desc.Format, {} });
+            // Skipped before the pass opens, so Source still holds the previous result.
+            const RHI::FPipelineH Pipeline = FindPipeline(Key);
+            if (!Pipeline)
+            {
+                continue;
+            }
+
             RHI::FRenderAttachment Color;
             Color.Texture = Dest->Texture;
             Color.LoadOp  = RHI::ELoadOp::Undefined;
@@ -621,12 +632,7 @@ namespace Lumina
             SetViewportScissor(CL, Dest->GetExtent());
             RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
-
-            FGraphicsPipelineKey Key;
-            Key.VS = VS;
-            Key.PS = PS;
-            Key.ColorTargets.push_back({ Dest->Desc.Format, {} });
-            RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+            RHI::CmdSetPipeline(CL, Pipeline);
 
             FPostProcessMaterialPushConstants PC = {};
             PC.MaterialIndex    = PPMaterial.MaterialIndex;

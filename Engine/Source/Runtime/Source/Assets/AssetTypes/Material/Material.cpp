@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Material.h"
+#include "Core/Engine/Engine.h"
 #include "Renderer/SpirvStrip.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Material/MaterialParameterCollection.h"
@@ -893,8 +894,11 @@ namespace Lumina
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
         if (ShaderCompiler == nullptr)
         {
-            LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
-                     "the built-in material '{}' was not created.", Name.c_str());
+            if (!GIsHeadless)
+            {
+                LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
+                         "the built-in material '{}' was not created.", Name.c_str());
+            }
             return nullptr;
         }
 
@@ -1017,8 +1021,11 @@ namespace Lumina
     {
         if (GShaderCompiler == nullptr)
         {
-            LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
-                     "the default material was not created.");
+            if (!GIsHeadless)
+            {
+                LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
+                         "the default material was not created.");
+            }
             return;
         }
 
@@ -1053,8 +1060,11 @@ namespace Lumina
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
         if (ShaderCompiler == nullptr)
         {
-            LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
-                     "the default terrain material was not created.");
+            if (!GIsHeadless)
+            {
+                LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
+                         "the default terrain material was not created.");
+            }
             return;
         }
 

@@ -16,7 +16,7 @@ public static partial class Game
     /// down and the new world starts fresh. URL forms: a world asset path ("/Game/Maps/Arena"), a hosted
     /// map ("/Game/Maps/Arena?listen?port=7777"), or a server address to connect to ("192.168.1.5:7777").
     /// </summary>
-    public static void OpenLevel(string Url) => Lumina.CGameLibrary.OpenLevel(Url);
+    public static void OpenLevel(string Url) => Lumina.CGameLibrary.OpenLevel(World, Url);
 
     /// <summary>
     /// Quits the game: exits the process in a packaged game; in the editor it ends the Play session

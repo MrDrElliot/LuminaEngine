@@ -13,6 +13,7 @@ namespace Lumina
     class FNetArchive;
     class INetworkTransport;
     class CObject;
+    class CEntityScript;
     struct FConnectionHandle;
     struct FNetObjectMap;
     struct FNetAssetMap;
@@ -78,8 +79,44 @@ namespace Lumina
         void WriteEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity,
             const TVector<FComponentRepOut>* Components = nullptr);
 
+        // A spawn sends full state, since unreplicated configuration would otherwise arrive as defaults.
+        void WriteSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void ReadSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+
+        // Every script's full state, in manifest order, for the same reason.
+        void WriteScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void ReadScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Count);
+
         // Client, recreate/refresh components on Entity, then apply the replicated attachment link.
         void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+
+        // One script's diff, keyed by its index on the entity. Block has the same layout as a component's.
+        struct FScriptRepOut
+        {
+            uint32         ScriptIndex = 0;
+            TVector<uint8> Block;
+        };
+
+        // Server, diff every script on Entity that declares replicated fields. Same contract as CollectComponentFieldsInto.
+        void CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
+            bool bBaseline, FComponentRepState* DiffState, TVector<FScriptRepOut>& Out);
+
+        // The class of every script on Entity, so a client can build a spawned entity's scripts before their fields arrive.
+        void WriteScriptManifest(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+        uint32 ReadScriptManifest(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+
+        void WriteEntityScripts(FNetArchive& Ar, const TVector<FScriptRepOut>& Scripts);
+
+        // Client, applies each script's changed fields and tells it which ones changed.
+        void ReadEntityScripts(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity);
+
+        // Scripts are addressed by position on the entity, which both peers build in the same order.
+        int32 FindScriptIndex(ECS::FRegistry& Registry, ECS::FEntity Entity, const CEntityScript* Script);
+        CEntityScript* GetScriptAt(ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Index);
+
+        // One framed ScriptRpc message. Caller is the connection that issued it, which the server rewrites on relay.
+        void AppendScriptRpc(TVector<uint8>& Batch, uint32 Guid, uint32 ScriptIndex, uint32 RpcId, ERpcTarget Target,
+            uint8 Flags, uint32 Caller, const uint8* Payload, uint32 PayloadSize);
 
         // Client, reparent any children that were deferred waiting on NewEntity (NetGUID NewGuid) to spawn.
         // Call right after registering a freshly-spawned entity's NetGUID in the GuidTable.

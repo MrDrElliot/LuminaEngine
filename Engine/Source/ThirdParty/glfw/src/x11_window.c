@@ -693,7 +693,7 @@ static GLFWbool createNativeWindow(_GLFWwindow* window,
 
     // GLFW_TITLEBAR off means the app draws its own, which on X11 is the undecorated window the
     // WM already knows how to make. ButtonPress then hands drags and edge resizes back to the WM.
-    if (!wndconfig->decorated || !_glfw.hints.window.titlebar)
+    if (!wndconfig->decorated || !wndconfig->titlebar)
         _glfwSetWindowDecoratedX11(window, GLFW_FALSE);
 
     if (_glfw.x11.NET_WM_STATE && !window->monitor)
@@ -1411,7 +1411,7 @@ static void processEvent(XEvent *event)
 
             // Undecorated because the app draws its own title bar: the WM no longer has a frame to
             // start a drag or resize from, so offer it one before the click reaches the app.
-            if (!_glfw.hints.window.titlebar &&
+            if (!window->titlebar &&
                 event->xbutton.button == Button1 &&
                 startWMMoveResize(window,
                                   event->xbutton.x, event->xbutton.y,

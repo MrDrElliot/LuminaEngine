@@ -346,6 +346,13 @@ namespace Lumina::Paths
         return Result;
     }
 
+    FFixedString MakeServerApplicationName()
+    {
+        FFixedString Result = "Lumina-Server-";
+        Result.append(LUMINA_CONFIGURATION_NAME).append(LUMINA_EXECUTABLE_EXT_NAME);
+        return Result;
+    }
+
     FFixedString MakeGameModuleFileName(FStringView ModuleName)
     {
         FFixedString Result = LUMINA_SHAREDLIB_PREFIX_NAME;

@@ -48,6 +48,9 @@ namespace Lumina
         bool OnEvent(FEvent& Event) override;
         //~ End IEventHandler
 
+        // Chords that must work while a game owns the keyboard, so they run before any viewport sees the key.
+        bool OnShortcutEvent(FEvent& Event);
+
         void Initialize(const FUpdateContext& UpdateContext) override;
         void Deinitialize(const FUpdateContext& UpdateContext) override;
 
@@ -318,6 +321,13 @@ namespace Lumina
         // input and cleared ONCE on the way out -- never per-frame, which would clobber the editor camera's
         // own NoMouse capture during RMB-look.
         bool                                            bWasGameOwningInput = false;
+
+        struct FShortcutLayer final : IEventHandler
+        {
+            FEditorUI* Owner = nullptr;
+            bool OnEvent(FEvent& Event) override { return Owner->OnShortcutEvent(Event); }
+        };
+        FShortcutLayer                                  ShortcutLayer;
 
         // Extra-player (players 2..N) Game Preview tools spawned for multiplayer PIE. Each tool owns its
         // own PIE world (torn down on the tool's Deinitialize), so this list is non-owning bookkeeping.

@@ -58,6 +58,9 @@ namespace Lumina::SessionOps
     NODISCARD EDITOR_API bool GetPlayState(FPlayState& Out, FString& OutError);
 
     EDITOR_API bool StartPlay(FString& OutError);
+
+    // Applies to the next StartPlay. NetMode is standalone, listen or dedicated.
+    EDITOR_API bool SetPlayNetwork(int32 NumPlayers, FStringView NetMode, FString& OutError);
     EDITOR_API bool StopPlay(FString& OutError);
     EDITOR_API bool SetPaused(bool bPaused, FString& OutError);
     NODISCARD EDITOR_API bool IsPaused(FString& OutError);

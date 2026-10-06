@@ -34,5 +34,11 @@ namespace Lumina
         // The game drives this camera, not an editor one.
         NODISCARD bool ShouldDrawViewGizmo() const override { return false; }
 
+    private:
+
+        void OnWorldTraveled(CWorld* OldWorld, CWorld* NewWorld);
+
+        FDelegateHandle WorldTraveledHandle;
+
     };
 }

@@ -12,7 +12,7 @@ namespace Lumina
     class CWorld;
     class CWorldSubsystem;
 
-    /** Engine level session operations. There is one engine per process, so none of this takes a world. */
+    // Engine level session operations. OpenLevel takes the calling world, since editor PIE runs one world per player.
     REFLECT()
     class RUNTIME_API CGameLibrary : public CFunctionLibrary
     {
@@ -20,9 +20,9 @@ namespace Lumina
 
     public:
 
-        /** The swap runs at the next frame start, so calling this mid tick is safe. */
+        // The swap runs at the next frame start, so calling this mid tick is safe.
         FUNCTION()
-        static void OpenLevel(const FString& Url);
+        static void OpenLevel(CWorld* World, const FString& Url);
 
         /** Ends the play session in the editor and exits the process in a packaged game, both deferred. */
         FUNCTION()

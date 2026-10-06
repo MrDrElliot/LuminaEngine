@@ -513,6 +513,9 @@ namespace Lumina
         explicit FEntityProperty(const FPropertyParams* Params)
             : Super(Params)
         {}
+
+        // Sent as the id both peers share when the archive can translate one, since a raw entity id is local.
+        RUNTIME_API void NetSerialize(FNetArchive& Ar, void* Value) override;
     };
 
     class FUInt64Property : public TProperty_Numeric<uint64>

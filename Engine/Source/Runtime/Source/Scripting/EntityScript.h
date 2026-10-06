@@ -122,6 +122,9 @@ namespace Lumina
 
         /** Replayed on restore so the held bytes are read exactly as the file wrote them. */
         int32          FileVersion = 0;
+
+        // A package writes names and objects as indices into its own tables, so plain bytes cannot be read back alone.
+        FArchive::FDeferredReaderFactory MakeReader;
     };
 
     /** Holds the scripts attached to one entity. Language-agnostic: each element is a CEntityScript of

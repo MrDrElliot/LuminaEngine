@@ -290,6 +290,7 @@ namespace Lumina::Physics
             }
 
             Movement.PendingLookYaw = Controller.LookInput.x;
+            Movement.PendingButtons = Controller.Buttons;
             Controller.MoveInput = {};
             Controller.WorldMoveInput = {};
 
@@ -352,6 +353,16 @@ namespace Lumina::Physics
 
             FPhysicsCharacterHandle& Character = *Physics.Character;
 
+            if (Character.NetDrive == (uint8)ECharacterNetDrive::Commands)
+            {
+                return;
+            }
+            if (Character.NetDrive == (uint8)ECharacterNetDrive::FollowTransform)
+            {
+                FollowTransform(Registry, Entity, Physics, Movement, FixedDt);
+                return;
+            }
+
             if (Character.bResting)
             {
                 const bool bPollDue = ((CharacterStepCounter + (uint64)(Entity).Value) & kRestPollMask) == 0;
@@ -369,82 +380,9 @@ namespace Lumina::Physics
                 Character.bResting = false;
             }
 
-            if (Movement.bPendingTeleport)
+            if (!ResolveCharacterPreStep(Entity, Physics, Movement))
             {
-                Movement.bPendingTeleport = false;
-
-                // A teleport lands the same way a spawn does, so it gets seated instead of dropped into geometry.
-                Character.SpawnPosition = Movement.PendingTeleportLocation;
-                Character.bAwaitingGround = true;
-                Character.AwaitingGroundSteps = 0;
-
-                Character.Position = Movement.PendingTeleportLocation;
-                Character.Velocity = FVector3(0.0f);
-                Character.bGrounded = false;
-                Character.GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
-                Character.GroundEntity = ECS::NullEntity;
-
-                Movement.Velocity = FVector3(0.0f);
-                Movement.bGrounded = false;
-                Movement.GroundEntity = ECS::NullEntity;
-                Movement.GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
-
-                // Reseeds the interp snapshot so the render transform does not streak across the jump.
-                Physics.LastBodyPosition = Character.Position;
-                PlaceProxy(Character);
                 return;
-            }
-
-            // The capsule is centered on the entity origin, so a ground-level spawn starts buried, and Box3D's
-            // mover ignores initial overlap and can never climb out. A dynamic mesh collider also defers until
-            // its CPU data is ready, so the ground can appear several frames after the character does. Holding
-            // at the spawn until there is something to stand on covers both.
-            if (Character.bAwaitingGround)
-            {
-                b3Vec3 Seated;
-                const EMoverSeatResult Result = TrySeatMoverOnGround(WorldId, Character.MakeMoverCapsule(),
-                    Box3DUtils::ToB3Vec3(Character.SpawnPosition), Character.Filter, Character.Profile,
-                    Character.StickToFloorDistance, Character.ProxyBody, Seated);
-
-                if (Result == EMoverSeatResult::NoGeometry)
-                {
-                    ++Character.AwaitingGroundSteps;
-                    if (Character.AwaitingGroundSteps == kAwaitingGroundWarnSteps)
-                    {
-                        LOG_WARN("Character on entity {} has found nothing to stand on below y {:.2f} after {} steps; "
-                                 "it is held at its spawn until a collider its profile can see appears.",
-                            (Entity).Value, Character.SpawnPosition.y, kAwaitingGroundWarnSteps);
-                    }
-
-                    Character.Position = Character.SpawnPosition;
-                    Character.Velocity = FVector3(0.0f);
-                    Movement.Velocity = FVector3(0.0f);
-
-                    Physics.LastBodyPosition = Character.Position;
-                    Physics.LastBodyRotation = Character.Rotation;
-
-                    PlaceProxy(Character);
-                    return;
-                }
-
-                if (Result == EMoverSeatResult::Seated)
-                {
-                    const FVector3 SeatedPosition = Box3DUtils::FromB3Vec3(Seated);
-                    LOG_DEBUG("Character on entity {} spawned inside geometry and was seated from y {:.2f} to {:.2f} "
-                              "after {} step(s) waiting for ground.",
-                        (Entity).Value, Character.Position.y, SeatedPosition.y, Character.AwaitingGroundSteps);
-
-                    Character.Position = SeatedPosition;
-                    Character.Velocity = FVector3(0.0f);
-                    Movement.Velocity = FVector3(0.0f);
-                }
-                else
-                {
-                    LOG_DEBUG("Character on entity {} starts airborne at y {:.2f} after {} step(s) waiting for ground.",
-                        (Entity).Value, Character.SpawnPosition.y, Character.AwaitingGroundSteps);
-                }
-
-                Character.bAwaitingGround = false;
             }
 
             CharacterWorkScratch.push_back({ &Physics, &Movement });
@@ -497,6 +435,220 @@ namespace Lumina::Physics
         LUMINA_PROFILE_VALUE("Physics/RestingCharacters", RestingCount);
     }
 
+    bool FBox3DPhysicsScene::ResolveCharacterPreStep(ECS::FEntity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement)
+    {
+        FPhysicsCharacterHandle& Character = *Physics.Character;
+
+        if (Movement.bPendingTeleport)
+        {
+            Movement.bPendingTeleport = false;
+
+            // A teleport lands the same way a spawn does, so it gets seated instead of dropped into geometry.
+            Character.SpawnPosition = Movement.PendingTeleportLocation;
+            Character.bAwaitingGround = true;
+            Character.AwaitingGroundSteps = 0;
+
+            Character.Position = Movement.PendingTeleportLocation;
+            Character.Velocity = FVector3(0.0f);
+            Character.bGrounded = false;
+            Character.GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
+            Character.GroundEntity = ECS::NullEntity;
+
+            Movement.Velocity = FVector3(0.0f);
+            Movement.bGrounded = false;
+            Movement.GroundEntity = ECS::NullEntity;
+            Movement.GroundNormal = FVector3(0.0f, 1.0f, 0.0f);
+
+            // Reseeds the interp snapshot so the render transform does not streak across the jump.
+            Physics.LastBodyPosition = Character.Position;
+            PlaceProxy(Character);
+            return false;
+        }
+
+        // A centered capsule spawns buried and a mesh collider can land frames late, so hold at the spawn until there is ground.
+        if (Character.bAwaitingGround)
+        {
+            b3Vec3 Seated;
+            const EMoverSeatResult Result = TrySeatMoverOnGround(WorldId, Character.MakeMoverCapsule(),
+                Box3DUtils::ToB3Vec3(Character.SpawnPosition), Character.Filter, Character.Profile,
+                Character.StickToFloorDistance, Character.ProxyBody, Seated);
+
+            if (Result == EMoverSeatResult::NoGeometry)
+            {
+                ++Character.AwaitingGroundSteps;
+                if (Character.AwaitingGroundSteps == kAwaitingGroundWarnSteps)
+                {
+                    LOG_WARN("Character on entity {} has found nothing to stand on below y {:.2f} after {} steps; "
+                             "it is held at its spawn until a collider its profile can see appears.",
+                        (Entity).Value, Character.SpawnPosition.y, kAwaitingGroundWarnSteps);
+                }
+
+                Character.Position = Character.SpawnPosition;
+                Character.Velocity = FVector3(0.0f);
+                Movement.Velocity = FVector3(0.0f);
+
+                Physics.LastBodyPosition = Character.Position;
+                Physics.LastBodyRotation = Character.Rotation;
+
+                PlaceProxy(Character);
+                return false;
+            }
+
+            if (Result == EMoverSeatResult::Seated)
+            {
+                const FVector3 SeatedPosition = Box3DUtils::FromB3Vec3(Seated);
+                LOG_DEBUG("Character on entity {} spawned inside geometry and was seated from y {:.2f} to {:.2f} "
+                          "after {} step(s) waiting for ground.",
+                    (Entity).Value, Character.Position.y, SeatedPosition.y, Character.AwaitingGroundSteps);
+
+                Character.Position = SeatedPosition;
+                Character.Velocity = FVector3(0.0f);
+                Movement.Velocity = FVector3(0.0f);
+            }
+            else
+            {
+                LOG_DEBUG("Character on entity {} starts airborne at y {:.2f} after {} step(s) waiting for ground.",
+                    (Entity).Value, Character.SpawnPosition.y, Character.AwaitingGroundSteps);
+            }
+
+            Character.bAwaitingGround = false;
+        }
+
+        return true;
+    }
+
+    void FBox3DPhysicsScene::FollowTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, SCharacterPhysicsComponent& Physics,
+        SCharacterMovementComponent& Movement, float FixedDt)
+    {
+        FPhysicsCharacterHandle& Character = *Physics.Character;
+        const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
+        if (Transform == nullptr)
+        {
+            return;
+        }
+
+        // The velocity is derived, so footsteps and animation on a mirrored character still see it move.
+        const FVector3 Target = Transform->GetLocation();
+        Movement.Velocity = FixedDt > 0.0f ? (Target - Character.Position) / FixedDt : FVector3(0.0f);
+        Character.Position = Target;
+        Character.Rotation = Transform->GetRotation();
+        Character.Velocity = Movement.Velocity;
+        Character.bAwaitingGround = false;
+        Physics.LastBodyPosition = Character.Position;
+        Physics.LastBodyRotation = Character.Rotation;
+        PlaceProxy(Character);
+    }
+
+    bool FBox3DPhysicsScene::GetCharacterNetState(ECS::FEntity Entity, FCharacterNetState& Out) const
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        const SCharacterPhysicsComponent* Physics = Registry.TryGet<SCharacterPhysicsComponent>(Entity);
+        const SCharacterMovementComponent* Movement = Registry.TryGet<SCharacterMovementComponent>(Entity);
+        if (Physics == nullptr || !Physics->Character || Movement == nullptr)
+        {
+            return false;
+        }
+        const FPhysicsCharacterHandle& Character = *Physics->Character;
+        Out.Position       = Character.Position;
+        Out.Rotation       = Character.Rotation;
+        Out.Velocity       = Movement->Velocity;
+        Out.GroundNormal   = Character.GroundNormal;
+        Out.GroundVelocity = Character.GroundVelocity;
+        Out.JumpCount      = Movement->JumpCount;
+        Out.bGrounded      = Character.bGrounded;
+        return true;
+    }
+
+    bool FBox3DPhysicsScene::SetCharacterNetState(ECS::FEntity Entity, const FCharacterNetState& State)
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        SCharacterPhysicsComponent* Physics = Registry.TryGet<SCharacterPhysicsComponent>(Entity);
+        SCharacterMovementComponent* Movement = Registry.TryGet<SCharacterMovementComponent>(Entity);
+        if (Physics == nullptr || !Physics->Character || Movement == nullptr)
+        {
+            return false;
+        }
+        FPhysicsCharacterHandle& Character = *Physics->Character;
+        Character.Position       = State.Position;
+        Character.Rotation       = State.Rotation;
+        Character.Velocity       = State.Velocity;
+        Character.GroundNormal   = State.GroundNormal;
+        Character.GroundVelocity = State.GroundVelocity;
+        Character.bGrounded      = State.bGrounded;
+        Character.bAwaitingGround = false;
+        Character.bResting        = false;
+        Movement->Velocity     = State.Velocity;
+        Movement->JumpCount    = State.JumpCount;
+        Movement->bGrounded    = State.bGrounded;
+        Movement->GroundNormal = State.GroundNormal;
+        Physics->LastBodyPosition = State.Position;
+        Physics->LastBodyRotation = State.Rotation;
+        return true;
+    }
+
+    bool FBox3DPhysicsScene::SimulateCharacterStep(ECS::FEntity Entity, const FCharacterMoveInput& Input, float FixedDt, bool bReplay)
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        SCharacterPhysicsComponent* Physics = Registry.TryGet<SCharacterPhysicsComponent>(Entity);
+        SCharacterMovementComponent* Movement = Registry.TryGet<SCharacterMovementComponent>(Entity);
+        if (Physics == nullptr || !Physics->Character || Movement == nullptr)
+        {
+            return false;
+        }
+
+        Movement->PendingMoveDirection = Input.Direction;
+        Movement->PendingMoveThrottle  = Input.Throttle;
+        Movement->bHasPendingMoveInput = Input.bHasMove;
+        Movement->PendingLookYaw       = Input.LookYaw;
+        Movement->PendingButtons       = Input.Buttons;
+        Movement->bPendingJump         = Movement->bPendingJump || Input.bJump;
+
+        const float AuthoredSpeed = Movement->MoveSpeed;
+        if (Input.MoveSpeed > 0.0f)
+        {
+            Movement->MoveSpeed = Input.MoveSpeed;
+        }
+
+        Physics->Character->bResting = false;
+        if (ResolveCharacterPreStep(Entity, *Physics, *Movement))
+        {
+            if (CharacterPushScratch.empty())
+            {
+                CharacterPushScratch.resize(1);
+            }
+            CharacterPushScratch[0].Pushes.clear();
+
+            StepCharacter(FCharacterWork{ Physics, Movement }, FixedDt, 0);
+            DriveProxy(*Physics->Character, FixedDt);
+
+            // A replay re-walks steps whose pushes already happened, so applying them again would shove twice.
+            if (!bReplay)
+            {
+                for (const FPendingCharacterPush& Push : CharacterPushScratch[0].Pushes)
+                {
+                    if (b3Body_IsValid(Push.Body))
+                    {
+                        b3Body_ApplyLinearImpulse(Push.Body, Push.Impulse, Push.Point, true);
+                    }
+                }
+            }
+            CharacterPushScratch[0].Pushes.clear();
+        }
+
+        Movement->MoveSpeed = AuthoredSpeed;
+        return true;
+    }
+
+    void FBox3DPhysicsScene::SetCharacterNetDrive(ECS::FEntity Entity, ECharacterNetDrive Drive)
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        if (SCharacterPhysicsComponent* Physics = Registry.TryGet<SCharacterPhysicsComponent>(Entity); Physics != nullptr && Physics->Character)
+        {
+            Physics->Character->NetDrive = (uint8)Drive;
+            Physics->Character->bResting = false;
+        }
+    }
+
     void FBox3DPhysicsScene::StepCharacter(const FCharacterWork& Work, float FixedDt, uint32 ThreadSlot)
     {
         SCharacterPhysicsComponent& Physics = *Work.Physics;
@@ -509,7 +661,9 @@ namespace Lumina::Physics
 
         const bool bHasMovementInput = Movement.bHasPendingMoveInput;
         const FVector3 DesiredDirection = Movement.PendingMoveDirection;
-        const float TargetSpeed = bHasMovementInput ? Movement.MoveSpeed * Movement.PendingMoveThrottle : 0.0f;
+        const bool bSprinting = Movement.SprintSpeed > 0.0f && (Movement.PendingButtons & Movement.SprintButtons) != 0;
+        const float Speed = bSprinting ? Movement.SprintSpeed : Movement.MoveSpeed;
+        const float TargetSpeed = bHasMovementInput ? Speed * Movement.PendingMoveThrottle : 0.0f;
         const FVector3 TargetVelocity = DesiredDirection * TargetSpeed;
 
         // Ground state was resolved at the end of the previous substep.

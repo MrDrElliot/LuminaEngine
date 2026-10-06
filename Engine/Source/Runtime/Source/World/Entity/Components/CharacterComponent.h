@@ -116,6 +116,14 @@ namespace Lumina
         PROPERTY(Editable, ClampMin = 0.0f, Category = "Movement", Units = "m/s")
         float MoveSpeed = 5.0f;
 
+        // Speed while the controller holds SprintButtons, read inside the step so client and host sprint on the same move.
+        PROPERTY(Editable, ClampMin = 0.0f, Category = "Movement", Units = "m/s")
+        float SprintSpeed = 0.0f;
+
+        // Controller button bits that select SprintSpeed.
+        PROPERTY(Editable, Category = "Movement")
+        uint32 SprintButtons = 1;
+
         /** Rate at which the character accelerates to MoveSpeed (m/s²). */
         PROPERTY(Editable, ClampMin = 0.0f, Category = "Movement", Units = "m/s^2")
         float Acceleration = 10.0f;
@@ -184,6 +192,7 @@ namespace Lumina
         float     PendingLookYaw       = 0.0f;
         bool      bHasPendingMoveInput = false;
         bool      bPendingJump         = false;
+        uint32    PendingButtons       = 0;
 
         // Input magnitude clamped to [0,1], scales MoveSpeed this step. Lets an
         // analog stick (or a path follower's Speed) walk below full speed.

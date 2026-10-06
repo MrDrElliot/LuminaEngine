@@ -110,6 +110,7 @@ namespace Lumina
         ENetLODTier Tier             = ENetLODTier::Near;
         float       TimeSinceSent    = 1.0e9f; // large -> first eligible send (Stage 2 rate LOD)
         float       TimeOutOfAOI     = 0.0f;   // grace accumulator once outside the leave radius
+        float       TimeHeld         = 0.0f;   // how long the client has held it, so a crowd cap never drops a fresh arrival
         uint64      RelevantTick     = 0;      // == FNetWorldState::RelevancyTick when seen relevant this tick
         bool        bDynamic         = false;  // runtime-spawned -> per-client spawn/despawn applies
         bool        bBaselinePending = false;  // dynamic entity spawned this tick; hold its transform one tick (spawn carried the pose)
@@ -121,6 +122,13 @@ namespace Lumina
     {
         THashMap<uint32 /*guid*/, FRelevantEntry> Relevant;
         bool bForceBaseline = true; // re-send every relevant pose (set on join / map travel)
+
+        // Clients are serviced at the send rate on staggered ticks, so each tick carries only a share of them.
+        double NextServiceTime = -1.0;
+        double LastServiceTime = -1.0;
+
+        // Property and ownership messages held until this client's next service.
+        TVector<uint8> PendingReliable;
     };
 
     namespace NetGraph

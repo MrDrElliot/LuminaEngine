@@ -137,21 +137,25 @@ namespace Lumina
             return Count;
         }
 
-        // Stem ends with "-<OtherConfig>"; used to skip wrong-config DLLs from a previous Editor build.
-        bool HasOtherConfigSuffix(FStringView Stem, const FString& MyConfig)
+        // The tail every binary of this package ends in, "Development" for a game and "Server-Development" for a server.
+        FString BinaryTail(const FString& Config, bool bServer)
         {
-            const char* Configs[] = { "Debug", "Development", "Shipping" };
-            for (const char* Cfg : Configs)
+            return bServer ? FString("Server-") + Config : Config;
+        }
+
+        // A suffixed binary that does not end in this package's tail belongs to another configuration or target.
+        bool HasOtherConfigSuffix(FStringView Stem, const FString& MyTail)
+        {
+            FString Mine = "-";
+            Mine.append(MyTail);
+            if (Stem.ends_with(FStringView(Mine.c_str(), Mine.size())))
             {
-                if (MyConfig == Cfg)
-                {
-                    continue;
-                }
+                return false;
+            }
 
-                FString Suffix = "-";
-                Suffix.append(Cfg);
-
-                if (Stem.ends_with(FStringView(Suffix.c_str(), Suffix.size())))
+            for (const char* Cfg : { "-Debug", "-Development", "-Shipping" })
+            {
+                if (Stem.ends_with(Cfg))
                 {
                     return true;
                 }
@@ -172,7 +176,7 @@ namespace Lumina
 
             const FStringView Base = Stem.substr(0, Stem.size() - ConfigTail.size());
 
-            for (const char* Type : { "Editor", "Program" })
+            for (const char* Type : { "Editor", "Program", "Server" })
             {
                 FString TypeTail = "-";
                 TypeTail.append(Type);
@@ -224,14 +228,19 @@ namespace Lumina
             return Names;
         }
 
-        // The module a "<Module>-<Config>" binary belongs to, or empty for a binary without the suffix.
+        // The module a "<Module>-<Config>" or "<Module>-Server-<Config>" binary belongs to, or empty for one without the suffix.
         FStringView ModuleOfSuffixedBinary(FStringView Stem)
         {
             for (const char* Cfg : { "-Debug", "-Development", "-Shipping" })
             {
                 if (Stem.ends_with(Cfg))
                 {
-                    return Stem.substr(0, Stem.size() - strlen(Cfg));
+                    FStringView Module = Stem.substr(0, Stem.size() - strlen(Cfg));
+                    if (Module.ends_with("-Server"))
+                    {
+                        Module = Module.substr(0, Module.size() - strlen("-Server"));
+                    }
+                    return Module;
                 }
             }
             return {};
@@ -245,7 +254,7 @@ namespace Lumina
             {
                 return true;
             }
-            return ConfigSuffix == FStringView("Shipping") && FileName.starts_with("GFSDK_Aftermath");
+            return ConfigSuffix.ends_with("Shipping") && FileName.starts_with("GFSDK_Aftermath");
         }
 
         void RemoveStaleBinaries(FStringView DestDir, const THashSet<FString>& WrittenStems, FStringView ConfigSuffix,
@@ -291,6 +300,7 @@ namespace Lumina
                                   FStringView DestDir,
                                   const FString& ConfigSuffix,
                                   FStringView ProjectName,
+                                  FStringView ExecutableName,
                                   const THashSet<FString>* AllowedModules,
                                   THashSet<FString>& WrittenStems,
                                   const TFunction<void(FStringView)>& LogFunc,
@@ -387,11 +397,11 @@ namespace Lumina
                     return;
                 }
 
-                // Rename launcher to <ProjectName>.exe; safe because it never reads its own filename.
+                // Renamed to the package name, which is also how the executable finds its <Name>_Data folder.
                 FString DstName(FileName.data(), FileName.size());
-                if (bExe && !ProjectName.empty())
+                if (bExe && !ExecutableName.empty())
                 {
-                    DstName.assign(ProjectName.data(), ProjectName.size());
+                    DstName.assign(ExecutableName.data(), ExecutableName.size());
                     DstName.append(".exe");
                 }
 
@@ -625,8 +635,11 @@ namespace Lumina
         const FString ProjectDir = Options.ProjectDirectory;
         const FString BuildTool  = EngineDir + "/LuminaBuild.bat";
 
+        const FString Tail = BinaryTail(Config, Options.bServer);
+        const FString PackageName = GetPackageName(ProjectName, Options.bServer);
+
         FString Args = FString(ProjectName.data(), ProjectName.size());
-        Args += " -TargetType=Game";
+        Args += Options.bServer ? " -TargetType=Server" : " -TargetType=Game";
         Args += " -Configuration=" + Config;
 
         if (!ProjectDir.empty())
@@ -674,7 +687,7 @@ namespace Lumina
         FMonolithicCopy EngineCopy = Monolithic;
         EngineCopy.bCopyExecutable = !Monolithic.bEnabled;
 
-        const FString DataDir = GetDataDirectory(FStringView(DestDir.c_str(), DestDir.size()), ProjectName);
+        const FString DataDir = GetDataDirectory(FStringView(DestDir.c_str(), DestDir.size()), FStringView(PackageName.c_str(), PackageName.size()));
         Monolithic.PluginsDirectory = Join(DataDir, "Plugins");
         EngineCopy.PluginsDirectory = Monolithic.PluginsDirectory;
 
@@ -682,7 +695,8 @@ namespace Lumina
         RemoveOldPayload(DestDir, DataDir, LogFunc);
 
         THashSet<FString> WrittenStems;
-        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, &EngineModules, WrittenStems, LogFunc, EngineCopy);
+        const FStringView ExecutableName(PackageName.c_str(), PackageName.size());
+        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Tail, ProjectName, ExecutableName, &EngineModules, WrittenStems, LogFunc, EngineCopy);
 
         // Project modules link into the project tree, while engine binaries stay shared where they are.
         if (!ProjectBinaries.empty() && Filesystem::Exists(ProjectBinaries))
@@ -690,7 +704,7 @@ namespace Lumina
             LogPackager(LogFunc, Format("Copying project binaries from {}",
                 ProjectBinaries.c_str()).c_str());
 
-            Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, nullptr, WrittenStems, LogFunc, Monolithic);
+            Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Tail, ProjectName, ExecutableName, nullptr, WrittenStems, LogFunc, Monolithic);
         }
 
         if (Copied == 0)
@@ -699,13 +713,23 @@ namespace Lumina
             return Result;
         }
         LogPackager(LogFunc, Format("Copied {} runtime files.", Copied).c_str());
-        RemoveStaleBinaries(DestDir, WrittenStems, FStringView(Config.c_str(), Config.size()), LogFunc);
+        RemoveStaleBinaries(DestDir, WrittenStems, FStringView(Tail.c_str(), Tail.size()), LogFunc);
 
         // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
         CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DataDir, !(Config == "Shipping"), LogFunc);
 
         Result.bSuccess = true;
         return Result;
+    }
+
+    FString FProjectPackager::GetPackageName(FStringView ProjectName, bool bServer)
+    {
+        FString Name(ProjectName.data(), ProjectName.size());
+        if (bServer)
+        {
+            Name += "Server";
+        }
+        return Name;
     }
 
     FString FProjectPackager::GetDataDirectory(FStringView OutputDirectory, FStringView ProjectName)
@@ -742,11 +766,12 @@ namespace Lumina
         }
 
         const FString ProjectName(GEngine->GetProjectName().data(), GEngine->GetProjectName().size());
+        const FString PackageName = GetPackageName(FStringView(ProjectName.c_str(), ProjectName.size()), Options.bServer);
 
         FString OutDir = Options.OutputDirectory;
         if (OutDir.empty())
         {
-            OutDir = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/" + ProjectName;
+            OutDir = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size()) + "/Build/" + PackageName;
         }
 
         if (!Filesystem::MakeDirectoryTree(OutDir))
@@ -758,7 +783,7 @@ namespace Lumina
 
         LogPackager(LogFunc, Format("Output directory: {}", OutDir.c_str()).c_str());
 
-        const FString PakPath = GetPakPath(FStringView(OutDir.c_str(), OutDir.size()), FStringView(ProjectName.c_str(), ProjectName.size()));
+        const FString PakPath = GetPakPath(FStringView(OutDir.c_str(), OutDir.size()), FStringView(PackageName.c_str(), PackageName.size()));
         RemoveOldPaks(OutDir, LogFunc);
         LogPackager(LogFunc, Format("Cooking PAK: {}", PakPath.c_str()).c_str());
 
@@ -780,7 +805,7 @@ namespace Lumina
         if (Options.bExtractScriptsAsLooseFiles)
         {
             LogPackager(LogFunc, "Extracting loose /Game files...");
-            const size_t Extracted = CopyLooseScripts(GetDataDirectory(FStringView(OutDir.c_str(), OutDir.size()), FStringView(ProjectName.c_str(), ProjectName.size())), LogFunc);
+            const size_t Extracted = CopyLooseScripts(GetDataDirectory(FStringView(OutDir.c_str(), OutDir.size()), FStringView(PackageName.c_str(), PackageName.size())), LogFunc);
             LogPackager(LogFunc, Format("Extracted {} loose script files.", Extracted).c_str());
         }
 

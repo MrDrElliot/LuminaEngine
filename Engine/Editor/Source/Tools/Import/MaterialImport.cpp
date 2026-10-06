@@ -22,6 +22,7 @@
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Math.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_TextureSample.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialOutputNode.h"
+#include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Tools/Import/ImportPaths.h"
 #include "Containers/StringFormat.h"
@@ -531,6 +532,193 @@ namespace Lumina
             FFixedString Reserved = Import::PathReservations::Reserve(Path);
             return Reserved.empty() ? Path : Reserved;
         }
+
+        // An asset an earlier import left at Path, whether it is already loaded or still only on disk.
+        template<typename T>
+        T* FindExistingAsset(const FFixedString& Path)
+        {
+            FFixedString OnDisk = Path;
+            CPackage::AddPackageExt(OnDisk);
+            if (FindObject<CPackage>(Path) == nullptr && !VFS::Exists(OnDisk))
+            {
+                return nullptr;
+            }
+            return LoadObject<T>(OnDisk);
+        }
+
+        // Numbered siblings are what EnsureUniquePath hands out, so a match can sit past the first few.
+        constexpr uint32 kMaxReuseCandidates = 32;
+
+        struct FInstanceParam
+        {
+            FName                   Name;
+            EMaterialParameterType  Type    = EMaterialParameterType::Scalar;
+            float                   Scalar  = 0.0f;
+            FVector4                Vector  = FVector4(0.0f);
+            CTexture*               Texture = nullptr;
+        };
+
+        // Every override an instance of Src carries, so a new instance and an earlier one compare on the same terms.
+        TVector<FInstanceParam> BuildInstanceParams(const FMeshImportMaterial& Src, TSpan<CTexture* const> ImageAssets, uint32 FeatureSignature)
+        {
+            TVector<FInstanceParam> Params;
+            auto Scalar = [&](const FName& Name, float Value)
+            {
+                Params.push_back({ Name, EMaterialParameterType::Scalar, Value });
+            };
+            auto Vector = [&](const FName& Name, const FVector4& Value)
+            {
+                FInstanceParam Param{ Name, EMaterialParameterType::Vector };
+                Param.Vector = Value;
+                Params.push_back(Param);
+            };
+
+            Vector("BaseColorFactor", Src.BaseColorFactor);
+            Scalar("MetallicFactor", Src.MetallicFactor);
+            Scalar("RoughnessFactor", Src.RoughnessFactor);
+            if ((FeatureSignature & MFB_Emissive) != 0)
+            {
+                Vector("EmissiveColor", FVector4(Src.EmissiveColor.x, Src.EmissiveColor.y, Src.EmissiveColor.z, 1.0f));
+            }
+
+            // A channel with no image keeps the neutral default, and a failed cook warns since it flattens the look.
+            auto Texture = [&](const FName& Name, int32 ImageIndex)
+            {
+                if (ImageIndex < 0)
+                {
+                    return;
+                }
+                CTexture* Resolved = ((size_t)ImageIndex < ImageAssets.size()) ? ImageAssets[ImageIndex] : nullptr;
+                if (Resolved == nullptr)
+                {
+                    LOG_WARN("[MaterialImport] '{}' texture '{}' (image {}) did not resolve; using neutral default.", Src.Name, Name, ImageIndex);
+                    return;
+                }
+                FInstanceParam Param{ Name, EMaterialParameterType::Texture };
+                Param.Texture = Resolved;
+                Params.push_back(Param);
+            };
+
+            Texture("BaseColorTexture", Src.BaseColorImage);
+            if (UsesSplitMetalRough(Src))
+            {
+                Texture("MetallicTexture", Src.MetallicImage);
+                Texture("RoughnessTexture", Src.RoughnessImage);
+            }
+            else
+            {
+                Texture("MetallicRoughnessTexture", Src.MetallicRoughnessImage);
+            }
+            Texture("NormalTexture", Src.NormalImage);
+            if ((FeatureSignature & MFB_EmissiveTexture) != 0)
+            {
+                Texture("EmissiveTexture", Src.EmissiveImage);
+            }
+            Texture("OcclusionTexture", Src.OcclusionImage);
+
+            // The master bakes only which set and whether a chain exists, so scale and offset stay per-instance.
+            const uint32 UVSignature = BuildUVSignature(Src);
+            for (size_t Slot = 0; Slot < (size_t)EMaterialTextureSlot::Count; ++Slot)
+            {
+                if (((UVSignature >> (Slot * 2 + 1)) & 0x1u) == 0)
+                {
+                    continue;
+                }
+                const FTextureUVTransform& UVT = Src.UVTransforms[Slot];
+                const FString Stem = GSlotNames[Slot];
+                Vector(FName((Stem + "UVScale").c_str()), FVector4(UVT.Scale.x, UVT.Scale.y, 0.0f, 0.0f));
+                Vector(FName((Stem + "UVOffset").c_str()), FVector4(UVT.Offset.x, UVT.Offset.y, 0.0f, 0.0f));
+                // Radians, which is what the TexCoords Rotation pin expects.
+                Scalar(FName((Stem + "UVRotation").c_str()), UVT.Rotation);
+            }
+
+            if ((FeatureSignature & MFB_NormalScale) != 0)
+            {
+                Scalar("NormalScale", Src.NormalScale);
+            }
+            if ((FeatureSignature & MFB_OcclusionStrength) != 0)
+            {
+                Scalar("OcclusionStrength", Src.OcclusionStrength);
+            }
+            if ((FeatureSignature & MFB_Specular) != 0)
+            {
+                Scalar("Specular", ComputeEngineSpecular(Src));
+            }
+            if ((FeatureSignature & MFB_Clearcoat) != 0)
+            {
+                Scalar("Clearcoat", Src.ClearcoatFactor);
+                Scalar("ClearcoatRoughness", Src.ClearcoatRoughness);
+            }
+            if (ToBlendMode(Src.AlphaMode) != EBlendMode::Opaque)
+            {
+                Scalar("OpacityFactor", Src.BaseColorFactor.w);
+            }
+            return Params;
+        }
+
+        void ApplyInstanceParams(CMaterialInstance* Instance, const TVector<FInstanceParam>& Params)
+        {
+            for (const FInstanceParam& Param : Params)
+            {
+                switch (Param.Type)
+                {
+                case EMaterialParameterType::Scalar:  Instance->SetScalarValue(Param.Name, Param.Scalar);   break;
+                case EMaterialParameterType::Vector:  Instance->SetVectorValue(Param.Name, Param.Vector);   break;
+                case EMaterialParameterType::Texture: Instance->SetTextureValue(Param.Name, Param.Texture); break;
+                }
+            }
+        }
+
+        // Exact on purpose, since two sources that merely share a name ("lambert1", "Material") must not merge.
+        bool InstanceMatches(const CMaterialInstance& Candidate, const CMaterial* Master, const TVector<FInstanceParam>& Params)
+        {
+            if (Candidate.Material.Get() != Master)
+            {
+                return false;
+            }
+
+            size_t EnabledOverrides = 0;
+            for (const FMaterialParameterOverride& Override : Candidate.Overrides)
+            {
+                EnabledOverrides += Override.bEnabled ? 1 : 0;
+            }
+            if (EnabledOverrides != Params.size())
+            {
+                return false;
+            }
+
+            for (const FInstanceParam& Param : Params)
+            {
+                const FMaterialParameterOverride* Override = Candidate.FindOverride(Param.Name);
+                if (Override == nullptr || !Override->bEnabled || Override->Type != Param.Type)
+                {
+                    return false;
+                }
+                switch (Param.Type)
+                {
+                case EMaterialParameterType::Scalar:
+                    if (Math::Abs(Override->Scalar - Param.Scalar) > 1e-5f)
+                    {
+                        return false;
+                    }
+                    break;
+                case EMaterialParameterType::Vector:
+                    if (Math::Abs(Override->Vector.x - Param.Vector.x) > 1e-5f || Math::Abs(Override->Vector.y - Param.Vector.y) > 1e-5f
+                        || Math::Abs(Override->Vector.z - Param.Vector.z) > 1e-5f || Math::Abs(Override->Vector.w - Param.Vector.w) > 1e-5f)
+                    {
+                        return false;
+                    }
+                    break;
+                case EMaterialParameterType::Texture:
+                    if (Override->Texture.Get() != Param.Texture)
+                    {
+                        return false;
+                    }
+                    break;
+                }
+            }
+            return true;
+        }
     }
 
     namespace Import::Materials
@@ -551,37 +739,36 @@ namespace Lumina
                 return Instances;
             }
 
-            // Prefix follows the asset convention, and Variant is an already-clean tag appended after the core.
-            auto MakeAssetPath = [&](FStringView Prefix, FStringView Variant) -> FFixedString
+            // Shared by every import into MaterialsDir, so a folder of meshes carries one pair rather than one per file.
+            TObjectPtr<CTexture> White;
+            TObjectPtr<CTexture> FlatNormal;
+            bool bDefaultsResolved = false;
+            auto ResolveDefaults = [&]()
             {
-                FFixedString Path = MaterialsDir;
-                Path.append(Import::MakeAssetName(Prefix, BaseName.c_str()).c_str());
-                Path.append(Variant.data(), Variant.length());
-                return Path;
-            };
-
-            // Held as strong pins, since a mid-loop teardown would leave later masters building on dangling pointers.
-            TObjectPtr<CTexture> White = CTextureFactory::CreateSolidColorTexture(
-                EnsureUniquePath(MakeAssetPath("T_", "_DefaultWhite")), 255, 255, 255, 255, ETextureColorSpace::Linear);
-            TObjectPtr<CTexture> FlatNormal = CTextureFactory::CreateSolidColorTexture(
-                EnsureUniquePath(MakeAssetPath("T_", "_DefaultFlatNormal")), 128, 128, 255, 255, ETextureColorSpace::Linear);
-
-            bool bDefaultsRegistered = false;
-            auto RegisterSharedDefaults = [&]()
-            {
-                if (bDefaultsRegistered)
+                if (bDefaultsResolved)
                 {
                     return;
                 }
-                bDefaultsRegistered = true;
-                if (White)
+                bDefaultsResolved = true;
+
+                auto FindOrCreate = [&](const char* Name, uint8 R, uint8 G, uint8 B) -> TObjectPtr<CTexture>
                 {
-                    OutCreated.push_back(White.Get());
-                }
-                if (FlatNormal)
-                {
-                    OutCreated.push_back(FlatNormal.Get());
-                }
+                    FFixedString Path = MaterialsDir;
+                    Path.append(Name);
+                    if (CTexture* Existing = FindExistingAsset<CTexture>(Path))
+                    {
+                        return Existing;
+                    }
+                    TObjectPtr<CTexture> Created = CTextureFactory::CreateSolidColorTexture(EnsureUniquePath(Path), R, G, B, 255, ETextureColorSpace::Linear);
+                    // Pushed ahead of any master, so reverse-order teardown frees masters before their textures.
+                    if (Created)
+                    {
+                        OutCreated.push_back(Created.Get());
+                    }
+                    return Created;
+                };
+                White = FindOrCreate("T_ImportDefaultWhite", 255, 255, 255);
+                FlatNormal = FindOrCreate("T_ImportDefaultFlatNormal", 128, 128, 255);
             };
 
             // One master per distinct render state (instances can only diverge in parameters, not blend/two-sided).
@@ -622,15 +809,19 @@ namespace Lumina
                     }
                 }
 
-                // One master per distinct render state, with the M_ prefix replacing the old _Material tag.
+                // The name spells out everything the graph is built from, so it alone identifies a reusable master.
                 FFixedString Variant;
                 if (Blend == EBlendMode::Masked)           { Variant.append("_Masked"); }
                 else if (Blend == EBlendMode::Translucent) { Variant.append("_Translucent"); }
                 else if (Blend == EBlendMode::Additive)    { Variant.append("_Additive"); }
+                if (Blend == EBlendMode::Masked && Math::Abs(Cutoff - 0.5f) > 0.001f)
+                {
+                    Variant.append("_C");
+                    Variant.append(Format("{}", (int32)Math::Round(Cutoff * 1000.0f)));
+                }
                 if (Shading == EMaterialShadingModel::Unlit)     { Variant.append("_Unlit"); }
                 if (Shading == EMaterialShadingModel::Clearcoat) { Variant.append("_Clearcoat"); }
                 if (bTwoSided)                               { Variant.append("_TwoSided"); }
-                // Two masters differing only in UV topology or feature set would otherwise fight for one name.
                 if (UVSignature != 0)
                 {
                     Variant.append("_UV");
@@ -647,7 +838,20 @@ namespace Lumina
                     Variant.append(Format("{}", FeatureSignature));
                 }
 
-                CMaterial* Master = CFactory::CreateNewOf<CMaterial>(EnsureUniquePath(MakeAssetPath("M_", Variant)));
+                FFixedString MasterPath = MaterialsDir;
+                MasterPath.append("M_Imported");
+                MasterPath.append(Variant.c_str());
+
+                CMaterial* Existing = FindExistingAsset<CMaterial>(MasterPath);
+                if (Existing != nullptr && Existing->MaterialType == EMaterialType::PBR && Existing->BlendMode == Blend
+                    && Existing->ShadingModel == Shading && Existing->bTwoSided == bTwoSided
+                    && (Blend != EBlendMode::Masked || Math::Abs(Existing->OpacityMaskClipValue - Cutoff) < 0.001f))
+                {
+                    Groups.push_back({ Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature, FeatureSignature, Existing });
+                    return Existing;
+                }
+
+                CMaterial* Master = CFactory::CreateNewOf<CMaterial>(EnsureUniquePath(MasterPath));
                 if (Master == nullptr)
                 {
                     return nullptr;
@@ -656,10 +860,10 @@ namespace Lumina
                 // glTF BLEND legitimately means blend, so cutout foliage silently pays for forward shading.
                 if (Blend == EBlendMode::Translucent)
                 {
-                    LOG_WARN("[Import] '{}' imported as TRANSLUCENT (source alpha mode = BLEND). Translucency "
+                    LOG_WARN("[Import] '{}' imported as translucent (source alpha mode is BLEND). Translucency "
                              "is forward shaded through OIT and cannot be occlusion-culled. If "
                              "this is cutout geometry (foliage, fences, decals on cards), set Blend Mode to "
-                             "Masked -- and tick Two Sided, which Translucent gets implicitly and Masked does not.",
+                             "Masked and tick Two Sided, which Translucent gets implicitly and Masked does not.",
                              Master->GetName());
                 }
 
@@ -672,6 +876,7 @@ namespace Lumina
                     Master->OpacityMaskClipValue = Cutoff;
                 }
 
+                ResolveDefaults();
                 CMaterialNodeGraph* Graph = MaterialGraphBuilder::CreateHeadlessGraph(Master);
                 BuildPBRGraph(Graph, White.Get(), FlatNormal.Get(), Blend != EBlendMode::Opaque,
                               UVSignature, Src.Samplers, FeatureSignature);
@@ -681,7 +886,7 @@ namespace Lumina
                 {
                     // Named even with no errors, since an empty list is exactly what used to drop a master silently.
                     LOG_ERROR("[MaterialImport] Generated PBR material '{}' failed to compile ({} error(s)); "
-                              "every surface using it will import with NO material.",
+                              "every surface using it will import without a material.",
                               Master->GetName(), (uint32)CompileResult.Errors.size());
                     for (const EdNodeGraph::FError& Error : CompileResult.Errors)
                     {
@@ -694,10 +899,7 @@ namespace Lumina
                     return nullptr;
                 }
 
-                // Registered ahead of the first master, so reverse-order teardown frees masters before textures.
-                RegisterSharedDefaults();
-
-                // Master THEN graph, so reverse-order teardown releases the back-ref before the master is freed.
+                // Master before graph, so reverse-order teardown releases the back-ref before the master is freed.
                 OutCreated.push_back(Master);
                 OutCreated.push_back(Graph);
                 Groups.push_back({ Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature,
@@ -706,6 +908,7 @@ namespace Lumina
             };
 
             Instances.resize(SourceMaterials.size(), nullptr);
+            uint32 Reused = 0;
 
             for (size_t i = 0; i < SourceMaterials.size(); ++i)
             {
@@ -715,117 +918,59 @@ namespace Lumina
                 if (Master == nullptr)
                 {
                     LOG_ERROR("[MaterialImport] source material '{}' produced no master; meshes using it "
-                              "import with an EMPTY material slot.", Src.Name);
+                              "import with an empty material slot.", Src.Name);
                     continue;
                 }
 
-                // The folder already scopes the instance, so the name only needs cleaning.
-                FFixedString InstPath = MaterialsDir;
-                InstPath.append(Import::MakeAssetName("MI_", Src.Name.c_str(), "Material").c_str());
-                InstPath = EnsureUniquePath(InstPath);
+                const uint32 FeatureSignature = BuildFeatureSignature(Src, bSourceHasVertexColors);
+                const TVector<FInstanceParam> Params = BuildInstanceParams(Src, ImageAssets, FeatureSignature);
 
-                CMaterialInstance* Instance = CFactory::CreateNewOf<CMaterialInstance>(InstPath);
+                // The folder already scopes the instance, so the name only needs cleaning.
+                FFixedString BasePath = MaterialsDir;
+                BasePath.append(Import::MakeAssetName("MI_", Src.Name.c_str(), "Material").c_str());
+
+                // An identical instance from an earlier import, or from earlier in this one, is shared rather than copied.
+                CMaterialInstance* Instance = nullptr;
+                for (uint32 N = 0; N < kMaxReuseCandidates && Instance == nullptr; ++N)
+                {
+                    FFixedString Candidate = BasePath;
+                    if (N > 0)
+                    {
+                        Candidate.append("_").append(Format("{}", N).c_str());
+                    }
+                    CMaterialInstance* Existing = FindExistingAsset<CMaterialInstance>(Candidate);
+                    if (Existing != nullptr && InstanceMatches(*Existing, Master, Params))
+                    {
+                        Instance = Existing;
+                    }
+                }
+                if (Instance != nullptr)
+                {
+                    ++Reused;
+                    Instances[i] = Instance;
+                    continue;
+                }
+
+                const FFixedString InstPath = EnsureUniquePath(BasePath);
+                Instance = CFactory::CreateNewOf<CMaterialInstance>(InstPath);
                 if (Instance == nullptr)
                 {
                     LOG_ERROR("[MaterialImport] could not create instance '{}' for source material '{}'; "
-                              "meshes using it import with an EMPTY material slot.", InstPath, Src.Name);
+                              "meshes using it import with an empty material slot.", InstPath, Src.Name);
                     continue;
                 }
 
                 Instance->Material = Master;
-
-                Instance->SetVectorValue("BaseColorFactor", Src.BaseColorFactor);
-                Instance->SetScalarValue("MetallicFactor", Src.MetallicFactor);
-                Instance->SetScalarValue("RoughnessFactor", Src.RoughnessFactor);
-
-                // Set only where the feature signature built the node, keeping this symmetric with the graph.
-                const uint32 FeatureSignature = BuildFeatureSignature(Src, bSourceHasVertexColors);
-                if ((FeatureSignature & MFB_Emissive) != 0)
-                {
-                    Instance->SetVectorValue("EmissiveColor", FVector4(Src.EmissiveColor.x, Src.EmissiveColor.y, Src.EmissiveColor.z, 1.0f));
-                }
-
-                // A channel with no image keeps the neutral default, and a failed cook warns since it flattens the look.
-                auto BindTexture = [&](const FName& Param, int32 ImageIndex)
-                {
-                    if (ImageIndex < 0)
-                    {
-                        return;
-                    }
-                    CTexture* Texture = ((size_t)ImageIndex < ImageAssets.size()) ? ImageAssets[ImageIndex] : nullptr;
-                    if (Texture != nullptr)
-                    {
-                        Instance->SetTextureValue(Param, Texture);
-                    }
-                    else
-                    {
-                        LOG_WARN("[MaterialImport] '{}' texture '{}' (image {}) did not resolve; using neutral default.", Src.Name, Param, ImageIndex);
-                    }
-                };
-
-                BindTexture("BaseColorTexture", Src.BaseColorImage);
-                if (UsesSplitMetalRough(Src))
-                {
-                    BindTexture("MetallicTexture", Src.MetallicImage);
-                    BindTexture("RoughnessTexture", Src.RoughnessImage);
-                }
-                else
-                {
-                    BindTexture("MetallicRoughnessTexture", Src.MetallicRoughnessImage);
-                }
-                BindTexture("NormalTexture", Src.NormalImage);
-                if ((FeatureSignature & MFB_EmissiveTexture) != 0)
-                {
-                    BindTexture("EmissiveTexture", Src.EmissiveImage);
-                }
-                BindTexture("OcclusionTexture", Src.OcclusionImage);
-
-                // The master bakes only WHICH set and whether a chain exists, so scale and offset stay per-instance.
-                const uint32 UVSignature = BuildUVSignature(Src);
-                for (size_t Slot = 0; Slot < (size_t)EMaterialTextureSlot::Count; ++Slot)
-                {
-                    if (((UVSignature >> (Slot * 2 + 1)) & 0x1u) == 0)
-                    {
-                        continue;
-                    }
-
-                    const FTextureUVTransform& UVT = Src.UVTransforms[Slot];
-                    const FString Stem = GSlotNames[Slot];
-                    Instance->SetVectorValue(FName((Stem + "UVScale").c_str()),
-                                             FVector4(UVT.Scale.x, UVT.Scale.y, 0.0f, 0.0f));
-                    Instance->SetVectorValue(FName((Stem + "UVOffset").c_str()),
-                                             FVector4(UVT.Offset.x, UVT.Offset.y, 0.0f, 0.0f));
-                    // Radians, which is what the TexCoords Rotation pin expects.
-                    Instance->SetScalarValue(FName((Stem + "UVRotation").c_str()), UVT.Rotation);
-                }
-
-                if ((FeatureSignature & MFB_NormalScale) != 0)
-                {
-                    Instance->SetScalarValue("NormalScale", Src.NormalScale);
-                }
-                if ((FeatureSignature & MFB_OcclusionStrength) != 0)
-                {
-                    Instance->SetScalarValue("OcclusionStrength", Src.OcclusionStrength);
-                }
-                if ((FeatureSignature & MFB_Specular) != 0)
-                {
-                    Instance->SetScalarValue("Specular", ComputeEngineSpecular(Src));
-                }
-                if ((FeatureSignature & MFB_Clearcoat) != 0)
-                {
-                    Instance->SetScalarValue("Clearcoat", Src.ClearcoatFactor);
-                    Instance->SetScalarValue("ClearcoatRoughness", Src.ClearcoatRoughness);
-                }
-
-                if (ToBlendMode(Src.AlphaMode) != EBlendMode::Opaque)
-                {
-                    Instance->SetScalarValue("OpacityFactor", Src.BaseColorFactor.w);
-                }
-
+                ApplyInstanceParams(Instance, Params);
                 Instance->PostLoad();
 
                 OutCreated.push_back(Instance);
                 Instances[i] = Instance;
+            }
+
+            if (Reused > 0)
+            {
+                LOG_INFO("[MaterialImport] '{}' reused {} of {} material instance(s) already in {}.", BaseName, Reused, (uint32)SourceMaterials.size(), MaterialsDir);
             }
 
             return Instances;

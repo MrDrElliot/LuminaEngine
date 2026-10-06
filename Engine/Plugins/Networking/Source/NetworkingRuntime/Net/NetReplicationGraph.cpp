@@ -98,9 +98,11 @@ namespace Lumina::NetGraph
                     }
                     else
                     {
-                        Pos   = T.WorldTransform.GetLocation();
-                        Rot   = T.WorldTransform.GetRotation();
-                        Scale = T.WorldTransform.GetScale();
+                        // A flat entity never writes WorldTransform, so the raw field would freeze at its spawn pose.
+                        const FTransform& World = T.GetWorldTransformCached();
+                        Pos   = World.GetLocation();
+                        Rot   = World.GetRotation();
+                        Scale = World.GetScale();
                     }
 
                     const NetQuantize::FQuantizedVector QPos   = NetQuantize::FQuantizedVector::FromVector(Pos);

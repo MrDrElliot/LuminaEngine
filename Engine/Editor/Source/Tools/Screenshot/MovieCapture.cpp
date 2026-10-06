@@ -18,6 +18,9 @@ namespace Lumina::MovieCapture
     {
         constexpr const char* FixedDeltaVariable = "Core.FixedDeltaTime";
 
+        // The renderer only resizes to an exact view once the size has held for 8 frames, so the letterboxed view needs a few more.
+        constexpr uint32 LetterboxSettleFrames = 12;
+
         struct FState
         {
             FSettings     Settings;
@@ -179,9 +182,12 @@ namespace Lumina::MovieCapture
                 S.Status.OutputPath.empty() ? FString() : FString(" to ") + S.Status.OutputPath,
                 S.Status.Error.empty() ? FString() : FString(", ") + S.Status.Error);
 
-            if (S.Settings.OnRecordingFinished)
+            TFunction<void()> Callback = Move(S.Settings.OnRecordingFinished);
+
+            // Released now rather than at exit, since a callback's code can live in a plugin that unloads before statics are destroyed.
+            S.Settings = FSettings{};
+            if (Callback)
             {
-                TFunction<void()> Callback = Move(S.Settings.OnRecordingFinished);
                 Callback();
             }
         }
@@ -244,7 +250,7 @@ namespace Lumina::MovieCapture
         S.Status.OutputPath = Settings.OutputPath;
         S.Status.PngDirectory = Settings.PngDirectory;
         S.Status.bAudio = S.bOfflineAudio;
-        S.WarmupRemaining = Settings.WarmupFrames;
+        S.WarmupRemaining = Math::Max(Settings.WarmupFrames, LetterboxSettleFrames);
         S.bStartedCallback = false;
 
         // Every frame advances the game by exactly one video frame, however long it takes to draw and encode.
@@ -268,6 +274,12 @@ namespace Lumina::MovieCapture
     FStatus GetStatus()
     {
         return State().Status;
+    }
+
+    float GetRecordingAspect()
+    {
+        const FState& S = State();
+        return S.Status.bActive ? (float)S.Settings.Width / (float)S.Settings.Height : 0.0f;
     }
 
     void Tick()

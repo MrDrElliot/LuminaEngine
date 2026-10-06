@@ -21,7 +21,7 @@ public class LuminaTarget : LuminaTargetRules
         // A shipping game links every module into one executable. Editor targets stay modular
         // even in Shipping: Runtime and Editor each carry their own copy of the stb_image_write
         // implementation, which is fine in separate images and a duplicate symbol in one.
-        bMonolithic = Target.Configuration == BuildConfiguration.Shipping && Target.Type == TargetType.Game;
+        bMonolithic = Target.Configuration == BuildConfiguration.Shipping && (Target.Type == TargetType.Game || Target.Type == TargetType.Server);
 
         // The managed engine API. Not linked, but the editor loads it at startup, so a build that
         // skipped it would leave C# scripting silently dead.

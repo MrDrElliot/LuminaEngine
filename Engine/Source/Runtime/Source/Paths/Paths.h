@@ -56,6 +56,9 @@ namespace Lumina::Paths
     /** The engine's game application, which a package ships and a standalone launch runs. */
     RUNTIME_API FFixedString MakeGameApplicationName();
 
+    // The dedicated server build of the engine application, which packaging stages as a separate executable.
+    RUNTIME_API FFixedString MakeServerApplicationName();
+
     /** Module file name as a Game target builds it, which is not what an editor process is named. */
     RUNTIME_API FFixedString MakeGameModuleFileName(FStringView ModuleName);
 

@@ -681,6 +681,7 @@ public sealed class TargetAssembler
         Definitions.AddRange(PlatformSupport.GetPlatformDefinitions(Info));
         Definitions.AddRange(TargetRules.GlobalDefinitions);
         Definitions.Add($"WITH_EDITOR={(Info.bWithEditor ? 1 : 0)}");
+        Definitions.Add($"WITH_SERVER={(Info.bWithServer ? 1 : 0)}");
 
         // Read here rather than in the rules so it still matches after a target overrides the suffix.
         Definitions.Add($"LUMINA_BINARY_SUFFIX=\"{TargetRules.OutputSuffix}\"");

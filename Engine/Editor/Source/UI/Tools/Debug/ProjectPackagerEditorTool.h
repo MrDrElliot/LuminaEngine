@@ -67,9 +67,13 @@ namespace Lumina
         void AppendLog(FStringView Line);
         void ClearLog();
 
+        FString DefaultOutputDir(bool bForServer) const;
+        FString PackageName() const;
+
         FString             OutputDir;          // editable; defaults set on first draw
         int32               ConfigIndex     = 0; // 0=Shipping, 1=Development, 2=Debug
         bool                bExtractScriptsLoose = false;
+        bool                bServer              = false;
         TVector<FString>    ExtraFiles;
         TVector<FString>    ExtraDirectories;
         int32               SelectedExtraFile      = -1;

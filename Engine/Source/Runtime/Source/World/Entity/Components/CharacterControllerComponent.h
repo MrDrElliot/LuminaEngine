@@ -110,6 +110,10 @@ namespace Lumina
         PROPERTY(ReadOnly)
         bool bJumpPressed = false;
 
+        // Game-defined bits that ride with each predicted move, so the host reads the owner's held buttons here.
+        PROPERTY(NoSerialize, Category = "Network")
+        uint32 Buttons = 0;
+
         // Transient Launch/Teleport requests, latched into the movement
         // component before the physics step (same path as bJumpPressed).
         FVector3 PendingLaunchVelocity     = FVector3(0.0f);

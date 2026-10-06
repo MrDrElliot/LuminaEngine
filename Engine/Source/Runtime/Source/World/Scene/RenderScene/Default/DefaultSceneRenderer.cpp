@@ -2078,7 +2078,71 @@ namespace Lumina
         return Alloc.Gpu;
     }
 
-    RHI::FPipelineH FDefaultSceneRenderer::GetOrCreatePipeline(const FGraphicsPipelineKey& Key)
+    namespace
+    {
+        uint64 HashComputeKey(FShaderH CS, TSpan<const RHI::FSpecializationConstant> Constants)
+        {
+            size_t Seed = 0;
+            Hash::HashCombine(Seed, CS.Handle);
+            Hash::HashCombine(Seed, 0xC0C0C0C0ull);   // disambiguate from graphics keys
+            for (const RHI::FSpecializationConstant& Constant : Constants)
+            {
+                Hash::HashCombine(Seed, Constant.ConstantID);
+                Hash::HashCombine(Seed, Constant.AsInt);
+                Hash::HashCombine(Seed, (uint32)Constant.Type);
+            }
+            return Seed;
+        }
+
+        // An owned copy of one stage, since the library may free the entry before a background build reads it.
+        struct FStageCopy
+        {
+            TVector<uint32> Spirv;
+            FName           Path;
+
+            bool IsSet() const { return !Spirv.empty(); }
+
+            RHI::FShaderSource Source() const
+            {
+                if (Spirv.empty())
+                {
+                    return {};
+                }
+                return RHI::FShaderSource
+                {
+                    .Source     = TSpan<const std::byte>(reinterpret_cast<const std::byte*>(Spirv.data()), Spirv.size() * sizeof(uint32)),
+                    .EntryPoint = "main",
+                    .DebugName  = Path.c_str()
+                };
+            }
+        };
+
+        FStageCopy CopyStage(const FShaderEntry* Entry)
+        {
+            return Entry != nullptr ? FStageCopy{ Entry->Spirv, Entry->Path } : FStageCopy{};
+        }
+
+        #if USING(WITH_EDITOR)
+        void PublishEditorPipelineInfo(RHI::FPipelineH Pipeline, FShaderH StatsShader, const FName& Name)
+        {
+            if (!Pipeline)
+            {
+                return;
+            }
+            if (StatsShader != nullptr && !FShaderLibrary::HasPipelineStats(StatsShader))
+            {
+                TVector<RHI::FPipelineStat> Stats;
+                if (RHI::GetPipelineStatistics(Pipeline, Stats))
+                {
+                    FShaderLibrary::PublishPipelineStats(StatsShader, Move(Stats));
+                }
+            }
+            RHI::DumpPipelineISA(Pipeline, Name);
+        }
+        #endif
+    }
+
+    uint64 FDefaultSceneRenderer::HashGraphicsKey(const FGraphicsPipelineKey& Key)
     {
         size_t Seed = 0;
         Hash::HashCombine(Seed, Key.VS.Handle);
@@ -2105,24 +2169,11 @@ namespace Lumina
             Bits = (Bits << 4)  | (uint64)B.ColorWriteMask;
             Hash::HashCombine(Seed, Bits);
         }
+        return Seed;
+    }
 
-        {
-            FReadScopeLock Lock(ScenePipelines().Mutex);
-            auto It = ScenePipelines().Entries.find(Seed);
-            if (It != ScenePipelines().Entries.end())
-            {
-                return It->second.Pipeline;
-            }
-        }
-
-        RHI::FRasterDesc Desc;
-        Desc.Topology         = Key.Topology;
-        Desc.bWireframe       = Key.bWireframe;
-        Desc.bAlphaToCoverage = Key.bAlphaToCoverage;
-        Desc.SampleCount      = Key.SampleCount;
-        Desc.DepthFormat      = Key.DepthFormat;
-        Desc.ColorTargets     = TSpan<const RHI::FColorTarget>(Key.ColorTargets.data(), Key.ColorTargets.size());
-
+    FPipelineBuild FDefaultSceneRenderer::MakeGraphicsBuild(const FGraphicsPipelineKey& Key)
+    {
         // A handle that no longer resolves was freed since the key was built, so bail.
         const FShaderEntry* VSEntry = FShaderLibrary::Resolve(Key.VS);
         const FShaderEntry* PSEntry = FShaderLibrary::Resolve(Key.PS);
@@ -2135,83 +2186,49 @@ namespace Lumina
             return {};
         }
 
-        const RHI::FShaderSource PSSource = PSEntry != nullptr ? PSEntry->Source() : RHI::FShaderSource{};
-
         auto MakeUInt = [](uint32 Id, uint32 Value) -> RHI::FSpecializationConstant
         {
             return RHI::FSpecializationConstant{ .ConstantID = Id, .AsInt = (uint64)Value, .Type = RHI::ESpecializationConstantType::UInt32 };
         };
-        const RHI::FSpecializationConstant SpecConsts[] =
-        {
-            MakeUInt(1, (Key.ShadingFeatures & SF_DebugViews) ? 1u : 0u),
-            MakeUInt(2, (Key.ShadingFeatures & SF_Decals)     ? 1u : 0u),
-            MakeUInt(3, (Key.ShadingFeatures & SF_GTAO)       ? 1u : 0u),
-            MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u),
-            MakeUInt(5, (uint32)Key.SkinnedMode),   // SPEC_SKINNED 0=static, 1=skinned, 2=dynamic
-            MakeUInt(7, (uint32)Key.TriCullMode),   // SPEC_TRI_CULL, per-triangle rejects
-            MakeUInt(8, (uint32)Key.SkyMode),       // SPEC_SKY_MODE, GSkyMode_Runtime = branch at runtime
-        };
-        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 7);
 
-        FWriteScopeLock Lock(ScenePipelines().Mutex);
-        if (auto Existing = ScenePipelines().Entries.find(Seed); Existing != ScenePipelines().Entries.end())
-        {
-            return Existing->second.Pipeline;
-        }
-
-        // Task-less by construction, since MeshletCull.slang compacted before any draw was recorded.
-        RHI::FPipelineH Pipeline = MSEntry != nullptr
-            ? RHI::CreateMeshShaderPipeline(RHI::FShaderSource{}, MSEntry->Source(), PSSource, Desc, Consts)
-            : RHI::CreateGraphicsPipeline(VSEntry->Source(), PSSource, Desc, Consts);
-        ScenePipelines().Entries.emplace(Seed, FScenePipelineCache::FEntry{ Pipeline, { Key.VS, Key.PS, Key.MS } });
-
-#if USING(WITH_EDITOR)
-        if (Key.PS != nullptr && !FShaderLibrary::HasPipelineStats(Key.PS))
-        {
-            TVector<RHI::FPipelineStat> Stats;
-            if (RHI::GetPipelineStatistics(Pipeline, Stats))
-            {
-                FShaderLibrary::PublishPipelineStats(Key.PS, Move(Stats));
-            }
-        }
+        TFixedVector<RHI::FSpecializationConstant, 7> SpecConsts;
+        SpecConsts.push_back(MakeUInt(1, (Key.ShadingFeatures & SF_DebugViews) ? 1u : 0u));
+        SpecConsts.push_back(MakeUInt(2, (Key.ShadingFeatures & SF_Decals)     ? 1u : 0u));
+        SpecConsts.push_back(MakeUInt(3, (Key.ShadingFeatures & SF_GTAO)       ? 1u : 0u));
+        SpecConsts.push_back(MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u));
+        SpecConsts.push_back(MakeUInt(5, (uint32)Key.SkinnedMode));   // SPEC_SKINNED 0=static, 1=skinned, 2=dynamic
+        SpecConsts.push_back(MakeUInt(7, (uint32)Key.TriCullMode));   // SPEC_TRI_CULL, per-triangle rejects
+        SpecConsts.push_back(MakeUInt(8, (uint32)Key.SkyMode));       // SPEC_SKY_MODE, GSkyMode_Runtime = branch at runtime
 
         const FShaderEntry* NamedEntry = PSEntry != nullptr ? PSEntry : (MSEntry != nullptr ? MSEntry : VSEntry);
-        RHI::DumpPipelineISA(Pipeline, NamedEntry->Path);
-#endif
 
-        return Pipeline;
+        return [VS = CopyStage(MSEntry != nullptr ? nullptr : VSEntry), MS = CopyStage(MSEntry), PS = CopyStage(PSEntry),
+                Key, SpecConsts, StatsShader = Key.PS, Name = NamedEntry->Path]() -> RHI::FPipelineH
+        {
+            RHI::FRasterDesc Desc;
+            Desc.Topology         = Key.Topology;
+            Desc.bWireframe       = Key.bWireframe;
+            Desc.bAlphaToCoverage = Key.bAlphaToCoverage;
+            Desc.SampleCount      = Key.SampleCount;
+            Desc.DepthFormat      = Key.DepthFormat;
+            Desc.ColorTargets     = TSpan<const RHI::FColorTarget>(Key.ColorTargets.data(), Key.ColorTargets.size());
+
+            const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts.data(), SpecConsts.size());
+
+            // Task-less by construction, since MeshletCull.slang compacted before any draw was recorded.
+            const RHI::FPipelineH Pipeline = MS.IsSet()
+                ? RHI::CreateMeshShaderPipeline(RHI::FShaderSource{}, MS.Source(), PS.Source(), Desc, Consts)
+                : RHI::CreateGraphicsPipeline(VS.Source(), PS.Source(), Desc, Consts);
+
+            #if USING(WITH_EDITOR)
+            PublishEditorPipelineInfo(Pipeline, StatsShader, Name);
+            #endif
+            return Pipeline;
+        };
     }
 
-    RHI::FPipelineH FDefaultSceneRenderer::GetOrCreateComputePipeline(FShaderH CS,
-        TSpan<const RHI::FSpecializationConstant> Constants)
+    FPipelineBuild FDefaultSceneRenderer::MakeComputeBuild(FShaderH CS, TSpan<const RHI::FSpecializationConstant> Constants)
     {
-        size_t Seed = 0;
-        Hash::HashCombine(Seed, CS.Handle);
-        Hash::HashCombine(Seed, 0xC0C0C0C0ull);   // disambiguate from graphics keys
-        
-        for (const RHI::FSpecializationConstant& Constant : Constants)
-        {
-            Hash::HashCombine(Seed, Constant.ConstantID);
-            Hash::HashCombine(Seed, Constant.AsInt);
-            Hash::HashCombine(Seed, (uint32)Constant.Type);
-        }
-
-        {
-            FReadScopeLock Lock(ScenePipelines().Mutex);
-            auto It = ScenePipelines().Entries.find(Seed);
-            if (It != ScenePipelines().Entries.end())
-            {
-                return It->second.Pipeline;
-            }
-        }
-
-        // See GetOrCreatePipeline for why the write lock spans creation and re-checks.
-        FWriteScopeLock Lock(ScenePipelines().Mutex);
-        if (auto Existing = ScenePipelines().Entries.find(Seed); Existing != ScenePipelines().Entries.end())
-        {
-            return Existing->second.Pipeline;
-        }
-
         const FShaderEntry* CSEntry = FShaderLibrary::Resolve(CS);
         if (CSEntry == nullptr)
         {
@@ -2219,23 +2236,85 @@ namespace Lumina
             return {};
         }
 
-        RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(CSEntry->Source(), Constants);
-        ScenePipelines().Entries.emplace(Seed, FScenePipelineCache::FEntry{ Pipeline, { CS, FShaderH{}, FShaderH{} } });
-
-        #if USING(WITH_EDITOR)
-        if (!FShaderLibrary::HasPipelineStats(CS))
+        TVector<RHI::FSpecializationConstant> OwnedConstants(Constants.begin(), Constants.end());
+        return [Stage = CopyStage(CSEntry), OwnedConstants = Move(OwnedConstants), CS]() -> RHI::FPipelineH
         {
-            TVector<RHI::FPipelineStat> Stats;
-            if (RHI::GetPipelineStatistics(Pipeline, Stats))
-            {
-                FShaderLibrary::PublishPipelineStats(CS, Move(Stats));
-            }
+            const RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(Stage.Source(),
+                TSpan<const RHI::FSpecializationConstant>(OwnedConstants.data(), OwnedConstants.size()));
+
+            #if USING(WITH_EDITOR)
+            PublishEditorPipelineInfo(Pipeline, CS, Stage.Path);
+            #endif
+            return Pipeline;
+        };
+    }
+
+    FShaderH FDefaultSceneRenderer::DefaultMaterialStage(EMaterialShaderStage Stage)
+    {
+        const CMaterial* DefaultMaterial = CMaterial::GetDefaultMaterial();
+        return IsValid(DefaultMaterial) ? DefaultMaterial->GetStage(Stage) : FShaderH{};
+    }
+
+    RHI::FPipelineH FDefaultSceneRenderer::GetOrCreatePipeline(const FGraphicsPipelineKey& Key)
+    {
+        FScenePipelineCache& Cache = ScenePipelines();
+        const uint64 CacheKey = HashGraphicsKey(Key);
+        if (RHI::FPipelineH Found = Cache.Find(CacheKey))
+        {
+            return Found;
         }
 
-        RHI::DumpPipelineISA(Pipeline, CSEntry->Path);
-        #endif
+        const FShaderH Shaders[3] = { Key.VS, Key.PS, Key.MS };
+        return Cache.BuildNow(CacheKey, Shaders, Cache.IsPending(CacheKey) ? FPipelineBuild{} : MakeGraphicsBuild(Key));
+    }
 
-        return Pipeline;
+    RHI::FPipelineH FDefaultSceneRenderer::FindPipeline(const FGraphicsPipelineKey& Key)
+    {
+        FScenePipelineCache& Cache = ScenePipelines();
+        const uint64 CacheKey = HashGraphicsKey(Key);
+        if (RHI::FPipelineH Found = Cache.Find(CacheKey))
+        {
+            return Found;
+        }
+        if (Cache.IsPending(CacheKey))
+        {
+            return {};
+        }
+
+        const FShaderH Shaders[3] = { Key.VS, Key.PS, Key.MS };
+        return Cache.Request(CacheKey, Shaders, MakeGraphicsBuild(Key));
+    }
+
+    RHI::FPipelineH FDefaultSceneRenderer::GetOrCreateComputePipeline(FShaderH CS,
+        TSpan<const RHI::FSpecializationConstant> Constants)
+    {
+        FScenePipelineCache& Cache = ScenePipelines();
+        const uint64 CacheKey = HashComputeKey(CS, Constants);
+        if (RHI::FPipelineH Found = Cache.Find(CacheKey))
+        {
+            return Found;
+        }
+
+        const FShaderH Shaders[3] = { CS, FShaderH{}, FShaderH{} };
+        return Cache.BuildNow(CacheKey, Shaders, Cache.IsPending(CacheKey) ? FPipelineBuild{} : MakeComputeBuild(CS, Constants));
+    }
+
+    RHI::FPipelineH FDefaultSceneRenderer::FindComputePipeline(FShaderH CS,
+        TSpan<const RHI::FSpecializationConstant> Constants)
+    {
+        FScenePipelineCache& Cache = ScenePipelines();
+        const uint64 CacheKey = HashComputeKey(CS, Constants);
+        if (RHI::FPipelineH Found = Cache.Find(CacheKey))
+        {
+            return Found;
+        }
+        if (Cache.IsPending(CacheKey))
+        {
+            return {};
+        }
+
+        const FShaderH Shaders[3] = { CS, FShaderH{}, FShaderH{} };
+        return Cache.Request(CacheKey, Shaders, MakeComputeBuild(CS, Constants));
     }
 
     void FDefaultSceneRenderer::SetViewportScissor(RHI::FCmdListH CL, const FUIntVector2& Extent)

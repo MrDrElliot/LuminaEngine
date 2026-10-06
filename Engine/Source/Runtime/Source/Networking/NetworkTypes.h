@@ -32,20 +32,19 @@ namespace Lumina
         UnreliableSequenced, // No guarantee, but late packets are dropped (sequenced).
     };
 
-    enum class ERpcMode : uint8
+    // Who a script RPC runs on. Mirrors LuminaSharp.Networking.ERpcTarget.
+    enum class ERpcTarget : uint8
     {
-        Server,     // client -> server (authority)
-        Client,     // server -> the owning client
-        Multicast,  // server -> all peers
+        Broadcast = 0, // the host and every client
+        Host      = 1, // the host only
+        Owner     = 2, // the entity's owning connection only
     };
 
-    // Replication condition for a script-replicated field.
-    enum class EScriptRepCondition : uint8
+    // Mirrors LuminaSharp.Networking.ERpcFlags.
+    enum ERpcFlags : uint8
     {
-        Always,      // sent to every client
-        OwnerOnly,   // sent only to the entity's owning client
-        SkipOwner,   // sent to every client except the owner
-        InitialOnly, // sent once, in the spawn baseline; never in dirty updates
+        RpcFlag_None       = 0,
+        RpcFlag_Unreliable = 1 << 0,
     };
 
     enum class EConnectionState : uint8

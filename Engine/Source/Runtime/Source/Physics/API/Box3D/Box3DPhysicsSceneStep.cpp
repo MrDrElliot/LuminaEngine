@@ -545,6 +545,18 @@ namespace Lumina::Physics
             }
             SCharacterPhysicsComponent& Component = *Found;
 
+            // A mirrored character's transform is written by netcode, so physics must not stage over it.
+            if (Component.Character->NetDrive == (uint8)ECharacterNetDrive::FollowTransform)
+            {
+                InterpStaging.Entities[Slot] = Entity;
+                InterpStaging.Flags[Slot] = EInterpFlag::Skip;
+                InterpStaging.PrevPos[Slot] = InterpStaging.CurrPos[Slot] = FVector3(0.0f);
+                InterpStaging.PrevQx[Slot] = InterpStaging.PrevQy[Slot] = InterpStaging.PrevQz[Slot] = 0.0f;
+                InterpStaging.CurrQx[Slot] = InterpStaging.CurrQy[Slot] = InterpStaging.CurrQz[Slot] = 0.0f;
+                InterpStaging.PrevQw[Slot] = InterpStaging.CurrQw[Slot] = 1.0f;
+                return;
+            }
+
             const FVector3 CurrentPosition = Component.Character->Position;
             FQuat CurrentRotation = Component.Character->Rotation;
             FQuat PreviousRotation = Component.LastBodyRotation;
@@ -852,6 +864,7 @@ namespace Lumina::Physics
                 SynchronizeBodies();
                 ApplyDirtyTransforms(FixedTimestep, CollisionSteps - Step, Step == 0);
                 if (Step == 0) { LatchCharacterInput(); }
+                if (CharacterStepHook) { CharacterStepHook(FixedTimestep, false); }
                 ApplyBodyCommands();
 
                 // After the fixed script tick, so input a script sets this step drives this step.
@@ -864,6 +877,7 @@ namespace Lumina::Physics
                 DrainStepEvents();
 
                 UpdateCharacters(FixedTimestep);
+                if (CharacterStepHook) { CharacterStepHook(FixedTimestep, true); }
             }
 
             MonitorBreakableConstraints(FixedTimestep);

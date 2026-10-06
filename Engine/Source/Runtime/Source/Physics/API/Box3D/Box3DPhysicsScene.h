@@ -154,6 +154,16 @@ namespace Lumina::Physics
         void PoseVehicleWheels();
         void StepCharacter(const FCharacterWork& Work, float FixedDt, uint32 ThreadSlot);
         void LatchCharacterInput();
+
+        bool GetCharacterNetState(ECS::FEntity Entity, FCharacterNetState& Out) const override;
+        bool SetCharacterNetState(ECS::FEntity Entity, const FCharacterNetState& State) override;
+        bool SimulateCharacterStep(ECS::FEntity Entity, const FCharacterMoveInput& Input, float FixedDt, bool bReplay) override;
+        void SetCharacterNetDrive(ECS::FEntity Entity, ECharacterNetDrive Drive) override;
+
+        // Teleports and ground seating, shared by the loop and an isolated step. False means no collide-and-solve is owed.
+        bool ResolveCharacterPreStep(ECS::FEntity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement);
+        void FollowTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, SCharacterPhysicsComponent& Physics,
+            SCharacterMovementComponent& Movement, float FixedDt);
         void BuildInterpolatedTransforms(float Alpha);
         void ApplyInterpolatedTransforms();
 

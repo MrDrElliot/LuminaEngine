@@ -376,6 +376,13 @@ namespace Lumina
                 continue;
             }
 
+            // A system's own simulation compiles in the background, and the emitter stays dormant until it lands.
+            const RHI::FPipelineH SimPipeline = Item.bUsesCustomShader ? FindComputePipeline(ComputeShader) : GetOrCreateComputePipeline(ComputeShader);
+            if (!SimPipeline)
+            {
+                continue;
+            }
+
             // Steps are either one per frame or a whole number of fixed steps, preceded by any prewarm.
             const float FrameDelta = DeltaTime * Item.TimeScale;
             TFixedVector<float, 8> StepDeltas;
@@ -576,7 +583,7 @@ namespace Lumina
                     RHI::EStageFlags::Compute,
                     RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
-                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
+                RHI::CmdSetPipeline(CL, SimPipeline);
 
                 // Mirrors FParticleSimArgs in ParticleSimCommon.slang, everything by device address.
                 struct FParticleSimArgs
@@ -1084,6 +1091,19 @@ namespace Lumina
             // A Particle material shades sprites only; meshes and ribbons keep the built-in stages.
             const bool bMaterial = (Item.MaterialIndex >= 0) && Resolved.RenderMode == EParticleRenderMode::Sprite;
 
+            FGraphicsPipelineKey Key;
+            Key.VS          = bMaterial ? Item.MaterialVertexShader : ParticleVertexShaderFor(Resolved.RenderMode);
+            Key.PS          = bMaterial ? Item.MaterialPixelShader  : SpritePixelShader;
+            Key.DepthFormat = EFormat::D32;
+            Key.ColorTargets.push_back({ HDR.Desc.Format, bMaterial
+                ? MakeParticleMaterialBlend(Item.MaterialBlendMode)
+                : MakeParticleBlend(Resolved.BlendMode) });
+            const RHI::FPipelineH Pipeline = bMaterial ? FindPipeline(Key) : GetOrCreatePipeline(Key);
+            if (!Pipeline)
+            {
+                continue;
+            }
+
             RHI::FDepthStencilDesc DepthDesc;
             const bool bWriteDepth = bMaterial ? Item.bMaterialWritesDepth : Resolved.bWriteDepth;
             if (bWriteDepth)
@@ -1095,15 +1115,7 @@ namespace Lumina
                 : RHI::EDepthFlags::Read;
             DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
             RHI::CmdSetDepthStencil(CL, (DepthDesc));
-
-            FGraphicsPipelineKey Key;
-            Key.VS          = bMaterial ? Item.MaterialVertexShader : ParticleVertexShaderFor(Resolved.RenderMode);
-            Key.PS          = bMaterial ? Item.MaterialPixelShader  : SpritePixelShader;
-            Key.DepthFormat = EFormat::D32;
-            Key.ColorTargets.push_back({ HDR.Desc.Format, bMaterial
-                ? MakeParticleMaterialBlend(Item.MaterialBlendMode)
-                : MakeParticleBlend(Resolved.BlendMode) });
-            RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+            RHI::CmdSetPipeline(CL, Pipeline);
 
             FParticlePushConstants PC = MakeParticlePushConstants(Item, State, bMaterial);
             PC.bSorted          = bSorted ? 1u : 0u;

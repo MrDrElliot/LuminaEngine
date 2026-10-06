@@ -1304,6 +1304,23 @@ struct ImGui_ImplGlfw_ViewportData
     ~ImGui_ImplGlfw_ViewportData() { IM_ASSERT(Window == nullptr); }
 };
 
+static ImGui_ImplGlfw_WantsNativeFrameFn g_WantsNativeFrame = nullptr;
+static ImGui_ImplGlfw_CaptionHitTestFn g_CaptionHitTest = nullptr;
+
+void ImGui_ImplGlfw_SetNativeFrameCallbacks(ImGui_ImplGlfw_WantsNativeFrameFn wants_frame, ImGui_ImplGlfw_CaptionHitTestFn caption_hit_test)
+{
+    g_WantsNativeFrame = wants_frame;
+    g_CaptionHitTest = caption_hit_test;
+}
+
+#ifdef GLFW_TITLEBAR
+static void ImGui_ImplGlfw_TitlebarHitTestCallback(GLFWwindow* window, int x, int y, int* hit)
+{
+    ImGuiViewport* viewport = ImGui::FindViewportByPlatformHandle((void*)window);
+    *hit = (viewport != nullptr && g_CaptionHitTest != nullptr && g_CaptionHitTest(viewport, (float)x, (float)y)) ? 1 : 0;
+}
+#endif
+
 static void ImGui_ImplGlfw_WindowCloseCallback(GLFWwindow* window)
 {
     if (ImGuiViewport* viewport = ImGui::FindViewportByPlatformHandle(window))
@@ -1388,13 +1405,23 @@ static void ImGui_ImplGlfw_CreateWindow(ImGuiViewport* viewport)
 #if GLFW_HAS_FOCUS_ON_SHOW
     glfwWindowHint(GLFW_FOCUS_ON_SHOW, false);
 #endif
-    glfwWindowHint(GLFW_DECORATED, (viewport->Flags & ImGuiViewportFlags_NoDecoration) ? false : true);
+    // Lumina patch, a native frame keeps the borderless look but lets the OS maximize, snap and resize the window
+    const bool native_frame = (viewport->Flags & ImGuiViewportFlags_NoDecoration) && g_WantsNativeFrame != nullptr && g_WantsNativeFrame(viewport);
+    glfwWindowHint(GLFW_DECORATED, (native_frame || !(viewport->Flags & ImGuiViewportFlags_NoDecoration)) ? true : false);
+#ifdef GLFW_TITLEBAR
+    glfwWindowHint(GLFW_TITLEBAR, native_frame ? GLFW_FALSE : GLFW_TRUE);
+#endif
 #if GLFW_HAS_WINDOW_TOPMOST
     glfwWindowHint(GLFW_FLOATING, (viewport->Flags & ImGuiViewportFlags_TopMost) ? true : false);
 #endif
     GLFWwindow* share_window = (bd->ClientApi == GlfwClientApi_OpenGL) ? bd->Window : nullptr;
     vd->Window = glfwCreateWindow((int)viewport->Size.x, (int)viewport->Size.y, "No Title Yet", nullptr, share_window);
     vd->WindowOwned = true;
+#ifdef GLFW_TITLEBAR
+    glfwWindowHint(GLFW_TITLEBAR, GLFW_TRUE);
+    if (native_frame)
+        glfwSetTitlebarHitTestCallback(vd->Window, ImGui_ImplGlfw_TitlebarHitTestCallback);
+#endif
     ImGui_ImplGlfw_ContextMap_Add(vd->Window, bd->Context);
     viewport->PlatformHandle = (void*)vd->Window;
 #ifdef IMGUI_GLFW_HAS_SETWINDOWFLOATING

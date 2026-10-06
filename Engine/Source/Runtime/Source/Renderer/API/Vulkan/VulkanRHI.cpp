@@ -36,6 +36,9 @@
 
 #include "tracy/TracyVulkan.hpp"
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
+#include "Paths/Paths.h"
+#include "Platform/Filesystem/FileHelper.h"
 #include "Core/Profiler/Profile.h"
 #include "Containers/StringFormat.h"
 
@@ -670,6 +673,11 @@ namespace Lumina::RHI
         VkDescriptorPool                DescriptorPool;
         VkDescriptorSetLayout           DescriptorLayout;
         VkPipelineLayout                PipelineLayout;
+
+        // Shared by every pipeline creation and internally synchronized, so workers compile against it concurrently.
+        VkPipelineCache                 PipelineCache = VK_NULL_HANDLE;
+        FString                         PipelineCachePath;
+        FMutex                          PipelineCacheSaveMutex;
 
         // Image-init transitions record into a bump ring per queue and frame slot, reset whole by RetireSlot.
         struct FTransientRing
@@ -1684,6 +1692,53 @@ namespace Lumina::RHI
     };
     
     VK_CHECK(vkCreatePipelineLayout(*GDevice, &CreateInfo, Vulkan::HostAllocator(), &GDevice->PipelineLayout));
+    }
+
+    // A cache file is only handed to the driver when this exact driver and device wrote it.
+    static bool IsPipelineCacheCompatible(const TVector<uint8>& Data)
+    {
+        if (Data.size() < sizeof(VkPipelineCacheHeaderVersionOne))
+        {
+            return false;
+        }
+        VkPipelineCacheHeaderVersionOne Header;
+        Memory::Memcpy(&Header, Data.data(), sizeof(Header));
+        const VkPhysicalDeviceProperties& Props = GDevice->Properties;
+        return Header.headerSize >= sizeof(Header)
+            && Header.headerVersion == VK_PIPELINE_CACHE_HEADER_VERSION_ONE
+            && Header.vendorID == Props.vendorID
+            && Header.deviceID == Props.deviceID
+            && Memory::Memcmp(Header.pipelineCacheUUID, Props.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+    }
+
+    static void CreatePipelineCache(const FString& Path)
+    {
+        GDevice->PipelineCachePath = Path;
+
+        TVector<uint8> Data;
+        const FStringView PathView(Path.c_str(), Path.size());
+        if (!Path.empty() && Paths::Exists(PathView) && FileHelper::LoadFileToArray(Data, PathView) && !IsPipelineCacheCompatible(Data))
+        {
+            LOG_INFO("RHI: the pipeline cache at {} was written by another driver or GPU and is ignored.", Path);
+            Data.clear();
+        }
+
+        const VkPipelineCacheCreateInfo Info
+        {
+            .sType           = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+            .pNext           = nullptr,
+            .flags           = 0,
+            .initialDataSize = Data.size(),
+            .pInitialData    = Data.empty() ? nullptr : Data.data(),
+        };
+        if (vkCreatePipelineCache(*GDevice, &Info, Vulkan::HostAllocator(), &GDevice->PipelineCache) != VK_SUCCESS)
+        {
+            // Pipelines still build without one, only slower on the next launch.
+            GDevice->PipelineCache = VK_NULL_HANDLE;
+            LOG_WARN("RHI: could not create a pipeline cache; pipelines will not persist between runs.");
+            return;
+        }
+        LOG_INFO("RHI: pipeline cache {} ({} KiB).", Data.empty() ? "started empty" : "loaded", (uint32)(Data.size() / 1024));
     }
 
     // One pool per queue and frame slot, holding the image-init transitions that submit prepends.
@@ -2949,6 +3004,7 @@ namespace Lumina::RHI
         }
 
         CreateBindlessLayout();
+        CreatePipelineCache(DeviceDesc.PipelineCachePath);
 
         CreateTransientCommandPools();
 
@@ -3013,6 +3069,12 @@ namespace Lumina::RHI
             {
                 vkDestroyCommandPool(*GDevice, Ring.Pool, Vulkan::HostAllocator());
             }
+        }
+        if (GDevice->PipelineCache != VK_NULL_HANDLE)
+        {
+            SavePipelineCache();
+            vkDestroyPipelineCache(*GDevice, GDevice->PipelineCache, Vulkan::HostAllocator());
+            GDevice->PipelineCache = VK_NULL_HANDLE;
         }
         vkDestroyPipelineLayout(*GDevice, GDevice->PipelineLayout, Vulkan::HostAllocator());
         vkDestroyDescriptorPool(*GDevice, GDevice->DescriptorPool, Vulkan::HostAllocator());
@@ -3338,7 +3400,8 @@ namespace Lumina::RHI
     FGPUAllocation Malloc(uint64 Size, uint64 Alignment, EMemoryType Type)
     {
         LUMINA_MEMORY_SCOPE("RHI");
-        if (Size == 0)
+        // A headless process never makes a device, and assets loading there still ask for GPU memory.
+        if (Size == 0 || GDevice == nullptr)
         {
             return {};
         }
@@ -3859,6 +3922,10 @@ namespace Lumina::RHI
 
     FPipelineH CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
     {
+        if (GDevice == nullptr)
+        {
+            return {};
+        }
         LUMINA_MEMORY_SCOPE("RHI");
         // Logged before the driver compiles, so a crash inside the driver still names the shader.
         LOG_TRACE("Creating graphics pipeline for '{}' + '{}'.", ShaderLabel(Vertex), ShaderLabel(Fragment));
@@ -4075,7 +4142,7 @@ namespace Lumina::RHI
         };
         
         VkPipeline VulkanPipeline;
-        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, nullptr, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
+        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, GDevice->PipelineCache, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
 
         vkDestroyShaderModule(*GDevice, VertModule, Vulkan::HostAllocator());
         if (FragModule != VK_NULL_HANDLE)
@@ -4432,8 +4499,46 @@ namespace Lumina::RHI
 
 #endif
 
+    void SavePipelineCache()
+    {
+        if (GDevice == nullptr || GDevice->PipelineCache == VK_NULL_HANDLE || GDevice->PipelineCachePath.empty())
+        {
+            return;
+        }
+
+        // Two saves racing would interleave their writes into one file.
+        FScopeLock Lock(GDevice->PipelineCacheSaveMutex);
+
+        size_t Size = 0;
+        if (vkGetPipelineCacheData(*GDevice, GDevice->PipelineCache, &Size, nullptr) != VK_SUCCESS || Size == 0)
+        {
+            return;
+        }
+        TVector<uint8> Data(Size);
+        if (vkGetPipelineCacheData(*GDevice, GDevice->PipelineCache, &Size, Data.data()) != VK_SUCCESS)
+        {
+            return;
+        }
+        Data.resize(Size);
+
+        const FString& Path = GDevice->PipelineCachePath;
+        const FString Parent = Paths::Parent(FStringView(Path.c_str(), Path.size()), true);
+        if (!Parent.empty())
+        {
+            Paths::CreateDirectories(FStringView(Parent.c_str(), Parent.size()));
+        }
+        if (!FileHelper::SaveArrayToFile(Data, FStringView(Path.c_str(), Path.size())))
+        {
+            LOG_WARN("RHI: could not write the pipeline cache to {}.", Path);
+        }
+    }
+
     FPipelineH CreateComputePipeline(const FShaderSource& Compute, TSpan<const FSpecializationConstant> Constants)
     {
+        if (GDevice == nullptr)
+        {
+            return {};
+        }
         LUMINA_MEMORY_SCOPE("RHI");
         LOG_TRACE("Creating compute pipeline for '{}'.", ShaderLabel(Compute));
         VkShaderModule ShaderModule = CreateShaderModule(Compute);
@@ -4462,7 +4567,7 @@ namespace Lumina::RHI
         };
         
         VkPipeline Pipeline{};
-        VK_CHECK(vkCreateComputePipelines(*GDevice, nullptr, 1, &Info, Vulkan::HostAllocator(), &Pipeline));
+        VK_CHECK(vkCreateComputePipelines(*GDevice, GDevice->PipelineCache, 1, &Info, Vulkan::HostAllocator(), &Pipeline));
 
         vkDestroyShaderModule(*GDevice, ShaderModule, Vulkan::HostAllocator());
 
@@ -4486,6 +4591,10 @@ namespace Lumina::RHI
 
     FPipelineH CreateMeshShaderPipeline(const FShaderSource& Task, const FShaderSource& Mesh, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
     {
+        if (GDevice == nullptr)
+        {
+            return {};
+        }
         LUMINA_MEMORY_SCOPE("RHI");
 
         if (!GDevice->bMeshShaderSupported)
@@ -4720,7 +4829,7 @@ namespace Lumina::RHI
         };
 
         VkPipeline VulkanPipeline;
-        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, nullptr, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
+        VK_CHECK(vkCreateGraphicsPipelines(*GDevice, GDevice->PipelineCache, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
 
         if (TaskModule != VK_NULL_HANDLE)
         {
@@ -4737,6 +4846,10 @@ namespace Lumina::RHI
 
     FSemaphoreH CreateTimelineSemaphore(uint64 Value)
     {
+        if (GDevice == nullptr)
+        {
+            return {};
+        }
         VkSemaphoreTypeCreateInfo TypeInfo
         {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
@@ -4792,6 +4905,10 @@ namespace Lumina::RHI
     FTextureH CreateTexture(const FTextureDesc& Desc, GPUPtr Location)
     {
         LUMINA_MEMORY_SCOPE("RHI");
+        if (GDevice == nullptr)
+        {
+            return {};
+        }
         const VkFormat Format = ConvertFormat(Desc.Format);
         const VkImageAspectFlags Aspect = GuessImageAspectFlags(Format);
 
@@ -4904,6 +5021,10 @@ namespace Lumina::RHI
 
     FTextureHeapH CreateTextureHeap(uint32 TextureCount, uint32 RWTextureCount, uint32 SamplerCount)
     {
+        if (GDevice == nullptr)
+        {
+            return {};
+        }
         TextureCount   = Math::Min(TextureCount, GDevice->SampledHeapCapacity);
         RWTextureCount = Math::Min(RWTextureCount, GDevice->StorageHeapCapacity);
         LUMINA_MEMORY_SCOPE("RHI");

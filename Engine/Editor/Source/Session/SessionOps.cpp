@@ -103,6 +103,28 @@ namespace Lumina::SessionOps
         return true;
     }
 
+    bool SetPlayNetwork(int32 NumPlayers, FStringView NetMode, FString& OutError)
+    {
+        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+
+        ENetMode Mode;
+        if (NetMode == "standalone")     { Mode = ENetMode::Standalone; }
+        else if (NetMode == "listen")    { Mode = ENetMode::ListenServer; }
+        else if (NetMode == "dedicated") { Mode = ENetMode::DedicatedServer; }
+        else
+        {
+            OutError = "NetMode must be standalone, listen or dedicated.";
+            return false;
+        }
+
+        Tool->SetPlayNetwork(NumPlayers, Mode);
+        return true;
+    }
+
     bool StopPlay(FString& OutError)
     {
         FWorldEditorTool* Tool = RequireSceneEditor(OutError);

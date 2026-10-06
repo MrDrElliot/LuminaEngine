@@ -598,7 +598,14 @@ namespace Lumina
             };
             const TSpan<const RHI::FSpecializationConstant> DeferredSpec(DeferredConsts, 2);
 
-            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BinnedDeferredSlotShaders[Slot], DeferredSpec));
+            // Every pixel in the bin has to be shaded, so a slot still compiling shades as the default material.
+            RHI::FPipelineH SlotPipeline = FindComputePipeline(BinnedDeferredSlotShaders[Slot], DeferredSpec);
+            if (!SlotPipeline)
+            {
+                const FShaderH DefaultDeferred = DefaultMaterialStage(EMaterialShaderStage::Deferred);
+                SlotPipeline = GetOrCreateComputePipeline(DefaultDeferred != nullptr ? DefaultDeferred : BinnedDeferredSlotShaders[Slot], DeferredSpec);
+            }
+            RHI::CmdSetPipeline(CL, SlotPipeline);
             RHI::CmdDispatchIndirect(CL, ArgsAlloc.Gpu + Slot * sizeof(FDeferredMaterialPC), Classify.Skip(Layout.MaterialArgsOffset + Slot * (uint32)sizeof(RHI::FDispatchIndirectArguments)));
         }
 

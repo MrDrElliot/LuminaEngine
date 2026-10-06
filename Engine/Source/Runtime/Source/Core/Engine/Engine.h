@@ -21,6 +21,7 @@ namespace Lumina
     class FApplication;
     class FWindow;
     class CGameInstance;
+    class CWorld;
 }
 
 namespace Lumina
@@ -121,14 +122,15 @@ namespace Lumina
         RUNTIME_API void ScheduleCacheTrim() { CacheTrimCountdown = kCacheTrimDelayFrames; }
 
         /** Queues world travel; swap runs at next FrameStart. Prefers PIE Game world; preserves editor proxy on PIE exit. */
-        RUNTIME_API void Travel(FStringView WorldPath);
+        RUNTIME_API void Travel(FStringView WorldPath, CWorld* FromWorld = nullptr);
 
         /** Gameplay quit: ends the PIE session in the editor (via FCoreDelegates::Get().OnGameQuitRequested),
          *  exits the process in a packaged game. Safe to call from inside a world tick. */
         RUNTIME_API void RequestExitGame();
         
         /** The proper entry point: host a level (Map [+ bListen]), open standalone, or connect to URL.Host. */
-        RUNTIME_API void OpenLevel(const FURL& URL);
+        // FromWorld picks which running world swaps or connects, since editor PIE runs one per player.
+        RUNTIME_API void OpenLevel(const FURL& URL, CWorld* FromWorld = nullptr);
 
         /** Convenience: open Map as a listen server on Port. */
         RUNTIME_API void HostLevel(FStringView Map, uint16 Port = 7777);
@@ -151,6 +153,9 @@ namespace Lumina
 
         /** Loads Project.GameStartupMap as a Game world. Editor overrides to no-op. */
         RUNTIME_API virtual void LoadStartupMap();
+
+        // A headless process of -bots=N scripted clients that connect to a server, for load testing it.
+        void LoadBotWorlds(FStringView MapName);
 
         RUNTIME_API virtual void DestroyGameInstance();
 
@@ -188,6 +193,7 @@ namespace Lumina
         double                  RefreshCheckTime = -1.0;
 
         FString                 PendingTravelPath;
+        TWeakObjectPtr<CWorld>  PendingTravelWorld;
         bool                    bHasPendingTravel = false;
 
         // Engine time the current level began, so a travel can report how the level it leaves ran.
@@ -201,6 +207,7 @@ namespace Lumina
 
         // Deferred OpenLevel/Host/Connect, drained at FrameStart.
         FURL                    PendingOpenURL;
+        TWeakObjectPtr<CWorld>  PendingOpenWorld;
         bool                    bHasPendingOpen = false;
 
         // Host-level OpenLevel travels to a map, then applies this role/port to the new world's context.

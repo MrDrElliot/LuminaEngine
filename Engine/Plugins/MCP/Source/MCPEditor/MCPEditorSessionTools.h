@@ -43,6 +43,20 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SStartPlayParams
+    {
+        GENERATED_BODY()
+
+        // 0 keeps the current setting. Players past the first join player one as clients.
+        PROPERTY()
+        int32 Players = 0;
+
+        // standalone, listen or dedicated. Empty keeps the current setting.
+        PROPERTY()
+        FString NetMode;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SSaveAllParams
     {
         GENERATED_BODY()

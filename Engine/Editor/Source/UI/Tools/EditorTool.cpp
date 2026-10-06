@@ -26,6 +26,7 @@
 #include "Settings/EditorSettings.h"
 #include "Thumbnails/ThumbnailManager.h"
 #include "Thumbnails/ThumbnailUtils.h"
+#include "Tools/Screenshot/MovieCapture.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/EditorAssetDropHandlers.h"
 #include "Core/Application/Application.h"
@@ -821,6 +822,25 @@ namespace Lumina
         }
     }
 
+    void FEditorTool::GetViewportImageRect(ImVec2& OutMin, ImVec2& OutSize)
+    {
+        const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
+        OutMin = ImGui::GetCursorScreenPos();
+        OutSize = ImVec2(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
+
+        const float MovieAspect = MovieCapture::GetRecordingAspect();
+        if (MovieAspect <= 0.0f)
+        {
+            return;
+        }
+
+        const ImVec2 Fitted = (OutSize.x / OutSize.y > MovieAspect)
+                            ? ImVec2(std::floor(OutSize.y * MovieAspect), OutSize.y)
+                            : ImVec2(OutSize.x, std::floor(OutSize.x / MovieAspect));
+        OutMin = ImVec2(std::floor(OutMin.x + (OutSize.x - Fitted.x) * 0.5f), std::floor(OutMin.y + (OutSize.y - Fitted.y) * 0.5f));
+        OutSize = Fitted;
+    }
+
     void FEditorTool::UpdateViewportInput(const FUpdateContext& UpdateContext)
     {
         if ((bViewportFocused || bViewportHovered) && ImGui::IsKeyPressed(ImGuiKey_F11, false))
@@ -828,9 +848,9 @@ namespace Lumina
             ToggleViewportFullscreen();
         }
 
-        const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
-        const ImVec2 CursorScreenPos = ImGui::GetCursorScreenPos();
+        ImVec2 CursorScreenPos;
+        ImVec2 ViewportSize;
+        GetViewportImageRect(CursorScreenPos, ViewportSize);
 
         const float AspectRatio = (ViewportSize.x / ViewportSize.y);
         float t = (ViewportSize.x - 500) / (1200 - 500);
@@ -945,13 +965,16 @@ namespace Lumina
     bool FEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
-        const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
-        const ImVec2 WindowPosition = ImGui::GetCursorScreenPos();
+        const ImVec2 PanelMin = ImGui::GetCursorScreenPos();
+        const ImVec2 PanelMax(PanelMin.x + Math::Max(ContentRegion.x, 64.0f), PanelMin.y + Math::Max(ContentRegion.y, 64.0f));
+
+        ImVec2 WindowPosition;
+        ImVec2 ViewportSize;
+        GetViewportImageRect(WindowPosition, ViewportSize);
         const ImVec2 WindowBottomRight = { WindowPosition.x + ViewportSize.x, WindowPosition.y + ViewportSize.y };
 
         // Shows through until a frame composites, since only that makes the viewport target opaque.
-        ImGui::GetWindowDrawList()->AddRectFilled(WindowPosition, WindowBottomRight,
-                                                  EditorColors::U32(EditorColors::PanelBg()));
+        ImGui::GetWindowDrawList()->AddRectFilled(PanelMin, PanelMax, EditorColors::U32(EditorColors::PanelBg()));
 
         // A target nobody has composited into holds whatever memory it was given, so it is not drawn.
         const IRenderScene* Scene = HasWorld() ? GetWorld()->GetRenderer() : nullptr;
@@ -1009,7 +1032,9 @@ namespace Lumina
             FInputViewportRegistry& Reg = FInputViewportRegistry::Get();
             if (!Reg.IsGameInputFocused())
             {
+                // Keys go to the focused viewport first, so it moves with the click or they stay with the last player.
                 Reg.SetActiveViewport(InputViewport.get());
+                Reg.SetFocusedViewport(InputViewport.get());
                 Reg.SetGameInputFocused(true);
             }
         }

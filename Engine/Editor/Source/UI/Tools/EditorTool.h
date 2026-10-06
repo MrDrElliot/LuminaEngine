@@ -313,6 +313,9 @@ namespace Lumina
 
         void UpdateViewportInput(const FUpdateContext& UpdateContext);
 
+        // The panel area the world draws into, narrowed to the movie's aspect while one records so the edges are not cropped away.
+        static void GetViewportImageRect(ImVec2& OutMin, ImVec2& OutSize);
+
         /** Draws overlay elements on the viewport for tool actions. */
         virtual void DrawViewportToolbar(const FUpdateContext& UpdateContext);
 

@@ -6,6 +6,7 @@
 #include "Core/Profiler/Profile.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Core/Object/Class.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Math/Hash/Hash.h"
@@ -15,9 +16,13 @@
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/RelationshipComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
 #include "Components/NetworkComponent.h"
 #include "Networking/INetworkTransport.h"
 #include "Log/Log.h"
+#include "Scripting/EntityScript.h"
+#include "Scripting/ScriptableObject.h"
+#include "Scripting/DotNet/NetScriptBridge.h"
 
 namespace Lumina::Net
 {
@@ -160,7 +165,7 @@ namespace Lumina::Net
     uint32 GetProtocolHash()
     {
         // Bump on any hand-rolled wire-format change (message layout, codec) that reflection won't catch.
-        constexpr uint32 NetProtocolVersion = 1;
+        constexpr uint32 NetProtocolVersion = 3;
 
         // The same build gives the same table order, so a differing component set flips the hash.
         uint32 H = 2166136261u;
@@ -415,6 +420,432 @@ namespace Lumina::Net
         ApplyReplicatedParent(Registry, Entity, ParentGuid);
     }
 
+    namespace
+    {
+        SEntityScriptComponent* ScriptsOf(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        {
+            return Registry.TryGet<SEntityScriptComponent>(Entity);
+        }
+
+        void WriteClassName(FNetArchive& Ar, FName Name)
+        {
+            if (Ar.NameToNetIndex)
+            {
+                WriteVarUInt(Ar, Ar.NameToNetIndex(Name));
+                return;
+            }
+            Ar << Name;
+        }
+
+        FName ReadClassName(FNetArchive& Ar)
+        {
+            FName Name;
+            if (Ar.NetIndexToName)
+            {
+                Ar.NetIndexToName(ReadVarUInt(Ar), Name);
+                return Name;
+            }
+            Ar << Name;
+            return Name;
+        }
+    }
+
+    void CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
+                                 bool bBaseline, FComponentRepState* DiffState, TVector<FScriptRepOut>& Out)
+    {
+        LUMINA_PROFILE_SCOPE();
+        Out.clear();
+
+        SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+        if (Component == nullptr)
+        {
+            return;
+        }
+
+        static thread_local TVector<uint8>  HookScratch;
+        static thread_local TVector<uint8>  CurBytes;
+        static thread_local TVector<uint32> CurOffsets;
+
+        HookScratch.clear();
+        FNetArchive HookSrc(HookScratch);
+        Net::BindWriters(HookSrc, State);
+
+        for (uint32 Index = 0; Index < (uint32)Component->Scripts.size(); ++Index)
+        {
+            CEntityScript* Script = Component->Scripts[Index].Get();
+            if (Script == nullptr)
+            {
+                continue;
+            }
+            CClass* Class = Script->GetClass();
+            if (Class->GetNetReplicatedPropertyCount() == 0)
+            {
+                continue;
+            }
+
+            Class->NetSerializeReplicatedFlat(HookSrc, Script, CurBytes, CurOffsets);
+            const uint32 N = CurOffsets.empty() ? 0u : (uint32)CurOffsets.size() - 1u;
+
+            FRepFieldSnapshot* Base = DiffState != nullptr ? &DiffState->ScriptLastSent[Index] : nullptr;
+            const bool bBaseUsable = Base != nullptr && Base->Num() == N;
+
+            FScriptRepOut Rep;
+            Rep.ScriptIndex = Index;
+            Rep.Block.resize((N + 7) / 8, 0);
+
+            bool bAny = false;
+            for (uint32 i = 0; i < N; ++i)
+            {
+                const uint32 Size = CurOffsets[i + 1] - CurOffsets[i];
+                const bool bChanged = bBaseline || !bBaseUsable
+                    || Base->FieldSize(i) != Size
+                    || Memory::Memcmp(Base->FieldData(i), CurBytes.data() + CurOffsets[i], Size) != 0;
+                if (bChanged)
+                {
+                    Rep.Block[i >> 3] |= static_cast<uint8>(1u << (i & 7));
+                    bAny = true;
+                }
+            }
+
+            if (Base != nullptr)
+            {
+                Base->Bytes.assign(CurBytes.begin(), CurBytes.end());
+                Base->Offsets.assign(CurOffsets.begin(), CurOffsets.end());
+            }
+
+            if (!bAny)
+            {
+                continue;
+            }
+
+            for (uint32 i = 0; i < N; ++i)
+            {
+                if (Rep.Block[i >> 3] & (1u << (i & 7)))
+                {
+                    const uint8* Field = CurBytes.data() + CurOffsets[i];
+                    Rep.Block.insert(Rep.Block.end(), Field, Field + (CurOffsets[i + 1] - CurOffsets[i]));
+                }
+            }
+            Out.push_back(Move(Rep));
+        }
+    }
+
+    void WriteScriptManifest(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+        const uint32 Count = Component != nullptr ? (uint32)Component->Scripts.size() : 0u;
+        WriteVarUInt(Ar, Count);
+        for (uint32 Index = 0; Index < Count; ++Index)
+        {
+            CEntityScript* Script = Component->Scripts[Index].Get();
+            WriteClassName(Ar, Script != nullptr ? Script->GetClass()->GetName() : FName());
+        }
+    }
+
+    uint32 ReadScriptManifest(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const uint32 Count = ReadVarUInt(Ar);
+        for (uint32 Index = 0; Index < Count && !Ar.HasError(); ++Index)
+        {
+            const FName ClassName = ReadClassName(Ar);
+            SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+            const uint32 Present = Component != nullptr ? (uint32)Component->Scripts.size() : 0u;
+            if (Index < Present || ClassName.IsNone())
+            {
+                continue;
+            }
+
+            CClass* ScriptClass = FScriptableRegistry::ResolveClass(ClassName);
+            if (ScriptClass == nullptr || EntityScripts::Attach(Registry, Entity, ScriptClass) == nullptr)
+            {
+                LOG_WARN("[Net] Spawned entity names script class '{}', which this peer cannot load; its later scripts shift index.", ClassName.c_str());
+            }
+        }
+        return Count;
+    }
+
+    void WriteEntityScripts(FNetArchive& Ar, const TVector<FScriptRepOut>& Scripts)
+    {
+        WriteVarUInt(Ar, (uint32)Scripts.size());
+        for (const FScriptRepOut& Rep : Scripts)
+        {
+            WriteVarUInt(Ar, Rep.ScriptIndex);
+            if (!Rep.Block.empty())
+            {
+                Ar.Serialize(const_cast<uint8*>(Rep.Block.data()), static_cast<int64>(Rep.Block.size()));
+            }
+        }
+    }
+
+    void ReadEntityScripts(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        LUMINA_PROFILE_SCOPE();
+        const uint32 Count = ReadVarUInt(Ar);
+
+        static thread_local TVector<FProperty*> Props;
+        static thread_local TVector<uint8>      Mask;
+        static thread_local TVector<char>       Names;
+
+        for (uint32 i = 0; i < Count; ++i)
+        {
+            const uint32 Index = ReadVarUInt(Ar);
+            if (Ar.HasError())
+            {
+                return;
+            }
+
+            SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
+            CEntityScript* Script = (Component != nullptr && Index < (uint32)Component->Scripts.size())
+                ? Component->Scripts[Index].Get() : nullptr;
+            if (Script == nullptr)
+            {
+                // Without the class there is no way to know how many bytes to skip.
+                LOG_WARN("[Net] Replicated fields for missing script {} on entity {}; dropping the rest of the update.", Index, Entity.Value);
+                Ar.SetHasError(true);
+                return;
+            }
+
+            CClass* Class = Script->GetClass();
+            Class->GetNetReplicatedProperties(Props);
+            const uint32 N = (uint32)Props.size();
+            Mask.assign((N + 7) / 8, 0);
+            if (!Mask.empty())
+            {
+                Ar.Serialize(Mask.data(), static_cast<int64>(Mask.size()));
+                if (Ar.HasError())
+                {
+                    return;
+                }
+            }
+
+            Names.clear();
+            for (uint32 Field = 0; Field < N; ++Field)
+            {
+                if (Mask[Field >> 3] & (1u << (Field & 7)))
+                {
+                    const char* FieldName = Props[Field]->GetPropertyName().c_str();
+                    Names.insert(Names.end(), FieldName, FieldName + strlen(FieldName));
+                    Names.push_back('\0');
+                }
+            }
+
+            NetScripts::DispatchSyncChanging(Script, Names.data(), (uint32)Names.size());
+            Class->NetReadReplicatedMasked(Ar, Script, Mask.data());
+            if (Ar.HasError())
+            {
+                return;
+            }
+            NetScripts::DispatchSyncChanged(Script, Names.data(), (uint32)Names.size());
+
+            if (!Registry.IsValid(Entity))
+            {
+                return;
+            }
+        }
+    }
+
+    int32 FindScriptIndex(ECS::FRegistry& Registry, ECS::FEntity Entity, const CEntityScript* Script)
+    {
+        if (const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity))
+        {
+            for (int32 Index = 0; Index < (int32)Component->Scripts.size(); ++Index)
+            {
+                if (Component->Scripts[Index].Get() == Script)
+                {
+                    return Index;
+                }
+            }
+        }
+        return INDEX_NONE;
+    }
+
+    CEntityScript* GetScriptAt(ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Index)
+    {
+        const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
+        return (Component != nullptr && Index < (uint32)Component->Scripts.size()) ? Component->Scripts[Index].Get() : nullptr;
+    }
+
+    void AppendScriptRpc(TVector<uint8>& Batch, uint32 Guid, uint32 ScriptIndex, uint32 RpcId, ERpcTarget Target,
+                         uint8 Flags, uint32 Caller, const uint8* Payload, uint32 PayloadSize)
+    {
+        static thread_local TVector<uint8> Message;
+        Message.clear();
+        FNetArchive Writer(Message);
+        uint8 Type = static_cast<uint8>(ENetMessage::ScriptRpc);
+        uint8 TargetByte = static_cast<uint8>(Target);
+        Writer << Type;
+        WriteNetGuid(Writer, Guid);
+        WriteVarUInt(Writer, ScriptIndex);
+        WriteVarUInt(Writer, RpcId);
+        Writer << TargetByte;
+        Writer << Flags;
+        WriteVarUInt(Writer, Caller);
+        WriteVarUInt(Writer, PayloadSize);
+        if (PayloadSize > 0)
+        {
+            Writer.Serialize(const_cast<uint8*>(Payload), static_cast<int64>(PayloadSize));
+        }
+        AppendFramedMessage(Batch, Message.data(), static_cast<SIZE_T>(Message.size()));
+    }
+
+    // A default instance per component type, kept for the process so every spawn diffs against the same baseline.
+    static void* DefaultComponentFor(CStruct* Struct)
+    {
+        static THashMap<CStruct*, void*> Defaults;
+        auto [It, bNew] = Defaults.try_emplace(Struct, nullptr);
+        if (bNew && Struct->GetComponentOps() != nullptr)
+        {
+            It->second = Struct->GetComponentOps()->New();
+        }
+        return It->second;
+    }
+
+    void WriteSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        LUMINA_PROFILE_SCOPE();
+        struct FSpawnComponent { uint32 WireIndex; CStruct* Struct; void* Data; };
+        TVector<FSpawnComponent> Components;
+
+        const FReplTypeTable& Types = ReplTypes();
+        const CStruct* TransformStruct = STransformComponent::StaticStruct();
+        for (ECS::FSparseSet* Set : Registry.GetActiveStorages())
+        {
+            if (!Set->Contains(Entity))
+            {
+                continue;
+            }
+            CStruct* St = FindComponentStructByTypeId(Set->GetTypeInfo().TypeID);
+            if (St == nullptr)
+            {
+                continue;
+            }
+            const auto It = Types.HashToIndex.find(HashStructName(St->GetName()));
+            if (It == Types.HashToIndex.end())
+            {
+                continue;
+            }
+            FSpawnComponent Entry{ It->second, St, Set->GetRaw(Entity) };
+            if (St == TransformStruct)
+            {
+                Components.insert(Components.begin(), Entry);
+            }
+            else
+            {
+                Components.push_back(Entry);
+            }
+        }
+
+        uint16 Count = static_cast<uint16>(Components.size());
+        Ar << Count;
+        for (const FSpawnComponent& Component : Components)
+        {
+            WriteVarUInt(Ar, Component.WireIndex);
+            if (Component.Struct->GetComponentOps() != nullptr && Component.Data != nullptr)
+            {
+                void* Defaults = DefaultComponentFor(Component.Struct);
+                if (Defaults != nullptr)
+                {
+                    Component.Struct->NetWriteAllDelta(Ar, Component.Data, Defaults);
+                }
+                else
+                {
+                    Component.Struct->NetSerializeAll(Ar, Component.Data);
+                }
+            }
+        }
+
+        uint32 ParentGuid = 0;
+        if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
+            Rel && Rel->Parent != ECS::NullEntity && ParentReplicates(Registry, Rel->Parent))
+        {
+            ParentGuid = Registry.Get<SNetworkComponent>(Rel->Parent).NetGUID.Value;
+        }
+        WriteNetGuid(Ar, ParentGuid);
+    }
+
+    void ReadSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        LUMINA_PROFILE_SCOPE();
+        uint16 Count = 0;
+        Ar << Count;
+
+        TVector<CStruct*> Applied;
+        const FReplTypeTable& Types = ReplTypes();
+        for (uint16 i = 0; i < Count; ++i)
+        {
+            const uint32 Index = ReadVarUInt(Ar);
+            if (Ar.HasError() || Index >= static_cast<uint32>(Types.ByIndex.size()))
+            {
+                Ar.SetHasError(true);
+                return;
+            }
+            CStruct* St = Types.ByIndex[Index].Struct;
+            const FComponentOps* Ops = St != nullptr ? St->GetComponentOps() : nullptr;
+            if (Ops == nullptr)
+            {
+                Ar.SetHasError(true);
+                return;
+            }
+
+            // Read into a detached copy first, so the component's construct hooks see its real values.
+            void* Staged = Ops->New();
+            if (Staged == nullptr)
+            {
+                Ops->EmplaceDefault(Registry, Entity);
+                continue;
+            }
+            St->NetReadAllDelta(Ar, Staged);
+            if (Ar.HasError())
+            {
+                Ops->Delete(Staged);
+                return;
+            }
+            Ops->EmplaceCopy(Registry, Entity, Staged);
+            Ops->Delete(Staged);
+            Applied.push_back(St);
+        }
+
+        for (CStruct* Type : Applied)
+        {
+            if (!Registry.IsValid(Entity))
+            {
+                break;
+            }
+            Type->GetComponentOps()->Patch(Registry, Entity);
+        }
+
+        const uint32 ParentGuid = ReadNetGuid(Ar);
+        ApplyReplicatedParent(Registry, Entity, ParentGuid);
+    }
+
+    void WriteScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
+        const uint32 Count = Component != nullptr ? (uint32)Component->Scripts.size() : 0u;
+        for (uint32 Index = 0; Index < Count; ++Index)
+        {
+            if (CEntityScript* Script = Component->Scripts[Index].Get())
+            {
+                Script->GetClass()->NetSerializeAll(Ar, Script);
+            }
+        }
+    }
+
+    void ReadScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Count)
+    {
+        for (uint32 Index = 0; Index < Count && !Ar.HasError(); ++Index)
+        {
+            CEntityScript* Script = GetScriptAt(Registry, Entity, Index);
+            if (Script == nullptr)
+            {
+                // Without the class the bytes cannot be skipped, so the rest of the message is unreadable.
+                Ar.SetHasError(true);
+                return;
+            }
+            Script->GetClass()->NetSerializeAll(Ar, Script);
+        }
+    }
+
     void AppendFramedMessage(TVector<uint8>& Batch, const uint8* Msg, SIZE_T MsgSize)
     {
         if (MsgSize == 0)
@@ -556,6 +987,16 @@ namespace Lumina::Net
 
     void BindWriters(FNetArchive& Ar, FNetWorldState& State)
     {
+        Ar.EntityToNetGUID    = [&State](uint32 Raw) -> uint32
+        {
+            const ECS::FEntity Entity = static_cast<ECS::FEntity>(Raw);
+            if (State.Registry == nullptr || Entity == ECS::NullEntity || !State.Registry->IsValid(Entity))
+            {
+                return 0u;
+            }
+            const SNetworkComponent* Net = State.Registry->TryGet<SNetworkComponent>(Entity);
+            return Net != nullptr ? Net->NetGUID.Value : 0u;
+        };
         Ar.ObjectToNetIndex   = [&State](CObject* O)         { return NetObj_GetOrAssign(State.OutObjects, O); };
         Ar.AssetRefToNetIndex = [&State](const FAssetRef& R) { return NetAsset_GetOrAssign(State.OutAssets, R); };
         Ar.NameToNetIndex     = [&State](const FName& N)     { return NetName_GetOrAssign(State.OutNames, N); };
@@ -566,6 +1007,12 @@ namespace Lumina::Net
         FNetObjectMap& InObj = State.InObjects[SenderConn]; // operator[] default-creates the per-connection entry
         FNetAssetMap&  InAst = State.InAssets[SenderConn];
         FNetNameMap&   InNme = State.InNames[SenderConn];
+
+        Ar.NetGUIDToEntity    = [&State](uint32 Guid) -> uint32
+        {
+            const ECS::FEntity Entity = Guid != 0 ? State.GuidTable.Find(FNetGUID{ Guid }) : ECS::NullEntity;
+            return static_cast<uint32>(Entity.Value);
+        };
 
         Ar.NetIndexToObject   = [&InObj](uint32 I)
         {

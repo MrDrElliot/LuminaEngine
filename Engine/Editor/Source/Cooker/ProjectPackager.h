@@ -29,6 +29,9 @@ namespace Lumina
         // Build configuration ("Shipping" recommended; "Development" for debugging).
         FString BuildConfiguration = "Shipping";
 
+        // Builds the Server target into <Project>Server, a headless dedicated server with its own data and pak.
+        bool    bServer = false;
+
         // Project root passed to the build tool as -Project, and the second place binaries are
         // collected from. Carried in the options rather than read from the engine, because the
         // build and copy stages run on a worker thread and must not touch engine state.
@@ -49,6 +52,9 @@ namespace Lumina
     public:
 
         static FPackageBuildResult Package(const FPackageBuildOptions& Options, const TFunction<void(FStringView)>& LogFunc = {});
+
+        // The executable and data folder name, which a server package suffixes so it never mixes with the game's.
+        static FString GetPackageName(FStringView ProjectName, bool bServer);
 
         /** Build + binary-copy stages only; expects a .pak to already exist at <OutputDirectory>/<ProjectName>.pak.
          *  Safe from a worker thread (touches no engine state); LogFunc may be invoked from that thread. */

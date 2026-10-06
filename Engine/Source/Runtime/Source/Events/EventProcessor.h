@@ -8,6 +8,7 @@ namespace Lumina
     /** Higher = runs first; first handler returning true stops propagation. */
     enum class EInputLayer : int32
     {
+        EditorShortcuts = 1500,
         Viewport     = 1000,
         EditorChrome = 500,
         Default      = 0,

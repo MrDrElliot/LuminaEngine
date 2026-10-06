@@ -69,5 +69,10 @@ IMGUI_IMPL_API void     ImGui_ImplGlfw_Sleep(int milliseconds);
 IMGUI_IMPL_API float    ImGui_ImplGlfw_GetContentScaleForWindow(GLFWwindow* window);
 IMGUI_IMPL_API float    ImGui_ImplGlfw_GetContentScaleForMonitor(GLFWmonitor* monitor);
 
+// Lumina patch, a borderless viewport the app approves gets a native resizable frame whose caption the app hit tests
+typedef bool (*ImGui_ImplGlfw_WantsNativeFrameFn)(ImGuiViewport* viewport);
+typedef bool (*ImGui_ImplGlfw_CaptionHitTestFn)(ImGuiViewport* viewport, float client_x, float client_y);
+IMGUI_IMPL_API void     ImGui_ImplGlfw_SetNativeFrameCallbacks(ImGui_ImplGlfw_WantsNativeFrameFn wants_frame, ImGui_ImplGlfw_CaptionHitTestFn caption_hit_test);
+
 
 #endif // #ifndef IMGUI_DISABLE

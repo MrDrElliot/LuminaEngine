@@ -59,6 +59,9 @@ namespace Lumina
         int32       MaxCollisionIterations = 8;
         bool        bCollideWithCharacters = true;
 
+        // ECharacterNetDrive, which decides whether the physics loop steps this character at all.
+        uint8       NetDrive = 0;
+
         FPhysicsCharacterHandle() = default;
         FPhysicsCharacterHandle(const FPhysicsCharacterHandle&) = delete;
         FPhysicsCharacterHandle& operator=(const FPhysicsCharacterHandle&) = delete;

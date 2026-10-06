@@ -54,7 +54,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Empty writes to <Project>/Build/<ProjectName>.
+        // Empty writes to <Project>/Build/<ProjectName>, or <ProjectName>Server for a server.
         PROPERTY()
         FString OutputDirectory;
 
@@ -69,6 +69,10 @@ namespace Lumina
         // Ship loose /Game files next to the exe rather than inside the pak.
         PROPERTY()
         bool bExtractScriptsAsLooseFiles = false;
+
+        // Builds the headless dedicated server target as <ProjectName>Server.exe instead of the game.
+        PROPERTY()
+        bool bServer = false;
     };
 
     REFLECT()

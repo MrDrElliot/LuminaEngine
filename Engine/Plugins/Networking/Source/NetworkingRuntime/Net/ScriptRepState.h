@@ -25,6 +25,9 @@ namespace Lumina
     {
         THashMap<uint32, FRepFieldSnapshot> LastSent;
 
+        // Keyed by the script's index on the entity, which both peers share.
+        THashMap<uint32, FRepFieldSnapshot> ScriptLastSent;
+
         // Server game-clock time (seconds) of the last PropertyUpdate sent for this entity. Drives
         // oldest-first scheduling in ReplicateDirtyProperties so a per-tick byte budget never starves an entity.
         double LastReplicatedTime = 0.0;

@@ -53,6 +53,7 @@ namespace Lumina
         const bool   bExtrapolate    = Settings ? Settings->bEnableExtrapolation : true;
         const double MaxExtrap       = Settings ? static_cast<double>(Settings->MaxExtrapolation) : 0.25;
         const double BufferIntervals = Settings ? static_cast<double>(Settings->InterpBufferIntervals) : 1.5;
+        const float  TeleportDistance = Settings ? Settings->TeleportDistance : 3.0f;
 
         // Tracks the offset with a gentle EMA so RenderTime stays behind the newest server time.
         const double Dt = Context.GetDeltaTime();
@@ -130,7 +131,7 @@ namespace Lumina
 
                 FVector3 Pos;
                 FQuat    Rot;
-                Rep.Ring.Evaluate(RenderTime, Pos, Rot, bExtrapolate, MaxExtrap);
+                Rep.Ring.Evaluate(RenderTime, Pos, Rot, bExtrapolate, MaxExtrap, TeleportDistance);
 
                 // Scale isn't interpolated; apply the latest replicated value, else keep the local scale.
                 const FVector3 Scale = Rep.bHasScale ? Rep.CurrentScaleQ.ToVector(NetQuantize::ScaleQuantum)

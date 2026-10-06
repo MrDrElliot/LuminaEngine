@@ -54,6 +54,8 @@ namespace Lumina
         // held, not borrowed, so a concurrent save cannot replace it under a read in flight
         void SetNameTable(TSharedPtr<const FPackageNameTable> InNames) { Names = Move(InNames); }
 
+        FDeferredReaderFactory GetDeferredReaderFactory() const override;
+
         // Mirrors FPackageSaver, since FTextureSourceFile picks its inline or bulk layout from this answer on read too.
         bool SupportsBulkData() const override { return true; }
 

@@ -1,6 +1,7 @@
 ﻿#include "Containers/StringFormat.h"
 #include "GamePreviewTool.h"
 #include "World/WorldManager.h"
+#include "Core/Delegates/CoreDelegates.h"
 
 namespace Lumina
 {
@@ -17,10 +18,21 @@ namespace Lumina
 
     void FGamePreviewTool::OnInitialize()
     {
+        WorldTraveledHandle = FCoreDelegates::OnWorldTraveled.AddMember(this, &FGamePreviewTool::OnWorldTraveled);
     }
 
     void FGamePreviewTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
+        FCoreDelegates::OnWorldTraveled.Remove(WorldTraveledHandle);
+    }
+
+    // A title screen's Host or Join opens a new level, and the old world is already torn down when this runs.
+    void FGamePreviewTool::OnWorldTraveled(CWorld* OldWorld, CWorld* NewWorld)
+    {
+        if (OldWorld == World.Get() && NewWorld != nullptr)
+        {
+            RebindToWorld(NewWorld);
+        }
     }
 
     void FGamePreviewTool::Update(const FUpdateContext& UpdateContext)

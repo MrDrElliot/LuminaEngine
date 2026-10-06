@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Containers/HashTable.h"
+#include "Containers/Function.h"
+#include "Memory/SmartPtr.h"
 #include "Containers/Pair.h"
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
@@ -100,6 +102,10 @@ namespace Lumina
          *  Serialize can branch on source version to migrate older payloads. */
         FORCEINLINE int32 GetFileVersion() const { return FileVersion; }
         FORCEINLINE void SetFileVersion(int32 InVersion) { FileVersion = InVersion; }
+
+        // Reads bytes cut from this archive later, resolving names and objects through the same tables. Empty means plain bytes suffice.
+        using FDeferredReaderFactory = TFunction<TUniquePtr<FArchive>(const TVector<uint8>&)>;
+        virtual FDeferredReaderFactory GetDeferredReaderFactory() const { return {}; }
 
         FORCEINLINE size_t GetMaxSerializeSize() const { return ArMaxSerializeSize; }
 

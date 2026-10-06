@@ -160,6 +160,9 @@ public sealed class ScriptProperty
 
     // Parameter direction, folded onto the minted property's flags. Always None for a member.
     internal EScriptParamFlags ParamFlags { get; init; }
+
+    // Flags a member earns from an attribute other than [Property], such as Replicated from [Sync].
+    internal EPropertyFlags ExtraFlags { get; init; }
 }
 
 /// <summary>One [Button] method surfaced as an inspector button, invoked by name.</summary>

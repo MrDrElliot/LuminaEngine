@@ -1221,6 +1221,11 @@ namespace Lumina
         return false;
     }
 
+    void CWorld::SetEntityTag(ECS::FEntity Entity, const FName& Tag)
+    {
+        ECS::Utils::SetEntityTag(EntityRegistry, Entity, Tag);
+    }
+
     void CWorld::CreateRenderer()
     {
         // A null RenderScene makes Extract and Render skip this world.
@@ -1334,6 +1339,11 @@ namespace Lumina
         return OwningContext ? OwningContext->NetMode : ENetMode::Standalone;
     }
 
+    bool CWorld::IsBotWorld() const
+    {
+        return OwningContext != nullptr && OwningContext->bBot;
+    }
+
     bool CWorld::IsNetServer() const
     {
         return NetIsServerMode(GetNetMode());
@@ -1427,6 +1437,9 @@ namespace Lumina
         TransformComponent.Registry = &EntityRegistry;
         TransformComponent.Entity = Entity;
         TransformComponent.DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
+
+        // A copied component's guards describe its source's queue, and a set one would keep the tag below from ever enqueuing it.
+        TransformComponent.ResetDirtyState();
 
         // Checked rather than assumed, since nothing orders the two components.
         TransformComponent.bIsFlat = ECS::Utils::IsEntityTransformFlat(EntityRegistry, Entity);

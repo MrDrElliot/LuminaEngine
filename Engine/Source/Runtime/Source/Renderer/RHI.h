@@ -507,6 +507,9 @@ namespace Lumina::RHI
 
         // MiB of device-local memory a GPU must report to be considered. Zero takes any amount.
         uint32 MinDeviceLocalMemoryMiB = 0;
+
+        // OS path of the driver pipeline cache, read at creation and written back by FreeDevice. Empty keeps it in memory only.
+        FString PipelineCachePath;
     };
 
     /** Observer for the debug-utils messenger, in addition to the log. Set BEFORE CreateDevice. Fires on
@@ -590,6 +593,9 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CreateDevice(const FDeviceDesc& Desc = {});
     RUNTIME_API void        FreeDevice();
+
+    // Writes the pipeline cache to FDeviceDesc::PipelineCachePath now, so a crash later does not lose the compiles so far.
+    RUNTIME_API void        SavePipelineCache();
     RUNTIME_API void        WaitDeviceIdle();
     // Once a frame slot's timelines are waited, so the slot's transient command buffers can be reused.
     RUNTIME_API void        RetireSlot(uint32 Slot);

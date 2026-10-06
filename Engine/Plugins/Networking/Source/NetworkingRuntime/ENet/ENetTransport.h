@@ -26,6 +26,7 @@ namespace Lumina
         void Broadcast(const void* Data, SIZE_T Size, uint8 Channel, ESendMode Mode) override;
 
         void Service(TVector<FNetworkEvent>& OutEvents) override;
+        void Flush() override;
 
         EConnectionState GetConnectionState(FConnectionHandle Connection) const override;
 

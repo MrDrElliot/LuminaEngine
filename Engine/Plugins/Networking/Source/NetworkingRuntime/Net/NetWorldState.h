@@ -14,6 +14,13 @@
 namespace Lumina
 {
     class CObject;
+    class FNetCountingTransport;
+
+    // Where a server tick's network time goes, for the -netstats breakdown.
+    enum class ENetPhase : uint8
+    {
+        Extract, Schedule, Relevancy, Messages, Exports, Payloads, Send, Flush, Count
+    };
 
     // The server's reserved peer id (authority, owns connection 0).
     inline constexpr uint32 ServerPeerId = 0;
@@ -34,6 +41,8 @@ namespace Lumina
         ObjectExport      = 11,// CObject net-index map
         AssetExport       = 12,// FAssetRef net-index map
         NameExport        = 13,// FName net-index map
+        MoveCommands      = 14,// client to host, predicted character input
+        MoveAck           = 15,// host to owner, the state a move produced
     };
 
     // CObject-ref net-index cache. A referenced object is sent as a compact varint index; the index/GUID
@@ -93,6 +102,12 @@ namespace Lumina
     {
         TUniquePtr<INetworkTransport> Transport;
 
+        // The same transport when -netstats wrapped it in a byte counter.
+        FNetCountingTransport*        CountingTransport = nullptr;
+
+        // The world's own registry, which entity references need to find an entity's NetGUID.
+        ECS::FRegistry*               Registry = nullptr;
+
         // Client side, link to the server. Invalid until ConnectToServer succeeds.
         FConnectionHandle             ServerConnection;
 
@@ -100,11 +115,48 @@ namespace Lumina
         int32                         ConnectedClients = 0;
         TVector<uint32>               ConnectedClientIds;
 
+        // Server side, clients that sent ClientReady, in join order. Gameplay only ever sees these.
+        TVector<uint32>               ReadyClientIds;
+
+        // Outgoing script RPCs keyed by destination connection, flushed after the frame's replication.
+        THashMap<uint32, TVector<uint8>> PendingRpcReliable;
+        THashMap<uint32, TVector<uint8>> PendingRpcUnreliable;
+
+        // Periodic stats line, on when the process was started with -netstats=Seconds.
+        float                         StatsTimer = 0.0f;
+        double                        StatsTickStart = 0.0;
+        float                         StatsFrameMsMax = 0.0f;
+        double                        StatsFrameMsSum = 0.0;
+        double                        StatsReceiveMsSum = 0.0;
+        double                        PhaseMsSum[static_cast<uint32>(ENetPhase::Count)] = {};
+        double                        PhaseMsMax[static_cast<uint32>(ENetPhase::Count)] = {};
+        double                        StatsSendMsSum = 0.0;
+        float                         StatsSendMsMax = 0.0f;
+        uint32                        StatsFrames = 0;
+        uint64                        StatsLastSent = 0;
+        uint64                        StatsLastReceived = 0;
+
+        // Server scratch, the extract records every client receives regardless of distance.
+        TVector<uint32>               AlwaysRelevantRecords;
+
         // This peer's unique id. ServerPeerId on the server, the assigned handle on a client.
         uint32                        LocalPeerId = ServerPeerId;
 
-        // Server side, re-broadcast the ownership table next tick.
-        bool                          bOwnershipDirty = true;
+        // Server, entities whose owner changed, sent only to clients that hold them and to the owner.
+        TVector<ECS::FEntity>         OwnershipChanged;
+
+        // Server, joiners still owed the owners of map entities, which no spawn message carries.
+        TVector<uint32>               OwnershipJoiners;
+
+        // Server, this tick's property deltas, each sent only to clients that hold the entity.
+        struct FPendingProperty
+        {
+            uint32 Guid   = 0;
+            uint32 Offset = 0;
+            uint32 Size   = 0;
+        };
+        TVector<FPendingProperty>     PendingProperties;
+        TVector<uint8>                PendingPropertyBytes;
 
         // Client side, set once the link to the server is established.
         bool                          bClientConnected = false;
@@ -166,17 +218,23 @@ namespace Lumina
         // GuidTable (which stays the global entity-lifetime map).
         THashMap<uint32, FNetClientView> ClientViews;
 
+        // Map entities exist on every client, while a spawned one only on clients it is relevant to.
+        bool HoldsEntity(uint32 Connection, uint32 Guid) const
+        {
+            if (Guid < NetGUID_DynamicStart)
+            {
+                return true;
+            }
+            const auto View = ClientViews.find(Connection);
+            return View != ClientViews.end() && View->second.Relevant.contains(Guid);
+        }
+
         // Incremented once per ServerReplicateRelevant tick. An FRelevantEntry is "relevant this tick" when
         // its RelevantTick == this, which replaces a full-map "reset every entry to not-relevant" pass.
         uint64                           RelevancyTick = 0;
 
         // Reused buffer for the per-tick transport Service() drain (avoids reallocating it every frame).
         TVector<FNetworkEvent>           ServiceEvents;
-
-        // Per-tick scratch: reliable PropertyUpdate datagrams that must go to specific clients (entities with
-        // owner-conditioned --@replicated fields). Built by ReplicateDirtyProperties, flushed by
-        // ServerReplicateRelevant AFTER net-index exports so the recipient can resolve any referenced index.
-        THashMap<uint32, TVector<uint8>> PendingClientReliable;
 
         // Client: replicated children whose parent hasn't spawned yet. Key = child entity (integral id, so the
         // map needs no custom hasher), value = desired parent NetGUID. Drained when that parent spawns

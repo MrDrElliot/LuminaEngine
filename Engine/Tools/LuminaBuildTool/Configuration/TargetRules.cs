@@ -61,6 +61,8 @@ public sealed class TargetInfo
 
     public bool bWithEditor => Type == TargetType.Editor;
 
+    public bool bWithServer => Type == TargetType.Server;
+
     public bool bShipping => Configuration == BuildConfiguration.Shipping;
 
     public bool bDebug => Configuration == BuildConfiguration.Debug;

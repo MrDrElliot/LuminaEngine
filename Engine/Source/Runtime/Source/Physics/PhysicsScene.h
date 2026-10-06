@@ -125,6 +125,37 @@ namespace Lumina::Physics
 
     enum class EPhysicsBodyStatus : uint8 { Missing, Pending, Ready, Failed };
 
+    // Everything a character's next step reads from its last one, so a predicting client can rewind to it.
+    struct FCharacterNetState
+    {
+        FVector3 Position       = FVector3(0.0f);
+        FQuat    Rotation       = FQuat::Identity();
+        FVector3 Velocity       = FVector3(0.0f);
+        FVector3 GroundNormal   = FVector3(0.0f, 1.0f, 0.0f);
+        FVector3 GroundVelocity = FVector3(0.0f);
+        int32    JumpCount      = 0;
+        bool     bGrounded      = false;
+    };
+
+    // One fixed step of character input. MoveSpeed of zero keeps the component's own speed.
+    struct FCharacterMoveInput
+    {
+        FVector3 Direction = FVector3(0.0f);
+        float    Throttle  = 0.0f;
+        float    LookYaw   = 0.0f;
+        float    MoveSpeed = 0.0f;
+        uint32   Buttons   = 0;
+        bool     bHasMove  = false;
+        bool     bJump     = false;
+    };
+
+    enum class ECharacterNetDrive : uint8
+    {
+        Simulated,       // stepped by the physics loop from its controller
+        FollowTransform, // placed where its transform says, for a copy another peer controls
+        Commands,        // stepped only by SimulateCharacterStep, one step per received command
+    };
+
     struct FPhysicsBodyState
     {
         FVector3 Position = FVector3(0.0f);
@@ -146,6 +177,17 @@ namespace Lumina::Physics
 
         // Runs before each solver step, the only place a force survives the accumulator reset.
         void SetPreStepCallback(TFunction<void(float)> Callback) { PreStepCallback = Move(Callback); }
+
+        // Runs around every fixed character step, after input is latched, so netcode can record or replace it.
+        void SetCharacterStepHook(TFunction<void(float, bool)> Hook) { CharacterStepHook = Move(Hook); }
+
+        virtual bool GetCharacterNetState(ECS::FEntity Entity, FCharacterNetState& Out) const { return false; }
+        virtual bool SetCharacterNetState(ECS::FEntity Entity, const FCharacterNetState& State) { return false; }
+
+        // One fixed step of a single character outside the physics loop. A replay discards its pushes on dynamic bodies.
+        virtual bool SimulateCharacterStep(ECS::FEntity Entity, const FCharacterMoveInput& Input, float FixedDt, bool bReplay) { return false; }
+
+        virtual void SetCharacterNetDrive(ECS::FEntity Entity, ECharacterNetDrive Drive) {}
 
         virtual void PostUpdate() = 0;
         virtual void Simulate() = 0;
@@ -261,5 +303,6 @@ namespace Lumina::Physics
     protected:
 
         TFunction<void(float)> PreStepCallback;
+        TFunction<void(float, bool)> CharacterStepHook;
     };
 }

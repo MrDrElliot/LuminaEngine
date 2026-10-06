@@ -6,6 +6,7 @@
 #include "Containers/Vector.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Log/Log.h"
+#include "Core/CommandLine/CommandLine.h"
 
 namespace Lumina
 {
@@ -16,12 +17,12 @@ namespace Lumina
         "Simulated outgoing packet loss, 0..100%. Only unreliable packets are dropped (reliable ones retransmit).");
 
     // Both peers must enable it, which they do, and it is read once at host creation.
-    static TConsoleVar<bool> CVarCompression("Net.Compression", true,
-        "Compress packets with ENet's range coder (good ratio on game traffic, low overhead). Both peers must match.");
+    static TConsoleVar<bool> CVarCompression("Net.Compression", false,
+        "Compress packets with ENet's range coder. Quantized snapshots barely shrink and it costs real CPU per peer, so it is off. Both peers must match.");
 
     static void EnablePacketCompression(ENetHost* Host)
     {
-        if (Host == nullptr || !CVarCompression.GetValue())
+        if (Host == nullptr || !CVarCompression.GetValue() || GCommandLine->Has("netnocompress"))
         {
             return;
         }
@@ -318,6 +319,15 @@ namespace Lumina
         }
 
         Impl->SendImmediate(0, Channel, Mode, Data, Size);
+    }
+
+    void FENetTransport::Flush()
+    {
+        if (Impl->Host != nullptr)
+        {
+            Impl->FlushDelayed();
+            enet_host_flush(Impl->Host);
+        }
     }
 
     void FENetTransport::Service(TVector<FNetworkEvent>& OutEvents)

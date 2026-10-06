@@ -47,7 +47,7 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         bPublishesEngineReflectionManifest = false;
 
         // A packaged Shipping game links into the engine executable, since a game library would load a second runtime beside it.
-        bMonolithic = Target.Type == TargetType.Game && Target.Configuration == BuildConfiguration.Shipping;
+        bMonolithic = (Target.Type == TargetType.Game || Target.Type == TargetType.Server) && Target.Configuration == BuildConfiguration.Shipping;
         if (bMonolithic)
         {
             ExtraModuleNames.Add("Lumina");

@@ -62,6 +62,9 @@ namespace Lumina::MovieCapture
 
     EDITOR_API FStatus GetStatus();
 
+    // Width over height of the movie being recorded, or zero when none is, so a viewport can letterbox to the frame that is kept.
+    EDITOR_API float GetRecordingAspect();
+
     // Called once per editor frame; records the frame the world last rendered.
     EDITOR_API void Tick();
 }

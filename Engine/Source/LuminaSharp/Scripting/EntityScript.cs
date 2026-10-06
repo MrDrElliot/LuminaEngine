@@ -37,7 +37,7 @@ public sealed class ParallelUpdateAttribute : System.Attribute
 /// Consequence worth knowing: an instance is only valid once the native side has created it. Scripts are
 /// created by attaching them to an entity, never by <c>new</c>.
 /// </summary>
-public abstract class EntityScript : Lumina.CEntityScript
+public abstract partial class EntityScript : Lumina.CEntityScript
 {
     internal TypeDescription Description = null!; // set at Create; cached labels + callback flags, no per-frame reflection
 

@@ -5935,4 +5935,10 @@ namespace Lumina
             DrawList->AddCircle(BaseCenter, 3.0f, OutlineColor, 0, 1.5f);
         }
     }
+
+    void FWorldEditorTool::SetPlayNetwork(int32 NumPlayers, ENetMode NetMode)
+    {
+        PlaySettings.NumPlayers = Math::Clamp(NumPlayers, 1, MaxPlayers);
+        PlaySettings.NetMode    = NetMode;
+    }
 }

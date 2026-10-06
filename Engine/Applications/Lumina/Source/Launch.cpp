@@ -68,7 +68,8 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     GEditorEngine = &EdEngine;
     GEngine = GEditorEngine;
     #else
-    GIsHeadless = Parsed.Has("server");
+    // Bots are client worlds nobody watches, so a bot process draws and plays nothing either.
+    GIsHeadless = USING(WITH_SERVER) || Parsed.Has("server") || Parsed.Has("bots") || Parsed.Has("netbots");
     CrashHandler::SetAllowModalDialog(!GIsHeadless);
 
     FEngine Engine{};

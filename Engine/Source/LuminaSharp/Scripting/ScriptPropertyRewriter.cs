@@ -38,7 +38,8 @@ internal static class ScriptPropertyRewriter
     public static SyntaxTree Rewrite(CSharpCompilation Probe, SyntaxTree Tree, List<string> OutErrors)
     {
         SyntaxNode Root = Tree.GetRoot();
-        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(NeedsNativeStorage))
+        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(NeedsNativeStorage)
+            && !Root.DescendantNodes().OfType<MethodDeclarationSyntax>().Any(MayBeRpc))
         {
             return Tree;
         }
@@ -68,8 +69,33 @@ internal static class ScriptPropertyRewriter
                 {
                     Name = Name.Substring(Dot + 1);
                 }
-                return Name is "Property" or "PropertyAttribute" or "Serialize" or "SerializeAttribute";
+                return Name is "Property" or "PropertyAttribute" or "Serialize" or "SerializeAttribute"
+                    or "Sync" or "SyncAttribute";
             });
+    }
+
+    private static bool HasAttributeNamed(SyntaxList<AttributeListSyntax> Lists, string Wanted)
+    {
+        return Lists.SelectMany(List => List.Attributes).Any(Attribute =>
+        {
+            string Name = Attribute.Name.ToString();
+            int Dot = Name.LastIndexOf('.');
+            if (Dot >= 0)
+            {
+                Name = Name.Substring(Dot + 1);
+            }
+            return Name == Wanted || Name == Wanted + "Attribute";
+        });
+    }
+
+    // Syntax only, so the cheap pre-check costs no semantic model. The semantic pass confirms each one.
+    private static bool MayBeRpc(MethodDeclarationSyntax Method)
+    {
+        return Method.AttributeLists.SelectMany(List => List.Attributes).Any(Attribute =>
+        {
+            string Name = Attribute.Name.ToString();
+            return Name.Contains("Rpc.") || Name.Contains("RpcAttribute");
+        });
     }
 
     private sealed class Rewriter : CSharpSyntaxRewriter
@@ -89,7 +115,8 @@ internal static class ScriptPropertyRewriter
         {
             List<FieldDeclarationSyntax> Fields = Node.Members.OfType<FieldDeclarationSyntax>()
                 .Where(NeedsNativeStorage).ToList();
-            if (Fields.Count == 0)
+            List<FRpcMethod> Rpcs = CollectRpcs(Node);
+            if (Fields.Count == 0 && Rpcs.Count == 0)
             {
                 return base.VisitClassDeclaration(Node);
             }
@@ -156,12 +183,23 @@ internal static class ScriptPropertyRewriter
 
             // The declared order is preserved: each field is replaced in place by its property, so the
             // inspector's row order still follows the source.
+            var RpcBodies = new Dictionary<MethodDeclarationSyntax, MethodDeclarationSyntax>();
+            foreach (FRpcMethod Rpc in Rpcs)
+            {
+                RpcBodies[Rpc.Syntax] = RouteRpc(Rpc);
+            }
+
             var Members = new List<MemberDeclarationSyntax>();
             foreach (MemberDeclarationSyntax Member in Node.Members)
             {
                 if (Member is FieldDeclarationSyntax Field && Replacements.TryGetValue(Field, out List<MemberDeclarationSyntax>? Built))
                 {
                     Members.AddRange(Built);
+                    continue;
+                }
+                if (Member is MethodDeclarationSyntax Method && RpcBodies.TryGetValue(Method, out MethodDeclarationSyntax? Routed))
+                {
+                    Members.Add(Routed);
                     continue;
                 }
                 Members.Add(Member);
@@ -172,10 +210,164 @@ internal static class ScriptPropertyRewriter
                 Members.AddRange(BuildDefaultsMethod(Defaults));
             }
 
+            if (Rpcs.Count > 0)
+            {
+                Members.AddRange(ParseMembers(BuildRpcDispatcher(Rpcs)).Select(Member => Member.WithoutTrivia()));
+            }
+
             return Node.WithMembers(SyntaxFactory.List(Members));
         }
 
         private int Line(SyntaxNode Node) => Node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+        private sealed class FRpcMethod
+        {
+            public required MethodDeclarationSyntax Syntax;
+            public required IMethodSymbol Symbol;
+            public required string Target;
+            public required uint Flags;
+            public required uint Id;
+        }
+
+        private List<FRpcMethod> CollectRpcs(ClassDeclarationSyntax Node)
+        {
+            var Result = new List<FRpcMethod>();
+            var SeenNames = new HashSet<string>();
+            foreach (MethodDeclarationSyntax Method in Node.Members.OfType<MethodDeclarationSyntax>().Where(MayBeRpc))
+            {
+                if (Model.GetDeclaredSymbol(Method) is not IMethodSymbol Symbol)
+                {
+                    continue;
+                }
+
+                AttributeData? Attribute = Symbol.GetAttributes().FirstOrDefault(Data =>
+                    Data.AttributeClass?.ContainingType?.Name == "Rpc"
+                    && Data.AttributeClass.Name is "BroadcastAttribute" or "HostAttribute" or "OwnerAttribute");
+                if (Attribute == null)
+                {
+                    continue;
+                }
+
+                string Where = $"{FilePath}({Line(Method)}): [Rpc] '{Symbol.Name}'";
+                if (!Symbol.ReturnsVoid || Symbol.IsStatic || Symbol.IsGenericMethod || Symbol.IsAsync)
+                {
+                    Errors.Add($"{Where} must be a non-static, non-generic, non-async method returning void, since the call returns before it runs remotely.");
+                    continue;
+                }
+                if (Symbol.Parameters.Any(Parameter => Parameter.RefKind != RefKind.None))
+                {
+                    Errors.Add($"{Where} has a ref or out parameter, which a remote call has no way to hand back.");
+                    continue;
+                }
+                if (!DerivesFromEntityScript(Symbol.ContainingType))
+                {
+                    Errors.Add($"{Where} is declared on {Symbol.ContainingType.Name}, and only an EntityScript has an entity to route the call through.");
+                    continue;
+                }
+                if (!SeenNames.Add(Symbol.Name))
+                {
+                    Errors.Add($"{Where} is overloaded, and a remote call is matched by name alone.");
+                    continue;
+                }
+                if (Method.Body == null && Method.ExpressionBody == null)
+                {
+                    Errors.Add($"{Where} has no body to route.");
+                    continue;
+                }
+
+                uint Flags = Attribute.ConstructorArguments.Length > 0 && Attribute.ConstructorArguments[0].Value is uint Value ? Value : 0u;
+                string Target = Attribute.AttributeClass!.Name.Replace("Attribute", "");
+                Result.Add(new FRpcMethod
+                {
+                    Syntax = Method,
+                    Symbol = Symbol,
+                    Target = Target,
+                    Flags = Flags,
+                    Id = StableId(Symbol.ContainingType.ToDisplayString() + "." + Symbol.Name),
+                });
+            }
+            return Result;
+        }
+
+        private static bool DerivesFromEntityScript(INamedTypeSymbol? Type)
+        {
+            for (INamedTypeSymbol? Current = Type; Current != null; Current = Current.BaseType)
+            {
+                if (Current.Name == "EntityScript" && Current.ContainingNamespace?.ToDisplayString() == "LuminaSharp")
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // FNV-1a over the declaring type and name, so an id survives reordering and is unique across a hierarchy.
+        private static uint StableId(string Text)
+        {
+            uint Hash = 2166136261u;
+            foreach (char Character in Text)
+            {
+                Hash ^= Character;
+                Hash *= 16777619u;
+            }
+            return Hash;
+        }
+
+        private static string Qualify(ITypeSymbol Type) => Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+        // The routing prefix is one line placed on the body's first line, so no later line number moves.
+        private MethodDeclarationSyntax RouteRpc(FRpcMethod Rpc)
+        {
+            var Prefix = new StringBuilder();
+            Prefix.Append("if (global::LuminaSharp.RpcRuntime.ShouldSend(this, global::LuminaSharp.ERpcTarget.").Append(Rpc.Target)
+                  .Append(", out bool __rpcRunLocal)) { var __rpcWriter = global::LuminaSharp.RpcRuntime.BeginWrite(this); ");
+            foreach (IParameterSymbol Parameter in Rpc.Symbol.Parameters)
+            {
+                Prefix.Append("__rpcWriter.Write<").Append(Qualify(Parameter.Type)).Append(">(").Append(Parameter.Name).Append("); ");
+            }
+            Prefix.Append("global::LuminaSharp.RpcRuntime.Send(this, ").Append(Rpc.Id).Append("u, global::LuminaSharp.ERpcTarget.").Append(Rpc.Target)
+                  .Append(", (global::LuminaSharp.NetFlags)").Append(Rpc.Flags).Append("u, ref __rpcWriter); if (!__rpcRunLocal) { return; } } ");
+
+            StatementSyntax Gate = SyntaxFactory.ParseStatement(Prefix.ToString());
+            MethodDeclarationSyntax Method = Rpc.Syntax;
+
+            if (Method.Body != null)
+            {
+                return Method.WithBody(Method.Body.WithStatements(Method.Body.Statements.Insert(0, Gate)));
+            }
+
+            // An expression body becomes a block on the same line, keeping the line count.
+            ArrowExpressionClauseSyntax Arrow = Method.ExpressionBody!;
+            BlockSyntax Block = SyntaxFactory.Block(Gate, SyntaxFactory.ExpressionStatement(Arrow.Expression))
+                .WithLeadingTrivia(Arrow.GetLeadingTrivia())
+                .WithTrailingTrivia(Method.SemicolonToken.TrailingTrivia);
+            return Method.WithExpressionBody(null).WithSemicolonToken(default).WithBody(Block);
+        }
+
+        // One line too, so it lands where the class's closing brace already was.
+        private static string BuildRpcDispatcher(List<FRpcMethod> Rpcs)
+        {
+            var Text = new StringBuilder();
+            Text.Append("protected override bool __RpcDispatch(uint __RpcId, ref global::LuminaSharp.NetReader __RpcReader) { switch (__RpcId) { ");
+            foreach (FRpcMethod Rpc in Rpcs)
+            {
+                Text.Append("case ").Append(Rpc.Id).Append("u: { ");
+                Text.Append("if (!global::LuminaSharp.RpcRuntime.Permit(this, (global::LuminaSharp.NetFlags)").Append(Rpc.Flags).Append("u)) { return true; } ");
+                var Arguments = new List<string>();
+                foreach (IParameterSymbol Parameter in Rpc.Symbol.Parameters)
+                {
+                    string Local = "__rpcArg" + Arguments.Count;
+                    Text.Append("var ").Append(Local).Append(" = __RpcReader.Read<").Append(Qualify(Parameter.Type)).Append(">(); ");
+                    Arguments.Add(Local);
+                }
+                Text.Append("if (__RpcReader.Failed) { return true; } ");
+                Text.Append("global::LuminaSharp.RpcRuntime.MarkArriving(); ");
+                Text.Append(Rpc.Symbol.Name).Append("(").Append(string.Join(", ", Arguments)).Append("); return true; } ");
+            }
+            Text.Append("} return base.__RpcDispatch(__RpcId, ref __RpcReader); }");
+            return Text.ToString();
+        }
+
 
         /// <summary>
         /// The property replacing one field. Wrapped in #line directives pointing back at the field, so a
@@ -284,7 +476,20 @@ internal static class ScriptPropertyRewriter
             // Gated on HasNativeStorage: the schema pass creates one UNBOUND instance per script type purely
             // to describe it, and reading through a null handle there is an access violation on load.
             Body.Append("    get => HasNativeStorage ? ").Append(Get).Append(" : ").Append(Unbound).AppendLine(";");
-            if (bWritable && Set != null)
+            bool bSync = HasAttributeNamed(Field.AttributeLists, "Sync");
+            if (bSync && Classification.IsView)
+            {
+                Errors.Add($"{FilePath}({Line(Declarator)}): [Sync] '{Name}' is a container, and only whole values replicate. "
+                         + "Sync a count or an id instead, or send the contents through an RPC.");
+                return System.Array.Empty<MemberDeclarationSyntax>();
+            }
+            if (bWritable && Set != null && bSync)
+            {
+                Body.Append("    set { if (HasNativeStorage) { var __old = ").Append(Get).Append("; ").Append(Set)
+                    .Append("; if (!global::System.Collections.Generic.EqualityComparer<").Append(Type)
+                    .AppendLine(">.Default.Equals(__old, value)) { global::LuminaSharp.SyncRuntime.MarkDirty(Handle); } } }");
+            }
+            else if (bWritable && Set != null)
             {
                 Body.Append("    set { if (HasNativeStorage) { ").Append(Set).AppendLine("; } }");
             }

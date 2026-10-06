@@ -15,6 +15,7 @@
 #include "Renderer/RHICore.h"
 #include "Renderer/RHITexture.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "Tools/UI/ImGui/ImGuiNativeFrames.h"
 
 namespace Lumina
 {
@@ -42,6 +43,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
 
         ImGui_ImplGlfw_InitForVulkan(Windowing::GetPrimaryWindowHandle()->GetWindow(), true);
+        ImGuiX::NativeFrames::Install();
 
         ImGuiIO& IO = ImGui::GetIO();
         IO.BackendRendererName = "Lumina_RHI";

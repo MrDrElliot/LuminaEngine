@@ -195,6 +195,10 @@ namespace Lumina
         FUNCTION()
         NODISCARD ENetMode GetNetMode() const;
 
+        // A load-test client, which gameplay drives itself instead of reading a person's input.
+        FUNCTION()
+        NODISCARD bool IsBotWorld() const;
+
         /** True when this world is the network authority (listen or dedicated server). */
         FUNCTION()
         NODISCARD bool IsNetServer() const;
@@ -295,6 +299,10 @@ namespace Lumina
 
         FUNCTION()
         bool EntityHasTag(ECS::FEntity Entity, const FName& Tag);
+
+        // An entity carries one tag, so this replaces whatever it had. None clears it.
+        FUNCTION()
+        void SetEntityTag(ECS::FEntity Entity, const FName& Tag);
 
         //~ Entity transforms.
 

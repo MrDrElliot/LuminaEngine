@@ -36,6 +36,9 @@ namespace Lumina
         // Called once per frame by Network::Update.
         virtual void Service(TVector<FNetworkEvent>& OutEvents) = 0;
 
+        // Puts everything queued by Send and Broadcast on the wire now instead of at the next Service.
+        virtual void Flush() {}
+
         virtual EConnectionState GetConnectionState(FConnectionHandle Connection) const = 0;
 
         // Bytes of reliable data sent to this connection but not yet acknowledged (in flight). Used as a

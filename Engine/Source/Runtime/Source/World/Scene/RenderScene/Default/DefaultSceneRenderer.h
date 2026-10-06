@@ -51,6 +51,7 @@ namespace Lumina
     class CMaterialInterface;
     class CStaticMesh;
     class CMaterial;
+    enum class EMaterialShaderStage : uint8;
 
     /** The engine's default scene renderer: GPU-driven meshlet culling into a visibility buffer, then
      *  per-material GBuffer resolve and a clustered lighting pass. RenderSceneFactory falls back to this
@@ -1010,6 +1011,15 @@ namespace Lumina
 
         RHI::FPipelineH      GetOrCreatePipeline(const FGraphicsPipelineKey& Key);
 
+        // Starts a background build on a miss and returns null until it lands, for pipelines a frame can draw without.
+        RHI::FPipelineH      FindPipeline(const FGraphicsPipelineKey& Key);
+        static uint64        HashGraphicsKey(const FGraphicsPipelineKey& Key);
+
+        // The default material's stage, which stands in for a material whose pipeline is still compiling.
+        static FShaderH      DefaultMaterialStage(EMaterialShaderStage Stage);
+        static TMoveOnlyFunction<RHI::FPipelineH()> MakeGraphicsBuild(const FGraphicsPipelineKey& Key);
+        static TMoveOnlyFunction<RHI::FPipelineH()> MakeComputeBuild(FShaderH CS, TSpan<const RHI::FSpecializationConstant> Constants);
+
         /** Where a meshlet pass draws, as opposed to what. Everything here is per PASS, not per batch. */
         struct FMeshletPassContext
         {
@@ -1029,9 +1039,10 @@ namespace Lumina
 
         void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FMeshletPassContext& Ctx);
 
-        template<typename TSetup, typename TBound>
+        // Fallback rewrites the key to one that can stand in while the material's own pipeline compiles, or returns false to skip the batch.
+        template<typename TSetup, typename TBound, typename TFallback>
         void ForEachMeshletBatch(RHI::FCmdListH CL, const TVector<uint32>& DrawList,
-                                 const FMeshletPassContext& Ctx, TSetup&& Setup, TBound&& Bound)
+                                 const FMeshletPassContext& Ctx, TSetup&& Setup, TBound&& Bound, TFallback&& Fallback)
         {
             const auto& DrawCommands = RenderFrame->Geometry.DrawCommands;
 
@@ -1047,11 +1058,33 @@ namespace Lumina
                     continue;
                 }
 
-                RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+                RHI::FPipelineH Pipeline = FindPipeline(Key);
+                if (!Pipeline)
+                {
+                    if (!Fallback(Key, Batch))
+                    {
+                        continue;
+                    }
+                    Pipeline = GetOrCreatePipeline(Key);
+                    if (!Pipeline)
+                    {
+                        continue;
+                    }
+                }
+
+                RHI::CmdSetPipeline(CL, Pipeline);
                 Bound(Batch);
 
                 DrawMeshletBatch(CL, Batch, Ctx);
             }
+        }
+
+        template<typename TSetup, typename TBound>
+        void ForEachMeshletBatch(RHI::FCmdListH CL, const TVector<uint32>& DrawList,
+                                 const FMeshletPassContext& Ctx, TSetup&& Setup, TBound&& Bound)
+        {
+            ForEachMeshletBatch(CL, DrawList, Ctx, static_cast<TSetup&&>(Setup), static_cast<TBound&&>(Bound),
+                                [](FGraphicsPipelineKey&, const FMeshDrawCommand&) { return false; });
         }
 
         /** Overload for passes with no per-batch dynamic state. */
@@ -1064,6 +1097,8 @@ namespace Lumina
         }
 
         RHI::FPipelineH      GetOrCreateComputePipeline(FShaderH CS,
+                                 TSpan<const RHI::FSpecializationConstant> Constants = {});
+        RHI::FPipelineH      FindComputePipeline(FShaderH CS,
                                  TSpan<const RHI::FSpecializationConstant> Constants = {});
 
         // Build and publish together, or the next view draws against the previous view's bindings.

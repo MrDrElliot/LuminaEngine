@@ -12,6 +12,12 @@
 #include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Config/EngineSettings.h"
+#include "Config/GameUserSettings.h"
+#include "Paths/Paths.h"
+#include "Platform/Process/PlatformProcess.h"
+#include <thread>
+#include "TaskSystem/Future.h"
+#include "TaskSystem/Scheduler/JobScheduler.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Windows/Window.h"
 #include "Core/Profiler/Profile.h"
@@ -59,9 +65,267 @@ namespace Lumina
         return *GRenderManager;
     }
 
+    // Beside the user settings, which is writable in an installed game where the shader cache is not.
+    static FString PipelineCachePath()
+    {
+        if (GCommandLine != nullptr && GCommandLine->Has("nopipelinecache"))
+        {
+            return {};
+        }
+        const FString Settings = CGameUserSettings::GetSettingsFilePath();
+        FString Path = Paths::Parent(FStringView(Settings.c_str(), Settings.size()), true);
+
+        // A packaged game creates the device before it knows its project name, which would share one cache across games.
+        if (GEngine == nullptr || (GEngine->GetProjectPath().empty() && GEngine->GetProjectName().empty()))
+        {
+            Path = Paths::Parent(FStringView(Path.c_str(), Path.size()), true);
+            Path += "/";
+            #if PLATFORM_TCHAR_IS_WIDE
+            Path += StringUtils::FromWideString(Platform::ExecutableName());
+            #else
+            Path += Platform::ExecutableName();
+            #endif
+        }
+
+        Path += "/PipelineCache.bin";
+        return Path;
+    }
+
     FRenderManager* TryRender()
     {
         return GRenderManager;
+    }
+
+    namespace
+    {
+        // Half the cores, since a driver compile pins a whole thread and the frame's own jobs still need workers.
+        uint32 MaxConcurrentPipelineBuilds()
+        {
+            const uint32 Cores = Math::Max(1u, (uint32)std::thread::hardware_concurrency());
+            return Math::Clamp(Cores / 2u, 1u, 8u);
+        }
+
+        // Saved after a burst rather than per pipeline, since the whole cache is rewritten each time.
+        constexpr uint32 kBuildsPerCacheSave = 16;
+
+        enum EPendingState : uint8
+        {
+            PendingQueued  = 0,
+            PendingRunning = 1,
+            PendingDone    = 2,
+        };
+    }
+
+    struct FScenePipelineCache::FPendingBuild
+    {
+        uint64                Hash = 0;
+        FShaderH              Shaders[3];
+        FPipelineBuild        Build;
+        std::atomic<uint8>    State{ PendingQueued };
+        TPromise<void>        Done;
+        TFuture<void>         DoneFuture = Done.GetFuture();
+    };
+
+    RHI::FPipelineH FScenePipelineCache::Find(uint64 Hash)
+    {
+        FReadScopeLock Lock(Mutex);
+        auto It = Entries.find(Hash);
+        return It != Entries.end() ? It->second.Pipeline : RHI::FPipelineH{};
+    }
+
+    bool FScenePipelineCache::IsPending(uint64 Hash)
+    {
+        FReadScopeLock Lock(Mutex);
+        return PendingBuilds.find(Hash) != PendingBuilds.end();
+    }
+
+    TSharedPtr<FScenePipelineCache::FPendingBuild> FScenePipelineCache::AddPending(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build, bool bQueued)
+    {
+        TSharedPtr<FPendingBuild> Pending = MakeShared<FPendingBuild>();
+        Pending->Hash = Hash;
+        for (uint32 i = 0; i < 3; ++i)
+        {
+            Pending->Shaders[i] = Shaders[i];
+        }
+        Pending->Build = Move(Build);
+        Pending->State.store(bQueued ? PendingQueued : PendingRunning, std::memory_order_relaxed);
+        PendingBuilds.emplace(Hash, Pending);
+        return Pending;
+    }
+
+    RHI::FPipelineH FScenePipelineCache::RunBuild(uint64 Hash, FPendingBuild& Pending)
+    {
+        const RHI::FPipelineH Pipeline = Pending.Build();
+        Pending.Build = {};
+
+        {
+            FWriteScopeLock Lock(Mutex);
+            if (Pipeline)
+            {
+                Entries.emplace(Hash, FEntry{ Pipeline, { Pending.Shaders[0], Pending.Shaders[1], Pending.Shaders[2] } });
+            }
+            if (auto It = PendingBuilds.find(Hash); It != PendingBuilds.end() && It->second.get() == &Pending)
+            {
+                PendingBuilds.erase(It);
+            }
+        }
+
+        Pending.State.store(PendingDone, std::memory_order_release);
+        Pending.Done.SetValue();
+        return Pipeline;
+    }
+
+    RHI::FPipelineH FScenePipelineCache::Request(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build)
+    {
+        {
+            FWriteScopeLock Lock(Mutex);
+            if (auto It = Entries.find(Hash); It != Entries.end())
+            {
+                return It->second.Pipeline;
+            }
+            if (PendingBuilds.find(Hash) != PendingBuilds.end() || !Build)
+            {
+                return {};
+            }
+
+            TSharedPtr<FPendingBuild> Pending = AddPending(Hash, Shaders, Move(Build), true);
+            FScopeLock QueueLock(QueueMutex);
+            Queue.push_back(Move(Pending));
+        }
+
+        Pump();
+        return {};
+    }
+
+    RHI::FPipelineH FScenePipelineCache::BuildNow(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build)
+    {
+        TSharedPtr<FPendingBuild> Pending;
+        bool bOwn = false;
+        {
+            FWriteScopeLock Lock(Mutex);
+            if (auto It = Entries.find(Hash); It != Entries.end())
+            {
+                return It->second.Pipeline;
+            }
+
+            if (auto It = PendingBuilds.find(Hash); It != PendingBuilds.end())
+            {
+                Pending = It->second;
+                // A build still waiting for a worker is taken over here rather than waited behind the queue.
+                uint8 Expected = PendingQueued;
+                bOwn = Pending->State.compare_exchange_strong(Expected, PendingRunning, std::memory_order_acq_rel);
+            }
+            else if (Build)
+            {
+                Pending = AddPending(Hash, Shaders, Move(Build), false);
+                bOwn = true;
+            }
+            else
+            {
+                return {};
+            }
+        }
+
+        if (bOwn)
+        {
+            return RunBuild(Hash, *Pending);
+        }
+
+        Pending->DoneFuture.Wait();
+        return Find(Hash);
+    }
+
+    struct FScenePipelineCache::FPumpJob
+    {
+        FScenePipelineCache*        Cache;
+        TSharedPtr<FPendingBuild>   Pending;
+
+        static void Run(void* Arg, uint32)
+        {
+            FPumpJob* Job = static_cast<FPumpJob*>(Arg);
+            Job->Cache->RunQueued(*Job->Pending);
+            Memory::Delete(Job);
+        }
+    };
+
+    void FScenePipelineCache::RunQueued(FPendingBuild& Pending)
+    {
+        uint8 Expected = PendingQueued;
+        if (Pending.State.compare_exchange_strong(Expected, PendingRunning, std::memory_order_acq_rel))
+        {
+            RunBuild(Pending.Hash, Pending);
+            BuiltSinceSave.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        bool bDrained = false;
+        {
+            FScopeLock Lock(QueueMutex);
+            --InFlight;
+            bDrained = InFlight == 0 && Queue.empty();
+        }
+
+        if (bDrained && BuiltSinceSave.load(std::memory_order_relaxed) >= kBuildsPerCacheSave)
+        {
+            BuiltSinceSave.store(0, std::memory_order_relaxed);
+            RHI::SavePipelineCache();
+        }
+        Pump();
+    }
+
+    void FScenePipelineCache::Pump()
+    {
+        static const uint32 MaxInFlight = MaxConcurrentPipelineBuilds();
+
+        for (;;)
+        {
+            TSharedPtr<FPendingBuild> Next;
+            {
+                FScopeLock Lock(QueueMutex);
+                if (InFlight >= MaxInFlight || Queue.empty())
+                {
+                    return;
+                }
+                Next = Move(Queue.front());
+                Queue.erase(Queue.begin());
+                ++InFlight;
+            }
+
+            // Background, so a thread assist-waiting on frame work never inherits a driver compile.
+            FPumpJob* Job = Memory::New<FPumpJob>(FPumpJob{ this, Move(Next) });
+            Jobs::RunJob(&FPumpJob::Run, Job, Jobs::EJobPriority::Background, nullptr, "PipelineBuild");
+        }
+    }
+
+    void FScenePipelineCache::WaitForBuilds()
+    {
+        {
+            FScopeLock Lock(QueueMutex);
+            for (TSharedPtr<FPendingBuild>& Pending : Queue)
+            {
+                uint8 Expected = PendingQueued;
+                if (Pending->State.compare_exchange_strong(Expected, PendingDone, std::memory_order_acq_rel))
+                {
+                    Pending->Done.SetValue();
+                }
+            }
+            Queue.clear();
+        }
+
+        // A worker still compiling writes into Entries and needs the device alive until it returns.
+        for (;;)
+        {
+            {
+                FScopeLock Lock(QueueMutex);
+                if (InFlight == 0)
+                {
+                    break;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        FWriteScopeLock Lock(Mutex);
+        PendingBuilds.clear();
     }
 
     void FScenePipelineCache::PurgeStale()
@@ -89,6 +353,7 @@ namespace Lumina
 
     void FScenePipelineCache::ReleaseAll()
     {
+        WaitForBuilds();
         FWriteScopeLock Lock(Mutex);
         for (auto& [Hash, Entry] : Entries)
         {
@@ -219,6 +484,7 @@ namespace Lumina
             // The scene renderer draws every meshlet through the mesh path; there is no fallback.
             .RequiredFeatures = RHI::EDeviceFeature::MeshShading,
             .MinDeviceLocalMemoryMiB = MinVRAMMiB,
+            .PipelineCachePath = PipelineCachePath(),
         });
         RenderBootMark("RHI::CreateDevice");
 

@@ -162,16 +162,26 @@ namespace Lumina::MCP
                         : Lumina::Format("Editing {}.", Out.World));
                 });
 
-            Agent::FToolRegistry::Get().Register<SPlayStateParams, SPlayState>(
+            Agent::FToolRegistry::Get().Register<SStartPlayParams, SPlayState>(
                 Owner, "editor.play",
-                "Start play-in-editor on the open world.",
+                "Start play-in-editor on the open world, optionally as a networked session with several players.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
-                [](const SPlayStateParams&, SPlayState& Out)
+                [](const SStartPlayParams& In, SPlayState& Out)
                 {
                     FString SessionError;
                     if (!SessionOps::HasSceneEditor())
                     {
                         return Agent::FToolResult::Error(GNoWorldEditorSession);
+                    }
+
+                    if (In.Players > 0 || !In.NetMode.empty())
+                    {
+                        const FString Mode = In.NetMode.empty() ? FString("listen") : In.NetMode;
+                        const int32 Players = In.Players > 0 ? In.Players : 1;
+                        if (!SessionOps::SetPlayNetwork(Players, FStringView(Mode.c_str(), Mode.size()), SessionError))
+                        {
+                            return Agent::FToolResult::Error(SessionError);
+                        }
                     }
 
                     if (!SessionOps::StartPlay(SessionError))

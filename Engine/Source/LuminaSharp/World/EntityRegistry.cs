@@ -146,7 +146,24 @@ public readonly unsafe partial struct EntityRegistry
     /// The first live script of type T on the entity, or null. Re-fetch per use; do not cache across frames (a stored ref outlives a destroyed script).
     public T? GetScript<T>(Entity Entity) where T : Lumina.CEntityScript
     {
+        if (!ClassOf<T>().IsValid)
+        {
+            foreach (Lumina.CEntityScript Script in FindScriptsOfAbstract(Entity))
+            {
+                if (Script is T Typed)
+                {
+                    return Typed;
+                }
+            }
+            return null;
+        }
         return AsScript<T>(Lumina.CEntityScriptLibrary.FindScript(World, Entity, ClassOf<T>()));
+    }
+
+    // An abstract script type mints no class, so its subclasses are found among every script by managed type.
+    private Lumina.CEntityScript[] FindScriptsOfAbstract(Entity Entity)
+    {
+        return Lumina.CEntityScriptLibrary.FindScripts(World, Entity, ClassOf<Lumina.CEntityScript>());
     }
 
     // A C++ script has no managed instance of its own, so it arrives as its base wrapper and is rewrapped as T.
@@ -162,7 +179,9 @@ public readonly unsafe partial struct EntityRegistry
     /// Every live script of type T on the entity (empty if none). A fresh list per call.
     public System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : Lumina.CEntityScript
     {
-        Lumina.CEntityScript[] Scripts = Lumina.CEntityScriptLibrary.FindScripts(World, Entity, ClassOf<T>());
+        Lumina.CEntityScript[] Scripts = ClassOf<T>().IsValid
+            ? Lumina.CEntityScriptLibrary.FindScripts(World, Entity, ClassOf<T>())
+            : FindScriptsOfAbstract(Entity);
         var Result = new System.Collections.Generic.List<T>(Scripts.Length);
         foreach (Lumina.CEntityScript Script in Scripts)
         {
@@ -195,7 +214,7 @@ public readonly unsafe partial struct EntityRegistry
     /// Remove the first script of type T from the entity. Returns true if one was removed.
     public bool RemoveScript<T>(Entity Entity) where T : Lumina.CEntityScript
     {
-        Lumina.CEntityScript? Script = Lumina.CEntityScriptLibrary.FindScript(World, Entity, ClassOf<T>());
+        Lumina.CEntityScript? Script = GetScript<T>(Entity);
         return Script is not null && Lumina.CEntityScriptLibrary.RemoveScript(World, Entity, Script);
     }
 

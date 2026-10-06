@@ -247,6 +247,13 @@ namespace Lumina
 
                 // Two-sided materials must rasterize both faces into the VisBuffer.
                 RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
+            },
+            [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand&)
+            {
+                Key.MS               = DefaultMaterialStage(EMaterialShaderStage::VisBufferMesh);
+                Key.PS               = VisPixel;
+                Key.bVisBufferMasked = false;
+                return Key.MS != nullptr;
             });
         }
 
@@ -271,11 +278,27 @@ namespace Lumina
         Key.SkinnedMode = SelectSkinnedMode(Batch);
         // A two-sided caster has no back face to reject, and culling one costs it half its shadow.
         Key.TriCullMode = (uint8)((Batch.bTwoSided ? 0u : (uint32)TriCull_Backface) | (uint32)TriCull_SmallPrim);
-        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+        if (Key.MS == nullptr)
+        {
+            return false;
+        }
+
+        RHI::FPipelineH Pipeline = FindPipeline(Key);
+        if (!Pipeline)
+        {
+            // Casts the default material's shadow until this one's pipeline is ready.
+            Key.MS = DefaultMaterialStage(EMaterialShaderStage::MeshShadow);
+            Key.PS = PixelShader;
+            if (Key.MS == nullptr || !(Pipeline = GetOrCreatePipeline(Key)))
+            {
+                return false;
+            }
+        }
+        RHI::CmdSetPipeline(CL, Pipeline);
 
         // Set here, not hoisted out of the caller's loop, so it cannot disagree with the bit above.
         RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
-        return Key.MS != nullptr;
+        return true;
     }
 
     void FDefaultSceneRenderer::DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
@@ -697,7 +720,12 @@ namespace Lumina
             Key.ColorTargets.push_back({ DBufferB.Desc.Format, DecalBlend });
             Key.ColorTargets.push_back({ DBufferC.Desc.Format, DecalBlend });
             Key.ColorTargets.push_back({ DBufferD.Desc.Format, EmissionBlend });
-            RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+            const RHI::FPipelineH Pipeline = FindPipeline(Key);
+            if (!Pipeline)
+            {
+                continue;
+            }
+            RHI::CmdSetPipeline(CL, Pipeline);
 
             RHI::CmdDraw(CL, MakeArgs(PC), 36, Batch.Count, 0, Batch.FirstInstance);
         }

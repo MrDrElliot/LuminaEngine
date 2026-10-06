@@ -187,6 +187,9 @@ namespace Lumina
 
         // Play-in-editor for a caller outside the tool; false when a session is already running.
         EDITOR_API bool StartPlayInEditor();
+
+        // Players clamps to 1..MaxPlayers, and every player past the first is a client of player one.
+        EDITOR_API void SetPlayNetwork(int32 NumPlayers, ENetMode NetMode);
         
         bool IsUnsavedDocument() override;
 

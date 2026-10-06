@@ -536,6 +536,11 @@ namespace Lumina
         {
             return FrameRateCapOverride;
         }
+        if (GIsHeadless)
+        {
+            static const int32 TickRate = GCommandLine->GetInt("tickrate").value_or(GetDefault<CProjectSettings>()->HeadlessTickRate);
+            return Math::Max(TickRate, 1);
+        }
         return UserFrameRateLimit >= 0 ? UserFrameRateLimit : GetDefault<CRendererSettings>()->MaxFPS;
     }
 
@@ -1134,6 +1139,47 @@ namespace Lumina
         LOG_DISPLAY("GameInstance created: class '{}'.", GameInstance->GetClass()->GetName().ToString().c_str());
     }
 
+    void FEngine::LoadBotWorlds(FStringView MapName)
+    {
+        const int32 Count = Math::Clamp(GCommandLine->GetInt("bots").value_or(1), 1, 512);
+        FURL Target;
+        if (TOptional<FFixedString> ConnectArg = GCommandLine->Get("connect"))
+        {
+            Target = FURL::Parse(FStringView(ConnectArg.value().c_str(), ConnectArg.value().size()));
+        }
+        const FString Host = Target.Host.empty() ? FString("127.0.0.1") : Target.Host;
+        const uint16 Port = Target.Port != 0 ? Target.Port : 7777;
+
+        CWorld* SourceWorld = LoadObjectGraph<CWorld>(MapName);
+        if (SourceWorld == nullptr)
+        {
+            LOG_ERROR("[Net] Bots could not load '{}'.", FString(MapName.data(), MapName.size()).c_str());
+            return;
+        }
+
+        // Each bot is a whole client world of its own, which is what a separate player's machine would run.
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            CWorld* BotWorld = CWorld::DuplicateWorld(SourceWorld);
+            if (BotWorld == nullptr)
+            {
+                continue;
+            }
+            FWorldContext* Context = GWorldManager->CreateWorldContext(BotWorld, EWorldType::Game, ENetMode::Client);
+            if (Context == nullptr)
+            {
+                continue;
+            }
+            Context->SourceWorld  = SourceWorld;
+            Context->GameInstance = GameInstance.Get();
+            Context->MapPath      = FString(MapName.data(), MapName.size());
+            Context->NetHost      = Host;
+            Context->NetPort      = Port;
+            Context->bBot         = true;
+        }
+        LOG_DISPLAY("[Net] Started {} bot client(s) for {}:{}.", Count, Host.c_str(), Port);
+    }
+
     void FEngine::LoadStartupMap()
     {
         FString RawMapName;
@@ -1169,6 +1215,19 @@ namespace Lumina
         // Tolerate legacy absolute paths from before the path resolver.
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawMapName);
         LOG_DISPLAY("LoadStartupMap: loading '{}' (resolved '{}').", RawMapName.c_str(), MapName.c_str());
+
+        if (GCommandLine->Has("bots"))
+        {
+            LoadBotWorlds(FStringView(MapName.c_str(), MapName.size()));
+            return;
+        }
+
+        // Wire-level load bots run inside the network runtime and never need a world of their own.
+        if (GCommandLine->Has("netbots"))
+        {
+            LOG_DISPLAY("LoadStartupMap: skipped, this process only runs network load bots.");
+            return;
+        }
 
         if (GIsHeadless)
         {
@@ -1216,10 +1275,11 @@ namespace Lumina
         }
     }
 
-    void FEngine::Travel(FStringView WorldPath)
+    void FEngine::Travel(FStringView WorldPath, CWorld* FromWorld)
     {
         // Deferred, since tearing down a world inside its own tick is unsafe, and drained next FrameStart.
         PendingTravelPath.assign(WorldPath.data(), WorldPath.size());
+        PendingTravelWorld = FromWorld;
         bHasPendingTravel = true;
     }
 
@@ -1244,6 +1304,8 @@ namespace Lumina
 
         const FString RawPath = Move(PendingTravelPath);
         PendingTravelPath.clear();
+        CWorld* const FromWorld = PendingTravelWorld.Get();
+        PendingTravelWorld.Reset();
 
         if (RawPath.empty())
         {
@@ -1276,16 +1338,20 @@ namespace Lumina
             return;
         }
 
+        FWorldContext* OldContext = FromWorld != nullptr ? GWorldManager->FindContext(FromWorld) : nullptr;
+
         // Prefer a PIE Game context so Travel replaces the running world, not the editor proxy world.
-        FWorldContext* OldContext = nullptr;
-        for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
+        if (OldContext == nullptr)
         {
-            if (Ctx->Type == EWorldType::Game)
+            for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
             {
-                OldContext = Ctx.get();
-                if (Ctx->bPIE)
+                if (Ctx->Type == EWorldType::Game)
                 {
-                    break;
+                    OldContext = Ctx.get();
+                    if (Ctx->bPIE)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -1381,7 +1447,9 @@ namespace Lumina
             NewContext->NetPort      = NetPort;
         }
 
-        if (FInputViewport* Primary = GApp ? GApp->GetPrimaryViewport() : nullptr)
+        // Every PIE preview has its own viewport, so only the ones showing the traveling world follow it.
+        FInputViewportRegistry::Get().ReplaceWorld(OldWorld, NewWorld);
+        if (FInputViewport* Primary = GApp ? GApp->GetPrimaryViewport() : nullptr; Primary != nullptr && OldWorld == nullptr)
         {
             Primary->SetWorld(NewWorld);
         }
@@ -1390,11 +1458,12 @@ namespace Lumina
         FCoreDelegates::OnWorldTraveled.Broadcast(OldWorld, NewWorld);
     }
 
-    void FEngine::OpenLevel(const FURL& URL)
+    void FEngine::OpenLevel(const FURL& URL, CWorld* FromWorld)
     {
         // Deferred, drained at FrameStart alongside Travel.
-        PendingOpenURL  = URL;
-        bHasPendingOpen = true;
+        PendingOpenURL   = URL;
+        PendingOpenWorld = FromWorld;
+        bHasPendingOpen  = true;
     }
 
     void FEngine::HostLevel(FStringView Map, uint16 Port)
@@ -1434,6 +1503,8 @@ namespace Lumina
 
         const FURL URL = Move(PendingOpenURL);
         PendingOpenURL = FURL{};
+        CWorld* const FromWorld = PendingOpenWorld.Get();
+        PendingOpenWorld.Reset();
 
         if (GWorldManager == nullptr)
         {
@@ -1443,7 +1514,11 @@ namespace Lumina
 
         if (URL.IsClient())
         {
-            FWorldContext* Ctx = GWorldManager->GetPrimaryGameContext();
+            FWorldContext* Ctx = FromWorld != nullptr ? GWorldManager->FindContext(FromWorld) : nullptr;
+            if (Ctx == nullptr)
+            {
+                Ctx = GWorldManager->GetPrimaryGameContext();
+            }
             if (Ctx == nullptr)
             {
                 LOG_ERROR("FEngine::ConnectToServer: no game world to connect from; open a level first.");
@@ -1461,7 +1536,7 @@ namespace Lumina
         bPendingHostListen    = URL.bListen;
         bPendingHostDedicated = URL.bDedicated;
         PendingHostPort       = URL.Port;
-        Travel(URL.Map);
+        Travel(URL.Map, FromWorld);
     }
 
     TUniquePtr<INetworkTransport> FEngine::TakeCarriedConnection(FConnectionHandle& OutConnection, uint32& OutLocalPeerId)

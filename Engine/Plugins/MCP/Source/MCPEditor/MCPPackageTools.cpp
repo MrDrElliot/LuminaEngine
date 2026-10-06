@@ -143,9 +143,10 @@ namespace Lumina::MCP
             return Directory;
         }
 
-        FString DefaultOutputDirectory()
+        FString DefaultOutputDirectory(bool bServer)
         {
-            return ProjectDirectory() + "/Build/" + ProjectName();
+            const FString Name = ProjectName();
+            return ProjectDirectory() + "/Build/" + FProjectPackager::GetPackageName(FStringView(Name.c_str(), Name.size()), bServer);
         }
 
         FString DirectoryOf(const FString& Path)
@@ -270,7 +271,7 @@ namespace Lumina::MCP
 
                     Out.ProjectName = ProjectName();
                     Out.ProjectDirectory = ProjectDirectory();
-                    Out.DefaultOutputDirectory = DefaultOutputDirectory();
+                    Out.DefaultOutputDirectory = DefaultOutputDirectory(false);
                     if (const CProjectSettings* Settings = GetDefault<CProjectSettings>())
                     {
                         const FStringView Map = Settings->GameStartupMap.GetPath();
@@ -293,7 +294,8 @@ namespace Lumina::MCP
             Agent::FToolRegistry::Get().Register<SPackageBuildParams, SPackageStatusResult>(
                 Owner, "package.build",
                 "Package the open project as a standalone game. Cooks its content into pak files right away, then builds and copies the "
-                "executable in the background, so poll package.status until bFinished. Set bBuildExecutable false to cook only.",
+                "executable in the background, so poll package.status until bFinished. Set bBuildExecutable false to cook only, "
+                "or bServer true for a headless dedicated server package.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SPackageBuildParams& In, SPackageStatusResult& Out)
                 {
@@ -317,12 +319,13 @@ namespace Lumina::MCP
                     }
 
                     const FString Name = ProjectName();
-                    const FString OutputDirectory = In.OutputDirectory.empty() ? DefaultOutputDirectory() : In.OutputDirectory;
+                    const FString PackageName = FProjectPackager::GetPackageName(FStringView(Name.c_str(), Name.size()), In.bServer);
+                    const FString OutputDirectory = In.OutputDirectory.empty() ? DefaultOutputDirectory(In.bServer) : In.OutputDirectory;
                     if (!Filesystem::MakeDirectoryTree(FStringView(OutputDirectory.c_str(), OutputDirectory.size())))
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Could not create {}.", OutputDirectory));
                     }
-                    const FString PakPath = FProjectPackager::GetPakPath(FStringView(OutputDirectory.c_str(), OutputDirectory.size()), FStringView(Name.c_str(), Name.size()));
+                    const FString PakPath = FProjectPackager::GetPakPath(FStringView(OutputDirectory.c_str(), OutputDirectory.size()), FStringView(PackageName.c_str(), PackageName.size()));
 
                     {
                         FScopeLock Lock(S.Mutex);
@@ -383,9 +386,10 @@ namespace Lumina::MCP
                     Options.BuildConfiguration = In.Configuration;
                     Options.bBuildExecutable = true;
                     Options.bExtractScriptsAsLooseFiles = In.bExtractScriptsAsLooseFiles;
+                    Options.bServer = In.bServer;
 
                     S.Stage.store(EPackageStage::Building);
-                    S.Worker = FThread([Options, Name, PakPath]()
+                    S.Worker = FThread([Options, Name, PackageName, PakPath]()
                     {
                         FPackageSession& Worker = Session();
                         const FPackageBuildResult Result = FProjectPackager::BuildAndCopyOnly(Options, FStringView(Name.c_str(), Name.size()),
@@ -393,7 +397,7 @@ namespace Lumina::MCP
                                                                                               [&Worker](FStringView Line) { Worker.Append(Line); });
                         if (Result.bSuccess)
                         {
-                            const FString Executable = Options.OutputDirectory + "/" + Name + ".exe";
+                            const FString Executable = Options.OutputDirectory + "/" + PackageName + ".exe";
                             FScopeLock Lock(Worker.Mutex);
                             Worker.Executable = Filesystem::IsFile(FStringView(Executable.c_str(), Executable.size())) ? Executable : FString();
                         }

@@ -22,6 +22,9 @@ public enum TargetType
     Editor,
     Game,
     Program,
+
+    // A headless dedicated server, built from the same runtime modules as Game.
+    Server,
 }
 
 /// <summary>Link-time role of a module's own output.</summary>
@@ -159,7 +162,7 @@ public static class BuildEnumExtensions
         {
             ModuleHostType.Runtime => true,
             ModuleHostType.Editor => Target == TargetType.Editor,
-            ModuleHostType.Developer => Target != TargetType.Game,
+            ModuleHostType.Developer => Target != TargetType.Game && Target != TargetType.Server,
             ModuleHostType.Program => Target == TargetType.Program,
             _ => true,
         };

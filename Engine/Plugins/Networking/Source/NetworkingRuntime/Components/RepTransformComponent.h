@@ -55,7 +55,8 @@ namespace Lumina
 
         // Pose at RenderTime. Holds at the low end, lerps between bracketing samples, and past the newest
         // sample extrapolates position from the last velocity (capped) when bExtrapolate; rotation is held.
-        void Evaluate(double RenderTime, FVector3& OutPos, FQuat& OutRot, bool bExtrapolate, double MaxExtrapolation)
+        void Evaluate(double RenderTime, FVector3& OutPos, FQuat& OutRot, bool bExtrapolate, double MaxExtrapolation,
+            float TeleportDistance = 0.0f)
         {
             if (Count == 0)
             {
@@ -90,6 +91,11 @@ namespace Lumina
                 FNetInterpSample& B = Logical(i + 1);
                 if (RenderTime >= A.Time && RenderTime <= B.Time)
                 {
+                    // A jump this far was a teleport, so it lands at B's time instead of sliding across the gap.
+                    if (TeleportDistance > 0.0f && Math::Length(B.Pos - A.Pos) > TeleportDistance)
+                    {
+                        OutPos = A.Pos; OutRot = A.Rot; return;
+                    }
                     const double Span = B.Time - A.Time;
                     const float  T    = (Span > 1e-9) ? static_cast<float>((RenderTime - A.Time) / Span) : 0.0f;
                     OutPos = Math::Mix(A.Pos, B.Pos, T);

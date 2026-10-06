@@ -47,5 +47,8 @@ namespace Lumina
 
         // Edge state for the render-skip diagnostic, so a legitimately throttled world logs once.
         bool                    bWarnedRenderSkip = false;
+
+        // Driven by script instead of a person, for load testing a server with many clients from one process.
+        bool                    bBot = false;
     };
 }

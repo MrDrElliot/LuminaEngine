@@ -3,6 +3,7 @@
 
 #include "ImGuiDesignIcons.h"
 #include "ImGuiFonts.h"
+#include "ImGuiNativeFrames.h"
 #include "Core/Engine/Engine.h"
 #include "imgui/misc/freetype/imgui_freetype.h"
 
@@ -416,6 +417,7 @@ namespace Lumina
         // DisplaySize is not set here; NewFrame already consumed it and the GLFW backend restamps it.
         ImGuiIO& Io = ImGui::GetIO();
 
+        ImGuiX::NativeFrames::Update();
         ImGuiX::Notifications::Render();
         ImGui::Render();
 

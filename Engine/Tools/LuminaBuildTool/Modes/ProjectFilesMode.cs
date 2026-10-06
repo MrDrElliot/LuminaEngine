@@ -33,7 +33,7 @@ public static class ProjectFilesMode
 
         foreach (BuildConfiguration Configuration in Enum.GetValues<BuildConfiguration>())
         {
-            foreach (TargetType Type in new[] { TargetType.Editor, TargetType.Game })
+            foreach (TargetType Type in new[] { TargetType.Editor, TargetType.Game, TargetType.Server })
             {
                 Configurations.Add(new ProjectConfiguration(Configuration, Type));
             }

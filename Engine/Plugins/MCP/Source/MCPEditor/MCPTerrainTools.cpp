@@ -146,6 +146,9 @@ namespace Lumina::MCP
                         if (In.bCollision)
                         {
                             World->EmplaceComponent<STerrainColliderComponent>(Created);
+
+                            // Editor worlds have no physics scene to add the body, and without one the saved terrain never collides.
+                            World->GetOrEmplaceComponent<SRigidBodyComponent>(Created).BodyType = EBodyType::Static;
                         }
                     }, SceneError);
 

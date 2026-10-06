@@ -321,6 +321,21 @@ namespace Lumina
         ApplyActiveCursorMode();
     }
 
+    void FInputViewportRegistry::ReplaceWorld(const CWorld* OldWorld, CWorld* NewWorld)
+    {
+        if (OldWorld == nullptr)
+        {
+            return;
+        }
+        for (FInputViewport* Viewport : Viewports)
+        {
+            if (Viewport->GetWorld() == OldWorld)
+            {
+                Viewport->SetWorld(NewWorld);
+            }
+        }
+    }
+
     FInputViewport* FInputViewportRegistry::FindViewportForWorld(const CWorld* World) const
     {
         if (World == nullptr)
@@ -432,13 +447,10 @@ namespace Lumina
 
         RawInput->OnEvent(Event);
 
-        // ImGui hover and focus flags lie under a disabled cursor, so they cannot be trusted for routing.
-        for (FInputViewport* V : Viewports)
+        // ImGui hover and focus flags lie under a disabled cursor, and only the active viewport's cursor is ever captured.
+        if (IsActiveCursorCaptured())
         {
-            if (V->GetContext().GetMouseMode() == EMouseMode::Captured)
-            {
-                return V->RouteEvent(Event);
-            }
+            return ActiveViewport->RouteEvent(Event);
         }
 
         if (bIsKeyEvent)
@@ -484,17 +496,29 @@ namespace Lumina
 
         if (ActiveViewport != nullptr)
         {
-            EMouseMode Mode = ActiveViewport->GetContext().GetMouseMode();
-
-            // Releasing focus shows the cursor without discarding the world's desired mode.
-            const CWorld* ActiveWorld = ActiveViewport->GetWorld();
-            if (ActiveWorld != nullptr && ActiveWorld->IsGameWorld() && !bGameInputFocused)
-            {
-                Mode = EMouseMode::Normal;
-            }
-
-            ApplyCursorModeToWindow(ActiveWindow, Mode);
+            ApplyCursorModeToWindow(ActiveWindow, GetActiveEffectiveMouseMode());
         }
+    }
+
+    EMouseMode FInputViewportRegistry::GetActiveEffectiveMouseMode() const
+    {
+        if (ActiveViewport == nullptr)
+        {
+            return EMouseMode::Normal;
+        }
+
+        // Releasing focus shows the cursor without discarding the world's desired mode.
+        const CWorld* ActiveWorld = ActiveViewport->GetWorld();
+        if (ActiveWorld != nullptr && ActiveWorld->IsGameWorld() && !bGameInputFocused)
+        {
+            return EMouseMode::Normal;
+        }
+        return ActiveViewport->GetContext().GetMouseMode();
+    }
+
+    bool FInputViewportRegistry::IsActiveCursorCaptured() const
+    {
+        return GetActiveEffectiveMouseMode() == EMouseMode::Captured;
     }
 
     void FInputViewportRegistry::ReapplyActiveCursorMode()

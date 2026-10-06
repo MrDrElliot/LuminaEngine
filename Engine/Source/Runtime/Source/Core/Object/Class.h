@@ -168,6 +168,9 @@ namespace Lumina
         /** Count of replicated fields (the bitmask width). Same walk/filter as NetSerializeProperties. */
         RUNTIME_API uint32 GetNetReplicatedPropertyCount() const;
 
+        // The replicated properties in the order their changed-field mask bits run.
+        RUNTIME_API void GetNetReplicatedProperties(TVector<FProperty*>& Out) const;
+
         /** Writer-side diff support: serialize every replicated field into one flat buffer, byte-aligned
          *  between fields, with OutOffsets naming the boundaries so field i is [Offsets[i], Offsets[i+1]).
          *  OutOffsets gets NumFields + 1 entries. Net-index hooks are copied from HookSource so object,
@@ -178,6 +181,12 @@ namespace Lumina
         /** Reader side: for each field whose Mask bit is set, deserialize it then byte-align (matching the
          *  whole-byte field buffers the writer emitted). Fields whose bit is clear keep their current value. */
         RUNTIME_API void NetReadReplicatedMasked(FNetArchive& Ar, void* Data, const uint8* Mask) const;
+
+        // Every serializable field that differs from Defaults, behind a mask, so a spawn skips what the receiver constructs anyway.
+        RUNTIME_API void NetWriteAllDelta(FNetArchive& Ar, void* Data, void* Defaults) const;
+
+        // Reads what NetWriteAllDelta wrote into a default-constructed instance.
+        RUNTIME_API void NetReadAllDelta(FNetArchive& Ar, void* Data) const;
 
         /** Structured (named-field) variant; drives each property's SerializeItem. Used by the
          *  JSON backend so reflected data round-trips through human-readable named fields. */
