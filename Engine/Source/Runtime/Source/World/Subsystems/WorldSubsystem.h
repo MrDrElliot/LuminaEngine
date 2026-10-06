@@ -54,17 +54,17 @@ namespace Lumina
     namespace WorldSubsystems
     {
         // Creates any subsystem class not already instanced, then initializes and readies only the new ones.
-        RUNTIME_API int32 CreateMissing(CWorld& World, TVector<TObjectPtr<CWorldSubsystem>>& Out);
+        RUNTIME_API int32 CreateMissing(CWorld& World, TVector<TStrongObjectPtr<CWorldSubsystem>>& Out);
 
         // Tears down the subsystems backed by a script class, so a hot reload can rebuild them.
-        RUNTIME_API void DropScripted(TVector<TObjectPtr<CWorldSubsystem>>& Subsystems);
+        RUNTIME_API void DropScripted(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems);
 
-        RUNTIME_API void Update(TVector<TObjectPtr<CWorldSubsystem>>& Subsystems, float DeltaTime);
+        RUNTIME_API void Update(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, float DeltaTime);
 
         // Runs OnTeardown on each and empties the list.
-        RUNTIME_API void DestroyAll(TVector<TObjectPtr<CWorldSubsystem>>& Subsystems);
+        RUNTIME_API void DestroyAll(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems);
 
         // The first subsystem whose class derives from Class, or null.
-        RUNTIME_API CWorldSubsystem* Find(const TVector<TObjectPtr<CWorldSubsystem>>& Subsystems, const CClass* Class);
+        RUNTIME_API CWorldSubsystem* Find(const TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, const CClass* Class);
     }
 }

@@ -205,7 +205,7 @@ namespace Lumina
         const bool bStaleInline = bInline;
 
         // Pinned, since a type that already died can neither be walked for fields nor destructed through.
-        TObjectPtr<CStruct> StalePin = ScriptTypePin.IsValid() ? ScriptTypePin : TObjectPtr<CStruct>(Stale);
+        TStrongObjectPtr<CStruct> StalePin = ScriptTypePin.IsValid() ? ScriptTypePin : TStrongObjectPtr<CStruct>(Stale);
         const bool bStaleAlive = StalePin.IsValid();
 
         // Inline bytes are about to be overwritten, so the old value has to be moved out first.

@@ -144,7 +144,7 @@ namespace Lumina
 
     protected:
 
-        TObjectPtr<CObject>         Asset;
+        TStrongObjectPtr<CObject>   Asset;
         FPropertyTable              PropertyTable;
         uint8                       bAssetLoadBroadcasted:1;
         uint8                       bOpenedOnAsset:1;

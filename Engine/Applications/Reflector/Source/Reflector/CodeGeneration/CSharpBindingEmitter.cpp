@@ -1235,7 +1235,7 @@ namespace Lumina::Reflection
             std::string VectorElemCpp;
             // Set only for an object element, where the caller buffer is a raw pointer array.
             std::string VectorElemBufferCpp;
-            // TObjectPtr<T> by value, which marshals as the handle but has to be re-wrapped at the call.
+            // TStrongObjectPtr<T> by value, which marshals as the handle but has to be re-wrapped at the call.
             bool          bObjectPtrValue = false;
             // The C++ parameter's own name, so the C# signature reads like the declaration it came from.
             std::string Name;
@@ -1391,7 +1391,7 @@ namespace Lumina::Reflection
 
         // The C# and fully-qualified C++ spellings for an element the two-pass buffer can carry by value.
         // OutBufferCpp is set only for an object element, whose caller buffer holds raw pointers rather
-        // than the refcounted TObjectPtr the callee fills.
+        // than the refcounted TStrongObjectPtr the callee fills.
         bool VectorElementCSharp(const FReflectionDatabase& Db, const std::string& Elem,
             std::string& OutCSharp, std::string& OutCpp, std::string& OutBufferCpp)
         {
@@ -1411,8 +1411,10 @@ namespace Lumina::Reflection
                 OutCpp = Elem;
                 return true;
             }
-            // A reflected container of objects holds TObjectPtr, since LRT1001 refuses a raw pointer there.
-            if (Elem.rfind("TObjectPtr<", 0) == 0 || Elem.rfind("Lumina::TObjectPtr<", 0) == 0)
+            // A reflected container of objects holds TStrongObjectPtr, since LRT1001 refuses a raw pointer there.
+            const bool bStrong = Elem.rfind("TStrongObjectPtr<", 0) == 0 || Elem.rfind("Lumina::TStrongObjectPtr<", 0) == 0;
+            const bool bOldName = Elem.rfind("TObjectPtr<", 0) == 0 || Elem.rfind("Lumina::TObjectPtr<", 0) == 0;
+            if (bStrong || bOldName)
             {
                 const std::string Target = ResolveTargetType(Db, FirstTemplateArgument(Elem));
                 const bool bRoot = IsObjectRootType(Target);
@@ -1422,7 +1424,7 @@ namespace Lumina::Reflection
                 }
                 const std::string Qualified = bRoot ? std::string("Lumina::CObject") : Target;
                 OutCSharp = bRoot ? "global::LuminaSharp.NativeObject" : GlobalCSharp(Target);
-                OutCpp = "Lumina::TObjectPtr<" + Qualified + ">";
+                OutCpp = "Lumina::TStrongObjectPtr<" + Qualified + ">";
                 OutBufferCpp = Qualified + "*";
                 return true;
             }
@@ -1582,8 +1584,8 @@ namespace Lumina::Reflection
                     return true;
                 case EPropertyTypeFlags::Object:
                 {
-                    // TObjectPtr<T> by value; the pointer spelling took the branch above and the handle ABI matches.
-                    if (F.TypeName != "Lumina::TObjectPtr")
+                    // TStrongObjectPtr<T> by value; the pointer spelling took the branch above and the handle ABI matches.
+                    if (F.TypeName != "Lumina::TStrongObjectPtr")
                     {
                         return false;
                     }
@@ -2112,7 +2114,7 @@ namespace Lumina::Reflection
             if (A.bEntity) { return "(uint32)" + N; }
             switch (A.Kind) { case EBind::Bool: return "(unsigned char)(" + N + " ? 1 : 0)"; case EBind::Enum: return "(int)" + N; case EBind::Object: return "(void*)" + N; default: return N; }
         }
-        // A parms field for an object is a TObjectPtr, where the shim's own parameter is already a raw pointer.
+        // A parms field for an object is a TStrongObjectPtr, where the shim's own parameter is already a raw pointer.
         std::string SeParmsField(const FArg& A, const std::string& N)
         {
             return A.Kind == EBind::Object ? N + ".Get()" : N;

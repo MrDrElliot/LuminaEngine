@@ -96,7 +96,7 @@ namespace Lumina
 
     CEdNodeGraphPin* CEdGraphNode::GetRerouteSourcePin() const
     {
-        const TVector<TObjectPtr<CEdNodeGraphPin>>& Inputs = GetInputPins();
+        const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Inputs = GetInputPins();
         return Inputs.empty() ? nullptr : Inputs[0].Get();
     }
 
@@ -116,9 +116,9 @@ namespace Lumina
     // Two live pins sharing an id self-link the editor's chain, so the id is salted until unique.
     bool CEdGraphNode::IsPinIDTaken(uint32 ID) const
     {
-        for (const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins : NodePins)
+        for (const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins : NodePins)
         {
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
                 if (Pin.IsValid() && Pin->PinID == ID)
                 {

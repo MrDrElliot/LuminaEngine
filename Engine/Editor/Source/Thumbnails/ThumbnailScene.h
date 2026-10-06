@@ -82,7 +82,7 @@ namespace Lumina
         // Maps the finished readback into Thumbnail and frees it. Caller must have waited on the value.
         bool ResolveCapture(FPendingCapture& In, FPackageThumbnail& Thumbnail);
 
-        TObjectPtr<CWorld>          World;
+        TStrongObjectPtr<CWorld>    World;
         ECS::FEntity                CameraEntity = ECS::NullEntity;
         TVector<ECS::FEntity>       SpawnedEntities;
         TUniquePtr<FPendingCapture> Pending;

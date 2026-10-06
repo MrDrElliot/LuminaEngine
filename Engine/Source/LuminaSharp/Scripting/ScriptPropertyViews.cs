@@ -48,7 +48,7 @@ internal static class ScriptPropertyViews
 
     private static readonly FView[] Views =
     {
-        // One list view for every element flavour: a plain value, an FString, or a TObjectPtr<T>. The element
+        // One list view for every element flavour: a plain value, an FString, or a TStrongObjectPtr<T>. The element
         // type is the type argument in all three cases -- TVector routes the per-slot read/write through
         // ElementMarshal, so there is nothing to special-case here either.
         new(typeof(TVector<>), EScriptAccess.ListView,

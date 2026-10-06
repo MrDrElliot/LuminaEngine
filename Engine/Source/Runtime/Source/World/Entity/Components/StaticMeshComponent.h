@@ -31,6 +31,6 @@ namespace Lumina
         
         /** The static mesh asset to render for this component. */
         PROPERTY(Editable, Replicated, Category = "Rendering")
-        TObjectPtr<CStaticMesh> StaticMesh;
+        TStrongObjectPtr<CStaticMesh> StaticMesh;
     };
 }

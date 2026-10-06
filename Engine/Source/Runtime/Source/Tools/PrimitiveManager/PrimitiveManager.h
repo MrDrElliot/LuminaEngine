@@ -22,26 +22,26 @@ namespace Lumina
 
         /** Unit cube mesh. */
         PROPERTY(NoSerialize)
-        TObjectPtr<CStaticMesh> CubeMesh;
+        TStrongObjectPtr<CStaticMesh> CubeMesh;
 
         /** Unit sphere mesh. */
         PROPERTY(NoSerialize)
-        TObjectPtr<CStaticMesh> SphereMesh;
+        TStrongObjectPtr<CStaticMesh> SphereMesh;
 
         /** Unit plane mesh. */
         PROPERTY(NoSerialize)
-        TObjectPtr<CStaticMesh> PlaneMesh;
+        TStrongObjectPtr<CStaticMesh> PlaneMesh;
 
         /** Unit cylinder mesh. */
         PROPERTY(NoSerialize)
-        TObjectPtr<CStaticMesh> CylinderMesh;
+        TStrongObjectPtr<CStaticMesh> CylinderMesh;
 
         /** Unit cone mesh. */
         PROPERTY(NoSerialize)
-        TObjectPtr<CStaticMesh> ConeMesh;
+        TStrongObjectPtr<CStaticMesh> ConeMesh;
 
         /** Unit capsule mesh. */
         PROPERTY(NoSerialize)
-        TObjectPtr<CStaticMesh> CapsuleMesh;
+        TStrongObjectPtr<CStaticMesh> CapsuleMesh;
     };
 }

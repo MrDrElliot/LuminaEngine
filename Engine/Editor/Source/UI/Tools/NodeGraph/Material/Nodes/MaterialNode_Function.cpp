@@ -175,9 +175,9 @@ namespace Lumina
         struct FConnSnapshot { FString Name; bool bInput; TVector<CEdNodeGraphPin*> Remotes; };
         TVector<FConnSnapshot> Snapshots;
 
-        auto SnapshotPins = [&](const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins, bool bInput)
+        auto SnapshotPins = [&](const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins, bool bInput)
         {
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
                 if (!Pin.IsValid() || !Pin->HasConnection())
                 {
@@ -196,7 +196,7 @@ namespace Lumina
         // Sever and drop all current pins.
         auto ClearDirection = [&](ENodePinDirection Direction)
         {
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : NodePins[(uint32)Direction])
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : NodePins[(uint32)Direction])
             {
                 TVector<CEdNodeGraphPin*> Remotes = Pin->GetConnections();
                 for (CEdNodeGraphPin* Remote : Remotes)
@@ -244,8 +244,8 @@ namespace Lumina
         // Reconnect by matching pin name.
         for (const FConnSnapshot& Snap : Snapshots)
         {
-            const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins = Snap.bInput ? GetInputPins() : GetOutputPins();
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins = Snap.bInput ? GetInputPins() : GetOutputPins();
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
                 if (Pin->GetPinName() != Snap.Name)
                 {
@@ -350,7 +350,7 @@ namespace Lumina
         // Gather the function's I/O nodes.
         TVector<CMaterialExpression_FunctionInput*> InputNodes;
         TVector<CMaterialFunctionOutput*>           OutputNodes;
-        for (const TObjectPtr<CEdGraphNode>& N : FnGraph->Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& N : FnGraph->Nodes)
         {
             if (!N.IsValid())
             {

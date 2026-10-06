@@ -17,7 +17,7 @@ namespace Lumina
         FAudioGraphProgram Program;
 
         /** Wave assets the program addresses by index. */
-        TVector<TObjectPtr<CAudioStream>> Waves;
+        TVector<TStrongObjectPtr<CAudioStream>> Waves;
 
         TVector<FString> Errors;
         TVector<FString> Warnings;

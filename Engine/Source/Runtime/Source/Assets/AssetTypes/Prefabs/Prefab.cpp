@@ -78,7 +78,7 @@ namespace Lumina
 
         CEntityScript* FindScriptOfClass(const SEntityScriptComponent& Component, const CClass* Class)
         {
-            for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Component.Scripts)
             {
                 if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->GetClass() == Class)
                 {
@@ -96,7 +96,7 @@ namespace Lumina
 
         void CollectScriptOverrides(const SEntityScriptComponent& Instance, const SEntityScriptComponent& Prefab, TVector<FName>& OutPaths)
         {
-            for (const TObjectPtr<CEntityScript>& Held : Instance.Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Instance.Scripts)
             {
                 CEntityScript* InstanceScript = Held.Get();
                 CEntityScript* PrefabScript = InstanceScript != nullptr ? FindScriptOfClass(Prefab, InstanceScript->GetClass()) : nullptr;
@@ -118,7 +118,7 @@ namespace Lumina
         // In place, so a live script keeps running and only the fields nobody overrode follow the prefab.
         void ApplyInheritedScriptLeaves(ECS::FRegistry& Registry, ECS::FEntity Entity, const SEntityScriptComponent& Prefab, const THashSet<FName>& OverriddenPaths)
         {
-            for (const TObjectPtr<CEntityScript>& Held : Prefab.Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Prefab.Scripts)
             {
                 CEntityScript* PrefabScript = Held.Get();
                 if (PrefabScript == nullptr)

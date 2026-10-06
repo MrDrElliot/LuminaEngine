@@ -284,13 +284,13 @@ internal sealed class TypeLibrary
         {
             Type Definition = Type.GetGenericTypeDefinition();
             // A SOFT reference is a path resolved on demand; a HARD one is a live object pointer that keeps
-            // its target alive. They were both reported as SoftObject, which gave TObjectPtr<T> an asset
+            // its target alive. They were both reported as SoftObject, which gave TStrongObjectPtr<T> an asset
             // picker, no strong reference, and no way to point at an object that has no asset path.
             if (Definition == typeof(TSoftObjectPtr<>))
             {
                 return new ScriptType { Kind = EPropertyType.SoftObject, Clr = Type, TargetClass = Type.GetGenericArguments()[0].Name };
             }
-            if (Definition == typeof(TObjectPtr<>))
+            if (Definition == typeof(TStrongObjectPtr<>))
             {
                 return new ScriptType { Kind = EPropertyType.Object, Clr = Type, TargetClass = Type.GetGenericArguments()[0].Name };
             }

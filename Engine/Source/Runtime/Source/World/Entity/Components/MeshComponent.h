@@ -73,7 +73,7 @@ namespace Lumina
         
         /** Per-slot material overrides applied on top of the mesh's default materials. */
         PROPERTY(Editable, Category = "Rendering")
-        TVector<TObjectPtr<CMaterialInterface>> MaterialOverrides;
+        TVector<TStrongObjectPtr<CMaterialInterface>> MaterialOverrides;
 
         /** Per-instance shader data packed into a single primitive data slot. */
         PROPERTY(Editable, Category = "Rendering")

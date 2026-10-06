@@ -89,11 +89,11 @@ namespace Lumina::NodeGraphOps
             return nullptr;
         }
 
-        const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins = Direction == ENodePinDirection::Input
+        const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins = Direction == ENodePinDirection::Input
             ? Node->GetInputPins()
             : Node->GetOutputPins();
 
-        for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+        for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
         {
             if (Pin.IsValid() && FStringView(Pin->GetPinName()) == PinName)
             {
@@ -111,12 +111,12 @@ namespace Lumina::NodeGraphOps
             return FString();
         }
 
-        const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins = Direction == ENodePinDirection::Input
+        const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins = Direction == ENodePinDirection::Input
             ? Node->GetInputPins()
             : Node->GetOutputPins();
 
         FString Names;
-        for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+        for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
         {
             if (!Pin.IsValid())
             {

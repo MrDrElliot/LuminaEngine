@@ -24,7 +24,7 @@ namespace Lumina
     // (type, net mode, PIE) so systems branch on it without CWorld carrying editor/network concerns.
     struct FWorldContext
     {
-        TObjectPtr<CWorld>      World;
+        TStrongObjectPtr<CWorld> World;
         EWorldType              Type            = EWorldType::None;
         ENetMode                NetMode         = ENetMode::Standalone;
         bool                    bPIE            = false;

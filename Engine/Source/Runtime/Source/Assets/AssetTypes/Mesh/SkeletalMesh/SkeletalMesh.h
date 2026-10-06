@@ -26,10 +26,10 @@ namespace Lumina
         void RemapJointIndicesToSkeleton();
 
         PROPERTY(Editable, Category = "Skeleton")
-        TObjectPtr<CSkeleton> Skeleton;
+        TStrongObjectPtr<CSkeleton> Skeleton;
 
     private:
 
-        TObjectPtr<CSkeleton> SkeletonJointIndicesAddress;
+        TStrongObjectPtr<CSkeleton> SkeletonJointIndicesAddress;
     };
 }

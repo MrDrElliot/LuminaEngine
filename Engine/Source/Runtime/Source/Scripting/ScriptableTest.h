@@ -117,7 +117,7 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        TObjectPtr<CObject> Child;
+        TStrongObjectPtr<CObject> Child;
     };
 
     /** Throwaway counter of its own teardown, so a test can prove OnDestroy is not reentered. */

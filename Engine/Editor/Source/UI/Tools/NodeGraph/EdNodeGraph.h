@@ -232,13 +232,13 @@ namespace Lumina
         // Placements requested outside the draw loop, applied (and cleared) on the next DrawGraph.
         struct FPendingPlacement
         {
-            TObjectPtr<CEdGraphNode> Node;
+            TStrongObjectPtr<CEdGraphNode> Node;
             ImVec2                   ScreenPos;
         };
         TVector<FPendingPlacement> PendingPlacements;
 
         // Focus requested outside the draw loop, applied (and cleared) on the next DrawGraph.
-        TObjectPtr<CEdGraphNode> PendingFocusNode;
+        TStrongObjectPtr<CEdGraphNode> PendingFocusNode;
 
         // Applied on the next draw, since menus are drawn inside a Suspend block.
         bool           bHasPendingAlignment = false;
@@ -276,7 +276,7 @@ namespace Lumina
 
         // All nodes currently in this graph.
         PROPERTY()
-        TVector<TObjectPtr<CEdGraphNode>>               Nodes;
+        TVector<TStrongObjectPtr<CEdGraphNode>>         Nodes;
 
         // Pin-to-pin links, stored as pairs of 32-bit pin ids.
         PROPERTY()

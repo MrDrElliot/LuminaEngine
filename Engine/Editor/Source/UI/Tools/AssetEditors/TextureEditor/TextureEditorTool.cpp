@@ -614,7 +614,7 @@ namespace Lumina
                 int MoveTo      = -1;
                 for (size_t i = 0; i < Array->SourceTextures.size(); ++i)
                 {
-                    const TObjectPtr<CTexture>& Layer = Array->SourceTextures[i];
+                    const TStrongObjectPtr<CTexture>& Layer = Array->SourceTextures[i];
 
                     ImGui::PushID((int)i);
                     ImGui::Text("%2zu", i);

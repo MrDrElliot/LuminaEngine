@@ -229,11 +229,11 @@ namespace Lumina::NetScripts
         }
 
         // Gathered first, since a listener may spawn the player's entity and grow the pool being walked.
-        TVector<TObjectPtr<CEntityScript>> Scripts;
+        TVector<TStrongObjectPtr<CEntityScript>> Scripts;
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent>())
         {
-            for (const TObjectPtr<CEntityScript>& Script : Registry.Get<SEntityScriptComponent>(Entity).Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Script : Registry.Get<SEntityScriptComponent>(Entity).Scripts)
             {
                 if (Script.Get() != nullptr && Script->IsReady())
                 {
@@ -242,7 +242,7 @@ namespace Lumina::NetScripts
             }
         }
 
-        for (const TObjectPtr<CEntityScript>& Script : Scripts)
+        for (const TStrongObjectPtr<CEntityScript>& Script : Scripts)
         {
             if (void* Handle = ManagedHandleOf(Script.Get()))
             {

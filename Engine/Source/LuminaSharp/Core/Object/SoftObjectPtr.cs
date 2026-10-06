@@ -113,18 +113,18 @@ namespace Lumina
         }
     }
 
-    // Mirror of TObjectPtr, a hard reference stored as an object property so it keeps the object alive and needs no path.
-    public struct TObjectPtr<T> where T : NativeObject
+    // Mirror of TStrongObjectPtr, a hard reference stored as an object property so it keeps the object alive and needs no path.
+    public struct TStrongObjectPtr<T> where T : NativeObject
     {
         private IntPtr Handle;
 
-        public TObjectPtr(T? Value)
+        public TStrongObjectPtr(T? Value)
         {
             Handle = Value != null ? Value.Handle : IntPtr.Zero;
         }
 
         // Wraps an already resolved native pointer, as the accessors ScriptPropertyRewriter emits do.
-        public TObjectPtr(IntPtr NativeObject)
+        public TStrongObjectPtr(IntPtr NativeObject)
         {
             Handle = NativeObject;
         }
@@ -140,7 +140,7 @@ namespace Lumina
             return Value;
         }
 
-        public static implicit operator T?(TObjectPtr<T> Pointer)
+        public static implicit operator T?(TStrongObjectPtr<T> Pointer)
         {
             return Pointer.Value;
         }

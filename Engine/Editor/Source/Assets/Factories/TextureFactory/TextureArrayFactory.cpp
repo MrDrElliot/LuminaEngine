@@ -59,7 +59,7 @@ namespace Lumina
 
         for (uint32 Layer = 0; Layer < LayerCount; ++Layer)
         {
-            const TObjectPtr<CTexture>& Source = Array->SourceTextures[Layer];
+            const TStrongObjectPtr<CTexture>& Source = Array->SourceTextures[Layer];
             if (!Source.IsValid())
             {
                 LOG_ERROR("TextureArrayFactory: '{0}' layer {1} has no texture assigned.",

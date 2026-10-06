@@ -16,7 +16,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable, Category = "Animation")
-        TObjectPtr<CSpriteSheet> SpriteSheet;
+        TStrongObjectPtr<CSpriteSheet> SpriteSheet;
 
         /** Clip to play. Empty plays the sheet's first animation. */
         PROPERTY(Editable, Category = "Animation")

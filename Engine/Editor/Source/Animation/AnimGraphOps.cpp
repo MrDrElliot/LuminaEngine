@@ -62,7 +62,7 @@ namespace Lumina::AnimGraphOps
             return Transitions;
         }
 
-        for (const TObjectPtr<CAnimStateTransition>& Transition : Machine->GetTransitions())
+        for (const TStrongObjectPtr<CAnimStateTransition>& Transition : Machine->GetTransitions())
         {
             if (Transition.IsValid())
             {

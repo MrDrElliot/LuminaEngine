@@ -13,7 +13,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable, Category = "Grass")
-        TObjectPtr<CGrassType> GrassType;
+        TStrongObjectPtr<CGrassType> GrassType;
 
         /** Index into the terrain's Layers array; only that layer's painted weight grows this species. */
         PROPERTY(Editable, Category = "Grass", ClampMin = 0, ClampMax = 3)

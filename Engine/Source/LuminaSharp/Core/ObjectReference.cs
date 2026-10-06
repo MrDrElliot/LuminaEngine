@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 
 namespace LuminaSharp;
 
-// The managed side of a TObjectPtr, counting every reference the canonical wrapper of a CObject has handed out.
+// The managed side of a TStrongObjectPtr, counting every reference the canonical wrapper of a CObject has handed out.
 internal sealed class ObjectReference
 {
     // Dropping the last reference can destroy the object, which only the game thread may do.

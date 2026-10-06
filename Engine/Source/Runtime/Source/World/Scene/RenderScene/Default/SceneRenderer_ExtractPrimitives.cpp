@@ -719,7 +719,7 @@ namespace Lumina
         // Track the nearest water surface above the camera (largest local.y still below the plane).
         float BestUnderwaterLocalY = -1.0e30f;
 
-        auto ResolveTexture = [](const TObjectPtr<CTexture>& Tex) -> uint32
+        auto ResolveTexture = [](const TStrongObjectPtr<CTexture>& Tex) -> uint32
         {
             const CTexture* T = Tex.Get();
             const int32 ID = T ? T->GetResourceID() : -1;

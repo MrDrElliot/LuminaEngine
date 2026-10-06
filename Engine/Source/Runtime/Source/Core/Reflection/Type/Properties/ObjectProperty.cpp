@@ -12,7 +12,7 @@ namespace Lumina
 
     void FObjectProperty::Serialize(FArchive& Ar, void* Value)
     {
-        auto Ptr = static_cast<TObjectPtr<CObject>*>(Value);
+        auto Ptr = static_cast<TStrongObjectPtr<CObject>*>(Value);
 
         CObject* Raw = Ptr->Get();
         Ar << Raw;
@@ -21,7 +21,7 @@ namespace Lumina
 
     void FObjectProperty::NetSerialize(FNetArchive& Ar, void* Value)
     {
-        auto Ptr = static_cast<TObjectPtr<CObject>*>(Value);
+        auto Ptr = static_cast<TStrongObjectPtr<CObject>*>(Value);
 
         if (Ar.IsWriting())
         {
@@ -64,7 +64,7 @@ namespace Lumina
 
     void FObjectProperty::SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults)
     {
-        auto Ptr = static_cast<TObjectPtr<CObject>*>(Value);
+        auto Ptr = static_cast<TStrongObjectPtr<CObject>*>(Value);
 
         CObject* Raw = Ptr->Get();
         Slot.Serialize(Raw);
@@ -73,11 +73,11 @@ namespace Lumina
 
     void FObjectProperty::CopyCompleteValue(void* Dst, const void* Src) const
     {
-        *static_cast<TObjectPtr<CObject>*>(Dst) = *static_cast<const TObjectPtr<CObject>*>(Src);
+        *static_cast<TStrongObjectPtr<CObject>*>(Dst) = *static_cast<const TStrongObjectPtr<CObject>*>(Src);
     }
 
     void FObjectProperty::DestructValue(void* Value) const
     {
-        static_cast<TObjectPtr<CObject>*>(Value)->~TObjectPtr();
+        static_cast<TStrongObjectPtr<CObject>*>(Value)->~TStrongObjectPtr();
     }
 }

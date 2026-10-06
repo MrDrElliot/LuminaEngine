@@ -29,7 +29,7 @@ namespace Lumina::MaterialOps
             return nullptr;
         }
 
-        for (const TObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
         {
             if (Node.IsValid() && Node->IsA<CMaterialOutputNode>())
             {

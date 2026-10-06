@@ -171,7 +171,7 @@ namespace Lumina
         // Post-process materials run in order after tone mapping; each is a fullscreen pass whose Emissive
         // replaces scene color (later entries read earlier via SceneColor). Must be MaterialType = PostProcess.
         PROPERTY(Editable, Category = "Camera|Post Process")
-        TVector<TObjectPtr<CMaterialInterface>> PostProcessMaterials;
+        TVector<TStrongObjectPtr<CMaterialInterface>> PostProcessMaterials;
 
     private:
 

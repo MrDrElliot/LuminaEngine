@@ -75,6 +75,6 @@ namespace Lumina
 
     private:
 
-        TObjectPtr<CMaterial> Material;
+        TStrongObjectPtr<CMaterial> Material;
     };
 }

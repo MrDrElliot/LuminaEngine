@@ -58,7 +58,7 @@ TEST(AudioGraphApi, PersistenceComesFromTheSoundNotTheLoopFlag)
     FAudioGraphProgram Program;
     Program.Nodes.push_back(FAudioGraphNodeInstance());
     Program.FinishedSlot = 0;
-    Graph->SetProgram(Move(Program), TVector<TObjectPtr<CAudioStream>>());
+    Graph->SetProgram(Move(Program), TVector<TStrongObjectPtr<CAudioStream>>());
 
     // A wired On Finished makes it a one shot, which must never be restarted by virtualization.
     EXPECT_FALSE(Source.IsPersistent());

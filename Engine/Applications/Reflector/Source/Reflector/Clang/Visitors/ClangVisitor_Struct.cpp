@@ -227,7 +227,7 @@ namespace Lumina::Reflection::Visitor
 			else if (CanonicalKind == CXType_Pointer)
 			{
 				LRT_ERROR(Cursor, Reflection::EDiagId::RawObjectPointer,
-					"Property '%s' is a raw pointer ('%s'). Raw pointers to CObject are not reflectable; use TObjectPtr<T> instead.",
+					"Property '%s' is a raw pointer ('%s'). Raw pointers to CObject are not reflectable; use TStrongObjectPtr<T> instead.",
 					CursorName.c_str(), TypeSpelling.c_str());
 				return std::nullopt;
 			}
@@ -382,7 +382,7 @@ namespace Lumina::Reflection::Visitor
 			else if (CanonicalKind == CXType_Pointer)
 			{
 				LRT_ERROR(ParentField.OwningCursor, Reflection::EDiagId::RawObjectPointer,
-					"Inner element of property '%s' is a raw pointer ('%s'). Use TObjectPtr<T> instead.",
+					"Inner element of property '%s' is a raw pointer ('%s'). Use TStrongObjectPtr<T> instead.",
 					ParentField.Name.c_str(), FieldName.c_str());
 				return std::nullopt;
 			}
@@ -531,7 +531,7 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::Object:
 		{
-			// A member is a TObjectPtr<T>, whose T is the template argument. A function parameter is a raw
+			// A member is a TStrongObjectPtr<T>, whose T is the template argument. A function parameter is a raw
 			// T*, where the class is the pointee; both spellings describe the same object property.
 			CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			if (ArgType.kind == CXType_Invalid)
@@ -811,7 +811,7 @@ namespace Lumina::Reflection::Visitor
 			LRT_ERROR(FieldInfo.OwningCursor, Reflection::EDiagId::UnknownPropertyType,
 				"Property '%s' has type '%s' which is not supported by the reflector. "
 				"Supported kinds: numeric, bool, FString/FName, enum, struct (REFLECT'd), "
-				"TObjectPtr<T>, TVector<T>, TOptional<T>.",
+				"TStrongObjectPtr<T>, TVector<T>, TOptional<T>.",
 				FieldInfo.Name.c_str(), FieldInfo.TypeName.c_str());
 		}
 		break;
@@ -875,7 +875,7 @@ namespace Lumina::Reflection::Visitor
 	//
 	// Containers and maps are out because their inners are created through the same factory, which attaches
 	// them to the owning type, and untangling that for a parameter is worth doing on its own. Object and
-	// class are out for a sharper reason: the property factory derives the pointee from a TObjectPtr<T>'s
+	// class are out for a sharper reason: the property factory derives the pointee from a TStrongObjectPtr<T>'s
 	// template argument, and a raw CWorld* parameter carries no such argument, so it cannot be qualified.
 	// Both want CreateFuncField to describe the inner type, which is the next piece of this rather than a
 	// reason to hold the rest back.
@@ -940,7 +940,7 @@ namespace Lumina::Reflection::Visitor
 				return false;
 			}
 
-			// FObjectProperty sizes itself as TObjectPtr<CObject> and its copy and teardown go through the
+			// FObjectProperty sizes itself as TStrongObjectPtr<CObject> and its copy and teardown go through the
 			// handle to keep the refcount straight, so the frame has to hold one too. Spelled against
 			// CObject rather than the declared class, whose definition a generated file need not have, and
 			// the thunk casts on the way out. The handle also keeps the object alive across the call.
@@ -954,7 +954,7 @@ namespace Lumina::Reflection::Visitor
 				}
 
 				ObjectCastType = StorageType;
-				StorageType = "Lumina::TObjectPtr<Lumina::CObject>";
+				StorageType = "Lumina::TStrongObjectPtr<Lumina::CObject>";
 			}
 
 			// Described as what the frame stores, not as the signature spelled it. A TVector<float> reaches
@@ -1076,7 +1076,7 @@ namespace Lumina::Reflection::Visitor
 				// Flagged so the C# binder skips it, since a generated thunk would call with too few arguments.
 				NewFunction->bHasOmittedArgs = true;
 				LRT_WARNING(ArgCursor, Reflection::EDiagId::FunctionFieldFailed,
-					"Argument '%s' of function '%s' has an unsupported type and will be omitted from the script binding. Reflected function args accept core types, structs, enums, and TObjectPtr<T>.",
+					"Argument '%s' of function '%s' has an unsupported type and will be omitted from the script binding. Reflected function args accept core types, structs, enums, and TStrongObjectPtr<T>.",
 					ArgName.c_str(), NewFunction->Name.c_str());
 			}
 		}

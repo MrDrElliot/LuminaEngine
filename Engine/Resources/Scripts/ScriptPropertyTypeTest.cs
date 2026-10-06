@@ -112,7 +112,7 @@ public class ScriptPropertyTypeTest : EntityScript
     // that keeps its target alive and can name any CObject rather than only something with an asset path.
     // No initializer -- null is the only default a hard reference can express.
     [Property(Category = "References", Tooltip = "A hard object reference, drawn as an object picker.")]
-    public TObjectPtr<CWorld> WorldRef;
+    public TStrongObjectPtr<CWorld> WorldRef;
 
     //~ Containers hand out a VIEW over the native container rather than a managed copy, because there is only
     //~ ever one copy of the value and native owns it. No initializer: assigning the view is meaningless.
@@ -136,12 +136,12 @@ public class ScriptPropertyTypeTest : EntityScript
     [Property(Category = "Containers")]
     public TVector<FString> Names;
 
-    // A list of object references. Its own view type rather than TVector<TObjectPtr<T>>, which the
-    // classifier refuses: a TObjectPtr is a bare pointer, so it passes the unmanaged test and would be copied
+    // A list of object references. Its own view type rather than TVector<TStrongObjectPtr<T>>, which the
+    // classifier refuses: a TStrongObjectPtr is a bare pointer, so it passes the unmanaged test and would be copied
     // as 8 raw bytes -- storing the pointer without taking a reference, and without releasing the one it
     // replaced. Writes here go through the native assignment, which does both.
     [Property(Category = "Containers")]
-    public TVector<TObjectPtr<CWorld>> Worlds;
+    public TVector<TStrongObjectPtr<CWorld>> Worlds;
 
     private int Failures;
 
@@ -364,20 +364,20 @@ public class ScriptPropertyTypeTest : EntityScript
     /// </summary>
     private void CheckObjectReference()
     {
-        TObjectPtr<CWorld> Saved = WorldRef;
+        TStrongObjectPtr<CWorld> Saved = WorldRef;
         CWorld Live = World;
 
-        WorldRef = new TObjectPtr<CWorld>(Live);
-        Check("TObjectPtr assign", WorldRef.IsValid, WorldRef.IsValid ? "valid" : "null");
+        WorldRef = new TStrongObjectPtr<CWorld>(Live);
+        Check("TStrongObjectPtr assign", WorldRef.IsValid, WorldRef.IsValid ? "valid" : "null");
 
         // Reference equality, not merely a non-null pointer. Reading an object property has to hand back the
         // ONE canonical wrapper for that native object, or `==` between two reads would silently be false and
         // every identity comparison a script author writes would be wrong.
-        Check("TObjectPtr identity", ReferenceEquals(WorldRef.Value, Live), "same wrapper instance as World");
-        Check("TObjectPtr identity (re-read)", ReferenceEquals(WorldRef.Value, WorldRef.Value), "stable across reads");
+        Check("TStrongObjectPtr identity", ReferenceEquals(WorldRef.Value, Live), "same wrapper instance as World");
+        Check("TStrongObjectPtr identity (re-read)", ReferenceEquals(WorldRef.Value, WorldRef.Value), "stable across reads");
 
-        WorldRef = new TObjectPtr<CWorld>(null);
-        Check("TObjectPtr cleared", !WorldRef.IsValid && WorldRef.Value is null, "null");
+        WorldRef = new TStrongObjectPtr<CWorld>(null);
+        Check("TStrongObjectPtr cleared", !WorldRef.IsValid && WorldRef.Value is null, "null");
 
         WorldRef = Saved;
     }
@@ -495,37 +495,37 @@ public class ScriptPropertyTypeTest : EntityScript
     private void CheckObjectList()
     {
         CWorld Live = World;
-        TObjectPtr<CWorld> Ref = new TObjectPtr<CWorld>(Live);
+        TStrongObjectPtr<CWorld> Ref = new TStrongObjectPtr<CWorld>(Live);
 
-        TVector<TObjectPtr<CWorld>> List = Worlds;
+        TVector<TStrongObjectPtr<CWorld>> List = Worlds;
         List.Clear();
         List.Add(Ref);
         List.Add(default);
 
-        Check("TVector<TObjectPtr> count", Worlds.Count == 2, Worlds.Count.ToString());
-        Check("TVector<TObjectPtr> read", Worlds.Count == 2 && ReferenceEquals(Worlds.Get(0).Value, Live),
+        Check("TVector<TStrongObjectPtr> count", Worlds.Count == 2, Worlds.Count.ToString());
+        Check("TVector<TStrongObjectPtr> read", Worlds.Count == 2 && ReferenceEquals(Worlds.Get(0).Value, Live),
             "canonical wrapper");
-        Check("TVector<TObjectPtr> null element", Worlds.Count == 2 && !Worlds.Get(1).IsValid, "null");
+        Check("TVector<TStrongObjectPtr> null element", Worlds.Count == 2 && !Worlds.Get(1).IsValid, "null");
 
         // Overwriting a slot has to release what it held and take a reference on the new object; assigning
         // over the null slot is the direction that would silently under-release if it byte-copied.
         Worlds.Set(1, Ref);
-        Check("TVector<TObjectPtr> set", ReferenceEquals(Worlds.Get(1).Value, Live), "assigned over null");
+        Check("TVector<TStrongObjectPtr> set", ReferenceEquals(Worlds.Get(1).Value, Live), "assigned over null");
 
         Worlds.Set(0, default);
-        Check("TVector<TObjectPtr> clear slot", !Worlds.Get(0).IsValid, "null");
+        Check("TVector<TStrongObjectPtr> clear slot", !Worlds.Get(0).IsValid, "null");
 
-        Check("TVector<TObjectPtr> indexof", Worlds.IndexOf(Ref) == 1, Worlds.IndexOf(Ref).ToString());
+        Check("TVector<TStrongObjectPtr> indexof", Worlds.IndexOf(Ref) == 1, Worlds.IndexOf(Ref).ToString());
 
         Worlds.Insert(0, Ref);
-        Check("TVector<TObjectPtr> insert", Worlds.Count == 3 && ReferenceEquals(Worlds.Get(0).Value, Live),
+        Check("TVector<TStrongObjectPtr> insert", Worlds.Count == 3 && ReferenceEquals(Worlds.Get(0).Value, Live),
             Worlds.Count.ToString());
 
         Worlds.RemoveAt(0);
-        Check("TVector<TObjectPtr> remove", Worlds.Count == 2, Worlds.Count.ToString());
+        Check("TVector<TStrongObjectPtr> remove", Worlds.Count == 2, Worlds.Count.ToString());
 
         // Clearing releases every reference the list held, which is the half a leak would live in.
         Worlds.Clear();
-        Check("TVector<TObjectPtr> cleared", Worlds.Count == 0, Worlds.Count.ToString());
+        Check("TVector<TStrongObjectPtr> cleared", Worlds.Count == 0, Worlds.Count.ToString());
     }
 }

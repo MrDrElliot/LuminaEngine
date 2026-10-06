@@ -19,7 +19,7 @@ namespace Lumina
 
         /** The animation asset to play on the skeletal mesh. */
         PROPERTY(Editable, Replicated, Category = "Animation")
-        TObjectPtr<CAnimation> Animation;
+        TStrongObjectPtr<CAnimation> Animation;
 
         /** Current playback position within the animation (seconds). */
         PROPERTY(Editable, Category = "Animation")

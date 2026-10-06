@@ -27,7 +27,7 @@ namespace
         ~FCreationGate() { CWorldSubsystemTest::bAllowCreation = false; }
     };
 
-    CWorldSubsystemTest* FindTestSubsystem(const TVector<TObjectPtr<CWorldSubsystem>>& Subsystems)
+    CWorldSubsystemTest* FindTestSubsystem(const TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
         return Cast<CWorldSubsystemTest>(
             WorldSubsystems::Find(Subsystems, CWorldSubsystemTest::StaticClass()));
@@ -38,7 +38,7 @@ TEST(WorldSubsystem, CreateMissingHonorsShouldCreate)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CWorldSubsystem>> Subsystems;
+    TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
     WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
 
     CWorldSubsystemTest* Created = FindTestSubsystem(Subsystems);
@@ -56,7 +56,7 @@ TEST(WorldSubsystem, InitializeRunsBeforeWorldReady)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CWorldSubsystem>> Subsystems;
+    TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
     WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
 
     CWorldSubsystemTest* Created = FindTestSubsystem(Subsystems);
@@ -73,7 +73,7 @@ TEST(WorldSubsystem, CreateMissingIsIdempotent)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CWorldSubsystem>> Subsystems;
+    TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
     const int32 First = WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
     ASSERT_GT(First, 0);
 
@@ -94,7 +94,7 @@ TEST(WorldSubsystem, UpdateAndTeardownReachEverySubsystem)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CWorldSubsystem>> Subsystems;
+    TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
     WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
 
     CWorldSubsystemTest* Created = FindTestSubsystem(Subsystems);
@@ -117,7 +117,7 @@ TEST(WorldSubsystem, DropScriptedLeavesNativeSubsystemsAlone)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CWorldSubsystem>> Subsystems;
+    TVector<TStrongObjectPtr<CWorldSubsystem>> Subsystems;
     WorldSubsystems::CreateMissing(*SentinelWorld, Subsystems);
 
     const size_t Before = Subsystems.size();

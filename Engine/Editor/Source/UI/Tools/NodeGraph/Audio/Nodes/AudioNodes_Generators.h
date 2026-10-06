@@ -118,7 +118,7 @@ namespace Lumina
         FFixedString GetNodeCategory() const override { return "Generators"; }
 
         PROPERTY(Editable, Category = "Wave Player")
-        TObjectPtr<CAudioStream> Wave;
+        TStrongObjectPtr<CAudioStream> Wave;
 
         PROPERTY(Editable, Category = "Wave Player")
         bool Loop = false;

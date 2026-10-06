@@ -66,7 +66,7 @@ namespace Lumina
             return;
         }
 
-        for (const TObjectPtr<CEdNodeGraphPin>& Pin : NodePins[(uint32)ENodePinDirection::Output])
+        for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : NodePins[(uint32)ENodePinDirection::Output])
         {
             if (Pin.IsValid())
             {

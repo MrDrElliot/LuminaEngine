@@ -622,7 +622,7 @@ namespace Lumina
         {
             if (BoundSequence != nullptr)
             {
-                for (const TObjectPtr<CSequenceTrack>& Track : BoundSequence->Tracks)
+                for (const TStrongObjectPtr<CSequenceTrack>& Track : BoundSequence->Tracks)
                 {
                     if (Track.IsValid())
                     {
@@ -731,7 +731,7 @@ namespace Lumina
     {
         // Tracks run in their declared order, so a look-at aims from where the transform put the camera and cuts read both.
         TFixedVector<const CSequenceTrack*, 64> Ordered;
-        for (const TObjectPtr<CSequenceTrack>& Track : Tracks)
+        for (const TStrongObjectPtr<CSequenceTrack>& Track : Tracks)
         {
             if (Track.IsValid() && Track->bEnabled)
             {

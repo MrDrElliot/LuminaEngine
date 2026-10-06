@@ -564,7 +564,7 @@ namespace Lumina
         
         TVector<TUniquePtr<FToolWindow>>    ToolWindows;
         
-        TObjectPtr<CWorld>                  World;
+        TStrongObjectPtr<CWorld>            World;
         ECS::FEntity                        EditorEntity;
         FEditorCameraState                  CameraState;
         // Per-tool so a second visible viewport can't inherit this one's drag or snap animation.

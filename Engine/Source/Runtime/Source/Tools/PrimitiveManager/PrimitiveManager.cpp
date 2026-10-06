@@ -18,7 +18,7 @@ namespace Lumina
         // Transient package with stable GUIDs so worlds reference them across save/load without disk files.
         CPackage* TransientPackage = CPackage::GetTransientPackage();
 
-        auto BuildPrimitive = [TransientPackage](TObjectPtr<CStaticMesh>& OutMesh,
+        auto BuildPrimitive = [TransientPackage](TStrongObjectPtr<CStaticMesh>& OutMesh,
                                                  const char* ObjectName,
                                                  const char* SurfaceID,
                                                  const char* DeterministicTag,

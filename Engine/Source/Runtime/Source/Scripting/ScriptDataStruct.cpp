@@ -109,7 +109,7 @@ namespace Lumina
             Params.Package = CPackage::GetTransientPackage();
             Params.Guid    = FGuid::New();
 
-            TObjectPtr<CScriptStruct> Minted = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
+            TStrongObjectPtr<CScriptStruct> Minted = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
             if (Minted == nullptr)
             {
                 continue;

@@ -8,7 +8,7 @@ namespace Lumina
     RUNTIME_API bool IsInstancableStructType(const CStruct* Type);
 
     // A value type an FInstancedStruct may own: reflected, and NOT a CObject. A CObject has identity
-    // and is referenced through TObjectPtr, never copied into an inline value slot.
+    // and is referenced through TStrongObjectPtr, never copied into an inline value slot.
 #if defined(REFLECTION_PARSER)
     // GENERATED_BODY is stubbed while parsing, so requiring StaticStruct() would reject every struct.
     template<typename T>
@@ -88,7 +88,7 @@ namespace Lumina
         mutable uint8* InstanceMemory = nullptr;
 
         // A reload drops the registry's ref to a script type, so the value keeps its own until it migrates or dies.
-        mutable TObjectPtr<CStruct> ScriptTypePin;
+        mutable TStrongObjectPtr<CStruct> ScriptTypePin;
 
         // Stable identity of the stored type, so it survives the re-mint its pointer does not.
         FName TypeIdentity;

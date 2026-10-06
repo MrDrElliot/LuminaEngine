@@ -30,6 +30,6 @@ namespace Lumina
 
     private:
 
-        TObjectPtr<CParticleSystem> ParticleSystem;
+        TStrongObjectPtr<CParticleSystem> ParticleSystem;
     };
 }

@@ -113,7 +113,7 @@ namespace Lumina
 
         /** The material function asset to inline. Changing it rebuilds this node's pins. */
         PROPERTY(Editable, Category = "Material Function")
-        TObjectPtr<CMaterialFunction> Function;
+        TStrongObjectPtr<CMaterialFunction> Function;
 
         // (Re)creates input/output pins from the current Function's signature, preserving any existing
         // connections that still match by pin name. Pin IDs are name-hashed so they survive save/load.

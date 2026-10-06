@@ -489,7 +489,7 @@ namespace Lumina
         }
     }
 
-    CStaticMesh* Fracture::BuildPieceMesh(const FFracturePiece& Piece, const TVector<TObjectPtr<CMaterialInterface>>& Materials, const char* DebugName)
+    CStaticMesh* Fracture::BuildPieceMesh(const FFracturePiece& Piece, const TVector<TStrongObjectPtr<CMaterialInterface>>& Materials, const char* DebugName)
     {
         if (Piece.Vertices.empty() || Piece.Indices.empty())
         {
@@ -546,7 +546,7 @@ namespace Lumina
         }
 
         // Matches the runtime fracture's choice, the baked collection materials else the source mesh's.
-        const TVector<TObjectPtr<CMaterialInterface>>& Mats =
+        const TVector<TStrongObjectPtr<CMaterialInterface>>& Mats =
             (!Materials.empty() || SourceMesh.Get() == nullptr) ? Materials : SourceMesh->Materials;
 
         PieceMeshes.reserve(Data.Pieces.size());
@@ -556,7 +556,7 @@ namespace Lumina
         }
     }
 
-    const TVector<TObjectPtr<CStaticMesh>>& CGeometryCollection::GetPieceMeshes()
+    const TVector<TStrongObjectPtr<CStaticMesh>>& CGeometryCollection::GetPieceMeshes()
     {
         BuildPieceMeshes();
         return PieceMeshes;

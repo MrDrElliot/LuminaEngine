@@ -431,7 +431,7 @@ namespace Lumina
         bool bEnabled = true;
 
         /** Package-local name of this emitter's authoring module stack. The stack is an editor-only class,
-         *  so it is linked by NAME rather than by TObjectPtr: a hard reference from a runtime asset would
+         *  so it is linked by NAME rather than by TStrongObjectPtr: a hard reference from a runtime asset would
          *  drag editor-only data into cooked builds. Stable across reorder and rename, and empty only until
          *  the editor first opens the emitter. */
         PROPERTY()
@@ -482,7 +482,7 @@ namespace Lumina
 
         // Surface a Shape Location module set to Mesh spawns on.
         PROPERTY(Editable, Category = "Simulation")
-        TObjectPtr<CStaticMesh> EmissionMesh;
+        TStrongObjectPtr<CStaticMesh> EmissionMesh;
 
         // Meters around the emitter its particles can reach, scaled with the entity. Off-screen bounds skip drawing, and zero never culls.
         PROPERTY(Editable, Category = "Culling", ClampMin = 0.0f)
@@ -590,11 +590,11 @@ namespace Lumina
 
         /** Sprite shading; null, or any domain but Particle, leaves this emitter on the texture path. */
         PROPERTY(Editable, Category = "Render")
-        TObjectPtr<CMaterialInterface> Material;
+        TStrongObjectPtr<CMaterialInterface> Material;
 
         /** Sampled only on the texture path; a Particle material samples whatever its graph binds. */
         PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
-        TObjectPtr<CTexture> Texture;
+        TStrongObjectPtr<CTexture> Texture;
 
         PROPERTY(Editable, Category = "Render")
         EParticleFacingMode FacingMode = EParticleFacingMode::CameraFacing;
@@ -638,7 +638,7 @@ namespace Lumina
         EParticleRenderMode RenderMode = EParticleRenderMode::Sprite;
 
         PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode == Mesh")
-        TObjectPtr<CStaticMesh> Mesh;
+        TStrongObjectPtr<CStaticMesh> Mesh;
 
         // Points each mesh's up axis along its velocity instead of tumbling it by the particle's rotation.
         PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode == Mesh")
@@ -697,7 +697,7 @@ namespace Lumina
         /** Emitters in draw order. Never empty after PostLoad: an asset that somehow has none gets one, so
          *  no caller has to handle a system that cannot render anything. */
         PROPERTY()
-        TVector<TObjectPtr<CParticleEmitter>> Emitters;
+        TVector<TStrongObjectPtr<CParticleEmitter>> Emitters;
 
         /** Appends a new emitter with a unique display name. Returns it. */
         CParticleEmitter* AddEmitter();

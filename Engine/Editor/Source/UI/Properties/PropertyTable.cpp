@@ -227,7 +227,7 @@ namespace Lumina
         {
             if (Term.Property->GetType() == EPropertyTypeFlags::Object)
             {
-                TObjectPtr<CObject> Value;
+                TStrongObjectPtr<CObject> Value;
                 Term.Property->GetValue(ContainerPtr, &Value);
                 bResult = Value != nullptr;
             }

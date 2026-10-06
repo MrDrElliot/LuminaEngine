@@ -53,7 +53,7 @@ TEST(CObjectLifetime, PoppingAPinnedListDestroysEachEntryExactlyOnce)
     TWeakObjectPtr<CObject> WeakChild = Child;
     TWeakObjectPtr<CObject> WeakParent = Parent;
 
-    TVector<TObjectPtr<CObject>> Created;
+    TVector<TStrongObjectPtr<CObject>> Created;
     Created.push_back(Child);
     Created.push_back(Parent);
 
@@ -72,7 +72,7 @@ TEST(CObjectLifetime, PoppingAPinnedListDestroysEachEntryExactlyOnce)
 TEST(CObjectLifetime, AssigningOutOfTheReleasedObjectKeepsTheNewTarget)
 {
     CObject* Child = nullptr;
-    TObjectPtr<CObject> Ref = NewParentOwningChild(Child);
+    TStrongObjectPtr<CObject> Ref = NewParentOwningChild(Child);
     ASSERT_NE(Child, nullptr);
 
     Ref = static_cast<CObjectRefTest*>(Ref.Get())->Child;
@@ -84,7 +84,7 @@ TEST(CObjectLifetime, AssigningOutOfTheReleasedObjectKeepsTheNewTarget)
 TEST(CObjectLifetime, MoveAssigningOutOfTheReleasedObjectKeepsTheNewTarget)
 {
     CObject* Child = nullptr;
-    TObjectPtr<CObject> Ref = NewParentOwningChild(Child);
+    TStrongObjectPtr<CObject> Ref = NewParentOwningChild(Child);
     ASSERT_NE(Child, nullptr);
 
     Ref = Move(static_cast<CObjectRefTest*>(Ref.Get())->Child);
@@ -96,7 +96,7 @@ TEST(CObjectLifetime, MoveAssigningOutOfTheReleasedObjectKeepsTheNewTarget)
 TEST(CObjectLifetime, RawAssigningOutOfTheReleasedObjectKeepsTheNewTarget)
 {
     CObject* Child = nullptr;
-    TObjectPtr<CObject> Ref = NewParentOwningChild(Child);
+    TStrongObjectPtr<CObject> Ref = NewParentOwningChild(Child);
     ASSERT_NE(Child, nullptr);
 
     Ref = static_cast<CObjectRefTest*>(Ref.Get())->Child.Get();
@@ -109,9 +109,9 @@ TEST(CObjectLifetime, RawAssigningOutOfTheReleasedObjectKeepsTheNewTarget)
 TEST(CObjectLifetime, SelfAssignmentLeavesTheReferenceIntact)
 {
     CObject* Object = NewTransientTestObject();
-    TObjectPtr<CObject> Ref = Object;
+    TStrongObjectPtr<CObject> Ref = Object;
 
-    TObjectPtr<CObject>& Alias = Ref;
+    TStrongObjectPtr<CObject>& Alias = Ref;
     Ref = Alias;
     EXPECT_EQ(Ref.Get(), Object);
 
@@ -122,7 +122,7 @@ TEST(CObjectLifetime, SelfAssignmentLeavesTheReferenceIntact)
 // A strong reference carries its own array entry, so refcounting never reaches through the object.
 TEST(CObjectLifetime, AStrongReferenceCarriesItsOwnSlot)
 {
-    EXPECT_EQ(sizeof(TObjectPtr<CObject>), 2 * sizeof(void*));
+    EXPECT_EQ(sizeof(TStrongObjectPtr<CObject>), 2 * sizeof(void*));
 }
 
 TEST(CObjectLifetime, AStrongReferenceKeepsItsObjectAlive)
@@ -130,12 +130,12 @@ TEST(CObjectLifetime, AStrongReferenceKeepsItsObjectAlive)
     CObject* Object = NewTransientTestObject();
     ASSERT_NE(Object, nullptr);
 
-    TObjectPtr<CObject> Owner(Object);
+    TStrongObjectPtr<CObject> Owner(Object);
     EXPECT_EQ(Owner.Get(), Object);
     EXPECT_TRUE(Owner.IsValid());
 
     {
-        TObjectPtr<CObject> Second = Owner;
+        TStrongObjectPtr<CObject> Second = Owner;
         EXPECT_EQ(Second.Get(), Object) << "a copy shares the object rather than resurrecting it";
     }
 
@@ -150,7 +150,7 @@ TEST(CObjectLifetime, AStaleStrongReferenceReadsAsNull)
     CObject* Doomed = NewTransientTestObject();
     ASSERT_NE(Doomed, nullptr);
 
-    TObjectPtr<CObject> Stale(Doomed);
+    TStrongObjectPtr<CObject> Stale(Doomed);
     ASSERT_EQ(Stale.Get(), Doomed);
 
     // Stands in for the extra release a lifetime bug elsewhere would perform.
@@ -170,10 +170,10 @@ TEST(CObjectLifetime, ReleasingAStaleReferenceLeavesOtherObjectsAlone)
     CObject* Doomed = NewTransientTestObject();
     ASSERT_NE(Doomed, nullptr);
 
-    TObjectPtr<CObject> Stale(Doomed);
+    TStrongObjectPtr<CObject> Stale(Doomed);
     GObjectArray.ReleaseStrongRef(Doomed);
 
-    TObjectPtr<CObject> Bystander(NewTransientTestObject());
+    TStrongObjectPtr<CObject> Bystander(NewTransientTestObject());
     ASSERT_TRUE(Bystander.IsValid());
 
     EXPECT_EQ(Stale.Get(), nullptr);
@@ -186,13 +186,13 @@ TEST(CObjectLifetime, ReleasingAStaleReferenceLeavesOtherObjectsAlone)
 // Reuse is delayed so an address-identical allocation cannot land in the slot a stale reference still names.
 TEST(CObjectLifetime, AFreedSlotIsNotImmediatelyReissued)
 {
-    TObjectPtr<CObject> First(NewTransientTestObject());
+    TStrongObjectPtr<CObject> First(NewTransientTestObject());
     ASSERT_TRUE(First.IsValid());
     const int32 FirstIndex = First.GetHandle().Index;
 
     First.Reset();
 
-    TObjectPtr<CObject> Second(NewTransientTestObject());
+    TStrongObjectPtr<CObject> Second(NewTransientTestObject());
     ASSERT_TRUE(Second.IsValid());
 
     EXPECT_NE(Second.GetHandle().Index, FirstIndex) << "a slot handed straight back defeats the occupant check";
@@ -205,13 +205,13 @@ TEST(CObjectLifetime, CopyingAStaleReferenceYieldsNull)
     CObject* Doomed = NewTransientTestObject();
     ASSERT_NE(Doomed, nullptr);
 
-    TObjectPtr<CObject> Stale(Doomed);
+    TStrongObjectPtr<CObject> Stale(Doomed);
     GObjectArray.ReleaseStrongRef(Doomed);
 
-    TObjectPtr<CObject> Reused(NewTransientTestObject());
+    TStrongObjectPtr<CObject> Reused(NewTransientTestObject());
     ASSERT_TRUE(Reused.IsValid());
 
-    TObjectPtr<CObject> CopyOfStale = Stale;
+    TStrongObjectPtr<CObject> CopyOfStale = Stale;
     EXPECT_EQ(CopyOfStale.Get(), nullptr) << "copying a stale reference must not claim the new occupant";
     EXPECT_TRUE(Reused.IsValid());
 }
@@ -220,14 +220,14 @@ TEST(CObjectLifetime, AWeakReferenceOutlivesItsObject)
 {
     TWeakObjectPtr<CObject> Weak;
     {
-        TObjectPtr<CObject> Owner(NewTransientTestObject());
+        TStrongObjectPtr<CObject> Owner(NewTransientTestObject());
         ASSERT_TRUE(Owner.IsValid());
 
         Weak = Owner;
         EXPECT_TRUE(Weak.IsValid());
         EXPECT_EQ(Weak.Get(), Owner.Get());
 
-        TObjectPtr<CObject> Pinned = Weak.Lock();
+        TStrongObjectPtr<CObject> Pinned = Weak.Lock();
         EXPECT_EQ(Pinned.Get(), Owner.Get()) << "Lock must adopt the ref the array already took";
     }
 

@@ -45,9 +45,9 @@ namespace Lumina
 		FAssetHandle LoadPrimaryAssetAsync(const FPrimaryAssetId& Id);
 
 		template<typename T>
-		TObjectPtr<T> LoadPrimaryAssetSynchronous(const TPrimaryAssetId<T>& Id)
+		TStrongObjectPtr<T> LoadPrimaryAssetSynchronous(const TPrimaryAssetId<T>& Id)
 		{
-			return TObjectPtr<T>(static_cast<T*>(LoadPrimaryAssetSynchronous(static_cast<const FPrimaryAssetId&>(Id))));
+			return TStrongObjectPtr<T>(static_cast<T*>(LoadPrimaryAssetSynchronous(static_cast<const FPrimaryAssetId&>(Id))));
 		}
 
 	private:
@@ -78,10 +78,10 @@ namespace Lumina
 	// TPrimaryAssetId<T> templated impls, out-of-line here because they need the full FAssetManager.
 
 	template<typename T>
-	TObjectPtr<T> TPrimaryAssetId<T>::LoadSynchronous() const
+	TStrongObjectPtr<T> TPrimaryAssetId<T>::LoadSynchronous() const
 	{
 		CObject* Obj = FAssetManager::Get().LoadPrimaryAssetSynchronous(static_cast<const FPrimaryAssetId&>(*this));
-		return TObjectPtr<T>(static_cast<T*>(Obj));
+		return TStrongObjectPtr<T>(static_cast<T*>(Obj));
 	}
 
 	template<typename T>

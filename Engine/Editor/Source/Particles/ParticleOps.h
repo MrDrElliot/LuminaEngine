@@ -30,7 +30,7 @@ namespace Lumina
         // Accepts the class name or the display name, ignoring case.
         EDITOR_API CClass* ResolveModuleType(FStringView Name);
 
-        EDITOR_API TVector<TObjectPtr<CParticleModule>>* GetModules(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage);
+        EDITOR_API TVector<TStrongObjectPtr<CParticleModule>>* GetModules(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage);
 
         // Inserts into the stack matching the module's stage, where a negative index appends.
         EDITOR_API CParticleModule* AddModule(CParticleSystem* System, int32 EmitterIndex, CClass* ModuleClass, int32 InsertIndex = -1);

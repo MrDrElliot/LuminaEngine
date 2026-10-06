@@ -13,7 +13,7 @@ namespace Lumina
     namespace
     {
         thread_local uint32 GBatchDepth = 0;
-        thread_local TVector<TObjectPtr<CMesh>> GPendingMeshes;
+        thread_local TVector<TStrongObjectPtr<CMesh>> GPendingMeshes;
 
         void FinishDynamicMeshes(ECS::FRegistry& Registry)
         {
@@ -50,7 +50,7 @@ namespace Lumina
                 return;
             }
 
-            TVector<TObjectPtr<CMesh>> Meshes = Move(GPendingMeshes);
+            TVector<TStrongObjectPtr<CMesh>> Meshes = Move(GPendingMeshes);
             GPendingMeshes.clear();
 
             LUMINA_PROFILE_SECTION("Batched Mesh Builds");
@@ -64,7 +64,7 @@ namespace Lumina
             });
 
             // Uploads and resolve-cache invalidation stay on this thread.
-            for (const TObjectPtr<CMesh>& Mesh : Meshes)
+            for (const TStrongObjectPtr<CMesh>& Mesh : Meshes)
             {
                 if (Mesh.Get() != nullptr)
                 {

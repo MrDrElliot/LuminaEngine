@@ -103,12 +103,12 @@ namespace Lumina
         void SetPath(FStringView InPath) { Inner.SetPath(InPath); }
         void Reset()                     { Inner.Reset(); }
 
-        TObjectPtr<T> LoadSynchronous() const
+        TStrongObjectPtr<T> LoadSynchronous() const
         {
             CObject* Obj = Inner.LoadSynchronous();
             // Runtime type validation against ObjectClass happens in FSoftObjectProperty.
             static_assert(std::is_base_of_v<CObject, T>, "TSoftObjectPtr<T>: T must derive from CObject");
-            return TObjectPtr<T>(static_cast<T*>(Obj));
+            return TStrongObjectPtr<T>(static_cast<T*>(Obj));
         }
 
         void LoadAsync(const TFunction<void(T*)>& Callback) const

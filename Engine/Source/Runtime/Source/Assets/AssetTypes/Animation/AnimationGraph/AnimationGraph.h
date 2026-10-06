@@ -119,7 +119,7 @@ namespace Lumina
         }
     }
 
-    // TObjectPtr<T> holds exactly one T*, so an object property reads as a plain pointer at its offset.
+    // TStrongObjectPtr<T> holds exactly one T*, so an object property reads as a plain pointer at its offset.
     FORCEINLINE CObject* ReadAnimParamObject(const uint8* Base, const FAnimGraphParamBinding& Binding)
     {
         return *reinterpret_cast<CObject* const*>(Base + Binding.Offset);
@@ -416,7 +416,7 @@ namespace Lumina
 
         /** Skeleton every pose produced by this graph is authored against. */
         PROPERTY(Editable, Category = "Animation")
-        TObjectPtr<CSkeleton> Skeleton;
+        TStrongObjectPtr<CSkeleton> Skeleton;
 
         /** Parameter block this graph reads. The instance's values are the authored defaults. */
         PROPERTY(Editable, Category = "Animation")
@@ -424,11 +424,11 @@ namespace Lumina
 
         /** Animation clips referenced by SampleAnim opcodes, indexed by clip index. */
         PROPERTY()
-        TVector<TObjectPtr<CAnimation>> Clips;
+        TVector<TStrongObjectPtr<CAnimation>> Clips;
 
         /** Blend spaces referenced by SampleBlendSpace opcodes, indexed by blend-space index. */
         PROPERTY()
-        TVector<TObjectPtr<CBlendSpace>> BlendSpaces;
+        TVector<TStrongObjectPtr<CBlendSpace>> BlendSpaces;
 
         /** Lua- and editor-tweakable parameters that drive the graph. */
         TVector<FAnimGraphParameter> Parameters;
@@ -439,7 +439,7 @@ namespace Lumina
 
         /** Assets referenced by LoadObjectConst, so a static pin still flows through an object register. */
         PROPERTY()
-        TVector<TObjectPtr<CObject>> ObjectConstants;
+        TVector<TStrongObjectPtr<CObject>> ObjectConstants;
 
         /** Offsets into the blackboard struct, parallel to Parameters / ObjectParameters. Transient. */
         TVector<FAnimGraphParamBinding> ParamBindings;

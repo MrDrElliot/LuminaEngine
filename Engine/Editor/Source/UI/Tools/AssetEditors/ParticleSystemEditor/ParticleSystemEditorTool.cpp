@@ -152,7 +152,7 @@ namespace Lumina
         }
 
         // These may be the only strong refs, and dropping them first would destroy every module and reload it from disk.
-        TVector<TObjectPtr<CParticleEmitterStack>> Previous = Move(EmitterStacks);
+        TVector<TStrongObjectPtr<CParticleEmitterStack>> Previous = Move(EmitterStacks);
         EmitterStacks.clear();
         EmitterStacks.reserve(PS->Emitters.size());
 
@@ -246,7 +246,7 @@ namespace Lumina
             return;
         }
 
-        for (const TObjectPtr<CParticleModule>& Module : Stack->SpawnModules)
+        for (const TStrongObjectPtr<CParticleModule>& Module : Stack->SpawnModules)
         {
             const CParticleModule_SpawnLocation* Location = Cast<CParticleModule_SpawnLocation>(Module.Get());
             if (Location == nullptr || !Location->bEnabled)
@@ -504,7 +504,7 @@ namespace Lumina
 
         ImGui::PushID(Label);
 
-        TVector<TObjectPtr<CParticleModule>>& Stack = EmitterStack->GetStack(Stage);
+        TVector<TStrongObjectPtr<CParticleModule>>& Stack = EmitterStack->GetStack(Stage);
 
         // A frame-height square clips wider glyphs such as the trash icon, so size for icon plus padding.
         const float Spacing = ImGui::GetStyle().ItemSpacing.x;

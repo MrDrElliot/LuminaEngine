@@ -428,7 +428,7 @@ internal static class ScriptPropertyRewriter
                     break;
 
                 // A hard object reference. Stored natively as an object property (the same as a C++
-                // TObjectPtr), so it keeps its target alive; the value is just the pointer.
+                // TStrongObjectPtr), so it keeps its target alive; the value is just the pointer.
                 case EScriptAccess.ObjectPtr:
                     Get = $"new {Type}(global::LuminaSharp.Native.PropGetObject(Handle, {Token}))";
                     Set = $"global::LuminaSharp.Native.PropSetObject(Handle, {Token}, value.NativeHandle)";
@@ -443,7 +443,7 @@ internal static class ScriptPropertyRewriter
                     break;
                 }
 
-                // One view for every element flavour -- plain value, FString, TObjectPtr<T>. What differs
+                // One view for every element flavour -- plain value, FString, TStrongObjectPtr<T>. What differs
                 // per element is how a slot is read and written, and TVector routes that through
                 // ElementMarshal, so nothing here needs to know which it is.
                 case EScriptAccess.ListView:

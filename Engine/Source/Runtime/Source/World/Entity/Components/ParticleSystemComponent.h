@@ -64,7 +64,7 @@ namespace Lumina
 
         /** The particle system asset that drives this emitter. */
         PROPERTY(Editable, Replicated, Category = "Particle System")
-        TObjectPtr<CParticleSystem> ParticleSystem;
+        TStrongObjectPtr<CParticleSystem> ParticleSystem;
 
         /** Local-space offset applied to the emitter origin relative to the entity transform. */
         PROPERTY(Editable, Category = "Particle System")
@@ -93,7 +93,7 @@ namespace Lumina
 
         /** Per-emitter sprite material overrides applied on top of the asset's, indexed by emitter. */
         PROPERTY(Editable, Category = "Particle System")
-        TVector<TObjectPtr<CMaterialInterface>> MaterialOverrides;
+        TVector<TStrongObjectPtr<CMaterialInterface>> MaterialOverrides;
 
         /** This component's material for EmitterIndex, falling back to the one the asset authored. */
         FUNCTION()

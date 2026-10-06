@@ -30,7 +30,7 @@ namespace Lumina
 
         /** Shared values. Empty falls back to the inline overrides. */
         PROPERTY(Editable, Category = "Attenuation")
-        TObjectPtr<CSoundAttenuation> AttenuationSettings;
+        TStrongObjectPtr<CSoundAttenuation> AttenuationSettings;
 
         /** Ignores the asset and uses the inline overrides instead. */
         PROPERTY(Editable, Category = "Attenuation", EditCondition = "AttenuationSettings")

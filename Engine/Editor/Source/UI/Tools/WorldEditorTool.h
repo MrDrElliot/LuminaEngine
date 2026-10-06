@@ -294,7 +294,7 @@ namespace Lumina
             ImVec2 Current;
         } SelectionBox;
         
-        TObjectPtr<CWorld>                      ProxyWorld;
+        TStrongObjectPtr<CWorld>                ProxyWorld;
 
         // Hidden, non-rendered server world spawned for "Play as Dedicated Server" (owned by
         // FWorldManager via StartPIE/StopPIE). Null unless the PIE net mode is DedicatedServer.

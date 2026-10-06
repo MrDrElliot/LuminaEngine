@@ -1,6 +1,7 @@
 #pragma once
 #include "ObjectArray.h"
 #include "Core/Templates/LuminaTemplate.h"
+#include "Core/LuminaMacros.h"
 
 
 namespace Lumina
@@ -14,7 +15,7 @@ namespace Lumina
     
     // Owning reference that refcounts through the object's array entry, which outlives the object itself.
     template<typename T>
-    class TObjectPtr
+    class TStrongObjectPtr
     {
     private:
         T*             Object = nullptr;
@@ -22,7 +23,7 @@ namespace Lumina
 
         // Adopts a strong ref the object array already incremented, as the weak to strong upgrade does.
         struct FAdoptRef {};
-        TObjectPtr(T* InObject, FCObjectEntry* InEntry, FAdoptRef) : Object(InObject), Entry(InEntry) {}
+        TStrongObjectPtr(T* InObject, FCObjectEntry* InEntry, FAdoptRef) : Object(InObject), Entry(InEntry) {}
 
         // Resolved once, so every later add and release goes through the entry instead of the object.
         void AcquireInternal(T* InObject)
@@ -74,19 +75,19 @@ namespace Lumina
         }
 
     public:
-        TObjectPtr() = default;
+        TStrongObjectPtr() = default;
 
-        TObjectPtr(T* InObject)
+        TStrongObjectPtr(T* InObject)
         {
             AcquireInternal(InObject);
         }
 
-        TObjectPtr(const TObjectPtr& Other)
+        TStrongObjectPtr(const TStrongObjectPtr& Other)
         {
             AdoptInternal(Other.Object, Other.Entry);
         }
 
-        TObjectPtr(TObjectPtr&& Other) noexcept : Object(Other.Object), Entry(Other.Entry)
+        TStrongObjectPtr(TStrongObjectPtr&& Other) noexcept : Object(Other.Object), Entry(Other.Entry)
         {
             Other.Object = nullptr;
             Other.Entry  = nullptr;
@@ -94,18 +95,18 @@ namespace Lumina
 
         template<typename U>
         requires std::is_base_of_v<T, U>
-        TObjectPtr(const TObjectPtr<U>& Other)
+        TStrongObjectPtr(const TStrongObjectPtr<U>& Other)
         {
             AdoptInternal(Other.Object, Other.Entry);
         }
 
-        ~TObjectPtr()
+        ~TStrongObjectPtr()
         {
             ReleaseInternal();
         }
 
         // Releasing first would destroy the owner the source lives inside, so the new reference is taken first.
-        TObjectPtr& operator=(const TObjectPtr& Other)
+        TStrongObjectPtr& operator=(const TStrongObjectPtr& Other)
         {
             if (this != &Other)
             {
@@ -117,7 +118,7 @@ namespace Lumina
             return *this;
         }
 
-        TObjectPtr& operator=(TObjectPtr&& Other) noexcept
+        TStrongObjectPtr& operator=(TStrongObjectPtr&& Other) noexcept
         {
             if (this != &Other)
             {
@@ -132,7 +133,7 @@ namespace Lumina
             return *this;
         }
 
-        TObjectPtr& operator=(T* InObject)
+        TStrongObjectPtr& operator=(T* InObject)
         {
             if (Object != InObject)
             {
@@ -144,7 +145,7 @@ namespace Lumina
             return *this;
         }
 
-        TObjectPtr& operator=(std::nullptr_t)
+        TStrongObjectPtr& operator=(std::nullptr_t)
         {
             ReleaseInternal();
             return *this;
@@ -182,13 +183,17 @@ namespace Lumina
         }
 
         // All routed through Get, so equality agrees with what a dereference gives, stale slot or not.
-        bool operator==(const TObjectPtr& Other) const noexcept { return Get() == Other.Get(); }
+        bool operator==(const TStrongObjectPtr& Other) const noexcept { return Get() == Other.Get(); }
         bool operator==(T* Other) const noexcept { return Get() == Other; }
         bool operator==(std::nullptr_t) const noexcept { return Get() == nullptr; }
 
-        template<typename U> friend class TObjectPtr;
+        template<typename U> friend class TStrongObjectPtr;
         template<typename U> friend class TWeakObjectPtr;
     };
+
+    // The old name, kept for one version so game modules can move over.
+    template<typename T>
+    using TObjectPtr LUM_DEPRECATED(0.1.12, "Renamed to TStrongObjectPtr.") = TStrongObjectPtr<T>;
 
 
     
@@ -219,7 +224,7 @@ namespace Lumina
         {
         }
 
-        TWeakObjectPtr(const TObjectPtr<T>& Strong) : Handle(Strong.GetHandle())
+        TWeakObjectPtr(const TStrongObjectPtr<T>& Strong) : Handle(Strong.GetHandle())
         {
         }
 
@@ -256,7 +261,7 @@ namespace Lumina
             return *this;
         }
 
-        TWeakObjectPtr& operator=(const TObjectPtr<T>& Strong)
+        TWeakObjectPtr& operator=(const TStrongObjectPtr<T>& Strong)
         {
             Handle = Strong.GetHandle();
             return *this;
@@ -271,16 +276,16 @@ namespace Lumina
         // Try to get a strong reference; returns null if the object was deleted. Atomic: the validate +
         // acquire happen together inside the object array, so this never races a concurrent destroy into
         // a use-after-free (unlike Get()-then-wrap). This is the safe way to pin a weakly-held object.
-        TObjectPtr<T> Lock() const
+        TStrongObjectPtr<T> Lock() const
         {
             CObjectBase* Obj = GObjectArray.TryAddStrongRef(Handle);
             if (Obj == nullptr)
             {
-                return TObjectPtr<T>();
+                return TStrongObjectPtr<T>();
             }
             // TryAddStrongRef already incremented the strong count; adopt it without a second AddRef.
-            return TObjectPtr<T>(static_cast<T*>(Obj), GObjectArray.GetEntry(Obj),
-                typename TObjectPtr<T>::FAdoptRef{});
+            return TStrongObjectPtr<T>(static_cast<T*>(Obj), GObjectArray.GetEntry(Obj),
+                typename TStrongObjectPtr<T>::FAdoptRef{});
         }
 
         T* Get() const
@@ -317,7 +322,7 @@ namespace Lumina
 namespace Lumina
 {
     template <typename T>
-    NODISCARD FORCEINLINE uint64 GetTypeHash(const TObjectPtr<T>& Object) noexcept
+    NODISCARD FORCEINLINE uint64 GetTypeHash(const TStrongObjectPtr<T>& Object) noexcept
     {
         return GetTypeHash(Object.Get());
     }
@@ -329,8 +334,8 @@ namespace Lumina
     }
 
     // A module built against the old size reads the wrong bytes, because property offsets bake in at compile time.
-    static_assert(sizeof(TObjectPtr<CObjectBase>) == 16,
-        "TObjectPtr changed size. Bump LUMINA_MODULE_ABI_VERSION in ModuleManager.h so stale modules are rejected, then update this assert.");
+    static_assert(sizeof(TStrongObjectPtr<CObjectBase>) == 16,
+        "TStrongObjectPtr changed size. Bump LUMINA_MODULE_ABI_VERSION in ModuleManager.h so stale modules are rejected, then update this assert.");
     static_assert(sizeof(TWeakObjectPtr<CObjectBase>) == 8,
         "TWeakObjectPtr changed size. Bump LUMINA_MODULE_ABI_VERSION in ModuleManager.h so stale modules are rejected, then update this assert.");
 }

@@ -33,7 +33,7 @@ namespace Lumina
 
         /** The texture array asset to sample. */
         PROPERTY(Editable, Category = "Texture")
-        TObjectPtr<CTextureArray> TextureArray;
+        TStrongObjectPtr<CTextureArray> TextureArray;
 
         /** Name used to expose this array as a material parameter for instancing (only used when bDynamic). */
         PROPERTY(Editable, Category = "Parameter")

@@ -164,8 +164,8 @@ namespace Lumina
         float GetNodeX() const { return GridX; }
         float GetNodeY() const { return GridY; }
 
-        const TVector<TObjectPtr<CEdNodeGraphPin>>& GetInputPins() const { return NodePins[static_cast<uint32>(ENodePinDirection::Input)]; }
-        const TVector<TObjectPtr<CEdNodeGraphPin>>& GetOutputPins() const { return NodePins[static_cast<uint32>(ENodePinDirection::Output)]; }
+        const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& GetInputPins() const { return NodePins[static_cast<uint32>(ENodePinDirection::Input)]; }
+        const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& GetOutputPins() const { return NodePins[static_cast<uint32>(ENodePinDirection::Output)]; }
 
         CEdNodeGraphPin* CreatePin(CClass* InClass, const FString& Name, ENodePinDirection Direction);
 
@@ -197,7 +197,7 @@ namespace Lumina
         
     protected:
 
-        TArray<TVector<TObjectPtr<CEdNodeGraphPin>>, static_cast<uint32>(ENodePinDirection::Count)> NodePins;
+        TArray<TVector<TStrongObjectPtr<CEdNodeGraphPin>>, static_cast<uint32>(ENodePinDirection::Count)> NodePins;
 
         uint32 DebugExecutionOrder;
 

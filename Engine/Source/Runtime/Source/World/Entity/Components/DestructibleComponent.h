@@ -22,11 +22,11 @@ namespace Lumina
         // Pre-baked fracture pieces; the entity shatters into these convex chunks. Null = on-the-fly
         // convex Voronoi fracture from the source mesh bounds.
         PROPERTY(Editable, Category = "Destruction")
-        TObjectPtr<CGeometryCollection> Collection;
+        TStrongObjectPtr<CGeometryCollection> Collection;
 
         /** Fallback only (no Collection, no Voronoi): mesh used for each grid chunk. Null = reuse the source mesh. */
         PROPERTY(Editable, Category = "Destruction")
-        TObjectPtr<CStaticMesh> FragmentMesh;
+        TStrongObjectPtr<CStaticMesh> FragmentMesh;
 
         /** Approximate number of fragments to break into. Rounded up to the nearest cubic grid. */
         PROPERTY(Editable, ClampMin = 2, ClampMax = 512, Category = "Destruction")

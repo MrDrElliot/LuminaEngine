@@ -48,7 +48,7 @@ namespace Lumina
         void StartPreview();
         void StopPreview();
 
-        TObjectPtr<CAudioNodeGraph>     NodeGraph;
+        TStrongObjectPtr<CAudioNodeGraph> NodeGraph;
         CEdGraphNode*                   SelectedNode = nullptr;
 
         /** Live value behind each transport slider, since the instance owns no readable copy. */

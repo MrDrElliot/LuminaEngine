@@ -214,7 +214,7 @@ namespace Lumina::MCP
                     Out.Name        = FString(Target.Asset->GetName().ToString().c_str());
                     Out.CanvasClass = FString(Target.Canvas->GetClass()->GetName().ToString().c_str());
 
-                    for (const TObjectPtr<CEdGraphNode>& Node : Target.Canvas->Nodes)
+                    for (const TStrongObjectPtr<CEdGraphNode>& Node : Target.Canvas->Nodes)
                     {
                         if (!Node.IsValid())
                         {

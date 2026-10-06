@@ -14,7 +14,7 @@ namespace Lumina;
 /// As with <see cref="List{T}"/>, a mutation invalidates any earlier span, handle or enumerator; the view
 /// does not own the storage.
 ///
-/// <para>The element may be a plain value, an <see cref="FString"/>, or a <see cref="TObjectPtr{T}"/> --
+/// <para>The element may be a plain value, an <see cref="FString"/>, or a <see cref="TStrongObjectPtr{T}"/> --
 /// which is why there is one view type and not three. What differs per element is only how a slot is read and
 /// written, and that is <c>ElementMarshal</c>'s job; this file has no per-kind knowledge, the same way
 /// <c>FScriptArrayElementDesc</c> natively has none (it dispatches through the element's own FProperty).</para>

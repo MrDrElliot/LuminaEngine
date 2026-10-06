@@ -10,7 +10,7 @@ namespace Lumina::GraphAlgorithms
 {
     // Kahn's algorithm over a pre-computed reachable set. Writes SortedNodes in dependency order
     // (roots-last). Returns the first node participating in a cycle, or nullptr on success.
-    inline CEdGraphNode* TopologicalSortReachable(const TVector<TObjectPtr<CEdGraphNode>>& Nodes, const THashSet<CEdGraphNode*>& ReachableNodes, TVector<CEdGraphNode*>& SortedNodes)
+    inline CEdGraphNode* TopologicalSortReachable(const TVector<TStrongObjectPtr<CEdGraphNode>>& Nodes, const THashSet<CEdGraphNode*>& ReachableNodes, TVector<CEdGraphNode*>& SortedNodes)
     {
         THashMap<CEdGraphNode*, uint32> InDegree;
         for (const auto& NodeRef : Nodes)
@@ -183,10 +183,10 @@ namespace Lumina::GraphAlgorithms
     // Topo-sorts the subset of Nodes reachable (via input edges) from the first RootPredicate match
     // into SortedNodes (dependency order, roots-last). Returns the first node in a cycle, else nullptr.
     template <typename TRootPredicate>
-    CEdGraphNode* TopologicalSortFromRoot(const TVector<TObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
+    CEdGraphNode* TopologicalSortFromRoot(const TVector<TStrongObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
     {
         const auto RootItr = Algo::FindIf(Nodes,
-            [&IsRoot](const TObjectPtr<CEdGraphNode>& Node) { return IsRoot(Node.Get()); });
+            [&IsRoot](const TStrongObjectPtr<CEdGraphNode>& Node) { return IsRoot(Node.Get()); });
 
         CEdGraphNode* RootNode = RootItr != Nodes.end() ? RootItr->Get() : nullptr;
 
@@ -204,7 +204,7 @@ namespace Lumina::GraphAlgorithms
     // Multi-root variant: seeds the reachability walk from EVERY node matching RootPredicate. A
     // material function graph has one output node per declared output, so the walk must seed from all.
     template <typename TRootPredicate>
-    CEdGraphNode* TopologicalSortFromRoots(const TVector<TObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
+    CEdGraphNode* TopologicalSortFromRoots(const TVector<TStrongObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
     {
         THashSet<CEdGraphNode*> ReachableNodes;
         for (const auto& NodeRef : Nodes)

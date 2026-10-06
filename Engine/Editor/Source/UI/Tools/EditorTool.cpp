@@ -180,7 +180,7 @@ namespace Lumina
 
         if (HasWorld())
         {
-            // Do NOT ForceDestroyNow, since this TObjectPtr still holds the world and would then dangle.
+            // Do NOT ForceDestroyNow, since this TStrongObjectPtr still holds the world and would then dangle.
             GWorldManager->DestroyWorldContext(World.Get());
             World.Reset();
         }

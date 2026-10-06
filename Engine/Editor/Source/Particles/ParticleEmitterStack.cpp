@@ -10,7 +10,7 @@ namespace Lumina
     {
         int32 ModuleIndex = 0;
 
-        for (const TObjectPtr<CParticleModule>& Module : SpawnModules)
+        for (const TStrongObjectPtr<CParticleModule>& Module : SpawnModules)
         {
             if (Module.IsValid() && Module->bEnabled)
             {
@@ -19,7 +19,7 @@ namespace Lumina
             ++ModuleIndex;
         }
 
-        for (const TObjectPtr<CParticleModule>& Module : UpdateModules)
+        for (const TStrongObjectPtr<CParticleModule>& Module : UpdateModules)
         {
             if (Module.IsValid() && Module->bEnabled)
             {
@@ -53,7 +53,7 @@ namespace Lumina
             return;
         }
 
-        TVector<TObjectPtr<CParticleModule>>& Stack = GetStack(Module->GetStage());
+        TVector<TStrongObjectPtr<CParticleModule>>& Stack = GetStack(Module->GetStage());
         for (auto It = Stack.begin(); It != Stack.end(); ++It)
         {
             if (It->Get() == Module)
@@ -71,7 +71,7 @@ namespace Lumina
             return;
         }
 
-        TVector<TObjectPtr<CParticleModule>>& Stack = GetStack(Module->GetStage());
+        TVector<TStrongObjectPtr<CParticleModule>>& Stack = GetStack(Module->GetStage());
         for (int32 i = 0; i < (int32)Stack.size(); ++i)
         {
             if (Stack[i].Get() == Module)
@@ -79,7 +79,7 @@ namespace Lumina
                 const int32 Target = i + (Direction < 0 ? -1 : 1);
                 if (Target >= 0 && Target < (int32)Stack.size())
                 {
-                    TObjectPtr<CParticleModule> Tmp = Stack[i];
+                    TStrongObjectPtr<CParticleModule> Tmp = Stack[i];
                     Stack[i] = Stack[Target];
                     Stack[Target] = Tmp;
                 }

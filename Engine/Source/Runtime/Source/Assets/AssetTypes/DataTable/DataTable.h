@@ -135,7 +135,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable)
-        TObjectPtr<CDataTable> DataTable;
+        TStrongObjectPtr<CDataTable> DataTable;
 
         PROPERTY(Editable)
         FName RowName;

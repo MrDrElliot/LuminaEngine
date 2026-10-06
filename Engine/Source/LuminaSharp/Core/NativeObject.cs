@@ -4,7 +4,7 @@ namespace LuminaSharp;
 
 /// <summary>
 /// Base for the generated opaque wrappers around native CObjects. Identifies the object by its object-array
-/// index + generation, and the canonical wrapper also owns a strong reference, as a TObjectPtr would.
+/// index + generation, and the canonical wrapper also owns a strong reference, as a TStrongObjectPtr would.
 /// </summary>
 public unsafe class NativeObject : IDisposable
 {
@@ -63,7 +63,7 @@ public unsafe class NativeObject : IDisposable
         References?.ReleaseAll();
     }
 
-    // Drops one handed-out reference, as releasing a TObjectPtr would; undisposed ones go when the wrapper is collected.
+    // Drops one handed-out reference, as releasing a TStrongObjectPtr would; undisposed ones go when the wrapper is collected.
     public void Dispose()
     {
         References?.Release();

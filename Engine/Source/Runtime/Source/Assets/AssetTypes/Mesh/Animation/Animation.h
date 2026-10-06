@@ -292,7 +292,7 @@ namespace Lumina
         float EvaluateCurve(const FName& CurveName, float Time, float Default = 0.0f) const;
 
         PROPERTY(Editable, Category = "Skeleton")
-        TObjectPtr<CSkeleton> Skeleton;
+        TStrongObjectPtr<CSkeleton> Skeleton;
 
         /**
          * Extract the root bone's motion each frame and use it to drive the owning entity's transform; the
@@ -320,7 +320,7 @@ namespace Lumina
         /** Clip the base pose is sampled from. Leaving it empty falls back to the skeleton's ref pose. */
         PROPERTY(Editable, Category = "Additive",
                  EditCondition = "AdditiveAnimType != None && AdditiveBasePoseType != RefPose", EditConditionHides)
-        TObjectPtr<CAnimation> AdditiveBaseAnimation;
+        TStrongObjectPtr<CAnimation> AdditiveBaseAnimation;
 
         /** Time in the base clip that Anim Frame freezes on. */
         PROPERTY(Editable, Category = "Additive", Units = "s", ClampMin = 0.0f,

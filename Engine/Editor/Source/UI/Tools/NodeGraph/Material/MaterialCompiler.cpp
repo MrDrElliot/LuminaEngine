@@ -1317,14 +1317,14 @@ namespace Lumina
 		RegisterDeriv(NodeID, EDerivState::Zero);
 	}
 
-	void FMaterialCompiler::GetBoundCollections(TVector<TObjectPtr<CMaterialParameterCollection>>& Out) const
+	void FMaterialCompiler::GetBoundCollections(TVector<TStrongObjectPtr<CMaterialParameterCollection>>& Out) const
 	{
 		Out = BoundCollections;
 	}
 
 	void FMaterialCompiler::SeedManifest(const TVector<FMaterialParameter>& Params, const FMaterialUniforms& Uniforms,
-		const TVector<TObjectPtr<CTexture>>& Textures,
-		const TVector<TObjectPtr<CMaterialParameterCollection>>& Collections)
+		const TVector<TStrongObjectPtr<CTexture>>& Textures,
+		const TVector<TStrongObjectPtr<CMaterialParameterCollection>>& Collections)
 	{
 		// Position here is the shader slot, so this has to be the material's order exactly.
 		BoundCollections = Collections;
@@ -3823,7 +3823,7 @@ namespace Lumina
 			+ L0Str + ", " + L1Str + ", " + L2Str + ", " + L3Str + ", HeightUV);\n");
 	}
 
-	void FMaterialCompiler::GetBoundTextures(TVector<TObjectPtr<CTexture>>& Images)
+	void FMaterialCompiler::GetBoundTextures(TVector<TStrongObjectPtr<CTexture>>& Images)
 	{
 		Images = BoundImages;
 	}

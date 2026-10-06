@@ -111,7 +111,7 @@ namespace Lumina
 
         void SetPreviewCameras(CWorld* World, bool bPreview);
 
-        TObjectPtr<CSequence>    Sequence;
+        TStrongObjectPtr<CSequence> Sequence;
 
         // The same binding and evaluation the game's player uses, so a preview is what ships.
         FSequenceInstance        Instance;

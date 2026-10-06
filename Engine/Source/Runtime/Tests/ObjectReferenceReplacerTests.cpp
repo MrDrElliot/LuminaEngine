@@ -59,20 +59,20 @@ TEST(ObjectReferenceReplacer, RepointsAHardReferenceAndClearsWhenTheReplacementI
 
     FProperty* Ref = Holder->GetProperty(FName("Ref"));
     ASSERT_NE(Ref, nullptr);
-    *Ref->GetValuePtr<TObjectPtr<CObject>>(Owner) = Target;
+    *Ref->GetValuePtr<TStrongObjectPtr<CObject>>(Owner) = Target;
 
     {
         FObjectReferenceReplacer Replacer(Target, Other);
         EXPECT_GT(Replacer.ApplyToAllObjects(), 0u);
     }
-    EXPECT_EQ(Ref->GetValuePtr<TObjectPtr<CObject>>(Owner)->Get(), Other);
+    EXPECT_EQ(Ref->GetValuePtr<TStrongObjectPtr<CObject>>(Owner)->Get(), Other);
 
     {
         // A null replacement clears rather than repoints, which is how an unloaded export is let go.
         FObjectReferenceReplacer Replacer(Other, nullptr);
         Replacer.ApplyToAllObjects();
     }
-    EXPECT_EQ(Ref->GetValuePtr<TObjectPtr<CObject>>(Owner)->Get(), nullptr);
+    EXPECT_EQ(Ref->GetValuePtr<TStrongObjectPtr<CObject>>(Owner)->Get(), nullptr);
 }
 
 TEST(ObjectReferenceReplacer, RewritesASoftReferenceByGuidWithoutLoadingIt)
@@ -128,12 +128,12 @@ TEST(ObjectReferenceReplacer, ReachesAReferenceInsideAContainer)
 
     void* Container = Array->GetValuePtr<void>(Owner);
     Array->Resize(Container, 1);
-    *static_cast<TObjectPtr<CObject>*>(Array->GetAt(Container, 0)) = Target;
+    *static_cast<TStrongObjectPtr<CObject>*>(Array->GetAt(Container, 0)) = Target;
 
     FObjectReferenceReplacer Replacer(Target, Other);
     EXPECT_GT(Replacer.ApplyToAllObjects(), 0u);
 
-    EXPECT_EQ(static_cast<TObjectPtr<CObject>*>(Array->GetAt(Container, 0))->Get(), Other)
+    EXPECT_EQ(static_cast<TStrongObjectPtr<CObject>*>(Array->GetAt(Container, 0))->Get(), Other)
         << "a reference inside a container must be repointed like any other";
 }
 

@@ -85,7 +85,7 @@ namespace Lumina::MCP
                 return false;
             }
 
-            TVector<TObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, Emitter, OutStage);
+            TVector<TStrongObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, Emitter, OutStage);
             if (Modules == nullptr || Index < 0 || Index >= (int32)Modules->size() || (*Modules)[Index] == nullptr)
             {
                 OutError = Lumina::Format("There is no {} module {} on emitter {}.", StageName, Index, Emitter);
@@ -118,7 +118,7 @@ namespace Lumina::MCP
 
         void CollectModules(CParticleSystem* System, int32 Emitter, EParticleModuleStage Stage, TVector<SParticleModuleInfo>& Out)
         {
-            TVector<TObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, Emitter, Stage);
+            TVector<TStrongObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, Emitter, Stage);
             if (Modules == nullptr)
             {
                 return;
@@ -146,7 +146,7 @@ namespace Lumina::MCP
         {
             for (EParticleModuleStage Stage : { EParticleModuleStage::Spawn, EParticleModuleStage::Update })
             {
-                if (TVector<TObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, Emitter, Stage))
+                if (TVector<TStrongObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, Emitter, Stage))
                 {
                     Modules->clear();
                 }
@@ -535,7 +535,7 @@ namespace Lumina::MCP
                     }
 
                     const EParticleModuleStage Stage = Module->GetStage();
-                    TVector<TObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, In.Emitter, Stage);
+                    TVector<TStrongObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, In.Emitter, Stage);
                     for (int32 Index = 0; Modules != nullptr && Index < (int32)Modules->size(); ++Index)
                     {
                         if ((*Modules)[Index].Get() == Module)

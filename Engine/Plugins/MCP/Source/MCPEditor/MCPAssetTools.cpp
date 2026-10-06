@@ -437,7 +437,7 @@ namespace Lumina::MCP
 
             // A file holding several meshes names each File_Mesh, so the caller is told the paths that really exist.
             TVector<FString> CreatedPaths;
-            for (const TObjectPtr<CObject>& Created : Result.CreatedObjects)
+            for (const TStrongObjectPtr<CObject>& Created : Result.CreatedObjects)
             {
                 if (Created.IsValid() && Created->GetPackage() != nullptr)
                 {

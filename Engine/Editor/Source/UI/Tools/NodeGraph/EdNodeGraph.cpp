@@ -22,7 +22,7 @@ namespace Lumina
 {
     namespace
     {
-        // Raw pointers deliberately, since a TObjectPtr clipboard would outlive its graph at teardown.
+        // Raw pointers deliberately, since a TStrongObjectPtr clipboard would outlive its graph at teardown.
         TVector<CEdGraphNode*>& GetNodeClipboard()
         {
             static TVector<CEdGraphNode*> Clipboard;
@@ -128,7 +128,7 @@ namespace Lumina
     void CEdNodeGraph::Shutdown()
     {
         // Otherwise closing the editor you copied from leaves a paste pointing at freed nodes.
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (Node.IsValid())
             {
@@ -149,7 +149,7 @@ namespace Lumina
     {
         Super::PostLoad();
         
-        TVector<TObjectPtr<CEdGraphNode>> SavedNodes = Move(Nodes);
+        TVector<TStrongObjectPtr<CEdGraphNode>> SavedNodes = Move(Nodes);
         TVector<uint32> SavedConnections = Move(Connections);
         Nodes.clear();
         Connections.clear();
@@ -157,7 +157,7 @@ namespace Lumina
         // Reconciling before the links are back would drop everything keyed off them.
         bIsPostLoading = true;
 
-        for (const TObjectPtr<CEdGraphNode>& Node : SavedNodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : SavedNodes)
         {
             if (Node.IsValid())
             {
@@ -350,11 +350,11 @@ namespace Lumina
             return nullptr;
         }
 
-        const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins = Direction == ENodePinDirection::Input
+        const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins = Direction == ENodePinDirection::Input
             ? Node->GetInputPins()
             : Node->GetOutputPins();
 
-        for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+        for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
         {
             if (Pin.IsValid() && Pin->GetPinName() == Name)
             {
@@ -376,7 +376,7 @@ namespace Lumina
                 continue;
             }
 
-            for (const TObjectPtr<CEdNodeGraphPin>& SourceInput : Source->GetInputPins())
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& SourceInput : Source->GetInputPins())
             {
                 if (!SourceInput.IsValid())
                 {
@@ -516,7 +516,7 @@ namespace Lumina
         TVector<CEdGraphNode*> SourceOrder;
         SourceOrder.reserve(Source->Nodes.size());
 
-        for (const TObjectPtr<CEdGraphNode>& SourceNode : Source->Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& SourceNode : Source->Nodes)
         {
             if (!SourceNode.IsValid())
             {
@@ -559,7 +559,7 @@ namespace Lumina
 
         uint64 Version = ContentVersion;
 
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (!Node.IsValid())
             {
@@ -579,7 +579,7 @@ namespace Lumina
     {
         uint32 Repaired = 0;
 
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (!Node.IsValid())
             {
@@ -956,7 +956,7 @@ namespace Lumina
 
     CEdNodeGraphPin* CEdNodeGraph::FindPinByGUID(uint32 PinID) const
     {
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (!Node.IsValid())
             {
@@ -1339,7 +1339,7 @@ namespace Lumina
             // The popup was opened and never begun, so every node's own context menu was unreachable.
             if (ImGui::BeginPopup("Node Context Menu"))
             {
-                auto NodeItr = Algo::FindIf(Nodes, [this](const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = Algo::FindIf(Nodes, [this](const TStrongObjectPtr<CEdGraphNode>& A)
                 {
                     return A.IsValid() && Cmp::Equal(A->GetNodeID(), ContextMenuNodeID);
                 });
@@ -1679,7 +1679,7 @@ namespace Lumina
             while (NodeEditor::QueryDeletedNode(&NodeId))
             {
                 // O(n^2) scan mirrors the approach from the imgui-node-editor examples; acceptable for typical graph sizes.
-                auto NodeItr = Algo::FindIf(Nodes, [NodeId] (const TObjectPtr<CEdGraphNode>& A)
+                auto NodeItr = Algo::FindIf(Nodes, [NodeId] (const TStrongObjectPtr<CEdGraphNode>& A)
                 {
                     return Cmp::Equal(A->GetNodeID(), NodeId.Get()) && A->IsDeletable();
                 });
@@ -1910,7 +1910,7 @@ namespace Lumina
 
     CEdGraphNode* CEdNodeGraph::FindNode(int64 InNodeID) const
     {
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (Node.IsValid() && Node->GetNodeID() == InNodeID)
             {
@@ -1955,11 +1955,11 @@ namespace Lumina
 
         const FEdGraphSchema& Schema = GetSchema();
         const bool bSourceIsInput = SourcePin->bInputPin;
-        const TVector<TObjectPtr<CEdNodeGraphPin>>& Candidates = bSourceIsInput
+        const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Candidates = bSourceIsInput
             ? NewNode->GetOutputPins()
             : NewNode->GetInputPins();
 
-        for (const TObjectPtr<CEdNodeGraphPin>& Candidate : Candidates)
+        for (const TStrongObjectPtr<CEdNodeGraphPin>& Candidate : Candidates)
         {
             if (!Candidate.IsValid() || Candidate->IsDisabled())
             {
@@ -2013,7 +2013,7 @@ namespace Lumina
     {
         const auto IsTaken = [this](int64 Candidate)
         {
-            for (const TObjectPtr<CEdGraphNode>& Existing : Nodes)
+            for (const TStrongObjectPtr<CEdGraphNode>& Existing : Nodes)
             {
                 if (Existing.IsValid() && Existing->GetNodeID() == Candidate)
                 {

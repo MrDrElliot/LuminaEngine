@@ -38,6 +38,6 @@ namespace Lumina
 
         void EnsureRootNodes();
 
-        TObjectPtr<CAudioGraph> AudioGraph;
+        TStrongObjectPtr<CAudioGraph> AudioGraph;
     };
 }

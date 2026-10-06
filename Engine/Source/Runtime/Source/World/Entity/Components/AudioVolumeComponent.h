@@ -24,7 +24,7 @@ namespace Lumina
 		GENERATED_BODY()
 
 		PROPERTY(Editable, ToolTip = "Sound that plays while the listener is inside, usually a looping music track or ambience bed.")
-		TObjectPtr<CSoundBase> Sound;
+		TStrongObjectPtr<CSoundBase> Sound;
 
 		PROPERTY(Editable, ToolTip = "Mix group the zone's sound routes through.")
 		EAudioBus Bus = EAudioBus::Ambient;

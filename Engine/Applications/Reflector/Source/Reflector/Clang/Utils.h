@@ -366,7 +366,9 @@ namespace Lumina::ClangUtils
                 { "Lumina::Containers::TVariant",      "Lumina::TVariant"    },
                 { "FString",                           "Lumina::FString"     },
                 { "FName",                             "Lumina::FName"       },
-                { "TObjectPtr",                        "Lumina::TObjectPtr"  },
+                { "TStrongObjectPtr",                  "Lumina::TStrongObjectPtr" },
+                { "TObjectPtr",                        "Lumina::TStrongObjectPtr" },
+                { "Lumina::TObjectPtr",                "Lumina::TStrongObjectPtr" },
                 { "CObject",                           "Lumina::CObject"     },
                 { "CClass",                            "Lumina::CClass"      },
             });

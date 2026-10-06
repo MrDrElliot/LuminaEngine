@@ -617,8 +617,8 @@ namespace Lumina
         EditorWindowClass.ParentViewportId              = 0; // Top level window
         EditorWindowClass.DockingAlwaysTabBar           = true;
 
-        // Held through a TObjectPtr, since a project load can hand the tool a different world and free this.
-        TObjectPtr<CWorld> World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
+        // Held through a TStrongObjectPtr, since a project load can hand the tool a different world and free this.
+        TStrongObjectPtr<CWorld> World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
 
         WorldEditorTool = CreateTool<FWorldEditorTool>(this, World.Get());
         ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);

@@ -96,7 +96,7 @@ namespace Lumina
         
         
         PROPERTY(Editable, NoResize, NoReorder, Category = "Materials")
-        TVector<TObjectPtr<CMaterialInterface>> Materials;
+        TVector<TStrongObjectPtr<CMaterialInterface>> Materials;
 
         PROPERTY(Category = "AABB")
         FAABB BoundingBox;

@@ -11,7 +11,7 @@ namespace Lumina
     {
         Super::Initialize();
 
-        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TObjectPtr<CEdGraphNode>& Node)
+        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TStrongObjectPtr<CEdGraphNode>& Node)
         {
             return Node.IsValid() && Node->IsA<CParticleOutputNode>();
         });
@@ -65,7 +65,7 @@ namespace Lumina
         }
 
         CParticleOutputNode* OutputNode = nullptr;
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (CParticleOutputNode* Out = Cast<CParticleOutputNode>(Node.Get()))
             {

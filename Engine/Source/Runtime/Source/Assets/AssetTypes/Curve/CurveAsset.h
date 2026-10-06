@@ -180,7 +180,7 @@ namespace Lumina
         bool bUseAsset = false;
 
         PROPERTY(Editable, Category = "Curve")
-        TObjectPtr<CCurveAsset> Asset;
+        TStrongObjectPtr<CCurveAsset> Asset;
 
         PROPERTY(Editable, Category = "Curve")
         SKeyedCurve Curve;

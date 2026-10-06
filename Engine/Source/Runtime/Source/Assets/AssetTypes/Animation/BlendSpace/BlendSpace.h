@@ -86,7 +86,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable, Category = "Sample")
-        TObjectPtr<CAnimation> Animation;
+        TStrongObjectPtr<CAnimation> Animation;
 
         /** Where this sample sits in axis space. Y is ignored on a one-axis blend space. */
         PROPERTY(Editable, Category = "Sample")
@@ -128,7 +128,7 @@ namespace Lumina
 
         /** Skeleton every sample clip is authored against. */
         PROPERTY(Editable, Category = "Blend Space")
-        TObjectPtr<CSkeleton> Skeleton;
+        TStrongObjectPtr<CSkeleton> Skeleton;
 
         PROPERTY(Editable, Category = "Blend Space")
         EBlendSpaceAxes AxisCount = EBlendSpaceAxes::Two;

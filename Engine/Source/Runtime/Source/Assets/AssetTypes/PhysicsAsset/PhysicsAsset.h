@@ -68,7 +68,7 @@ namespace Lumina
 
         /** Surface material; null falls back to the asset's defaults. */
         PROPERTY(Editable, Category = "Body")
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
     };
 
     /** A swing-twist joint connecting a child body to its parent body, limiting how far the limb can
@@ -121,7 +121,7 @@ namespace Lumina
 
         /** Skeleton these bodies/constraints are authored against. */
         PROPERTY(Editable, Category = "Physics Asset")
-        TObjectPtr<CSkeleton> Skeleton;
+        TStrongObjectPtr<CSkeleton> Skeleton;
 
         /** Collision layer/mask applied to every ragdoll body. */
         PROPERTY(Editable, Category = "Physics Asset")

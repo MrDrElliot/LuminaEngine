@@ -68,7 +68,7 @@ namespace Lumina::MCP
             // Scripts are subobjects the component only points at, so their values are listed under their own class.
             if (const SEntityScriptComponent* Scripts = Registry.TryGet<SEntityScriptComponent>(Entity))
             {
-                for (const TObjectPtr<CEntityScript>& Held : Scripts->Scripts)
+                for (const TStrongObjectPtr<CEntityScript>& Held : Scripts->Scripts)
                 {
                     CEntityScript* Script = Held.Get();
                     if (Script == nullptr || Script->GetClass() == nullptr)
@@ -382,7 +382,7 @@ namespace Lumina::MCP
                 return nullptr;
             }
 
-            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 CEntityScript* Script = Held.Get();
                 if (Script == nullptr || Script->GetClass() == nullptr)

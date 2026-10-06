@@ -13,7 +13,7 @@ namespace Lumina
             : FProperty(Params)
         {
             ObjectClass = Params->ClassFunc();
-            SetElementSize(sizeof(TObjectPtr<CObject>));
+            SetElementSize(sizeof(TStrongObjectPtr<CObject>));
         }
 
         void Serialize(FArchive& Ar, void* Value) override;
@@ -23,11 +23,11 @@ namespace Lumina
         // (assets have deterministic/persistent GUIDs identical on both ends).
         RUNTIME_API void NetSerialize(FNetArchive& Ar, void* Value) override;
 
-        // Assign through TObjectPtr; a raw memcpy (base impl) would skip the strong-ref
+        // Assign through TStrongObjectPtr; a raw memcpy (base impl) would skip the strong-ref
         // add/release and corrupt the refcount (crash on a later release).
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
-        // A zeroed TObjectPtr IS a valid null, so construction has nothing to do -- but destruction must
+        // A zeroed TStrongObjectPtr IS a valid null, so construction has nothing to do -- but destruction must
         // release the strong ref or the referenced object never dies.
         RUNTIME_API void DestructValue(void* Value) const override;
         bool OwnsStorage() const override { return true; }

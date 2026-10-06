@@ -54,7 +54,7 @@ namespace Lumina
 
         /** Material for the whole shape. Null draws with the engine default. */
         PROPERTY(Editable, Category = "Blockout")
-        TObjectPtr<CMaterialInterface> Material;
+        TStrongObjectPtr<CMaterialInterface> Material;
 
         /** Sides around the axis for Cylinder, Cone, Sphere, Capsule, Torus, Arch and Pipe. */
         PROPERTY(Editable, Category = "Blockout|Tessellation", ClampMin = 3, ClampMax = 128)

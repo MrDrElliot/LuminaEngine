@@ -141,7 +141,7 @@ namespace Lumina
         void EnsureGraphReady(CEdNodeGraph* Graph);
         void WireGraphCallbacks(CEdNodeGraph* Graph);
 
-        TObjectPtr<CAnimationGraphNodeGraph>    NodeGraph;
+        TStrongObjectPtr<CAnimationGraphNodeGraph> NodeGraph;
         CEdGraphNode*                           SelectedNode = nullptr;
         CAnimStateTransition*                   SelectedTransition = nullptr;
         FString                                 CompilationLog;

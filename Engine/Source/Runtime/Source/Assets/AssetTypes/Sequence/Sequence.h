@@ -45,7 +45,7 @@ namespace Lumina
         ESequenceBindingKind Kind = ESequenceBindingKind::Possess;
 
         PROPERTY(Editable, Category = "Binding")
-        TObjectPtr<CPrefab> SpawnPrefab;
+        TStrongObjectPtr<CPrefab> SpawnPrefab;
     };
 
     // What a track is handed when it evaluates. Bindings are resolved once per play rather than per track,
@@ -299,7 +299,7 @@ namespace Lumina
         float StartTime = 0.0f;
 
         PROPERTY(Editable, Category = "Audio")
-        TObjectPtr<CSoundBase> Sound;
+        TStrongObjectPtr<CSoundBase> Sound;
 
         PROPERTY(Editable, Category = "Audio", ClampMin = 0.0f)
         float Volume = 1.0f;
@@ -515,7 +515,7 @@ namespace Lumina
         TVector<SSequenceBinding> Bindings;
 
         PROPERTY(Editable, Category = "Sequence")
-        TVector<TObjectPtr<CSequenceTrack>> Tracks;
+        TVector<TStrongObjectPtr<CSequenceTrack>> Tracks;
 
         // Black bars for the whole sequence as the picture's width over height, where zero shows none.
         PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 4.0f, Category = "Sequence")

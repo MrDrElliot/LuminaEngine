@@ -43,7 +43,7 @@ namespace Lumina
 
         CMaterialOutputNode* GetOutputNode(CMaterialNodeGraph* Graph)
         {
-            for (const TObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+            for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
             {
                 if (Node.IsValid() && Node->IsA<CMaterialOutputNode>())
                 {
@@ -730,7 +730,7 @@ namespace Lumina
             TSpan<CTexture* const>              ImageAssets,
             const FFixedString&                 MaterialsDir,
             const FFixedString&                 BaseName,
-            TVector<TObjectPtr<CObject>>&       OutCreated,
+            TVector<TStrongObjectPtr<CObject>>&       OutCreated,
             bool                                bSourceHasVertexColors)
         {
             TVector<CMaterialInstance*> Instances;
@@ -740,8 +740,8 @@ namespace Lumina
             }
 
             // Shared by every import into MaterialsDir, so a folder of meshes carries one pair rather than one per file.
-            TObjectPtr<CTexture> White;
-            TObjectPtr<CTexture> FlatNormal;
+            TStrongObjectPtr<CTexture> White;
+            TStrongObjectPtr<CTexture> FlatNormal;
             bool bDefaultsResolved = false;
             auto ResolveDefaults = [&]()
             {
@@ -751,7 +751,7 @@ namespace Lumina
                 }
                 bDefaultsResolved = true;
 
-                auto FindOrCreate = [&](const char* Name, uint8 R, uint8 G, uint8 B) -> TObjectPtr<CTexture>
+                auto FindOrCreate = [&](const char* Name, uint8 R, uint8 G, uint8 B) -> TStrongObjectPtr<CTexture>
                 {
                     FFixedString Path = MaterialsDir;
                     Path.append(Name);
@@ -759,7 +759,7 @@ namespace Lumina
                     {
                         return Existing;
                     }
-                    TObjectPtr<CTexture> Created = CTextureFactory::CreateSolidColorTexture(EnsureUniquePath(Path), R, G, B, 255, ETextureColorSpace::Linear);
+                    TStrongObjectPtr<CTexture> Created = CTextureFactory::CreateSolidColorTexture(EnsureUniquePath(Path), R, G, B, 255, ETextureColorSpace::Linear);
                     // Pushed ahead of any master, so reverse-order teardown frees masters before their textures.
                     if (Created)
                     {

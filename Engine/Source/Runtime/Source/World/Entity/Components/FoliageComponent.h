@@ -61,7 +61,7 @@ namespace Lumina
 
         /** Mesh drawn for every instance of this type. */
         PROPERTY(Editable, Category = "Foliage Type")
-        TObjectPtr<CStaticMesh> Mesh;
+        TStrongObjectPtr<CStaticMesh> Mesh;
 
         /** Painted instances per square meter at full brush strength. */
         PROPERTY(Editable, Category = "Scatter", ClampMin = 0.0001f)
@@ -104,7 +104,7 @@ namespace Lumina
 
         /** Authored collision used per instance; null falls back to collision built from the mesh. */
         PROPERTY(Editable, Category = "Collision")
-        TObjectPtr<CCollisionShape> CollisionShape;
+        TStrongObjectPtr<CCollisionShape> CollisionShape;
 
         /** Mesh fallback only: true builds a convex hull, false a concave triangle mesh. */
         PROPERTY(Editable, Category = "Collision")
@@ -112,7 +112,7 @@ namespace Lumina
 
         /** Physics material for this type's bodies; null uses the engine defaults. */
         PROPERTY(Editable, Category = "Collision")
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         // Transient resolve cache (not serialized); refreshed by ResolveDirtyMeshComponents.
         uint32          CachedMeshletHeaderSlot = 0;

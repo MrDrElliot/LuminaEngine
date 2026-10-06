@@ -150,7 +150,7 @@ namespace Lumina::MCP
 
                     Out.Name = FString(Target.Asset->GetName().ToString().c_str());
 
-                    for (const TObjectPtr<CEdGraphNode>& Node : Target.Graph->Nodes)
+                    for (const TStrongObjectPtr<CEdGraphNode>& Node : Target.Graph->Nodes)
                     {
                         if (!Node.IsValid())
                         {
@@ -543,9 +543,9 @@ namespace Lumina::MCP
 
     void CollectPins(CEdGraphNode* Node, TVector<SGraphPinInfo>& Out)
     {
-        const auto Append = [&](const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins, const char* Direction)
+        const auto Append = [&](const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins, const char* Direction)
         {
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
                 if (!Pin.IsValid())
                 {

@@ -23,7 +23,7 @@ namespace Lumina
 
         /** Compiled animation graph asset evaluated each frame for this entity. */
         PROPERTY(Editable, Replicated, Category = "Animation")
-        TObjectPtr<CAnimationGraph> Graph;
+        TStrongObjectPtr<CAnimationGraph> Graph;
 
         /** Live parameter block, an instance of the graph's ParameterStruct. Write its fields directly. */
         PROPERTY(Editable, Category = "Animation")

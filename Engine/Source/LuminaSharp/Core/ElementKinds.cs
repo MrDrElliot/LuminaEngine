@@ -27,8 +27,8 @@ internal static class ElementKinds
         {
             return EElementKind.Optional;
         }
-        // Assigning a TObjectPtr by bytes would store the pointer without releasing or taking a reference.
-        if (Slot.IsGenericType && Slot.GetGenericTypeDefinition() == typeof(TObjectPtr<>))
+        // Assigning a TStrongObjectPtr by bytes would store the pointer without releasing or taking a reference.
+        if (Slot.IsGenericType && Slot.GetGenericTypeDefinition() == typeof(TStrongObjectPtr<>))
         {
             return EElementKind.ObjectRef;
         }

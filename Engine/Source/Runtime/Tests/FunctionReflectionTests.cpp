@@ -129,8 +129,8 @@ namespace
     // An object parameter is held as a handle, matching the storage FObjectProperty describes.
     struct FEcho_Parms
     {
-        TObjectPtr<CObject> In;
-        TObjectPtr<CObject> ReturnValue;
+        TStrongObjectPtr<CObject> In;
+        TStrongObjectPtr<CObject> ReturnValue;
     };
 
     void Thunk_Echo(const FFunction&, void* Context, void* Frame)
@@ -414,11 +414,11 @@ TEST(FunctionReflection, AnObjectArgumentTravelsAsAHandle)
 
     const FProperty* InParam = Echo->GetParams()[0];
     ASSERT_EQ(InParam->GetType(), EPropertyTypeFlags::Object);
-    EXPECT_EQ(InParam->GetElementSize(), sizeof(TObjectPtr<CObject>));
+    EXPECT_EQ(InParam->GetElementSize(), sizeof(TStrongObjectPtr<CObject>));
     EXPECT_TRUE(InParam->OwnsStorage()) << "the handle has to be released when the frame goes away";
 
     // Held, or the frame's release takes the count back to zero and destroys it before the checks below.
-    TObjectPtr<CObject> Owner(NewObject(CScriptableTest::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient));
+    TStrongObjectPtr<CObject> Owner(NewObject(CScriptableTest::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient));
     CObject* Subject_Object = Owner.Get();
     ASSERT_NE(Subject_Object, nullptr);
     const int32 RefsBefore = Subject_Object->GetStrongRefCount();
@@ -427,13 +427,13 @@ TEST(FunctionReflection, AnObjectArgumentTravelsAsAHandle)
 
     {
         FFunctionFrame Frame(*Echo);
-        Frame.At<TObjectPtr<CObject>>(0) = Subject_Object;
+        Frame.At<TStrongObjectPtr<CObject>>(0) = Subject_Object;
 
         EXPECT_GT(Subject_Object->GetStrongRefCount(), RefsBefore) << "the frame holds the object across the call";
 
         Frame.Invoke(&Subject);
 
-        EXPECT_EQ(Frame.Return<TObjectPtr<CObject>>().Get(), Subject_Object);
+        EXPECT_EQ(Frame.Return<TStrongObjectPtr<CObject>>().Get(), Subject_Object);
         EXPECT_EQ(Subject.Echoed, Subject_Object);
     }
 

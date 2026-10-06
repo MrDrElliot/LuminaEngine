@@ -235,7 +235,7 @@ namespace Lumina
         // The VM takes the first passing edge, so author Priority decides the emission order.
         TVector<CAnimStateTransition*> SortedTransitions;
         SortedTransitions.reserve(SMGraph->GetTransitions().size());
-        for (const TObjectPtr<CAnimStateTransition>& Transition : SMGraph->GetTransitions())
+        for (const TStrongObjectPtr<CAnimStateTransition>& Transition : SMGraph->GetTransitions())
         {
             if (Transition.IsValid())
             {

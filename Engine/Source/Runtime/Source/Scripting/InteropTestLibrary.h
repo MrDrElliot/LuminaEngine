@@ -68,7 +68,7 @@ namespace Lumina
 
         /** An object element, which crosses as a raw pointer and is rebuilt through the wrapper cache. */
         FUNCTION()
-        static void MakeObjectRange(int32 Count, TVector<TObjectPtr<CInteropTestLibrary>>& Out);
+        static void MakeObjectRange(int32 Count, TVector<TStrongObjectPtr<CInteropTestLibrary>>& Out);
 
         /** Reads a class handle back, so a test can pin that a TSubclassOf argument arrives intact. */
         FUNCTION()

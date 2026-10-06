@@ -189,7 +189,7 @@ namespace Lumina
 
         TVector<CMaterialExpression_FunctionInput*> InputNodes;
         TVector<CMaterialFunctionOutput*>           OutputNodes;
-        for (const TObjectPtr<CEdGraphNode>& N : NodeGraph->Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& N : NodeGraph->Nodes)
         {
             if (!N.IsValid())
             {

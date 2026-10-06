@@ -12,7 +12,7 @@ namespace Lumina::Reflection
     enum class EDiagId : uint32_t
     {
         UnknownPropertyType    = 1000,  // PROPERTY field has a type the reflector cannot map.
-        RawObjectPointer       = 1001,  // raw pointer to a CObject; caller must use TObjectPtr.
+        RawObjectPointer       = 1001,  // raw pointer to a CObject; caller must use TStrongObjectPtr.
         ArrayElementUnknown    = 1002,  // element type of TVector<T> couldn't be resolved.
         OptionalElementUnknown = 1003,  // element type of TOptional<T> couldn't be resolved.
         FieldQualifyFailed     = 1004,  // clang couldn't qualify the field's type.

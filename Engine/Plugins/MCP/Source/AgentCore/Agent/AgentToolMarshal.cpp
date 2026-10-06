@@ -720,7 +720,7 @@ namespace Lumina::Agent
             {
             case EPropertyTypeFlags::Object:
                 {
-                    TObjectPtr<CObject>* Slot = static_cast<TObjectPtr<CObject>*>(ValuePtr);
+                    TStrongObjectPtr<CObject>* Slot = static_cast<TStrongObjectPtr<CObject>*>(ValuePtr);
 
                     const std::string Given = Value.get<std::string>();
                     if (Given.empty())
@@ -882,7 +882,7 @@ namespace Lumina::Agent
             case EPropertyTypeFlags::Object:
                 {
                     // The archive wrote the object's name, which cannot be looked back up.
-                    const TObjectPtr<CObject>* Slot = static_cast<const TObjectPtr<CObject>*>(ValuePtr);
+                    const TStrongObjectPtr<CObject>* Slot = static_cast<const TStrongObjectPtr<CObject>*>(ValuePtr);
                     CObject* Referenced = Slot->Get();
 
                     Out = Referenced != nullptr

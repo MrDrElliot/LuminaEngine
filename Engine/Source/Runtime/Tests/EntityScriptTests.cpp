@@ -125,7 +125,7 @@ TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
     EXPECT_EQ(Script->FixedUpdateCount, 1);
 
     // Detaching drops the component's only strong ref, so the counter is read through a pin.
-    TObjectPtr<CEntityScript> Pinned(Script);
+    TStrongObjectPtr<CEntityScript> Pinned(Script);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Script->DetachCount, 1);
     EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Entity).Scripts.empty());
@@ -282,7 +282,7 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     EXPECT_FALSE(Unadopted->IsAttached());
 
     // Detaching drops the component's only strong ref, so the counters are read through pins.
-    TObjectPtr<CEntityScript> PinnedUnadopted(Unadopted);
+    TStrongObjectPtr<CEntityScript> PinnedUnadopted(Unadopted);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Unadopted->DetachCount, 0) << "no OnAttach ran, so no OnDetach is owed";
 
@@ -290,7 +290,7 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     const ECS::FEntity Adopted = Registry.Create();
     CEntityScriptTest* Attached = AttachTestScript(Registry, Adopted);
     ASSERT_NE(Attached, nullptr);
-    TObjectPtr<CEntityScript> PinnedAttached(Attached);
+    TStrongObjectPtr<CEntityScript> PinnedAttached(Attached);
     EntityScripts::DetachAll(Registry, Adopted);
     EXPECT_EQ(Attached->DetachCount, 1);
 }
@@ -330,7 +330,7 @@ TEST(EntityScriptUnification, AFaultedScriptStopsTickingButStillDetaches)
     EXPECT_EQ(Script->UpdateCount, 0);
     EXPECT_EQ(Script->FixedUpdateCount, 0);
 
-    TObjectPtr<CEntityScript> Pinned(Script);
+    TStrongObjectPtr<CEntityScript> Pinned(Script);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Script->DetachCount, 1) << "whatever OnAttach managed to set up is still owed its OnDetach";
 }
@@ -388,7 +388,7 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
     EXPECT_EQ(Managed->GetClass(), Minted);
 
     // Detaching drops the component's only strong ref, so the counter is read through a pin.
-    TObjectPtr<CEntityScript> PinnedNative(Native);
+    TStrongObjectPtr<CEntityScript> PinnedNative(Native);
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Native->DetachCount, 1);
 }
@@ -555,7 +555,7 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
 
     EntityScripts::Tick(Loaded, 0.1f);
 
-    for (TObjectPtr<CEntityScript>& Held : Loaded.Get<SEntityScriptComponent>(LoadedEntity).Scripts)
+    for (TStrongObjectPtr<CEntityScript>& Held : Loaded.Get<SEntityScriptComponent>(LoadedEntity).Scripts)
     {
         CEntityScriptTest* Script = static_cast<CEntityScriptTest*>(Held.Get());
         ASSERT_NE(Script, nullptr);
@@ -948,7 +948,7 @@ TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
         Component.Serialize(Ar);
-        for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
+        for (const TStrongObjectPtr<CEntityScript>& Held : Component.Scripts)
         {
             Scripting::ResetSkipHotReloadProperties(Held.Get());
         }
@@ -991,9 +991,9 @@ TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesS
     ASSERT_NE(ThirdScript, nullptr);
 
     // Detaching drops the component's only strong ref, so the counters are read through pins, not raw.
-    TObjectPtr<CEntityScript> PinFirst(FirstScript);
-    TObjectPtr<CEntityScript> PinSecond(SecondScript);
-    TObjectPtr<CEntityScript> PinThird(ThirdScript);
+    TStrongObjectPtr<CEntityScript> PinFirst(FirstScript);
+    TStrongObjectPtr<CEntityScript> PinSecond(SecondScript);
+    TStrongObjectPtr<CEntityScript> PinThird(ThirdScript);
 
     FDetachMutationContext Context;
     Context.Registry = &Registry;

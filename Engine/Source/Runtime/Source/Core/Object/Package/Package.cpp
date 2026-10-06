@@ -850,7 +850,7 @@ namespace Lumina
         // Synchronous teardown.
         {
             // A primary asset's destructor releases sibling exports, which would die mid-loop without the pin.
-            TVector<TObjectPtr<CObject>> PinnedExports;
+            TVector<TStrongObjectPtr<CObject>> PinnedExports;
             {
                 TVector<CObject*> ExportObjects;
                 ExportObjects.reserve(20);
@@ -864,7 +864,7 @@ namespace Lumina
             }
 
             // Null every live reference to the exported assets across the whole object graph.
-            for (const TObjectPtr<CObject>& ExportObject : PinnedExports)
+            for (const TStrongObjectPtr<CObject>& ExportObject : PinnedExports)
             {
                 if (!ExportObject.IsValid() || ExportObject.Get() == PackageToDestroy)
                 {

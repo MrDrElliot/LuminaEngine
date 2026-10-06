@@ -38,7 +38,7 @@ namespace Lumina
     }
 
     void CEntityScriptLibrary::FindScripts(CWorld* World, ECS::FEntity Entity,
-        TSubclassOf<CEntityScript> ScriptClass, TVector<TObjectPtr<CEntityScript>>& OutScripts)
+        TSubclassOf<CEntityScript> ScriptClass, TVector<TStrongObjectPtr<CEntityScript>>& OutScripts)
     {
         if (World == nullptr || !ScriptClass.IsValid())
         {

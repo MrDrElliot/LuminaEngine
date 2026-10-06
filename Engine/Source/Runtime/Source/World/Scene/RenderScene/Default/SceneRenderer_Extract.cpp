@@ -754,7 +754,7 @@ namespace Lumina
         FORCEINLINE uint32 HashOverrides(const TComponent& Component)
         {
             uint32 Hash = 2166136261u;
-            for (const TObjectPtr<CMaterialInterface>& Override : Component.MaterialOverrides)
+            for (const TStrongObjectPtr<CMaterialInterface>& Override : Component.MaterialOverrides)
             {
                 const uint64 Bits = (uint64)(uintptr_t)Override.Get();
                 for (uint32 b = 0; b < 8u; ++b)
@@ -773,7 +773,7 @@ namespace Lumina
         {
             OverrideScratch.clear();
             OverrideScratch.reserve(Component.MaterialOverrides.size());
-            for (const TObjectPtr<CMaterialInterface>& Override : Component.MaterialOverrides)
+            for (const TStrongObjectPtr<CMaterialInterface>& Override : Component.MaterialOverrides)
             {
                 OverrideScratch.push_back(Override.Get());
             }

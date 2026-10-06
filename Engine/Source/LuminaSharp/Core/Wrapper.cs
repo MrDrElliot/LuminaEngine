@@ -21,7 +21,7 @@ internal static class Wrapper<T> where T : class
     /// works and repeated access stops allocating.
     ///
     /// Every hand-out counts as one reference to the object (see NativeObject.Dispose), so holding the wrapper
-    /// keeps the object alive the way a TObjectPtr does. The cache itself stays weak, so a wrapper nothing references
+    /// keeps the object alive the way a TStrongObjectPtr does. The cache itself stays weak, so a wrapper nothing references
     /// is collected normally (releasing its references) and the cache can never pin the collectible script ALC.
     ///
     /// Only valid for CObject-backed wrappers. Component views (NativeStruct) are not objects, have no slot,

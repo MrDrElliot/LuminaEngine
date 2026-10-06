@@ -23,7 +23,7 @@ namespace Lumina
 
         /** The curve asset sampled by this node. */
         PROPERTY(Editable, Category = "Curve")
-        TObjectPtr<CCurveAsset> Curve;
+        TStrongObjectPtr<CCurveAsset> Curve;
 
         CMaterialInput* Time = nullptr;
     };

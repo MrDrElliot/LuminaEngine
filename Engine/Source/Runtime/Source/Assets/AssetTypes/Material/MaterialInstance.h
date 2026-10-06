@@ -39,7 +39,7 @@ namespace Lumina
         FVector4 Vector = FVector4(0.0f);
 
         PROPERTY()
-        TObjectPtr<CTexture> Texture;
+        TStrongObjectPtr<CTexture> Texture;
     };
 
     /** A static switch an instance flips; absence is the inherit state, so no enabled flag is needed. */
@@ -172,7 +172,7 @@ namespace Lumina
 
         /** Immediate parent: a base material, or another instance. Assign through SetParentMaterial. */
         PROPERTY(ReadOnly, Category = "Material")
-        TObjectPtr<CMaterialInterface> Material;
+        TStrongObjectPtr<CMaterialInterface> Material;
         
         PROPERTY(Editable, Category = "Material|Shading")
         bool bOverrideShadingModel = false;

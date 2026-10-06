@@ -22,7 +22,7 @@ namespace Lumina
         }
     }
 
-    void CAudioGraph::SetProgram(FAudioGraphProgram&& InProgram, TVector<TObjectPtr<CAudioStream>>&& InWaves)
+    void CAudioGraph::SetProgram(FAudioGraphProgram&& InProgram, TVector<TStrongObjectPtr<CAudioStream>>&& InWaves)
     {
         Program         = Move(InProgram);
         ReferencedWaves = Move(InWaves);

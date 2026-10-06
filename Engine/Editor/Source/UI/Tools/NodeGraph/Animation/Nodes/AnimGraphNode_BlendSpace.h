@@ -24,7 +24,7 @@ namespace Lumina
 
         /** Blend space sampled by this node. */
         PROPERTY(Editable, Category = "Animation")
-        TObjectPtr<CBlendSpace> BlendSpace;
+        TStrongObjectPtr<CBlendSpace> BlendSpace;
 
         CAnimGraphPin* BlendSpacePin = nullptr;
         CAnimGraphPin* XPin = nullptr;

@@ -92,9 +92,9 @@ namespace Lumina::MCP
         }
 
         // Held for the session, since a loaded asset nothing references is freed the moment a player lets go of it, edits and all.
-        TVector<TObjectPtr<CSequence>>& TouchedSequences()
+        TVector<TStrongObjectPtr<CSequence>>& TouchedSequences()
         {
-            static TVector<TObjectPtr<CSequence>> Touched;
+            static TVector<TStrongObjectPtr<CSequence>> Touched;
             return Touched;
         }
 
@@ -113,8 +113,8 @@ namespace Lumina::MCP
                 return false;
             }
 
-            TVector<TObjectPtr<CSequence>>& Touched = TouchedSequences();
-            if (std::find_if(Touched.begin(), Touched.end(), [Out](const TObjectPtr<CSequence>& Held) { return Held.Get() == Out; }) == Touched.end())
+            TVector<TStrongObjectPtr<CSequence>>& Touched = TouchedSequences();
+            if (std::find_if(Touched.begin(), Touched.end(), [Out](const TStrongObjectPtr<CSequence>& Held) { return Held.Get() == Out; }) == Touched.end())
             {
                 Touched.push_back(Out);
             }
@@ -1429,7 +1429,7 @@ namespace Lumina::MCP
                 {
                     Info.Sequence = FString(Sequence->GetName().ToString().c_str());
                     Info.Duration = Sequence->Duration;
-                    for (const TObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
+                    for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
                     {
                         const CSequenceTrack_CameraCut* Cuts = Cast<CSequenceTrack_CameraCut>(Track.Get());
                         const int32 Cut = Cuts != nullptr ? Cuts->FindCutAt(Player.Time) : INDEX_NONE;

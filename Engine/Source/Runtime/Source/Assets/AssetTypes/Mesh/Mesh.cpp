@@ -150,7 +150,7 @@ namespace Lumina
             return false;
         }
 
-        const bool bMaterialsReady = Algo::AllOf(Materials, [](const TObjectPtr<CMaterialInterface>& Material)
+        const bool bMaterialsReady = Algo::AllOf(Materials, [](const TStrongObjectPtr<CMaterialInterface>& Material)
         {
             return Material != nullptr && Material->IsReadyForRender();
         });

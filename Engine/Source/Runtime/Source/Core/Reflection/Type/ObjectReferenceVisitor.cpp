@@ -39,7 +39,7 @@ namespace Lumina
             {
             case EPropertyTypeFlags::Object:
                 {
-                    auto* Handle = static_cast<TObjectPtr<CObject>*>(Value);
+                    auto* Handle = static_cast<TStrongObjectPtr<CObject>*>(Value);
                     CObject* Current = Handle->Get();
                     CObject* Replacement = Func(Current);
                     if (Replacement != Current)

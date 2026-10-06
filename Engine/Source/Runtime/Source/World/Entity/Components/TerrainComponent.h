@@ -133,7 +133,7 @@ namespace Lumina
 
         /** Null = engine DefaultTerrainMaterial at draw time. */
         PROPERTY(Editable, Category = "Terrain|Material")
-        TObjectPtr<CMaterialInterface> Material;
+        TStrongObjectPtr<CMaterialInterface> Material;
 
         /** Must be (pow2 + 1) for clean chunking (513, 1025). */
         PROPERTY(Editable, Category = "Terrain|Layout", ClampMin = 33, NoDrag, Delta = 32)

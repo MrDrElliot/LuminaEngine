@@ -9,7 +9,7 @@ namespace LuminaSharp;
 /// <remarks>
 /// Nothing holds the result on your behalf. Lifetime here is refcounting rather than a garbage collector, so
 /// an object you make and never store is leaked rather than collected: put it somewhere that owns it, which
-/// for a script usually means a [Property] field, whose native side is a strong TObjectPtr.
+/// for a script usually means a [Property] field, whose native side is a strong TStrongObjectPtr.
 ///
 /// A wrapper is a weak handle, so one whose object is later destroyed reads back invalid rather than dangling.
 /// </remarks>

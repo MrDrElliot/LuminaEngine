@@ -54,7 +54,7 @@ namespace Lumina
         static void CollectReadCacheNames(const THashSet<CEdGraphNode*>& SubtreeNodes, THashSet<FName>& OutNames);
         static void CollectReadCacheNamesInGraph(CAnimationGraphNodeGraph* Graph, THashSet<FName>& OutNames);
 
-        TObjectPtr<CAnimationGraph> AnimationGraph;
+        TStrongObjectPtr<CAnimationGraph> AnimationGraph;
 
         // One-shot guards; not serialized. bSetupDone covers context-free setup; bInitialized covers
         // full Initialize() (which additionally creates the node-editor context).

@@ -153,7 +153,7 @@ LUMINA_DOTNET_EXPORT(void, PropSetName)(void* C, const void* Prop, const char* U
     Value = (Len > 0) ? FName(FStringView(Utf8, (size_t)Len)) : FName();
 }
 
-// Object/TObjectPtr get/set.
+// Object/TStrongObjectPtr get/set.
 LUMINA_DOTNET_EXPORT(void, SetObjectPtr)(void*, void*); // defined in DotNetHost.cpp
 
 LUMINA_DOTNET_EXPORT(void*, PropGetObject)(void* C, const void* Prop)
@@ -163,7 +163,7 @@ LUMINA_DOTNET_EXPORT(void*, PropGetObject)(void* C, const void* Prop)
         return nullptr;
     }
     const FProperty* Property = static_cast<const FProperty*>(Prop);
-    const TObjectPtr<CObject>& Value = *Property->GetValuePtr<TObjectPtr<CObject>>(C);
+    const TStrongObjectPtr<CObject>& Value = *Property->GetValuePtr<TStrongObjectPtr<CObject>>(C);
     return (void*)Value.Get();
 }
 
@@ -174,7 +174,7 @@ LUMINA_DOTNET_EXPORT(void, PropSetObject)(void* C, const void* Prop, void* Obj)
         return;
     }
     const FProperty* Property = static_cast<const FProperty*>(Prop);
-    LuminaSharp_SetObjectPtr(Property->GetValuePtr<TObjectPtr<CObject>>(C), Obj);
+    LuminaSharp_SetObjectPtr(Property->GetValuePtr<TStrongObjectPtr<CObject>>(C), Obj);
 }
 
 // Kept as a property-kind exporter so the storage layout stays the path type's own business.
@@ -259,7 +259,7 @@ LUMINA_DOTNET_EXPORT(void*, FindClassByName)(const char* Name, int Len)
  * anything that gets saved. Name empty means the class picks a unique one, exactly as native construction does.
  *
  * The object comes back with no strong reference held on its behalf, which is what native construction does
- * too: the caller is expected to store it somewhere that owns it, a [Property] holding a TObjectPtr being the
+ * too: the caller is expected to store it somewhere that owns it, a [Property] holding a TStrongObjectPtr being the
  * usual answer. Nothing collects it in the meantime, since lifetime here is refcounting rather than a GC.
  */
 LUMINA_DOTNET_EXPORT(void*, NewObject)(void* Class, void* Package, const char* Name, int NameLen)

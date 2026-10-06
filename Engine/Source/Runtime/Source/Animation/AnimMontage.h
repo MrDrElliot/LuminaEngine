@@ -21,7 +21,7 @@ namespace Lumina
     // One playing montage. Position is montage-timeline seconds; Weight is what the slot blends at.
     struct RUNTIME_API FAnimMontageInstance
     {
-        TObjectPtr<CAnimationMontage> Montage;
+        TStrongObjectPtr<CAnimationMontage> Montage;
 
         /** Identifies this play through the montage; reusing the asset later gets a fresh id. */
         uint32 InstanceID = 0;

@@ -146,7 +146,7 @@ namespace Lumina
         // Reflected so the object graph can be walked and repointed, NoSerialize because the component
         // carries its own Serialize and a second, per-property path would fight it.
         PROPERTY(NoSerialize)
-        TVector<TObjectPtr<CEntityScript>> Scripts;
+        TVector<TStrongObjectPtr<CEntityScript>> Scripts;
 
         /** Unresolved at load, written back out untouched, retried on the next script reload. */
         TVector<FPendingScript> Pending;

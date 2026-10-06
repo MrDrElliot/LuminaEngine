@@ -29,7 +29,7 @@ namespace Lumina
 
         /** Height field. Grayscale, read from the red channel; white = polygon surface, black = deepest. */
         PROPERTY(Editable, Category = "Texture")
-        TObjectPtr<CTexture> HeightMap;
+        TStrongObjectPtr<CTexture> HeightMap;
 
         /** Name used to expose the height map as a material parameter for instancing (only used when bDynamic). */
         PROPERTY(Editable, Category = "Parameter")

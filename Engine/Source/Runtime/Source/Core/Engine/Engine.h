@@ -229,7 +229,7 @@ namespace Lumina
         
         FString                     ProjectName;
         FFixedString                ProjectPath;
-        TObjectPtr<CGameInstance>   GameInstance;
+        TStrongObjectPtr<CGameInstance> GameInstance;
 
         // Read by MountProject, applied by StartProject once project settings are writable.
         TVector<FString>            LegacyCookRoots;

@@ -36,7 +36,7 @@ namespace Lumina
         int32 FindSocketBoneIndex(const FName& SocketName) const;
 
         PROPERTY(Editable, Category = "Preview")
-        TObjectPtr<CSkeletalMesh> PreviewMesh;
+        TStrongObjectPtr<CSkeletalMesh> PreviewMesh;
 
         /**
          * Bones animated when a mesh is far away (skeleton LOD). Bones are stored parents-first, so

@@ -24,7 +24,7 @@ namespace Lumina
 
         /** Mesh instanced for every blade/clump. */
         PROPERTY(Editable, Category = "Grass")
-        TObjectPtr<CStaticMesh> Mesh;
+        TStrongObjectPtr<CStaticMesh> Mesh;
 
         /** Instances per square metre where the bound layer's weight is 1. */
         PROPERTY(Editable, Category = "Scatter", ClampMin = 0.0001f, NoDrag, Delta = 0.01f)

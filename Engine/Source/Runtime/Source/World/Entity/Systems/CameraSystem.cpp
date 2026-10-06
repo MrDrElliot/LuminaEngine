@@ -269,7 +269,7 @@ namespace Lumina
         }
 
         TVector<CMaterialInterface*>& PostProcessMaterials = Resolved.PostProcessMaterials;
-        for (const TObjectPtr<CMaterialInterface>& M : Camera.PostProcessMaterials)
+        for (const TStrongObjectPtr<CMaterialInterface>& M : Camera.PostProcessMaterials)
         {
             if (M.IsValid())
             {
@@ -309,7 +309,7 @@ namespace Lumina
         for (const FMaterialVolumeRef& Ref : MaterialVolumes)
         {
             const SPostProcessComponent& Volume = VolumeView.Get<SPostProcessComponent>(Ref.Entity);
-            for (const TObjectPtr<CMaterialInterface>& M : Volume.PostProcessMaterials)
+            for (const TStrongObjectPtr<CMaterialInterface>& M : Volume.PostProcessMaterials)
             {
                 if (M.IsValid())
                 {

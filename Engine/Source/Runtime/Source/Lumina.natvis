@@ -155,7 +155,7 @@
     </Expand>
   </Type>
 
-  <Type Name="Lumina::TObjectPtr&lt;*&gt;">
+  <Type Name="Lumina::TStrongObjectPtr&lt;*&gt;">
     <SmartPointer Usage="Minimal">Object</SmartPointer>
     <DisplayString Condition="Object == nullptr">null</DisplayString>
     <DisplayString>{*Object}</DisplayString>

@@ -2077,15 +2077,15 @@ LUMINA_DOTNET_EXPORT(void, SetObjectPtr)(void* Member, void* Value)
 {
     if (Member != nullptr)
     {
-        *reinterpret_cast<Lumina::TObjectPtr<Lumina::CObject>*>(Member) = static_cast<Lumina::CObject*>(Value);
+        *reinterpret_cast<Lumina::TStrongObjectPtr<Lumina::CObject>*>(Member) = static_cast<Lumina::CObject*>(Value);
     }
 }
 
-// Through TObjectPtr::Get, so a slot that has moved on reads as null rather than as reclaimed memory.
+// Through TStrongObjectPtr::Get, so a slot that has moved on reads as null rather than as reclaimed memory.
 LUMINA_DOTNET_EXPORT(void*, GetObjectPtr)(const void* Member)
 {
     return Member != nullptr
-        ? static_cast<void*>(reinterpret_cast<const Lumina::TObjectPtr<Lumina::CObject>*>(Member)->Get())
+        ? static_cast<void*>(reinterpret_cast<const Lumina::TStrongObjectPtr<Lumina::CObject>*>(Member)->Get())
         : nullptr;
 }
 
@@ -2155,12 +2155,12 @@ LUMINA_DOTNET_EXPORT(void*, PinObject)(void* Object)
     {
         return nullptr;
     }
-    return Lumina::Memory::New<Lumina::TObjectPtr<Lumina::CObject>>(static_cast<Lumina::CObject*>(Object));
+    return Lumina::Memory::New<Lumina::TStrongObjectPtr<Lumina::CObject>>(static_cast<Lumina::CObject*>(Object));
 }
 
 LUMINA_DOTNET_EXPORT(void, UnpinObject)(void* Pin)
 {
-    Lumina::Memory::Delete(static_cast<Lumina::TObjectPtr<Lumina::CObject>*>(Pin));
+    Lumina::Memory::Delete(static_cast<Lumina::TStrongObjectPtr<Lumina::CObject>*>(Pin));
 }
 
 // Registry probe with no load, returning bool because the generated binding marshals a C# bool as one byte.
@@ -2192,7 +2192,7 @@ namespace
         Soft.LoadAsync([Callback](Lumina::CObject* Object)
         {
             // The only owner may be a release already queued for the game thread, so the hop holds its own reference.
-            Lumina::MainThread::Enqueue([Callback, Held = Lumina::TObjectPtr<Lumina::CObject>(Object)]()
+            Lumina::MainThread::Enqueue([Callback, Held = Lumina::TStrongObjectPtr<Lumina::CObject>(Object)]()
             {
                 Lumina::DotNet::DispatchAssetCallback(Callback, Held.Get());
             });

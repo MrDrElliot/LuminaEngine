@@ -198,7 +198,7 @@ namespace Lumina
 
         // Every state machine has exactly one (undeletable) Entry node.
         bool bHasEntry = false;
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (Node.IsValid() && Node->IsA<CAnimGraphNode_StateEntry>())
             {
@@ -239,7 +239,7 @@ namespace Lumina
 
     CAnimStateTransition* CAnimStateMachineGraph::FindTransition(int64 FromStateNodeID, int64 ToStateNodeID) const
     {
-        for (const TObjectPtr<CAnimStateTransition>& Transition : Transitions)
+        for (const TStrongObjectPtr<CAnimStateTransition>& Transition : Transitions)
         {
             if (Transition.IsValid() &&
                 Transition->FromStateNodeID == FromStateNodeID &&
@@ -253,7 +253,7 @@ namespace Lumina
 
     CAnimStateTransition* CAnimStateMachineGraph::FindAnyStateTransitionTo(int64 ToStateNodeID) const
     {
-        for (const TObjectPtr<CAnimStateTransition>& Transition : Transitions)
+        for (const TStrongObjectPtr<CAnimStateTransition>& Transition : Transitions)
         {
             if (!Transition.IsValid() || Transition->ToStateNodeID != ToStateNodeID)
             {
@@ -293,7 +293,7 @@ namespace Lumina
     void CAnimStateMachineGraph::GetOutgoingTransitions(int64 FromStateNodeID, TVector<CAnimStateTransition*>& Out) const
     {
         Out.clear();
-        for (const TObjectPtr<CAnimStateTransition>& Transition : Transitions)
+        for (const TStrongObjectPtr<CAnimStateTransition>& Transition : Transitions)
         {
             if (Transition.IsValid() && Transition->FromStateNodeID == FromStateNodeID)
             {
@@ -426,7 +426,7 @@ namespace Lumina
             RemappedIDs.emplace(Entry.first->GetNodeID(), Entry.second->GetNodeID());
         }
 
-        for (const TObjectPtr<CAnimStateTransition>& SourceTransition : SourceGraph->Transitions)
+        for (const TStrongObjectPtr<CAnimStateTransition>& SourceTransition : SourceGraph->Transitions)
         {
             if (!SourceTransition.IsValid())
             {

@@ -55,7 +55,7 @@ namespace Lumina
         // "Any State" / "Entry" for the special nodes.
         FString GetEndpointLabel(int64 NodeID) const;
 
-        const TVector<TObjectPtr<CAnimStateTransition>>& GetTransitions() const { return Transitions; }
+        const TVector<TStrongObjectPtr<CAnimStateTransition>>& GetTransitions() const { return Transitions; }
 
         void PushGraphStyle() const override;
         void PopGraphStyle() const override;
@@ -68,7 +68,7 @@ namespace Lumina
 
         /** Transition data behind each State -> State wire. Reconciled in ValidateGraph. */
         PROPERTY()
-        TVector<TObjectPtr<CAnimStateTransition>> Transitions;
+        TVector<TStrongObjectPtr<CAnimStateTransition>> Transitions;
 
     private:
 

@@ -338,7 +338,7 @@ namespace Lumina
 
     CSequenceTrack_Transform* FSequencerEditMode::FindOrCreateTransformTrack(int32 BindingIndex)
     {
-        for (const TObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
+        for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
         {
             if (!Track.IsValid() || Track->BindingIndex != BindingIndex)
             {
@@ -415,7 +415,7 @@ namespace Lumina
             return nullptr;
         }
 
-        for (const TObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
+        for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
         {
             if (!Track.IsValid() || Track->BindingIndex != BindingIndex)
             {
@@ -560,7 +560,7 @@ namespace Lumina
             return nullptr;
         }
 
-        for (const TObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
+        for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
         {
             if (Track.IsValid())
             {
@@ -1090,7 +1090,7 @@ namespace Lumina
             return;
         }
 
-        for (const TObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
+        for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
         {
             if (!Track.IsValid())
             {
@@ -1212,10 +1212,10 @@ namespace Lumina
         // Spawned entities belong to this binding, so normal teardown destroys them before it disappears.
         ReleaseBindings(World);
 
-        TVector<TObjectPtr<CSequenceTrack>> Kept;
+        TVector<TStrongObjectPtr<CSequenceTrack>> Kept;
         Kept.reserve(Sequence->Tracks.size());
 
-        for (const TObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
+        for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
         {
             if (!Track.IsValid())
             {
@@ -1488,7 +1488,7 @@ namespace Lumina
 
             DrawList->PushClipRect(ImVec2(TrackLeft, RowY), RowMax, true);
 
-            for (const TObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
+            for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
             {
                 const CSequenceTrack_Transform* Transform = Track.IsValid()
                     ? Cast<CSequenceTrack_Transform>(Track.Get()) : nullptr;
@@ -2119,7 +2119,7 @@ namespace Lumina
         const int32 Index = Keys->UpdateOrAddKey(Time, Value);
         Keys->Keys[Index].InterpMode = ECurveInterpMode::Cubic;
         Keys->ComputeAutoTangents();
-        SelectedTrack = Algo::IndexOfIf(Sequence->Tracks, [Track](const TObjectPtr<CSequenceTrack>& Other) { return Other.Get() == Track; });
+        SelectedTrack = Algo::IndexOfIf(Sequence->Tracks, [Track](const TStrongObjectPtr<CSequenceTrack>& Other) { return Other.Get() == Track; });
         SelectedTrackKey = Index;
         Sequence->GetPackage()->MarkDirty();
         EvaluateAt(World, PlayTime, true);

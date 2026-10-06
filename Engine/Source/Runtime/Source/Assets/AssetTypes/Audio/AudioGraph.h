@@ -35,7 +35,7 @@ namespace Lumina
         const FAudioGraphProgram& GetProgram() const { return Program; }
 
         /** Replaces the compiled program. The editor compiler owns this; nothing else should call it. */
-        void SetProgram(FAudioGraphProgram&& InProgram, TVector<TObjectPtr<CAudioStream>>&& InWaves);
+        void SetProgram(FAudioGraphProgram&& InProgram, TVector<TStrongObjectPtr<CAudioStream>>&& InWaves);
 
         /** Builds a playable copy. Call from the game thread; wave decoding happens on the first call. */
         TSharedPtr<FAudioGraphInstance> CreateInstance(uint32 SampleRate, uint32 NumChannels);
@@ -48,7 +48,7 @@ namespace Lumina
 
         /** Wave assets the compiled program addresses by index. Filled by the compiler. */
         PROPERTY()
-        TVector<TObjectPtr<CAudioStream>> ReferencedWaves;
+        TVector<TStrongObjectPtr<CAudioStream>> ReferencedWaves;
 
         /** Shown in the asset tooltip and the sound picker. */
         PROPERTY(Editable, Category = "Audio Graph")

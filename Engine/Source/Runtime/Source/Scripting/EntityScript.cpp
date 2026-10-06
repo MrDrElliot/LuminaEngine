@@ -42,11 +42,11 @@ namespace Lumina
             return Clone;
         }
 
-        void CloneScripts(const TVector<TObjectPtr<CEntityScript>>& Source, TVector<TObjectPtr<CEntityScript>>& Out)
+        void CloneScripts(const TVector<TStrongObjectPtr<CEntityScript>>& Source, TVector<TStrongObjectPtr<CEntityScript>>& Out)
         {
             Out.clear();
             Out.reserve(Source.size());
-            for (const TObjectPtr<CEntityScript>& Held : Source)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Source)
             {
                 if (CEntityScript* Clone = CloneScript(Held.Get()))
                 {
@@ -136,7 +136,7 @@ namespace Lumina
         if (Ar.IsWriting())
         {
             int32 Count = (int32)Pending.size();
-            for (const TObjectPtr<CEntityScript>& Held : Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Scripts)
             {
                 if (Held.Get() != nullptr && Held.Get()->GetClass() != nullptr)
                 {
@@ -158,7 +158,7 @@ namespace Lumina
                 }
             }
 
-            for (const TObjectPtr<CEntityScript>& Held : Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Scripts)
             {
                 CEntityScript* Script = Held.Get();
                 if (Script == nullptr || Script->GetClass() == nullptr)
@@ -265,7 +265,7 @@ namespace Lumina
     {
         // Snapshotting as a strong ref keeps a script detached mid-pass alive until the snapshot dies.
 
-        using FScriptSnapshot = TVector<TObjectPtr<CEntityScript>>;
+        using FScriptSnapshot = TVector<TStrongObjectPtr<CEntityScript>>;
 
         // Counted by the PrePhysics pass, which visits every script, so a world with none in the later phase skips that walk.
         struct FScriptPhaseCensus
@@ -442,7 +442,7 @@ namespace Lumina
             }
 
             Out.reserve(Component->Scripts.size());
-            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 if (Held.Get() != nullptr)
                 {
@@ -473,7 +473,7 @@ namespace Lumina
                 return false;
             }
 
-            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 if (Held.Get() == Script)
                 {
@@ -538,7 +538,7 @@ namespace Lumina
 
             bool   bAnyTicking     = false;
             uint32 PostPhysicsHere = 0;
-            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 const CEntityScript* Script = Held.Get();
                 if (Script == nullptr || (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!Script->IsFaulted() && !Script->IsReady()))))
@@ -563,7 +563,7 @@ namespace Lumina
             }
 
             const size_t Start = OutScripts.size();
-            for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 CEntityScript* Script = Held.Get();
                 Facts.See(Script);
@@ -749,7 +749,7 @@ namespace Lumina
                 // Until a callback runs, the snapshot is exactly what the component holds, so there is nothing to re-check.
                 bool bUserCodeRan = false;
 
-                for (TObjectPtr<CEntityScript>& Held : Scripts)
+                for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
                 {
                     CEntityScript* Script = Held.Get();
                     if (bUserCodeRan ? !IsStillAttached(Registry, Entity, Script) : Script == nullptr)
@@ -825,7 +825,7 @@ namespace Lumina
                     return false;
                 }
 
-                for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+                for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
                 {
                     const CEntityScript* Script = Held.Get();
                     if (Script == nullptr)
@@ -860,7 +860,7 @@ namespace Lumina
                 const size_t Start = BatchHandles.size();
                 const uint32 EpochBefore = GStructureEpoch.load(std::memory_order_relaxed);
                 uint32 PostPhysicsHere = 0;
-                for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+                for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
                 {
                     CEntityScript* Script = Held.Get();
                     const EScriptUpdatePhase ScriptUpdatePhase = Script->GetClass() == CachedClass ? CachedPhase : ScriptPhase(Script);
@@ -1134,7 +1134,7 @@ namespace Lumina
             auto RunEntity = [&](ECS::FEntity Entity)
             {
                 SnapshotScripts(Registry, Entity, Scripts);
-                for (TObjectPtr<CEntityScript>& Held : Scripts)
+                for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
                 {
                     // Fixed update only runs on a readied script, so none sees a fixed step before its OnReady.
                     CEntityScript* Script = Held.Get();
@@ -1170,7 +1170,7 @@ namespace Lumina
 
                     bool bEligible   = true;
                     bool bAnyTicking = false;
-                    for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+                    for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
                     {
                         const CEntityScript* Script = Held.Get();
                         if (Script == nullptr)
@@ -1199,7 +1199,7 @@ namespace Lumina
                         continue;
                     }
 
-                    for (const TObjectPtr<CEntityScript>& Held : Component->Scripts)
+                    for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
                     {
                         if (Held->ShouldTick())
                         {
@@ -1288,7 +1288,7 @@ namespace Lumina
             {
                 return nullptr;
             }
-            for (TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            for (TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 CEntityScript* Script = Held.Get();
                 if (Script != nullptr && Script->GetClass() != nullptr && Script->GetClass()->IsChildOf(ScriptClass))
@@ -1311,7 +1311,7 @@ namespace Lumina
             {
                 return;
             }
-            for (TObjectPtr<CEntityScript>& Held : Component->Scripts)
+            for (TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 CEntityScript* Script = Held.Get();
                 if (Script != nullptr && Script->GetClass() != nullptr && Script->GetClass()->IsChildOf(ScriptClass))
@@ -1328,7 +1328,7 @@ namespace Lumina
                 return false;
             }
             
-            TObjectPtr<CEntityScript> Pinned(Script);
+            TStrongObjectPtr<CEntityScript> Pinned(Script);
             NoteStructureChange();
 
             if (Script->IsAttached())
@@ -1358,7 +1358,7 @@ namespace Lumina
             FScriptSnapshot Scripts;
             SnapshotScripts(Registry, Entity, Scripts);
 
-            for (TObjectPtr<CEntityScript>& Held : Scripts)
+            for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
             {
                 CEntityScript* Script = Held.Get();
                 if (IsStillAttached(Registry, Entity, Script) && !Script->IsFaulted())
@@ -1374,7 +1374,7 @@ namespace Lumina
             FScriptSnapshot Scripts;
             SnapshotScripts(Registry, Entity, Scripts);
 
-            for (TObjectPtr<CEntityScript>& Held : Scripts)
+            for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
             {
                 CEntityScript* Script = Held.Get();
                 if (!IsStillAttached(Registry, Entity, Script) || Script->IsFaulted())
@@ -1405,7 +1405,7 @@ namespace Lumina
             }
             NoteStructureChange();
 
-            for (TObjectPtr<CEntityScript>& Held : Scripts)
+            for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
             {
                 // For a C# script the call would mint a managed instance purely to tear it down again.
                 if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->IsAttached())
@@ -1518,7 +1518,7 @@ namespace Lumina
                     SnapshotScripts(Registry, Entity, Scripts);
 
                     Context.Entity = Entity;
-                    for (TObjectPtr<CEntityScript>& Held : Scripts)
+                    for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
                     {
                         CEntityScript* Script = Held.Get();
 

@@ -280,7 +280,7 @@ namespace Lumina::AssetOps
         }
 
         // Pinned first, since dropping the instances' strong refs could free the prefab out from under us.
-        TObjectPtr<CObject> KeepAlive = AliveObject;
+        TStrongObjectPtr<CObject> KeepAlive = AliveObject;
         if (AliveObject != nullptr && AliveObject->IsA<CPrefab>())
         {
             static_cast<CPrefab*>(AliveObject)->DestroyAllInstancesInLoadedWorlds();

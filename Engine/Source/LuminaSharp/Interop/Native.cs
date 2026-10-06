@@ -243,7 +243,7 @@ public static unsafe partial class Native
     // native string in place with no crossing). See ElementMarshal (EElementKind.String).
     [NativeCall] public static partial void StringAssign(IntPtr String, string Value);
 
-    // Assigns a TObjectPtr at a raw address, releasing the old reference and adding one to the new. The write
+    // Assigns a TStrongObjectPtr at a raw address, releasing the old reference and adding one to the new. The write
     // half of an object container element: a raw pointer store would skip the refcount. See ElementMarshal (EElementKind.ObjectRef).
     [NativeCall] public static partial void SetObjectPtr(IntPtr Slot, IntPtr Object);
 

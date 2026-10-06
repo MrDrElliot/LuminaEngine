@@ -119,7 +119,7 @@ namespace Lumina
             "An asset is Loaded when a CObject for its GUID exists in memory. Unloaded assets have no "
             "ref-count or CPU footprint until something requests them.");
         DrawHelpTextRow("Ref Count",
-            "The object's strong ref-count: how many TObjectPtrs keep it alive (components, materials, the "
+            "The object's strong ref-count: how many TStrongObjectPtrs keep it alive (components, materials, the "
             "open editor, etc). Zero on a loaded asset means it is a candidate for unloading.");
         DrawHelpTextRow("Referenced By",
             "The saved packages that import the selected asset, read from the registry, so it works for "

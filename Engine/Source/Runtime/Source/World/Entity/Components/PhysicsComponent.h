@@ -148,7 +148,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -174,7 +174,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -210,7 +210,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -250,7 +250,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -290,7 +290,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -330,7 +330,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -356,7 +356,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -383,7 +383,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -405,7 +405,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -472,7 +472,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution for the whole body. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -564,7 +564,7 @@ namespace Lumina
 
         /** Authored collision. Null builds no body at all rather than silently falling back to the mesh. */
         PROPERTY(Editable)
-        TObjectPtr<CCollisionShape> CollisionShape;
+        TStrongObjectPtr<CCollisionShape> CollisionShape;
 
         /** Local-space offset applied to the collider position relative to the entity. */
         PROPERTY(Editable)
@@ -576,7 +576,7 @@ namespace Lumina
 
         /** Overrides the asset's material for this instance; null uses the asset's. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)
@@ -594,7 +594,7 @@ namespace Lumina
 
         /** Mesh asset used as collision geometry. If null, the system falls back to the entity's StaticMeshComponent. */
         PROPERTY(Editable)
-        TObjectPtr<CStaticMesh> Mesh;
+        TStrongObjectPtr<CStaticMesh> Mesh;
 
         /** Build a convex hull from the mesh (allows dynamic bodies). When false, builds a concave triangle mesh (static / kinematic only). */
         PROPERTY(Editable)
@@ -610,7 +610,7 @@ namespace Lumina
 
         /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
         PROPERTY(Editable)
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         /** When true, the body produces overlap events but no contact response (trigger volume). */
         PROPERTY(Editable)

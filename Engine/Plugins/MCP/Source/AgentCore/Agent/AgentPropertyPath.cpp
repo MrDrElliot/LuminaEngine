@@ -211,7 +211,7 @@ namespace Lumina::Agent
             else if (Property->GetType() == EPropertyTypeFlags::Object)
             {
                 // Entity scripts hang off SEntityScriptComponent::Scripts, so a path has to reach into objects.
-                CObject* Object = static_cast<TObjectPtr<CObject>*>(ValuePtr)->Get();
+                CObject* Object = static_cast<TStrongObjectPtr<CObject>*>(ValuePtr)->Get();
                 if (Object == nullptr)
                 {
                     OutError = Lumina::Format("'{}' is null, so nothing can follow it in the path.", Segment.Name);

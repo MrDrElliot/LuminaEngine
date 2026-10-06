@@ -604,7 +604,7 @@ internal static unsafe class InteropTestHooks
             (typeof(Lumina.FSoftObjectPath), EElementKind.SoftRef),
             (typeof(Lumina.FAnimGraphBoneMaskBone), EElementKind.StructView),
             (typeof(Lumina.CWorld), EElementKind.ObjectWrapper),
-            (typeof(Lumina.TObjectPtr<Lumina.CWorld>), EElementKind.ObjectRef),
+            (typeof(Lumina.TStrongObjectPtr<Lumina.CWorld>), EElementKind.ObjectRef),
 
             // A class handle is its own value, so copying the pointer is the whole of it.
             (typeof(Lumina.TSubclassOf<Lumina.CWorld>), EElementKind.Blittable),

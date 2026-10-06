@@ -46,7 +46,7 @@ namespace Lumina
     private:
 
         /** Minted types by stable script type name. Strong refs: the registry is their only owner. */
-        THashMap<FName, TObjectPtr<CScriptStruct>> Types;
+        THashMap<FName, TStrongObjectPtr<CScriptStruct>> Types;
 
         uint64 Generation = 0;
     };

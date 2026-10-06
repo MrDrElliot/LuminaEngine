@@ -183,12 +183,12 @@ namespace Lumina::SkeletalMeshMerge
 
         //~ Material slots, deduplicated so two pieces sharing a material share one slot.
 
-        TVector<TObjectPtr<CMaterialInterface>> MergedMaterials;
+        TVector<TStrongObjectPtr<CMaterialInterface>> MergedMaterials;
         TVector<TVector<int16>>                 MaterialRemap(Sources.size());
 
         for (SIZE_T m = 0; m < Sources.size(); ++m)
         {
-            const TVector<TObjectPtr<CMaterialInterface>>& Slots = Sources[m]->Materials;
+            const TVector<TStrongObjectPtr<CMaterialInterface>>& Slots = Sources[m]->Materials;
             MaterialRemap[m].resize(Slots.size(), -1);
 
             for (SIZE_T s = 0; s < Slots.size(); ++s)

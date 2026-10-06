@@ -41,7 +41,7 @@ namespace Lumina
         {
             const auto& Style = ImGui::GetStyle();
 
-            TObjectPtr<CObject> HardObject = Object.Lock();
+            TStrongObjectPtr<CObject> HardObject = Object.Lock();
 
             const char* Label = HardObject.IsValid() ? Object.Get()->GetName().c_str() : "<None>";
             ImGui::BeginDisabled(Object == nullptr);
@@ -297,13 +297,13 @@ namespace Lumina
 
     void FCObjectPropertyCustomization::UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property)
     {
-        TObjectPtr<CObject> Value = Object.Lock();
+        TStrongObjectPtr<CObject> Value = Object.Lock();
         Property->SetValue(Value);
     }
 
     void FCObjectPropertyCustomization::HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property)
     {
-        TObjectPtr<CObject> Value;
+        TStrongObjectPtr<CObject> Value;
         Property->GetValue(&Value);
         Object = Value;
     }

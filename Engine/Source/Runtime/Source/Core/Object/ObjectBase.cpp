@@ -24,7 +24,7 @@ namespace Lumina
 
 
     // Rooted objects are never auto-destroyed.
-    static THashSet<TObjectPtr<CObjectBase>> GRootedObjects;
+    static THashSet<TStrongObjectPtr<CObjectBase>> GRootedObjects;
     static FMutex RootMutex;
 
     struct FPendingRegistrantInfo
@@ -254,7 +254,7 @@ namespace Lumina
         }
 
         // The root set often holds the ONLY strong ref, so erase would free this before the flags clear.
-        TObjectPtr<CObjectBase> Pinned(this);
+        TStrongObjectPtr<CObjectBase> Pinned(this);
         {
             FScopeLock Lock(RootMutex);
             GRootedObjects.erase(this);

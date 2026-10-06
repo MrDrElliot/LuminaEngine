@@ -1509,7 +1509,7 @@ namespace Lumina::ECS::Utils
             // A script is held BY a component, so its reflected properties are invisible to the storage walk.
             if (SEntityScriptComponent* Scripts = Registry.TryGet<SEntityScriptComponent>(Entity))
             {
-                for (const TObjectPtr<CEntityScript>& Held : Scripts->Scripts)
+                for (const TStrongObjectPtr<CEntityScript>& Held : Scripts->Scripts)
                 {
                     CEntityScript* Script = Held.Get();
                     if (Script != nullptr && Script->GetClass() != nullptr)

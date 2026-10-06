@@ -15,7 +15,7 @@ namespace Lumina
         
         /** Texture displayed on the billboard quad. */
         PROPERTY(Editable)
-        TObjectPtr<CTexture> Texture;
+        TStrongObjectPtr<CTexture> Texture;
 
         /** Uniform scale of the billboard quad in world space. */
         PROPERTY(Editable)

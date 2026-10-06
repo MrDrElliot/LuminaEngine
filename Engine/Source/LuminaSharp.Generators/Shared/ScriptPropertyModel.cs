@@ -36,7 +36,7 @@ internal static class ScriptPropertyClassifier
             return FScriptPropertyClassification.Of(EScriptAccess.String);
         }
 
-        // Asset references (FSoftObjectPath, TSoftObjectPtr<T>; TObjectPtr<T> is NOT one) are recognised by the
+        // Asset references (FSoftObjectPath, TSoftObjectPtr<T>; TStrongObjectPtr<T> is NOT one) are recognised by the
         // interface they share, so a new asset-reference type needs nothing here. Checked before the unmanaged
         // test at the bottom, which they would otherwise pass -- they are pointer-sized values, and reading
         // them as raw bytes would not read the FSoftObjectPath native actually stores.
@@ -271,10 +271,10 @@ internal static class ScriptPropertyClassifier
             EScriptAccess.String =>
                 Prefix + "it is a managed reference, which cannot live in native memory.",
 
-            // A bare wrapper is not a storable reference -- TObjectPtr is what a native object slot holds.
+            // A bare wrapper is not a storable reference -- TStrongObjectPtr is what a native object slot holds.
             EScriptAccess.Object when bMarshalled =>
                 Prefix + "a bare wrapper is not a storable reference. Declare the element as "
-                       + $"TObjectPtr<{Referenced(Type)}>, which is what the native slot holds.",
+                       + $"TStrongObjectPtr<{Referenced(Type)}>, which is what the native slot holds.",
 
             EScriptAccess.Object or EScriptAccess.ObjectPtr =>
                 Prefix + "it is an object reference, and copying it by bytes would store the pointer without "
@@ -307,13 +307,13 @@ internal static class ScriptPropertyClassifier
         }
         if (Access == EScriptAccess.Object || Access == EScriptAccess.ObjectPtr)
         {
-            return $"TVector<TObjectPtr<{Referenced(Element)}>>";
+            return $"TVector<TStrongObjectPtr<{Referenced(Element)}>>";
         }
         return $"TVector<{Display(Element)}>";
     }
 
-    /// <summary>The wrapper type an object reference points AT: the type argument of a TObjectPtr&lt;T&gt;,
-    /// or the type itself for a bare wrapper. Advice that names TObjectPtr&lt;T&gt; must not double-wrap an
+    /// <summary>The wrapper type an object reference points AT: the type argument of a TStrongObjectPtr&lt;T&gt;,
+    /// or the type itself for a bare wrapper. Advice that names TStrongObjectPtr&lt;T&gt; must not double-wrap an
     /// element that already is one, or the suggested declaration would not compile either.</summary>
     private static string Referenced(ITypeSymbol Type)
     {
@@ -361,7 +361,7 @@ internal static class ScriptPropertyClassifier
         "it cannot be viewed over native storage. Supported: numbers, bool, enums, engine struct mirrors, "
         + "a struct you declare whose every field is marked and blittable, string, Lumina.FString, "
         + "Lumina.FName, asset references, object references, TVector<T> (of a plain value, an FString, or a "
-        + "TObjectPtr<T>), and THashMap<K, V> of plain values.";
+        + "TStrongObjectPtr<T>), and THashMap<K, V> of plain values.";
 }
 
 /// <summary>How one member's value is reached. Mirrors the native property kinds; see the rewriter's emitter.</summary>
@@ -454,7 +454,7 @@ internal static class ScriptPropertyTypeNames
     public const string FString = "Lumina.FString";
     public const string TVector = "Lumina.TVector<T>";
     public const string THashMap = "Lumina.THashMap<K, V>";
-    public const string ObjectPtr = "Lumina.TObjectPtr<T>";
+    public const string ObjectPtr = "Lumina.TStrongObjectPtr<T>";
 
     public const string List = "System.Collections.Generic.List<T>";
     public const string Dictionary = "System.Collections.Generic.Dictionary<TKey, TValue>";

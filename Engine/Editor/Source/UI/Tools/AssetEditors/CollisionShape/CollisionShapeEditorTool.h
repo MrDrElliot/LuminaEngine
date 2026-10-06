@@ -101,7 +101,7 @@ namespace Lumina
         FShapeHandleState           HandleState;
         ImGuizmo::OPERATION         GizmoOp = ImGuizmo::TRANSLATE;
 
-        TObjectPtr<CStaticMesh>     CachedSourceMesh;
+        TStrongObjectPtr<CStaticMesh> CachedSourceMesh;
 
         uint8                       bDrawShapes:1 = true;
         uint8                       bDrawMesh:1 = true;

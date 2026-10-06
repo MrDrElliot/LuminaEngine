@@ -57,7 +57,7 @@ namespace Lumina
         }
 
         const FName Path(Prefab.GetPath());
-        TObjectPtr<CWorld> WorldHandle(World);
+        TStrongObjectPtr<CWorld> WorldHandle(World);
         AsyncLoadObject(Path, [WorldHandle, Path, OnSpawned](CObject* Object)
         {
             CWorld* Target = WorldHandle.Get();

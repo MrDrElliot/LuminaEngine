@@ -55,7 +55,7 @@ namespace Lumina
 
         /** Font asset to draw with. Must have a baked MSDF atlas (re-import older fonts to bake one). */
         PROPERTY(Editable, Category = "Text")
-        TObjectPtr<CFont> Font;
+        TStrongObjectPtr<CFont> Font;
 
         /** Text to display. Supports newlines (wraps to multiple lines); UTF-8. */
         PROPERTY(Editable, Category = "Text", Multiline)

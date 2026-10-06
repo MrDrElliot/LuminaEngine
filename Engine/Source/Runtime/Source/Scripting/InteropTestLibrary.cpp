@@ -36,7 +36,7 @@ namespace Lumina
     }
 
     // Its own class default object, so the element is a real reflected CObject with no world to build.
-    void CInteropTestLibrary::MakeObjectRange(int32 Count, TVector<TObjectPtr<CInteropTestLibrary>>& Out)
+    void CInteropTestLibrary::MakeObjectRange(int32 Count, TVector<TStrongObjectPtr<CInteropTestLibrary>>& Out)
     {
         for (int32 Index = 0; Index < Count; ++Index)
         {

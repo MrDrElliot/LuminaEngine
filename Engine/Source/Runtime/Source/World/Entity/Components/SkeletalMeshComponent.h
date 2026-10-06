@@ -81,7 +81,7 @@ namespace Lumina
 
         /** The skeletal mesh asset to render and animate for this component. */
         PROPERTY(Editable, Replicated, Category = "Mesh")
-        TObjectPtr<CSkeletalMesh> SkeletalMesh;
+        TStrongObjectPtr<CSkeletalMesh> SkeletalMesh;
 
         // Sized to the skeleton's bone count by the animation system (0 when unused). The render scene
         // uploads exactly this many matrices; FGPUInstance.BoneOffset references this instance's slice.

@@ -31,7 +31,7 @@ namespace Lumina
         void Capture(TVector<uint8>& Out) const;
         void Restore(const TVector<uint8>& In) const;
 
-        TObjectPtr<CObject> Object;
+        TStrongObjectPtr<CObject> Object;
         FName               Name;
         TVector<uint8>      Before;
         TVector<uint8>      After;

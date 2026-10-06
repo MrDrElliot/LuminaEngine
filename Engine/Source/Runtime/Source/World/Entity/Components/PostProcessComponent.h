@@ -48,6 +48,6 @@ namespace Lumina
         // Post-process materials this volume contributes; while the camera is inside (or always, if bInfiniteExtent)
         // they're appended after the camera's own, order preserved. Must be MaterialType = PostProcess.
         PROPERTY(Editable, Category = "Settings")
-        TVector<TObjectPtr<CMaterialInterface>> PostProcessMaterials;
+        TVector<TStrongObjectPtr<CMaterialInterface>> PostProcessMaterials;
     };
 }

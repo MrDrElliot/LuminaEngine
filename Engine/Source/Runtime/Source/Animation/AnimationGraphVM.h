@@ -211,7 +211,7 @@ namespace Lumina
         TVector<float> Parameters;
 
         // Current object parameter values, refilled each update from the entity's blackboard.
-        TVector<TObjectPtr<CObject>> ObjectParameters;
+        TVector<TStrongObjectPtr<CObject>> ObjectParameters;
 
         TVector<FAnimInertializer> Inertializers;     // per state machine; transition smoothing state
         TVector<FAnimInertializer> NodeInertializers; // per Inertialization node

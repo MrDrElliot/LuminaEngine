@@ -36,7 +36,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable, Category = "Sprite")
-        TObjectPtr<CTexture> Texture;
+        TStrongObjectPtr<CTexture> Texture;
 
         /** World units per texture pixel, so the quad measures frame size times this. */
         PROPERTY(Editable, Category = "Sprite", ClampMin = 0.0001f)

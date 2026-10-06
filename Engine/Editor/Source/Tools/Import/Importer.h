@@ -27,7 +27,7 @@ namespace Lumina
     {
         // Pinned, since destroying one entry can release the last reference to another and free it early.
         /** Everything the import minted, in creation order; the caller saves and tears down in reverse. */
-        TVector<TObjectPtr<CObject>> CreatedObjects;
+        TVector<TStrongObjectPtr<CObject>> CreatedObjects;
 
         FString Error;
 

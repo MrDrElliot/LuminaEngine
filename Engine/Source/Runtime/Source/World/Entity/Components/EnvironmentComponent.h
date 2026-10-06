@@ -164,7 +164,7 @@ namespace Lumina
 
         /** HDR equirect for IBL irradiance/prefilter. Texture must use ColorSpace = Environment. */
         PROPERTY(Editable, Category = "Sky|HDRI")
-        TObjectPtr<CTexture> EnvironmentMap;
+        TStrongObjectPtr<CTexture> EnvironmentMap;
 
         /** Linear multiplier on the panorama's radiance. Applied to the visible sky AND the IBL bake, so
             ambient and reflections track it. 1.0 = the HDRI's authored values. */

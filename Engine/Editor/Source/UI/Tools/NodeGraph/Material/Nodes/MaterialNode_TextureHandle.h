@@ -54,7 +54,7 @@ namespace Lumina
 
         /** The texture whose slot index this node resolves. Any view type; nothing is sampled here. */
         PROPERTY(Editable, Category = "Texture")
-        TObjectPtr<CTexture> Texture;
+        TStrongObjectPtr<CTexture> Texture;
 
         /** Name used to expose this texture as a material parameter for instancing (only used when bDynamic). */
         PROPERTY(Editable, Category = "Parameter")

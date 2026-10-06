@@ -63,7 +63,7 @@ namespace Lumina
         NODISCARD int32 GetFrameCount() const { return Math::Max(HFrames, 1) * Math::Max(VFrames, 1); }
 
         PROPERTY(Editable, Category = "Sheet")
-        TObjectPtr<CTexture> Texture;
+        TStrongObjectPtr<CTexture> Texture;
 
         PROPERTY(Editable, Category = "Sheet", ClampMin = 1)
         int32 HFrames = 1;

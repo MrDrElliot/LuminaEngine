@@ -25,7 +25,7 @@ namespace Lumina
 
         /** Wave or audio graph to play. */
         PROPERTY(Editable, Category = "Sound")
-        TObjectPtr<CSoundBase> Sound;
+        TStrongObjectPtr<CSoundBase> Sound;
 
         /** Socket or bone to play at. Empty plays at the entity's origin. */
         PROPERTY(Editable, Category = "Sound", Picker = "Socket")
@@ -60,7 +60,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable, Category = "Particle System")
-        TObjectPtr<CParticleSystem> ParticleSystem;
+        TStrongObjectPtr<CParticleSystem> ParticleSystem;
 
         /** Socket or bone to play at. Empty plays at the entity's origin. */
         PROPERTY(Editable, Category = "Particle System", Picker = "Socket")

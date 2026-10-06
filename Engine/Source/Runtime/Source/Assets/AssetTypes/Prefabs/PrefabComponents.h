@@ -27,7 +27,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(ReadOnly, Category = "Prefab")
-        TObjectPtr<CPrefab> SourcePrefab;
+        TStrongObjectPtr<CPrefab> SourcePrefab;
 
         PROPERTY(ReadOnly, Category = "Prefab")
         FName StableID;

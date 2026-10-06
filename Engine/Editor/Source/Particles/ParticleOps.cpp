@@ -66,7 +66,7 @@ namespace Lumina::ParticleOps
             constexpr float TemplateDefaultLifetime = 1.0f;
             FVector2 Range(TemplateDefaultLifetime);
             bool bFound = false;
-            for (const TObjectPtr<CParticleModule>& Module : Stack->SpawnModules)
+            for (const TStrongObjectPtr<CParticleModule>& Module : Stack->SpawnModules)
             {
                 const CParticleModule_Lifetime* Lifetime = Cast<CParticleModule_Lifetime>(Module.Get());
                 if (Lifetime == nullptr || !Lifetime->bEnabled)
@@ -154,7 +154,7 @@ namespace Lumina::ParticleOps
         return nullptr;
     }
 
-    TVector<TObjectPtr<CParticleModule>>* GetModules(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage)
+    TVector<TStrongObjectPtr<CParticleModule>>* GetModules(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage)
     {
         CParticleEmitterStack* Stack = FindOrCreateStack(System, EmitterIndex);
         return Stack != nullptr ? &Stack->GetStack(Stage) : nullptr;
@@ -174,11 +174,11 @@ namespace Lumina::ParticleOps
             return nullptr;
         }
 
-        TVector<TObjectPtr<CParticleModule>>& Modules = Stack->GetStack(Module->GetStage());
+        TVector<TStrongObjectPtr<CParticleModule>>& Modules = Stack->GetStack(Module->GetStage());
         const int32 Last = (int32)Modules.size() - 1;
         if (InsertIndex >= 0 && InsertIndex < Last)
         {
-            TObjectPtr<CParticleModule> Added = Modules[Last];
+            TStrongObjectPtr<CParticleModule> Added = Modules[Last];
             Modules.erase(Modules.begin() + Last);
             Modules.insert(Modules.begin() + InsertIndex, Added);
         }
@@ -188,7 +188,7 @@ namespace Lumina::ParticleOps
 
     bool RemoveModule(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage, int32 Index)
     {
-        TVector<TObjectPtr<CParticleModule>>* Modules = GetModules(System, EmitterIndex, Stage);
+        TVector<TStrongObjectPtr<CParticleModule>>* Modules = GetModules(System, EmitterIndex, Stage);
         if (Modules == nullptr || Index < 0 || Index >= (int32)Modules->size())
         {
             return false;
@@ -200,13 +200,13 @@ namespace Lumina::ParticleOps
 
     bool MoveModule(CParticleSystem* System, int32 EmitterIndex, EParticleModuleStage Stage, int32 From, int32 To)
     {
-        TVector<TObjectPtr<CParticleModule>>* Modules = GetModules(System, EmitterIndex, Stage);
+        TVector<TStrongObjectPtr<CParticleModule>>* Modules = GetModules(System, EmitterIndex, Stage);
         if (Modules == nullptr || From < 0 || From >= (int32)Modules->size() || To < 0 || To >= (int32)Modules->size())
         {
             return false;
         }
 
-        TObjectPtr<CParticleModule> Moved = (*Modules)[From];
+        TStrongObjectPtr<CParticleModule> Moved = (*Modules)[From];
         Modules->erase(Modules->begin() + From);
         Modules->insert(Modules->begin() + To, Moved);
         return true;

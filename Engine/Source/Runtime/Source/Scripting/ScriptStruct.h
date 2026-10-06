@@ -234,8 +234,8 @@ namespace Lumina
 
         uint8*                                          Defaults = nullptr;
         bool                                           bRequiresLifecycle = false;
-        TVector<TObjectPtr<CScriptStruct>>             SubStructs;
-        TVector<TObjectPtr<CScriptEnum>>               MintedEnums;
+        TVector<TStrongObjectPtr<CScriptStruct>>       SubStructs;
+        TVector<TStrongObjectPtr<CScriptEnum>>         MintedEnums;
 
         // Keyed by type shape, so many fields of one type share a single mint within this layout.
         THashMap<FString, CScriptStruct*>              SubStructsByKey;

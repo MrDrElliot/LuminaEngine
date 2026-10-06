@@ -532,7 +532,7 @@ namespace Lumina
 
         // One instance of every enabled system class; the per-stage FStageSlots only point into it.
         PROPERTY(NoSerialize)
-        TVector<TObjectPtr<CEntitySystem>>                 Systems;
+        TVector<TStrongObjectPtr<CEntitySystem>>           Systems;
 
         //~ Subsystems. One CObject per subsystem class per world, so a C++ and a C# one are the same
         //~ thing to the world and to the details panel.
@@ -549,7 +549,7 @@ namespace Lumina
             return static_cast<T*>(GetSubsystem(T::StaticClass()));
         }
 
-        NODISCARD const TVector<TObjectPtr<CWorldSubsystem>>& GetSubsystems() const { return Subsystems; }
+        NODISCARD const TVector<TStrongObjectPtr<CWorldSubsystem>>& GetSubsystems() const { return Subsystems; }
 
         // Holds an object until the world is torn down, since a managed wrapper is only weak.
         FUNCTION()
@@ -557,8 +557,8 @@ namespace Lumina
 
         // Runtime state rather than map data, but reflected so the hot reload reinstancer reaches it.
         PROPERTY(NoSerialize)
-        TVector<TObjectPtr<CWorldSubsystem>>               Subsystems;
-        TVector<TObjectPtr<CObject>>                       RetainedObjects;
+        TVector<TStrongObjectPtr<CWorldSubsystem>>         Subsystems;
+        TVector<TStrongObjectPtr<CObject>>                 RetainedObjects;
 
         //~ Physics scene and queries.
 

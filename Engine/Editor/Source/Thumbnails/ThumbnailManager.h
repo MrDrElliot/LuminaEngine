@@ -90,7 +90,7 @@ namespace Lumina
             bool     bLoadAttempted = false;
 
             // Keeps the asset alive from its load until its capture is read back.
-            TObjectPtr<CObject> Pin;
+            TStrongObjectPtr<CObject> Pin;
         };
 
         // Worker task: sidecar cache -> legacy embedded block -> queue a render. Resolves where a thumbnail comes from.

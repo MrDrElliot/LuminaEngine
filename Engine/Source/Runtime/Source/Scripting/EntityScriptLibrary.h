@@ -32,7 +32,7 @@ namespace Lumina
         /** Every script on the entity whose class derives the named one. */
         FUNCTION()
         static void FindScripts(CWorld* World, ECS::FEntity Entity, TSubclassOf<CEntityScript> ScriptClass,
-            TVector<TObjectPtr<CEntityScript>>& OutScripts);
+            TVector<TStrongObjectPtr<CEntityScript>>& OutScripts);
 
         /** Runs OnDetach and drops the script. False when it was not attached to this entity. */
         FUNCTION()

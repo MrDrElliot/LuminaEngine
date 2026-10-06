@@ -160,7 +160,7 @@ namespace Lumina
         int32                       SelectedConstraintIndex = INDEX_NONE;
         FName                       SelectedBone;
 
-        TObjectPtr<CSkeleton>       CachedSkeleton;
+        TStrongObjectPtr<CSkeleton> CachedSkeleton;
 
         float                       GenerateMinBoneLength = 0.05f;
         int32                       SimulationFrames = 0;

@@ -57,7 +57,7 @@ namespace Lumina
 
         /** Optional tangent-space detail normal (BC5) for high-frequency ripples. */
         PROPERTY(Editable, Category = "Water|Waves")
-        TObjectPtr<CTexture> DetailNormalMap;
+        TStrongObjectPtr<CTexture> DetailNormalMap;
 
         /** Strength of the detail normal perturbation. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f, ClampMax = 1.0f)
@@ -137,7 +137,7 @@ namespace Lumina
 
         /** Optional foam texture, scrolled with the wind. */
         PROPERTY(Editable, Category = "Water|Foam")
-        TObjectPtr<CTexture> FoamTexture;
+        TStrongObjectPtr<CTexture> FoamTexture;
 
         /** Foam texture tiling across the surface. */
         PROPERTY(Editable, Category = "Water|Foam", ClampMin = 0.01f)

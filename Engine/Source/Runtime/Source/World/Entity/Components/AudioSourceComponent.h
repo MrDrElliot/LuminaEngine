@@ -22,7 +22,7 @@ namespace Lumina
 
 		/** Sound to play. Accepts a wave asset or a compiled audio graph. */
 		PROPERTY(Editable)
-		TObjectPtr<CSoundBase> Sound;
+		TStrongObjectPtr<CSoundBase> Sound;
 
 		/** Mix group this source routes through. */
 		PROPERTY(Editable)

@@ -123,7 +123,7 @@ namespace Lumina
         ECS::FEntity                    ParticleEntity;
 
         // Transient spray the Particle domain previews through, built the first time one is opened.
-        TObjectPtr<CParticleSystem>     PreviewParticleSystem;
+        TStrongObjectPtr<CParticleSystem> PreviewParticleSystem;
         
         FString                         Tree;
         FString                         VertexTree;
@@ -156,7 +156,7 @@ namespace Lumina
         TUniquePtr<FPropertyTable>      EnvironmentEditor;
         TUniquePtr<FPropertyTable>      DirectionalEditor;
         
-        TObjectPtr<CMaterialNodeGraph>  NodeGraph;
+        TStrongObjectPtr<CMaterialNodeGraph> NodeGraph;
         bool                            bGLSLPreviewDirty = false;
         
         EDebugMesh                      DebugMesh;

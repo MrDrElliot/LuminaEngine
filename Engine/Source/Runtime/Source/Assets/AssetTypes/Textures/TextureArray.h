@@ -43,7 +43,7 @@ namespace Lumina
          * does not read these at runtime, and a packaged build never needs them resident.
          */
         PROPERTY(Editable, Category = "Layers")
-        TVector<TObjectPtr<CTexture>> SourceTextures;
+        TVector<TStrongObjectPtr<CTexture>> SourceTextures;
 
         /**
          * Resample mismatched layers to layer 0's dimensions instead of refusing them.

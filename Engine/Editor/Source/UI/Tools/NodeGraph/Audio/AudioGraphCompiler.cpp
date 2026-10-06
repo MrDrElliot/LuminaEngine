@@ -162,8 +162,8 @@ namespace Lumina
         /** Pins must match the operator's ABI, or its Execute would index a neighbor's slot. */
         bool ValidateAgainstOperator(CAudioGraphNode* Node, const FAudioGraphNodeClass& Operator, FCompileContext& Context)
         {
-            const TVector<TObjectPtr<CEdNodeGraphPin>>& Inputs = Node->GetInputPins();
-            const TVector<TObjectPtr<CEdNodeGraphPin>>& Outputs = Node->GetOutputPins();
+            const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Inputs = Node->GetInputPins();
+            const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Outputs = Node->GetOutputPins();
 
             const FString Label = Node->GetNodeTitleText();
 
@@ -242,7 +242,7 @@ namespace Lumina
 
             if (CAudioGraphInputNode* InputNode = Cast<CAudioGraphInputNode>(Node))
             {
-                const TVector<TObjectPtr<CEdNodeGraphPin>>& OutputPins = InputNode->GetOutputPins();
+                const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& OutputPins = InputNode->GetOutputPins();
                 if (OutputPins.empty())
                 {
                     continue;
@@ -286,7 +286,7 @@ namespace Lumina
 
             if (CAudioGraphNamedOutputNode* NamedOutput = Cast<CAudioGraphNamedOutputNode>(Node))
             {
-                const TVector<TObjectPtr<CEdNodeGraphPin>>& InputPins = NamedOutput->GetInputPins();
+                const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = NamedOutput->GetInputPins();
                 if (InputPins.empty())
                 {
                     continue;
@@ -302,7 +302,7 @@ namespace Lumina
 
             if (CAudioGraphTriggerOutputNode* TriggerOutput = Cast<CAudioGraphTriggerOutputNode>(Node))
             {
-                const TVector<TObjectPtr<CEdNodeGraphPin>>& InputPins = TriggerOutput->GetInputPins();
+                const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = TriggerOutput->GetInputPins();
                 if (InputPins.empty())
                 {
                     continue;
@@ -318,7 +318,7 @@ namespace Lumina
 
             if (Cast<CAudioGraphOutputNode>(Node) != nullptr)
             {
-                const TVector<TObjectPtr<CEdNodeGraphPin>>& InputPins = Node->GetInputPins();
+                const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = Node->GetInputPins();
 
                 if (InputPins.size() >= 3)
                 {
@@ -359,16 +359,16 @@ namespace Lumina
             Instance.OperatorName = OperatorName;
             Instance.SourceNodeID = Node->GetNodeID();
 
-            const TVector<TObjectPtr<CEdNodeGraphPin>>& InputPins = Node->GetInputPins();
+            const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& InputPins = Node->GetInputPins();
             Instance.InputSlots.reserve(InputPins.size());
-            for (const TObjectPtr<CEdNodeGraphPin>& InputPin : InputPins)
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& InputPin : InputPins)
             {
                 Instance.InputSlots.push_back(ResolveInputSlot(InputPin.Get(), Context));
             }
 
-            const TVector<TObjectPtr<CEdNodeGraphPin>>& OutputPins = Node->GetOutputPins();
+            const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& OutputPins = Node->GetOutputPins();
             Instance.OutputSlots.reserve(OutputPins.size());
-            for (const TObjectPtr<CEdNodeGraphPin>& OutputPin : OutputPins)
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& OutputPin : OutputPins)
             {
                 const CAudioGraphPin* Pin = Cast<CAudioGraphPin>(OutputPin.Get());
                 const uint16 Slot = Pin != nullptr ? Context.Allocate(Pin->GetPinType()) : kAudioGraphInvalidSlot;

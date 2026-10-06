@@ -10,7 +10,7 @@ public static class ObjectCore
     // Pending async callbacks, so a script unload can clear what they capture before the native side completes them.
     private static readonly HashSet<IntPtr> PendingLoads = new();
 
-    // Blocking load by virtual path, as LoadObject<T> in C++; the wrapper holds a strong reference like a TObjectPtr member.
+    // Blocking load by virtual path, as LoadObject<T> in C++; the wrapper holds a strong reference like a TStrongObjectPtr member.
     public static T? LoadObject<T>(string Path) where T : NativeObject
     {
         IntPtr Pointer = Native.LoadObject(Path);

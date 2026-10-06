@@ -99,7 +99,7 @@ namespace Lumina
 
         /** Prefab this one is a variant of. Null for a root prefab, whose Registry is authored directly. */
         PROPERTY(ReadOnly, Category = "Variant")
-        TObjectPtr<CPrefab> ParentPrefab;
+        TStrongObjectPtr<CPrefab> ParentPrefab;
 
         NODISCARD bool IsVariant() const { return ParentPrefab != nullptr; }
 

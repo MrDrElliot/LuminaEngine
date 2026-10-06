@@ -43,7 +43,7 @@ namespace Lumina
         void ClearPreviewEntities();
         void ApplyExplode();            // offset each piece outward by ExplodeAmount
 
-        TVector<TObjectPtr<CStaticMesh>> PieceMeshes;     // aligned with piece index (null = build failed)
+        TVector<TStrongObjectPtr<CStaticMesh>> PieceMeshes;     // aligned with piece index (null = build failed)
         TVector<ECS::FEntity>            PieceEntities;    // aligned with piece index (null = no entity)
         ECS::FEntity                     LightEntity = ECS::NullEntity;
         float                            ExplodeAmount = 0.0f;

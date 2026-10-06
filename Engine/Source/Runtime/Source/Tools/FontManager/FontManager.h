@@ -27,6 +27,6 @@ namespace Lumina
 
         /** Default engine font (Lexend), MSDF-baked at startup. */
         PROPERTY(NoSerialize)
-        TObjectPtr<CFont> DefaultFont;
+        TStrongObjectPtr<CFont> DefaultFont;
     };
 }

@@ -66,7 +66,7 @@ namespace Lumina
 
         /** Bind imported clips and skinned meshes to an existing skeleton, matching bone names. */
         PROPERTY(Editable, Category = "Skeleton")
-        TObjectPtr<CSkeleton> TargetSkeleton;
+        TStrongObjectPtr<CSkeleton> TargetSkeleton;
 
         /** Import material definitions and generate material assets for them. */
         PROPERTY(Editable, Category = "Import")
@@ -78,7 +78,7 @@ namespace Lumina
 
         // Fills every slot of every imported mesh with this material instead of generating any.
         PROPERTY(Editable, Category = "Import")
-        TObjectPtr<CMaterialInterface> OverrideMaterial;
+        TStrongObjectPtr<CMaterialInterface> OverrideMaterial;
 
         /** Uniform scale applied to all imported geometry, skeletons and animation translations. */
         PROPERTY(Editable, Category = "Transform", ClampMin = "0.001", ClampMax = "1000.0")

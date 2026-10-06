@@ -96,9 +96,9 @@ namespace Lumina
         namespace
         {
             // Exact rather than IsChildOf, so a system deriving from another still gets its own instance.
-            bool AlreadyPresent(const TVector<TObjectPtr<CEntitySystem>>& Systems, const CClass* Class)
+            bool AlreadyPresent(const TVector<TStrongObjectPtr<CEntitySystem>>& Systems, const CClass* Class)
             {
-                for (const TObjectPtr<CEntitySystem>& System : Systems)
+                for (const TStrongObjectPtr<CEntitySystem>& System : Systems)
                 {
                     if (System != nullptr && System->GetClass() == Class)
                     {
@@ -109,7 +109,7 @@ namespace Lumina
             }
         }
 
-        int32 CreateMissing(CWorld& World, const THashSet<FName>& Disabled, TVector<TObjectPtr<CEntitySystem>>& Out)
+        int32 CreateMissing(CWorld& World, const THashSet<FName>& Disabled, TVector<TStrongObjectPtr<CEntitySystem>>& Out)
         {
             const size_t FirstNew = Out.size();
 
@@ -143,7 +143,7 @@ namespace Lumina
 
         namespace
         {
-            void DropWhere(TVector<TObjectPtr<CEntitySystem>>& Systems, TFunctionRef<bool(const CEntitySystem&)> Predicate)
+            void DropWhere(TVector<TStrongObjectPtr<CEntitySystem>>& Systems, TFunctionRef<bool(const CEntitySystem&)> Predicate)
             {
                 // Back to front, so a system created later can still reach an earlier one while it tears down.
                 for (size_t Index = Systems.size(); Index > 0; --Index)
@@ -165,7 +165,7 @@ namespace Lumina
             }
         }
 
-        void DropScripted(TVector<TObjectPtr<CEntitySystem>>& Systems)
+        void DropScripted(TVector<TStrongObjectPtr<CEntitySystem>>& Systems)
         {
             DropWhere(Systems, [](const CEntitySystem& System)
             {
@@ -173,7 +173,7 @@ namespace Lumina
             });
         }
 
-        void DropDisabled(const THashSet<FName>& Disabled, TVector<TObjectPtr<CEntitySystem>>& Systems)
+        void DropDisabled(const THashSet<FName>& Disabled, TVector<TStrongObjectPtr<CEntitySystem>>& Systems)
         {
             DropWhere(Systems, [&Disabled](const CEntitySystem& System)
             {
@@ -181,9 +181,9 @@ namespace Lumina
             });
         }
 
-        void StartupPending(TVector<TObjectPtr<CEntitySystem>>& Systems)
+        void StartupPending(TVector<TStrongObjectPtr<CEntitySystem>>& Systems)
         {
-            for (TObjectPtr<CEntitySystem>& System : Systems)
+            for (TStrongObjectPtr<CEntitySystem>& System : Systems)
             {
                 if (System != nullptr && !System->HasStarted())
                 {
@@ -193,14 +193,14 @@ namespace Lumina
             }
         }
 
-        CEntitySystem* Find(const TVector<TObjectPtr<CEntitySystem>>& Systems, const CClass* Class)
+        CEntitySystem* Find(const TVector<TStrongObjectPtr<CEntitySystem>>& Systems, const CClass* Class)
         {
             if (Class == nullptr)
             {
                 return nullptr;
             }
 
-            for (const TObjectPtr<CEntitySystem>& System : Systems)
+            for (const TStrongObjectPtr<CEntitySystem>& System : Systems)
             {
                 if (System != nullptr && System->GetClass()->IsChildOf(Class))
                 {
@@ -211,7 +211,7 @@ namespace Lumina
             return nullptr;
         }
 
-        void DestroyAll(TVector<TObjectPtr<CEntitySystem>>& Systems)
+        void DestroyAll(TVector<TStrongObjectPtr<CEntitySystem>>& Systems)
         {
             // Back to front, so a system created later can still reach an earlier one while it tears down.
             for (size_t Index = Systems.size(); Index > 0; --Index)

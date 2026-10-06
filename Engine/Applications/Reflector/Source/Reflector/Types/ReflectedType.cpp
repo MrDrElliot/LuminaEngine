@@ -63,7 +63,7 @@ namespace Lumina::Reflection
                 { "Lumina::TFixedVector",     EPropertyTypeFlags::Vector          },
                 { "Lumina::THashMap",         EPropertyTypeFlags::Map             },
                 { "Lumina::TOptional",        EPropertyTypeFlags::Optional        },
-                { "Lumina::TObjectPtr",       EPropertyTypeFlags::Object          },
+                { "Lumina::TStrongObjectPtr", EPropertyTypeFlags::Object          },
                 { "Lumina::TWeakObjectPtr",   EPropertyTypeFlags::Object          },
                 { "Lumina::CObject",          EPropertyTypeFlags::Object          },
                 { "Lumina::TSubclassOf",      EPropertyTypeFlags::Class           },

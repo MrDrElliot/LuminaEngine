@@ -14,7 +14,7 @@ namespace Lumina
      *
      * A prefab's own registries are declared by CPrefab itself, since it is a CObject and can. Generic over the
      * component's CStruct rather than over a list of component types, so a component that gains a
-     * TObjectPtr takes part without anything here changing.
+     * TStrongObjectPtr takes part without anything here changing.
      */
     class FECSObjectReferenceProvider final : public IObjectReferenceProvider
     {

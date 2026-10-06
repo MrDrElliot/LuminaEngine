@@ -51,7 +51,7 @@ namespace Lumina
         // First thing in engine shutdown, while every system is still alive, for work that must stop before any of it goes.
         RUNTIME_API static TMulticastDelegate<void>                 OnEngineShutdownStarted;
 
-        // A reflected object argument is a strong TObjectPtr, which would keep the torn-down OldWorld
+        // A reflected object argument is a strong TStrongObjectPtr, which would keep the torn-down OldWorld
         // alive across the handler, so these stay native-only until a weak reflected form exists.
         RUNTIME_API static TMulticastDelegate<void, CWorld*, CWorld*> OnWorldTraveled;
         RUNTIME_API static TMulticastDelegate<void, FStringView>     OnContentFileModified;

@@ -63,7 +63,7 @@ namespace Lumina
             TSpan<CTexture* const>                          ImageAssets,
             const FFixedString&                             MaterialsDir,
             const FFixedString&                             BaseName,
-            TVector<TObjectPtr<CObject>>&                   OutCreated,
+            TVector<TStrongObjectPtr<CObject>>&                   OutCreated,
             bool                                            bSourceHasVertexColors);
     }
 }

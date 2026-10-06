@@ -318,8 +318,8 @@ namespace Lumina
         }
 
         TVector<uint8>                          Bytecode;
-        TVector<TObjectPtr<CAnimation>>         Clips;
-        TVector<TObjectPtr<CBlendSpace>>        BlendSpaces;
+        TVector<TStrongObjectPtr<CAnimation>>   Clips;
+        TVector<TStrongObjectPtr<CBlendSpace>>  BlendSpaces;
         TVector<FName>                          SyncGroupNames;
         TVector<FName>                          SlotNames;
         TVector<FName>                          PoseSnapshotNames;
@@ -329,7 +329,7 @@ namespace Lumina
         TVector<FAnimGraphBlendSpaceCurveMap>   BlendSpaceCurveMaps;
         TVector<FAnimGraphParameter>            Parameters;
         TVector<FAnimGraphObjectParameter>      ObjectParameters;
-        TVector<TObjectPtr<CObject>>            ObjectConstants;
+        TVector<TStrongObjectPtr<CObject>>      ObjectConstants;
         TVector<FAnimGraphBoneMask>             BoneMasks;
         THashMap<FName, int32>                  BoneMaskNameToIndex;
         THashMap<FName, uint16>                 CachedPoses;

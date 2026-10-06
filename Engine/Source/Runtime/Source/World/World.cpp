@@ -816,13 +816,13 @@ namespace Lumina
 
         if (!Pieces.empty())
         {
-            const TVector<TObjectPtr<CMaterialInterface>>& PieceMaterials =
+            const TVector<TStrongObjectPtr<CMaterialInterface>>& PieceMaterials =
                 (CollectionData && !Destructible->Collection->Materials.empty())
                     ? Destructible->Collection->Materials
                     : SourceMesh->Materials;
 
             // Pre-baked collections cache piece meshes; the Voronoi path builds each one inline.
-            const TVector<TObjectPtr<CStaticMesh>>* CachedMeshes =
+            const TVector<TStrongObjectPtr<CStaticMesh>>* CachedMeshes =
                 CollectionData ? &Destructible->Collection->GetPieceMeshes() : nullptr;
 
             for (size_t PieceIndex = 0; PieceIndex < Pieces.size() && (uint32)Spawned < MaxFragments; ++PieceIndex)
@@ -1527,7 +1527,7 @@ namespace Lumina
             SystemUpdateList[i].clear();
         }
 
-        for (const TObjectPtr<CEntitySystem>& System : Systems)
+        for (const TStrongObjectPtr<CEntitySystem>& System : Systems)
         {
             if (System == nullptr)
             {

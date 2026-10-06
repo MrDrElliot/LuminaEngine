@@ -23,7 +23,7 @@ namespace Lumina
 
         /** Clip sampled by this node. A wired Animation pin overrides it at runtime. */
         PROPERTY(Editable, Category = "Animation")
-        TObjectPtr<CAnimation> Clip;
+        TStrongObjectPtr<CAnimation> Clip;
 
         /** On, Time is a 0..1 fraction of the clip; off, it is seconds. */
         PROPERTY(Editable, Category = "Animation")

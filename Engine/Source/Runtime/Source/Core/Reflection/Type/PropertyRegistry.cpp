@@ -94,7 +94,7 @@ namespace Lumina
 
                 Add<FStringProperty,     FStringPropertyParams,     FString>             (EPropertyTypeFlags::String, false, true);
                 Add<FNameProperty,       FNamePropertyParams,       FName>               (EPropertyTypeFlags::Name,   false, true);
-                Add<FObjectProperty,     FObjectPropertyParams,     TObjectPtr<CObject>> (EPropertyTypeFlags::Object);
+                Add<FObjectProperty,     FObjectPropertyParams,     TStrongObjectPtr<CObject>> (EPropertyTypeFlags::Object);
                 Add<FSoftObjectProperty, FSoftObjectPropertyParams, FSoftObjectPath>     (EPropertyTypeFlags::SoftObject);
                 Add<FClassProperty,      FClassPropertyParams,      void*>               (EPropertyTypeFlags::Class);
                 Add<FSubStructProperty,  FSubStructPropertyParams,  void*>               (EPropertyTypeFlags::SubStruct);

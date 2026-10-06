@@ -393,7 +393,7 @@ namespace Lumina::Reflection
 
         case EPropertyTypeFlags::Object:
             {
-                CObject* Object = static_cast<TObjectPtr<CObject>*>(Value)->Get();
+                CObject* Object = static_cast<TStrongObjectPtr<CObject>*>(Value)->Get();
                 if (Object == nullptr || Object->GetPackage() == nullptr)
                 {
                     return FString();
@@ -470,7 +470,7 @@ namespace Lumina::Reflection
 
         case EPropertyTypeFlags::Object:
             {
-                auto* Ptr = static_cast<TObjectPtr<CObject>*>(Value);
+                auto* Ptr = static_cast<TStrongObjectPtr<CObject>*>(Value);
                 if (Text.empty())
                 {
                     *Ptr = nullptr;

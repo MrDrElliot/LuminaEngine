@@ -277,9 +277,9 @@ namespace Lumina
         struct FConnSnapshot { FString Name; bool bInput; TVector<CEdNodeGraphPin*> Remotes; };
         TVector<FConnSnapshot> Snapshots;
 
-        auto SnapshotPins = [&](const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins, bool bInput)
+        auto SnapshotPins = [&](const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins, bool bInput)
         {
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
                 if (!Pin.IsValid() || !Pin->HasConnection())
                 {
@@ -297,7 +297,7 @@ namespace Lumina
 
         auto ClearDirection = [&](ENodePinDirection Direction)
         {
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : NodePins[(uint32)Direction])
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : NodePins[(uint32)Direction])
             {
                 TVector<CEdNodeGraphPin*> Remotes = Pin->GetConnections();
                 for (CEdNodeGraphPin* Remote : Remotes)
@@ -338,8 +338,8 @@ namespace Lumina
         THashSet<CEdNodeGraphPin*> Restored;
         for (const FConnSnapshot& Snap : Snapshots)
         {
-            const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins = Snap.bInput ? GetInputPins() : GetOutputPins();
-            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins = Snap.bInput ? GetInputPins() : GetOutputPins();
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
                 if (!Pin.IsValid() || Pin->GetPinName() != Snap.Name || Restored.count(Pin.Get()) != 0)
                 {

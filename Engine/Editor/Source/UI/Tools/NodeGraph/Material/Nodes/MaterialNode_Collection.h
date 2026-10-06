@@ -23,7 +23,7 @@ namespace Lumina
 
         /** The collection to read. A material may bind at most MAX_MATERIAL_COLLECTIONS of them. */
         PROPERTY(Editable, Category = "Collection")
-        TObjectPtr<CMaterialParameterCollection> Collection;
+        TStrongObjectPtr<CMaterialParameterCollection> Collection;
 
         /** Name the collection declares. Its position in the collection is what the shader compiles to. */
         PROPERTY(Editable, Category = "Collection")

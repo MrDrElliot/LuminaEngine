@@ -54,7 +54,7 @@ namespace Lumina
         std::vector<std::string>                         ParameterStorageTypes;
 
         /// The declared pointer type an object parameter is cast back to, empty for anything else. The frame
-        /// holds a TObjectPtr<CObject>, because that is the storage FObjectProperty describes.
+        /// holds a TStrongObjectPtr<CObject>, because that is the storage FObjectProperty describes.
         std::vector<std::string>                         ParameterObjectCastTypes;
 
         /// True for a parameter the real signature takes by reference, so the thunk hands the slot over.

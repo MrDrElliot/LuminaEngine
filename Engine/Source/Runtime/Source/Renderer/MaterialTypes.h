@@ -101,7 +101,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY()
-        TObjectPtr<CGrassType> GrassType;
+        TStrongObjectPtr<CGrassType> GrassType;
 
         /** Index into STerrainComponent::Layers whose painted weight gates this species. */
         PROPERTY()

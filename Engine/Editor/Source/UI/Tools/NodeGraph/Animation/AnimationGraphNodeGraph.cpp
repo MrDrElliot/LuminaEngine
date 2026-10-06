@@ -36,7 +36,7 @@ namespace Lumina
         }
         bSetupDone = true;
 
-        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TObjectPtr<CEdGraphNode>& Node)
+        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TStrongObjectPtr<CEdGraphNode>& Node)
         {
             return Node.IsValid() && Node->IsA<CAnimGraphNode_Output>();
         });
@@ -332,7 +332,7 @@ namespace Lumina
                 }
 
                 // Each transition condition declares a parameter the runtime reads at evaluation time.
-                for (const TObjectPtr<CAnimStateTransition>& Transition : SMGraph->Transitions)
+                for (const TStrongObjectPtr<CAnimStateTransition>& Transition : SMGraph->Transitions)
                 {
                     if (!Transition.IsValid())
                     {

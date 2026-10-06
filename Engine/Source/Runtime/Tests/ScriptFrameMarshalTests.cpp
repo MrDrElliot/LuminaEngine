@@ -1062,7 +1062,7 @@ TEST_F(FFrameMarshalTest, AWrapperToADestroyedObjectStillThrows)
     ASSERT_NE(Doomed, nullptr);
 
     // A strong reference, so the release below is the one that actually frees it.
-    TObjectPtr<CObject> Owner(Doomed);
+    TStrongObjectPtr<CObject> Owner(Doomed);
     void* Wrapper = Bind(Doomed);
     ASSERT_NE(Wrapper, nullptr);
 

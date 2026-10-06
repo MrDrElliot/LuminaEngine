@@ -106,7 +106,7 @@ namespace Lumina
         int32                       SelectedSample = INDEX_NONE;
         int32                       DraggedSample = INDEX_NONE;
 
-        TObjectPtr<CSkeleton>       CachedSkeleton;
+        TStrongObjectPtr<CSkeleton> CachedSkeleton;
 
         // Snapping and the drawn gridlines share this, so samples land on the lines you can actually see.
         int32                       SnapDivisions = 10;

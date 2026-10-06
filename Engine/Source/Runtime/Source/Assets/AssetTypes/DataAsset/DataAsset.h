@@ -16,7 +16,7 @@ namespace Lumina
      *         GENERATED_BODY()
      *     public:
      *         PROPERTY(Editable, Category = "Damage") float BaseDamage = 10.0f;
-     *         PROPERTY(Editable) TObjectPtr<CStaticMesh> Mesh;
+     *         PROPERTY(Editable) TStrongObjectPtr<CStaticMesh> Mesh;
      *     };
      *
      * The content browser's Data Asset entry lists every class deriving from this one and mints the

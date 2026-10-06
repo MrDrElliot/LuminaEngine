@@ -34,7 +34,7 @@ namespace Lumina
 
     CAudioGraphOutputNode* CAudioNodeGraph::FindOutputNode() const
     {
-        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
             if (Node.IsValid())
             {

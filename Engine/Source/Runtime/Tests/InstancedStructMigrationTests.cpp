@@ -185,7 +185,7 @@ TEST(InstancedStructMigration, ValueOutlivesItsTypesRegistryRef)
     FScriptExportSchema Schema;
     Schema.Fields.push_back(ScalarField("Text", EPropertyTypeFlags::String));
 
-    TObjectPtr<CScriptStruct> RegistryRef = BuildLayout(Schema);
+    TStrongObjectPtr<CScriptStruct> RegistryRef = BuildLayout(Schema);
     ASSERT_TRUE(RegistryRef.IsValid());
     RegistryRef->Metadata.AddValue("ScriptTypeName", "ReloadProbeRow");
 
@@ -198,7 +198,7 @@ TEST(InstancedStructMigration, ValueOutlivesItsTypesRegistryRef)
         RegistryRef = nullptr;
     }
 
-    TObjectPtr<CScriptStruct> MigratedRef = BuildLayout(Schema);
+    TStrongObjectPtr<CScriptStruct> MigratedRef = BuildLayout(Schema);
     ASSERT_TRUE(MigratedRef.IsValid());
     MigratedRef->Metadata.AddValue("ScriptTypeName", "ReloadProbeRow");
 

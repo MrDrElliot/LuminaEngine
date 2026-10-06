@@ -90,7 +90,7 @@ namespace Lumina
         }
 
         // PostLoad commits their shader binaries, and a nested export gets none from the outer load.
-        for (const TObjectPtr<CParticleEmitter>& Emitter : Emitters)
+        for (const TStrongObjectPtr<CParticleEmitter>& Emitter : Emitters)
         {
             if (Emitter.IsValid())
             {
@@ -113,7 +113,7 @@ namespace Lumina
         {
             Candidate = FString("Emitter ") + Format("{}", Suffix).c_str();
             bool bTaken = false;
-            for (const TObjectPtr<CParticleEmitter>& Existing : Emitters)
+            for (const TStrongObjectPtr<CParticleEmitter>& Existing : Emitters)
             {
                 if (Existing.IsValid() && Existing->EmitterName == Candidate)
                 {
@@ -164,7 +164,7 @@ namespace Lumina
                 const int32 Target = i + (Direction < 0 ? -1 : 1);
                 if (Target >= 0 && Target < (int32)Emitters.size())
                 {
-                    TObjectPtr<CParticleEmitter> Tmp = Emitters[i];
+                    TStrongObjectPtr<CParticleEmitter> Tmp = Emitters[i];
                     Emitters[i]      = Emitters[Target];
                     Emitters[Target] = Tmp;
                 }
@@ -177,7 +177,7 @@ namespace Lumina
     {
         auto FindEmitter = [this](const FString& Name) -> const CParticleEmitter*
         {
-            for (const TObjectPtr<CParticleEmitter>& Candidate : Emitters)
+            for (const TStrongObjectPtr<CParticleEmitter>& Candidate : Emitters)
             {
                 if (Candidate != nullptr && Candidate->EmitterName == Name)
                 {
@@ -188,7 +188,7 @@ namespace Lumina
         };
 
         float Length = 0.0f;
-        for (const TObjectPtr<CParticleEmitter>& Emitter : Emitters)
+        for (const TStrongObjectPtr<CParticleEmitter>& Emitter : Emitters)
         {
             if (Emitter == nullptr || !Emitter->bEnabled)
             {

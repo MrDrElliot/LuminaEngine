@@ -707,7 +707,7 @@ namespace Lumina
         Params.Package = CPackage::GetTransientPackage();
         Params.Guid    = FGuid::New();
 
-        TObjectPtr<CScriptEnum> Enum = static_cast<CScriptEnum*>(StaticAllocateObject(Params));
+        TStrongObjectPtr<CScriptEnum> Enum = static_cast<CScriptEnum*>(StaticAllocateObject(Params));
         CObjectForceRegistration(Enum.Get());
 
         Enum->ScriptTypeName  = Type.EnumName;
@@ -762,7 +762,7 @@ namespace Lumina
         Params.Package = CPackage::GetTransientPackage();
         Params.Guid    = FGuid::New();
 
-        TObjectPtr<CScriptStruct> Sub = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
+        TStrongObjectPtr<CScriptStruct> Sub = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
         CObjectForceRegistration(Sub.Get());
 
         FScriptExportSchema SubSchema;
@@ -807,7 +807,7 @@ namespace Lumina
         Params.Package = CPackage::GetTransientPackage();
         Params.Guid    = FGuid::New();
 
-        TObjectPtr<CScriptStruct> Base = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
+        TStrongObjectPtr<CScriptStruct> Base = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
         CObjectForceRegistration(Base.Get());
 
         // A type marker only. The ScriptInstanceBase tag hides it from the picker.
@@ -855,7 +855,7 @@ namespace Lumina
         Params.Package = CPackage::GetTransientPackage();
         Params.Guid    = FGuid::New();
 
-        TObjectPtr<CScriptStruct> Sub = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
+        TStrongObjectPtr<CScriptStruct> Sub = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
         CObjectForceRegistration(Sub.Get());
 
         FScriptExportSchema Schema;
@@ -1568,7 +1568,7 @@ namespace Lumina::Scripting
         Params.Package = CPackage::GetTransientPackage();
         Params.Guid    = FGuid::New();
 
-        TObjectPtr<CScriptStruct> Record = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
+        TStrongObjectPtr<CScriptStruct> Record = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
         CObjectForceRegistration(Record.Get());
 
         // Appended properties start past the shim, so they can never overlap a native member.

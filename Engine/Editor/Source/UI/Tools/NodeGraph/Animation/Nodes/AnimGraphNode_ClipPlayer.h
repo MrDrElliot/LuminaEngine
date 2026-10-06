@@ -25,7 +25,7 @@ namespace Lumina
 
         /** Animation clip sampled by this node. */
         PROPERTY(Editable, Category = "Animation")
-        TObjectPtr<CAnimation> Clip;
+        TStrongObjectPtr<CAnimation> Clip;
 
         /** How the playback clock behaves when it reaches the clip's duration.
          *  Loop wraps around (default); PlayOnce clamps at the end and the

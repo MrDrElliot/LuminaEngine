@@ -31,7 +31,7 @@ internal enum EElementKind
     // A managed string over the same FString storage FString names, decoded rather than handled.
     ManagedString,
 
-    // A CObject wrapper over a TObjectPtr slot, resolved through the managed-instance cache so identity holds.
+    // A CObject wrapper over a TStrongObjectPtr slot, resolved through the managed-instance cache so identity holds.
     ObjectWrapper,
 
     // The managed value is the slot address, so the slot is viewed in place and never copied over it.
@@ -197,7 +197,7 @@ public static unsafe class ElementMarshal
                 return Unsafe.As<FString, T>(ref Value);
             }
             case EElementKind.ObjectRef:
-                // TObjectPtr<X> is a single IntPtr, and so is the native slot, so the read is the same
+                // TStrongObjectPtr<X> is a single IntPtr, and so is the native slot, so the read is the same
                 // reinterpretation a blittable element gets. Only the WRITE differs.
                 return Unsafe.ReadUnaligned<T>((void*)Address);
 

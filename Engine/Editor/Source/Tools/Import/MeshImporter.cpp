@@ -187,8 +187,8 @@ namespace Lumina
     void CMeshImporter::ReplaceAnimationInPlace(CAnimation* Existing, TUniquePtr<FAnimationResource>&& NewClip,
                                                 CSkeleton* NewSkeleton)
     {
-        MainThread::Enqueue([Existing = TObjectPtr<CAnimation>(Existing), NewClip = Move(NewClip),
-                             NewSkeleton = TObjectPtr<CSkeleton>(NewSkeleton)]() mutable
+        MainThread::Enqueue([Existing = TStrongObjectPtr<CAnimation>(Existing), NewClip = Move(NewClip),
+                             NewSkeleton = TStrongObjectPtr<CSkeleton>(NewSkeleton)]() mutable
         {
             if (!Existing.IsValid())
             {
@@ -464,9 +464,9 @@ namespace Lumina
 
         // Keyed off surface names so reordered materials keep their overrides, with index as the fallback.
         void RemapMaterialSlots(const FMeshResource& OldResource,
-                                const TVector<TObjectPtr<CMaterialInterface>>& OldMaterials,
+                                const TVector<TStrongObjectPtr<CMaterialInterface>>& OldMaterials,
                                 const FMeshResource& NewResource,
-                                TVector<TObjectPtr<CMaterialInterface>>& OutMaterials)
+                                TVector<TStrongObjectPtr<CMaterialInterface>>& OutMaterials)
         {
             const size_t SlotCount = CountMaterialSlots(NewResource);
 
@@ -519,8 +519,8 @@ namespace Lumina
         void ReplaceMeshInPlace(CMesh* Existing, TUniquePtr<FMeshResource>&& NewResource,
                                 CMaterialInterface* OverrideMaterial, const FFixedString& SourcePath)
         {
-            MainThread::Enqueue([Existing = TObjectPtr<CMesh>(Existing), NewResource = Move(NewResource),
-                                 Override = TObjectPtr<CMaterialInterface>(OverrideMaterial),
+            MainThread::Enqueue([Existing = TStrongObjectPtr<CMesh>(Existing), NewResource = Move(NewResource),
+                                 Override = TStrongObjectPtr<CMaterialInterface>(OverrideMaterial),
                                  Source = FString(SourcePath.c_str())]() mutable
             {
                 if (!Existing.IsValid())
@@ -529,7 +529,7 @@ namespace Lumina
                 }
 
                 NewResource->Name = Existing->GetName();
-                TVector<TObjectPtr<CMaterialInterface>> Materials;
+                TVector<TStrongObjectPtr<CMaterialInterface>> Materials;
                 if (Override.IsValid())
                 {
                     Materials.resize(CountMaterialSlots(*NewResource), Override);
@@ -1322,14 +1322,14 @@ namespace Lumina
             Progress->EnterProgressFrame(kCreateBudget, "Creating assets...");
         }
 
-        TVector<TObjectPtr<CObject>>& CreatedObjects = OutResult.CreatedObjects;
+        TVector<TStrongObjectPtr<CObject>>& CreatedObjects = OutResult.CreatedObjects;
         CreatedObjects.reserve(SourceData.Skeletons.size() + SourceData.Resources.size()
                              + SourceData.Animations.size() + SourceData.Images.size());
 
         // Indexed by Resources index, so the prefab can resolve a scene node's mesh slot to its asset.
         TVector<CMesh*> ResourceToMesh(SourceData.Resources.size(), nullptr);
 
-        TObjectPtr<CSkeleton> PrimarySkeleton;
+        TStrongObjectPtr<CSkeleton> PrimarySkeleton;
         const bool bMultipleSkeletons = SourceData.Skeletons.size() > 1;
 
         // With a target skeleton the file's own only binds skinned meshes, so skip minting a duplicate.
@@ -1749,7 +1749,7 @@ namespace Lumina
         }
 
         const float SaveStep = kSaveBudget / (float)std::max<size_t>((size_t)1, CreatedObjects.size());
-        for (const TObjectPtr<CObject>& Created : CreatedObjects)
+        for (const TStrongObjectPtr<CObject>& Created : CreatedObjects)
         {
             CObject* Object = Created.Get();
             if (Object == nullptr)
@@ -1899,7 +1899,7 @@ namespace Lumina
             DensifyMaterialSlots(*NewResource);
         }
 
-        TVector<TObjectPtr<CMaterialInterface>> RemappedMaterials;
+        TVector<TStrongObjectPtr<CMaterialInterface>> RemappedMaterials;
         RemapMaterialSlots(Mesh->GetMeshResource(), Mesh->Materials, *NewResource, RemappedMaterials);
         Mesh->Materials = Move(RemappedMaterials);
 

@@ -99,24 +99,24 @@ namespace Lumina
     namespace EntitySystems
     {
         // Creates and configures any system class not already instanced and not named in Disabled.
-        RUNTIME_API int32 CreateMissing(CWorld& World, const THashSet<FName>& Disabled, TVector<TObjectPtr<CEntitySystem>>& Out);
+        RUNTIME_API int32 CreateMissing(CWorld& World, const THashSet<FName>& Disabled, TVector<TStrongObjectPtr<CEntitySystem>>& Out);
 
         // Tears down the systems backed by a script class, so a hot reload can rebuild them.
-        RUNTIME_API void DropScripted(TVector<TObjectPtr<CEntitySystem>>& Systems);
+        RUNTIME_API void DropScripted(TVector<TStrongObjectPtr<CEntitySystem>>& Systems);
 
         // Tears down the systems the editor just disabled.
-        RUNTIME_API void DropDisabled(const THashSet<FName>& Disabled, TVector<TObjectPtr<CEntitySystem>>& Systems);
+        RUNTIME_API void DropDisabled(const THashSet<FName>& Disabled, TVector<TStrongObjectPtr<CEntitySystem>>& Systems);
 
         // Runs OnStartup on every system that has not had it yet.
-        RUNTIME_API void StartupPending(TVector<TObjectPtr<CEntitySystem>>& Systems);
+        RUNTIME_API void StartupPending(TVector<TStrongObjectPtr<CEntitySystem>>& Systems);
 
         // Every system class in the process, for the editor's system list. Includes disabled ones.
         RUNTIME_API void ForEachSystemClass(TFunctionRef<void(CClass*)> Visitor);
 
         // Runs OnTeardown on each and empties the list.
-        RUNTIME_API void DestroyAll(TVector<TObjectPtr<CEntitySystem>>& Systems);
+        RUNTIME_API void DestroyAll(TVector<TStrongObjectPtr<CEntitySystem>>& Systems);
 
         // The first system whose class derives from Class, or null.
-        RUNTIME_API CEntitySystem* Find(const TVector<TObjectPtr<CEntitySystem>>& Systems, const CClass* Class);
+        RUNTIME_API CEntitySystem* Find(const TVector<TStrongObjectPtr<CEntitySystem>>& Systems, const CClass* Class);
     }
 }

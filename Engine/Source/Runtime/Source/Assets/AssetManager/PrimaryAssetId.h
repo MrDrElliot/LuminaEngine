@@ -39,7 +39,7 @@ namespace Lumina
         explicit TPrimaryAssetId(const FName& InName) : FPrimaryAssetId(InName) {}
         explicit TPrimaryAssetId(const FPrimaryAssetId& InBase) : FPrimaryAssetId(InBase) {}
 
-        TObjectPtr<T> LoadSynchronous() const;
+        TStrongObjectPtr<T> LoadSynchronous() const;
         void          LoadAsync(const TFunction<void(T*)>& Callback) const;
     };
 }

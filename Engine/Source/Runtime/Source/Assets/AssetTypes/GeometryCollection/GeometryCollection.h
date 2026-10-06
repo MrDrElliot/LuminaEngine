@@ -78,7 +78,7 @@ namespace Lumina
 
         /** Per-piece CStaticMesh built once and shared across every fracture (indices match Pieces);
          *  lets runtime fracture spawn fragments with zero mesh-build cost. */
-        const TVector<TObjectPtr<CStaticMesh>>& GetPieceMeshes();
+        const TVector<TStrongObjectPtr<CStaticMesh>>& GetPieceMeshes();
 
         /** Re-bake the pieces from SourceMesh using NumPieces/Seed and copy its materials. Returns the piece count. */
         int32 Rebuild();
@@ -88,7 +88,7 @@ namespace Lumina
 
         /** Source mesh whose bounds are fractured. Pick it in the editor, then Generate. */
         PROPERTY(Editable, Category = "Fracture")
-        TObjectPtr<CStaticMesh> SourceMesh;
+        TStrongObjectPtr<CStaticMesh> SourceMesh;
 
         /** Number of convex chunks produced by the next bake. */
         PROPERTY(Editable, ClampMin = 2, ClampMax = 512, Category = "Fracture")
@@ -100,7 +100,7 @@ namespace Lumina
 
         /** Shared materials applied to each piece (copied from the source mesh at bake time). */
         PROPERTY(Editable, NoResize, Category = "Materials")
-        TVector<TObjectPtr<CMaterialInterface>> Materials;
+        TVector<TStrongObjectPtr<CMaterialInterface>> Materials;
 
     private:
 
@@ -110,7 +110,7 @@ namespace Lumina
         FFractureData Data;   // serialized geometry blob (not a reflected property)
 
         /** Shared per-piece meshes, built once. Strong refs keep them alive; cleared on Rebuild. Not serialized. */
-        TVector<TObjectPtr<CStaticMesh>> PieceMeshes;
+        TVector<TStrongObjectPtr<CStaticMesh>> PieceMeshes;
     };
 
     namespace Fracture
@@ -120,6 +120,6 @@ namespace Lumina
         RUNTIME_API void GenerateConvexFracture(const CMesh* SourceMesh, const FFractureSettings& Settings, TVector<FFracturePiece>& OutPieces);
 
         /** Build a transient, render- and collision-ready CStaticMesh from one piece. */
-        RUNTIME_API CStaticMesh* BuildPieceMesh(const FFracturePiece& Piece, const TVector<TObjectPtr<CMaterialInterface>>& Materials, const char* DebugName);
+        RUNTIME_API CStaticMesh* BuildPieceMesh(const FFracturePiece& Piece, const TVector<TStrongObjectPtr<CMaterialInterface>>& Materials, const char* DebugName);
     }
 }

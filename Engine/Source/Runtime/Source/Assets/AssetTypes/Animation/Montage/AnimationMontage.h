@@ -22,7 +22,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable, Category = "Segment")
-        TObjectPtr<CAnimation> Animation;
+        TStrongObjectPtr<CAnimation> Animation;
 
         /** Where the segment begins on the montage timeline. */
         PROPERTY(Editable, Category = "Segment", Units = "s", ClampMin = 0.0f)
@@ -157,7 +157,7 @@ namespace Lumina
 
         /** Skeleton every segment clip is authored against. */
         PROPERTY(Editable, Category = "Montage")
-        TObjectPtr<CSkeleton> Skeleton;
+        TStrongObjectPtr<CSkeleton> Skeleton;
 
         PROPERTY(Editable, Category = "Montage")
         TVector<SAnimMontageSlotTrack> SlotTracks;

@@ -34,17 +34,17 @@ namespace Lumina
         /** Seeds a sensible starter stack (point burst with gravity + fade) when both stacks are empty. */
         void EnsureDefaultStack();
 
-        TVector<TObjectPtr<CParticleModule>>& GetStack(EParticleModuleStage Stage)
+        TVector<TStrongObjectPtr<CParticleModule>>& GetStack(EParticleModuleStage Stage)
         {
             return Stage == EParticleModuleStage::Spawn ? SpawnModules : UpdateModules;
         }
 
         /** Modules run once when a particle is born. */
         PROPERTY()
-        TVector<TObjectPtr<CParticleModule>> SpawnModules;
+        TVector<TStrongObjectPtr<CParticleModule>> SpawnModules;
 
         /** Modules run every frame on live particles. */
         PROPERTY()
-        TVector<TObjectPtr<CParticleModule>> UpdateModules;
+        TVector<TStrongObjectPtr<CParticleModule>> UpdateModules;
     };
 }

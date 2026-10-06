@@ -39,7 +39,7 @@ namespace Lumina
         // SortPriority then name) and runs a throwaway validation compile to surface node errors.
         void CompileAndSyncSignature();
 
-        TObjectPtr<CMaterialFunctionGraph> NodeGraph;
+        TStrongObjectPtr<CMaterialFunctionGraph> NodeGraph;
         CEdGraphNode*                      SelectedNode = nullptr;
         FString                            CompilationLog;
         bool                               bHasErrors = false;

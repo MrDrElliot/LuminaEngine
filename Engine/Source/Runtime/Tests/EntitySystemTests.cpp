@@ -47,7 +47,7 @@ namespace
         return Disabled;
     }
 
-    CEntitySystemTest* FindTestSystem(const TVector<TObjectPtr<CEntitySystem>>& Systems)
+    CEntitySystemTest* FindTestSystem(const TVector<TStrongObjectPtr<CEntitySystem>>& Systems)
     {
         return Cast<CEntitySystemTest>(EntitySystems::Find(Systems, CEntitySystemTest::StaticClass()));
     }
@@ -57,7 +57,7 @@ TEST(EntitySystem, TeardownOnlyRunsForASystemThatStarted)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CEntitySystem>> Systems;
+    TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     EntitySystems::CreateMissing(*SentinelWorld, AllButTestSystems(), Systems);
 
     CEntitySystemTest* Created = FindTestSystem(Systems);
@@ -72,7 +72,7 @@ TEST(EntitySystem, ConfigureDeclaresStagesAndAccess)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CEntitySystem>> Systems;
+    TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     EntitySystems::CreateMissing(*SentinelWorld, AllButTestSystems(), Systems);
 
     CEntitySystemTest* Created = FindTestSystem(Systems);
@@ -105,7 +105,7 @@ TEST(EntitySystem, DeclaringNoAccessRunsExclusive)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CEntitySystem>> Systems;
+    TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     EntitySystems::CreateMissing(*SentinelWorld, AllButTestSystems(), Systems);
 
     CEntitySystem* Exclusive = EntitySystems::Find(Systems, CEntitySystemExclusiveTest::StaticClass());
@@ -121,7 +121,7 @@ TEST(EntitySystem, CreateMissingIsIdempotent)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CEntitySystem>> Systems;
+    TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     const THashSet<FName> Disabled = AllButTestSystems();
 
     EXPECT_EQ(EntitySystems::CreateMissing(*SentinelWorld, Disabled, Systems), 2);
@@ -142,7 +142,7 @@ TEST(EntitySystem, StartupRunsOnceAndTeardownFollows)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CEntitySystem>> Systems;
+    TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     EntitySystems::CreateMissing(*SentinelWorld, AllButTestSystems(), Systems);
 
     CEntitySystemTest* Created = FindTestSystem(Systems);
@@ -164,7 +164,7 @@ TEST(EntitySystem, DropDisabledRemovesOnlyTheNamedSystem)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CEntitySystem>> Systems;
+    TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     EntitySystems::CreateMissing(*SentinelWorld, AllButTestSystems(), Systems);
 
     EntitySystems::StartupPending(Systems);
@@ -187,7 +187,7 @@ TEST(EntitySystem, DropScriptedLeavesNativeSystemsAlone)
 {
     FCreationGate Gate;
 
-    TVector<TObjectPtr<CEntitySystem>> Systems;
+    TVector<TStrongObjectPtr<CEntitySystem>> Systems;
     EntitySystems::CreateMissing(*SentinelWorld, AllButTestSystems(), Systems);
 
     const size_t Before = Systems.size();

@@ -18,7 +18,7 @@ namespace Lumina
 
         /** Material to project. Must have its domain set to Decal. */
         PROPERTY(Editable, Category = "Decal")
-        TObjectPtr<CMaterialInterface> DecalMaterial;
+        TStrongObjectPtr<CMaterialInterface> DecalMaterial;
 
         /** Box dimensions in local units (before the entity transform scale). The decal projects along -Z. */
         PROPERTY(Editable, Category = "Decal", Units = "m")

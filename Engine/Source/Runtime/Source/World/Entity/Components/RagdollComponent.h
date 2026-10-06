@@ -33,7 +33,7 @@ namespace Lumina
 
         /** Authored bodies/constraints. If null, the system auto-generates one from the mesh's skeleton. */
         PROPERTY(Editable, Category = "Ragdoll")
-        TObjectPtr<CPhysicsAsset> PhysicsAsset;
+        TStrongObjectPtr<CPhysicsAsset> PhysicsAsset;
 
         /** Flip to Simulated to collapse into physics; the system creates/destroys bodies to match. */
         PROPERTY(Editable, Category = "Ragdoll")

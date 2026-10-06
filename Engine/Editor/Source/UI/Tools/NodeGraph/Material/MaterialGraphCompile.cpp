@@ -28,7 +28,7 @@ namespace Lumina
     {
         void RefreshFunctionCallPins(CMaterialNodeGraph* Graph, THashSet<FGuid>& VisitedFunctions)
         {
-            for (const TObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+            for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
             {
                 CMaterialExpression_MaterialFunctionCall* Call = Cast<CMaterialExpression_MaterialFunctionCall>(Node.Get());
                 if (Call == nullptr)
@@ -73,7 +73,7 @@ namespace Lumina
                 return;
             }
 
-            for (const TObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+            for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
             {
                 if (!Node.IsValid())
                 {
@@ -165,7 +165,7 @@ namespace Lumina
             Compiler.SetStaticSwitchOverrides(Target.StaticSwitchOverrides);
 
             // Resolved first, or a null slot fails to dedupe and binds its texture a second time.
-            TVector<TObjectPtr<CTexture>> Resolved;
+            TVector<TStrongObjectPtr<CTexture>> Resolved;
             Resolved.reserve(Material->Textures.size());
             for (uint32 i = 0; i < (uint32)Material->Textures.size(); ++i)
             {
@@ -397,7 +397,7 @@ namespace Lumina
         {
             FRecursiveScopeLock TextureLock(Material->TextureSlotMutex);
 
-            TVector<TObjectPtr<CTexture>> BoundTextures;
+            TVector<TStrongObjectPtr<CTexture>> BoundTextures;
             Compiler.GetBoundTextures(BoundTextures);
 
             Material->Textures.clear();
@@ -405,7 +405,7 @@ namespace Lumina
             Material->ResolvedTextures.clear();
             Material->ResolvedTextures.reserve(BoundTextures.size());
 
-            for (const TObjectPtr<CTexture>& Texture : BoundTextures)
+            for (const TStrongObjectPtr<CTexture>& Texture : BoundTextures)
             {
                 if (Texture == nullptr)
                 {
@@ -513,11 +513,11 @@ namespace Lumina
         struct FPendingMaterialRecompile
         {
             // The per-stage commit callbacks capture the material RAW, so this ref has to outlive the wait.
-            TObjectPtr<CMaterial>         Material;
+            TStrongObjectPtr<CMaterial>   Material;
             // Finish reads bound textures and parameters back off it, so it outlives the dispatch.
             TUniquePtr<FMaterialCompiler> Compiler;
             FMaterialGraphCompileResult   Result;
-            TObjectPtr<CMaterialNodeGraph> Graph;
+            TStrongObjectPtr<CMaterialNodeGraph> Graph;
             uint64                        GraphContentVersion = 0;
             bool                          bFunctionChange = false;
             bool                          bSaveWhenComplete = false;
@@ -529,7 +529,7 @@ namespace Lumina
 
         struct FPendingPermutationCompile
         {
-            TObjectPtr<CMaterial>         Material;
+            TStrongObjectPtr<CMaterial>   Material;
             TUniquePtr<FMaterialCompiler> Compiler;
             FMaterialGraphCompileResult   Result;
             FMaterialCompileTarget        Target;
@@ -649,7 +649,7 @@ namespace Lumina
             return;
         }
 
-        TObjectPtr<CMaterial> Material;
+        TStrongObjectPtr<CMaterial> Material;
         uint64                Key = 0;
         if (!CMaterial::PopPermutationRequest(Material, Key))
         {
@@ -757,7 +757,7 @@ namespace Lumina
         }
 
         const bool bFunctionChange = !GFunctionRecompileQueue.empty();
-        TObjectPtr<CMaterial> Material;
+        TStrongObjectPtr<CMaterial> Material;
         if (bFunctionChange)
         {
             const FGuid MaterialGUID = GFunctionRecompileQueue.back();

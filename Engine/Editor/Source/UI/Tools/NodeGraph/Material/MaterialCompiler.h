@@ -54,7 +54,7 @@ namespace Lumina
         struct FTextureParam
         {
             uint16 Index;
-            TObjectPtr<CTexture> Texture;
+            TStrongObjectPtr<CTexture> Texture;
         };
 
         struct FNodeOutputInfo
@@ -184,8 +184,8 @@ namespace Lumina
 
         // Pins the slots Params, Textures and Collections already hold, so every permutation reads one layout.
         void SeedManifest(const TVector<FMaterialParameter>& Params, const FMaterialUniforms& Uniforms,
-                          const TVector<TObjectPtr<CTexture>>& Textures,
-                          const TVector<TObjectPtr<CMaterialParameterCollection>>& Collections);
+                          const TVector<TStrongObjectPtr<CTexture>>& Textures,
+                          const TVector<TStrongObjectPtr<CMaterialParameterCollection>>& Collections);
 
         // Claims one of the material's collection binding slots, or INDEX_NONE past the budget.
         int32 BindParameterCollection(CMaterialParameterCollection* Collection, CEdGraphNode* Node);
@@ -197,7 +197,7 @@ namespace Lumina
                                     const FName& ParamID, CEdGraphNode* Node);
 
         // The collections this graph bound, in the slot order their shader reads were compiled against.
-        void GetBoundCollections(TVector<TObjectPtr<CMaterialParameterCollection>>& Out) const;
+        void GetBoundCollections(TVector<TStrongObjectPtr<CMaterialParameterCollection>>& Out) const;
 
         // An unnamed switch resolves without registering, so it stays fixed at the master and has no bit.
         bool ResolveStaticSwitch(const FName& ParamID, bool bDefaultValue, CEdGraphNode* Node);
@@ -481,7 +481,7 @@ namespace Lumina
         void NewLine();
         void AddRaw(const FString& Raw);
 
-        void GetBoundTextures(TVector<TObjectPtr<CTexture>>& Images);
+        void GetBoundTextures(TVector<TStrongObjectPtr<CTexture>>& Images);
 
         /** Export the dynamic parameter manifest discovered during compile and seed default values into the uniform block. */
         void GetParameters(TVector<FMaterialParameter>& OutParams, FMaterialUniforms& OutUniforms) const;
@@ -616,10 +616,10 @@ namespace Lumina
         EMaterialCompileStage CurrentStage = EMaterialCompileStage::Pixel;
         bool bMasked = false;
 
-        TVector<TObjectPtr<CTexture>> BoundImages;
+        TVector<TStrongObjectPtr<CTexture>> BoundImages;
 
         // Parallel-indexed with FMaterialUniforms::CollectionIndices, so position here is the shader slot.
-        TVector<TObjectPtr<CMaterialParameterCollection>> BoundCollections;
+        TVector<TStrongObjectPtr<CMaterialParameterCollection>> BoundCollections;
         TVector<EdNodeGraph::FError> Errors;
         TVector<EdNodeGraph::FError> Warnings;   // non-fatal; see AddWarning
 

@@ -14,7 +14,7 @@ namespace Lumina
         }
 
         // @TODO Temp load sync, mirroring SPrefabSpawnerSystem::Startup.
-        TObjectPtr<CPrefab> Prefab = PrefabInstance.LoadSynchronous();
+        TStrongObjectPtr<CPrefab> Prefab = PrefabInstance.LoadSynchronous();
         if (!Prefab.IsValid())
         {
             return false;

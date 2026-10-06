@@ -70,11 +70,11 @@ namespace Lumina
          *  against geometry that no longer exists, so it is shown but not editable; make a new asset from
          *  the other mesh instead. Kept so shapes can be regenerated after a reimport. */
         PROPERTY(ReadOnly, Category = "Source")
-        TObjectPtr<CStaticMesh> SourceMesh;
+        TStrongObjectPtr<CStaticMesh> SourceMesh;
 
         /** Surface response for every piece; null falls back to the rigid body's override fields. */
         PROPERTY(Editable, Category = "Collision")
-        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+        TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
         PROPERTY(Editable, Category = "Collision")
         TVector<SCollisionPrimitive> Primitives;

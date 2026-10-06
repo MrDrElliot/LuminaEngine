@@ -178,13 +178,13 @@ namespace Lumina
 
 #if USING(WITH_EDITOR)
         /** Next asset material whose serialized stages predate the current shader templates  */
-        static TObjectPtr<CMaterial> PopStaleTemplateMaterial();
+        static TStrongObjectPtr<CMaterial> PopStaleTemplateMaterial();
 
         /** Ask the editor to compile Key's permutation; idempotent, so an instance may call it freely. */
         static void RequestPermutation(CMaterial* Material, uint64 Key);
 
         /** Next queued permutation request, or false when none remain. */
-        static bool PopPermutationRequest(TObjectPtr<CMaterial>& OutMaterial, uint64& OutKey);
+        static bool PopPermutationRequest(TStrongObjectPtr<CMaterial>& OutMaterial, uint64& OutKey);
 #endif
 
         EMaterialType GetMaterialType() const override { return MaterialType; }
@@ -243,7 +243,7 @@ namespace Lumina
         TVector<TSoftObjectPtr<CTexture>>       Textures;
 
         /** Strong refs for the slots that have actually been demanded */
-        TVector<TObjectPtr<CTexture>>           ResolvedTextures;
+        TVector<TStrongObjectPtr<CTexture>>     ResolvedTextures;
 
         // Guards Textures and ResolvedTextures; the async load completion writes them from a loader thread.
         mutable FRecursiveMutex                 TextureSlotMutex;
@@ -279,7 +279,7 @@ namespace Lumina
         /** Collections this graph reads, in the slot order the shader compiled. Hard refs, since a
             collection is tiny and a material that samples one is useless without it. */
         PROPERTY()
-        TVector<TObjectPtr<CMaterialParameterCollection>> ParameterCollections;
+        TVector<TStrongObjectPtr<CMaterialParameterCollection>> ParameterCollections;
 
         /** Named static switches this graph declares, ordered by name with BitIndex assigned. */
         PROPERTY()

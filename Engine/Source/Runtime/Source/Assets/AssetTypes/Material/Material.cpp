@@ -117,13 +117,13 @@ namespace Lumina
 #if USING(WITH_EDITOR)
         // Filled during the parallel PostLoad wave and drained on the game thread, hence the mutex.
         FMutex                        StaleTemplateMutex;
-        TVector<TObjectPtr<CMaterial>> StaleTemplateMaterials;
+        TVector<TStrongObjectPtr<CMaterial>> StaleTemplateMaterials;
 
         // Idempotent, since every instance's PostLoad can reach the same master before the drain runs.
         void QueueStaleTemplateMaterial(CMaterial* Material)
         {
             FScopeLock Lock(StaleTemplateMutex);
-            for (const TObjectPtr<CMaterial>& Queued : StaleTemplateMaterials)
+            for (const TStrongObjectPtr<CMaterial>& Queued : StaleTemplateMaterials)
             {
                 if (Queued.Get() == Material)
                 {
@@ -135,7 +135,7 @@ namespace Lumina
 
         struct FPermutationRequest
         {
-            TObjectPtr<CMaterial> Material;
+            TStrongObjectPtr<CMaterial> Material;
             uint64                Key = 0;
         };
 
@@ -436,7 +436,7 @@ namespace Lumina
 
         // Never resolves to answer, since this runs for every material on a texture reimport.
         return Algo::AnyOf(ResolvedTextures,
-            [ChangedTexture](const TObjectPtr<CTexture>& Texture) { return Texture.Get() == ChangedTexture; });
+            [ChangedTexture](const TStrongObjectPtr<CTexture>& Texture) { return Texture.Get() == ChangedTexture; });
     }
 
     void CMaterial::OnReferencesReplaced()
@@ -1472,14 +1472,14 @@ namespace Lumina
     }
 
 #if USING(WITH_EDITOR)
-    TObjectPtr<CMaterial> CMaterial::PopStaleTemplateMaterial()
+    TStrongObjectPtr<CMaterial> CMaterial::PopStaleTemplateMaterial()
     {
         FScopeLock Lock(StaleTemplateMutex);
         if (StaleTemplateMaterials.empty())
         {
             return nullptr;
         }
-        TObjectPtr<CMaterial> Material = StaleTemplateMaterials.back();
+        TStrongObjectPtr<CMaterial> Material = StaleTemplateMaterials.back();
         StaleTemplateMaterials.pop_back();
         return Material;
     }
@@ -1503,7 +1503,7 @@ namespace Lumina
         PermutationRequests.push_back({ Material, Key });
     }
 
-    bool CMaterial::PopPermutationRequest(TObjectPtr<CMaterial>& OutMaterial, uint64& OutKey)
+    bool CMaterial::PopPermutationRequest(TStrongObjectPtr<CMaterial>& OutMaterial, uint64& OutKey)
     {
         FScopeLock Lock(PermutationRequestMutex);
         if (PermutationRequests.empty())

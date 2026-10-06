@@ -30,7 +30,7 @@ namespace Lumina
 
     void CMaterialNodeGraph::EnsureRootNodes()
     {
-        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TObjectPtr<CEdGraphNode>& Node)
+        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TStrongObjectPtr<CEdGraphNode>& Node)
         {
             return Node.IsValid() && Node->IsA<CMaterialOutputNode>();
         });
@@ -411,7 +411,7 @@ namespace Lumina
 
         // Nodes in both sets are walked twice (once per stage) to emit into both chunk buffers.
         CMaterialOutputNode* OutputNode = nullptr;
-        for (const TObjectPtr<CEdGraphNode>& N : Nodes)
+        for (const TStrongObjectPtr<CEdGraphNode>& N : Nodes)
         {
             if (N.IsValid() && N->IsA<CMaterialOutputNode>())
             {

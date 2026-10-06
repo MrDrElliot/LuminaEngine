@@ -11,9 +11,9 @@ namespace Lumina::WorldSubsystems
 {
     namespace
     {
-        bool AlreadyPresent(const TVector<TObjectPtr<CWorldSubsystem>>& Subsystems, const CClass* Class)
+        bool AlreadyPresent(const TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, const CClass* Class)
         {
-            for (const TObjectPtr<CWorldSubsystem>& Subsystem : Subsystems)
+            for (const TStrongObjectPtr<CWorldSubsystem>& Subsystem : Subsystems)
             {
                 if (Subsystem != nullptr && Subsystem->GetClass() == Class)
                 {
@@ -24,7 +24,7 @@ namespace Lumina::WorldSubsystems
         }
     }
 
-    int32 CreateMissing(CWorld& World, TVector<TObjectPtr<CWorldSubsystem>>& Out)
+    int32 CreateMissing(CWorld& World, TVector<TStrongObjectPtr<CWorldSubsystem>>& Out)
     {
         CClass* BaseClass = CWorldSubsystem::StaticClass();
 
@@ -85,7 +85,7 @@ namespace Lumina::WorldSubsystems
         return (int32)(Out.size() - FirstNew);
     }
 
-    void DropScripted(TVector<TObjectPtr<CWorldSubsystem>>& Subsystems)
+    void DropScripted(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
         // Back to front, so a subsystem created later can still reach an earlier one while it tears down.
         for (size_t Index = Subsystems.size(); Index > 0; --Index)
@@ -102,9 +102,9 @@ namespace Lumina::WorldSubsystems
         }
     }
 
-    void Update(TVector<TObjectPtr<CWorldSubsystem>>& Subsystems, float DeltaTime)
+    void Update(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, float DeltaTime)
     {
-        for (TObjectPtr<CWorldSubsystem>& Subsystem : Subsystems)
+        for (TStrongObjectPtr<CWorldSubsystem>& Subsystem : Subsystems)
         {
             if (Subsystem != nullptr)
             {
@@ -113,7 +113,7 @@ namespace Lumina::WorldSubsystems
         }
     }
 
-    void DestroyAll(TVector<TObjectPtr<CWorldSubsystem>>& Subsystems)
+    void DestroyAll(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
         for (size_t Index = Subsystems.size(); Index > 0; --Index)
         {
@@ -128,14 +128,14 @@ namespace Lumina::WorldSubsystems
         Subsystems.clear();
     }
 
-    CWorldSubsystem* Find(const TVector<TObjectPtr<CWorldSubsystem>>& Subsystems, const CClass* Class)
+    CWorldSubsystem* Find(const TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, const CClass* Class)
     {
         if (Class == nullptr)
         {
             return nullptr;
         }
 
-        for (const TObjectPtr<CWorldSubsystem>& Subsystem : Subsystems)
+        for (const TStrongObjectPtr<CWorldSubsystem>& Subsystem : Subsystems)
         {
             if (Subsystem != nullptr && Subsystem->GetClass()->IsChildOf(Class))
             {

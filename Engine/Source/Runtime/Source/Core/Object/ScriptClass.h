@@ -108,7 +108,7 @@ namespace Lumina
 
         /** Anchors the type that emitted ScriptProperties: its arena owns their storage, so the two die
          *  together. Held as a CStruct because the concrete emitting type is the scripting layer's. */
-        TObjectPtr<CStruct> LayoutRecord;
+        TStrongObjectPtr<CStruct> LayoutRecord;
 
         /** Size and alignment before the block was appended, to restore when it is rebuilt. */
         uint32 ShimSize = 0;

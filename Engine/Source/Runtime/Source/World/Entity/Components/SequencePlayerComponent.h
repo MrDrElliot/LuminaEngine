@@ -24,7 +24,7 @@ namespace Lumina
         GENERATED_BODY()
 
         PROPERTY(Editable, Category = "Sequence")
-        TObjectPtr<CSequence> Sequence;
+        TStrongObjectPtr<CSequence> Sequence;
 
         /** Begins playing as soon as the component exists, for cutscenes triggered by level load. */
         PROPERTY(Editable, Category = "Sequence")
