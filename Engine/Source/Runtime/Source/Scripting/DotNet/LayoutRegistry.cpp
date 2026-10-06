@@ -1,7 +1,9 @@
 ﻿#include "RuntimePCH.h"
 
 #include "LayoutRegistry.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Reflection/Type/PropertyRegistry.h"
 #include "Scripting/DotNet/DotNetExport.h"
 #include "Scripting/DotNet/ExportSignature.h"
 
@@ -85,9 +87,34 @@ LUMINA_DOTNET_EXPORT(int32, PropertyType_Count)()
     return (int32)::Lumina::EPropertyTypeFlags::Count;
 }
 
+// Size in the low half and alignment in the high half, for a C# struct that lays its fields out the way a minted script struct does.
+LUMINA_DOTNET_EXPORT(int64, ScriptValueLayout)(int32 Kind, const char* StructName, int32 Len)
+{
+    uint32 Size = 0;
+    uint32 Alignment = 0;
+    if (Kind == (int32)::Lumina::EPropertyTypeFlags::Struct)
+    {
+        const ::Lumina::CStruct* Struct = (StructName != nullptr && Len > 0)
+            ? ::Lumina::FindObject<::Lumina::CStruct>(::Lumina::FName(::Lumina::FString(StructName, (size_t)Len).c_str())) : nullptr;
+        if (Struct == nullptr)
+        {
+            return -1;
+        }
+        Size = Struct->GetAlignedSize();
+        Alignment = Struct->GetAlignment();
+    }
+    else if (Kind <= 0 || Kind >= (int32)::Lumina::EPropertyTypeFlags::Count
+        || !::Lumina::GetPropertyKindOps((::Lumina::EPropertyTypeFlags)Kind).GetFixedLayout(Size, Alignment))
+    {
+        return -1;
+    }
+    return (int64)Size | ((int64)Alignment << 32);
+}
+
 LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(Layout_GetSize),
     LUMINA_DOTNET_SIG(PropertyType_Value),
     LUMINA_DOTNET_SIG(PropertyFlag_Value),
-    LUMINA_DOTNET_SIG(PropertyType_Count)
+    LUMINA_DOTNET_SIG(PropertyType_Count),
+    LUMINA_DOTNET_SIG(ScriptValueLayout)
 );

@@ -256,9 +256,8 @@ namespace Lumina
                     Value = Shaped(Shape, Phase) * Amplitude + Offset;
                     AudioOut[Frame] = Value;
 
-                    Phase += Increment;
-                    while (Phase >= 1.0f) { Phase -= 1.0f; }
-                    while (Phase < 0.0f)  { Phase += 1.0f; }
+                    Phase = std::isfinite(Phase + Increment) ? Math::Fract(Phase + Increment) : 0.0f;
+                    Phase = Phase < 1.0f ? Phase : 0.0f;
                 }
 
                 *ValueOut = Value;

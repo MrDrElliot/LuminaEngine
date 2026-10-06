@@ -39,6 +39,25 @@ namespace Lumina::Box3DUtils
     RUNTIME_API b3BodyType ToBox3DBodyType(EBodyType Type);
     RUNTIME_API EBodyType FromBox3DBodyType(b3BodyType Type);
 
+    // The broadphase never terminates on a non-finite bound and squares extents in float, so bodies past this are refused.
+    inline constexpr float MaxSafeCoordinate = 1.0e9f;
+
+    // Written as a negated range test so a NaN component fails it too.
+    FORCEINLINE bool IsWithin(const FVector3& Vec, float Limit)
+    {
+        return Math::Abs(Vec.x) <= Limit && Math::Abs(Vec.y) <= Limit && Math::Abs(Vec.z) <= Limit;
+    }
+
+    FORCEINLINE bool IsFiniteVector(const FVector3& Vec)
+    {
+        return IsWithin(Vec, FLT_MAX);
+    }
+
+    FORCEINLINE bool IsSafePose(const FVector3& Position, const FQuat& Rotation)
+    {
+        return IsWithin(Position, MaxSafeCoordinate) && IsWithin(FVector3(Rotation.x, Rotation.y, Rotation.z), 2.0f) && Math::Abs(Rotation.w) <= 2.0f;
+    }
+
     FORCEINLINE b3Vec3 ToB3Vec3(const FVector3& Vec)
     {
         return b3Vec3{ Vec.x, Vec.y, Vec.z };

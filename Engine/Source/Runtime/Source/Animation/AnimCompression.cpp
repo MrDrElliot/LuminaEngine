@@ -243,7 +243,48 @@ namespace Lumina
         Ar << Data.Bones;
         Ar << Data.QuantizedData;
         Ar << Data.RawData;
+
+        // The decoders index the pools by these offsets unchecked, so a corrupt clip loads empty instead.
+        if (Ar.IsReading() && !Data.HasConsistentTracks())
+        {
+            LOG_ERROR("Compressed animation with {} frames and {} bones has tracks outside its data; the clip loads empty", Data.NumFrames, Data.Bones.size());
+            Ar.SetHasError(true);
+            Data.Reset();
+        }
         return Ar;
+    }
+
+    bool FCompressedAnimData::HasConsistentTracks() const
+    {
+        if (NumFrames > AnimCompression::MaxFrames)
+        {
+            return false;
+        }
+
+        auto Fits = [this](const FCompressedAnimTrack& Track, uint64 QuantizedLanes, uint64 RawLanes)
+        {
+            switch (Track.Format)
+            {
+            case EAnimTrackFormat::None:
+            case EAnimTrackFormat::Constant:
+                return true;
+            case EAnimTrackFormat::Quantized:
+                return (uint64)Track.DataOffset + (uint64)NumFrames * QuantizedLanes <= QuantizedData.size();
+            case EAnimTrackFormat::Raw:
+                return RawLanes == 0 || (uint64)Track.DataOffset + (uint64)NumFrames * RawLanes <= RawData.size();
+            default:
+                return false;
+            }
+        };
+
+        for (const FCompressedAnimBone& Bone : Bones)
+        {
+            if (!Fits(Bone.Translation, 3, 3) || !Fits(Bone.Rotation, 4, 0) || !Fits(Bone.Scale, 3, 0))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     void FCompressedAnimData::GetFrameBlend(float Time, float Duration, uint32& OutFrame0, uint32& OutFrame1, float& OutAlpha) const

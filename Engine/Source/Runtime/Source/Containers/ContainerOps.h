@@ -40,6 +40,7 @@ namespace Lumina
         void   (*ConstructContainer)(void* Vector, const void* Context);
         void   (*DestructContainer)(void* Vector, const void* Context);
         const void* ContainerContext;
+        uint32 ContainerSize;
     };
 
     // Ops for a specific vector-like CONTAINER type, not just its element type. TFixedVector<T, N> reflects as
@@ -64,6 +65,7 @@ namespace Lumina
             [](void* V, const void*) { Memory::ConstructAt(static_cast<TContainer*>(V)); },
             [](void* V, const void*) { Memory::DestroyAt(static_cast<TContainer*>(V)); },
             nullptr,
+            static_cast<uint32>(sizeof(TContainer)),
         };
         return &Ops;
     }
@@ -102,6 +104,7 @@ namespace Lumina
         void   (*ConstructContainer)(void* Map, const void* Context);
         void   (*DestructContainer)(void* Map, const void* Context);
         const void* ContainerContext;
+        uint32 ContainerSize;
     };
 
     // The map counterpart of GetVectorOpsFor: keyed on the container type so a TFixedHashMap<K, V, N>, which
@@ -167,6 +170,7 @@ namespace Lumina
             [](void* M, const void*) { Memory::ConstructAt(static_cast<MapT*>(M)); },
             [](void* M, const void*) { Memory::DestroyAt(static_cast<MapT*>(M)); },
             nullptr,
+            static_cast<uint32>(sizeof(MapT)),
         };
         return &Ops;
     }

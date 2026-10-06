@@ -69,8 +69,28 @@ namespace Lumina::Physics
         return ReadBodyState(ResolveTarget(Target), Out);
     }
 
-    void FBox3DPhysicsScene::QueueBodyCommand(const FBodyCommand& Command)
+    void FBox3DPhysicsScene::QueueBodyCommand(const FBodyCommand& InCommand)
     {
+        const bool bFinite = Box3DUtils::IsFiniteVector(InCommand.Value) && Box3DUtils::IsFiniteVector(InCommand.Point)
+                          && Box3DUtils::IsFiniteVector(InCommand.Secondary) && Box3DUtils::IsFiniteVector(FVector3(InCommand.Parameters))
+                          && Math::Abs(InCommand.Parameters.w) <= FLT_MAX;
+        if (!bFinite)
+        {
+            static TAtomic<bool> bWarned{ false };
+            if (!bWarned.exchange(true, std::memory_order_relaxed))
+            {
+                LOG_WARN("Dropped a physics body command with a NaN or infinite value for entity {}", InCommand.Entity.Value);
+            }
+            return;
+        }
+
+        FBodyCommand Command = InCommand;
+        if (Command.Type != EBodyCommand::TargetForce)
+        {
+            const FBodyRecord* Record = FindBodyRecord(Command.Entity);
+            Command.Revision = Record != nullptr ? Record->Revision : 0;
+        }
+
         const uint32 Slot = Jobs::GetWorkerIndex();
         if (Slot < (uint32)ThreadBodyCommands.size())
         {
@@ -126,7 +146,8 @@ namespace Lumina::Physics
         else
         {
             const FBodyRecord* Record = FindBodyRecord(Command.Entity);
-            if (Record == nullptr || Record->Status == EPhysicsBodyStatus::Failed)
+            if (Record == nullptr || Record->Status == EPhysicsBodyStatus::Failed
+                || (Command.Revision != 0 && Command.Revision != Record->Revision))
             {
                 return EBodyCommandResult::Dropped;
             }

@@ -64,6 +64,10 @@ internal static class ElementKinds
         {
             return EElementKind.ObjectWrapper;
         }
+        if (ScriptStructLayout.NeedsMarshalling(Slot))
+        {
+            return EElementKind.ScriptStruct;
+        }
         return EElementKind.Blittable;
     }
 }

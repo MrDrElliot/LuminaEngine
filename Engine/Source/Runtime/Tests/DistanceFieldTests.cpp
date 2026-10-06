@@ -323,7 +323,7 @@ TEST(DistanceField, SerializationRoundTrips)
 // Transcribed from FMeshletHeader in Common.slang, which is hand-written; if one moves, check it.
 TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 {
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 128u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 144u);
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletsAddress), 0u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, SpheresAddress), 8u);
@@ -356,7 +356,10 @@ TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, BonePaletteCount), 120u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, _LocalBoundsPad1), 124u);
 
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, PositionsAddress), 128u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _PositionsPad), 136u);
+
     // Every member is accounted for above, so a new one shows up here as a size mismatch.
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _LocalBoundsPad1) + sizeof(FMeshletHeaderGPU::_LocalBoundsPad1),
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _PositionsPad) + sizeof(FMeshletHeaderGPU::_PositionsPad),
               sizeof(FMeshletHeaderGPU));
 }

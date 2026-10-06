@@ -57,5 +57,7 @@ namespace Lumina
         RUNTIME_API static TMulticastDelegate<void, FStringView>     OnContentFileModified;
         RUNTIME_API static TMulticastDelegate<void, FStringView, FStringView> OnContentFileRenamed;
         RUNTIME_API static TMulticastDelegate<void, CClass*>         OnSettingsSaved;
+        // Before a C# reload replaces its classes, so a holder the reinstancer cannot see lets go of their instances.
+        RUNTIME_API static TMulticastDelegate<void>                 OnScriptsWillReload;
     };
 }

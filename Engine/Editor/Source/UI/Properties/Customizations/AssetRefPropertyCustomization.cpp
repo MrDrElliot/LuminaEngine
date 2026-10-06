@@ -4,6 +4,8 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetRegistry/TextAssetTypes.h"
 #include "FileSystem/FileSystem.h"
+#include "Session/SessionOps.h"
+#include "UI/Tools/EditorToolContext.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -122,14 +124,22 @@ namespace Lumina
         }
 
         ImGui::SameLine();
+        // UI documents and stylesheets have an editor of their own in the engine, everything else opens outside it.
+        const ETextAssetKind ResolvedKind = TextAsset::KindFromPath(FStringView(ResolvedPath.c_str(), ResolvedPath.size()));
+        const bool bEngineEditor = ResolvedKind == ETextAssetKind::RmlDocument || ResolvedKind == ETextAssetKind::RmlStyleSheet;
         if (ImGui::Button(LE_ICON_OPEN_IN_NEW "##Open", GAssetRefButtonSize))
         {
-            if (!ResolvedPath.empty())
+            IEditorToolContext* Tools = SessionOps::GetToolContext();
+            if (!ResolvedPath.empty() && bEngineEditor && Tools != nullptr)
+            {
+                Tools->OpenFileEditor(FStringView(ResolvedPath.c_str(), ResolvedPath.size()));
+            }
+            else if (!ResolvedPath.empty())
             {
                 VFS::PlatformOpen(ResolvedPath);
             }
         }
-        ImGuiX::TextTooltip("Open in your native editor");
+        ImGuiX::TextTooltip("{}", bEngineEditor ? "Open in the UI editor" : "Open in your native editor");
 
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_CONTENT_COPY "##Copy", GAssetRefButtonSize))

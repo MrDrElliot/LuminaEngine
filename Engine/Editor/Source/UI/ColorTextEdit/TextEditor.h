@@ -625,6 +625,9 @@ public:
 		// Null = use the triggerInStrings flag alone.
 		std::function<bool(const AutoCompleteState&)> stringTriggerFilter;
 
+		// optional app gate on every trigger, so an app completing only some contexts never shows an empty popup
+		std::function<bool(const AutoCompleteState&)> triggerFilter;
+
 		// manual trigger key sequence (default is Ctrl+space on all platforms, even MacOS)
 		// remember Dear ImGui reverses Ctrl and Command on MacOS
 #if __APPLE__

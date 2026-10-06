@@ -88,6 +88,9 @@ namespace Lumina
         // ENetRealm from the C# [HostOnly], [ClientOnly] and [Cosmetic], the managed spelling of the REFLECT specifiers.
         uint8 ScriptNetRealm = 0;
 
+        // The class metadata the C# attributes set last reload, so a removed or changed attribute does not linger on a reused class.
+        TVector<FName> ScriptClassMetaKeys;
+
         /** Every property appended from the script type's schema, in layout order. They live past the C++
          *  shim the class was minted from. */
         TVector<FProperty*> ScriptProperties;

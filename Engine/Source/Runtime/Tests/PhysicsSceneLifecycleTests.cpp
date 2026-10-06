@@ -197,13 +197,13 @@ TEST_F(PhysicsSceneLifecycle, ConstraintsWaitForBothPendingBodies)
     const uint32 Constraint = Scene->CreateConstraint(Desc);
     ASSERT_NE(Constraint, 0u);
     Scene->Update(0.0);
-    EXPECT_EQ(b3World_GetCounters(Scene->GetWorldId()).jointCount, 0);
+    EXPECT_EQ((int)Scene->GetLiveJointCount(), 0);
     Registry->Emplace<SSphereColliderComponent>(B);
     Scene->Update(0.0);
-    EXPECT_EQ(b3World_GetCounters(Scene->GetWorldId()).jointCount, 1);
+    EXPECT_EQ((int)Scene->GetLiveJointCount(), 1);
     Scene->DestroyConstraint(Constraint);
     Scene->Update(0.0);
-    EXPECT_EQ(b3World_GetCounters(Scene->GetWorldId()).jointCount, 0);
+    EXPECT_EQ((int)Scene->GetLiveJointCount(), 0);
 }
 
 TEST_F(PhysicsSceneLifecycle, RagdollRequestsOwnTemporaryPoseDataAndFilterByOwner)
@@ -240,3 +240,4 @@ TEST_F(PhysicsSceneLifecycle, RagdollRequestsOwnTemporaryPoseDataAndFilterByOwne
     Scene->Update(0.0);
     EXPECT_EQ(Scene->GetBodyCount(), 0u);
 }
+

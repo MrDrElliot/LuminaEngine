@@ -130,7 +130,7 @@ internal static class Serializer
 
         WriteString(Writer, Property.Name);
         WriteAliases(Writer, Property.Aliases);
-        WriteMeta(Writer, Property.Meta, Property.Hidden, Property.ParamFlags, Property.ExtraFlags, Property.NetRate, Property.NetMeta);
+        WriteMeta(Writer, Property.Meta, Property.Hidden, Property.ParamFlags, Property.ExtraFlags, Property.NetRate, Property.ExtraMeta);
 
         // Only a top-level field has a hot-reload identity, so only it carries the byte.
         if (bTopLevel)
@@ -149,7 +149,7 @@ internal static class Serializer
 
     private static void WriteMeta(BinaryWriter Writer, PropertyAttribute? Meta, bool bHidden = false,
         EScriptParamFlags ParamFlags = EScriptParamFlags.None, EPropertyFlags ExtraFlags = EPropertyFlags.None, float NetRate = 0.0f,
-        IReadOnlyList<KeyValuePair<string, string>>? NetMeta = null)
+        IReadOnlyList<KeyValuePair<string, string>>? ExtraMeta = null)
     {
         using var Frame = new Record(Writer, ERecord.Meta);
 
@@ -178,10 +178,10 @@ internal static class Serializer
         Writer.Write((uint)(Meta?.Flags ?? EPropertyFlags.None) | (uint)ExtraFlags | (uint)ParamFlags);
         Writer.Write((double)NetRate);
 
-        Writer.Write(NetMeta?.Count ?? 0);
-        if (NetMeta != null)
+        Writer.Write(ExtraMeta?.Count ?? 0);
+        if (ExtraMeta != null)
         {
-            foreach (KeyValuePair<string, string> Pair in NetMeta)
+            foreach (KeyValuePair<string, string> Pair in ExtraMeta)
             {
                 WriteString(Writer, Pair.Key);
                 WriteString(Writer, Pair.Value);
@@ -420,6 +420,10 @@ internal static class Serializer
         if (Type.IsInputAction)
         {
             return Value is SInputBinding Binding ? Binding.Name : "";
+        }
+        if (Value is global::Lumina.FString Text)
+        {
+            return Text.ToString();
         }
         return Value as string ?? "";
     }
@@ -665,7 +669,8 @@ internal static class Serializer
             Value = Box;
             return Box != null;
         }
-        Value = Text;
+        // Both spellings name one native FString, so the value comes back as whichever the field declares.
+        Value = Type.Clr == typeof(global::Lumina.FString) ? new global::Lumina.FString(Text) : Text;
         return true;
     }
 

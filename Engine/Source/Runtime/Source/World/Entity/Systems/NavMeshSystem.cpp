@@ -20,6 +20,7 @@
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
+#include "World/Entity/Components/FoliageComponent.h"
 #include "World/Entity/Components/NavLinkComponent.h"
 #include "World/Entity/Components/NavMeshComponent.h"
 #include "World/Entity/Components/NavModifierComponent.h"
@@ -39,7 +40,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
         Writes<SNavMeshComponent>();
-        Reads<SRigidBodyComponent, SBoxColliderComponent, SSphereColliderComponent, SMeshColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent, SCharacterPhysicsComponent, STerrainColliderComponent, STerrainComponent, STransformComponent, SStaticMeshComponent, SDynamicMeshColliderComponent, SDynamicMeshComponent, SCompoundColliderComponent, SNavModifierComponent, SNavLinkComponent>();
+        Reads<SRigidBodyComponent, SBoxColliderComponent, SSphereColliderComponent, SMeshColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent, SCharacterPhysicsComponent, STerrainColliderComponent, STerrainComponent, STransformComponent, SStaticMeshComponent, SDynamicMeshColliderComponent, SDynamicMeshComponent, SCompoundColliderComponent, SNavModifierComponent, SNavLinkComponent, SFoliageComponent>();
     }
 
     // NOLINTBEGIN(bugprone-throwing-static-initialization)
@@ -259,7 +260,7 @@ namespace Lumina
         }
 
         // Tag-bit packed into cache key so one entity may track one collider of each type.
-        enum class ENavColliderType : uint8 { Box = 0, Sphere = 1, Mesh = 2, CharacterCapsule = 3, Capsule = 4, Cylinder = 5, Terrain = 6, TriangleSoup = 7, DynamicMesh = 8, AreaVolume = 9, OffMeshLink = 10 };
+        enum class ENavColliderType : uint8 { Box = 0, Sphere = 1, Mesh = 2, CharacterCapsule = 3, Capsule = 4, Cylinder = 5, Terrain = 6, TriangleSoup = 7, DynamicMesh = 8, AreaVolume = 9, OffMeshLink = 10, Foliage = 11 };
 
         // Compound children reuse the primitive types, so their sub-indices sit above a collision shape asset's.
         constexpr uint32 CompoundSubIndexBase = 1u << 23;
@@ -649,6 +650,8 @@ namespace Lumina
             TSharedPtr<TVector<FVector3>>   TriangleSoup;             // world-space tri soup (groups of 3); Terrain and TriangleSoup types
             TSharedPtr<FNavAreaVolume>      AreaVolume;               // AreaVolume type
             TSharedPtr<FNavOffMeshLink>     Link;                     // OffMeshLink type
+            // Foliage type, shared by every instance of a species in its local space and placed by World.
+            TSharedPtr<const TVector<FNavSourcePrim>> Children;
         };
 
         struct FNavSourceEntry
@@ -681,6 +684,27 @@ namespace Lumina
                         for (size_t i = 0; i + 2 < Tris.size(); i += 3)
                         {
                             EmitTri(Acc, BakeMin, BakeMax, Tris[i], Tris[i + 1], Tris[i + 2]);
+                        }
+                    }
+                    break;
+                case ENavColliderType::Foliage:
+                    if (P.Children)
+                    {
+                        for (const FNavSourcePrim& Child : *P.Children)
+                        {
+                            if (Child.TriangleSoup)
+                            {
+                                const TVector<FVector3>& Tris = *Child.TriangleSoup;
+                                for (size_t i = 0; i + 2 < Tris.size(); i += 3)
+                                {
+                                    EmitTri(Acc, BakeMin, BakeMax, FVector3(P.World * FVector4(Tris[i], 1.0f)),
+                                        FVector3(P.World * FVector4(Tris[i + 1], 1.0f)), FVector3(P.World * FVector4(Tris[i + 2], 1.0f)));
+                                }
+                                continue;
+                            }
+                            FNavSourcePrim Placed = Child;
+                            Placed.World = P.World * Child.World;
+                            EmitNavSourcePrim(Placed, BakeMin, BakeMax, Acc);
                         }
                     }
                     break;
@@ -751,26 +775,176 @@ namespace Lumina
         }
 
         // Change detector and cache rebuild MUST agree byte for byte, so all four share this walk.
+        void CornersAABB(const FMatrix4& W, const FVector3* Local, int32 N, FVector3& Mn, FVector3& Mx)
+        {
+            Mn = FVector3( FLT_MAX);
+            Mx = FVector3(-FLT_MAX);
+            for (int32 i = 0; i < N; ++i)
+            {
+                const FVector3 Pt = FVector3(W * FVector4(Local[i], 1.0f));
+                Mn = Math::Min(Mn, Pt);
+                Mx = Math::Max(Mx, Pt);
+            }
+        }
+
+        float ScaledRadius(const FMatrix4& W, float Radius)
+        {
+            const float Sx = Math::Length(FVector3(W[0]));
+            const float Sy = Math::Length(FVector3(W[1]));
+            const float Sz = Math::Length(FVector3(W[2]));
+            return Radius * Math::Max(Sx, Math::Max(Sy, Sz));
+        }
+
+        // One source per collision piece, so nav sees the same decomposed shape physics does. Emit takes the key type and sub-index.
+        template<typename FnEmit>
+        void ForEachCollisionShapePrim(const CCollisionShape& Asset, const FMatrix4& ColliderWorld, FnEmit&& Emit)
+        {
+            if (Asset.IsConcave())
+            {
+                FNavSourceEntry Entry;
+                Entry.Prim.Type = ENavColliderType::TriangleSoup;
+                Entry.Prim.World = ColliderWorld;
+                Entry.Prim.TriangleSoup = MakeShared<TVector<FVector3>>();
+
+                Entry.Prim.TriangleSoup->reserve(Asset.TriangleIndices.size());
+                for (uint32 Index : Asset.TriangleIndices)
+                {
+                    const FVector3 P = FVector3(ColliderWorld * FVector4(Asset.TriangleVertices[Index], 1.0f));
+                    Entry.Prim.TriangleSoup->push_back(P);
+                    Entry.AABBMin = Math::Min(Entry.AABBMin, P);
+                    Entry.AABBMax = Math::Max(Entry.AABBMax, P);
+                }
+
+                Emit(ENavColliderType::TriangleSoup, 0u, std::move(Entry));
+                return;
+            }
+
+            for (uint32 i = 0; i < (uint32)Asset.Primitives.size(); ++i)
+            {
+                const SCollisionPrimitive& Primitive = Asset.Primitives[i];
+
+                FNavSourceEntry Entry;
+                Entry.Prim.World = ColliderWorld * Math::Translate(FMatrix4(1.0f), Primitive.Center)
+                                                 * Math::ToMatrix4(FQuat(Math::Radians(Primitive.Rotation)));
+
+                switch (Primitive.Type)
+                {
+                case ECollisionPrimitiveType::Box:
+                    {
+                        Entry.Prim.Type = ENavColliderType::Box;
+                        Entry.Prim.Shape = Primitive.HalfExtent;
+
+                        const FVector3 H = Primitive.HalfExtent;
+                        const FVector3 Corners[8] = {
+                            {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z}, { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
+                            {-H.x, H.y,-H.z}, { H.x, H.y,-H.z}, { H.x, H.y, H.z}, {-H.x, H.y, H.z},
+                        };
+                        CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
+                    }
+                    break;
+
+                case ECollisionPrimitiveType::Sphere:
+                    {
+                        Entry.Prim.Type = ENavColliderType::Sphere;
+                        Entry.Prim.Shape = FVector3(Primitive.Radius, 0.0f, 0.0f);
+
+                        const FVector3 Center = FVector3(Entry.Prim.World * FVector4(0.0f, 0.0f, 0.0f, 1.0f));
+                        const float R = ScaledRadius(Entry.Prim.World, Primitive.Radius);
+                        Entry.AABBMin = Center - FVector3(R);
+                        Entry.AABBMax = Center + FVector3(R);
+                    }
+                    break;
+
+                case ECollisionPrimitiveType::Capsule:
+                    {
+                        Entry.Prim.Type = ENavColliderType::Capsule;
+                        Entry.Prim.Shape = FVector3(Primitive.Radius, Primitive.HalfHeight, 0.0f);
+
+                        const FVector3 Center = FVector3(Entry.Prim.World * FVector4(0.0f, 0.0f, 0.0f, 1.0f));
+                        const float R = ScaledRadius(Entry.Prim.World, Primitive.Radius + Primitive.HalfHeight);
+                        Entry.AABBMin = Center - FVector3(R);
+                        Entry.AABBMax = Center + FVector3(R);
+                    }
+                    break;
+
+                case ECollisionPrimitiveType::ConvexHull:
+                    {
+                        TVector<FVector3> HullVertices;
+                        TVector<uint32> HullIndices;
+                        if (!Physics::CollisionGen::BuildHullTriangles(Primitive.HullPoints, HullVertices, HullIndices))
+                        {
+                            continue;
+                        }
+
+                        Entry.Prim.Type = ENavColliderType::TriangleSoup;
+                        Entry.Prim.TriangleSoup = MakeShared<TVector<FVector3>>();
+
+                        Entry.Prim.TriangleSoup->reserve(HullIndices.size());
+                        for (uint32 Index : HullIndices)
+                        {
+                            const FVector3 P = FVector3(Entry.Prim.World * FVector4(HullVertices[Index], 1.0f));
+                            Entry.Prim.TriangleSoup->push_back(P);
+                            Entry.AABBMin = Math::Min(Entry.AABBMin, P);
+                            Entry.AABBMax = Math::Max(Entry.AABBMax, P);
+                        }
+                    }
+                    break;
+                }
+
+                Emit(Entry.Prim.Type, i, std::move(Entry));
+            }
+        }
+
+        // A species' collision in its own space, built once per scan and placed per instance.
+        struct FFoliageNavTemplate
+        {
+            TSharedPtr<const TVector<FNavSourcePrim>> Children;
+            FVector3 LocalMin = FVector3( FLT_MAX);
+            FVector3 LocalMax = FVector3(-FLT_MAX);
+            uint64   ContentId = 0;
+        };
+
+        // Mirrors SFoliageCollisionSystem, an authored shape first and the mesh otherwise, read as triangles like a mesh collider.
+        FFoliageNavTemplate BuildFoliageNavTemplate(const SFoliageType& Type)
+        {
+            FFoliageNavTemplate Template;
+            if (!Type.bEnableCollision)
+            {
+                return Template;
+            }
+
+            auto Children = MakeShared<TVector<FNavSourcePrim>>();
+            const CCollisionShape* Shape = Type.CollisionShape.Get();
+            if (Shape != nullptr && Shape->HasCollision())
+            {
+                ForEachCollisionShapePrim(*Shape, FMatrix4(1.0f), [&](ENavColliderType, uint32, FNavSourceEntry&& Entry)
+                {
+                    Template.LocalMin = Math::Min(Template.LocalMin, Entry.AABBMin);
+                    Template.LocalMax = Math::Max(Template.LocalMax, Entry.AABBMax);
+                    Children->push_back(std::move(Entry.Prim));
+                });
+                Template.ContentId = MakeContentId(Shape, Shape->TriangleIndices.size(), Shape->Primitives.size());
+            }
+            else if (CStaticMesh* Mesh = Type.Mesh.Get(); Mesh != nullptr && !Mesh->GetMeshResource().bSkinnedMesh)
+            {
+                FNavSourcePrim& Child = Children->emplace_back();
+                Child.Type = ENavColliderType::Mesh;
+                Child.Mesh = Mesh;
+                const FMeshletData& MeshletData = Mesh->GetMeshResource().MeshletData;
+                Template.ContentId = MakeContentId(Mesh, MeshletData.MeshletVertices.size(), MeshletData.MeshletTriangles.size());
+                Template.LocalMin = Mesh->GetAABB().Min;
+                Template.LocalMax = Mesh->GetAABB().Max;
+            }
+
+            if (!Children->empty())
+            {
+                Template.Children = Children;
+            }
+            return Template;
+        }
+
         void CollectNavSources(const FSystemContext& Context, const FVector3& BakeMin, const FVector3& BakeMax, bool bTessellateTerrain, float CellSize, TVector<FNavSourceEntry>& Out)
         {
-            auto CornersAABB = [](const FMatrix4& W, const FVector3* Local, int32 N, FVector3& Mn, FVector3& Mx)
-            {
-                Mn = FVector3( FLT_MAX);
-                Mx = FVector3(-FLT_MAX);
-                for (int32 i = 0; i < N; ++i)
-                {
-                    const FVector3 Pt = FVector3(W * FVector4(Local[i], 1.0f));
-                    Mn = Math::Min(Mn, Pt);
-                    Mx = Math::Max(Mx, Pt);
-                }
-            };
-            auto ScaledRadius = [](const FMatrix4& W, float Radius) -> float
-            {
-                const float Sx = Math::Length(FVector3(W[0]));
-                const float Sy = Math::Length(FVector3(W[1]));
-                const float Sz = Math::Length(FVector3(W[2]));
-                return Radius * Math::Max(Sx, Math::Max(Sy, Sz));
-            };
 
             // A simulated body is loose debris rather than level geometry, and baking it would rebuild tiles every time it settles.
             auto RigidBodies = Context.GetRegistry().GetStorage<SRigidBodyComponent>();
@@ -836,106 +1010,52 @@ namespace Lumina
                                                                CSC.TranslationOffset, CSC.RotationOffset);
 
                 const uint64 AssetContentId = MakeContentId(Asset, Asset->TriangleIndices.size(), Asset->Primitives.size());
-
-                if (Asset->IsConcave())
+                ForEachCollisionShapePrim(*Asset, ColliderWorld, [&](ENavColliderType KeyType, uint32 SubIndex, FNavSourceEntry&& Entry)
                 {
-                    FNavSourceEntry Entry;
-                    Entry.Key = PackSourceKey(E, ENavColliderType::TriangleSoup);
+                    Entry.Key = PackSourceKey(E, KeyType, SubIndex);
                     Entry.ContentId = AssetContentId;
-                    Entry.Prim.Type = ENavColliderType::TriangleSoup;
-                    Entry.Prim.World = ColliderWorld;
-                    Entry.Prim.TriangleSoup = MakeShared<TVector<FVector3>>();
-
-                    Entry.Prim.TriangleSoup->reserve(Asset->TriangleIndices.size());
-                    for (uint32 Index : Asset->TriangleIndices)
-                    {
-                        const FVector3 P = FVector3(ColliderWorld * FVector4(Asset->TriangleVertices[Index], 1.0f));
-                        Entry.Prim.TriangleSoup->push_back(P);
-                        Entry.AABBMin = Math::Min(Entry.AABBMin, P);
-                        Entry.AABBMax = Math::Max(Entry.AABBMax, P);
-                    }
-
                     Out.push_back(std::move(Entry));
-                    continue;
+                });
+            }
+
+            // Painted instances are world space, and erasing one shifts or swaps indices, which the detector sees as a move.
+            auto FoliageView = Context.CreateView<SFoliageComponent>();
+            for (ECS::FEntity E : FoliageView)
+            {
+                const SFoliageComponent& Foliage = FoliageView.Get<SFoliageComponent>(E);
+
+                TVector<FFoliageNavTemplate> Templates;
+                Templates.reserve(Foliage.Types.size());
+                for (const SFoliageType& Type : Foliage.Types)
+                {
+                    Templates.push_back(BuildFoliageNavTemplate(Type));
                 }
 
-                for (uint32 i = 0; i < (uint32)Asset->Primitives.size(); ++i)
+                constexpr uint32 MaxKeyedInstances = 1u << 24;
+                const uint32 NumInstances = (uint32)Math::Min<size_t>(Foliage.Instances.size(), MaxKeyedInstances);
+                for (uint32 Index = 0; Index < NumInstances; ++Index)
                 {
-                    const SCollisionPrimitive& Primitive = Asset->Primitives[i];
-
-                    FNavSourceEntry Entry;
-                    Entry.ContentId = AssetContentId;
-                    Entry.Prim.World = ColliderWorld * Math::Translate(FMatrix4(1.0f), Primitive.Center)
-                                                     * Math::ToMatrix4(FQuat(Math::Radians(Primitive.Rotation)));
-
-                    switch (Primitive.Type)
+                    const SFoliageInstance& Instance = Foliage.Instances[Index];
+                    if (!Foliage.IsValidType(Instance.TypeIndex) || !Templates[(size_t)Instance.TypeIndex].Children)
                     {
-                    case ECollisionPrimitiveType::Box:
-                        {
-                            Entry.Key = PackSourceKey(E, ENavColliderType::Box, i);
-                            Entry.Prim.Type = ENavColliderType::Box;
-                            Entry.Prim.Shape = Primitive.HalfExtent;
-
-                            const FVector3 H = Primitive.HalfExtent;
-                            const FVector3 Corners[8] = {
-                                {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z}, { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
-                                {-H.x, H.y,-H.z}, { H.x, H.y,-H.z}, { H.x, H.y, H.z}, {-H.x, H.y, H.z},
-                            };
-                            CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
-                        }
-                        break;
-
-                    case ECollisionPrimitiveType::Sphere:
-                        {
-                            Entry.Key = PackSourceKey(E, ENavColliderType::Sphere, i);
-                            Entry.Prim.Type = ENavColliderType::Sphere;
-                            Entry.Prim.Shape = FVector3(Primitive.Radius, 0.0f, 0.0f);
-
-                            const FVector3 Center = FVector3(Entry.Prim.World * FVector4(0.0f, 0.0f, 0.0f, 1.0f));
-                            const float R = ScaledRadius(Entry.Prim.World, Primitive.Radius);
-                            Entry.AABBMin = Center - FVector3(R);
-                            Entry.AABBMax = Center + FVector3(R);
-                        }
-                        break;
-
-                    case ECollisionPrimitiveType::Capsule:
-                        {
-                            Entry.Key = PackSourceKey(E, ENavColliderType::Capsule, i);
-                            Entry.Prim.Type = ENavColliderType::Capsule;
-                            Entry.Prim.Shape = FVector3(Primitive.Radius, Primitive.HalfHeight, 0.0f);
-
-                            const FVector3 Center = FVector3(Entry.Prim.World * FVector4(0.0f, 0.0f, 0.0f, 1.0f));
-                            const float R = ScaledRadius(Entry.Prim.World, Primitive.Radius + Primitive.HalfHeight);
-                            Entry.AABBMin = Center - FVector3(R);
-                            Entry.AABBMax = Center + FVector3(R);
-                        }
-                        break;
-
-                    case ECollisionPrimitiveType::ConvexHull:
-                        {
-                            TVector<FVector3> HullVertices;
-                            TVector<uint32> HullIndices;
-                            if (!Physics::CollisionGen::BuildHullTriangles(Primitive.HullPoints, HullVertices, HullIndices))
-                            {
-                                continue;
-                            }
-
-                            Entry.Key = PackSourceKey(E, ENavColliderType::TriangleSoup, i);
-                            Entry.Prim.Type = ENavColliderType::TriangleSoup;
-                            Entry.Prim.TriangleSoup = MakeShared<TVector<FVector3>>();
-
-                            Entry.Prim.TriangleSoup->reserve(HullIndices.size());
-                            for (uint32 Index : HullIndices)
-                            {
-                                const FVector3 P = FVector3(Entry.Prim.World * FVector4(HullVertices[Index], 1.0f));
-                                Entry.Prim.TriangleSoup->push_back(P);
-                                Entry.AABBMin = Math::Min(Entry.AABBMin, P);
-                                Entry.AABBMax = Math::Max(Entry.AABBMax, P);
-                            }
-                        }
-                        break;
+                        continue;
                     }
 
+                    const FFoliageNavTemplate& Template = Templates[(size_t)Instance.TypeIndex];
+                    FNavSourceEntry Entry;
+                    Entry.Key = PackSourceKey(E, ENavColliderType::Foliage, Index);
+                    Entry.ContentId = Template.ContentId;
+                    Entry.Prim.Type = ENavColliderType::Foliage;
+                    Entry.Prim.World = Instance.GetMatrix();
+                    Entry.Prim.Children = Template.Children;
+
+                    const FVector3 Mn = Template.LocalMin;
+                    const FVector3 Mx = Template.LocalMax;
+                    const FVector3 Corners[8] = {
+                        {Mn.x, Mn.y, Mn.z}, {Mx.x, Mn.y, Mn.z}, {Mn.x, Mx.y, Mn.z}, {Mx.x, Mx.y, Mn.z},
+                        {Mn.x, Mn.y, Mx.z}, {Mx.x, Mn.y, Mx.z}, {Mn.x, Mx.y, Mx.z}, {Mx.x, Mx.y, Mx.z},
+                    };
+                    CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
                     Out.push_back(std::move(Entry));
                 }
             }
@@ -1675,7 +1795,7 @@ namespace Lumina
                         {
                             const char* CauseNames[4] = { "new", "moved", "reshaped", "removed" };
                             const char* TypeNames[kTypeSlots] = { "Box", "Sphere", "Mesh", "CharacterCapsule", "Capsule", "Cylinder", "Terrain",
-                                                                  "TriangleSoup", "DynamicMesh", "AreaVolume", "OffMeshLink", "?", "?", "?", "?", "?" };
+                                                                  "TriangleSoup", "DynamicMesh", "AreaVolume", "OffMeshLink", "Foliage", "?", "?", "?", "?" };
                             FString Causes;
                             for (int32 Cause = 0; Cause < 4; ++Cause)
                             {

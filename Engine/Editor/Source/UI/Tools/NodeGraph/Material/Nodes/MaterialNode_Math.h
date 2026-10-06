@@ -47,6 +47,9 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
+        // A new node divides by one, since a constant zero divisor is a shader compile error rather than a value.
+        CMaterialExpression_Division() { ConstB = 1.0f; }
+
         void BuildNode() override;
         FStringView GetNodeDisplayName() const override { return "Divide"; }
         FStringView GetNodeTooltip() const override { return "Returns A / B, per component. Beware division by zero."; }

@@ -902,6 +902,7 @@ namespace Lumina::Reflection::Visitor
 		case EPropertyTypeFlags::Optional:
 		case EPropertyTypeFlags::Map:
 		case EPropertyTypeFlags::Object:
+		case EPropertyTypeFlags::Enum:
 			return true;
 		default:
 			return false;

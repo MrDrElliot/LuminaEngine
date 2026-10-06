@@ -330,6 +330,12 @@ namespace Lumina
             {
                 return;
             }
+            // A texture created empty has no image until one is imported into it.
+            if (Texture->TextureResource == nullptr)
+            {
+                ImGui::TextDisabled("%s has no image yet. Import one to see its details.", Texture->GetName().c_str());
+                return;
+            }
         
             const FTextureResource::FDescription& ImageDesc = Texture->TextureResource->ImageDescription;
         
@@ -708,6 +714,7 @@ namespace Lumina
             ImGui::Spacing();
 
             // The settings above are recorded, not applied, so the chain is whatever the last cook produced.
+            if (Texture->TextureResource != nullptr)
             {
                 const FTextureResource::FDescription& CookedDesc = Texture->TextureResource->ImageDescription;
                 const FTextureGroupPolicy Policy = Texture->GetResolvedPolicy();

@@ -10,12 +10,15 @@ namespace Lumina
     {
         constexpr float kTwoPi = 6.28318530717958647692f;
 
-        /** Wraps a normalized phase back into the unit range without a modulo. */
+        // Restarts a non-finite phase, since a huge or infinite frequency input would otherwise never wrap.
         FORCEINLINE float WrapPhase(float Phase)
         {
-            while (Phase >= 1.0f) { Phase -= 1.0f; }
-            while (Phase < 0.0f)  { Phase += 1.0f; }
-            return Phase;
+            if (!std::isfinite(Phase))
+            {
+                return 0.0f;
+            }
+            const float Wrapped = Math::Fract(Phase);
+            return Wrapped < 1.0f ? Wrapped : 0.0f;
         }
 
         // Polynomial correction subtracted at a discontinuity, so a hard edged oscillator does not alias.

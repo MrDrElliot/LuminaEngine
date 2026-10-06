@@ -91,6 +91,11 @@ namespace Lumina::Physics
 
         const FVector3 Scale = Transform->GetScale();
         const float UniformScale = Transform->MaxScale();
+        if (!Box3DUtils::IsSafePose(Transform->GetLocation(), Transform->GetRotation()) || !Box3DUtils::IsWithin(Scale, Box3DUtils::MaxSafeCoordinate))
+        {
+            LOG_ERROR("Entity {} has a NaN, infinite or out of range transform, so its rigid body is not created", Entity.Value);
+            return EBodyBuildStatus::Error;
+        }
 
         if (const SBoxColliderComponent* BC = Registry.TryGet<SBoxColliderComponent>(Entity))
         {
@@ -343,6 +348,13 @@ namespace Lumina::Physics
             if (Terrain == nullptr || Terrain->Heightmap.empty())
             {
                 return EBodyBuildStatus::Defer;
+            }
+
+            const float TerrainReach = Math::Max(Math::Abs(Terrain->TileWorldSize), Math::Abs(Terrain->MaxHeight));
+            if (!(TerrainReach <= Box3DUtils::MaxSafeCoordinate))
+            {
+                LOG_ERROR("Terrain on Entity {} spans {} units, past the physics limit, so it has no collision", Entity.Value, TerrainReach);
+                return EBodyBuildStatus::Error;
             }
 
             b3HeightFieldData* Field = BuildTerrainHeightField(*Terrain);

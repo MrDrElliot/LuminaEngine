@@ -367,6 +367,16 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SOpenFileParams
+    {
+        GENERATED_BODY()
+
+        // Virtual path of a text file with an editor of its own, such as an .rml or .rcss.
+        PROPERTY()
+        FString Path;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SOpenAssetResult
     {
         GENERATED_BODY()

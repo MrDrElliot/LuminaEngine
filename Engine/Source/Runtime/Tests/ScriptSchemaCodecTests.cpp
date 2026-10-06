@@ -249,6 +249,9 @@ TEST(ScriptSchemaCodec, AnUnknownTrailingFieldIsSkippedRatherThanDesyncing)
             W.U8(0);
             W.U8(0);
             W.U8(0);
+            W.U32(0);
+            W.F64(0.0);
+            W.I32(0);
             W.Str("something a later version added");   // unknown trailing payload
             W.I64(1234);
             W.Close(M);

@@ -4,6 +4,10 @@
 #include "UI/Properties/NamePicker.h"
 #include <Assets/AssetRegistry/AssetData.h>
 #include <Assets/AssetRegistry/AssetRegistry.h>
+#include "Assets/AssetRegistry/TextAssetTypes.h"
+#include "Session/SessionOps.h"
+#include "Tools/UI/ImGui/ImGuiDragDrop.h"
+#include "UI/Tools/EditorToolContext.h"
 
 namespace Lumina
 {
@@ -117,11 +121,13 @@ namespace Lumina
             return EPropertyChangeOp::None;
         }
 
-        // "FilePath" meta turns the field into an asset-path picker ("..." button, searchable).
-        const bool bFilePath = Property->Property->HasMetadata("FilePath");
+        // "FilePath" meta turns the field into an asset-path picker ("..." button, searchable), and "AssetType" narrows it to those text files.
+        const bool bTextAsset = Property->Property->HasMetadata("AssetType");
+        const bool bFilePath = bTextAsset || Property->Property->HasMetadata("FilePath");
+        const TVector<ETextAssetKind> TextKinds = bTextAsset ? TextAsset::ParseAssetTypeMeta(Property->Property->GetMetadata("AssetType")) : TVector<ETextAssetKind>();
         // "Multiline" meta turns the field into a wrapping multi-line box (newlines allowed).
         const bool bMultiline = Property->Property->HasMetadata("Multiline");
-        const float ButtonWidth = bFilePath ? ImGui::GetFrameHeight() : 0.0f;
+        const float ButtonWidth = bFilePath ? ImGui::GetFrameHeight() * (bTextAsset ? 2.0f : 1.0f) : 0.0f;
 
         EPropertyChangeOp Result = EPropertyChangeOp::None;
 
@@ -144,6 +150,27 @@ namespace Lumina
                 DisplayValue = Buffer;
             }
             ImGui::PopItemWidth();
+
+            // A file of an allowed kind dragged from the content browser lands as its path.
+            if (bTextAsset && ImGui::BeginDragDropTarget())
+            {
+                for (ETextAssetKind Kind : TextKinds)
+                {
+                    FStringView Ext = TextAsset::ExtensionForKind(Kind);
+                    if (!Ext.empty() && Ext[0] == '.')
+                    {
+                        Ext = Ext.substr(1);
+                    }
+                    FFixedString Dropped;
+                    if (DragDrop::AcceptFile(Ext, Dropped))
+                    {
+                        DisplayValue = FString(Dropped.c_str(), Dropped.size());
+                        Result = EPropertyChangeOp::Updated;
+                        break;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
 
         if (ImGui::IsItemDeactivatedAfterEdit())
@@ -172,24 +199,59 @@ namespace Lumina
                 }
                 if (ImGui::BeginChild("##PathList", ImVec2(300, 300)))
                 {
-                    TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; });
-                    for (const FAssetData* Asset : Assets)
+                    auto Offer = [&](const FString& Path)
                     {
-                        if (!ImGuiX::PassSearchFilter(SearchFilter, Asset->Path.c_str()))
+                        if (!ImGuiX::PassSearchFilter(SearchFilter, Path.c_str()))
                         {
-                            continue;
+                            return;
                         }
-
-                        if (ImGui::Selectable(Asset->Path.c_str()))
+                        if (ImGui::Selectable(Path.c_str()))
                         {
-                            DisplayValue = Asset->Path.c_str();
+                            DisplayValue = Path;
                             Result = EPropertyChangeOp::Updated;
                             ImGui::CloseCurrentPopup();
+                        }
+                    };
+
+                    if (bTextAsset)
+                    {
+                        for (ETextAssetKind Kind : TextKinds)
+                        {
+                            for (const FTextAssetData* Data : FAssetRegistry::Get().GetTextAssetsOfKind(Kind))
+                            {
+                                Offer(FString(Data->Path.c_str(), Data->Path.size()));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const FAssetData* Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
+                        {
+                            Offer(FString(Asset->Path.c_str()));
                         }
                     }
                 }
                 ImGui::EndChild();
                 ImGui::EndPopup();
+            }
+
+            // A text asset opens in the engine's own editor for it, such as the UI editor for an .rml.
+            if (bTextAsset)
+            {
+                ImGui::SameLine(0, 0);
+                ImGui::BeginDisabled(DisplayValue.empty());
+                if (ImGui::Button(LE_ICON_OPEN_IN_NEW "##OpenTextAsset", ImVec2(ImGui::GetFrameHeight(), 0)))
+                {
+                    if (IEditorToolContext* Tools = SessionOps::GetToolContext())
+                    {
+                        Tools->OpenFileEditor(FStringView(DisplayValue.c_str(), DisplayValue.size()));
+                    }
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+                {
+                    ImGuiX::TextTooltip_Internal("Open in its editor");
+                }
             }
         }
 

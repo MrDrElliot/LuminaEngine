@@ -57,6 +57,8 @@ namespace Lumina
 
         bool IsValid() const { return NumFrames > 0 && !Bones.empty(); }
 
+        RUNTIME_API bool HasConsistentTracks() const;
+
         void Reset()
         {
             NumFrames = 0;

@@ -437,7 +437,7 @@ namespace Lumina
         PROPERTY()
         FString AuthoringStackName;
 
-        PROPERTY(Editable, Category = "Simulation", ClampMin = 1)
+        PROPERTY(Editable, Category = "Simulation", ClampMin = 1, ClampMax = 1048576)
         int32 MaxParticles = 1024;
 
         PROPERTY(Editable, Category = "Simulation", ClampMin = 0.0f)
@@ -792,7 +792,12 @@ namespace Lumina
         bool            bPrewarmPending     = true;
         // Seconds a sub-emitter keeps simulating after its parent last ran, so late events still spawn.
         float           ParentAliveTime     = 0.0f;
+        // The capacity last refused for exceeding the byte budget, so the error logs once.
+        uint32          RejectedMax         = 0;
     };
+
+    // Matches the ClampMax on CParticleEmitter::MaxParticles.
+    inline constexpr int32 ParticleEmitterMaxCapacity = 1 << 20;
 
     /** Per-frame, per-emitter snapshot of simulation properties after binding resolution. */
     struct RUNTIME_API FResolvedParticleParams

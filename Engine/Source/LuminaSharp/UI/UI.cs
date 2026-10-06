@@ -46,6 +46,9 @@ public readonly unsafe partial struct UI
     /// </summary>
     public UIDataModel AddModel(string Name, ViewModel Model) => new(Handle, Name, Model);
 
+    // Registers the model under its [DataModel] name, or its class name, which is what the .rml's data-model names.
+    public UIDataModel AddModel(ViewModel Model) => new(Handle, DataModelAttribute.NameOf(Model.GetType()), Model);
+
     /// <summary>
     /// Re-fetch a data model registered on this world by <see cref="AddModel"/>, so another script can push to
     /// a model it didn't create. Returns null if no model with that name is currently registered.

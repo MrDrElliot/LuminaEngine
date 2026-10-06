@@ -12,6 +12,7 @@ namespace Lumina
     TMulticastDelegate<void, FStringView>       FCoreDelegates::OnContentFileModified;
     TMulticastDelegate<void, FStringView, FStringView> FCoreDelegates::OnContentFileRenamed;
     TMulticastDelegate<void, CClass*>           FCoreDelegates::OnSettingsSaved;
+    TMulticastDelegate<void>                    FCoreDelegates::OnScriptsWillReload;
 
     SCoreDelegates& FCoreDelegates::Get()
     {

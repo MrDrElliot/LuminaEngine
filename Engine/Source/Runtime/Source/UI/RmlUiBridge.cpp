@@ -8,6 +8,16 @@
 #include "RmlUiFileInterface.h"
 #include "RmlUiRenderer.h"
 #include "WorldUIContext.h"
+#include "UIScript.h"
+#include "Core/Object/Object.h"
+#include "Core/Object/Class.h"
+#include "Core/Reflection/PropertySnapshot.h"
+#include "Core/Reflection/PropertyText.h"
+#include "Core/Reflection/Type/Function.h"
+#include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/EnumProperty.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Scripting/DotNet/DotNetUI.h"
 #include "Core/Math/Hash/Hash.h"
 
 #include <RmlUi/Core.h>
@@ -29,6 +39,7 @@
 #include <RmlUi/Core/Variant.h>
 #include <RmlUi/Core/PropertyDictionary.h>
 #include <RmlUi/Core/StyleSheetSpecification.h>
+#include <cmath>
 #include <limits>
 #include <RmlUi/Debugger.h>
 
@@ -230,6 +241,18 @@ namespace Lumina::RmlUi
             Rml::ElementDocument* Document = nullptr;
             float                 DpiScale = 1.0f;
             FVector4             ClearColor{0.10f, 0.10f, 0.12f, 1.0f};
+
+            // Owned by State.DataModels like every other model, listed here so the preview can replace or reap them.
+            TVector<void*>        DesignModels;
+        };
+
+        // Game code running inside an RmlUi event, where removing a data model would free the controller still on the stack.
+        int32 GEventDispatchDepth = 0;
+
+        struct FEventDispatchScope
+        {
+            FEventDispatchScope()  { ++GEventDispatchDepth; }
+            ~FEventDispatchScope() { --GEventDispatchDepth; }
         };
 
         // RmlUi never deletes listeners on element destruction, so bAttached guards a freed element.
@@ -261,6 +284,7 @@ namespace Lumina::RmlUi
                 if (Event.GetParameter<bool>("meta_key",  false)) Mods |= 0x8;
                 Data.Modifiers = Mods;
 
+                FEventDispatchScope Dispatch;
                 Event_.Broadcast(Data);
             }
 
@@ -357,6 +381,11 @@ namespace Lumina::RmlUi
                 {
                     return Rml::DataVariable();
                 }
+                // A list of plain values, such as names, reads each row's one cell as the item itself.
+                if (List->MemberNames.empty())
+                {
+                    return Rml::DataVariable(List->MemberDef.get(), reinterpret_cast<void*>((uintptr_t)Index << 32));
+                }
                 return Rml::DataVariable(List->StructDef.get(), reinterpret_cast<void*>((uintptr_t)Index));
             }
         private:
@@ -377,6 +406,12 @@ namespace Lumina::RmlUi
             void*                     Context = nullptr;  // managed GCHandle handed back to the thunks
             FManagedDataSetThunk      SetThunk = nullptr;
             FManagedDataEventThunk    EventThunk = nullptr;
+
+            // Set for an editor preview's design model, which belongs to that context rather than to a world.
+            Rml::Context*             OwnerContext = nullptr;
+
+            // Commands an editor preview fired, as "Name(args)", since it has no script to call.
+            TVector<FString>          FiredCommands;
         };
 
         // Coerce a double into a Variant typed per EUIVarType so views format/compare against the right type.
@@ -404,6 +439,10 @@ namespace Lumina::RmlUi
 
             // Cycle count of the latest such save, since a watcher reports a write as it starts and the file is still partial then.
             TAtomic<uint64>                     LastUIFileChangeCycles{0};
+
+            // .rml files saved since the last reload pass, handed to the scripts showing them. Written by the watcher thread.
+            FMutex                              ChangedDocumentsMutex;
+            TVector<FString>                    ChangedDocuments;
 
             CWorld*                             ActiveWorld = nullptr;
 
@@ -660,13 +699,53 @@ namespace Lumina::RmlUi
                 const int NumDocs = Ctx->GetNumDocuments();
                 for (int d = 0; d < NumDocs; ++d)
                 {
-                    if (Rml::ElementDocument* Doc = Ctx->GetDocument(d))
+                    // A document parsed from memory has no file to read its styles back from.
+                    Rml::ElementDocument* Doc = Ctx->GetDocument(d);
+                    if (Doc != nullptr && !Doc->GetSourceURL().empty())
                     {
                         Doc->ReloadStyleSheet();
                     }
                 }
             }
             LOG_INFO("[RmlUi] UI hot-reload: restyled all documents across {} context(s).", NumContexts);
+
+            // Restyling cannot change markup, so a script showing a saved .rml loads it again.
+            TVector<FString> Changed;
+            {
+                FScopeLock ChangedLock(State.ChangedDocumentsMutex);
+                Changed.swap(State.ChangedDocuments);
+            }
+            for (const FString& Path : Changed)
+            {
+                UIScripts::DocumentChanged(FStringView(Path.c_str(), Path.size()));
+            }
+        }
+
+        // Scans the live contexts without dereferencing Document, so a handle kept past its unload is refused instead of followed.
+        bool IsLiveDocument(void* Document)
+        {
+            if (Document == nullptr)
+            {
+                return false;
+            }
+            const int NumContexts = Rml::GetNumContexts();
+            for (int i = 0; i < NumContexts; ++i)
+            {
+                Rml::Context* Ctx = Rml::GetContext(i);
+                if (Ctx == nullptr)
+                {
+                    continue;
+                }
+                const int NumDocs = Ctx->GetNumDocuments();
+                for (int d = 0; d < NumDocs; ++d)
+                {
+                    if (Ctx->GetDocument(d) == Document)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         // Safe whether or not the elements still exist, since a destroyed one already fired OnDetach.
@@ -720,6 +799,16 @@ namespace Lumina::RmlUi
             };
             if (EndsWith(FStringView(".rml")) || EndsWith(FStringView(".rcss")))
             {
+                if (EndsWith(FStringView(".rml")))
+                {
+                    FState& State = S();
+                    FScopeLock Lock(State.ChangedDocumentsMutex);
+                    const FString Path(VirtualPath.data(), VirtualPath.size());
+                    if (std::find(State.ChangedDocuments.begin(), State.ChangedDocuments.end(), Path) == State.ChangedDocuments.end())
+                    {
+                        State.ChangedDocuments.push_back(Path);
+                    }
+                }
                 S().LastUIFileChangeCycles.store(PlatformTime::Cycles(), Atomic::MemoryOrderRelease);
                 S().bUIReloadPending.store(true, Atomic::MemoryOrderRelease);
             }
@@ -1107,6 +1196,12 @@ namespace Lumina::RmlUi
         return UI;
     }
 
+    namespace
+    {
+        // Defined with the object models further down.
+        void ReapContextObjectModels(Rml::Context* Context);
+    }
+
     void DestroyWorldUI(CWorld* World)
     {
         if (World == nullptr)
@@ -1129,6 +1224,8 @@ namespace Lumina::RmlUi
         {
             ReapWorldUIListeners(State, World);
             ReapWorldDataModels(State, World);
+            ReapContextObjectModels(UI->Context);
+            UIScripts::ForgetWorld(World);
             UI->Context = nullptr;
             UI->Documents.clear();
             if (State.ActiveWorld == World)
@@ -1147,9 +1244,14 @@ namespace Lumina::RmlUi
                 State.DebuggerHost = nullptr;
                 State.bDebuggerVisible = false;
             }
+            // The scripts showing documents here let go of them before the context and its models go.
+            UIScripts::ForgetWorld(World);
+            Rml::Context* Dying = UI->Context;
+
             // RmlUi tears down first (calls listener OnDetach), then we drop wrappers.
             Rml::RemoveContext(UI->Context->GetName());
             UI->Context = nullptr;
+            ReapContextObjectModels(Dying);
         }
         // Elements are gone now (RemoveContext fired OnDetach); free the script listener objects.
         ReapWorldUIListeners(State, World);
@@ -1200,6 +1302,10 @@ namespace Lumina::RmlUi
         {
             return;
         }
+
+        UIScripts::Tick(World);
+        DotNetUI::PollModels(World);
+        PollObjectModels(UI->Context);
 
         const FWorldTarget Tgt = GetWorldTarget(World);
         FUIntVector2 LayoutSize = UI->LastLayoutSize;
@@ -1490,6 +1596,7 @@ namespace Lumina::RmlUi
                 // Editor contexts use caller-supplied DPI; the world heuristic is too small for previews <1080px.
                 E->Context->SetDensityIndependentPixelRatio(Math::Max(0.1f, E->DpiScale));
             }
+            PollObjectModels(E->Context);
             E->Context->Update();
         }
     }
@@ -1751,7 +1858,15 @@ namespace Lumina::RmlUi
                 State.bDebuggerVisible = false;
             }
 
+            for (void* Model : E->DesignModels)
+            {
+                DestroyDataModel(Model);
+            }
+            E->DesignModels.clear();
+
+            Rml::Context* Dying = E->Context;
             Rml::RemoveContext(E->Context->GetName());
+            ReapContextObjectModels(Dying);
             E->Context = nullptr;
 
             const size_t Last = State.EditorContexts.size() - 1;
@@ -2052,6 +2167,41 @@ namespace Lumina::RmlUi
         return UI->Context->LoadDocumentFromMemory(ToRml(Body), ToRml(SourceUrl));
     }
 
+    void* LoadScreenDocumentWithModel(CWorld* World, FStringView VirtualPath, FStringView FromModel, FStringView ToModel)
+    {
+        if (FromModel == ToModel)
+        {
+            return LoadScreenDocument(World, VirtualPath);
+        }
+        Rml::FileInterface* Files = Rml::GetFileInterface();
+        Rml::String Body;
+        if (Files == nullptr || !Files->LoadFile(ToRml(VirtualPath), Body))
+        {
+            return nullptr;
+        }
+
+        const Rml::String From(FromModel.data(), FromModel.size());
+        const Rml::String To(ToModel.data(), ToModel.size());
+        for (const char Quote : { '"', '\'' })
+        {
+            const Rml::String Old = Rml::String("data-model=") + Quote + From + Quote;
+            const Rml::String New = Rml::String("data-model=") + Quote + To + Quote;
+            for (size_t At = Body.find(Old); At != Rml::String::npos; At = Body.find(Old, At + New.size()))
+            {
+                Body.replace(At, Old.size(), New);
+            }
+        }
+        return LoadScreenDocumentFromMemory(World, FStringView(Body.data(), Body.size()), VirtualPath);
+    }
+
+    bool HasDataModel(Rml::Context* Context, FStringView Name)
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        // GetDataModel logs a miss as an error, and a miss is the answer this asks for.
+        return State.bInitialized && Context != nullptr && Context->GetDataModels().count(Rml::String(Name.data(), Name.size())) > 0;
+    }
+
     void UnloadScreenDocument(CWorld* World, void* Document)
     {
         NoteUIChanged();
@@ -2062,7 +2212,7 @@ namespace Lumina::RmlUi
             return;
         }
         FWorldUIContext* UI = WorldUI(World);
-        if (UI != nullptr && UI->Context != nullptr)
+        if (UI != nullptr && UI->Context != nullptr && IsLiveDocument(Document))
         {
             UI->Context->UnloadDocument(AsDocument(Document));
         }
@@ -2073,7 +2223,7 @@ namespace Lumina::RmlUi
         NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (State.bInitialized && Document != nullptr)
+        if (State.bInitialized && IsLiveDocument(Document))
         {
             AsDocument(Document)->Show(bModal     ? Rml::ModalFlag::Modal : Rml::ModalFlag::None,
                                        bAutoFocus ? Rml::FocusFlag::Auto  : Rml::FocusFlag::None);
@@ -2085,7 +2235,7 @@ namespace Lumina::RmlUi
         NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (State.bInitialized && Document != nullptr)
+        if (State.bInitialized && IsLiveDocument(Document))
         {
             AsDocument(Document)->Hide();
         }
@@ -2096,7 +2246,7 @@ namespace Lumina::RmlUi
         NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (State.bInitialized && Document != nullptr)
+        if (State.bInitialized && IsLiveDocument(Document))
         {
             AsDocument(Document)->PullToFront();
         }
@@ -2112,7 +2262,7 @@ namespace Lumina::RmlUi
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        if (!State.bInitialized || Document == nullptr || Id.empty())
+        if (!State.bInitialized || Id.empty() || !IsLiveDocument(Document))
         {
             return nullptr;
         }
@@ -2310,7 +2460,10 @@ namespace Lumina::RmlUi
         FRecursiveScopeLock Lock(State.StateMutex);
         if (State.bInitialized && Element != nullptr)
         {
-            AsElement(Element)->Click();
+            {
+                FEventDispatchScope Dispatch;
+                AsElement(Element)->Click();
+            }
             NoteElementChanged(AsElement(Element));
         }
     }
@@ -2488,10 +2641,20 @@ namespace Lumina::RmlUi
         FManagedDataModel* M = static_cast<FManagedDataModel*>(ModelPtr);
         const Rml::String CmdName(Name.data(), Name.size());
         M->Constructor.BindEventCallback(CmdName,
-            [M, CommandId](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& Arguments)
+            [M, CommandId, CmdName](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& Arguments)
             {
                 if (M->EventThunk == nullptr)
                 {
+                    if (M->OwnerContext != nullptr && M->FiredCommands.size() < 64)
+                    {
+                        Rml::String Call = CmdName + "(";
+                        for (size_t Index = 0; Index < Arguments.size(); ++Index)
+                        {
+                            Call += (Index > 0 ? ", " : "") + Arguments[Index].Get<Rml::String>();
+                        }
+                        Call += ")";
+                        M->FiredCommands.push_back(FString(Call.c_str(), Call.size()));
+                    }
                     return;
                 }
                 // Stringify each RML argument uniformly; keep the storage alive across the dispatch call.
@@ -2714,6 +2877,10 @@ namespace Lumina::RmlUi
                     }
                 }
             }
+            else if (State.bInitialized && M->OwnerContext != nullptr)
+            {
+                M->OwnerContext->RemoveDataModel(M->Name);
+            }
             State.DataModels[i] = State.DataModels.back();
             State.DataModels.pop_back();
             delete M;
@@ -2721,4 +2888,962 @@ namespace Lumina::RmlUi
         }
     }
 
+
+
+    namespace
+    {
+        // The name of an enum value without its type prefix, empty when the value has no name such as a bitmask.
+        Rml::String EnumValueName(const FEnumProperty* Property, int64 Raw)
+        {
+            if (CEnum* Enum = Property->GetEnum())
+            {
+                for (const TPair<FName, uint64>& Entry : Enum->Names)
+                {
+                    if ((int64)Entry.second == Raw)
+                    {
+                        const Rml::String Qualified = Entry.first.c_str();
+                        const size_t Separator = Qualified.rfind("::");
+                        return Separator == Rml::String::npos ? Qualified : Qualified.substr(Separator + 2);
+                    }
+                }
+            }
+            return Rml::String();
+        }
+
+        bool EnumValueByName(const FEnumProperty* Property, const Rml::String& Name, int64& OutRaw)
+        {
+            CEnum* Enum = Property->GetEnum();
+            if (Enum == nullptr)
+            {
+                return false;
+            }
+            for (const TPair<FName, uint64>& Entry : Enum->Names)
+            {
+                const Rml::String Qualified = Entry.first.c_str();
+                const size_t Separator = Qualified.rfind("::");
+                if (Qualified == Name || (Separator != Rml::String::npos && Qualified.compare(Separator + 2, Rml::String::npos, Name) == 0))
+                {
+                    OutRaw = (int64)Entry.second;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // The C runtime prints a NaN as -nan(ind), so a value that is not a number reads as its name instead.
+        template<typename TNumber>
+        Rml::Variant FiniteOrName(TNumber Number)
+        {
+            if (std::isnan(Number))
+            {
+                return Rml::Variant(Rml::String("NaN"));
+            }
+            if (std::isinf(Number))
+            {
+                return Rml::Variant(Rml::String(Number > 0 ? "Infinity" : "-Infinity"));
+            }
+            return Rml::Variant(Number);
+        }
+
+        // Reads a bound value into what RmlUi shows. Numbers stay numbers, so data-if and comparisons work on them, and an enum reads as its name.
+        bool ReadVariant(const FProperty* Property, const void* Value, Rml::Variant& Out)
+        {
+            switch (Property->GetType())
+            {
+                case EPropertyTypeFlags::Bool:   Out = *static_cast<const bool*>(Value); return true;
+                case EPropertyTypeFlags::Int8:   Out = (int)*static_cast<const int8*>(Value); return true;
+                case EPropertyTypeFlags::Int16:  Out = (int)*static_cast<const int16*>(Value); return true;
+                case EPropertyTypeFlags::Int32:  Out = (int)*static_cast<const int32*>(Value); return true;
+                case EPropertyTypeFlags::Int64:  Out = (int64_t)*static_cast<const int64*>(Value); return true;
+                case EPropertyTypeFlags::UInt8:  Out = (int)*static_cast<const uint8*>(Value); return true;
+                case EPropertyTypeFlags::UInt16: Out = (int)*static_cast<const uint16*>(Value); return true;
+                case EPropertyTypeFlags::UInt32: Out = (int64_t)*static_cast<const uint32*>(Value); return true;
+                case EPropertyTypeFlags::UInt64: Out = (int64_t)*static_cast<const uint64*>(Value); return true;
+                case EPropertyTypeFlags::Float:  Out = FiniteOrName(*static_cast<const float*>(Value)); return true;
+                case EPropertyTypeFlags::Double: Out = FiniteOrName(*static_cast<const double*>(Value)); return true;
+                case EPropertyTypeFlags::Entity: Out = (int64_t)*static_cast<const uint32*>(Value); return true;
+                case EPropertyTypeFlags::String:
+                {
+                    const FString& Text = *static_cast<const FString*>(Value);
+                    Out = Rml::String(Text.c_str(), Text.size());
+                    return true;
+                }
+                case EPropertyTypeFlags::Name:
+                    Out = Rml::String(static_cast<const FName*>(Value)->c_str());
+                    return true;
+                case EPropertyTypeFlags::Enum:
+                {
+                    const FEnumProperty* EnumProperty = static_cast<const FEnumProperty*>(Property);
+                    const int64 Raw = EnumProperty->GetInnerProperty()->GetSignedIntPropertyValue(Value);
+                    const Rml::String Name = EnumValueName(EnumProperty, Raw);
+                    Out = Name.empty() ? Rml::Variant((int64_t)Raw) : Rml::Variant(Name);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        // False when In does not convert, such as text where a number goes, so the value is left as it was.
+        bool WriteVariant(const FProperty* Property, void* Value, const Rml::Variant& In)
+        {
+            auto WriteNumber = [&In, Value]<typename TNumber, typename TRead>(TNumber*, TRead*) -> bool
+            {
+                TRead Read{};
+                if (!In.GetInto(Read))
+                {
+                    return false;
+                }
+                *static_cast<TNumber*>(Value) = (TNumber)Read;
+                return true;
+            };
+
+            switch (Property->GetType())
+            {
+                case EPropertyTypeFlags::Bool:   return WriteNumber((bool*)nullptr,   (bool*)nullptr);
+                case EPropertyTypeFlags::Int8:   return WriteNumber((int8*)nullptr,   (int*)nullptr);
+                case EPropertyTypeFlags::Int16:  return WriteNumber((int16*)nullptr,  (int*)nullptr);
+                case EPropertyTypeFlags::Int32:  return WriteNumber((int32*)nullptr,  (int*)nullptr);
+                case EPropertyTypeFlags::Int64:  return WriteNumber((int64*)nullptr,  (int64_t*)nullptr);
+                case EPropertyTypeFlags::UInt8:  return WriteNumber((uint8*)nullptr,  (int*)nullptr);
+                case EPropertyTypeFlags::UInt16: return WriteNumber((uint16*)nullptr, (int*)nullptr);
+                case EPropertyTypeFlags::UInt32: return WriteNumber((uint32*)nullptr, (int64_t*)nullptr);
+                case EPropertyTypeFlags::UInt64: return WriteNumber((uint64*)nullptr, (int64_t*)nullptr);
+                case EPropertyTypeFlags::Float:  return WriteNumber((float*)nullptr,  (float*)nullptr);
+                case EPropertyTypeFlags::Double: return WriteNumber((double*)nullptr, (double*)nullptr);
+                case EPropertyTypeFlags::String:
+                {
+                    const Rml::String Text = In.Get<Rml::String>();
+                    *static_cast<FString*>(Value) = FString(Text.c_str(), Text.size());
+                    return true;
+                }
+                case EPropertyTypeFlags::Name:
+                    *static_cast<FName*>(Value) = FName(In.Get<Rml::String>().c_str());
+                    return true;
+                case EPropertyTypeFlags::Enum:
+                {
+                    const FEnumProperty* EnumProperty = static_cast<const FEnumProperty*>(Property);
+                    int64 Raw = 0;
+                    if (!(In.GetType() == Rml::Variant::STRING && EnumValueByName(EnumProperty, In.Get<Rml::String>(), Raw)))
+                    {
+                        int64_t Number = 0;
+                        if (!In.GetInto(Number))
+                        {
+                            return false;
+                        }
+                        Raw = Number;
+                    }
+                    EnumProperty->GetInnerProperty()->SetIntPropertyValue(Value, Raw);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        bool IsScalarType(EPropertyTypeFlags Type)
+        {
+            switch (Type)
+            {
+                case EPropertyTypeFlags::Bool:   case EPropertyTypeFlags::Int8:   case EPropertyTypeFlags::Int16:
+                case EPropertyTypeFlags::Int32:  case EPropertyTypeFlags::Int64:  case EPropertyTypeFlags::UInt8:
+                case EPropertyTypeFlags::UInt16: case EPropertyTypeFlags::UInt32: case EPropertyTypeFlags::UInt64:
+                case EPropertyTypeFlags::Float:  case EPropertyTypeFlags::Double: case EPropertyTypeFlags::String:
+                case EPropertyTypeFlags::Name:   case EPropertyTypeFlags::Enum:   case EPropertyTypeFlags::Entity:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // A Change function runs with no arguments or with (Old, New) of the bound property's own type, since anything else would copy the value into the wrong type.
+        const FFunction* FindChangeHandler(const CClass* Class, const FProperty* Property, bool bReport)
+        {
+            const FCStringView ChangeName = Property->GetMetadata("Change");
+            if (ChangeName.empty() || Class == nullptr)
+            {
+                return nullptr;
+            }
+            const FString HandlerName(ChangeName.data(), ChangeName.size());
+            const FFunction* Change = Class->FindFunction(FName(HandlerName.c_str()));
+            if (Change == nullptr)
+            {
+                if (bReport)
+                {
+                    LOG_WARN("[RmlUi] {}.{} names Change = {}, which is not a reflected function of the class.",
+                        Class->GetName().c_str(), Property->GetPropertyName().c_str(), HandlerName.c_str());
+                }
+                return nullptr;
+            }
+            const TSpan<FProperty* const> Params = Change->GetArguments();
+            const bool bCallable = Params.empty() || (Params.size() == 2 && Params[0]->HasSameValueType(Property) && Params[1]->HasSameValueType(Property));
+            if (!bCallable)
+            {
+                if (bReport)
+                {
+                    LOG_WARN("[RmlUi] {}.{} names Change = {}, which must take no arguments or (Old, New) of type {}, so it will not run.",
+                        Class->GetName().c_str(), Property->GetPropertyName().c_str(), HandlerName.c_str(), PropertyTypePlainNames[(size_t)Property->GetType()]);
+                }
+                return nullptr;
+            }
+            return Change;
+        }
+
+        // A frame big enough for a function's parameters, aligned the way FFunction expects.
+        struct FModelCallFrame
+        {
+            explicit FModelCallFrame(const FFunction& InFunction)
+                : Function(InFunction)
+                , Storage(InFunction.GetParmsSize() / sizeof(std::max_align_t) + 1)
+            {
+                Function.InitializeFrame(Storage.data());
+            }
+
+            ~FModelCallFrame()
+            {
+                Function.DestructFrame(Storage.data());
+            }
+
+            void* Data() { return Storage.data(); }
+
+            const FFunction& Function;
+            TVector<std::max_align_t> Storage;
+        };
+
+        struct FObjectModel;
+
+        class FObjectValueDefinition final : public Rml::VariableDefinition
+        {
+        public:
+            FObjectValueDefinition(FObjectModel* InModel, const FProperty* InProperty, const FProperty* InRoot)
+                : Rml::VariableDefinition(Rml::DataVariableType::Scalar), Model(InModel), Property(InProperty), Root(InRoot) {}
+
+            bool Get(void* Ptr, Rml::Variant& Out) override;
+            bool Set(void* Ptr, const Rml::Variant& In) override;
+
+        private:
+            FObjectModel*    Model;
+            const FProperty* Property;
+            const FProperty* Root;
+        };
+
+        class FObjectStructDefinition final : public Rml::VariableDefinition
+        {
+        public:
+            FObjectStructDefinition(FObjectModel* InModel, const CStruct* InStruct, const FProperty* InRoot)
+                : Rml::VariableDefinition(Rml::DataVariableType::Struct), Model(InModel), Struct(InStruct), Root(InRoot) {}
+
+            Rml::DataVariable Child(void* Ptr, const Rml::DataAddressEntry& Address) override;
+            Rml::StringList ReflectMemberNames() override;
+
+        private:
+            FObjectModel*    Model;
+            const CStruct*   Struct;
+            const FProperty* Root;
+        };
+
+        class FObjectArrayDefinition final : public Rml::VariableDefinition
+        {
+        public:
+            FObjectArrayDefinition(FObjectModel* InModel, const FArrayProperty* InArray, const FProperty* InRoot)
+                : Rml::VariableDefinition(Rml::DataVariableType::Array), Model(InModel), Array(InArray), Root(InRoot) {}
+
+            int Size(void* Ptr) override;
+            Rml::DataVariable Child(void* Ptr, const Rml::DataAddressEntry& Address) override;
+
+        private:
+            FObjectModel*         Model;
+            const FArrayProperty* Array;
+            const FProperty*      Root;
+        };
+
+        // One CObject bound as a data model. RmlUi reads and writes its memory in place through these definitions.
+        struct FObjectModel
+        {
+            struct FValue
+            {
+                FProperty*  Property = nullptr;
+                Rml::String Name;
+            };
+
+            struct FComputed
+            {
+                const FFunction* Function = nullptr;
+                Rml::String      Name;
+                Rml::Variant     Last;
+            };
+
+            struct FDefinitionEntry
+            {
+                const FProperty*         Property = nullptr;
+                const FProperty*         Root = nullptr;
+                Rml::VariableDefinition* Definition = nullptr;
+            };
+
+            Rml::Context*             Context = nullptr;
+            Rml::String               Name;
+            Rml::DataModelConstructor Constructor;
+            Rml::DataModelHandle      Handle;
+            CObject*                  Object = nullptr;
+            bool                      bDesignTime = false;
+
+            // Destroyed during an event, so it waits for the next poll to leave RmlUi and must not touch Object meanwhile.
+            bool                      bDead = false;
+            TVector<FValue>           Values;
+            TVector<FComputed>        Computed;
+            FPropertySnapshot         Snapshot;
+            TVector<FDefinitionEntry> DefinitionIndex;
+            TVector<TUniquePtr<Rml::VariableDefinition>> Definitions;
+            TVector<FString>          FiredCommands;
+            TVector<Rml::String>      Warned;
+
+            // Markup mistakes repeat every click, so each one is reported once per model.
+            template<typename... TArgs>
+            void WarnOnce(const Rml::String& Key, Fmt::TFormatString<std::decay_t<TArgs>...> Format, TArgs&&... Args)
+            {
+                if (std::find(Warned.begin(), Warned.end(), Key) != Warned.end())
+                {
+                    return;
+                }
+                Warned.push_back(Key);
+                Logging::Log(ELogLevel::Warn, Format, std::forward<TArgs>(Args)...);
+            }
+
+            // Null for a type a UI cannot show, such as an object reference or a map.
+            Rml::VariableDefinition* DefinitionFor(const FProperty* Property, const FProperty* InRoot)
+            {
+                for (const FDefinitionEntry& Entry : DefinitionIndex)
+                {
+                    if (Entry.Property == Property && Entry.Root == InRoot)
+                    {
+                        return Entry.Definition;
+                    }
+                }
+
+                TUniquePtr<Rml::VariableDefinition> Created;
+                const EPropertyTypeFlags Type = Property->GetType();
+                if (Type == EPropertyTypeFlags::Struct)
+                {
+                    Created = MakeUnique<FObjectStructDefinition>(this, static_cast<const FStructProperty*>(Property)->GetStruct(), InRoot);
+                }
+                else if (Type == EPropertyTypeFlags::Vector)
+                {
+                    Created = MakeUnique<FObjectArrayDefinition>(this, static_cast<const FArrayProperty*>(Property), InRoot);
+                }
+                else if (IsScalarType(Type))
+                {
+                    Created = MakeUnique<FObjectValueDefinition>(this, Property, InRoot);
+                }
+                if (!Created)
+                {
+                    return nullptr;
+                }
+
+                Rml::VariableDefinition* Definition = Created.get();
+                Definitions.push_back(Move(Created));
+                DefinitionIndex.push_back(FDefinitionEntry{ Property, InRoot, Definition });
+                return Definition;
+            }
+
+            void Evaluate(const FComputed& Entry, Rml::Variant& Out)
+            {
+                // A preview never runs game code, so it shows the name where the value would go.
+                if (bDesignTime || Object == nullptr)
+                {
+                    Out = Entry.Name;
+                    return;
+                }
+                FModelCallFrame Frame(*Entry.Function);
+                Entry.Function->Invoke(Object, Frame.Data());
+                const FProperty* Return = Entry.Function->GetReturnParam();
+                if (Return == nullptr || !ReadVariant(Return, Return->GetValuePtr<void>(Frame.Data()), Out))
+                {
+                    Out = Rml::Variant();
+                }
+            }
+
+            void RunCommand(const FFunction* Function, const Rml::String& CommandName, const Rml::VariantList& Arguments)
+            {
+                if (bDesignTime)
+                {
+                    if (FiredCommands.size() < 64)
+                    {
+                        Rml::String Call = CommandName + "(";
+                        for (size_t Index = 0; Index < Arguments.size(); ++Index)
+                        {
+                            Call += (Index > 0 ? ", " : "") + Arguments[Index].Get<Rml::String>();
+                        }
+                        FiredCommands.push_back(FString((Call + ")").c_str()));
+                    }
+                    return;
+                }
+                if (Object == nullptr)
+                {
+                    return;
+                }
+
+                FEventDispatchScope Dispatch;
+                FModelCallFrame Frame(*Function);
+                const TSpan<FProperty* const> Params = Function->GetArguments();
+                if (Params.size() != Arguments.size())
+                {
+                    WarnOnce(CommandName, "[RmlUi] {}.{} takes {} argument(s) but the markup passes {}; missing ones run as defaults and extra ones are dropped.",
+                        Name.c_str(), CommandName.c_str(), Params.size(), Arguments.size());
+                }
+                for (size_t Index = 0; Index < Params.size() && Index < Arguments.size(); ++Index)
+                {
+                    if (!WriteVariant(Params[Index], Params[Index]->GetValuePtr<void>(Frame.Data()), Arguments[Index]))
+                    {
+                        WarnOnce(CommandName + "#" + std::to_string(Index), "[RmlUi] {}.{} could not read '{}' as its {} argument {}, so it runs with the default.",
+                            Name.c_str(), CommandName.c_str(), Arguments[Index].Get<Rml::String>().c_str(), PropertyTypePlainNames[(size_t)Params[Index]->GetType()],
+                            Params[Index]->GetPropertyName().c_str());
+                    }
+                }
+                Function->Invoke(Object, Frame.Data());
+                NoteUIChanged();
+            }
+
+            // A two-way view wrote Root, so its PROPERTY(Change = ...) function runs with the old and new values.
+            void ValueWrittenByView(const FProperty* InRoot)
+            {
+                NoteUIChanged();
+                const int32 Index = Snapshot.IndexOf(InRoot);
+                if (Index < 0 || Object == nullptr)
+                {
+                    return;
+                }
+                // A text field submits on Enter as well as on each edit, which writes back the value it already has.
+                if (Snapshot.IsTracked(Index) && Snapshot.Matches(Index, Object))
+                {
+                    return;
+                }
+
+                const FFunction* Change = !bDesignTime ? FindChangeHandler(Object->GetClass(), InRoot, false) : nullptr;
+                if (Change != nullptr)
+                {
+                    FEventDispatchScope Dispatch;
+                    const TSpan<FProperty* const> Params = Change->GetArguments();
+                    FModelCallFrame Frame(*Change);
+                    if (Params.size() == 2)
+                    {
+                        Params[0]->CopyCompleteValue(Params[0]->GetValuePtr<void>(Frame.Data()), Snapshot.IsTracked(Index) ? Snapshot.Slot(Index) : InRoot->GetValuePtr<void>(Object));
+                        Params[1]->CopyCompleteValue(Params[1]->GetValuePtr<void>(Frame.Data()), InRoot->GetValuePtr<void>(Object));
+                    }
+                    Change->Invoke(Object, Frame.Data());
+                }
+                // The handler may have destroyed the script this model reads.
+                if (Object != nullptr)
+                {
+                    Snapshot.Store(Index, Object);
+                }
+            }
+
+            void Poll()
+            {
+                if (bDead || Object == nullptr)
+                {
+                    return;
+                }
+                bool bChanged = false;
+                for (size_t Index = 0; Index < Values.size(); ++Index)
+                {
+                    if (!Snapshot.Matches(Index, Object))
+                    {
+                        Snapshot.Store(Index, Object);
+                        Handle.DirtyVariable(Values[Index].Name);
+                        bChanged = true;
+                    }
+                }
+                if (!bDesignTime)
+                {
+                    for (FComputed& Entry : Computed)
+                    {
+                        Rml::Variant Current;
+                        Evaluate(Entry, Current);
+                        if (!(Current == Entry.Last))
+                        {
+                            Entry.Last = Current;
+                            Handle.DirtyVariable(Entry.Name);
+                            bChanged = true;
+                        }
+                    }
+                }
+                if (bChanged)
+                {
+                    NoteUIChanged();
+                }
+            }
+        };
+
+        bool FObjectValueDefinition::Get(void* Ptr, Rml::Variant& Out)
+        {
+            return !Model->bDead && ReadVariant(Property, Ptr, Out);
+        }
+
+        int FObjectArrayDefinition::Size(void* Ptr)
+        {
+            return Model->bDead ? 0 : (int)Array->GetNum(Ptr);
+        }
+
+        bool FObjectValueDefinition::Set(void* Ptr, const Rml::Variant& In)
+        {
+            if (Model->bDead || !WriteVariant(Property, Ptr, In))
+            {
+                return false;
+            }
+            Model->ValueWrittenByView(Root);
+            return true;
+        }
+
+        Rml::DataVariable FObjectStructDefinition::Child(void* Ptr, const Rml::DataAddressEntry& Address)
+        {
+            if (Address.name.empty() || Model->bDead)
+            {
+                return Rml::DataVariable();
+            }
+            FProperty* Member = Struct->GetProperty(FName(Address.name.c_str()));
+            Rml::VariableDefinition* Definition = Member != nullptr ? Model->DefinitionFor(Member, Root) : nullptr;
+            return Definition != nullptr ? Rml::DataVariable(Definition, Member->GetValuePtr<void>(Ptr)) : Rml::DataVariable();
+        }
+
+        Rml::StringList FObjectStructDefinition::ReflectMemberNames()
+        {
+            Rml::StringList Names;
+            for (const FProperty* Member : Struct->GetProperties())
+            {
+                Names.push_back(Member->GetPropertyName().c_str());
+            }
+            return Names;
+        }
+
+        Rml::DataVariable FObjectArrayDefinition::Child(void* Ptr, const Rml::DataAddressEntry& Address)
+        {
+            const int Count = Size(Ptr);
+            if (Address.index < 0 && Address.name == "size")
+            {
+                return Rml::MakeLiteralIntVariable(Count);
+            }
+            if (Address.index < 0 || Address.index >= Count)
+            {
+                return Rml::DataVariable();
+            }
+            Rml::VariableDefinition* Definition = Model->DefinitionFor(Array->GetInternalProperty(), Root);
+            return Definition != nullptr ? Rml::DataVariable(Definition, Array->GetAt(Ptr, (size_t)Address.index)) : Rml::DataVariable();
+        }
+
+        TVector<FObjectModel*>& ObjectModels()
+        {
+            static TVector<FObjectModel*> Models;
+            return Models;
+        }
+
+        void ReapContextObjectModels(Rml::Context* Context)
+        {
+            TVector<FObjectModel*>& Models = ObjectModels();
+            for (size_t Index = 0; Index < Models.size();)
+            {
+                if (Models[Index]->Context == Context)
+                {
+                    delete Models[Index];
+                    Models[Index] = Models.back();
+                    Models.pop_back();
+                }
+                else
+                {
+                    ++Index;
+                }
+            }
+        }
+    }
+
+    void* CreateObjectModel(Rml::Context* Context, FStringView Name, CObject* Object, bool bDesignTime)
+    {
+        NoteUIChanged();
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        if (!State.bInitialized || Context == nullptr || Object == nullptr || Name.empty())
+        {
+            return nullptr;
+        }
+
+        const Rml::String ModelName(Name.data(), Name.size());
+        Rml::DataModelConstructor Constructor = Context->CreateDataModel(ModelName);
+        if (!Constructor)
+        {
+            LOG_WARN("[RmlUi] Data model '{}' already exists in this context, so {} could not bind as it.", ModelName.c_str(), Object->GetClass()->GetName().c_str());
+            return nullptr;
+        }
+
+        FObjectModel* Model = new FObjectModel();
+        Model->Context     = Context;
+        Model->Name        = ModelName;
+        Model->Constructor = Constructor;
+        Model->Handle      = Constructor.GetModelHandle();
+        Model->Object      = Object;
+        Model->bDesignTime = bDesignTime;
+        ObjectModels().push_back(Model);
+
+        TVector<UIBinding::FBoundValue> Values;
+        UIBinding::GetBoundValues(Object->GetClass(), Values);
+        TVector<FProperty*> Snapshotted;
+        for (const UIBinding::FBoundValue& Value : Values)
+        {
+            Rml::VariableDefinition* Definition = Model->DefinitionFor(Value.Property, Value.Property);
+            if (Definition == nullptr)
+            {
+                LOG_WARN("[RmlUi] {}.{} is bound but its type cannot be shown in a UI.", Object->GetClass()->GetName().c_str(), Value.Property->GetPropertyName().c_str());
+                continue;
+            }
+            const Rml::String VariableName(Value.Name.c_str(), Value.Name.size());
+            Constructor.BindCustomDataVariable(VariableName, Rml::DataVariable(Definition, Value.Property->GetValuePtr<void>(Object)));
+            Model->Values.push_back(FObjectModel::FValue{ Value.Property, VariableName });
+            Snapshotted.push_back(Value.Property);
+            if (!bDesignTime)
+            {
+                FindChangeHandler(Object->GetClass(), Value.Property, true);
+            }
+        }
+        Model->Snapshot.Capture(Snapshotted, Object);
+
+        TVector<UIBinding::FBoundFunction> Functions;
+        UIBinding::GetBoundFunctions(Object->GetClass(), Functions);
+        for (const UIBinding::FBoundFunction& Bound : Functions)
+        {
+            const Rml::String FunctionName(Bound.Name.c_str(), Bound.Name.size());
+            if (Bound.bComputed)
+            {
+                Model->Computed.push_back(FObjectModel::FComputed{ Bound.Function, FunctionName, Rml::Variant() });
+                const size_t Index = Model->Computed.size() - 1;
+                Model->Evaluate(Model->Computed[Index], Model->Computed[Index].Last);
+                Constructor.BindFunc(FunctionName, [Model, Index](Rml::Variant& Out) { Out = Model->Computed[Index].Last; });
+            }
+            else
+            {
+                const FFunction* Function = Bound.Function;
+                Constructor.BindEventCallback(FunctionName, [Model, Function, FunctionName](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& Arguments)
+                {
+                    Model->RunCommand(Function, FunctionName, Arguments);
+                });
+            }
+        }
+        return Model;
+    }
+
+    void DestroyObjectModel(void* ModelPtr)
+    {
+        NoteUIChanged();
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        TVector<FObjectModel*>& Models = ObjectModels();
+        for (size_t Index = 0; Index < Models.size(); ++Index)
+        {
+            FObjectModel* Model = Models[Index];
+            if (Model != ModelPtr)
+            {
+                continue;
+            }
+            if (GEventDispatchDepth > 0)
+            {
+                Model->bDead = true;
+                Model->Object = nullptr;
+                return;
+            }
+            if (State.bInitialized && Model->Context != nullptr)
+            {
+                Model->Context->RemoveDataModel(Model->Name);
+            }
+            Models[Index] = Models.back();
+            Models.pop_back();
+            delete Model;
+            return;
+        }
+    }
+
+    void PollObjectModels(Rml::Context* Context)
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        TVector<FObjectModel*>& Models = ObjectModels();
+        for (size_t Index = 0; Index < Models.size();)
+        {
+            FObjectModel* Model = Models[Index];
+            if (Model->Context == Context && Model->bDead && GEventDispatchDepth == 0)
+            {
+                Context->RemoveDataModel(Model->Name);
+                Models[Index] = Models.back();
+                Models.pop_back();
+                delete Model;
+                continue;
+            }
+            if (Model->Context == Context)
+            {
+                Model->Poll();
+            }
+            ++Index;
+        }
+    }
+
+    bool SetObjectModelValue(void* ModelPtr, FStringView Variable, FStringView Text)
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        for (FObjectModel* Model : ObjectModels())
+        {
+            if (Model != ModelPtr)
+            {
+                continue;
+            }
+            void* Container = nullptr;
+            if (const FProperty* Property = UIBinding::ResolvePath(Model->Object, Variable, Container))
+            {
+                const bool bSet = Reflection::FromText(Property, Container, Text);
+                NoteUIChanged();
+                return bSet;
+            }
+        }
+        return false;
+    }
+
+    FString GetObjectModelValue(void* ModelPtr, FStringView Variable)
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        for (FObjectModel* Model : ObjectModels())
+        {
+            if (Model != ModelPtr)
+            {
+                continue;
+            }
+            void* Container = nullptr;
+            if (const FProperty* Property = UIBinding::ResolvePath(Model->Object, Variable, Container))
+            {
+                return Reflection::ToText(Property, Container);
+            }
+        }
+        return FString();
+    }
+
+    namespace
+    {
+        FManagedDataModel* FindDesignModel(FEditorEntry& Entry, FStringView Name)
+        {
+            for (void* Model : Entry.DesignModels)
+            {
+                FManagedDataModel* M = static_cast<FManagedDataModel*>(Model);
+                if (FStringView(M->Name.c_str(), M->Name.size()) == Name)
+                {
+                    return M;
+                }
+            }
+            return nullptr;
+        }
+
+        int32 FindDesignField(const FManagedDataModel& M, FStringView Variable)
+        {
+            for (size_t Index = 0; Index < M.VarNames.size(); ++Index)
+            {
+                if (FStringView(M.VarNames[Index].c_str(), M.VarNames[Index].size()) == Variable)
+                {
+                    return (int32)Index;
+                }
+            }
+            return -1;
+        }
+
+        void StoreDesignValue(FManagedDataModel* M, int32 Field, EUIVarType Type, FStringView Value)
+        {
+            if (Type == EUIVarType::String)
+            {
+                DataModelSetString(M, Field, Value);
+                return;
+            }
+            const FString Text(Value.data(), Value.size());
+            double Number = 0.0;
+            if (Text == "true")
+            {
+                Number = 1.0;
+            }
+            else if (!Text.empty())
+            {
+                Number = std::strtod(Text.c_str(), nullptr);
+            }
+            DataModelSetNumber(M, Field, Number);
+        }
+
+        void FillDesignRows(FManagedDataModel* M, int32 ListField, const TVector<TVector<FString>>& Rows)
+        {
+            DataModelListResize(M, ListField, (int32)Rows.size());
+            for (size_t Row = 0; Row < Rows.size(); ++Row)
+            {
+                for (size_t Col = 0; Col < Rows[Row].size(); ++Col)
+                {
+                    DataModelListSetCell(M, ListField, (int32)Row, (int32)Col, FStringView(Rows[Row][Col].c_str(), Rows[Row][Col].size()));
+                }
+            }
+        }
+
+        int32 FindDesignList(FManagedDataModel& M, FStringView List)
+        {
+            for (size_t Index = 0; Index < M.Lists.size(); ++Index)
+            {
+                if (M.Lists[Index] && FStringView(M.Lists[Index]->Name.c_str(), M.Lists[Index]->Name.size()) == List)
+                {
+                    return (int32)Index;
+                }
+            }
+            return -1;
+        }
+    }
+
+    void SetEditorDesignModels(Rml::Context* Context, const TVector<FUIDesignModel>& Models)
+    {
+        NoteUIChanged();
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;
+        if (Entry == nullptr)
+        {
+            return;
+        }
+
+        // Dropped first, since a document still bound to an old model would keep reading it.
+        if (Entry->Document != nullptr)
+        {
+            Context->UnloadDocument(Entry->Document);
+            Entry->Document = nullptr;
+            Context->Update();
+        }
+        for (void* Model : Entry->DesignModels)
+        {
+            DestroyDataModel(Model);
+        }
+        Entry->DesignModels.clear();
+
+        for (const FUIDesignModel& Design : Models)
+        {
+            const Rml::String ModelName(Design.Name.c_str(), Design.Name.size());
+            Rml::DataModelConstructor Ctor = Context->CreateDataModel(ModelName);
+            if (!Ctor)
+            {
+                continue;
+            }
+
+            FManagedDataModel* M = new FManagedDataModel();
+            M->Name         = ModelName;
+            M->Constructor  = Ctor;
+            M->Handle       = Ctor.GetModelHandle();
+            M->OwnerContext = Context;
+            State.DataModels.push_back(M);
+            Entry->DesignModels.push_back(M);
+
+            for (const FUIDesignScalar& Scalar : Design.Scalars)
+            {
+                const int32 Field = DataModelBindScalar(M, FStringView(Scalar.Name.c_str(), Scalar.Name.size()), (int32)Scalar.Type);
+                if (Field >= 0)
+                {
+                    StoreDesignValue(M, Field, Scalar.Type, FStringView(Scalar.Value.c_str(), Scalar.Value.size()));
+                }
+            }
+
+            for (const FUIDesignList& List : Design.Lists)
+            {
+                const int32 ListField = DataModelBindList(M, FStringView(List.Name.c_str(), List.Name.size()));
+                if (ListField < 0)
+                {
+                    continue;
+                }
+                for (const FString& Member : List.Members)
+                {
+                    DataModelBindListMember(M, ListField, FStringView(Member.c_str(), Member.size()));
+                }
+                FillDesignRows(M, ListField, List.Rows);
+            }
+
+            for (size_t Index = 0; Index < Design.Commands.size(); ++Index)
+            {
+                const FString& Name = Design.Commands[Index].Name;
+                DataModelBindCommand(M, FStringView(Name.c_str(), Name.size()), (int32)Index);
+            }
+            DataModelDirtyAll(M);
+        }
+    }
+
+    void SetEditorDesignValue(Rml::Context* Context, FStringView Model, FStringView Variable, FStringView Value)
+    {
+        NoteUIChanged();
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;
+        FManagedDataModel* M = Entry != nullptr ? FindDesignModel(*Entry, Model) : nullptr;
+        const int32 Field = M != nullptr ? FindDesignField(*M, Variable) : -1;
+        if (Field < 0)
+        {
+            return;
+        }
+        StoreDesignValue(M, Field, (EUIVarType)M->Types[Field], Value);
+        DataModelDirty(M, Field);
+    }
+
+    FString GetEditorDesignValue(Rml::Context* Context, FStringView Model, FStringView Variable)
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;
+        FManagedDataModel* M = Entry != nullptr ? FindDesignModel(*Entry, Model) : nullptr;
+        const int32 Field = M != nullptr ? FindDesignField(*M, Variable) : -1;
+        if (Field < 0)
+        {
+            return FString();
+        }
+        const Rml::String Text = M->Values[Field].Get<Rml::String>();
+        return FString(Text.c_str(), Text.size());
+    }
+
+    void SetEditorDesignRows(Rml::Context* Context, FStringView Model, FStringView List, const TVector<TVector<FString>>& Rows)
+    {
+        NoteUIChanged();
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;
+        FManagedDataModel* M = Entry != nullptr ? FindDesignModel(*Entry, Model) : nullptr;
+        const int32 ListField = M != nullptr ? FindDesignList(*M, List) : -1;
+        if (ListField < 0)
+        {
+            return;
+        }
+        FillDesignRows(M, ListField, Rows);
+        DataModelListDirty(M, ListField);
+    }
+
+    void ConsumeEditorDesignCommands(Rml::Context* Context, TVector<FString>& Out)
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;
+        if (Entry == nullptr)
+        {
+            return;
+        }
+        for (void* Model : Entry->DesignModels)
+        {
+            FManagedDataModel* M = static_cast<FManagedDataModel*>(Model);
+            for (FString& Fired : M->FiredCommands)
+            {
+                Out.push_back(Move(Fired));
+            }
+            M->FiredCommands.clear();
+        }
+        for (FObjectModel* Model : ObjectModels())
+        {
+            if (Model->Context != Context)
+            {
+                continue;
+            }
+            for (FString& Fired : Model->FiredCommands)
+            {
+                Out.push_back(Move(Fired));
+            }
+            Model->FiredCommands.clear();
+        }
+    }
 }

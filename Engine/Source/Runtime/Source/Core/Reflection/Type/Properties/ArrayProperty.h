@@ -15,9 +15,13 @@ namespace Lumina
             : FProperty(Params)
         {
             Ops = Params->GetOpsFn ? Params->GetOpsFn() : nullptr;
+            SetElementSize(Ops != nullptr ? Ops->ContainerSize : 0);
         }
         
         void AddProperty(FProperty* Property) override { Inner = Property; }
+
+        // Numbers, bools and enums, which a byte compare and a byte copy handle exactly.
+        bool HasPlainElements() const;
 
         void Serialize(FArchive& Ar, void* Value) override;
         void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;

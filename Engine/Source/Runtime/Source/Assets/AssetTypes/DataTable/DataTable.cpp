@@ -3,6 +3,7 @@
 
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
 #include "Containers/StringFormat.h"
 
 namespace Lumina
@@ -46,7 +47,26 @@ namespace Lumina
     const void* CDataTable::FindRow(const FName& RowName) const
     {
         const int32 Index = FindRowIndex(RowName);
-        return Index != INDEX_NONE ? Rows[Index].Value.GetMemory() : nullptr;
+        if (Index == INDEX_NONE || Rows[Index].Value.GetScriptStruct() != GetRowStruct())
+        {
+            return nullptr;
+        }
+        return Rows[Index].Value.GetMemory();
+    }
+
+    void CDataTable::PostPropertyChange(FProperty* ChangedProperty)
+    {
+        Super::PostPropertyChange(ChangedProperty);
+
+        // A direct edit of the name skips SetRowStruct, and rows of the old type must not be read as the new one.
+        if (ChangedProperty != nullptr && ChangedProperty->GetPropertyName() == FName("RowStructName"))
+        {
+            CStruct* RowStruct = GetRowStruct();
+            Rows.erase(std::remove_if(Rows.begin(), Rows.end(), [RowStruct](const SDataTableRow& Row)
+            {
+                return Row.Value.GetScriptStruct() != RowStruct;
+            }), Rows.end());
+        }
     }
 
     int32 CDataTable::AddRow(const FName& RowName)

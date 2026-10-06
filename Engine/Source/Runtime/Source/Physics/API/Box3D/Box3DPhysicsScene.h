@@ -217,6 +217,9 @@ namespace Lumina::Physics
         FQuat GetBodyRotation(ECS::FEntity Entity) const override;
 
         uint32 GetBodyCount() override;
+
+        // Joints alive in the solver, counted here because Box3D's world registry is private to the module that links it.
+        uint32 GetLiveJointCount();
         uint32 GetMaxBodyCount() override;
 
 
@@ -472,6 +475,9 @@ namespace Lumina::Physics
             FVector3 Point = FVector3(0.0f);
             FVector3 Secondary = FVector3(0.0f);
             FVector4 Parameters = FVector4(0.0f);
+
+            // The body binding the command was aimed at, so a removed and re-added component does not inherit it. Zero when none existed yet.
+            uint64 Revision = 0;
         };
 
         enum class EBodyCommandResult : uint8 { Applied, Dropped, Waiting };

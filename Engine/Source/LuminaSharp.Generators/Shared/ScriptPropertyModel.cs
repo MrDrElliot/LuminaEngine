@@ -113,19 +113,20 @@ internal static class ScriptPropertyClassifier
 
         // Everything blittable -- numbers, bool, and the struct mirrors like FVector3/FTransform -- is read in
         // place at the property's offset. Checked last so every special case above wins.
-        if (!Type.IsUnmanagedType)
+        // A struct declared in script may hold a string, which makes it managed without making it unsupported.
+        if (!Type.IsUnmanagedType && Type.TypeKind != TypeKind.Struct)
         {
             return FScriptPropertyClassification.Reject(SupportedTypesHelp);
         }
-        if (IsEngineMirror(Type))
+        if (Type.IsUnmanagedType && IsEngineMirror(Type))
         {
             return FScriptPropertyClassification.Of(EScriptAccess.Blittable);
         }
 
-        string? Why = ScriptStructRejection(Type);
+        string? Why = ScriptStructRejection(Type, out bool bMarshalled);
         return Why != null
             ? FScriptPropertyClassification.Reject(Why)
-            : FScriptPropertyClassification.Of(EScriptAccess.Blittable);
+            : FScriptPropertyClassification.Of(bMarshalled ? EScriptAccess.MarshalledStruct : EScriptAccess.Blittable);
     }
 
     // A primitive is its bytes everywhere, and a mirror's size is checked against native at startup.
@@ -153,8 +154,9 @@ internal static class ScriptPropertyClassifier
     }
 
     // Native packs members at their own alignment in declaration order, which a sequential C# struct also does.
-    private static string? ScriptStructRejection(ITypeSymbol Type)
+    private static string? ScriptStructRejection(ITypeSymbol Type, out bool bMarshalled)
     {
+        bMarshalled = false;
         if (Type.TypeKind != TypeKind.Struct)
         {
             return $"'{Display(Type)}' cannot back a property. {SupportedTypesHelp}";
@@ -178,11 +180,16 @@ internal static class ScriptPropertyClassifier
             }
 
             EScriptAccess MemberAccess = Classify(Field.Type).Access;
+            if (MemberAccess is EScriptAccess.String or EScriptAccess.MarshalledStruct)
+            {
+                bMarshalled = true;
+                continue;
+            }
             if (MemberAccess != EScriptAccess.Blittable && MemberAccess != EScriptAccess.Enum)
             {
                 return $"'{Display(Type)}' has the field '{Field.Name}' of type "
-                     + $"'{Display(Field.Type)}', which cannot live in native storage as raw bytes. A struct "
-                     + "declared in script may hold only numbers, bool, engine math types, and structs of those.";
+                     + $"'{Display(Field.Type)}', which a script struct cannot hold. A struct declared in script "
+                     + "may hold only numbers, bool, enums, strings, engine math types, and structs of those.";
             }
         }
 
@@ -255,7 +262,7 @@ internal static class ScriptPropertyClassifier
         {
             return null;
         }
-        if (bMarshalled && Classification.Access == EScriptAccess.ObjectPtr)
+        if (bMarshalled && Classification.Access is EScriptAccess.ObjectPtr or EScriptAccess.MarshalledStruct)
         {
             return null;
         }
@@ -377,6 +384,9 @@ internal enum EScriptAccess
     ListView,
     MapView,
     InputBinding,
+
+    // A struct declared in script holding a string, so its native layout differs from its managed one and each field crosses on its own.
+    MarshalledStruct,
 }
 
 /// <summary>The result of <see cref="ScriptPropertyClassifier.Classify"/>: the access shape plus whatever type

@@ -11,10 +11,12 @@
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Reflection/Type/Function.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Reflection/PropertySnapshot.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Networking/INetworkRuntime.h"
 #include "Networking/NetRealm.h"
 #include "DotNet/NetScriptBridge.h"
+#include "UI/UIScript.h"
 #include "World/WorldContext.h"
 #include "Core/Engine/GameLibrary.h"
 #include "World/World.h"
@@ -126,27 +128,11 @@ namespace Lumina
         }
     }
 
-    struct FSyncSnapshot
-    {
-        ~FSyncSnapshot()
-        {
-            for (size_t Index = 0; Index < Fields.size(); ++Index)
-            {
-                Fields[Index]->DestructValue(Slot(Index));
-            }
-        }
-
-        void* Slot(size_t Index) { return reinterpret_cast<uint8*>(Storage.data()) + Offsets[Index]; }
-
-        TVector<FProperty*>         Fields;
-        TVector<size_t>             Offsets;
-        TVector<std::max_align_t>   Storage;
-    };
-
     // A script destroyed outright, not detached, must still stop a batch that has it queued.
     CEntityScript::~CEntityScript()
     {
         EntityScripts::NoteStructureChange();
+        UIScripts::Forget(this);
         delete SyncSnapshot;
     }
 
@@ -544,9 +530,12 @@ namespace Lumina
         }
 
         const TSpan<FProperty* const> Arguments = Function->GetArguments();
-        if (Arguments.size() != 0 && Arguments.size() != 2)
+        const bool bCallable = Arguments.empty()
+            || (Arguments.size() == 2 && Arguments[0]->HasSameValueType(Field) && Arguments[1]->HasSameValueType(Field));
+        if (!bCallable)
         {
-            LOG_WARN("{}::{} is a change handler, so it takes nothing or (Old, New).", GetClass()->GetName().c_str(), Function->GetFunctionName().c_str());
+            LOG_WARN("{}::{} is a change handler, so it takes nothing or (Old, New) of {}'s type.", GetClass()->GetName().c_str(),
+                Function->GetFunctionName().c_str(), Field->GetPropertyName().c_str());
             return;
         }
 
@@ -569,7 +558,7 @@ namespace Lumina
 
         const TSpan<FProperty* const> Arguments = Function->GetArguments();
         const FProperty* Return = Function->GetReturnParam();
-        if (Arguments.size() != 1 || Return == nullptr || Return->GetType() != EPropertyTypeFlags::Bool)
+        if (Arguments.size() != 1 || !Arguments[0]->HasSameValueType(Field) || Return == nullptr || Return->GetType() != EPropertyTypeFlags::Bool)
         {
             LOG_WARN("{}::{} validates a Sync field, so it takes the proposed value and returns bool.", GetClass()->GetName().c_str(), Function->GetFunctionName().c_str());
             return true;
@@ -624,27 +613,14 @@ namespace Lumina
             static_cast<uint8>(ENetFlags::None), Payload.data(), static_cast<uint32>(Payload.size()));
     }
 
-    FSyncSnapshot& CEntityScript::EnsureSyncSnapshot()
+    FPropertySnapshot& CEntityScript::EnsureSyncSnapshot()
     {
-        if (SyncSnapshot != nullptr)
+        if (SyncSnapshot == nullptr)
         {
-            return *SyncSnapshot;
-        }
-
-        SyncSnapshot = new FSyncSnapshot();
-        GetClass()->GetNetReplicatedProperties(SyncSnapshot->Fields);
-        size_t Size = 0;
-        for (const FProperty* Field : SyncSnapshot->Fields)
-        {
-            SyncSnapshot->Offsets.push_back(Size);
-            Size += (Field->GetElementSize() + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t) * sizeof(std::max_align_t);
-        }
-        SyncSnapshot->Storage.resize(Size / sizeof(std::max_align_t) + 1);
-        for (size_t Index = 0; Index < SyncSnapshot->Fields.size(); ++Index)
-        {
-            FProperty* Field = SyncSnapshot->Fields[Index];
-            Field->ConstructValue(SyncSnapshot->Slot(Index));
-            Field->CopyCompleteValue(SyncSnapshot->Slot(Index), Field->GetValuePtr<void>(this));
+            SyncSnapshot = new FPropertySnapshot();
+            TVector<FProperty*> Fields;
+            GetClass()->GetNetReplicatedProperties(Fields);
+            SyncSnapshot->Capture(Fields, this);
         }
         return *SyncSnapshot;
     }
@@ -666,17 +642,15 @@ namespace Lumina
         const bool bHost = IsHost();
         const bool bOwner = !bHost && IsOwner();
         bool bDirty = false;
-        for (size_t Index = 0; Index < SyncSnapshot->Fields.size(); ++Index)
+        for (size_t Index = 0; Index < SyncSnapshot->Num(); ++Index)
         {
-            FProperty* Field = SyncSnapshot->Fields[Index];
+            FProperty* Field = SyncSnapshot->Field(Index);
             const bool bWriter = bHost || (bOwner && IsSyncFromOwner(Field));
             if (bWriter)
             {
                 QuantizeSync(Field);
             }
-
-            void* Seen = SyncSnapshot->Slot(Index);
-            if (Field->Identical(Seen, Field->GetValuePtr<void>(this)))
+            if (SyncSnapshot->Matches(Index, this))
             {
                 continue;
             }
@@ -689,8 +663,8 @@ namespace Lumina
             {
                 SendSync(Field, false);
             }
-            NotifySyncChanged(Field, Seen);
-            Field->CopyCompleteValue(Seen, Field->GetValuePtr<void>(this));
+            NotifySyncChanged(Field, SyncSnapshot->Slot(Index));
+            SyncSnapshot->Store(Index, this);
         }
 
         if (bDirty)
@@ -715,18 +689,17 @@ namespace Lumina
         {
             const char* Name = Names + Start;
             Start += static_cast<uint32>(strlen(Name) + 1);
-            for (size_t Index = 0; Index < SyncSnapshot->Fields.size(); ++Index)
+            for (size_t Index = 0; Index < SyncSnapshot->Num(); ++Index)
             {
-                FProperty* Field = SyncSnapshot->Fields[Index];
+                FProperty* Field = SyncSnapshot->Field(Index);
                 if (strcmp(Field->GetPropertyName().c_str(), Name) != 0)
                 {
                     continue;
                 }
-                void* Seen = SyncSnapshot->Slot(Index);
-                if (!Field->Identical(Seen, Field->GetValuePtr<void>(this)))
+                if (!SyncSnapshot->Matches(Index, this))
                 {
-                    NotifySyncChanged(Field, Seen);
-                    Field->CopyCompleteValue(Seen, Field->GetValuePtr<void>(this));
+                    NotifySyncChanged(Field, SyncSnapshot->Slot(Index));
+                    SyncSnapshot->Store(Index, this);
                 }
                 break;
             }
@@ -1404,6 +1377,9 @@ namespace Lumina
                         {
                             // Once per script, so naming it by class costs nothing per frame and splits the script system's time.
                             LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
+
+                            // Before OnReady, so a UI script's document, bound values and elements are already there.
+                            UIScripts::Open(Script);
                             Script->OnReady();
                         }
                         bUserCodeRan = true;
@@ -1951,6 +1927,7 @@ namespace Lumina
             {
                 Script->OnDetach();
             }
+            UIScripts::Close(Script);
             
             SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
@@ -2028,6 +2005,7 @@ namespace Lumina
                 {
                     Script->OnDetach();
                 }
+                UIScripts::Close(Held.Get());
             }
             
             if (SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity))

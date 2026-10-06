@@ -12,6 +12,17 @@ namespace Lumina
     static constexpr float  ParticlePrewarmStep     = 1.0f / 30.0f;
     static constexpr uint32 ParticleMaxPrewarmSteps = 300;
     static constexpr uint32 ParticleMaxFixedSteps   = 4;
+    static constexpr uint64 ParticleEmitterByteBudget = 512ull << 20;
+
+    // Saturates instead of casting, since an out-of-range float to integer cast is undefined.
+    static uint32 ToClampedCount(float Value, uint32 Max)
+    {
+        if (!(Value > 0.0f))
+        {
+            return 0u;
+        }
+        return Value >= (float)Max ? Max : (uint32)Value;
+    }
 
     static constexpr uint32 ParticleMaxCollisionSources   = 16;
     static constexpr uint64 ParticleCollisionListBytes    = (uint64)PARTICLE_EVENT_CAPACITY * sizeof(FParticleEventGPU);
@@ -134,7 +145,7 @@ namespace Lumina
         State.SortCount    = 0;
     }
 
-    void FDefaultSceneRenderer::EnsureParticleBuffers(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleGPUState& State)
+    bool FDefaultSceneRenderer::EnsureParticleBuffers(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleGPUState& State)
     {
         const FResolvedParticleParams& Resolved = Item.Resolved;
         const uint32 MaxParticles    = (uint32)Resolved.MaxParticles;
@@ -150,10 +161,24 @@ namespace Lumina
                               || ((State.SortCount > 0) != bWantsSort);
         if (!bNeedsAlloc)
         {
-            return;
+            return true;
         }
 
         ReleaseParticleState(State);
+
+        const uint64 PerParticleBytes = sizeof(FGPUParticle) + (uint64)Item.AttributeFloatCount * sizeof(float)
+                                      + (uint64)RibbonSegments * sizeof(FVector4) + (bWantsSort ? 2ull * sizeof(uint32) : 0ull);
+        if ((uint64)MaxParticles * PerParticleBytes > ParticleEmitterByteBudget)
+        {
+            if (State.RejectedMax == MaxParticles)
+            {
+                return false;
+            }
+            State.RejectedMax = MaxParticles;
+            LOG_ERROR("Particle emitter {} of entity {} needs {} MB for {} particles, over the {} MB budget, and is skipped",
+                Item.EmitterIndex, (uint32)Item.Entity, ((uint64)MaxParticles * PerParticleBytes) >> 20, MaxParticles, ParticleEmitterByteBudget >> 20);
+            return false;
+        }
 
         // A pooled buffer may still be read by an earlier frame's draw, so its clear waits for those reads.
         if (!bParticlePoolReuseBarrierIssued)
@@ -220,6 +245,7 @@ namespace Lumina
         {
             State.FrameSeed = (uint32)Resolved.Seed;
         }
+        return true;
     }
 
     bool FDefaultSceneRenderer::IsParticleEmitterCulled(const FFrameData::FParticleExtract& Item, bool bForDraw) const
@@ -349,7 +375,10 @@ namespace Lumina
                 continue;
             }
 
-            EnsureParticleBuffers(CL, Item, State);
+            if (!EnsureParticleBuffers(CL, Item, State))
+            {
+                continue;
+            }
 
             if (Item.bForceReset)
             {
@@ -389,7 +418,7 @@ namespace Lumina
             uint32 PrewarmSteps = 0;
             if (State.bPrewarmPending && Resolved.PrewarmTime > 0.0f)
             {
-                PrewarmSteps = Math::Min((uint32)Math::Ceil(Resolved.PrewarmTime / ParticlePrewarmStep), ParticleMaxPrewarmSteps);
+                PrewarmSteps = ToClampedCount(Math::Ceil(Resolved.PrewarmTime / ParticlePrewarmStep), ParticleMaxPrewarmSteps);
             }
             State.bPrewarmPending = false;
 
@@ -397,7 +426,7 @@ namespace Lumina
             {
                 const float Step = 1.0f / Resolved.FixedFPS;
                 State.FixedStepRemainder += FrameDelta;
-                const uint32 Steps = Math::Min((uint32)(State.FixedStepRemainder / Step), ParticleMaxFixedSteps);
+                const uint32 Steps = ToClampedCount(State.FixedStepRemainder / Step, ParticleMaxFixedSteps);
                 State.FixedStepRemainder = Math::Min(State.FixedStepRemainder - (float)Steps * Step, Step);
                 for (uint32 Index = 0; Index < Steps; ++Index)
                 {
@@ -469,8 +498,8 @@ namespace Lumina
                 if (bEmitActive && Rate > 0.0f)
                 {
                     State.SpawnAccumulator += StepDelta * Rate * (1.0f - Resolved.Explosiveness);
-                    SpawnCount = (uint32)State.SpawnAccumulator;
-                    State.SpawnAccumulator -= (float)SpawnCount;
+                    SpawnCount = ToClampedCount(State.SpawnAccumulator, MaxParticles);
+                    State.SpawnAccumulator = Math::Clamp(State.SpawnAccumulator - (float)SpawnCount, 0.0f, 1.0f);
 
                     if (Resolved.Explosiveness > 0.0f)
                     {
@@ -478,7 +507,7 @@ namespace Lumina
                         State.CycleTime = bCycleStart ? 0.0f : State.CycleTime + StepDelta;
                         if (bCycleStart)
                         {
-                            SpawnCount += (uint32)Math::Round(Resolved.Explosiveness * Rate * CycleLength);
+                            SpawnCount += ToClampedCount(Math::Round(Resolved.Explosiveness * Rate * CycleLength), MaxParticles);
                         }
                     }
                 }
@@ -490,7 +519,7 @@ namespace Lumina
                 const bool bDoBurst = bEmitActive && Item.bBurstOnSpawn && State.bBurstPending && Resolved.BurstCount > 0;
                 if (bDoBurst)
                 {
-                    SpawnCount += (uint32)Resolved.BurstCount;
+                    SpawnCount += Math::Min((uint32)Resolved.BurstCount, MaxParticles);
                     State.bBurstPending = false;
                 }
                 else if (!Item.bBurstOnSpawn)

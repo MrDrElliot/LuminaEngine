@@ -8,6 +8,7 @@ using System.Runtime.Loader;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Text;
 
@@ -196,7 +197,7 @@ internal static class ScriptCompiler
                 Native.Log(ELogLevel.Error, "C# compile: " + Diagnostic);
                 ExplainShadowedGameNamespace(Diagnostic);
             }
-            else if (Diagnostic.Severity == DiagnosticSeverity.Warning)
+            else if (Diagnostic.Severity == DiagnosticSeverity.Warning && !IsAssignedByEngine(Diagnostic))
             {
                 Native.Log(ELogLevel.Warn, "C# compile: " + Diagnostic);
             }
@@ -210,6 +211,19 @@ internal static class ScriptCompiler
     }
 
     // CS0234 names the missing member, never the shadowing namespace that actually caused it.
+    // An [Element] field is filled when its UIScript's document loads, so "never assigned" is wrong about it.
+    private static bool IsAssignedByEngine(Diagnostic Diagnostic)
+    {
+        if (Diagnostic.Id != "CS0649" || Diagnostic.Location.SourceTree is not { } Tree)
+        {
+            return false;
+        }
+        SyntaxNode Node = Tree.GetRoot().FindNode(Diagnostic.Location.SourceSpan);
+        FieldDeclarationSyntax? Field = Node.FirstAncestorOrSelf<FieldDeclarationSyntax>();
+        return Field != null && Field.AttributeLists.SelectMany(List => List.Attributes)
+            .Any(Attribute => Attribute.Name.ToString() is "Element" or "ElementAttribute" or "LuminaSharp.Element");
+    }
+
     private static void ExplainShadowedGameNamespace(Diagnostic Diagnostic)
     {
         string Message = Diagnostic.GetMessage();

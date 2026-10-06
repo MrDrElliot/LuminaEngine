@@ -39,6 +39,7 @@ namespace Lumina::Scripting
         uint8               UpdatePhase = 0;
         bool                bParallelUpdate = false;
         uint8               NetRealm = 0;
+        TVector<std::pair<FString, FString>> ClassMeta;
     };
 
     /**

@@ -20,7 +20,7 @@ namespace Lumina
     class CWorld;
     class FFunction;
     class FProperty;
-    struct FSyncSnapshot;
+    class FPropertySnapshot;
 
     // Where one routed call runs, decided the same way for NET_RPC and a C# [Rpc] method.
     enum class ERpcRoute : uint8
@@ -113,6 +113,15 @@ namespace Lumina
         void MarkFaulted();
 
         bool ShouldTick() const { return bReady && !bFaulted; }
+
+        // A reload that reshapes a C# class replaces its instances, and the replacement carries on where the original was rather than attaching again.
+        void ContinueLifecycleOf(const CEntityScript& Original)
+        {
+            OwningEntity = Original.OwningEntity;
+            OwningWorld  = Original.OwningWorld;
+            bReady       = Original.bReady;
+            bFaulted     = Original.bFaulted;
+        }
 
         //~ Networking, spelled the way LuminaSharp's Networking and EntityNetwork are. A standalone world answers as its own host.
 
@@ -215,11 +224,11 @@ namespace Lumina
         bool bFaulted = false;
 
         // The Sync values PollSync last saw, built on first use and only for a C++ script.
-        FSyncSnapshot* SyncSnapshot = nullptr;
+        FPropertySnapshot* SyncSnapshot = nullptr;
 
         void ReceiveSync(FProperty* Field, bool bCorrection, uint32 CallerId, const uint8* Payload, uint32 PayloadSize);
         void ApplySync(FProperty* Field, const void* Value);
-        FSyncSnapshot& EnsureSyncSnapshot();
+        FPropertySnapshot& EnsureSyncSnapshot();
     };
 
     /** One script kept verbatim because its class was not loadable when the world was read. */

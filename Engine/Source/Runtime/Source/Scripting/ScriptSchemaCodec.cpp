@@ -141,7 +141,7 @@ namespace Lumina::Scripting
 
             // The rest of a [Sync] declaration, under the same keys PROPERTY(Sync = ...) writes for C++.
             const int32 Extra = R.P < Scope.RecordEnd ? R.I32() : 0;
-            for (int32 i = 0; i < Extra && !R.bError; ++i)
+            for (int32 i = 0; i < Extra && !R.bError && R.P < Scope.RecordEnd; ++i)
             {
                 const FString Key = R.Str();
                 const FString Value = R.Str();

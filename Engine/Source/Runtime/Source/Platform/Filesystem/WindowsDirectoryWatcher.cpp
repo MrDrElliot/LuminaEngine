@@ -82,24 +82,29 @@ namespace Lumina
         OVERLAPPED Overlapped = {};
         Overlapped.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 
+        bool bReadPending = false;
         while (bRunning.load(Atomic::MemoryOrderRelaxed))
         {
             DWORD BytesReturned = 0;
-            BOOL Success = ReadDirectoryChangesW(
-                hDir,
-                Buffer.data(),
-                BufferSize,
-                bWatchRecursive ? TRUE : FALSE,
-                FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | 
-                FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_CREATION,
-                &BytesReturned,
-                &Overlapped,
-                nullptr
-            );
 
-            if (!Success)
+            // One read stays outstanding across timeouts, since a second one on the same buffer and event loses the first's results.
+            if (!bReadPending)
             {
-                break;
+                ResetEvent(Overlapped.hEvent);
+                if (!ReadDirectoryChangesW(
+                    hDir,
+                    Buffer.data(),
+                    BufferSize,
+                    bWatchRecursive ? TRUE : FALSE,
+                    FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+                    FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_CREATION,
+                    nullptr,
+                    &Overlapped,
+                    nullptr))
+                {
+                    break;
+                }
+                bReadPending = true;
             }
 
             DWORD WaitResult = WaitForSingleObject(Overlapped.hEvent, 100);
@@ -112,6 +117,7 @@ namespace Lumina
                 break;
             }
 
+            bReadPending = false;
             if (!GetOverlappedResult(hDir, &Overlapped, &BytesReturned, FALSE))
             {
                 break;
@@ -169,10 +175,14 @@ namespace Lumina
 
                 Info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(reinterpret_cast<BYTE*>(Info) + Info->NextEntryOffset);
             }
-
-            ResetEvent(Overlapped.hEvent);
         }
 
+        if (bReadPending)
+        {
+            DWORD Ignored = 0;
+            CancelIo(hDir);
+            GetOverlappedResult(hDir, &Overlapped, &Ignored, TRUE);
+        }
         CloseHandle(Overlapped.hEvent);
         CloseHandle(hDir);
         

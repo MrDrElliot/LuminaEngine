@@ -109,6 +109,18 @@ namespace Lumina
 
         FORCEINLINE size_t GetMaxSerializeSize() const { return ArMaxSerializeSize; }
 
+        // A count past what is left to read is a corrupt length caught before it allocates, measured in bits since net archives pack bools.
+        bool CanHoldCount(uint64 Count, uint64 MinBytes = 1)
+        {
+            const int64 Total = TotalSize();
+            if (!IsReading() || Total <= 0)
+            {
+                return true;
+            }
+            const int64 Left = Total - Tell();
+            return Left >= 0 && Count <= (uint64)Left * 8 / (MinBytes > 0 ? MinBytes : 1);
+        }
+
         
         virtual FArchive& operator<<(CObject*& Value)
         {
@@ -234,7 +246,7 @@ namespace Lumina
                 uint64 SaveNum = 0;
                 *this << SaveNum;
             
-                if (SaveNum > GetMaxSerializeSize())
+                if (SaveNum > GetMaxSerializeSize() || !CanHoldCount(SaveNum))
                 {
                     SetHasError(true);
                     LOG_ERROR("Archiver is corrupted, string is too large! (Size: {0}, Max: {1})", SaveNum, GetMaxSerializeSize());
@@ -274,7 +286,7 @@ namespace Lumina
                 uint64 SaveNum = 0;
                 *this << SaveNum;
             
-                if (SaveNum > GetMaxSerializeSize())
+                if (SaveNum > GetMaxSerializeSize() || !CanHoldCount(SaveNum))
                 {
                     SetHasError(true);
                     LOG_ERROR("Archiver is corrupted, string is too large! (Size: {0}, Max: {1})", SaveNum, GetMaxSerializeSize());
@@ -360,7 +372,7 @@ namespace Lumina
                 return *this;
             }
         
-            if (SerializeNum > GetMaxSerializeSize())
+            if (SerializeNum > GetMaxSerializeSize() || !CanHoldCount(SerializeNum))
             {
                 SetHasError(true);
                 LOG_ERROR("Archiver is corrupted, attempted to serialize {} array elements. Max is: {}", SerializeNum, GetMaxSerializeSize());
@@ -387,7 +399,7 @@ namespace Lumina
                     Array.resize(SerializeNum);
                 }
 
-                for (size_t i = 0; i < SerializeNum; i++)
+                for (size_t i = 0; i < SerializeNum && !HasError(); i++)
                 {
                     *this << Array[i];
                 }

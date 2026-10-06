@@ -4,6 +4,7 @@
 // the per-world Rml::Context lives on CWorld via FWorldUIContext.
 
 #include "Core/Math/Math.h"
+#include "UI/UIDesignModel.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
@@ -18,6 +19,7 @@ namespace Rml
 namespace Lumina
 {
     class CWorld;
+    class CObject;
     class FRmlUiRenderer;
     struct FWorldUIContext;
     struct SWidgetComponent;
@@ -189,6 +191,11 @@ namespace Lumina::RmlUi
     // Rml::ElementDocument* as a handle (hidden until ShowDocument); null on parse/load failure.
     RUNTIME_API void* LoadScreenDocument(CWorld* World, FStringView VirtualPath);
     RUNTIME_API void* LoadScreenDocumentFromMemory(CWorld* World, FStringView Body, FStringView SourceUrl);
+
+    // Loads a document whose data-model names FromModel as though it named ToModel, for a second instance of a class.
+    RUNTIME_API void* LoadScreenDocumentWithModel(CWorld* World, FStringView VirtualPath, FStringView FromModel, FStringView ToModel);
+
+    RUNTIME_API bool HasDataModel(Rml::Context* Context, FStringView Name);
     RUNTIME_API void  UnloadScreenDocument(CWorld* World, void* Document);
     RUNTIME_API void  ShowDocument(void* Document, bool bModal, bool bAutoFocus);
     RUNTIME_API void  HideDocument(void* Document);
@@ -265,4 +272,32 @@ namespace Lumina::RmlUi
     // Remove the model from its context and free the wrapper. No-op (safe) if the model was already reaped
     // when its world tore down -- the handle is validated against the live set, not dereferenced blindly.
     RUNTIME_API void  DestroyDataModel(void* Model);
+
+    // The editor preview's stand-in data models, so {{ }} and data-* show values while editing instead of nothing.
+
+    // Replaces the preview context's design models. Call before loading the document that binds them.
+    RUNTIME_API void    SetEditorDesignModels(Rml::Context* Context, const TVector<FUIDesignModel>& Models);
+
+    // Updates one stand-in value and refreshes the views bound to it.
+    RUNTIME_API void    SetEditorDesignValue(Rml::Context* Context, FStringView Model, FStringView Variable, FStringView Value);
+
+    // A stand-in value, which a two-way control in the preview may have changed.
+    RUNTIME_API FString GetEditorDesignValue(Rml::Context* Context, FStringView Model, FStringView Variable);
+
+    // Replaces a stand-in collection's rows, each a value per member.
+    RUNTIME_API void    SetEditorDesignRows(Rml::Context* Context, FStringView Model, FStringView List, const TVector<TVector<FString>>& Rows);
+
+    // Takes the commands the preview fired since the last call, as "Name(args)".
+    RUNTIME_API void    ConsumeEditorDesignCommands(Rml::Context* Context, TVector<FString>& Out);
+
+    // Binds Object's Bind members in place through FProperty, and a design-time model records commands rather than running them.
+    RUNTIME_API void*   CreateObjectModel(Rml::Context* Context, FStringView Name, CObject* Object, bool bDesignTime);
+    RUNTIME_API void    DestroyObjectModel(void* Model);
+
+    // Dirties the views of whatever bound values changed since the last call. The context ticks run it.
+    RUNTIME_API void    PollObjectModels(Rml::Context* Context);
+
+    // A bound value as text and back, for the editor's Data panel.
+    RUNTIME_API bool    SetObjectModelValue(void* Model, FStringView Variable, FStringView Text);
+    RUNTIME_API FString GetObjectModelValue(void* Model, FStringView Variable);
 }

@@ -45,10 +45,11 @@ internal sealed class ScriptableRuntime
             return;
         }
 
-        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, byte*, int, byte, byte, void>)Sink;
+        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, byte*, int, byte, byte, byte*, int, void>)Sink;
         Span<byte> NameScratch = stackalloc byte[256];
         Span<byte> BaseScratch = stackalloc byte[256];
         Span<byte> OverrideScratch = stackalloc byte[1024];
+        Span<byte> MetaScratch = stackalloc byte[512];
         foreach (Type Type in Library.ScriptableTypes)
         {
             if (Type.FullName is not { } FullName)
@@ -64,6 +65,7 @@ internal sealed class ScriptableRuntime
             Interop.FInteropString Name = new(FullName, NameScratch);
             Interop.FInteropString Base = new(NativeBase, BaseScratch);
             Interop.FInteropString Overrides = new(GetOverriddenEvents(Type), OverrideScratch);
+            Interop.FInteropString Meta = new(GetClassMeta(Type), MetaScratch);
             try
             {
                 Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length,
@@ -71,10 +73,12 @@ internal sealed class ScriptableRuntime
                     (byte)((Type.IsDefined(typeof(ParallelUpdateAttribute), inherit: true) ? 1 : 0)
                          | (Type.IsDefined(typeof(HostOnlyAttribute), inherit: true) ? 2 : 0)
                          | (Type.IsDefined(typeof(ClientOnlyAttribute), inherit: true) ? 4 : 0)
-                         | (Type.IsDefined(typeof(CosmeticAttribute), inherit: true) ? 8 : 0)));
+                         | (Type.IsDefined(typeof(CosmeticAttribute), inherit: true) ? 8 : 0)),
+                    Meta.Pointer, Meta.Length);
             }
             finally
             {
+                Meta.Free();
                 Overrides.Free();
                 Name.Free();
                 Base.Free();
@@ -212,6 +216,23 @@ internal sealed class ScriptableRuntime
         {
             Native.Log(ELogLevel.Error, $"Script defaults for '{TypeName}' threw: {Exception.Message}");
         }
+    }
+
+    // The class metadata a C++ REFLECT(...) would carry, as lines of key, tab, value.
+    private static string GetClassMeta(Type Type)
+    {
+        if (!typeof(UIScript).IsAssignableFrom(Type))
+        {
+            return "";
+        }
+        var Lines = new System.Text.StringBuilder();
+        Lines.Append("UIScript\t\n");
+        Lines.Append("DataModel\t").Append(DataModelAttribute.NameOf(Type)).Append('\n');
+        if (Type.GetCustomAttribute<UIDocumentAttribute>(inherit: true) is { } Document)
+        {
+            Lines.Append("UIDocument\t").Append(Document.Path).Append('\n');
+        }
+        return Lines.ToString();
     }
 
     // An override moves the method's DeclaringType out of LuminaSharp.dll, which is what identifies one.

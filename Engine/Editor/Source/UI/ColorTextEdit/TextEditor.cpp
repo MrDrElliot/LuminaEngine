@@ -4929,6 +4929,10 @@ bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, cons
 				}
 			}
 
+			if (configuration.triggerFilter && !configuration.triggerFilter(state)) {
+				return false;
+			}
+
 			// get initial list of suggestions from the app
 			refreshSuggestions();
 

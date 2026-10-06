@@ -1011,13 +1011,13 @@ namespace Lumina
         ContentBrowserTileSize = GetDefault<CContentBrowserSettings>()->TileSize;
         ContentBrowserTileView.SetTileSize(ContentBrowserTileSize);
 
+        RefreshFilterClasses();
+
+        // A --Project launch loads the project before this tool exists, so its broadcast was already missed.
         if (GEditorEngine->HasLoadedProject())
         {
-            // Virtual mount path, not the native content dir, the browser iterates VFS.
-            SelectedPath = "/Game";
+            OnProjectLoaded();
         }
-
-        RefreshFilterClasses();
 
         ContentBrowserTileViewContext.bShowTypeLabels = true;
 

@@ -47,6 +47,9 @@ namespace Lumina
         // FUNCTION(NetFlags = ...), mirroring ENetFlags
         NetUnreliable   = BIT(10),
         NetOwnerOnly    = BIT(11),
+
+        // FUNCTION(Bind), a command a UI document calls, or a computed value when it takes nothing and returns one
+        UIBind          = BIT(12),
     };
 
     ENUM_CLASS_FLAGS(EFunctionFlags);

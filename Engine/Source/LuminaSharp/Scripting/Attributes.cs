@@ -124,6 +124,9 @@ public sealed class PropertyAttribute : Attribute
     /// <summary>Draw a color picker for a Vector3/Vector4 value instead of drag fields.</summary>
     public bool Color { get; set; }
 
+    // Turns a string into a picker of those file kinds, such as "rml" or "rml,rcss", the same as a C++ PROPERTY(AssetType = ...).
+    public string? AssetType { get; set; }
+
     /// <summary>
     /// Reflected flags for this property, on top of the Editable one <see cref="PropertyAttribute"/> implies.
     ///

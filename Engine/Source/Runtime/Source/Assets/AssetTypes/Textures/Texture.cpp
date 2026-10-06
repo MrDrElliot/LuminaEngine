@@ -246,6 +246,12 @@ namespace Lumina
 
         const FTextureResource::FDescription& Desc = TextureResource->ImageDescription;
 
+        // Nothing to describe a GPU image with, as for an empty asset or one whose description failed to load.
+        if (TextureResource->Mips.empty() || Desc.Format == EFormat::UNKNOWN)
+        {
+            return false;
+        }
+
         const uint32 NumMips   = TextureResource->GetNumMips();
         const uint32 NumLayers = TextureResource->GetNumLayers();
 

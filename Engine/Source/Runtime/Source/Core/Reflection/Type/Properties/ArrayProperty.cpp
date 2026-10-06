@@ -5,6 +5,7 @@
 #include "StructProperty.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
 
 namespace Lumina
 {
@@ -338,6 +339,13 @@ namespace Lumina
                 return;
             }
 
+            if (!Ar.CanHoldCount(Count, SavedStride))
+            {
+                LOG_ERROR("Array property '{}' claims {} elements of {} bytes, more than the archive has left; failing the archive.", Array.Name, Count, SavedStride);
+                Ar.SetHasError(true);
+                return;
+            }
+
             const FProperty* Inner = Array.GetInternalProperty();
             const CStruct* Struct = GetPlainElementStruct(Inner);
             if (Struct == nullptr)
@@ -458,6 +466,13 @@ namespace Lumina
             return;
         }
 
+        if (!Ar.CanHoldCount(ElementCount))
+        {
+            LOG_ERROR("Array property '{}' claims {} elements, more than the archive has left; failing the archive.", Name, ElementCount);
+            Ar.SetHasError(true);
+            return;
+        }
+
         if (Ar.IsReading() && (SerializedInnerElementSize & PlainStructArrayFlag) != 0)
         {
             ReadPlainStructs(Ar, *this, Value, ElementCount, SerializedInnerElementSize & ~PlainStructArrayFlag);
@@ -534,6 +549,13 @@ namespace Lumina
         }
     }
 
+    bool FArrayProperty::HasPlainElements() const
+    {
+        // By kind rather than the Trivial flag, which a property minted for a C# script never carries.
+        return Ops != nullptr && Inner != nullptr && (IsPlainNumeric(Inner->GetType()) || Inner->GetType() == EPropertyTypeFlags::Enum)
+            && Inner->GetElementSize() == Ops->ElementSize;
+    }
+
     bool FArrayProperty::Identical(const void* ValueA, const void* ValueB) const
     {
         const SIZE_T NumA = GetNum(ValueA);
@@ -541,6 +563,16 @@ namespace Lumina
         if (NumA != NumB)
         {
             return false;
+        }
+        if (NumA == 0)
+        {
+            return true;
+        }
+
+        // A plain element already compares byte-wise, so the whole buffer compares in one pass.
+        if (HasPlainElements())
+        {
+            return Memory::Memcmp(Ops->Data(const_cast<void*>(ValueA)), Ops->Data(const_cast<void*>(ValueB)), NumA * Ops->ElementSize) == 0;
         }
 
         for (SIZE_T i = 0; i < NumA; ++i)
@@ -559,6 +591,11 @@ namespace Lumina
     {
         const SIZE_T SrcCount = GetNum(Src);
         Resize(Dst, SrcCount);
+        if (SrcCount > 0 && HasPlainElements())
+        {
+            Memory::Memcpy(Ops->Data(Dst), Ops->Data(const_cast<void*>(Src)), SrcCount * Ops->ElementSize);
+            return;
+        }
         for (SIZE_T i = 0; i < SrcCount; ++i)
         {
             void* DstElem = GetAt(Dst, i);

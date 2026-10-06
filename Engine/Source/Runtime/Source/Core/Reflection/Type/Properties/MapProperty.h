@@ -15,6 +15,7 @@ namespace Lumina
             : FProperty(Params)
         {
             Ops = Params->GetOpsFn ? Params->GetOpsFn() : nullptr;
+            SetElementSize(Ops != nullptr ? Ops->ContainerSize : 0);
         }
 
         // Called by ConstructProperties for the two inners in a fixed order: the KEY first, then the VALUE (the

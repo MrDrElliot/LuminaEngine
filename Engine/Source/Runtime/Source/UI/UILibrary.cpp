@@ -1,4 +1,5 @@
 #include "UI/UILibrary.h"
+#include "UI/UIScript.h"
 
 #include "UI/RmlUiBridge.h"
 #include "World/World.h"
@@ -31,6 +32,26 @@ namespace Lumina
     bool CUILibrary::IsCursorOverUI(CWorld* World)
     {
         return RmlUi::IsCursorOverWorldUI(World);
+    }
+
+    void CUILibrary::ShowScriptUI(CEntityScript* Script)
+    {
+        UIScripts::Show(Script);
+    }
+
+    void CUILibrary::HideScriptUI(CEntityScript* Script)
+    {
+        UIScripts::Hide(Script);
+    }
+
+    bool CUILibrary::IsScriptUIShown(CEntityScript* Script)
+    {
+        return UIScripts::IsShown(Script);
+    }
+
+    FUIDocument CUILibrary::GetScriptDocument(CEntityScript* Script)
+    {
+        return FromPtr<FUIDocument>(UIScripts::GetDocument(Script));
     }
 
     FUIDocument CUILibrary::LoadDocument(CWorld* World, const FString& Path)

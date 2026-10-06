@@ -38,7 +38,7 @@ internal static class ScriptPropertyRewriter
     public static SyntaxTree Rewrite(CSharpCompilation Probe, SyntaxTree Tree, List<string> OutErrors)
     {
         SyntaxNode Root = Tree.GetRoot();
-        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(NeedsNativeStorage)
+        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(Field => NeedsNativeStorage(Field) || HasAttributeNamed(Field.AttributeLists, "Bind"))
             && !Root.DescendantNodes().OfType<MethodDeclarationSyntax>().Any(MayBeRpc))
         {
             return Tree;
@@ -113,8 +113,10 @@ internal static class ScriptPropertyRewriter
 
         public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax Node)
         {
+            // A [Bind] field lives natively only on a CObject, since a plain ViewModel has no native block to put it in.
+            bool bNativeBacked = DerivesFromNativeObject(Model.GetDeclaredSymbol(Node));
             List<FieldDeclarationSyntax> Fields = Node.Members.OfType<FieldDeclarationSyntax>()
-                .Where(NeedsNativeStorage).ToList();
+                .Where(Field => NeedsNativeStorage(Field) || (bNativeBacked && HasAttributeNamed(Field.AttributeLists, "Bind"))).ToList();
             List<FRpcMethod> Rpcs = CollectRpcs(Node);
             if (Fields.Count == 0 && Rpcs.Count == 0)
             {
@@ -281,6 +283,18 @@ internal static class ScriptPropertyRewriter
             return Result;
         }
 
+        private static bool DerivesFromNativeObject(INamedTypeSymbol? Type)
+        {
+            for (INamedTypeSymbol? Current = Type; Current != null; Current = Current.BaseType)
+            {
+                if (Current.Name == "NativeObject" && Current.ContainingNamespace?.ToDisplayString() == "LuminaSharp")
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private static bool DerivesFromEntityScript(INamedTypeSymbol? Type)
         {
             for (INamedTypeSymbol? Current = Type; Current != null; Current = Current.BaseType)
@@ -353,6 +367,12 @@ internal static class ScriptPropertyRewriter
                 case EScriptAccess.Enum:
                     Get = $"global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{Type}>((void*)((nint)Handle + {Offset}))";
                     Set = $"global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)((nint)Handle + {Offset}), value)";
+                    break;
+
+                // A string member makes the native value a different shape from the managed one, so it crosses field by field.
+                case EScriptAccess.MarshalledStruct:
+                    Get = $"global::LuminaSharp.ScriptStructMarshal<{Type}>.Read((nint)Handle + {Offset})";
+                    Set = $"global::LuminaSharp.ScriptStructMarshal<{Type}>.Write((nint)Handle + {Offset}, value)";
                     break;
 
                 case EScriptAccess.String:

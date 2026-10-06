@@ -57,14 +57,11 @@ namespace Lumina
             TVector<SCurveKey>& Keys = Channel->Curve.Keys;
             for (size_t Index = 1; Index < Keys.size(); ++Index)
             {
-                const float Previous = Keys[Index - 1].Value;
-                while (Keys[Index].Value - Previous > 180.0f)
+                // Whole turns in one step, since stepping by 360 never moves a value too large for the step to register.
+                const float Delta = Keys[Index].Value - Keys[Index - 1].Value;
+                if (std::isfinite(Delta) && Math::Abs(Delta) > 180.0f)
                 {
-                    Keys[Index].Value -= 360.0f;
-                }
-                while (Keys[Index].Value - Previous < -180.0f)
-                {
-                    Keys[Index].Value += 360.0f;
+                    Keys[Index].Value -= std::round(Delta / 360.0f) * 360.0f;
                 }
             }
         }

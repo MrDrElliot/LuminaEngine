@@ -38,6 +38,7 @@ namespace Lumina
         const char* RmlPreviewWindowName   = "RmlPreview";
         const char* RmlHierarchyWindowName = "RmlHierarchy";
         const char* RmlInspectorWindowName = "RmlInspector";
+        const char* RmlDataWindowName      = "RmlData";
 
         // Section headings were an ImVec4 literal repeated at every call site.
         constexpr ImVec4 kSectionHeader{0.60f, 0.85f, 1.00f, 1.00f};
@@ -876,6 +877,7 @@ namespace Lumina
 
         ApplyEditorSettings();
         CodeEditor.SetLanguage(GetRmlLanguage(bIsStylesheet));
+        ConfigureAutoComplete();
         LoadFromDisk();
 
         // Retarget our path when the file is renamed/moved so a later save hits the new file.
@@ -888,6 +890,12 @@ namespace Lumina
             VirtualPath.assign(New.data(), New.size());
             const FStringView ParentView = VFS::Parent(New, true);
             ParentDir.assign(ParentView.data(), ParentView.size());
+        });
+
+        // The preview instances belong to classes the reload is about to replace, and the next frame rebuilds them.
+        ScriptsWillReloadHandle = FCoreDelegates::OnScriptsWillReload.AddLambda([this]
+        {
+            ReleaseDesignObjects();
         });
 
         // Live-refreshes so palette and font tweaks apply without reopening the editor.
@@ -1027,12 +1035,18 @@ namespace Lumina
         {
             DrawInspectorPanel();
         });
+
+        CreateToolWindow(RmlDataWindowName, [this](bool bFocused)
+        {
+            DrawDataPanel();
+        });
     }
 
     void FRmlUiEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
         FCoreDelegates::OnContentFileRenamed.Remove(FileRenamedHandle);
         FCoreDelegates::OnSettingsSaved.Remove(SettingsSavedHandle);
+        FCoreDelegates::OnScriptsWillReload.Remove(ScriptsWillReloadHandle);
         FileWatcher.Stop();
         TearDownPreview();
     }
@@ -1060,6 +1074,7 @@ namespace Lumina
         }
 
         RefreshCompositionSlots();
+        PollDesignActivity();
     }
 
     void FRmlUiEditorTool::DrawHelpMenu()
@@ -1112,13 +1127,17 @@ namespace Lumina
         ImGuiID DesignerDockID = 0, PreviewDockID = 0;
         ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Right, 0.34f, &DesignerDockID, &PreviewDockID);
 
-        ImGuiID HierarchyDockID = 0, InspectorDockID = 0;
-        ImGui::DockBuilderSplitNode(DesignerDockID, ImGuiDir_Down, 0.45f, &InspectorDockID, &HierarchyDockID);
+        ImGuiID HierarchyDockID = 0, LowerDockID = 0;
+        ImGui::DockBuilderSplitNode(DesignerDockID, ImGuiDir_Down, 0.66f, &LowerDockID, &HierarchyDockID);
+
+        ImGuiID DataDockID = 0, InspectorDockID = 0;
+        ImGui::DockBuilderSplitNode(LowerDockID, ImGuiDir_Down, 0.45f, &InspectorDockID, &DataDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlEditorWindowName).c_str(), LeftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlPreviewWindowName).c_str(), PreviewDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlHierarchyWindowName).c_str(), HierarchyDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlInspectorWindowName).c_str(), InspectorDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlDataWindowName).c_str(), DataDockID);
     }
 
     void FRmlUiEditorTool::ApplyEditorSettings()
@@ -2101,6 +2120,12 @@ namespace Lumina
             Doc = Body;
         }
 
+        // The stand-in models have to exist before the parse, since RmlUi resolves bindings while it loads.
+        if (!bIsStylesheet)
+        {
+            RefreshDesignModels(Body);
+        }
+
         const FStringView View(Doc.data(), Doc.size());
         const FStringView SourceUrl(VirtualPath.c_str(), VirtualPath.size());
 
@@ -2252,6 +2277,11 @@ namespace Lumina
             RmlUi::DestroyEditorContext(PreviewContext);
             PreviewContext = nullptr;
         }
+
+        // The context reaped the object models with it, so only the preview instances are left to drop.
+        DesignObjectModels.clear();
+        DesignObjects.clear();
+
         if (PreviewTarget.IsValid())
         {
             if (FRmlUiRenderer* Renderer = RmlUi::GetRenderer())
@@ -2614,6 +2644,8 @@ namespace Lumina
         {
             ImGui::TextDisabled("Not in the live preview yet. It appears once the document reloads.");
         }
+
+        DrawElementBindings();
 
         ImGui::Spacing();
         ImGui::TextDisabled("Read only. Edit the document in the code editor.");

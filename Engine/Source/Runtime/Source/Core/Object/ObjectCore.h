@@ -202,8 +202,9 @@ namespace Lumina
     
     inline const char* PropertyTypeToString(EPropertyTypeFlags Flag)
     {
-        uint16 Index = static_cast<uint16>(Flag);
-        return PropertyTypeFlagNames[Index];
+        // A tag read from a corrupt package can carry any kind byte.
+        const uint16 Index = static_cast<uint16>(Flag);
+        return Index < (uint16)EPropertyTypeFlags::Count ? PropertyTypeFlagNames[Index] : "Invalid";
     }
     
     RUNTIME_API EPropertyTypeFlags PropertyStringToType(FName String);

@@ -192,6 +192,11 @@ namespace Lumina::DataTableCSV
             Result.FailureReason = "The table has no row struct set.";
             return Result;
         }
+        if (!RowStruct->IsChildOf(SDataTableRowBase::StaticStruct()))
+        {
+            Result.FailureReason = Format("The row struct {} does not derive from SDataTableRowBase.", RowStruct->GetName().ToString());
+            return Result;
+        }
 
         const TVector<FCSVRecord> Records = ParseRecords(Text);
         if (Records.empty())

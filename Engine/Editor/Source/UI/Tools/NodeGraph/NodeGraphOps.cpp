@@ -272,6 +272,21 @@ namespace Lumina::NodeGraphOps
         }
 
         FEditorTool* Tool = UI->FindAssetEditor(Asset);
-        return Tool != nullptr ? FString(Tool->GetToolName().c_str()) : FString();
+        if (Tool == nullptr)
+        {
+            return FString();
+        }
+
+        // The window name leads with an icon glyph and ends in an ImGui id, so only the id between is retypeable.
+        const FString WindowName(Tool->GetToolName().c_str());
+        const size_t Hash = WindowName.find("###");
+        const FString Label = WindowName.substr(0, Hash);
+        size_t Start = 0;
+        while (Start < Label.size() && ((uint8)Label[Start] >= 0x80 || Label[Start] == ' '))
+        {
+            ++Start;
+        }
+        const FString Id = Hash == FString::npos ? WindowName : WindowName.substr(Hash + 3);
+        return Lumina::Format("the {} editor (tab {})", Label.substr(Start), Id);
     }
 }

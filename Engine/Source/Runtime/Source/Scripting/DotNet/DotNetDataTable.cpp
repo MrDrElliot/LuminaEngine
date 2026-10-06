@@ -22,7 +22,8 @@ LUMINA_DOTNET_EXPORT(void*, DataTable_FindRow)(void* Table, const char* RowName,
 LUMINA_DOTNET_EXPORT(void*, DataTable_GetRowAt)(void* Table, int32 Index)
 {
     const CDataTable* DataTable = static_cast<const CDataTable*>(Table);
-    if (DataTable == nullptr || Index < 0 || Index >= DataTable->GetRowCount())
+    if (DataTable == nullptr || Index < 0 || Index >= DataTable->GetRowCount()
+        || DataTable->Rows[Index].Value.GetScriptStruct() != DataTable->GetRowStruct())
     {
         return nullptr;
     }

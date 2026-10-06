@@ -19,6 +19,8 @@
 #include "Platform/Time/PlatformTime.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Session/SessionOps.h"
+#include "FileSystem/FileSystem.h"
+#include "UI/Tools/EditorToolContext.h"
 #include "MCPTextMatch.h"
 #include "Tools/Screenshot/ScreenshotCapture.h"
 #include "World/World.h"
@@ -355,6 +357,26 @@ namespace Lumina::MCP
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("Open in tab '{}'.", Out.Tab));
+                });
+
+            Agent::FToolRegistry::Get().Register<SOpenFileParams, SOpenAssetResult>(
+                Owner, "editor.open_file",
+                "Open a text file that has an editor of its own, such as an .rml or .rcss in the UI editor, by virtual path.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SOpenFileParams& In, SOpenAssetResult& Out)
+                {
+                    IEditorToolContext* Tools = SessionOps::GetToolContext();
+                    if (Tools == nullptr)
+                    {
+                        return Agent::FToolResult::Error("The editor UI is not running.");
+                    }
+                    if (!VFS::Exists(FStringView(In.Path.c_str(), In.Path.size())))
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("No file at '{}'.", In.Path));
+                    }
+                    Tools->OpenFileEditor(FStringView(In.Path.c_str(), In.Path.size()));
+                    Out.Tab = In.Path;
+                    return Agent::FToolResult::Ok(Lumina::Format("Opened '{}'.", In.Path));
                 });
 
             Agent::FToolRegistry::Get().Register<SBrowseFolderParams, SBrowseFolderResult>(

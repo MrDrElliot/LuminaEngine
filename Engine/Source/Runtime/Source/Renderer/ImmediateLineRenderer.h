@@ -78,7 +78,7 @@ namespace Lumina
             FReservation& R = Ch.Reservations[ThreadSlot];
             if (R.Remaining == 0 && !Refill(Ch, R))
             {
-                R.Dropped += 2;
+                R.Dropped += Ch.bOpen.load(std::memory_order_relaxed) ? 2u : 0u;
                 return;
             }
 

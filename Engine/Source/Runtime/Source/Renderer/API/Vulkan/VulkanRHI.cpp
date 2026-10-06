@@ -3890,9 +3890,35 @@ namespace Lumina::RHI
             return true;
         }
 
+        // Drivers trust SPIR-V, so a stream that is not even well framed is refused before it can crash one.
+        bool IsWellFramedSpirv(TSpan<const uint32> Words)
+        {
+            constexpr uint32 SpvMagic   = 0x07230203u;
+            constexpr uint32 MaxIdBound = 1u << 22;
+            if (Words.size() <= SpvHeaderWords || Words[0] != SpvMagic || Words[3] == 0u || Words[3] > MaxIdBound)
+            {
+                return false;
+            }
+            for (size_t At = SpvHeaderWords; At < Words.size();)
+            {
+                const uint32 WordCount = Words[At] >> 16;
+                if (WordCount == 0u || At + WordCount > Words.size())
+                {
+                    return false;
+                }
+                At += WordCount;
+            }
+            return true;
+        }
+
         VkShaderModule CreateShaderModule(const FShaderSource& Shader)
         {
             const TSpan<const uint32> Words(reinterpret_cast<const uint32*>(Shader.Source.data()), Shader.Source.size() / sizeof(uint32));
+            if (Shader.Source.size() % sizeof(uint32) != 0 || !IsWellFramedSpirv(Words))
+            {
+                LOG_ERROR("Shader '{}' is not valid SPIR-V ({} bytes), so no pipeline is built from it", Shader.DebugName, Shader.Source.size());
+                return VK_NULL_HANDLE;
+            }
             TVector<uint32> Stripped;
             const bool bStripped = StripShaderDebugInfo(Words, Stripped);
 
@@ -3936,6 +3962,13 @@ namespace Lumina::RHI
         if (!Fragment.Source.empty())
         {
             FragModule = CreateShaderModule(Fragment);
+        }
+
+        if (VertModule == VK_NULL_HANDLE || (!Fragment.Source.empty() && FragModule == VK_NULL_HANDLE))
+        {
+            vkDestroyShaderModule(*GDevice, VertModule, Vulkan::HostAllocator());
+            vkDestroyShaderModule(*GDevice, FragModule, Vulkan::HostAllocator());
+            return {};
         }
 
         FMemMark Mark;
@@ -4542,6 +4575,10 @@ namespace Lumina::RHI
         LUMINA_MEMORY_SCOPE("RHI");
         LOG_TRACE("Creating compute pipeline for '{}'.", ShaderLabel(Compute));
         VkShaderModule ShaderModule = CreateShaderModule(Compute);
+        if (ShaderModule == VK_NULL_HANDLE)
+        {
+            return {};
+        }
      
         FMemMark Mark{};
         VkSpecializationInfo SpecializationInfo = ConstructSpecializationInfo(Mark, Constants);
@@ -4620,6 +4657,13 @@ namespace Lumina::RHI
         VkShaderModule TaskModule = MakeModule(Task);
         VkShaderModule MeshModule = MakeModule(Mesh);
         VkShaderModule FragModule = MakeModule(Fragment);
+        if (MeshModule == VK_NULL_HANDLE || (!Task.Source.empty() && TaskModule == VK_NULL_HANDLE) || (!Fragment.Source.empty() && FragModule == VK_NULL_HANDLE))
+        {
+            vkDestroyShaderModule(*GDevice, TaskModule, Vulkan::HostAllocator());
+            vkDestroyShaderModule(*GDevice, MeshModule, Vulkan::HostAllocator());
+            vkDestroyShaderModule(*GDevice, FragModule, Vulkan::HostAllocator());
+            return {};
+        }
 
         FMemMark Mark;
         const VkSpecializationInfo SpecializationInfo = ConstructSpecializationInfo(Mark, Constants);

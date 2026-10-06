@@ -633,7 +633,58 @@ namespace Lumina
 
             Ar << Data.DistanceField;
 
+            // Offsets index CPU arrays and GPU buffers unchecked, so a corrupt package loads an empty mesh instead.
+            if (Ar.IsReading() && !Data.HasConsistentMeshlets())
+            {
+                LOG_ERROR("FMeshResource '{}': meshlet offsets point outside its data; the mesh loads empty", Data.Name);
+                Ar.SetHasError(true);
+                Data.MeshletData.ClearAndShrink();
+                Data.GeometrySurfaces.clear();
+            }
+
             return Ar;
+        }
+
+        bool HasConsistentMeshlets() const
+        {
+            const FMeshletData& M = MeshletData;
+            const uint64 NumMeshlets  = M.Meshlets.size();
+            const uint64 NumVertices  = bSkinnedMesh ? M.MeshletSkinnedVertices.size() : M.MeshletVertices.size();
+            const uint64 NumTriangles = M.MeshletTriangles.size();
+
+            for (const FGeometrySurface& Surface : GeometrySurfaces)
+            {
+                if (Surface.NumLODs > MAX_MESH_LODS)
+                {
+                    return false;
+                }
+                for (uint32 Lod = 0; Lod < Surface.NumLODs; ++Lod)
+                {
+                    if ((uint64)Surface.LODMeshletOffset[Lod] + Surface.LODMeshletCount[Lod] > NumMeshlets)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            for (const FMeshlet& Meshlet : M.Meshlets)
+            {
+                if ((uint64)Meshlet.VertexOffset + Meshlet.VertexCount > NumVertices
+                    || (uint64)Meshlet.TriangleOffset + Meshlet.TriangleCount > NumTriangles)
+                {
+                    return false;
+                }
+                for (uint32 Triangle = 0; Triangle < Meshlet.TriangleCount; ++Triangle)
+                {
+                    const uint32 Packed = M.MeshletTriangles[Meshlet.TriangleOffset + Triangle];
+                    if ((Packed & 0xFFu) >= Meshlet.VertexCount || ((Packed >> 8) & 0xFFu) >= Meshlet.VertexCount
+                        || ((Packed >> 16) & 0xFFu) >= Meshlet.VertexCount)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
     };
 }

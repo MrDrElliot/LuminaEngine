@@ -287,7 +287,8 @@ namespace Lumina
         {
             return nullptr;
         }
-        if (CStruct* Found = FindObject<CStruct>(Key); IsInstancableStructType(Found))
+        // A typed slot only takes its own hierarchy, since a reader casts the memory to that base.
+        if (CStruct* Found = FindObject<CStruct>(Key); IsInstancableStructType(Found) && (MetaBase == nullptr || Found->IsChildOf(MetaBase)))
         {
             return Found;
         }

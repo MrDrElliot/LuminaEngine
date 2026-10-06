@@ -10,6 +10,7 @@
 namespace Lumina
 {
     class CWorld;
+    class CEntityScript;
 
     // The script-facing half of the RmlUi bridge, reflected so C# binds it instead of hand-written thunks.
     REFLECT()
@@ -26,6 +27,20 @@ namespace Lumina
         /** True while the cursor is on an interface element, so a click to move can ignore that click. */
         FUNCTION()
         static bool IsCursorOverUI(CWorld* World);
+
+        //~ UI scripts, the calls LuminaSharp.UIScript makes on itself
+
+        FUNCTION()
+        static void ShowScriptUI(CEntityScript* Script);
+
+        FUNCTION()
+        static void HideScriptUI(CEntityScript* Script);
+
+        FUNCTION()
+        static bool IsScriptUIShown(CEntityScript* Script);
+
+        FUNCTION()
+        static FUIDocument GetScriptDocument(CEntityScript* Script);
 
         //~ Documents
 

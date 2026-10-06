@@ -242,6 +242,10 @@ namespace Lumina::Reflection
                     else if (Pair.Value == "Host")  { Flags += " | Lumina::EFunctionFlags::RpcHost"; }
                     else if (Pair.Value == "Owner") { Flags += " | Lumina::EFunctionFlags::RpcOwner"; }
                 }
+                else if (Pair.Key == "Bind")
+                {
+                    Flags += " | Lumina::EFunctionFlags::UIBind";
+                }
                 else if (Pair.Key == "NetFlags")
                 {
                     if (Pair.Value.find("Unreliable") != std::string::npos) { Flags += " | Lumina::EFunctionFlags::NetUnreliable"; }

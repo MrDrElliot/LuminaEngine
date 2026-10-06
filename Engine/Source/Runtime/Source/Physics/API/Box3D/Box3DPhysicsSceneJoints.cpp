@@ -50,6 +50,20 @@ namespace Lumina::Physics
         }
     }
 
+    uint32 FBox3DPhysicsScene::GetLiveJointCount()
+    {
+        FScopeLock Lock(ConstraintsMutex);
+        uint32 Count = 0;
+        for (const auto& [ID, Constraint] : Constraints)
+        {
+            if (b3Joint_IsValid(Constraint.JointId))
+            {
+                ++Count;
+            }
+        }
+        return Count;
+    }
+
     uint32 FBox3DPhysicsScene::CreateConstraint(const FConstraintDesc& Desc)
     {
         auto RevisionOf = [&](ECS::FEntity Entity) -> uint64

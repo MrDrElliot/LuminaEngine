@@ -4,14 +4,8 @@ using System.Runtime.CompilerServices;
 
 namespace LuminaSharp;
 
-/// <summary>
-/// Marks a property on a <see cref="ViewModel"/> as a bound data variable. RML references it by name via
-/// <c>{{ Name }}</c>, <c>data-text</c>, <c>data-style-*</c>, <c>data-class-*</c>, <c>data-value</c>, etc.
-/// Supported property types: <see cref="bool"/>, integer types and enums, <see cref="float"/>,
-/// <see cref="double"/>, and <see cref="string"/>. A property with a setter is two-way (form controls using
-/// <c>data-value</c>/<c>data-checked</c> write back into it); a get-only property is display-only.
-/// </summary>
-[AttributeUsage(AttributeTargets.Property, Inherited = true)]
+// Exposes a value, a collection of [Bind] items or a data-event-* command to RML, and a writable value is two-way.
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Method, Inherited = true)]
 public sealed class BindAttribute : Attribute
 {
     /// <summary>Override the name RML binds to (defaults to the property name).</summary>
@@ -54,6 +48,20 @@ public sealed class BindCommandAttribute : Attribute
 /// }
 /// </code>
 /// </summary>
+// The name an .rml's data-model attribute uses for a ViewModel or UIScript. The class name when absent.
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public sealed class DataModelAttribute : Attribute
+{
+    public DataModelAttribute(string Name)
+    {
+        this.Name = Name;
+    }
+
+    public string Name { get; }
+
+    internal static string NameOf(Type Type) => (Attribute.GetCustomAttribute(Type, typeof(DataModelAttribute), false) as DataModelAttribute)?.Name ?? Type.Name;
+}
+
 public abstract class ViewModel
 {
     /// <summary>The live binding, or null while the model is not registered. Set by <see cref="UIDataModel"/>.</summary>

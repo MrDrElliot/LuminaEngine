@@ -126,11 +126,40 @@ namespace Lumina
             return Roots;
         }
 
+        bool HasConsistentHierarchy() const
+        {
+            for (int32 Index = 0; Index < (int32)Bones.size(); ++Index)
+            {
+                const int32 Parent = Bones[Index].ParentIndex;
+                if (Parent != INDEX_NONE && (Parent < 0 || Parent >= Index))
+                {
+                    return false;
+                }
+            }
+            for (const auto& [BoneName, Index] : BoneNameToIndex)
+            {
+                if (Index < 0 || Index >= (int32)Bones.size())
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         friend FArchive& operator << (FArchive& Ar, FSkeletonResource& Data)
         {
             Ar << Data.Name;
             Ar << Data.Bones;
             Ar << Data.BoneNameToIndex;
+
+            // Every pose walk indexes by these without checking, so a corrupt package loads an empty skeleton.
+            if (Ar.IsReading() && !Data.HasConsistentHierarchy())
+            {
+                LOG_ERROR("FSkeletonResource '{}': a parent or name index points outside its {} bones; the skeleton loads empty", Data.Name, Data.Bones.size());
+                Ar.SetHasError(true);
+                Data.Bones.clear();
+                Data.BoneNameToIndex.clear();
+            }
 
             Data.BuildBindPoseCache();
 

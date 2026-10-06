@@ -135,6 +135,7 @@ internal static unsafe class FrameMarshal
         {
             case EElementKind.Bool:
             case EElementKind.ManagedString:
+            case EElementKind.ScriptStruct:
                 Slot = new FSlot(Kind, Offset, Property, Declared, null);
                 return true;
 
@@ -229,6 +230,9 @@ internal static unsafe class FrameMarshal
             case EElementKind.ManagedString:
                 return NativeMarshal.ReadString(Address);
 
+            case EElementKind.ScriptStruct:
+                return ScriptStructLayout.ReadBoxed(Slot.Declared, Address);
+
             case EElementKind.ObjectWrapper:
             {
                 IntPtr Object = Native.PropGetObject(Frame, Slot.Property);
@@ -269,6 +273,10 @@ internal static unsafe class FrameMarshal
 
             case EElementKind.Bool:
                 Unsafe.WriteUnaligned((void*)Address, (byte)(Value is true ? 1 : 0));
+                return;
+
+            case EElementKind.ScriptStruct:
+                ScriptStructLayout.WriteBoxed(Slot.Declared, Address, Value);
                 return;
 
             // Assigned rather than written in place, since the frame's string owns its memory.

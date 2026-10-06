@@ -152,8 +152,8 @@ public sealed class ScriptProperty
     // The most sends a second a [Sync] field allows, or zero for every change.
     public float NetRate { get; init; }
 
-    // The rest of a [Sync] declaration, as the metadata keys PROPERTY(Sync = ...) writes for C++.
-    public IReadOnlyList<KeyValuePair<string, string>>? NetMeta { get; init; }
+    // Metadata keys the C++ spelling of the same declaration would write, such as Sync or AssetType.
+    public IReadOnlyList<KeyValuePair<string, string>>? ExtraMeta { get; init; }
     public Func<object, object?> Get { get; init; } = Instance => null;
     public Action<object, object?> Set { get; init; } = (Instance, Value) => { };
 

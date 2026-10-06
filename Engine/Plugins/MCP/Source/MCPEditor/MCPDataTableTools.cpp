@@ -257,7 +257,8 @@ namespace Lumina::MCP
                     Out.Index = Table->AddRow(Name);
                     if (Out.Index == INDEX_NONE)
                     {
-                        return Agent::FToolResult::Error("The row could not be added.");
+                        return Agent::FToolResult::Error(Lumina::Format(
+                            "The row could not be added, since {} does not derive from SDataTableRowBase.", RowType->GetName().ToString()));
                     }
 
                     Out.Row = FString(Name.ToString().c_str());

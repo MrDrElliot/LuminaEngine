@@ -194,6 +194,9 @@ namespace Lumina::DotNet
 
         // ENetRealm from the class's [HostOnly], [ClientOnly] and [Cosmetic].
         uint8   NetRealm = 0;
+
+        // Class metadata a C++ REFLECT(...) would write, such as DataModel or UIDocument, as key and value.
+        TVector<std::pair<FString, FString>> ClassMeta;
     };
 
     // One `[Alias]` on a C# script class: the name it used to have, and the name it has now.

@@ -4,6 +4,10 @@
 #include "Core/Object/Class.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Log/Log.h"
+#include "Properties/ArrayProperty.h"
+#include "Properties/EnumProperty.h"
+#include "Properties/MapProperty.h"
+#include "Properties/StructProperty.h"
 
 namespace Lumina
 {
@@ -155,6 +159,36 @@ namespace Lumina
     {
         void* PropertyPtr = (uint8*)ContainerPtr + Offset;
         return (uint8*)PropertyPtr + ArrayIndex * ElementSize;
+    }
+
+    bool FProperty::HasSameValueType(const FProperty* Other) const
+    {
+        if (Other == nullptr || TypeFlags != Other->TypeFlags || GetElementSize() != Other->GetElementSize())
+        {
+            return false;
+        }
+        switch (TypeFlags)
+        {
+            case EPropertyTypeFlags::Struct:
+                return static_cast<const FStructProperty*>(this)->GetStruct() == static_cast<const FStructProperty*>(Other)->GetStruct();
+            case EPropertyTypeFlags::Enum:
+                return static_cast<const FEnumProperty*>(this)->GetEnum() == static_cast<const FEnumProperty*>(Other)->GetEnum();
+            case EPropertyTypeFlags::Vector:
+            {
+                const FProperty* Inner = static_cast<const FArrayProperty*>(this)->GetInternalProperty();
+                return Inner != nullptr && Inner->HasSameValueType(static_cast<const FArrayProperty*>(Other)->GetInternalProperty());
+            }
+            case EPropertyTypeFlags::Map:
+            {
+                const FMapProperty* Map = static_cast<const FMapProperty*>(this);
+                const FMapProperty* OtherMap = static_cast<const FMapProperty*>(Other);
+                return Map->GetKeyProperty() != nullptr && Map->GetValueProperty() != nullptr
+                    && Map->GetKeyProperty()->HasSameValueType(OtherMap->GetKeyProperty())
+                    && Map->GetValueProperty()->HasSameValueType(OtherMap->GetValueProperty());
+            }
+            default:
+                return true;
+        }
     }
 
     bool FProperty::Identical(const void* ValueA, const void* ValueB) const

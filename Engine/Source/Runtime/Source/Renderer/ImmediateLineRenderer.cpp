@@ -168,6 +168,12 @@ namespace Lumina
 
         FChannel& Ch = Channels[Channel];
 
+        // A closed channel is not short of room, so its lines must not count as overflow demand.
+        if (!Ch.bOpen.load(std::memory_order_acquire))
+        {
+            return nullptr;
+        }
+
         const uint32 ThreadSlot = Jobs::GetWorkerIndex();
         if (ThreadSlot >= Ch.Reservations.size())
         {

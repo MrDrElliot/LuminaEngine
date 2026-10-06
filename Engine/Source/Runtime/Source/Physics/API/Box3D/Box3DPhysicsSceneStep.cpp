@@ -214,6 +214,15 @@ namespace Lumina::Physics
             const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
             const FVector3 TargetLocation = Transform.GetLocation();
             const FQuat TargetRotation = Transform.GetRotation();
+            if (!Box3DUtils::IsSafePose(TargetLocation, TargetRotation))
+            {
+                static TAtomic<bool> bWarned{ false };
+                if (!bWarned.exchange(true, std::memory_order_relaxed))
+                {
+                    LOG_WARN("Entity {} was moved to a NaN, infinite or out of range transform, which its rigid body ignores", Entity.Value);
+                }
+                continue;
+            }
             const b3Vec3 Position = Box3DUtils::ToB3Vec3(TargetLocation);
             const b3Quat Rotation = Box3DUtils::ToB3Quat(TargetRotation);
 

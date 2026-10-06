@@ -2976,25 +2976,32 @@ namespace Lumina
 	void FMaterialCompiler::CustomPrimitiveData(CMaterialExpression_CustomPrimitiveData* Node, ECustomPrimitiveDataType Type)
 	{
 		Node->Output->SetInputType(EMaterialInputType::Float);
+		const FString ID = Node->GetNodeFullName();
+
+		// Only PBR surface passes carry the per-instance FGPUInstance, so every other pass reads zero.
+		const bool bHasInstance = !RejectInUI(Node, "Custom Primitive Data") && CurrentMaterialType == EMaterialType::PBR;
+		const FString Data = !bHasInstance ? FString()
+			: (CurrentStage == EMaterialCompileStage::Vertex) ? FString("Inst.CustomData")
+			: FString("GetInstance(Input.InstanceIndex).CustomData");
 
 		switch (Type)
 		{
 		case ECustomPrimitiveDataType::Float:
-			GetActiveChunk().append("float " + Node->GetNodeFullName() + " = Cull.CustomData.AsFloat;\n");
+			GetActiveChunk().append("float " + ID + " = " + (bHasInstance ? Data + ".AsFloat" : FString("0.0")) + ";\n");
 			break;
 		case ECustomPrimitiveDataType::Int:
-			GetActiveChunk().append("int " + Node->GetNodeFullName() + " = Cull.CustomData.AsInt;\n");
+			GetActiveChunk().append("int " + ID + " = " + (bHasInstance ? Data + ".AsInt" : FString("0")) + ";\n");
 			break;
 		case ECustomPrimitiveDataType::UInt:
-			GetActiveChunk().append("uint " + Node->GetNodeFullName() + " = Cull.CustomData.AsUInt;\n");
+			GetActiveChunk().append("uint " + ID + " = " + (bHasInstance ? Data + ".AsUInt" : FString("0u")) + ";\n");
 			break;
 		case ECustomPrimitiveDataType::Color:
-			GetActiveChunk().append("float4 " + Node->GetNodeFullName() + " = Cull.CustomData.AsColor;\n");
+			GetActiveChunk().append("float4 " + ID + " = " + (bHasInstance ? Data + ".AsColor" : FString("float4(0.0, 0.0, 0.0, 0.0)")) + ";\n");
 			Node->Output->SetInputType(EMaterialInputType::Float4);
 			Node->Output->SetComponentMask(EComponentMask::RGBA);
 			break;
 		case ECustomPrimitiveDataType::Bool:
-			GetActiveChunk().append("bool " + Node->GetNodeFullName() + " = Cull.CustomData.AsBool;\n");
+			GetActiveChunk().append("bool " + ID + " = " + (bHasInstance ? Data + ".AsBool" : FString("false")) + ";\n");
 			break;
 		}
 	}
@@ -3010,6 +3017,14 @@ namespace Lumina
 	void FMaterialCompiler::Divide(CMaterialInput* A, CMaterialInput* B)
 	{
 		CMaterialExpression_Math* Node = A->GetOwningNode<CMaterialExpression_Math>();
+		if ((B == nullptr || !B->HasConnection()) && Node->ConstB == 0.0f)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node = Node;
+			Error.Name = "Divide By Zero";
+			Error.Description = "B is unconnected and its constant is 0, which the shader compiler rejects. Connect B or set it to a nonzero value.";
+			AddError(Error);
+		}
 		Node->Output->InputType = EmitBinaryOp("/", A, B, Node->ConstA, Node->ConstB, true);
 	}
 

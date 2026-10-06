@@ -447,6 +447,11 @@ internal sealed class TypeLibrary
         }
         try
         {
+            // Marshalled field by field, so what native has to agree with is the layout it is read through.
+            if (ScriptStructLayout.NeedsMarshalling(Type))
+            {
+                return ScriptStructLayout.Of(Type).Size;
+            }
             return (int)UnsafeSizeOf.MakeGenericMethod(Type).Invoke(null, null)!;
         }
         catch (Exception Ex)
@@ -502,7 +507,7 @@ internal sealed class TypeLibrary
                 SkipHotReload = bClassSkip || Field.GetCustomAttribute<SkipHotReloadAttribute>() != null,
                 ExtraFlags = bSync ? EPropertyFlags.Replicated : EPropertyFlags.None,
                 NetRate = Field.GetCustomAttribute<SyncAttribute>()?.Rate ?? 0.0f,
-                NetMeta = NetMetaOf(Field),
+                ExtraMeta = ExtraMetaOf(Field, Meta),
                 Get = Field.GetValue,
                 Set = Field.SetValue,
             });
@@ -517,7 +522,9 @@ internal sealed class TypeLibrary
 
             PropertyAttribute? Meta = Property.GetCustomAttribute<PropertyAttribute>();
             bool bSync = Property.GetCustomAttribute<SyncAttribute>() != null;
-            bool bSerializeOnly = Meta == null && (bSync || Property.GetCustomAttribute<SerializeAttribute>() != null);
+            bool bBindOnly = Meta == null && Property.GetCustomAttribute<BindAttribute>() != null
+                && (Property.CanWrite || IsNativeOwnedViewType(Property.PropertyType));
+            bool bSerializeOnly = Meta == null && (bSync || bBindOnly || Property.GetCustomAttribute<SerializeAttribute>() != null);
             if ((Meta == null && !bSerializeOnly) || Property.GetCustomAttribute<HideAttribute>() != null)
             {
                 continue;
@@ -548,9 +555,9 @@ internal sealed class TypeLibrary
                 Hidden = bSerializeOnly,
                 Aliases = GatherAliases(Property),
                 SkipHotReload = bClassSkip || Property.GetCustomAttribute<SkipHotReloadAttribute>() != null,
-                ExtraFlags = bSync ? EPropertyFlags.Replicated : EPropertyFlags.None,
+                ExtraFlags = (bSync ? EPropertyFlags.Replicated : EPropertyFlags.None) | (bBindOnly && !bSync ? EPropertyFlags.NoSerialize : EPropertyFlags.None),
                 NetRate = Property.GetCustomAttribute<SyncAttribute>()?.Rate ?? 0.0f,
-                NetMeta = NetMetaOf(Property),
+                ExtraMeta = ExtraMetaOf(Property, Meta),
                 Get = Property.GetValue,
                 // Never Property.SetValue for a view: there is no setter to call, and reaching for one throws.
                 Set = bNativeOwnedView ? (Instance, Value) => { } : Property.SetValue,
@@ -643,32 +650,36 @@ internal sealed class TypeLibrary
         return false;
     }
 
-    // The same keys and values PROPERTY(Sync = ..., Change = ..., Quantize = ..., Validate = ...) gives a C++ field.
-    private static List<KeyValuePair<string, string>>? NetMetaOf(MemberInfo Member)
+    // The same keys and values the C++ PROPERTY(Sync = ..., Change = ..., AssetType = ...) gives a field.
+    private static List<KeyValuePair<string, string>>? ExtraMetaOf(MemberInfo Member, PropertyAttribute? Meta)
     {
-        SyncAttribute? Sync = Member.GetCustomAttribute<SyncAttribute>();
-        if (Sync == null)
+        var Result = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrEmpty(Meta?.AssetType))
         {
-            return null;
+            Result.Add(new("AssetType", Meta.AssetType));
         }
-
-        var Result = new List<KeyValuePair<string, string>>
+        if (Member.GetCustomAttribute<BindAttribute>() is BindAttribute Bind)
         {
-            new("Sync", (Sync.Flags & SyncFlags.FromOwner) != 0 ? "FromOwner" : ""),
-        };
-        if (Sync.Quantize > 0.0)
-        {
-            Result.Add(new("Quantize", Sync.Quantize.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
-        }
-        if (Sync.Validate != null)
-        {
-            Result.Add(new("Validate", Sync.Validate));
+            Result.Add(new("Bind", Bind.Name ?? ""));
         }
         if (Member.GetCustomAttribute<ChangeAttribute>() is ChangeAttribute Change)
         {
             Result.Add(new("Change", Change.Method));
         }
-        return Result;
+
+        if (Member.GetCustomAttribute<SyncAttribute>() is SyncAttribute Sync)
+        {
+            Result.Add(new("Sync", (Sync.Flags & SyncFlags.FromOwner) != 0 ? "FromOwner" : ""));
+            if (Sync.Quantize > 0.0)
+            {
+                Result.Add(new("Quantize", Sync.Quantize.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+            }
+            if (Sync.Validate != null)
+            {
+                Result.Add(new("Validate", Sync.Validate));
+            }
+        }
+        return Result.Count > 0 ? Result : null;
     }
 
     private static bool TryGetMapTypes(Type Type, out Type? KeyType, out Type? ValueType)
@@ -722,7 +733,25 @@ internal sealed class TypeDescription
     {
         return Method.GetCustomAttribute<ScriptFunctionAttribute>() != null
             || Method.GetCustomAttribute<Rpc.RpcAttribute>() != null
+            || IsUIBound(Method)
             || NamedBySync.Contains(Method.Name);
+    }
+
+    // A [Bind] method, or the getter of a get-only [Bind] property, which a UI document reads as a computed value.
+    private static bool IsUIBound(MethodInfo Method)
+    {
+        if (Method.GetCustomAttribute<BindAttribute>() != null || Method.GetCustomAttribute<BindCommandAttribute>() != null)
+        {
+            return true;
+        }
+        if (!Method.IsSpecialName || !Method.Name.StartsWith("get_", StringComparison.Ordinal) || Method.DeclaringType == null)
+        {
+            return false;
+        }
+        PropertyInfo? Property = Method.DeclaringType.GetProperty(Method.Name.Substring(4),
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+        return Property != null && Property.SetMethod == null && Property.GetCustomAttribute<BindAttribute>() != null
+            && !ScriptPropertyViews.IsView(Property.PropertyType);
     }
 
     private static HashSet<string> MethodsNamedBySync(Type Type)
@@ -731,11 +760,12 @@ internal sealed class TypeDescription
         const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         foreach (MemberInfo Member in Type.GetFields(Flags).Cast<MemberInfo>().Concat(Type.GetProperties(Flags)))
         {
-            if (Member.GetCustomAttribute<SyncAttribute>() is not SyncAttribute Sync)
+            SyncAttribute? Sync = Member.GetCustomAttribute<SyncAttribute>();
+            if (Sync == null && Member.GetCustomAttribute<BindAttribute>() == null)
             {
                 continue;
             }
-            if (Sync.Validate != null)
+            if (Sync?.Validate != null)
             {
                 Result.Add(Sync.Validate);
             }
@@ -747,11 +777,14 @@ internal sealed class TypeDescription
         return Result;
     }
 
+    // EFunctionFlags::UIBind, mirroring Function.h.
+    private const uint UIBindFlag = 1u << 12;
+
     private static uint FunctionFlagsOf(MethodInfo Method)
     {
         if (Method.GetCustomAttribute<Rpc.RpcAttribute>() is not Rpc.RpcAttribute Declared)
         {
-            return 0;
+            return IsUIBound(Method) ? UIBindFlag : 0;
         }
         uint Flags = Declared switch
         {

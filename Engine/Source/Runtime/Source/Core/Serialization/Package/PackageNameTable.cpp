@@ -163,6 +163,18 @@ namespace Lumina
             Ar << Number;
         }
 
+        // One bad slot means the stream is misaligned, so the archive fails rather than logging every name after it.
+        if ((Packed & kSlotMask) >= Table->Num())
+        {
+            if (!Ar.HasError())
+            {
+                LOG_ERROR("Package name slot {} is outside the {}-entry name table; failing the archive", Packed & kSlotMask, Table->Num());
+            }
+            Ar.SetHasError(true);
+            Value = NAME_None;
+            return;
+        }
+
         Value = Table->Resolve(Packed & kSlotMask, bHasNumber, Number);
     }
 

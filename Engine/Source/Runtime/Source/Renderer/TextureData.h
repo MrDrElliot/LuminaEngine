@@ -236,6 +236,19 @@ namespace Lumina
             return (uint8)(NumMips - 1);
         }
 
+        bool IsPlausibleDescription(FArchive& Ar) const
+        {
+            constexpr uint32 MaxExtent = 32768;
+            constexpr uint32 MaxMips   = 16;
+            constexpr uint32 MaxLayers = 2048;
+            constexpr uint64 MinMipHeaderBytes = 5 * sizeof(uint32);
+            const FDescription& Desc = ImageDescription;
+            return Desc.Format < EFormat::COUNT
+                && Desc.Extent.x >= 1 && Desc.Extent.y >= 1 && Desc.Extent.x <= MaxExtent && Desc.Extent.y <= MaxExtent
+                && Desc.NumMips <= MaxMips && Desc.LayerCount <= MaxLayers && Desc.FirstInlineMip <= Desc.NumMips
+                && Ar.CanHoldCount((uint64)GetNumMips() * GetNumLayers(), MinMipHeaderBytes);
+        }
+
         friend FArchive& operator << (FArchive& Ar, FTextureResource& Data)
         {
             // An archive with nowhere to put bulk data (duplication, transient, network) has to fall back to
@@ -260,6 +273,18 @@ namespace Lumina
             }
 
             Ar << Data.ImageDescription;
+
+            // A corrupt description would size the mip table and the GPU image, so the texture loads empty instead.
+            if (Ar.IsReading() && !Data.IsPlausibleDescription(Ar))
+            {
+                LOG_ERROR("FTextureResource: implausible description ({}x{}, {} mips, {} layers, format {}); the texture loads empty",
+                    Data.ImageDescription.Extent.x, Data.ImageDescription.Extent.y, Data.ImageDescription.NumMips,
+                    Data.ImageDescription.LayerCount, (uint32)Data.ImageDescription.Format);
+                Ar.SetHasError(true);
+                Data.ImageDescription = FDescription{};
+                Data.Mips.clear();
+                return Ar;
+            }
 
             if (Ar.IsReading())
             {

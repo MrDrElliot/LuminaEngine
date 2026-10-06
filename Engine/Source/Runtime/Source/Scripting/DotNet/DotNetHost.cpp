@@ -1,5 +1,6 @@
 ﻿#include "LayoutRegistry.h"
 #include "DotNetHost.h"
+#include "Core/Delegates/CoreDelegates.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ManagedTypeRegistry.h"
 #include "Scripting/ScriptSchemaCodec.h"
@@ -286,7 +287,7 @@ namespace Lumina::DotNet
 
         // Sink the managed EnumerateScriptables calls once per Scriptable C# type; Ctx is the out desc vector.
         void LmScriptableSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen,
-            const char* Overrides, int OverridesLen, uint8 UpdatePhase, uint8 ParallelUpdate)
+            const char* Overrides, int OverridesLen, uint8 UpdatePhase, uint8 ParallelUpdate, const char* Meta, int MetaLen)
         {
             auto* Out = static_cast<TVector<FScriptableTypeDesc>*>(Ctx);
             if (Out == nullptr || Name == nullptr || NameLen <= 0)
@@ -322,6 +323,28 @@ namespace Lumina::DotNet
             Desc.UpdatePhase     = UpdatePhase;
             Desc.bParallelUpdate = (ParallelUpdate & 1) != 0;
             Desc.NetRealm        = static_cast<uint8>((ParallelUpdate >> 1) & 0x7);
+
+            // Lines of key, a tab, then value.
+            if (Meta != nullptr && MetaLen > 0)
+            {
+                const FStringView Joined(Meta, (size_t)MetaLen);
+                size_t Start = 0;
+                while (Start < Joined.size())
+                {
+                    size_t End = Joined.find('\n', Start);
+                    if (End == FStringView::npos)
+                    {
+                        End = Joined.size();
+                    }
+                    const FStringView Line = Joined.substr(Start, End - Start);
+                    const size_t Tab = Line.find('\t');
+                    if (Tab != FStringView::npos)
+                    {
+                        Desc.ClassMeta.emplace_back(FString(Line.data(), Tab), FString(Line.data() + Tab + 1, Line.size() - Tab - 1));
+                    }
+                    Start = End + 1;
+                }
+            }
             Out->emplace_back(std::move(Desc));
         }
 
@@ -1264,6 +1287,8 @@ namespace Lumina::DotNet
     // Releases what the outgoing generation holds, returning the generation it replaces.
     int32 PrepareGenerationSwap()
     {
+        FCoreDelegates::OnScriptsWillReload.Broadcast();
+
         // A queued Task.Run body is user code holding a strong handle, so let it finish before the teardown.
         GTaskSystem->WaitForAll();
 
@@ -1801,6 +1826,7 @@ namespace Lumina::DotNet
             Definition.UpdatePhase    = Desc.UpdatePhase;
             Definition.bParallelUpdate = Desc.bParallelUpdate;
             Definition.NetRealm        = Desc.NetRealm;
+            Definition.ClassMeta       = Desc.ClassMeta;
 
             // The one crossing for this type's schema. Consumers read it from here.
             TVector<Scripting::FScriptPropertyEntry> UnusedDefaults;

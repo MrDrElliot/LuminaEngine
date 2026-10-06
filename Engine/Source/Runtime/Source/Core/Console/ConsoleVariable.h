@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "Core/Templates/NumericLimits.h"
+#include <cmath>
 #include <limits>
 #include "Containers/HashTable.h"
 #include "Core/Assertions/Assert.h"
@@ -43,8 +44,8 @@ namespace Lumina
         TOptional<T> ParseValue(FStringView Str)
         {
             char* End = nullptr;
-            T Value = static_cast<T>(std::strtod(Str.data(), &End));
-            if (End != Str.data())
+            const T Value = static_cast<T>(std::strtod(Str.data(), &End));
+            if (End != Str.data() && std::isfinite(Value))
             {
                 return Value;
             }

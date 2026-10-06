@@ -36,9 +36,14 @@ namespace Lumina::FShaderCache
             if (Ar.IsReading())
             {
                 R.Bindings.clear();
+                if (!Ar.CanHoldCount(Count))
+                {
+                    Ar.SetHasError(true);
+                    return Ar;
+                }
                 R.Bindings.resize(Count);
             }
-            for (size_t i = 0; i < Count; ++i)
+            for (size_t i = 0; i < Count && !Ar.HasError(); ++i)
             {
                 SerializeBinding(Ar, R.Bindings[i]);
             }

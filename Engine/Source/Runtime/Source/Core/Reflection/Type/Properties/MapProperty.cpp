@@ -51,9 +51,10 @@ namespace Lumina
         Ar << SerializedKeySize;
         Ar << SerializedValueSize;
 
-        if (Count > 0xFFFFFFFFull)
+        if (Count > 0xFFFFFFFFull || !Ar.CanHoldCount(Count))
         {
             LOG_ERROR("Map property '{}' tried to serialize {} entries. Aborted", Name, Count);
+            Ar.SetHasError(true);
             return;
         }
 

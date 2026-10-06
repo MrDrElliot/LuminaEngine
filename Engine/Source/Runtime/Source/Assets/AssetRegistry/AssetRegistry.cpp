@@ -1151,13 +1151,17 @@ namespace Lumina
 
         uint32 Count = 0;
         Ar << Count;
+        if (!Ar.CanHoldCount(Count))
+        {
+            return false;
+        }
 
         FWriteScopeLock Lock(AssetsMutex);
         InvalidatePathIndex();
         Assets.clear();
         Assets.reserve(Count);
 
-        for (uint32 i = 0; i < Count; ++i)
+        for (uint32 i = 0; i < Count && !Ar.HasError(); ++i)
         {
             auto Data = MakeUnique<FAssetData>();
             Ar << Data->AssetGUID;
@@ -1172,6 +1176,11 @@ namespace Lumina
 
             uint32 DepCount = 0;
             Ar << DepCount;
+            if (!Ar.CanHoldCount(DepCount))
+            {
+                Ar.SetHasError(true);
+                break;
+            }
             Data->Dependencies.resize(DepCount);
             for (uint32 d = 0; d < DepCount; ++d)
             {
@@ -1194,8 +1203,13 @@ namespace Lumina
 
             uint32 TextCount = 0;
             Ar << TextCount;
+            if (!Ar.CanHoldCount(TextCount))
+            {
+                Ar.SetHasError(true);
+                TextCount = 0;
+            }
             TextAssets.reserve(TextCount);
-            for (uint32 i = 0; i < TextCount; ++i)
+            for (uint32 i = 0; i < TextCount && !Ar.HasError(); ++i)
             {
                 auto Data = MakeUnique<FTextAssetData>();
                 Ar << Data->Guid;
@@ -1219,7 +1233,7 @@ namespace Lumina
             bReverseMapDirty = true;
         }
 
-        return true;
+        return !Ar.HasError();
     }
 
     // FGuid and FFixedString have no leaf overload, so they round-trip through an FString.

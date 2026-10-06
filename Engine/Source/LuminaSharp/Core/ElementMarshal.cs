@@ -49,6 +49,9 @@ internal enum EElementKind
     Vector,
 
     Map,
+
+    // A struct declared in script that holds a string, read and written field by field at its native offsets.
+    ScriptStruct,
 }
 
 /// <summary>
@@ -73,6 +76,20 @@ internal static class ElementKind<T>
     public static readonly bool IsMarshalled = Kind is not (EElementKind.Blittable or EElementKind.Bool);
 
     public static readonly Func<IntPtr, T>? MakeObject = BindObject();
+
+    public static readonly Func<nint, T>? ReadScriptStruct = BindScriptStruct<Func<nint, T>>(nameof(ScriptStructMarshal<int>.Read));
+
+    public static readonly Action<nint, T>? WriteScriptStruct = BindScriptStruct<Action<nint, T>>(nameof(ScriptStructMarshal<int>.Write));
+
+    // ScriptStructMarshal carries the struct constraint, which T here does not.
+    private static TDelegate? BindScriptStruct<TDelegate>(string Method) where TDelegate : Delegate
+    {
+        if (Kind != EElementKind.ScriptStruct)
+        {
+            return null;
+        }
+        return (TDelegate)typeof(ScriptStructMarshal<>).MakeGenericType(typeof(T)).GetMethod(Method)!.CreateDelegate(typeof(TDelegate));
+    }
 
     public static readonly Func<nint, T>? MakeOptional = BindOptional<Func<nint, T>>(nameof(OptionalMarshal.Read));
 
@@ -226,6 +243,9 @@ public static unsafe class ElementMarshal
             case EElementKind.ObjectWrapper:
                 return ElementKind<T>.MakeObject!(Native.GetObjectPtr(Address));
 
+            case EElementKind.ScriptStruct:
+                return ElementKind<T>.ReadScriptStruct!(Address);
+
             case EElementKind.Optional:
             case EElementKind.Vector:
             case EElementKind.Map:
@@ -329,6 +349,10 @@ public static unsafe class ElementMarshal
 
             case EElementKind.ObjectWrapper:
                 Native.SetObjectPtr(Address, (Value as NativeObject)?.Handle ?? IntPtr.Zero);
+                break;
+
+            case EElementKind.ScriptStruct:
+                ElementKind<T>.WriteScriptStruct!(Address, Value);
                 break;
 
             case EElementKind.SlotView:

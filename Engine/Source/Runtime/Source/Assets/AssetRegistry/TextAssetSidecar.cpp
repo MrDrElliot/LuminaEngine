@@ -31,8 +31,8 @@ namespace Lumina::TextAssetSidecar
             return Roots;
         }
 
-        // Find the content root owning Path; returns its length (root prefix) or npos.
-        size_t FindContentRoot(FStringView Path, FStringView& OutRoot)
+        // Find the content root owning Path; returns its length (root prefix) or npos. The root is copied out, since the list it came from is a temporary.
+        size_t FindContentRoot(FStringView Path, FFixedString& OutRoot)
         {
             size_t BestLen = FStringView::npos;
             for (const FFixedString& Root : GatherContentRoots())
@@ -45,7 +45,7 @@ namespace Lumina::TextAssetSidecar
                 if (BestLen == FStringView::npos || RootView.size() > BestLen)
                 {
                     BestLen = RootView.size();
-                    OutRoot = RootView;
+                    OutRoot = Root;
                 }
             }
             return BestLen;
@@ -54,7 +54,7 @@ namespace Lumina::TextAssetSidecar
 
     FFixedString PathFor(FStringView ContentVirtualPath)
     {
-        FStringView Root;
+        FFixedString Root;
         const size_t RootLen = FindContentRoot(ContentVirtualPath, Root);
         if (RootLen == FStringView::npos)
         {
@@ -65,7 +65,7 @@ namespace Lumina::TextAssetSidecar
         FStringView Relative = ContentVirtualPath.substr(RootLen);
         while (!Relative.empty() && Relative.front() == '/') Relative.remove_prefix(1);
 
-        FFixedString Out(Root.data(), Root.size());
+        FFixedString Out(Root.c_str(), Root.size());
         Out.append("/");
         Out.append(kMetaDirName.data(), kMetaDirName.size());
         Out.append("/");

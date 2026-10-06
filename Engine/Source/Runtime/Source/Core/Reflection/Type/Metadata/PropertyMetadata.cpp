@@ -8,6 +8,16 @@ namespace Lumina
         PairParams.emplace(Key, Value);
     }
 
+    void FMetaDataPair::SetValue(const FName& Key, const FString& Value)
+    {
+        PairParams.insert_or_assign(Key, Value);
+    }
+
+    void FMetaDataPair::RemoveValue(const FName& Key)
+    {
+        PairParams.erase(Key);
+    }
+
     bool FMetaDataPair::HasMetadata(const FName& Key) const
     {
         return PairParams.find(Key) != PairParams.end();

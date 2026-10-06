@@ -8,6 +8,7 @@
 #include "ManagedTypeRegistry.h"
 
 #include "EntityScript.h"
+#include "UI/UIScript.h"
 
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
@@ -414,6 +415,17 @@ namespace Lumina
                 Minted->ScriptUpdatePhase = Desc->UpdatePhase;
                 Minted->bScriptParallelUpdate = Desc->bParallelUpdate;
                 Minted->ScriptNetRealm = Desc->NetRealm;
+                for (const FName& Key : Minted->ScriptClassMetaKeys)
+                {
+                    Minted->Metadata.RemoveValue(Key);
+                }
+                Minted->ScriptClassMetaKeys.clear();
+                for (const std::pair<FString, FString>& Pair : Desc->ClassMeta)
+                {
+                    const FName Key(Pair.first.c_str());
+                    Minted->Metadata.SetValue(Key, Pair.second);
+                    Minted->ScriptClassMetaKeys.push_back(Key);
+                }
 
                 // Re-appending would duplicate properties, so a changed schema tears the block down and rebuilds.
                 const Scripting::FScriptExportSchema& Schema = Desc->Schema;
@@ -436,14 +448,13 @@ namespace Lumina
                     // is a fresh one and the branch over it appended its block already.
                     const EScriptTypeDirty Dirty = Scripting::DiffScriptClassLayout(Minted, Schema);
 
-                    if (EnumHasAnyFlags(Dirty, EScriptTypeDirty::Metadata))
+                    if (EnumHasAnyFlags(Dirty, EScriptTypeDirty::Metadata | EScriptTypeDirty::Defaults))
                     {
                         Scripting::RefreshScriptPropertyMetadata(Minted, Schema);
                     }
-                    if (EnumHasAnyFlags(Dirty, EScriptTypeDirty::Defaults))
-                    {
-                        NeedDefaults.push_back(Minted);
-                    }
+
+                    // An unbound instance reads native-backed fields as zero, so the schema never shows an edited initializer.
+                    NeedDefaults.push_back(Minted);
                 }
 
                 bMintedAny = true;
@@ -470,7 +481,31 @@ namespace Lumina
 
         // A [SkipHotReload] property is the one thing the value carry-over must not carry, and the
         // reinstancer has no reason to know what that means.
-        Reinstancer.SetPostReplaceHook([](CObject*, CObject* New) { Scripting::ResetSkipHotReloadProperties(New); });
+        Reinstancer.SetPostReplaceHook([](CObject* Old, CObject* New)
+        {
+            // The tagged carry-over skips what is never saved, such as a UI's Bind values, which a plain reload keeps.
+            if (CScriptClass* NewClass = Cast<CScriptClass>(New->GetClass()))
+            {
+                for (FProperty* Property : NewClass->ScriptProperties)
+                {
+                    const FProperty* Previous = Property->ShouldSerialize() ? nullptr : Old->GetClass()->GetProperty(Property->GetPropertyName());
+                    if (Previous != nullptr && Property->HasSameValueType(Previous))
+                    {
+                        Property->CopyCompleteValue(Property->GetValuePtr<void>(New), Previous->GetValuePtr<void>(Old));
+                    }
+                }
+            }
+            Scripting::ResetSkipHotReloadProperties(New);
+
+            // OnReloaded is what a reload delivers, so a replaced script must not look new enough for OnAttach and OnReady again.
+            CEntityScript* OldScript = Cast<CEntityScript>(Old);
+            CEntityScript* NewScript = Cast<CEntityScript>(New);
+            if (OldScript != nullptr && NewScript != nullptr)
+            {
+                NewScript->ContinueLifecycleOf(*OldScript);
+                UIScripts::Replace(OldScript, NewScript);
+            }
+        });
 
         for (const FPendingReplacement& Pending : Replacements)
         {

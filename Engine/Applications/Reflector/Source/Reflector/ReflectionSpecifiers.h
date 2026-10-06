@@ -50,6 +50,8 @@ namespace Lumina::Reflection
     X(ClientOnly,           Flag,   Runtime,   "A script, system or world subsystem that runs only on a client joined to a host. Inherited, like C# [ClientOnly].") \
     X(Cosmetic,             Flag,   Runtime,   "A script, system or world subsystem that runs only where something is drawn or played, never on a dedicated server, a bot or a headless process. Inherited, like C# [Cosmetic].") \
     X(ConfigFile,           Value,  Runtime,   "Backs the class with the named config file. The config system loads and saves its properties there.") \
+    X(DataModel,            Value,  Runtime,   "The name a UI document's data-model attribute uses for this class. The class name without its C prefix when absent.") \
+    X(UIDocument,           Value,  Runtime,   "The .rml a UI script shows when its Document property is empty.") \
     X(Category,             Value,  Editor,    "Groups the type under a named heading in the component picker and the settings list.") \
     X(DisplayName,          Value,  Editor,    "Overrides the label shown for the type in editor UI.") \
     X(ToolTip,              Value,  Editor,    "Hover text for the type. Filled from the declaration's doc comment when not written by hand.") \
@@ -70,7 +72,9 @@ namespace Lumina::Reflection
     X(EditorOnly,           Flag,   Runtime,   "The property exists for editor tooling only and is stripped from cooked packages.") \
     X(Sync,                 Either, Runtime,   "Replicates the field from the host, the C++ spelling of C# [Sync]. Sync = FromOwner lets the owning client write it too.") \
     X(Replicated,           Flag,   Runtime,   "Alias of Sync.") \
-    X(Change,               Value,  Runtime,   "A FUNCTION() run whenever the Sync field changes, here or on arrival, taking nothing or (Old, New).") \
+    X(Change,               Value,  Runtime,   "A FUNCTION() run whenever the Sync field changes, or a Bind field is changed by its UI, taking nothing or (Old, New).") \
+    X(Bind,                 Either, Runtime,   "Exposes the value to a UI document as {{ Name }} and the data-* views, under this name or its own. A struct binds its members and a TVector binds for data-for.") \
+    X(Element,              Either, Runtime,   "Fills an FUIElement with the element of this id, or of the property's name, each time the script's UI document loads.") \
     X(Rate,                 Value,  Runtime,   "The most times a second the host sends the Sync field. A change sooner than that waits for the next slot.") \
     X(Quantize,             Value,  Runtime,   "Snaps a numeric Sync field to multiples of this step, so a smaller wobble never reaches the wire.") \
     X(Validate,             Value,  Runtime,   "For a Sync = FromOwner field, a FUNCTION() taking the proposed value and returning whether the host accepts it.") \
@@ -110,6 +114,7 @@ namespace Lumina::Reflection
     X(ToolTip,                  Value, Editor, "Hover text for the function. Filled from the declaration's doc comment when not written by hand.") \
     X(Rpc,                      Value, Runtime, "Broadcast, Host or Owner, the C++ spelling of C# [Rpc.*]. The body starts with NET_RPC(...) passing its parameters.") \
     X(NetFlags,                 Value, Runtime, "Unreliable and OwnerOnly, joined with |, the C++ spelling of C# NetFlags.") \
+    X(Bind,                     Flag,  Runtime, "A command a UI document runs from data-event-*, or a computed {{ value }} when it takes nothing and returns one.") \
     X(SuppressGCTransition,     Flag,  Script, "Skips the GC transition on the generated C# call. Only valid on a short leaf function that never calls back into managed code.") \
     X(NoSuppressGCTransition,   Flag,  Script, "Opts one function back out of a type-wide REFLECT(ScriptFastCalls).")
 

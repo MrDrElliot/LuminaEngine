@@ -107,6 +107,8 @@ namespace Lumina
         /** Unique "NewRow", "NewRow_1", ... for a table that already has rows. */
         RUNTIME_API NODISCARD FName MakeUniqueRowName(const FName& Base) const;
 
+        RUNTIME_API void PostPropertyChange(FProperty* ChangedProperty) override;
+
     private:
 
         /** Resolution result for RowStructName. Not serialized: reflection objects live at different

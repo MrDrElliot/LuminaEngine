@@ -341,7 +341,7 @@ namespace Lumina
     {
         FResolvedParticleParams R;
 
-        R.MaxParticles            = Emitter.MaxParticles;
+        R.MaxParticles            = Math::Clamp(Emitter.MaxParticles, 0, ParticleEmitterMaxCapacity);
         R.SpawnRate               = ResolveBoundFloat(Asset, Component, "SpawnRate",              Emitter.SpawnRate);
         R.BurstCount              = ResolveBoundInt  (Asset, Component, "BurstCount",             Emitter.BurstCount);
         R.Duration                = ResolveBoundFloat(Asset, Component, "Duration",               Emitter.Duration);

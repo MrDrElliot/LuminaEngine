@@ -1,8 +1,10 @@
-﻿#pragma once
+#pragma once
 
 #include <string>
 #include <vector>
 #include "Containers/Vector.h"
+#include "Containers/HashTable.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"
 #include "Platform/Filesystem/DirectoryWatcher.h"
@@ -10,6 +12,7 @@
 #include "UI/RmlUiBridge.h"
 #include "UI/ColorTextEdit/TextEditor.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
+#include "RmlBindingAnalysis.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
 
 namespace Rml
@@ -105,6 +108,20 @@ namespace Lumina
         void ReportReloadDiagnostics(bool bLoaded, const TVector<RmlUi::FRmlDiagnostic>& Diagnostics,
                                      bool bAlwaysReport);
 
+        // Rebuilds the preview's stand-in data models from the C# types the document names, before the document reloads.
+        void RefreshDesignModels(const std::string& Body);
+
+        // Unbinds and drops the preview's class instances, which a model still bound to the document would keep reading.
+        void ReleaseDesignObjects();
+        void ApplyBindingMarkers();
+        void ConfigureAutoComplete();
+        void OnAutoComplete(TextEditor::AutoCompleteState& State);
+        void DrawDataPanel();
+        void DrawModelSection(int32 ModelIndex);
+        void DrawElementBindings();
+        void JumpToLine(int32 Line);
+        void PollDesignActivity();
+
         // False for .rcss, which has no DOM; the panels explain that rather than showing an empty tree.
         bool HasElementTree() const { return !bIsStylesheet; }
 
@@ -150,11 +167,33 @@ namespace Lumina
         // Live-refresh subscription: re-pull + re-apply when CRmlUiEditorSettings is saved from the
         // global Settings panel, so palette/appearance edits show up without reopening the editor.
         FDelegateHandle             SettingsSavedHandle;
+        FDelegateHandle             ScriptsWillReloadHandle;
         // .rcss stylesheets are edited the same as .rml, but can't render on
         // their own -- the preview wraps them in a component specimen.
         bool                        bIsStylesheet = false;
 
         TextEditor                  CodeEditor;
+        TextEditor::AutoCompleteConfig AutoCompleteConfig;
+
+        // What the document binds and the models the preview stands in with, one Described flag per model.
+        RmlBinding::FDocumentBindings      Bindings;
+        TVector<FUIDesignModel>            DesignModels;
+        TVector<bool>                      DesignDescribed;
+
+        // Per design model, the transient instance of its class and the object model binding it, both null when inferred.
+        TVector<TStrongObjectPtr<CObject>> DesignObjects;
+        TVector<void*>                     DesignObjectModels;
+        TVector<RmlBinding::FProblem>      BindingProblems;
+        TVector<FUIModelInfo>              AvailableModels;
+
+        // Values typed into the Data panel, keyed "Model.Member", which survive the reload every edit causes.
+        THashMap<FString, FString>         DesignOverrides;
+        THashMap<FString, int32>           DesignRowCounts;
+        bool                               bDesignReloadPending = false;
+
+        // Commands the preview fired, newest last, since an editor preview has no script to run them.
+        TVector<FString>                   FiredCommands;
+        int32                              SeenScriptGeneration = -1;
         std::string                 LastSyncedText;     // matches disk + last preview reload
         bool                        bBufferDirty = false;
         bool                        bAutoReload = true;

@@ -420,6 +420,7 @@ namespace Lumina
                 static_cast<FScriptDynamicArray*>(Vector)->~FScriptDynamicArray();
             };
             Ops.ContainerContext = Desc;
+            Ops.ContainerSize = sizeof(FScriptDynamicArray);
         }
 
         // ---- Script dynamic optional (a heap payload, so an engaged optional is a non-null pointer) ----
@@ -673,6 +674,7 @@ namespace Lumina
                 static_cast<FScriptDynamicMap*>(Map)->~FScriptDynamicMap();
             };
             Ops.ContainerContext = Desc;
+            Ops.ContainerSize = sizeof(FScriptDynamicMap);
         }
     }
 
@@ -1702,6 +1704,38 @@ namespace Lumina::Scripting
         }
     }
 
+    namespace
+    {
+        bool FunctionsMatch(const TVector<FScriptExportFunction>& Old, const TVector<FScriptExportFunction>& New)
+        {
+            if (Old.size() != New.size())
+            {
+                return false;
+            }
+            for (size_t Index = 0; Index < New.size(); ++Index)
+            {
+                const FScriptExportFunction& A = Old[Index];
+                const FScriptExportFunction& B = New[Index];
+                if (A.Name != B.Name || A.ReturnIndex != B.ReturnIndex || A.Flags != B.Flags || A.Params.size() != B.Params.size())
+                {
+                    return false;
+                }
+                for (size_t Param = 0; Param < B.Params.size(); ++Param)
+                {
+                    FString OldShape;
+                    FString NewShape;
+                    AppendFieldSignature(A.Params[Param], OldShape);
+                    AppendFieldSignature(B.Params[Param], NewShape);
+                    if (OldShape != NewShape)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+    }
+
     EScriptTypeDirty DiffScriptClassLayout(const CScriptClass* Target, const FScriptExportSchema& Schema)
     {
         const CScriptStruct* Record = GetLayoutRecord(Target);
@@ -1714,6 +1748,12 @@ namespace Lumina::Scripting
 
         const FScriptExportSchema& Applied = Record->GetAppliedSchema();
         if (Applied.Fields.size() != Schema.Fields.size())
+        {
+            return EScriptTypeDirty::Layout;
+        }
+
+        // Functions are minted with the block, so one added, dropped or reshaped rebuilds the class the way a field would.
+        if (!FunctionsMatch(Applied.Functions, Schema.Functions))
         {
             return EScriptTypeDirty::Layout;
         }

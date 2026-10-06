@@ -104,6 +104,10 @@ namespace Lumina::Physics
         // Places the proxy on the character by the next world step, written per body so it runs inside the fan-out.
         void DriveProxy(FPhysicsCharacterHandle& Character, float FixedDt)
         {
+            if (!Box3DUtils::IsSafePose(Character.Position, Character.Rotation))
+            {
+                return;
+            }
             const b3WorldTransform Target{ Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation) };
             b3Body_SetTargetTransform(Character.ProxyBody, Target, FixedDt, false);
             Character.bProxyInMotion = true;
@@ -112,6 +116,10 @@ namespace Lumina::Physics
         // Teleports and seating place the proxy at once, so a velocity left from a target transform must not carry it on.
         void PlaceProxy(FPhysicsCharacterHandle& Character)
         {
+            if (!Box3DUtils::IsSafePose(Character.Position, Character.Rotation))
+            {
+                return;
+            }
             b3Body_SetTransform(Character.ProxyBody, Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation));
             if (Character.bProxyInMotion)
             {
@@ -442,6 +450,11 @@ namespace Lumina::Physics
         if (Movement.bPendingTeleport)
         {
             Movement.bPendingTeleport = false;
+            if (!Box3DUtils::IsWithin(Movement.PendingTeleportLocation, Box3DUtils::MaxSafeCoordinate))
+            {
+                LOG_WARN("Character on entity {} ignored a teleport to a NaN, infinite or out of range location", (Entity).Value);
+                return true;
+            }
 
             // A teleport lands the same way a spawn does, so it gets seated instead of dropped into geometry.
             Character.SpawnPosition = Movement.PendingTeleportLocation;

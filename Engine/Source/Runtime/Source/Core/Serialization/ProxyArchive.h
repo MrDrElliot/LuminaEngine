@@ -35,7 +35,7 @@ namespace Lumina
         
         void Seek(int64 InPos) override { InnerArchive.Seek(InPos); }
         int64 Tell() override { return InnerArchive.Tell(); }
-        int64 TotalSize() override { return InnerArchive.Tell(); }
+        int64 TotalSize() override { return InnerArchive.TotalSize(); }
 
         bool IsReading() const override { return InnerArchive.IsReading(); }
         bool IsWriting() const override { return InnerArchive.IsWriting(); }

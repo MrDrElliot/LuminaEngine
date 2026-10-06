@@ -11,6 +11,10 @@ namespace Lumina
 
         void AddValue(const FName& Key, const FString& Value);
 
+        // Replaces any value Key already has, where AddValue keeps the first.
+        void SetValue(const FName& Key, const FString& Value);
+        void RemoveValue(const FName& Key);
+
         bool HasMetadata(const FName& Key) const;
         
         const FString* TryGetMetadata(const FName& Key) const;

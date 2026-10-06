@@ -45,6 +45,10 @@ namespace Lumina
         constexpr uint32 kPackageChunkMagic   = 0x32435A4C; // 'LZC2'
         constexpr uint32 kPackageChunkVersion = 2;
         constexpr uint32 kPackageChunkSize    = 4u * 1024 * 1024; // 4 MiB uncompressed per chunk
+        constexpr uint32 kMaxPackageChunkSize = 16u * kPackageChunkSize;
+
+        // Deflate cannot expand a stream past about 1032 to 1, so a larger claimed size is a corrupt header.
+        constexpr uint64 kMaxDeflateRatio = 1032;
 
         // version 1 named no codec because deflate was the only one, so it is what a v1 container holds
         enum class EPackageCodec : uint32
@@ -143,8 +147,12 @@ namespace Lumina
             {
                 Out.resize(ZSTD_compressBound(Len));
 
-                const size_t Written = ZSTD_compressCCtx(GZstdContexts.Compress(), Out.data(), Out.size(),
-                                                         Src, Len, Level);
+                ZSTD_CCtx* Context = GZstdContexts.Compress();
+                ZSTD_CCtx_reset(Context, ZSTD_reset_session_and_parameters);
+                ZSTD_CCtx_setParameter(Context, ZSTD_c_compressionLevel, Level);
+                // The content checksum turns a corrupt chunk into a decompress error instead of bytes the loader and GPU driver trust.
+                ZSTD_CCtx_setParameter(Context, ZSTD_c_checksumFlag, 1);
+                const size_t Written = ZSTD_compress2(Context, Out.data(), Out.size(), Src, Len);
                 if (ZSTD_isError(Written))
                 {
                     LOG_ERROR("zstd could not compress a {}-byte chunk: {}", Len, ZSTD_getErrorName(Written));
@@ -311,9 +319,11 @@ namespace Lumina
             const uint32 ChunkSize = ReadU32();
             const uint32 NumChunks = ReadU32();
 
-            if (ChunkSize == 0)
+            // The codecs trust the destination length, so a header whose chunks overshoot Total would write past Out.
+            const uint64 ExpectedChunks = (ChunkSize == 0 || Total == 0) ? 1u : (Total + ChunkSize - 1) / ChunkSize;
+            if (ChunkSize == 0 || ChunkSize > kMaxPackageChunkSize || NumChunks != ExpectedChunks)
             {
-                LOG_ERROR("DecompressChunkedPackage: zero chunk size");
+                LOG_ERROR("DecompressChunkedPackage: inconsistent chunk layout ({} bytes in {} chunks of {})", Total, NumChunks, ChunkSize);
                 return false;
             }
 
@@ -402,6 +412,12 @@ namespace Lumina
             {
                 LOG_ERROR("DecompressPackageBinary: size mismatch (header={}, file={})",
                     sizeof(FCompressedPackageHeader) + CHeader.CompressedSize, Raw.size());
+                return false;
+            }
+
+            if (CHeader.UncompressedSize > CHeader.CompressedSize * kMaxDeflateRatio + 1024)
+            {
+                LOG_ERROR("DecompressPackageBinary: header claims {} bytes from {} compressed", CHeader.UncompressedSize, CHeader.CompressedSize);
                 return false;
             }
 
@@ -1130,6 +1146,13 @@ namespace Lumina
 
                 Reader.Seek(PackageHeader.ExportTableOffset);
                 Reader << Package->ExportTable;
+
+                if (Reader.HasError())
+                {
+                    LOG_ERROR("LoadPackage: {} has a corrupt import or export table", Path);
+                    Package->ImportTable.clear();
+                    Package->ExportTable.clear();
+                }
 
 #if USING(WITH_EDITOR)
                 // Non-editor saves encode no thumbnail (offset == 0).

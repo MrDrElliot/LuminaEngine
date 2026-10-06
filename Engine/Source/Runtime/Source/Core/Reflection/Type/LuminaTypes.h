@@ -136,6 +136,9 @@ namespace Lumina
         RUNTIME_API void CopyCompleteValue_InContainer(void* DstContainer, const void* SrcContainer, int64 ArrayIndex = 0) const;
 
         RUNTIME_API bool IsA(EPropertyTypeFlags Flag) const { return TypeFlags == Flag; }
+
+        // True when a value of Other can be copied into this property, the check before handing a value to a function parameter.
+        RUNTIME_API bool HasSameValueType(const FProperty* Other) const;
         
         RUNTIME_API const FName& GetTypeName() const;
         

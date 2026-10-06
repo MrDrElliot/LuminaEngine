@@ -805,7 +805,7 @@ namespace Lumina
         RHI::FGPUAllocation AcquireParticleBuffer(uint64 Size, const char* DebugName);
         void ReleaseParticleBuffer(RHI::FGPUAllocation& Allocation, uint64 Size);
         void ReleaseParticleState(FParticleGPUState& State);
-        void EnsureParticleBuffers(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleGPUState& State);
+        bool EnsureParticleBuffers(RHI::FCmdListH CL, const FFrameData::FParticleExtract& Item, FParticleGPUState& State);
         bool IsParticleEmitterCulled(const FFrameData::FParticleExtract& Item, bool bForDraw) const;
         void SortParticlesGlobal(RHI::FCmdListH CL, FParticleGPUState& State, uint32 SortMode, uint32 VertsPerParticle);
         void TerrainUpdatePass(RHI::FCmdListH CL);
