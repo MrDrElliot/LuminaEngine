@@ -60,8 +60,18 @@
 #define MATERIAL_PIXEL_GROUP_SIZE       (MATERIAL_CLASSIFY_TILE * MATERIAL_CLASSIFY_TILE)
 // Frames one streaming-feedback readback spans; the deferred material pass reports a rotating 1/N of its groups each frame.
 #define STREAMING_FEEDBACK_WINDOW       4u
-// Distinct deferred shaders one frame may bin. A backstop, not a knob; costs are linear in the live count.
-#define MATERIAL_MAX_SLOTS              1024u
+// Distinct deferred shaders one frame may bin, bounded by the R16F slot image holding slot + 1 exactly.
+#define MATERIAL_MAX_SLOTS              2048u
+// A classified pair packs its slot under the tile index, so these bits have to cover MATERIAL_MAX_SLOTS.
+#define MATERIAL_PAIR_SLOT_BITS         11u
+#define MATERIAL_PAIR_SLOT_MASK         ((1u << MATERIAL_PAIR_SLOT_BITS) - 1u)
+// Slots a tile records inline, past which its pairs go to the overflow list.
+#define MATERIAL_TILE_SLOTS             4u
+// A slot word plus a 64-bit pixel mask for each inline pair.
+#define MATERIAL_TILE_RECORD            (MATERIAL_TILE_SLOTS * 3u)
+#define MATERIAL_TILE_SPARSE_FLAG       0x80000000u
+// A pair covering fewer pixels than this shades a lane per pixel, since a whole tile group would leave most lanes idle.
+#define MATERIAL_SPARSE_PIXELS          16u
 
 // FMaterialUniforms layout. Changing one side reinterprets every field after it.
 #define MAX_SCALARS                     24

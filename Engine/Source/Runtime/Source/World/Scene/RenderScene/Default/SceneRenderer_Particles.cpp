@@ -1068,7 +1068,8 @@ namespace Lumina
         RHI::FRenderPassDesc Pass;
         Pass.ColorAttachments         = TSpan<const RHI::FRenderAttachment>(&Color, 1);
         Pass.DepthAttachment.Texture  = Depth.Texture;
-        const bool bClearsDepth = DrawCommands.empty();
+        // Meshes and terrain both lay depth down before this, so only a frame with neither may clear it.
+        const bool bClearsDepth = DrawCommands.empty() && Frame.Extracts.TerrainExtracts.empty();
         Pass.DepthAttachment.LoadOp   = bClearsDepth ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
         Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
         Pass.DepthAttachment.Color[0] = 0.0f;

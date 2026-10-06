@@ -38,6 +38,8 @@ namespace Lumina
         std::atomic<bool>           bDone{ false };
     };
 
+    struct FNavFoliageCache;
+
     struct FNavMeshRuntime
     {
         TUniquePtr<FNavMesh>            Mesh;
@@ -54,6 +56,12 @@ namespace Lumina
 
         /** Cached per-collider AABBs from previous tick. */
         THashMap<uint64, FNavSourceEntity>      EntityAABBs;
+
+        // Foliage is tracked per entity with cached instance bounds, since walking every instance each scan stalled the frame.
+        TSharedPtr<FNavFoliageCache>            FoliageCache;
+
+        // Until set, a scan adopts what it finds, because a hydrated bake already holds the world it was loaded with.
+        bool                                    bSourcesSeeded = false;
 
         /** Tile coords waiting to be rebuilt. */
         THashSet<uint64>                        DirtyTiles;

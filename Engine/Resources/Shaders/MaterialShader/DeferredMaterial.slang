@@ -13,7 +13,7 @@ struct FDeferredMaterialArgs
 {
     uint  VisBufferIndex;   // 0
     uint  FeedbackPhase;    // 4   which 1/STREAMING_FEEDBACK_WINDOW of the groups report streaming feedback this frame
-    uint  TileStride;       // 8   TileList entries reserved per slot
+    uint  NumSlots;         // 8   where the sparse half of Counts and Offsets starts
     uint  SlotImageIndex;   // 12  slot + 1 per pixel from classify
     uint  DrawListCount;    // 16  MeshletDrawList slot bound
     uint  SlotIndex;        // 20  this dispatch's dense material slot
@@ -25,8 +25,10 @@ struct FDeferredMaterialArgs
     uint  GBufferDUAV;      // 44
     uint  VelocityUAV;      // 48  0xFFFFFFFF when temporal AA is off
     uint  _PadVelocity;     // 52
-    GPUSpan<uint> TileList;   // 56  packed tile coordinates, one run of TileStride per slot
-    GPUSpan<uint> Counts;     // 72  tiles each slot owns
+    GPUSpan<uint> PairList;   // 56  packed tile coordinates grouped by slot, each run starting at Offsets[slot]
+    GPUSpan<uint> Counts;     // 72  dense tiles per slot, then sparse pixels per slot
+    GPUSpan<uint> Offsets;    // 88  run starts in PairList, then in PixelList
+    GPUSpan<uint> PixelList;  // 104 packed pixel coordinates of the pairs too thin to shade as a tile
 };
 FDeferredMaterialArgs* Pass() { return GetPassArgs<FDeferredMaterialArgs>(); }
 
@@ -44,6 +46,14 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
     // A shorter snapshot cannot be indexed safely, because ResolvePaletteBone clamps against the live count.
     const bool bPrevPoseUsable = (PrevBones().Count != 0u)
                               && (PrevBones().Count >= Scene().CullData.BoneNum);
+
+    // The skinning pass already blended last frame's pose once per vertex, so a pre-skinned instance only reads it.
+    const uint PrevIndex = Ref.SkinnedVertexBase + Ref.M.VertexOffset + LocalVertIdx;
+    if (bSkinned && Ref.SkinnedVertexBase != kNoPreSkinBase && SpanContains(PreSkinnedPrevPositions(), PrevIndex))
+    {
+        const FPrevSkinnedPosition Prev = SpanGet(PreSkinnedPrevPositions(), PrevIndex);
+        return float3(Prev.X, Prev.Y, Prev.Z);
+    }
 
     if (bSkinned && bPrevPoseUsable)
     {
@@ -71,24 +81,35 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 {
     const uint Slot = Pass().SlotIndex;
 
-    // Folded across Y with the matching unfold in VisBufferMaterialArgs, one group per binned tile.
+    // Folded across Y with the matching unfold in VisBufferMaterialArgs, the slot's dense tiles then its listed pixels 64 to a group.
     const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
-    if (LinearGroup >= SpanGet(&Pass().Counts, Slot))
-    {
-        return;
-    }
+    const uint DenseTiles  = SpanGet(&Pass().Counts, Slot);
 
-    const uint2 Tile  = UnpackVisPixel(SpanGet(&Pass().TileList, Slot * Pass().TileStride + LinearGroup));
-    const uint2 Texel = Tile * MATERIAL_CLASSIFY_TILE + uint2(Lane % MATERIAL_CLASSIFY_TILE, Lane / MATERIAL_CLASSIFY_TILE);
-    if (Texel.x >= Pass().ScreenW || Texel.y >= Pass().ScreenH)
+    uint2 Texel;
+    if (LinearGroup >= DenseTiles)
     {
-        return;
+        const uint SparseRun = Pass().NumSlots + Slot;
+        const uint Entry     = (LinearGroup - DenseTiles) * MATERIAL_PIXEL_GROUP_SIZE + Lane;
+        if (Entry >= SpanGet(&Pass().Counts, SparseRun))
+        {
+            return;
+        }
+        Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, SpanGet(&Pass().Offsets, SparseRun) + Entry));
     }
-
-    // A tile is shared with other materials, so the slot classify stored keeps only this one's pixels.
-    if ((uint)(LoadTexture2D(Pass().SlotImageIndex, int2(Texel)).r + 0.5) != Slot + 1u)
+    else
     {
-        return;
+        const uint2 Tile = UnpackVisPixel(SpanGet(&Pass().PairList, SpanGet(&Pass().Offsets, Slot) + LinearGroup));
+        Texel = Tile * MATERIAL_CLASSIFY_TILE + uint2(Lane % MATERIAL_CLASSIFY_TILE, Lane / MATERIAL_CLASSIFY_TILE);
+        if (Texel.x >= Pass().ScreenW || Texel.y >= Pass().ScreenH)
+        {
+            return;
+        }
+
+        // A tile is shared with other materials, so the slot classify stored keeps only this one's pixels.
+        if ((uint)(LoadTexture2D(Pass().SlotImageIndex, int2(Texel)).r + 0.5) != Slot + 1u)
+        {
+            return;
+        }
     }
 
     const uint   Raw = LoadTexture2DUInt(Pass().VisBufferIndex, int2(Texel));

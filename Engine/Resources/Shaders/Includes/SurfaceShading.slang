@@ -422,6 +422,19 @@ float3 EvaluateTransmission(FShadingContext S, float3 L, float3 Radiance, float3
     return Transmission * Thickness * Forward * Radiance;
 }
 
+// Frostbite's energy-renormalized Burley term, so rough surfaces brighten and smooth ones darken toward grazing.
+float BurleyDiffuseScale(float NdotL, float NdotV, float LdotH, float Roughness)
+{
+    const float EnergyBias   = 0.5 * Roughness;
+    const float EnergyFactor = lerp(1.0, 1.0 / 1.51, Roughness);
+    const float Fd90         = EnergyBias + 2.0 * LdotH * LdotH * Roughness;
+    const float L5           = 1.0 - NdotL;
+    const float V5           = 1.0 - NdotV;
+    const float LightScatter = 1.0 + (Fd90 - 1.0) * (L5 * L5) * (L5 * L5) * L5;
+    const float ViewScatter  = 1.0 + (Fd90 - 1.0) * (V5 * V5) * (V5 * V5) * V5;
+    return LightScatter * ViewScatter * EnergyFactor;
+}
+
 // L is supplied by the caller for every light type, so the directional normalize happens once at the
 // call site. Diffuse and specular return separately so translucency keeps reflections un-premultiplied.
 void EvaluateRadianceContributionSplit(FLight Light, FShadingContext S, float3 L, float3 Radiance,
@@ -451,7 +464,7 @@ void EvaluateRadianceContributionSplit(FLight Light, FShadingContext S, float3 L
     half3 F     = FresnelSchlickHalf(HdotV, S.F0);
 
     half3 SpecTint = F * S.EnergyComp;                // color part of the specular lobe
-    half3 Diffuse  = (half3(1.0) - F) * S.DiffuseBase;
+    half3 Diffuse  = S.DiffuseBase * (half)BurleyDiffuseScale(NdotLf, S.NdotV, (float)HdotV, S.Roughness);
 
     // Recombine in float; NDF and the visibility term carry the HDR dynamic range between them.
     float3 Spec = float3(SpecTint) * (NDF * SpecVisibility(Lobe, NdotLf));

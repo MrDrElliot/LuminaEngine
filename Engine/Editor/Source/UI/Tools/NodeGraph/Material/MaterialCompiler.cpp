@@ -487,6 +487,18 @@ namespace Lumina
 		RegisterDeriv(NodeID, EDerivState::Zero);
 	}
 
+	void FMaterialCompiler::RegisterExternalDeriv(const FString& ID, EDerivState State)
+	{
+		FDerivInfo Info;
+		Info.State = (State == EDerivState::Valid && CurrentStage == EMaterialCompileStage::Vertex) ? EDerivState::Unknown : State;
+		if (Info.State == EDerivState::Valid)
+		{
+			Info.DDX = ID + "_DDX";
+			Info.DDY = ID + "_DDY";
+		}
+		DerivByVar[ID] = Info;
+	}
+
 	void FMaterialCompiler::RegisterDeriv(const FString& ID, EDerivState State,
 	                                      const FString& DdxExpr, const FString& DdyExpr,
 	                                      int32 ComponentCount)
@@ -538,6 +550,24 @@ namespace Lumina
 			RegisterDeriv(ID, EDerivState::Unknown);
 			break;
 		}
+	}
+
+	void FMaterialCompiler::RegisterChainDeriv(const FString& ID, const FInputValue& A, const FString& Factor)
+	{
+		if (A.Deriv != EDerivState::Valid)
+		{
+			RegisterDeriv(ID, A.Deriv);
+			return;
+		}
+		const FString Mask = GetSwizzleForMask(A.Mask);
+		const FString Scale = Factor.empty() ? FString() : " * (" + Factor + ")";
+		RegisterDeriv(ID, EDerivState::Valid, "(" + A.DDX + Mask + Scale + ")", "(" + A.DDY + Mask + Scale + ")",
+		              Math::Clamp(A.ComponentCount, 1, 4));
+	}
+
+	FString FMaterialCompiler::DerivOrZero(const FInputValue& V, bool bDdx, const FString& TypeStr)
+	{
+		return V.Deriv == EDerivState::Valid ? (bDdx ? V.DDX : V.DDY) + GetSwizzleForMask(V.Mask) : TypeStr + "(0.0)";
 	}
 
 	void FMaterialCompiler::GetUVGradients(const FInputValue& UV, FString& OutDdx, FString& OutDdy) const
@@ -713,9 +743,37 @@ namespace Lumina
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
 
-		// Anything else stays Unknown and falls back rather than claiming a gradient it cannot justify.
-		RegisterDeriv(OwningNode, AValue.Deriv == EDerivState::Zero
-		                        ? EDerivState::Zero : EDerivState::Unknown);
+		const FString X = "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ")";
+		const FString Safe = "max(abs(" + X + "), 1e-6)";
+		// Piecewise-constant functions have a zero gradient almost everywhere; frac keeps the UV's own, as tiling expects.
+		static const THashSet<FString> Flat = { "floor", "ceil", "round", "trunc", "sign" };
+		if (Flat.find(Func) != Flat.end() && AValue.Deriv != EDerivState::Unknown)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Zero);
+		}
+		else if (Func == "frac")        { RegisterChainDeriv(OwningNode, AValue, FString()); }
+		else if (Func == "sin")         { RegisterChainDeriv(OwningNode, AValue, "cos" + X); }
+		else if (Func == "cos")         { RegisterChainDeriv(OwningNode, AValue, "-sin" + X); }
+		else if (Func == "tan")         { RegisterChainDeriv(OwningNode, AValue, "1.0 / max(cos" + X + " * cos" + X + ", 1e-6)"); }
+		else if (Func == "asin")        { RegisterChainDeriv(OwningNode, AValue, "rsqrt(max(1.0 - " + X + " * " + X + ", 1e-6))"); }
+		else if (Func == "acos")        { RegisterChainDeriv(OwningNode, AValue, "-rsqrt(max(1.0 - " + X + " * " + X + ", 1e-6))"); }
+		else if (Func == "atan")        { RegisterChainDeriv(OwningNode, AValue, "1.0 / (1.0 + " + X + " * " + X + ")"); }
+		else if (Func == "sinh")        { RegisterChainDeriv(OwningNode, AValue, "cosh" + X); }
+		else if (Func == "cosh")        { RegisterChainDeriv(OwningNode, AValue, "sinh" + X); }
+		else if (Func == "tanh")        { RegisterChainDeriv(OwningNode, AValue, "1.0 - tanh" + X + " * tanh" + X); }
+		else if (Func == "sqrt")        { RegisterChainDeriv(OwningNode, AValue, "0.5 * rsqrt(" + Safe + ")"); }
+		else if (Func == "rsqrt")       { RegisterChainDeriv(OwningNode, AValue, "-0.5 * rsqrt(" + Safe + ") / " + Safe); }
+		else if (Func == "log")         { RegisterChainDeriv(OwningNode, AValue, "1.0 / " + Safe); }
+		else if (Func == "log2")        { RegisterChainDeriv(OwningNode, AValue, "1.442695041 / " + Safe); }
+		else if (Func == "log10")       { RegisterChainDeriv(OwningNode, AValue, "0.4342944819 / " + Safe); }
+		else if (Func == "exp")         { RegisterChainDeriv(OwningNode, AValue, "exp" + X); }
+		else if (Func == "exp2")        { RegisterChainDeriv(OwningNode, AValue, "exp2" + X + " * 0.6931471806"); }
+		else if (Func == "abs")         { RegisterChainDeriv(OwningNode, AValue, "sign" + X); }
+		else if (Func == "saturate")    { RegisterChainDeriv(OwningNode, AValue, "step(0.0, " + X + ") * step(" + X + ", 1.0)"); }
+		else
+		{
+			RegisterDeriv(OwningNode, AValue.Deriv == EDerivState::Zero ? EDerivState::Zero : EDerivState::Unknown);
+		}
 
 		SetOwningOutputType(A, AValue.Type);
 		return AValue.Type;
@@ -740,10 +798,70 @@ namespace Lumina
 			GetActiveChunk().append("// ERROR: Type mismatch\n");
 		}
 
-		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + BValue.Value + GetSwizzleForMask(BValue.Mask) + ");\n");
+		const FString AExpr = "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ")";
+		const FString BExpr = "(" + BValue.Value + GetSwizzleForMask(BValue.Mask) + ")";
+		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AExpr + ", " + BExpr + ");\n");
+
+		RegisterBinaryFuncDeriv(OwningNode, Func, AValue, AExpr, BValue, BExpr, ResultType);
 
 		SetOwningOutputType(A, ResultType);
 		return ResultType;
+	}
+
+	void FMaterialCompiler::RegisterBinaryFuncDeriv(const FString& ID, const FString& Func, const FInputValue& A, const FString& AExpr,
+	                                                const FInputValue& B, const FString& BExpr, EMaterialInputType ResultType)
+	{
+		const int32 Components = GetComponentCount(ResultType);
+		if (A.Deriv == EDerivState::Unknown || B.Deriv == EDerivState::Unknown || Components < 1 || Components > 4)
+		{
+			RegisterDeriv(ID, EDerivState::Unknown);
+			return;
+		}
+		if (Func == "step" || (A.Deriv == EDerivState::Zero && B.Deriv == EDerivState::Zero))
+		{
+			RegisterDeriv(ID, EDerivState::Zero);
+			return;
+		}
+
+		const FString T = GetVectorType(ResultType);
+		auto Pair = [&](auto&& Build)
+		{
+			RegisterDeriv(ID, EDerivState::Valid, Build(DerivOrZero(A, true, T), DerivOrZero(B, true, T)),
+			              Build(DerivOrZero(A, false, T), DerivOrZero(B, false, T)), Components);
+		};
+
+		if (Func == "min")
+		{
+			Pair([&](const FString& DA, const FString& DB) { return "lerp(" + DB + ", " + DA + ", " + T + "(step(" + AExpr + ", " + BExpr + ")))"; });
+		}
+		else if (Func == "max")
+		{
+			Pair([&](const FString& DA, const FString& DB) { return "lerp(" + DA + ", " + DB + ", " + T + "(step(" + AExpr + ", " + BExpr + ")))"; });
+		}
+		else if (Func == "pow")
+		{
+			const FString SafeA = "max(" + AExpr + ", 1e-6)";
+			Pair([&](const FString& DA, const FString& DB)
+			{
+				return "(pow(" + SafeA + ", " + BExpr + ") * (" + DB + " * log(" + SafeA + ") + " + BExpr + " * " + DA + " / " + SafeA + "))";
+			});
+		}
+		else if (Func == "fmod" && B.Deriv == EDerivState::Zero)
+		{
+			Pair([&](const FString& DA, const FString&) { return DA; });
+		}
+		else if (Func == "atan2")
+		{
+			// atan2(y, x) with A the y operand.
+			Pair([&](const FString& DY, const FString& DX)
+			{
+				return "((" + BExpr + " * " + DY + " - " + AExpr + " * " + DX + ") / max(" + AExpr + " * " + AExpr + " + " + BExpr + " * " + BExpr + ", 1e-6))";
+			});
+		}
+		else
+		{
+			RegisterDeriv(ID, EDerivState::Unknown);
+		}
 	}
 
 	EMaterialInputType FMaterialCompiler::EmitTernaryFunc(const FString& Func, CMaterialInput* A, CMaterialInput* B, CMaterialInput* C, float DA, float DB, float DC)
@@ -790,9 +908,51 @@ namespace Lumina
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + Operand(0) + ", " + Operand(1) + ", " + Operand(2) + ");\n");
 
-		// Otherwise Unknown until the specific function earns a rule of its own.
-		RegisterDeriv(OwningNode, (AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero
-		                        && CValue.Deriv == EDerivState::Zero) ? EDerivState::Zero : EDerivState::Unknown);
+		auto OperandDeriv = [&](int32 I, bool bDdx)
+		{
+			const FString D = DerivOrZero(*Values[I], bDdx, GetVectorType(GetTypeFromComponentCount(Math::Max(Widths[I], 1))));
+			return (Widths[I] > ResultWidth) ? "(" + D + ")." + FString("xyzw").substr(0, ResultWidth) : D;
+		};
+
+		const bool bAnyUnknown = AValue.Deriv == EDerivState::Unknown || BValue.Deriv == EDerivState::Unknown || CValue.Deriv == EDerivState::Unknown;
+		const bool bAllZero    = AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero && CValue.Deriv == EDerivState::Zero;
+		if (bAllZero)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Zero);
+		}
+		else if (bAnyUnknown)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Unknown);
+		}
+		else if (Func == "lerp")
+		{
+			// d lerp(a, b, t) = da (1 - t) + db t + (b - a) dt
+			auto Build = [&](bool bDdx)
+			{
+				return "(" + OperandDeriv(0, bDdx) + " * (1.0 - " + Operand(2) + ") + " + OperandDeriv(1, bDdx) + " * " + Operand(2)
+				     + " + (" + Operand(1) + " - " + Operand(0) + ") * " + OperandDeriv(2, bDdx) + ")";
+			};
+			RegisterDeriv(OwningNode, EDerivState::Valid, Build(true), Build(false), ResultWidth);
+		}
+		else if (Func == "clamp" && BValue.Deriv == EDerivState::Zero && CValue.Deriv == EDerivState::Zero)
+		{
+			// The value passes through between the bounds and is flat outside them.
+			const FString Inside = "step(" + Operand(1) + ", " + Operand(0) + ") * step(" + Operand(0) + ", " + Operand(2) + ")";
+			RegisterDeriv(OwningNode, EDerivState::Valid, "(" + OperandDeriv(0, true) + " * " + Inside + ")",
+			              "(" + OperandDeriv(0, false) + " * " + Inside + ")", ResultWidth);
+		}
+		else if (Func == "smoothstep" && AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero)
+		{
+			const FString Range = "max(" + Operand(1) + " - " + Operand(0) + ", 1e-6)";
+			const FString T = "saturate((" + Operand(2) + " - " + Operand(0) + ") / " + Range + ")";
+			const FString Slope = "(6.0 * " + T + " * (1.0 - " + T + ") / " + Range + ")";
+			RegisterDeriv(OwningNode, EDerivState::Valid, "(" + OperandDeriv(2, true) + " * " + Slope + ")",
+			              "(" + OperandDeriv(2, false) + " * " + Slope + ")", ResultWidth);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, EDerivState::Unknown);
+		}
 
 		SetOwningOutputType(A, ResultType);
 		return ResultType;
@@ -878,14 +1038,16 @@ namespace Lumina
 	{
 		FString ValueString = Format("{}", Value);
 		GetActiveChunk().append("float " + ID + " = " + ValueString + ";\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::DefineConstantFloat2(const FString& ID, float Value[2])
 	{
 		FString ValueStringX = Format("{}", Value[0]);
 		FString ValueStringY = Format("{}", Value[1]);
 		GetActiveChunk().append("float2 " + ID + " = float2(" + ValueStringX + ", " + ValueStringY + ");\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::DefineConstantFloat3(const FString& ID, float Value[3])
 	{
@@ -893,7 +1055,8 @@ namespace Lumina
 		FString ValueStringY = Format("{}", Value[1]);
 		FString ValueStringZ = Format("{}", Value[2]);
 		GetActiveChunk().append("float3 " + ID + " = float3(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ");\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::DefineConstantFloat4(const FString& ID, float Value[4])
 	{
@@ -902,7 +1065,8 @@ namespace Lumina
 		FString ValueStringZ = Format("{}", Value[2]);
 		FString ValueStringW = Format("{}", Value[3]);
 		GetActiveChunk().append("float4 " + ID + " = float4(" + ValueStringX + ", " + ValueStringY + ", " + ValueStringZ + ", " + ValueStringW + ");\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::BreakFloat2(CMaterialInput* A)
 	{
@@ -923,9 +1087,14 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xy" + ";\n");
-		// BreakFloatN is distinct from ComponentMask and was the last unruled link in the tiling chain.
-		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
-		                       ? EDerivState::Zero : EDerivState::Unknown);
+		if (ValueString.Deriv == EDerivState::Valid && ValueString.ComponentCount == 2)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Valid, ValueString.DDX + ".xy", ValueString.DDY + ".xy", 2);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero ? EDerivState::Zero : EDerivState::Unknown);
+		}
 	}
 
 	void FMaterialCompiler::BreakFloat3(CMaterialInput* A)
@@ -946,9 +1115,14 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyz" + ";\n");
-		// BreakFloatN is distinct from ComponentMask and was the last unruled link in the tiling chain.
-		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
-		                       ? EDerivState::Zero : EDerivState::Unknown);
+		if (ValueString.Deriv == EDerivState::Valid && ValueString.ComponentCount == 3)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Valid, ValueString.DDX + ".xyz", ValueString.DDY + ".xyz", 3);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero ? EDerivState::Zero : EDerivState::Unknown);
+		}
 	}
 
 	void FMaterialCompiler::BreakFloat4(CMaterialInput* A)
@@ -970,9 +1144,46 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyzw" + ";\n");
-		// BreakFloatN is distinct from ComponentMask and was the last unruled link in the tiling chain.
-		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
-		                       ? EDerivState::Zero : EDerivState::Unknown);
+		if (ValueString.Deriv == EDerivState::Valid && ValueString.ComponentCount == 4)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Valid, ValueString.DDX + ".xyzw", ValueString.DDY + ".xyzw", 4);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero ? EDerivState::Zero : EDerivState::Unknown);
+		}
+	}
+
+	void FMaterialCompiler::RegisterComposedDeriv(const FString& ID, std::initializer_list<const FInputValue*> Components)
+	{
+		bool bAllZero = true;
+		for (const FInputValue* C : Components)
+		{
+			if (C->Deriv == EDerivState::Unknown || C->ComponentCount != 1)
+			{
+				RegisterDeriv(ID, EDerivState::Unknown);
+				return;
+			}
+			bAllZero = bAllZero && C->Deriv == EDerivState::Zero;
+		}
+		if (bAllZero)
+		{
+			RegisterDeriv(ID, EDerivState::Zero);
+			return;
+		}
+
+		const int32 Count = (int32)Components.size();
+		const FString T = GetVectorType(GetTypeFromComponentCount(Count));
+		FString Ddx = T + "(";
+		FString Ddy = T + "(";
+		bool bFirst = true;
+		for (const FInputValue* C : Components)
+		{
+			Ddx += (bFirst ? "" : ", ") + DerivOrZero(*C, true, "float");
+			Ddy += (bFirst ? "" : ", ") + DerivOrZero(*C, false, "float");
+			bFirst = false;
+		}
+		RegisterDeriv(ID, EDerivState::Valid, Ddx + ")", Ddy + ")", Count);
 	}
 
 	void FMaterialCompiler::MakeFloat2(CMaterialInput* R, CMaterialInput* G)
@@ -1001,6 +1212,7 @@ namespace Lumina
 		FString GMask = GetSwizzleForMask(ValueG.Mask);
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = float2(" + ValueR.Value + RMask + ", " +  ValueG.Value + GMask + ");\n");
+		RegisterComposedDeriv(OwningNode, { &ValueR, &ValueG });
 	}
 
 	void FMaterialCompiler::MakeFloat3(CMaterialInput* R, CMaterialInput* G, CMaterialInput* B)
@@ -1032,6 +1244,7 @@ namespace Lumina
 		FString BMask = GetSwizzleForMask(ValueB.Mask);
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = float3(" + ValueR.Value + RMask + ", " +  ValueG.Value + GMask + ", " + ValueB.Value + BMask + ");\n");
+		RegisterComposedDeriv(OwningNode, { &ValueR, &ValueG, &ValueB });
 	}
 
 	void FMaterialCompiler::MakeFloat4(CMaterialInput* R, CMaterialInput* G, CMaterialInput* B, CMaterialInput* A)
@@ -1066,6 +1279,7 @@ namespace Lumina
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = float4(" + ValueR.Value + RMask + ", "
 			+  ValueG.Value + GMask + ", " + ValueB.Value + BMask + ", " + ValueA.Value + AMask + ");\n");
+		RegisterComposedDeriv(OwningNode, { &ValueR, &ValueG, &ValueB, &ValueA });
 	}
 
 	void FMaterialCompiler::Append(CMaterialInput* A, CMaterialInput* B)
@@ -2672,7 +2886,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float3 " + ID + " = GetCameraPosition();\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	FString FMaterialCompiler::EmitInstanceModelMatrix(const FString& ID)
 	{
@@ -2705,7 +2920,8 @@ namespace Lumina
 			"length(mul(" + M + ", float4(1.0, 0.0, 0.0, 0.0)).xyz), "
 			"length(mul(" + M + ", float4(0.0, 1.0, 0.0, 0.0)).xyz), "
 			"length(mul(" + M + ", float4(0.0, 0.0, 1.0, 0.0)).xyz));\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ObjectPosition(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -2717,7 +2933,8 @@ namespace Lumina
 
 		const FString M = EmitInstanceModelMatrix(ID);
 		GetActiveChunk().append("float3 " + ID + " = mul(" + M + ", float4(0.0, 0.0, 0.0, 1.0)).xyz;\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	// Same lane split as EmitInstanceModelMatrix, since only the deferred pixel template declares Inst.
 	FString FMaterialCompiler::EmitInstanceMeshletHeader(const FString& ID)
@@ -2837,7 +3054,8 @@ namespace Lumina
 	void FMaterialCompiler::EntityID(const FString& ID)
 	{
 		GetActiveChunk().append("float " + ID + " = float(EntityID);\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::Time(const FString& ID)
 	{
@@ -2856,7 +3074,15 @@ namespace Lumina
 		{
 			GetActiveChunk().append("float2 " + ID + " = Input.Position.xy / max(float2(GetScreenSize()), float2(1.0, 1.0));\n");
 		}
-	}
+		if (bRaw)
+		{
+			RegisterDeriv(ID, EDerivState::Valid, "float2(1.0, 0.0)", "float2(0.0, 1.0)", 2);
+		}
+		else
+		{
+			RegisterDeriv(ID, EDerivState::Valid, "float2(1.0 / max(float(GetScreenSize().x), 1.0), 0.0)", "float2(0.0, 1.0 / max(float(GetScreenSize().y), 1.0))", 2);
+		}
+		}
 
 	void FMaterialCompiler::ViewDirection(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -2898,12 +3124,14 @@ namespace Lumina
 	void FMaterialCompiler::ViewportSize(const FString& ID)
 	{
 		GetActiveChunk().append("float2 " + ID + " = float2(GetScreenSize());\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::AspectRatio(const FString& ID)
 	{
 		GetActiveChunk().append("float " + ID + " = float(GetScreenSize().x) / max(float(GetScreenSize().y), 1.0);\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	// Other domains have no such binding, so emit a graph error rather than a shader that fails to link.
 	void FMaterialCompiler::SceneColor(const FString& ID, CMaterialInput* UV)
@@ -2971,7 +3199,8 @@ namespace Lumina
 	void FMaterialCompiler::NumericConstant(const FString& ID, float Value)
 	{
 		GetActiveChunk().append("float " + ID + " = " + Format("{}", Value) + ";\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::CustomPrimitiveData(CMaterialExpression_CustomPrimitiveData* Node, ECustomPrimitiveDataType Type)
 	{
@@ -3004,7 +3233,8 @@ namespace Lumina
 			GetActiveChunk().append("bool " + ID + " = " + (bHasInstance ? Data + ".AsBool" : FString("false")) + ";\n");
 			break;
 		}
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	// Math Operations - binary
 
@@ -3135,6 +3365,7 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = 1.0 / max(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + TypeStr + "(1e-6));\n");
+		RegisterChainDeriv(OwningNode, AValue, "-1.0 / max(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + " * " + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + TypeStr + "(1e-12))");
 		SetOwningOutputType(A, AValue.Type);
 	}
 
@@ -3145,6 +3376,7 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = -(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
+		RegisterChainDeriv(OwningNode, AValue, "-1.0");
 		SetOwningOutputType(A, AValue.Type);
 	}
 
@@ -3156,6 +3388,7 @@ namespace Lumina
 		FString TypeStr = GetVectorType(AValue.Type);
 		FString V = AValue.Value + GetSwizzleForMask(AValue.Mask);
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + V + ") * (" + V + ");\n");
+		RegisterChainDeriv(OwningNode, AValue, "2.0 * (" + V + ")");
 		SetOwningOutputType(A, AValue.Type);
 	}
 
@@ -3166,6 +3399,7 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ") * 0.01745329252;\n");
+		RegisterChainDeriv(OwningNode, AValue, "0.01745329252");
 		SetOwningOutputType(A, AValue.Type);
 	}
 
@@ -3176,6 +3410,7 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = (" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ") * 57.29577951;\n");
+		RegisterChainDeriv(OwningNode, AValue, "57.29577951");
 		SetOwningOutputType(A, AValue.Type);
 	}
 
@@ -3212,6 +3447,16 @@ namespace Lumina
 		FString TypeStr = GetVectorType(ResultType);
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + OutMinV.Value + " + (" + XV.Value + " - " + InMinV.Value + ") * (" + OutMaxV.Value + " - " + OutMinV.Value + ") / max(" + InMaxV.Value + " - " + InMinV.Value + ", 1e-6);\n");
+		const bool bConstantBounds = InMinV.Deriv == EDerivState::Zero && InMaxV.Deriv == EDerivState::Zero
+		                          && OutMinV.Deriv == EDerivState::Zero && OutMaxV.Deriv == EDerivState::Zero;
+		if (bConstantBounds && XV.ComponentCount == GetComponentCount(ResultType))
+		{
+			RegisterChainDeriv(OwningNode, XV, "(" + OutMaxV.Value + " - " + OutMinV.Value + ") / max(" + InMaxV.Value + " - " + InMinV.Value + ", 1e-6)");
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, EDerivState::Unknown);
+		}
 		SetOwningOutputType(X, ResultType);
 	}
 
@@ -3670,7 +3915,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float4 " + ID + " = ParticleColor;\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ParticlePosition(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -3680,7 +3926,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float3 " + ID + " = ParticlePosition;\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ParticleVelocity(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -3690,7 +3937,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float3 " + ID + " = ParticleVelocity;\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ParticleSize(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -3700,7 +3948,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float2 " + ID + " = ParticleSize;\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ParticleRelativeTime(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -3710,7 +3959,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float " + ID + " = ParticleLife;\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ParticleRandom(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -3720,7 +3970,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float " + ID + " = ParticleSeedRandom;\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ParticleSpeed(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -3730,7 +3981,8 @@ namespace Lumina
 			return;
 		}
 		GetActiveChunk().append("float " + ID + " = length(ParticleVelocity);\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	void FMaterialCompiler::ParticleDirection(const FString& ID, CMaterialGraphNode* Node)
 	{
@@ -3742,7 +3994,8 @@ namespace Lumina
 		// A particle that has not moved has no direction, and normalizing it would be a NaN.
 		GetActiveChunk().append("float3 " + ID + " = (dot(ParticleVelocity, ParticleVelocity) > 1e-8) ? "
 		                        "normalize(ParticleVelocity) : float3(0.0, 1.0, 0.0);\n");
-	}
+		RegisterDeriv(ID, EDerivState::Zero);
+		}
 
 	// Terrain
 

@@ -5,6 +5,12 @@
 
 namespace Lumina
 {
+    #if !defined(LE_SHIPPING)
+    // Scripts and agents have no viewport menu, so this forces a debug view mode by its ERenderSceneDebugFlags value.
+    static TConsoleVar<int32> CVarDebugViewOverride("r.DebugViewOverride", -1,
+        "Forces the scene debug view to this ERenderSceneDebugFlags value in every view; -1 leaves each viewport's own.");
+    #endif
+
     namespace
     {
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
@@ -170,6 +176,12 @@ namespace Lumina
         SceneGlobalData.CullData.LODDistanceScaleSq     = LODDistanceScale * LODDistanceScale;
         CascadeMinTexels                                = 1.0f;
         SceneGlobalData.CullData.DebugMode              = (uint32)FrameSettings.Flags;
+        #if !defined(LE_SHIPPING)
+        if (const int32 Override = CVarDebugViewOverride.GetValue(); Override >= 0)
+        {
+            SceneGlobalData.CullData.DebugMode = (uint32)Override;
+        }
+        #endif
         SceneGlobalData.CullData.bCascadeHZBValid       = 0u;
         SceneGlobalData.CullData.bCascadeHZBMidValid    = 0u;
 
@@ -2612,7 +2624,16 @@ namespace Lumina
             {
                 TranslucentDrawList.push_back(i);
             }
-            else
+            else if (!DrawCommands[i].bMasked)
+            {
+                OpaqueDrawList.push_back(i);
+            }
+        }
+
+        // Masked batches go last, so the depth opaque geometry already wrote rejects their clip shader before it runs.
+        for (uint32 i = 0; i < NumEmittedBatches; ++i)
+        {
+            if (Registry.IsLive(i) && !DrawCommands[i].bTranslucent && DrawCommands[i].bMasked)
             {
                 OpaqueDrawList.push_back(i);
             }
@@ -4281,6 +4302,7 @@ namespace Lumina
             // Cleared up front because the element is reused across frames and these are written conditionally.
             Out.Shaders       = FRenderMaterialShaders{};
             Out.MaterialIndex = 0u;
+            Out.bMasked       = false;
 
             // Anything that is not a ready terrain material, wrong domain included, falls back to the default.
             CMaterialInterface* TerrainMaterial = Terrain.Material.Get();
@@ -4295,6 +4317,7 @@ namespace Lumina
                 Out.Shaders.VertexShader = TerrainVS;
                 Out.Shaders.PixelShader  = TerrainPS;
                 Out.MaterialIndex        = (uint32)Math::Max(TerrainMaterial->GetMaterialIndex(), 0);
+                Out.bMasked              = TerrainMaterial->GetBlendMode() == EBlendMode::Masked;
 
                 // Demand only, like particles, since terrain cannot simply disappear while its textures load.
                 TerrainMaterial->RequestTexturesResolved();

@@ -24,6 +24,8 @@ struct FPushConstants
     // The pre-skin arena this pass fills. Held here rather than reached through the scene root, because
     // the pass that writes an array is the one that should carry its bound.
     GPUSpan<FPreSkinnedVertex> OutVertices;
+    // Last frame's pose for the same vertices, empty when no view wants motion vectors.
+    GPUSpan<FPrevSkinnedPosition> OutPrevPositions;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -150,7 +152,32 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
                     S.Weights);
             }
 
-            SpanSet(&Pass().OutVertices, OutIndex, SkinWithRows(S, Rows));
+            const FPreSkinnedVertex Current = SkinWithRows(S, Rows);
+            SpanSet(&Pass().OutVertices, OutIndex, Current);
+
+            if (SpanContains(&Pass().OutPrevPositions, OutIndex))
+            {
+                // A shorter snapshot cannot be indexed safely, because ResolvePaletteBone clamps against the live count.
+                const bool bPrevPoseUsable = bCanSkin && PrevBones().Count != 0u && PrevBones().Count >= Scene().CullData.BoneNum;
+                float3 Prev = float3(Current.Px, Current.Py, Current.Pz);
+                if (bPrevPoseUsable)
+                {
+                    const FSkinRows PrevRows = BlendSkinRows(
+                        SpanGetAligned(PrevBones(), ResolvePaletteBone(Header, Palette, S.Slots.x, Data.BoneOffset)),
+                        SpanGetAligned(PrevBones(), ResolvePaletteBone(Header, Palette, S.Slots.y, Data.BoneOffset)),
+                        SpanGetAligned(PrevBones(), ResolvePaletteBone(Header, Palette, S.Slots.z, Data.BoneOffset)),
+                        SpanGetAligned(PrevBones(), ResolvePaletteBone(Header, Palette, S.Slots.w, Data.BoneOffset)),
+                        S.Weights);
+                    const float4 P = float4(S.Position, 1.0);
+                    Prev = float3(dot(PrevRows.R0, P), dot(PrevRows.R1, P), dot(PrevRows.R2, P));
+                }
+
+                FPrevSkinnedPosition Out;
+                Out.X = Prev.x;
+                Out.Y = Prev.y;
+                Out.Z = Prev.z;
+                SpanSet(&Pass().OutPrevPositions, OutIndex, Out);
+            }
         }
     }
 }

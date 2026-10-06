@@ -273,6 +273,8 @@ namespace Lumina
             }
         };
         PreSkinnedVerticesBuffer.Release();
+        PreSkinnedPrevPositionsBuffer.Release();
+        MaterialPairList.Release();
 
         RetainedCullEntryBuffer.Release();
         RetainedTransformBuffer.Release();
@@ -307,7 +309,6 @@ namespace Lumina
             SkinWorkBaseRing[Slot].Release();
             InstanceViewRangeRing[Slot].Release();
             MaterialClassifyRing[Slot].Release();
-            MaterialTileListRing[Slot].Release();
             VisibleInstanceRing[Slot].Release();
             TotalsRing[Slot].Release();
 
@@ -537,14 +538,16 @@ namespace Lumina
                     SkinningPass(CL);
                 }
                 
+                // Terrain first, since it is the one large cheap occluder and every mesh behind a hill then fails early-Z.
+                bool bTerrainCleared = false;
                 {
-                    SCENE_GPU_SCOPE(CL, "VisBuffer Early");
-                    VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true, ECullPhase::Early);
+                    SCENE_GPU_SCOPE(CL, "Terrain Depth");
+                    bTerrainCleared = TerrainDepthPrePass(CL, /*bClear*/ true);
                 }
 
                 {
-                    SCENE_GPU_SCOPE(CL, "Terrain Depth");
-                    TerrainDepthPrePass(CL);
+                    SCENE_GPU_SCOPE(CL, "VisBuffer Early");
+                    VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ !bTerrainCleared, ECullPhase::Early);
                 }
 
                 // Before the pyramid, so custom geometry occludes the late cull like terrain does.
@@ -925,9 +928,9 @@ namespace Lumina
 
     void FDefaultSceneRenderer::RenderCaptureView(RHI::FCmdListH CL)
     {
-        VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
         TerrainCullPass(CL);
-        TerrainDepthPrePass(CL);
+        const bool bTerrainCleared = TerrainDepthPrePass(CL, /*bClear*/ true);
+        VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ !bTerrainCleared);
         ClusterBuildPass(CL);
         LightCullPass(CL);
         EnvironmentPass(CL);
@@ -1469,6 +1472,8 @@ namespace Lumina
         const bool bTranslucency = !Frame.Geometry.TranslucentDrawList.empty();
         const bool bDecals       = !Frame.Primitives.DecalExtracts.empty();
         const bool bWater        = !Frame.Water.Surfaces.empty();
+        const SPostProcessSettings* PostSettings = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
+        const bool bDepthOfField = PostSettings != nullptr && PostSettings->bEnabled && PostSettings->DepthOfFieldFStop > 0.0f;
 
         auto Want = [this, &View](ENamedImage Image, bool bNeeded, bool bMipUAVs = false)
         {
@@ -1504,7 +1509,8 @@ namespace Lumina
         Want(ENamedImage::Revealage,       bTranslucency);
         const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>();
         const bool bSSR = RendererSettings != nullptr && RendererSettings->bScreenSpaceReflections;
-        Want(ENamedImage::WaterRefraction, bWater);
+        // Depth of field borrows the refraction copy as its gather source, so it needs the image without water too.
+        Want(ENamedImage::WaterRefraction, bWater || bDepthOfField);
         Want(ENamedImage::SceneDepthCopy,  bWater);
         Want(ENamedImage::DBufferA,        bDecals);
         Want(ENamedImage::DBufferB,        bDecals);
@@ -1818,6 +1824,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::InitSkyCube(uint32 FaceSize)
     {
+        bSkyTargetsBlack = false;
         RHI::FTextureDesc Desc;
         Desc.Type       = RHI::ETextureType::TexCube;
         Desc.Dimension  = FUIntVector3(FaceSize, FaceSize, 1);

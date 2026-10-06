@@ -483,6 +483,11 @@ namespace Lumina
             const FString Var = Prefix + "out" + Format("{}", i);
 
             Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Var + " = " + ZeroLiteral(T) + ";\n");
+            if (bProvidesGradients)
+            {
+                Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Var + "_DDX = " + ZeroLiteral(T) + ";\n");
+                Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Var + "_DDY = " + ZeroLiteral(T) + ";\n");
+            }
             Pin->ResolvedVar = Var;
             OutVars.push_back(Var);
         }
@@ -505,7 +510,11 @@ namespace Lumina
 
         // Resolve upstream expressions BEFORE opening the block so nothing upstream lands inside our scope.
         TVector<FString> ArgExprs;
+        TVector<FString> ArgDdx;
+        TVector<FString> ArgDdy;
         TVector<int32> ArgWidths;
+        bool bAnyUnknownGradient = false;
+        bool bAllZeroGradient = true;
         ArgExprs.reserve(CustomInputPins.size());
         ArgWidths.reserve(CustomInputPins.size());
         for (size_t i = 0; i < CustomInputPins.size(); ++i)
@@ -521,6 +530,11 @@ namespace Lumina
             const FMaterialCompiler::FInputValue Value = Compiler.GetTypedInputValue(CustomInputPins[i], Fallback);
             const FString Swizzle = GetSwizzleForMask(Value.Mask);
             ArgExprs.push_back(Value.Value + Swizzle);
+            const bool bValid = Value.Deriv == FMaterialCompiler::EDerivState::Valid;
+            ArgDdx.push_back(bValid ? Value.DDX + Swizzle : FString("0.0"));
+            ArgDdy.push_back(bValid ? Value.DDY + Swizzle : FString("0.0"));
+            bAnyUnknownGradient = bAnyUnknownGradient || (!bHandle && Value.Deriv == FMaterialCompiler::EDerivState::Unknown);
+            bAllZeroGradient    = bAllZeroGradient && (bHandle || Value.Deriv == FMaterialCompiler::EDerivState::Zero);
             if (!CustomInputPins[i]->HasConnection())
             {
                 ArgWidths.push_back(bHandle || i >= Inputs.size() ? 1 : DefaultWidthFor(Inputs[i].Default));
@@ -540,6 +554,11 @@ namespace Lumina
             const EMaterialInputType T = ToMaterialInputType(Inputs[i].Type);
             const FString TypeName = FMaterialCompiler::GetHLSLTypeName(T);
             Compiler.AddRaw("const " + TypeName + " " + Inputs[i].Name.ToString() + " = " + CoerceToType(ArgExprs[i], ArgWidths[i], T) + ";\n");
+            if (bProvidesGradients && T != EMaterialInputType::TextureHandle)
+            {
+                Compiler.AddRaw("const " + TypeName + " " + Inputs[i].Name.ToString() + "_DDX = " + CoerceToType(ArgDdx[i], ArgWidths[i], T) + ";\n");
+                Compiler.AddRaw("const " + TypeName + " " + Inputs[i].Name.ToString() + "_DDY = " + CoerceToType(ArgDdy[i], ArgWidths[i], T) + ";\n");
+            }
         }
 
         // Outputs as zero-initialized locals the body assigns to.
@@ -547,6 +566,11 @@ namespace Lumina
         {
             const EMaterialInputType T = ToMaterialInputType(Out.Type);
             Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Out.Name.ToString() + " = " + ZeroLiteral(T) + ";\n");
+            if (bProvidesGradients)
+            {
+                Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Out.Name.ToString() + "_DDX = " + ZeroLiteral(T) + ";\n");
+                Compiler.AddRaw(FMaterialCompiler::GetHLSLTypeName(T) + " " + Out.Name.ToString() + "_DDY = " + ZeroLiteral(T) + ";\n");
+            }
         }
 
         // A nested scope, so the author's locals cannot collide with the declarations above.
@@ -558,8 +582,24 @@ namespace Lumina
         for (size_t i = 0; i < OutVars.size() && i < Outputs.size(); ++i)
         {
             Compiler.AddRaw(OutVars[i] + " = " + Outputs[i].Name.ToString() + ";\n");
+            if (bProvidesGradients)
+            {
+                Compiler.AddRaw(OutVars[i] + "_DDX = " + Outputs[i].Name.ToString() + "_DDX;\n");
+                Compiler.AddRaw(OutVars[i] + "_DDY = " + Outputs[i].Name.ToString() + "_DDY;\n");
+            }
         }
 
         Compiler.AddRaw("}\n");
+
+        // An author's gradient is only as good as the ones it was given, so an unknown input keeps the outputs unknown.
+        using EDeriv = FMaterialCompiler::EDerivState;
+        const EDeriv OutState = bAnyUnknownGradient ? EDeriv::Unknown
+                              : bProvidesGradients ? EDeriv::Valid
+                              : bAllZeroGradient   ? EDeriv::Zero
+                              : EDeriv::Unknown;
+        for (const FString& Var : OutVars)
+        {
+            Compiler.RegisterExternalDeriv(Var, OutState);
+        }
     }
 }

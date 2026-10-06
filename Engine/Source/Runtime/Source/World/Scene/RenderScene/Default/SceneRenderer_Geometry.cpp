@@ -1331,14 +1331,13 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::TerrainDepthPrePass(RHI::FCmdListH CL)
+    bool FDefaultSceneRenderer::TerrainDepthPrePass(RHI::FCmdListH CL, bool bClear)
     {
         const FFrameData& Frame = *RenderFrame;
-        const auto& DrawCommands = Frame.Geometry.DrawCommands;
 
         if (Frame.Extracts.TerrainExtracts.empty())
         {
-            return;
+            return false;
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Terrain Depth", tracy::Color::SeaGreen);
@@ -1346,12 +1345,19 @@ namespace Lumina
         static const FShaderH StampPS = FShaderLibrary::Get("TerrainDepthPixel.slang");
         const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
 
-        const RHI::ELoadOp VisLoadOp = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
+        // Runs ahead of the VisBuffer phases, so the first terrain owns the clear the geometry pass would have done.
+        const RHI::ELoadOp LoadOp = bClear ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
         bool bPassOpen = false;
 
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
             if (TerrainItem.Resolution < 2 || TerrainItem.ChunkResolution < 2 || !IsTerrainInView(TerrainItem))
+            {
+                continue;
+            }
+
+            // A masked terrain clips holes this pass cannot see, so it writes its own depth in TerrainRenderPass.
+            if (TerrainItem.bMasked)
             {
                 continue;
             }
@@ -1411,7 +1417,7 @@ namespace Lumina
 
             RHI::FRenderAttachment Color;
             Color.Texture = VisRT.Texture;
-            Color.LoadOp  = VisLoadOp;
+            Color.LoadOp  = LoadOp;
             Color.StoreOp = RHI::EStoreOp::Store;
 
             RHI::FRenderPassDesc Pass;
@@ -1420,8 +1426,9 @@ namespace Lumina
                 Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
             }
             Pass.DepthAttachment.Texture  = GetNamedImage(ENamedImage::DepthAttachment).Texture;
-            Pass.DepthAttachment.LoadOp   = RHI::ELoadOp::Load;   // cleared by VisBuffer phase 1 or ResetPass
+            Pass.DepthAttachment.LoadOp   = LoadOp;
             Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
+            Pass.DepthAttachment.Color[0] = 0.0f;   // reverse-Z clear
             Pass.RenderArea               = Extent;
 
             // Every terrain writes the same attachments, so they share one pass and the first one owns the clear.
@@ -1463,8 +1470,9 @@ namespace Lumina
         if (bPassOpen)
         {
             RHI::CmdEndRenderPass(CL);
+            Barriers::RasterToRead(CL);
         }
-        Barriers::RasterToRead(CL);
+        return bPassOpen && bClear;
     }
 
     void FDefaultSceneRenderer::TerrainRenderPass(RHI::FCmdListH CL)
@@ -1582,6 +1590,12 @@ namespace Lumina
             Key.PS          = PixelShader;
             Key.DepthFormat = EFormat::D32;
             Key.ShadingFeatures = SF_DebugViews | SF_GTAO | SF_Decals;
+
+            // The prepass skipped a masked terrain, so it lays down its own depth here after the clip.
+            RHI::FDepthStencilDesc TerrainDepth;
+            TerrainDepth.DepthMode = TerrainItem.bMasked ? (RHI::EDepthFlags::Read | RHI::EDepthFlags::Write) : RHI::EDepthFlags::Read;
+            TerrainDepth.DepthTest = RHI::EOp::GreaterEqual;
+            RHI::CmdSetDepthStencil(CL, TerrainDepth);
             Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
             #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ PickerRT.Desc.Format, {} });

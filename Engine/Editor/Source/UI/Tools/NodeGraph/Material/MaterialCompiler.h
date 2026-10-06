@@ -531,6 +531,21 @@ namespace Lumina
         // affine UV case (TexCoords, Panner). Returns Unknown unchanged so it keeps propagating.
         void RegisterScaledDeriv(const FString& ID, const FInputValue& Source, const FString& ScaleExpr);
 
+        // dA times Factor, an expression of the input; an empty Factor passes the gradient through.
+        void RegisterChainDeriv(const FString& ID, const FInputValue& A, const FString& Factor);
+
+        // Records ID_DDX and ID_DDY as companions the caller has already declared and filled.
+        void RegisterExternalDeriv(const FString& ID, EDerivState State);
+
+        // A value's companion with its mask, or a zero of TypeStr when it has none.
+        static FString DerivOrZero(const FInputValue& V, bool bDdx, const FString& TypeStr);
+
+        // One scalar companion per component of a MakeFloatN.
+        void RegisterComposedDeriv(const FString& ID, std::initializer_list<const FInputValue*> Components);
+
+        void RegisterBinaryFuncDeriv(const FString& ID, const FString& Func, const FInputValue& A, const FString& AExpr,
+                                     const FInputValue& B, const FString& BExpr, EMaterialInputType ResultType);
+
         // What a texture sample should pass for explicit gradients. Valid -> the value's own pair;
         // anything else -> UV0's, which is what every sample used before this existed.
         // Only legal in a lane that HAS gradients -- see LaneSamplesWithGradients.

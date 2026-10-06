@@ -830,13 +830,17 @@ namespace Lumina
         // Dense offset of this bucket's blocks in the flat meshlet-cull dispatch. Blocks are dense within
         // a bucket but sparse across the arena, so the cull cannot derive its bucket from the block.
         uint32 CullWorkBase;
+        uint32 DrawBudgetCursor;
+        uint32 DrawDemand;
+        uint32 BlockDemand;
+        uint32 _BudgetPad;
         // Per-slice (EMeshletSlice) view of the draw region, relative to DrawBase.
         uint32 SliceBase[kMeshletSliceCount];
         uint32 SliceCount[kMeshletSliceCount];
         // Read as the indirect draw count at offsetof(SubDrawCount) + slice * 4; keep last.
         uint32 SubDrawCount[kMeshletSliceCount];
     };
-    static_assert(sizeof(FRenderBucketGPU) == 64, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
+    static_assert(sizeof(FRenderBucketGPU) == 80, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
     // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
     static_assert(sizeof(FRenderBucketGPU) % 16 == 0, "FRenderBucketGPU stride must stay 16-byte aligned for loadAligned<16>");
 
@@ -970,6 +974,14 @@ namespace Lumina
     };
     // 32 B lands every element on a sector boundary, so a warp's skinned writes fill whole sectors.
     static_assert(sizeof(FPreSkinnedVertex) == 32, "FPreSkinnedVertex must match shader");
+
+    struct FPrevSkinnedPosition
+    {
+        float X;
+        float Y;
+        float Z;
+    };
+    static_assert(sizeof(FPrevSkinnedPosition) == 12, "FPrevSkinnedPosition must match Common.slang");
     // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
     static_assert(sizeof(FPreSkinnedVertex) % 16 == 0, "FPreSkinnedVertex stride must stay 16-byte aligned for loadAligned<16>");
 
@@ -1257,6 +1269,8 @@ namespace Lumina
         RHI::TGPUSpan<FSkinnedFrameData>    SkinnedFrameData;
         // Same index space as SkinnedMeshletBounds, so one base addresses both.
         RHI::TGPUSpan<FMeshletCone>         SkinnedMeshletCones;
+        // Parallel to PreSkinnedVertices, and empty when no view wants motion vectors.
+        RHI::TGPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions;
 
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
@@ -1267,7 +1281,7 @@ namespace Lumina
         uint32 ProbeCubeArrayIndex   = 0;
         uint32 _Pad0                 = 0;
     };
-    static_assert(sizeof(FSceneRoot) == 368, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 384, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

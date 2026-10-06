@@ -104,6 +104,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Custom Slang", Multiline)
         FString Code = "Out = float3(UV, 0.0);\n";
 
+        // Exposes each input's gradients as <Input>_DDX and <Input>_DDY, and samples downstream with the <Output>_DDX and <Output>_DDY the code writes.
+        PROPERTY(Editable, Category = "Custom Slang")
+        bool bProvidesGradients = false;
+
         // Set once the starter signature has been installed, and serialized, so a node whose pins were
         // deliberately deleted stays deleted instead of re-seeding itself on the next load.
         PROPERTY()

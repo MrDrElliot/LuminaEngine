@@ -129,6 +129,14 @@ struct FPreSkinnedVertex
     uint     Color;
 };
 
+// Last frame's skinned position beside each pre-skinned vertex, so motion vectors need no second skin per pixel.
+struct FPrevSkinnedPosition
+{
+    float X;
+    float Y;
+    float Z;
+};
+
 struct FVertexData
 {
     float3 Position;
@@ -653,6 +661,12 @@ struct FRenderBucket
     // Dense offset of this bucket's blocks in the flat meshlet-cull dispatch. Blocks are dense within a
     // bucket but sparse across the arena, so a workgroup cannot read its bucket from the block itself.
     uint CullWorkBase;
+    // Meshlets BuildMeshletBlocks has promised the draw region, so a run is only built when its worst case fits.
+    uint DrawBudgetCursor;
+    // What CullInstances asked for before BuildDrawPrefix fitted the bucket into the arena.
+    uint DrawDemand;
+    uint BlockDemand;
+    uint _BudgetPad;
     // What each cull phase appended, RELATIVE to DrawBase (DrawCursor is a count, not an index).
     // Indexed by MESHLET_SLICE_*: both VisBuffer phases share cull view 0, so one pair would be
     // clobbered by the late phase before the single-phase passes draw.

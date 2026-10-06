@@ -509,6 +509,10 @@ namespace Lumina
         const FSceneImage& HDR        = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& SceneColor = GetNamedImage(ENamedImage::WaterRefraction);
         const FSceneImage& SceneDepth = GetNamedImage(ENamedImage::DepthAttachment);
+        if (!SceneColor)
+        {
+            return;
+        }
 
         Barriers::SceneToTransfer(CL);
         RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});

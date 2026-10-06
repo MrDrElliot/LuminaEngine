@@ -223,6 +223,7 @@ namespace Lumina
                 uint32              MaterialIndex   = 0;
                 bool                bCastShadow     = true;
                 bool                bReceiveShadow  = true;
+                bool                bMasked         = false;
 
                 bool                bStructuralChange = false;
 
@@ -645,7 +646,7 @@ namespace Lumina
         /** Per-material counts, starts, scatter cursors, dispatch args and the frame pixel total. */
         RHI::FGPUAllocation GetMaterialClassify()  const { return MaterialClassifyRing[CurrentFrameSlot]; }
         /** One packed screen position per classified pixel, grouped into one contiguous run per material. */
-        RHI::FGPUAllocation GetMaterialTileList() const { return MaterialTileListRing[CurrentFrameSlot]; }
+        RHI::FGPUAllocation GetMaterialPairList() const { return MaterialPairList; }
 
         uint32 GetDisplayResourceID() const override;
         bool HasCompositedFrame() const override { return FramesComposited > 0; }
@@ -734,6 +735,8 @@ namespace Lumina
         void BakeBRDFLUT();
 
         void InitSkyCube(uint32 FaceSize);
+        // Set once the sky targets hold the no-environment black, so later frames without one skip the clears.
+        bool bSkyTargetsBlack = false;
 
         void InitIBLConvolutionTargets(const FIBLBakeResolution& Resolution);
         
@@ -816,7 +819,8 @@ namespace Lumina
 
         /** Generates grass instances on the GPU for every species the visible terrains declare. */
         void GrassScatterPass(RHI::FCmdListH CL);
-        void TerrainDepthPrePass(RHI::FCmdListH CL);
+        // Returns whether it cleared the VisBuffer and depth, which it does when bClear and any terrain drew.
+        bool TerrainDepthPrePass(RHI::FCmdListH CL, bool bClear);
         void TerrainRenderPass(RHI::FCmdListH CL);
         void GTAOPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
@@ -1204,6 +1208,7 @@ namespace Lumina
         FFrozenCull FrozenCull;
         
         FSceneBuffer PreSkinnedVerticesBuffer { "Cull.PreSkinnedVertices", 1.2f };
+        FSceneBuffer PreSkinnedPrevPositionsBuffer { "Cull.PreSkinnedPrevPositions", 1.2f };
 
         // Sharing one buffer would clear the flags the late dispatch still needs to read.
         TArray<FSceneBuffer, 2> InstanceVisibilityBuffers = MakeSceneRing<2>("Retained.InstanceVisibility", 1.5f, EBufferInit::Zeroed);
@@ -1474,10 +1479,17 @@ namespace Lumina
         };
 
         FDemandWindow                                       BlockListDemand;
+        // Highest demand seen this session, which sizes the lists for the frames after a camera cut.
+        uint32                                              BlockListPeak = 0;
+        uint32                                              DrawListPeak = 0;
+        FVector3                                            LastCullOrigin = FVector3(0.0f);
+        bool                                                bHasLastCullOrigin = false;
+        uint32                                              CameraCutFramesLeft = 0;
         FDemandWindow                                       PreSkinDemand;
         FDemandWindow                                       VisibleInstanceDemand;
         FDemandWindow                                       DrawListDemand;
         uint32                                              PreSkinnedVertexCapacity = 0;
+        uint32                                              PreSkinnedPrevCapacity = 0;
         uint32                                              MeshSubDrawsPerSlice = 1;
         // Logs only a new peak, since the value alternates with the frame ring.
         uint32                                              LoggedSubDrawPeak = 0;
@@ -1493,7 +1505,8 @@ namespace Lumina
         uint32                                              RecentSlotCursor = 0;
         void   UpdateMeshletBoundFeedback(uint8 Slot);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialClassifyRing = MakeSceneRing<RHI::kFramesInFlight>("Material.ClassifyBlock", 1.0f, EBufferInit::Undefined, /*bAllowShrink*/ false);
-        TArray<FSceneBuffer, RHI::kFramesInFlight> MaterialTileListRing = MakeSceneRing<RHI::kFramesInFlight>("Material.TileList", 1.2f);
+        // GPU-only scratch ordered by the graphics queue, so one copy serves every frame in flight.
+        FSceneBuffer MaterialPairList { "Material.PairList", 1.2f };
         
         uint8                                                           CurrentFrameSlot = 0;
 
@@ -1559,12 +1572,22 @@ namespace Lumina
             uint32 NumSlots      = 0;
             uint32 ScreenW       = 0;
             uint32 ScreenH       = 0;
-            uint32 TileStride    = 0;   // tile-list entries reserved per slot, one per screen tile
-            uint32 TileCapacity  = 0;   // entries the tile list holds, taken from the allocation
+            uint32 PairCapacity  = 0;   // (tile, slot) entries the pair list holds, taken from the allocation
+            uint32 OverflowCountOffset = 0;
+            uint32 TilesX        = 0;
+            uint32 NumTiles      = 0;
+            uint32 OverflowCapacity = 0;
+            uint64 TileSlotsOffset  = 0;    // byte offsets into the pair list allocation
+            uint64 OverflowOffset   = 0;
+            uint64 PixelListOffset  = 0;
+            uint32 PixelCapacity    = 0;
 
             // Byte offsets, packed to the live slot count; the shaders take each region by its own address.
             uint32 CountsOffset       = 0;
+            uint32 OffsetsOffset      = 0;
+            uint32 CursorsOffset      = 0;
             uint32 MaterialArgsOffset = 0;
+            uint32 ScatterArgsOffset  = 0;
             uint32 BlockSize          = 0;
         };
         // Derived once by VisBufferClassifyPass and read by the material and lighting passes. Zeroed at

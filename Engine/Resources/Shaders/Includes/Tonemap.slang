@@ -12,6 +12,7 @@
 #define TONEMAPPER_AGX        2u
 #define TONEMAPPER_AGX_PUNCHY 3u
 #define TONEMAPPER_AGX_GOLDEN 4u
+#define TONEMAPPER_GT         5u
 
 float3 Tonemap_ACES(float3 X)
 {
@@ -93,6 +94,32 @@ float3 Tonemap_AGX_Golden(float3 X)
     return AGX_Eotf(AGX_Look(X, float3(1.0, 0.9, 0.5), float3(0.8), 0.8));
 }
 
+// Uchimura's Gran Turismo curve with its published defaults, a linear midsection between a toe and a shoulder.
+float3 Tonemap_GT(float3 X)
+{
+    static const float P = 1.0;     // display peak
+    static const float A = 1.0;     // linear section slope
+    static const float M = 0.22;    // linear section start
+    static const float L = 0.4;     // linear section length
+    static const float C = 1.33;    // toe curvature
+    static const float B = 0.0;     // black lift
+
+    const float L0 = ((P - M) * L) / A;
+    const float S0 = M + L0;
+    const float S1 = M + A * L0;
+    const float C2 = (A * P) / (P - S1);
+    const float CP = -C2 / P;
+
+    const float3 W0 = 1.0 - smoothstep(0.0, M, X);
+    const float3 W2 = step(S0, X);
+    const float3 W1 = 1.0 - W0 - W2;
+
+    const float3 Toe      = M * pow(max(X, 0.0) / M, float3(C)) + B;
+    const float3 Shoulder = P - (P - S1) * exp(CP * (X - S0));
+    const float3 Linear   = M + A * (X - M);
+    return saturate(Toe * W0 + Linear * W1 + Shoulder * W2);
+}
+
 float3 ApplyTonemap(float3 X, uint Mode)
 {
     switch (Mode)
@@ -103,6 +130,7 @@ float3 ApplyTonemap(float3 X, uint Mode)
         case TONEMAPPER_AGX:        return Tonemap_AGX(X);
         case TONEMAPPER_AGX_PUNCHY: return Tonemap_AGX_Punchy(X);
         case TONEMAPPER_AGX_GOLDEN: return Tonemap_AGX_Golden(X);
+        case TONEMAPPER_GT:         return Tonemap_GT(X);
     }
 }
 

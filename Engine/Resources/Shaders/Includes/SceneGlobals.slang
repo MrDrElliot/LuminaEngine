@@ -36,6 +36,8 @@ struct FSceneRoot
     GPUSpan<FSkinnedFrameData>   SkinnedFrameData;
     // Same index space as SkinnedMeshletBounds, so one base addresses both.
     GPUSpan<FMeshletCone>        SkinnedMeshletCones;
+    // Parallel to PreSkinnedVertices, and empty when no view wants motion vectors.
+    GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions;
 
     uint  BRDFLutIndex;          // bindless 2D SRV
     uint  SkyIrradianceIndex;    // bindless cube SRV
@@ -109,6 +111,7 @@ extension FInstanceStatic
 }
 GPUSpan<FMeshletDraw>*        MeshletDrawList()       { return &GetSceneRoot().MeshletDrawList; }
 GPUSpan<FPreSkinnedVertex>*   PreSkinnedVertices()    { return &GetSceneRoot().PreSkinnedVertices; }
+GPUSpan<FPrevSkinnedPosition>* PreSkinnedPrevPositions() { return &GetSceneRoot().PreSkinnedPrevPositions; }
 GPUSpan<FMeshletSphere>*      SkinnedMeshletBounds()  { return &GetSceneRoot().SkinnedMeshletBounds; }
 GPUSpan<FSkinnedFrameData>*   SkinnedFrameData()      { return &GetSceneRoot().SkinnedFrameData; }
 GPUSpan<FMeshletCone>*        SkinnedMeshletCones()   { return &GetSceneRoot().SkinnedMeshletCones; }

@@ -3,6 +3,33 @@
 
 namespace Lumina
 {
+    #if !defined(LE_SHIPPING)
+    static TConsoleVar<float> CVarCullDebugCapacityScale("r.Cull.DebugCapacityScale", 1.0f,
+        "Scales the meshlet draw and block lists below demand, to exercise the coarse-LOD overflow fallback.");
+    #endif
+
+    static bool IsDebugCapacityScaled()
+    {
+        #if !defined(LE_SHIPPING)
+        const float Scale = CVarCullDebugCapacityScale.GetValue();
+        return Scale > 0.0f && Scale < 1.0f;
+        #else
+        return false;
+        #endif
+    }
+
+    // Below 1 only in development, where it forces the overflow path that a real scene rarely reaches.
+    static uint32 ApplyDebugCapacityScale(uint32 Wanted)
+    {
+        #if !defined(LE_SHIPPING)
+        if (IsDebugCapacityScaled())
+        {
+            return Math::Max(1u, (uint32)((float)Wanted * CVarCullDebugCapacityScale.GetValue()));
+        }
+        #endif
+        return Wanted;
+    }
+
     void FDefaultSceneRenderer::UploadBoneArena(RHI::FCmdListH CL, const FFrameData& Frame)
     {
         const TVector<FBoneTransform>& Mirror = Frame.Geometry.BonesData;
@@ -308,8 +335,29 @@ namespace Lumina
 
         UpdateMeshletBoundFeedback(CurrentFrameSlot);
 
+        // A cut lands somewhere the lagging demand has never seen, so the lists hold the session peak until it catches up.
+        constexpr float CameraCutDistance = 10.0f;
+        if (!CullViews.empty())
+        {
+            const FVector3 Origin = FVector3(CullViews[0].ViewOriginAndFlags);
+            if (bHasLastCullOrigin && Math::Length(Origin - LastCullOrigin) > CameraCutDistance)
+            {
+                CameraCutFramesLeft = RHI::kFramesInFlight + 2u;
+            }
+            LastCullOrigin     = Origin;
+            bHasLastCullOrigin = true;
+        }
+        const bool bAfterCameraCut = CameraCutFramesLeft > 0u;
+        CameraCutFramesLeft = bAfterCameraCut ? CameraCutFramesLeft - 1u : 0u;
+
+        DrawListPeak  = Math::Max(DrawListPeak, LastDrawListRequired);
+        BlockListPeak = Math::Max(BlockListPeak, LastBlocksRequested);
+
         // Windowed like the other GPU-fed sizes, so the raw readback's lag does not collapse it.
-        const uint32 DrawListWanted = Math::Max(DrawListDemand.Observe(LastDrawListRequired), 65536u);
+        // The readback lags the frame by the ring depth, so a moving camera outgrows an exact fit before it is seen.
+        auto WithHeadroom = [](uint32 Demand) { return (uint32)Math::Min<uint64>((uint64)Demand + Demand / 4u, 0xFFFFFFFFull); };
+        const uint32 DrawListWindowed = Math::Max(WithHeadroom(DrawListDemand.Observe(LastDrawListRequired)), 65536u);
+        const uint32 DrawListWanted   = ApplyDebugCapacityScale(bAfterCameraCut ? Math::Max(DrawListWindowed, DrawListPeak) : DrawListWindowed);
         const SIZE_T MeshletDrawListSize = Math::Max<SIZE_T>(
             sizeof(uint32) * 2,
             (SIZE_T)DrawListWanted * sizeof(uint32) * 2);
@@ -320,10 +368,22 @@ namespace Lumina
         ReserveBuffer(CL, PreSkinnedVerticesBuffer, PreSkinnedSize);
         PreSkinnedVertexCapacity = (uint32)Math::Min<uint64>(
             PreSkinnedVerticesBuffer.Size / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
+
+        // Only motion vectors read the previous pose, so without them the skinning pass skips it entirely.
+        PreSkinnedPrevCapacity = 0;
+        if (IsVelocityWanted())
+        {
+            ReserveBuffer(CL, PreSkinnedPrevPositionsBuffer, (SIZE_T)Math::Max(PreSkinnedVertexCapacity, 1u) * sizeof(FPrevSkinnedPosition));
+            PreSkinnedPrevCapacity = (uint32)Math::Min<uint64>(PreSkinnedPrevPositionsBuffer.Size / sizeof(FPrevSkinnedPosition), PreSkinnedVertexCapacity);
+        }
         {
             const uint8 Slot = CurrentFrameSlot;
             ReserveBuffer(CL, MeshletDrawListRing[Slot], MeshletDrawListSize);
             DrawListCapacity = MeshletDrawListRing[Slot].CapacityOf<FUIntVector2>();
+            if (IsDebugCapacityScaled())
+            {
+                DrawListCapacity = Math::Min(DrawListCapacity, DrawListWanted);
+            }
 
             // Read after the resize, because last frame's value describes the other ring slot's buffer.
             const uint32 MaxGroups = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
@@ -360,7 +420,9 @@ namespace Lumina
 
             const uint32 VisibleCapacityMax = Math::Max(SlotCount, 1u);
 
-            if (LastVisibleInstances == 0u)
+            // Every retained slot fits under this, so an instance can never be refused a visible slot.
+            constexpr uint64 ExactVisibleBoundBytes = 64ull << 20;
+            if (LastVisibleInstances == 0u || (uint64)VisibleCapacityMax * sizeof(FGPUInstance) <= ExactVisibleBoundBytes)
             {
                 VisibleCapacityWanted = VisibleCapacityMax;
             }
@@ -381,19 +443,24 @@ namespace Lumina
             ReserveBuffer(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize);
 
             // Only the GPU knows how many blocks were appended, and its counter lags the frames in flight.
-            const uint32 BlockListWanted = BlockListDemand.Observe(LastBlocksRequested);
+            const uint32 BlockListWindowed = WithHeadroom(BlockListDemand.Observe(LastBlocksRequested));
+            const uint32 BlockListWanted   = ApplyDebugCapacityScale(bAfterCameraCut ? Math::Max(BlockListWindowed, BlockListPeak) : BlockListWindowed);
 
             const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
                 (SIZE_T)Math::Max<uint32>(BlockListWanted, 1u) * sizeof(uint32) * 2);
             ReserveBuffer(CL, MeshletBlockRing[Slot], MeshletBlockSize);
             BlockListCapacity = MeshletBlockRing[Slot].CapacityOf<FUIntVector2>();
+            if (IsDebugCapacityScaled())
+            {
+                BlockListCapacity = Math::Min(BlockListCapacity, BlockListWanted);
+            }
 
             // Requirement is from kFramesInFlight ago, capacity is from now, so print both sides.
             const auto LogOverflow = [](const char* What, uint32 Needed, uint32 GrownTo)
             {
-                LOG_WARN("RenderScene: {} overflowed -- {} needed, capacity now {}. Geometry was dropped "
-                         "that frame; this clears once the larger allocation cycles in.",
+                LOG_WARN("RenderScene: {} overflowed -- {} needed, capacity now {}. Instances that did not fit "
+                         "drew at their coarsest LOD that frame, or not at all without one; this clears once the larger allocation cycles in.",
                          What, Needed, GrownTo);
             };
 
@@ -559,6 +626,7 @@ namespace Lumina
             SceneRootShared.Collections          = Render().GetCollectionManager().GetSpan();
             SceneRootShared.MeshletDrawList      = { GetMeshletDrawList(), DrawListCapacity };
             SceneRootShared.PreSkinnedVertices   = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
+            SceneRootShared.PreSkinnedPrevPositions = { PreSkinnedPrevPositionsBuffer, PreSkinnedPrevCapacity };
             SceneRootShared.SkinnedFrameData     = { SkinnedFrameDataBuffer };
             // Spheres and cones are indexed by one base, so each carries the same capacity.
             SceneRootShared.SkinnedMeshletBounds = { SkinnedMeshletBoundsBuffer, SkinnedMeshletBoundsCapacity };
@@ -645,14 +713,16 @@ namespace Lumina
             RHI::TGPUSpan<FSkinnedFrameData>  SkinnedData;
             RHI::TGPUSpan<FInstanceStatic>    RetainedStatic;
             RHI::TGPUSpan<FPreSkinnedVertex>  OutVertices;
+            RHI::TGPUSpan<FPrevSkinnedPosition> OutPrevPositions;
         } PC = {};
-        static_assert(sizeof(FSkinningPushConstants) == 80, "FSkinningPushConstants must match Skinning.slang.");
+        static_assert(sizeof(FSkinningPushConstants) == 96, "FSkinningPushConstants must match Skinning.slang.");
 
         PC.WorkBase       = { SkinWorkBaseRing[Slot], NumPairs };
         PC.SlotList       = { SkinnedSlotListBuffer, NumSkinned };
         PC.SkinnedData    = { SkinnedFrameDataBuffer };
         PC.RetainedStatic = { RetainedStaticBuffer };
         PC.OutVertices    = { GetPreSkinnedVerticesBuffer() };
+        PC.OutPrevPositions = { PreSkinnedPrevPositionsBuffer, PreSkinnedPrevCapacity };
 
         DispatchComputeIndirect(CL, SkinShader, PC, GetSkinDispatchArgs());
 
@@ -1120,8 +1190,9 @@ namespace Lumina
                     RHI::TGPUSpan<FUIntVector2>     InstanceViewRanges;
                     RHI::TGPUSpan<FRenderBucketGPU> Buckets;
                     RHI::TGPUSpan<FUIntVector2>     OutBlockList;
+                    RHI::TGPUSpan<FSurfaceDescGPU>  SurfaceDescs;
                 } BPC = {};
-                static_assert(sizeof(FBuildMeshletBlocksPC) == 88, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
+                static_assert(sizeof(FBuildMeshletBlocksPC) == 104, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
 
                 BPC.NumViews           = NumCullViews;
                 BPC.NumBatches         = NumBatches;
@@ -1130,6 +1201,7 @@ namespace Lumina
                 BPC.InstanceViewRanges = { GetInstanceViewRanges() };
                 BPC.Buckets            = { GetRenderBuckets() };
                 BPC.OutBlockList       = { GetMeshletBlocks(), BlockListCapacity };
+                BPC.SurfaceDescs       = { SurfaceDescBuffer, UploadedSurfaceDescs };
 
                 RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BlocksShader));
 

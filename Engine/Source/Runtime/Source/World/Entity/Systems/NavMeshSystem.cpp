@@ -503,7 +503,7 @@ namespace Lumina
             return Fallback ? Fallback->StaticMesh.Get() : nullptr;
         }
 
-        void EmitMeshGeometry(const FMatrix4& W, const FMeshResource& Res, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc)
+        void EmitMeshGeometry(const FMatrix4& W, const FMeshResource& Res, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc, bool bCoarsestLOD = false)
         {
             const FMeshletData&  Md  = Res.MeshletData;
             if (Md.IsEmpty() || Res.bSkinnedMesh) return;
@@ -513,8 +513,16 @@ namespace Lumina
 
             for (const FGeometrySurface& Surface : Res.GeometrySurfaces)
             {
-                const uint32 First = Surface.LODMeshletOffset[0];
-                const uint32 Count = Surface.LODMeshletCount[0];
+                uint32 Lod = 0;
+                if (bCoarsestLOD)
+                {
+                    for (uint32 Candidate = 1; Candidate < MAX_MESH_LODS; ++Candidate)
+                    {
+                        Lod = Surface.LODMeshletCount[Candidate] != 0u ? Candidate : Lod;
+                    }
+                }
+                const uint32 First = Surface.LODMeshletOffset[Lod];
+                const uint32 Count = Surface.LODMeshletCount[Lod];
                 for (uint32 m = 0; m < Count; ++m)
                 {
                     const FMeshlet& Meshlet = Md.Meshlets[First + m];
@@ -652,6 +660,8 @@ namespace Lumina
             TSharedPtr<FNavOffMeshLink>     Link;                     // OffMeshLink type
             // Foliage type, shared by every instance of a species in its local space and placed by World.
             TSharedPtr<const TVector<FNavSourcePrim>> Children;
+            // Reads the mesh's coarsest LOD, enough for a footprint at a fraction of the triangles.
+            bool                            bCoarsestLOD = false;
         };
 
         struct FNavSourceEntry
@@ -671,7 +681,7 @@ namespace Lumina
             {
                 case ENavColliderType::Box:    EmitBoxGeometry(P.World, P.Shape, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::Sphere: EmitSphereGeometry(P.World, P.Shape.x, BakeMin, BakeMax, Acc); break;
-                case ENavColliderType::Mesh:   if (P.Mesh) EmitMeshGeometry(P.World, P.Mesh->GetMeshResource(), BakeMin, BakeMax, Acc); break;
+                case ENavColliderType::Mesh:   if (P.Mesh) EmitMeshGeometry(P.World, P.Mesh->GetMeshResource(), BakeMin, BakeMax, Acc, P.bCoarsestLOD); break;
                 case ENavColliderType::DynamicMesh: if (P.DynamicMesh) EmitMeshGeometry(P.World, P.DynamicMesh->Resource, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::Capsule:
                 case ENavColliderType::CharacterCapsule: EmitCapsuleGeometry(P.World, P.Shape.y, P.Shape.x, BakeMin, BakeMax, Acc); break;
@@ -930,6 +940,7 @@ namespace Lumina
                 FNavSourcePrim& Child = Children->emplace_back();
                 Child.Type = ENavColliderType::Mesh;
                 Child.Mesh = Mesh;
+                Child.bCoarsestLOD = true;
                 const FMeshletData& MeshletData = Mesh->GetMeshResource().MeshletData;
                 Template.ContentId = MakeContentId(Mesh, MeshletData.MeshletVertices.size(), MeshletData.MeshletTriangles.size());
                 Template.LocalMin = Mesh->GetAABB().Min;
@@ -943,7 +954,117 @@ namespace Lumina
             return Template;
         }
 
-        void CollectNavSources(const FSystemContext& Context, const FVector3& BakeMin, const FVector3& BakeMax, bool bTessellateTerrain, float CellSize, TVector<FNavSourceEntry>& Out)
+        uint64 FoliageNavSignature(const SFoliageComponent& Foliage)
+        {
+            size_t Seed = Foliage.InstancesVersion;
+            Hash::HashCombine(Seed, Foliage.Types.size());
+            for (const SFoliageType& Type : Foliage.Types)
+            {
+                Hash::HashCombine(Seed, (size_t)Type.bEnableCollision);
+                const CCollisionShape* Shape = Type.CollisionShape.Get();
+                Hash::HashCombine(Seed, (size_t)(uintptr_t)Shape);
+                if (Shape != nullptr)
+                {
+                    Hash::HashCombine(Seed, (size_t)Shape->HasCollision());
+                    Hash::HashCombine(Seed, Shape->TriangleIndices.size());
+                    Hash::HashCombine(Seed, Shape->Primitives.size());
+                }
+                CStaticMesh* Mesh = Type.Mesh.Get();
+                Hash::HashCombine(Seed, (size_t)(uintptr_t)Mesh);
+                if (Mesh != nullptr)
+                {
+                    Hash::HashCombine(Seed, Mesh->GetMeshResource().MeshletData.MeshletTriangles.size());
+                }
+            }
+            return (uint64)Seed;
+        }
+    }
+
+    struct FNavFoliageEntity
+    {
+        uint64                       Signature = 0;
+        bool                         bBuilt    = false;
+        bool                         bSeen     = false;
+        TVector<FFoliageNavTemplate> Templates;
+        // Per instance, with Min above Max where the instance has no collision to bake.
+        TVector<FVector3>            Min;
+        TVector<FVector3>            Max;
+
+        // What the last change scan saw, so a changed entity is diffed instance by instance against it.
+        bool                         bDetected = false;
+        uint64                       DetectedSignature = 0;
+        TVector<FVector3>            DetectedMin;
+        TVector<FVector3>            DetectedMax;
+    };
+
+    struct FNavFoliageCache
+    {
+        THashMap<uint32, FNavFoliageEntity> Entities;
+    };
+
+    namespace
+    {
+        FNavFoliageCache& GetFoliageCache(SNavMeshComponent& Comp)
+        {
+            if (!Comp.Runtime.FoliageCache)
+            {
+                Comp.Runtime.FoliageCache = MakeShared<FNavFoliageCache>();
+            }
+            return *Comp.Runtime.FoliageCache;
+        }
+
+        bool HasFoliageBounds(const FVector3& Mn, const FVector3& Mx)
+        {
+            return Mn.x <= Mx.x;
+        }
+
+        // Rebuilt only when the instances or a species' collision change, so a steady scan never re-places instances.
+        FNavFoliageEntity& RefreshFoliageEntity(FNavFoliageCache& Cache, ECS::FEntity E, const SFoliageComponent& Foliage)
+        {
+            FNavFoliageEntity& Entry = Cache.Entities[(uint32)E];
+            Entry.bSeen = true;
+
+            const uint64 Signature = FoliageNavSignature(Foliage);
+            if (Entry.bBuilt && Entry.Signature == Signature)
+            {
+                return Entry;
+            }
+            Entry.Signature = Signature;
+            Entry.bBuilt    = true;
+
+            Entry.Templates.clear();
+            Entry.Templates.reserve(Foliage.Types.size());
+            for (const SFoliageType& Type : Foliage.Types)
+            {
+                Entry.Templates.push_back(BuildFoliageNavTemplate(Type));
+            }
+
+            constexpr uint32 MaxKeyedInstances = 1u << 24;
+            const uint32 NumInstances = (uint32)Math::Min<size_t>(Foliage.Instances.size(), MaxKeyedInstances);
+            Entry.Min.assign(NumInstances, FVector3( FLT_MAX));
+            Entry.Max.assign(NumInstances, FVector3(-FLT_MAX));
+            for (uint32 Index = 0; Index < NumInstances; ++Index)
+            {
+                const SFoliageInstance& Instance = Foliage.Instances[Index];
+                if (!Foliage.IsValidType(Instance.TypeIndex) || !Entry.Templates[(size_t)Instance.TypeIndex].Children)
+                {
+                    continue;
+                }
+
+                const FFoliageNavTemplate& Template = Entry.Templates[(size_t)Instance.TypeIndex];
+                const FVector3 Mn = Template.LocalMin;
+                const FVector3 Mx = Template.LocalMax;
+                const FVector3 Corners[8] = {
+                    {Mn.x, Mn.y, Mn.z}, {Mx.x, Mn.y, Mn.z}, {Mn.x, Mx.y, Mn.z}, {Mx.x, Mx.y, Mn.z},
+                    {Mn.x, Mn.y, Mx.z}, {Mx.x, Mn.y, Mx.z}, {Mn.x, Mx.y, Mx.z}, {Mx.x, Mx.y, Mx.z},
+                };
+                CornersAABB(Instance.GetMatrix(), Corners, 8, Entry.Min[Index], Entry.Max[Index]);
+            }
+            return Entry;
+        }
+
+        // A null cache leaves foliage out, for the change scan that diffs it per entity instead.
+        void CollectNavSources(const FSystemContext& Context, const FVector3& BakeMin, const FVector3& BakeMax, bool bTessellateTerrain, float CellSize, TVector<FNavSourceEntry>& Out, FNavFoliageCache* FoliageCache)
         {
 
             // A simulated body is loose debris rather than level geometry, and baking it would rebuild tiles every time it settles.
@@ -1022,40 +1143,33 @@ namespace Lumina
             auto FoliageView = Context.CreateView<SFoliageComponent>();
             for (ECS::FEntity E : FoliageView)
             {
-                const SFoliageComponent& Foliage = FoliageView.Get<SFoliageComponent>(E);
-
-                TVector<FFoliageNavTemplate> Templates;
-                Templates.reserve(Foliage.Types.size());
-                for (const SFoliageType& Type : Foliage.Types)
+                if (FoliageCache == nullptr)
                 {
-                    Templates.push_back(BuildFoliageNavTemplate(Type));
+                    break;
                 }
 
-                constexpr uint32 MaxKeyedInstances = 1u << 24;
-                const uint32 NumInstances = (uint32)Math::Min<size_t>(Foliage.Instances.size(), MaxKeyedInstances);
-                for (uint32 Index = 0; Index < NumInstances; ++Index)
+                const SFoliageComponent& Foliage = FoliageView.Get<SFoliageComponent>(E);
+                const FNavFoliageEntity& Cached = RefreshFoliageEntity(*FoliageCache, E, Foliage);
+                for (uint32 Index = 0; Index < (uint32)Cached.Min.size(); ++Index)
                 {
-                    const SFoliageInstance& Instance = Foliage.Instances[Index];
-                    if (!Foliage.IsValidType(Instance.TypeIndex) || !Templates[(size_t)Instance.TypeIndex].Children)
+                    const FVector3& Mn = Cached.Min[Index];
+                    const FVector3& Mx = Cached.Max[Index];
+                    if (!HasFoliageBounds(Mn, Mx) ||
+                        Mn.x > BakeMax.x || Mx.x < BakeMin.x || Mn.y > BakeMax.y || Mx.y < BakeMin.y || Mn.z > BakeMax.z || Mx.z < BakeMin.z)
                     {
                         continue;
                     }
 
-                    const FFoliageNavTemplate& Template = Templates[(size_t)Instance.TypeIndex];
+                    const SFoliageInstance& Instance = Foliage.Instances[Index];
+                    const FFoliageNavTemplate& Template = Cached.Templates[(size_t)Instance.TypeIndex];
                     FNavSourceEntry Entry;
                     Entry.Key = PackSourceKey(E, ENavColliderType::Foliage, Index);
                     Entry.ContentId = Template.ContentId;
                     Entry.Prim.Type = ENavColliderType::Foliage;
                     Entry.Prim.World = Instance.GetMatrix();
                     Entry.Prim.Children = Template.Children;
-
-                    const FVector3 Mn = Template.LocalMin;
-                    const FVector3 Mx = Template.LocalMax;
-                    const FVector3 Corners[8] = {
-                        {Mn.x, Mn.y, Mn.z}, {Mx.x, Mn.y, Mn.z}, {Mn.x, Mx.y, Mn.z}, {Mx.x, Mx.y, Mn.z},
-                        {Mn.x, Mn.y, Mx.z}, {Mx.x, Mn.y, Mx.z}, {Mn.x, Mx.y, Mx.z}, {Mx.x, Mx.y, Mx.z},
-                    };
-                    CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
+                    Entry.AABBMin = Mn;
+                    Entry.AABBMax = Mx;
                     Out.push_back(std::move(Entry));
                 }
             }
@@ -1346,15 +1460,30 @@ namespace Lumina
         FORCEINLINE uint64 PackTileKey(int32 TX, int32 TY) { return ((uint64)(uint32)TY << 32) | (uint32)TX; }
 
         // Snapshot at bake completion so the next change-detector tick reports zero diff.
-        void RebuildEntityAABBCache(const FSystemContext& Context, const FVector3& BakeMin, const FVector3& BakeMax, THashMap<uint64, FNavSourceEntity>& OutCache)
+        // A finished bake holds exactly what is in the world now, so the change scan starts from it.
+        void SeedChangeTracking(const FSystemContext& Context, SNavMeshComponent& Comp)
         {
+            THashMap<uint64, FNavSourceEntity>& OutCache = Comp.Runtime.EntityAABBs;
             OutCache.clear();
             TVector<FNavSourceEntry> Sources;
-            CollectNavSources(Context, BakeMin, BakeMax, false, 0.0f, Sources);
+            CollectNavSources(Context, Comp.Center - Comp.GetWorldExtents(), Comp.Center + Comp.GetWorldExtents(), false, 0.0f, Sources, nullptr);
             for (const FNavSourceEntry& Entry : Sources)
             {
                 OutCache[Entry.Key] = FNavSourceEntity{ Entry.AABBMin, Entry.AABBMax, Entry.ContentId };
             }
+
+            FNavFoliageCache& Cache = GetFoliageCache(Comp);
+            Cache.Entities.clear();
+            auto FoliageView = Context.CreateView<SFoliageComponent>();
+            for (ECS::FEntity E : FoliageView)
+            {
+                FNavFoliageEntity& Entry = RefreshFoliageEntity(Cache, E, FoliageView.Get<SFoliageComponent>(E));
+                Entry.bDetected         = true;
+                Entry.DetectedSignature = Entry.Signature;
+                Entry.DetectedMin       = Entry.Min;
+                Entry.DetectedMax       = Entry.Max;
+            }
+            Comp.Runtime.bSourcesSeeded = true;
         }
 
         // One walk feeds geometry and annotations, so a full bake and a hot rebake see the same authored set.
@@ -1365,7 +1494,7 @@ namespace Lumina
             Out.BoundsMax = Comp.Center + Comp.GetWorldExtents();
 
             TVector<FNavSourceEntry> Sources;
-            CollectNavSources(Context, Out.BoundsMin, Out.BoundsMax, true, Comp.Settings.CellSize, Sources);
+            CollectNavSources(Context, Out.BoundsMin, Out.BoundsMax, true, Comp.Settings.CellSize, Sources, &GetFoliageCache(Comp));
 
             OutPrims.reserve(Sources.size());
             for (FNavSourceEntry& Entry : Sources)
@@ -1482,7 +1611,7 @@ namespace Lumina
                     LOG_INFO("NavMesh bake complete: {}/{} tiles walkable, origin=({:.2f}, {:.2f}, {:.2f}), tileSize={:.2f}.",
                         NonEmptyTiles, (int32)Comp.Tiles.size(), Comp.Origin.x, Comp.Origin.y, Comp.Origin.z, Comp.TileWorldSize);
                     Comp.Runtime.bRuntimeDirty = true;
-                    RebuildEntityAABBCache(Context, Comp.Center - Comp.GetWorldExtents(), Comp.Center + Comp.GetWorldExtents(), Comp.Runtime.EntityAABBs);
+                    SeedChangeTracking(Context, Comp);
                 }
             }
 
@@ -1724,11 +1853,18 @@ namespace Lumina
                     ++CauseCounts[Cause][Math::Min<int32>((int32)(Key & 0xFF), kTypeSlots - 1)];
                 };
 
+                const bool bAdopt = !Comp.Runtime.bSourcesSeeded;
+
                 auto VisitSource = [&](uint64 Key, const FVector3& Mn, const FVector3& Mx, uint64 ContentId)
                 {
                     CurrentAABBs[Key] = FNavSourceEntity{ Mn, Mx, ContentId };
                     auto It = Comp.Runtime.EntityAABBs.find(Key);
                     const bool bNew   = It == Comp.Runtime.EntityAABBs.end();
+
+                    if (bAdopt)
+                    {
+                        return;
+                    }
                     const bool bMoved = !bNew && (!Math::IsNearlyEqual(It->second.AABBMin, Mn) || !Math::IsNearlyEqual(It->second.AABBMax, Mx));
 
                     // A re-imported, swapped or sculpted mesh keeps its bounds, so the AABB test alone misses it.
@@ -1748,8 +1884,7 @@ namespace Lumina
 
                 TVector<FNavSourceEntry> CurrentSources;
                 PlatformTime::FStopwatch DetectWatch;
-                CollectNavSources(Context, Comp.Center - Comp.GetWorldExtents(), Comp.Center + Comp.GetWorldExtents(), false, 0.0f, CurrentSources);
-                const double DetectGatherMs = DetectWatch.ElapsedMilliseconds();
+                CollectNavSources(Context, Comp.Center - Comp.GetWorldExtents(), Comp.Center + Comp.GetWorldExtents(), false, 0.0f, CurrentSources, nullptr);
                 const int32 DirtyBefore = (int32)(Comp.Runtime.DirtyTiles.size() + Comp.Runtime.SettlingTiles.size());
                 for (const FNavSourceEntry& Src : CurrentSources)
                 {
@@ -1759,12 +1894,86 @@ namespace Lumina
                 // Removed colliders dirty their last-known tiles.
                 for (const auto& [Id, Snap] : Comp.Runtime.EntityAABBs)
                 {
-                    if (CurrentAABBs.find(Id) == CurrentAABBs.end())
+                    if (!bAdopt && CurrentAABBs.find(Id) == CurrentAABBs.end())
                     {
                         CountCause(3, Id);
                         MarkDirtyForAABB(Snap.AABBMin, Snap.AABBMax);
                     }
                 }
+
+                // Foliage is diffed per entity, so a scan where nothing changed never walks its instances.
+                FNavFoliageCache& FoliageCache = GetFoliageCache(Comp);
+                for (auto& [Id, Cached] : FoliageCache.Entities)
+                {
+                    Cached.bSeen = false;
+                }
+                const uint64 FoliageKey = (uint64)ENavColliderType::Foliage;
+                auto FoliageView = Context.CreateView<SFoliageComponent>();
+                for (ECS::FEntity E : FoliageView)
+                {
+                    FNavFoliageEntity& Cached = RefreshFoliageEntity(FoliageCache, E, FoliageView.Get<SFoliageComponent>(E));
+                    if (Cached.bDetected && Cached.DetectedSignature == Cached.Signature)
+                    {
+                        continue;
+                    }
+
+                    if (!bAdopt)
+                    {
+                        const size_t Count = Math::Max(Cached.Min.size(), Cached.DetectedMin.size());
+                        for (size_t i = 0; i < Count; ++i)
+                        {
+                            const bool bWas = i < Cached.DetectedMin.size() && HasFoliageBounds(Cached.DetectedMin[i], Cached.DetectedMax[i]);
+                            const bool bIs  = i < Cached.Min.size() && HasFoliageBounds(Cached.Min[i], Cached.Max[i]);
+                            if (!bWas && !bIs)
+                            {
+                                continue;
+                            }
+                            if (bWas && bIs && Math::IsNearlyEqual(Cached.DetectedMin[i], Cached.Min[i]) && Math::IsNearlyEqual(Cached.DetectedMax[i], Cached.Max[i]))
+                            {
+                                continue;
+                            }
+
+                            CountCause(bWas ? (bIs ? 1 : 3) : 0, FoliageKey);
+                            if (bWas)
+                            {
+                                MarkDirtyForAABB(Cached.DetectedMin[i], Cached.DetectedMax[i]);
+                            }
+                            if (bIs)
+                            {
+                                MarkDirtyForAABB(Cached.Min[i], Cached.Max[i]);
+                            }
+                        }
+                    }
+
+                    Cached.bDetected         = true;
+                    Cached.DetectedSignature = Cached.Signature;
+                    Cached.DetectedMin       = Cached.Min;
+                    Cached.DetectedMax       = Cached.Max;
+                }
+
+                for (auto It = FoliageCache.Entities.begin(); It != FoliageCache.Entities.end();)
+                {
+                    FNavFoliageEntity& Cached = It->second;
+                    if (Cached.bSeen)
+                    {
+                        ++It;
+                        continue;
+                    }
+                    if (!bAdopt)
+                    {
+                        for (size_t i = 0; i < Cached.DetectedMin.size(); ++i)
+                        {
+                            if (HasFoliageBounds(Cached.DetectedMin[i], Cached.DetectedMax[i]))
+                            {
+                                CountCause(3, FoliageKey);
+                                MarkDirtyForAABB(Cached.DetectedMin[i], Cached.DetectedMax[i]);
+                            }
+                        }
+                    }
+                    It = FoliageCache.Entities.erase(It);
+                }
+                Comp.Runtime.bSourcesSeeded = true;
+                const double DetectGatherMs = DetectWatch.ElapsedMilliseconds();
 
                 if (CVarNavTimings.GetValue())
                 {
@@ -1911,7 +2120,7 @@ namespace Lumina
             PlatformTime::FStopwatch GatherWatch;
             {
                 TVector<FNavSourceEntry> Sources;
-                CollectNavSources(Context, Snap->GatherMin, Snap->GatherMax, true, Comp.Settings.CellSize, Sources);
+                CollectNavSources(Context, Snap->GatherMin, Snap->GatherMax, true, Comp.Settings.CellSize, Sources, &GetFoliageCache(Comp));
                 Snap->Prims.reserve(Sources.size());
                 for (FNavSourceEntry& Entry : Sources)
                 {
@@ -2065,6 +2274,8 @@ namespace Lumina
             Comp.Runtime.DirtyTiles.clear();
             Comp.Runtime.SettlingTiles.clear();
             Comp.Runtime.EntityAABBs.clear();
+            Comp.Runtime.FoliageCache.reset();
+            Comp.Runtime.FoliageCache.reset();
             Comp.Runtime.State = ENavBakeState::Idle;
         }
     }
@@ -2099,6 +2310,8 @@ namespace Lumina
 
         // EntityAABB cache populated at bake-completion drain (avoids tight-vs-conservative AABB mismatch storm).
         Comp.Runtime.EntityAABBs.clear();
+        Comp.Runtime.FoliageCache.reset();
+        Comp.Runtime.FoliageCache.reset();
         Comp.Runtime.DirtyTiles.clear();
         Comp.Runtime.SettlingTiles.clear();
         Comp.Runtime.PendingRebakes.clear();

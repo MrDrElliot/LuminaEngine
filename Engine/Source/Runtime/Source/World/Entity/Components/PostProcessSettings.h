@@ -13,6 +13,7 @@ namespace Lumina
         AGX         = 2,    // Sobotka AGX (bwrensch fit); neutral highlights
         AGXPunchy   = 3,    // AGX with extra slope/sat; graded-print look
         AGXGolden   = 4,    // AGX biased warm; sunset/candlelit
+        GranTurismo = 5,    // Uchimura's Gran Turismo curve; linear midtones with a soft shoulder
     };
 
     // Per-camera color grading + tone mapping. Grading is linear HDR before the tone mapper; vignette is

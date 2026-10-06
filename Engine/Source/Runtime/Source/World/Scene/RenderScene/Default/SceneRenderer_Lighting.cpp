@@ -1,5 +1,7 @@
 #include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "Platform/Time/PlatformTime.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
 {
@@ -67,9 +69,9 @@ namespace Lumina
             SetSceneRoot(CL, View,
                 RHI::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
 
-            VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
             TerrainCullPass(CL);
-            TerrainDepthPrePass(CL);
+            const bool bTerrainCleared = TerrainDepthPrePass(CL, /*bClear*/ true);
+            VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ !bTerrainCleared);
             ClusterBuildPass(CL);
             LightCullPass(CL);
 
@@ -316,6 +318,15 @@ namespace Lumina
                         LOG_WARN("More than {} distinct deferred material shaders are visible; the excess {}.",
                             SlotBudget, FallbackShader ? "shades as the default material" : "will not shade");
                     }
+                    #if USING(WITH_EDITOR)
+                    // A log line scrolls away, and the symptom is surfaces quietly wearing the wrong material.
+                    static double LastSlotCapToast = -1.0e9;
+                    if (const double Now = PlatformTime::Seconds(); Now - LastSlotCapToast > 10.0)
+                    {
+                        LastSlotCapToast = Now;
+                        ImGuiX::Notifications::NotifyWarning("Over {} distinct material shaders are on screen; the excess draws as the default material.", SlotBudget);
+                    }
+                    #endif
 
                     if (!FallbackShader)
                     {
@@ -353,35 +364,66 @@ namespace Lumina
         const uint32 TilesX   = RenderUtils::GetGroupCount(Extent.x, (uint32)MATERIAL_CLASSIFY_TILE);
         const uint32 TilesY   = RenderUtils::GetGroupCount(Extent.y, (uint32)MATERIAL_CLASSIFY_TILE);
         const uint64 NumTiles = (uint64)TilesX * (uint64)TilesY;
-        // A tile is listed at most once per slot, so a run of NumTiles per slot can never overflow.
-        const uint64 TileListSize = NumTiles * (uint64)NumSlots * sizeof(uint32);
+
+        // A tile holds at most one slot per pixel, so this bound is exact and never overflows, however many shaders are visible.
+        constexpr uint64 MaxSlotsPerTile = (uint64)MATERIAL_CLASSIFY_TILE * MATERIAL_CLASSIFY_TILE;
+        const uint64 PairBound = NumTiles * Math::Min<uint64>(NumSlots, MaxSlotsPerTile);
+        if (NumTiles > (1ull << (32u - MATERIAL_PAIR_SLOT_BITS)))
+        {
+            return false;
+        }
+        // Sorted runs, each tile's inline records, the pixels of thin pairs, then the pairs past a tile's inline records.
+        const uint64 TileSlotEntries = NumTiles * MATERIAL_TILE_RECORD;
+        const uint64 PixelBound      = NumTiles * Math::Min<uint64>(MaxSlotsPerTile, Math::Min<uint64>(NumSlots, MATERIAL_TILE_SLOTS) * (MATERIAL_SPARSE_PIXELS - 1u));
+        const uint64 OverflowBound   = NumTiles * (Math::Min<uint64>(NumSlots, MaxSlotsPerTile) - Math::Min<uint64>(NumSlots, MATERIAL_TILE_SLOTS));
+        const uint64 PairListSize    = (PairBound + TileSlotEntries + PixelBound + Math::Max<uint64>(OverflowBound, 1u)) * sizeof(uint32);
 
         // Built into a local so a bail-out below leaves the member zeroed rather than half-filled.
         FMaterialClassifyLayout Layout;
         Layout.NumSlots = NumSlots;
 
         uint32 Cursor = 0u;
-        Layout.CountsOffset = Cursor; Cursor += NumSlots * (uint32)sizeof(uint32);
+        Layout.OverflowCountOffset = Cursor; Cursor += (uint32)sizeof(uint32);
+
+        // Each per-slot region holds the dense half, then the sparse half at NumSlots.
+        const uint32 RunEntries = NumSlots * 2u;
+
+        Cursor = AlignClassifyRegion(Cursor);
+        Layout.CountsOffset = Cursor; Cursor += RunEntries * (uint32)sizeof(uint32);
+
+        Cursor = AlignClassifyRegion(Cursor);
+        Layout.OffsetsOffset = Cursor; Cursor += RunEntries * (uint32)sizeof(uint32);
+
+        Cursor = AlignClassifyRegion(Cursor);
+        Layout.CursorsOffset = Cursor; Cursor += RunEntries * (uint32)sizeof(uint32);
 
         Cursor = AlignClassifyRegion(Cursor);
         Layout.MaterialArgsOffset = Cursor;
-        Cursor += NumSlots * (uint32)sizeof(RHI::FDispatchIndirectArguments);
+        Cursor += RunEntries * (uint32)sizeof(RHI::FDispatchIndirectArguments);
+        Layout.ScatterArgsOffset = Cursor;
+        Cursor += (uint32)sizeof(RHI::FDispatchIndirectArguments);
 
         Layout.BlockSize = AlignClassifyRegion(Cursor);
 
         ReserveBuffer(CL, MaterialClassifyRing[CurrentFrameSlot], Layout.BlockSize);
-        ReserveBuffer(CL, MaterialTileListRing[CurrentFrameSlot], TileListSize);
+        ReserveBuffer(CL, MaterialPairList, PairListSize);
 
-        if (!GetMaterialClassify() || !GetMaterialTileList())
+        if (!GetMaterialClassify() || !GetMaterialPairList())
         {
             return false;
         }
 
-        Layout.ScreenW    = Extent.x;
-        Layout.ScreenH    = Extent.y;
-        Layout.TileStride = (uint32)NumTiles;
-        // From the allocation, not from what was asked for, since the classify bounds writes on this.
-        Layout.TileCapacity = (uint32)Math::Min<uint64>(GetMaterialTileList().Size / sizeof(uint32), 0xFFFFFFFFull);
+        Layout.ScreenW = Extent.x;
+        Layout.ScreenH = Extent.y;
+        Layout.TilesX  = TilesX;
+        Layout.NumTiles = (uint32)NumTiles;
+        Layout.PairCapacity = (uint32)PairBound;
+        Layout.TileSlotsOffset = PairBound * sizeof(uint32);
+        Layout.PixelListOffset = (PairBound + TileSlotEntries) * sizeof(uint32);
+        Layout.PixelCapacity   = (uint32)PixelBound;
+        Layout.OverflowOffset  = (PairBound + TileSlotEntries + PixelBound) * sizeof(uint32);
+        // From the allocation, not from what was asked for, since the classify bounds overflow writes on this.
+        Layout.OverflowCapacity = (uint32)Math::Min<uint64>((GetMaterialPairList().Size - Layout.OverflowOffset) / sizeof(uint32), 0xFFFFFFFFull);
 
         MaterialClassifyLayout = Layout;
         return true;
@@ -401,7 +443,8 @@ namespace Lumina
 
         static const FShaderH ClassifyCS = FShaderLibrary::Get("VisBufferMaterialClassify.slang");
         static const FShaderH ArgsCS     = FShaderLibrary::Get("VisBufferMaterialArgs.slang");
-        if (!ClassifyCS || !ArgsCS)
+        static const FShaderH ScatterCS  = FShaderLibrary::Get("VisBufferMaterialScatter.slang");
+        if (!ClassifyCS || !ArgsCS || !ScatterCS)
         {
             return;
         }
@@ -434,36 +477,45 @@ namespace Lumina
             RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments, RHI::EAccessFlags::None,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
 
-        // Only the counters are cleared; the args pass rewrites the dispatch triples.
-        RHI::CmdMemset(CL, { Base + Layout.CountsOffset, sizeof(uint32) * Layout.NumSlots }, 0u);
+        // Only the counters are cleared, and they lead the block; the args pass rewrites the dispatch triples.
+        RHI::CmdMemset(CL, { Base + Layout.OverflowCountOffset, Layout.CountsOffset + sizeof(uint32) * Layout.NumSlots * 2u }, 0u);
         Barriers::TransferToCompute(CL);
 
-        const RHI::TGPUSpan<uint32> CountsSpan = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots);
+        const RHI::TGPUSpan<uint32> CountsSpan = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots * 2u);
+        const RHI::TGPUSpan<uint32> OverflowCountSpan = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.OverflowCountOffset, 1u);
+        const RHI::FGPUAllocation   PairAlloc  = GetMaterialPairList();
+        const RHI::TGPUSpan<uint32> SortedSpan    = RHI::TGPUSpan<uint32>::FromAddress(PairAlloc.Gpu, Layout.PairCapacity);
+        const RHI::TGPUSpan<uint32> TileSlotsSpan = RHI::TGPUSpan<uint32>::FromAddress(PairAlloc.Gpu + Layout.TileSlotsOffset, Layout.NumTiles * MATERIAL_TILE_RECORD);
+        const RHI::TGPUSpan<uint32> PixelListSpan = RHI::TGPUSpan<uint32>::FromAddress(PairAlloc.Gpu + Layout.PixelListOffset, Layout.PixelCapacity);
+        const RHI::TGPUSpan<uint32> OverflowSpan  = RHI::TGPUSpan<uint32>::FromAddress(PairAlloc.Gpu + Layout.OverflowOffset, Layout.OverflowCapacity);
 
         struct FMaterialClassifyPC
         {
             RHI::TGPUSpan<uint32> Counts;
             RHI::TGPUSpan<uint32> SlotByMaterial;
-            RHI::TGPUSpan<uint32> TileList;
+            RHI::TGPUSpan<uint32> OverflowCount;
+            RHI::TGPUSpan<uint32> TileSlots;
+            RHI::TGPUSpan<uint32> Overflow;
             uint32      VisBufferIndex;
             uint32      SlotImageUAV;
             uint32      ScreenW;
             uint32      ScreenH;
             uint32      DrawListCount;
-            uint32      TileStride;
             uint32      _Pad0;
             uint32      _Pad1;
+            uint32      _Pad2;
         } ClassifyPC = {};
-        static_assert(sizeof(FMaterialClassifyPC) == 80, "FMaterialClassifyPC must match VisBufferMaterialClassify.slang FMaterialClassifyArgs.");
+        static_assert(sizeof(FMaterialClassifyPC) == 112, "FMaterialClassifyPC must match VisBufferMaterialClassify.slang FMaterialClassifyArgs.");
         ClassifyPC.Counts         = CountsSpan;
+        ClassifyPC.OverflowCount  = OverflowCountSpan;
+        ClassifyPC.TileSlots      = TileSlotsSpan;
+        ClassifyPC.Overflow       = OverflowSpan;
         ClassifyPC.SlotByMaterial = SlotByMaterialRange;
-        ClassifyPC.TileList       = { GetMaterialTileList(), Layout.TileCapacity };
         ClassifyPC.VisBufferIndex = (uint32)VisRT.GetResourceID();
         ClassifyPC.SlotImageUAV   = (uint32)SlotUAV;
         ClassifyPC.ScreenW        = Layout.ScreenW;
         ClassifyPC.ScreenH        = Layout.ScreenH;
         ClassifyPC.DrawListCount  = DrawListCapacity;
-        ClassifyPC.TileStride     = Layout.TileStride;
 
         DispatchCompute(CL, ClassifyCS, ClassifyPC,
             RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE),
@@ -474,18 +526,67 @@ namespace Lumina
             RHI::EStageFlags::Compute,
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
+        const RHI::TGPUSpan<uint32> OffsetsSpan = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.OffsetsOffset, Layout.NumSlots * 2u);
+        const RHI::TGPUSpan<uint32> CursorsSpan = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CursorsOffset, Layout.NumSlots * 2u);
+
         struct FMaterialArgsPC
         {
             RHI::TGPUSpan<uint32> Counts;
+            RHI::TGPUSpan<uint32> Offsets;
+            RHI::TGPUSpan<uint32> Cursors;
             RHI::TGPUSpan<uint32> Args;
+            RHI::TGPUSpan<uint32> OverflowCount;
+            uint32                OverflowCapacity;
+            uint32                NumTiles;
+            uint32                _Pad1;
+            uint32                _Pad2;
         } ArgsPC = {};
-        static_assert(sizeof(FMaterialArgsPC) == 32, "FMaterialArgsPC must match VisBufferMaterialArgs.slang FMaterialArgsArgs.");
-        ArgsPC.Counts = CountsSpan;
-        ArgsPC.Args   = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.MaterialArgsOffset, Layout.NumSlots * 3u);
+        static_assert(sizeof(FMaterialArgsPC) == 96, "FMaterialArgsPC must match VisBufferMaterialArgs.slang FMaterialArgsArgs.");
+        ArgsPC.OverflowCount    = OverflowCountSpan;
+        ArgsPC.OverflowCapacity = Layout.OverflowCapacity;
+        ArgsPC.NumTiles         = Layout.NumTiles;
+        ArgsPC.Counts  = CountsSpan;
+        ArgsPC.Offsets = OffsetsSpan;
+        ArgsPC.Cursors = CursorsSpan;
+        ArgsPC.Args    = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.MaterialArgsOffset, Layout.NumSlots * 6u + 3u);
 
-        DispatchCompute(CL, ArgsCS, ArgsPC, RenderUtils::GetGroupCount(Layout.NumSlots, 64u), 1u, 1u);
+        // One group scans every slot, which MATERIAL_MAX_SLOTS keeps within two slots per thread.
+        DispatchCompute(CL, ArgsCS, ArgsPC, 1u, 1u, 1u);
 
-        // The tile lists and stored slots feed the material dispatches; the argument triples feed the indirect fetch.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
+
+        struct FMaterialScatterPC
+        {
+            RHI::TGPUSpan<uint32> Offsets;
+            RHI::TGPUSpan<uint32> Cursors;
+            RHI::TGPUSpan<uint32> PairList;
+            RHI::TGPUSpan<uint32> TileSlots;
+            RHI::TGPUSpan<uint32> Overflow;
+            RHI::TGPUSpan<uint32> OverflowCount;
+            RHI::TGPUSpan<uint32> PixelList;
+            uint32      TilesX;
+            uint32      NumTiles;
+            uint32      NumSlots;
+            uint32      _Pad0;
+        } ScatterPC = {};
+        static_assert(sizeof(FMaterialScatterPC) == 128, "FMaterialScatterPC must match VisBufferMaterialScatter.slang FMaterialScatterArgs.");
+        ScatterPC.Offsets        = OffsetsSpan;
+        ScatterPC.Cursors        = CursorsSpan;
+        ScatterPC.PairList       = SortedSpan;
+        ScatterPC.TileSlots      = TileSlotsSpan;
+        ScatterPC.Overflow       = OverflowSpan;
+        ScatterPC.OverflowCount  = OverflowCountSpan;
+        ScatterPC.PixelList      = PixelListSpan;
+        ScatterPC.TilesX         = Layout.TilesX;
+        ScatterPC.NumTiles       = Layout.NumTiles;
+        ScatterPC.NumSlots       = Layout.NumSlots;
+
+        DispatchComputeIndirect(CL, ScatterCS, ScatterPC, GetMaterialClassify().Skip(Layout.ScatterArgsOffset));
+
+        // The pair list and stored slots feed the material dispatches; the argument triples feed the indirect fetch.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
             RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
@@ -514,7 +615,7 @@ namespace Lumina
         {
             uint32      VisBufferIndex;
             uint32      FeedbackPhase;
-            uint32      TileStride;
+            uint32      NumSlots;
             uint32      SlotImageIndex;
             uint32      DrawListCount;
             uint32      SlotIndex;
@@ -526,10 +627,12 @@ namespace Lumina
             uint32      GBufferDUAV;
             uint32      VelocityUAV;
             uint32      _PadVelocity;
-            RHI::TGPUSpan<uint32> TileList;
+            RHI::TGPUSpan<uint32> PairList;
             RHI::TGPUSpan<uint32> Counts;
+            RHI::TGPUSpan<uint32> Offsets;
+            RHI::TGPUSpan<uint32> PixelList;
         } PC = {};
-        static_assert(sizeof(FDeferredMaterialPC) == 88, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
+        static_assert(sizeof(FDeferredMaterialPC) == 120, "FDeferredMaterialPC must match DeferredMaterial.slang FDeferredMaterialArgs.");
 
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
         PC.FeedbackPhase  = (uint32)(StreamingFeedbackTick % STREAMING_FEEDBACK_WINDOW);
@@ -551,10 +654,12 @@ namespace Lumina
         PC.GBufferCUAV = (uint32)UAVC;
         PC.GBufferDUAV = (uint32)UAVD;
 
-        PC.TileStride     = Layout.TileStride;
         PC.SlotImageIndex = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
-        PC.TileList       = { GetMaterialTileList(), Layout.TileCapacity };
-        PC.Counts         = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots);
+        PC.PairList       = { GetMaterialPairList(), Layout.PairCapacity };
+        PC.NumSlots       = Layout.NumSlots;
+        PC.Counts         = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.CountsOffset, Layout.NumSlots * 2u);
+        PC.Offsets        = RHI::TGPUSpan<uint32>::FromAddress(Base + Layout.OffsetsOffset, Layout.NumSlots * 2u);
+        PC.PixelList      = RHI::TGPUSpan<uint32>::FromAddress(GetMaterialPairList().Gpu + Layout.PixelListOffset, Layout.PixelCapacity);
 
         // Invalid disables the write, which leaves the camera-only base the fullscreen pass laid down.
         PC.VelocityUAV = 0xFFFFFFFFu;
@@ -1970,6 +2075,12 @@ namespace Lumina
 
         if (!FrameFlags.bHasEnvironment)
         {
+            if (bSkyTargetsBlack)
+            {
+                return;
+            }
+            bSkyTargetsBlack = true;
+
             const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
@@ -1984,6 +2095,7 @@ namespace Lumina
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
             return;
         }
+        bSkyTargetsBlack = false;
 
         if (!bIBLDirty)
         {

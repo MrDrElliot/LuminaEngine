@@ -40,6 +40,17 @@ struct FBuildDrawPrefixArgs
 };
 FBuildDrawPrefixArgs* Pass() { return GetPassArgs<FBuildDrawPrefixArgs>(); }
 
+// Monotonic in Offset and never past Capacity, so the scaled windows tile the arena without overlapping.
+uint ShareOfArena(uint Offset, uint TotalDemand, uint Capacity)
+{
+    if (TotalDemand <= Capacity)
+    {
+        return Offset;
+    }
+    const float Scale = (float)Capacity / (float)TotalDemand;
+    return min((uint)floor((float)Offset * Scale), Capacity);
+}
+
 [shader("compute")]
 [numthreads(DRAW_PREFIX_THREADS, 1, 1)]
 void ComputeMain(uint ThreadIndex : SV_GroupIndex)
@@ -71,15 +82,18 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
         const uint DrawCount  = Bucket.DrawCapacity;
         const uint BlockCount = Bucket.BlockCapacity;
 
-        // Room left in each allocation, since every appender takes its region's length as its capacity.
-        const uint DrawRoom  = (DrawRunning  < DrawCapacity)  ? (DrawCapacity  - DrawRunning)  : 0u;
-        const uint BlockRoom = (BlockRunning < BlockCapacity) ? (BlockCapacity - BlockRunning) : 0u;
+        // Every bucket keeps a share of a short arena, so a batch drops to coarse LODs instead of vanishing.
+        const uint DrawStart  = ShareOfArena(DrawRunning, Demand.x, DrawCapacity);
+        const uint DrawEnd    = ShareOfArena(DrawRunning + DrawCount, Demand.x, DrawCapacity);
+        const uint BlockStart = ShareOfArena(BlockRunning, Demand.y, BlockCapacity);
+        const uint BlockEnd   = ShareOfArena(BlockRunning + BlockCount, Demand.y, BlockCapacity);
 
-        // A region that cannot fit gets a zero-length window at the end, and its capacity is published as the room it has.
-        Bucket.DrawBase      = min(DrawRunning,  DrawCapacity);
-        Bucket.DrawCapacity  = min(DrawCount, DrawRoom);
-        Bucket.BlockBase     = min(BlockRunning, BlockCapacity);
-        Bucket.BlockCapacity = min(BlockCount, BlockRoom);
+        Bucket.DrawDemand    = DrawCount;
+        Bucket.BlockDemand   = BlockCount;
+        Bucket.DrawBase      = DrawStart;
+        Bucket.DrawCapacity  = DrawEnd - DrawStart;
+        Bucket.BlockBase     = BlockStart;
+        Bucket.BlockCapacity = BlockEnd - BlockStart;
 
         DrawRunning  += DrawCount;
         BlockRunning += BlockCount;
