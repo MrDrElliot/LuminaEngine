@@ -545,7 +545,12 @@ namespace Lumina::Reflection
                 for (const std::string& ArgType : Del->ArgTypeNames)
                 {
                     auto Arg = std::make_unique<FBinding>();
-                    if (!ClassifyElement(ArgType, OwnerNs, Db, *Arg))
+                    // An entity is a plain id in both languages, so it reads straight out of the argument pack.
+                    if (ArgType == "ECS::FEntity" || ArgType == "Lumina::ECS::FEntity")
+                    {
+                        Arg->CSharp = "global::LuminaSharp.Entity";
+                    }
+                    else if (!ClassifyElement(ArgType, OwnerNs, Db, *Arg))
                     {
                         return false;
                     }
@@ -2182,7 +2187,7 @@ namespace Lumina::Reflection
             Writer.Linef("if (global::System.Runtime.InteropServices.GCHandle.FromIntPtr(__handle).Target is %s __o)", ClassName.c_str());
             Writer.BeginBlock();
             Writer.Line("__target = __o;");
-            Writer.Line("using var __scope = global::LuminaSharp.Game.EnterScriptEvent(__o);");
+            Writer.Line("using var __scope = global::LuminaSharp.Engine.EnterScriptEvent(__o);");
             if (FB.bVoid)
             {
                 Writer.Linef("__o.%s(%s);", Name.c_str(), CallArgs.c_str());

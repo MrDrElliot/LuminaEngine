@@ -55,6 +55,27 @@ namespace Lumina
         }
     }
 
+    void CEntityScriptLibrary::FindScriptsInWorld(CWorld* World, TSubclassOf<CEntityScript> ScriptClass,
+        TVector<TStrongObjectPtr<CEntityScript>>& OutScripts)
+    {
+        if (World == nullptr || !ScriptClass.IsValid())
+        {
+            return;
+        }
+
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent>())
+        {
+            for (const TStrongObjectPtr<CEntityScript>& Script : Registry.Get<SEntityScriptComponent>(Entity).Scripts)
+            {
+                if (Script.Get() != nullptr && Script->IsAttached() && Script->GetClass()->IsChildOf(ScriptClass.Get()))
+                {
+                    OutScripts.push_back(Script);
+                }
+            }
+        }
+    }
+
     bool CEntityScriptLibrary::RemoveScript(CWorld* World, ECS::FEntity Entity, CEntityScript* Script)
     {
         if (World == nullptr || Script == nullptr)

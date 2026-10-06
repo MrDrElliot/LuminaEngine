@@ -20,7 +20,7 @@ public static class GameTask
         internal readonly TaskCompletionSource<T> Source = new();
 
         // The callback context at the await, so the continuation sees the same world, entity and script.
-        internal readonly Game.Scope Context = Game.Snapshot();
+        internal readonly Engine.Scope Context = Engine.Snapshot();
 
         private CancellationTokenRegistration Registration;
         private Lumina.CWorld? TimerWorld;
@@ -45,7 +45,7 @@ public static class GameTask
         {
             if (Finish())
             {
-                using (Game.Resume(Context))
+                using (Engine.Resume(Context))
                 {
                     Source.TrySetResult(Value);
                 }
@@ -70,7 +70,7 @@ public static class GameTask
         // Explicit tokens win, and otherwise the calling script's lifetime bounds the await.
         internal void CancelOn(CancellationToken Token)
         {
-            if (!Token.CanBeCanceled && Game.ActiveScript is { } Owner)
+            if (!Token.CanBeCanceled && Engine.ActiveScript is { } Owner)
             {
                 Token = Owner.LifetimeToken;
             }
@@ -96,14 +96,14 @@ public static class GameTask
     /// <summary>Resume after <paramref name="Seconds"/> of world time.</summary>
     public static System.Threading.Tasks.Task DelaySeconds(float Seconds, CancellationToken Token = default)
     {
-        if (!Game.InWorld)
+        if (!Engine.InWorld)
         {
             FPending<bool> Orphan = new(null);
             Orphan.Cancel();
             return Orphan.Source.Task;
         }
 
-        Lumina.CWorld World = Game.World;
+        Lumina.CWorld World = Engine.World;
         FPending<bool> Pending = new(World);
         Pending.CancelOn(Token);
         uint Timer = CTimerLibrary.SetTimer(World, Seconds, ScriptCallback.OfRepeating(() => Pending.Settle(true)));
@@ -117,7 +117,7 @@ public static class GameTask
     /// <summary>Load an object without blocking; resume with the result (or null) on the game thread.</summary>
     public static System.Threading.Tasks.Task<T?> LoadObjectAsync<T>(string Path, CancellationToken Token = default) where T : NativeObject
     {
-        FPending<T?> Pending = new(Game.InWorld ? Game.World : null);
+        FPending<T?> Pending = new(Engine.InWorld ? Engine.World : null);
         Pending.CancelOn(Token);
         ObjectCore.AsyncLoadObject<T>(Path, Result => Pending.Settle(Result));
         return Pending.Source.Task;

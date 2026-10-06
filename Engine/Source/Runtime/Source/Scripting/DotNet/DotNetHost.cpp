@@ -320,7 +320,8 @@ namespace Lumina::DotNet
             }
 
             Desc.UpdatePhase     = UpdatePhase;
-            Desc.bParallelUpdate = ParallelUpdate != 0;
+            Desc.bParallelUpdate = (ParallelUpdate & 1) != 0;
+            Desc.NetRealm        = static_cast<uint8>((ParallelUpdate >> 1) & 0x7);
             Out->emplace_back(std::move(Desc));
         }
 
@@ -1799,6 +1800,7 @@ namespace Lumina::DotNet
             Definition.OverriddenEvents = Desc.OverriddenEvents;
             Definition.UpdatePhase    = Desc.UpdatePhase;
             Definition.bParallelUpdate = Desc.bParallelUpdate;
+            Definition.NetRealm        = Desc.NetRealm;
 
             // The one crossing for this type's schema. Consumers read it from here.
             TVector<Scripting::FScriptPropertyEntry> UnusedDefaults;

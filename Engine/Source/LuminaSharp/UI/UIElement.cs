@@ -70,6 +70,15 @@ public readonly unsafe struct UIElement
         }
     }
 
+    // A length in density independent pixels, the unit RML layouts are written in.
+    public void SetDp(string Property, float Value) => SetStyle(Property, Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "dp");
+
+    // A length as a percentage of the parent, where 50 is half.
+    public void SetPercent(string Property, float Value) => SetStyle(Property, Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%");
+
+    // Zero is invisible but still laid out, unlike hiding the element.
+    public void SetOpacity(float Value) => SetStyle("opacity", Math.Clamp(Value, 0.0f, 1.0f).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+
     /// <summary>Remove an inline CSS property set via <see cref="SetStyle"/>, reverting to the stylesheet.</summary>
     public void ClearStyle(string Property)
     {

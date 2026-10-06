@@ -12,6 +12,14 @@ public static class Sound
         float MinDistance = 1.0f, float MaxDistance = 50.0f, bool Loop = false)
         => new(CAudioLibrary.PlaySoundAtLocation(Clip!, Location, Volume, Pitch, MinDistance, MaxDistance, Loop));
 
+    // By asset path, so a one-off sound needs no LoadObject of its own. Nothing loads in a process with no audio device.
+    public static PlayingSound Play(string ClipPath, float Volume = 1.0f, float Pitch = 1.0f, bool Loop = false)
+        => Engine.IsHeadless ? default : Play(ObjectCore.LoadObject<CSoundBase>(ClipPath), Volume, Pitch, Loop);
+
+    public static PlayingSound PlayAt(string ClipPath, FVector3 Location, float Volume = 1.0f, float Pitch = 1.0f,
+        float MinDistance = 1.0f, float MaxDistance = 50.0f, bool Loop = false)
+        => Engine.IsHeadless ? default : PlayAt(ObjectCore.LoadObject<CSoundBase>(ClipPath), Location, Volume, Pitch, MinDistance, MaxDistance, Loop);
+
     /// Play with the full parameter set, so bus, attenuation, cone, priority and fades.
     public static PlayingSound PlayEx(CSoundBase? Clip, FAudioPlayParams Params)
         => new(CAudioLibrary.PlaySoundEx(Clip!, Params));

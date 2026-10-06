@@ -32,6 +32,14 @@ namespace Lumina
         FUNCTION()
         static CGameInstance* GetGameInstance();
 
+        // True for a dedicated server or load-test process, which never opens a window or an audio device.
+        FUNCTION()
+        static bool IsHeadless();
+
+        // False wherever nothing is drawn or heard, which covers a headless process, a dedicated server world and a bot world.
+        FUNCTION()
+        static bool HasPresentation(CWorld* World);
+
         /** Resolved by class name, so a C# subsystem and a C++ one are found through the same call. */
         FUNCTION()
         static CWorldSubsystem* GetSubsystem(CWorld* World, const FName& ClassName);

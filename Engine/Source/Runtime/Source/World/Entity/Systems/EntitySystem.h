@@ -104,6 +104,9 @@ namespace Lumina
         // Tears down the systems backed by a script class, so a hot reload can rebuild them.
         RUNTIME_API void DropScripted(TVector<TStrongObjectPtr<CEntitySystem>>& Systems);
 
+        // Tears down the systems whose HostOnly, ClientOnly or Cosmetic no longer fits the world, after its net mode changed.
+        RUNTIME_API void DropOutsideRealm(CWorld& World, TVector<TStrongObjectPtr<CEntitySystem>>& Systems);
+
         // Tears down the systems the editor just disabled.
         RUNTIME_API void DropDisabled(const THashSet<FName>& Disabled, TVector<TStrongObjectPtr<CEntitySystem>>& Systems);
 

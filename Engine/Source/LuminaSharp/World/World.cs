@@ -95,6 +95,39 @@ public unsafe partial class CWorld
     /// Every entity carrying Tag. A fresh list per call; empty when nothing carries it.
     public List<Entity> FindAllByTag(string Tag) => new(GetEntitiesByTag(Tag));
 
+    // Every script of type T attached anywhere in this world, an abstract base matching each subclass. A fresh list per call.
+    public List<T> Scripts<T>() where T : CEntityScript
+    {
+        TSubclassOf<CEntityScript> Class = LuminaSharp.NativeClass<T>.Of.AsBase<CEntityScript>();
+        CEntityScript[] Found = CEntityScriptLibrary.FindScriptsInWorld(this, Class.IsValid ? Class : LuminaSharp.NativeClass<CEntityScript>.Of.AsBase<CEntityScript>());
+        var Result = new List<T>(Found.Length);
+        foreach (CEntityScript Script in Found)
+        {
+            T? Typed = Script as T ?? (Class.IsValid ? LuminaSharp.Wrapper<T>.ForObject(Script.Handle) : null);
+            if (Typed != null)
+            {
+                Result.Add(Typed);
+            }
+        }
+        return Result;
+    }
+
+    // A new entity under Parent at LocalOffset in the parent's space. It goes when the parent is destroyed, so it needs no cleanup of its own.
+    public Entity CreateChild(Entity Parent, string Name, FVector3 LocalOffset = default)
+    {
+        Entity Child = CreateEntity(Name);
+        SetParent(Child, Parent);
+        Registry.Get<STransformComponent>(Child).SetLocalLocation(LocalOffset);
+        return Child;
+    }
+
+    // The first script of type T in this world, for the one-of-a-kind ones like a game director, or null.
+    public T? FindScript<T>() where T : CEntityScript
+    {
+        List<T> Found = Scripts<T>();
+        return Found.Count > 0 ? Found[0] : null;
+    }
+
     /// A new named entity with a transform and nothing else; add components through <see cref="Registry"/>, destroy it with <see cref="DestroyEntity(Entity)"/>.
     public Entity CreateEntity(string Name, FVector3 Location = default, FQuat? Rotation = null, FVector3? Scale = null)
         => ConstructEntity(Name, new FTransform(Location, Rotation ?? FQuat.Identity, Scale ?? FVector3.One));

@@ -59,7 +59,7 @@ public readonly unsafe struct ScriptDelegate
         }
 
         // Owner is carried so the handler runs with this script's Game context, NOT to auto-unbind it.
-        EntityScript? Owner = Game.ActiveScript;
+        EntityScript? Owner = Engine.ActiveScript;
         return DelegateBindings.Bind(Address, new VoidInvoker { Handler = Handler, Owner = Owner });
     }
 }

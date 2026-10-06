@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Lumina;
 
@@ -500,6 +501,8 @@ internal sealed class TypeLibrary
                 Aliases = GatherAliases(Field),
                 SkipHotReload = bClassSkip || Field.GetCustomAttribute<SkipHotReloadAttribute>() != null,
                 ExtraFlags = bSync ? EPropertyFlags.Replicated : EPropertyFlags.None,
+                NetRate = Field.GetCustomAttribute<SyncAttribute>()?.Rate ?? 0.0f,
+                NetMeta = NetMetaOf(Field),
                 Get = Field.GetValue,
                 Set = Field.SetValue,
             });
@@ -546,6 +549,8 @@ internal sealed class TypeLibrary
                 Aliases = GatherAliases(Property),
                 SkipHotReload = bClassSkip || Property.GetCustomAttribute<SkipHotReloadAttribute>() != null,
                 ExtraFlags = bSync ? EPropertyFlags.Replicated : EPropertyFlags.None,
+                NetRate = Property.GetCustomAttribute<SyncAttribute>()?.Rate ?? 0.0f,
+                NetMeta = NetMetaOf(Property),
                 Get = Property.GetValue,
                 // Never Property.SetValue for a view: there is no setter to call, and reaching for one throws.
                 Set = bNativeOwnedView ? (Instance, Value) => { } : Property.SetValue,
@@ -638,6 +643,34 @@ internal sealed class TypeLibrary
         return false;
     }
 
+    // The same keys and values PROPERTY(Sync = ..., Change = ..., Quantize = ..., Validate = ...) gives a C++ field.
+    private static List<KeyValuePair<string, string>>? NetMetaOf(MemberInfo Member)
+    {
+        SyncAttribute? Sync = Member.GetCustomAttribute<SyncAttribute>();
+        if (Sync == null)
+        {
+            return null;
+        }
+
+        var Result = new List<KeyValuePair<string, string>>
+        {
+            new("Sync", (Sync.Flags & SyncFlags.FromOwner) != 0 ? "FromOwner" : ""),
+        };
+        if (Sync.Quantize > 0.0)
+        {
+            Result.Add(new("Quantize", Sync.Quantize.ToString("R", System.Globalization.CultureInfo.InvariantCulture)));
+        }
+        if (Sync.Validate != null)
+        {
+            Result.Add(new("Validate", Sync.Validate));
+        }
+        if (Member.GetCustomAttribute<ChangeAttribute>() is ChangeAttribute Change)
+        {
+            Result.Add(new("Change", Change.Method));
+        }
+        return Result;
+    }
+
     private static bool TryGetMapTypes(Type Type, out Type? KeyType, out Type? ValueType)
     {
         // A managed Dictionary<K,V> -- a data struct's own member, copied across the wire.
@@ -677,16 +710,76 @@ internal sealed class TypeDescription
         HasInputBindings = InputBindings.Count > 0;
     }
 
-    // The [ScriptFunction] methods, described the same way a property is: a parameter is a field of the call
-    // frame, so it goes through the same type resolver and needs no description of its own.
+    // EFunctionFlags bits, mirroring Function.h.
+    private const uint RpcBroadcastFlag = 1u << 7;
+    private const uint RpcHostFlag = 1u << 8;
+    private const uint RpcOwnerFlag = 1u << 9;
+    private const uint NetUnreliableFlag = 1u << 10;
+    private const uint NetOwnerOnlyFlag = 1u << 11;
+
+    // A [ScriptFunction], an [Rpc] method, or a method a [Sync] field names, each of which native calls through a reflected frame.
+    private static bool IsReflectedMethod(MethodInfo Method, HashSet<string> NamedBySync)
+    {
+        return Method.GetCustomAttribute<ScriptFunctionAttribute>() != null
+            || Method.GetCustomAttribute<Rpc.RpcAttribute>() != null
+            || NamedBySync.Contains(Method.Name);
+    }
+
+    private static HashSet<string> MethodsNamedBySync(Type Type)
+    {
+        var Result = new HashSet<string>(StringComparer.Ordinal);
+        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        foreach (MemberInfo Member in Type.GetFields(Flags).Cast<MemberInfo>().Concat(Type.GetProperties(Flags)))
+        {
+            if (Member.GetCustomAttribute<SyncAttribute>() is not SyncAttribute Sync)
+            {
+                continue;
+            }
+            if (Sync.Validate != null)
+            {
+                Result.Add(Sync.Validate);
+            }
+            if (Member.GetCustomAttribute<ChangeAttribute>() is ChangeAttribute Change)
+            {
+                Result.Add(Change.Method);
+            }
+        }
+        return Result;
+    }
+
+    private static uint FunctionFlagsOf(MethodInfo Method)
+    {
+        if (Method.GetCustomAttribute<Rpc.RpcAttribute>() is not Rpc.RpcAttribute Declared)
+        {
+            return 0;
+        }
+        uint Flags = Declared switch
+        {
+            Rpc.HostAttribute => RpcHostFlag,
+            Rpc.OwnerAttribute => RpcOwnerFlag,
+            _ => RpcBroadcastFlag,
+        };
+        if ((Declared.Flags & NetFlags.Unreliable) != 0)
+        {
+            Flags |= NetUnreliableFlag;
+        }
+        if ((Declared.Flags & NetFlags.OwnerOnly) != 0)
+        {
+            Flags |= NetOwnerOnlyFlag;
+        }
+        return Flags;
+    }
+
+    // Described the same way a property is, since a parameter is a field of the call frame and needs no description of its own.
     private static IReadOnlyList<ScriptFunction> ComputeFunctions(Type Type, TypeLibrary Library)
     {
         List<ScriptFunction>? Found = null;
-        HashSet<string>? Overloaded = OverloadedFunctionNames(Type);
+        HashSet<string> NamedBySync = MethodsNamedBySync(Type);
+        HashSet<string>? Overloaded = OverloadedFunctionNames(Type, NamedBySync);
 
         foreach (MethodInfo Method in Type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
         {
-            if (Method.GetCustomAttribute<ScriptFunctionAttribute>() == null)
+            if (!IsReflectedMethod(Method, NamedBySync))
             {
                 continue;
             }
@@ -741,20 +834,20 @@ internal sealed class TypeDescription
             }
 
             Found ??= new List<ScriptFunction>();
-            Found.Add(new ScriptFunction(Method.Name, Params, ReturnIndex));
+            Found.Add(new ScriptFunction(Method.Name, Params, ReturnIndex, FunctionFlagsOf(Method)));
         }
 
         return (IReadOnlyList<ScriptFunction>?)Found ?? Array.Empty<ScriptFunction>();
     }
 
     // Both sides key a reflected function by name, so an overload has nothing to tell it apart from its twin.
-    private static HashSet<string>? OverloadedFunctionNames(Type Type)
+    private static HashSet<string>? OverloadedFunctionNames(Type Type, HashSet<string> NamedBySync)
     {
         Dictionary<string, int> Declared = new(StringComparer.Ordinal);
 
         foreach (MethodInfo Method in Type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
         {
-            if (Method.GetCustomAttribute<ScriptFunctionAttribute>() == null)
+            if (!IsReflectedMethod(Method, NamedBySync))
             {
                 continue;
             }

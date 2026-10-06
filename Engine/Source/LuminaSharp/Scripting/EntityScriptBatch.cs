@@ -14,7 +14,7 @@ internal static unsafe class EntityScriptBatch
     public static int DispatchEntityScriptUpdates(IntPtr* Handles, int Count, float DeltaTime, uint* StructureEpoch)
     {
         uint Epoch = Volatile.Read(ref *StructureEpoch);
-        using var Scope = Game.Snapshot();
+        using var Scope = Engine.Snapshot();
         for (int Index = 0; Index < Count; ++Index)
         {
             object? Target = null;
@@ -23,7 +23,7 @@ internal static unsafe class EntityScriptBatch
                 if (GCHandle.FromIntPtr(Handles[Index]).Target is Lumina.CEntityScript Script)
                 {
                     Target = Script;
-                    Game.RetargetScriptEvent(Script);
+                    Engine.RetargetScriptEvent(Script);
                     Script.OnUpdate(DeltaTime);
                 }
             }

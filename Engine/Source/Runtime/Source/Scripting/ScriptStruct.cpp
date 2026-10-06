@@ -1606,7 +1606,7 @@ namespace Lumina::Scripting
             ParamSchema.Fields = Declared.Params;
 
             MintScriptFunction(*Target, *Record, Declared.Name, ParamSchema, Declared.ReturnIndex,
-                &ScriptFunctionThunk);
+                &ScriptFunctionThunk, static_cast<EFunctionFlags>(Declared.Flags));
         }
         Target->ShimSize = ShimSize;
         Target->ShimAlign = ShimAlign;

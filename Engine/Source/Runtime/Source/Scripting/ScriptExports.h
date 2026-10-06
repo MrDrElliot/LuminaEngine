@@ -136,6 +136,9 @@ namespace Lumina::Scripting
 
         /** Index into Params of the return value, or -1 for a function that returns nothing. */
         int32                        ReturnIndex = -1;
+
+        // EFunctionFlags the declaration adds, such as where a C# [Rpc] method runs.
+        uint32                       Flags = 0;
     };
 
     struct FScriptExportSchema

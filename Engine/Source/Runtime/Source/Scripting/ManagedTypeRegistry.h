@@ -38,6 +38,7 @@ namespace Lumina::Scripting
         TVector<FString>    OverriddenEvents;
         uint8               UpdatePhase = 0;
         bool                bParallelUpdate = false;
+        uint8               NetRealm = 0;
     };
 
     /**

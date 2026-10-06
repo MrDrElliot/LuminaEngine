@@ -745,6 +745,9 @@ namespace Lumina
         // C# script generation the scripted systems were built against, so a hot reload can rebuild them.
         int32                                              ScriptGeneration = -1;
 
+        // NetRealm::KeyOf when the systems were last registered.
+        uint32                                             RegisteredRealmKey = 0;
+
         // Reflected systems disabled for this world, by name. DisabledSystems is the applied state used by
         // RegisterSystems; PendingDisabledSystems is the editor-requested next state. They diverge only
         // between a SetSystemEnabled call and the next ApplyPendingSystemChanges (which reconciles them).

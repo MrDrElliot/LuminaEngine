@@ -132,6 +132,21 @@ namespace Lumina::Scripting
 
             // Written by a newer managed side; an older buffer simply has no bytes left in this record.
             OutFlags = R.P < Scope.RecordEnd ? R.U32() : 0u;
+
+            const double NetRate = R.P < Scope.RecordEnd ? R.F64() : 0.0;
+            if (NetRate > 0.0)
+            {
+                Meta.Set("Rate", NumberToString(NetRate));
+            }
+
+            // The rest of a [Sync] declaration, under the same keys PROPERTY(Sync = ...) writes for C++.
+            const int32 Extra = R.P < Scope.RecordEnd ? R.I32() : 0;
+            for (int32 i = 0; i < Extra && !R.bError; ++i)
+            {
+                const FString Key = R.Str();
+                const FString Value = R.Str();
+                Meta.Set(FName(Key.c_str()), Value);
+            }
         }
 
         void ReadValue(FBlobReader& R, FScriptPropertyValue& Out);
@@ -388,6 +403,7 @@ namespace Lumina::Scripting
             {
                 Out.Params.push_back(ReadField(R, /*bTopLevel*/ false));
             }
+            Out.Flags = R.P < Scope.RecordEnd ? R.U32() : 0u;
 
             return !R.bError && !Out.Name.IsNone();
         }

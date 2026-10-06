@@ -29,7 +29,20 @@ namespace Lumina
         NETREC_Changed        = 1 << 2, // pose changed since last extract (global "did it move at all" gate)
         NETREC_ScaleChanged   = 1 << 3, // scale changed since last sent
         NETREC_Movement       = 1 << 4, // replicates a streamed transform (has FRepTransform); else spawn/relevancy only
+        NETREC_HasPitch       = 1 << 5, // a character whose view pitch rides with its pose
     };
+
+    // A view pitch in degrees to and from the signed byte the wire carries.
+    inline int8 QuantizeViewPitch(float Degrees)
+    {
+        const float Clamped = Degrees < -90.0f ? -90.0f : (Degrees > 90.0f ? 90.0f : Degrees);
+        return static_cast<int8>(Clamped * (127.0f / 90.0f) + (Clamped >= 0.0f ? 0.5f : -0.5f));
+    }
+
+    inline float ViewPitchDegrees(int8 Quantized)
+    {
+        return static_cast<float>(Quantized) * (90.0f / 127.0f);
+    }
 
     // Per-thread scratch for the parallel extract (append-local, merged serially). Reused across ticks.
     struct FNetExtractThread
@@ -41,10 +54,11 @@ namespace Lumina
         TVector<NetQuantize::FQuantizedVector> Scale;
         TVector<uint32>                      OwnerConn;
         TVector<uint8>                       Flags;
+        TVector<int8>                        Pitch;
 
         void Reset()
         {
-            Guid.clear(); Pos.clear(); WorldPos.clear(); Rot.clear(); Scale.clear(); OwnerConn.clear(); Flags.clear();
+            Guid.clear(); Pos.clear(); WorldPos.clear(); Rot.clear(); Scale.clear(); OwnerConn.clear(); Flags.clear(); Pitch.clear();
         }
     };
 
@@ -59,12 +73,13 @@ namespace Lumina
         TVector<NetQuantize::FQuantizedVector> Scale;
         TVector<uint32>                        OwnerConn; // 0 = server/unowned
         TVector<uint8>                         Flags;     // ENetRecordFlags
+        TVector<int8>                          Pitch;     // QuantizeViewPitch, meaningful with NETREC_HasPitch
 
         TVector<FNetExtractThread>             Threads;   // reused per-thread scratch
 
         void Reset()
         {
-            Guid.clear(); Pos.clear(); WorldPos.clear(); Rot.clear(); Scale.clear(); OwnerConn.clear(); Flags.clear();
+            Guid.clear(); Pos.clear(); WorldPos.clear(); Rot.clear(); Scale.clear(); OwnerConn.clear(); Flags.clear(); Pitch.clear();
         }
         uint32 Num() const { return static_cast<uint32>(Guid.size()); }
     };

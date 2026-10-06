@@ -17,6 +17,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Server", ClampMin = 1, ClampMax = 4000)
         int32 MaxClients = 64;
 
+        // Seconds a client waits for its host to answer before it gives up and reports TimedOut.
+        PROPERTY(Editable, Category = "Session", ClampMin = 1.0f, Units = "s")
+        float ConnectTimeout = 10.0f;
+
         /** Floor for how many seconds a SimulatedProxy renders behind the newest received server time. */
         PROPERTY(Editable, Category = "Replication", ClampMin = 0.0f, ClampMax = 1.0f)
         float InterpDelay = 0.04f;

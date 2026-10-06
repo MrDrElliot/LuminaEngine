@@ -78,5 +78,14 @@ namespace Lumina
         /** A point WorldDistance along the ray through ScreenPosition, measured from the near plane. */
         FUNCTION()
         static FVector3 DeprojectScreenToWorld(CWorld* World, FVector2 ScreenPosition, float WorldDistance);
+
+        // On screen in the active view, within MaxDistance, and with nothing solid in between. IgnoreA is the viewer's body, IgnoreB the target's.
+        FUNCTION()
+        static bool IsPointVisible(CWorld* World, FVector3 Point, ECS::FEntity IgnoreA, ECS::FEntity IgnoreB, float MaxDistance);
+
+        // The same test from any eye, which is how a server judges what each player's camera sees.
+        FUNCTION()
+        static bool IsPointVisibleFrom(CWorld* World, FVector3 Eye, FVector3 Forward, float FovDegrees, float Aspect,
+            FVector3 Point, ECS::FEntity IgnoreA, ECS::FEntity IgnoreB, float MaxDistance);
     };
 }

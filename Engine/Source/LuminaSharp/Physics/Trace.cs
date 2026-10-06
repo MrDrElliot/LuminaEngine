@@ -3,7 +3,7 @@ using Lumina;
 
 namespace LuminaSharp;
 
-/// Fluent physics query, s&amp;box style, as Trace.Ray(a, b).Ignore(self).Run(). A mutable builder over CPhysicsLibrary that allocates nothing until Run or RunAll, against the ambient Game.World.
+/// Fluent physics query, s&amp;box style, as Trace.Ray(a, b).Ignore(self).Run(). A mutable builder over CPhysicsLibrary that allocates nothing until Run or RunAll, against the ambient Engine.World.
 public struct Trace
 {
     private CWorld World;
@@ -16,7 +16,7 @@ public struct Trace
     private static Trace Begin(FVector3 From, FVector3 To)
     {
         Trace T = default;
-        T.World = Game.World;
+        T.World = Engine.World;
         T.From = From;
         T.To = To;
         T.IgnoreEntity = Entity.Null;
@@ -49,7 +49,7 @@ public struct Trace
     /// Skip the entity whose callback is running.
     public Trace IgnoreSelf()
     {
-        IgnoreEntity = Game.CurrentEntity;
+        IgnoreEntity = Engine.CurrentEntity;
         return this;
     }
 

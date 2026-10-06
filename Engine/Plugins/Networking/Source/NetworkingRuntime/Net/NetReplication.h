@@ -98,7 +98,8 @@ namespace Lumina
         };
 
         // Server, diff every script on Entity that declares replicated fields. Same contract as CollectComponentFieldsInto.
-        void CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
+        // Returns true when a rate-limited field changed too soon and was held back, so the entity has to stay dirty.
+        bool CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
             bool bBaseline, FComponentRepState* DiffState, TVector<FScriptRepOut>& Out);
 
         // The class of every script on Entity, so a client can build a spawned entity's scripts before their fields arrive.
@@ -142,6 +143,9 @@ namespace Lumina
         // incoming maps. Used for component + RPC-arg replication.
         void BindWriters(FNetArchive& Ar, FNetWorldState& State);
         void BindReaders(FNetArchive& Ar, FNetWorldState& State, uint32 SenderConn);
+
+        // Entity ids alone, which every peer shares, for a payload that may be relayed past the peer that wrote it.
+        void BindEntityIds(FNetArchive& Ar, FNetWorldState& State);
 
         // Build/apply the index-to-identity export messages (reliable). Apply ingests into the sender's map.
         void BuildObjectExport(const FNetObjectMap& Map, const TVector<uint32>& Indices, TVector<uint8>& OutMsg);

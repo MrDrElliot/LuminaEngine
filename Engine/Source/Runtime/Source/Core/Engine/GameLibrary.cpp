@@ -25,6 +25,20 @@ namespace Lumina
         }
     }
 
+    bool CGameLibrary::IsHeadless()
+    {
+        return GIsHeadless;
+    }
+
+    bool CGameLibrary::HasPresentation(CWorld* World)
+    {
+        if (GIsHeadless)
+        {
+            return false;
+        }
+        return World == nullptr || (World->GetNetMode() != ENetMode::DedicatedServer && !World->IsBotWorld());
+    }
+
     CGameInstance* CGameLibrary::GetGameInstance()
     {
         return GEngine ? GEngine->GetGameInstance() : nullptr;

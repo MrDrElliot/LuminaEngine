@@ -1165,7 +1165,7 @@ namespace Lumina
             {
                 continue;
             }
-            FWorldContext* Context = GWorldManager->CreateWorldContext(BotWorld, EWorldType::Game, ENetMode::Client);
+            FWorldContext* Context = GWorldManager->CreateWorldContext(BotWorld, EWorldType::Game, ENetMode::Client, true);
             if (Context == nullptr)
             {
                 continue;

@@ -1,4 +1,5 @@
 ﻿#include "RuntimePCH.h"
+#include "Networking/NetRealm.h"
 #include "EntitySystem.h"
 
 #include "Core/Object/Class.h"
@@ -120,6 +121,11 @@ namespace Lumina
                     return;
                 }
 
+                if (!NetRealm::Allows(Class, &World))
+                {
+                    return;
+                }
+
                 CEntitySystem* Defaults = Class->GetDefaultObject<CEntitySystem>();
                 if (Defaults == nullptr || !Defaults->ShouldCreate())
                 {
@@ -170,6 +176,14 @@ namespace Lumina
             DropWhere(Systems, [](const CEntitySystem& System)
             {
                 return Cast<CScriptClass>(System.GetClass()) != nullptr;
+            });
+        }
+
+        void DropOutsideRealm(CWorld& World, TVector<TStrongObjectPtr<CEntitySystem>>& Systems)
+        {
+            DropWhere(Systems, [&World](const CEntitySystem& System)
+            {
+                return !NetRealm::Allows(System.GetClass(), &World);
             });
         }
 

@@ -88,6 +88,22 @@ public static class Mathf
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Sign(float V) => V > 0.0f ? 1.0f : (V < 0.0f ? -1.0f : 0.0f);
 
+    // Eases Current toward Target at Rate per second, the same however the frames fall, unlike a lerp by a fixed fraction.
+    public static float Damp(float Current, float Target, float Rate, float DeltaTime)
+    {
+        return Current + (Target - Current) * (1.0f - MathF.Exp(-Rate * DeltaTime));
+    }
+
+    // The heading of Direction in degrees, zero along +Z and growing toward +X, which is how a yaw input reads.
+    public static float YawDegrees(FVector3 Direction) => MathF.Atan2(Direction.X, Direction.Z) * Rad2Deg;
+
+    // The pitch of Direction in degrees as a camera reads it, positive looking down.
+    public static float PitchDegrees(FVector3 Direction)
+    {
+        float Flat = MathF.Sqrt(Direction.X * Direction.X + Direction.Z * Direction.Z);
+        return -MathF.Atan2(Direction.Y, Flat) * Rad2Deg;
+    }
+
     // Moves Current toward Target by at most MaxDelta.
     public static float MoveTowards(float Current, float Target, float MaxDelta)
     {

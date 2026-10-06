@@ -8,6 +8,7 @@
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "Components/RepTransformComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Net/NetGUID.h"
 #include "Net/NetReplication.h"
 #include "World/Subsystems/WorldSettings.h"
@@ -41,6 +42,7 @@ namespace Lumina::NetGraph
         auto RepStorage   = Registry.GetStorage<FRepTransform>();
         // Every entity has a transform, so joining the universal pool would be a regression.
         auto TformStorage = Registry.GetStorage<STransformComponent>();
+        auto ControllerStorage = Registry.GetStorage<SCharacterControllerComponent>();
 
         if (N > 0)
         {
@@ -79,6 +81,7 @@ namespace Lumina::NetGraph
                         L.Scale.push_back(NetQuantize::FQuantizedVector::FromVector(FVector3(1.0f), NetQuantize::ScaleQuantum));
                         L.OwnerConn.push_back(Net.OwningConnectionId);
                         L.Flags.push_back(Flags);
+                        L.Pitch.push_back(0);
                         continue;
                     }
 
@@ -109,11 +112,21 @@ namespace Lumina::NetGraph
                     const NetQuantize::FQuantizedQuat   QRot   = NetQuantize::FQuantizedQuat::FromQuat(Rot);
                     const NetQuantize::FQuantizedVector QScale = NetQuantize::FQuantizedVector::FromVector(Scale, NetQuantize::ScaleQuantum);
 
+                    // Other players see where a character looks, so its pitch moves the record like its pose does.
+                    int8 Pitch = 0;
+                    if (ControllerStorage.Contains(E))
+                    {
+                        Pitch = QuantizeViewPitch(ControllerStorage.Get(E).LookInput.y);
+                        Flags |= NETREC_HasPitch;
+                    }
+
                     // A non-movement entity's pose only ever rides the spawn baseline, so it skips this gate.
                     if (bMovement)
                     {
                         FRepTransform& Rep = RepStorage.Get(E);
                         if (!Rep.bSendCacheValid || QPos != Rep.LastSentPos || QRot != Rep.LastSentRot) { Flags |= NETREC_Changed; }
+                        if ((Flags & NETREC_HasPitch) && Pitch != Rep.LastSentPitch)                     { Flags |= NETREC_Changed; }
+                        Rep.LastSentPitch   = Pitch;
                         if (!Rep.bSendCacheValid || QScale != Rep.LastSentScale)                        { Flags |= NETREC_ScaleChanged; }
                         Rep.LastSentPos     = QPos;
                         Rep.LastSentRot     = QRot;
@@ -129,6 +142,7 @@ namespace Lumina::NetGraph
                     L.Scale.push_back(QScale);
                     L.OwnerConn.push_back(Net.OwningConnectionId);
                     L.Flags.push_back(Flags);
+                    L.Pitch.push_back(Pitch);
                 }
             }, 256);
         }
@@ -143,6 +157,7 @@ namespace Lumina::NetGraph
         Out.Scale.reserve(Total);
         Out.OwnerConn.reserve(Total);
         Out.Flags.reserve(Total);
+        Out.Pitch.reserve(Total);
 
         for (uint32 t = 0; t < NumThreads; ++t)
         {
@@ -158,6 +173,7 @@ namespace Lumina::NetGraph
                 Out.Scale.push_back(L.Scale[i]);
                 Out.OwnerConn.push_back(L.OwnerConn[i]);
                 Out.Flags.push_back(L.Flags[i]);
+                Out.Pitch.push_back(L.Pitch[i]);
                 if (L.OwnerConn[i] != 0)
                 {
                     OutOwnerToRecord[L.OwnerConn[i]] = Rec; // a client owns one pawn; last wins

@@ -212,14 +212,16 @@ internal static class ScriptCompiler
     // CS0234 names the missing member, never the shadowing namespace that actually caused it.
     private static void ExplainShadowedGameNamespace(Diagnostic Diagnostic)
     {
-        if (Diagnostic.Id != "CS0234" || !Diagnostic.GetMessage().Contains("namespace 'Game'"))
+        string Message = Diagnostic.GetMessage();
+        string? Shadowed = Message.Contains("namespace 'Engine'") ? "Engine" : Message.Contains("namespace 'Game'") ? "Game" : null;
+        if (Diagnostic.Id != "CS0234" || Shadowed == null)
         {
             return;
         }
 
         Native.Log(ELogLevel.Error,
-            "C# compile: 'Game' here is your own namespace, which hides LuminaSharp.Game. Rename the "
-            + "namespace (the template uses GameScripts), or write global::LuminaSharp.Game.");
+            $"C# compile: '{Shadowed}' here is your own namespace, which hides LuminaSharp.{Shadowed}. Rename the "
+            + $"namespace (the template uses GameScripts), or write global::LuminaSharp.{Shadowed}.");
     }
 
     private static ImmutableArray<ISourceGenerator>? CachedGenerators;

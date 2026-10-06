@@ -37,5 +37,8 @@ namespace Lumina
         ECS::FEntity NetIdToEntity(const CWorld* World, uint32 NetId) const override;
         bool SendScriptRpc(CEntityScript* Script, uint32 RpcId, ERpcTarget Target, uint8 Flags,
             const uint8* Payload, uint32 PayloadSize) override;
+        bool IsJoined(const CWorld* World) const override;
+        ECS::FEntity FindOwnedPawn(const CWorld* World, uint32 ConnectionId) const override;
+        void BindEntityIds(const CWorld* World, FNetArchive& Ar) const override;
     };
 }

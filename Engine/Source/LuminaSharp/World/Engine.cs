@@ -5,10 +5,10 @@ namespace LuminaSharp;
 /// <summary>
 /// Ambient access to the world the current gameplay callback belongs to. The runtime sets this around every
 /// EntityScript and EntitySystem callback, so the static engine APIs (<see cref="Time"/>, <see cref="Sound"/>,
-/// <see cref="Trace"/>, <see cref="Gizmo"/>) and the entity extension methods resolve their world without you
+/// <see cref="Trace"/>, <see cref="Gizmo"/>) and the Entity extension methods resolve their world without you
 /// threading one through. Game-thread only, never touch it from a worker Task body.
 /// </summary>
-public static partial class Game
+public static partial class Engine
 {
     /// <summary>
     /// Switches to another level. The world swap is deferred to the next frame start, so this is safe to
@@ -23,6 +23,33 @@ public static partial class Game
     /// instead. Deferred to a safe frame point, so it is fine to call from any script callback.
     /// </summary>
     public static void Quit() => Lumina.CGameLibrary.QuitGame();
+
+    // The port a hosted session listens on and a join dials when the address names none.
+    public const ushort DefaultPort = 7777;
+
+    // Opens Map as a listen server, so this peer plays and hosts at once.
+    public static void Host(string Map, ushort Port = DefaultPort) => OpenLevel($"{Map}?listen?port={Port}");
+
+    // Connects to a host. An empty address means this machine, and one without a port gets DefaultPort.
+    public static void Join(string Address, ushort Port = DefaultPort)
+    {
+        string Target = Address.Trim();
+        if (Target.Length == 0)
+        {
+            Target = "127.0.0.1";
+        }
+        if (!Target.Contains(':'))
+        {
+            Target += $":{Port}";
+        }
+        OpenLevel(Target);
+    }
+
+    // A dedicated server or load-test process, which never opens a window or an audio device.
+    public static bool IsHeadless => Lumina.CGameLibrary.IsHeadless();
+
+    // False wherever nothing is drawn or heard, so cosmetic work can skip a server, a bot and a headless process alike.
+    public static bool HasPresentation => Lumina.CGameLibrary.HasPresentation(World);
 
     /// The persistent game instance, or null before the project has created one.
     public static Lumina.CGameInstance? Instance => Lumina.CGameLibrary.GetGameInstance();
@@ -39,7 +66,7 @@ public static partial class Game
 
     /// <summary>The world the current callback runs in. Throws if accessed outside a gameplay callback.</summary>
     public static Lumina.CWorld World => ActiveWorld ?? EventWorld() ?? throw new InvalidOperationException(
-        "No active world: Game.World / Time / Sound / Trace / Gizmo are only valid inside a script or system callback.");
+        "No active world: Engine.World / Time / Sound / Trace / Gizmo are only valid inside a script or system callback.");
 
     /// <summary>True while a gameplay callback is running (so <see cref="World"/> is available).</summary>
     public static bool InWorld => ActiveWorld != null || EventWorld() != null;

@@ -142,6 +142,21 @@ namespace Lumina
         });
     }
 
+    float CPhysicsLibrary::GetGroundHeight(CWorld* World, FVector3 Point, float SearchDistance, ECS::FEntity IgnoreEntity, float Fallback)
+    {
+        const FVector3 Start(Point.x, Point.y + SearchDistance, Point.z);
+        const FVector3 End(Point.x, Point.y - SearchDistance, Point.z);
+        const SRayResult Hit = Raycast(World, Start, End, IgnoreEntity);
+        return Hit.bHit ? Hit.Location.y : Fallback;
+    }
+
+    bool CPhysicsLibrary::IsSpaceFree(CWorld* World, FVector3 Center, float Radius, ECS::FEntity IgnoreEntity)
+    {
+        TVector<ECS::FEntity> Overlaps;
+        OverlapSphere(World, Center, Radius, IgnoreEntity, Overlaps);
+        return Overlaps.empty();
+    }
+
     void CPhysicsLibrary::AddForce(CWorld* World, ECS::FEntity Entity, FVector3 Force)
     {
         if (Physics::IPhysicsScene* Scene = SceneOf(World)) { Scene->AddForce(Entity, Force); }

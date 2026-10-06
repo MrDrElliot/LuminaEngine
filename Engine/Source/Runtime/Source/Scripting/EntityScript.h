@@ -8,12 +8,27 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Input/InputAction.h"
 #include "Input/InputEvent.h"
+#include "Networking/NetworkTypes.h"
 #include "ScriptReloadContext.h"
 #include "EntityScript.generated.h"
+
+// The first statement of a FUNCTION(Rpc = ...) body, passed the function's parameters in order, the C++ form of calling a C# [Rpc] method.
+#define NET_RPC(...) do { if (this->RouteRpc(__func__ __VA_OPT__(,) __VA_ARGS__)) { return; } } while (false)
 
 namespace Lumina
 {
     class CWorld;
+    class FFunction;
+    class FProperty;
+    struct FSyncSnapshot;
+
+    // Where one routed call runs, decided the same way for NET_RPC and a C# [Rpc] method.
+    enum class ERpcRoute : uint8
+    {
+        RunHere,
+        SendAndRunHere,
+        SendOnly,
+    };
 
     // Which side of the physics step a script's OnUpdate runs on. Mirrors LuminaSharp.EScriptPhase.
     enum class EScriptUpdatePhase : uint8
@@ -99,6 +114,92 @@ namespace Lumina
 
         bool ShouldTick() const { return bReady && !bFaulted; }
 
+        //~ Networking, spelled the way LuminaSharp's Networking and EntityNetwork are. A standalone world answers as its own host.
+
+        // True on the host, a dedicated server and a standalone world, the peers whose word is final.
+        bool IsHost() const;
+
+        // True when this peer controls the entity, which a standalone world and an unnetworked entity always do.
+        bool IsOwner() const;
+
+        // Another peer controls the entity, so this one only mirrors it.
+        bool IsProxy() const { return !IsOwner(); }
+
+        // The connection the RPC being handled came from, or this peer's own when the call was not received.
+        uint32 GetRpcCaller() const;
+
+        // True on this thread while a received RPC or an owner's Sync write is being applied.
+        static bool IsReceivingRpc();
+
+        // The connection that sent what is being applied, or zero when nothing is.
+        static uint32 GetReceivingCaller();
+
+        // Resends the entity's replicated component fields. A PROPERTY(Sync) field needs no call, since it is checked every tick.
+        void MarkNetDirty();
+
+        // Called through NET_RPC. Sends the call where its FUNCTION(Rpc = ...) says and returns true when it should not also run here.
+        template<typename... TArgs>
+        bool RouteRpc(const char* FunctionName, const TArgs&... Args)
+        {
+            const void* Values[] = { static_cast<const void*>(&Args)..., nullptr };
+            return RouteRpcValues(FunctionName, Values, static_cast<uint32>(sizeof...(TArgs)));
+        }
+
+        bool RouteRpcValues(const char* FunctionName, const void* const* Values, uint32 NumValues);
+
+        // Where a call to Function goes from here. Consumes the mark a received call leaves, so the arriving call runs locally.
+        ERpcRoute PlanRpc(const FFunction& Function);
+
+        // Writes each argument through its parameter's FProperty::NetSerialize and sends the call, Values in parameter order.
+        void SendRpc(const FFunction& Function, const void* const* Values);
+
+        // The same, reading the arguments out of a call frame laid out for Function.
+        void SendRpcFrame(const FFunction& Function, const void* Frame);
+
+        // An RPC or an owner's Sync write arrived for this script, read through the same FProperty::NetSerialize it was written with.
+        void ReceiveRpc(uint32 RpcId, uint32 CallerId, const uint8* Payload, uint32 PayloadSize);
+
+        //~ PROPERTY(Sync) support, used by the netcode, which checks Sync fields every tick the way a C# [Sync] setter would.
+
+        // The id an owner's write to a FromOwner field travels under, or the one the host's correction comes back under.
+        uint32 SyncFieldId(const FProperty* Field, bool bCorrection) const;
+
+        // Runs the field's PROPERTY(Change = ...) function, if it names one, with OldValue and the current value.
+        void NotifySyncChanged(const FProperty* Field, const void* OldValue);
+
+        // Whether the field's PROPERTY(Validate = ...) function accepts Proposed. A field without one accepts anything.
+        bool ValidateSync(const FProperty* Field, const void* Proposed);
+
+        // Snaps a numeric field to its PROPERTY(Quantize = ...) step in place.
+        void QuantizeSync(const FProperty* Field);
+
+        // Sends the field's current value to the host as an owner's write, or back to the owner as a correction.
+        void SendSync(const FProperty* Field, bool bCorrection);
+
+        // Whether the field is PROPERTY(Sync = FromOwner), the only kind an owner may write.
+        static bool IsSyncFromOwner(const FProperty* Field);
+
+        // Compares a C++ script's Sync fields with the values last seen, doing what a C# [Sync] setter does for each change.
+        void PollSync();
+
+        // Replicated values are about to land, or just landed, in the named fields, which are zero-terminated back to back.
+        void SyncArriving();
+        void SyncArrived(const char* Names, uint32 NamesSize);
+
+        //~ Session events, the C++ side of LuminaSharp.INetworkListener.
+
+        // Host. A client finished joining.
+        virtual void OnConnected(uint32 ConnectionId) {}
+
+        // Host. A client left, told before anything it owned changes hands.
+        virtual void OnDisconnected(uint32 ConnectionId) {}
+
+        // Client. This peer finished joining its host.
+        virtual void OnJoinedHost() {}
+
+        // Client. The session ended, or never came up, for Reason.
+        virtual void OnLeftHost(ENetLeaveReason Reason) {}
+
         // The batched update's copy of this script's managed handle, trusted only while the generation still matches.
         void*  CachedManagedHandle     = nullptr;
         uint32 CachedHandleGeneration  = 0;
@@ -112,6 +213,13 @@ namespace Lumina
         // Transient: OnReady has run. Not serialized -- a loaded script re-readies on its first tick.
         bool bReady = false;
         bool bFaulted = false;
+
+        // The Sync values PollSync last saw, built on first use and only for a C++ script.
+        FSyncSnapshot* SyncSnapshot = nullptr;
+
+        void ReceiveSync(FProperty* Field, bool bCorrection, uint32 CallerId, const uint8* Payload, uint32 PayloadSize);
+        void ApplySync(FProperty* Field, const void* Value);
+        FSyncSnapshot& EnsureSyncSnapshot();
     };
 
     /** One script kept verbatim because its class was not loadable when the world was read. */

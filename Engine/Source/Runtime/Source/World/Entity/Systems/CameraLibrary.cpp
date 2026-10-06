@@ -2,6 +2,7 @@
 
 #include "CameraLibrary.h"
 
+#include "Physics/PhysicsLibrary.h"
 #include "World/ECS/Registry.h"
 #include "World/Entity/Systems/SystemSingletons.h"
 #include "World/World.h"
@@ -154,5 +155,80 @@ namespace Lumina
     {
         const FWorldRay Ray = ScreenToWorldRay(World, ScreenPosition);
         return Ray.bValid ? (Ray.Origin + Ray.Direction * WorldDistance) : FVector3(0.0f);
+    }
+
+    namespace
+    {
+        // A hit this close short of the point is the point's own surface, not something in front of it.
+        constexpr float kOcclusionSlack = 0.35f;
+
+        bool IsUnoccluded(CWorld* World, const FVector3& Eye, const FVector3& Point, float Distance, ECS::FEntity IgnoreA, ECS::FEntity IgnoreB)
+        {
+            const SRayResult Hit = CPhysicsLibrary::Raycast(World, Eye, Point, IgnoreA);
+            return !Hit.bHit || ECS::FEntity(Hit.Entity) == IgnoreB || Hit.Distance >= Distance - kOcclusionSlack;
+        }
+    }
+
+    bool CCameraLibrary::IsPointVisible(CWorld* World, FVector3 Point, ECS::FEntity IgnoreA, ECS::FEntity IgnoreB, float MaxDistance)
+    {
+        if (World == nullptr)
+        {
+            return false;
+        }
+
+        const FVector3 Eye = GetViewPosition(World);
+        const float Distance = Math::Length(Point - Eye);
+        if (Distance > MaxDistance)
+        {
+            return false;
+        }
+
+        const FScreenProjection Projected = WorldToScreen(World, Point);
+        const FVector2 Viewport = GetViewportSize(World);
+        if (!Projected.bOnScreen || Projected.Depth <= 0.0f)
+        {
+            return false;
+        }
+        if (Projected.Position.x < 0.0f || Projected.Position.y < 0.0f || Projected.Position.x > Viewport.x || Projected.Position.y > Viewport.y)
+        {
+            return false;
+        }
+
+        return IsUnoccluded(World, Eye, Point, Distance, IgnoreA, IgnoreB);
+    }
+
+    bool CCameraLibrary::IsPointVisibleFrom(CWorld* World, FVector3 Eye, FVector3 Forward, float FovDegrees, float Aspect,
+        FVector3 Point, ECS::FEntity IgnoreA, ECS::FEntity IgnoreB, float MaxDistance)
+    {
+        if (World == nullptr)
+        {
+            return false;
+        }
+
+        const FVector3 ToPoint = Point - Eye;
+        const float Distance = Math::Length(ToPoint);
+        if (Distance > MaxDistance || Distance < 1e-3f || Math::Length(Forward) < 1e-3f)
+        {
+            return false;
+        }
+
+        // Projected onto the view's own axes, which is the frustum test without a viewport.
+        const FVector3 ViewForward = Math::Normalize(Forward);
+        FVector3 Right = Math::Cross(FVector3(0.0f, 1.0f, 0.0f), ViewForward);
+        Right = Math::Length(Right) > 1e-3f ? Math::Normalize(Right) : FVector3(1.0f, 0.0f, 0.0f);
+        const FVector3 Up = Math::Cross(ViewForward, Right);
+        const float Depth = Math::Dot(ToPoint, ViewForward);
+        if (Depth <= 0.0f)
+        {
+            return false;
+        }
+        const float TanHalfV = Math::Tan(Math::Radians(FovDegrees * 0.5f));
+        const float TanHalfH = TanHalfV * Aspect;
+        if (Math::Abs(Math::Dot(ToPoint, Right)) > Depth * TanHalfH || Math::Abs(Math::Dot(ToPoint, Up)) > Depth * TanHalfV)
+        {
+            return false;
+        }
+
+        return IsUnoccluded(World, Eye, Point, Distance, IgnoreA, IgnoreB);
     }
 }

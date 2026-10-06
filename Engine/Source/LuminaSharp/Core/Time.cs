@@ -4,11 +4,11 @@ namespace LuminaSharp;
 public static class Time
 {
     /// Seconds since the last frame.
-    public static float Delta => Game.World.DeltaTime;
+    public static float Delta => Engine.World.DeltaTime;
 
     /// Alias of Delta.
-    public static float DeltaTime => Game.World.DeltaTime;
+    public static float DeltaTime => Engine.World.DeltaTime;
 
     /// Seconds since the world was created.
-    public static double Now => Game.World.ElapsedTime;
+    public static double Now => Engine.World.ElapsedTime;
 }

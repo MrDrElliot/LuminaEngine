@@ -109,40 +109,60 @@ public static unsafe class ScriptFunctionDispatch
                 return;
             }
 
-            int Count = Bound.Parameters.Length;
-            object?[] Arguments = Count == 0 ? Array.Empty<object>() : new object?[Count];
-
-            for (int Index = 0; Index < Count; ++Index)
+            // A script's method runs inside its own callback context, as every other script event does.
+            if (Target is EntityScript Script && !Script.Entity.IsNull)
             {
-                Arguments[Index] = FrameMarshal.Read(Frame, Bound.Parameters[Index]);
-            }
-
-            object? Result = Bound.Method.Invoke(Target, Arguments);
-            if (Bound.bAsync)
-            {
-                Result = ScriptAsync.Track(Result);
-            }
-
-            // Invoke assigns an out or ref argument back into the array, which the caller reads off the frame.
-            if (Bound.WriteBack != null)
-            {
-                for (int Index = 0; Index < Count; ++Index)
+                using Engine.Scope Scope = Engine.Push(Script.World, Script.Entity, Script);
+                try
                 {
-                    if (Bound.WriteBack[Index])
-                    {
-                        FrameMarshal.Write(Frame, Bound.Parameters[Index], Arguments[Index]);
-                    }
+                    InvokeBound(Target, Bound, Frame);
                 }
+                catch (TargetInvocationException Thrown) when (Thrown.InnerException != null)
+                {
+                    NativeBindings.ScriptEventException(Script, Bound.Method.Name, Thrown.InnerException);
+                }
+                return;
             }
 
-            if (Bound.bHasReturn)
-            {
-                FrameMarshal.Write(Frame, Bound.Return, Result);
-            }
+            InvokeBound(Target, Bound, Frame);
         }
         catch (Exception Exception)
         {
             Interop.LogException(Exception);
+        }
+    }
+
+    private static void InvokeBound(object Target, in FBound Bound, IntPtr Frame)
+    {
+        int Count = Bound.Parameters.Length;
+        object?[] Arguments = Count == 0 ? Array.Empty<object>() : new object?[Count];
+
+        for (int Index = 0; Index < Count; ++Index)
+        {
+            Arguments[Index] = FrameMarshal.Read(Frame, Bound.Parameters[Index]);
+        }
+
+        object? Result = Bound.Method.Invoke(Target, Arguments);
+        if (Bound.bAsync)
+        {
+            Result = ScriptAsync.Track(Result);
+        }
+
+        // Invoke assigns an out or ref argument back into the array, which the caller reads off the frame.
+        if (Bound.WriteBack != null)
+        {
+            for (int Index = 0; Index < Count; ++Index)
+            {
+                if (Bound.WriteBack[Index])
+                {
+                    FrameMarshal.Write(Frame, Bound.Parameters[Index], Arguments[Index]);
+                }
+            }
+        }
+
+        if (Bound.bHasReturn)
+        {
+            FrameMarshal.Write(Frame, Bound.Return, Result);
         }
     }
 

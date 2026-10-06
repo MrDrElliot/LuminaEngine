@@ -12,7 +12,7 @@ namespace Lumina::Scripting
 {
     FFunction* MintScriptFunction(CScriptClass& Class, CScriptStruct& LayoutRecord, const FName& Name,
                                   const FScriptExportSchema& ParamSchema, int32 ReturnIndex,
-                                  FFunction::FNativeFuncPtr Thunk)
+                                  FFunction::FNativeFuncPtr Thunk, EFunctionFlags ExtraFlags)
     {
         TVector<FProperty*> Params;
         Params.reserve(ParamSchema.Fields.size());
@@ -35,7 +35,7 @@ namespace Lumina::Scripting
         }
 
         FFunction* Function = FFunctionBuilder::BuildMinted(Class.GetPropertyArena(), &Class, Name,
-            EFunctionFlags::ScriptCallable, Params, ReturnIndex, (uint16)Layout.EndOffset, Thunk);
+            EFunctionFlags::ScriptCallable | ExtraFlags, Params, ReturnIndex, (uint16)Layout.EndOffset, Thunk);
 
         if (Function == nullptr)
         {

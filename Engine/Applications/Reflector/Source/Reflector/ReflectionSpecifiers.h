@@ -46,6 +46,9 @@ namespace Lumina::Reflection
     X(Event,                Flag,   Runtime,   "Documents the struct as an ECS event. The dispatcher is type-driven, so this emits no registration.") \
     X(BitMask,              Flag,   Runtime,   "Marks an enum as a set of bit flags. CEnum::IsBitmaskEnum() reports it and the editor draws checkboxes.") \
     X(ParallelUpdate,       Flag,   Runtime,   "An entity script's promise that its OnUpdate and OnFixedUpdate read and write only its own entity, so the driver runs it in parallel with other such scripts. Inherited by subclasses.") \
+    X(HostOnly,             Flag,   Runtime,   "A script, system or world subsystem that runs only on the host, a dedicated server or a standalone game. Inherited, like C# [HostOnly].") \
+    X(ClientOnly,           Flag,   Runtime,   "A script, system or world subsystem that runs only on a client joined to a host. Inherited, like C# [ClientOnly].") \
+    X(Cosmetic,             Flag,   Runtime,   "A script, system or world subsystem that runs only where something is drawn or played, never on a dedicated server, a bot or a headless process. Inherited, like C# [Cosmetic].") \
     X(ConfigFile,           Value,  Runtime,   "Backs the class with the named config file. The config system loads and saves its properties there.") \
     X(Category,             Value,  Editor,    "Groups the type under a named heading in the component picker and the settings list.") \
     X(DisplayName,          Value,  Editor,    "Overrides the label shown for the type in editor UI.") \
@@ -65,7 +68,12 @@ namespace Lumina::Reflection
     X(ReflectAs,            Value,  Reflector, "Reflects the field as the named type instead of its declared type.") \
     X(NoSerialize,          Flag,   Runtime,   "Excludes the property from serialization.") \
     X(EditorOnly,           Flag,   Runtime,   "The property exists for editor tooling only and is stripped from cooked packages.") \
-    X(Replicated,           Flag,   Runtime,   "The property participates in network replication.") \
+    X(Sync,                 Either, Runtime,   "Replicates the field from the host, the C++ spelling of C# [Sync]. Sync = FromOwner lets the owning client write it too.") \
+    X(Replicated,           Flag,   Runtime,   "Alias of Sync.") \
+    X(Change,               Value,  Runtime,   "A FUNCTION() run whenever the Sync field changes, here or on arrival, taking nothing or (Old, New).") \
+    X(Rate,                 Value,  Runtime,   "The most times a second the host sends the Sync field. A change sooner than that waits for the next slot.") \
+    X(Quantize,             Value,  Runtime,   "Snaps a numeric Sync field to multiples of this step, so a smaller wobble never reaches the wire.") \
+    X(Validate,             Value,  Runtime,   "For a Sync = FromOwner field, a FUNCTION() taking the proposed value and returning whether the host accepts it.") \
     X(DuplicateTransient,   Flag,   Runtime,   "Resets the property to its default when the owning object is duplicated.") \
     X(StructBase,           Value,  Runtime,   "Constrains a bare FInstancedStruct to structs deriving from the named base.") \
     X(Editable,             Flag,   Editor,    "Shows the property in the details panel and allows editing.") \
@@ -100,6 +108,8 @@ namespace Lumina::Reflection
 
 #define LUMINA_FUNCTION_SPECIFIERS(X) \
     X(ToolTip,                  Value, Editor, "Hover text for the function. Filled from the declaration's doc comment when not written by hand.") \
+    X(Rpc,                      Value, Runtime, "Broadcast, Host or Owner, the C++ spelling of C# [Rpc.*]. The body starts with NET_RPC(...) passing its parameters.") \
+    X(NetFlags,                 Value, Runtime, "Unreliable and OwnerOnly, joined with |, the C++ spelling of C# NetFlags.") \
     X(SuppressGCTransition,     Flag,  Script, "Skips the GC transition on the generated C# call. Only valid on a short leaf function that never calls back into managed code.") \
     X(NoSuppressGCTransition,   Flag,  Script, "Opts one function back out of a type-wide REFLECT(ScriptFastCalls).")
 

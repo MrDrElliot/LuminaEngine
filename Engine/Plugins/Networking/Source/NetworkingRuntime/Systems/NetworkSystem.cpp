@@ -31,6 +31,7 @@
 #include "Physics/PhysicsScene.h"
 #include "Physics/PhysicsTypes.h"
 #include "World/Entity/Components/CharacterComponent.h"
+#include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Core/Serialization/NetQuantize.h"
@@ -38,6 +39,7 @@
 #include "Core/CommandLine/CommandLine.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/DotNet/NetScriptBridge.h"
+#include "Core/Object/ScriptClass.h"
 
 namespace Lumina
 {
@@ -344,7 +346,12 @@ namespace Lumina
                 static thread_local TVector<Net::FScriptRepOut>    Scripts;
                 static thread_local TVector<uint8>                 Buffer;
                 Net::CollectComponentFieldsInto(Registry, Entity, State, /*bBaseline*/false, &CompDiff, Comps);
-                Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/false, &CompDiff, Scripts);
+                const bool bHeldBack = Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/false, &CompDiff, Scripts);
+                // Waiting on a rate-limited field with nothing else to say, so this tick sends nothing at all.
+                if (bHeldBack && Comps.empty() && Scripts.empty())
+                {
+                    continue;
+                }
 
                 // Written once and copied only to clients that hold the entity, which happens after relevancy runs.
                 Buffer.clear();
@@ -362,7 +369,10 @@ namespace Lumina
                 BytesThisTick += static_cast<int32>(Framed);
 
                 CompDiff.LastReplicatedTime = NowTime; // mark sent -> drives the oldest-first fairness above
-                Registry.Remove<FNetDirty>(Entity);    // sent this tick; deferred entities keep the flag
+                if (!bHeldBack)
+                {
+                    Registry.Remove<FNetDirty>(Entity); // sent this tick; deferred entities keep the flag
+                }
                 ++State.Stats.PropertyUpdatesSent;
             }
 
@@ -530,6 +540,8 @@ namespace Lumina
             FQuat       Rot;
             bool        bScale = false;
             FVector3    Scale  = FVector3(1.0f);
+            bool        bPitch = false;
+            int8        Pitch  = 0;
         };
 
         constexpr uint32 YawBits = 12;
@@ -588,6 +600,14 @@ namespace Lumina
             if (bScale)
             {
                 NetQuantize::FQuantizedVector::FromVector(R.Scale, NetQuantize::ScaleQuantum).Write(Writer);
+            }
+
+            bool bPitch = R.bPitch;
+            Writer.SerializeBit(bPitch);
+            if (bPitch)
+            {
+                uint8 Packed = static_cast<uint8>(R.Pitch);
+                Writer.SerializeBits(&Packed, 8);
             }
         }
 
@@ -941,6 +961,8 @@ namespace Lumina
                                 R.Rot    = Ex.Rot[Rec].ToQuat();
                                 R.bScale = bScaleChg || bBaseline || bRefresh;
                                 R.Scale  = Ex.Scale[Rec].ToVector(NetQuantize::ScaleQuantum);
+                                R.bPitch = (Ex.Flags[Rec] & NETREC_HasPitch) != 0;
+                                R.Pitch  = Ex.Pitch[Rec];
 
                                 // Staleness weighted by nearness, so a capped stream rotates through far entities instead of starving them.
                                 const FVector3& P = Ex.WorldPos[Rec];
@@ -1318,6 +1340,13 @@ namespace Lumina
             {
                 QScale.Read(Reader);
             }
+            bool bPitch = false;
+            Reader.SerializeBit(bPitch);
+            uint8 PackedPitch = 0;
+            if (bPitch)
+            {
+                Reader.SerializeBits(&PackedPitch, 8);
+            }
             if (Reader.HasError())
             {
                 return false;
@@ -1339,6 +1368,15 @@ namespace Lumina
             if (OwnerGate != 0 && (Net == nullptr || Net->OwningConnectionId != OwnerGate || NetPrediction::IsPredictedCharacter(Registry, Entity)))
             {
                 return true;
+            }
+
+            // Only another player's character takes the pitch, since the owner's own view is its input.
+            if (bPitch && OwnerGate == 0)
+            {
+                if (SCharacterControllerComponent* Controller = Registry.TryGet<SCharacterControllerComponent>(Entity))
+                {
+                    Controller->LookInput.y = ViewPitchDegrees(static_cast<int8>(PackedPitch));
+                }
             }
 
             FRepTransform& Rep = Registry.GetOrEmplace<FRepTransform>(Entity);
@@ -1444,7 +1482,7 @@ namespace Lumina
             }
 
             const ERpcTarget Target = static_cast<ERpcTarget>(TargetByte);
-            const bool bReliable = (Flags & RpcFlag_Unreliable) == 0;
+            const bool bReliable = (Flags & static_cast<uint8>(ENetFlags::Unreliable)) == 0;
             auto Relay = [&](uint32 Connection)
             {
                 TVector<uint8>& Batch = bReliable ? State.PendingRpcReliable[Connection] : State.PendingRpcUnreliable[Connection];
@@ -1600,6 +1638,18 @@ namespace Lumina
         }
 
         // With nobody connected the diff still runs, so the state a joiner is caught up to includes these changes.
+        // Client, tells this world's scripts the session ended, once.
+        void LeaveHost(CWorld* World, FNetWorldState& State, ENetLeaveReason Reason)
+        {
+            if (State.bLeaveDispatched)
+            {
+                return;
+            }
+            State.bLeaveDispatched = true;
+            LOG_DISPLAY("[Net][Client] Left the host ({})", static_cast<uint32>(Reason));
+            NetScripts::DispatchSession(World, ENetSessionEvent::LeftHost, 0, Reason);
+        }
+
         void SeedDirtyBaselines(ECS::FRegistry& Registry, FNetWorldState& State)
         {
             TVector<ECS::FEntity> Dirty;
@@ -1615,13 +1665,45 @@ namespace Lumina
                 {
                     FComponentRepState& Diff = Registry.GetOrEmplace<FComponentRepState>(Entity);
                     Net::CollectComponentFieldsInto(Registry, Entity, State, /*bBaseline*/false, &Diff, Comps);
-                    Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/false, &Diff, Scripts);
+                    if (Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/false, &Diff, Scripts))
+                    {
+                        continue;
+                    }
                 }
                 Registry.Remove<FNetDirty>(Entity);
             }
         }
 
         // Everything a frame produced goes out once scripts and physics have run, so it is never a frame stale.
+        // A C++ script's Sync fields have no setter to catch a write, so each is compared once a frame before anything is sent.
+        void PollNativeSyncFields(ECS::FRegistry& Registry)
+        {
+            LUMINA_PROFILE_SCOPE();
+            static THashMap<const CClass*, bool> HasSyncFields;
+            static TVector<FProperty*> Fields;
+            for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent, SNetworkComponent>())
+            {
+                for (const TStrongObjectPtr<CEntityScript>& Held : Registry.Get<SEntityScriptComponent>(Entity).Scripts)
+                {
+                    CEntityScript* Script = Held.Get();
+                    if (Script == nullptr || !Script->IsReady() || ToScriptClass(Script->GetClass()) != nullptr)
+                    {
+                        continue;
+                    }
+                    auto Found = HasSyncFields.find(Script->GetClass());
+                    if (Found == HasSyncFields.end())
+                    {
+                        Script->GetClass()->GetNetReplicatedProperties(Fields);
+                        Found = HasSyncFields.emplace(Script->GetClass(), !Fields.empty()).first;
+                    }
+                    if (Found->second)
+                    {
+                        Script->PollSync();
+                    }
+                }
+            }
+        }
+
         void SendFrame(CWorld* World, ECS::FRegistry& Registry, FNetWorldState& State, const FSystemContext& Context, bool bServer)
         {
             LUMINA_PROFILE_SCOPE();
@@ -1669,6 +1751,21 @@ namespace Lumina
             }
             else
             {
+                const CNetworkSettings* Settings = GetDefault<CNetworkSettings>();
+                const double Timeout = Settings != nullptr ? Settings->ConnectTimeout : 10.0;
+                if (!State.bClientConnected && State.ConnectStartTime >= 0.0 && PlatformTime::Seconds() - State.ConnectStartTime > Timeout)
+                {
+                    State.ConnectStartTime = -1.0;
+                    State.Transport->Disconnect(State.ServerConnection, 0, true);
+                    LeaveHost(World, State, ENetLeaveReason::TimedOut);
+                }
+
+                if (State.bClientConnected && State.bWelcomed && !State.bJoinDispatched)
+                {
+                    State.bJoinDispatched = true;
+                    NetScripts::DispatchSession(World, ENetSessionEvent::JoinedHost, 0, ENetLeaveReason::None);
+                }
+
                 if (State.bClientConnected && !State.bClientReadySent)
                 {
                     State.bClientReadySent = true;
@@ -1809,6 +1906,7 @@ namespace Lumina
                 State->ServerConnection = Conn;
                 State->LocalPeerId      = PeerId;
                 State->bClientConnected = true;
+                State->bWelcomed        = true;
                 LOG_DISPLAY("[Net] Client adopted carried connection after travel (peer id {})", PeerId);
             }
             else // Client, open a fresh connection.
@@ -1821,7 +1919,12 @@ namespace Lumina
                 Params.ChannelCount = 2;
 
                 State->ServerConnection = State->Transport->ConnectToServer(Params);
+                State->ConnectStartTime = PlatformTime::Seconds();
                 LOG_DISPLAY("[Net] Client connecting to {}:{}...", Host.c_str(), Port);
+                if (State->ServerConnection == FConnectionHandle::Invalid())
+                {
+                    LeaveHost(World, *State, ENetLeaveReason::ConnectFailed);
+                }
             }
         }
 
@@ -1832,6 +1935,7 @@ namespace Lumina
 
         if (Context.GetUpdateStage() == EUpdateStage::FrameEnd)
         {
+            PollNativeSyncFields(Registry);
             const double SendStart = PlatformTime::Seconds();
             SendFrame(World, Registry, *State, Context, bServer);
             const float SendMs = static_cast<float>((PlatformTime::Seconds() - SendStart) * 1000.0);
@@ -1923,6 +2027,24 @@ namespace Lumina
                     }
                     State->ClientViews.erase(Event.Connection.Value); // drop its per-client relevancy state
 
+                    // A player's own entities leave with them instead of lingering as host-owned leftovers.
+                    TVector<ECS::FEntity> Leaving;
+                    for (ECS::FEntity Entity : Registry.View<SNetworkComponent>())
+                    {
+                        const SNetworkComponent& Net = Registry.Get<SNetworkComponent>(Entity);
+                        if (Net.OwningConnectionId == Event.Connection.Value && Net.bDestroyWithOwner)
+                        {
+                            Leaving.push_back(Entity);
+                        }
+                    }
+                    for (ECS::FEntity Entity : Leaving)
+                    {
+                        if (Registry.IsValid(Entity))
+                        {
+                            World->DestroyEntity(Entity);
+                        }
+                    }
+
                     // Release anything this connection owned so it doesn't stay stuck as an orphan proxy.
                     for (ECS::FEntity Entity : Registry.View<SNetworkComponent>())
                     {
@@ -1937,9 +2059,13 @@ namespace Lumina
                 }
                 else
                 {
+                    const bool bWasConnected = State->bClientConnected;
                     State->bClientConnected = false;
                     State->LocalPeerId      = ServerPeerId;
                     LOG_DISPLAY("[Net][Client] Disconnected from server");
+                    const ENetLeaveReason Reason = State->PendingLeaveReason != ENetLeaveReason::None ? State->PendingLeaveReason
+                        : (bWasConnected ? ENetLeaveReason::HostClosed : ENetLeaveReason::ConnectFailed);
+                    LeaveHost(World, *State, Reason);
                 }
                 break;
 
@@ -2021,6 +2147,7 @@ namespace Lumina
                                 LOG_ERROR("[Net][Client] Protocol mismatch (server {:#x}, client {:#x}) -- disconnecting. Client and server builds differ.",
                                     Proto, Net::GetProtocolHash());
                                 State->Transport->Disconnect(Event.Connection, /*Reason*/1, /*bForce*/false);
+                                State->PendingLeaveReason = ENetLeaveReason::ProtocolMismatch;
                                 break;
                             }
 
@@ -2041,6 +2168,14 @@ namespace Lumina
                                     LOG_DISPLAY("[Net][Client] Welcome -> loading server map '{}'", MapPath.c_str());
                                     GEngine->Travel(FStringView(MapPath.c_str(), MapPath.size()), World);
                                 }
+                                else
+                                {
+                                    State->bWelcomed = true;
+                                }
+                            }
+                            else
+                            {
+                                State->bWelcomed = true;
                             }
                         }
                         break;
@@ -2066,6 +2201,29 @@ namespace Lumina
                             // Catches this connection up to the current world, with ownership re-sent below.
                             State->ClientViews[Event.Connection.Value].bForceBaseline = true;
                             State->OwnershipJoiners.push_back(Event.Connection.Value);
+
+                            // Every changed stable entity's state, built before the index tables so any reference it mints goes out with them.
+                            TVector<uint8> StableBaselines;
+                            for (ECS::FEntity Ent : Registry.View<SNetworkComponent, FComponentRepState>())
+                            {
+                                const SNetworkComponent& StableNet = Registry.Get<SNetworkComponent>(Ent);
+                                if (!StableNet.bReplicates || StableNet.NetGUID.Value == 0 || StableNet.NetGUID.Value >= NetGUID_DynamicStart)
+                                {
+                                    continue;
+                                }
+                                TVector<Net::FComponentRepOut> Comps = Net::CollectComponentFields(Registry, Ent, *State, /*bBaseline*/true, nullptr);
+                                TVector<Net::FScriptRepOut> Scripts;
+                                Net::CollectScriptFieldsInto(Registry, Ent, *State, /*bBaseline*/true, nullptr, Scripts);
+                                TVector<uint8> Message;
+                                FNetArchive W(Message);
+                                Net::BindWriters(W, *State);
+                                uint8 PType = static_cast<uint8>(ENetMessage::PropertyUpdate);
+                                W << PType;
+                                Net::WriteNetGuid(W, StableNet.NetGUID.Value);
+                                Net::WriteEntityComponents(W, Registry, Ent, &Comps);
+                                Net::WriteEntityScripts(W, Scripts);
+                                Net::AppendFramedMessage(StableBaselines, Message.data(), static_cast<SIZE_T>(Message.size()));
+                            }
 
                             // Dynamic entities arrive through AOI, while stable ones come from the map the joiner loads.
                             if (!State->OutObjects.IndexToGuid.empty())
@@ -2121,6 +2279,12 @@ namespace Lumina
                                     Net::AppendFramedMessage(DespawnBatch, Buffer.data(), static_cast<SIZE_T>(Buffer.size()));
                                 }
                                 State->Transport->Send(Event.Connection, DespawnBatch.data(), static_cast<SIZE_T>(DespawnBatch.size()), 0, ESendMode::Reliable);
+                            }
+
+                            // A joiner far from a stable entity would otherwise only catch up once it comes into view.
+                            if (!StableBaselines.empty())
+                            {
+                                State->Transport->Send(Event.Connection, StableBaselines.data(), static_cast<SIZE_T>(StableBaselines.size()), 0, ESendMode::Reliable);
                             }
 
                             LOG_DISPLAY("[Net][Server] Client {} ready; sent index tables", Event.Connection.Value);

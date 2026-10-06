@@ -120,6 +120,11 @@ internal static class ScriptPropertyRewriter
             {
                 return base.VisitClassDeclaration(Node);
             }
+            return RewriteClass(Node, Fields, Rpcs);
+        }
+
+        private SyntaxNode RewriteClass(ClassDeclarationSyntax Node, List<FieldDeclarationSyntax> Fields, List<FRpcMethod> Rpcs)
+        {
 
             string TypeName = Model.GetDeclaredSymbol(Node)?.ToDisplayString() ?? Node.Identifier.Text;
 
@@ -210,11 +215,6 @@ internal static class ScriptPropertyRewriter
                 Members.AddRange(BuildDefaultsMethod(Defaults));
             }
 
-            if (Rpcs.Count > 0)
-            {
-                Members.AddRange(ParseMembers(BuildRpcDispatcher(Rpcs)).Select(Member => Member.WithoutTrivia()));
-            }
-
             return Node.WithMembers(SyntaxFactory.List(Members));
         }
 
@@ -224,9 +224,6 @@ internal static class ScriptPropertyRewriter
         {
             public required MethodDeclarationSyntax Syntax;
             public required IMethodSymbol Symbol;
-            public required string Target;
-            public required uint Flags;
-            public required uint Id;
         }
 
         private List<FRpcMethod> CollectRpcs(ClassDeclarationSyntax Node)
@@ -275,15 +272,10 @@ internal static class ScriptPropertyRewriter
                     continue;
                 }
 
-                uint Flags = Attribute.ConstructorArguments.Length > 0 && Attribute.ConstructorArguments[0].Value is uint Value ? Value : 0u;
-                string Target = Attribute.AttributeClass!.Name.Replace("Attribute", "");
                 Result.Add(new FRpcMethod
                 {
                     Syntax = Method,
                     Symbol = Symbol,
-                    Target = Target,
-                    Flags = Flags,
-                    Id = StableId(Symbol.ContainingType.ToDisplayString() + "." + Symbol.Name),
                 });
             }
             return Result;
@@ -301,32 +293,18 @@ internal static class ScriptPropertyRewriter
             return false;
         }
 
-        // FNV-1a over the declaring type and name, so an id survives reordering and is unique across a hierarchy.
-        private static uint StableId(string Text)
-        {
-            uint Hash = 2166136261u;
-            foreach (char Character in Text)
-            {
-                Hash ^= Character;
-                Hash *= 16777619u;
-            }
-            return Hash;
-        }
-
         private static string Qualify(ITypeSymbol Type) => Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-        // The routing prefix is one line placed on the body's first line, so no later line number moves.
+        // One line on the body's first line, so no later line number moves. Native serializes the frame as it does a C++ NET_RPC.
         private MethodDeclarationSyntax RouteRpc(FRpcMethod Rpc)
         {
             var Prefix = new StringBuilder();
-            Prefix.Append("if (global::LuminaSharp.RpcRuntime.ShouldSend(this, global::LuminaSharp.ERpcTarget.").Append(Rpc.Target)
-                  .Append(", out bool __rpcRunLocal)) { var __rpcWriter = global::LuminaSharp.RpcRuntime.BeginWrite(this); ");
+            Prefix.Append("if (global::LuminaSharp.RpcRuntime.Begin(this, \"").Append(Rpc.Symbol.Name).Append("\", out var __rpc)) { ");
             foreach (IParameterSymbol Parameter in Rpc.Symbol.Parameters)
             {
-                Prefix.Append("__rpcWriter.Write<").Append(Qualify(Parameter.Type)).Append(">(").Append(Parameter.Name).Append("); ");
+                Prefix.Append("__rpc.Add<").Append(Qualify(Parameter.Type)).Append(">(").Append(Parameter.Name).Append("); ");
             }
-            Prefix.Append("global::LuminaSharp.RpcRuntime.Send(this, ").Append(Rpc.Id).Append("u, global::LuminaSharp.ERpcTarget.").Append(Rpc.Target)
-                  .Append(", (global::LuminaSharp.NetFlags)").Append(Rpc.Flags).Append("u, ref __rpcWriter); if (!__rpcRunLocal) { return; } } ");
+            Prefix.Append("if (__rpc.Send()) { return; } } ");
 
             StatementSyntax Gate = SyntaxFactory.ParseStatement(Prefix.ToString());
             MethodDeclarationSyntax Method = Rpc.Syntax;
@@ -344,29 +322,6 @@ internal static class ScriptPropertyRewriter
             return Method.WithExpressionBody(null).WithSemicolonToken(default).WithBody(Block);
         }
 
-        // One line too, so it lands where the class's closing brace already was.
-        private static string BuildRpcDispatcher(List<FRpcMethod> Rpcs)
-        {
-            var Text = new StringBuilder();
-            Text.Append("protected override bool __RpcDispatch(uint __RpcId, ref global::LuminaSharp.NetReader __RpcReader) { switch (__RpcId) { ");
-            foreach (FRpcMethod Rpc in Rpcs)
-            {
-                Text.Append("case ").Append(Rpc.Id).Append("u: { ");
-                Text.Append("if (!global::LuminaSharp.RpcRuntime.Permit(this, (global::LuminaSharp.NetFlags)").Append(Rpc.Flags).Append("u)) { return true; } ");
-                var Arguments = new List<string>();
-                foreach (IParameterSymbol Parameter in Rpc.Symbol.Parameters)
-                {
-                    string Local = "__rpcArg" + Arguments.Count;
-                    Text.Append("var ").Append(Local).Append(" = __RpcReader.Read<").Append(Qualify(Parameter.Type)).Append(">(); ");
-                    Arguments.Add(Local);
-                }
-                Text.Append("if (__RpcReader.Failed) { return true; } ");
-                Text.Append("global::LuminaSharp.RpcRuntime.MarkArriving(); ");
-                Text.Append(Rpc.Symbol.Name).Append("(").Append(string.Join(", ", Arguments)).Append("); return true; } ");
-            }
-            Text.Append("} return base.__RpcDispatch(__RpcId, ref __RpcReader); }");
-            return Text.ToString();
-        }
 
 
         /// <summary>
@@ -485,9 +440,10 @@ internal static class ScriptPropertyRewriter
             }
             if (bWritable && Set != null && bSync)
             {
-                Body.Append("    set { if (HasNativeStorage) { var __old = ").Append(Get).Append("; ").Append(Set)
-                    .Append("; if (!global::System.Collections.Generic.EqualityComparer<").Append(Type)
-                    .AppendLine(">.Default.Equals(__old, value)) { global::LuminaSharp.SyncRuntime.MarkDirty(Handle); } } }");
+                if (!BuildSyncSetter(Body, Declarator, Symbol, TypeName, Type, Get, Set))
+                {
+                    return System.Array.Empty<MemberDeclarationSyntax>();
+                }
             }
             else if (bWritable && Set != null)
             {
@@ -529,6 +485,120 @@ internal static class ScriptPropertyRewriter
                 Members[^1].GetTrailingTrivia().AddRange(
                     Directive(Field.GetLocation().GetLineSpan().EndLinePosition.Line + OneBased + NextLine)));
             return Members;
+        }
+
+        private static bool IsNumber(ITypeSymbol Type) => Type.SpecialType is SpecialType.System_Single or SpecialType.System_Double
+            or SpecialType.System_Byte or SpecialType.System_SByte or SpecialType.System_Int16 or SpecialType.System_UInt16
+            or SpecialType.System_Int32 or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64;
+
+        // Snaps, writes, then on a real change marks dirty, forwards an owner's write to the host and runs the change handler.
+        private bool BuildSyncSetter(StringBuilder Body, VariableDeclaratorSyntax Declarator, IFieldSymbol Symbol, string TypeName,
+            string Type, string Get, string Set)
+        {
+            string Where = $"{FilePath}({Line(Declarator)}): [Sync] '{Symbol.Name}'";
+            AttributeData? Sync = Symbol.GetAttributes().FirstOrDefault(Data => Data.AttributeClass?.Name == "SyncAttribute");
+            AttributeData? Change = Symbol.GetAttributes().FirstOrDefault(Data => Data.AttributeClass?.Name == "ChangeAttribute");
+
+            uint Flags = Sync != null && Sync.ConstructorArguments.Length > 0 && Sync.ConstructorArguments[0].Value is uint Raw ? Raw : 0u;
+            bool bFromOwner = (Flags & 1u) != 0;
+            double Quantize = 0.0;
+            string? Validate = null;
+            if (Sync != null)
+            {
+                foreach (KeyValuePair<string, TypedConstant> Named in Sync.NamedArguments)
+                {
+                    if (Named.Key == "Quantize" && Named.Value.Value is double Snap)
+                    {
+                        Quantize = Snap;
+                    }
+                    else if (Named.Key == "Validate" && Named.Value.Value is string Method)
+                    {
+                        Validate = Method;
+                    }
+                }
+            }
+
+            if (Quantize > 0.0 && !IsNumber(Symbol.Type))
+            {
+                Errors.Add($"{Where} sets Quantize, which only a number can snap to.");
+                return false;
+            }
+            if (bFromOwner && !DerivesFromEntityScript(Symbol.ContainingType))
+            {
+                Errors.Add($"{Where} is FromOwner, and only an EntityScript has an owner to take the write from.");
+                return false;
+            }
+            if (Validate != null && !bFromOwner)
+            {
+                Errors.Add($"{Where} names Validate without SyncFlags.FromOwner, and only an owner's write is validated.");
+                return false;
+            }
+            if (Validate != null && !HasValidator(Symbol.ContainingType, Validate, Symbol.Type))
+            {
+                Errors.Add($"{Where} names Validate method '{Validate}', which must take one {Symbol.Type.ToDisplayString()} and return bool.");
+                return false;
+            }
+
+            string Step = Quantize.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "d";
+            Body.Append("    set { if (HasNativeStorage) { ");
+            if (Quantize > 0.0)
+            {
+                Body.Append("value = (").Append(Type).Append(")(global::System.Math.Round((double)value / ").Append(Step).Append(") * ").Append(Step).Append("); ");
+            }
+            Body.Append("var __old = ").Append(Get).Append("; ").Append(Set)
+                .Append("; if (!global::System.Collections.Generic.EqualityComparer<").Append(Type)
+                .Append(">.Default.Equals(__old, value)) { global::LuminaSharp.SyncRuntime.MarkDirty(Handle); ");
+
+            // Native sends the stored value through the field's FProperty, as it does for a C++ PROPERTY(Sync = FromOwner).
+            if (bFromOwner)
+            {
+                Body.Append("if (global::LuminaSharp.SyncRuntime.ShouldForward(this)) { global::LuminaSharp.SyncRuntime.Forward(this, \"")
+                    .Append(NativeNameOf(Symbol)).Append("\"); } ");
+            }
+
+            if (Change != null)
+            {
+                Body.Append("global::LuminaSharp.SyncRuntime.Changed(this, \"").Append(Symbol.Name).Append("\", __old, value); ");
+            }
+
+            Body.AppendLine("} } }");
+            return true;
+        }
+
+        private static bool HasValidator(INamedTypeSymbol Type, string Name, ITypeSymbol ValueType)
+        {
+            for (INamedTypeSymbol? Current = Type; Current != null; Current = Current.BaseType)
+            {
+                foreach (IMethodSymbol Method in Current.GetMembers(Name).OfType<IMethodSymbol>())
+                {
+                    if (Method.Parameters.Length == 1 && Method.ReturnType.SpecialType == SpecialType.System_Boolean
+                        && SymbolEqualityComparer.Default.Equals(Method.Parameters[0].Type, ValueType))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // The name native knows the field by, which a [Property(Name = ...)] can change.
+        private static string NativeNameOf(IFieldSymbol Symbol)
+        {
+            foreach (AttributeData Data in Symbol.GetAttributes())
+            {
+                if (Data.AttributeClass?.Name != "PropertyAttribute")
+                {
+                    continue;
+                }
+                foreach (KeyValuePair<string, TypedConstant> Named in Data.NamedArguments)
+                {
+                    if (Named.Key == "Name" && Named.Value.Value is string Renamed && Renamed.Length > 0)
+                    {
+                        return Renamed;
+                    }
+                }
+            }
+            return Symbol.Name;
         }
 
         private SyntaxTriviaList Directive(int SourceLine)

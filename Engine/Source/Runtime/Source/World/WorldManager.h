@@ -43,7 +43,7 @@ namespace Lumina
         void RenderWorlds(uint8 FrameIndex);
 
         // Creates a context for an already-constructed CWorld and calls InitializeWorld on it.
-        FWorldContext* CreateWorldContext(CWorld* World, EWorldType Type, ENetMode NetMode = ENetMode::Standalone);
+        FWorldContext* CreateWorldContext(CWorld* World, EWorldType Type, ENetMode NetMode = ENetMode::Standalone, bool bBot = false);
 
         // Tears the world down and removes its context. Safe to call with a world that has no context.
         void DestroyWorldContext(CWorld* World);

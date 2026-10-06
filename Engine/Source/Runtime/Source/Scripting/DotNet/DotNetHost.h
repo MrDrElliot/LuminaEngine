@@ -191,6 +191,9 @@ namespace Lumina::DotNet
 
         // The class carries [ParallelUpdate].
         bool    bParallelUpdate = false;
+
+        // ENetRealm from the class's [HostOnly], [ClientOnly] and [Cosmetic].
+        uint8   NetRealm = 0;
     };
 
     // One `[Alias]` on a C# script class: the name it used to have, and the name it has now.

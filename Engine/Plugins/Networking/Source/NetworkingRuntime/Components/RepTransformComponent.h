@@ -121,6 +121,9 @@ namespace Lumina
         bool  bSendCacheValid   = false;
         float TimeSinceLastSend = 0.0f;
 
+        // A character's view pitch as last sent, in the same steps the wire carries.
+        int8  LastSentPitch     = 0;
+
         //~ Receive side. Timestamped sample ring for interpolation/extrapolation.
         FNetInterpState Ring;
 

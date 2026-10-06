@@ -19,7 +19,7 @@ internal sealed class VoidInvoker : IDelegateInvoker
     {
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler();
             }
@@ -41,7 +41,7 @@ internal sealed class PayloadInvoker<T> : IDelegateInvoker where T : unmanaged
         T Argument = Unsafe.Read<T>((void*)Payload);
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler(Argument);
             }

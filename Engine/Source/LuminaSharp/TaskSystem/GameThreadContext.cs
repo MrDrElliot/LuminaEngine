@@ -13,7 +13,7 @@ internal sealed class GameThreadContext : SynchronizationContext
 
     private readonly struct FWork
     {
-        internal FWork(SendOrPostCallback Callback, object? State, Game.Scope Context)
+        internal FWork(SendOrPostCallback Callback, object? State, Engine.Scope Context)
         {
             this.Callback = Callback;
             this.State = State;
@@ -22,7 +22,7 @@ internal sealed class GameThreadContext : SynchronizationContext
 
         internal readonly SendOrPostCallback Callback;
         internal readonly object?            State;
-        internal readonly Game.Scope         Context;
+        internal readonly Engine.Scope         Context;
     }
 
     internal static bool OnGameThread => Environment.CurrentManagedThreadId == GameThreadId;
@@ -42,7 +42,7 @@ internal sealed class GameThreadContext : SynchronizationContext
     // A game thread post keeps the poster's world and script, and one from a worker resumes with none rather than whatever the drain left.
     public override void Post(SendOrPostCallback Callback, object? State)
     {
-        Pending.Enqueue(new FWork(Callback, State, OnGameThread ? Game.Snapshot() : default));
+        Pending.Enqueue(new FWork(Callback, State, OnGameThread ? Engine.Snapshot() : default));
     }
 
     // Blocking a worker on the thread that drains the queue would deadlock, so this refuses rather than waits.
@@ -67,7 +67,7 @@ internal sealed class GameThreadContext : SynchronizationContext
         {
             try
             {
-                using (Game.Resume(Work.Context))
+                using (Engine.Resume(Work.Context))
                 {
                     Work.Callback(Work.State);
                 }

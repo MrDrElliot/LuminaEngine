@@ -9,6 +9,7 @@
 #include "Net/NetWorldState.h"
 #include "Net/NetLoadBots.h"
 #include "Scripting/EntityScript.h"
+#include "World/Entity/Components/CharacterControllerComponent.h"
 #include "Networking/INetworkTransport.h"
 
 namespace Lumina
@@ -132,6 +133,46 @@ namespace Lumina
         return true;
     }
 
+    bool FLuminaNetworkRuntime::IsJoined(const CWorld* World) const
+    {
+        const FNetWorldState* State = StateOf(World);
+        return State != nullptr && !IsServerWorld(World) && State->bJoinDispatched && State->bClientConnected;
+    }
+
+    ECS::FEntity FLuminaNetworkRuntime::FindOwnedPawn(const CWorld* World, uint32 ConnectionId) const
+    {
+        if (World == nullptr || StateOf(World) == nullptr)
+        {
+            return ECS::NullEntity;
+        }
+        ECS::FRegistry& Registry = RegistryOf(World);
+        ECS::FEntity Fallback = ECS::NullEntity;
+        for (ECS::FEntity Entity : Registry.View<SNetworkComponent>())
+        {
+            if (Registry.Get<SNetworkComponent>(Entity).OwningConnectionId != ConnectionId)
+            {
+                continue;
+            }
+            if (Registry.HasAll<SCharacterControllerComponent>(Entity))
+            {
+                return Entity;
+            }
+            if (Fallback == ECS::NullEntity)
+            {
+                Fallback = Entity;
+            }
+        }
+        return Fallback;
+    }
+
+    void FLuminaNetworkRuntime::BindEntityIds(const CWorld* World, FNetArchive& Ar) const
+    {
+        if (FNetWorldState* State = const_cast<FNetWorldState*>(StateOf(World)))
+        {
+            Net::BindEntityIds(Ar, *State);
+        }
+    }
+
     uint32 FLuminaNetworkRuntime::GetLocalConnectionId(const CWorld* World) const
     {
         const FNetWorldState* State = StateOf(World);
@@ -226,7 +267,7 @@ namespace Lumina
             return false;
         }
 
-        const bool bReliable = (Flags & RpcFlag_Unreliable) == 0;
+        const bool bReliable = (Flags & static_cast<uint8>(ENetFlags::Unreliable)) == 0;
         auto Queue = [&](uint32 Connection)
         {
             TVector<uint8>& Batch = bReliable ? State->PendingRpcReliable[Connection] : State->PendingRpcUnreliable[Connection];

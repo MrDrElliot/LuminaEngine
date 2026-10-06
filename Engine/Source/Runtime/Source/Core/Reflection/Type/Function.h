@@ -38,6 +38,15 @@ namespace Lumina
 
         // the body lives in script rather than in C++, so calling it dispatches into managed code
         ScriptImplemented = BIT(6),
+
+        // FUNCTION(Rpc = ...), where the call runs, the C++ spelling of LuminaSharp's Rpc attributes
+        RpcBroadcast    = BIT(7),
+        RpcHost         = BIT(8),
+        RpcOwner        = BIT(9),
+
+        // FUNCTION(NetFlags = ...), mirroring ENetFlags
+        NetUnreliable   = BIT(10),
+        NetOwnerOnly    = BIT(11),
     };
 
     ENUM_CLASS_FLAGS(EFunctionFlags);
@@ -95,6 +104,7 @@ namespace Lumina
         NODISCARD bool IsScriptCallable() const { return EnumHasAnyFlags(Flags, EFunctionFlags::ScriptCallable); }
         NODISCARD bool HasReturn() const        { return EnumHasAnyFlags(Flags, EFunctionFlags::HasReturn); }
         NODISCARD bool IsScriptImplemented() const { return EnumHasAnyFlags(Flags, EFunctionFlags::ScriptImplemented); }
+        NODISCARD bool IsRpc() const            { return EnumHasAnyFlags(Flags, EFunctionFlags::RpcBroadcast | EFunctionFlags::RpcHost | EFunctionFlags::RpcOwner); }
 
         /** Brings a caller-owned frame of GetParmsSize() bytes up to a valid, default set of arguments. */
         RUNTIME_API void InitializeFrame(void* Frame) const;

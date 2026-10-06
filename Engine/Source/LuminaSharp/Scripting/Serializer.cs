@@ -96,6 +96,7 @@ internal static class Serializer
                 // No owner, so no default is captured: a parameter's value comes from the call, not the type.
                 WriteField(Writer, Parameter, null, bTopLevel: false);
             }
+            Writer.Write(Function.Flags);
         }
 
         Writer.Flush();
@@ -129,7 +130,7 @@ internal static class Serializer
 
         WriteString(Writer, Property.Name);
         WriteAliases(Writer, Property.Aliases);
-        WriteMeta(Writer, Property.Meta, Property.Hidden, Property.ParamFlags, Property.ExtraFlags);
+        WriteMeta(Writer, Property.Meta, Property.Hidden, Property.ParamFlags, Property.ExtraFlags, Property.NetRate, Property.NetMeta);
 
         // Only a top-level field has a hot-reload identity, so only it carries the byte.
         if (bTopLevel)
@@ -147,7 +148,8 @@ internal static class Serializer
     }
 
     private static void WriteMeta(BinaryWriter Writer, PropertyAttribute? Meta, bool bHidden = false,
-        EScriptParamFlags ParamFlags = EScriptParamFlags.None, EPropertyFlags ExtraFlags = EPropertyFlags.None)
+        EScriptParamFlags ParamFlags = EScriptParamFlags.None, EPropertyFlags ExtraFlags = EPropertyFlags.None, float NetRate = 0.0f,
+        IReadOnlyList<KeyValuePair<string, string>>? NetMeta = null)
     {
         using var Frame = new Record(Writer, ERecord.Meta);
 
@@ -174,6 +176,17 @@ internal static class Serializer
 
         // Appended, which the Meta record's length prefix makes safe against an older native reader.
         Writer.Write((uint)(Meta?.Flags ?? EPropertyFlags.None) | (uint)ExtraFlags | (uint)ParamFlags);
+        Writer.Write((double)NetRate);
+
+        Writer.Write(NetMeta?.Count ?? 0);
+        if (NetMeta != null)
+        {
+            foreach (KeyValuePair<string, string> Pair in NetMeta)
+            {
+                WriteString(Writer, Pair.Key);
+                WriteString(Writer, Pair.Value);
+            }
+        }
     }
 
     // Type descriptor; parsed in lockstep by the native ReadType. The kind is the shared reflected taxonomy

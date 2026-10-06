@@ -85,6 +85,9 @@ namespace Lumina
         // From the C# [ParallelUpdate], the managed spelling of REFLECT(ParallelUpdate).
         bool bScriptParallelUpdate = false;
 
+        // ENetRealm from the C# [HostOnly], [ClientOnly] and [Cosmetic], the managed spelling of the REFLECT specifiers.
+        uint8 ScriptNetRealm = 0;
+
         /** Every property appended from the script type's schema, in layout order. They live past the C++
          *  shim the class was minted from. */
         TVector<FProperty*> ScriptProperties;

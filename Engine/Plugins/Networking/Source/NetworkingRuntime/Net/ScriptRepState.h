@@ -28,6 +28,9 @@ namespace Lumina
         // Keyed by the script's index on the entity, which both peers share.
         THashMap<uint32, FRepFieldSnapshot> ScriptLastSent;
 
+        // When each script field last went out, only kept for scripts with a rate-limited field.
+        THashMap<uint32, TVector<double>> ScriptFieldSentTime;
+
         // Server game-clock time (seconds) of the last PropertyUpdate sent for this entity. Drives
         // oldest-first scheduling in ReplicateDirtyProperties so a per-tick byte budget never starves an entity.
         double LastReplicatedTime = 0.0;

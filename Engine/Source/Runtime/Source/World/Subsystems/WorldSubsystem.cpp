@@ -1,4 +1,5 @@
 ﻿#include "WorldSubsystem.h"
+#include "Networking/NetRealm.h"
 
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectArray.h"
@@ -48,6 +49,11 @@ namespace Lumina::WorldSubsystems
 
         for (CClass* Class : Candidates)
         {
+            if (!NetRealm::Allows(Class, &World))
+            {
+                continue;
+            }
+
             CWorldSubsystem* Defaults = Class->GetDefaultObject<CWorldSubsystem>();
             if (Defaults == nullptr || !Defaults->ShouldCreate())
             {
@@ -92,6 +98,22 @@ namespace Lumina::WorldSubsystems
         {
             CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
             if (Subsystem == nullptr || Cast<CScriptClass>(Subsystem->GetClass()) == nullptr)
+            {
+                continue;
+            }
+
+            Subsystem->OnTeardown();
+            Subsystem->SetOwningWorld(nullptr);
+            Subsystems.erase(Subsystems.begin() + (int64)(Index - 1));
+        }
+    }
+
+    void DropOutsideRealm(CWorld& World, TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
+    {
+        for (size_t Index = Subsystems.size(); Index > 0; --Index)
+        {
+            CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
+            if (Subsystem == nullptr || NetRealm::Allows(Subsystem->GetClass(), &World))
             {
                 continue;
             }

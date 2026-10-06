@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Platform/GenericPlatform.h"
+#include "Core/LuminaMacros.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 
@@ -40,12 +41,34 @@ namespace Lumina
         Owner     = 2, // the entity's owning connection only
     };
 
-    // Mirrors LuminaSharp.Networking.ERpcFlags.
-    enum ERpcFlags : uint8
+    // Why a client's session with its host ended. Mirrors LuminaSharp.ENetLeaveReason.
+    enum class ENetLeaveReason : uint8
     {
-        RpcFlag_None       = 0,
-        RpcFlag_Unreliable = 1 << 0,
+        None             = 0,
+        ConnectFailed    = 1, // the host could not be reached
+        TimedOut         = 2, // the host never answered within the connect timeout
+        HostClosed       = 3, // the session was up and the host went away
+        ProtocolMismatch = 4, // the host runs a different build
     };
+
+    // How an RPC travels. Mirrors LuminaSharp.NetFlags and is spelled the same in FUNCTION(NetFlags = ...).
+    enum class ENetFlags : uint8
+    {
+        None       = 0,
+        Unreliable = 1 << 0, // may be dropped, for frequent cosmetic calls
+        OwnerOnly  = 1 << 1, // ignored on arrival unless the caller owns the entity or is the host
+    };
+
+    ENUM_CLASS_FLAGS(ENetFlags);
+
+    // Who may write a Sync field. Mirrors LuminaSharp.SyncFlags and is spelled the same in PROPERTY(Sync = ...).
+    enum class ESyncFlags : uint8
+    {
+        None      = 0,
+        FromOwner = 1 << 0, // the owning client writes it too, and the host may refuse the write through Validate
+    };
+
+    ENUM_CLASS_FLAGS(ESyncFlags);
 
     enum class EConnectionState : uint8
     {

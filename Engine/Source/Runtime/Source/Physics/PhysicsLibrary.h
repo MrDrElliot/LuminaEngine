@@ -55,6 +55,14 @@ namespace Lumina
         static void OverlapPoint(CWorld* World, FVector3 Point, ECS::FEntity IgnoreEntity,
             TVector<ECS::FEntity>& Out);
 
+        // The height of the first surface straight down through Point, searching SearchDistance above and below it.
+        FUNCTION()
+        static float GetGroundHeight(CWorld* World, FVector3 Point, float SearchDistance, ECS::FEntity IgnoreEntity, float Fallback);
+
+        // True when no body overlaps the sphere, the check for whether something can be placed there.
+        FUNCTION()
+        static bool IsSpaceFree(CWorld* World, FVector3 Center, float Radius, ECS::FEntity IgnoreEntity);
+
         //~ Forces and impulses. An entity without a body is a no-op.
 
         FUNCTION()

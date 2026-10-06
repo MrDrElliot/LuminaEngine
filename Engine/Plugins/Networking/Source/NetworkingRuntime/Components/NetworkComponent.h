@@ -30,6 +30,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Networking")
         bool bReplicatesMovement = true;
 
+        // Destroyed when its owning connection leaves, rather than handed back to the host.
+        PROPERTY(Editable, Category = "Networking")
+        bool bDestroyWithOwner = false;
+
         /** How many times per second this entity's movement is sent (caps the send rate; clients interpolate
          *  between updates). <= 0 sends every tick. Replicated so the owning client throttles its sends to match. */
         PROPERTY(Editable, Replicated, Category = "Networking")

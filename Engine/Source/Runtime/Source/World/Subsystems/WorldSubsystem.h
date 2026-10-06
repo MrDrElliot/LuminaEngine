@@ -59,6 +59,9 @@ namespace Lumina
         // Tears down the subsystems backed by a script class, so a hot reload can rebuild them.
         RUNTIME_API void DropScripted(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems);
 
+        // Tears down the subsystems whose HostOnly, ClientOnly or Cosmetic no longer fits the world, after its net mode changed.
+        RUNTIME_API void DropOutsideRealm(CWorld& World, TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems);
+
         RUNTIME_API void Update(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, float DeltaTime);
 
         // Runs OnTeardown on each and empties the list.

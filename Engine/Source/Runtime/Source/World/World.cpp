@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "World.h"
 #include "World/ECS/Registry.h"
+#include "Networking/NetRealm.h"
 #include "World/ECS/EventDispatcher.h"
 #include <cmath>
 #include <utility>
@@ -572,6 +573,15 @@ namespace Lumina
 
             // A reload retires the old script classes, so the scripted subsystems rebuild against the new ones.
             WorldSubsystems::DropScripted(Subsystems);
+            WorldSubsystems::CreateMissing(*this, Subsystems);
+        }
+
+        // Joining a host turns a standalone world into a client, which changes what HostOnly and ClientOnly allow.
+        if (Stage == EUpdateStage::FrameStart && NetRealm::KeyOf(this) != RegisteredRealmKey)
+        {
+            EntitySystems::DropOutsideRealm(*this, Systems);
+            RegisterSystems();
+            WorldSubsystems::DropOutsideRealm(*this, Subsystems);
             WorldSubsystems::CreateMissing(*this, Subsystems);
         }
 
@@ -1514,6 +1524,7 @@ namespace Lumina
     void CWorld::RegisterSystems()
     {
         ScriptGeneration = DotNet::IsInitialized() ? DotNet::GetScriptGeneration() : -1;
+        RegisteredRealmKey = NetRealm::KeyOf(this);
 
         EntitySystems::CreateMissing(*this, DisabledSystems, Systems);
         RebuildSystemSchedule();

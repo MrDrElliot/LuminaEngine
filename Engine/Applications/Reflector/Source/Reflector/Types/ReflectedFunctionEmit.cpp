@@ -234,6 +234,20 @@ namespace Lumina::Reflection
             if (Function->bIsStatic)  { Flags += " | Lumina::EFunctionFlags::Static"; }
             if (Function->bIsConst)   { Flags += " | Lumina::EFunctionFlags::Const"; }
             if (Function->bIsVirtual) { Flags += " | Lumina::EFunctionFlags::Virtual"; }
+            for (const FMetadataPair& Pair : Function->Metadata)
+            {
+                if (Pair.Key == "Rpc")
+                {
+                    if (Pair.Value == "Broadcast")  { Flags += " | Lumina::EFunctionFlags::RpcBroadcast"; }
+                    else if (Pair.Value == "Host")  { Flags += " | Lumina::EFunctionFlags::RpcHost"; }
+                    else if (Pair.Value == "Owner") { Flags += " | Lumina::EFunctionFlags::RpcOwner"; }
+                }
+                else if (Pair.Key == "NetFlags")
+                {
+                    if (Pair.Value.find("Unreliable") != std::string::npos) { Flags += " | Lumina::EFunctionFlags::NetUnreliable"; }
+                    if (Pair.Value.find("OwnerOnly") != std::string::npos)  { Flags += " | Lumina::EFunctionFlags::NetOwnerOnly"; }
+                }
+            }
 
             const std::string ParamsArg = Function->ParamEntries.empty()
                 ? std::string("nullptr")

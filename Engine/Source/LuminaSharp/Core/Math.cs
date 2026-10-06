@@ -327,6 +327,17 @@ public struct FVector3 : IEquatable<FVector3>
         return (A - B).Length;
     }
 
+    // Distance across the ground, ignoring height, which is what reach and proximity usually mean.
+    public static float FlatDistance(FVector3 A, FVector3 B)
+    {
+        float Dx = A.X - B.X;
+        float Dz = A.Z - B.Z;
+        return MathF.Sqrt(Dx * Dx + Dz * Dz);
+    }
+
+    // This vector with its height dropped.
+    public FVector3 Flat => new(X, 0.0f, Z);
+
     public static float DistanceSquared(FVector3 A, FVector3 B)
     {
         return (A - B).LengthSquared;
@@ -670,6 +681,9 @@ public struct FQuat : IEquatable<FQuat>
         float S = MathF.Sin(Half);
         return new FQuat(N.X * S, N.Y * S, N.Z * S, MathF.Cos(Half));
     }
+
+    // A turn about +Y by YawDegrees, the upright facing of a character or a prop on the ground.
+    public static FQuat FromYawDegrees(float YawDegrees) => AngleAxis(YawDegrees * Mathf.Deg2Rad, new FVector3(0.0f, 1.0f, 0.0f));
 
     // Alias of AngleAxis with axis-first argument order (matches C++ Math::FromAxisAngle).
     public static FQuat FromAxisAngle(FVector3 Axis, float AngleRadians) => AngleAxis(AngleRadians, Axis);

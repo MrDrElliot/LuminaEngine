@@ -131,7 +131,7 @@ internal sealed class ArgsInvoker1<T1> : IDelegateInvoker
 
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler(A0);
             }
@@ -156,7 +156,7 @@ internal sealed class ArgsInvoker2<T1, T2> : IDelegateInvoker
 
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler(A0, A1);
             }
@@ -182,7 +182,7 @@ internal sealed class ArgsInvoker3<T1, T2, T3> : IDelegateInvoker
 
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler(A0, A1, A2);
             }
@@ -209,7 +209,7 @@ internal sealed class ArgsInvoker4<T1, T2, T3, T4> : IDelegateInvoker
 
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler(A0, A1, A2, A3);
             }
@@ -237,7 +237,7 @@ internal sealed class ArgsInvoker5<T1, T2, T3, T4, T5> : IDelegateInvoker
 
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler(A0, A1, A2, A3, A4);
             }
@@ -266,7 +266,7 @@ internal sealed class ArgsInvoker6<T1, T2, T3, T4, T5, T6> : IDelegateInvoker
 
         if (Owner is { } Script)
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Engine.Push(Script.World, Script.Entity))
             {
                 Handler(A0, A1, A2, A3, A4, A5);
             }
@@ -319,7 +319,7 @@ public readonly unsafe struct ScriptDelegate<T1>
             return default;
         }
 
-        EntityScript? Owner = Game.ActiveScript;
+        EntityScript? Owner = Engine.ActiveScript;
         return DelegateBindings.Bind(Address, new ArgsInvoker1<T1> { Handler = Handler, Slots = Slots, Owner = Owner });
     }
 }
@@ -353,7 +353,7 @@ public readonly unsafe struct ScriptDelegate<T1, T2>
             return default;
         }
 
-        EntityScript? Owner = Game.ActiveScript;
+        EntityScript? Owner = Engine.ActiveScript;
         return DelegateBindings.Bind(Address, new ArgsInvoker2<T1, T2> { Handler = Handler, Slots = Slots, Owner = Owner });
     }
 }
@@ -387,7 +387,7 @@ public readonly unsafe struct ScriptDelegate<T1, T2, T3>
             return default;
         }
 
-        EntityScript? Owner = Game.ActiveScript;
+        EntityScript? Owner = Engine.ActiveScript;
         return DelegateBindings.Bind(Address, new ArgsInvoker3<T1, T2, T3> { Handler = Handler, Slots = Slots, Owner = Owner });
     }
 }
@@ -421,7 +421,7 @@ public readonly unsafe struct ScriptDelegate<T1, T2, T3, T4>
             return default;
         }
 
-        EntityScript? Owner = Game.ActiveScript;
+        EntityScript? Owner = Engine.ActiveScript;
         return DelegateBindings.Bind(Address, new ArgsInvoker4<T1, T2, T3, T4> { Handler = Handler, Slots = Slots, Owner = Owner });
     }
 }
@@ -455,7 +455,7 @@ public readonly unsafe struct ScriptDelegate<T1, T2, T3, T4, T5>
             return default;
         }
 
-        EntityScript? Owner = Game.ActiveScript;
+        EntityScript? Owner = Engine.ActiveScript;
         return DelegateBindings.Bind(Address, new ArgsInvoker5<T1, T2, T3, T4, T5> { Handler = Handler, Slots = Slots, Owner = Owner });
     }
 }
@@ -489,7 +489,7 @@ public readonly unsafe struct ScriptDelegate<T1, T2, T3, T4, T5, T6>
             return default;
         }
 
-        EntityScript? Owner = Game.ActiveScript;
+        EntityScript? Owner = Engine.ActiveScript;
         return DelegateBindings.Bind(Address, new ArgsInvoker6<T1, T2, T3, T4, T5, T6> { Handler = Handler, Slots = Slots, Owner = Owner });
     }
 }

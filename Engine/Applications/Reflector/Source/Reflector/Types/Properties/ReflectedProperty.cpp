@@ -63,7 +63,7 @@ namespace Lumina
             {
                 PropertyFlags |= EPropertyFlags::EditorOnly;
             }
-            else if (MetadataPair.Key == "Replicated")
+            else if (MetadataPair.Key == "Replicated" || MetadataPair.Key == "Sync")
             {
                 PropertyFlags |= EPropertyFlags::Replicated;
             }

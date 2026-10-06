@@ -228,7 +228,7 @@ namespace Lumina
         }
     }
 
-    FWorldContext* FWorldManager::CreateWorldContext(CWorld* World, EWorldType Type, ENetMode NetMode)
+    FWorldContext* FWorldManager::CreateWorldContext(CWorld* World, EWorldType Type, ENetMode NetMode, bool bBot)
     {
         LUMINA_PROFILE_SCOPE();
         if (World == nullptr)
@@ -245,6 +245,7 @@ namespace Lumina
         Context->World   = World;
         Context->Type    = Type;
         Context->NetMode = NetMode;
+        Context->bBot    = bBot;
 
         FWorldContext* Raw = Context.get();
         

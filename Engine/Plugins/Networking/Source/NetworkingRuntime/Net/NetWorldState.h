@@ -184,6 +184,15 @@ namespace Lumina
         // Client side, ClientReady sent to the server once the link is up.
         bool                          bClientReadySent = false;
 
+        // Client side, this world already matches the host's map, so joining finishes here rather than after travel.
+        bool                          bWelcomed = false;
+
+        // Client side, each session event reaches this world's scripts once.
+        bool                          bJoinDispatched = false;
+        bool                          bLeaveDispatched = false;
+        ENetLeaveReason               PendingLeaveReason = ENetLeaveReason::None;
+        double                        ConnectStartTime = -1.0;
+
         //~ Client snapshot interpolation for SimulatedProxy movement. Per-entity sample rings live on the
         //  entity's FRepTransform component; this state is the global render clock shared by all of them.
         double                        LatestServerTime   = 0.0;

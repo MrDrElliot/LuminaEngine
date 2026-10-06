@@ -202,13 +202,13 @@ namespace Lumina
                 FNetArchive Writer(Payload);
                 WriteVarUInt(Writer, static_cast<uint32>(Text.size()));
                 Writer.Serialize(const_cast<char*>(Text.data()), static_cast<int64>(Text.size()));
-                SendRpc(Bot, ChatRpcId, static_cast<uint8>(ERpcTarget::Broadcast), RpcFlag_Unreliable, Payload);
+                SendRpc(Bot, ChatRpcId, static_cast<uint8>(ERpcTarget::Broadcast), static_cast<uint8>(ENetFlags::Unreliable), Payload);
             }
 
             if (Config.AttackSeconds > 0.0f && Now >= Bot.NextAttack)
             {
                 Bot.NextAttack = Now + Config.AttackSeconds * (0.5 + RandomUnit(Bot.Rng));
-                SendRpc(Bot, AttackRpcId, static_cast<uint8>(ERpcTarget::Host), RpcFlag_None, {});
+                SendRpc(Bot, AttackRpcId, static_cast<uint8>(ERpcTarget::Host), static_cast<uint8>(ENetFlags::None), {});
             }
         }
 
@@ -368,7 +368,7 @@ namespace Lumina
         TVector<uint8> Batch;
         Net::AppendScriptRpc(Batch, Bot.PawnGuid, 0, RpcId, static_cast<ERpcTarget>(Target), Flags, Bot.PeerId,
             Payload.data(), static_cast<uint32>(Payload.size()));
-        const bool bReliable = (Flags & RpcFlag_Unreliable) == 0;
+        const bool bReliable = (Flags & static_cast<uint8>(ENetFlags::Unreliable)) == 0;
         Bot.Transport->Send(Bot.Server, Batch.data(), static_cast<SIZE_T>(Batch.size()), bReliable ? 0 : 1,
             bReliable ? ESendMode::Reliable : ESendMode::UnreliableSequenced);
         Bot.BytesOut += Batch.size();

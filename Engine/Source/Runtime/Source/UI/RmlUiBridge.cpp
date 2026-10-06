@@ -1,5 +1,6 @@
 ﻿#include "Platform/Time/PlatformTime.h"
 #include "RuntimePCH.h"
+#include "Core/Engine/Engine.h"
 #include "World/ECS/Registry.h"
 #include "RmlUiBridge.h"
 #include "Core/Delegates/ScriptDelegate.h"
@@ -2010,7 +2011,11 @@ namespace Lumina::RmlUi
         }
         if (!State.bInitialized)
         {
-            LOG_WARN("[RmlUi] World.UI.LoadDocument('{}') called before RmlUi initialized.", FString(VirtualPath.data(), VirtualPath.size()).c_str());
+            // A headless process never starts the UI, so a document it asks for is expected to come back empty.
+            if (!GIsHeadless)
+            {
+                LOG_WARN("[RmlUi] World.UI.LoadDocument('{}') called before RmlUi initialized.", FString(VirtualPath.data(), VirtualPath.size()).c_str());
+            }
             return nullptr;
         }
         FWorldUIContext* UI = WorldUI(World);

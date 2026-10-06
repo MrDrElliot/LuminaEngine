@@ -68,7 +68,10 @@ internal sealed class ScriptableRuntime
             {
                 Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length,
                     Overrides.Pointer, Overrides.Length, GetUpdatePhase(Type),
-                    (byte)(Type.IsDefined(typeof(ParallelUpdateAttribute), inherit: true) ? 1 : 0));
+                    (byte)((Type.IsDefined(typeof(ParallelUpdateAttribute), inherit: true) ? 1 : 0)
+                         | (Type.IsDefined(typeof(HostOnlyAttribute), inherit: true) ? 2 : 0)
+                         | (Type.IsDefined(typeof(ClientOnlyAttribute), inherit: true) ? 4 : 0)
+                         | (Type.IsDefined(typeof(CosmeticAttribute), inherit: true) ? 8 : 0)));
             }
             finally
             {

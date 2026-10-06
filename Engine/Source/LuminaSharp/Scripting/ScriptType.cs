@@ -115,12 +115,16 @@ public sealed class ScriptType
 /// <summary>One [ScriptFunction] method: its name and the fields of its call frame.</summary>
 public sealed class ScriptFunction
 {
-    public ScriptFunction(string Name, IReadOnlyList<ScriptProperty> Params, int ReturnIndex)
+    public ScriptFunction(string Name, IReadOnlyList<ScriptProperty> Params, int ReturnIndex, uint Flags = 0)
     {
         this.Name = Name;
         this.Params = Params;
         this.ReturnIndex = ReturnIndex;
+        this.Flags = Flags;
     }
+
+    // EFunctionFlags the declaration adds, such as where an [Rpc] method runs.
+    public uint Flags { get; }
 
     public string Name { get; }
 
@@ -144,6 +148,12 @@ public sealed class ScriptProperty
     public IReadOnlyList<string>? Aliases { get; init; }
     /// <summary>Reset to default on a hot reload instead of carrying the previous value.</summary>
     public bool SkipHotReload { get; init; }
+
+    // The most sends a second a [Sync] field allows, or zero for every change.
+    public float NetRate { get; init; }
+
+    // The rest of a [Sync] declaration, as the metadata keys PROPERTY(Sync = ...) writes for C++.
+    public IReadOnlyList<KeyValuePair<string, string>>? NetMeta { get; init; }
     public Func<object, object?> Get { get; init; } = Instance => null;
     public Action<object, object?> Set { get; init; } = (Instance, Value) => { };
 

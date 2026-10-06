@@ -147,7 +147,7 @@ public abstract partial class EntityScript : Lumina.CEntityScript
 
         try
         {
-            using var Scope = Game.Push(World, Entity, this);
+            using var Scope = Engine.Push(World, Entity, this);
             Description.DispatchAction(this, Action, in State);
         }
         catch (System.Exception Exception)

@@ -21,6 +21,7 @@
 #include "Scripting/DotNet/ExportSignature.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/EntityScript.h"
+#include "Core/Reflection/Type/Function.h"
 #include "Scripting/ScriptableObject.h"
 #include "Core/Object/ScriptClass.h"
 #include "Scripting/DotNet/NetScriptBridge.h"
@@ -181,22 +182,102 @@ LUMINA_DOTNET_EXPORT(uint32, Net_NetIdToEntity)(uint64 World, uint32 NetId)
     return ToId((Net && AsWorld(World)) ? Net->NetIdToEntity(AsWorld(World), NetId) : ECS::NullEntity);
 }
 
-LUMINA_DOTNET_EXPORT(int32, Net_SendRpc)(CEntityScript* Script, uint32 RpcId, uint32 Target, uint32 Flags, const uint8* Payload, int32 PayloadSize)
+LUMINA_DOTNET_EXPORT(int32, Net_IsJoined)(uint64 World)
 {
     INetworkRuntime* Net = GetNetworkRuntime();
-    if (Net == nullptr || Script == nullptr || PayloadSize < 0)
+    return (Net && AsWorld(World) && Net->IsJoined(AsWorld(World))) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(uint32, Net_GetOwnedPawn)(uint64 World, uint32 ConnectionId)
+{
+    INetworkRuntime* Net = GetNetworkRuntime();
+    return ToId((Net && AsWorld(World)) ? Net->FindOwnedPawn(AsWorld(World), ConnectionId) : ECS::NullEntity);
+}
+
+// A C# [Rpc] method is a reflected function, found once per type and routed exactly as NET_RPC routes a C++ one.
+LUMINA_DOTNET_EXPORT(const void*, Net_FindRpc)(CEntityScript* Script, const char* Name, int32 Len)
+{
+    if (Script == nullptr || Script->GetClass() == nullptr || Name == nullptr || Len <= 0)
     {
-        return 0;
+        return nullptr;
     }
-    return Net->SendScriptRpc(Script, RpcId, (ERpcTarget)Target, (uint8)Flags, Payload, (uint32)PayloadSize) ? 1 : 0;
+    const FFunction* Function = Script->GetClass()->FindFunction(FName(FString(Name, (size_t)Len).c_str()));
+    return (Function != nullptr && Function->IsRpc()) ? Function : nullptr;
+}
+
+// The ERpcRoute for this call, which also consumes the mark a received call leaves.
+LUMINA_DOTNET_EXPORT(int32, Net_RpcPlan)(CEntityScript* Script, const void* Function)
+{
+    if (Script == nullptr || Function == nullptr)
+    {
+        return (int32)ERpcRoute::RunHere;
+    }
+    return (int32)Script->PlanRpc(*static_cast<const FFunction*>(Function));
+}
+
+// A default call frame the caller fills slot by slot and hands to Net_RpcSend, which frees it.
+LUMINA_DOTNET_EXPORT(void*, Net_RpcFrame)(const void* Function)
+{
+    const FFunction* Typed = static_cast<const FFunction*>(Function);
+    if (Typed == nullptr)
+    {
+        return nullptr;
+    }
+    void* Frame = Memory::Malloc(std::max<size_t>(Typed->GetParmsSize(), 1), alignof(std::max_align_t));
+    Memory::Memzero(Frame, std::max<size_t>(Typed->GetParmsSize(), 1));
+    Typed->InitializeFrame(Frame);
+    return Frame;
+}
+
+LUMINA_DOTNET_EXPORT(void, Net_RpcSend)(CEntityScript* Script, const void* Function, void* Frame)
+{
+    const FFunction* Typed = static_cast<const FFunction*>(Function);
+    if (Typed == nullptr || Frame == nullptr)
+    {
+        return;
+    }
+    if (Script != nullptr)
+    {
+        Script->SendRpcFrame(*Typed, Frame);
+    }
+    Typed->DestructFrame(Frame);
+    Memory::Free(Frame);
+}
+
+// The FromOwner Sync field a C# setter forwards, found once per type.
+LUMINA_DOTNET_EXPORT(void*, Net_FindSyncField)(CEntityScript* Script, const char* Name, int32 Len)
+{
+    if (Script == nullptr || Script->GetClass() == nullptr || Name == nullptr || Len <= 0)
+    {
+        return nullptr;
+    }
+    FProperty* Field = Script->GetClass()->GetProperty(FName(FString(Name, (size_t)Len).c_str()));
+    return (Field != nullptr && CEntityScript::IsSyncFromOwner(Field)) ? Field : nullptr;
+}
+
+LUMINA_DOTNET_EXPORT(void, Net_SendSync)(CEntityScript* Script, void* Field)
+{
+    if (Script != nullptr && Field != nullptr)
+    {
+        Script->SendSync(static_cast<FProperty*>(Field), false);
+    }
+}
+
+LUMINA_DOTNET_EXPORT(uint32, Net_RpcCaller)(CEntityScript* Script)
+{
+    return Script != nullptr ? Script->GetRpcCaller() : CEntityScript::GetReceivingCaller();
+}
+
+LUMINA_DOTNET_EXPORT(int32, Net_IsReceivingRpc)()
+{
+    return CEntityScript::IsReceivingRpc() ? 1 : 0;
 }
 
 namespace Lumina::NetScripts
 {
     namespace
     {
-        DotNet::TManagedExport<void (*)(void*, uint32, uint32, const uint8*, int32)> GDispatchRpc("NetDispatchRpc");
-        DotNet::TManagedExport<void (*)(void*, uint32, int32)>                      GDispatchConnection("NetDispatchConnection");
+        DotNet::TManagedExport<void (*)(void*, int32, uint32, int32)>               GDispatchSession("NetDispatchSession");
         DotNet::TManagedExport<void (*)(void*, const char*, int32, int32)>          GDispatchSync("NetDispatchSync");
 
         // Null for a C++ script, which has no managed side to notify.
@@ -210,23 +291,27 @@ namespace Lumina::NetScripts
         }
     }
 
+    // Either language, since a C# [Rpc] method is a reflected function read through the same properties.
     void DispatchRpc(CEntityScript* Script, uint32 RpcId, uint32 CallerId, const uint8* Payload, uint32 PayloadSize)
     {
-        auto* Fn = GDispatchRpc.Get();
-        void* Handle = ManagedHandleOf(Script);
-        if (Fn != nullptr && Handle != nullptr)
+        if (Script != nullptr)
         {
-            Fn(Handle, RpcId, CallerId, Payload, (int32)PayloadSize);
+            Script->ReceiveRpc(RpcId, CallerId, Payload, PayloadSize);
         }
     }
 
     void DispatchConnection(CWorld* World, uint32 ConnectionId, bool bJoined)
     {
-        auto* Fn = GDispatchConnection.Get();
-        if (Fn == nullptr || World == nullptr)
+        DispatchSession(World, bJoined ? ENetSessionEvent::ClientJoined : ENetSessionEvent::ClientLeft, ConnectionId, ENetLeaveReason::None);
+    }
+
+    void DispatchSession(CWorld* World, ENetSessionEvent Event, uint32 ConnectionId, ENetLeaveReason Reason)
+    {
+        if (World == nullptr)
         {
             return;
         }
+        auto* Fn = GDispatchSession.Get();
 
         // Gathered first, since a listener may spawn the player's entity and grow the pool being walked.
         TVector<TStrongObjectPtr<CEntityScript>> Scripts;
@@ -246,16 +331,35 @@ namespace Lumina::NetScripts
         {
             if (void* Handle = ManagedHandleOf(Script.Get()))
             {
-                Fn(Handle, ConnectionId, bJoined ? 1 : 0);
+                if (Fn != nullptr)
+                {
+                    Fn(Handle, (int32)Event, ConnectionId, (int32)Reason);
+                }
+                continue;
+            }
+
+            switch (Event)
+            {
+                case ENetSessionEvent::ClientJoined: Script->OnConnected(ConnectionId);    break;
+                case ENetSessionEvent::ClientLeft:   Script->OnDisconnected(ConnectionId); break;
+                case ENetSessionEvent::JoinedHost:   Script->OnJoinedHost();               break;
+                case ENetSessionEvent::LeftHost:     Script->OnLeftHost(Reason);           break;
             }
         }
     }
 
     void DispatchSyncChanging(CEntityScript* Script, const char* Names, uint32 NamesSize)
     {
-        auto* Fn = GDispatchSync.Get();
         void* Handle = ManagedHandleOf(Script);
-        if (Fn != nullptr && Handle != nullptr)
+        if (Handle == nullptr)
+        {
+            if (Script != nullptr)
+            {
+                Script->SyncArriving();
+            }
+            return;
+        }
+        if (auto* Fn = GDispatchSync.Get())
         {
             Fn(Handle, Names, (int32)NamesSize, 0);
         }
@@ -263,9 +367,16 @@ namespace Lumina::NetScripts
 
     void DispatchSyncChanged(CEntityScript* Script, const char* Names, uint32 NamesSize)
     {
-        auto* Fn = GDispatchSync.Get();
         void* Handle = ManagedHandleOf(Script);
-        if (Fn != nullptr && Handle != nullptr)
+        if (Handle == nullptr)
+        {
+            if (Script != nullptr)
+            {
+                Script->SyncArrived(Names, NamesSize);
+            }
+            return;
+        }
+        if (auto* Fn = GDispatchSync.Get())
         {
             Fn(Handle, Names, (int32)NamesSize, 1);
         }
@@ -290,5 +401,14 @@ LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(Net_MarkEntityDirty),
     LUMINA_DOTNET_SIG(Net_EntityToNetId),
     LUMINA_DOTNET_SIG(Net_NetIdToEntity),
-    LUMINA_DOTNET_SIG(Net_SendRpc)
+    LUMINA_DOTNET_SIG(Net_IsJoined),
+    LUMINA_DOTNET_SIG(Net_GetOwnedPawn),
+    LUMINA_DOTNET_SIG(Net_FindRpc),
+    LUMINA_DOTNET_SIG(Net_RpcPlan),
+    LUMINA_DOTNET_SIG(Net_RpcFrame),
+    LUMINA_DOTNET_SIG(Net_RpcSend),
+    LUMINA_DOTNET_SIG(Net_FindSyncField),
+    LUMINA_DOTNET_SIG(Net_SendSync),
+    LUMINA_DOTNET_SIG(Net_RpcCaller),
+    LUMINA_DOTNET_SIG(Net_IsReceivingRpc)
 );

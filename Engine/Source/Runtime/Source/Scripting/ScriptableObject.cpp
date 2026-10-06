@@ -413,6 +413,7 @@ namespace Lumina
                 ApplyScriptOverrides(Minted, Desc->OverriddenEvents);
                 Minted->ScriptUpdatePhase = Desc->UpdatePhase;
                 Minted->bScriptParallelUpdate = Desc->bParallelUpdate;
+                Minted->ScriptNetRealm = Desc->NetRealm;
 
                 // Re-appending would duplicate properties, so a changed schema tears the block down and rebuilds.
                 const Scripting::FScriptExportSchema& Schema = Desc->Schema;

@@ -20,6 +20,7 @@
 #include "Components/NetworkComponent.h"
 #include "Networking/INetworkTransport.h"
 #include "Log/Log.h"
+#include "Platform/Time/PlatformTime.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ScriptableObject.h"
 #include "Scripting/DotNet/NetScriptBridge.h"
@@ -165,7 +166,7 @@ namespace Lumina::Net
     uint32 GetProtocolHash()
     {
         // Bump on any hand-rolled wire-format change (message layout, codec) that reflection won't catch.
-        constexpr uint32 NetProtocolVersion = 3;
+        constexpr uint32 NetProtocolVersion = 4;
 
         // The same build gives the same table order, so a differing component set flips the hash.
         uint32 H = 2166136261u;
@@ -450,7 +451,19 @@ namespace Lumina::Net
         }
     }
 
-    void CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
+    // The Rate a Sync field declares, as the shortest gap between sends, or zero when it may go every tick.
+    static double MinSendInterval(const FProperty* Property)
+    {
+        const FCStringView Rate = Property->GetMetadata("Rate");
+        if (Rate.empty())
+        {
+            return 0.0;
+        }
+        const double Hz = std::strtod(Rate.data(), nullptr);
+        return Hz > 0.0 ? 1.0 / Hz : 0.0;
+    }
+
+    bool CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
                                  bool bBaseline, FComponentRepState* DiffState, TVector<FScriptRepOut>& Out)
     {
         LUMINA_PROFILE_SCOPE();
@@ -459,12 +472,18 @@ namespace Lumina::Net
         SEntityScriptComponent* Component = ScriptsOf(Registry, Entity);
         if (Component == nullptr)
         {
-            return;
+            return false;
         }
 
-        static thread_local TVector<uint8>  HookScratch;
-        static thread_local TVector<uint8>  CurBytes;
-        static thread_local TVector<uint32> CurOffsets;
+        static thread_local TVector<uint8>      HookScratch;
+        static thread_local TVector<uint8>      CurBytes;
+        static thread_local TVector<uint32>     CurOffsets;
+        static thread_local TVector<FProperty*> Fields;
+        static thread_local TVector<uint8>      Held;
+        static thread_local TVector<uint8>      Merged;
+        static thread_local TVector<uint32>     MergedOffsets;
+        bool bAnyHeld = false;
+        const double Now = PlatformTime::Seconds();
 
         HookScratch.clear();
         FNetArchive HookSrc(HookScratch);
@@ -493,24 +512,68 @@ namespace Lumina::Net
             Rep.ScriptIndex = Index;
             Rep.Block.resize((N + 7) / 8, 0);
 
+            Held.assign(N, 0);
+            bool bFieldsResolved = false;
+
             bool bAny = false;
+            bool bHeldHere = false;
             for (uint32 i = 0; i < N; ++i)
             {
                 const uint32 Size = CurOffsets[i + 1] - CurOffsets[i];
                 const bool bChanged = bBaseline || !bBaseUsable
                     || Base->FieldSize(i) != Size
                     || Memory::Memcmp(Base->FieldData(i), CurBytes.data() + CurOffsets[i], Size) != 0;
-                if (bChanged)
+                if (!bChanged)
                 {
-                    Rep.Block[i >> 3] |= static_cast<uint8>(1u << (i & 7));
-                    bAny = true;
+                    continue;
                 }
+
+                // A rate-limited field that went out too recently waits, keeping its old baseline so it still reads as changed.
+                if (!bBaseline && bBaseUsable && DiffState != nullptr)
+                {
+                    if (!bFieldsResolved)
+                    {
+                        Class->GetNetReplicatedProperties(Fields);
+                        bFieldsResolved = true;
+                    }
+                    const double Interval = i < Fields.size() ? MinSendInterval(Fields[i]) : 0.0;
+                    if (Interval > 0.0)
+                    {
+                        TVector<double>& SentTimes = DiffState->ScriptFieldSentTime[Index];
+                        SentTimes.resize(N, -1.0e9);
+                        if (Now - SentTimes[i] < Interval)
+                        {
+                            Held[i] = 1;
+                            bHeldHere = true;
+                            continue;
+                        }
+                        SentTimes[i] = Now;
+                    }
+                }
+
+                Rep.Block[i >> 3] |= static_cast<uint8>(1u << (i & 7));
+                bAny = true;
             }
 
-            if (Base != nullptr)
+            if (Base != nullptr && !bHeldHere)
             {
                 Base->Bytes.assign(CurBytes.begin(), CurBytes.end());
                 Base->Offsets.assign(CurOffsets.begin(), CurOffsets.end());
+            }
+            else if (Base != nullptr)
+            {
+                Merged.clear();
+                MergedOffsets.assign(1, 0u);
+                for (uint32 i = 0; i < N; ++i)
+                {
+                    const uint8* Source = Held[i] ? Base->FieldData(i) : CurBytes.data() + CurOffsets[i];
+                    const uint32 Size = Held[i] ? Base->FieldSize(i) : CurOffsets[i + 1] - CurOffsets[i];
+                    Merged.insert(Merged.end(), Source, Source + Size);
+                    MergedOffsets.push_back(static_cast<uint32>(Merged.size()));
+                }
+                Base->Bytes.assign(Merged.begin(), Merged.end());
+                Base->Offsets.assign(MergedOffsets.begin(), MergedOffsets.end());
+                bAnyHeld = true;
             }
 
             if (!bAny)
@@ -528,6 +591,7 @@ namespace Lumina::Net
             }
             Out.push_back(Move(Rep));
         }
+        return bAnyHeld;
     }
 
     void WriteScriptManifest(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -1000,6 +1064,25 @@ namespace Lumina::Net
         Ar.ObjectToNetIndex   = [&State](CObject* O)         { return NetObj_GetOrAssign(State.OutObjects, O); };
         Ar.AssetRefToNetIndex = [&State](const FAssetRef& R) { return NetAsset_GetOrAssign(State.OutAssets, R); };
         Ar.NameToNetIndex     = [&State](const FName& N)     { return NetName_GetOrAssign(State.OutNames, N); };
+    }
+
+    void BindEntityIds(FNetArchive& Ar, FNetWorldState& State)
+    {
+        Ar.EntityToNetGUID = [&State](uint32 Raw) -> uint32
+        {
+            const ECS::FEntity Entity = static_cast<ECS::FEntity>(Raw);
+            if (State.Registry == nullptr || Entity == ECS::NullEntity || !State.Registry->IsValid(Entity))
+            {
+                return 0u;
+            }
+            const SNetworkComponent* Net = State.Registry->TryGet<SNetworkComponent>(Entity);
+            return Net != nullptr ? Net->NetGUID.Value : 0u;
+        };
+        Ar.NetGUIDToEntity = [&State](uint32 Guid) -> uint32
+        {
+            const ECS::FEntity Entity = Guid != 0 ? State.GuidTable.Find(FNetGUID{ Guid }) : ECS::NullEntity;
+            return static_cast<uint32>(Entity.Value);
+        };
     }
 
     void BindReaders(FNetArchive& Ar, FNetWorldState& State, uint32 SenderConn)

@@ -34,6 +34,11 @@ namespace Lumina
         static void FindScripts(CWorld* World, ECS::FEntity Entity, TSubclassOf<CEntityScript> ScriptClass,
             TVector<TStrongObjectPtr<CEntityScript>>& OutScripts);
 
+        // Every attached script in the world whose class derives the named one, in no particular order.
+        FUNCTION()
+        static void FindScriptsInWorld(CWorld* World, TSubclassOf<CEntityScript> ScriptClass,
+            TVector<TStrongObjectPtr<CEntityScript>>& OutScripts);
+
         /** Runs OnDetach and drops the script. False when it was not attached to this entity. */
         FUNCTION()
         static bool RemoveScript(CWorld* World, ECS::FEntity Entity, CEntityScript* Script);

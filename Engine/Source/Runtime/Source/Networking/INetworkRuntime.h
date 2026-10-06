@@ -16,6 +16,7 @@ namespace Lumina
     class CWorld;
     class CEntityScript;
     class INetworkTransport;
+    class FNetArchive;
 
     // Everything the engine asks of networking, and the whole of it. The engine calls through this
     // and never names an implementation, so the netcode behind it can be replaced or removed
@@ -87,6 +88,15 @@ namespace Lumina
         // Queues an RPC whose arguments the script already serialized. False when it could not be routed.
         virtual bool SendScriptRpc(CEntityScript* Script, uint32 RpcId, ERpcTarget Target, uint8 Flags,
             const uint8* Payload, uint32 PayloadSize) { return false; }
+
+        // Client, the session with the host is up and this world matches the host's map.
+        virtual bool IsJoined(const CWorld* World) const { return false; }
+
+        // An entity ConnectionId owns, preferring one with a character controller, or the null entity.
+        virtual ECS::FEntity FindOwnedPawn(const CWorld* World, uint32 ConnectionId) const { return ECS::NullEntity; }
+
+        // Binds the entity ids every peer shares onto Ar, so a reflected value carrying an entity reads alike on every peer.
+        virtual void BindEntityIds(const CWorld* World, FNetArchive& Ar) const {}
     };
 
     // Null until something installs one, which is a supported state and not an error.

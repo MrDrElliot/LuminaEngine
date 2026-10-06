@@ -27,7 +27,7 @@ namespace Lumina::Scripting
      */
     RUNTIME_API FFunction* MintScriptFunction(CScriptClass& Class, CScriptStruct& LayoutRecord, const FName& Name,
                                              const FScriptExportSchema& ParamSchema, int32 ReturnIndex,
-                                             FFunction::FNativeFuncPtr Thunk);
+                                             FFunction::FNativeFuncPtr Thunk, EFunctionFlags ExtraFlags = EFunctionFlags::None);
 }
 
 namespace Lumina::Scripting

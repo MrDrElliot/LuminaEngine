@@ -9,6 +9,14 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ManagedInstance.h"
 #include "Core/Object/ObjectIterator.h"
+#include "Core/Reflection/Type/Function.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Serialization/NetArchive.h"
+#include "Networking/INetworkRuntime.h"
+#include "Networking/NetRealm.h"
+#include "DotNet/NetScriptBridge.h"
+#include "World/WorldContext.h"
+#include "Core/Engine/GameLibrary.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "ScriptableObject.h"
@@ -118,10 +126,28 @@ namespace Lumina
         }
     }
 
+    struct FSyncSnapshot
+    {
+        ~FSyncSnapshot()
+        {
+            for (size_t Index = 0; Index < Fields.size(); ++Index)
+            {
+                Fields[Index]->DestructValue(Slot(Index));
+            }
+        }
+
+        void* Slot(size_t Index) { return reinterpret_cast<uint8*>(Storage.data()) + Offsets[Index]; }
+
+        TVector<FProperty*>         Fields;
+        TVector<size_t>             Offsets;
+        TVector<std::max_align_t>   Storage;
+    };
+
     // A script destroyed outright, not detached, must still stop a batch that has it queued.
     CEntityScript::~CEntityScript()
     {
         EntityScripts::NoteStructureChange();
+        delete SyncSnapshot;
     }
 
     // A fault is not a broken promise, so it stops a parallel pass without being reported as one.
@@ -129,6 +155,582 @@ namespace Lumina
     {
         bFaulted = true;
         BumpStructureEpoch();
+    }
+
+    namespace
+    {
+        thread_local bool   GArrivingRpc = false;
+        thread_local int32  GRpcDepth    = 0;
+        thread_local uint32 GRpcCaller   = 0;
+
+        // Marks this thread as applying something that arrived, so a write it makes is not sent straight back.
+        struct FReceiveScope
+        {
+            explicit FReceiveScope(uint32 CallerId)
+                : OuterCaller(GRpcCaller)
+            {
+                GRpcCaller = CallerId;
+                ++GRpcDepth;
+            }
+
+            ~FReceiveScope()
+            {
+                --GRpcDepth;
+                GRpcCaller = OuterCaller;
+            }
+
+            uint32 OuterCaller;
+        };
+
+        // FNV-1a, so an id is the same on every peer and needs no table to agree on.
+        uint32 HashInto(uint32 Hash, const char* Text)
+        {
+            for (; *Text != '\0'; ++Text)
+            {
+                Hash ^= static_cast<uint8>(*Text);
+                Hash *= 16777619u;
+            }
+            return Hash;
+        }
+
+        uint32 RpcIdOf(const CClass* Class, const FFunction& Function)
+        {
+            uint32 Hash = HashInto(2166136261u, Class->GetName().c_str());
+            Hash = HashInto(Hash, ".");
+            return HashInto(Hash, Function.GetFunctionName().c_str());
+        }
+
+        ERpcTarget TargetOf(const FFunction& Function)
+        {
+            const EFunctionFlags Flags = Function.GetFunctionFlags();
+            if (EnumHasAnyFlags(Flags, EFunctionFlags::RpcHost))
+            {
+                return ERpcTarget::Host;
+            }
+            return EnumHasAnyFlags(Flags, EFunctionFlags::RpcOwner) ? ERpcTarget::Owner : ERpcTarget::Broadcast;
+        }
+
+        // A frame big enough for the function's parameters, aligned the way FFunction expects.
+        struct FCallFrame
+        {
+            explicit FCallFrame(const FFunction& InFunction)
+                : Function(InFunction)
+                , Storage(InFunction.GetParmsSize() / sizeof(std::max_align_t) + 1)
+            {
+                Function.InitializeFrame(Data());
+            }
+
+            ~FCallFrame()
+            {
+                Function.DestructFrame(Data());
+            }
+
+            void* Data() { return Storage.data(); }
+
+            const FFunction& Function;
+            TVector<std::max_align_t> Storage;
+        };
+
+        // One value of a property outside any container, for a write that has not been accepted yet.
+        struct FValueBuffer
+        {
+            explicit FValueBuffer(const FProperty& InField)
+                : Field(InField)
+                , Storage(InField.GetElementSize() / sizeof(std::max_align_t) + 1)
+            {
+                Field.ConstructValue(Data());
+            }
+
+            ~FValueBuffer()
+            {
+                Field.DestructValue(Data());
+            }
+
+            void* Data() { return Storage.data(); }
+
+            const FProperty& Field;
+            TVector<std::max_align_t> Storage;
+        };
+
+        // Only entity ids are bound, so names, objects and assets travel inline and a relayed call reads the same on every peer.
+        void BindCallArchive(FNetArchive& Archive, const CWorld* World)
+        {
+            if (INetworkRuntime* Net = GetNetworkRuntime())
+            {
+                Net->BindEntityIds(World, Archive);
+            }
+        }
+
+        const FFunction* FindNamedFunction(const CEntityScript* Script, const FProperty* Field, FStringView Key)
+        {
+            const FCStringView Name = Field->GetMetadata(Key);
+            if (Name.empty())
+            {
+                return nullptr;
+            }
+            const FFunction* Function = Script->GetClass()->FindFunction(FName(FString(Name.data(), Name.size()).c_str()));
+            if (Function == nullptr)
+            {
+                LOG_WARN("{}.{} names {} function '{}', which is not a reflected function of the script.",
+                    Script->GetClass()->GetName().c_str(), Field->GetPropertyName().c_str(), FString(Key.data(), Key.size()).c_str(),
+                    FString(Name.data(), Name.size()).c_str());
+            }
+            return Function;
+        }
+    }
+
+    bool CEntityScript::IsHost() const
+    {
+        return OwningWorld == nullptr || OwningWorld->GetNetMode() != ENetMode::Client;
+    }
+
+    bool CEntityScript::IsOwner() const
+    {
+        INetworkRuntime* Net = GetNetworkRuntime();
+        if (Net == nullptr || OwningWorld == nullptr || !Net->IsEntityNetworked(OwningWorld, OwningEntity))
+        {
+            return true;
+        }
+        return Net->GetEntityOwner(OwningWorld, OwningEntity) == Net->GetLocalConnectionId(OwningWorld);
+    }
+
+    uint32 CEntityScript::GetRpcCaller() const
+    {
+        if (GRpcDepth > 0)
+        {
+            return GRpcCaller;
+        }
+        INetworkRuntime* Net = GetNetworkRuntime();
+        return (Net != nullptr && OwningWorld != nullptr) ? Net->GetLocalConnectionId(OwningWorld) : 0u;
+    }
+
+    bool CEntityScript::IsReceivingRpc()
+    {
+        return GRpcDepth > 0;
+    }
+
+    uint32 CEntityScript::GetReceivingCaller()
+    {
+        return GRpcDepth > 0 ? GRpcCaller : 0u;
+    }
+
+    void CEntityScript::MarkNetDirty()
+    {
+        if (INetworkRuntime* Net = GetNetworkRuntime(); Net != nullptr && OwningWorld != nullptr)
+        {
+            Net->MarkEntityDirty(OwningWorld, OwningEntity);
+        }
+    }
+
+    ERpcRoute CEntityScript::PlanRpc(const FFunction& Function)
+    {
+        // The mark belongs to exactly one call, so an RPC made from inside a received one still routes.
+        if (GArrivingRpc)
+        {
+            GArrivingRpc = false;
+            return ERpcRoute::RunHere;
+        }
+
+        INetworkRuntime* Net = GetNetworkRuntime();
+        if (Net == nullptr || OwningWorld == nullptr || OwningWorld->GetNetMode() == ENetMode::Standalone)
+        {
+            return ERpcRoute::RunHere;
+        }
+
+        switch (TargetOf(Function))
+        {
+            case ERpcTarget::Host:
+                return IsHost() ? ERpcRoute::RunHere : ERpcRoute::SendOnly;
+
+            case ERpcTarget::Owner:
+                return Net->GetEntityOwner(OwningWorld, OwningEntity) == Net->GetLocalConnectionId(OwningWorld)
+                    ? ERpcRoute::RunHere : ERpcRoute::SendOnly;
+
+            default:
+                return ERpcRoute::SendAndRunHere;
+        }
+    }
+
+    void CEntityScript::SendRpc(const FFunction& Function, const void* const* Values)
+    {
+        INetworkRuntime* Net = GetNetworkRuntime();
+        if (Net == nullptr || OwningWorld == nullptr)
+        {
+            return;
+        }
+
+        TVector<uint8> Payload;
+        FNetArchive Writer(Payload);
+        BindCallArchive(Writer, OwningWorld);
+        const TSpan<FProperty* const> Arguments = Function.GetArguments();
+        for (size_t Index = 0; Index < Arguments.size(); ++Index)
+        {
+            Arguments[Index]->NetSerialize(Writer, const_cast<void*>(Values[Index]));
+        }
+        Writer.AlignToByte();
+
+        const bool bUnreliable = EnumHasAnyFlags(Function.GetFunctionFlags(), EFunctionFlags::NetUnreliable);
+        const uint8 Flags = static_cast<uint8>(bUnreliable ? ENetFlags::Unreliable : ENetFlags::None);
+        Net->SendScriptRpc(this, RpcIdOf(GetClass(), Function), TargetOf(Function), Flags, Payload.data(), static_cast<uint32>(Payload.size()));
+    }
+
+    void CEntityScript::SendRpcFrame(const FFunction& Function, const void* Frame)
+    {
+        const TSpan<FProperty* const> Arguments = Function.GetArguments();
+        TVector<const void*> Values(Arguments.size());
+        for (size_t Index = 0; Index < Arguments.size(); ++Index)
+        {
+            Values[Index] = Arguments[Index]->GetValuePtr<void>(Frame);
+        }
+        SendRpc(Function, Values.data());
+    }
+
+    bool CEntityScript::RouteRpcValues(const char* FunctionName, const void* const* Values, uint32 NumValues)
+    {
+        const FFunction* Function = GetClass()->FindFunction(FName(FunctionName));
+        if (Function == nullptr || !Function->IsRpc())
+        {
+            GArrivingRpc = false;
+            LOG_ERROR("NET_RPC in {}::{} needs the function declared FUNCTION(Rpc = Broadcast, Host or Owner).", GetClass()->GetName().c_str(), FunctionName);
+            return false;
+        }
+
+        const ERpcRoute Route = PlanRpc(*Function);
+        if (Route == ERpcRoute::RunHere)
+        {
+            return false;
+        }
+
+        if (Function->GetArguments().size() != NumValues)
+        {
+            LOG_ERROR("NET_RPC in {}::{} has to pass all {} parameters, in order.", GetClass()->GetName().c_str(), FunctionName, Function->GetArguments().size());
+            return false;
+        }
+
+        SendRpc(*Function, Values);
+        return Route == ERpcRoute::SendOnly;
+    }
+
+    void CEntityScript::ReceiveRpc(uint32 RpcId, uint32 CallerId, const uint8* Payload, uint32 PayloadSize)
+    {
+        INetworkRuntime* Net = GetNetworkRuntime();
+        for (const FFunction* Function : GetClass()->GetFunctions())
+        {
+            if (!Function->IsRpc() || RpcIdOf(GetClass(), *Function) != RpcId)
+            {
+                continue;
+            }
+
+            // Owner-only calls are refused unless they came from the entity's owner or from the host.
+            if (EnumHasAnyFlags(Function->GetFunctionFlags(), EFunctionFlags::NetOwnerOnly) && CallerId != 0
+                && (Net == nullptr || Net->GetEntityOwner(OwningWorld, OwningEntity) != CallerId))
+            {
+                return;
+            }
+
+            FCallFrame Frame(*Function);
+            FNetArchive Reader(Payload, PayloadSize);
+            BindCallArchive(Reader, OwningWorld);
+            for (FProperty* Argument : Function->GetArguments())
+            {
+                Argument->NetSerialize(Reader, Argument->GetValuePtr<void>(Frame.Data()));
+            }
+            if (Reader.HasError())
+            {
+                LOG_WARN("[Net] RPC {}::{} arrived truncated.", GetClass()->GetName().c_str(), Function->GetFunctionName().c_str());
+                return;
+            }
+
+            FReceiveScope Scope(CallerId);
+            GArrivingRpc = true;
+            Function->Invoke(this, Frame.Data());
+            GArrivingRpc = false;
+            return;
+        }
+
+        TVector<FProperty*> Fields;
+        GetClass()->GetNetReplicatedProperties(Fields);
+        for (FProperty* Field : Fields)
+        {
+            if (!IsSyncFromOwner(Field))
+            {
+                continue;
+            }
+            const bool bCorrection = RpcId == SyncFieldId(Field, true);
+            if (bCorrection || RpcId == SyncFieldId(Field, false))
+            {
+                ReceiveSync(Field, bCorrection, CallerId, Payload, PayloadSize);
+                return;
+            }
+        }
+
+        LOG_WARN("[Net] {} has no RPC or Sync field with id {}; the peers are running different builds.", GetClass()->GetName().c_str(), RpcId);
+    }
+
+    void CEntityScript::ReceiveSync(FProperty* Field, bool bCorrection, uint32 CallerId, const uint8* Payload, uint32 PayloadSize)
+    {
+        INetworkRuntime* Net = GetNetworkRuntime();
+        if (Net == nullptr || OwningWorld == nullptr)
+        {
+            return;
+        }
+
+        // A proposal is the host's to judge and comes only from the owner. A correction is the owner's to take.
+        if (bCorrection == IsHost())
+        {
+            return;
+        }
+        if (!bCorrection && CallerId != 0 && Net->GetEntityOwner(OwningWorld, OwningEntity) != CallerId)
+        {
+            return;
+        }
+
+        FValueBuffer Value(*Field);
+        FNetArchive Reader(Payload, PayloadSize);
+        BindCallArchive(Reader, OwningWorld);
+        Field->NetSerialize(Reader, Value.Data());
+        if (Reader.HasError())
+        {
+            return;
+        }
+
+        FReceiveScope Scope(CallerId);
+        if (!bCorrection && !ValidateSync(Field, Value.Data()))
+        {
+            SendSync(Field, true);
+            return;
+        }
+        if (Field->Identical(Field->GetValuePtr<void>(this), Value.Data()))
+        {
+            return;
+        }
+
+        ApplySync(Field, Value.Data());
+        if (!bCorrection)
+        {
+            MarkNetDirty();
+        }
+    }
+
+    void CEntityScript::ApplySync(FProperty* Field, const void* Value)
+    {
+        const char* Name = Field->GetPropertyName().c_str();
+        const uint32 NameSize = static_cast<uint32>(strlen(Name) + 1);
+        NetScripts::DispatchSyncChanging(this, Name, NameSize);
+        Field->CopyCompleteValue(Field->GetValuePtr<void>(this), Value);
+        NetScripts::DispatchSyncChanged(this, Name, NameSize);
+    }
+
+    uint32 CEntityScript::SyncFieldId(const FProperty* Field, bool bCorrection) const
+    {
+        uint32 Hash = HashInto(2166136261u, GetClass()->GetName().c_str());
+        Hash = HashInto(Hash, ".");
+        Hash = HashInto(Hash, Field->GetPropertyName().c_str());
+        return HashInto(Hash, bCorrection ? "#correct" : "#sync");
+    }
+
+    bool CEntityScript::IsSyncFromOwner(const FProperty* Field)
+    {
+        const FCStringView Sync = Field->GetMetadata("Sync");
+        return FStringView(Sync.data(), Sync.size()).find("FromOwner") != FStringView::npos;
+    }
+
+    void CEntityScript::NotifySyncChanged(const FProperty* Field, const void* OldValue)
+    {
+        const FFunction* Function = FindNamedFunction(this, Field, "Change");
+        if (Function == nullptr)
+        {
+            return;
+        }
+
+        const TSpan<FProperty* const> Arguments = Function->GetArguments();
+        if (Arguments.size() != 0 && Arguments.size() != 2)
+        {
+            LOG_WARN("{}::{} is a change handler, so it takes nothing or (Old, New).", GetClass()->GetName().c_str(), Function->GetFunctionName().c_str());
+            return;
+        }
+
+        FCallFrame Frame(*Function);
+        if (Arguments.size() == 2)
+        {
+            Arguments[0]->CopyCompleteValue(Arguments[0]->GetValuePtr<void>(Frame.Data()), OldValue);
+            Arguments[1]->CopyCompleteValue(Arguments[1]->GetValuePtr<void>(Frame.Data()), Field->GetValuePtr<void>(this));
+        }
+        Function->Invoke(this, Frame.Data());
+    }
+
+    bool CEntityScript::ValidateSync(const FProperty* Field, const void* Proposed)
+    {
+        const FFunction* Function = FindNamedFunction(this, Field, "Validate");
+        if (Function == nullptr)
+        {
+            return true;
+        }
+
+        const TSpan<FProperty* const> Arguments = Function->GetArguments();
+        const FProperty* Return = Function->GetReturnParam();
+        if (Arguments.size() != 1 || Return == nullptr || Return->GetType() != EPropertyTypeFlags::Bool)
+        {
+            LOG_WARN("{}::{} validates a Sync field, so it takes the proposed value and returns bool.", GetClass()->GetName().c_str(), Function->GetFunctionName().c_str());
+            return true;
+        }
+
+        FCallFrame Frame(*Function);
+        Arguments[0]->CopyCompleteValue(Arguments[0]->GetValuePtr<void>(Frame.Data()), Proposed);
+        Function->Invoke(this, Frame.Data());
+        return *Return->GetValuePtr<bool>(Frame.Data());
+    }
+
+    void CEntityScript::QuantizeSync(const FProperty* Field)
+    {
+        const FCStringView Text = Field->GetMetadata("Quantize");
+        const double Step = Text.empty() ? 0.0 : std::strtod(Text.data(), nullptr);
+        if (Step <= 0.0)
+        {
+            return;
+        }
+
+        void* Value = Field->GetValuePtr<void>(this);
+        auto Snap = [Step](double In) { return std::round(In / Step) * Step; };
+        switch (Field->GetType())
+        {
+            case EPropertyTypeFlags::Float:  *static_cast<float*>(Value)  = static_cast<float>(Snap(*static_cast<float*>(Value))); break;
+            case EPropertyTypeFlags::Double: *static_cast<double*>(Value) = Snap(*static_cast<double*>(Value)); break;
+            case EPropertyTypeFlags::Int8:   *static_cast<int8*>(Value)   = static_cast<int8>(Snap(*static_cast<int8*>(Value))); break;
+            case EPropertyTypeFlags::Int16:  *static_cast<int16*>(Value)  = static_cast<int16>(Snap(*static_cast<int16*>(Value))); break;
+            case EPropertyTypeFlags::Int32:  *static_cast<int32*>(Value)  = static_cast<int32>(Snap(*static_cast<int32*>(Value))); break;
+            case EPropertyTypeFlags::Int64:  *static_cast<int64*>(Value)  = static_cast<int64>(Snap(static_cast<double>(*static_cast<int64*>(Value)))); break;
+            case EPropertyTypeFlags::UInt8:  *static_cast<uint8*>(Value)  = static_cast<uint8>(Snap(*static_cast<uint8*>(Value))); break;
+            case EPropertyTypeFlags::UInt16: *static_cast<uint16*>(Value) = static_cast<uint16>(Snap(*static_cast<uint16*>(Value))); break;
+            case EPropertyTypeFlags::UInt32: *static_cast<uint32*>(Value) = static_cast<uint32>(Snap(*static_cast<uint32*>(Value))); break;
+            case EPropertyTypeFlags::UInt64: *static_cast<uint64*>(Value) = static_cast<uint64>(Snap(static_cast<double>(*static_cast<uint64*>(Value)))); break;
+            default: break;
+        }
+    }
+
+    void CEntityScript::SendSync(const FProperty* Field, bool bCorrection)
+    {
+        INetworkRuntime* Net = GetNetworkRuntime();
+        if (Net == nullptr || OwningWorld == nullptr)
+        {
+            return;
+        }
+        TVector<uint8> Payload;
+        FNetArchive Writer(Payload);
+        BindCallArchive(Writer, OwningWorld);
+        const_cast<FProperty*>(Field)->NetSerialize(Writer, Field->GetValuePtr<void>(this));
+        Writer.AlignToByte();
+        Net->SendScriptRpc(this, SyncFieldId(Field, bCorrection), bCorrection ? ERpcTarget::Owner : ERpcTarget::Host,
+            static_cast<uint8>(ENetFlags::None), Payload.data(), static_cast<uint32>(Payload.size()));
+    }
+
+    FSyncSnapshot& CEntityScript::EnsureSyncSnapshot()
+    {
+        if (SyncSnapshot != nullptr)
+        {
+            return *SyncSnapshot;
+        }
+
+        SyncSnapshot = new FSyncSnapshot();
+        GetClass()->GetNetReplicatedProperties(SyncSnapshot->Fields);
+        size_t Size = 0;
+        for (const FProperty* Field : SyncSnapshot->Fields)
+        {
+            SyncSnapshot->Offsets.push_back(Size);
+            Size += (Field->GetElementSize() + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t) * sizeof(std::max_align_t);
+        }
+        SyncSnapshot->Storage.resize(Size / sizeof(std::max_align_t) + 1);
+        for (size_t Index = 0; Index < SyncSnapshot->Fields.size(); ++Index)
+        {
+            FProperty* Field = SyncSnapshot->Fields[Index];
+            Field->ConstructValue(SyncSnapshot->Slot(Index));
+            Field->CopyCompleteValue(SyncSnapshot->Slot(Index), Field->GetValuePtr<void>(this));
+        }
+        return *SyncSnapshot;
+    }
+
+    void CEntityScript::PollSync()
+    {
+        if (OwningWorld == nullptr || OwningWorld->GetNetMode() == ENetMode::Standalone || bFaulted)
+        {
+            return;
+        }
+
+        // The first sighting is the baseline, which the entity's initial replication already carries.
+        if (SyncSnapshot == nullptr)
+        {
+            EnsureSyncSnapshot();
+            return;
+        }
+
+        const bool bHost = IsHost();
+        const bool bOwner = !bHost && IsOwner();
+        bool bDirty = false;
+        for (size_t Index = 0; Index < SyncSnapshot->Fields.size(); ++Index)
+        {
+            FProperty* Field = SyncSnapshot->Fields[Index];
+            const bool bWriter = bHost || (bOwner && IsSyncFromOwner(Field));
+            if (bWriter)
+            {
+                QuantizeSync(Field);
+            }
+
+            void* Seen = SyncSnapshot->Slot(Index);
+            if (Field->Identical(Seen, Field->GetValuePtr<void>(this)))
+            {
+                continue;
+            }
+
+            if (bHost)
+            {
+                bDirty = true;
+            }
+            else if (bWriter)
+            {
+                SendSync(Field, false);
+            }
+            NotifySyncChanged(Field, Seen);
+            Field->CopyCompleteValue(Seen, Field->GetValuePtr<void>(this));
+        }
+
+        if (bDirty)
+        {
+            MarkNetDirty();
+        }
+    }
+
+    void CEntityScript::SyncArriving()
+    {
+        EnsureSyncSnapshot();
+    }
+
+    void CEntityScript::SyncArrived(const char* Names, uint32 NamesSize)
+    {
+        if (SyncSnapshot == nullptr)
+        {
+            return;
+        }
+
+        for (uint32 Start = 0; Start < NamesSize;)
+        {
+            const char* Name = Names + Start;
+            Start += static_cast<uint32>(strlen(Name) + 1);
+            for (size_t Index = 0; Index < SyncSnapshot->Fields.size(); ++Index)
+            {
+                FProperty* Field = SyncSnapshot->Fields[Index];
+                if (strcmp(Field->GetPropertyName().c_str(), Name) != 0)
+                {
+                    continue;
+                }
+                void* Seen = SyncSnapshot->Slot(Index);
+                if (!Field->Identical(Seen, Field->GetValuePtr<void>(this)))
+                {
+                    NotifySyncChanged(Field, Seen);
+                    Field->CopyCompleteValue(Seen, Field->GetValuePtr<void>(this));
+                }
+                break;
+            }
+        }
     }
 
     bool SEntityScriptComponent::Serialize(FArchive& Ar)
@@ -459,6 +1061,11 @@ namespace Lumina
                                     : EScriptUpdatePhase::PrePhysics;
         }
 
+        bool IsOutsideRealm(const CEntityScript* Script, CWorld* World)
+        {
+            return !NetRealm::Allows(Script->GetClass(), World);
+        }
+
         // Re-resolved per dispatch, since an earlier callback may have removed this script or its entity.
         bool IsStillAttached(ECS::FRegistry& Registry, ECS::FEntity Entity, const CEntityScript* Script)
         {
@@ -676,6 +1283,13 @@ namespace Lumina
                 return nullptr;
             }
 
+            // find, not get, since a bare registry in a test or tool has no world and its scripts have none.
+            CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
+            if (WorldPtr != nullptr && !NetRealm::Allows(ScriptClass, *WorldPtr))
+            {
+                return nullptr;
+            }
+
             CObject* Created = NewObject(ScriptClass, nullptr, NAME_None, FGuid::New(), OF_Transient);
             CEntityScript* Script = static_cast<CEntityScript*>(Created);
             if (Script == nullptr)
@@ -683,8 +1297,6 @@ namespace Lumina
                 return nullptr;
             }
 
-            // find, not get, since a bare registry in a test or tool has no world and its scripts have none.
-            CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
             Script->SetOwner(Entity, WorldPtr != nullptr ? *WorldPtr : nullptr);
 
             SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
@@ -763,6 +1375,10 @@ namespace Lumina
                     // The one place entity and registry are both in hand, and it runs before OnReady.
                     if (bDrainLifecycle && Script->GetOwningEntity() == ECS::NullEntity)
                     {
+                        if (IsOutsideRealm(Script, World))
+                        {
+                            continue;
+                        }
                         Script->SetOwner(Entity, World);
                         {
                             LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());

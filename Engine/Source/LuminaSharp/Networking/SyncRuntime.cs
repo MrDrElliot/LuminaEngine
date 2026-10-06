@@ -15,6 +15,52 @@ public static class SyncRuntime
     {
         NetNative.MarkScriptDirty(Script);
     }
+
+    // Emitted into a [Sync] setter carrying [Change], so the writer's own change runs the handler the same as an arriving one.
+    public static void Changed<T>(object Owner, string Member, T Old, T New)
+    {
+        if (Owner is EntityScript Script && !Script.Entity.IsNull)
+        {
+            SyncChanges.DispatchLocal(Script, Member, Old, New);
+        }
+    }
+
+    // A FromOwner write goes to the host only from the owning client, and never while an arriving value is being applied.
+    public static bool ShouldForward(EntityScript Script)
+    {
+        return !Script.Entity.IsNull && Script.World.IsClient && Script.Network.IsNetworked && Script.Network.IsOwner && !RpcRuntime.IsReceiving;
+    }
+
+    // Native sends the stored value through the field's FProperty, then validates, applies or corrects it on the host, as for C++.
+    public static void Forward(EntityScript Script, string Field)
+    {
+        IntPtr Handle = NativeObjectMarshal.ToHandle(Script);
+        IntPtr Property = FieldOf(Script.GetType(), Handle, Field);
+        if (Property != IntPtr.Zero)
+        {
+            NetNative.SendSync(Handle, Property);
+        }
+    }
+
+    private static readonly ConditionalWeakTable<Type, Dictionary<string, IntPtr>> Fields = new();
+
+    private static IntPtr FieldOf(Type Type, IntPtr Handle, string Field)
+    {
+        Dictionary<string, IntPtr> ByName = Fields.GetValue(Type, _ => new Dictionary<string, IntPtr>(StringComparer.Ordinal));
+        lock (ByName)
+        {
+            if (!ByName.TryGetValue(Field, out IntPtr Property))
+            {
+                Property = NetNative.FindSyncField(Handle, Field);
+                if (Property == IntPtr.Zero)
+                {
+                    Native.Log(ELogLevel.Error, $"[Net] {Type.Name}.{Field} is not a native Sync FromOwner field, so the owner's writes stay local.");
+                }
+                ByName[Field] = Property;
+            }
+            return Property;
+        }
+    }
 }
 
 // Runs [Change] handlers. Built per type on first use and keyed weakly, so a hot reload's old types are not pinned.
@@ -30,6 +76,19 @@ internal static class SyncChanges
     private sealed class FTypeHandlers
     {
         public readonly Dictionary<string, FHandler> ByName = new(StringComparer.Ordinal);
+
+        // The C# member name, which is what a generated setter knows when a [Property] renames the native one.
+        public readonly Dictionary<string, FHandler> ByMember = new(StringComparer.Ordinal);
+    }
+
+    public static void DispatchLocal<T>(EntityScript Script, string Member, T Old, T New)
+    {
+        FTypeHandlers Handlers = Cache.GetValue(Script.GetType(), Build);
+        if (!Handlers.ByMember.TryGetValue(Member, out FHandler? Handler))
+        {
+            return;
+        }
+        Handler.Method.Invoke(Script, Handler.bTakesValues ? new object?[] { Old, New } : null);
     }
 
     private static readonly ConditionalWeakTable<Type, FTypeHandlers> Cache = new();
@@ -115,7 +174,9 @@ internal static class SyncChanges
             }
 
             string NativeName = Property.GetCustomAttribute<PropertyAttribute>()?.Name ?? Property.Name;
-            Result.ByName[NativeName] = new FHandler { Property = Property, Method = Method, bTakesValues = bTakesValues };
+            var Handler = new FHandler { Property = Property, Method = Method, bTakesValues = bTakesValues };
+            Result.ByName[NativeName] = Handler;
+            Result.ByMember[Property.Name] = Handler;
         }
         return Result;
     }
