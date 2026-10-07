@@ -7,4 +7,7 @@ namespace Lumina::ImGuiX::NativeFrames
 
     // Draws the window controls and records each frame's caption area, once per frame before ImGui::Render.
     void Update();
+
+    // Runs the minimize, maximize and restore clicks queued this frame, after ImGui::UpdatePlatformWindows.
+    void FlushWindowActions();
 }

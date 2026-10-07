@@ -1595,6 +1595,21 @@ namespace Lumina
         ImGui::Dummy(ImVec2(Offset, 0));
         ImGui::SameLine();
 
+        // A customization draws the whole value in one row, so there is nothing for an arrow to fold.
+        if (Customization)
+        {
+            if (IsArrayElementProperty())
+            {
+                ImGui::Text("%lld", static_cast<long long>(PropertyHandle->Index));
+            }
+            else
+            {
+                ImGui::TextUnformatted(StructProperty->GetPropertyDisplayName().c_str());
+            }
+            DrawPropertyTooltip(StructProperty);
+            return;
+        }
+
         ImGui::SetNextItemOpen(bExpanded);
         ImGui::PushStyleColor(ImGuiCol_Header, 0);
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
@@ -1607,7 +1622,7 @@ namespace Lumina
 
     void FStructPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
-        if (!bExpanded)
+        if (!bExpanded && !Customization)
         {
             return;
         }
@@ -1628,7 +1643,8 @@ namespace Lumina
 
     float FStructPropertyRow::GetMeasuredHeaderTextWidth() const
     {
-        return ImGui::GetTreeNodeToLabelSpacing() + ImGui::CalcTextSize(StructProperty->GetPropertyDisplayName().c_str()).x;
+        const float LabelWidth = ImGui::CalcTextSize(StructProperty->GetPropertyDisplayName().c_str()).x;
+        return Customization ? LabelWidth : ImGui::GetTreeNodeToLabelSpacing() + LabelWidth;
     }
 
     void FStructPropertyRow::RebuildChildren()

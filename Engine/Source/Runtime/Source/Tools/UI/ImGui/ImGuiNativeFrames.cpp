@@ -20,6 +20,30 @@ namespace Lumina::ImGuiX::NativeFrames
         // Rebuilt every frame and read by the OS hit test between frames, both on the thread that pumps messages.
         TVector<FViewportCaption> GCaptions;
 
+        enum class EWindowAction : uint8
+        {
+            Minimize,
+            Maximize,
+            Restore,
+        };
+
+        struct FPendingWindowAction
+        {
+            ImGuiID       ViewportID = 0;
+            EWindowAction Action     = EWindowAction::Restore;
+        };
+
+        // Applied between frames, since a resize the OS reports mid-frame is dropped when ImGui clears its request flags.
+        TVector<FPendingWindowAction> GPendingActions;
+
+        void QueueWindowAction(const ImGuiViewport* Viewport, EWindowAction Action)
+        {
+            if (Viewport != nullptr)
+            {
+                GPendingActions.push_back({ Viewport->ID, Action });
+            }
+        }
+
         bool WantsNativeFrame(ImGuiViewport* Viewport)
         {
             const ImGuiWindow* Window = static_cast<ImGuiViewportP*>(Viewport)->Window;
@@ -165,26 +189,42 @@ namespace Lumina::ImGuiX::NativeFrames
             }
 
             // The taskbar is the only way back to a minimized window, so one without an icon there never minimizes.
+            const ImGuiViewport* Viewport = Node->HostWindow != nullptr ? Node->HostWindow->Viewport : nullptr;
             if (bCanMinimize && ImGui::TabItemButton(MinimizeLabel, Flags))
             {
-                glfwIconifyWindow(Window);
+                QueueWindowAction(Viewport, EWindowAction::Minimize);
             }
 
             if (ImGui::TabItemButton(MaximizeLabel, Flags))
             {
-                if (bMaximized)
-                {
-                    glfwRestoreWindow(Window);
-                }
-                else
-                {
-                    glfwMaximizeWindow(Window);
-                }
+                QueueWindowAction(Viewport, bMaximized ? EWindowAction::Restore : EWindowAction::Maximize);
             }
 
             ImGui::DockNodeEndAmendTabBar();
             return SpacerID;
         }
+    }
+
+    void FlushWindowActions()
+    {
+        // Looked up again by id, since UpdatePlatformWindows may have destroyed a window queued this frame.
+        for (const FPendingWindowAction& Pending : GPendingActions)
+        {
+            const ImGuiViewport* Viewport = ImGui::FindViewportByID(Pending.ViewportID);
+            GLFWwindow* Window = Viewport != nullptr ? GetFramedWindow(Viewport) : nullptr;
+            if (Window == nullptr)
+            {
+                continue;
+            }
+
+            switch (Pending.Action)
+            {
+            case EWindowAction::Minimize: glfwIconifyWindow(Window);  break;
+            case EWindowAction::Maximize: glfwMaximizeWindow(Window); break;
+            case EWindowAction::Restore:  glfwRestoreWindow(Window);  break;
+            }
+        }
+        GPendingActions.clear();
     }
 
     void Install()
@@ -207,7 +247,7 @@ namespace Lumina::ImGuiX::NativeFrames
         {
             if (GLFWwindow* Moving = GetFramedWindow(G.MovingWindow->Viewport); Moving != nullptr && glfwGetWindowAttrib(Moving, GLFW_MAXIMIZED) == GLFW_TRUE)
             {
-                glfwRestoreWindow(Moving);
+                QueueWindowAction(G.MovingWindow->Viewport, EWindowAction::Restore);
             }
         }
 

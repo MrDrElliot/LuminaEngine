@@ -219,6 +219,10 @@ namespace Lumina
         /** List row background (active / pressed). */
         PROPERTY(Editable, Color, Category = "Surfaces")
         FVector4 RowBgActive = FVector4(0.160f, 0.175f, 0.215f, 1.00f);
+
+        // Kept last, since the style refresh hashes the run of colors from Accent through this one.
+        PROPERTY(Editable, Color, Category = "Surfaces", ToolTip = "Component and script header bars in the details panel. Hover and pressed shades derive from it.")
+        FVector4 ComponentHeader = FVector4(0.175f, 0.190f, 0.235f, 1.00f);
     };
 
     REFLECT()

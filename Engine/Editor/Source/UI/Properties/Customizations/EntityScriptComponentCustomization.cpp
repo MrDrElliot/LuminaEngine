@@ -8,6 +8,7 @@
 #include "Scripting/ScriptableObject.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "UI/Properties/PropertyTable.h"
 #include "Session/SessionOps.h"
 #include "UI/Tools/EditorToolContext.h"
@@ -96,14 +97,18 @@ namespace Lumina
             // Breathing room around the title, which is what stops the stack of scripts reading as one block.
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 6.0f));
             ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+            ImGui::PushStyleColor(ImGuiCol_Header, EditorColors::ComponentHeader());
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorColors::Lighten(EditorColors::ComponentHeader(), 0.05f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorColors::Lighten(EditorColors::ComponentHeader(), 0.08f));
             // AllowOverlap so the buttons get their own clicks instead of the header toggling collapse.
             const bool bOpen = ImGui::CollapsingHeader((HeaderLabel + "##scripthdr").c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+            ImGui::PopStyleColor(3);
             ImGui::PopStyleVar();
 
             // The namespace trails the name in the header's own row, dimmed, so it informs without competing.
             if (!Namespace.empty())
             {
-                ImGui::SameLine();
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
                 ImGui::TextDisabled("%.*s", (int)Namespace.size(), Namespace.data());
             }
 

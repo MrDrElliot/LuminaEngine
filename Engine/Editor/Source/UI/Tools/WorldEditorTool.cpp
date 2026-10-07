@@ -3732,6 +3732,13 @@ namespace Lumina
                 ToggleGameViewMode();
             }
 
+            if (InputViewport)
+            {
+                PossessedInputMode = InputViewport->GetContext().GetInputMode();
+                PossessedMouseMode = InputViewport->GetContext().GetMouseMode();
+                bHasPossessedInputModes = true;
+            }
+
             // Set last, since HasEditorCameraControl flips with it and the refocus handler reads it next draw.
             bEjectedFromPlay = true;
             SetInputFocus(EInputFocus::Editor);
@@ -3761,6 +3768,14 @@ namespace Lumina
             }
             bRestoreGameViewOnPossess = false;
 
+            // Before focus returns, so the game gets back the cursor it had rather than whatever the flycam left.
+            if (bHasPossessedInputModes && InputViewport)
+            {
+                InputViewport->GetContext().SetInputMode(PossessedInputMode);
+                FInputProcessor::Get().SetMouseMode(PossessedMouseMode, World.Get());
+            }
+            bHasPossessedInputModes = false;
+
             bEjectedFromPlay = false;
             SetInputFocus(EInputFocus::Game);
         }
@@ -3780,6 +3795,7 @@ namespace Lumina
             bEjectedFromPlay = false;
             PossessedCameraEntity = ECS::NullEntity;
             bRestoreGameViewOnPossess = false;
+            bHasPossessedInputModes = false;
         }
     }
 
@@ -4263,6 +4279,7 @@ namespace Lumina
             bEjectedFromPlay = false;
             PossessedCameraEntity = ECS::NullEntity;
             bRestoreGameViewOnPossess = false;
+            bHasPossessedInputModes = false;
 
             PropertyTables.clear();
             ResetSelectionState();

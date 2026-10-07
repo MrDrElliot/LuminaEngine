@@ -19,6 +19,8 @@
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "World/WorldContext.h"
+#include "Events/MouseCodes.h"
+#include "Input/InputMode.h"
 
 namespace Lumina
 {
@@ -309,6 +311,11 @@ namespace Lumina
         bool                                    bEjectedFromPlay = false;
         ECS::FEntity                            PossessedCameraEntity = ECS::NullEntity;   // game camera to hand back to
         bool                                    bRestoreGameViewOnPossess = false;
+
+        // The game's own input and cursor modes, since the flycam's look capture rewrites the shared context while ejected.
+        EInputMode                              PossessedInputMode = EInputMode::Game;
+        EMouseMode                              PossessedMouseMode = EMouseMode::Normal;
+        bool                                    bHasPossessedInputModes = false;
 
         // Play-in-editor session config, edited via the play-controls dropdown.
         struct FPlayInEditorSettings

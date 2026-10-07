@@ -224,7 +224,7 @@ namespace Lumina
             // The palette is a contiguous run of FVector4 members; hashing the block detects any edit.
             const CEditorColorSettings& P = *GetDefault<CEditorColorSettings>();
             const char* Begin = reinterpret_cast<const char*>(&P.Accent);
-            const char* End   = reinterpret_cast<const char*>(&P.RowBgActive) + sizeof(FVector4);
+            const char* End   = reinterpret_cast<const char*>(&P.ComponentHeader) + sizeof(FVector4);
             return Hash::GetHash64(Begin, static_cast<size_t>(End - Begin));
         }
 
@@ -426,6 +426,7 @@ namespace Lumina
         if (Io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             ImGui::UpdatePlatformWindows();
+            ImGuiX::NativeFrames::FlushWindowActions();
             ForwardSecondaryPlatformWindowInput();
         }
 

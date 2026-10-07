@@ -35,6 +35,8 @@
 #include "UI/Properties/PropertyEditContexts.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "Scene/SceneOps.h"
+#include "Core/Serialization/ObjectArchiver.h"
+#include "Core/Serialization/MemoryArchiver.h"
 #include "UI/Tools/EditorEntityUtils.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EntityTags.h"
@@ -379,16 +381,79 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        const char* PickerCategoryIcon(const FString& Name);
+
+        // The object picker's button size, so a component header uses the same controls as the rest of the panel.
+        constexpr ImVec2 GHeaderButtonSize(42, 0);
+
+        // Whole-component values for Copy and Paste in the header's options menu.
+        struct FComponentClipboard
+        {
+            const CStruct* Type = nullptr;
+            TVector<uint8> Bytes;
+        };
+
+        FComponentClipboard& GetComponentClipboard()
+        {
+            static FComponentClipboard Clipboard;
+            return Clipboard;
+        }
+
+        // "SkyLightComponent" reads as "Sky Light".
+        FString FriendlyComponentName(const FString& Title)
+        {
+            FString Name = Title;
+            const FStringView Suffix("Component");
+            if (Name.size() > Suffix.size() && FStringView(Name).ends_with(Suffix))
+            {
+                Name.resize(Name.size() - Suffix.size());
+            }
+
+            FString Spaced;
+            Spaced.reserve(Name.size() + 4);
+            for (size_t Index = 0; Index < Name.size(); ++Index)
+            {
+                const char Char = Name[Index];
+                const bool bUpper = Char >= 'A' && Char <= 'Z';
+                const bool bAfterLower = Index > 0 && Name[Index - 1] >= 'a' && Name[Index - 1] <= 'z';
+                if (bUpper && bAfterLower)
+                {
+                    Spaced.push_back(' ');
+                }
+                Spaced.push_back(Char);
+            }
+            return Spaced.empty() ? Title : Spaced;
+        }
+
+        void CaptureComponentValues(const CStruct* Type, void* Data, TVector<uint8>& Out)
+        {
+            Out.clear();
+            FMemoryWriter Writer(Out);
+            FObjectProxyArchiver Ar(Writer, false);
+            Type->SerializeTaggedProperties(Ar, Data);
+        }
+
+        // Reflected fields only, so the runtime state a component keeps beside them survives.
+        void ApplyComponentValues(const CStruct* Type, void* Data, const TVector<uint8>& In)
+        {
+            FMemoryReader Reader(In);
+            FObjectProxyArchiver Ar(Reader, true);
+            Type->SerializeTaggedProperties(Ar, Data);
+        }
+    }
+
     void FSceneEditorTool::DrawComponentHeader(FComponentTableEntry& Entry, ECS::FEntity Entity)
     {
-
         // Existence check via meta; drop this row if the entity no longer holds the component.
         if (IsComponentHiddenInDetails(Entry.ReflectedType))
         {
             return;
         }
 
-        if (!ECS::Utils::HasComponent(GetSceneRegistry(), Entity, Entry.ReflectedType))
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (!ECS::Utils::HasComponent(Registry, Entity, Entry.ReflectedType))
         {
             return;
         }
@@ -396,57 +461,101 @@ namespace Lumina
         const bool bIsRequired =
             Entry.ReflectedType == STransformComponent::StaticStruct() || Entry.ReflectedType == SNameComponent::StaticStruct();
 
+        CStruct* Type = const_cast<CStruct*>(Entry.ReflectedType);
+        const FComponentOps* Ops = FindComponentOps(Type->GetName().c_str());
+        void* Data = Ops != nullptr && Ops->Get != nullptr ? Ops->Get(Registry, Entity) : nullptr;
+
+        const FString Category = Type->HasMeta("Category") ? Type->GetMeta("Category") : FString();
+        const FString Friendly = FriendlyComponentName(Entry.Title);
+
         ImGui::PushID(&Entry);
 
-        constexpr ImGuiTableFlags Flags =
-        ImGuiTableFlags_BordersOuter |
-        ImGuiTableFlags_NoBordersInBodyUntilResize |
-        ImGuiTableFlags_SizingFixedFit;
+        const float Spacing     = ImGui::GetStyle().ItemSpacing.x;
+        const float HeaderRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        const int32 ButtonCount = bIsRequired ? 1 : 2;
+        const float ButtonsLeft = HeaderRight - GHeaderButtonSize.x * ButtonCount - Spacing * (ButtonCount - 1);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 10.0f)); // increase Y for taller header
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0, 0));
-        bool bIsOpen = false;
-        if (ImGui::BeginTable("GridTable", 1, Flags))
+        // The script header's proportions, so every collapsible section in the panel reads the same.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 6.0f));
+        ImGui::PushStyleColor(ImGuiCol_Header, EditorColors::ComponentHeader());
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorColors::Lighten(EditorColors::ComponentHeader(), 0.05f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorColors::Lighten(EditorColors::ComponentHeader(), 0.08f));
+        const FString Label = Format("{} {}##ComponentHeader", PickerCategoryIcon(Category), Friendly);
+        const bool bIsOpen = ImGui::CollapsingHeader(Label.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
+        ImGuiX::TextTooltip("{}", Entry.Title);
+
+        ImGui::SameLine(ButtonsLeft);
+        if (ImGui::Button(LE_ICON_DOTS_VERTICAL "##ComponentOptions", GHeaderButtonSize))
         {
-            ImGui::TableSetupColumn("##Header", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
+            ImGui::OpenPopup("ComponentOptions");
+        }
+        ImGuiX::TextTooltip("{}", "Component options.");
 
-            ImGui::PushStyleColor(ImGuiCol_Header, EditorColors::U32(EditorColors::Header()));
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorColors::U32(EditorColors::RowBgHovered()));
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorColors::U32(EditorColors::RowBgActive()));
-            ImGui::SetNextItemAllowOverlap();
-            bIsOpen = ImGui::CollapsingHeader(Entry.Title.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
-            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, EditorColors::U32(EditorColors::PanelBg()));
-
-            ImGui::PopStyleColor(3);
-
-            if (!bIsRequired)
+        if (!bIsRequired)
+        {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
+            if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##RemoveComponent", GHeaderButtonSize))
             {
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 28.0f);
-
-                ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::WithAlpha(EditorColors::Danger(), 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::WithAlpha(EditorColors::Danger(), 0.85f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::Danger());
-                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
-
-                if (ImGui::SmallButton(LE_ICON_TRASH_CAN "##RemoveComponent"))
-                {
-                    ComponentDestroyRequests.push(FComponentDestroyRequest{ Entry.ReflectedType, Entity });
-                }
-
-                ImGuiX::TextTooltip("{}", "Remove Component");
-
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor(4);
+                ComponentDestroyRequests.push(FComponentDestroyRequest{ Entry.ReflectedType, Entity });
             }
-
-            ImGui::EndTable();
+            ImGui::PopStyleColor(3);
+            ImGuiX::TextTooltip("{}", "Remove this component.");
         }
 
-        ImGui::PopStyleVar(2);
+        if (ImGui::BeginPopup("ComponentOptions"))
+        {
+            FComponentClipboard& Clipboard = GetComponentClipboard();
 
+            // One undo step through the same per-component record a property edit makes.
+            auto ApplyTransacted = [&](FName StepLabel, const TVector<uint8>& Values)
+            {
+                BeginComponentTransaction({ Entity }, Type);
+                {
+                    SceneOps::FPropertyEditScope Edit(Registry, Entity, Type, Data, nullptr, nullptr);
+                    ApplyComponentValues(Type, Data, Values);
+                }
+                EndTransaction(StepLabel);
+                MarkSceneDirty();
+                bDetailsDirty = true;
+            };
+
+            if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy Values", nullptr, false, Data != nullptr))
+            {
+                Clipboard.Type = Type;
+                CaptureComponentValues(Type, Data, Clipboard.Bytes);
+            }
+
+            const bool bCanPaste = Data != nullptr && Clipboard.Type == Type && !Clipboard.Bytes.empty();
+            if (ImGui::MenuItem(LE_ICON_CONTENT_PASTE " Paste Values", nullptr, false, bCanPaste))
+            {
+                ApplyTransacted("Paste Component Values", Clipboard.Bytes);
+            }
+
+            // A prefab instance resets to its prefab, everything else to the struct's own defaults.
+            void* Defaults = Entry.Table != nullptr && Entry.Table->GetDefaultObject() != nullptr
+                ? Entry.Table->GetDefaultObject()
+                : Type->GetDefaultInstance();
+            if (ImGui::MenuItem(LE_ICON_RESTORE " Reset to Defaults", nullptr, false, Data != nullptr && Defaults != nullptr))
+            {
+                TVector<uint8> DefaultValues;
+                CaptureComponentValues(Type, Defaults, DefaultValues);
+                ApplyTransacted("Reset Component", DefaultValues);
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem(LE_ICON_CLOSE_CIRCLE " Remove Component", nullptr, false, !bIsRequired))
+            {
+                ComponentDestroyRequests.push(FComponentDestroyRequest{ Entry.ReflectedType, Entity });
+            }
+
+            ImGui::EndPopup();
+        }
 
         if (bIsOpen && Entry.Table != nullptr)
         {
