@@ -64,39 +64,17 @@ namespace Lumina
         ~FDefaultSceneRenderer() override;
         LE_NO_COPYMOVE(FDefaultSceneRenderer);
 
-        struct FEntityRecord
+        // A skinned slot past the frame data's current size, written by the merge once it has grown the array.
+        struct FDeferredSkinnedSlot
         {
-            FMatrix4               Transform;
-            FVector4               SphereBounds;
-            uint32                  MeshletHeaderSlot;
-            uint32                  CustomData;
-            uint32                  EntityID;
-            uint32                  BoneArenaBase;   // into the compacted per-frame arena
-            uint32                  BoneArenaCount;
-        };
-
-        struct FProcessedDrawItem
-        {
-            uint32              EntityRecordIndex;
-            uint32              BatchIndex;
             uint32              InstanceSlot;
-            uint32              SurfaceMeshletOffset;
-            uint32              SurfaceMeshletCount;
-            uint32              ShadowMeshletOffset;
-            uint32              ShadowMeshletCount;
-            uint32              MeshletTotalCount;
-            EInstanceFlags      Flags;
-            uint16              MaterialIndex;
-            uint16              _Pad;
+            FSkinnedFrameData   Data;
         };
 
         struct CACHE_ALIGN FThreadLocalDrawData
         {
-            TFrameVector<FProcessedDrawItem>    Items;
-            TFrameVector<FEntityRecord>         EntityRecords;
-
-            TVector<uint32>                     DrawInstanceCounts;
-            TVector<uint32>                     TouchedSlots;
+            TVector<uint32>                     SkinnedSlots;
+            TVector<FDeferredSkinnedSlot>       DeferredSlots;
             TVector<FUIntVector2>               BoneUploadRanges;
 
             FSceneRenderStats                   Stats = {};
@@ -110,31 +88,11 @@ namespace Lumina
 
             void ResetForFrame()
             {
-                Items.Reset();
-                EntityRecords.Reset();
+                SkinnedSlots.clear();
+                DeferredSlots.clear();
                 BoneUploadRanges.clear();
                 Stats = {};
                 bTouched = false;
-            }
-
-            // Zeroes only what the last gather dirtied, then grows to the current batch count.
-            void PrepareCounters(uint32 NumBatches)
-            {
-                for (uint32 Slot : TouchedSlots)
-                {
-                    DrawInstanceCounts[Slot] = 0u;
-                }
-                TouchedSlots.clear();
-
-                if ((uint32)DrawInstanceCounts.size() < NumBatches)
-                {
-                    DrawInstanceCounts.resize(NumBatches, 0u);
-                }
-            }
-
-            ~FThreadLocalDrawData()
-            {
-                ResetForFrame();
             }
         };
 
@@ -1619,7 +1577,6 @@ namespace Lumina
         TVector<FSpriteSortEntry>               SpriteSortScratch;
         
         TVector<FThreadLocalDrawData>           ThreadLocalStorage;
-        uint32                                  CurrentReservePerThread = 0;
 
         struct alignas(64) FLineBatchScratch
         {

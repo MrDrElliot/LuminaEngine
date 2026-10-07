@@ -28,6 +28,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Skeleton")
         TStrongObjectPtr<CSkeleton> Skeleton;
 
+        // What a runtime merge built this from, held so the parts stay loaded while anything wears it.
+        TVector<TStrongObjectPtr<CSkeletalMesh>> MergeSources;
+
     private:
 
         TStrongObjectPtr<CSkeleton> SkeletonJointIndicesAddress;

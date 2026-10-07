@@ -86,7 +86,7 @@ namespace Lumina
         const auto Attach = [&](ECS::FEntity Entity, const SSocketAttachmentComponent& Attachment, STransformComponent& Transform)
         {
             const FRelationshipComponent* Relationship = SystemContext.TryGet<FRelationshipComponent>(Entity);
-            if (Relationship == nullptr || Relationship->Parent == ECS::NullEntity)
+            if (Relationship == nullptr || Relationship->Parent == ECS::NullEntity) 
             {
                 return;
             }

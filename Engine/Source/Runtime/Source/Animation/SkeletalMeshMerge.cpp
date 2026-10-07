@@ -4,8 +4,10 @@
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
+#include "Containers/HashTable.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Threading/Thread.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/SkeletonResource.h"
 #include "TaskSystem/TaskSystem.h"
@@ -142,7 +144,7 @@ namespace Lumina::SkeletalMeshMerge
         return true;
     }
 
-    FResult Merge(TSpan<CSkeletalMesh* const> Meshes, const FSettings& Settings)
+    static FResult MergeUncached(TSpan<CSkeletalMesh* const> Meshes, const FSettings& Settings)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -449,12 +451,124 @@ namespace Lumina::SkeletalMeshMerge
         CSkeletalMesh* OutMesh = NewObject<CSkeletalMesh>(nullptr, MeshName, FGuid::New(), OF_Transient);
         OutMesh->Skeleton  = OutSkeleton;
         OutMesh->Materials = MergedMaterials;
+        OutMesh->MergeSources.reserve(Sources.size());
+        for (CSkeletalMesh* Source : Sources)
+        {
+            OutMesh->MergeSources.emplace_back(Source);
+        }
 
         // Last, because it uploads the geometry and derives the bounding box from what it was given.
         OutMesh->SetMeshResource(Move(Merged));
 
         Result.Mesh     = OutMesh;
         Result.Skeleton = OutSkeleton;
+        return Result;
+    }
+
+    namespace
+    {
+        struct FMergeCacheEntry
+        {
+            TVector<uint64>               Key;
+            TWeakObjectPtr<CSkeletalMesh> Mesh;
+            TWeakObjectPtr<CSkeleton>     Skeleton;
+        };
+
+        // Weak, so a merged mesh still dies with the last character wearing it.
+        struct FMergeCache
+        {
+            FMutex                                Mutex;
+            THashMap<uint64, FMergeCacheEntry>    Entries;
+            SIZE_T                                PruneAt = 64;
+        };
+
+        FMergeCache& GetMergeCache()
+        {
+            static FMergeCache Cache;
+            return Cache;
+        }
+
+        uint64 PackHandle(const CObjectBase* Object)
+        {
+            const FObjectHandle Handle(Object);
+            return ((uint64)(uint32)Handle.Index << 32) | (uint32)Handle.Generation;
+        }
+
+        // Resource addresses catch a reimport, which swaps the geometry under the same object.
+        void BuildMergeKey(TSpan<CSkeletalMesh* const> Meshes, const FSettings& Settings, TVector<uint64>& OutKey)
+        {
+            OutKey.push_back(Settings.BaseSkeleton != nullptr ? PackHandle(Settings.BaseSkeleton) : 0ull);
+            OutKey.push_back(GetTypeHash(Settings.Name));
+            OutKey.push_back(Settings.bMergeSockets ? 1ull : 0ull);
+
+            for (CSkeletalMesh* Mesh : Meshes)
+            {
+                if (!HasMergeableGeometry(Mesh))
+                {
+                    continue;
+                }
+                const CSkeleton* Skeleton = SkeletonOf(Mesh);
+                OutKey.push_back(PackHandle(Mesh));
+                OutKey.push_back((uint64)(uintptr_t)&Mesh->GetMeshResource());
+                OutKey.push_back(PackHandle(Skeleton));
+                OutKey.push_back((uint64)(uintptr_t)Skeleton->GetSkeletonResource());
+                for (const TStrongObjectPtr<CMaterialInterface>& Material : Mesh->Materials)
+                {
+                    OutKey.push_back((uint64)(uintptr_t)Material.Get());
+                }
+            }
+        }
+
+        uint64 HashMergeKey(const TVector<uint64>& Key)
+        {
+            uint64 Hash = 0xcbf29ce484222325ull;
+            for (uint64 Word : Key)
+            {
+                Hash = (Hash ^ Word) * 0x100000001b3ull;
+            }
+            return Hash;
+        }
+    }
+
+    FResult Merge(TSpan<CSkeletalMesh* const> Meshes, const FSettings& Settings)
+    {
+        TVector<uint64> Key;
+        BuildMergeKey(Meshes, Settings, Key);
+        const uint64 Hash = HashMergeKey(Key);
+
+        FMergeCache& Cache = GetMergeCache();
+        {
+            FScopeLock Lock(Cache.Mutex);
+            auto It = Cache.Entries.find(Hash);
+            if (It != Cache.Entries.end() && It->second.Key == Key)
+            {
+                FResult Shared;
+                Shared.Mesh     = It->second.Mesh.Lock();
+                Shared.Skeleton = It->second.Skeleton.Lock();
+                if (Shared.IsValid() && Shared.Skeleton.Get() != nullptr)
+                {
+                    return Shared;
+                }
+            }
+        }
+
+        FResult Result = MergeUncached(Meshes, Settings);
+        if (!Result.IsValid())
+        {
+            return Result;
+        }
+
+        FScopeLock Lock(Cache.Mutex);
+        FMergeCacheEntry& Entry = Cache.Entries[Hash];
+        Entry.Key      = Move(Key);
+        Entry.Mesh     = Result.Mesh;
+        Entry.Skeleton = Result.Skeleton;
+
+        if (Cache.Entries.size() >= Cache.PruneAt)
+        {
+            erase_if(Cache.Entries, [](const auto& Pair) { return !Pair.second.Mesh.IsValid(); });
+            Cache.PruneAt = Math::Max<SIZE_T>(64, Cache.Entries.size() * 2);
+        }
         return Result;
     }
 }

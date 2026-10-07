@@ -626,16 +626,9 @@ namespace Lumina
 
     FDefaultSceneRenderer::FThreadLocalDrawData& FDefaultSceneRenderer::AcquireThreadLocalDrawData(uint32 Slot)
     {
+        // PrepareGatherScratch already reset every entry, so this only marks it for the merge.
         FThreadLocalDrawData& Local = ThreadLocalStorage[Slot];
-
-        if (!Local.bTouched)
-        {
-            Local.ResetForFrame();
-            Local.Items.reserve(CurrentReservePerThread);
-
-            Local.PrepareCounters(ScenePrimitives.GetBatches().Num());
-            Local.bTouched = true;
-        }
+        Local.bTouched = true;
         return Local;
     }
 
@@ -1281,9 +1274,6 @@ namespace Lumina
     {
         auto& DrawCommands = Frame.Geometry.DrawCommands;
 
-        // The gather emits skeletal items only; statics are culled on the GPU from the retained set.
-        const size_t EstimatedProxies  = (size_t)ScenePrimitives.GetSkinnedPrimitiveCount() * 2;
-
         // One command per pipeline batch, not per primitive; the merge emits exactly this many.
         DrawCommands.reserve(ScenePrimitives.GetBatches().Num());
 
@@ -1298,8 +1288,7 @@ namespace Lumina
                 ThreadLocal.emplace_back();
             }
         }
-        CurrentReservePerThread = (uint32)((EstimatedProxies + NumThreads - 1) / Math::Max(1u, NumThreads));
-        
+
         {
             LUMINA_PROFILE_SECTION("Thread Local Reset");
             // Every entry, not the first NumThreads, since the merge walks the whole container.
@@ -2109,6 +2098,26 @@ namespace Lumina
         return (uint32)Math::Clamp(Biased, 0, MaxLOD);
     }
 
+    // Leaves FrameTag and SkinnedBoundsBase alone, since UploadSkinnedFrameData stamps both on the render thread.
+    static void PublishSkinnedFrameData(FSkinnedFrameData& Out, const FSkinnedFrameData& In)
+    {
+        Out.SurfaceMeshletOffset    = In.SurfaceMeshletOffset;
+        Out.SurfaceMeshletCount     = In.SurfaceMeshletCount;
+        Out.ShadowMeshletOffset     = In.ShadowMeshletOffset;
+        Out.ShadowMeshletCount      = In.ShadowMeshletCount;
+        Out.MeshletTotalCount       = In.MeshletTotalCount;
+        Out.SkinnedVertexBase       = In.SkinnedVertexBase;
+        Out.ShadowSkinnedVertexBase = In.ShadowSkinnedVertexBase;
+        Out.BoneOffset              = In.BoneOffset;
+    }
+
+    struct FSkinnedFrameDataTarget
+    {
+        FSkinnedFrameData*  Data;
+        uint32              Num;
+        uint32              RetainedSlots;
+    };
+
     // The LOD table comes from the interned FSurfaceDescGPU the binding already names, not from the
     // 304-byte FResolvedSurface behind Prim.Surfaces. Identical tables collapse to one entry there, so many
     // instances of few meshes read a handful of descs instead of one pointer chase per primitive.
@@ -2117,7 +2126,8 @@ namespace Lumina
                                       const FSurfaceBinding* Bindings,
                                       const FSurfaceDescGPU* SurfaceDescs,
                                       uint32 NumSurfaceDescs,
-                                      uint32 EntityRecordIdx,
+                                      uint32 BoneArenaBase,
+                                      const FSkinnedFrameDataTarget& Target,
                                       const FSceneRenderSettings& Settings,
                                       float DistSq,
                                       float RadiusSq)
@@ -2127,54 +2137,44 @@ namespace Lumina
         for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
             const FSurfaceBinding& Binding = Bindings[s];
-            if (Binding.SurfaceDescIndex >= NumSurfaceDescs)
+            const uint32 InstanceSlot = Binding.InstanceSlot;
+            if (Binding.SurfaceDescIndex >= NumSurfaceDescs || InstanceSlot >= Target.RetainedSlots)
             {
                 continue;
             }
             const FSurfaceDescGPU& Desc = SurfaceDescs[Binding.SurfaceDescIndex];
-
-            EInstanceFlags Flags = Prim.BaseFlags | Binding.MaterialFlags;
-            if (Prim.bCastShadow && Binding.bMaterialCastsShadows)
-            {
-                Flags |= EInstanceFlags::CastShadow;
-            }
 
             // CPU LOD pick replaces LOD 0; smaller ranges directly cut cull-pass cost.
             const uint32 LODIndex       = ResolveSurfaceLOD(Desc, Prim.ForcedLODIndex, Settings.bUseLODs, DistSq, RadiusSq);
             const uint32 ShadowLODIndex = ResolveShadowLOD(Desc, LODIndex, Settings.ShadowLODBias,
                                                            DistSq, Settings.ShadowCoarseLODDistance * Settings.ShadowCoarseLODDistance);
 
-            // Zero meshlet count gates the cull shader's MeshletHeader deref.
-            const uint32 SurfaceMeshletCount  = MeshletHeaderSlot ? Desc.LODMeshletCount[LODIndex]       : 0u;
-            const uint32 SurfaceMeshletOffset = Desc.LODMeshletOffset[LODIndex];
-            const uint32 ShadowMeshletCount   = MeshletHeaderSlot ? Desc.LODMeshletCount[ShadowLODIndex] : 0u;
-            const uint32 ShadowMeshletOffset  = Desc.LODMeshletOffset[ShadowLODIndex];
-
             const uint32 LastLOD = Desc.NumLODs > 0u ? Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
-            const uint32 MeshletTotalCount = MeshletHeaderSlot
-                                           ? Desc.LODMeshletOffset[LastLOD] + Desc.LODMeshletCount[LastLOD]
-                                           : 0u;
 
-            const uint32 BatchIndex = Binding.BatchIndex;
+            FSkinnedFrameData Data = {};
+            // Zero meshlet count gates the cull shader's MeshletHeader deref.
+            Data.SurfaceMeshletCount     = MeshletHeaderSlot ? Desc.LODMeshletCount[LODIndex]       : 0u;
+            Data.SurfaceMeshletOffset    = Desc.LODMeshletOffset[LODIndex];
+            Data.ShadowMeshletCount      = MeshletHeaderSlot ? Desc.LODMeshletCount[ShadowLODIndex] : 0u;
+            Data.ShadowMeshletOffset     = Desc.LODMeshletOffset[ShadowLODIndex];
+            Data.MeshletTotalCount       = MeshletHeaderSlot
+                                         ? Desc.LODMeshletOffset[LastLOD] + Desc.LODMeshletCount[LastLOD]
+                                         : 0u;
+            // Seeded to the sentinel so a rejected slot keeps no slice rather than last frame's base.
+            Data.SkinnedVertexBase       = kNoPreSkinBase;
+            Data.ShadowSkinnedVertexBase = kNoPreSkinBase;
+            Data.BoneOffset              = BoneArenaBase;
 
-            // Counted only to mark the batch touched, so PrepareCounters knows what to reset.
-            if (Local.DrawInstanceCounts[BatchIndex]++ == 0u)
+            // Slots are disjoint across primitives, and the array only grows in the merge, after every emit.
+            if (InstanceSlot < Target.Num)
             {
-                Local.TouchedSlots.push_back(BatchIndex);
+                PublishSkinnedFrameData(Target.Data[InstanceSlot], Data);
+                Local.SkinnedSlots.push_back(InstanceSlot);
             }
-            FDefaultSceneRenderer::FProcessedDrawItem& Item = Local.Items.emplace_back();
-            Item.EntityRecordIndex    = EntityRecordIdx;
-            Item.BatchIndex           = BatchIndex;
-            Item.InstanceSlot         = Binding.InstanceSlot;
-            Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
-            Item.SurfaceMeshletCount  = SurfaceMeshletCount;
-            Item.ShadowMeshletOffset  = ShadowMeshletOffset;
-            Item.ShadowMeshletCount   = ShadowMeshletCount;
-            Item.MeshletTotalCount    = MeshletTotalCount;
-            Item.Flags                = Flags;
-            Item.MaterialIndex        = Binding.MaterialIndex;
-            Item._Pad                 = 0;
-
+            else
+            {
+                Local.DeferredSlots.push_back({ InstanceSlot, Data });
+            }
         }
     }
 
@@ -2364,6 +2364,9 @@ namespace Lumina
 
         const double WorldTime = World->GetTimeSinceWorldCreation();
 
+        TVector<FSkinnedFrameData>& SkinnedData = ExtractFrame->Geometry.SkinnedFrameData;
+        const FSkinnedFrameDataTarget Target{ SkinnedData.data(), (uint32)SkinnedData.size(), ScenePrimitives.GetRetainedSlotCount() };
+
         for (uint32 c = Range.Start; c < Range.End; ++c)
         {
             const uint32 i = SkinnedCandidates[c];
@@ -2386,18 +2389,6 @@ namespace Lumina
             // Same operand order as the GPU's SelectLOD callers, so the two picks agree bit for bit.
             const float    RadiusSq = Radius * Radius * SceneGlobalData.CullData.LODDistanceScaleSq;
 
-            const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
-            FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
-            EntityRecord.Transform            = Prim.Transform;
-            EntityRecord.SphereBounds         = Sphere;
-            EntityRecord.MeshletHeaderSlot    = Prim.MeshletHeaderSlot;
-            EntityRecord.CustomData           = Prim.CustomData;
-            EntityRecord.EntityID             = Prim.EntityID;
-            EntityRecord.BoneArenaBase        = kNoBoneSlice;
-            EntityRecord.BoneArenaCount       = 0u;
-
-            //~ Everything below needs the live component.
-
             if (!SkeletalStorage.Contains(Prim.Entity))
             {
                 continue;
@@ -2412,10 +2403,10 @@ namespace Lumina
             // Both counts were cached at sync; a skeleton swap re-syncs the primitive before it is gathered again.
             const uint32 SkeletonBoneCount = Prim.BoneCount;
 
+            uint32 BoneArenaBase = kNoBoneSlice;
             if (SkeletonBoneCount > 0 && (SIZE_T)BoneSlice + SkeletonBoneCount <= ArenaCount)
             {
-                EntityRecord.BoneArenaBase  = BoneSlice;
-                EntityRecord.BoneArenaCount = SkeletonBoneCount;
+                BoneArenaBase = BoneSlice;
 
                 // A partial pose cannot be packed against this slice, so it falls through to identity.
                 const bool bHasFullPose = (uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount;
@@ -2461,7 +2452,7 @@ namespace Lumina
 
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
                                   SurfaceDescs, NumSurfaceDescs,
-                                  EntityRecordIdx, FrameSettings, DistSq, RadiusSq);
+                                  BoneArenaBase, Target, FrameSettings, DistSq, RadiusSq);
         }
     }
 
@@ -2549,22 +2540,14 @@ namespace Lumina
             TVector<uint32>&            SkinnedSlots = Frame.Geometry.SkinnedSlots;
 
             SkinnedSlots.clear();
-            // Indexed by retained slot; grown, never cleared. Ungathered slots are rejected by their tag.
-            const uint32 RetainedSlots = ScenePrimitives.GetRetainedSlotCount();
 
-            // Only as long as the highest skinned slot, since millions of static instances can share the slot range.
-            uint32 SkinnedExtent = 0;
+            // Indexed by retained slot; grown, never cleared, and only as long as the highest skinned slot.
+            uint32 SkinnedExtent = (uint32)SkinnedData.size();
             for (uint32 t = 0; t < NumThreads; ++t)
             {
-                if (ThreadLocal[t].bTouched)
+                for (const FDeferredSkinnedSlot& Deferred : ThreadLocal[t].DeferredSlots)
                 {
-                    for (const FProcessedDrawItem& Item : ThreadLocal[t].Items)
-                    {
-                        if (Item.InstanceSlot < RetainedSlots)
-                        {
-                            SkinnedExtent = Math::Max(SkinnedExtent, Item.InstanceSlot + 1u);
-                        }
-                    }
+                    SkinnedExtent = Math::Max(SkinnedExtent, Deferred.InstanceSlot + 1u);
                 }
             }
             if ((uint32)SkinnedData.size() < SkinnedExtent)
@@ -2580,31 +2563,13 @@ namespace Lumina
                     continue;
                 }
 
-                for (const FProcessedDrawItem& Item : Local.Items)
+                SkinnedSlots.insert(SkinnedSlots.end(), Local.SkinnedSlots.begin(), Local.SkinnedSlots.end());
+                for (const FDeferredSkinnedSlot& Deferred : Local.DeferredSlots)
                 {
-                    if (Item.InstanceSlot >= RetainedSlots)
-                    {
-                        continue;   // slot freed after the gather read it; the cull will reject it anyway
-                    }
-
-                    FSkinnedFrameData& Out = SkinnedData[Item.InstanceSlot];
-                    Out.BoneOffset              = (Item.EntityRecordIndex < Local.EntityRecords.size())
-                                                ? Local.EntityRecords[Item.EntityRecordIndex].BoneArenaBase
-                                                : kNoBoneSlice;
-                    // UploadSkinnedFrameData stamps FrameTag later, so the tag does not exist yet here.
-                    Out.SurfaceMeshletOffset    = Item.SurfaceMeshletOffset;
-                    Out.SurfaceMeshletCount     = Item.SurfaceMeshletCount;
-                    Out.ShadowMeshletOffset     = Item.ShadowMeshletOffset;
-                    Out.ShadowMeshletCount      = Item.ShadowMeshletCount;
-                    Out.MeshletTotalCount       = Item.MeshletTotalCount;
-                    // Seeded to the sentinel so a rejected slot keeps no slice rather than last frame's base.
-                    Out.SkinnedVertexBase       = kNoPreSkinBase;
-                    Out.ShadowSkinnedVertexBase = kNoPreSkinBase;
-
-                    SkinnedSlots.push_back(Item.InstanceSlot);
+                    PublishSkinnedFrameData(SkinnedData[Deferred.InstanceSlot], Deferred.Data);
+                    SkinnedSlots.push_back(Deferred.InstanceSlot);
                 }
             }
-
         }
 
         // Every slot keeps a command so IndirectDrawOffset stays a slot index, but only bound batches draw.
