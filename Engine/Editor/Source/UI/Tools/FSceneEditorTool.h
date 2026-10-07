@@ -35,6 +35,8 @@ namespace Lumina
         FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld);
 
         ~FSceneEditorTool() override = default;
+
+        NODISCARD FSceneEditorTool* AsSceneEditor() override { return this; }
         
         void OnSave() override;
 
@@ -100,12 +102,26 @@ namespace Lumina
         void RunTransacted(FName Label, const TFunction<void()>& Mutate);
 
         // The same for an edit that only adds entities, which records far less than a full snapshot.
+        // Gives an entity made outside SpawnEntityTransacted the same setup, such as prefab membership.
+        void AdoptCreatedEntity(ECS::FEntity Entity) { OnEntityCreatedInScene(Entity); }
+
+        // A copy of Source and its children as this editor's Duplicate makes it, such as with fresh prefab stable IDs.
+        virtual ECS::FEntity DuplicateEntityForScene(ECS::FEntity Source);
+
+        // Makes a spawned subtree belong to this scene as a content drop would; the prefab editor copies it in unlinked.
+        virtual void AdoptSpawnedSubtree(ECS::FEntity Root) {}
+
         void RunCreationTransacted(FName Label, const TFunction<void()>& Mutate);
 
         // The same for an edit that destroys Doomed, recording only what those entities reach.
         void RunDestroyTransacted(FName Label, const TVector<ECS::FEntity>& Doomed, const TFunction<void()>& Mutate);
 
+        // Replaces the selection, as clicking the entities in the outliner would.
+        void SelectEntities(const TVector<ECS::FEntity>& Entities);
+
         // Removes one component as its own undo step, recording only that component type on that entity.
+        // Mutate under a one-component undo step, which also records the edit as a prefab instance override.
+        void RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, const TFunction<void()>& Mutate);
         void RemoveComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType);
 
     protected:

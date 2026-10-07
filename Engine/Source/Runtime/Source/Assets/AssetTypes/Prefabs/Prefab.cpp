@@ -60,6 +60,8 @@ namespace Lumina
         // Game thread only, since every writer runs from world init, the prefab editor or asset capture.
         uint32 GDataGeneration = 0;
 
+        TFunction<void(CWorld*, bool)> GLoadedWorldRefreshHook;
+
         // Nested instance tracking must not leak into the new prefab, which gets fresh tags instead.
         bool ShouldSkipInstanceComponent(uint32 ID)
         {
@@ -74,6 +76,12 @@ namespace Lumina
             }
             CClass* Class = static_cast<CClass*>(Type);
             return Class->IsChildOf(CEntityScript::StaticClass()) ? Class : nullptr;
+        }
+
+        // The ledger and instance tag describe the placement itself, so editing them is never an override.
+        bool IsInstanceTrackingStruct(const CStruct* Type)
+        {
+            return Type == SPrefabInstanceComponent::StaticStruct() || Type == SPrefabOverrideComponent::StaticStruct();
         }
 
         CEntityScript* FindScriptOfClass(const SEntityScriptComponent& Component, const CClass* Class)
@@ -94,14 +102,30 @@ namespace Lumina
             return FString(Class->GetName().ToString().c_str()) + ".";
         }
 
+        // Which scripts an instance carries is an override too, marked per class beside its field paths.
+        constexpr const char* ScriptRemovedMarker = "$Removed";
+        constexpr const char* ScriptAddedMarker   = "$Added";
+
         void CollectScriptOverrides(const SEntityScriptComponent& Instance, const SEntityScriptComponent& Prefab, TVector<FName>& OutPaths)
         {
+            for (const TStrongObjectPtr<CEntityScript>& Held : Prefab.Scripts)
+            {
+                if (CEntityScript* PrefabScript = Held.Get(); PrefabScript != nullptr && FindScriptOfClass(Instance, PrefabScript->GetClass()) == nullptr)
+                {
+                    OutPaths.push_back(FName((ScriptPathPrefix(PrefabScript->GetClass()) + ScriptRemovedMarker).c_str()));
+                }
+            }
+
             for (const TStrongObjectPtr<CEntityScript>& Held : Instance.Scripts)
             {
                 CEntityScript* InstanceScript = Held.Get();
                 CEntityScript* PrefabScript = InstanceScript != nullptr ? FindScriptOfClass(Prefab, InstanceScript->GetClass()) : nullptr;
                 if (PrefabScript == nullptr)
                 {
+                    if (InstanceScript != nullptr)
+                    {
+                        OutPaths.push_back(FName((ScriptPathPrefix(InstanceScript->GetClass()) + ScriptAddedMarker).c_str()));
+                    }
                     continue;
                 }
 
@@ -116,7 +140,8 @@ namespace Lumina
         }
 
         // In place, so a live script keeps running and only the fields nobody overrode follow the prefab.
-        void ApplyInheritedScriptLeaves(ECS::FRegistry& Registry, ECS::FEntity Entity, const SEntityScriptComponent& Prefab, const THashSet<FName>& OverriddenPaths)
+        void ApplyInheritedScriptLeaves(ECS::FRegistry& Registry, ECS::FEntity Entity, const SEntityScriptComponent& Prefab, const THashSet<FName>& OverriddenPaths,
+            const TVector<const CClass*>* PreviouslyInherited)
         {
             for (const TStrongObjectPtr<CEntityScript>& Held : Prefab.Scripts)
             {
@@ -131,6 +156,10 @@ namespace Lumina
                 CEntityScript* InstanceScript = Current != nullptr ? FindScriptOfClass(*Current, Class) : nullptr;
                 if (InstanceScript == nullptr)
                 {
+                    if (OverriddenPaths.find(FName((ScriptPathPrefix(Class) + ScriptRemovedMarker).c_str())) != OverriddenPaths.end())
+                    {
+                        continue;
+                    }
                     InstanceScript = EntityScripts::Attach(Registry, Entity, Class);
                     if (InstanceScript == nullptr)
                     {
@@ -149,6 +178,31 @@ namespace Lumina
                     }
                 }
                 PrefabOverride::ApplyInheritedLeaves(Class, InstanceScript, PrefabScript, ClassPaths);
+            }
+
+            // A script the prefab dropped goes too, unless the instance added that class itself.
+            TVector<CEntityScript*> Dropped;
+            const SEntityScriptComponent* Current = PreviouslyInherited != nullptr ? Registry.TryGet<SEntityScriptComponent>(Entity) : nullptr;
+            if (Current != nullptr)
+            {
+                for (const TStrongObjectPtr<CEntityScript>& Held : Current->Scripts)
+                {
+                    CEntityScript* InstanceScript = Held.Get();
+                    if (InstanceScript == nullptr || FindScriptOfClass(Prefab, InstanceScript->GetClass()) != nullptr
+                        || !Algo::Contains(*PreviouslyInherited, InstanceScript->GetClass()))
+                    {
+                        continue;
+                    }
+                    const FName AddedPath((ScriptPathPrefix(InstanceScript->GetClass()) + ScriptAddedMarker).c_str());
+                    if (OverriddenPaths.find(AddedPath) == OverriddenPaths.end())
+                    {
+                        Dropped.push_back(InstanceScript);
+                    }
+                }
+            }
+            for (CEntityScript* Script : Dropped)
+            {
+                EntityScripts::Remove(Registry, Entity, Script);
             }
         }
 
@@ -459,6 +513,34 @@ namespace Lumina
         return WorldRoot;
     }
 
+    void CPrefab::CapturePreCommitState()
+    {
+        ClearPreCommitState();
+        Registry.View<SPrefabComponent, STransformComponent>().ForEach(
+            [&](ECS::FEntity, const SPrefabComponent& Node, const STransformComponent& Transform)
+        {
+            PreCommitTransforms[Node.StableID] = Transform.LocalTransform;
+        });
+        Registry.View<SPrefabComponent, SEntityScriptComponent>().ForEach(
+            [&](ECS::FEntity, const SPrefabComponent& Node, const SEntityScriptComponent& Scripts)
+        {
+            TVector<const CClass*>& Classes = PreCommitScripts[Node.StableID];
+            for (const TStrongObjectPtr<CEntityScript>& Held : Scripts.Scripts)
+            {
+                if (const CEntityScript* Script = Held.Get())
+                {
+                    Classes.push_back(Script->GetClass());
+                }
+            }
+        });
+    }
+
+    void CPrefab::ClearPreCommitState()
+    {
+        PreCommitTransforms.clear();
+        PreCommitScripts.clear();
+    }
+
     void CPrefab::RefreshInstance(CWorld* World, ECS::FEntity InstanceRoot)
     {
 
@@ -587,6 +669,33 @@ namespace Lumina
             InstanceByStableID.erase(StaleID);
         }
 
+        THashSet<FName> RemovedNodes;
+        if (SPrefabOverrideComponent* Ledger = WorldRegistry.TryGet<SPrefabOverrideComponent>(InstanceRoot))
+        {
+            // A node the prefab dropped, or one an undo brought back, no longer needs suppressing.
+            auto& Removed = Ledger->RemovedEntities;
+            Removed.erase(Algo::RemoveIf(Removed, [&](const FName& NodeID)
+            {
+                return PrefabByStableID.find(NodeID) == PrefabByStableID.end() || InstanceByStableID.find(NodeID) != InstanceByStableID.end();
+            }), Removed.end());
+            RemovedNodes.insert(Removed.begin(), Removed.end());
+        }
+
+        // A node the prefab adds beneath a deleted one goes with it, rather than surfacing under the root.
+        auto IsUnderRemovedNode = [&](ECS::FEntity PrefabE)
+        {
+            for (ECS::FEntity Cur = PrefabE; Registry.IsValid(Cur);)
+            {
+                if (const SPrefabComponent* Tag = Registry.TryGet<SPrefabComponent>(Cur); Tag && RemovedNodes.find(Tag->StableID) != RemovedNodes.end())
+                {
+                    return true;
+                }
+                const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Cur);
+                Cur = Rel ? Rel->Parent : ECS::NullEntity;
+            }
+            return false;
+        };
+
         // Spawn instance entities for new prefab entries.
         for (auto& [StableID, PrefabE] : PrefabByStableID)
         {
@@ -594,7 +703,12 @@ namespace Lumina
             {
                 continue;
             }
-            const ECS::FEntity NewE = WorldRegistry.Create();
+            if (!RemovedNodes.empty() && IsUnderRemovedNode(PrefabE))
+            {
+                continue;
+            }
+            // A recycled slot could be one the world editor's undo history means to restore.
+            const ECS::FEntity NewE = WorldRegistry.CreateInFreshSlot();
             InstanceByStableID[StableID] = NewE;
 
             SPrefabInstanceComponent& Inst = WorldRegistry.Emplace<SPrefabInstanceComponent>(NewE);
@@ -710,6 +824,17 @@ namespace Lumina
                     {
                         Ops->EmplaceCopy(WorldRegistry, WorldE, SrcCompPtr);
                     }
+                    else if (WorldE != InstanceRoot)
+                    {
+                        // Gizmo moves record no override, so only a child still at the old prefab value follows the edit.
+                        auto Previous = PreCommitTransforms.find(NodeID);
+                        const FTransform& Authored = static_cast<const STransformComponent*>(SrcCompPtr)->LocalTransform;
+                        STransformComponent& Placed = WorldRegistry.Get<STransformComponent>(WorldE);
+                        if (Previous != PreCommitTransforms.end() && Previous->second != Authored && Placed.LocalTransform == Previous->second)
+                        {
+                            Placed.SetLocalTransform(Authored);
+                        }
+                    }
                     continue;
                 }
 
@@ -762,7 +887,9 @@ namespace Lumina
 
                 if (ID == ScriptComponentID && CompOverrides != nullptr && DstCompPtr != nullptr)
                 {
-                    ApplyInheritedScriptLeaves(WorldRegistry, WorldE, *static_cast<const SEntityScriptComponent*>(SrcCompPtr), *CompOverrides);
+                    const auto PreviousScripts = PreCommitScripts.find(NodeID);
+                    ApplyInheritedScriptLeaves(WorldRegistry, WorldE, *static_cast<const SEntityScriptComponent*>(SrcCompPtr), *CompOverrides,
+                        PreviousScripts != PreCommitScripts.end() ? &PreviousScripts->second : nullptr);
                     bEntityHasOverrides = true;
                     continue;
                 }
@@ -807,6 +934,8 @@ namespace Lumina
             {
                 if (auto* Storage = WorldRegistry.FindStorage(ID))
                 {
+                    // Signaled as FRegistry::Remove does, or the render scene and physics keep the dropped component's state.
+                    Storage->Signals.OnDestroy.Broadcast(WorldRegistry, WorldE);
                     Storage->RemoveEntity(WorldE);
                 }
             }
@@ -928,11 +1057,29 @@ namespace Lumina
                 }
             });
 
+            if (Roots.empty())
+            {
+                continue;
+            }
+
+            if (GLoadedWorldRefreshHook)
+            {
+                GLoadedWorldRefreshHook(World, true);
+            }
             for (ECS::FEntity Root : Roots)
             {
                 RefreshInstance(World, Root);
             }
+            if (GLoadedWorldRefreshHook)
+            {
+                GLoadedWorldRefreshHook(World, false);
+            }
         }
+    }
+
+    void CPrefab::SetLoadedWorldRefreshHook(TFunction<void(CWorld*, bool)> Hook)
+    {
+        GLoadedWorldRefreshHook = Move(Hook);
     }
 
     void CPrefab::CullOrphanedInstances(ECS::FRegistry& Registry)
@@ -1776,7 +1923,7 @@ namespace Lumina
 
     void CPrefab::RecaptureComponentOverrides(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType)
     {
-        if (ComponentType == nullptr || !Registry.IsValid(Entity))
+        if (ComponentType == nullptr || IsInstanceTrackingStruct(ComponentType) || !Registry.IsValid(Entity))
         {
             return;
         }
@@ -1842,7 +1989,7 @@ namespace Lumina
 
     void CPrefab::NoteComponentAdded(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType)
     {
-        if (ComponentType == nullptr || !Registry.IsValid(Entity))
+        if (ComponentType == nullptr || IsInstanceTrackingStruct(ComponentType) || !Registry.IsValid(Entity))
         {
             return;
         }
@@ -1889,7 +2036,7 @@ namespace Lumina
 
     void CPrefab::NoteComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType)
     {
-        if (ComponentType == nullptr || !Registry.IsValid(Entity))
+        if (ComponentType == nullptr || IsInstanceTrackingStruct(ComponentType) || !Registry.IsValid(Entity))
         {
             return;
         }
@@ -1935,5 +2082,57 @@ namespace Lumina
             Rec.ComponentType  = CompName;
             Removed.push_back(Rec);
         }
+    }
+
+    namespace
+    {
+        template<typename FuncType>
+        void ForEachRemovedInheritedNode(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Doomed, FuncType&& Func)
+        {
+            for (ECS::FEntity Entity : Doomed)
+            {
+                if (!Registry.IsValid(Entity))
+                {
+                    continue;
+                }
+                const SPrefabInstanceComponent* Inst = Registry.TryGet<SPrefabInstanceComponent>(Entity);
+                if (Inst == nullptr || Inst->bIsRoot || Inst->StableID.IsNone())
+                {
+                    continue;
+                }
+
+                // A root going down with its nodes leaves no instance to keep a record on.
+                const ECS::FEntity Root = CPrefab::FindInstanceRoot(Registry, Entity);
+                if (Root == ECS::NullEntity || Algo::Contains(Doomed, Root))
+                {
+                    continue;
+                }
+                const FName NodeID = Inst->StableID;
+                Func(Root, NodeID);
+            }
+        }
+    }
+
+    void CPrefab::CollectRemovedNodeRoots(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Doomed, TVector<ECS::FEntity>& OutRoots)
+    {
+        ForEachRemovedInheritedNode(Registry, Doomed, [&](ECS::FEntity Root, const FName&)
+        {
+            if (!Algo::Contains(OutRoots, Root))
+            {
+                OutRoots.push_back(Root);
+            }
+        });
+    }
+
+    void CPrefab::NoteEntitiesRemoved(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Doomed)
+    {
+        ForEachRemovedInheritedNode(Registry, Doomed, [&](ECS::FEntity Root, const FName& NodeID)
+        {
+            TVector<FName>& Removed = Registry.GetOrEmplace<SPrefabOverrideComponent>(Root).RemovedEntities;
+            if (!Algo::Contains(Removed, NodeID))
+            {
+                Removed.push_back(NodeID);
+            }
+        });
     }
 }

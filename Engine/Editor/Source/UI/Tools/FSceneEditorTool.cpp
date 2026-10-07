@@ -516,6 +516,16 @@ namespace Lumina
         }
     }
 
+    ECS::FEntity FSceneEditorTool::DuplicateEntityForScene(ECS::FEntity Source)
+    {
+        ECS::FEntity Copy = ECS::NullEntity;
+        if (World != nullptr)
+        {
+            World->DuplicateEntity(Copy, Source, &EditorEntityUtils::DefaultDuplicateFilter);
+        }
+        return Copy;
+    }
+
     void FSceneEditorTool::RemoveComponent(ECS::FEntity Entity, const CStruct* ComponentType)
     {
         bool bWasRemoved = false;
@@ -525,10 +535,13 @@ namespace Lumina
             return;
         }
 
-        ECS::Utils::ForEachComponent(GetSceneRegistry(), Entity, [&](void*, ECS::FSparseSet& Set, CStruct* StructType)
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        ECS::Utils::ForEachComponent(Registry, Entity, [&](void*, ECS::FSparseSet& Set, CStruct* StructType)
         {
             if (StructType == ComponentType)
             {
+                // Signaled as FRegistry::Remove does, or the render scene and physics keep the component's primitive.
+                Set.Signals.OnDestroy.Broadcast(Registry, Entity);
                 Set.RemoveEntity(Entity);
                 bWasRemoved = true;
             }
@@ -2047,6 +2060,31 @@ namespace Lumina
         }
 
         BeginDestroyTransaction(Doomed);
+        Mutate();
+        EndTransaction(Label);
+
+        MarkSceneDirty();
+        OutlinerListView.MarkTreeDirty();
+        bDetailsDirty = true;
+    }
+
+    void FSceneEditorTool::SelectEntities(const TVector<ECS::FEntity>& Entities)
+    {
+        ClearSelectedEntities();
+        for (SIZE_T Index = 0; Index < Entities.size(); ++Index)
+        {
+            AddSelectedEntity(Entities[Index], Index + 1 == Entities.size());
+        }
+    }
+
+    void FSceneEditorTool::RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, const TFunction<void()>& Mutate)
+    {
+        if (!Mutate)
+        {
+            return;
+        }
+
+        BeginComponentTransaction(TVector<ECS::FEntity>{ Entity }, ComponentType);
         Mutate();
         EndTransaction(Label);
 

@@ -170,6 +170,30 @@ namespace Lumina
         int32 EntityCount = 0;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SCreateVariantParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Asset;
+
+        PROPERTY()
+        FString Name;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SCreateVariantResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Path;
+
+        PROPERTY()
+        FString Guid;
+    };
+
     namespace MCP
     {
         void RegisterPrefabTools(FStringView Owner);

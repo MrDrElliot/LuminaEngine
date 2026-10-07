@@ -1,6 +1,7 @@
 #pragma once
 
 #include "World/ECS/Registry.h"
+#include "Containers/Function.h"
 #include "Containers/Name.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -85,6 +86,15 @@ namespace Lumina
          *  it); for an instance-added component, simply drops it from the added set. */
         static void NoteComponentRemoved(ECS::FRegistry& Registry, ECS::FEntity Entity, CStruct* ComponentType);
 
+        // Instance roots whose ledger NoteEntitiesRemoved would write for these doomed entities.
+        static void CollectRemovedNodeRoots(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Doomed, TVector<ECS::FEntity>& OutRoots);
+
+        // Records inherited instance nodes the user is deleting, so a refresh never respawns them.
+        static void NoteEntitiesRemoved(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Doomed);
+
+        // Called with true before and false after RefreshInstancesInLoadedWorlds rewrites a world, so an editor can record it.
+        static void SetLoadedWorldRefreshHook(TFunction<void(CWorld*, bool)> Hook);
+
         // Per-instance tracking, which belongs to a placed copy and must never be captured into an asset.
         NODISCARD static bool IsInstanceTrackingComponent(uint32 ID);
 
@@ -132,6 +142,15 @@ namespace Lumina
         NODISCARD bool IsUnresolvedVariant() const { return bVariantResolveFailed; }
 
         ECS::FRegistry Registry;
+
+        // Child transforms from before the editor's last commit; a refresh moves only instance children still at these values.
+        THashMap<FName, FTransform> PreCommitTransforms;
+
+        // Script classes each node had before that commit; a refresh drops only scripts the prefab itself dropped.
+        THashMap<FName, TVector<const CClass*>> PreCommitScripts;
+
+        void CapturePreCommitState();
+        void ClearPreCommitState();
 
         /** Entities the variant diverges on. Only these are serialized; everything else comes from the
          *  parent. Each carries SPrefabComponent so its StableID pairs it with a parent node. */

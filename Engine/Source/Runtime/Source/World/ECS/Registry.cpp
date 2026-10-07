@@ -166,6 +166,24 @@ namespace Lumina::ECS
         return Created;
     }
 
+    FEntity FRegistry::CreateInFreshSlot()
+    {
+        FEntity Created;
+        {
+            TScopeLock<FMutex> Lock(AllocState->Mutex);
+            const uint32 Index = Math::Max(AllocState->NextAppendIndex, static_cast<uint32>(EntityRecords.size()));
+            ASSERT(Index <= FEntity::MaxIndex);
+            AllocState->NextAppendIndex = Index + 1u;
+            EnsureRecordLocked(Index);
+            Created = FEntity(Index, 0u);
+            EntityRecords[Index] = Created;
+        }
+
+        ++LiveEntityCount;
+        EntityCreated.Broadcast(*this, Created);
+        return Created;
+    }
+
     FEntity FRegistry::ReserveEntity()
     {
         TScopeLock<FMutex> Lock(AllocState->Mutex);

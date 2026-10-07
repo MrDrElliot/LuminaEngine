@@ -18,6 +18,8 @@
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Transactions/EcsRegistrySnapshotCommand.h"
 #include "Transactions/EntityComponentSnapshotCommand.h"
+#include "Assets/AssetTypes/Prefabs/Prefab.h"
+#include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Transactions/EntityCreationCommand.h"
 #include "Transactions/EntityDestroyCommand.h"
 #include "Transactions/EntityRelationshipCommand.h"
@@ -2313,6 +2315,15 @@ namespace Lumina
         FEntityRelationshipCommand::CollectAffected(Registry, Candidates, ECS::NullEntity, Neighbors);
 
         TransactionManager.BeginTransaction(FName());
+
+        // Deleting an inherited instance node writes its root's ledger, which undo has to roll back with it.
+        TVector<ECS::FEntity> InstanceRoots;
+        CPrefab::CollectRemovedNodeRoots(Registry, Candidates, InstanceRoots);
+        if (!InstanceRoots.empty())
+        {
+            TransactionManager.Record(MakeUnique<FEntityComponentSnapshotCommand>(World.Get(), InstanceRoots, SPrefabOverrideComponent::StaticStruct()));
+            CPrefab::NoteEntitiesRemoved(Registry, Candidates);
+        }
 
         // Recorded before the destroy so undo runs it after, once the entities are back to link to.
         TransactionManager.Record(MakeUnique<FEntityRelationshipCommand>(World.Get(), Neighbors));

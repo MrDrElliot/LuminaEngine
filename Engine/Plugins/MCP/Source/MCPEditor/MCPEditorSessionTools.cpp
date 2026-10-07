@@ -85,7 +85,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(GNoWorldEditorSession);
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Undo is blocked while playing in editor.");
                     }
@@ -120,7 +120,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(GNoWorldEditorSession);
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Redo is blocked while playing in editor.");
                     }
@@ -408,6 +408,25 @@ namespace Lumina::MCP
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("Focusing '{}'.", In.Tab));
+                });
+
+            Agent::FToolRegistry::Get().Register<STabNameParams, STabActionResult>(
+                Owner, "editor.target_scene",
+                "Point the scene, entity and undo tools at another scene tab, such as an open prefab editor. An empty Tab "
+                "restores the world editor. Play controls always stay on the world editor.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const STabNameParams& In, STabActionResult& Out)
+                {
+                    FString Error;
+                    Out.bDone = SessionOps::SetSceneTarget(FStringView(In.Tab), Error);
+                    if (!Out.bDone)
+                    {
+                        return Agent::FToolResult::Error(Error + " Call editor.list_tabs.");
+                    }
+
+                    return Agent::FToolResult::Ok(In.Tab.empty()
+                        ? FString("Scene tools target the world editor.")
+                        : Lumina::Format("Scene tools target '{}'.", In.Tab));
                 });
 
             Agent::FToolRegistry::Get().Register<SCloseTabParams, STabActionResult>(

@@ -3929,6 +3929,9 @@ namespace Lumina
 
     void FWorldEditorTool::OnPostUndoRedo()
     {
+        // An undo after a save changes the level again, so the next save must not skip it.
+        MarkSceneDirty();
+
         // The true-restore preserves handles but drops the (non-serialized) selection tags; re-stamp then rebuild the cache.
         ReapplySelectionTags();
         ResyncSelectionFromRegistry();

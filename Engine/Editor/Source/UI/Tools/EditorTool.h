@@ -27,6 +27,7 @@ namespace Lumina
     class FUpdateContext;
     class FInputViewport;
     class CStruct;
+    class FSceneEditorTool;
 }
 
 namespace Lumina
@@ -161,6 +162,15 @@ namespace Lumina
         NODISCARD bool HasFlag(EEditorToolFlags Flag) const {  return (ToolFlags & Flag) == Flag; }
 
         NODISCARD CWorld* GetWorld() const { return World.Get(); }
+        // Non-null for a tool that edits an entity scene, so session code can drive it without knowing its type.
+        NODISCARD virtual FSceneEditorTool* AsSceneEditor() { return nullptr; }
+
+        // For an outside change that leaves recorded transactions unsafe to replay, such as a deleted prefab.
+        void DiscardUndoHistory() { ClearTransactionHistory(); }
+
+        // Brackets an outside rewrite of this tool's world, such as a prefab pushing onto its instances, as one undo step.
+        void BeginOutsideChange() { BeginTransaction(); }
+        void EndOutsideChange(FName Label) { EndTransaction(Label); }
         NODISCARD bool HasWorld() const { return World != nullptr; }
         NODISCARD ImGuiID GetCurrentDockspaceID() const { return CurrDockspaceID; }
 

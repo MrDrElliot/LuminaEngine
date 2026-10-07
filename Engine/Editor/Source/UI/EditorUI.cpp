@@ -492,6 +492,18 @@ namespace Lumina
         // Before any tool exists, so a reinstance during startup still finds this holder.
         FObjectReferenceProviders::Register(this);
 
+        // A prefab save rewrites placed instances, and recording that keeps later undos from replaying stale entities.
+        CPrefab::SetLoadedWorldRefreshHook([this](CWorld* World, bool bBegin)
+        {
+            for (FEditorTool* Tool : EditorTools)
+            {
+                if (Tool->AsSceneEditor() != nullptr && Tool->GetWorld() == World)
+                {
+                    bBegin ? Tool->BeginOutsideChange() : Tool->EndOutsideChange("Update Prefab Instances");
+                }
+            }
+        });
+
         ImGuiContext* Context = Render().GetImGuiRenderer()->GetImGuiContext();
         ImPlotContext* PlotContext = Render().GetImGuiRenderer()->GetImPlotContext();
         ImGui::SetCurrentContext(Context);
@@ -674,6 +686,7 @@ namespace Lumina
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
     {
         FObjectReferenceProviders::Unregister(this);
+        CPrefab::SetLoadedWorldRefreshHook({});
         GApp->GetEventProcessor().UnregisterEventHandler(&ShortcutLayer);
 
         if (AssetDataChangedHandle.IsValid())
@@ -1896,6 +1909,24 @@ namespace Lumina
 
     void FEditorUI::OnDestroyAsset(CObject* InAsset)
     {
+        // A scene's undo can restore an instance of the deleted prefab, which then lives on unlinked until the next load culls it.
+        if (InAsset != nullptr && InAsset->IsA<CPrefab>())
+        {
+            bool bCleared = false;
+            for (FEditorTool* Tool : EditorTools)
+            {
+                if (Tool->AsSceneEditor() != nullptr)
+                {
+                    Tool->DiscardUndoHistory();
+                    bCleared = true;
+                }
+            }
+            if (bCleared)
+            {
+                ImGuiX::Notifications::NotifyInfo("Undo history was cleared, since it could restore instances of the deleted prefab.");
+            }
+        }
+
         if (ActiveAssetTools.find(InAsset) != ActiveAssetTools.end())
         {
             ToolsPendingDestroy.push(ActiveAssetTools.at(InAsset));

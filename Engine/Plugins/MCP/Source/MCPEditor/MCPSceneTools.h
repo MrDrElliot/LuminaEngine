@@ -203,6 +203,15 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SRemoveScriptResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bRemoved = false;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SSetPropertyParams
     {
         GENERATED_BODY()
@@ -292,6 +301,24 @@ namespace Lumina
         /** Ids from scene.list_entities. Children go with their parents. */
         PROPERTY()
         TVector<FString> Entities;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSelectEntitiesParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        TVector<FString> Entities;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSelectEntitiesResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int32 Selected = 0;
     };
 
     REFLECT()

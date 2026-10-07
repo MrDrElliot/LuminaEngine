@@ -88,6 +88,8 @@ namespace Lumina
         // Base CreateEntity*/component-add path; the prefab supplies these hooks: tag new entities
         // with SPrefabComponent + parent them under the root, and spawn at identity (not the camera).
         void OnEntityCreatedInScene(ECS::FEntity Entity) override;
+        ECS::FEntity DuplicateEntityForScene(ECS::FEntity Source) override { return DuplicatePrefabEntity(Source); }
+        void AdoptSpawnedSubtree(ECS::FEntity Root) override;
         FTransform GetNewEntitySpawnTransform() const override;
 
         void RequestDestroyEntity(ECS::FEntity Entity);

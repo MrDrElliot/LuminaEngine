@@ -10,6 +10,7 @@
 #include "LuminaEditor.h"
 #include "UI/EditorUI.h"
 #include "UI/Tools/EditorTool.h"
+#include "UI/Tools/FSceneEditorTool.h"
 #include "UI/Tools/WorldEditorTool.h"
 
 namespace Lumina::SessionOps
@@ -40,6 +41,61 @@ namespace Lumina::SessionOps
             }
             return Tool;
         }
+
+        // Empty targets the world editor; otherwise the tab name of another scene editor, such as a prefab.
+        FString GSceneTargetTab;
+
+        FSceneEditorTool* RequireSceneTarget(FString& OutError)
+        {
+            if (GSceneTargetTab.empty())
+            {
+                return RequireSceneEditor(OutError);
+            }
+
+            FEditorUI* UI = FindUI();
+            FEditorTool* Tool = UI != nullptr ? UI->FindTab(GSceneTargetTab, OutError) : nullptr;
+            FSceneEditorTool* Scene = Tool != nullptr ? Tool->AsSceneEditor() : nullptr;
+            if (Scene == nullptr)
+            {
+                // Never falls back, since a closed target would otherwise send the edit to a different scene.
+                OutError = Lumina::Format("The targeted scene tab '{}' is no longer open.", GSceneTargetTab);
+            }
+            return Scene;
+        }
+
+        FSceneEditorTool* FindSceneTarget()
+        {
+            FString Ignored;
+            return RequireSceneTarget(Ignored);
+        }
+    }
+
+    bool SetSceneTarget(FStringView TabName, FString& OutError)
+    {
+        if (TabName.empty())
+        {
+            GSceneTargetTab.clear();
+            return true;
+        }
+
+        FEditorUI* UI = FindUI();
+        FEditorTool* Tool = UI != nullptr ? UI->FindTab(TabName, OutError) : nullptr;
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+        if (Tool->AsSceneEditor() == nullptr)
+        {
+            OutError = Lumina::Format("'{}' is not a scene editor.", TabName);
+            return false;
+        }
+        GSceneTargetTab = FString(TabName.data(), TabName.size());
+        return true;
+    }
+
+    FString GetSceneTarget()
+    {
+        return GSceneTargetTab;
     }
 
     IEditorToolContext* GetToolContext()
@@ -54,13 +110,13 @@ namespace Lumina::SessionOps
 
     ECS::FRegistry* GetSceneRegistry(FString& OutError)
     {
-        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
         return Tool != nullptr ? &Tool->GetSceneEntityRegistry() : nullptr;
     }
 
     CWorld* GetSceneWorld(FString& OutError)
     {
-        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
         return Tool != nullptr ? Tool->GetSceneWorld() : nullptr;
     }
 
@@ -68,6 +124,11 @@ namespace Lumina::SessionOps
     {
         FWorldEditorTool* Tool = FindSceneEditor();
         return Tool != nullptr && Tool->HasSimulatingWorld();
+    }
+
+    bool IsSceneTargetSimulating()
+    {
+        return GSceneTargetTab.empty() && IsSimulating();
     }
 
     bool GetPlayState(FPlayState& Out, FString& OutError)
@@ -155,7 +216,7 @@ namespace Lumina::SessionOps
 
     bool RunTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError)
     {
-        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
         if (Tool == nullptr)
         {
             return false;
@@ -166,7 +227,7 @@ namespace Lumina::SessionOps
 
     bool RunCreationTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError)
     {
-        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
         if (Tool == nullptr)
         {
             return false;
@@ -178,7 +239,7 @@ namespace Lumina::SessionOps
     bool RunDestroyTransacted(FName Label, const TVector<ECS::FEntity>& Doomed,
         const TFunction<void()>& Mutate, FString& OutError)
     {
-        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
         if (Tool == nullptr)
         {
             return false;
@@ -187,9 +248,53 @@ namespace Lumina::SessionOps
         return true;
     }
 
+    bool SelectEntities(const TVector<ECS::FEntity>& Entities, FString& OutError)
+    {
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+        Tool->SelectEntities(Entities);
+        return true;
+    }
+
+    void AdoptSpawnedSubtree(ECS::FEntity Root)
+    {
+        if (FSceneEditorTool* Tool = FindSceneTarget())
+        {
+            Tool->AdoptSpawnedSubtree(Root);
+        }
+    }
+
+    ECS::FEntity DuplicateEntity(ECS::FEntity Source)
+    {
+        FSceneEditorTool* Tool = FindSceneTarget();
+        return Tool != nullptr ? Tool->DuplicateEntityForScene(Source) : ECS::NullEntity;
+    }
+
+    void AdoptCreatedEntity(ECS::FEntity Entity)
+    {
+        if (FSceneEditorTool* Tool = FindSceneTarget())
+        {
+            Tool->AdoptCreatedEntity(Entity);
+        }
+    }
+
+    bool RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, const TFunction<void()>& Mutate, FString& OutError)
+    {
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+        Tool->RunComponentTransacted(Label, Entity, ComponentType, Mutate);
+        return true;
+    }
+
     bool RemoveComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, FString& OutError)
     {
-        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
         if (Tool == nullptr)
         {
             return false;
@@ -213,7 +318,7 @@ namespace Lumina::SessionOps
     FUndoState GetUndoState()
     {
         FUndoState State;
-        if (FWorldEditorTool* Tool = FindSceneEditor())
+        if (FSceneEditorTool* Tool = FindSceneTarget())
         {
             const FName Undo = Tool->PeekUndoLabel();
             const FName Redo = Tool->PeekRedoLabel();
@@ -225,7 +330,7 @@ namespace Lumina::SessionOps
 
     int32 Undo(int32 Steps)
     {
-        FWorldEditorTool* Tool = FindSceneEditor();
+        FSceneEditorTool* Tool = FindSceneTarget();
         int32 Applied = 0;
         for (int32 Index = 0; Tool != nullptr && Index < Steps && Tool->RunUndo(); ++Index)
         {
@@ -236,7 +341,7 @@ namespace Lumina::SessionOps
 
     int32 Redo(int32 Steps)
     {
-        FWorldEditorTool* Tool = FindSceneEditor();
+        FSceneEditorTool* Tool = FindSceneTarget();
         int32 Applied = 0;
         for (int32 Index = 0; Tool != nullptr && Index < Steps && Tool->RunRedo(); ++Index)
         {

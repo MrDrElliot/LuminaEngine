@@ -37,12 +37,19 @@ namespace Lumina::SessionOps
 
     NODISCARD EDITOR_API bool HasSceneEditor();
 
+    // Points the scene, entity and undo calls below at another scene tab, such as a prefab editor; empty restores the world editor.
+    EDITOR_API bool SetSceneTarget(FStringView TabName, FString& OutError);
+    NODISCARD EDITOR_API FString GetSceneTarget();
+
     // Null with a reason when no world editor is open.
     NODISCARD EDITOR_API ECS::FRegistry* GetSceneRegistry(FString& OutError);
     NODISCARD EDITOR_API CWorld* GetSceneWorld(FString& OutError);
 
     // True while a play or simulate session is running, which most mutations refuse to run during.
     NODISCARD EDITOR_API bool IsSimulating();
+
+    // Whether the scene the mutation calls target is the one playing; another scene tab, such as a prefab, never is.
+    NODISCARD EDITOR_API bool IsSceneTargetSimulating();
 
     //~ Play session.
 
@@ -70,6 +77,20 @@ namespace Lumina::SessionOps
     EDITOR_API bool RunTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError);
     EDITOR_API bool RunCreationTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError);
     EDITOR_API bool RunDestroyTransacted(FName Label, const TVector<ECS::FEntity>& Doomed,
+        const TFunction<void()>& Mutate, FString& OutError);
+    // Runs the target editor's own setup on an entity created inside RunCreationTransacted, as its create menu would.
+    EDITOR_API void AdoptCreatedEntity(ECS::FEntity Entity);
+
+    // Replaces the target scene's selection, as clicking the entities in its outliner would.
+    EDITOR_API bool SelectEntities(const TVector<ECS::FEntity>& Entities, FString& OutError);
+
+    // Makes a spawned subtree belong to the target scene as a content drop would; call inside RunCreationTransacted.
+    EDITOR_API void AdoptSpawnedSubtree(ECS::FEntity Root);
+
+    // Duplicates as the target editor's own Duplicate does; call inside RunCreationTransacted.
+    NODISCARD EDITOR_API ECS::FEntity DuplicateEntity(ECS::FEntity Source);
+    // One component's undo step, recorded as a prefab override on a placed instance the way the inspector's edits are.
+    EDITOR_API bool RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType,
         const TFunction<void()>& Mutate, FString& OutError);
     EDITOR_API bool RemoveComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType,
         FString& OutError);

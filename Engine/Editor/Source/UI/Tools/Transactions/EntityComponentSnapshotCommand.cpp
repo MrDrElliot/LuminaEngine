@@ -35,11 +35,53 @@ namespace Lumina
         }
 
         Capture(Before);
+
+        PresentBefore.assign(Entities.size(), 0u);
+        if (CWorld* W = World.Get(); W != nullptr && Ops != nullptr)
+        {
+            ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
+            for (SIZE_T i = 0; i < Entities.size(); ++i)
+            {
+                PresentBefore[i] = Registry.IsValid(Entities[i]) && Ops->Has(Registry, Entities[i]) != 0;
+            }
+        }
     }
 
     void FEntityComponentSnapshotCommand::Finalize()
     {
         Capture(After);
+
+        CWorld* W = World.Get();
+        if (W == nullptr || Ops == nullptr)
+        {
+            return;
+        }
+
+        // Every component edit records its prefab override here, so no caller can forget and lose it on the next refresh.
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
+        for (SIZE_T i = 0; i < Entities.size(); ++i)
+        {
+            const ECS::FEntity Entity = Entities[i];
+            if (!Registry.IsValid(Entity))
+            {
+                continue;
+            }
+
+            const bool bPresentNow = Ops->Has(Registry, Entity) != 0;
+            if (PresentBefore[i] && !bPresentNow)
+            {
+                CPrefab::NoteComponentRemoved(Registry, Entity, ComponentType);
+            }
+            else if (!PresentBefore[i] && bPresentNow)
+            {
+                CPrefab::NoteComponentAdded(Registry, Entity, ComponentType);
+            }
+
+            if (bPresentNow)
+            {
+                CPrefab::RecaptureComponentOverrides(Registry, Entity, ComponentType);
+            }
+        }
     }
 
     void FEntityComponentSnapshotCommand::Capture(TVector<uint8>& Out) const

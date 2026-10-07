@@ -105,5 +105,9 @@ namespace Lumina
         /** Inherited components the instance deleted; a refresh must never re-add them. */
         PROPERTY()
         TVector<SPrefabComponentRef> RemovedComponents;
+
+        // Inherited nodes the instance deleted, which a refresh must never respawn.
+        PROPERTY()
+        TVector<FName> RemovedEntities;
     };
 }

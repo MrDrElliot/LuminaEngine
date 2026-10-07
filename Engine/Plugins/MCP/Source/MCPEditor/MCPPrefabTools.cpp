@@ -8,6 +8,9 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
+#include "Assets/Factories/Factory.h"
+#include "FileSystem/FileSystem.h"
+#include "Paths/Paths.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Session/SessionOps.h"
@@ -164,7 +167,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error("No world editor is open, so there is nowhere to spawn.");
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Stop play-in-editor first.");
                     }
@@ -201,6 +204,10 @@ namespace Lumina::MCP
                     SessionOps::RunCreationTransacted("Spawn Prefab (agent)", [&]()
                     {
                         Root = CPrefabLibrary::SpawnPrefabAt(World, Ref, Transform, Parent);
+                        if (Root != ECS::NullEntity)
+                        {
+                            SessionOps::AdoptSpawnedSubtree(Root);
+                        }
 
                         if (Root != ECS::NullEntity && !In.Name.empty())
                         {
@@ -243,7 +250,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error("No world editor is open, so there is nothing to capture from.");
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Stop play-in-editor first.");
                     }
@@ -331,11 +338,65 @@ namespace Lumina::MCP
 
                     FAssetRegistry::Get().AssetSaved(Prefab);
                     Prefab->RefreshInstancesInLoadedWorlds();
+                    Prefab->PropagateToVariants();
 
                     Out.Path = FString(Path.c_str());
                     return Agent::FToolResult::Ok(Lumina::Format("Captured {} into {}.", In.Entity, Out.Path));
                 });
         }
+    }
+
+    void RegisterCreateVariant(FStringView Owner)
+    {
+        Agent::FToolRegistry::Get().Register<SCreateVariantParams, SCreateVariantResult>(
+            Owner, "prefab.create_variant",
+            "Create a variant of the prefab whose GUID is Asset, as the content browser's Create Variant does, saved beside it as Name or as the parent's name plus _Variant.",
+            Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+            [](const SCreateVariantParams& In, SCreateVariantResult& Out)
+            {
+                CPrefab* Parent = nullptr;
+                FString Error;
+                if (!Agent::ResolveAsset<CPrefab>(FStringView(In.Asset), Parent, Error))
+                {
+                    return Agent::FToolResult::Error(Error);
+                }
+
+                CPackage* ParentPackage = Parent->GetPackage();
+                if (ParentPackage == nullptr)
+                {
+                    return Agent::FToolResult::Error("That prefab has no package to sit beside.");
+                }
+
+                const FFixedString ParentPath = ParentPackage->GetPackagePath();
+                const FString Folder = Paths::Parent(FStringView(ParentPath.c_str(), ParentPath.size()));
+                const FString Name = In.Name.empty() ? FString(Parent->GetName().ToString().c_str()) + "_Variant" : In.Name;
+
+                FFixedString Path = Paths::Combine(FStringView(Folder), FStringView(Name));
+                CPackage::AddPackageExt(Path);
+                if (VFS::Exists(Path))
+                {
+                    return Agent::FToolResult::Error(Lumina::Format("{} already exists.", Path));
+                }
+
+                CPrefab* Variant = CFactory::CreateNewOf<CPrefab>(FStringView(Path.c_str(), Path.size()));
+                if (Variant == nullptr)
+                {
+                    return Agent::FToolResult::Error(Lumina::Format("Could not create {}.", Path));
+                }
+
+                Variant->ParentPrefab = Parent;
+                Variant->ResolveVariant();
+
+                if (!CPackage::SavePackage(Variant->GetPackage(), FStringView(Path.c_str(), Path.size())))
+                {
+                    return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
+                }
+                FAssetRegistry::Get().AssetCreated(Variant);
+
+                Out.Path = FString(Path.c_str());
+                Out.Guid = FString(Variant->GetGUID().ToString().c_str());
+                return Agent::FToolResult::Ok(Lumina::Format("Created variant {} of {}.", Out.Path, Parent->GetName().ToString()));
+            });
     }
 
     void RegisterPrefabTools(FStringView Owner)
@@ -344,5 +405,6 @@ namespace Lumina::MCP
         RegisterDescribePrefab(Owner);
         RegisterSpawn(Owner);
         RegisterCapture(Owner);
+        RegisterCreateVariant(Owner);
     }
 }

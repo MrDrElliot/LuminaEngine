@@ -51,6 +51,9 @@ namespace Lumina::ECS
         // Materializes this exact handle when its slot is free, which is what loading a saved world needs.
         NODISCARD RUNTIME_API FEntity Create(FEntity Hint);
 
+        // Never recycles a freed slot, so an editor undo that restores a deleted handle still finds it free.
+        NODISCARD RUNTIME_API FEntity CreateInFreshSlot();
+
         RUNTIME_API void Destroy(FEntity Entity);
 
         // Thread-safe. The handle is not valid until MaterializeReserved, so a deferred create can be targeted before it exists.

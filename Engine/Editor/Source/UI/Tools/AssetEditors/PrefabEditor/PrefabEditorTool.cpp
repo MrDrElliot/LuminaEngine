@@ -249,17 +249,7 @@ namespace Lumina
             // Tooltip building (component scan) is deferred from tree-build to first hover.
             BuildEntityTooltip(Data.Entity, Tree.Get<FTreeNodeDisplay>(Item));
 
-            if (const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Data.Entity))
-            {
-                if (const SStaticMeshComponent* MeshComp = Registry.TryGet<SStaticMeshComponent>(Data.Entity))
-                {
-                    World->DrawBox(Transform->GetWorldLocation(), MeshComp->GetAABB().GetSize() * 0.5f * Transform->GetWorldScale() * 1.2f, Transform->GetWorldRotation(), FColor::White, 3.0f);
-                }
-                else
-                {
-                    World->DrawBox(Transform->GetWorldLocation(), 1.0f * Transform->GetWorldScale(), Transform->GetWorldRotation(), FColor::White, 3.0f);
-                }
-            }
+            EditorEntityUtils::DrawEntityBounds(World.Get(), Data.Entity, FColor::White, 3.0f);
         };
 
         OutlinerContext.KeyPressedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, ImGuiKey Key) -> bool
@@ -381,6 +371,9 @@ namespace Lumina
 
     void FPrefabEditorTool::OnPostUndoRedo()
     {
+        // An undo after a save changes the document again, so the next save must not skip it.
+        MarkSceneDirty();
+
         // The true-restore preserves handles but drops the (non-serialized) selection tags; re-stamp then rebuild the cache.
         ReapplySelectionTags();
         ResyncSelectionFromRegistry();
@@ -510,6 +503,9 @@ namespace Lumina
             PrefabEntities.push_back(E);
         });
 
+        // Taken before the registry is replaced, so the save's refresh can tell which instance children never diverged.
+        Prefab->CapturePreCommitState();
+
         // Replacing the registry frees what an open details panel points at, so the generation moves too.
         CPrefab::BumpDataGeneration();
         Prefab->Registry = ECS::FRegistry{};
@@ -545,6 +541,9 @@ namespace Lumina
 
             // Descendant variants re-resolve and push on, which is the whole point of a variant.
             Prefab->PropagateToVariants();
+
+            // Only this save's refresh may compare against the old values; a later world load seeds as before.
+            Prefab->ClearPreCommitState();
         }
     }
 
@@ -615,17 +614,11 @@ namespace Lumina
 
         ProcessClipboardShortcuts();
 
-        // Selection-highlight bounds; mirror world editor's red-AABB.
         Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Entity)
         {
-            if (!Registry.IsValid(Entity))
+            if (Registry.IsValid(Entity))
             {
-                return;
-            }
-            if (SStaticMeshComponent* MeshComp = Registry.TryGet<SStaticMeshComponent>(Entity))
-            {
-                const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
-                World->DrawBox(Transform.GetWorldLocation(), MeshComp->GetAABB().GetSize() * 0.5f * Transform.GetWorldScale() * 1.2f, Transform.GetWorldRotation(), FColor::Red, 5.0f);
+                EditorEntityUtils::DrawEntitySelectionBox(World.Get(), Entity, FColor::Green, 0.2f, 5.0f);
             }
         });
     }
@@ -888,6 +881,31 @@ namespace Lumina
         {
             HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), DropItem, /*bAttachToTarget*/ true);
         }
+    }
+
+    void FPrefabEditorTool::AdoptSpawnedSubtree(ECS::FEntity Root)
+    {
+        ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+        if (!Registry.IsValid(Root))
+        {
+            return;
+        }
+
+        // Resolved before adopting, so the subtree being adopted can never become its own parent.
+        const ECS::FEntity PrefabRoot = FindPrefabRoot();
+        const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Root);
+        const bool bHasParent = Relationship != nullptr && Relationship->Parent != ECS::NullEntity;
+        if (!bHasParent && PrefabRoot != ECS::NullEntity && PrefabRoot != Root)
+        {
+            ECS::Utils::ReparentEntity(Registry, Root, PrefabRoot);
+        }
+
+        AdoptIntoPrefab(Root);
+        ECS::Utils::ForEachDescendant(Registry, Root, [this](ECS::FEntity Descendant)
+        {
+            AdoptIntoPrefab(Descendant);
+        });
+        OutlinerListView.MarkTreeDirty();
     }
 
     void FPrefabEditorTool::AdoptIntoPrefab(ECS::FEntity Entity)

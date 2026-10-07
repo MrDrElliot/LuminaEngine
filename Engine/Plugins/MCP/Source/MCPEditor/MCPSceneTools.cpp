@@ -265,6 +265,8 @@ namespace Lumina::MCP
                             return;
                         }
 
+                        SessionOps::AdoptCreatedEntity(Created);
+
                         for (CStruct* Type : Types)
                         {
                             const SceneOps::FAddComponentPlan Plan =
@@ -438,7 +440,7 @@ namespace Lumina::MCP
                     }
 
                     CEntityScript* Script = nullptr;
-                    SessionOps::RunTransacted("Add Script (agent)", [&]()
+                    SessionOps::RunComponentTransacted("Add Script (agent)", Entity, SEntityScriptComponent::StaticStruct(), [&]()
                     {
                         Script = EntityScripts::Attach(Registry, Entity, ScriptClass);
                     }, SceneError);
@@ -451,6 +453,92 @@ namespace Lumina::MCP
                     Out.bAdded = true;
                     return Agent::FToolResult::Ok(Lumina::Format("Attached {} to '{}'.",
                         In.ScriptClass, NameOf(Registry, Entity)));
+                });
+        }
+
+        void RegisterSelectEntities(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSelectEntitiesParams, SSelectEntitiesResult>(
+                Owner, "editor.select",
+                "Replace the selection in the targeted scene with these entity ids from scene.list_entities, as clicking in its outliner would. An empty list clears it.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSelectEntitiesParams& In, SSelectEntitiesResult& Out)
+                {
+                    FString SceneError;
+                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    if (ScenePtr == nullptr)
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+
+                    TVector<ECS::FEntity> Entities;
+                    for (const FString& Token : In.Entities)
+                    {
+                        ECS::FEntity Entity = ECS::NullEntity;
+                        FString Error;
+                        if (!Agent::FEntityTokens::Resolve(*ScenePtr, FStringView(Token), Entity, Error))
+                        {
+                            return Agent::FToolResult::Error(Error);
+                        }
+                        Entities.push_back(Entity);
+                    }
+
+                    if (!SessionOps::SelectEntities(Entities, SceneError))
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+                    Out.Selected = (int32)Entities.size();
+                    return Agent::FToolResult::Ok(Lumina::Format("Selected {} entities.", Out.Selected));
+                });
+        }
+
+        void RegisterRemoveScript(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SAddScriptParams, SRemoveScriptResult>(
+                Owner, "entity.remove_script",
+                "Detach the first script of a class from an entity, as the inspector's script remove button does, leaving its other scripts.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SAddScriptParams& In, SRemoveScriptResult& Out)
+                {
+                    FString SceneError;
+                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    if (ScenePtr == nullptr)
+                    {
+                        return Agent::FToolResult::Error(SceneError);
+                    }
+
+                    ECS::FRegistry& Registry = *ScenePtr;
+
+                    ECS::FEntity Entity = ECS::NullEntity;
+                    FString Error;
+                    if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Entity, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    CClass* ScriptClass = FindObject<CClass>(FName(In.ScriptClass));
+                    if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format(
+                            "'{}' is not a loaded CEntityScript class.", In.ScriptClass));
+                    }
+
+                    if (EntityScripts::Find(Registry, Entity, ScriptClass) == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("'{}' has no {} script.", NameOf(Registry, Entity), In.ScriptClass));
+                    }
+
+                    SessionOps::RunComponentTransacted("Remove Script (agent)", Entity, SEntityScriptComponent::StaticStruct(), [&]()
+                    {
+                        CEntityScript* Script = EntityScripts::Find(Registry, Entity, ScriptClass);
+                        Out.bRemoved = Script != nullptr && EntityScripts::Remove(Registry, Entity, Script);
+                    }, SceneError);
+
+                    if (!Out.bRemoved)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("'{}' could not be removed.", In.ScriptClass));
+                    }
+                    return Agent::FToolResult::Ok(Lumina::Format("Removed {} from '{}'.", In.ScriptClass, NameOf(Registry, Entity)));
                 });
         }
 
@@ -592,7 +680,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(SceneError);
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Stop play-in-editor first.");
                     }
@@ -662,7 +750,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(SceneError);
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Stop play-in-editor first.");
                     }
@@ -685,7 +773,7 @@ namespace Lumina::MCP
                     ECS::FEntity Copy = ECS::NullEntity;
                     if (!SessionOps::RunCreationTransacted("Duplicate (agent)", [&]()
                     {
-                        World->DuplicateEntity(Copy, Source, &EditorEntityUtils::DefaultDuplicateFilter);
+                        Copy = SessionOps::DuplicateEntity(Source);
                     }, SceneError))
                     {
                         return Agent::FToolResult::Error(SceneError);
@@ -713,7 +801,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(SceneError);
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Stop play-in-editor first.");
                     }
@@ -734,6 +822,17 @@ namespace Lumina::MCP
                     if (Parent == Child || (Parent != ECS::NullEntity && ECS::Utils::IsDescendantOf(Registry, Parent, Child)))
                     {
                         return Agent::FToolResult::Error("The new parent is inside the entity's own subtree, which would make a cycle.");
+                    }
+
+                    // Matches the outliner, since a refresh would mirror an inherited node back to its prefab parent.
+                    auto IsInheritedPrefabNode = [&](ECS::FEntity Entity)
+                    {
+                        const SPrefabInstanceComponent* Instance = Entity != ECS::NullEntity ? Registry.TryGet<SPrefabInstanceComponent>(Entity) : nullptr;
+                        return Instance != nullptr && !Instance->bIsRoot;
+                    };
+                    if (IsInheritedPrefabNode(Child) || IsInheritedPrefabNode(Parent))
+                    {
+                        return Agent::FToolResult::Error("Cannot reparent prefab-instance children. Edit the source prefab instead.");
                     }
 
                     if (!SessionOps::RunTransacted("Reparent Entity (agent)", [&]()
@@ -763,7 +862,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(SceneError);
                     }
 
-                    if (SessionOps::IsSimulating())
+                    if (SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Stop play-in-editor first.");
                     }
@@ -839,7 +938,7 @@ namespace Lumina::MCP
             {
                 return Agent::FToolResult::Error(SceneError);
             }
-            if (SessionOps::IsSimulating())
+            if (SessionOps::IsSceneTargetSimulating())
             {
                 return Agent::FToolResult::Error("Stop play-in-editor first.");
             }
@@ -1011,6 +1110,8 @@ namespace Lumina::MCP
         RegisterCreateEntity(Owner);
         RegisterAddComponent(Owner);
         RegisterAddScript(Owner);
+        RegisterRemoveScript(Owner);
+        RegisterSelectEntities(Owner);
         RegisterSetEntityProperty(Owner);
         RegisterRemoveComponent(Owner);
         RegisterDestroyEntities(Owner);

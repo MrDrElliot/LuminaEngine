@@ -49,5 +49,8 @@ namespace Lumina
 
         TVector<uint8>          Before;
         TVector<uint8>          After;
+
+        // Whether each entity carried the component when the before-image was taken.
+        TVector<uint8>          PresentBefore;
     };
 }

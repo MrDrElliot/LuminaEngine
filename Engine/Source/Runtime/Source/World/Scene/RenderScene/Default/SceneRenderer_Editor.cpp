@@ -32,11 +32,6 @@ namespace Lumina
     // Entity ids belong to the geometry, not any material, so they never enter the GBuffer.
     void FDefaultSceneRenderer::PickerResolvePass(RHI::FCmdListH CL)
     {
-        if (RenderFrame->Geometry.DrawCommands.empty())
-        {
-            return;
-        }
-
         // Only the selection outline reads the whole image; a hover reads one cursor window, and otherwise nothing does.
         const bool   bOutline = !RenderFrame->Extracts.SelectionBits.empty();
         const uint64 Cursor   = PickerCursorPacked.load(std::memory_order_relaxed);
@@ -59,6 +54,23 @@ namespace Lumina
         const FSceneImage& PickerImg = GetNamedImage(ENamedImage::Picker);
         const FSceneImage& VisRT     = GetNamedImage(ENamedImage::VisBuffer);
         const FUIntVector2 Extent    = GetNamedImage(ENamedImage::HDR).GetExtent();
+
+        // With no mesh draws the VisBuffer was never written, but the outline and the later picker writers still read this image.
+        if (RenderFrame->Geometry.DrawCommands.empty())
+        {
+            RHI::FRenderAttachment Cleared;
+            Cleared.Texture = PickerImg.Texture;
+            Cleared.LoadOp  = RHI::ELoadOp::Clear;
+            Cleared.StoreOp = RHI::EStoreOp::Store;
+
+            RHI::FRenderPassDesc ClearPass;
+            ClearPass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Cleared, 1);
+            ClearPass.RenderArea       = Extent;
+            RHI::CmdBeginRenderPass(CL, ClearPass);
+            RHI::CmdEndRenderPass(CL);
+            Barriers::RasterToRead(CL);
+            return;
+        }
 
         RHI::FRenderAttachment Color;
         Color.Texture        = PickerImg.Texture;
