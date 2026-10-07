@@ -8,6 +8,7 @@
 #include "algorithm.h"
 #include "math_internal.h"
 #include "shape.h"
+#include "simd.h"
 
 #include "box3d/collision.h"
 #include "box3d/constants.h"
@@ -1627,25 +1628,67 @@ static float* b3GetHullSoaNormalsWrite( b3HullData* hull )
 	return (float*)( (intptr_t)hull + hull->soaNormalOffset );
 }
 
+static void b3UpdateHullEdgeCosines( b3HullData* hull )
+{
+	const b3HullHalfEdge* edges = b3GetHullEdges( hull );
+	const b3Plane* planes = b3GetHullPlanes( hull );
+	float* cosines = (float*)( (intptr_t)hull + hull->edgeCosineOffset );
+	int count = hull->edgeCount / 2;
+
+	for ( int i = 0; i < count; ++i )
+	{
+		cosines[i] = b3Dot( planes[edges[2 * i].face].normal, planes[edges[2 * i + 1].face].normal );
+	}
+}
+
 int b3FindHullSupportVertex( const b3HullData* hull, b3Vec3 direction )
 {
 	int bestIndex = B3_NULL_INDEX;
 	float bestDot = -FLT_MAX;
 
 	int vertexCount = hull->vertexCount;
-	const b3Vec3* points = b3GetHullPoints( hull );
+	const float* vx = b3GetHullSoaVertices( hull );
 
-	for ( int index = 0; index < vertexCount; ++index )
+	int soaVertexCount = b3GetHullSoaStride( vertexCount );
+	const float* vy = vx + soaVertexCount;
+	const float* vz = vy + soaVertexCount;
+
+	b3FloatW4 dx = b3SplatW4( direction.x );
+	b3FloatW4 dy = b3SplatW4( direction.y );
+	b3FloatW4 dz = b3SplatW4( direction.z );
+	b3FloatW4 four = b3SplatW4( 4.0f );
+	b3FloatW4 index = b3SetW4( 0.0f, 1.0f, 2.0f, 3.0f );
+	b3FloatW4 bestDotW = b3SplatW4( -FLT_MAX );
+	b3FloatW4 bestIndexW = b3SplatW4( -1.0f );
+
+	// Keep this at 4 wide to avoid regressing 4 wide platforms.
+	int loopCount = ( vertexCount + 3 ) & ~3;
+	for ( int i = 0; i < loopCount; i += 4 )
 	{
-		float dot = b3Dot( direction, points[index] );
-		if ( dot > bestDot )
+		b3FloatW4 dot = b3AddW4( b3AddW4( b3MulW4( dx, b3LoadW4( vx + i ) ), b3MulW4( dy, b3LoadW4( vy + i ) ) ),
+								 b3MulW4( dz, b3LoadW4( vz + i ) ) );
+		b3FloatW4 mask = b3GreaterThanW4( dot, bestDotW );
+		bestDotW = b3BlendW4( bestDotW, dot, mask );
+		bestIndexW = b3BlendW4( bestIndexW, index, mask );
+		index = b3AddW4( index, four );
+	}
+
+	_Alignas( 16 ) float dots[4];
+	_Alignas( 16 ) float indices[4];
+	b3StoreW4( dots, bestDotW );
+	b3StoreW4( indices, bestIndexW );
+
+	for ( int lane = 0; lane < 4; ++lane )
+	{
+		int laneIndex = (int)indices[lane];
+		if ( laneIndex >= 0 && ( dots[lane] > bestDot || ( dots[lane] == bestDot && laneIndex < bestIndex ) ) )
 		{
-			bestIndex = index;
-			bestDot = dot;
+			bestIndex = laneIndex;
+			bestDot = dots[lane];
 		}
 	}
-	B3_ASSERT( bestIndex >= 0 );
 
+	B3_ASSERT( 0 <= bestIndex && bestIndex < vertexCount );
 	return bestIndex;
 }
 
@@ -1892,6 +1935,51 @@ b3HullData* b3CreateRock( float radius )
 	return b3CreateHull( points, pointCount, pointCount );
 }
 
+// PEEL's BasicRandom. This is just for testing.
+static uint32_t b3NextComplexHullRandom( uint32_t* state )
+{
+	*state = *state * 2147001325u + 715136305u;
+	return *state;
+}
+
+static float b3ComplexHullRandomFloat( uint32_t* state )
+{
+	return (float)( b3NextComplexHullRandom( state ) & 0xffff ) / 65535.0f - 0.5f;
+}
+
+static b3Vec3 b3ComplexHullRandomDirection( uint32_t* state )
+{
+	b3Vec3 point;
+	float lengthSquared;
+	do
+	{
+		point.x = b3ComplexHullRandomFloat( state );
+		point.y = b3ComplexHullRandomFloat( state );
+		point.z = b3ComplexHullRandomFloat( state );
+		lengthSquared = b3Dot( point, point );
+	}
+	while ( lengthSquared > 0.25f );
+
+	return b3Normalize( point );
+}
+
+b3HullData* b3CreateComplexHull( float radius )
+{
+	enum
+	{
+		pointCount = 32
+	};
+
+	b3Vec3 points[pointCount];
+	uint32_t state = 42;
+	for ( int i = 0; i < pointCount; ++i )
+	{
+		points[i] = b3MulSV( radius, b3ComplexHullRandomDirection( &state ) );
+	}
+
+	return b3CreateHull( points, pointCount, pointCount );
+}
+
 static void b3UpdateHullBounds( b3HullData* hull )
 {
 	const b3Vec3* points = b3GetHullPoints( hull );
@@ -2132,8 +2220,8 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 		while ( edge != face->edge );
 	}
 
-	int soaVertexCount = ( vertexCount + 3 ) & ~3;
-	int soaNormalCount = ( faceCount + 3 ) & ~3;
+	int soaVertexCount = b3GetHullSoaStride( vertexCount );
+	int soaNormalCount = b3GetHullSoaStride( faceCount );
 
 	// Allocate the hull. Arrays hang off the end.
 	size_t byteCount = b3AlignUp8( sizeof( b3HullData ) );
@@ -2151,6 +2239,8 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	byteCount += b3AlignUp8( 3 * soaVertexCount * (int)sizeof( float ) );
 	int soaNormalOffset = (int)byteCount;
 	byteCount += b3AlignUp8( 3 * soaNormalCount * (int)sizeof( float ) );
+	int edgeCosineOffset = (int)byteCount;
+	byteCount += b3AlignUp8( ( edgeCount / 2 ) * (int)sizeof( float ) );
 
 	b3HullData* hull = b3Alloc( byteCount );
 	memset( hull, 0, byteCount );
@@ -2163,6 +2253,7 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	hull->faceOffset = faceOffset;
 	hull->soaVertexOffset = soaVertexOffset;
 	hull->soaNormalOffset = soaNormalOffset;
+	hull->edgeCosineOffset = edgeCosineOffset;
 
 	hull->vertexCount = vertexCount;
 	hull->edgeCount = edgeCount;
@@ -2244,6 +2335,8 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	// All builder pointers are dead from here on.
 	b3Free( work, sizes.totalBytes );
 
+	b3UpdateHullEdgeCosines( hull );
+
 	b3UpdateHullBounds( hull );
 	bool success = b3UpdateHullBulkProperties( hull );
 	if ( success == false )
@@ -2299,8 +2392,8 @@ bool b3CompareHullData( const b3HullData* hull1, const b3HullData* hull2 )
 
 // Hull identity covers every byte, so the structs carry explicit padding. These lock
 // the layout, re-audit padding if a size changes.
-_Static_assert( sizeof( b3HullData ) == 144, "unexpected hull data size" );
-_Static_assert( sizeof( b3BoxHull ) == 640, "unexpected box hull size" );
+_Static_assert( sizeof( b3HullData ) == 152, "unexpected hull data size" );
+_Static_assert( sizeof( b3BoxHull ) == 696, "unexpected box hull size" );
 
 // Implement b3HullMap.
 #define NAME b3HullMap
@@ -2401,7 +2494,7 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 	b3Matrix3 matrix = b3MakeMatrixFromQuat( transform.q );
 	b3Vec3* points = b3GetHullPointsWrite( hull );
 
-	int soaVertexCount = ( vertexCount + 3 ) & ~3;
+	int soaVertexCount = b3GetHullSoaStride( vertexCount );
 	float* vx = b3GetHullSoaVerticesWrite( hull );
 	float* vy = vx + soaVertexCount;
 	float* vz = vy + soaVertexCount;
@@ -2423,7 +2516,7 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 	}
 
 	b3Plane* planes = b3GetHullPlanesWrite( hull );
-	int soaNormalCount = ( faceCount + 3 ) & ~3;
+	int soaNormalCount = b3GetHullSoaStride( faceCount );
 	float* nx = b3GetHullSoaNormalsWrite( hull );
 	float* ny = nx + soaNormalCount;
 	float* nz = ny + soaNormalCount;
@@ -2484,6 +2577,8 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 		ny[i] = 0.0f;
 		nz[i] = 0.0f;
 	}
+
+	b3UpdateHullEdgeCosines( hull );
 
 	b3UpdateHullBounds( hull );
 	bool success = b3UpdateHullBulkProperties( hull );
@@ -2739,6 +2834,7 @@ static const b3BoxHull s_boxHull = {
 			.faceOffset = offsetof( b3BoxHull, boxFaces ),
 			.soaVertexOffset = offsetof( b3BoxHull, vx ),
 			.soaNormalOffset = offsetof( b3BoxHull, nx ),
+			.edgeCosineOffset = offsetof( b3BoxHull, edgeCosines ),
 		},
 	.boxVertices =
 		{

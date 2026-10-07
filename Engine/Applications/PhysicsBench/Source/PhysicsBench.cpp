@@ -11,6 +11,9 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <algorithm>
+#include <vector>
 
 namespace PhysicsBench
 {
@@ -79,8 +82,6 @@ namespace PhysicsBench
             b3ShapeDef ShapeDef = b3DefaultShapeDef();
             b3CreateSphereShape(Body, &ShapeDef, &Sphere);
         }
-
-        b3World_RebuildStaticTree(WorldId);
     }
 
     static FStepStats RunSteps(b3WorldId WorldId, uint32 StepCount, uint32 SubStepCount)
@@ -242,12 +243,214 @@ namespace PhysicsBench
     }
 }
 
+namespace PhysicsBench
+{
+    enum class ESingleScene : uint8
+    {
+        BoxPile,
+        MixedPile,
+        Debris,
+    };
+
+    static const char* SceneName(ESingleScene Scene)
+    {
+        switch (Scene)
+        {
+        case ESingleScene::BoxPile:   return "box pile";
+        case ESingleScene::MixedPile: return "mixed pile";
+        case ESingleScene::Debris:    return "debris";
+        }
+        return "?";
+    }
+
+    static void AddStaticBox(b3WorldId WorldId, b3Vec3 Center, b3Vec3 HalfExtent)
+    {
+        b3BodyDef Def = b3DefaultBodyDef();
+        Def.type = b3_staticBody;
+        Def.position = Center;
+        const b3BodyId Body = b3CreateBody(WorldId, &Def);
+        const b3BoxHull Hull = b3MakeBoxHull(HalfExtent.x, HalfExtent.y, HalfExtent.z);
+        b3ShapeDef ShapeDef = b3DefaultShapeDef();
+        b3CreateHullShape(Body, &ShapeDef, &Hull.base);
+    }
+
+    // Sleep is off for every body, so the whole set stays in the solver however long it rests.
+    static void PopulateSingleScene(b3WorldId WorldId, ESingleScene Scene, uint32 BodyCount)
+    {
+        AddStaticBox(WorldId, { 0.0f, -1.0f, 0.0f }, { 400.0f, 1.0f, 400.0f });
+
+        const b3BoxHull Box = b3MakeBoxHull(0.5f, 0.5f, 0.5f);
+        const b3Sphere Sphere = { { 0.0f, 0.0f, 0.0f }, 0.5f };
+        const b3Capsule Capsule = { { 0.0f, -0.35f, 0.0f }, { 0.0f, 0.35f, 0.0f }, 0.35f };
+
+        const bool bPile = Scene != ESingleScene::Debris;
+        constexpr uint32 LayersInPile = 10;
+        const uint32 Side = bPile
+            ? (uint32)std::ceil(std::sqrt((double)BodyCount / LayersInPile))
+            : (uint32)std::ceil(std::sqrt((double)BodyCount));
+        const float Spacing = bPile ? 1.1f : 3.0f;
+        const float Half = (float)Side * Spacing * 0.5f;
+
+        // Walls keep the pile a pile, so every body stays in contact with several neighbors for the whole run.
+        if (bPile)
+        {
+            const float Wall = Half + 0.6f;
+            const float Height = LayersInPile * 1.2f + 2.0f;
+            AddStaticBox(WorldId, {  Wall, Height * 0.5f, 0.0f }, { 0.5f, Height * 0.5f, Wall });
+            AddStaticBox(WorldId, { -Wall, Height * 0.5f, 0.0f }, { 0.5f, Height * 0.5f, Wall });
+            AddStaticBox(WorldId, { 0.0f, Height * 0.5f,  Wall }, { Wall, Height * 0.5f, 0.5f });
+            AddStaticBox(WorldId, { 0.0f, Height * 0.5f, -Wall }, { Wall, Height * 0.5f, 0.5f });
+        }
+
+        for (uint32 Index = 0; Index < BodyCount; ++Index)
+        {
+            const uint32 Column = Index % (Side * Side);
+            const uint32 Layer = Index / (Side * Side);
+            const float Jitter = (float)((Index * 7919u) % 97u) / 97.0f - 0.5f;
+
+            b3BodyDef Def = b3DefaultBodyDef();
+            Def.type = b3_dynamicBody;
+            Def.enableSleep = false;
+            Def.position = { (float)(Column % Side) * Spacing - Half + 0.5f + Jitter * 0.1f,
+                             0.6f + (float)Layer * 1.15f,
+                             (float)(Column / Side) * Spacing - Half + 0.5f - Jitter * 0.1f };
+            if (!bPile)
+            {
+                // Skidding debris, so each box keeps a live ground contact instead of settling into rest.
+                Def.linearVelocity = { Jitter * 8.0f, 0.0f, -Jitter * 6.0f };
+                Def.angularVelocity = { 0.0f, Jitter * 4.0f, 0.0f };
+            }
+
+            const b3BodyId Body = b3CreateBody(WorldId, &Def);
+            b3ShapeDef ShapeDef = b3DefaultShapeDef();
+            const uint32 Kind = Scene == ESingleScene::MixedPile ? Index % 3u : 0u;
+            if (Kind == 1)
+            {
+                b3CreateSphereShape(Body, &ShapeDef, &Sphere);
+            }
+            else if (Kind == 2)
+            {
+                b3CreateCapsuleShape(Body, &ShapeDef, &Capsule);
+            }
+            else
+            {
+                b3CreateHullShape(Body, &ShapeDef, &Box.base);
+            }
+        }
+    }
+
+    static void RunSingleThreadCase(ESingleScene Scene, uint32 BodyCount, uint32 SubStepCount, bool bForceSSE2)
+    {
+        constexpr uint32 SettleSteps = 90;
+        constexpr uint32 MeasuredSteps = 240;
+        constexpr uint32 Passes = 3;
+
+        double BestAverage = 1e9;
+        double BestP95 = 0.0;
+        double BestWorst = 0.0;
+        b3Profile BestProfile{};
+        int32 Contacts = 0;
+
+        for (uint32 Pass = 0; Pass < Passes; ++Pass)
+        {
+            const b3WorldId WorldId = CreateWorld(FWorldConfig{ 1, false }, nullptr);
+            b3World_EnableSSE2Fallback(WorldId, bForceSSE2);
+            PopulateSingleScene(WorldId, Scene, BodyCount);
+
+            for (uint32 Step = 0; Step < SettleSteps; ++Step)
+            {
+                b3World_Step(WorldId, 1.0f / 60.0f, (int)SubStepCount);
+            }
+
+            std::vector<double> StepMs;
+            StepMs.reserve(MeasuredSteps);
+            b3Profile Sum{};
+            for (uint32 Step = 0; Step < MeasuredSteps; ++Step)
+            {
+                const double Start = PlatformTime::Seconds();
+                b3World_Step(WorldId, 1.0f / 60.0f, (int)SubStepCount);
+                StepMs.push_back((PlatformTime::Seconds() - Start) * 1000.0);
+
+                const b3Profile Profile = b3World_GetProfile(WorldId);
+                Sum.pairs += Profile.pairs;
+                Sum.collide += Profile.collide;
+                Sum.solve += Profile.solve;
+                Sum.prepareConstraints += Profile.prepareConstraints;
+                Sum.solveImpulses += Profile.solveImpulses;
+                Sum.integrateVelocities += Profile.integrateVelocities + Profile.integratePositions;
+                Sum.refit += Profile.refit + Profile.transforms;
+            }
+
+            double Total = 0.0;
+            for (double Ms : StepMs)
+            {
+                Total += Ms;
+            }
+            const double Average = Total / (double)StepMs.size();
+            std::sort(StepMs.begin(), StepMs.end());
+
+            if (Average < BestAverage)
+            {
+                BestAverage = Average;
+                BestP95 = StepMs[(size_t)(StepMs.size() * 0.95)];
+                BestWorst = StepMs.back();
+                const float Inv = 1.0f / (float)MeasuredSteps;
+                BestProfile = Sum;
+                BestProfile.pairs *= Inv;
+                BestProfile.collide *= Inv;
+                BestProfile.solve *= Inv;
+                BestProfile.prepareConstraints *= Inv;
+                BestProfile.solveImpulses *= Inv;
+                BestProfile.integrateVelocities *= Inv;
+                BestProfile.refit *= Inv;
+                Contacts = b3World_GetCounters(WorldId).contactCount;
+            }
+
+            b3DestroyWorld(WorldId);
+        }
+
+        std::printf("%-11s %6u %8d %8.3f %8.3f %8.3f   %6.3f %6.3f %6.3f %6.3f %6.3f %6.3f %6.3f\n",
+            SceneName(Scene), BodyCount, Contacts, BestAverage, BestP95, BestWorst,
+            BestProfile.pairs, BestProfile.collide, BestProfile.solve, BestProfile.prepareConstraints,
+            BestProfile.solveImpulses, BestProfile.integrateVelocities, BestProfile.refit);
+    }
+
+    // One worker and every body awake for the whole measurement, the budget a low-core-count target actually has.
+    static void RunSingleThreadSweep(uint32 SubStepCount, bool bForceSSE2)
+    {
+        std::printf("Box3D on one thread, %u sub-steps at 60 Hz, sleep disabled, best of 3 worlds, %s\n\n",
+            SubStepCount, b3IsAVX2Available() && !bForceSSE2 ? "AVX2 kernels" : "SSE2 kernels");
+        std::printf("%-11s %6s %8s %8s %8s %8s   %6s %6s %6s %6s %6s %6s %6s\n",
+            "scene", "bodies", "contacts", "avg ms", "p95 ms", "worst", "pairs", "collid", "solve", "prep", "impuls", "integr", "refit");
+        std::printf("-----------------------------------------------------------------------------------------------------------------\n");
+
+        const uint32 Counts[] = { 1000, 2000, 3000, 4000, 5000, 6000 };
+        const ESingleScene Scenes[] = { ESingleScene::BoxPile, ESingleScene::MixedPile, ESingleScene::Debris };
+        for (ESingleScene Scene : Scenes)
+        {
+            for (uint32 Count : Counts)
+            {
+                RunSingleThreadCase(Scene, Count, SubStepCount, bForceSSE2);
+            }
+        }
+    }
+}
+
 int main(int Argc, char** Argv)
 {
     using namespace Lumina;
     using namespace PhysicsBench;
 
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // "--single [substeps] [sse2]" profiles a handful of thousand awake bodies on one worker instead of the throughput table.
+    if (Argc > 1 && std::strcmp(Argv[1], "--single") == 0)
+    {
+        const uint32 SingleSubSteps = Argc > 2 ? (uint32)std::atoll(Argv[2]) : 4u;
+        const bool bForceSSE2 = Argc > 3 && std::strcmp(Argv[3], "sse2") == 0;
+        RunSingleThreadSweep(SingleSubSteps == 0 ? 4u : SingleSubSteps, bForceSSE2);
+        return 0;
+    }
 
     uint32 BodyCount = 50000;
     if (Argc > 1)

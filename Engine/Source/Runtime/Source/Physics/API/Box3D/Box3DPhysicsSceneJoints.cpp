@@ -629,7 +629,6 @@ namespace Lumina::Physics
             }
             Handles.push_back(Handle);
         }
-        bStaticTreeDirty = true;
     }
 
     void FBox3DPhysicsScene::DestroyStaticBodyGroup(uint32 GroupID)

@@ -58,7 +58,6 @@
 typedef struct b3BodySim b3BodySim;
 typedef struct b3BodyState b3BodyState;
 typedef struct b3ContactConstraint b3ContactConstraint;
-typedef struct b3ContactConstraintWide b3ContactConstraintWide;
 typedef struct b3ContactSpec b3ContactSpec;
 typedef struct b3JointSim b3JointSim;
 typedef struct b3Manifold b3Manifold;
@@ -164,6 +163,14 @@ typedef struct b3ContactPrepareSpan
 	b3ContactSpec* contacts;
 } b3ContactPrepareSpan;
 
+typedef struct b3MeshPrepareSpan
+{
+	int start;
+	int count;
+	b3ContactSpec* contacts;
+	int* order;
+} b3MeshPrepareSpan;
+
 typedef struct b3JointPrepareSpan
 {
 	int start;
@@ -189,7 +196,6 @@ typedef struct b3StepContext
 	b3Softness contactSoftness;
 	b3Softness staticSoftness;
 
-	float restitutionThreshold;
 	float maxLinearVelocity;
 
 	struct b3World* world;
@@ -209,6 +215,8 @@ typedef struct b3StepContext
 	int* bulletBodies;
 	b3AtomicInt bulletBodyCount;
 
+	b3AtomicInt anyRestitution;
+
 	// Contact ids for simplified parallel-for access. Used in narrow-phase.
 	// These contacts may or may not be touching. They are associated with awake bodies.
 	int* awakeContactIndices;
@@ -216,16 +224,16 @@ typedef struct b3StepContext
 	// Flat view of the wide contact constraint array used by prepare and store.
 	// prepareSpans has activeColorCount + 1 entries, the last being a sentinel
 	// at wideContactCount. wideContactConstraints is the contiguous base
-	// pointer; per-color slices live at colors[i].wideConstraints.
-	struct b3ContactConstraintWide* wideConstraints;
+	// pointer. Per-color slices live at colors[i].wideConstraints.
+	void* wideConstraints;
 	b3WidePrepareSpan* widePrepareSpans;
 	int wideContactCount;
 
-	// Similar for mesh/overflow contact constraints
-	struct b3ManifoldConstraint* manifoldConstraints;
-	struct b3ContactConstraint* contactConstraints;
-	b3ContactPrepareSpan* contactPrepareSpans;
+	// Similar for overflow contact constraints.
 	b3ContactPrepareSpan* overflowSpans;
+	void* wideMeshConstraints;
+	int* wideMeshManifoldStarts;
+	b3MeshPrepareSpan* meshPrepareSpans;
 	b3JointPrepareSpan* jointPrepareSpans;
 
 	int activeColorCount;

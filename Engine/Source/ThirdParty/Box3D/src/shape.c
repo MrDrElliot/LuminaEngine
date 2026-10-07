@@ -75,7 +75,7 @@ static float b3ComputeShapeMargin( b3Shape* shape )
 	return b3MinFloat( B3_MAX_AABB_MARGIN, B3_AABB_MARGIN_FRACTION * margin );
 }
 
-static void b3UpdateShapeAABBs( b3Shape* shape, b3WorldTransform transform, b3BodyType proxyType )
+static void b3UpdateShapeAABBs( b3Shape* shape, b3AABB* fatAABB, b3WorldTransform transform, b3BodyType proxyType )
 {
 	// Compute a bounding box with a speculative margin
 	const float speculativeDistance = B3_SPECULATIVE_DISTANCE;
@@ -86,14 +86,7 @@ static void b3UpdateShapeAABBs( b3Shape* shape, b3WorldTransform transform, b3Bo
 
 	// Smaller margin for static bodies. Cannot be zero due to TOI tolerance.
 	float margin = proxyType == b3_staticBody ? speculativeDistance : aabbMargin;
-	b3AABB fatAABB;
-	fatAABB.lowerBound.x = aabb.lowerBound.x - margin;
-	fatAABB.lowerBound.y = aabb.lowerBound.y - margin;
-	fatAABB.lowerBound.z = aabb.lowerBound.z - margin;
-	fatAABB.upperBound.x = aabb.upperBound.x + margin;
-	fatAABB.upperBound.y = aabb.upperBound.y + margin;
-	fatAABB.upperBound.z = aabb.upperBound.z + margin;
-	shape->fatAABB = fatAABB;
+	*fatAABB = b3AABB_Inflate( aabb, margin );
 }
 
 static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTransform bodyTransform, const b3ShapeDef* def,
@@ -105,11 +98,14 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 	if ( shapeId == world->shapes.count )
 	{
 		b3Array_Push( world->shapes, (b3Shape){ 0 } );
+		b3Array_Push( world->fatAABBs, (b3AABB){ 0 } );
 	}
 	else
 	{
 		B3_ASSERT( world->shapes.data[shapeId].id == B3_NULL_INDEX );
 	}
+
+	B3_ASSERT( world->fatAABBs.count == world->shapes.count );
 
 	b3Shape* shape = b3Array_Get( world->shapes, shapeId );
 
@@ -186,7 +182,7 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 	shape->localCentroid = b3GetShapeCentroid( shape );
 	shape->aabbMargin = b3ComputeShapeMargin( shape );
 	shape->aabb = (b3AABB){ b3Vec3_zero, b3Vec3_zero };
-	shape->fatAABB = (b3AABB){ b3Vec3_zero, b3Vec3_zero };
+	world->fatAABBs.data[shapeId] = (b3AABB){ b3Vec3_zero, b3Vec3_zero };
 	shape->nameId = b3AddName( &world->names, def->name );
 	shape->generation += 1;
 
@@ -220,7 +216,7 @@ static b3Shape* b3CreateShapeInternal( b3World* world, b3Body* body, b3WorldTran
 	{
 		b3BodyType proxyType = body->type;
 		bool forcePairCreation = def->invokeContactCreation && shape->type != b3_compoundShape;
-		b3CreateShapeProxy( shape, &world->broadPhase, proxyType, bodyTransform, forcePairCreation );
+		b3CreateShapeProxy( world, shape, proxyType, bodyTransform, forcePairCreation );
 	}
 
 	// Add to shape doubly linked list
@@ -835,6 +831,24 @@ b3ShapeExtent b3ComputeShapeExtent( const b3Shape* shape, b3Vec3 localCenter )
 	return extent;
 }
 
+float b3ComputeShapeMinExtent( const b3Shape* shape, b3Vec3 localCenter )
+{
+	switch ( shape->type )
+	{
+		case b3_capsuleShape:
+			return shape->capsule.radius;
+
+		case b3_sphereShape:
+			return shape->sphere.radius;
+
+		case b3_hullShape:
+			return shape->hull->innerRadius;
+
+		default:
+			return b3ComputeShapeExtent( shape, localCenter ).minExtent;
+	}
+}
+
 b3CastOutput b3RayCastShape( const b3Shape* shape, b3Transform transform, const b3RayCastInput* input )
 {
 	b3RayCastInput localInput = *input;
@@ -1004,15 +1018,16 @@ int b3CollideMover( b3PlaneResult* planes, int planeCapacity, const b3Shape* sha
 	return planeCount;
 }
 
-void b3CreateShapeProxy( b3Shape* shape, b3BroadPhase* bp, b3BodyType type, b3WorldTransform transform, bool forcePairCreation )
+void b3CreateShapeProxy( b3World* world, b3Shape* shape, b3BodyType type, b3WorldTransform transform, bool forcePairCreation )
 {
 	B3_ASSERT( shape->proxyKey == B3_NULL_INDEX );
 
-	b3UpdateShapeAABBs( shape, transform, type );
+	b3AABB* fatAABB = world->fatAABBs.data + shape->id;
+	b3UpdateShapeAABBs( shape, fatAABB, transform, type );
 
 	// Create proxies in the broad-phase.
-	shape->proxyKey =
-		b3BroadPhase_CreateProxy( bp, type, shape->fatAABB, shape->filter.categoryBits, shape->id, forcePairCreation );
+	shape->proxyKey = b3BroadPhase_CreateProxy( &world->broadPhase, type, *fatAABB, shape->filter.categoryBits, shape->id,
+												forcePairCreation );
 	B3_ASSERT( B3_PROXY_TYPE( shape->proxyKey ) < b3_bodyTypeCount );
 }
 
@@ -1360,25 +1375,26 @@ static void b3ResetProxy( b3World* world, b3Shape* shape, bool wakeBodies, bool 
 	if ( shape->proxyKey != B3_NULL_INDEX )
 	{
 		b3BodyType proxyType = B3_PROXY_TYPE( shape->proxyKey );
-		b3UpdateShapeAABBs( shape, transform, proxyType );
+		b3AABB* fatAABB = world->fatAABBs.data + shapeId;
+		b3UpdateShapeAABBs( shape, fatAABB, transform, proxyType );
 
 		if ( destroyProxy )
 		{
 			b3BroadPhase_DestroyProxy( &world->broadPhase, shape->proxyKey );
 
 			bool forcePairCreation = true;
-			shape->proxyKey = b3BroadPhase_CreateProxy( &world->broadPhase, proxyType, shape->fatAABB, shape->filter.categoryBits,
+			shape->proxyKey = b3BroadPhase_CreateProxy( &world->broadPhase, proxyType, *fatAABB, shape->filter.categoryBits,
 														shapeId, forcePairCreation );
 		}
 		else
 		{
-			b3BroadPhase_MoveProxy( &world->broadPhase, shape->proxyKey, shape->fatAABB );
+			b3BroadPhase_MoveProxy( &world->broadPhase, shape->proxyKey, *fatAABB );
 		}
 	}
 	else
 	{
 		b3BodyType proxyType = body->type;
-		b3UpdateShapeAABBs( shape, transform, proxyType );
+		b3UpdateShapeAABBs( shape, world->fatAABBs.data + shapeId, transform, proxyType );
 	}
 
 	b3ValidateSolverSets( world );
@@ -1549,6 +1565,14 @@ const b3HeightFieldData* b3Shape_GetHeightField( b3ShapeId shapeId )
 	b3Shape* shape = b3GetShape( world, shapeId );
 	B3_ASSERT( shape->type == b3_heightShape );
 	return shape->heightField;
+}
+
+const b3CompoundData* b3Shape_GetCompound( b3ShapeId shapeId )
+{
+	b3World* world = b3GetWorld( shapeId.world0 );
+	b3Shape* shape = b3GetShape( world, shapeId );
+	B3_ASSERT( shape->type == b3_compoundShape );
+	return shape->compound;
 }
 
 void b3Shape_SetSphere( b3ShapeId shapeId, const b3Sphere* sphere )
@@ -2081,8 +2105,6 @@ typedef struct b3MeshImpactContext
 	b3Vec3 meshLocalCentroidB1, meshLocalCentroidB2;
 	float fallbackRadius;
 	bool isSensor;
-
-	int visitCount;
 } b3MeshImpactContext;
 
 static bool b3MeshTimeOfImpactFcn( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleIndex, void* context )
@@ -2090,8 +2112,6 @@ static bool b3MeshTimeOfImpactFcn( b3Vec3 a, b3Vec3 b, b3Vec3 c, int triangleInd
 	B3_UNUSED( triangleIndex );
 
 	b3MeshImpactContext* toiContext = context;
-
-	toiContext->visitCount += 1;
 
 	// Early out for parallel movement
 	b3Vec3 c1 = toiContext->meshLocalCentroidB1;
@@ -2272,8 +2292,8 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		b3Vec3 localCentroidB = b3GetShapeCentroid( shapeB );
 		context.localCentroidB = localCentroidB;
 
-		b3ShapeExtent extents = b3ComputeShapeExtent( shapeB, context.localCentroidB );
-		context.fallbackRadius = b3MaxFloat( 0.75f * extents.minExtent, B3_SPECULATIVE_DISTANCE );
+		float minExtent = b3ComputeShapeMinExtent( shapeB, context.localCentroidB );
+		context.fallbackRadius = b3MaxFloat( 0.75f * minExtent, B3_SPECULATIVE_DISTANCE );
 
 		// Swept bounds of shapeB
 		b3AABB bounds = b3ComputeSweptShapeAABB( shapeB, sweepB, maxFraction );
@@ -2291,8 +2311,6 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 	{
 		// todo implement b3MeshTimeOfImpact and b3HeightFieldTimeOfImpact
 		// Note: assuming mesh is static
-
-		uint64_t ticks = b3GetTicks();
 
 		b3MeshImpactContext context = { 0 };
 		context.toiInput.sweepA = *sweepA;
@@ -2324,8 +2342,8 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		context.meshLocalCentroidB1 = b3InvTransformPoint( xfA, b3TransformPoint( xfB1, localCentroidB ) );
 		context.meshLocalCentroidB2 = b3InvTransformPoint( xfA, b3TransformPoint( xfB2, localCentroidB ) );
 
-		b3ShapeExtent extents = b3ComputeShapeExtent( shapeB, context.localCentroidB );
-		context.fallbackRadius = b3MaxFloat( 0.5f * extents.minExtent, B3_LINEAR_SLOP );
+		float minExtent = b3ComputeShapeMinExtent( shapeB, context.localCentroidB );
+		context.fallbackRadius = b3MaxFloat( 0.5f * minExtent, B3_LINEAR_SLOP );
 
 		// Swept bounds of shapeB
 		// todo pass in xfA to get local bounds directly
@@ -2341,12 +2359,6 @@ b3TOIOutput b3ShapeTimeOfImpact( b3Shape* shapeA, b3Shape* shapeB, b3Sweep* swee
 		else if ( typeA == b3_heightShape )
 		{
 			b3QueryHeightField( shapeA->heightField, localBounds, b3MeshTimeOfImpactFcn, &context );
-		}
-
-		float ms = b3GetMilliseconds( ticks );
-		if ( ms > 1000.0f * b3GetStallThreshold() )
-		{
-			b3Log( "CCD stall: visited %d triangles", context.visitCount );
 		}
 
 		return context.toiOutput;
@@ -2415,7 +2427,7 @@ uint64_t b3GetShapeUserMaterialId( const b3Shape* shape, int childIndex, int tri
 		{
 			const uint8_t* indices = b3GetMeshMaterialIndices( child.mesh.data );
 			int meshMaterialIndex = indices != NULL ? indices[triangleIndex] : 0;
-			meshMaterialIndex = b3ClampInt( meshMaterialIndex, 0, B3_MAX_COMPOUND_MESH_MATERIALS - 1 );
+			B3_ASSERT( 0 <= meshMaterialIndex && meshMaterialIndex < child.materialCount );
 			materialIndex = child.materialIndices[meshMaterialIndex];
 		}
 		else

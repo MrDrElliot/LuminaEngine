@@ -33,7 +33,7 @@
 
 // Snapshot image magic 'BNS3' and version
 #define B3_SNAP_MAGIC 0x33534E42u
-#define B3_SNAP_VERSION 5u // broad-phase pair traversal, move buffer removed
+#define B3_SNAP_VERSION 10u // post solve restitution
 
 #define B3_SNAP_FLAG_VALIDATION 0x1u
 #define B3_SNAP_FLAG_DOUBLE_PRECISION 0x2u
@@ -65,6 +65,26 @@ static uint32_t b3ComputeLayoutHash( void )
 	MIX( sizeof( b3DynamicTree ) )
 	MIX( sizeof( b3TreeNode ) )
 	MIX( sizeof( b3TreeProxy ) )
+	MIX( sizeof( b3HullData ) )
+	MIX( sizeof( b3HullVertex ) )
+	MIX( sizeof( b3HullHalfEdge ) )
+	MIX( sizeof( b3HullFace ) )
+	MIX( sizeof( b3Plane ) )
+	MIX( sizeof( b3MeshData ) )
+	MIX( sizeof( b3MeshNode ) )
+	MIX( sizeof( b3MeshTriangle ) )
+	MIX( sizeof( b3HeightFieldData ) )
+	MIX( sizeof( b3CompoundData ) )
+	MIX( sizeof( b3CompoundCapsule ) )
+	MIX( sizeof( b3CompoundSphere ) )
+	MIX( B3_HULL_VERSION & 0xFFFFFFFFu )
+	MIX( B3_HULL_VERSION >> 32 )
+	MIX( B3_MESH_VERSION & 0xFFFFFFFFu )
+	MIX( B3_MESH_VERSION >> 32 )
+	MIX( B3_HEIGHT_FIELD_VERSION & 0xFFFFFFFFu )
+	MIX( B3_HEIGHT_FIELD_VERSION >> 32 )
+	MIX( B3_COMPOUND_VERSION & 0xFFFFFFFFu )
+	MIX( B3_COMPOUND_VERSION >> 32 )
 	MIX( sizeof( b3SetItem ) )
 	MIX( sizeof( b3IdPool ) )
 	MIX( sizeof( b3SurfaceMaterial ) )
@@ -470,6 +490,7 @@ static void b3SerWorldConfig( b3RecBuffer* buf, const b3World* world )
 	b3SnapW_Bytes( buf, &world->gravity, sizeof( b3Vec3 ) );
 	b3SnapW_Bytes( buf, &world->hitEventThreshold, sizeof( float ) );
 	b3SnapW_Bytes( buf, &world->restitutionThreshold, sizeof( float ) );
+	b3SnapW_I32( buf, world->restitutionIterations );
 	b3SnapW_Bytes( buf, &world->maxLinearSpeed, sizeof( float ) );
 	b3SnapW_Bytes( buf, &world->contactSpeed, sizeof( float ) );
 	b3SnapW_Bytes( buf, &world->contactHertz, sizeof( float ) );
@@ -487,6 +508,7 @@ static void b3SerWorldConfig( b3RecBuffer* buf, const b3World* world )
 	flags |= world->enableWarmStarting ? 0x02u : 0u;
 	flags |= world->enableContinuous ? 0x04u : 0u;
 	flags |= world->enableSpeculative ? 0x08u : 0u;
+	flags |= world->enableRestitutionPropagation ? 0x10u : 0u;
 	b3RecBufAppend( buf, &flags, 1 );
 }
 
@@ -495,6 +517,7 @@ static void b3DesWorldConfig( b3SnapReader* r, b3World* world )
 	b3SnapR_Bytes( r, &world->gravity, sizeof( b3Vec3 ) );
 	b3SnapR_Bytes( r, &world->hitEventThreshold, sizeof( float ) );
 	b3SnapR_Bytes( r, &world->restitutionThreshold, sizeof( float ) );
+	world->restitutionIterations = b3SnapR_I32( r );
 	b3SnapR_Bytes( r, &world->maxLinearSpeed, sizeof( float ) );
 	b3SnapR_Bytes( r, &world->contactSpeed, sizeof( float ) );
 	b3SnapR_Bytes( r, &world->contactHertz, sizeof( float ) );
@@ -513,6 +536,7 @@ static void b3DesWorldConfig( b3SnapReader* r, b3World* world )
 	world->enableWarmStarting = ( flags & 0x02u ) != 0;
 	world->enableContinuous = ( flags & 0x04u ) != 0;
 	world->enableSpeculative = ( flags & 0x08u ) != 0;
+	world->enableRestitutionPropagation = ( flags & 0x10u ) != 0;
 }
 
 // Shapes carry pointer fields: materials, userData, userShape, and the geometry union.
@@ -628,7 +652,7 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 	// shape with the same geometry. Carrying its handle over avoids tearing down and rebuilding every
 	// GPU mesh on each seek, which the host (a 3D renderer) would otherwise pay for. Handles that are
 	// not reclaimed below belong to shapes that are gone or were replaced, and get released so the host
-	// pool does not leak across seeks. Box2D has no such handles, so its restore skips all of this.
+	// pool does not leak across seeks.
 	int oldShapeCount = world->shapes.count;
 	void** savedUserShape = NULL;
 	uint16_t* savedGeneration = NULL;
@@ -721,13 +745,13 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 				{
 					break;
 				}
-				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
+				b3RegistrySlot* slot = b3RecGetSlot( rdr, gid, b3_geometryHull );
+				if ( slot == NULL )
 				{
 					r->ok = false;
 					break;
 				}
 				// Hull is cloned into the world DB; pass raw bytes directly
-				b3RegistrySlot* slot = rdr->slots + gid;
 				dst->hull = b3AddHullToDatabase( world, (const b3HullData*)slot->bytes );
 				break;
 			}
@@ -740,12 +764,12 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 				{
 					break;
 				}
-				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
+				b3RegistrySlot* slot = b3RecGetSlot( rdr, gid, b3_geometryMesh );
+				if ( slot == NULL )
 				{
 					r->ok = false;
 					break;
 				}
-				b3RegistrySlot* slot = rdr->slots + gid;
 				// Mesh is a self-contained blob used by reference; point straight at the pristine bytes.
 				dst->mesh.data = (const b3MeshData*)slot->bytes;
 				dst->mesh.scale = scale;
@@ -758,12 +782,12 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 				{
 					break;
 				}
-				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
+				b3RegistrySlot* slot = b3RecGetSlot( rdr, gid, b3_geometryHeightField );
+				if ( slot == NULL )
 				{
 					r->ok = false;
 					break;
 				}
-				b3RegistrySlot* slot = rdr->slots + gid;
 				// Self-contained blob used by reference; point straight at the pristine bytes.
 				dst->heightField = (const b3HeightFieldData*)slot->bytes;
 				break;
@@ -775,19 +799,13 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 				{
 					break;
 				}
-				if ( rdr == NULL || gid >= (uint32_t)rdr->slotCount )
+				b3RegistrySlot* slot = b3RecGetSlot( rdr, gid, b3_geometryCompound );
+				if ( slot == NULL )
 				{
 					r->ok = false;
 					break;
 				}
-				b3RegistrySlot* slot = rdr->slots + gid;
-				if ( slot->live == NULL )
-				{
-					slot->live = b3Alloc( (size_t)slot->byteCount );
-					memcpy( slot->live, slot->bytes, (size_t)slot->byteCount );
-					b3ConvertBytesToCompound( (uint8_t*)slot->live, slot->byteCount );
-				}
-				dst->compound = (const b3CompoundData*)slot->live;
+				dst->compound = (const b3CompoundData*)slot->bytes;
 				break;
 			}
 			default:
@@ -831,8 +849,6 @@ static void b3SerContacts( b3RecBuffer* buf, b3World* world )
 		// Write raw struct with pointer fields zeroed
 		b3Contact copy = *c;
 		copy.manifolds = NULL;
-		copy.bodySimIndexA = B3_NULL_INDEX;
-		copy.bodySimIndexB = B3_NULL_INDEX;
 		if ( copy.flags & b3_simMeshContact )
 		{
 			copy.meshContact.triangleCache.data = NULL;
@@ -889,8 +905,6 @@ static void b3DesContacts( b3SnapReader* r, b3World* world )
 		b3Contact* dst = world->contacts.data + i;
 		b3SnapR_Bytes( r, dst, sizeof( b3Contact ) );
 		dst->manifolds = NULL;
-		dst->bodySimIndexA = B3_NULL_INDEX;
-		dst->bodySimIndexB = B3_NULL_INDEX;
 		if ( dst->flags & b3_simMeshContact )
 		{
 			dst->meshContact.triangleCache.data = NULL;
@@ -1061,6 +1075,8 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 
 	// Shape sparse array with geometry interning
 	b3SerShapes( buf, world, rec );
+
+	b3SerPodArray( buf, world->fatAABBs );
 
 	// Contact sparse array with manifold and mesh triangleCache
 	b3SerContacts( buf, world );
@@ -1237,6 +1253,13 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 
 	// 5. Shape sparse array
 	b3DesShapes( r, world, rdr );
+
+	if ( !r->ok )
+	{
+		return false;
+	}
+
+	b3DesPodArray( r, world->fatAABBs );
 
 	if ( !r->ok )
 	{

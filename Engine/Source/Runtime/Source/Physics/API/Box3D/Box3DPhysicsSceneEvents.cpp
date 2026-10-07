@@ -462,11 +462,6 @@ namespace Lumina::Physics
         SynchronizeBodyGroups();
         DrainPendingConstraints();
         SynchronizeConstraints();
-        if (bStaticTreeDirty)
-        {
-            b3World_RebuildStaticTree(WorldId);
-            bStaticTreeDirty = false;
-        }
     }
 
     void FBox3DPhysicsScene::CreateRigidBodiesBatched(const TVector<ECS::FEntity>& Entities)
@@ -493,7 +488,6 @@ namespace Lumina::Physics
             BatchStatusScratch[Index] = TryBuildRigidBody(Registry, Entities[Index], BatchBuildScratch[Index]);
         }, 16);
 
-        bool bCreatedStatic = false;
 
         for (uint32 Index = 0; Index < Count; ++Index)
         {
@@ -526,8 +520,6 @@ namespace Lumina::Physics
                     {
                         BodyAwake.resize(Handle + 1, 0);
                     }
-
-                    bCreatedStatic |= Build.BodyDef.type == b3_staticBody;
                     break;
                 }
                 case EBodyBuildStatus::Defer:
@@ -543,12 +535,6 @@ namespace Lumina::Physics
                 default:
                     break;
             }
-        }
-
-        // Static shapes skipped their own contact scan on creation, so the tree is rebuilt once here.
-        if (bCreatedStatic)
-        {
-            bStaticTreeDirty = true;
         }
     }
 

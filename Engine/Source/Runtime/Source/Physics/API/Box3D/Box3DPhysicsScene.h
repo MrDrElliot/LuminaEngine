@@ -458,7 +458,6 @@ namespace Lumina::Physics
         TVector<uint32> PendingBodyDestructions;
         TVector<uint32> BodyGenerations;
         uint64 SceneIdentity = 0;
-        bool bStaticTreeDirty = false;
 
         enum class EBodyCommand : uint8
         {

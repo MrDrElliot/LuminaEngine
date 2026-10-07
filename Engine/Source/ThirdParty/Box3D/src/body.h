@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "physics_world.h"
+
 #include "box3d/constants.h"
 #include "box3d/math_functions.h"
 #include "box3d/types.h"
@@ -29,7 +31,7 @@ enum b3BodyFlags
 	// This body has fixed rotation around the z-axis
 	b3_lockAngularZ = 0x00000020,
 
-	// This flag is used for debug draw
+	// This flag is used for debug draw and contact recycling. Only lives on b3BodySim.
 	b3_isFast = 0x00000040,
 
 	// This dynamic body does a final CCD pass against all body types, but not other bullets
@@ -38,14 +40,15 @@ enum b3BodyFlags
 	// This body was speed capped in the current time step
 	b3_isSpeedCapped = 0x00000100,
 
-	// This body had a time of impact event in the current time step
+	// This body had a time of impact event in the current time step (body sim only)
 	b3_hadTimeOfImpact = 0x00000200,
 
 	// This body has no limit on angular velocity
 	b3_allowFastRotation = 0x00000400,
 
-	// This body need's to have its AABB increased
-	b3_enlargeBounds = 0x00000800,
+	// This bullet body needs to have its AABB increased. Needed because bullets don't follow
+	// the standard broad-phase update.
+	b3_enlargeBulletBounds = 0x00000800,
 
 	// This body is dynamic so the solver should write to it.
 	// This prevents writing to kinematic bodies that causes a multithreaded sharing
@@ -68,7 +71,7 @@ enum b3BodyFlags
 	b3_fixedRotation = b3_lockAngularX | b3_lockAngularY | b3_lockAngularZ,
 
 	// These flags are transient per time step. These may be different across b3Body, b3BodySim, and b3BodyState.
-	b3_bodyTransientFlags = b3_isFast | b3_isSpeedCapped | b3_hadTimeOfImpact,
+	b3_bodyTransientFlags = b3_isSpeedCapped | b3_hadTimeOfImpact,
 };
 
 // Body organizational details that are not used in the solver.
@@ -156,28 +159,30 @@ typedef struct b3Body
 // according to substep progress. Contacts have reduced stability when anchors are rotated during substeps, especially for
 // round shapes.
 //
-// 56 bytes
-// todo_erin measure perf padding to 64 bytes
+// 64 bytes
 typedef struct b3BodyState
 {
-	b3Vec3 linearVelocity;	// 12
+	b3Vec3 linearVelocity; // 12
+	float padding1;
+
 	b3Vec3 angularVelocity; // 12
+	float padding2;
 
 	// Using delta position reduces round-off error far from the origin
 	b3Vec3 deltaPosition; // 12
 
-	// Using delta rotation because I cannot access the full rotation on static bodies in
-	// the solver and must use zero delta rotation for static bodies (c,s) = (1,0)
-	b3Quat deltaRotation; // 16
-
 	// b3BodyFlags
 	// Important flags: locking, dynamic
 	uint32_t flags; // 4
+
+	// Using delta rotation because I cannot access the full rotation on static bodies in
+	// the solver and must use zero delta rotation for static bodies (c,s) = (1,0)
+	b3Quat deltaRotation; // 16
 } b3BodyState;
 
 // Identity body state, notice the deltaRotation is identity
 static const b3BodyState b3_identityBodyState = {
-	{ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { { 0.0f, 0.0f, 0.0f }, 1.0f }, 0,
+	{ 0.0f, 0.0f, 0.0f }, 0.0f, { 0.0f, 0.0f, 0.0f }, 0.0f, { 0.0f, 0.0f, 0.0f }, 0, { { 0.0f, 0.0f, 0.0f }, 1.0f },
 };
 
 // Body simulation data used for integration of position and velocity
@@ -189,6 +194,12 @@ typedef struct b3BodySim
 
 	// center of mass position in world space
 	b3Pos center;
+
+	// b3BodyFlags
+	uint32_t flags;
+
+	float minExtent;
+	b3Vec3 maxExtent;
 
 	// previous rotation and COM for TOI
 	b3Quat rotation0;
@@ -207,17 +218,12 @@ typedef struct b3BodySim
 	b3Matrix3 invInertiaLocal;
 	b3Matrix3 invInertiaWorld;
 
-	float minExtent;
-	b3Vec3 maxExtent;
 	float linearDamping;
 	float angularDamping;
 	float gravityScale;
 
 	// Index of b3Body
 	int bodyId;
-
-	// b3BodyFlags
-	uint32_t flags;
 } b3BodySim;
 
 // Get a validated body from a world using an id.
@@ -241,6 +247,38 @@ bool b3WakeBodyWithLock( b3World* world, b3Body* body );
 
 void b3UpdateBodyMassData( b3World* world, b3Body* body );
 void b3SyncBodyFlags( b3World* world, b3Body* body );
+void b3RefreshBodyContactIndices( b3World* world, b3Body* body );
+
+// Encode the body sim index for storage in the contact.
+static inline int b3EncodeBodySimIndex( const b3Body* body )
+{
+	if ( body->setIndex == b3_awakeSet )
+	{
+		return body->localIndex;
+	}
+
+	if ( body->setIndex == b3_staticSet )
+	{
+		return -( body->localIndex + 2 );
+	}
+
+	return B3_NULL_INDEX;
+}
+
+static inline bool b3IsStaticSimIndex( int encodedBodySimIndex )
+{
+	return encodedBodySimIndex < B3_NULL_INDEX;
+}
+
+static inline int b3DecodeAwakeIndex( int encodedBodySimIndex )
+{
+	return encodedBodySimIndex >= 0 ? encodedBodySimIndex : B3_NULL_INDEX;
+}
+
+static inline int b3SleepBodySimIndex( int encodedBodySimIndex )
+{
+	return encodedBodySimIndex >= 0 ? B3_NULL_INDEX : encodedBodySimIndex;
+}
 
 // Make a sweep relative to a base position to keep TOI in float precision far from the origin.
 static inline b3Sweep b3MakeRelativeSweep( const b3BodySim* bodySim, b3Pos base )

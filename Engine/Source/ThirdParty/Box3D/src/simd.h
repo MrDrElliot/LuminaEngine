@@ -5,196 +5,38 @@
 
 #include "core.h"
 
-#include "box3d/math_functions.h"
 #include "box3d/types.h"
 
 #include <stdbool.h>
 
+#if defined( B3_SIMD_ENABLED )
+
 #if defined( B3_SIMD_NEON )
-
-#include <arm_neon.h>
-
-// wide float holds 4 numbers
-typedef float32x4_t b3FloatW;
-
-#elif defined( B3_SIMD_SSE2 )
-
-#include <emmintrin.h>
-
-// wide float holds 4 numbers
-typedef __m128 b3FloatW;
-
-#else
-
-#include <math.h>
-#include <string.h>
-
-// scalar math
-typedef struct b3FloatW
-{
-	float x, y, z, w;
-} b3FloatW;
-
+#include "simd_neon.h"
 #endif
 
 #if defined( B3_SIMD_SSE2 )
+#include "simd_sse2.h"
+#endif
 
-// wide float holds 4 numbers
-typedef __m128 b3V32;
-
-typedef union b3128
-{
-	b3V32 v;
-	float f[4];
-} b3128;
-
-#if defined( _MSC_VER ) && !defined( __clang__ )
-
-static const b3V32 b3_zeroV = { { 0.0f, 0.0f, 0.0f, 0.0f } };
-static const b3V32 b3_halfV = { { 0.5f, 0.5f, 0.5f, 0.5f } };
-static const b3V32 b3_oneV = { { 1.0f, 1.0f, 1.0f, 1.0f } };
+#if defined( B3_SIMD_AVX2 )
+#include "simd_avx2.h"
+#endif
 
 #else
 
-static const b3V32 b3_zeroV = { 0.0f, 0.0f, 0.0f, 0.0f };
-static const b3V32 b3_halfV = { 0.5f, 0.5f, 0.5f, 0.5f };
-static const b3V32 b3_oneV = { 1.0f, 1.0f, 1.0f, 1.0f };
+#include "simd_scalar.h"
 
 #endif
 
-static inline b3V32 b3AddV( b3V32 a, b3V32 b )
-{
-	return _mm_add_ps( a, b );
-}
-
-static inline b3V32 b3SubV( b3V32 a, b3V32 b )
-{
-	return _mm_sub_ps( a, b );
-}
-
-static inline b3V32 b3MulV( b3V32 a, b3V32 b )
-{
-	return _mm_mul_ps( a, b );
-}
-
-static inline b3V32 b3DivV( b3V32 a, b3V32 b )
-{
-	return _mm_div_ps( a, b );
-}
-
-static inline b3V32 b3NegV( b3V32 a )
-{
-	return _mm_sub_ps( _mm_setzero_ps(), a );
-}
-
-static inline b3V32 b3LoadV( const float* src )
-{
-	// Loads exactly 12 bytes: 8 via movsd, 4 via movss.
-	// Result lane 3 is implicitly zero from the partial loads.
-	__m128 xy = _mm_castpd_ps( _mm_load_sd( (const double*)( src ) ) );
-	__m128 z = _mm_load_ss( src + 2 );
-	return _mm_movelh_ps( xy, z ); // { src[0], src[1], src[2], 0.0f }
-}
-
-static inline b3V32 b3ZeroV( void )
-{
-	return _mm_setzero_ps();
-}
-
-static inline float b3GetXV( b3V32 a )
-{
-	return _mm_cvtss_f32( a );
-}
-
-static inline float b3GetYV( b3V32 a )
-{
-	return _mm_cvtss_f32( _mm_shuffle_ps( a, a, _MM_SHUFFLE( 1, 1, 1, 1 ) ) );
-}
-
-static inline float b3GetZV( b3V32 a )
-{
-	return _mm_cvtss_f32( _mm_shuffle_ps( a, a, _MM_SHUFFLE( 2, 2, 2, 2 ) ) );
-}
-
-static inline float b3GetV( b3V32 a, int index )
-{
-	b3128 b;
-	b.v = a;
-	return b.f[index];
-}
-
-static inline b3V32 b3SplatV( float x )
-{
-	return _mm_set_ps1( x );
-}
-
-static inline b3V32 b3AbsV( b3V32 a )
-{
-	// Abs( V ) = Max( -V, V )
-	b3V32 zero = _mm_setzero_ps();
-	return _mm_max_ps( _mm_sub_ps( zero, a ), a );
-}
-
-static inline b3V32 b3MinV( b3V32 a, b3V32 b )
-{
-	return _mm_min_ps( a, b );
-}
-
-static inline b3V32 b3MaxV( b3V32 a, b3V32 b )
-{
-	return _mm_max_ps( a, b );
-}
-
-static inline b3V32 b3CrossV( b3V32 a, b3V32 b )
-{
-	b3V32 yzX1 = _mm_shuffle_ps( a, a, _MM_SHUFFLE( 3, 0, 2, 1 ) );
-	b3V32 zxY1 = _mm_shuffle_ps( a, a, _MM_SHUFFLE( 3, 1, 0, 2 ) );
-	b3V32 yzX2 = _mm_shuffle_ps( b, b, _MM_SHUFFLE( 3, 0, 2, 1 ) );
-	b3V32 zxY2 = _mm_shuffle_ps( b, b, _MM_SHUFFLE( 3, 1, 0, 2 ) );
-
-	return _mm_sub_ps( _mm_mul_ps( yzX1, zxY2 ), _mm_mul_ps( zxY1, yzX2 ) );
-}
-
-static inline b3V32 b3ModifiedCrossV( b3V32 a, b3V32 b )
-{
-	b3V32 yzX1 = _mm_shuffle_ps( a, a, _MM_SHUFFLE( 3, 0, 2, 1 ) );
-	b3V32 zxY1 = _mm_shuffle_ps( a, a, _MM_SHUFFLE( 3, 1, 0, 2 ) );
-	b3V32 yzX2 = _mm_shuffle_ps( b, b, _MM_SHUFFLE( 3, 0, 2, 1 ) );
-	b3V32 zxY2 = _mm_shuffle_ps( b, b, _MM_SHUFFLE( 3, 1, 0, 2 ) );
-
-	return _mm_add_ps( _mm_mul_ps( yzX1, zxY2 ), _mm_mul_ps( zxY1, yzX2 ) );
-}
-
-static inline bool b3AnyLess3V( b3V32 a, b3V32 b )
-{
-	b3V32 v = _mm_cmplt_ps( a, b );
-	return ( _mm_movemask_ps( v ) & 0x07 ) != 0;
-}
-
-static inline bool b3AnyLessEq3V( b3V32 a, b3V32 b )
-{
-	b3V32 v = _mm_cmple_ps( a, b );
-	return ( _mm_movemask_ps( v ) & 0x07 ) != 0;
-}
-
-static inline bool b3AnyGreater3V( b3V32 a, b3V32 b )
-{
-	b3V32 v = _mm_cmpgt_ps( a, b );
-	return ( _mm_movemask_ps( v ) & 0x07 ) != 0;
-}
-
-static inline bool b3AllLessEq3V( b3V32 a, b3V32 b )
-{
-	b3V32 v = _mm_cmple_ps( a, b );
-	return ( _mm_movemask_ps( v ) & 0x07 ) == 0x07;
-}
-
-#else
+#if !defined( B3_SIMD_SSE2 )
 
 // I don't expect the use case of b3V32 to benefit from Neon code.
 // In particular the cross product is very complex in Neon.
 
-// scalar math
+#include <math.h>
+#include <stdbool.h>
+
 typedef struct b3V32
 {
 	float x, y, z;
@@ -360,6 +202,173 @@ static inline bool b3AllLessEq3V( b3V32 a, b3V32 b )
 
 #endif
 
+int b3GetSIMDWidth( void );
+void b3SetSIMDWidth( int width );
+
+// Wide vec3
+typedef struct b3Vec3W4
+{
+	b3FloatW4 X, Y, Z;
+} b3Vec3W4;
+
+static inline b3Vec3W4 b3LoadVW4( const float* x, const float* y, const float* z )
+{
+	return (b3Vec3W4){ b3LoadW4( x ), b3LoadW4( y ), b3LoadW4( z ) };
+}
+
+static inline void b3StoreVW4( float* x, float* y, float* z, b3Vec3W4 v )
+{
+	b3StoreW4( x, v.X );
+	b3StoreW4( y, v.Y );
+	b3StoreW4( z, v.Z );
+}
+
+static inline b3Vec3W4 b3SplatVW4( b3Vec3 v )
+{
+	return (b3Vec3W4){ b3SplatW4( v.x ), b3SplatW4( v.y ), b3SplatW4( v.z ) };
+}
+
+static inline b3Vec3W4 b3NegVW4( b3Vec3W4 a )
+{
+	return (b3Vec3W4){ b3NegW4( a.X ), b3NegW4( a.Y ), b3NegW4( a.Z ) };
+}
+
+// s * a
+static inline b3Vec3W4 b3MulSVW4( b3FloatW4 s, b3Vec3W4 a )
+{
+	return (b3Vec3W4){ b3MulW4( s, a.X ), b3MulW4( s, a.Y ), b3MulW4( s, a.Z ) };
+}
+
+// a - s * b
+static inline b3Vec3W4 b3MulSubSVW4( b3Vec3W4 a, b3FloatW4 s, b3Vec3W4 b )
+{
+	return (b3Vec3W4){ b3SubW4( a.X, b3MulW4( s, b.X ) ), b3SubW4( a.Y, b3MulW4( s, b.Y ) ), b3SubW4( a.Z, b3MulW4( s, b.Z ) ) };
+}
+
+// a + s * b
+static inline b3Vec3W4 b3MulAddSVW4( b3Vec3W4 a, b3FloatW4 s, b3Vec3W4 b )
+{
+	return (b3Vec3W4){ b3AddW4( a.X, b3MulW4( s, b.X ) ), b3AddW4( a.Y, b3MulW4( s, b.Y ) ), b3AddW4( a.Z, b3MulW4( s, b.Z ) ) };
+}
+
+// a - b
+static inline b3Vec3W4 b3SubVW4( b3Vec3W4 a, b3Vec3W4 b )
+{
+	return (b3Vec3W4){
+		b3SubW4( a.X, b.X ),
+		b3SubW4( a.Y, b.Y ),
+		b3SubW4( a.Z, b.Z ),
+	};
+}
+
+// a + b
+static inline b3Vec3W4 b3AddVW4( b3Vec3W4 a, b3Vec3W4 b )
+{
+	return (b3Vec3W4){
+		b3AddW4( a.X, b.X ),
+		b3AddW4( a.Y, b.Y ),
+		b3AddW4( a.Z, b.Z ),
+	};
+}
+
+static inline b3FloatW4 b3DotW4( b3Vec3W4 a, b3Vec3W4 b )
+{
+	return b3AddW4( b3AddW4( b3MulW4( a.X, b.X ), b3MulW4( a.Y, b.Y ) ), b3MulW4( a.Z, b.Z ) );
+}
+
+static inline b3Vec3W4 b3CrossW4( b3Vec3W4 a, b3Vec3W4 b )
+{
+	b3Vec3W4 c;
+	c.X = b3SubW4( b3MulW4( a.Y, b.Z ), b3MulW4( a.Z, b.Y ) );
+	c.Y = b3SubW4( b3MulW4( a.Z, b.X ), b3MulW4( a.X, b.Z ) );
+	c.Z = b3SubW4( b3MulW4( a.X, b.Y ), b3MulW4( a.Y, b.X ) );
+	return c;
+}
+
+#if defined( B3_SIMD_AVX2 )
+
+// Wide vec3
+typedef struct b3Vec3W8
+{
+	b3FloatW8 X, Y, Z;
+} b3Vec3W8;
+
+static inline b3Vec3W8 b3LoadVW8( const float* x, const float* y, const float* z )
+{
+	return (b3Vec3W8){ b3LoadW8( x ), b3LoadW8( y ), b3LoadW8( z ) };
+}
+
+static inline void b3StoreVW8( float* x, float* y, float* z, b3Vec3W8 v )
+{
+	b3StoreW8( x, v.X );
+	b3StoreW8( y, v.Y );
+	b3StoreW8( z, v.Z );
+}
+
+static inline b3Vec3W8 b3SplatVW8( b3Vec3 v )
+{
+	return (b3Vec3W8){ b3SplatW8( v.x ), b3SplatW8( v.y ), b3SplatW8( v.z ) };
+}
+
+static inline b3Vec3W8 b3NegVW8( b3Vec3W8 a )
+{
+	return (b3Vec3W8){ b3NegW8( a.X ), b3NegW8( a.Y ), b3NegW8( a.Z ) };
+}
+
+// s * a
+static inline b3Vec3W8 b3MulSVW8( b3FloatW8 s, b3Vec3W8 a )
+{
+	return (b3Vec3W8){ b3MulW8( s, a.X ), b3MulW8( s, a.Y ), b3MulW8( s, a.Z ) };
+}
+
+// a - s * b
+static inline b3Vec3W8 b3MulSubSVW8( b3Vec3W8 a, b3FloatW8 s, b3Vec3W8 b )
+{
+	return (b3Vec3W8){ b3SubW8( a.X, b3MulW8( s, b.X ) ), b3SubW8( a.Y, b3MulW8( s, b.Y ) ), b3SubW8( a.Z, b3MulW8( s, b.Z ) ) };
+}
+
+// a + s * b
+static inline b3Vec3W8 b3MulAddSVW8( b3Vec3W8 a, b3FloatW8 s, b3Vec3W8 b )
+{
+	return (b3Vec3W8){ b3AddW8( a.X, b3MulW8( s, b.X ) ), b3AddW8( a.Y, b3MulW8( s, b.Y ) ), b3AddW8( a.Z, b3MulW8( s, b.Z ) ) };
+}
+
+// a - b
+static inline b3Vec3W8 b3SubVW8( b3Vec3W8 a, b3Vec3W8 b )
+{
+	return (b3Vec3W8){
+		b3SubW8( a.X, b.X ),
+		b3SubW8( a.Y, b.Y ),
+		b3SubW8( a.Z, b.Z ),
+	};
+}
+
+// a + b
+static inline b3Vec3W8 b3AddVW8( b3Vec3W8 a, b3Vec3W8 b )
+{
+	return (b3Vec3W8){
+		b3AddW8( a.X, b.X ),
+		b3AddW8( a.Y, b.Y ),
+		b3AddW8( a.Z, b.Z ),
+	};
+}
+
+static inline b3FloatW8 b3DotW8( b3Vec3W8 a, b3Vec3W8 b )
+{
+	return b3AddW8( b3AddW8( b3MulW8( a.X, b.X ), b3MulW8( a.Y, b.Y ) ), b3MulW8( a.Z, b.Z ) );
+}
+
+static inline b3Vec3W8 b3CrossW8( b3Vec3W8 a, b3Vec3W8 b )
+{
+	b3Vec3W8 c;
+	c.X = b3SubW8( b3MulW8( a.Y, b.Z ), b3MulW8( a.Z, b.Y ) );
+	c.Y = b3SubW8( b3MulW8( a.Z, b.X ), b3MulW8( a.X, b.Z ) );
+	c.Z = b3SubW8( b3MulW8( a.X, b.Y ), b3MulW8( a.Y, b.X ) );
+	return c;
+}
+
+#endif
+
 static inline bool b3TestBoundsOverlap( b3V32 nodeMin1, b3V32 nodeMax1, b3V32 nodeMin2, b3V32 nodeMax2 )
 {
 	b3V32 separation = b3MaxV( b3SubV( nodeMin2, nodeMax1 ), b3SubV( nodeMin1, nodeMax2 ) );
@@ -383,721 +392,6 @@ static inline bool b3TestBoundsRayOverlap( b3V32 nodeMin, b3V32 nodeMax, b3V32 r
 
 bool b3TestBoundsTriangleOverlap( b3V32 nodeCenter, b3V32 nodeExtent, b3V32 vertex1, b3V32 vertex2, b3V32 vertex3 );
 float b3IntersectRayTriangle( b3V32 rayStart, b3V32 rayDelta, b3V32 vertex1, b3V32 vertex2, b3V32 vertex3 );
-
-#if defined( B3_SIMD_NEON )
-
-static inline b3FloatW b3ZeroW( void )
-{
-	return vdupq_n_f32( 0.0f );
-}
-
-static inline b3FloatW b3SplatW( float scalar )
-{
-	return vdupq_n_f32( scalar );
-}
-
-static inline b3FloatW b3SetW( float a, float b, float c, float d )
-{
-	float32_t array[4] = { a, b, c, d };
-	return vld1q_f32( array );
-}
-
-static inline b3FloatW b3LoadW( const float* data )
-{
-	return vld1q_f32( data );
-}
-
-static inline void b3StoreW( float* data, b3FloatW a )
-{
-	vst1q_f32( data, a );
-}
-
-static inline b3FloatW b3NegW( b3FloatW a )
-{
-	return vnegq_f32( a );
-}
-
-static inline b3FloatW b3AddW( b3FloatW a, b3FloatW b )
-{
-	return vaddq_f32( a, b );
-}
-
-static inline b3FloatW b3SubW( b3FloatW a, b3FloatW b )
-{
-	return vsubq_f32( a, b );
-}
-
-static inline b3FloatW b3MulW( b3FloatW a, b3FloatW b )
-{
-	return vmulq_f32( a, b );
-}
-
-static inline b3FloatW b3DivW( b3FloatW a, b3FloatW b )
-{
-	return vdivq_f32( a, b );
-}
-
-static inline b3FloatW b3SqrtW( b3FloatW a )
-{
-	return vsqrtq_f32( a );
-}
-
-// Cannot use real FMA because it doesn't match the non-SIMD path
-static inline b3FloatW b3MulAddW( b3FloatW a, b3FloatW b, b3FloatW c )
-{
-	return vaddq_f32( a, vmulq_f32( b, c ) );
-}
-
-static inline b3FloatW b3MinW( b3FloatW a, b3FloatW b )
-{
-	return vminq_f32( a, b );
-}
-
-static inline b3FloatW b3MaxW( b3FloatW a, b3FloatW b )
-{
-	return vmaxq_f32( a, b );
-}
-
-// clamp a to [-b, b]
-static inline b3FloatW b3SymClampW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW nb = b3NegW( b );
-	b3FloatW c = b3MaxW( nb, a );
-	return b3MinW( c, b );
-}
-
-static inline b3FloatW b3AndW( b3FloatW a, b3FloatW b )
-{
-	return vreinterpretq_f32_u32( vandq_u32( vreinterpretq_u32_f32( a ), vreinterpretq_u32_f32( b ) ) );
-}
-
-static inline b3FloatW b3OrW( b3FloatW a, b3FloatW b )
-{
-	return vreinterpretq_f32_u32( vorrq_u32( vreinterpretq_u32_f32( a ), vreinterpretq_u32_f32( b ) ) );
-}
-
-static inline b3FloatW b3GreaterThanW( b3FloatW a, b3FloatW b )
-{
-	return vreinterpretq_f32_u32( vcgtq_f32( a, b ) );
-}
-
-static inline b3FloatW b3LessThanW( b3FloatW a, b3FloatW b )
-{
-	return vreinterpretq_f32_u32( vcltq_f32( a, b ) );
-}
-
-static inline b3FloatW b3EqualsW( b3FloatW a, b3FloatW b )
-{
-	return vreinterpretq_f32_u32( vceqq_f32( a, b ) );
-}
-
-static inline bool b3AllZeroW( b3FloatW a )
-{
-	// Create a zero vector for comparison
-	b3FloatW zero = vdupq_n_f32( 0.0f );
-
-	// Compare the input vector with zero
-	uint32x4_t cmp_result = vceqq_f32( a, zero );
-
-// Check if all comparison results are non-zero using vminvq
-#ifdef __ARM_FEATURE_SVE
-	// ARM v8.2+ has horizontal minimum instruction
-	return vminvq_u32( cmp_result ) != 0;
-#else
-	// For older ARM architectures, we need to manually check all lanes
-	return vgetq_lane_u32( cmp_result, 0 ) != 0 && vgetq_lane_u32( cmp_result, 1 ) != 0 && vgetq_lane_u32( cmp_result, 2 ) != 0 &&
-		   vgetq_lane_u32( cmp_result, 3 ) != 0;
-#endif
-}
-
-// _mm_movemask_ps equivalent, compatible with ARM v7.
-static inline bool b3AnyTrueW( b3FloatW mask )
-{
-	uint32x4_t m = vreinterpretq_u32_f32( mask );
-	uint32x2_t p = vorr_u32( vget_low_u32( m ), vget_high_u32( m ) );
-	return ( vget_lane_u32( p, 0 ) | vget_lane_u32( p, 1 ) ) != 0;
-}
-
-// component-wise returns mask ? b : a
-static inline b3FloatW b3BlendW( b3FloatW a, b3FloatW b, b3FloatW mask )
-{
-	uint32x4_t mask32 = vreinterpretq_u32_f32( mask );
-	return vbslq_f32( mask32, b, a );
-}
-
-static inline b3FloatW b3Dot3W( b3FloatW ax, b3FloatW ay, b3FloatW az, b3FloatW bx, b3FloatW by, b3FloatW bz )
-{
-	return vaddq_f32( vmulq_f32( ax, bx ), vaddq_f32( vmulq_f32( ay, by ), vmulq_f32( az, bz ) ) );
-}
-
-static inline b3FloatW b3EmbedIndexW( b3FloatW value, int baseIndex, int bitCount )
-{
-	uint32_t mask = ( 1u << bitCount ) - 1;
-	const int32_t lanes[4] = { 0, 1, 2, 3 };
-	int32x4_t index = vaddq_s32( vdupq_n_s32( baseIndex ), vld1q_s32( lanes ) );
-	uint32x4_t clearLow = vdupq_n_u32( ~mask );
-	uint32x4_t bits = vorrq_u32( vandq_u32( vreinterpretq_u32_f32( value ), clearLow ), vreinterpretq_u32_s32( index ) );
-	return vreinterpretq_f32_u32( bits );
-}
-
-static inline int b3MinIndexW( b3FloatW a, int bitCount )
-{
-	float32x2_t m = vmin_f32( vget_low_f32( a ), vget_high_f32( a ) );
-	m = vpmin_f32( m, m );
-	uint32_t bits = vget_lane_u32( vreinterpret_u32_f32( m ), 0 );
-	return (int)( bits & ( ( 1u << bitCount ) - 1 ) );
-}
-
-#elif defined( B3_SIMD_SSE2 )
-
-static inline b3FloatW b3ZeroW( void )
-{
-	return _mm_setzero_ps();
-}
-
-static inline b3FloatW b3SplatW( float scalar )
-{
-	return _mm_set1_ps( scalar );
-}
-
-static inline b3FloatW b3SetW( float a, float b, float c, float d )
-{
-	return _mm_setr_ps( a, b, c, d );
-}
-
-static inline b3FloatW b3LoadW( const float* data )
-{
-	return _mm_loadu_ps( data );
-}
-
-static inline void b3StoreW( float* data, b3FloatW a )
-{
-	_mm_storeu_ps( data, a );
-}
-
-static inline b3FloatW b3NegW( b3FloatW a )
-{
-	// Create a mask with the sign bit set for each element
-	__m128 mask = _mm_set1_ps( -0.0f );
-
-	// XOR the input with the mask to negate each element
-	return _mm_xor_ps( a, mask );
-}
-
-static inline b3FloatW b3AddW( b3FloatW a, b3FloatW b )
-{
-	return _mm_add_ps( a, b );
-}
-
-static inline b3FloatW b3SubW( b3FloatW a, b3FloatW b )
-{
-	return _mm_sub_ps( a, b );
-}
-
-static inline b3FloatW b3MulW( b3FloatW a, b3FloatW b )
-{
-	return _mm_mul_ps( a, b );
-}
-
-static inline b3FloatW b3DivW( b3FloatW a, b3FloatW b )
-{
-	return _mm_div_ps( a, b );
-}
-
-static inline b3FloatW b3SqrtW( b3FloatW a )
-{
-	return _mm_sqrt_ps( a );
-}
-
-// a + b * c
-static inline b3FloatW b3MulAddW( b3FloatW a, b3FloatW b, b3FloatW c )
-{
-	return _mm_add_ps( a, _mm_mul_ps( b, c ) );
-}
-
-static inline b3FloatW b3MinW( b3FloatW a, b3FloatW b )
-{
-	return _mm_min_ps( a, b );
-}
-
-static inline b3FloatW b3MaxW( b3FloatW a, b3FloatW b )
-{
-	return _mm_max_ps( a, b );
-}
-
-// Horizontal min over a 4-lane vector (result broadcast to all lanes).
-static inline b3FloatW b3HorizontalMinW( b3FloatW v )
-{
-	v = _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 2, 3, 0, 1 ) ) );
-	return _mm_min_ps( v, _mm_shuffle_ps( v, v, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
-}
-
-// clamp a to [-b, b]
-static inline b3FloatW b3SymClampW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW nb = b3NegW( b );
-	b3FloatW c = b3MaxW( nb, a );
-	return b3MinW( c, b );
-}
-
-static inline b3FloatW b3AndW( b3FloatW a, b3FloatW b )
-{
-	return _mm_and_ps( a, b );
-}
-
-static inline b3FloatW b3OrW( b3FloatW a, b3FloatW b )
-{
-	return _mm_or_ps( a, b );
-}
-
-static inline b3FloatW b3GreaterThanW( b3FloatW a, b3FloatW b )
-{
-	return _mm_cmpgt_ps( a, b );
-}
-
-static inline b3FloatW b3LessThanW( b3FloatW a, b3FloatW b )
-{
-	return _mm_cmplt_ps( a, b );
-}
-
-static inline b3FloatW b3EqualsW( b3FloatW a, b3FloatW b )
-{
-	return _mm_cmpeq_ps( a, b );
-}
-
-static inline bool b3AllZeroW( b3FloatW a )
-{
-	// Compare each element with zero
-	b3FloatW zero = _mm_setzero_ps();
-	b3FloatW cmp = _mm_cmpeq_ps( a, zero );
-
-	// Create a mask from the comparison results
-	int mask = _mm_movemask_ps( cmp );
-
-	// If all elements are zero, the mask will be 0xF (1111 in binary)
-	return mask == 0xF;
-}
-
-static inline bool b3AnyTrueW( b3FloatW mask )
-{
-	return _mm_movemask_ps( mask ) != 0;
-}
-
-// component-wise returns mask ? b : a
-static inline b3FloatW b3BlendW( b3FloatW a, b3FloatW b, b3FloatW mask )
-{
-	return _mm_or_ps( _mm_and_ps( mask, b ), _mm_andnot_ps( mask, a ) );
-}
-
-static inline b3FloatW b3Dot3W( b3FloatW ax, b3FloatW ay, b3FloatW az, b3FloatW bx, b3FloatW by, b3FloatW bz )
-{
-	return _mm_add_ps( _mm_mul_ps( ax, bx ), _mm_add_ps( _mm_mul_ps( ay, by ), _mm_mul_ps( az, bz ) ) );
-}
-
-// Replace the low bitCount mantissa bits of each lane with baseIndex + lane. The value must be
-// positive so the embedded index sorts with the value, and ties fall to the lower index.
-static inline b3FloatW b3EmbedIndexW( b3FloatW value, int baseIndex, int bitCount )
-{
-	int mask = ( 1 << bitCount ) - 1;
-	__m128i index = _mm_add_epi32( _mm_set1_epi32( baseIndex ), _mm_setr_epi32( 0, 1, 2, 3 ) );
-	__m128 clearLow = _mm_castsi128_ps( _mm_set1_epi32( ~mask ) );
-	return _mm_or_ps( _mm_and_ps( value, clearLow ), _mm_castsi128_ps( index ) );
-}
-
-// Recovers the index embedded by b3EmbedIndexW from the lane holding the minimum.
-static inline int b3MinIndexW( b3FloatW a, int bitCount )
-{
-	a = _mm_min_ps( a, _mm_shuffle_ps( a, a, _MM_SHUFFLE( 2, 3, 0, 1 ) ) );
-	a = _mm_min_ps( a, _mm_shuffle_ps( a, a, _MM_SHUFFLE( 1, 0, 3, 2 ) ) );
-	return _mm_cvtsi128_si32( _mm_castps_si128( a ) ) & ( ( 1 << bitCount ) - 1 );
-}
-
-#else
-
-static inline b3FloatW b3ZeroW( void )
-{
-	return (b3FloatW){ 0.0f, 0.0f, 0.0f, 0.0f };
-}
-
-static inline b3FloatW b3SplatW( float scalar )
-{
-	return (b3FloatW){ scalar, scalar, scalar, scalar };
-}
-
-static inline b3FloatW b3SetW( float a, float b, float c, float d )
-{
-	return (b3FloatW){ a, b, c, d };
-}
-
-static inline b3FloatW b3LoadW( const float* data )
-{
-	return (b3FloatW){ data[0], data[1], data[2], data[3] };
-}
-
-static inline void b3StoreW( float* data, b3FloatW a )
-{
-	data[0] = a.x;
-	data[1] = a.y;
-	data[2] = a.z;
-	data[3] = a.w;
-}
-
-static inline b3FloatW b3NegW( b3FloatW a )
-{
-	return (b3FloatW){ -a.x, -a.y, -a.z, -a.w };
-}
-
-static inline b3FloatW b3AddW( b3FloatW a, b3FloatW b )
-{
-	return (b3FloatW){ a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w };
-}
-
-static inline b3FloatW b3SubW( b3FloatW a, b3FloatW b )
-{
-	return (b3FloatW){ a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w };
-}
-
-static inline b3FloatW b3MulW( b3FloatW a, b3FloatW b )
-{
-	return (b3FloatW){ a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w };
-}
-
-static inline b3FloatW b3DivW( b3FloatW a, b3FloatW b )
-{
-	return (b3FloatW){ a.x / b.x, a.y / b.y, a.z / b.z, a.w / b.w };
-}
-
-static inline b3FloatW b3SqrtW( b3FloatW a )
-{
-	return (b3FloatW){ sqrtf( a.x ), sqrtf( a.y ), sqrtf( a.z ), sqrtf( a.w ) };
-}
-
-static inline b3FloatW b3MulAddW( b3FloatW a, b3FloatW b, b3FloatW c )
-{
-	return (b3FloatW){ a.x + b.x * c.x, a.y + b.y * c.y, a.z + b.z * c.z, a.w + b.w * c.w };
-}
-
-static inline b3FloatW b3MinW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x <= b.x ? a.x : b.x;
-	r.y = a.y <= b.y ? a.y : b.y;
-	r.z = a.z <= b.z ? a.z : b.z;
-	r.w = a.w <= b.w ? a.w : b.w;
-	return r;
-}
-
-static inline b3FloatW b3MaxW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x >= b.x ? a.x : b.x;
-	r.y = a.y >= b.y ? a.y : b.y;
-	r.z = a.z >= b.z ? a.z : b.z;
-	r.w = a.w >= b.w ? a.w : b.w;
-	return r;
-}
-
-// clamp a to [-b, b]
-static inline b3FloatW b3SymClampW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x <= b.x ? a.x : b.x;
-	r.y = a.y <= b.y ? a.y : b.y;
-	r.z = a.z <= b.z ? a.z : b.z;
-	r.w = a.w <= b.w ? a.w : b.w;
-	r.x = r.x <= -b.x ? -b.x : r.x;
-	r.y = r.y <= -b.y ? -b.y : r.y;
-	r.z = r.z <= -b.z ? -b.z : r.z;
-	r.w = r.w <= -b.w ? -b.w : r.w;
-	return r;
-}
-
-// Logical operations on the scalar path are 0/1 float values. Not bit-wise like SIMD.
-
-static inline b3FloatW b3AndW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x != 0.0f && b.x != 0.0f ? 1.0f : 0.0f;
-	r.y = a.y != 0.0f && b.y != 0.0f ? 1.0f : 0.0f;
-	r.z = a.z != 0.0f && b.z != 0.0f ? 1.0f : 0.0f;
-	r.w = a.w != 0.0f && b.w != 0.0f ? 1.0f : 0.0f;
-	return r;
-}
-
-static inline b3FloatW b3OrW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x != 0.0f || b.x != 0.0f ? 1.0f : 0.0f;
-	r.y = a.y != 0.0f || b.y != 0.0f ? 1.0f : 0.0f;
-	r.z = a.z != 0.0f || b.z != 0.0f ? 1.0f : 0.0f;
-	r.w = a.w != 0.0f || b.w != 0.0f ? 1.0f : 0.0f;
-	return r;
-}
-
-static inline b3FloatW b3GreaterThanW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x > b.x ? 1.0f : 0.0f;
-	r.y = a.y > b.y ? 1.0f : 0.0f;
-	r.z = a.z > b.z ? 1.0f : 0.0f;
-	r.w = a.w > b.w ? 1.0f : 0.0f;
-	return r;
-}
-
-static inline b3FloatW b3LessThanW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x < b.x ? 1.0f : 0.0f;
-	r.y = a.y < b.y ? 1.0f : 0.0f;
-	r.z = a.z < b.z ? 1.0f : 0.0f;
-	r.w = a.w < b.w ? 1.0f : 0.0f;
-	return r;
-}
-
-static inline b3FloatW b3EqualsW( b3FloatW a, b3FloatW b )
-{
-	b3FloatW r;
-	r.x = a.x == b.x ? 1.0f : 0.0f;
-	r.y = a.y == b.y ? 1.0f : 0.0f;
-	r.z = a.z == b.z ? 1.0f : 0.0f;
-	r.w = a.w == b.w ? 1.0f : 0.0f;
-	return r;
-}
-
-static inline bool b3AllZeroW( b3FloatW a )
-{
-	return a.x == 0.0f && a.y == 0.0f && a.z == 0.0f && a.w == 0.0f;
-}
-
-static inline bool b3AnyTrueW( b3FloatW mask )
-{
-	return mask.x != 0.0f || mask.y != 0.0f || mask.z != 0.0f || mask.w != 0.0f;
-}
-
-// component-wise returns mask ? b : a
-static inline b3FloatW b3BlendW( b3FloatW a, b3FloatW b, b3FloatW mask )
-{
-	b3FloatW r;
-	r.x = mask.x != 0.0f ? b.x : a.x;
-	r.y = mask.y != 0.0f ? b.y : a.y;
-	r.z = mask.z != 0.0f ? b.z : a.z;
-	r.w = mask.w != 0.0f ? b.w : a.w;
-	return r;
-}
-
-static inline b3FloatW b3Dot3W( b3FloatW ax, b3FloatW ay, b3FloatW az, b3FloatW bx, b3FloatW by, b3FloatW bz )
-{
-	b3FloatW r;
-	r.x = ax.x * bx.x + ( ay.x * by.x + az.x * bz.x );
-	r.y = ax.y * bx.y + ( ay.y * by.y + az.y * bz.y );
-	r.z = ax.z * bx.z + ( ay.z * by.z + az.z * bz.z );
-	r.w = ax.w * bx.w + ( ay.w * by.w + az.w * bz.w );
-	return r;
-}
-
-static inline b3FloatW b3EmbedIndexW( b3FloatW value, int baseIndex, int bitCount )
-{
-	uint32_t mask = ( 1u << bitCount ) - 1;
-	float lanes[4] = { value.x, value.y, value.z, value.w };
-
-	for ( int i = 0; i < 4; ++i )
-	{
-		uint32_t bits;
-		memcpy( &bits, lanes + i, sizeof( bits ) );
-		bits = ( bits & ~mask ) | (uint32_t)( baseIndex + i );
-		memcpy( lanes + i, &bits, sizeof( bits ) );
-	}
-
-	return (b3FloatW){ lanes[0], lanes[1], lanes[2], lanes[3] };
-}
-
-static inline int b3MinIndexW( b3FloatW a, int bitCount )
-{
-	float m = a.x;
-	m = a.y < m ? a.y : m;
-	m = a.z < m ? a.z : m;
-	m = a.w < m ? a.w : m;
-
-	uint32_t bits;
-	memcpy( &bits, &m, sizeof( bits ) );
-	return (int)( bits & ( ( 1u << bitCount ) - 1 ) );
-}
-
-#endif
-
-#if defined( B3_SIMD_NEON )
-
-typedef struct b3AABBV
-{
-	float32x4_t lower;
-	float32x4_t upper;
-} b3AABBV;
-
-B3_FORCE_INLINE b3AABBV b3LoadAABBV( const b3AABB* aabb )
-{
-	const float* base = &aabb->lowerBound.x;
-
-	// Offset to avoid reading off the end (avoid UB).
-	// [lz ux uy uz]
-	float32x4_t v1 = vld1q_f32( base + 2 );
-	b3AABBV result;
-	// [lx ly lz -]
-	result.lower = vld1q_f32( base );
-	// [ux uy uz -]
-	result.upper = vextq_f32( v1, v1, 1 );
-	return result;
-}
-
-B3_FORCE_INLINE bool b3OverlapAABBV( b3AABBV a, b3AABBV b )
-{
-	static const uint32_t laneMask[4] = { 0, 0, 0, 0xFFFFFFFFu };
-	uint32x4_t test = vandq_u32( vcleq_f32( a.lower, b.upper ), vcleq_f32( b.lower, a.upper ) );
-	return vminvq_u32( vorrq_u32( test, vld1q_u32( laneMask ) ) ) != 0;
-}
-
-B3_FORCE_INLINE bool b3OverlapNode( b3AABBV av, const b3TreeNode* node )
-{
-	return b3OverlapAABBV( av, b3LoadAABBV( &node->aabb ) );
-}
-
-B3_FORCE_INLINE bool b3OverlapV( const b3AABB* a, const b3AABB* b )
-{
-	return b3OverlapAABBV( b3LoadAABBV( a ), b3LoadAABBV( b ) );
-}
-
-B3_FORCE_INLINE b3AABBV b3UnionAABBV( b3AABBV a, b3AABBV b )
-{
-	b3AABBV result;
-	result.lower = vminq_f32( a.lower, b.lower );
-	result.upper = vmaxq_f32( a.upper, b.upper );
-	return result;
-}
-
-B3_FORCE_INLINE b3AABBV b3UnionPairV( const b3TreeNode* pair )
-{
-	return b3UnionAABBV( b3LoadAABBV( &pair[0].aabb ), b3LoadAABBV( &pair[1].aabb ) );
-}
-
-B3_FORCE_INLINE void b3StoreAABBV( b3AABB* aabb, b3AABBV value, bool condition )
-{
-	float32x4_t raw0 = vsetq_lane_f32( vgetq_lane_f32( value.upper, 0 ), value.lower, 3 );
-	float32x4_t rotated = vextq_f32( value.upper, value.upper, 1 );
-	float32x4_t raw1 = vcombine_f32( vget_high_f32( raw0 ), vget_low_f32( rotated ) );
-
-	float* base = &aabb->lowerBound.x;
-	uint32x4_t mask = vdupq_n_u32( condition ? 0xFFFFFFFFu : 0u );
-	vst1q_f32( base, vbslq_f32( mask, raw0, vld1q_f32( base ) ) );
-	vst1q_f32( base + 2, vbslq_f32( mask, raw1, vld1q_f32( base + 2 ) ) );
-}
-
-#elif defined( B3_SIMD_SSE2 )
-
-typedef struct b3AABBV
-{
-	__m128 lower;
-	__m128 upper;
-} b3AABBV;
-
-B3_FORCE_INLINE b3AABBV b3LoadAABBV( const b3AABB* aabb )
-{
-	const float* base = &aabb->lowerBound.x;
-	// Same offset as Neon to avoid UB.
-	__m128 v1 = _mm_loadu_ps( base + 2 );
-	b3AABBV result;
-	result.lower = _mm_loadu_ps( base );
-	result.upper = _mm_shuffle_ps( v1, v1, _MM_SHUFFLE( 3, 3, 2, 1 ) );
-	return result;
-}
-
-B3_FORCE_INLINE bool b3OverlapAABBV( b3AABBV a, b3AABBV b )
-{
-	__m128 test = _mm_and_ps( _mm_cmple_ps( a.lower, b.upper ), _mm_cmple_ps( b.lower, a.upper ) );
-	return ( _mm_movemask_ps( test ) & 0x7 ) == 0x7;
-}
-
-B3_FORCE_INLINE bool b3OverlapNode( b3AABBV av, const b3TreeNode* node )
-{
-	return b3OverlapAABBV( av, b3LoadAABBV( &node->aabb ) );
-}
-
-B3_FORCE_INLINE bool b3OverlapV( const b3AABB* a, const b3AABB* b )
-{
-	return b3OverlapAABBV( b3LoadAABBV( a ), b3LoadAABBV( b ) );
-}
-
-B3_FORCE_INLINE b3AABBV b3UnionAABBV( b3AABBV a, b3AABBV b )
-{
-	b3AABBV result;
-	result.lower = _mm_min_ps( a.lower, b.lower );
-	result.upper = _mm_max_ps( a.upper, b.upper );
-	return result;
-}
-
-B3_FORCE_INLINE b3AABBV b3UnionPairV( const b3TreeNode* pair )
-{
-	return b3UnionAABBV( b3LoadAABBV( &pair[0].aabb ), b3LoadAABBV( &pair[1].aabb ) );
-}
-
-// Conditionally store an AABB. Avoids a branch.
-B3_FORCE_INLINE void b3StoreAABBV( b3AABB* aabb, b3AABBV value, bool condition )
-{
-	__m128 lane3 = _mm_castsi128_ps( _mm_set_epi32( -1, 0, 0, 0 ) );
-	__m128 uxSplat = _mm_shuffle_ps( value.upper, value.upper, _MM_SHUFFLE( 0, 0, 0, 0 ) );
-	__m128 raw0 = _mm_or_ps( _mm_andnot_ps( lane3, value.lower ), _mm_and_ps( lane3, uxSplat ) );
-	__m128 raw1 = _mm_shuffle_ps( raw0, value.upper, _MM_SHUFFLE( 2, 1, 3, 2 ) );
-
-	float* base = &aabb->lowerBound.x;
-	__m128 mask = _mm_castsi128_ps( _mm_set1_epi32( condition ? -1 : 0 ) );
-	__m128 old0 = _mm_loadu_ps( base );
-	__m128 old1 = _mm_loadu_ps( base + 2 );
-	_mm_storeu_ps( base, _mm_or_ps( _mm_and_ps( mask, raw0 ), _mm_andnot_ps( mask, old0 ) ) );
-	_mm_storeu_ps( base + 2, _mm_or_ps( _mm_and_ps( mask, raw1 ), _mm_andnot_ps( mask, old1 ) ) );
-}
-
-#else
-
-typedef b3AABB b3AABBV;
-
-B3_FORCE_INLINE b3AABBV b3LoadAABBV( const b3AABB* aabb )
-{
-	return *aabb;
-}
-
-B3_FORCE_INLINE bool b3OverlapAABBV( b3AABBV a, b3AABBV b )
-{
-	return a.lowerBound.x <= b.upperBound.x && a.lowerBound.y <= b.upperBound.y && a.lowerBound.z <= b.upperBound.z &&
-		   b.lowerBound.x <= a.upperBound.x && b.lowerBound.y <= a.upperBound.y && b.lowerBound.z <= a.upperBound.z;
-}
-
-B3_FORCE_INLINE bool b3OverlapNode( b3AABBV av, const b3TreeNode* node )
-{
-	return b3OverlapAABBV( av, node->aabb );
-}
-
-B3_FORCE_INLINE bool b3OverlapV( const b3AABB* a, const b3AABB* b )
-{
-	return b3OverlapAABBV( *a, *b );
-}
-
-B3_FORCE_INLINE b3AABBV b3UnionAABBV( b3AABBV a, b3AABBV b )
-{
-	return b3AABB_Union( a, b );
-}
-
-B3_FORCE_INLINE b3AABBV b3UnionPairV( const b3TreeNode* pair )
-{
-	return b3AABB_Union( pair[0].aabb, pair[1].aabb );
-}
-
-B3_FORCE_INLINE void b3StoreAABBV( b3AABB* aabb, b3AABBV value, bool condition )
-{
-	if ( condition )
-	{
-		*aabb = value;
-	}
-}
-
-#endif
 
 B3_FORCE_INLINE b3AABB b3UnionV( b3AABB a, b3AABB b )
 {

@@ -307,8 +307,8 @@ void b3PreparePrismaticJoint( b3JointSim* base, b3StepContext* context )
 	b3Body* bodyA = b3Array_Get( world->bodies, base->bodyIdA  );
 	b3Body* bodyB = b3Array_Get( world->bodies, base->bodyIdB  );
 
-	B3_ASSERT( bodyB->setIndex == b3_awakeSet );
-	b3SolverSet* setA = b3Array_Get( world->solverSets, bodyA->setIndex  );
+	B3_ASSERT( bodyA->setIndex == b3_awakeSet || bodyB->setIndex == b3_awakeSet );
+	b3SolverSet* setA = b3Array_Get( world->solverSets, bodyA->setIndex );
 	b3SolverSet* setB = b3Array_Get( world->solverSets, bodyB->setIndex  );
 
 	int localIndexA = bodyA->localIndex;

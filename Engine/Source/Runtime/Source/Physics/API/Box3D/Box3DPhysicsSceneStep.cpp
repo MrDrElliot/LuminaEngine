@@ -43,9 +43,6 @@ namespace Lumina::Physics
 
         SynchronizeBodies();
 
-        // One rebuild after the bulk spawn beats the incremental inserts each static shape would have done.
-        b3World_RebuildStaticTree(WorldId);
-
         Registry.GetSignals<SCharacterPhysicsComponent>().OnConstruct.Connect<&FBox3DPhysicsScene::OnCharacterComponentConstructed>(this);
         Registry.GetSignals<SCharacterPhysicsComponent>().OnDestroy.Connect<&FBox3DPhysicsScene::OnCharacterComponentDestroyed>(this);
 

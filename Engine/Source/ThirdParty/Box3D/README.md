@@ -149,6 +149,8 @@ You will need a compiler that supports C++20 to build the samples.
 
 Box3D uses SSE2 and Neon SIMD math to improve performance. SIMD can be disabled by defining `BOX3D_DISABLE_SIMD`.
 
+On x86, AVX2 kernels are selected at runtime when the CPU supports them. Configure with `-DBOX3D_AVX2=OFF` to disable them.
+
 ## Documentation
 
 The user manual lives in [`docs/`](docs/) and is built with Doxygen. Enable the `BOX3D_DOCS` CMake option and build the `doc` target.

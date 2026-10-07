@@ -49,32 +49,46 @@
 // Define SIMD
 #if defined( BOX3D_DISABLE_SIMD )
 	#define B3_SIMD_NONE
-	#define B3_SIMD_WIDTH 4
 	//#pragma message("B3_SIMD_NONE")
 #else
 	#if defined( B3_CPU_X86_X64 )
 		#define B3_SIMD_SSE2
-		#define B3_SIMD_WIDTH 4
-		//#pragma message("B3_SIMD_SSE2")
+		#if !defined( BOX3D_DISABLE_AVX2 )
+			#define B3_SIMD_HAS_WIDTH_8
+			#if defined( __AVX2__ ) || ( defined( B3_SIMD_WIDTH ) && B3_SIMD_WIDTH == 8 )
+				#define B3_SIMD_AVX2
+			#endif
+		#endif
 	#elif defined( B3_CPU_ARM )
-	// ARMv7 Neon doesn't have divide or sqrt so cannot be used.
-	#if defined( __aarch64__ ) || defined( _M_ARM64 )
-		#define B3_SIMD_NEON
-	#else
-		#define B3_SIMD_NONE
-	#endif
-		#define B3_SIMD_WIDTH 4
+		// ARMv7 Neon doesn't have divide or sqrt so cannot be used.
+		#if defined( __aarch64__ ) || defined( _M_ARM64 )
+			#define B3_SIMD_NEON
+		#else
+			#define B3_SIMD_NONE
+		#endif
 		//#pragma message("B3_SIMD_NEON")
 	#elif defined( B3_CPU_WASM )
-		#define B3_CPU_WASM
 		#define B3_SIMD_SSE2
-		#define B3_SIMD_WIDTH 4
 		//#pragma message("B3_SIMD_SSE2")
 	#else
 		#define B3_SIMD_NONE
-		#define B3_SIMD_WIDTH 4
 		//#pragma message("B3_SIMD_NONE")
 	#endif
+#endif
+
+#if !defined( B3_SIMD_NONE )
+	#define B3_SIMD_ENABLED
+#endif
+
+#if defined( B3_SIMD_AVX2 ) && defined( __clang__ )
+	#define B3_AVX2_BEGIN _Pragma( "clang attribute push( __attribute__( ( target( \"avx2\" ) ) ), apply_to = function )" )
+	#define B3_AVX2_END _Pragma( "clang attribute pop" )
+#elif defined( B3_SIMD_AVX2 ) && defined( __GNUC__ )
+	#define B3_AVX2_BEGIN _Pragma( "GCC push_options" ) _Pragma( "GCC target( \"avx2\" )" )
+	#define B3_AVX2_END _Pragma( "GCC pop_options" )
+#else
+	#define B3_AVX2_BEGIN
+	#define B3_AVX2_END
 #endif
 
 // Define compiler
@@ -113,8 +127,16 @@ typedef struct b3AtomicU32
 	uint32_t value;
 } b3AtomicU32;
 
+typedef struct b3AtomicI64
+{
+	// 64-bit atomic wants 8-byte alignment
+	_Alignas( 8 ) int64_t value;
+} b3AtomicI64;
+
 // Minimum memory alignment used for all allocations
-#define B3_ALIGNMENT 16
+#define B3_ALIGNMENT 32
+
+#define B3_RESTRICT restrict
 
 // Returns the number of elements of an array
 #define B3_ARRAY_COUNT( A ) (int)( sizeof( A ) / sizeof( A[0] ) )

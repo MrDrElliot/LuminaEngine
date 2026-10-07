@@ -210,6 +210,8 @@ void b3CreateContact( b3World* world, b3Shape* shapeA, b3Shape* shapeB, int chil
 	contact->shapeIdA = shapeIdA;
 	contact->shapeIdB = shapeIdB;
 	contact->childIndex = childIndex;
+	contact->encodedBodySimA = b3EncodeBodySimIndex( bodyA );
+	contact->encodedBodySimB = b3EncodeBodySimIndex( bodyB );
 
 	// Both bodies must enable recycling
 	if ( ( bodyA->flags & b3_bodyEnableContactRecycling ) != 0 && ( bodyB->flags & b3_bodyEnableContactRecycling ) != 0 )
@@ -527,7 +529,8 @@ static bool b3ComputeConvexManifold( b3World* world, int workerIndex, b3Contact*
 		else
 		{
 			B3_ASSERT( typeB == b3_hullShape );
-			b3CollideHulls( &geomManifold, pointCapacity, shapeA->hull, shapeB->hull, transformBtoA, &cache->satCache );
+			b3CollideHullsAtWidth( &geomManifold, pointCapacity, shapeA->hull, shapeB->hull, transformBtoA, &cache->satCache,
+								   world->simdWidth );
 			world->taskContexts.data[workerIndex].satCallCount += 1;
 			world->taskContexts.data[workerIndex].satCacheHitCount += cache->satCache.hit;
 		}

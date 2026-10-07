@@ -50,14 +50,16 @@ typedef struct b3GraphColor
 	b3Array( b3ContactSpec ) contacts;
 
 	// These are used for convex contacts
-	struct b3ContactConstraintWide* wideConstraints;
+	void* wideConstraints;
 	int wideConstraintCount;
+
+	void* wideMeshConstraints;
+	int* wideMeshManifoldStarts;
+	int wideMeshConstraintCount;
 
 	// These are used for mesh and overflow contacts
 	struct b3ManifoldConstraint* manifoldConstraints;
-	int manifoldConstraintCount;
 	struct b3ContactConstraint* contactConstraints;
-	int contactConstraintCount;
 } b3GraphColor;
 
 typedef struct b3ConstraintGraph

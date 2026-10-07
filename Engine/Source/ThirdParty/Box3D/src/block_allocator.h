@@ -9,6 +9,7 @@
 
 #define B3_BLOCK_EXPONENT 8
 #define B3_BLOCK_SIZE ( 1 << B3_BLOCK_EXPONENT )
+#define B3_BLOCK_ALIGNMENT 16
 
 typedef struct b3Block
 {
@@ -26,7 +27,7 @@ typedef struct b3BlockAllocator
 	int allocationCount;
 } b3BlockAllocator;
 
-// Element must be large enough to hold a pointer. The element size is rounded up to B3_ALIGNMENT.
+// Element must be large enough to hold a pointer. The element size is rounded up to B3_BLOCK_ALIGNMENT.
 b3BlockAllocator b3CreateBlockAllocator( int elementSize, int initialCount );
 void b3DestroyBlockAllocator( b3BlockAllocator* allocator );
 

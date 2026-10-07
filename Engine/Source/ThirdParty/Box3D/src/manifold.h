@@ -46,6 +46,13 @@ b3FeaturePair b3FlipPair( b3FeaturePair pair );
 int b3ClipPolygon( b3ClipVertex* out, b3ClipVertex* polygon, int count, b3Plane clipPlane, int edge, b3Plane refPlane );
 
 b3AxisQuery b3ComputeSeparatingAxis( const b3HullData* hullA, const b3HullData* hullB, b3Transform xfB, bool earlyReturn );
+b3AxisQuery b3ComputeSeparatingAxisAtWidth( const b3HullData* hullA, const b3HullData* hullB, b3Transform xfB, bool earlyReturn,
+											int simdWidth );
+void b3CollideHullsAtWidth( b3LocalManifold* manifold, int capacity, const b3HullData* hullA, const b3HullData* hullB,
+							b3Transform transformBtoA, b3SATCache* cache, int simdWidth );
+
+b3AxisQuery b3ComputeSeparatingAxisW4( const b3HullData* hullA, const b3HullData* hullB, b3Transform xfB, bool earlyReturn );
+b3AxisQuery b3ComputeSeparatingAxisW8( const b3HullData* hullA, const b3HullData* hullB, b3Transform xfB, bool earlyReturn );
 
 #if B3_ENABLE_VALIDATION
 bool b3ValidatePolygon( b3ClipVertex* polygon, int count );

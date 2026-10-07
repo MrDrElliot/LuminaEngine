@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // Compile-time options. Edit box3d/config.h, or define BOX3D_USER_CONFIG to
@@ -93,11 +94,12 @@
 /// Prototype for user allocation function.
 ///	@param size the allocation size in bytes
 ///	@param alignment the required alignment, guaranteed to be a power of 2
-typedef void* b3AllocFcn( int32_t size, int32_t alignment );
+typedef void* b3AllocFcn( size_t size, int32_t alignment );
 
 /// Prototype for user free function.
 ///	@param mem the memory previously allocated through `b3AllocFcn`
-typedef void b3FreeFcn( void* mem );
+///	@param size the size of the allocation in bytes.
+typedef void b3FreeFcn( void* mem, size_t size );
 
 /// Prototype for the user assert callback. Return 0 to skip the debugger break.
 typedef int b3AssertFcn( const char* condition, const char* fileName, int lineNumber );
@@ -110,7 +112,7 @@ typedef void b3LogFcn( const char* message );
 B3_API void b3SetAllocator( b3AllocFcn* allocFcn, b3FreeFcn* freeFcn );
 
 /// Total bytes allocated by Box3D
-B3_API int b3GetByteCount( void );
+B3_API int64_t b3GetByteCount( void );
 
 /// Override the default assert callback.
 ///	@param assertFcn a non-null assert callback
@@ -174,6 +176,9 @@ B3_API bool b3IsDoublePrecision( void );
 /// @return the value of B3_MAX_MANIFOLD_POINTS the library was compiled with. Useful for
 /// an ABI test.
 B3_API int b3GetMaxManifoldPoints( void );
+
+/// @return true if the current CPU has the AVX2 instruction set.
+B3_API bool b3IsAVX2Available( void );
 
 /**@}*/
 

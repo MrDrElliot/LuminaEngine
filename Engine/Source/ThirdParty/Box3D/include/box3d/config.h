@@ -31,5 +31,3 @@
 
 // Enable assertions when NDEBUG is defined
 // #define B3_ENABLE_ASSERT
-
-// #define B3_RESTITUTION_ITERATIONS

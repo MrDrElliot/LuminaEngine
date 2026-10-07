@@ -41,13 +41,13 @@ namespace Lumina::Physics
     static TConsoleVar CVarPhysicsDebugDrawDistance("Physics.Debug.DrawDistance", 0.0f,
         "Half extent of the box Box3D prunes its broad phase against, centered on the camera. 0 leaves it unbounded and culls per shape instead.");
 
-    static void* Box3DAllocate(int32_t Size, int32_t Alignment)
+    static void* Box3DAllocate(size_t Size, int32_t Alignment)
     {
         LUMINA_MEMORY_SCOPE("Physics");
-        return Memory::Malloc((size_t)Size, (size_t)Alignment);
+        return Memory::Malloc(Size, (size_t)Alignment);
     }
 
-    static void Box3DFree(void* Block)
+    static void Box3DFree(void* Block, size_t)
     {
         Memory::Free(Block);
     }

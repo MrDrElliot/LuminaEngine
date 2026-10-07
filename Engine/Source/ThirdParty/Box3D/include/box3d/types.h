@@ -147,6 +147,13 @@ typedef struct b3WorldDef
 	/// speed have restitution applied (will bounce).
 	float restitutionThreshold;
 
+	/// Number of iterations of the restitution solver. More iterations can lead to less box spinning.
+	/// @see B3_MAX_RESTITUTION_ITERATIONS
+	int restitutionIterations;
+
+	/// Enable full contact propagation in the restitution solver. Expensive.
+	bool enableRestitutionPropagation;
+
 	/// Hit event speed threshold, usually in m/s. Collisions above this
 	/// speed can generate hit events if the shape also enables hit events.
 	float hitEventThreshold;
@@ -537,69 +544,71 @@ typedef struct b3ShapeDef
 /// @ingroup shape
 B3_API b3ShapeDef b3DefaultShapeDef( void );
 
-//! @cond
 /// Profiling data. Times are in milliseconds.
 /// @ingroup world
 typedef struct b3Profile
 {
-	float step;
-	float pairs;
-	float collide;
-	float solve;
-	float solverSetup;
-	float constraints;
-	float prepareConstraints;
-	float integrateVelocities;
-	float warmStart;
-	float solveImpulses;
-	float integratePositions;
-	float relaxImpulses;
-	float applyRestitution;
-	float storeImpulses;
-	float splitIslands;
-	float transforms;
-	float sensorHits;
-	float jointEvents;
-	float hitEvents;
-	float refit;
-	float bullets;
-	float sleepIslands;
-	float sensors;
+	float step;				   //
+	float pairs;			   //
+	float collide;			   //
+	float solve;			   //
+	float solverSetup;		   //
+	float constraints;		   //
+	float prepareConstraints;  //
+	float integrateVelocities; //
+	float warmStart;		   //
+	float solveImpulses;	   //
+	float integratePositions;  //
+	float relaxImpulses;	   //
+	float restitution;		   //
+	float storeImpulses;	   //
+	float splitIslands;		   //
+	float transforms;		   //
+	float sensorHits;		   //
+	float jointEvents;		   //
+	float hitEvents;		   //
+	float refit;			   //
+	float bullets;			   //
+	float sleepIslands;		   //
+	float sensors;			   //
 } b3Profile;
 
 /// Counters that give details of the simulation size.
 /// @ingroup world
 typedef struct b3Counters
 {
-	int bodyCount;
-	int shapeCount;
-	int contactCount;
-	int jointCount;
-	int islandCount;
-	int stackUsed;
-	int arenaCapacity;
-	int staticTreeHeight;
-	int treeHeight;
-	int satCallCount;
-	int satCacheHitCount;
-	int byteCount;
-	int taskCount;
-	int colorCounts[24];
-	int manifoldCounts[B3_CONTACT_MANIFOLD_COUNT_BUCKETS];
+	int64_t byteCount;									   //
+	int bodyCount;										   //
+	int shapeCount;										   //
+	int contactCount;									   //
+	int jointCount;										   //
+	int islandCount;									   //
+	int stackUsed;										   //
+	int arenaCapacity;									   //
+	int staticTreeHeight;								   //
+	int treeHeight;										   //
+	int satCallCount;									   //
+	int satCacheHitCount;								   //
+	int taskCount;										   //
+	int colorCounts[24];								   //
+	int manifoldCounts[B3_CONTACT_MANIFOLD_COUNT_BUCKETS]; //
 
 	/// Number of contacts touched by the collide pass
 	/// graph contacts + awake-set non-touching
-	int awakeContactCount;
+	int awakeContactCount; //
 
 	/// Number of contacts recycled in the most recent step.
 	int recycledContactCount;
 
-	/// Maximum number of time of impact iterations
+	/// Maximum number of time of impact outer iterations
 	int distanceIterations;
+
+	/// Maximum TOI push backs.
 	int pushBackIterations;
+
+	/// Maximum TOI root solver iterations.
 	int rootIterations;
 } b3Counters;
-//! @endcond
 
 /// Joint type enumeration. This is useful because all joint types use b3JointId and sometimes you
 /// want to get the type of a joint.
@@ -2010,7 +2019,7 @@ typedef struct b3HullFace
 } b3HullFace;
 
 /// 64-bit hull version. Useful for validating serialized data.
-#define B3_HULL_VERSION 0x4A4C9587DE57485Cull
+#define B3_HULL_VERSION 0x6B1E39D4A87C25F3ull
 
 /// A convex hull.
 /// @note This data structure has data hanging off the end and cannot be directly copied.
@@ -2034,7 +2043,7 @@ typedef struct b3HullData
 	/// The radius of the largest sphere at the center.
 	float innerRadius;
 
-	/// The local centroid
+	/// The local centroid.
 	b3Vec3 center;
 
 	/// The inertia tensor about the centroid.
@@ -2049,7 +2058,7 @@ typedef struct b3HullData
 	/// Offset of the point array in bytes from the struct address.
 	int32_t pointOffset;
 
-	/// This is the half-edge count (double the edge count)
+	/// This is the half-edge count (double the edge count).
 	int32_t edgeCount;
 
 	/// Offset of the edge array in bytes from the struct address.
@@ -2064,14 +2073,20 @@ typedef struct b3HullData
 	/// Offset of the face array in bytes from the struct address.
 	int32_t faceOffset;
 
-	/// Offset of structure of array (SOA) vertices
+	/// Offset of structure of array (SOA) vertices.
 	int32_t soaVertexOffset;
 
-	/// Offset of structure of array (SOA) unit normal vectors
+	/// Offset of structure of array (SOA) unit normal vectors.
 	int32_t soaNormalOffset;
+
+	/// Offset of dot(n1, n2) for each full edge.
+	int32_t edgeCosineOffset;
 
 	/// The total number of bytes for this hull.
 	int32_t byteCount;
+
+	/// Explicit padding for determinism.
+	int32_t padding;
 
 	/// Any padding must be explicit.
 } b3HullData;
@@ -2090,9 +2105,10 @@ typedef struct b3BoxHull
 	float vx[8];				 ///< vertex x
 	float vy[8];				 ///< vertex y
 	float vz[8];				 ///< vertex z
-	float nx[8];				 ///< normal x, padded to multiple of 4
-	float ny[8];				 ///< normal y, padded to multiple of 4
-	float nz[8];				 ///< normal z, padded to multiple of 4
+	float nx[8];				 ///< normal x, padded to multiple of 8
+	float ny[8];				 ///< normal y, padded to multiple of 8
+	float nz[8];				 ///< normal z, padded to multiple of 8
+	float edgeCosines[12];		 ///< dot(n1, n2) for each full edge.
 } b3BoxHull;
 
 /**@}*/ // hull
@@ -2471,12 +2487,8 @@ typedef struct b3CompoundDef
 	int sphereCount;
 } b3CompoundDef;
 
-/// The baked compound version depends on the tree, mesh, and hull versions.
-#define B3_COMPOUND_VERSION ( 0xB11DCE70FAD5622Bull ^ B3_DYNAMIC_TREE_VERSION ^ B3_MESH_VERSION ^ B3_HULL_VERSION )
-
-/// Meshes used in compounds have limited space for materials. If you have
-/// a mesh with many materials, you can use it outside of the compound.
-#define B3_MAX_COMPOUND_MESH_MATERIALS 4
+/// The baked compound version depends on the mesh and hull versions.
+#define B3_COMPOUND_VERSION ( 0x9E4B17D3A25C68F1ull ^ B3_MESH_VERSION ^ B3_HULL_VERSION )
 
 /// The data for a baked compound shape. This is a potentially large yet highly optimized
 /// data structure. It can contain thousands of child shapes, yet at runtime it populates
@@ -2493,15 +2505,17 @@ typedef struct b3CompoundData
 	/// The total number of bytes for this compound.
 	int byteCount;
 
+	// Bounds of the tree.
+	b3AABB bounds;
+
+	// Tree height for diagnostics.
+	int treeHeight;
+
 	/// Offset of the tree node array in bytes from the struct address.
 	int nodeOffset;
 
-	/// Offset of the tree proxy array in bytes from the struct address.
-	int proxyOffset;
-
-	/// Immutable dynamic tree. The node and proxy pointers must be fixed up using the offsets
-	/// above. A baked tree is never inserted into, so the parent array stays null.
-	b3DynamicTree tree;
+	// The number of tree nodes.
+	int nodeCount;
 
 	/// Offset of the material array in bytes from the struct address.
 	int materialOffset;
@@ -2547,7 +2561,10 @@ typedef struct b3CompoundCapsule
 	b3Capsule capsule;
 
 	/// Index to a shared material.
-	int materialIndex;
+	uint16_t materialIndex;
+
+	/// Padding for determinism.
+	uint16_t padding;
 } b3CompoundCapsule;
 
 /// A hull that lives in a compound.
@@ -2560,7 +2577,10 @@ typedef struct b3CompoundHull
 	b3Transform transform;
 
 	/// Index to a shared material.
-	int materialIndex;
+	uint16_t materialIndex;
+
+	/// Padding for determinism.
+	uint16_t padding;
 } b3CompoundHull;
 
 /// A mesh with non-uniform scale that lives in a compound.
@@ -2576,10 +2596,12 @@ typedef struct b3CompoundMesh
 	b3Vec3 scale;
 
 	/// This is used to access the surface material from b3GetCompoundMaterials.
-	/// Requires an extra level of indirection. The triangle material index
-	/// is clamped to B3_MAX_COMPOUND_MESH_MATERIALS.
+	/// Requires an extra level of indirection.
 	/// materialIndex = materialIndices[triangle->materialIndex]
-	int materialIndices[B3_MAX_COMPOUND_MESH_MATERIALS];
+	const uint16_t* materialIndices;
+
+	/// The number of materials. 1 for convex hapes.
+	int materialCount;
 } b3CompoundMesh;
 
 /// A sphere that lives in a compound.
@@ -2589,7 +2611,10 @@ typedef struct b3CompoundSphere
 	b3Sphere sphere;
 
 	/// Index to a shared material.
-	int materialIndex;
+	uint16_t materialIndex;
+
+	/// Padding for determinism.
+	uint16_t padding;
 } b3CompoundSphere;
 
 /// Child shape of a compound
@@ -2608,8 +2633,11 @@ typedef struct b3ChildShape
 	b3Transform transform;
 
 	/// Material indices. Index 0 is used for convex shapes.
-	/// todo limit to 64K?
-	int materialIndices[B3_MAX_COMPOUND_MESH_MATERIALS];
+	const uint16_t* materialIndices;
+
+	/// The number of materials. This is one for convex shapes. For
+	/// meshes it is determined by the maximum triangle material index.
+	int materialCount;
 
 	/// The shape type (union tag).
 	b3ShapeType type;
@@ -2644,20 +2672,22 @@ typedef struct b3ManifoldPoint
 	/// The separation of the contact point, negative if penetrating
 	float separation;
 
-	/// Cached separation used for contact recycling
-	float baseSeparation;
-
 	/// The impulse along the manifold normal vector. Since Box3D uses sub-stepping, this is
 	/// result from the final sub-step.
 	float normalImpulse;
 
-	/// The total normal impulse applied during sub-stepping. This is important
+	/// The total normal impulse applied across sub-stepping and restitution. This is important
 	/// to identify speculative contact points that had an interaction in the time step.
+	/// This includes the warm starting impulse, the sub-step delta impulse, and the restitution
+	/// impulse.
 	float totalNormalImpulse;
 
-	/// Relative normal velocity pre-solve. Used for hit events. If the normal impulse is
-	/// zero then there was no hit. Negative means shapes are approaching.
+	/// Relative normal velocity pre-solve. Negative when approaching. This is only
+	/// computed if hit events are enabled.
 	float normalVelocity;
+
+	/// Cached separation used for contact recycling
+	float baseSeparation;
 
 	/// Local point for matching
 	/// Uniquely identifies a contact point between two shapes

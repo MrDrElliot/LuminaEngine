@@ -126,9 +126,9 @@ typedef struct b3Contact
 	// Back index into b3World::contacts
 	int contactId;
 
-	// These are transient and cached for improved performance. B3_NULL_INDEX for static bodies.
-	int bodySimIndexA;
-	int bodySimIndexB;
+	// Encoded body sim indices to avoid a cache miss accessing the body in the narrow phase.
+	int encodedBodySimA;
+	int encodedBodySimB;
 
 	// b3ContactFlags
 	uint32_t flags;
@@ -180,5 +180,6 @@ void b3DestroyContact( b3World* world, b3Contact* contact, bool wakeBodies );
 bool b3UpdateContact( b3World* world, int workerIndex, b3Contact* contact, b3Shape* shapeA, b3Vec3 localCenterA, b3WorldTransform xfA,
 					  b3Shape* shapeB, b3Vec3 localCenterB, b3WorldTransform xfB, bool isFast, b3Arena arena );
 
-bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact, const b3Shape* shapeA, const int* materialMap,
-							 b3WorldTransform xfA, const b3Shape* shapeB, b3WorldTransform xfB, bool isFast, b3Arena arena );
+bool b3ComputeMeshManifolds( b3World* world, int workerIndex, b3Contact* contact, const b3Shape* shapeA,
+							 const uint16_t* materialMap, b3WorldTransform xfA, const b3Shape* shapeB, b3WorldTransform xfB,
+							 bool isFast, b3Arena arena );
