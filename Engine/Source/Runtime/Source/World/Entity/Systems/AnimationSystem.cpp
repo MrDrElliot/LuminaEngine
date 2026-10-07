@@ -26,6 +26,7 @@
 #include "World/Entity/Systems/KinematicsSystem.h"
 #include "World/Entity/Systems/SignificanceSystem.h"
 #include "World/Entity/Systems/SystemResources.h"
+#include "World/WorldTypes.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
 #include "Containers/StringFormat.h"
@@ -685,7 +686,9 @@ namespace Lumina
         // Hoisted, since the graph bodies run in parallel and the context lookup is a per-type hash probe.
         const FKinematicsState* KinematicsState = Kinematics::GetState(SystemContext);
 
-        const float  DeltaTime = (float)SystemContext.GetDeltaTime();
+        // A paused game holds its poses, while editor worlds run this stage to preview animation.
+        const bool   bFrozen   = SystemContext.GetUpdateStage() == EUpdateStage::Paused && SystemContext.GetWorldType() != EWorldType::Editor;
+        const float  DeltaTime = bFrozen ? 0.0f : (float)SystemContext.GetDeltaTime();
         const double Now       = SystemContext.GetTime();
 
         // Relaxed throughout, since the TaskGraph::Wait() before the read is the ordering edge.
