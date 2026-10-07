@@ -6,6 +6,7 @@
 #include "Core/Templates/AsBytes.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
+#include "Renderer/VertexOps.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
@@ -184,11 +185,9 @@ namespace Lumina::Import::Mesh
 
             Task::ParallelFor((uint32)NumVertices, [=](const Task::FParallelRange& Range)
             {
-                for (uint32 i = Range.Start; i < Range.End; ++i)
-                {
-                    OutNormals[i] = UnpackNormal(InNormals[i]);
-                    OutUVs[i]     = Math::UnpackHalf2x16(InUVs[i]);
-                }
+                const size_t Count = Range.End - Range.Start;
+                VertexOps::UnpackNormals(InNormals + Range.Start, OutNormals + Range.Start, Count);
+                VertexOps::UnpackHalf2x16s(InUVs + Range.Start, OutUVs + Range.Start, Count);
             }, 4096);
         }
 
@@ -212,11 +211,13 @@ namespace Lumina::Import::Mesh
                         meshopt_TangentCompatible);
                 }
 
+                TVector<uint32> CornerPacked(Section.IndexCount);
+                VertexOps::PackTangents(CornerTangents.data(), CornerPacked.data(), Section.IndexCount);
+
                 // Per-corner collapsed to per-vertex last-writer-wins, as the previous per-corner writer did.
                 for (uint32 i = 0; i < Section.IndexCount; ++i)
                 {
-                    const float* T = &CornerTangents[(size_t)i * 4u];
-                    MeshResource.Tangents[SurfaceIndices[i]] = PackTangent(FVector3(T[0], T[1], T[2]), T[3]);
+                    MeshResource.Tangents[SurfaceIndices[i]] = CornerPacked[i];
                 }
             }
 
@@ -242,17 +243,27 @@ namespace Lumina::Import::Mesh
         const uint32* Normals  = MeshResource.Normals.data();
         uint32*       Tangents = MeshResource.Tangents.data();
 
+        constexpr uint32 kBatch = 256;
         Task::ParallelFor((uint32)NumVertices, [=](const Task::FParallelRange& Range)
         {
-            for (uint32 i = Range.Start; i < Range.End; ++i)
+            FVector3 N[kBatch];
+            float TangentsXYZW[kBatch * 4];
+            for (uint32 Start = Range.Start; Start < Range.End; Start += kBatch)
             {
-                const FVector3 N = UnpackNormal(Normals[i]);
-
-                // Cross against whichever axis is least parallel to N, so the result never degenerates.
-                const FVector3 Axis = (Math::Abs(N.z) < 0.9f) ? FVector3(0.0f, 0.0f, 1.0f)
-                                                              : FVector3(1.0f, 0.0f, 0.0f);
-                const FVector3 T = Math::Normalize(Math::Cross(Axis, N));
-                Tangents[i] = PackTangent(T, 1.0f);
+                const uint32 Count = Math::Min(kBatch, Range.End - Start);
+                VertexOps::UnpackNormals(Normals + Start, N, Count);
+                for (uint32 i = 0; i < Count; ++i)
+                {
+                    // Cross against whichever axis is least parallel to N, so the result never degenerates.
+                    const FVector3 Axis = (Math::Abs(N[i].z) < 0.9f) ? FVector3(0.0f, 0.0f, 1.0f)
+                                                                     : FVector3(1.0f, 0.0f, 0.0f);
+                    const FVector3 T = Math::Normalize(Math::Cross(Axis, N[i]));
+                    TangentsXYZW[i * 4 + 0] = T.x;
+                    TangentsXYZW[i * 4 + 1] = T.y;
+                    TangentsXYZW[i * 4 + 2] = T.z;
+                    TangentsXYZW[i * 4 + 3] = 1.0f;
+                }
+                VertexOps::PackTangents(TangentsXYZW, Tangents + Start, Count);
             }
         }, 4096);
     }
@@ -982,6 +993,18 @@ namespace Lumina::Import::Mesh
             }
         }
 
+        // Meshlets share vertices across borders and LODs, so each normal converts once here instead of once per reference.
+        TVector<VertexOps::FSNorm16Normal> MeshletNormals(MeshResource.Normals.size());
+        {
+            LUMINA_PROFILE_SECTION("Convert Meshlet Normals");
+            const uint32*                InNormals  = MeshResource.Normals.data();
+            VertexOps::FSNorm16Normal*   OutNormals = MeshletNormals.data();
+            Task::ParallelFor((uint32)MeshletNormals.size(), [=](const Task::FParallelRange& Range)
+            {
+                VertexOps::UnpackNormalsToSNorm16(InNormals + Range.Start, OutNormals + Range.Start, Range.End - Range.Start);
+            }, 4096);
+        }
+
         struct FPackSlot
         {
             const FSurfaceMeshletResult* Result;
@@ -1062,10 +1085,10 @@ namespace Lumina::Import::Mesh
 
                     FMeshletVertex& Packed = Data.MeshletVertices[Pack.VertexStart + i];
                     EncodeMeshletPosition(Quant, MeshResource.Positions[GlobalIdx], Packed);
-                    const FVector3 N = UnpackNormal(MeshResource.Normals[GlobalIdx]);
-                    Packed.NormalX  = Math::FloatToSNorm16(N.x);
-                    Packed.NormalY  = Math::FloatToSNorm16(N.y);
-                    Packed.NormalZ  = Math::FloatToSNorm16(N.z);
+                    const VertexOps::FSNorm16Normal& N = MeshletNormals[GlobalIdx];
+                    Packed.NormalX  = N.X;
+                    Packed.NormalY  = N.Y;
+                    Packed.NormalZ  = N.Z;
                     Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                     Packed.UV       = MeshResource.UVs[GlobalIdx];
                     Packed.UV1      = MeshResource.UVs1[GlobalIdx];
@@ -1148,10 +1171,10 @@ namespace Lumina::Import::Mesh
 
                         FMeshletSkinnedVertex Packed;
                         EncodeMeshletPosition(Quant, MeshResource.Positions[GlobalIdx], Packed);
-                        const FVector3 N = UnpackNormal(MeshResource.Normals[GlobalIdx]);
-                        Packed.NormalX  = Math::FloatToSNorm16(N.x);
-                        Packed.NormalY  = Math::FloatToSNorm16(N.y);
-                        Packed.NormalZ  = Math::FloatToSNorm16(N.z);
+                        const VertexOps::FSNorm16Normal& N = MeshletNormals[GlobalIdx];
+                        Packed.NormalX  = N.X;
+                        Packed.NormalY  = N.Y;
+                        Packed.NormalZ  = N.Z;
                         Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                         Packed.UV       = MeshResource.UVs[GlobalIdx];
                         Packed.UV1      = MeshResource.UVs1[GlobalIdx];
@@ -1341,11 +1364,14 @@ namespace Lumina::Import::Mesh
             // Bake the source scene-graph transform into the appended positions/normals.
             if (!bIdentity)
             {
-                for (size_t i = Start; i < Start + SrcCount; ++i)
+                TVector<FVector3> BakedNormals(SrcCount);
+                VertexOps::UnpackNormals(Dst.Normals.data() + Start, BakedNormals.data(), SrcCount);
+                for (size_t i = 0; i < SrcCount; ++i)
                 {
-                    Dst.Positions[i] = FVector3(PosMatrix * FVector4(Dst.Positions[i], 1.0f));
-                    Dst.Normals[i]   = PackNormal(Math::Normalize(NormalMatrix * UnpackNormal(Dst.Normals[i])));
+                    Dst.Positions[Start + i] = FVector3(PosMatrix * FVector4(Dst.Positions[Start + i], 1.0f));
+                    BakedNormals[i]          = Math::Normalize(NormalMatrix * BakedNormals[i]);
                 }
+                VertexOps::PackNormals(BakedNormals.data(), Dst.Normals.data() + Start, SrcCount);
             }
 
             Dst.Indices.reserve(Dst.Indices.size() + Src.Indices.size());

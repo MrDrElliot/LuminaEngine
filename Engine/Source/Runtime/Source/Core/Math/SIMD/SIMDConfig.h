@@ -2,15 +2,9 @@
 #include "Platform/Platform.h"
 #include <immintrin.h>
 
-// Shared config for Lumina::SIMD. Baseline is /arch:AVX (VFloat8 + SSE/AVX float always
-// available); 256-bit integer ops and FMA are AVX2, guarded below to avoid #UD on AVX-only.
-
-// MSVC defines __AVX2__ with /arch:AVX2 (which implies FMA3); clang/gcc define
-// __FMA__ directly. Under the AVX baseline neither is set.
-#if defined(__AVX2__) || defined(__FMA__)
-    #define LUMINA_SIMD_HAS_FMA 1
-#else
-    #define LUMINA_SIMD_HAS_FMA 0
+// Lumina::SIMD assumes AVX2 with FMA and F16C throughout, so a build below that level is an error rather than a slow path.
+#if (defined(_M_X64) || defined(__x86_64__)) && !defined(__AVX2__)
+    #error "Lumina targets AVX2. Set VectorExtensions to AVX2 for this target."
 #endif
 
 #define LUMINA_SIMD_ALIGN16 alignas(16)

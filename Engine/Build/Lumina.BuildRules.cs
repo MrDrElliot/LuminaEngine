@@ -10,8 +10,8 @@ public abstract class LuminaTargetRules : TargetRules
     {
         CppStandard = "c++latest";
 
-        // AVX, not AVX2: AVX2 raises an invalid-instruction fault on CPUs without it.
-        VectorExtensions = "AVX";
+        // The launcher checks for AVX2 before anything else runs and explains the failure on an older CPU.
+        VectorExtensions = "AVX2";
 
         bEnableExceptions = true;
         bEnableRtti = false;

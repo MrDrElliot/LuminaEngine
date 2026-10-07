@@ -35,8 +35,8 @@ namespace
     }
 }
 
-// The array path may use F16C, which rounds half to even where the scalar path rounds half up.
-TEST(PackHalf, ArrayMatchesScalarWithinOneUlp)
+// Both paths convert with F16C, so the array path and the scalar one agree exactly.
+TEST(PackHalf, ArrayMatchesScalar)
 {
     const std::vector<float> Pairs = MakePairs();
     const uint32 Count = (uint32)(Pairs.size() / 2);
@@ -48,9 +48,9 @@ TEST(PackHalf, ArrayMatchesScalarWithinOneUlp)
     {
         const uint32 Expected = Math::PackHalf2x16(TVec<float, 2>(Pairs[i * 2], Pairs[i * 2 + 1]));
 
-        EXPECT_LE(HalfDistance((uint16)(Packed[i] & 0xFFFFu), (uint16)(Expected & 0xFFFFu)), 1)
+        EXPECT_EQ(HalfDistance((uint16)(Packed[i] & 0xFFFFu), (uint16)(Expected & 0xFFFFu)), 0)
             << "x lane " << i << " (" << Pairs[i * 2] << ")";
-        EXPECT_LE(HalfDistance((uint16)(Packed[i] >> 16), (uint16)(Expected >> 16)), 1)
+        EXPECT_EQ(HalfDistance((uint16)(Packed[i] >> 16), (uint16)(Expected >> 16)), 0)
             << "y lane " << i << " (" << Pairs[i * 2 + 1] << ")";
     }
 }

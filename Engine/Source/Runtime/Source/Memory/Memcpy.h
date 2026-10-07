@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <cstring>
 #include <immintrin.h>
 
@@ -266,13 +267,7 @@ namespace Lumina::Memory
 
         FORCEINLINE uint32 FirstSetBitIndex(uint32 Mask)
         {
-        #if defined(_MSC_VER)
-            unsigned long Index = 0;
-            _BitScanForward(&Index, Mask);
-            return static_cast<uint32>(Index);
-        #else
-            return static_cast<uint32>(__builtin_ctz(Mask));
-        #endif
+            return static_cast<uint32>(std::countr_zero(Mask));
         }
 
         FORCEINLINE void Set15OrLess(uint8* RESTRICT Dest, uint64 Pattern, size_t Size)

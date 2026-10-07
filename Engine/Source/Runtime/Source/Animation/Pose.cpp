@@ -1321,6 +1321,83 @@ namespace Lumina
         Detail::BlendBoneRotation(Pose, MidIdx, NewMidLocal, Alpha);
     }
 
+    namespace Detail
+    {
+        // Lane k of X, Y, Z and W becomes the four floats at Out[k].Cols[Column].
+        FORCEINLINE void StoreColumnForEightBones(__m256 X, __m256 Y, __m256 Z, __m256 W, FMatrix4* Out, int Column)
+        {
+            const __m256 XY01 = _mm256_unpacklo_ps(X, Y);
+            const __m256 XY23 = _mm256_unpackhi_ps(X, Y);
+            const __m256 ZW01 = _mm256_unpacklo_ps(Z, W);
+            const __m256 ZW23 = _mm256_unpackhi_ps(Z, W);
+            const __m256 Bones04 = _mm256_shuffle_ps(XY01, ZW01, _MM_SHUFFLE(1, 0, 1, 0));
+            const __m256 Bones15 = _mm256_shuffle_ps(XY01, ZW01, _MM_SHUFFLE(3, 2, 3, 2));
+            const __m256 Bones26 = _mm256_shuffle_ps(XY23, ZW23, _MM_SHUFFLE(1, 0, 1, 0));
+            const __m256 Bones37 = _mm256_shuffle_ps(XY23, ZW23, _MM_SHUFFLE(3, 2, 3, 2));
+            _mm_store_ps(&Out[0].Cols[Column][0], _mm256_castps256_ps128(Bones04));
+            _mm_store_ps(&Out[1].Cols[Column][0], _mm256_castps256_ps128(Bones15));
+            _mm_store_ps(&Out[2].Cols[Column][0], _mm256_castps256_ps128(Bones26));
+            _mm_store_ps(&Out[3].Cols[Column][0], _mm256_castps256_ps128(Bones37));
+            _mm_store_ps(&Out[4].Cols[Column][0], _mm256_extractf128_ps(Bones04, 1));
+            _mm_store_ps(&Out[5].Cols[Column][0], _mm256_extractf128_ps(Bones15, 1));
+            _mm_store_ps(&Out[6].Cols[Column][0], _mm256_extractf128_ps(Bones26, 1));
+            _mm_store_ps(&Out[7].Cols[Column][0], _mm256_extractf128_ps(Bones37, 1));
+        }
+    }
+
+    void AnimPose::ComposeLocalMatrices(const FPose& Pose, FMatrix4* OutMatrices)
+    {
+        constexpr int32 kWidth = 8;
+        const int32 NumBones = Pose.GetNumBones();
+
+        const float* RESTRICT Tx = Pose.Tx(); const float* RESTRICT Ty = Pose.Ty(); const float* RESTRICT Tz = Pose.Tz();
+        const float* RESTRICT Sx = Pose.Sx(); const float* RESTRICT Sy = Pose.Sy(); const float* RESTRICT Sz = Pose.Sz();
+        const float* RESTRICT Rx = Pose.Rx(); const float* RESTRICT Ry = Pose.Ry(); const float* RESTRICT Rz = Pose.Rz();
+        const float* RESTRICT Rw = Pose.Rw();
+
+        const __m256 One  = _mm256_set1_ps(1.0f);
+        const __m256 Two  = _mm256_set1_ps(2.0f);
+        const __m256 Zero = _mm256_setzero_ps();
+
+        // Unfused multiplies and adds in ComposeTRS's order, so each matrix matches the scalar one bit for bit.
+        const auto Diagonal          = [&](__m256 A, __m256 B) { return _mm256_sub_ps(One, _mm256_mul_ps(Two, _mm256_add_ps(A, B))); };
+        const auto DoubledSum        = [&](__m256 A, __m256 B) { return _mm256_mul_ps(Two, _mm256_add_ps(A, B)); };
+        const auto DoubledDifference = [&](__m256 A, __m256 B) { return _mm256_mul_ps(Two, _mm256_sub_ps(A, B)); };
+
+        int32 i = 0;
+        for (; i + kWidth <= NumBones; i += kWidth)
+        {
+            const __m256 X = _mm256_loadu_ps(Rx + i);
+            const __m256 Y = _mm256_loadu_ps(Ry + i);
+            const __m256 Z = _mm256_loadu_ps(Rz + i);
+            const __m256 W = _mm256_loadu_ps(Rw + i);
+            const __m256 ScaleX = _mm256_loadu_ps(Sx + i);
+            const __m256 ScaleY = _mm256_loadu_ps(Sy + i);
+            const __m256 ScaleZ = _mm256_loadu_ps(Sz + i);
+
+            const __m256 XX = _mm256_mul_ps(X, X); const __m256 YY = _mm256_mul_ps(Y, Y); const __m256 ZZ = _mm256_mul_ps(Z, Z);
+            const __m256 XY = _mm256_mul_ps(X, Y); const __m256 XZ = _mm256_mul_ps(X, Z); const __m256 YZ = _mm256_mul_ps(Y, Z);
+            const __m256 WX = _mm256_mul_ps(W, X); const __m256 WY = _mm256_mul_ps(W, Y); const __m256 WZ = _mm256_mul_ps(W, Z);
+
+            FMatrix4* Out = OutMatrices + i;
+            Detail::StoreColumnForEightBones(_mm256_mul_ps(Diagonal(YY, ZZ), ScaleX),
+                                             _mm256_mul_ps(DoubledSum(XY, WZ), ScaleX),
+                                             _mm256_mul_ps(DoubledDifference(XZ, WY), ScaleX), Zero, Out, 0);
+            Detail::StoreColumnForEightBones(_mm256_mul_ps(DoubledDifference(XY, WZ), ScaleY),
+                                             _mm256_mul_ps(Diagonal(XX, ZZ), ScaleY),
+                                             _mm256_mul_ps(DoubledSum(YZ, WX), ScaleY), Zero, Out, 1);
+            Detail::StoreColumnForEightBones(_mm256_mul_ps(DoubledSum(XZ, WY), ScaleZ),
+                                             _mm256_mul_ps(DoubledDifference(YZ, WX), ScaleZ),
+                                             _mm256_mul_ps(Diagonal(XX, YY), ScaleZ), Zero, Out, 2);
+            Detail::StoreColumnForEightBones(_mm256_loadu_ps(Tx + i), _mm256_loadu_ps(Ty + i), _mm256_loadu_ps(Tz + i), One, Out, 3);
+        }
+
+        for (; i < NumBones; ++i)
+        {
+            OutMatrices[i] = ComposeTRS(FVector3(Tx[i], Ty[i], Tz[i]), FQuat(Rw[i], Rx[i], Ry[i], Rz[i]), FVector3(Sx[i], Sy[i], Sz[i]));
+        }
+    }
+
     void AnimPose::ToSkinningMatrices(const FPose& Pose, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutMatrices)
     {
         const int32 NumBones = Skeleton ? Skeleton->GetNumBones() : 0;
@@ -1351,22 +1428,19 @@ namespace Lumina
         // Globals go to scratch so InvBind folds in during the same pass rather than a second sweep.
         thread_local TVector<FMatrix4> Globals;
         Globals.resize(NumBones);
+        ComposeLocalMatrices(Pose, Globals.data());
 
         const int32* RESTRICT    Parents = Skeleton->BoneParents.data();
         const FMatrix4* RESTRICT InvBind = Skeleton->BoneInvBind.data();
 
-        const float* RESTRICT Tx = Pose.Tx(); const float* RESTRICT Ty = Pose.Ty(); const float* RESTRICT Tz = Pose.Tz();
-        const float* RESTRICT Sx = Pose.Sx(); const float* RESTRICT Sy = Pose.Sy(); const float* RESTRICT Sz = Pose.Sz();
-        const float* RESTRICT Rx = Pose.Rx(); const float* RESTRICT Ry = Pose.Ry(); const float* RESTRICT Rz = Pose.Rz();
-        const float* RESTRICT Rw = Pose.Rw();
-
+        // Parents come first, so Globals[Parent] is already global while Globals[i] still holds the local.
         for (int32 i = 0; i < NumBones; ++i)
         {
-            const FMatrix4 Local = ComposeTRS(FVector3(Tx[i], Ty[i], Tz[i]),
-                                              FQuat(Rw[i], Rx[i], Ry[i], Rz[i]),
-                                              FVector3(Sx[i], Sy[i], Sz[i]));
             const int32 Parent = Parents[i];
-            Globals[i] = Parent != Constants::kIndexNone ? Globals[Parent] * Local : Local;
+            if (Parent != Constants::kIndexNone)
+            {
+                Globals[i] = Globals[Parent] * Globals[i];
+            }
             OutMatrices[i] = Globals[i] * InvBind[i];
         }
     }

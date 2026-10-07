@@ -237,8 +237,8 @@ public abstract class TargetRules
     /// <summary>C++ language standard passed to the toolchain.</summary>
     public string CppStandard { get; set; } = "c++latest";
 
-    /// <summary>Instruction set baseline. AVX2 crashes on CPUs without it; see the engine target.</summary>
-    public string VectorExtensions { get; set; } = "AVX";
+    // Instruction set baseline; code built for it faults on a CPU without it.
+    public string VectorExtensions { get; set; } = "AVX2";
 
     /// <summary>What LUMINA_FORCEINLINE_HINT expands to. A PGO or size-tuned target picks Hint.</summary>
     public ForceInlineHintPolicy ForceInlineHint { get; set; } = ForceInlineHintPolicy.Default;

@@ -276,16 +276,6 @@ namespace Lumina
         return NullOpt;
     }
     
-    bool FGuid::operator==(const FGuid& other) const noexcept
-    {
-        return Bytes == other.Bytes;
-    }
-    
-    bool FGuid::operator!=(const FGuid& other) const noexcept
-    {
-        return Bytes != other.Bytes;
-    }
-    
     bool FGuid::operator<(const FGuid& other) const noexcept
     {
         return Bytes < other.Bytes;
@@ -331,11 +321,6 @@ namespace Lumina
     FString FGuid::ToShortString() const
     {
         return ToString(false, false);
-    }
-    
-    bool FGuid::IsValid() const noexcept
-    {
-        return *this != Empty();
     }
     
     void FGuid::Invalidate() noexcept

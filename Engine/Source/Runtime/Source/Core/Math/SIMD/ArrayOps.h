@@ -2,13 +2,8 @@
 
 #include "Platform/GenericPlatform.h"
 
-// Fusing rounds once instead of twice, so the two paths differ by an ULP and are not bit-identical.
-
 namespace Lumina::SIMD
 {
-    // FMA3 is a separate CPUID bit that the AVX baseline does not imply.
-    RUNTIME_API bool HasFMA();
-
     // Out = A * (1 - Alpha) + B * Alpha over Count floats. Out may alias A or B element-wise.
     RUNTIME_API void LerpArray(float* Out, const float* A, const float* B, int32 Count, float Alpha);
 

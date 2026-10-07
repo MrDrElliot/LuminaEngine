@@ -363,7 +363,8 @@ public sealed class ClangToolchain : IToolchain
         return Extensions.ToUpperInvariant() switch
         {
             "AVX" => "-mavx",
-            "AVX2" => "-mavx2",
+            // MSVC's AVX2 switch also allows FMA, BMI1/2, LZCNT, F16C and MOVBE, which is exactly this level.
+            "AVX2" => "-march=x86-64-v3",
             "AVX512" => "-mavx512f",
             "SSE2" => "-msse2",
             "SSE4.2" or "SSE42" => "-msse4.2",

@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "AnimCompression.h"
+#include "Core/Math/SIMD/SIMDConfig.h"
 
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Console/ConsoleVariable.h"
@@ -353,6 +354,56 @@ namespace Lumina
         const FQuat Q1(DequantizeSigned(B[3]), DequantizeSigned(B[0]), DequantizeSigned(B[1]), DequantizeSigned(B[2]));
 
         return Math::Normalize(Q0 * (1.0f - Alpha) + Q1 * Alpha);
+    }
+
+    void FCompressedAnimData::DecodeQuantizedRotationBatch(const uint32* TrackOffsets, uint32 Frame0, uint32 Frame1, float Alpha,
+                                                           float (&OutXYZW)[4][RotationBatchSize]) const
+    {
+        const uint16* Pool = QuantizedData.data();
+        const SIZE_T First = (SIZE_T)Frame0 * 4;
+        const SIZE_T Second = (SIZE_T)Frame1 * 4;
+
+        // Row k holds track k's two frames as eight floats, x y z w of the first then of the second.
+        __m256 Rows[RotationBatchSize];
+        for (int32 k = 0; k < RotationBatchSize; ++k)
+        {
+            const __m128i A = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(Pool + TrackOffsets[k] + First));
+            const __m128i B = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(Pool + TrackOffsets[k] + Second));
+            Rows[k] = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(_mm_unpacklo_epi64(A, B)));
+        }
+
+        const __m256 T0 = _mm256_unpacklo_ps(Rows[0], Rows[1]); const __m256 T1 = _mm256_unpackhi_ps(Rows[0], Rows[1]);
+        const __m256 T2 = _mm256_unpacklo_ps(Rows[2], Rows[3]); const __m256 T3 = _mm256_unpackhi_ps(Rows[2], Rows[3]);
+        const __m256 T4 = _mm256_unpacklo_ps(Rows[4], Rows[5]); const __m256 T5 = _mm256_unpackhi_ps(Rows[4], Rows[5]);
+        const __m256 T6 = _mm256_unpacklo_ps(Rows[6], Rows[7]); const __m256 T7 = _mm256_unpackhi_ps(Rows[6], Rows[7]);
+        const __m256 S0 = _mm256_shuffle_ps(T0, T2, _MM_SHUFFLE(1, 0, 1, 0)); const __m256 S1 = _mm256_shuffle_ps(T0, T2, _MM_SHUFFLE(3, 2, 3, 2));
+        const __m256 S2 = _mm256_shuffle_ps(T1, T3, _MM_SHUFFLE(1, 0, 1, 0)); const __m256 S3 = _mm256_shuffle_ps(T1, T3, _MM_SHUFFLE(3, 2, 3, 2));
+        const __m256 S4 = _mm256_shuffle_ps(T4, T6, _MM_SHUFFLE(1, 0, 1, 0)); const __m256 S5 = _mm256_shuffle_ps(T4, T6, _MM_SHUFFLE(3, 2, 3, 2));
+        const __m256 S6 = _mm256_shuffle_ps(T5, T7, _MM_SHUFFLE(1, 0, 1, 0)); const __m256 S7 = _mm256_shuffle_ps(T5, T7, _MM_SHUFFLE(3, 2, 3, 2));
+
+        const __m256 QInverse = _mm256_set1_ps(QuantizedInverse);
+        const __m256 One = _mm256_set1_ps(1.0f);
+        const __m256 Two = _mm256_set1_ps(2.0f);
+        const auto Dequantize = [&](__m256 V) { return _mm256_sub_ps(_mm256_mul_ps(_mm256_mul_ps(V, QInverse), Two), One); };
+
+        const __m256 FirstWeight = _mm256_set1_ps(1.0f - Alpha);
+        const __m256 SecondWeight = _mm256_set1_ps(Alpha);
+        const auto Lerp = [&](__m256 A, __m256 B) { return _mm256_add_ps(_mm256_mul_ps(Dequantize(A), FirstWeight), _mm256_mul_ps(Dequantize(B), SecondWeight)); };
+
+        const __m256 X = Lerp(_mm256_permute2f128_ps(S0, S4, 0x20), _mm256_permute2f128_ps(S0, S4, 0x31));
+        const __m256 Y = Lerp(_mm256_permute2f128_ps(S1, S5, 0x20), _mm256_permute2f128_ps(S1, S5, 0x31));
+        const __m256 Z = Lerp(_mm256_permute2f128_ps(S2, S6, 0x20), _mm256_permute2f128_ps(S2, S6, 0x31));
+        const __m256 W = Lerp(_mm256_permute2f128_ps(S3, S7, 0x20), _mm256_permute2f128_ps(S3, S7, 0x31));
+
+        // Math::Normalize's dot order and reciprocal, with the identity where the length is not positive.
+        const __m256 LengthSquared = _mm256_add_ps(_mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(X, X), _mm256_mul_ps(Y, Y)), _mm256_mul_ps(Z, Z)), _mm256_mul_ps(W, W));
+        const __m256 Length = _mm256_sqrt_ps(LengthSquared);
+        const __m256 InvLength = _mm256_div_ps(One, Length);
+        const __m256 Positive = _mm256_cmp_ps(Length, _mm256_setzero_ps(), _CMP_GT_OQ);
+        _mm256_storeu_ps(OutXYZW[0], _mm256_and_ps(_mm256_mul_ps(X, InvLength), Positive));
+        _mm256_storeu_ps(OutXYZW[1], _mm256_and_ps(_mm256_mul_ps(Y, InvLength), Positive));
+        _mm256_storeu_ps(OutXYZW[2], _mm256_and_ps(_mm256_mul_ps(Z, InvLength), Positive));
+        _mm256_storeu_ps(OutXYZW[3], _mm256_blendv_ps(One, _mm256_mul_ps(W, InvLength), Positive));
     }
 
 FVector3 AnimCompression::SampleKeysVec3(const TVector<float>& Times, const TVector<FVector3>& Values, float Time)

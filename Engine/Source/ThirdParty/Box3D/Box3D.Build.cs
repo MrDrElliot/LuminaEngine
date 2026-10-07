@@ -19,9 +19,6 @@ public class Box3D : LuminaThirdPartyModuleRules
         if (Target.Platform == BuildPlatform.Windows64)
         {
             PrivateCompilerOptions.Add("/std:c17");
-
-            // The 8-wide kernels live alone in wide8.c and Box3D only calls them when the CPU reports AVX2, as its own CMake build does.
-            AddPerFileOption("wide8.c", "/arch:AVX2");
         }
         else
         {

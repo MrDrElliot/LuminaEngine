@@ -195,6 +195,9 @@ namespace Lumina
         // Resolves a local-space pose into GPU skinning matrices (Global * InvBind).
         RUNTIME_API void ToSkinningMatrices(const FPose& Pose, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutMatrices);
 
+        // ComposeTRS of every bone in the pose, eight bones per step and bit-identical to the scalar form.
+        RUNTIME_API void ComposeLocalMatrices(const FPose& Pose, FMatrix4* OutMatrices);
+
         enum class EBoneSpace : uint8
         {
             LocalBone,

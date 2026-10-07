@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstring>
 #include <iosfwd>
 #include "Containers/Format.h"
 #include "Containers/StaticArray.h"
@@ -34,8 +35,8 @@ namespace Lumina
         FGuid& operator=(FGuid&&) noexcept = default;
         ~FGuid() = default;
 
-        bool operator==(const FGuid& other) const noexcept;
-        bool operator!=(const FGuid& other) const noexcept;
+        bool operator==(const FGuid& Other) const noexcept { return LowWord() == Other.LowWord() && HighWord() == Other.HighWord(); }
+        bool operator!=(const FGuid& Other) const noexcept { return !(*this == Other); }
         bool operator<(const FGuid& other) const noexcept;
         bool operator<=(const FGuid& other) const noexcept;
         bool operator>(const FGuid& other) const noexcept;
@@ -45,7 +46,7 @@ namespace Lumina
         FString ToString(bool uppercase = true, bool includeDashes = true) const;
         FString ToShortString() const;
         
-        bool IsValid() const noexcept;
+        bool IsValid() const noexcept { return (LowWord() | HighWord()) != 0; }
         explicit operator bool() const noexcept { return IsValid(); }
         
         const ByteArray& GetBytes() const noexcept { return Bytes; }
@@ -67,6 +68,9 @@ namespace Lumina
         friend RUNTIME_API std::istream& operator>>(std::istream& is, FGuid& guid);
     
     private:
+        uint64 LowWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.data(), sizeof(Word)); return Word; }
+        uint64 HighWord() const noexcept { uint64 Word; std::memcpy(&Word, Bytes.data() + sizeof(Word), sizeof(Word)); return Word; }
+
         ByteArray Bytes{};
 
         static bool TryParseInternal(FStringView str, ByteArray& outBytes);

@@ -79,6 +79,12 @@ namespace Lumina
 
         RUNTIME_API FVector3 DecodeTranslation(const FCompressedAnimTrack& Track, uint32 Frame0, uint32 Frame1, float Alpha) const;
         RUNTIME_API FQuat DecodeRotation(const FCompressedAnimTrack& Track, uint32 Frame0, uint32 Frame1, float Alpha) const;
+
+        static constexpr int32 RotationBatchSize = 8;
+
+        // DecodeRotation of eight quantized tracks given by their data offsets, as rows of x, y, z and w with one track per lane.
+        RUNTIME_API void DecodeQuantizedRotationBatch(const uint32* TrackOffsets, uint32 Frame0, uint32 Frame1, float Alpha,
+                                                      float (&OutXYZW)[4][RotationBatchSize]) const;
         RUNTIME_API FVector3 DecodeScale(const FCompressedAnimTrack& Track, uint32 Frame0, uint32 Frame1, float Alpha) const;
 
         friend RUNTIME_API FArchive& operator << (FArchive& Ar, FCompressedAnimData& Data);

@@ -322,6 +322,8 @@ namespace Lumina::Reflection
             AppendArg("-resource-dir=" + ResourceDir);
         }
         AppendArg("-O0");
+        // The engine builds for AVX2, so headers must parse with the same intrinsics and feature macros.
+        AppendArg("-march=x86-64-v3");
         AppendArg("-DREFLECTION_PARSER");
 #if defined(_WIN32)
         // libclang trails the MSVC STL's supported-compiler floor, and its version assert poisons <type_traits>.

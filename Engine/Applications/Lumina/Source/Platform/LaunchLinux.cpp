@@ -2,6 +2,8 @@
 
 #include <csignal>
 
+#include "CpuCheck.h"
+
 extern int LuminaMain(int ArgC, char** ArgV);
 
 namespace
@@ -18,6 +20,12 @@ namespace
 
 int main(int ArgC, char** ArgV)
 {
+    if (!LuminaHasRequiredCpu())
+    {
+        LuminaReportUnsupportedCpu();
+        return 1;
+    }
+
     IgnoreBrokenPipeSignal();
 
     return LuminaMain(ArgC, ArgV);

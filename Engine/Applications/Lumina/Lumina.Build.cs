@@ -12,6 +12,8 @@ public class Lumina : LuminaModuleRules
 
         PublicDependencyModuleNames.Add("Runtime");
 
+        AddPerFileOption("CpuCheck.cpp", Target.Platform == BuildPlatform.Windows64 ? "/arch:AVX" : "-march=x86-64");
+
         if (Target.bWithEditor)
         {
             PublicDependencyModuleNames.Add("Editor");

@@ -137,20 +137,23 @@ namespace Lumina
         return Out;
     }
 
+    // Two result columns per 256-bit register, with each lane's operations in the same order as the 4-wide form.
     [[nodiscard]] inline TMat<float, 4, 4> operator*(const TMat<float, 4, 4>& A, const TMat<float, 4, 4>& B)
     {
-        using namespace SIMD;
-        const VFloat4 A0 = VFloat4::LoadAligned(&A.Cols[0][0]);
-        const VFloat4 A1 = VFloat4::LoadAligned(&A.Cols[1][0]);
-        const VFloat4 A2 = VFloat4::LoadAligned(&A.Cols[2][0]);
-        const VFloat4 A3 = VFloat4::LoadAligned(&A.Cols[3][0]);
+        const __m256 A0 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&A.Cols[0][0]));
+        const __m256 A1 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&A.Cols[1][0]));
+        const __m256 A2 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&A.Cols[2][0]));
+        const __m256 A3 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&A.Cols[3][0]));
 
         TMat<float, 4, 4> Out;
-        for (int j = 0; j < 4; ++j)
+        for (int j = 0; j < 4; j += 2)
         {
-            const VFloat4 Bc = VFloat4::LoadAligned(&B.Cols[j][0]);
-            const VFloat4 R  = MulAdd(SplatW(Bc), A3, MulAdd(SplatZ(Bc), A2, MulAdd(SplatY(Bc), A1, SplatX(Bc) * A0)));
-            R.StoreAligned(&Out.Cols[j][0]);
+            const __m256 Bc = _mm256_loadu_ps(&B.Cols[j][0]);
+            __m256 R = _mm256_mul_ps(_mm256_permute_ps(Bc, _MM_SHUFFLE(0, 0, 0, 0)), A0);
+            R = _mm256_fmadd_ps(_mm256_permute_ps(Bc, _MM_SHUFFLE(1, 1, 1, 1)), A1, R);
+            R = _mm256_fmadd_ps(_mm256_permute_ps(Bc, _MM_SHUFFLE(2, 2, 2, 2)), A2, R);
+            R = _mm256_fmadd_ps(_mm256_permute_ps(Bc, _MM_SHUFFLE(3, 3, 3, 3)), A3, R);
+            _mm256_storeu_ps(&Out.Cols[j][0], R);
         }
         return Out;
     }

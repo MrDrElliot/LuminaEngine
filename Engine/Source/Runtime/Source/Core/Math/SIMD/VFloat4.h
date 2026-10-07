@@ -63,15 +63,7 @@ namespace Lumina::SIMD
     [[nodiscard]] FORCEINLINE VFloat4 Round(VFloat4 A)    { return _mm_round_ps(A.V, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC); }
     [[nodiscard]] FORCEINLINE VFloat4 Truncate(VFloat4 A) { return _mm_round_ps(A.V, _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC); }
 
-    // A*B + C, fused when the toolchain targets FMA, otherwise mul+add.
-    [[nodiscard]] FORCEINLINE VFloat4 MulAdd(VFloat4 A, VFloat4 B, VFloat4 C)
-    {
-    #if LUMINA_SIMD_HAS_FMA
-        return _mm_fmadd_ps(A.V, B.V, C.V);
-    #else
-        return _mm_add_ps(_mm_mul_ps(A.V, B.V), C.V);
-    #endif
-    }
+    [[nodiscard]] FORCEINLINE VFloat4 MulAdd(VFloat4 A, VFloat4 B, VFloat4 C) { return _mm_fmadd_ps(A.V, B.V, C.V); }
 
     [[nodiscard]] FORCEINLINE VFloat4 CmpEq(VFloat4 A, VFloat4 B) { return _mm_cmpeq_ps(A.V, B.V); }
     [[nodiscard]] FORCEINLINE VFloat4 CmpNe(VFloat4 A, VFloat4 B) { return _mm_cmpneq_ps(A.V, B.V); }

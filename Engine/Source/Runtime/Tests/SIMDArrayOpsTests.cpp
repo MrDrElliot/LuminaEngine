@@ -35,17 +35,6 @@ namespace
     }
 }
 
-TEST(SIMDArrayOps, DispatchedPathIsReported)
-{
-    // The two paths round differently, so which one ran decides what the rest of this file covered.
-    if (!SIMD::HasFMA())
-    {
-        GTEST_SKIP() << "no FMA3 on this CPU, so only the baseline kernels are exercised here";
-    }
-
-    SUCCEED() << "FMA3 present, fused kernels exercised";
-}
-
 TEST(SIMDArrayOps, LerpArrayMatchesReference)
 {
     for (int32 Count : kCounts)

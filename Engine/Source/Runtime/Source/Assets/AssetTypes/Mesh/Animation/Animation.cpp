@@ -4,6 +4,7 @@
 
 #include "Animation/BindPose.h"
 #include "Animation/Pose.h"
+#include "Core/Math/SIMD/SIMDConfig.h"
 #include "Memory/Memcpy.h"
 #include "Renderer/MeshData.h"
 #include "Log/Log.h"
@@ -26,6 +27,18 @@ namespace Lumina
             FVector3 S;
             uint8 Touched;
         };
+
+        static bool IsConsecutive(const int32 (&Bones)[FCompressedAnimData::RotationBatchSize])
+        {
+            for (int32 k = 1; k < FCompressedAnimData::RotationBatchSize; ++k)
+            {
+                if (Bones[k] != Bones[0] + k)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
 
         static FDecodedBone DecodeBone(const FCompressedAnimData& Data, const FCompressedAnimBone& Bone,
                                        uint32 Frame0, uint32 Frame1, float Alpha)
@@ -410,6 +423,39 @@ namespace Lumina
         float Alpha;
         Compressed.GetFrameBlend(Time, AnimationResource->Duration, Frame0, Frame1, Alpha);
 
+        constexpr int32 kBatch = FCompressedAnimData::RotationBatchSize;
+        int32  BatchBones[kBatch];
+        uint32 BatchOffsets[kBatch];
+        int32  BatchCount = 0;
+
+        float* RESTRICT Rx = OutPose.Rx(); float* RESTRICT Ry = OutPose.Ry();
+        float* RESTRICT Rz = OutPose.Rz(); float* RESTRICT Rw = OutPose.Rw();
+
+        const auto FlushRotations = [&]
+        {
+            float Decoded[4][kBatch];
+            Compressed.DecodeQuantizedRotationBatch(BatchOffsets, Frame0, Frame1, Alpha, Decoded);
+
+            // Clips usually list bones in skeleton order, which turns the scatter into four contiguous stores.
+            const int32 FirstBone = BatchBones[0];
+            if (Detail::IsConsecutive(BatchBones))
+            {
+                _mm256_storeu_ps(Rx + FirstBone, _mm256_loadu_ps(Decoded[0]));
+                _mm256_storeu_ps(Ry + FirstBone, _mm256_loadu_ps(Decoded[1]));
+                _mm256_storeu_ps(Rz + FirstBone, _mm256_loadu_ps(Decoded[2]));
+                _mm256_storeu_ps(Rw + FirstBone, _mm256_loadu_ps(Decoded[3]));
+            }
+            else
+            {
+                for (int32 k = 0; k < kBatch; ++k)
+                {
+                    const int32 Bone = BatchBones[k];
+                    Rx[Bone] = Decoded[0][k]; Ry[Bone] = Decoded[1][k]; Rz[Bone] = Decoded[2][k]; Rw[Bone] = Decoded[3][k];
+                }
+            }
+            BatchCount = 0;
+        };
+
         for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
         {
             const int32 BoneIdx = Resolved->CompressedBones[b];
@@ -418,10 +464,38 @@ namespace Lumina
                 continue;
             }
 
-            const Detail::FDecodedBone Decoded = Detail::DecodeBone(Compressed, Compressed.Bones[b], Frame0, Frame1, Alpha);
-            if (Decoded.Touched & Detail::TouchedT) OutPose.SetTranslation(BoneIdx, Decoded.T);
-            if (Decoded.Touched & Detail::TouchedR) OutPose.SetRotation(BoneIdx, Decoded.R);
-            if (Decoded.Touched & Detail::TouchedS) OutPose.SetScale(BoneIdx, Decoded.S);
+            const FCompressedAnimBone& Bone = Compressed.Bones[b];
+            if (Bone.Translation.Format != EAnimTrackFormat::None)
+            {
+                OutPose.SetTranslation(BoneIdx, Compressed.DecodeTranslation(Bone.Translation, Frame0, Frame1, Alpha));
+            }
+            if (Bone.Scale.Format != EAnimTrackFormat::None)
+            {
+                OutPose.SetScale(BoneIdx, Compressed.DecodeScale(Bone.Scale, Frame0, Frame1, Alpha));
+            }
+
+            if (Bone.Rotation.Format == EAnimTrackFormat::Quantized)
+            {
+                BatchBones[BatchCount]   = BoneIdx;
+                BatchOffsets[BatchCount] = Bone.Rotation.DataOffset;
+                if (++BatchCount == kBatch)
+                {
+                    FlushRotations();
+                }
+            }
+            else if (Bone.Rotation.Format != EAnimTrackFormat::None)
+            {
+                OutPose.SetRotation(BoneIdx, Compressed.DecodeRotation(Bone.Rotation, Frame0, Frame1, Alpha));
+            }
+        }
+
+        // Fewer than a batch remain, so these take the scalar decoder, which gives the same bits.
+        for (int32 k = 0; k < BatchCount; ++k)
+        {
+            FCompressedAnimTrack Track;
+            Track.Format     = EAnimTrackFormat::Quantized;
+            Track.DataOffset = BatchOffsets[k];
+            OutPose.SetRotation(BatchBones[k], Compressed.DecodeRotation(Track, Frame0, Frame1, Alpha));
         }
     }
 

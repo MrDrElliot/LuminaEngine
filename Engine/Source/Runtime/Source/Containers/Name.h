@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Containers/Format.h"
+#include <compare>
 #include <string_view>
 
 #include "String.h"
@@ -99,8 +100,17 @@ namespace Lumina
         size_t Length() const;
         size_t length() const { return Length(); }
 
-        auto operator <=> (const FName& Other) const = default;
-        bool operator==(const FName& Other) const = default;
+        // Spelled out because a defaulted comparison on an exported class is called through the DLL import table instead of inlined.
+        bool operator==(const FName& Other) const { return ((Index ^ Other.Index) | (Number ^ Other.Number)) == 0; }
+
+        std::strong_ordering operator<=>(const FName& Other) const
+        {
+            if (const std::strong_ordering Order = Index <=> Other.Index; Order != 0)
+            {
+                return Order;
+            }
+            return Number <=> Other.Number;
+        }
         bool operator+(const FName& Other) const = delete;
 
         size_t Hash() const
