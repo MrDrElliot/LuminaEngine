@@ -239,6 +239,34 @@ float3 NormalOffsetWS(float3 Normal, float3 ToLight, int CascadeIndex)
     return Normal * (TexelSize * 1.4 * OffsetScale * LightData().ShadowParams.x);
 }
 
+// tan(80 degrees). Past it the plane estimate is untrustworthy, and a normal-mapped shading normal can swing it.
+static const float kMaxReceiverSlope = 5.67;
+
+// Depth change per atlas UV across the receiver's plane, so a tap off the kernel center compares against the surface under it.
+float2 ReceiverPlaneDepthSlope(float4x4 CascadeVP, float3 Normal, float3 ToLight, float2 AtlasUVScale)
+{
+    const float3 Tangent   = normalize(cross(Normal, abs(Normal.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0)));
+    const float3 Bitangent = cross(Normal, Tangent);
+
+    // Directions with w at 0, so the orthographic cascade's translation drops out.
+    const float3 D1 = mul(CascadeVP, float4(Tangent, 0.0)).xyz;
+    const float3 D2 = mul(CascadeVP, float4(Bitangent, 0.0)).xyz;
+    const float2 U1 = D1.xy * 0.5 * AtlasUVScale;
+    const float2 U2 = D2.xy * 0.5 * AtlasUVScale;
+
+    const float Det = U1.x * U2.y - U2.x * U1.y;
+    if (abs(Det) < 1e-12)
+    {
+        return float2(0.0, 0.0);
+    }
+    float2 Slope = float2(U2.y * D1.z - U1.y * D2.z, U1.x * D2.z - U2.x * D1.z) / Det;
+
+    const float CosTheta = saturate(abs(dot(Normal, ToLight)));
+    const float TanTheta = sqrt(max(1.0 - CosTheta * CosTheta, 0.0)) / max(CosTheta, 1e-4);
+    Slope *= min(1.0, kMaxReceiverSlope / max(TanTheta, 1e-4));
+    return Slope;
+}
+
 // Godot's default soft sun shadow, a few hardware-compare taps on a rotated Vogel disk with no blocker search.
 float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float3 Normal, float3 ToLight, float2 ScreenPos, out bool Inside)
 {
@@ -274,6 +302,13 @@ float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float
     const float  RadiusUV0    = FilterTexels / max(LightData().CascadeResolutions[0], 1.0);
     const float2 RadiusUV     = RadiusUV0 * (LightData().CascadeRadii[0] / max(LightData().CascadeRadii[CascadeIndex], 1e-4)) * Tile.AtlasUVScale;
 
+    // The center's bias alone left the outer taps of a wide kernel comparing too deep, which striped flat ground.
+    const float2 DepthSlope = ReceiverPlaneDepthSlope(CascadeVP, Normal, ToLight, Tile.AtlasUVScale);
+
+    // Each tap's bilinear compare reads texel centers up to a texel away, so the plane's rise over one texel is owed too.
+    const float2 TexelUV  = Tile.AtlasUVScale / max(LightData().CascadeResolutions[CascadeIndex], 1.0);
+    const float  TapDepth = RefDepth - dot(abs(DepthSlope), TexelUV);
+
     float2 Dir;
     sincos(InterleavedGradientNoise(ScreenPos) * TWO_PI, Dir.y, Dir.x);
     const float2 GoldenStep = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
@@ -282,9 +317,9 @@ float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float
     [loop]
     for (int i = 0; i < Taps; ++i)
     {
-        const float2 Offset = Dir * sqrt((float(i) + 0.5) / float(Taps));
+        const float2 TapUV = Dir * sqrt((float(i) + 0.5) / float(Taps)) * RadiusUV;
         Dir = RotateVogel(Dir, GoldenStep);
-        Shadow += ShadowCascade().SampleCmpLevelZero(clamp(BaseUV + Offset * RadiusUV, TileMin, TileMax), RefDepth);
+        Shadow += ShadowCascade().SampleCmpLevelZero(clamp(BaseUV + TapUV, TileMin, TileMax), TapDepth + dot(DepthSlope, TapUV));
     }
     return Shadow / float(Taps);
 }

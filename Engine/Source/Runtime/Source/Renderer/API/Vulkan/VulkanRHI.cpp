@@ -6599,13 +6599,8 @@ namespace Lumina::RHI
         vkCmdCopyBuffer(VkCmdBuf, SourceRange.Buffer, DestRange.Buffer, 1, &Region);
     }
 
-    void CmdMemcpyBatch(FCmdListH CL, TSpan<const FBufferCopy> Copies)
+    static void CmdMemcpyBatchChunk(FCmdListH CL, TSpan<const FBufferCopy> Copies)
     {
-        if (Copies.empty())
-        {
-            return;
-        }
-
         FMemMark Mark;
 
         if (UseAddressCommands())
@@ -6685,6 +6680,17 @@ namespace Lumina::RHI
 
             vkCmdCopyBuffer(VkCmdBuf, Sources[First], Dests[First], (uint32)(Last - First), Regions + First);
             First = Last;
+        }
+    }
+
+    void CmdMemcpyBatch(FCmdListH CL, TSpan<const FBufferCopy> Copies)
+    {
+        // Each chunk's region arrays come from one scratch block, which caps how many copies fit at once.
+        constexpr SIZE_T kCopiesPerChunk = 2048;
+        for (SIZE_T First = 0; First < Copies.size(); First += kCopiesPerChunk)
+        {
+            const SIZE_T Count = Math::Min<SIZE_T>(kCopiesPerChunk, Copies.size() - First);
+            CmdMemcpyBatchChunk(CL, TSpan<const FBufferCopy>(Copies.data() + First, Count));
         }
     }
 

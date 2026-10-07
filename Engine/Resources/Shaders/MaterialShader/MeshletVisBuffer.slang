@@ -15,10 +15,9 @@ struct FVisPrimitive
     bool CullPrimitive  : SV_CullPrimitive;
 };
 
-// The per-vertex output type this variant declares. Masked needs the interpolant set; opaque needs a clip
-// position and nothing else (VisID is per-PRIMITIVE, below).
+// Masked carries what its opacity graph reads, and opaque only a clip position since VisID is per primitive.
 #ifdef VISBUFFER_MASKED_GEOM
-typedef FBaseVertexOutput      FVisVertexOutput;
+typedef FMaskedVertexOutput    FVisVertexOutput;
 #else
 typedef FDepthOnlyVertexOutput FVisVertexOutput;
 #endif
@@ -82,6 +81,9 @@ void MeshMain(
         const float3x3 NormalMatrix = CalculateNormalMatrix(ModelMatrix);
         const float4x4 CameraView   = GetCameraView();
         const float4x4 CameraProj   = GetCameraProjection();
+#ifdef VISBUFFER_MASKED_GEOM
+        const uint     MaterialIndex = Ref.Inst.MaterialIndex;
+#endif
 
         [ForceUnroll]
         for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
@@ -106,7 +108,7 @@ void MeshMain(
             WorldPos.xyz += Material.WorldPositionOffset;
 
 #ifdef VISBUFFER_MASKED_GEOM
-            FVisVertexOutput VOut = MakeBaseVertexOutput(Ref, W, WorldPos.xyz, CameraView, CameraProj);
+            FVisVertexOutput VOut = MakeMaskedVertexOutput(Ref, W, WorldPos.xyz, CameraView, CameraProj, MaterialIndex);
             Clip[v] = VOut.Position;   // the same two muls; taken from the output so they cannot drift
 #else
             FVisVertexOutput VOut = (FVisVertexOutput)0;

@@ -381,6 +381,41 @@ struct FDepthOnlyVertexOutput
     precise float4 Position : SV_Position;
 };
 
+// The masked lanes carry only what the material's pixel graph names, since their output storage caps how many mesh workgroups fit.
+#ifdef MASKED_IO_FULL
+typedef FBaseVertexOutput FMaskedVertexOutput;
+#else
+struct FMaskedVertexOutput
+{
+    float2 UV                          : TEXCOORD0;
+#ifdef MASKED_IO_UV1
+    float2 UV1                         : TEXCOORD1;
+#endif
+#ifdef MASKED_IO_COLOR
+    float4 FragColor                   : COLOR;
+#endif
+#ifdef MASKED_IO_NORMAL
+    float3 NormalWS                    : NORMAL_WS;
+#endif
+#ifdef MASKED_IO_TANGENT
+    float4 TangentWS                   : TANGENT_WS;
+#endif
+#ifdef MASKED_IO_VIEW_POS
+    float3 FragPos                     : FRAG_POS;
+#endif
+#ifdef MASKED_IO_WORLD_NO_WPO
+    float3 WorldPosNoWPO               : WORLD_POS_NO_WPO;
+#endif
+#ifdef MASKED_IO_INSTANCE
+    nointerpolation uint InstanceIndex : INSTANCE;
+    nointerpolation uint EntityID      : ENTITY_ID;
+    nointerpolation uint InstanceFlags : INSTANCE_FLAGS;
+#endif
+    nointerpolation uint MaterialIndex : MATERIAL_INDEX;
+    precise float4 Position            : SV_Position;
+};
+#endif
+
 // FinalWorldPos is post-WPO: the shader adds Material.WorldPositionOffset before calling this.
 FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos,
                                        float4x4 CameraView, float4x4 CameraProj)
@@ -408,4 +443,128 @@ FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, f
 FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos)
 {
     return MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
+}
+
+// MaterialIndex is passed in so the workgroup loads it once, ahead of the vertex phase.
+FMaskedVertexOutput MakeMaskedVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos,
+                                           float4x4 CameraView, float4x4 CameraProj, uint MaterialIndex)
+{
+#ifdef MASKED_IO_FULL
+    return MakeBaseVertexOutput(Ref, W, FinalWorldPos, CameraView, CameraProj);
+#else
+    const float4 ViewPos = CameraViewPosition(FinalWorldPos, CameraView);
+
+    FMaskedVertexOutput O;
+    O.UV            = W.UV;
+#ifdef MASKED_IO_UV1
+    O.UV1           = W.UV1;
+#endif
+#ifdef MASKED_IO_COLOR
+    O.FragColor     = W.Color;
+#endif
+#ifdef MASKED_IO_NORMAL
+    O.NormalWS      = W.NormalWS;
+#endif
+#ifdef MASKED_IO_TANGENT
+    O.TangentWS     = W.TangentWS;
+#endif
+#ifdef MASKED_IO_VIEW_POS
+    O.FragPos       = ViewPos.xyz;
+#endif
+#ifdef MASKED_IO_WORLD_NO_WPO
+    O.WorldPosNoWPO = W.WorldPos;
+#endif
+#ifdef MASKED_IO_INSTANCE
+    O.InstanceIndex = Ref.InstanceID;
+    O.EntityID      = Ref.Inst.EntityID;
+    O.InstanceFlags = (uint)Ref.InstFlags;
+#endif
+    O.MaterialIndex = MaterialIndex;
+    O.Position      = CameraClipPosition(ViewPos, CameraProj);
+    return O;
+#endif
+}
+
+// Pixel-side reads of the masked interpolants. A field the graph never names reads as a neutral value the compiler strips.
+float2 MaskedUV1(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_UV1
+    return Input.UV1;
+#else
+    return float2(0.0, 0.0);
+#endif
+}
+
+float4 MaskedVertexColor(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_COLOR
+    return Input.FragColor;
+#else
+    return float4(1.0, 1.0, 1.0, 1.0);
+#endif
+}
+
+float3 MaskedWorldNormal(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_NORMAL
+    return normalize(Input.NormalWS.xyz);
+#else
+    return float3(0.0, 1.0, 0.0);
+#endif
+}
+
+float4 MaskedWorldTangent(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_TANGENT
+    return Input.TangentWS;
+#else
+    return float4(1.0, 0.0, 0.0, 1.0);
+#endif
+}
+
+float3 MaskedWorldPosNoWPO(FMaskedVertexOutput Input, float3 WorldPosition)
+{
+#ifdef MASKED_IO_WORLD_NO_WPO
+    return Input.WorldPosNoWPO;
+#else
+    return WorldPosition;
+#endif
+}
+
+uint MaskedEntityID(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_INSTANCE
+    return Input.EntityID;
+#else
+    return 0u;
+#endif
+}
+
+uint MaskedInstanceFlags(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_INSTANCE
+    return Input.InstanceFlags;
+#else
+    return 0u;
+#endif
+}
+
+// Camera-pass view position. Without the interpolant it is unprojected from the fragment, which is the same point.
+float3 MaskedCameraViewPosition(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_VIEW_POS
+    return Input.FragPos.xyz;
+#else
+    return ReconstructViewPos(Input.Position.xy / float2(GetScreenSize()), Input.Position.z, GetInverseCameraProjection());
+#endif
+}
+
+// Shadow-pass view position. Its fragment is in light space, so only the interpolant can give the camera-space point.
+float3 MaskedShadowViewPosition(FMaskedVertexOutput Input)
+{
+#ifdef MASKED_IO_VIEW_POS
+    return Input.FragPos.xyz;
+#else
+    return float3(0.0, 0.0, 0.0);
+#endif
 }

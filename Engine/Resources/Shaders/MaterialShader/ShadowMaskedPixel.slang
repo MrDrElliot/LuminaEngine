@@ -7,19 +7,19 @@
 //
 // The material token appears exactly once below, inside the keep test. Never name it above its real site.
 
-bool ShadowMaskedKeep(FBaseVertexOutput Input)
+bool ShadowMaskedKeep(FMaskedVertexOutput Input)
 {
-    uint EntityID           = Input.EntityID;
+    uint EntityID           = MaskedEntityID(Input);
     uint MaterialIndex      = Input.MaterialIndex;
-    bool bReceiveShadow     = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
-    float3 WorldNormal      = normalize(Input.NormalWS.xyz);
-    float3 ViewPosition     = Input.FragPos.xyz;
-    float3 WorldPosition    = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
-    float3 WorldPositionExcludingOffsets = Input.WorldPosNoWPO;
+    bool bReceiveShadow     = (MaskedInstanceFlags(Input) & (uint)EInstanceFlags::ReceiveShadow) != 0u;
+    float3 WorldNormal      = MaskedWorldNormal(Input);
+    float3 ViewPosition     = MaskedShadowViewPosition(Input);
+    float3 WorldPosition    = mul(GetInverseCameraView(), float4(ViewPosition, 1.0)).xyz;
+    float3 WorldPositionExcludingOffsets = MaskedWorldPosNoWPO(Input, WorldPosition);
     float2 UV0              = Input.UV;
-    float2 UV1              = Input.UV1;
-    float4 VertexColor      = Input.FragColor;
-    float4 WorldTangent     = Input.TangentWS;
+    float2 UV1              = MaskedUV1(Input);
+    float4 VertexColor      = MaskedVertexColor(Input);
+    float4 WorldTangent     = MaskedWorldTangent(Input);
     float2 UV1_DDX          = ddx(UV1);
     float2 UV1_DDY          = ddy(UV1);
     float2 UV0_DDX          = ddx(UV0);
@@ -37,7 +37,7 @@ bool ShadowMaskedKeep(FBaseVertexOutput Input)
 }
 
 [shader("fragment")]
-void FragmentMain(FBaseVertexOutput Input)
+void FragmentMain(FMaskedVertexOutput Input)
 {
     if (!ShadowMaskedKeep(Input))
     {

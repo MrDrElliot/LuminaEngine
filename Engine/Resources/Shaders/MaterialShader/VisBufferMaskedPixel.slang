@@ -11,19 +11,19 @@
 
 // Runs the pixel graph and returns true when the texel should be KEPT (opacity >= the material's cutoff).
 // `discard` is legal from a helper called by a pixel shader. Reuses the exact local contract of BasePixelPass.
-bool MaskedVisKeep(FBaseVertexOutput Input)
+bool MaskedVisKeep(FMaskedVertexOutput Input)
 {
-    uint EntityID           = Input.EntityID;
+    uint EntityID           = MaskedEntityID(Input);
     uint MaterialIndex      = Input.MaterialIndex;
-    bool bReceiveShadow     = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
-    float3 WorldNormal      = normalize(Input.NormalWS.xyz);
-    float3 ViewPosition     = Input.FragPos.xyz;
-    float3 WorldPosition    = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
-    float3 WorldPositionExcludingOffsets = Input.WorldPosNoWPO;
+    bool bReceiveShadow     = (MaskedInstanceFlags(Input) & (uint)EInstanceFlags::ReceiveShadow) != 0u;
+    float3 WorldNormal      = MaskedWorldNormal(Input);
+    float3 ViewPosition     = MaskedCameraViewPosition(Input);
+    float3 WorldPosition    = mul(GetInverseCameraView(), float4(ViewPosition, 1.0)).xyz;
+    float3 WorldPositionExcludingOffsets = MaskedWorldPosNoWPO(Input, WorldPosition);
     float2 UV0              = Input.UV;
-    float2 UV1              = Input.UV1;
-    float4 VertexColor      = Input.FragColor;
-    float4 WorldTangent     = Input.TangentWS;
+    float2 UV1              = MaskedUV1(Input);
+    float4 VertexColor      = MaskedVertexColor(Input);
+    float4 WorldTangent     = MaskedWorldTangent(Input);
     float2 UV1_DDX          = ddx(UV1);
     float2 UV1_DDY          = ddy(UV1);
     float2 UV0_DDX          = ddx(UV0);
@@ -39,15 +39,14 @@ bool MaskedVisKeep(FBaseVertexOutput Input)
 
     // Anchored in world space, so the verdict for a surface point is the same every frame and the
     // dithered edge holds still instead of crawling as the camera moves.
-    const float3 ClipAnchor = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
-    const float  ClipCutoff = HashedAlphaThreshold(ClipAnchor, length(Input.FragPos.xyz),
+    const float  ClipCutoff = HashedAlphaThreshold(WorldPosition, length(ViewPosition),
                                                    GetMaterialOpacityClip(MaterialIndex));
     return Material.Opacity >= ClipCutoff;
 }
 
 
 [shader("fragment")]
-uint FragmentMain(FBaseVertexOutput Input, uint VisID : SV_PrimitiveID) : SV_Target0
+uint FragmentMain(FMaskedVertexOutput Input, uint VisID : SV_PrimitiveID) : SV_Target0
 {
     if (!MaskedVisKeep(Input))
     {

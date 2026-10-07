@@ -95,7 +95,7 @@ namespace Lumina
 
         bool                        bNeedsResolve = true;
 
-        // False while a slot's material is still compiling.
+        // False while a slot's material is still compiling and its surface draws with the default material.
         bool                        bAllMaterialsReady = false;
         bool                        bResolved = false;
     };

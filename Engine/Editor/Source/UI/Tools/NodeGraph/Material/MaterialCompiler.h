@@ -147,6 +147,9 @@ namespace Lumina
         // VisBuffer pixel shader, which runs the graph just to evaluate Opacity for the geometry-stage clip).
         FString BuildPixelShaderFromTemplate(const FString& TemplateAbsolutePath) const;
 
+        // The pixel graph exactly as the pixel templates substitute it.
+        FString GetPixelGraphSource() const { return PixelChunks + PixelOutputChunks; }
+
         // True when the graph fed any chunks into the vertex stage. Equivalent
         // to "WorldPositionOffset pin had a connection."
         bool UsesVertexStage() const { return !VertexChunks.empty() || !VertexOutputChunks.empty(); }

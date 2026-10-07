@@ -466,7 +466,7 @@ namespace Lumina
             }
         }
 
-        // MeshletHeaderSlot is 0 until the GPU buffers exist, which can lag the property data.
-        Out.bResolved = Out.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot && Out.bAllMaterialsReady;
+        // Geometry alone gates drawing. A surface whose material is still compiling draws with the default one, and the material's invalidation swaps it back.
+        Out.bResolved = Out.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot;
     }
 }

@@ -124,6 +124,134 @@ namespace Lumina
             default:                                         return "Unknown";
             }
         }
+
+        struct FMaskedInterpolants
+        {
+            bool bUV1        = false;
+            bool bColor      = false;
+            bool bNormal     = false;
+            bool bTangent    = false;
+            bool bViewPos    = false;
+            bool bWorldNoWPO = false;
+            bool bInstance   = false;
+            bool bFull       = false;
+        };
+
+        bool IsIdentifierChar(char C, bool bFirst)
+        {
+            return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || C == '_' || (!bFirst && C >= '0' && C <= '9');
+        }
+
+        // Conservative, since the whole pixel graph is scanned and not only the opacity chain feeding the masked lanes.
+        FMaskedInterpolants ScanMaskedInterpolants(const FString& PixelGraph)
+        {
+            FMaskedInterpolants IO;
+            const FStringView Source = PixelGraph.View();
+            size_t i = 0;
+
+            auto NextIdentifier = [&](size_t& Pos) -> FStringView
+            {
+                while (Pos < Source.size() && Source[Pos] == ' ')
+                {
+                    ++Pos;
+                }
+                const size_t Begin = Pos;
+                while (Pos < Source.size() && IsIdentifierChar(Source[Pos], Pos == Begin))
+                {
+                    ++Pos;
+                }
+                return FStringView(Source.data() + Begin, Pos - Begin);
+            };
+
+            while (i < Source.size())
+            {
+                if (!IsIdentifierChar(Source[i], true) || (i > 0 && IsIdentifierChar(Source[i - 1], false)))
+                {
+                    ++i;
+                    continue;
+                }
+
+                const FStringView Token = NextIdentifier(i);
+                if (Token == "Input")
+                {
+                    size_t Pos = i;
+                    while (Pos < Source.size() && Source[Pos] == ' ')
+                    {
+                        ++Pos;
+                    }
+                    if (Pos >= Source.size() || Source[Pos] != '.')
+                    {
+                        IO.bFull = true;
+                        continue;
+                    }
+                    ++Pos;
+                    const FStringView Member = NextIdentifier(Pos);
+                    i = Pos;
+                    if (Member == "InstanceIndex")
+                    {
+                        IO.bInstance = true;
+                    }
+                    else if (Member != "Position" && Member != "UV" && Member != "MaterialIndex")
+                    {
+                        IO.bFull = true;
+                    }
+                }
+                else if (Token == "UV1" || Token == "UV1_DDX" || Token == "UV1_DDY")
+                {
+                    IO.bUV1 = true;
+                }
+                else if (Token == "VertexColor" || Token == "VertexColor_DDX" || Token == "VertexColor_DDY")
+                {
+                    IO.bColor = true;
+                }
+                else if (Token == "WorldNormal")
+                {
+                    IO.bNormal = true;
+                }
+                else if (Token == "WorldTangent")
+                {
+                    IO.bTangent = true;
+                }
+                else if (Token == "WorldPositionExcludingOffsets" || Token == "WorldPositionExcludingOffsets_DDX"
+                      || Token == "WorldPositionExcludingOffsets_DDY")
+                {
+                    IO.bWorldNoWPO = true;
+                }
+                else if (Token == "WorldPosition" || Token == "WorldPosition_DDX" || Token == "WorldPosition_DDY"
+                      || Token == "ViewPosition")
+                {
+                    IO.bViewPos = true;
+                }
+                else if (Token == "EntityID" || Token == "bReceiveShadow")
+                {
+                    IO.bInstance = true;
+                }
+            }
+            return IO;
+        }
+
+        // The camera lane rebuilds view position from the fragment, so only the shadow lane ever carries it.
+        void AddMaskedInterpolantDefines(const FMaskedInterpolants& IO, bool bShadowLane, TVector<FString>& Out)
+        {
+            if (IO.bFull)
+            {
+                Out.emplace_back("MASKED_IO_FULL");
+                for (const char* Define : { "MASKED_IO_UV1", "MASKED_IO_COLOR", "MASKED_IO_NORMAL", "MASKED_IO_TANGENT",
+                                            "MASKED_IO_VIEW_POS", "MASKED_IO_WORLD_NO_WPO", "MASKED_IO_INSTANCE" })
+                {
+                    Out.emplace_back(Define);
+                }
+                return;
+            }
+
+            if (IO.bUV1)                    { Out.emplace_back("MASKED_IO_UV1"); }
+            if (IO.bColor)                  { Out.emplace_back("MASKED_IO_COLOR"); }
+            if (IO.bNormal)                 { Out.emplace_back("MASKED_IO_NORMAL"); }
+            if (IO.bTangent)                { Out.emplace_back("MASKED_IO_TANGENT"); }
+            if (IO.bViewPos && bShadowLane) { Out.emplace_back("MASKED_IO_VIEW_POS"); }
+            if (IO.bWorldNoWPO)             { Out.emplace_back("MASKED_IO_WORLD_NO_WPO"); }
+            if (IO.bInstance)               { Out.emplace_back("MASKED_IO_INSTANCE"); }
+        }
     }
 
     bool MakeMaterialPermutationTarget(const CMaterial* Material, uint64 Key, FMaterialCompileTarget& OutTarget)
@@ -305,23 +433,29 @@ namespace Lumina
 
             if (IsStageRequired(Material, EMaterialShaderStage::VisBufferMeshMasked))
             {
-                // Masked geometry widens the output back to the full interpolant set its pixel shader reads.
+                // Masked geometry exports what its pixel graph reads, and each lane's two stages must agree on that set.
+                const FMaskedInterpolants MaskedIO = ScanMaskedInterpolants(Compiler.GetPixelGraphSource());
+
                 FShaderCompileOptions VisMaskedOptions; VisMaskedOptions.DebugName = MatName + " [VBMM]";
                 VisMaskedOptions.MacroDefinitions.emplace_back("VISBUFFER_MASKED_GEOM");
+                AddMaskedInterpolantDefines(MaskedIO, false, VisMaskedOptions.MacroDefinitions);
                 ShaderCompiler->CompilerShaderRaw(VisSource, Move(VisMaskedOptions), CommitStage(EMaterialShaderStage::VisBufferMeshMasked));
 
                 const FString MaskedPSSource = Compiler.BuildPixelShaderFromTemplate(MeshShaderDir + "VisBufferMaskedPixel.slang");
                 FShaderCompileOptions MaskedPSOptions; MaskedPSOptions.DebugName = MatName + " [MVBP]";
                 MaskedPSOptions.MacroDefinitions.emplace_back("VISBUFFER_PRIMID");
+                AddMaskedInterpolantDefines(MaskedIO, false, MaskedPSOptions.MacroDefinitions);
                 ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSOptions), CommitStage(EMaterialShaderStage::MaskedVisBufferPixel));
 
-                // Same widening for the shadow lane, so a cut-out casts its own silhouette and not its quad.
+                // The shadow lane too, so a cut-out casts its own silhouette and not its quad.
                 FShaderCompileOptions ShadowMaskedOptions; ShadowMaskedOptions.DebugName = MatName + " [MSSM]";
                 ShadowMaskedOptions.MacroDefinitions.emplace_back("MESHLET_MESH_MASKED_SHADOW");
+                AddMaskedInterpolantDefines(MaskedIO, true, ShadowMaskedOptions.MacroDefinitions);
                 ShaderCompiler->CompilerShaderRaw(MeshSource, Move(ShadowMaskedOptions), CommitStage(EMaterialShaderStage::MeshShadowMasked));
 
                 const FString ShadowPSSource = Compiler.BuildPixelShaderFromTemplate(MeshShaderDir + "ShadowMaskedPixel.slang");
                 FShaderCompileOptions ShadowPSOptions; ShadowPSOptions.DebugName = MatName + " [SMP]";
+                AddMaskedInterpolantDefines(MaskedIO, true, ShadowPSOptions.MacroDefinitions);
                 ShaderCompiler->CompilerShaderRaw(ShadowPSSource, Move(ShadowPSOptions), CommitStage(EMaterialShaderStage::ShadowMaskedPixel));
             }
 
