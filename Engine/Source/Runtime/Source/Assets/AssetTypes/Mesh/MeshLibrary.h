@@ -11,6 +11,17 @@ namespace Lumina
     class CMaterialInterface;
 
     REFLECT()
+    enum class EPrimitiveShape : uint8
+    {
+        Cube,
+        Sphere,
+        Plane,
+        Cylinder,
+        Cone,
+        Capsule,
+    };
+
+    REFLECT()
     class RUNTIME_API CMeshLibrary : public CFunctionLibrary
     {
         GENERATED_BODY()
@@ -23,5 +34,9 @@ namespace Lumina
             const float* Normals, int32 NormalFloats, const float* UVs, int32 UVFloats,
             const float* Colors, int32 ColorFloats, const uint32* Indices, int32 IndexCount,
             CMaterialInterface* Material, int32 MaxLODs = 1);
+
+        // The engine's built-in primitives span one meter, so a box of size S is this mesh at scale S.
+        FUNCTION()
+        static CStaticMesh* GetPrimitiveMesh(EPrimitiveShape Shape);
     };
 }
