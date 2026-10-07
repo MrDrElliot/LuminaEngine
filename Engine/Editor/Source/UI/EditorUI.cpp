@@ -93,6 +93,8 @@
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleParamCustomization.h"
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleParameterCustomization.h"
 #include "Properties/Customizations/AssetRefPropertyCustomization.h"
+#include "Properties/Customizations/UIDocumentPropertyCustomization.h"
+#include "UI/UIDocumentRef.h"
 #include "Properties/Customizations/GameplayTagPropertyCustomization.h"
 #include "Properties/Customizations/DataTableRowHandleCustomization.h"
 #include "Properties/Customizations/InputActionCustomization.h"
@@ -575,6 +577,11 @@ namespace Lumina
         PropertyCustomizationRegistry->RegisterPropertyCustomization(FAssetRef::StaticStruct()->GetName(), []
         {
            return FAssetRefPropertyCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(FUIDocumentRef::StaticStruct()->GetName(), []
+        {
+           return FUIDocumentPropertyCustomization::MakeInstance();
         });
         
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SCustomPrimitiveData::StaticStruct()->GetName(), []
@@ -1905,6 +1912,11 @@ namespace Lumina
     const FAssetData* FEditorUI::GetContentBrowserSelectedAsset() const
     {
         return ContentBrowser != nullptr ? ContentBrowser->GetSelectedAsset() : nullptr;
+    }
+
+    FFixedString FEditorUI::GetContentBrowserSelectedFilePath() const
+    {
+        return ContentBrowser != nullptr ? ContentBrowser->GetSelectedFilePath() : FFixedString();
     }
 
     void FEditorUI::OnDestroyAsset(CObject* InAsset)

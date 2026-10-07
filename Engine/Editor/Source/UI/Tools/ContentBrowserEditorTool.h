@@ -196,6 +196,9 @@ namespace Lumina
         // multi-selection, or is a folder / loose file. Backs the property widgets' "use selected".
         NODISCARD const FAssetData* GetSelectedAsset() const;
 
+        // The one selected file's virtual path, or empty when a folder, several items or nothing is selected.
+        NODISCARD FFixedString GetSelectedFilePath() const;
+
     private:
 
         void OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item);

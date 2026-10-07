@@ -6,16 +6,20 @@
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ScriptableObject.h"
-#include "Platform/Process/PlatformProcess.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Properties/PropertyTable.h"
+#include "Session/SessionOps.h"
+#include "UI/Tools/EditorToolContext.h"
 
 namespace Lumina
 {
     namespace
     {
         constexpr const char* GScriptIcon = LE_ICON_LANGUAGE_CSHARP;
+
+        // The object picker's button size, so a script header and an asset slot use the same controls.
+        constexpr ImVec2 GButtonSize(42, 0);
 
         /** "Game.ZombieFPS.ZombieBrain" -> "ZombieBrain" plus "Game.ZombieFPS", so the name can lead. */
         void SplitTypeName(const FString& Full, FStringView& OutShort, FStringView& OutNamespace)
@@ -85,9 +89,9 @@ namespace Lumina
                 ? Lumina::Format("{} {}", GScriptIcon, FString(Short.data(), Short.size()))
                 : FString(LE_ICON_ALERT " (missing script)");
 
-            const float ButtonWidth = ImGui::GetFrameHeight();
             const float Spacing     = ImGui::GetStyle().ItemSpacing.x;
             const float HeaderRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+            const float ButtonsLeft = HeaderRight - GButtonSize.x * 3.0f - Spacing * 2.0f;
 
             // Breathing room around the title, which is what stops the stack of scripts reading as one block.
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 6.0f));
@@ -103,21 +107,35 @@ namespace Lumina
                 ImGui::TextDisabled("%.*s", (int)Namespace.size(), Namespace.data());
             }
 
-            if (!View.SourceFile.empty())
+            ImGui::SameLine(ButtonsLeft);
+            ImGui::BeginDisabled(View.SourceFile.empty());
+            if (ImGui::Button(LE_ICON_FILE_CODE "##OpenEntityScriptSource", GButtonSize))
             {
-                ImGui::SameLine(HeaderRight - ButtonWidth * 2.0f - Spacing);
-                if (ImGui::SmallButton(LE_ICON_FILE_CODE "##OpenEntityScriptSource"))
+                // The Content Browser's route, which honors the script editor chosen in the editor settings.
+                if (IEditorToolContext* Tools = SessionOps::GetToolContext())
                 {
-                    Platform::OpenSourceFile(UTF8_TO_TCHAR(View.SourceFile.c_str()), 1);
-                }
-                if (ImGui::IsItemHovered())
-                {
-                    ImGui::SetTooltip("Open %s", View.SourceFile.c_str());
+                    Tools->OpenScriptEditor(FStringView(View.SourceFile.c_str(), View.SourceFile.size()));
                 }
             }
+            ImGui::EndDisabled();
+            ImGuiX::TextTooltip("{}", View.SourceFile.empty() ? FString("No source file found for this script.") : Lumina::Format("Open {}", View.SourceFile));
 
-            ImGui::SameLine(HeaderRight - ButtonWidth);
-            if (ImGui::SmallButton(LE_ICON_DELETE "##RemoveEntityScript"))
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!bValid);
+            if (ImGui::Button(LE_ICON_CONTENT_COPY "##CopyEntityScriptName", GButtonSize))
+            {
+                ImGui::SetClipboardText(TypeName.c_str());
+            }
+            ImGui::EndDisabled();
+            ImGuiX::TextTooltip("{}", "Copy the script's type name.");
+
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
+            const bool bRemove = ImGui::Button(LE_ICON_CLOSE_CIRCLE "##RemoveEntityScript", GButtonSize);
+            ImGui::PopStyleColor(3);
+            if (bRemove)
             {
                 PendingMutation = [Component, Index]
                 {
@@ -132,10 +150,7 @@ namespace Lumina
                 };
                 bWasChanged = true;
             }
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("Remove this script");
-            }
+            ImGuiX::TextTooltip("{}", "Remove this script.");
 
             if (bOpen && Script != nullptr && Script->GetClass() != nullptr)
             {

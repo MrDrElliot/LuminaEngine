@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Assets/AssetRef.h"
+#include "UI/UIDocumentRef.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Scripting/EntityScript.h"
@@ -26,8 +26,8 @@ namespace Lumina
     public:
 
         // The .rml this script shows. Empty uses the class's REFLECT(UIDocument = ...).
-        PROPERTY(Editable, Category = "UI", AssetType = "rml")
-        FAssetRef Document;
+        PROPERTY(Editable, Category = "UI")
+        FUIDocumentRef Document;
 
         // Show the document as soon as it loads. Off keeps it hidden until Show().
         PROPERTY(Editable, Category = "UI")

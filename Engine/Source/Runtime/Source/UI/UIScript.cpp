@@ -456,7 +456,7 @@ namespace Lumina::UIScripts
                     }
                 }
                 else if (Property->GetType() == EPropertyTypeFlags::Struct
-                    && static_cast<const FStructProperty*>(Property)->GetStruct() == FAssetRef::StaticStruct())
+                    && static_cast<const FStructProperty*>(Property)->GetStruct()->IsChildOf(FAssetRef::StaticStruct()))
                 {
                     const FStringView Path = Property->GetValuePtr<FAssetRef>(Script)->ResolvePath();
                     if (!Path.empty())

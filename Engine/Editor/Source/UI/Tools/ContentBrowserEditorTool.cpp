@@ -2895,6 +2895,23 @@ namespace Lumina
         return FAssetRegistry::Get().GetAssetByPath(Path);
     }
 
+    FFixedString FContentBrowserEditorTool::GetSelectedFilePath() const
+    {
+        const TVector<FTileViewItem*>& Selections = ContentBrowserTileView.GetSelections();
+        if (Selections.size() != 1)
+        {
+            return FFixedString();
+        }
+
+        const FContentBrowserTileViewItem* Item = static_cast<const FContentBrowserTileViewItem*>(Selections[0]);
+        if (Item == nullptr || Item->IsDirectory())
+        {
+            return FFixedString();
+        }
+
+        return FFixedString(Item->GetVirtualPath().data(), Item->GetVirtualPath().size());
+    }
+
     void FContentBrowserEditorTool::DrawReimportAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected)
     {
         const FFixedString AssetPath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());

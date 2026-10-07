@@ -79,6 +79,9 @@ namespace Lumina
         void BrowseToAsset(FStringView VirtualPath) override;
         bool BrowseToFolder(FStringView Folder, FStringView Search);
         const FAssetData* GetContentBrowserSelectedAsset() const override;
+
+        // The one file selected in the Content Browser, asset or not, for slots that take loose files.
+        NODISCARD FFixedString GetContentBrowserSelectedFilePath() const;
         void OnDestroyAsset(CObject* InAsset) override;
 
 
