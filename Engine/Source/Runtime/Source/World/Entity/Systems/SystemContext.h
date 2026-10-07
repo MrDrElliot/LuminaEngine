@@ -79,22 +79,34 @@ namespace Lumina
         }
         
         template<typename... Ts, typename TFunc, typename... TArgs>
-        void ForEach(TFunc&& Function, TArgs&&... Args)
+        void ForEach(TFunc&& Function, TArgs&&... Args) const
         {
             auto View = Registry.View<Ts...>(std::forward<TArgs>(Args)...);
             View.ForEach(Forward<TFunc>(Function));
         }
 
         template<typename... Ts, typename TFunc, typename... TArgs>
-        void ParallelForEach(TFunc&& Function, TArgs&&... Args)
+        void ParallelForEach(TFunc&& Function, TArgs&&... Args) const
         {
-            auto View = Registry.View<Ts...>(std::forward<TArgs>(Args)...);
+            ParallelForEachView(Registry.View<Ts...>(std::forward<TArgs>(Args)...), Forward<TFunc>(Function));
+        }
+
+        // Fans an already built view out over the workers, running it inline when it is too small to be worth splitting.
+        template<typename TView, typename TFunc>
+        void ParallelForEachView(TView&& View, TFunc&& Function, uint32 MinRange = 64) const
+        {
+            const uint32 Num = static_cast<uint32>(View.NumDenseSlots());
+            if (Num <= MinRange)
+            {
+                View.ForEach(Function);
+                return;
+            }
 
             // Chunked, and the range walk reuses the driver's dense index rather than probing twice.
-            Task::ParallelFor(static_cast<uint32>(View.NumDenseSlots()), [&](const Task::FParallelRange& Range)
+            Task::ParallelFor(Num, [&](const Task::FParallelRange& Range)
             {
                 View.ForEachInRange(Range.Start, Range.End, Function);
-            }, 64);
+            }, MinRange);
         }
 
         NODISCARD auto& GetRegistryContext() const

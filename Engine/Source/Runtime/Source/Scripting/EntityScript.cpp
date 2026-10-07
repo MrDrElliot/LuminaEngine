@@ -22,6 +22,7 @@
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "ScriptableObject.h"
+#include "Core/Object/ScriptClass.h"
 #include "DotNet/DotNetHost.h"
 #include "Input/InputActionMap.h"
 #include "ScriptStruct.h"
@@ -1353,6 +1354,12 @@ namespace Lumina
                             continue;
                         }
                         Script->SetOwner(Entity, World);
+
+                        // A loaded C# script with no callbacks would otherwise never get its instance, and lookups would wrap it as the base class.
+                        if (Cast<CScriptClass>(Script->GetClass()) != nullptr)
+                        {
+                            Scriptable::GetOrCreateInstance(Script);
+                        }
                         {
                             LUMINA_PROFILE_SECTION_NAMED(Script->GetClass()->GetName().c_str());
                             Script->OnAttach();

@@ -914,6 +914,18 @@ namespace Lumina
             uint64   ContentId = 0;
         };
 
+        // The type's own shape, then the mesh's default, matching SFoliageCollisionSystem.
+        const CCollisionShape* ResolveFoliageCollisionShape(const SFoliageType& Type)
+        {
+            const CCollisionShape* Shape = Type.CollisionShape.Get();
+            if (Shape != nullptr && Shape->HasCollision())
+            {
+                return Shape;
+            }
+            const CStaticMesh* Mesh = Type.Mesh.Get();
+            return Mesh != nullptr ? Mesh->GetDefaultCollisionShape() : nullptr;
+        }
+
         // Mirrors SFoliageCollisionSystem, an authored shape first and the mesh otherwise, read as triangles like a mesh collider.
         FFoliageNavTemplate BuildFoliageNavTemplate(const SFoliageType& Type)
         {
@@ -924,8 +936,7 @@ namespace Lumina
             }
 
             auto Children = MakeShared<TVector<FNavSourcePrim>>();
-            const CCollisionShape* Shape = Type.CollisionShape.Get();
-            if (Shape != nullptr && Shape->HasCollision())
+            if (const CCollisionShape* Shape = ResolveFoliageCollisionShape(Type))
             {
                 ForEachCollisionShapePrim(*Shape, FMatrix4(1.0f), [&](ENavColliderType, uint32, FNavSourceEntry&& Entry)
                 {
@@ -961,11 +972,10 @@ namespace Lumina
             for (const SFoliageType& Type : Foliage.Types)
             {
                 Hash::HashCombine(Seed, (size_t)Type.bEnableCollision);
-                const CCollisionShape* Shape = Type.CollisionShape.Get();
+                const CCollisionShape* Shape = ResolveFoliageCollisionShape(Type);
                 Hash::HashCombine(Seed, (size_t)(uintptr_t)Shape);
                 if (Shape != nullptr)
                 {
-                    Hash::HashCombine(Seed, (size_t)Shape->HasCollision());
                     Hash::HashCombine(Seed, Shape->TriangleIndices.size());
                     Hash::HashCombine(Seed, Shape->Primitives.size());
                 }
@@ -1182,6 +1192,21 @@ namespace Lumina
                 const SStaticMeshComponent* Fallback = Context.GetRegistry().TryGet<SStaticMeshComponent>(E);
                 CStaticMesh* Mesh = ResolveMeshColliderAsset(MC, Fallback);
                 if (!Mesh || Mesh->GetMeshResource().bSkinnedMesh) continue;
+
+                // The mesh's simplified collision replaces its render triangles, as it does for the physics body.
+                if (const CCollisionShape* Asset = Mesh->GetDefaultCollisionShape())
+                {
+                    const FMatrix4 ColliderWorld = ColliderToWorld(MeshView.Get<STransformComponent>(E), MC.TranslationOffset, MC.RotationOffset);
+                    const uint64 AssetContentId = MakeContentId(Asset, Asset->TriangleIndices.size(), Asset->Primitives.size());
+                    ForEachCollisionShapePrim(*Asset, ColliderWorld, [&](ENavColliderType KeyType, uint32 SubIndex, FNavSourceEntry&& Entry)
+                    {
+                        Entry.Key = PackSourceKey(E, KeyType, SubIndex);
+                        Entry.ContentId = AssetContentId;
+                        Out.push_back(std::move(Entry));
+                    });
+                    continue;
+                }
+
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Mesh);
                 Entry.Prim.Type = ENavColliderType::Mesh;

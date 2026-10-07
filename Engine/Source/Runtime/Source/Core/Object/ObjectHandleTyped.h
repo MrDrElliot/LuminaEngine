@@ -108,7 +108,8 @@ namespace Lumina
         // Releasing first would destroy the owner the source lives inside, so the new reference is taken first.
         TStrongObjectPtr& operator=(const TStrongObjectPtr& Other)
         {
-            if (this != &Other)
+            // Reassigning what is already held is common in per-frame code and would otherwise cost two atomics.
+            if (this != &Other && (Object != Other.Object || Entry != Other.Entry))
             {
                 T* const             OldObject = Object;
                 FCObjectEntry* const OldEntry  = Entry;

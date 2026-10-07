@@ -93,6 +93,9 @@ namespace Lumina
         /** Row memory as RowStruct, or null when the name is unknown. */
         RUNTIME_API NODISCARD const void* FindRow(const FName& RowName) const;
 
+        // FindRow starting from a remembered index, which is checked by name and refreshed when the row moved.
+        RUNTIME_API NODISCARD const void* FindRowHinted(const FName& RowName, int32& InOutIndex) const;
+
         /** Appends a default-constructed row. Returns its index, or INDEX_NONE with no RowStruct set. */
         RUNTIME_API int32 AddRow(const FName& RowName);
 
@@ -162,11 +165,20 @@ namespace Lumina
         {
             return DataTable == Other.DataTable && RowName == Other.RowName;
         }
+
+    private:
+
+        // Where RowName was last found, so a lookup every frame skips the linear search. Verified by name on each use.
+        mutable int32 CachedRowIndex = INDEX_NONE;
     };
 
     template <typename T>
     const T* FindDataTableRow(const SDataTableRowHandle& Handle)
     {
-        return FindDataTableRow<T>(Handle.DataTable.Get(), Handle.RowName);
+        if (Handle.GetRowStruct() != T::StaticStruct())
+        {
+            return nullptr;
+        }
+        return static_cast<const T*>(Handle.GetRowMemory());
     }
 }

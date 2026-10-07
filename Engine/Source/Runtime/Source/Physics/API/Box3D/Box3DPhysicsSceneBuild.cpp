@@ -249,12 +249,26 @@ namespace Lumina::Physics
                 }
             }
 
-            if (Mesh == nullptr || Mesh->HasAnyFlag(OF_NeedsLoad) || Mesh->GetMeshResource().MeshletData.IsEmpty())
+            if (Mesh == nullptr || Mesh->HasAnyFlag(OF_NeedsLoad) || Mesh->GetMeshResource().MeshletData.IsEmpty() ||
+                Mesh->IsDefaultCollisionShapeLoading())
             {
                 return EBodyBuildStatus::Defer;
             }
 
-            if (MC->bConvex)
+            if (const CCollisionShape* Asset = Mesh->GetDefaultCollisionShape())
+            {
+                if (ResolvedMaterial == nullptr)
+                {
+                    ResolvedMaterial = Asset->PhysicsMaterial.Get();
+                }
+                if (!BuildCollisionShapeAsset(*Asset, Scale, Out.Shapes))
+                {
+                    LOG_ERROR("Failed to build the default collision shape of the MeshCollider on Entity: {}", (Entity).Value);
+                    return EBodyBuildStatus::Error;
+                }
+                bMustBeStatic = Asset->IsConcave();
+            }
+            else if (MC->bConvex)
             {
                 const b3HullData* Hull = GetOrCreateMeshHull(Mesh);
                 if (Hull == nullptr)

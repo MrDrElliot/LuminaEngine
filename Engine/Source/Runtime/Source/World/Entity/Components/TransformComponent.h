@@ -215,6 +215,16 @@ namespace Lumina
                 ECS::Utils::SetEntityWorldTransform(*Registry, Entity, InTransform);
             }
         }
+
+        // World rotation from the parent as resolved at the last barrier, lock-free and safe from parallel writers of disjoint entities.
+        FUNCTION()
+        void SetWorldRotationCached(const FQuat& InRotation)
+        {
+            if (Registry)
+            {
+                ECS::Utils::SetEntityWorldRotationCached(*Registry, Entity, InRotation);
+            }
+        }
         
         FUNCTION()
         void SetLocalTransform(const FTransform& InTransform)

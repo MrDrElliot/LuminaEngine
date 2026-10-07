@@ -52,6 +52,11 @@ namespace Lumina
                 }
 
                 const CCollisionShape* Shape = Type.CollisionShape.Get();
+                if (Shape != nullptr && Shape->HasAnyFlag(OF_NeedsLoad))
+                {
+                    bSourcesReady = false;
+                    continue;
+                }
                 if (Shape != nullptr && !Shape->HasCollision())
                 {
                     Shape = nullptr;
@@ -60,11 +65,13 @@ namespace Lumina
                 const CStaticMesh* Mesh = Type.Mesh.Get();
                 if (Shape == nullptr)
                 {
-                    if (Mesh == nullptr || Mesh->HasAnyFlag(OF_NeedsLoad) || Mesh->GetMeshResource().MeshletData.IsEmpty())
+                    if (Mesh == nullptr || Mesh->HasAnyFlag(OF_NeedsLoad) || Mesh->GetMeshResource().MeshletData.IsEmpty() ||
+                        Mesh->IsDefaultCollisionShapeLoading())
                     {
                         bSourcesReady = false;
                         continue;
                     }
+                    Shape = Mesh->GetDefaultCollisionShape();
                 }
 
                 Physics::FStaticInstanceDesc& Desc = Descs.emplace_back();

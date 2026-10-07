@@ -9,6 +9,19 @@
 
 namespace Lumina
 {
+    namespace
+    {
+        // Handed to C# before its own instance exists, a script would be wrapped as the base class and never become its real type.
+        CEntityScript* WithScriptInstance(CEntityScript* Script)
+        {
+            if (Script != nullptr && Cast<CScriptClass>(Script->GetClass()) != nullptr)
+            {
+                Scriptable::GetOrCreateInstance(Script);
+            }
+            return Script;
+        }
+    }
+
     CEntityScript* CEntityScriptLibrary::AddScript(CWorld* World, ECS::FEntity Entity,
         TSubclassOf<CEntityScript> ScriptClass)
     {
@@ -16,15 +29,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        CEntityScript* Script = EntityScripts::Attach(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get());
-
-        // A C# script's instance is otherwise made by its first event, so a script with none came back untyped.
-        if (Script != nullptr && Cast<CScriptClass>(Script->GetClass()) != nullptr)
-        {
-            Scriptable::GetOrCreateInstance(Script);
-        }
-
-        return Script;
+        return WithScriptInstance(EntityScripts::Attach(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get()));
     }
 
     CEntityScript* CEntityScriptLibrary::FindScript(CWorld* World, ECS::FEntity Entity,
@@ -34,7 +39,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        return EntityScripts::Find(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get());
+        return WithScriptInstance(EntityScripts::Find(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get()));
     }
 
     void CEntityScriptLibrary::FindScripts(CWorld* World, ECS::FEntity Entity,
@@ -51,7 +56,7 @@ namespace Lumina
         OutScripts.reserve(OutScripts.size() + Found.size());
         for (CEntityScript* Script : Found)
         {
-            OutScripts.emplace_back(Script);
+            OutScripts.emplace_back(WithScriptInstance(Script));
         }
     }
 
@@ -70,6 +75,7 @@ namespace Lumina
             {
                 if (Script.Get() != nullptr && Script->IsAttached() && Script->GetClass()->IsChildOf(ScriptClass.Get()))
                 {
+                    WithScriptInstance(Script.Get());
                     OutScripts.push_back(Script);
                 }
             }

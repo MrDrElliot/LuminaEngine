@@ -163,6 +163,9 @@ namespace Lumina::ECS::Utils
 	// The single source of truth for world->local conversion; writing WorldTransform directly is discarded next resolve.
 	RUNTIME_API void SetEntityWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& WorldTransform);
 
+	// Rotates in world space against the parent world resolved at the last barrier, so parallel writers never take the resolve lock.
+	RUNTIME_API void SetEntityWorldRotationCached(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation);
+
 	//-------------------------------------------------------------------------
 	// Reflection / queries
 	//-------------------------------------------------------------------------

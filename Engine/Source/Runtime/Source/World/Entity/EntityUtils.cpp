@@ -1545,6 +1545,38 @@ namespace Lumina::ECS::Utils
         ForEachEntityRefOnEntity(Registry, Entity, Visit);
     }
 
+    void SetEntityWorldRotationCached(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation)
+    {
+        ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true, "Write<STransformComponent>");
+        ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<FRelationshipComponent>()), false, "Read<FRelationshipComponent>");
+
+        STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
+        if (Transform == nullptr)
+        {
+            return;
+        }
+
+        FQuat LocalRotation = WorldRotation;
+        if (const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Entity))
+        {
+            if (Relationship->Parent != ECS::NullEntity)
+            {
+                if (const STransformComponent* Parent = Registry.TryGet<STransformComponent>(Relationship->Parent))
+                {
+                    LocalRotation = Math::Normalize(Math::Inverse(Parent->GetWorldTransformCached().GetRotation()) * WorldRotation);
+                }
+            }
+        }
+
+        if (Transform->LocalTransform.GetRotation() == LocalRotation && !Transform->bHasPhysicsBody)
+        {
+            return;
+        }
+        FTransform NewLocal = Transform->LocalTransform;
+        NewLocal.SetRotation(LocalRotation);
+        Transform->SetLocalTransform(NewLocal);
+    }
+
     void SetEntityWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& WorldTransform)
     {
         // Writes the entity's local transform and reads the parent's world matrix via FRelationshipComponent.

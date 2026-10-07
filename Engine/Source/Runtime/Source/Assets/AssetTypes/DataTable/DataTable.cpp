@@ -6,6 +6,8 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Containers/StringFormat.h"
 
+#include <atomic>
+
 namespace Lumina
 {
     CStruct* CDataTable::GetRowStruct() const
@@ -42,6 +44,19 @@ namespace Lumina
     {
         const CStruct* Struct = GetRowStruct();
         return Struct ? (int32)Struct->GetSize() : 0;
+    }
+
+    const void* CDataTable::FindRowHinted(const FName& RowName, int32& InOutIndex) const
+    {
+        if (InOutIndex < 0 || InOutIndex >= (int32)Rows.size() || Rows[InOutIndex].Name != RowName)
+        {
+            InOutIndex = FindRowIndex(RowName);
+        }
+        if (InOutIndex == INDEX_NONE || Rows[InOutIndex].Value.GetScriptStruct() != GetRowStruct())
+        {
+            return nullptr;
+        }
+        return Rows[InOutIndex].Value.GetMemory();
     }
 
     const void* CDataTable::FindRow(const FName& RowName) const
@@ -122,7 +137,17 @@ namespace Lumina
 
     const void* SDataTableRowHandle::GetRowMemory() const
     {
-        return IsNull() ? nullptr : DataTable->FindRow(RowName);
+        if (IsNull())
+        {
+            return nullptr;
+        }
+
+        // Relaxed, since a stale or torn index is only a hint and fails the name check like any other miss.
+        std::atomic_ref<int32> Cached(CachedRowIndex);
+        int32 Index = Cached.load(std::memory_order_relaxed);
+        const void* Row = DataTable->FindRowHinted(RowName, Index);
+        Cached.store(Index, std::memory_order_relaxed);
+        return Row;
     }
 
     FName CDataTable::MakeUniqueRowName(const FName& Base) const
