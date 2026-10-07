@@ -92,9 +92,9 @@ namespace Lumina
 
     public:
 
-        /** Binding this track drives. INDEX_NONE for tracks that act on the sequence itself. */
+        /** Binding this track drives. Constants::kIndexNone for tracks that act on the sequence itself. */
         PROPERTY(Editable, Category = "Track")
-        int32 BindingIndex = INDEX_NONE;
+        int32 BindingIndex = Constants::kIndexNone;
 
         PROPERTY(Editable, Category = "Track")
         bool bEnabled = true;
@@ -172,7 +172,7 @@ namespace Lumina
 
         /** Binding holding the camera this cut switches to. */
         PROPERTY(Editable, Category = "Cut")
-        int32 BindingIndex = INDEX_NONE;
+        int32 BindingIndex = Constants::kIndexNone;
 
         PROPERTY(Editable, Category = "Cut")
         float StartTime = 0.0f;
@@ -203,7 +203,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Camera")
         TVector<SSequenceCameraCut> Cuts;
 
-        /** Cut covering Time, or INDEX_NONE. */
+        /** Cut covering Time, or Constants::kIndexNone. */
         int32 FindCutAt(float Time) const;
     };
 
@@ -388,7 +388,7 @@ namespace Lumina
 
         // Binding to follow, or none to aim at TargetOffset as a fixed point in the world.
         PROPERTY(Editable, Category = "Look At")
-        int32 TargetBindingIndex = INDEX_NONE;
+        int32 TargetBindingIndex = Constants::kIndexNone;
 
         // Added to the target's position, so a shot can frame a head rather than the feet.
         PROPERTY(Editable, Category = "Look At")
@@ -451,7 +451,7 @@ namespace Lumina
         {
             const CSequenceTrack* Track = nullptr;
             FAudioHandle          Handle;
-            int32                 ClipIndex = INDEX_NONE;
+            int32                 ClipIndex = Constants::kIndexNone;
             bool                  bPaused = false;
         };
 

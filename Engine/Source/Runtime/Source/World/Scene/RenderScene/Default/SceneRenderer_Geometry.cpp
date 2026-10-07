@@ -126,7 +126,7 @@ namespace Lumina
         const auto& DrawCommands            = Frame.Geometry.DrawCommands;
         const auto& OpaqueDrawList          = Frame.Geometry.OpaqueDrawList;
 
-        if (ViewIndex == ~0u)
+        if (ViewIndex == Constants::kIndexNoneU32)
         {
             return;
         }
@@ -381,7 +381,7 @@ namespace Lumina
             {
                 const FLightShadow& LightShadow = PointShadows[LightIdx];
                 const uint32 ViewBase = PointShadowCullViewBases[LightIdx];
-                if (ViewBase == ~0u)
+                if (ViewBase == Constants::kIndexNoneU32)
                 {
                     continue;
                 }
@@ -392,7 +392,7 @@ namespace Lumina
                 for (int32 Face = 0; Face < 6; ++Face)
                 {
                     const FLightShadow& FaceShadow = ShadowData.Shadow[Face];
-                    if (FaceShadow.ShadowMapIndex == INDEX_NONE)
+                    if (FaceShadow.ShadowMapIndex == Constants::kIndexNone)
                     {
                         continue;
                     }
@@ -418,7 +418,7 @@ namespace Lumina
             const EFormat AtlasFormat = ShadowAtlas.GetImage().Desc.Format;
             for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
             {
-                if (PointShadowCullViewBases[LightIdx] == ~0u)
+                if (PointShadowCullViewBases[LightIdx] == Constants::kIndexNoneU32)
                 {
                     continue;
                 }
@@ -427,7 +427,7 @@ namespace Lumina
                 for (int32 Face = 0; Face < 6; ++Face)
                 {
                     const int32 ShadowMapIndex = ShadowData.Shadow[Face].ShadowMapIndex;
-                    if (ShadowMapIndex == INDEX_NONE)
+                    if (ShadowMapIndex == Constants::kIndexNone)
                     {
                         continue;
                     }
@@ -497,7 +497,7 @@ namespace Lumina
             {
                 const FLightShadow& Shadow  = SpotShadows[SpotIdx];
                 const uint32 ViewIndex      = SpotShadowCullViewBases[SpotIdx];
-                if (ViewIndex == ~0u)
+                if (ViewIndex == Constants::kIndexNoneU32)
                 {
                     continue;
                 }
@@ -523,7 +523,7 @@ namespace Lumina
             const EFormat AtlasFormat = ShadowAtlas.GetImage().Desc.Format;
             for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
             {
-                if (SpotShadowCullViewBases[SpotIdx] == ~0u)
+                if (SpotShadowCullViewBases[SpotIdx] == Constants::kIndexNoneU32)
                 {
                     continue;
                 }
@@ -554,12 +554,12 @@ namespace Lumina
         {
             return;
         }
-        if (Frame.Lighting.Lights[0].ShadowDataIndex == INDEX_NONE)
+        if (Frame.Lighting.Lights[0].ShadowDataIndex == Constants::kIndexNone)
         {
             return;
         }
 
-        if (CascadeViewBase == ~0u)
+        if (CascadeViewBase == Constants::kIndexNoneU32)
         {
             return;
         }

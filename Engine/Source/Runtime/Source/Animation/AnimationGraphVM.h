@@ -256,7 +256,7 @@ namespace Lumina
     struct FAnimGraphRootMotion
     {
         ERootMotionLockMode Mode = ERootMotionLockMode::FromAsset;
-        int32 RootBoneIndex = INDEX_NONE;
+        int32 RootBoneIndex = Constants::kIndexNone;
 
         // Out: this frame's blended entity-space delta (FromAsset only).
         FRootMotionDelta Delta;

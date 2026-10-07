@@ -514,9 +514,9 @@ namespace Lumina
         
                         // Size
                         ImGui::TableSetColumnIndex(3);
-                        if (actualSize >= 1024 * 1024)
+                        if (actualSize >= Constants::kMiB)
                         {
-                            ImGui::Text("%.2f MB", actualSize / (1024.0f * 1024.0f));
+                            ImGui::Text("%.2f MB", actualSize / float(Constants::kMiB));
                         }
                         else if (actualSize >= 1024)
                         {

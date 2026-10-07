@@ -52,8 +52,8 @@ namespace Lumina::Logging
 		// A Vyukov bounded MPMC ring, so producers claim with one CAS and the single consumer walks in order.
 		FLogSlot GSlots[GQueueCapacity];
 
-		alignas(CACHE_LINE_SIZE) std::atomic<uint64> GEnqueuePos{ 0 };
-		alignas(CACHE_LINE_SIZE) std::atomic<uint64> GDequeuePos{ 0 };
+		alignas(Constants::kCacheLineSize) std::atomic<uint64> GEnqueuePos{ 0 };
+		alignas(Constants::kCacheLineSize) std::atomic<uint64> GDequeuePos{ 0 };
 
 		std::atomic<bool>   GBackendRunning{ false };
 		std::atomic<bool>   GStopRequested{ false };
@@ -436,7 +436,7 @@ namespace Lumina::Logging
 			LogPath.append("/Logs/");
 			LogPath.append(GLogFileName);
 
-			constexpr uint64 MaxLogSizeBytes = 16llu * 1024 * 1024;
+			constexpr uint64 MaxLogSizeBytes = 16 * Constants::kMiB;
 			constexpr uint32 MaxLogFiles     = 5;
 
 			TUniquePtr<FFileSink> FileSink = MakeUnique<FFileSink>(

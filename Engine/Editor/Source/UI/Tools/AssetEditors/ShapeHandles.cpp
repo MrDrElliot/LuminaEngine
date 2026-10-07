@@ -69,7 +69,7 @@ namespace Lumina
         constexpr float HandleRadius = 6.0f;
         constexpr float HandleGrabRadius = 10.0f;
 
-        int32 HoveredHandle = INDEX_NONE;
+        int32 HoveredHandle = Constants::kIndexNone;
 
         for (int32 i = 0; i < (int32)Handles.size(); ++i)
         {
@@ -132,7 +132,7 @@ namespace Lumina
             return;
         }
 
-        if (HoveredHandle != INDEX_NONE && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        if (HoveredHandle != Constants::kIndexNone && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
             State.ActiveHandle = Handles[HoveredHandle].Type;
             Host.BeginShapeTransaction(Host.GetResizeTransactionName());
@@ -141,7 +141,7 @@ namespace Lumina
         }
 
         // Picks on release with a drag threshold, so a click that became a camera move does not reselect.
-        if (HoveredHandle == INDEX_NONE && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+        if (HoveredHandle == Constants::kIndexNone && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         {
             const ImVec2 Drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
             if (Drag.x * Drag.x + Drag.y * Drag.y <= 16.0f)

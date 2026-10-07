@@ -237,7 +237,7 @@ namespace Lumina::MCP
                     }
 
                     TVector<SFoliageType> Types;
-                    TVector<int32> Remap(TypeCount, INDEX_NONE);
+                    TVector<int32> Remap(TypeCount, Constants::kIndexNone);
                     for (uint32 t = 0; t < TypeCount; ++t)
                     {
                         uint16 Length = 0;
@@ -285,7 +285,7 @@ namespace Lumina::MCP
                         {
                             return Agent::FToolResult::Error("The instance table ends early.");
                         }
-                        if (TypeIndex >= TypeCount || Remap[TypeIndex] == INDEX_NONE)
+                        if (TypeIndex >= TypeCount || Remap[TypeIndex] == Constants::kIndexNone)
                         {
                             continue;
                         }

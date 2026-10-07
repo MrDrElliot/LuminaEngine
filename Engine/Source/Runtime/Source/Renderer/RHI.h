@@ -8,6 +8,7 @@
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
+#include "Lumina.h"
 
 #include <cstddef>
 
@@ -30,8 +31,8 @@ namespace Lumina::RHI
     constexpr uint32 kMaxStorageTextureHeapSize = INT16_MAX;
     constexpr auto kMaxNumSamplers              = 4000;
     constexpr auto kMaxNumTextureHeaps          = 1024;
-    constexpr auto kDedicatedMemoryThreshold    = 32u * 1024 * 1024;
-    constexpr auto kInvalidHeapSlot             = ~0u;
+    constexpr auto kDedicatedMemoryThreshold    = 32 * Constants::kMiB;
+    constexpr uint32 kInvalidHeapSlot           = Constants::kIndexNoneU32;
     constexpr auto kMaxInlineWrite              = 65536u;
 
     constexpr auto kMeshWorkGroupSize           = 32u;   // MESHLET_MESH_GROUP_SIZE (MeshletGeometry.slang)

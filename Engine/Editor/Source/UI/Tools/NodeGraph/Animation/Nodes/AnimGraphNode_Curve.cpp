@@ -14,7 +14,7 @@ namespace Lumina
         const uint16 PoseReg   = ResolvePoseInput(PosePin, Compiler);
         const int32  CurveSlot = Compiler.AddCurve(CurveName);
 
-        if (CurveSlot == INDEX_NONE)
+        if (CurveSlot == Constants::kIndexNone)
         {
             EdNodeGraph::FError NodeError;
             NodeError.Name        = "Missing Curve Name";
@@ -44,7 +44,7 @@ namespace Lumina
         const uint16 ValueReg  = ResolveValueInput(ValuePin, Compiler);
         const int32  CurveSlot = Compiler.AddCurve(CurveName);
 
-        if (CurveSlot == INDEX_NONE)
+        if (CurveSlot == Constants::kIndexNone)
         {
             EdNodeGraph::FError NodeError;
             NodeError.Name        = "Missing Curve Name";

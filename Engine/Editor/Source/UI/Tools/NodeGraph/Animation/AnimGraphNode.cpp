@@ -173,7 +173,7 @@ namespace Lumina
         }
 
         // Unconnected means the node keeps its own statically assigned asset.
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     uint16 CAnimGraphNode::ResolveValueInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler)

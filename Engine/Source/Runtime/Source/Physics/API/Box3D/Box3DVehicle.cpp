@@ -141,7 +141,7 @@ namespace Lumina::Physics
 
             const int32 WheelCount = Math::Min((int32)Vehicle.Wheels.size(), MaxWheels);
             const float SuspensionMass = Mass / (float)WheelCount;
-            const float Omega = 2.0f * LE_PI_F * Vehicle.SuspensionFrequency;
+            const float Omega = Math::TwoPi<float>() * Vehicle.SuspensionFrequency;
             const float Stiffness = SuspensionMass * Omega * Omega;
             const float Damping = 2.0f * Vehicle.SuspensionDamping * Math::Sqrt(Stiffness * SuspensionMass);
 

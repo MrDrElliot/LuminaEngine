@@ -173,22 +173,22 @@ namespace Lumina
         // A packed map always wins, so a source supplying both never builds the split chain.
         bool UsesSplitMetalRough(const FMeshImportMaterial& Src)
         {
-            return Src.MetallicRoughnessImage == INDEX_NONE
-                && (Src.MetallicImage != INDEX_NONE || Src.RoughnessImage != INDEX_NONE);
+            return Src.MetallicRoughnessImage == Constants::kIndexNone
+                && (Src.MetallicImage != Constants::kIndexNone || Src.RoughnessImage != Constants::kIndexNone);
         }
 
         uint32 BuildFeatureSignature(const FMeshImportMaterial& Src, bool bHasVertexColors)
         {
             uint32 Signature = bHasVertexColors ? MFB_VertexColor : 0u;
             if (UsesSplitMetalRough(Src))      { Signature |= MFB_SplitMetalRough; }
-            if (Src.BaseColorImage != INDEX_NONE)         { Signature |= MFB_BaseColorTexture; }
-            if (Src.MetallicRoughnessImage != INDEX_NONE) { Signature |= MFB_MetalRoughTexture; }
-            if (Src.NormalImage != INDEX_NONE)            { Signature |= MFB_NormalTexture; }
-            if (Src.OcclusionImage != INDEX_NONE)         { Signature |= MFB_OcclusionTexture; }
+            if (Src.BaseColorImage != Constants::kIndexNone)         { Signature |= MFB_BaseColorTexture; }
+            if (Src.MetallicRoughnessImage != Constants::kIndexNone) { Signature |= MFB_MetalRoughTexture; }
+            if (Src.NormalImage != Constants::kIndexNone)            { Signature |= MFB_NormalTexture; }
+            if (Src.OcclusionImage != Constants::kIndexNone)         { Signature |= MFB_OcclusionTexture; }
             // glTF multiplies the emissive map by the factor, so a black factor leaves the map unread.
             const bool bEmissiveFactor = Src.EmissiveColor.x > 0.0f || Src.EmissiveColor.y > 0.0f || Src.EmissiveColor.z > 0.0f;
             if (bEmissiveFactor)                                       { Signature |= MFB_Emissive; }
-            if (bEmissiveFactor && Src.EmissiveImage != INDEX_NONE)    { Signature |= MFB_EmissiveTexture; }
+            if (bEmissiveFactor && Src.EmissiveImage != Constants::kIndexNone)    { Signature |= MFB_EmissiveTexture; }
             // Scale and strength only shape a map, so without one they would build nodes nothing reads.
             if ((Signature & MFB_NormalTexture) != 0 && Src.NormalScale != 1.0f)          { Signature |= MFB_NormalScale; }
             if ((Signature & MFB_OcclusionTexture) != 0 && Src.OcclusionStrength != 1.0f) { Signature |= MFB_OcclusionStrength; }

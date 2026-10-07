@@ -183,7 +183,7 @@ namespace Lumina
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
         if (SelectedPrimitive >= (int32)Shape->Primitives.size())
         {
-            SelectedPrimitive = INDEX_NONE;
+            SelectedPrimitive = Constants::kIndexNone;
         }
 
         RebuildHullWireframes();
@@ -324,7 +324,7 @@ namespace Lumina
         BeginAssetTransaction("Remove Collision Shape");
 
         Shape->Primitives.erase(Shape->Primitives.begin() + Index);
-        SelectedPrimitive = INDEX_NONE;
+        SelectedPrimitive = Constants::kIndexNone;
 
         RebuildHullWireframes();
         NotifyAssetDataChanged();
@@ -357,7 +357,7 @@ namespace Lumina
         case 4: bSuccess = Physics::CollisionGen::GenerateFittedSphere(Mesh, Shape); break;
         }
 
-        SelectedPrimitive = INDEX_NONE;
+        SelectedPrimitive = Constants::kIndexNone;
         RebuildHullWireframes();
         NotifyAssetDataChanged();
         EndAssetTransaction();
@@ -466,7 +466,7 @@ namespace Lumina
         ImGui::TextDisabled("%d shapes, %d hull points", (int)Shape->Primitives.size(), Shape->NumHullPoints());
         ImGui::Spacing();
 
-        int32 PendingRemoval = INDEX_NONE;
+        int32 PendingRemoval = Constants::kIndexNone;
 
         for (int32 i = 0; i < (int32)Shape->Primitives.size(); ++i)
         {
@@ -503,7 +503,7 @@ namespace Lumina
         }
 
         // Deferred, since erasing mid-iteration invalidates the loop and every row after it.
-        if (PendingRemoval != INDEX_NONE)
+        if (PendingRemoval != Constants::kIndexNone)
         {
             RemovePrimitiveAt(PendingRemoval);
         }
@@ -538,7 +538,7 @@ namespace Lumina
     {
         CCollisionShape* Shape = GetAsset<CCollisionShape>();
 
-        int32 Best = INDEX_NONE;
+        int32 Best = Constants::kIndexNone;
         float BestDistance = 1e30f;
 
         for (int32 i = 0; i < (int32)Shape->Primitives.size(); ++i)

@@ -183,7 +183,7 @@ namespace Lumina::Jobs
 
         struct FThreadState
         {
-            uint32         WorkerIndex    = ~0u;
+            uint32         WorkerIndex    = Constants::kIndexNoneU32;
             bool           bIsWorker      = false;
             Fibers::FFiber SchedulerFiber = nullptr; // this worker's scheduler fiber
             FWorkFiber*    CurrentFiber   = nullptr; // work fiber currently switched in on this worker
@@ -288,7 +288,7 @@ namespace Lumina::Jobs
         // Give a slot back. Safe to call for a thread that never held one, and after Shutdown.
         FORCEINLINE void ReleaseExternalSlot(uint32 ThreadSlot)
         {
-            if (G != nullptr && ThreadSlot != ~0u && ThreadSlot >= G->NumWorkers)
+            if (G != nullptr && ThreadSlot != Constants::kIndexNoneU32 && ThreadSlot >= G->NumWorkers)
             {
                 const uint32 Bit = ThreadSlot - G->NumWorkers;
                 if (Bit < G->NumExternal)
@@ -1734,7 +1734,7 @@ namespace Lumina::Jobs
 
     uint32 GetWorkerIndex()
     {
-        if (TLS.WorkerIndex != ~0u)
+        if (TLS.WorkerIndex != Constants::kIndexNoneU32)
         {
             return TLS.WorkerIndex;
         }
@@ -1758,7 +1758,7 @@ namespace Lumina::Jobs
             ReleaseExternalSlot(TLS.WorkerIndex);
         }
         TLS.bOwnsExternalSlot = false;
-        TLS.WorkerIndex       = ~0u;
+        TLS.WorkerIndex       = Constants::kIndexNoneU32;
     }
 
     FCounter* AllocCounter(int32 InitialValue)

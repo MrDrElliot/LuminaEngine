@@ -13,6 +13,7 @@
 namespace LuminaAlgorithmTests
 {
     namespace Algo = Lumina::Algo;
+    namespace Constants = Lumina::Constants;
     using Lumina::FString;
     using Lumina::TVector;
     using Lumina::int32;
@@ -458,16 +459,16 @@ namespace LuminaAlgorithmTests
         const TVector<FNamed> Items = MakeNamed();
 
         EXPECT_EQ(Algo::IndexOf(Items, FString("gamma"), &FNamed::Name), 2);
-        EXPECT_EQ(Algo::IndexOf(Items, FString("missing"), &FNamed::Name), INDEX_NONE);
+        EXPECT_EQ(Algo::IndexOf(Items, FString("missing"), &FNamed::Name), Constants::kIndexNone);
         EXPECT_EQ(Algo::IndexOfIf(Items, &FNamed::IsExpensive), 1);
 
         const std::vector<int32> Values = { 7, 8, 9 };
         EXPECT_EQ(Algo::IndexOf(Values, 9), 2);
-        EXPECT_EQ(Algo::IndexOf(Values, 0), INDEX_NONE);
+        EXPECT_EQ(Algo::IndexOf(Values, 0), Constants::kIndexNone);
 
         const std::vector<int32> Empty;
-        EXPECT_EQ(Algo::IndexOf(Empty, 1), INDEX_NONE);
-        EXPECT_EQ(Algo::IndexOfIf(Empty, [](int32 V) { return V > 0; }), INDEX_NONE);
+        EXPECT_EQ(Algo::IndexOf(Empty, 1), Constants::kIndexNone);
+        EXPECT_EQ(Algo::IndexOfIf(Empty, [](int32 V) { return V > 0; }), Constants::kIndexNone);
     }
 
     TEST(AlgoAccumulate, FoldsWithAndWithoutAProjection)

@@ -62,7 +62,7 @@ namespace Lumina
         TVector<float>    GPUHistory;
         float             HistoryPeak   = 0.0f;
         float             GPURowHeight  = 30.0f;
-        int32             SelectedScope = INDEX_NONE;
+        int32             SelectedScope = Constants::kIndexNone;
 #endif
 
         //~ Task system
@@ -103,7 +103,7 @@ namespace Lumina
         char    Filter[64]    = {};
         bool    bShowEdges    = true;
         float   ScheduleZoom  = 1.0f;
-        int32   SelectedIndex = INDEX_NONE;
+        int32   SelectedIndex = Constants::kIndexNone;
         FName   SelectedName;
 
         //~ Assets

@@ -294,7 +294,7 @@ namespace Lumina
         PROPERTY()
         TVector<FMaterialShaderPermutation>     Permutations;
 
-        /** Bit ParameterName owns in a permutation key, or INDEX_NONE when this material has no such switch. */
+        /** Bit ParameterName owns in a permutation key, or Constants::kIndexNone when this material has no such switch. */
         NODISCARD int32 FindStaticSwitchBit(const FName& ParameterName) const;
 
         /** Permutation key for Overrides; a switch absent from it contributes its authored default. */

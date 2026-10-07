@@ -754,10 +754,10 @@ namespace Lumina
             if (!Stat.IsFile()) { return; }
             const uint64 Bytes = Stat.Size;
             const double B = (double)Bytes;
-            if (Bytes < 1024ull)                    { ImGui::TextColored(kMenuTextDim, "Size: %llu B", (unsigned long long)Bytes); }
-            else if (Bytes < 1024ull * 1024)        { ImGui::TextColored(kMenuTextDim, "Size: %.1f KB", B / 1024.0); }
-            else if (Bytes < 1024ull * 1024 * 1024) { ImGui::TextColored(kMenuTextDim, "Size: %.1f MB", B / (1024.0 * 1024.0)); }
-            else                                    { ImGui::TextColored(kMenuTextDim, "Size: %.2f GB", B / (1024.0 * 1024.0 * 1024.0)); }
+            if (Bytes < Constants::kKiB)            { ImGui::TextColored(kMenuTextDim, "Size: %llu B", (unsigned long long)Bytes); }
+            else if (Bytes < Constants::kMiB)       { ImGui::TextColored(kMenuTextDim, "Size: %.1f KB", B / double(Constants::kKiB)); }
+            else if (Bytes < Constants::kGiB)       { ImGui::TextColored(kMenuTextDim, "Size: %.1f MB", B / double(Constants::kMiB)); }
+            else                                    { ImGui::TextColored(kMenuTextDim, "Size: %.2f GB", B / double(Constants::kGiB)); }
         }
 
         // The rich tooltip body for a .lasset, covering type, plugin, refs, flags, size and GUID.

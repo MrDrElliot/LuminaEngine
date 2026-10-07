@@ -67,7 +67,7 @@ namespace Lumina::DataTableUI
                 return (Index == 0) ? FFixedString("None") : FFixedString(Candidates[Index - 1]->GetName().c_str());
             });
 
-        if (Picked != INDEX_NONE)
+        if (Picked != Constants::kIndexNone)
         {
             bOutChanged = true;
             return (Picked == 0) ? nullptr : Candidates[Picked - 1];

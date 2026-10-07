@@ -9,6 +9,7 @@
 #include "Memory/SmartPtr.h"
 #include "Memory/Allocators/Allocator.h"
 #include "Platform/GenericPlatform.h"
+#include "Lumina.h"
 #include <new>
 #include <utility>
 #include <type_traits>
@@ -24,8 +25,8 @@ namespace Lumina
 
         struct FNodeHandle
         {
-            uint32 Index = ~0u;
-            bool IsValid() const { return Index != ~0u; }
+            uint32 Index = Constants::kIndexNoneU32;
+            bool IsValid() const { return Index != Constants::kIndexNoneU32; }
         };
 
         RUNTIME_API FTaskGraph();

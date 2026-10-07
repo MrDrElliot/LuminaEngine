@@ -216,7 +216,7 @@ namespace Lumina::MCP
                 return Lines;
             }
 
-            constexpr uint64 MaxBytes = 1024 * 1024;
+            constexpr uint64 MaxBytes = Constants::kMiB;
             const uint64 Size = Filesystem::FileSize(View);
             const uint64 Offset = Size > MaxBytes ? Size - MaxBytes : 0;
 

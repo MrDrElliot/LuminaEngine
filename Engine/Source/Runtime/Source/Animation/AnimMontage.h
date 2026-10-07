@@ -35,7 +35,7 @@ namespace Lumina
 
         EAnimMontageState State = EAnimMontageState::BlendingIn;
 
-        int32 CurrentSection = INDEX_NONE;
+        int32 CurrentSection = Constants::kIndexNone;
 
         /** Section the playhead jumps to at the end of the current one, overriding the authored link. */
         FName QueuedSection;

@@ -58,7 +58,7 @@ namespace Lumina
 
         for (int32 Face = 0; Face < 6; ++Face)
         {
-            if (Bake.FaceCullViews[Face] == ~0u)
+            if (Bake.FaceCullViews[Face] == Constants::kIndexNoneU32)
             {
                 continue;
             }
@@ -291,7 +291,7 @@ namespace Lumina
         // One slot held back for the fallback, so a frame that fills the table can still claim it.
         const uint32 SlotBudget = FallbackShader ? (GMaterialMaxSlots - 1u) : GMaterialMaxSlots;
 
-        BinnedDeferredSlotByMaterial.assign((size_t)MaxMaterialIndex + 1u, 0xFFFFFFFFu);
+        BinnedDeferredSlotByMaterial.assign((size_t)MaxMaterialIndex + 1u, Constants::kIndexNoneU32);
         for (const auto& M : DeferredMaterials)
         {
             if (!M.DeferredShader)
@@ -300,13 +300,13 @@ namespace Lumina
             }
 
             // Looked up rather than scanned; a scan cost visible materials times distinct shaders.
-            uint32 Slot = 0xFFFFFFFFu;
+            uint32 Slot = Constants::kIndexNoneU32;
             if (auto It = BinnedDeferredSlotLookup.find(M.DeferredShader.Handle); It != BinnedDeferredSlotLookup.end())
             {
                 Slot = It->second;
             }
 
-            if (Slot == 0xFFFFFFFFu)
+            if (Slot == Constants::kIndexNoneU32)
             {
                 const bool bFull = (uint32)BinnedDeferredSlotShaders.size() >= SlotBudget;
                 if (bFull)
@@ -662,7 +662,7 @@ namespace Lumina
         PC.PixelList      = RHI::TGPUSpan<uint32>::FromAddress(GetMaterialPairList().Gpu + Layout.PixelListOffset, Layout.PixelCapacity);
 
         // Invalid disables the write, which leaves the camera-only base the fullscreen pass laid down.
-        PC.VelocityUAV = 0xFFFFFFFFu;
+        PC.VelocityUAV = RHI::kInvalidHeapSlot;
         if (IsVelocityWanted())
         {
             const int32 UAVVel = GetNamedImage(ENamedImage::Velocity).GetMipUAVIndex(0);
@@ -689,7 +689,7 @@ namespace Lumina
             ArgsCpu[Slot].SlotIndex = Slot;
         }
 
-        const uint64 bVelocity = PC.VelocityUAV != 0xFFFFFFFFu ? 1u : 0u;
+        const uint64 bVelocity = PC.VelocityUAV != RHI::kInvalidHeapSlot ? 1u : 0u;
 
         for (uint32 Slot = 0; Slot < Layout.NumSlots; ++Slot)
         {
@@ -782,7 +782,7 @@ namespace Lumina
             {
                 continue;
             }
-            bLocalShadows |= Light.ShadowDataIndex != INDEX_NONE;
+            bLocalShadows |= Light.ShadowDataIndex != Constants::kIndexNone;
             bLocalContact |= EnumHasAnyFlags(Light.Flags, ELightFlags::ContactShadow);
         }
 
@@ -1520,9 +1520,9 @@ namespace Lumina
 
         Globals.FogIntegratedIndex = bVolumetric
             ? (uint32)CurrentView->Images[(int)ENamedImage::FroxelIntegrated].GetResourceID()
-            : ~0u;
+            : Constants::kIndexNoneU32;
 
-        Globals.FogCloudShadowIndex  = ~0u;
+        Globals.FogCloudShadowIndex  = Constants::kIndexNoneU32;
         Globals.FogCloudShadowExtent = 0.0f;
         Globals.FogCloudShadowCenter = FVector2(0.0f, 0.0f);
 
@@ -1557,7 +1557,7 @@ namespace Lumina
     void FDefaultSceneRenderer::CloudShadowMapPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        if (Frame.SceneGlobalData.FogCloudShadowIndex == ~0u)
+        if (Frame.SceneGlobalData.FogCloudShadowIndex == Constants::kIndexNoneU32)
         {
             return;
         }
@@ -1750,8 +1750,8 @@ namespace Lumina
     {
         const FFrameData& Frame = *RenderFrame;
 
-        AtmosphereTerms.FogShaftIndex      = ~0u;
-        AtmosphereTerms.FogShaftDepthIndex = ~0u;
+        AtmosphereTerms.FogShaftIndex      = Constants::kIndexNoneU32;
+        AtmosphereTerms.FogShaftDepthIndex = Constants::kIndexNoneU32;
 
         if (!Frame.Volumetrics.bHasFog || Frame.Volumetrics.FarShaftSteps == 0u)
         {
@@ -1812,8 +1812,8 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
 
         const bool bFog    = Frame.Volumetrics.bHasFog;
-        const bool bAerial = AtmosphereTerms.AerialInScatterIndex != ~0u;
-        const bool bClouds = AtmosphereTerms.CloudScatterIndex != ~0u;
+        const bool bAerial = AtmosphereTerms.AerialInScatterIndex != Constants::kIndexNoneU32;
+        const bool bClouds = AtmosphereTerms.CloudScatterIndex != Constants::kIndexNoneU32;
 
         if (!bFog && !bAerial && !bClouds)
         {
@@ -1873,11 +1873,11 @@ namespace Lumina
         };
         const RHI::FSpecializationConstant CompositeConsts[] =
         {
-            Spec(13u, PC.AerialInScatterIndex != ~0u),
-            Spec(14u, PC.CloudScatterIndex != ~0u),
+            Spec(13u, PC.AerialInScatterIndex != Constants::kIndexNoneU32),
+            Spec(14u, PC.CloudScatterIndex != Constants::kIndexNoneU32),
             Spec(15u, PC.bFog != 0u),
             Spec(16u, PC.bVolumetric != 0u),
-            Spec(17u, PC.FogShaftIndex != ~0u),
+            Spec(17u, PC.FogShaftIndex != Constants::kIndexNoneU32),
         };
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS, TSpan<const RHI::FSpecializationConstant>(CompositeConsts, std::size(CompositeConsts))));
 
@@ -2502,8 +2502,8 @@ namespace Lumina
     {
         const FFrameData& Frame = *RenderFrame;
 
-        AtmosphereTerms.CloudScatterIndex = ~0u;
-        AtmosphereTerms.CloudDepthIndex   = ~0u;
+        AtmosphereTerms.CloudScatterIndex = Constants::kIndexNoneU32;
+        AtmosphereTerms.CloudDepthIndex   = Constants::kIndexNoneU32;
 
         if (!Frame.Volumetrics.bClouds)
         {
@@ -2877,8 +2877,8 @@ namespace Lumina
     {
         const FFrameData& Frame = *RenderFrame;
 
-        AtmosphereTerms.AerialInScatterIndex     = ~0u;
-        AtmosphereTerms.AerialTransmittanceIndex = ~0u;
+        AtmosphereTerms.AerialInScatterIndex     = Constants::kIndexNoneU32;
+        AtmosphereTerms.AerialTransmittanceIndex = Constants::kIndexNoneU32;
 
         if (!FrameFlags.bHasEnvironment
             || !Frame.Volumetrics.bAerialPerspective

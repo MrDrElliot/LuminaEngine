@@ -109,7 +109,7 @@ namespace Lumina
             }
         }
 
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     void CSequenceTrack_CameraCut::Evaluate(const FSequenceEvalContext& Context) const
@@ -120,7 +120,7 @@ namespace Lumina
         }
 
         const int32 CutIndex = FindCutAt(Context.Time);
-        if (CutIndex == INDEX_NONE)
+        if (CutIndex == Constants::kIndexNone)
         {
             return;
         }
@@ -491,7 +491,7 @@ namespace Lumina
         }
 
         FVector3 To = TargetOffset;
-        if (TargetBindingIndex != INDEX_NONE)
+        if (TargetBindingIndex != Constants::kIndexNone)
         {
             const ECS::FEntity Target = Context.Resolve(TargetBindingIndex);
             const STransformComponent* TargetTransform = Target != ECS::NullEntity && Context.World->IsValidEntity(Target)

@@ -141,7 +141,7 @@ namespace Lumina
         const int32 BudgetMiB = Settings != nullptr ? Settings->PreSkinnedVertexBudgetMiB : 0;
 
         const uint64 ResolvedMiB = BudgetMiB > 0 ? (uint64)BudgetMiB : AutoPreSkinnedBudgetMiB();
-        const uint64 Vertices    = (ResolvedMiB * 1024ull * 1024ull) / sizeof(FPreSkinnedVertex);
+        const uint64 Vertices    = (ResolvedMiB * Constants::kMiB) / sizeof(FPreSkinnedVertex);
         return (uint32)Math::Min<uint64>(Vertices, 0xFFFFFFFFull);
     }
 

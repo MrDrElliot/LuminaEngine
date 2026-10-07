@@ -14,7 +14,7 @@ namespace Lumina
             }
 
             Out.Texture = Image.Texture;
-            Out.Index   = Image.GetResourceID() < 0 ? ~0u : (uint32)Image.GetResourceID();
+            Out.Index   = Image.GetResourceID() < 0 ? Constants::kIndexNoneU32 : (uint32)Image.GetResourceID();
             Out.Format  = Image.Desc.Format;
             Out.Extent  = Image.GetExtent();
             return Out;

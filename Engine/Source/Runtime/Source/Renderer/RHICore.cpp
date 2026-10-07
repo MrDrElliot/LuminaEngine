@@ -19,7 +19,7 @@
 
 namespace Lumina::RHI
 {
-    static constexpr uint64 kTransientSliceRequest = 32 * kMegabyte;
+    static constexpr uint64 kTransientSliceRequest = 32 * Constants::kMiB;
 
     static uint64 GTransientSliceSize = kTransientSliceRequest;
 
@@ -635,12 +635,12 @@ namespace Lumina::RHI
             uint64 NewCapacity = Slice.Capacity;
             if (Demand > Slice.Capacity)
             {
-                NewCapacity = Math::AlignUp(Demand + Demand / 2, 1024ull * 1024); // grow 1.5x, MiB-rounded
+                NewCapacity = Math::AlignUp(Demand + Demand / 2, Constants::kMiB); // grow 1.5x, MiB-rounded
                 Slice.LowStreak = 0;
             }
             else if (Slice.Capacity > GTransientSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
             {
-                NewCapacity = Math::Max(GTransientSliceSize, Math::AlignUp(Demand + Demand / 2, kMegabyte));
+                NewCapacity = Math::Max(GTransientSliceSize, Math::AlignUp(Demand + Demand / 2, Constants::kMiB));
                 Slice.LowStreak = 0;
             }
             else if (Demand * 2 >= Slice.Capacity)

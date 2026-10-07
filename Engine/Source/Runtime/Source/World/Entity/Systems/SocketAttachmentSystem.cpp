@@ -26,7 +26,7 @@ namespace Lumina
         // The bone's bind global with the socket and component offsets folded in, so a posed frame is one multiply.
         bool ResolveSkeletal(const SSkeletalMeshComponent& Mesh, const FSkeletonResource& Skeleton, const SSocketAttachmentComponent& Attachment, FSocketAttachmentCache& Entry)
         {
-            int32 Bone = INDEX_NONE;
+            int32 Bone = Constants::kIndexNone;
             FMatrix4 SocketOffset;
             if (!SkeletalUtils::ResolveSocket(Mesh, Attachment.SocketName, Bone, SocketOffset) || !Skeleton.IsBoneIndexValid(Bone))
             {
@@ -47,7 +47,7 @@ namespace Lumina
             {
                 return false;
             }
-            Entry.Bone = INDEX_NONE;
+            Entry.Bone = Constants::kIndexNone;
             Entry.Post = SocketTransform * Attachment.RelativeTransform.GetMatrix();
             return true;
         }

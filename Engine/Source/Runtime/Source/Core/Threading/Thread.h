@@ -4,6 +4,7 @@
 
 #include "Containers/Function.h"
 #include "Core/Threading/Sync.h"
+#include "Lumina.h"
 #include "Platform/GenericPlatform.h"
 
 
@@ -65,10 +66,7 @@ namespace Lumina
 
     namespace Threading
     {
-        // Pinned rather than std::hardware_destructive_interference_size, whose value differs between
-        // compilers and versions and would silently change the layout of every CACHE_ALIGN type.
-        constexpr size_t kCacheLineSize = 64;
-        #define CACHE_ALIGN alignas(::Lumina::Threading::kCacheLineSize)
+        #define CACHE_ALIGN alignas(::Lumina::Constants::kCacheLineSize)
 
         using ThreadID = uint64;
 

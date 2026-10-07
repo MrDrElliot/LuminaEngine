@@ -383,10 +383,10 @@ namespace Lumina
         ImGui::PopStyleVar(2);
 
         // Recompile after the UI loop, and only the emitter that actually changed.
-        if (DirtyEmitter != INDEX_NONE)
+        if (DirtyEmitter != Constants::kIndexNone)
         {
             const int32 Target = DirtyEmitter;
-            DirtyEmitter = INDEX_NONE;
+            DirtyEmitter = Constants::kIndexNone;
             CompilationResult = FCompilationResultInfo();
             CompileEmitter(Target);
             Asset->GetPackage()->MarkDirty();

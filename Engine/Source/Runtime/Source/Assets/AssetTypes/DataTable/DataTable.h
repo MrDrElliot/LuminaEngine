@@ -74,13 +74,13 @@ namespace Lumina
         FUNCTION()
         RUNTIME_API NODISCARD int32 GetRowCount() const { return (int32)Rows.size(); }
 
-        /** Index of RowName, or INDEX_NONE. Linear: tables are authored small and read by name rarely
+        /** Index of RowName, or Constants::kIndexNone. Linear: tables are authored small and read by name rarely
          *  enough that an index would cost more to keep coherent than it saves. */
         FUNCTION()
         RUNTIME_API NODISCARD int32 FindRowIndex(const FName& RowName) const;
 
         FUNCTION()
-        RUNTIME_API NODISCARD bool HasRow(const FName& RowName) const { return FindRowIndex(RowName) != INDEX_NONE; }
+        RUNTIME_API NODISCARD bool HasRow(const FName& RowName) const { return FindRowIndex(RowName) != Constants::kIndexNone; }
 
         /** Row name at Index, or None when out of range. Lets a caller walk a table without the row memory. */
         FUNCTION()
@@ -96,7 +96,7 @@ namespace Lumina
         // FindRow starting from a remembered index, which is checked by name and refreshed when the row moved.
         RUNTIME_API NODISCARD const void* FindRowHinted(const FName& RowName, int32& InOutIndex) const;
 
-        /** Appends a default-constructed row. Returns its index, or INDEX_NONE with no RowStruct set. */
+        /** Appends a default-constructed row. Returns its index, or Constants::kIndexNone with no RowStruct set. */
         RUNTIME_API int32 AddRow(const FName& RowName);
 
         RUNTIME_API void RemoveRow(int32 Index);
@@ -169,7 +169,7 @@ namespace Lumina
     private:
 
         // Where RowName was last found, so a lookup every frame skips the linear search. Verified by name on each use.
-        mutable int32 CachedRowIndex = INDEX_NONE;
+        mutable int32 CachedRowIndex = Constants::kIndexNone;
     };
 
     template <typename T>

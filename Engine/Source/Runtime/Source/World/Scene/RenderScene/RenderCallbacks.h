@@ -9,6 +9,7 @@
 #include "Renderer/RHI.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/ShaderHandle.h"
+#include "Lumina.h"
 
 namespace Lumina
 {
@@ -62,7 +63,7 @@ namespace Lumina
     struct FRenderTexture
     {
         RHI::FTextureH Texture;
-        uint32         Index  = ~0u;
+        uint32         Index  = Constants::kIndexNoneU32;
         EFormat        Format = EFormat::UNKNOWN;
         FUIntVector2   Extent = FUIntVector2(0);
 

@@ -24,8 +24,6 @@ namespace Lumina::MCP
 {
     namespace
     {
-        constexpr uint64 BytesPerMegabyte = 1024ull * 1024ull;
-
         const char* WorldTypeName(EWorldType Type)
         {
             switch (Type)
@@ -62,15 +60,15 @@ namespace Lumina::MCP
 
             RHI::FGPUMemoryStats Gpu;
             RHI::GetGPUMemoryStats(Gpu);
-            Out.GpuUsageMB = (int32)(Gpu.TotalUsage / BytesPerMegabyte);
-            Out.GpuBudgetMB = (int32)(Gpu.TotalBudget / BytesPerMegabyte);
+            Out.GpuUsageMB = (int32)(Gpu.TotalUsage / Constants::kMiB);
+            Out.GpuBudgetMB = (int32)(Gpu.TotalBudget / Constants::kMiB);
             Out.GpuAllocations = (int32)Gpu.TotalAllocations;
 
-            Out.TrackedNativeMB = (int32)(Memory::GetTrackedLiveBytes() / BytesPerMegabyte);
+            Out.TrackedNativeMB = (int32)(Memory::GetTrackedLiveBytes() / Constants::kMiB);
             DotNet::FScriptDiagnostics Managed;
             if (DotNet::GetRuntimeDiagnostics(Managed, false))
             {
-                Out.ManagedHeapMB = (int32)(Managed.ManagedHeapBytes / (int64)BytesPerMegabyte);
+                Out.ManagedHeapMB = (int32)(Managed.ManagedHeapBytes / (int64)Constants::kMiB);
             }
 
             Out.LiveObjects = GObjectArray.GetNumAliveObjects();
@@ -96,7 +94,7 @@ namespace Lumina::MCP
 
     namespace
     {
-        float BytesToMB(uint64 Bytes) { return (float)((double)Bytes / (double)BytesPerMegabyte); }
+        float BytesToMB(uint64 Bytes) { return (float)((double)Bytes / (double)Constants::kMiB); }
 
         // The tracker and allocator wrappers sit at the top of every stack, and say nothing about who allocated.
         bool IsAllocatorFrame(const FString& Frame)

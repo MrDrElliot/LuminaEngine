@@ -479,7 +479,7 @@ namespace Lumina::NetPrediction
             return;
         }
 
-        int32 Index = INDEX_NONE;
+        int32 Index = Constants::kIndexNone;
         for (int32 Candidate = 0; Candidate < (int32)Prediction->Pending.size(); ++Candidate)
         {
             if (Prediction->Pending[Candidate].Command.Seq == Seq)
@@ -489,7 +489,7 @@ namespace Lumina::NetPrediction
             }
         }
         Prediction->LastAcked = Seq;
-        if (Index == INDEX_NONE || !Prediction->Pending[Index].bHasAfter)
+        if (Index == Constants::kIndexNone || !Prediction->Pending[Index].bHasAfter)
         {
             return;
         }

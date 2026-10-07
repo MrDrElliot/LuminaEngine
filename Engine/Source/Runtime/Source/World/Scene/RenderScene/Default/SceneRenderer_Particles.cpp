@@ -1031,7 +1031,7 @@ namespace Lumina
         PC.FlipbookMode         = (uint32)Resolved.FlipbookMode;
         PC.FlipbookFPS          = Resolved.FlipbookFPS;
         PC.bRandomStartFrame    = Resolved.bRandomStartFrame ? 1u : 0u;
-        PC.ShadowDataIndex      = INDEX_NONE;
+        PC.ShadowDataIndex      = Constants::kIndexNone;
         return PC;
     }
 

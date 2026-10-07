@@ -341,7 +341,7 @@ namespace Lumina
 
             const FSkeletonResource& Source = *Data.Skeletons[0];
 
-            TVector<int32> SourceToTarget(Source.Bones.size(), INDEX_NONE);
+            TVector<int32> SourceToTarget(Source.Bones.size(), Constants::kIndexNone);
             for (size_t i = 0; i < Source.Bones.size(); ++i)
             {
                 const int32 TargetIndex = Target.FindBoneIndex(Source.Bones[i].Name);
@@ -391,7 +391,7 @@ namespace Lumina
                         }
 
                         const uint32 Old = Indices[w];
-                        const int32  New = (Old < SourceToTarget.size()) ? SourceToTarget[Old] : INDEX_NONE;
+                        const int32  New = (Old < SourceToTarget.size()) ? SourceToTarget[Old] : Constants::kIndexNone;
 
                         if (New < 0)
                         {
@@ -440,7 +440,7 @@ namespace Lumina
         // Prefers a name match so reordered exports survive, and falls back to the first compatible resource.
         int32 FindResourceForAsset(const FMeshImportData& Data, const FName& AssetName, bool bWantSkinned)
         {
-            int32 FirstCompatible = INDEX_NONE;
+            int32 FirstCompatible = Constants::kIndexNone;
             const FString TargetName = Import::SanitizeAssetName(AssetName.c_str());
 
             for (size_t i = 0; i < Data.Resources.size(); ++i)
@@ -450,7 +450,7 @@ namespace Lumina
                 {
                     continue;
                 }
-                if (FirstCompatible == INDEX_NONE)
+                if (FirstCompatible == Constants::kIndexNone)
                 {
                     FirstCompatible = (int32)i;
                 }
@@ -851,7 +851,7 @@ namespace Lumina
             {
                 continue;
             }
-            for (int32 Walk = (int32)i; Walk != INDEX_NONE && bKeep[Walk] == 0; Walk = Nodes[Walk].ParentIndex)
+            for (int32 Walk = (int32)i; Walk != Constants::kIndexNone && bKeep[Walk] == 0; Walk = Nodes[Walk].ParentIndex)
             {
                 bKeep[Walk] = 1;
             }
@@ -889,7 +889,7 @@ namespace Lumina
         size_t RootCount = 0;
         for (size_t i = 0; i < Nodes.size(); ++i)
         {
-            if (bKeep[i] != 0 && Nodes[i].ParentIndex == INDEX_NONE)
+            if (bKeep[i] != 0 && Nodes[i].ParentIndex == Constants::kIndexNone)
             {
                 ++RootCount;
             }
@@ -933,7 +933,7 @@ namespace Lumina
         {
             const FSourceSceneNode& Node = Nodes[i];
 
-            WorldRotations[i] = (Node.ParentIndex != INDEX_NONE)
+            WorldRotations[i] = (Node.ParentIndex != Constants::kIndexNone)
                 ? WorldRotations[Node.ParentIndex] * Node.Rotation
                 : Node.Rotation;
 
@@ -964,7 +964,7 @@ namespace Lumina
             const ECS::FEntity Entity = MakeEntity(Node.Name, Transform);
             NodeEntities[i] = Entity;
 
-            const ECS::FEntity Parent = (Node.ParentIndex != INDEX_NONE) ? NodeEntities[Node.ParentIndex] : SharedRoot;
+            const ECS::FEntity Parent = (Node.ParentIndex != Constants::kIndexNone) ? NodeEntities[Node.ParentIndex] : SharedRoot;
             if (Parent != ECS::NullEntity)
             {
                 ECS::Utils::AddToParent(Registry, Entity, Parent);
@@ -1103,7 +1103,7 @@ namespace Lumina
             {
                 for (size_t i = 0; i < Nodes.size(); ++i)
                 {
-                    if (NodeEntities[i] != ECS::NullEntity && Nodes[i].ParentIndex == INDEX_NONE)
+                    if (NodeEntities[i] != ECS::NullEntity && Nodes[i].ParentIndex == Constants::kIndexNone)
                     {
                         EnvironmentRoot = NodeEntities[i];
                         break;
@@ -1488,7 +1488,7 @@ namespace Lumina
 
             for (const FMeshImportMaterial& Material : SourceData.Materials)
             {
-                if (Material.AlphaMode == EImportAlphaMode::Mask && Material.BaseColorImage != INDEX_NONE
+                if (Material.AlphaMode == EImportAlphaMode::Mask && Material.BaseColorImage != Constants::kIndexNone
                     && Material.BaseColorImage < (int32)SourceData.Images.size())
                 {
                     SourceData.Images[Material.BaseColorImage].AlphaCoverageCutoff = Material.AlphaCutoff;
@@ -1641,7 +1641,7 @@ namespace Lumina
                         int32 SourceIndex = Slot;
                         if (!SlotToSource.empty())
                         {
-                            SourceIndex = (Slot < (int32)SlotToSource.size()) ? SlotToSource[Slot] : INDEX_NONE;
+                            SourceIndex = (Slot < (int32)SlotToSource.size()) ? SlotToSource[Slot] : Constants::kIndexNone;
                         }
 
                         if (SourceIndex < 0 || (size_t)SourceIndex >= Instances.size())
@@ -1870,7 +1870,7 @@ namespace Lumina
         FinalizeMeshImportData(SourceData, Options, Progress, 0.9f);
 
         const int32 ResourceIndex = FindResourceForAsset(SourceData, Mesh->GetName(), Mesh->IsSkinned());
-        if (ResourceIndex == INDEX_NONE)
+        if (ResourceIndex == Constants::kIndexNone)
         {
             LOG_ERROR("Reimport: '{0}' contains no {1} mesh to replace '{2}' with.",
                       Request.SourcePath.c_str(), Mesh->IsSkinned() ? "skinned" : "static", Mesh->GetName().c_str());

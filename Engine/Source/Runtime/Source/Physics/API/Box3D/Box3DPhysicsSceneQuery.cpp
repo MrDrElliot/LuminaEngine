@@ -147,14 +147,14 @@ namespace Lumina::Physics
     {
         if (Entity == ECS::NullEntity)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
         const SRagdollComponent* RagdollComp = Registry.TryGet<SRagdollComponent>(Entity);
         if (RagdollComp == nullptr || !RagdollComp->Ragdoll)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         // Ragdolls are a handful of bodies, so a linear scan beats maintaining a body-to-bone map.
@@ -163,11 +163,11 @@ namespace Lumina::Physics
         {
             if (B3_ID_EQUALS(Handle.Bodies[i], BodyId))
             {
-                return i < Handle.JointToBone.size() ? Handle.JointToBone[i] : INDEX_NONE;
+                return i < Handle.JointToBone.size() ? Handle.JointToBone[i] : Constants::kIndexNone;
             }
         }
 
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     // Queries carry no zone, since gameplay runs thousands a frame on every worker and fiber builds serialize Tracy events.
@@ -175,7 +175,7 @@ namespace Lumina::Physics
     {
         const FVector3 Delta = Settings.End - Settings.Start;
         const float Length = Math::Length(Delta);
-        if (Length <= LE_SMALL_NUMBER)
+        if (Length <= Math::kSmallNumber)
         {
             return {};
         }
@@ -221,7 +221,7 @@ namespace Lumina::Physics
 
         const FVector3 Delta = Settings.End - Settings.Start;
         const float Length = Math::Length(Delta);
-        if (Length <= LE_SMALL_NUMBER)
+        if (Length <= Math::kSmallNumber)
         {
             return;
         }
@@ -249,7 +249,7 @@ namespace Lumina::Physics
 
         const FVector3 Delta = Settings.End - Settings.Start;
         const float Length = Math::Length(Delta);
-        if (Length <= LE_SMALL_NUMBER)
+        if (Length <= Math::kSmallNumber)
         {
             return;
         }
@@ -279,7 +279,7 @@ namespace Lumina::Physics
     {
         const FVector3 Delta = Settings.End - Settings.Start;
         const float Length = Math::Length(Delta);
-        if (Length <= LE_SMALL_NUMBER)
+        if (Length <= Math::kSmallNumber)
         {
             return {};
         }

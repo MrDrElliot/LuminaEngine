@@ -13,7 +13,7 @@ namespace Lumina::RHI
 {
     namespace
     {
-        constexpr uint64 kStagingSliceRequest = 64 * kMegabyte;
+        constexpr uint64 kStagingSliceRequest = 64 * Constants::kMiB;
 
         // Resolved against the CPU-visible VRAM aperture in Initialize.
         uint64 GStagingSliceSize = kStagingSliceRequest;
@@ -858,14 +858,14 @@ namespace Lumina::RHI
                 uint64 NewCapacity = Slice.Capacity;
                 if (Demand > Slice.Capacity)
                 {
-                    NewCapacity     = Math::AlignUp(Demand + Demand / 2, 1024ull * 1024);
+                    NewCapacity     = Math::AlignUp(Demand + Demand / 2, Constants::kMiB);
                     Slice.LowStreak = 0;
                 }
                 else if (Slice.Capacity > GStagingSliceSize && Demand * 2 < Slice.Capacity)
                 {
                     if (++Slice.LowStreak >= 64)
                     {
-                        NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, kMegabyte));
+                        NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, Constants::kMiB));
                         Slice.LowStreak = 0;
                     }
                 }

@@ -29,7 +29,7 @@ namespace
         {
             FSkeletonResource::FBoneInfo Bone;
             Bone.Name           = FName(("Bone" + std::to_string(i)).c_str());
-            Bone.ParentIndex    = i == 0 ? INDEX_NONE : (i - 1) / 2;
+            Bone.ParentIndex    = i == 0 ? Constants::kIndexNone : (i - 1) / 2;
             Bone.InvBindMatrix  = FMatrix4::Identity();
             Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(0.03f * (float)(i % 3), 0.12f, 0.02f),
                                                        FQuat(FVector3(0.1f, 0.05f * (float)(i % 4), 0.0f)), FVector3(1.0f));

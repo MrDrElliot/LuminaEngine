@@ -491,10 +491,10 @@ namespace Lumina
                     ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(C.Name.c_str());
                     ImGui::TableSetColumnIndex(1); ImGui::Text("%zu", C.Assets);
                     ImGui::TableSetColumnIndex(2);
-                    if (C.Bytes >= 1024 * 1024)
-                        ImGui::Text("%.2f MiB", (double)C.Bytes / (1024.0 * 1024.0));
+                    if (C.Bytes >= Constants::kMiB)
+                        ImGui::Text("%.2f MiB", (double)C.Bytes / double(Constants::kMiB));
                     else if (C.Bytes >= 1024)
-                        ImGui::Text("%.1f KiB", (double)C.Bytes / 1024.0);
+                        ImGui::Text("%.1f KiB", (double)C.Bytes / double(Constants::kKiB));
                     else
                         ImGui::Text("%zu B", C.Bytes);
                     ImGui::TableSetColumnIndex(3);

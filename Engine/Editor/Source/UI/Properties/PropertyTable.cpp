@@ -1697,7 +1697,7 @@ namespace Lumina
             }, LE_ICON_CUBE_OUTLINE);
         ImGui::PopItemWidth();
 
-        if (Picked != INDEX_NONE)
+        if (Picked != Constants::kIndexNone)
         {
             bOutChanged = true;
             return (Picked == 0) ? nullptr : Candidates[Picked - 1];

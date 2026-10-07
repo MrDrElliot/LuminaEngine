@@ -233,14 +233,14 @@ namespace Lumina
     int32 FProfilerEditorTool::ResolveSelection() const
     {
         const int32 Count = (int32)Schedule.size();
-        if (SelectedIndex == INDEX_NONE)
+        if (SelectedIndex == Constants::kIndexNone)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         if (SelectedName.IsNone())
         {
-            return SelectedIndex < Count ? SelectedIndex : INDEX_NONE;
+            return SelectedIndex < Count ? SelectedIndex : Constants::kIndexNone;
         }
 
         if (SelectedIndex < Count && Schedule[SelectedIndex].Name == SelectedName)
@@ -254,7 +254,7 @@ namespace Lumina
                 return Index;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     const FGameplayProfileEntry* FProfilerEditorTool::FindStat(const char* Name) const
@@ -355,12 +355,12 @@ namespace Lumina
         }
 
         const int32 Selection = ResolveSelection();
-        if (Selection != INDEX_NONE)
+        if (Selection != Constants::kIndexNone)
         {
             ImGui::SameLine(0.0f, 16.0f);
             if (ImGui::SmallButton("Clear selection"))
             {
-                SelectedIndex = INDEX_NONE;
+                SelectedIndex = Constants::kIndexNone;
                 SelectedName  = FName();
             }
         }
@@ -555,8 +555,8 @@ namespace Lumina
                     const ImVec2 To(Origin.x + Positions[Index].x, Origin.y + Positions[Index].y + NodeH * 0.5f);
                     const float Curve = (To.x - From.x) * 0.5f;
 
-                    const bool bTouchesSelection = Selection != INDEX_NONE && (Index == Selection || Other == Selection);
-                    const bool bDimmed = Selection != INDEX_NONE && !bTouchesSelection;
+                    const bool bTouchesSelection = Selection != Constants::kIndexNone && (Index == Selection || Other == Selection);
+                    const bool bDimmed = Selection != Constants::kIndexNone && !bTouchesSelection;
 
                     ImVec4 LinkColor = bTouchesSelection ? EditorColors::Danger() : EditorColors::TextDim();
                     LinkColor = EditorColors::WithAlpha(LinkColor, bDimmed ? 0.10f : (bTouchesSelection ? 0.95f : 0.38f));
@@ -567,15 +567,15 @@ namespace Lumina
             }
         }
 
-        int32 HoveredIndex = INDEX_NONE;
+        int32 HoveredIndex = Constants::kIndexNone;
 
         for (int32 Index = 0; Index < NumEntries; ++Index)
         {
             const FSystemScheduleEntry& Entry = Schedule[Index];
 
             const bool bIsSelected = Index == Selection;
-            const bool bConflicts  = Selection != INDEX_NONE && !bIsSelected && InsightsDetail::Conflicts(Entry, Schedule[Selection]);
-            const float Alpha      = (Selection == INDEX_NONE || bIsSelected || bConflicts) ? 1.0f : 0.26f;
+            const bool bConflicts  = Selection != Constants::kIndexNone && !bIsSelected && InsightsDetail::Conflicts(Entry, Schedule[Selection]);
+            const float Alpha      = (Selection == Constants::kIndexNone || bIsSelected || bConflicts) ? 1.0f : 0.26f;
 
             const ImVec2 Min(Origin.x + Positions[Index].x, Origin.y + Positions[Index].y);
             const ImVec2 Max(Min.x + NodeW, Min.y + NodeH);
@@ -715,9 +715,9 @@ namespace Lumina
             }
         }
 
-        if (bWindowHovered && HoveredIndex == INDEX_NONE && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        if (bWindowHovered && HoveredIndex == Constants::kIndexNone && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
-            SelectedIndex = INDEX_NONE;
+            SelectedIndex = Constants::kIndexNone;
             SelectedName  = FName();
         }
 
@@ -869,7 +869,7 @@ namespace Lumina
     void FProfilerEditorTool::DrawDetail()
     {
         const int32 Selection = ResolveSelection();
-        if (Selection == INDEX_NONE)
+        if (Selection == Constants::kIndexNone)
         {
             ImGui::Spacing();
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());

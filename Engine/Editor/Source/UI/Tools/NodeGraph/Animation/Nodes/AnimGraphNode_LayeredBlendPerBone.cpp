@@ -26,7 +26,7 @@ namespace Lumina
         {
             // Build a mask on the fly from the chosen bone's subtree.
             const int32 BoneIndex = Compiler.ResolveBoneIndex(BoneName);
-            if (BoneIndex != INDEX_NONE)
+            if (BoneIndex != Constants::kIndexNone)
             {
                 MaskIdx = Compiler.AddBoneSubtreeMask(BoneIndex, bInclusive);
             }
@@ -43,7 +43,7 @@ namespace Lumina
         else
         {
             const int32 MaskIndex = Compiler.FindBoneMaskIndex(MaskName);
-            if (MaskIndex != INDEX_NONE)
+            if (MaskIndex != Constants::kIndexNone)
             {
                 MaskIdx = (uint16)MaskIndex;
             }

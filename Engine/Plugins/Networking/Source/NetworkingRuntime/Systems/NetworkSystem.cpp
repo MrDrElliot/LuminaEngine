@@ -850,7 +850,7 @@ namespace Lumina
                 // A crowd keeps only the nearest entities, so a full town costs a client a bounded stream.
                 if (MaxRelevant > 0 && Gathered.size() > MaxRelevant)
                 {
-                    const uint32 OwnRecord = bHasViewpoint ? VpIt->second : UINT32_MAX;
+                    const uint32 OwnRecord = bHasViewpoint ? VpIt->second : Constants::kIndexNoneU32;
                     auto Score = [&](const FGathered& G)
                     {
                         if ((G.Flags & NETREC_AlwaysRelevant) || G.Rec == OwnRecord)

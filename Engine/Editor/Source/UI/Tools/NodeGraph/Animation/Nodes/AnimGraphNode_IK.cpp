@@ -41,9 +41,9 @@ namespace Lumina
         const int32 RootIdx = Compiler.ResolveBoneIndex(RootBone);
         const int32 TipIdx  = Compiler.ResolveBoneIndex(TipBone);
 
-        if (RootIdx == INDEX_NONE || TipIdx == INDEX_NONE)
+        if (RootIdx == Constants::kIndexNone || TipIdx == Constants::kIndexNone)
         {
-            ReportUnknownBone(Compiler, this, "FABRIK", RootIdx == INDEX_NONE ? RootBone : TipBone);
+            ReportUnknownBone(Compiler, this, "FABRIK", RootIdx == Constants::kIndexNone ? RootBone : TipBone);
             Compiler.SetPinRegister(PoseOutPin, SrcReg);
             return;
         }
@@ -105,7 +105,7 @@ namespace Lumina
         const uint16 SrcReg  = ResolvePoseInput(PoseInPin, Compiler);
         const int32  BoneIdx = Compiler.ResolveBoneIndex(Bone);
 
-        if (BoneIdx == INDEX_NONE)
+        if (BoneIdx == Constants::kIndexNone)
         {
             ReportUnknownBone(Compiler, this, "Look At", Bone);
             Compiler.SetPinRegister(PoseOutPin, SrcReg);
@@ -155,9 +155,9 @@ namespace Lumina
         const int32 CalfIdx  = Compiler.ResolveBoneIndex(CalfBone);
         const int32 FootIdx  = Compiler.ResolveBoneIndex(FootBone);
 
-        if (ThighIdx == INDEX_NONE || CalfIdx == INDEX_NONE || FootIdx == INDEX_NONE)
+        if (ThighIdx == Constants::kIndexNone || CalfIdx == Constants::kIndexNone || FootIdx == Constants::kIndexNone)
         {
-            const FName& Missing = ThighIdx == INDEX_NONE ? ThighBone : (CalfIdx == INDEX_NONE ? CalfBone : FootBone);
+            const FName& Missing = ThighIdx == Constants::kIndexNone ? ThighBone : (CalfIdx == Constants::kIndexNone ? CalfBone : FootBone);
             ReportUnknownBone(Compiler, this, "Foot IK", Missing);
             Compiler.SetPinRegister(PoseOutPin, SrcReg);
             return;
@@ -213,7 +213,7 @@ namespace Lumina
         const uint16 SrcReg  = ResolvePoseInput(PoseInPin, Compiler);
         const int32  BoneIdx = Compiler.ResolveBoneIndex(Bone);
 
-        if (BoneIdx == INDEX_NONE)
+        if (BoneIdx == Constants::kIndexNone)
         {
             ReportUnknownBone(Compiler, this, "Translate Bone", Bone);
             Compiler.SetPinRegister(PoseOutPin, SrcReg);

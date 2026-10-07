@@ -34,7 +34,7 @@ namespace
     {
         FSkeletonResource::FBoneInfo Bone;
         Bone.Name        = FName("Root");
-        Bone.ParentIndex = INDEX_NONE;
+        Bone.ParentIndex = Constants::kIndexNone;
         Skeleton.Bones.push_back(Bone);
         Skeleton.BoneNameToIndex[Bone.Name] = 0;
     }
@@ -50,7 +50,7 @@ namespace
         FAnimationGraphVM::BuildTasks(Graph, &Skeleton, 0.016f, State, Tasks, RootMotion);
 
         const int32 Slot = Graph->FindCurveIndex(CurveName);
-        return (Slot != INDEX_NONE && Slot < (int32)State.CurveValues.size()) ? State.CurveValues[Slot] : NAN;
+        return (Slot != Constants::kIndexNone && Slot < (int32)State.CurveValues.size()) ? State.CurveValues[Slot] : NAN;
     }
 }
 
@@ -210,7 +210,7 @@ TEST(AnimationCurves, StateTransitionEasesCurvesAcrossTheBlend)
     Compiler.BuildGraph(Graph);
 
     const int32 Slot = Graph->FindCurveIndex(FName("Speed"));
-    ASSERT_NE(Slot, INDEX_NONE);
+    ASSERT_NE(Slot, Constants::kIndexNone);
 
     FSkeletonResource Skeleton;
     MakeSkeleton(Skeleton);

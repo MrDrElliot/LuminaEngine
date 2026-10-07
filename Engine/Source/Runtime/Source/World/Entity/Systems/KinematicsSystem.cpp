@@ -31,7 +31,7 @@ namespace Lumina
     namespace
     {
         constexpr uint32 kKinematicsParallelGrain = 2048;
-        constexpr uint32 kKinematicsInvalidBody = 0xFFFFFFFFu;
+        constexpr uint32 kKinematicsInvalidBody = Constants::kIndexNoneU32;
     }
 
     void SKinematicsSystem::OnStartup()

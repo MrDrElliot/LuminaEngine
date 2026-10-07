@@ -118,8 +118,8 @@ namespace Lumina
         // frame from the registry and indices move whenever a filter changes.
         THashSet<FGuid> SelectedGUIDs;
 
-        // Index into VisibleRows of the last plain/ctrl click; INDEX_NONE when there is no anchor.
-        int32           RangeAnchor = INDEX_NONE;
+        // Index into VisibleRows of the last plain/ctrl click; Constants::kIndexNone when there is no anchor.
+        int32           RangeAnchor = Constants::kIndexNone;
 
         FString         SearchFilter;
         char            SearchBuffer[256] = {};

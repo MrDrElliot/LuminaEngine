@@ -133,22 +133,22 @@ namespace Lumina
 
         float                    PlayTime = 0.0f;
         float                    PlayRate = 1.0f;
-        int32                    SelectedBinding = INDEX_NONE;
+        int32                    SelectedBinding = Constants::kIndexNone;
 
         // Deferred: the request comes from a popup opened mid-draw, and removing a binding resizes the very
         // arrays the row loop is walking.
-        int32                    PendingRemoveBinding = INDEX_NONE;
+        int32                    PendingRemoveBinding = Constants::kIndexNone;
 
         // A key on a row is really a TIME at which all nine transform channels hold a key, since keying
         // writes them together. Selection is therefore by time rather than by index, which also survives
         // the re-sort a retime causes.
-        int32                    SelectedKeyBinding = INDEX_NONE;
+        int32                    SelectedKeyBinding = Constants::kIndexNone;
         float                    SelectedKeyTime = 0.0f;
         uint8                    bDraggingKey:1 = false;
 
         // Cut drag state. Edge is -1 for the start handle, +1 for the end, 0 for moving the whole clip.
-        int32                    SelectedCut = INDEX_NONE;
-        int32                    DraggingCut = INDEX_NONE;
+        int32                    SelectedCut = Constants::kIndexNone;
+        int32                    DraggingCut = Constants::kIndexNone;
         int32                    DragEdge = 0;
         float                    DragGrabOffset = 0.0f;
         // Seconds of sequence visible per screen. 1.0 fits the whole thing; smaller zooms in.
@@ -158,9 +158,9 @@ namespace Lumina
         void DrawTimeRuler(ImDrawList* DrawList, const ImVec2& Origin, float TrackLeft, float TrackWidth);
 
         // A generic track's selection, a key by index into whatever it holds, which a drag re-finds after a re-sort.
-        int32                    SelectedTrack = INDEX_NONE;
-        int32                    SelectedTrackKey = INDEX_NONE;
-        int32                    PendingRemoveTrack = INDEX_NONE;
+        int32                    SelectedTrack = Constants::kIndexNone;
+        int32                    SelectedTrackKey = Constants::kIndexNone;
+        int32                    PendingRemoveTrack = Constants::kIndexNone;
         uint8                    bDraggingTrackKey:1 = false;
 
         TUniquePtr<FPropertyTable> Details;

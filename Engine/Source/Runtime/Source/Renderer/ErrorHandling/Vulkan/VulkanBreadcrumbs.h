@@ -4,6 +4,7 @@
 #include <volk/volk.h>
 
 #include "Containers/String.h"
+#include "Lumina.h"
 
 namespace Lumina::RHI
 {
@@ -14,7 +15,7 @@ namespace Lumina::RHI
         static constexpr uint32 MaxMarkers   = 2048;
         static constexpr uint32 MaxNameChars = 64;
         static constexpr uint32 MaxDepth     = 32;
-        static constexpr uint32 InvalidIndex = ~0u;
+        static constexpr uint32 InvalidIndex = Constants::kIndexNoneU32;
 
         bool Initialize(VkDevice InDevice, VkPhysicalDevice InPhysicalDevice);
         void Shutdown(VkDevice InDevice);

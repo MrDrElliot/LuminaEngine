@@ -941,7 +941,7 @@ namespace Lumina
 
         int16 FinalBuf = ResultBuf[List.OutputTask];
 
-        if (List.bLockRoot && List.RootBoneIndex != INDEX_NONE)
+        if (List.bLockRoot && List.RootBoneIndex != Constants::kIndexNone)
         {
             // Pinning rewrites the root, which would edit the history the output was written into.
             if (Retained[List.OutputTask])

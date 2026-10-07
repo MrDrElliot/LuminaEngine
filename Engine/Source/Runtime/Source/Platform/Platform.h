@@ -61,10 +61,6 @@
     #endif
 #endif
 
-#ifndef CACHE_LINE_SIZE
-    #define CACHE_LINE_SIZE 64
-#endif
-
 #if defined(_MSC_VER)
     #define LUMINA_NOVTABLE __declspec(novtable)
 #else
@@ -179,7 +175,6 @@
 #define NODISCARD
 #define ALIGNOF(type) alignof(type)
 #define ALIGN(n)
-#define CACHE_LINE_SIZE 64
 #define LUMINA_NOVTABLE
 #define FORCEINLINE inline
 #define FORCENOINLINE

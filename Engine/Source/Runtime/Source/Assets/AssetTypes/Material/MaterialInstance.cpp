@@ -311,7 +311,7 @@ namespace Lumina
     bool CMaterialInstance::SetStaticSwitchValue(const FName& Name, bool bValue)
     {
         CMaterial* Root = GetMaterial();
-        if (Root == nullptr || Root->FindStaticSwitchBit(Name) == INDEX_NONE)
+        if (Root == nullptr || Root->FindStaticSwitchBit(Name) == Constants::kIndexNone)
         {
             WarnMissingParameterOnce("static switch", Name);
             return false;

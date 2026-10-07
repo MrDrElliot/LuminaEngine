@@ -30,13 +30,13 @@ namespace Lumina::RootMotion
     {
         if (Skeleton == nullptr || Skeleton->GetNumBones() == 0)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         if (!NameOverride.IsNone())
         {
             const int32 Named = Skeleton->FindBoneIndex(NameOverride);
-            if (Named != INDEX_NONE)
+            if (Named != Constants::kIndexNone)
             {
                 return Named;
             }
@@ -49,7 +49,7 @@ namespace Lumina::RootMotion
                 return i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     void PinRootToBindPose(FPose& Pose, const FSkeletonResource* Skeleton, int32 RootIndex)

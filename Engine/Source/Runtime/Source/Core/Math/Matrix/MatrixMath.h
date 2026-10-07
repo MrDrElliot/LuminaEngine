@@ -445,7 +445,7 @@ namespace Lumina::Math
         OutTranslation = TVec<T, 3>(T(0));
 
         TMat<T, 4, 4> Local = M;
-        if (std::abs(Local[3][3]) < T(LE_SMALL_NUMBER))
+        if (std::abs(Local[3][3]) < T(Math::kSmallNumber))
         {
             return false;
         }

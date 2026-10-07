@@ -2,6 +2,7 @@
 
 #include "Containers/HashPrimitives.h"
 #include "Platform/GenericPlatform.h"
+#include "Lumina.h"
 
 #include <type_traits>
 
@@ -22,7 +23,7 @@ namespace Lumina::ECS
         // Reserved for retired dense slots, so no live handle ever carries it.
         static constexpr uint32 TombstoneVersion = VersionMask;
 
-        uint32 Value = ~0u;
+        uint32 Value = Constants::kIndexNoneU32;
 
         constexpr FEntity() = default;
 
@@ -72,7 +73,7 @@ namespace Lumina::ECS
         return Ar << Entity.Value;
     }
 
-    inline constexpr FEntity NullEntity = FEntity::FromPacked(~0u);
+    inline constexpr FEntity NullEntity = FEntity::FromPacked(Constants::kIndexNoneU32);
 
     // Only the version is meaningful; the index carries the storage's free-list link.
     NODISCARD constexpr FEntity MakeTombstone(uint32 NextFreeDenseIndex)

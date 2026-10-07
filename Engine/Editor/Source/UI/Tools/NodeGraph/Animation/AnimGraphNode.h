@@ -77,7 +77,7 @@ namespace Lumina
         // the pin's DefaultValue when the pin is unconnected.
         static uint16 ResolveValueInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler);
 
-        // Object register feeding InputPin, or INDEX_NONE when the pin is unconnected.
+        // Object register feeding InputPin, or Constants::kIndexNone when the pin is unconnected.
         static int32 ResolveObjectInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler);
 
         // ResolveValueInput reshaped by Easing, for the nodes that expose an alpha pin.

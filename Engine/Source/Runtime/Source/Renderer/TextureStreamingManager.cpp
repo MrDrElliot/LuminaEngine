@@ -250,7 +250,7 @@ namespace Lumina
     uint64 FTextureStreamingManager::GetBudgetBytes() const
     {
         const int64 PoolMB = Math::Max<int64>(Settings().PoolSizeMB, 16);
-        return (uint64)PoolMB * 1024ull * 1024ull;
+        return (uint64)PoolMB * Constants::kMiB;
     }
 
     void FTextureStreamingManager::Update()
@@ -264,7 +264,7 @@ namespace Lumina
         DemotedLastFrame  = 0;
 
         // Splitting it per stage would let two stages each spend the budget and double the spike.
-        FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * 1024ull * 1024ull;
+        FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * Constants::kMiB;
 
         // A demotion recreates the image while copying zero host bytes, which the upload budget cannot see.
         FrameResidencyChanges = (uint32)Math::Max(Settings().MaxResidencyChangesPerFrame, 1);
@@ -279,10 +279,10 @@ namespace Lumina
         IssuePromotions();
 
         // A hitch is a shape over time, and these say whether the cost was host uploads or something else.
-        LUMINA_PROFILE_VALUE("Streaming/UploadBudgetLeftKiB", (int64)(FrameUploadBudget / 1024));
-        LUMINA_PROFILE_VALUE("Streaming/ResidentMiB", (int64)(ResidentBytesTotal / (1024 * 1024)));
+        LUMINA_PROFILE_VALUE("Streaming/UploadBudgetLeftKiB", (int64)(FrameUploadBudget / Constants::kKiB));
+        LUMINA_PROFILE_VALUE("Streaming/ResidentMiB", (int64)(ResidentBytesTotal / Constants::kMiB));
         LUMINA_PROFILE_VALUE("Streaming/LoadsInFlight", (int64)PendingLoads.size());
-        LUMINA_PROFILE_VALUE("Streaming/LoadStagingKiB", (int64)(PendingLoadBytes / 1024));
+        LUMINA_PROFILE_VALUE("Streaming/LoadStagingKiB", (int64)(PendingLoadBytes / Constants::kKiB));
         LUMINA_PROFILE_VALUE("Streaming/ResidencyChanges", (int64)(PromotedLastFrame + DemotedLastFrame));
     }
 
@@ -496,7 +496,7 @@ namespace Lumina
         {
             LOG_WARN("Texture streaming: {:.1f} MiB still needed against a {:.1f} MiB pool with every "
                      "unpinned texture at its inline tail -- raise Streaming.Texture.PoolSizeMB.",
-                     (double)Total / (1024.0 * 1024.0), (double)Budget / (1024.0 * 1024.0));
+                     (double)Total / double(Constants::kMiB), (double)Budget / double(Constants::kMiB));
         }
     }
 
@@ -586,7 +586,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Texture Streaming");
 
         const int32  MaxInFlight     = Math::Max(Settings().MaxLoadsInFlight, 1);
-        const uint64 MaxStagingBytes = (uint64)Math::Max(Settings().MaxLoadStagingMB, 1) * 1024ull * 1024ull;
+        const uint64 MaxStagingBytes = (uint64)Math::Max(Settings().MaxLoadStagingMB, 1) * Constants::kMiB;
 
         // Sized before the load is built, since building one copies every already-resident mip.
         auto PredictStagingBytes = [](const CTexture* Texture, uint32 TargetFirstMip, uint32 SourceFirstMip, uint32 LayerCount)

@@ -18,6 +18,7 @@
 #include "Assets/AssetTypes/PhysicsAsset/PhysicsAsset.h"
 #include "Renderer/SkeletonResource.h"
 #include "World/Entity/Components/DirtyComponent.h"
+#include "Lumina.h"
 
 namespace Lumina
 {
@@ -439,7 +440,7 @@ namespace Lumina::Physics
 
         struct FBodyRecord
         {
-            uint32 Handle = ~0u;
+            uint32 Handle = Constants::kIndexNoneU32;
             uint64 Revision = 0;
             EPhysicsBodyStatus Status = EPhysicsBodyStatus::Pending;
             FVector3 LastBodyPosition = FVector3(0.0f);

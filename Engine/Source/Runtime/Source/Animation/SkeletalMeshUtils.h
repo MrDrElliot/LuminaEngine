@@ -47,7 +47,7 @@ namespace Lumina::SkeletalUtils
     RUNTIME_API bool GetSocketWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);
 
     // Bone whose origin lies nearest WorldPoint; approximates the hit bone for meshes with a single
-    // physics body (per-bone hits only come from ragdoll bodies). INDEX_NONE without a skeleton.
+    // physics body (per-bone hits only come from ragdoll bodies). Constants::kIndexNone without a skeleton.
     RUNTIME_API int32 FindClosestBone(ECS::FRegistry& Registry, ECS::FEntity Entity, const FVector3& WorldPoint);
 
     // Packs NumBones skinning matrices into the 32-byte GPU layout the skinning shaders read. OutBones is

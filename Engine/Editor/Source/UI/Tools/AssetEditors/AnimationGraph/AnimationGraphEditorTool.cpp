@@ -1161,7 +1161,7 @@ namespace Lumina
         Labels.push_back("Preview");
         Targets.push_back({ nullptr, static_cast<ECS::FEntity>(ECS::NullEntity) });
 
-        int32 CurrentIndex = DebugTargetWorld.IsValid() ? INDEX_NONE : 0;
+        int32 CurrentIndex = DebugTargetWorld.IsValid() ? Constants::kIndexNone : 0;
 
         if (GWorldManager != nullptr && AssetGraph != nullptr)
         {
@@ -1198,7 +1198,7 @@ namespace Lumina
         const int32 Picked = ImGuiX::SearchableCombo("##DebugTarget", CurrentLabel.c_str(), (int32)Labels.size(), CurrentIndex,
             [&Labels](int32 Index) { return FFixedString(Labels[Index].c_str()); });
 
-        if (Picked != INDEX_NONE)
+        if (Picked != Constants::kIndexNone)
         {
             DebugTargetWorld  = Targets[Picked].first;
             DebugTargetEntity = Targets[Picked].second;

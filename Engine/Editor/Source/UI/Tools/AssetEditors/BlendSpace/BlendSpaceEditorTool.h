@@ -103,8 +103,8 @@ namespace Lumina
         float                       PreviewPhase = 0.0f;
         float                       PlayRate = 1.0f;
 
-        int32                       SelectedSample = INDEX_NONE;
-        int32                       DraggedSample = INDEX_NONE;
+        int32                       SelectedSample = Constants::kIndexNone;
+        int32                       DraggedSample = Constants::kIndexNone;
 
         TStrongObjectPtr<CSkeleton> CachedSkeleton;
 

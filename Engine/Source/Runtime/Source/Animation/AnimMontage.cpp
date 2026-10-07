@@ -53,14 +53,14 @@ namespace Lumina
         Instance.State      = EAnimMontageState::BlendingIn;
         Instance.BlendRate  = ResolveBlendRate(Montage->BlendInTime);
 
-        int32 SectionIndex = StartSection.IsNone() ? INDEX_NONE : Montage->FindSectionIndex(StartSection);
-        if (SectionIndex == INDEX_NONE && !Montage->Sections.empty())
+        int32 SectionIndex = StartSection.IsNone() ? Constants::kIndexNone : Montage->FindSectionIndex(StartSection);
+        if (SectionIndex == Constants::kIndexNone && !Montage->Sections.empty())
         {
             SectionIndex = Montage->FindSectionAtTime(0.0f);
         }
 
         Instance.CurrentSection = SectionIndex;
-        Instance.Position       = (SectionIndex != INDEX_NONE) ? Montage->Sections[SectionIndex].StartTime : 0.0f;
+        Instance.Position       = (SectionIndex != Constants::kIndexNone) ? Montage->Sections[SectionIndex].StartTime : 0.0f;
         Instance.PrevPosition   = Instance.Position;
 
         return Instance.InstanceID;
@@ -114,7 +114,7 @@ namespace Lumina
         }
 
         const int32 SectionIndex = Instance->Montage->FindSectionIndex(SectionName);
-        if (SectionIndex == INDEX_NONE)
+        if (SectionIndex == Constants::kIndexNone)
         {
             return false;
         }
@@ -142,7 +142,7 @@ namespace Lumina
             return false;
         }
 
-        if (!SectionName.IsNone() && Instance->Montage->FindSectionIndex(SectionName) == INDEX_NONE)
+        if (!SectionName.IsNone() && Instance->Montage->FindSectionIndex(SectionName) == Constants::kIndexNone)
         {
             return false;
         }
@@ -295,8 +295,8 @@ namespace Lumina
                 Next = Montage->Sections[Instance.CurrentSection].NextSection;
             }
 
-            const int32 NextIndex = Next.IsNone() ? INDEX_NONE : Montage->FindSectionIndex(Next);
-            if (NextIndex != INDEX_NONE)
+            const int32 NextIndex = Next.IsNone() ? Constants::kIndexNone : Montage->FindSectionIndex(Next);
+            if (NextIndex != Constants::kIndexNone)
             {
                 // Fire only up to the seam; the overshoot belongs to the section being entered.
                 const float Overshoot = Instance.Position - SectionEnd;

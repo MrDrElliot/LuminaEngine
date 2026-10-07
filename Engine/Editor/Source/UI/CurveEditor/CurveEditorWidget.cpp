@@ -371,7 +371,7 @@ namespace Lumina
             Selected = Remap[Selected];
         }
 
-        if (TangentDragKey != INDEX_NONE)
+        if (TangentDragKey != Constants::kIndexNone)
         {
             TangentDragKey = Remap[TangentDragKey];
         }
@@ -601,8 +601,8 @@ namespace Lumina
         ImGui::SameLine();
 
         // Numeric editing of the last-selected key.
-        const int32 ActiveKey = bHasSelection ? Selection.back() : INDEX_NONE;
-        if (ActiveKey != INDEX_NONE && ActiveKey < Curve->NumKeys())
+        const int32 ActiveKey = bHasSelection ? Selection.back() : Constants::kIndexNone;
+        if (ActiveKey != Constants::kIndexNone && ActiveKey < Curve->NumKeys())
         {
             SCurveKey& Key = Curve->Keys[ActiveKey];
 
@@ -819,8 +819,8 @@ namespace Lumina
 
     void FCurveEditorWidget::UpdateHover()
     {
-        HoveredKey = INDEX_NONE;
-        HoveredTangentKey = INDEX_NONE;
+        HoveredKey = Constants::kIndexNone;
+        HoveredTangentKey = Constants::kIndexNone;
 
         if (DragMode != EDragMode::None)
         {
@@ -854,7 +854,7 @@ namespace Lumina
             }
         }
 
-        if (HoveredTangentKey != INDEX_NONE)
+        if (HoveredTangentKey != Constants::kIndexNone)
         {
             return;
         }
@@ -961,7 +961,7 @@ namespace Lumina
         if (DragMode == EDragMode::None && bHovered)
         {
             const bool bPanChord = ImGui::IsMouseClicked(ImGuiMouseButton_Middle)
-                || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && IO.KeyAlt && HoveredTangentKey == INDEX_NONE);
+                || (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && IO.KeyAlt && HoveredTangentKey == Constants::kIndexNone);
 
             if (bPanChord)
             {
@@ -971,7 +971,7 @@ namespace Lumina
             }
             else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
-                if (HoveredTangentKey != INDEX_NONE)
+                if (HoveredTangentKey != Constants::kIndexNone)
                 {
                     DragMode = EDragMode::Tangent;
                     TangentDragKey = HoveredTangentKey;
@@ -984,7 +984,7 @@ namespace Lumina
                         NotifyModified();
                     }
                 }
-                else if (HoveredKey != INDEX_NONE)
+                else if (HoveredKey != Constants::kIndexNone)
                 {
                     if (IO.KeyCtrl)
                     {
@@ -1064,7 +1064,7 @@ namespace Lumina
                 else
                 {
                     DragMode = EDragMode::None;
-                    TangentDragKey = INDEX_NONE;
+                    TangentDragKey = Constants::kIndexNone;
                 }
                 break;
             }
@@ -1101,7 +1101,7 @@ namespace Lumina
         }
 
         // Double-click adds a key; on the curve it lands on the evaluated value.
-        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && HoveredKey == INDEX_NONE && HoveredTangentKey == INDEX_NONE)
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && HoveredKey == Constants::kIndexNone && HoveredTangentKey == Constants::kIndexNone)
         {
             const float Time = MouseCurvePos.x;
             const ImVec2 OnCurve = CurveToScreen(Time, Curve->Evaluate(Time));
@@ -1135,7 +1135,7 @@ namespace Lumina
             return;
         }
 
-        if (ContextKey != INDEX_NONE && ContextKey < Curve->NumKeys())
+        if (ContextKey != Constants::kIndexNone && ContextKey < Curve->NumKeys())
         {
             const SCurveKey& Key = Curve->Keys[ContextKey];
             ImGui::TextDisabled("Key %d - %s", ContextKey, InterpModeLabel(Key.InterpMode));

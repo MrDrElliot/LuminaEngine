@@ -26,7 +26,7 @@ namespace Lumina
     {
         // A wired Blend Space pin supplies the asset at runtime, so a missing static asset is fine there.
         const int32 BlendSpaceObjectReg = ResolveObjectInput(BlendSpacePin, Compiler);
-        const bool bDynamicBlendSpace = BlendSpaceObjectReg != INDEX_NONE;
+        const bool bDynamicBlendSpace = BlendSpaceObjectReg != Constants::kIndexNone;
 
         if (!bDynamicBlendSpace && !BlendSpace.IsValid())
         {

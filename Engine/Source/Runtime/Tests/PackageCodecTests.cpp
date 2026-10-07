@@ -77,7 +77,7 @@ TEST(PackageCodec, AVersionOneDeflateContainerStillReads)
     AppendU32(Container, kChunkMagic);
     AppendU32(Container, 1);
     AppendU64(Container, Payload.size());
-    AppendU32(Container, 4u * 1024 * 1024);
+    AppendU32(Container, uint32(4 * Constants::kMiB));
     AppendU32(Container, 1);
     AppendU32(Container, (uint32)Deflated.size());
     Container.insert(Container.end(), Deflated.begin(), Deflated.end());
@@ -100,7 +100,7 @@ TEST(PackageCodec, AnUnknownCodecIsRefusedRatherThanMisread)
     AppendU32(Container, 2);
     AppendU32(Container, 99);
     AppendU64(Container, 16);
-    AppendU32(Container, 4u * 1024 * 1024);
+    AppendU32(Container, uint32(4 * Constants::kMiB));
     AppendU32(Container, 1);
     AppendU32(Container, 8);
     Container.resize(Container.size() + 8, 0);
@@ -120,7 +120,7 @@ TEST(PackageCodec, AContainerFromAFutureVersionIsRefused)
     AppendU32(Container, kChunkMagic);
     AppendU32(Container, 99);
     AppendU64(Container, 16);
-    AppendU32(Container, 4u * 1024 * 1024);
+    AppendU32(Container, uint32(4 * Constants::kMiB));
     AppendU32(Container, 1);
     AppendU32(Container, 8);
     Container.resize(Container.size() + 8, 0);

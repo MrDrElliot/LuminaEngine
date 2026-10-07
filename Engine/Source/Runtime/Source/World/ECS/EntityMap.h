@@ -2,6 +2,7 @@
 
 #include "Entity.h"
 #include "Containers/Vector.h"
+#include "Lumina.h"
 
 namespace Lumina::ECS
 {
@@ -77,7 +78,7 @@ namespace Lumina::ECS
 
     private:
 
-        static constexpr uint32 InvalidDense = ~0u;
+        static constexpr uint32 InvalidDense = Constants::kIndexNoneU32;
 
         // A real entity never carries the null handle's version, so an empty slot fails the version test.
         NODISCARD FORCEINLINE uint32 FindDense(FEntity Entity) const

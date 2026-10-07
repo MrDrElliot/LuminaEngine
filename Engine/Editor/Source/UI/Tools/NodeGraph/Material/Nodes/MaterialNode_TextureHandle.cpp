@@ -44,7 +44,7 @@ namespace Lumina
                           ? Compiler.BindTextureParameter(ParameterName, Texture.Get(), this)
                           : Compiler.BindTexture(Texture.Get(), this);
 
-        if (Index == INDEX_NONE)
+        if (Index == Constants::kIndexNone)
         {
             // The budget error is already recorded; this only keeps downstream nodes resolvable.
             Compiler.AddRaw("uint " + FullName + " = " + ZeroLiteral(EMaterialInputType::TextureHandle) + ";\n");

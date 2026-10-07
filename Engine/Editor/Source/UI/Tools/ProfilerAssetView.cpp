@@ -11,13 +11,13 @@ namespace Lumina
     {
         void FormatBytes(uint64 Bytes, char* Out, size_t Capacity)
         {
-            if (Bytes >= 1024ull * 1024ull)
+            if (Bytes >= Constants::kMiB)
             {
-                snprintf(Out, Capacity, "%.1f MiB", (double)Bytes / (1024.0 * 1024.0));
+                snprintf(Out, Capacity, "%.1f MiB", (double)Bytes / double(Constants::kMiB));
             }
             else if (Bytes >= 1024ull)
             {
-                snprintf(Out, Capacity, "%.1f KiB", (double)Bytes / 1024.0);
+                snprintf(Out, Capacity, "%.1f KiB", (double)Bytes / double(Constants::kKiB));
             }
             else
             {

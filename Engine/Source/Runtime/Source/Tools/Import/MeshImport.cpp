@@ -34,7 +34,7 @@ namespace Lumina::Import::Mesh
     namespace
     {
         // meshopt_Allocator frees strictly LIFO, asserting blocks[count-1] == ptr, so a bump arena is safe.
-        constexpr size_t kMeshoptArenaSize  = 2u * 1024u * 1024u;
+        constexpr size_t kMeshoptArenaSize  = 2 * Constants::kMiB;
         constexpr size_t kMeshoptAlignment  = 16u;
         constexpr uint64 kMeshoptHeapMarker = ~0ull;
 

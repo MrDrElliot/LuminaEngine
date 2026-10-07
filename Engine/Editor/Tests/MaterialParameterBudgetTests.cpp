@@ -100,7 +100,7 @@ TEST(MaterialParameterBudget, ATexturePastTheBudgetBindsNoSlot)
     }
 
     EXPECT_FALSE(Compiler.HasErrors());
-    EXPECT_EQ(Compiler.BindTextureParameter("OverBudget", nullptr), INDEX_NONE);
+    EXPECT_EQ(Compiler.BindTextureParameter("OverBudget", nullptr), Constants::kIndexNone);
     EXPECT_TRUE(Compiler.HasErrors());
 
     const TVector<FMaterialParameter> Params = ExportedParameters(Compiler);

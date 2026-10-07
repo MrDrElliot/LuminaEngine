@@ -79,7 +79,7 @@ namespace Lumina
             float* Moved = KeyTime(Track, Index);
             if (Moved == nullptr)
             {
-                return INDEX_NONE;
+                return Constants::kIndexNone;
             }
             const float Time = *Moved;
 
@@ -311,7 +311,7 @@ namespace Lumina
         if (Selected == ECS::NullEntity || !Sequence.IsValid())
         {
             ImGuiX::Notifications::NotifyWarning("Select an entity in the world to bind it.");
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         FName EntityName = "Entity";
@@ -321,7 +321,7 @@ namespace Lumina
         }
 
         const int32 Existing = Algo::IndexOf(Sequence->Bindings, EntityName, &SSequenceBinding::Name);
-        if (Existing != INDEX_NONE)
+        if (Existing != Constants::kIndexNone)
         {
             return Existing;
         }
@@ -589,7 +589,7 @@ namespace Lumina
 
     void FSequencerEditMode::AddCameraCutAtPlayhead(CWorld* World)
     {
-        if (!Sequence.IsValid() || SelectedBinding == INDEX_NONE)
+        if (!Sequence.IsValid() || SelectedBinding == Constants::kIndexNone)
         {
             ImGuiX::Notifications::NotifyWarning("Select the binding holding the camera you want to cut to.");
             return;
@@ -700,7 +700,7 @@ namespace Lumina
         const ImVec2 MousePos = ImGui::GetMousePos();
         constexpr float EdgeGrab = 5.0f;
 
-        int32 PendingRemoval = INDEX_NONE;
+        int32 PendingRemoval = Constants::kIndexNone;
 
         for (int32 i = 0; i < (int32)Track->Cuts.size(); ++i)
         {
@@ -725,7 +725,7 @@ namespace Lumina
 
             const bool bHovered = ImGui::IsMouseHoveringRect(ClipMin, ClipMax);
 
-            if (DraggingCut == INDEX_NONE && bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            if (DraggingCut == Constants::kIndexNone && bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 SelectedCut = i;
                 DraggingCut = i;
@@ -743,11 +743,11 @@ namespace Lumina
             }
         }
 
-        if (DraggingCut != INDEX_NONE)
+        if (DraggingCut != Constants::kIndexNone)
         {
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || DraggingCut >= (int32)Track->Cuts.size())
             {
-                DraggingCut = INDEX_NONE;
+                DraggingCut = Constants::kIndexNone;
             }
             else
             {
@@ -779,11 +779,11 @@ namespace Lumina
         }
 
         // Deferred, since erasing mid-iteration invalidates the loop above.
-        if (PendingRemoval != INDEX_NONE)
+        if (PendingRemoval != Constants::kIndexNone)
         {
             Track->Cuts.erase(Track->Cuts.begin() + PendingRemoval);
-            SelectedCut = INDEX_NONE;
-            DraggingCut = INDEX_NONE;
+            SelectedCut = Constants::kIndexNone;
+            DraggingCut = Constants::kIndexNone;
             Sequence->GetPackage()->MarkDirty();
         }
 
@@ -921,16 +921,16 @@ namespace Lumina
         DrawDetails(World);
 
         // The request comes from a popup, and the row loop above iterates the arrays this resizes.
-        if (PendingRemoveBinding != INDEX_NONE)
+        if (PendingRemoveBinding != Constants::kIndexNone)
         {
             RemoveBinding(World, PendingRemoveBinding);
-            PendingRemoveBinding = INDEX_NONE;
+            PendingRemoveBinding = Constants::kIndexNone;
         }
 
-        if (PendingRemoveTrack != INDEX_NONE)
+        if (PendingRemoveTrack != Constants::kIndexNone)
         {
             RemoveTrack(World, PendingRemoveTrack);
-            PendingRemoveTrack = INDEX_NONE;
+            PendingRemoveTrack = Constants::kIndexNone;
         }
 
         ImGui::End();
@@ -1237,7 +1237,7 @@ namespace Lumina
             {
                 if (LookAt->TargetBindingIndex == BindingIndex)
                 {
-                    LookAt->TargetBindingIndex = INDEX_NONE;
+                    LookAt->TargetBindingIndex = Constants::kIndexNone;
                 }
                 else if (LookAt->TargetBindingIndex > BindingIndex)
                 {
@@ -1275,11 +1275,11 @@ namespace Lumina
         Sequence->Bindings.erase(Sequence->Bindings.begin() + BindingIndex);
         Sequence->GetPackage()->MarkDirty();
 
-        SelectedBinding = INDEX_NONE;
-        SelectedKeyBinding = INDEX_NONE;
-        SelectedCut = INDEX_NONE;
-        SelectedTrack = INDEX_NONE;
-        SelectedTrackKey = INDEX_NONE;
+        SelectedBinding = Constants::kIndexNone;
+        SelectedKeyBinding = Constants::kIndexNone;
+        SelectedCut = Constants::kIndexNone;
+        SelectedTrack = Constants::kIndexNone;
+        SelectedTrackKey = Constants::kIndexNone;
 
         BindToWorld(World);
     }
@@ -1293,7 +1293,7 @@ namespace Lumina
         ImGuiX::TextTooltip("Add the selected world entity as a possessed binding.");
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(SelectedBinding == INDEX_NONE);
+        ImGui::BeginDisabled(SelectedBinding == Constants::kIndexNone);
         if (ImGui::Button(LE_ICON_KEY " Key Transform"))
         {
             KeyTransform(World, SelectedBinding);
@@ -1302,7 +1302,7 @@ namespace Lumina
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(SelectedBinding == INDEX_NONE);
+        ImGui::BeginDisabled(SelectedBinding == Constants::kIndexNone);
         if (ImGui::Button(LE_ICON_MOVIE_OPEN " Add Camera Cut"))
         {
             AddCameraCutAtPlayhead(World);
@@ -1318,7 +1318,7 @@ namespace Lumina
         ImGuiX::TextTooltip("Add a cinematic camera where the editor camera is, keyed at the playhead and cut to from here.");
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(SelectedBinding == INDEX_NONE);
+        ImGui::BeginDisabled(SelectedBinding == Constants::kIndexNone);
         if (ImGui::Button(LE_ICON_CAMERA_IRIS " Key From View"))
         {
             KeyFromView(World, SelectedBinding);
@@ -1365,7 +1365,7 @@ namespace Lumina
         const float TrackLeft = Origin.x + SequencerLabelWidth;
 
         // Each binding's row is followed by its other tracks, then the tracks that act on the whole sequence.
-        struct FTimelineRow { int32 Binding = INDEX_NONE; int32 Track = INDEX_NONE; };
+        struct FTimelineRow { int32 Binding = Constants::kIndexNone; int32 Track = Constants::kIndexNone; };
         TVector<FTimelineRow> Rows;
         const auto IsRowTrack = [](const CSequenceTrack* Track)
         {
@@ -1373,7 +1373,7 @@ namespace Lumina
         };
         for (int32 BindingIndex = 0; BindingIndex < (int32)Sequence->Bindings.size(); ++BindingIndex)
         {
-            Rows.push_back({ BindingIndex, INDEX_NONE });
+            Rows.push_back({ BindingIndex, Constants::kIndexNone });
             for (int32 TrackIndex = 0; TrackIndex < (int32)Sequence->Tracks.size(); ++TrackIndex)
             {
                 const CSequenceTrack* Track = Sequence->Tracks[TrackIndex].Get();
@@ -1388,7 +1388,7 @@ namespace Lumina
             const CSequenceTrack* Track = Sequence->Tracks[TrackIndex].Get();
             if (IsRowTrack(Track) && (Track->BindingIndex < 0 || Track->BindingIndex >= (int32)Sequence->Bindings.size()))
             {
-                Rows.push_back({ INDEX_NONE, TrackIndex });
+                Rows.push_back({ Constants::kIndexNone, TrackIndex });
             }
         }
 
@@ -1445,7 +1445,7 @@ namespace Lumina
         for (int32 RowIndex = 0; RowIndex < (int32)Rows.size(); ++RowIndex)
         {
             const float RowY = BodyTop + CutRowHeight + (float)RowIndex * SequencerTrackHeight;
-            if (Rows[RowIndex].Track != INDEX_NONE)
+            if (Rows[RowIndex].Track != Constants::kIndexNone)
             {
                 DrawTrackRow(World, DrawList, Rows[RowIndex].Track, RowIndex, RowY, Origin.x, PanelWidth, TrackLeft, TrackWidth, bTimelineHovered);
                 continue;
@@ -1476,8 +1476,8 @@ namespace Lumina
             if (bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 SelectedBinding = i;
-                SelectedTrack = INDEX_NONE;
-                SelectedTrackKey = INDEX_NONE;
+                SelectedTrack = Constants::kIndexNone;
+                SelectedTrackKey = Constants::kIndexNone;
             }
 
             if (bOnLabel && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
@@ -1607,7 +1607,7 @@ namespace Lumina
         if (bDraggingTrackKey)
         {
             CSequenceTrack* Track = SelectedTrack >= 0 && SelectedTrack < (int32)Sequence->Tracks.size() ? Sequence->Tracks[SelectedTrack].Get() : nullptr;
-            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || Track == nullptr || SelectedTrackKey == INDEX_NONE)
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || Track == nullptr || SelectedTrackKey == Constants::kIndexNone)
             {
                 bDraggingTrackKey = false;
             }
@@ -1629,7 +1629,7 @@ namespace Lumina
 
         if (ImGui::BeginPopup("##BindingContext"))
         {
-            ImGui::BeginDisabled(SelectedBinding == INDEX_NONE);
+            ImGui::BeginDisabled(SelectedBinding == Constants::kIndexNone);
 
             if (ImGui::MenuItem(LE_ICON_KEY " Key Transform"))
             {
@@ -1688,13 +1688,13 @@ namespace Lumina
                     EvaluateAt(World, PlayTime, true);
                 }
 
-                SelectedKeyBinding = INDEX_NONE;
+                SelectedKeyBinding = Constants::kIndexNone;
             }
             ImGui::EndPopup();
         }
 
         // Delete removes the selected key, matching the context menu without needing the right-click.
-        if (SelectedKeyBinding != INDEX_NONE && !bDraggingKey && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        if (SelectedKeyBinding != Constants::kIndexNone && !bDraggingKey && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
         {
             if (CSequenceTrack_Transform* Track = FindTransformTrack(SelectedKeyBinding))
             {
@@ -1703,7 +1703,7 @@ namespace Lumina
                 EvaluateAt(World, PlayTime, true);
             }
 
-            SelectedKeyBinding = INDEX_NONE;
+            SelectedKeyBinding = Constants::kIndexNone;
         }
 
         // Click or drag anywhere on the ruler to scrub, which is where the hand goes for it.
@@ -1735,7 +1735,7 @@ namespace Lumina
         const ImU32 TintFaint = ImGui::ColorConvertFloat4ToU32(ImVec4(Tint.x, Tint.y, Tint.z, 0.28f * Alpha));
 
         // Indented under its binding, so the row reads as belonging to the entity above it.
-        const float Indent = Track->BindingIndex != INDEX_NONE ? 24.0f : 10.0f;
+        const float Indent = Track->BindingIndex != Constants::kIndexNone ? 24.0f : 10.0f;
         DrawList->AddRectFilled(ImVec2(Left + Indent - 7.0f, RowY + 6.0f), ImVec2(Left + Indent - 3.0f, RowMax.y - 6.0f), TintColor, 1.0f);
 
         const FString Label = SequencerTracks::RowLabel(Track);
@@ -1747,8 +1747,8 @@ namespace Lumina
         if (bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !bDraggingTrackKey)
         {
             SelectedTrack = TrackIndex;
-            SelectedTrackKey = INDEX_NONE;
-            SelectedKeyBinding = INDEX_NONE;
+            SelectedTrackKey = Constants::kIndexNone;
+            SelectedKeyBinding = Constants::kIndexNone;
         }
         if (bOnLabel && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
         {
@@ -1915,19 +1915,19 @@ namespace Lumina
             if (ImGui::MenuItem(LE_ICON_DELETE " Delete Key") && Track != nullptr)
             {
                 SequencerTracks::RemoveKey(Track, SelectedTrackKey);
-                SelectedTrackKey = INDEX_NONE;
+                SelectedTrackKey = Constants::kIndexNone;
                 Sequence->GetPackage()->MarkDirty();
                 EvaluateAt(World, PlayTime, true);
             }
             ImGui::EndPopup();
         }
 
-        if (Track != nullptr && SelectedTrackKey != INDEX_NONE && !bDraggingTrackKey
+        if (Track != nullptr && SelectedTrackKey != Constants::kIndexNone && !bDraggingTrackKey
             && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput
             && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
         {
             SequencerTracks::RemoveKey(Track, SelectedTrackKey);
-            SelectedTrackKey = INDEX_NONE;
+            SelectedTrackKey = Constants::kIndexNone;
             Sequence->GetPackage()->MarkDirty();
             EvaluateAt(World, PlayTime, true);
         }
@@ -2044,10 +2044,10 @@ namespace Lumina
 
         for (const FTrackChoice& Choice : Choices)
         {
-            const bool bDisabled = Choice.bNeedsBinding && SelectedBinding == INDEX_NONE;
+            const bool bDisabled = Choice.bNeedsBinding && SelectedBinding == Constants::kIndexNone;
             if (ImGui::MenuItem(Choice.Label, nullptr, false, !bDisabled))
             {
-                AddTrackOfClass(World, Choice.Class, Choice.bNeedsBinding ? SelectedBinding : INDEX_NONE);
+                AddTrackOfClass(World, Choice.Class, Choice.bNeedsBinding ? SelectedBinding : Constants::kIndexNone);
             }
             ImGuiX::TextTooltip("{}", bDisabled ? "Select a binding first." : Choice.Tooltip);
         }
@@ -2085,7 +2085,7 @@ namespace Lumina
 
         Sequence->Tracks.push_back(Track);
         SelectedTrack = (int32)Sequence->Tracks.size() - 1;
-        SelectedTrackKey = INDEX_NONE;
+        SelectedTrackKey = Constants::kIndexNone;
         Sequence->GetPackage()->MarkDirty();
 
         if (SequencerTracks::Curve(Track) != nullptr)
@@ -2136,8 +2136,8 @@ namespace Lumina
         ReleaseBindings(World);
         Sequence->Tracks.erase(Sequence->Tracks.begin() + TrackIndex);
         Sequence->GetPackage()->MarkDirty();
-        SelectedTrack = INDEX_NONE;
-        SelectedTrackKey = INDEX_NONE;
+        SelectedTrack = Constants::kIndexNone;
+        SelectedTrackKey = Constants::kIndexNone;
         BindToWorld(World);
         EvaluateAt(World, PlayTime, true);
     }
@@ -2210,7 +2210,7 @@ namespace Lumina
         {
             Name = FName(Lumina::Format("Camera{}", Number++).c_str());
         }
-        while (Algo::IndexOf(Sequence->Bindings, Name, &SSequenceBinding::Name) != INDEX_NONE);
+        while (Algo::IndexOf(Sequence->Bindings, Name, &SSequenceBinding::Name) != Constants::kIndexNone);
 
         SSequenceBinding& Binding = Sequence->Bindings.emplace_back();
         Binding.Name = Name;

@@ -11,6 +11,6 @@ namespace Lumina
                 return i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 }

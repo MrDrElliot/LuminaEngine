@@ -17,6 +17,7 @@
 #include "Renderer/RHICore.h"
 #include "World/Scene/RenderScene/EnvironmentRenderTypes.h"
 #include "Shared/SharedConstants.h"
+#include "Lumina.h"
 
 #define SCENE_MAX_BOUNDS UINT64_MAX
 
@@ -79,9 +80,9 @@ namespace Lumina
     template<typename T>
     using TRenderVector = TFixedVector<T, 100>;
 
-    constexpr uint32 INVALID_MESH_RESOLVE_HANDLE = ~0u;
+    constexpr uint32 INVALID_MESH_RESOLVE_HANDLE = Constants::kIndexNoneU32;
 
-    constexpr uint32 MESH_RESOLVE_STATE_STALE   = ~0u;  // never resolved, or invalidated since
+    constexpr uint32 MESH_RESOLVE_STATE_STALE   = Constants::kIndexNoneU32;  // never resolved, or invalidated since
     constexpr uint32 MESH_RESOLVE_STATE_NO_MESH = 0u;   // settled: there is nothing to resolve
 
     constexpr uint32 MAX_MESHLETS_PER_SURFACE_LOD = (1u << MESHLET_DRAW_INDEX_BITS);
@@ -92,7 +93,7 @@ namespace Lumina
     // FGPUInstance::RetainedSlot for an instance the CPU feeds directly (skinned), which has no retained
     // slot to key a persistent two-phase visibility flag off. Always out of range, so it reads as
     // "not visible last frame" and the late phase draws it.
-    constexpr uint32 kNoRetainedSlot = 0xFFFFFFFFu;
+    constexpr uint32 kNoRetainedSlot = Constants::kIndexNoneU32;
 
     // Mutually-exclusive debug viz; values must match DEBUG_MODE_* in Common.slang.
     enum class ERenderSceneDebugFlags : uint8
@@ -379,7 +380,7 @@ namespace Lumina
             RHI::SetDebugName(ShadowAtlas.Texture, "Scene.ShadowAtlas");
         }
 
-        // Quantizes up to next pow2 and clamps to [Min,Max]. Returns INDEX_NONE if full.
+        // Quantizes up to next pow2 and clamps to [Min,Max]. Returns Constants::kIndexNone if full.
         int32 AllocateTile(uint32 DesiredPixels)
         {
             FScopeLock Lock(AllocMutex);
@@ -415,7 +416,7 @@ namespace Lumina
                     return Handle;
                 }
             }
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         // Reseeds top-level free list with a grid of MaxTileResolution roots.
@@ -509,7 +510,7 @@ namespace Lumina
         FVector2        Angles;
 
         ELightFlags     Flags;
-        int32           ShadowDataIndex;    // INDEX_NONE if no shadow
+        int32           ShadowDataIndex;    // Constants::kIndexNone if no shadow
 
         float           VolumetricIntensity;
         float           VolumetricScatteringRadius;   // soft-core source radius (fraction of Radius) for spot/point fog
@@ -589,7 +590,7 @@ namespace Lumina
     // Tuning reaches the GTAO passes through their own push constants, so only the result lands here.
     struct FGTAOSettings
     {
-        uint32 AOTextureIndex = ~0u;
+        uint32 AOTextureIndex = Constants::kIndexNoneU32;
         uint32 _Pad0 = 0;
         uint32 _Pad1 = 0;
         uint32 _Pad2 = 0;
@@ -986,12 +987,12 @@ namespace Lumina
     static_assert(sizeof(FPreSkinnedVertex) % 16 == 0, "FPreSkinnedVertex stride must stay 16-byte aligned for loadAligned<16>");
 
 
-    constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
+    constexpr uint32 kNoPreSkinBase = Constants::kIndexNoneU32;
     // No per-frame skinned meshlet bounds, so the cull falls back to bind-pose spheres and distrusts them.
-    constexpr uint32 kNoSkinnedBounds = 0xFFFFFFFFu;
+    constexpr uint32 kNoSkinnedBounds = Constants::kIndexNoneU32;
 
     // No slice in the per-frame bone arena; the blend falls back to identity rather than reading garbage.
-    constexpr uint32 kNoBoneSlice = 0xFFFFFFFFu;
+    constexpr uint32 kNoBoneSlice = Constants::kIndexNoneU32;
 
     /** Per-frame data for one skinned instance slot*/
     struct FSkinnedFrameData
@@ -1153,7 +1154,7 @@ namespace Lumina
     static constexpr uint32 PARTICLE_SIM_FLAG_LOCAL_SPACE   = 1u << 2;
 
     // Sentinel for "consumes no event list", must match ParticleSimCommon.slang.
-    static constexpr uint32 PARTICLE_NO_EVENT_LIST = ~0u;
+    static constexpr uint32 PARTICLE_NO_EVENT_LIST = Constants::kIndexNoneU32;
 
     // Above the EParticleBlendMode byte of the sprite pass RenderFlags, must match ParticleSpriteCommon.slang.
     static constexpr uint32 PARTICLE_RENDER_FLAG_LIT = 1u << 8;
@@ -1316,17 +1317,17 @@ namespace Lumina
         uint32          TemporalPhase     = 0;
 
         // Opaque scene depth, for the screen-space traces that run after the depth pass.
-        uint32          SceneDepthIndex   = ~0u;
+        uint32          SceneDepthIndex   = Constants::kIndexNoneU32;
         // This view's decal layers, ~0u when no decal rendered, so every opaque pass composites them.
-        uint32          DBufferAIndex     = ~0u;
-        uint32          DBufferBIndex     = ~0u;
-        uint32          DBufferCIndex     = ~0u;
+        uint32          DBufferAIndex     = Constants::kIndexNoneU32;
+        uint32          DBufferBIndex     = Constants::kIndexNoneU32;
+        uint32          DBufferCIndex     = Constants::kIndexNoneU32;
         uint32          _PadFogParams[3]  = {};
 
         // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
         FExponentialHeightFogParams FogParams = {};
 
-        uint32          FogIntegratedIndex   = ~0u;
+        uint32          FogIntegratedIndex   = Constants::kIndexNoneU32;
         uint32          FogGridZ             = 0;
         float           FogNearPlane         = 0.05f;
         float           FogRange             = 200.0f;
@@ -1334,12 +1335,12 @@ namespace Lumina
         uint32          bFogEnabled          = 0;
         uint32          FogFarShaftSteps     = 0;
         float           FogFarShaftDistance  = 4000.0f;
-        uint32          FogCloudShadowIndex  = ~0u;
+        uint32          FogCloudShadowIndex  = Constants::kIndexNoneU32;
 
         FVector2        FogCloudShadowCenter = FVector2(0.0f, 0.0f);
         float           FogCloudShadowExtent = 0.0f;
         // The additive emission layer decals write, ~0u when no decal rendered.
-        uint32          DBufferDIndex        = ~0u;
+        uint32          DBufferDIndex        = Constants::kIndexNoneU32;
     };
     // alignas(16) here but 4-byte aligned in scalar layout, so C++ must not pad in front of it, which the 16 check alone cannot see.
     static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0 &&

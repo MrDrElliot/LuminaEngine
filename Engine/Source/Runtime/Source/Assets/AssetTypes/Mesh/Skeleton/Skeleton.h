@@ -32,7 +32,7 @@ namespace Lumina
 
         const FMeshSocket* FindSocket(const FName& SocketName) const { return FindSocketByName(Sockets, SocketName); }
 
-        /** Bone index the named socket rides on; INDEX_NONE when the socket or its bone doesn't exist. */
+        /** Bone index the named socket rides on; Constants::kIndexNone when the socket or its bone doesn't exist. */
         int32 FindSocketBoneIndex(const FName& SocketName) const;
 
         PROPERTY(Editable, Category = "Preview")

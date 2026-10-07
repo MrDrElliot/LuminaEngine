@@ -190,7 +190,7 @@ namespace Lumina
                           const TVector<TStrongObjectPtr<CTexture>>& Textures,
                           const TVector<TStrongObjectPtr<CMaterialParameterCollection>>& Collections);
 
-        // Claims one of the material's collection binding slots, or INDEX_NONE past the budget.
+        // Claims one of the material's collection binding slots, or Constants::kIndexNone past the budget.
         int32 BindParameterCollection(CMaterialParameterCollection* Collection, CEdGraphNode* Node);
 
         // Emits a read of one collection parameter, or its neutral value when the name is unknown.

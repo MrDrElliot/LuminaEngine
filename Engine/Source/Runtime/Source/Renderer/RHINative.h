@@ -3,6 +3,7 @@
 #include "ModuleAPI.h"
 #include "Containers/Vector.h"
 #include "RHI.h"
+#include "Lumina.h"
 
 namespace Lumina::RHI::Native
 {
@@ -13,7 +14,7 @@ namespace Lumina::RHI::Native
         void*    PhysicalDevice      = nullptr;   // Vulkan: VkPhysicalDevice
         void*    Device              = nullptr;   // Vulkan: VkDevice
         void*    GraphicsQueue       = nullptr;   // Vulkan: VkQueue (graphics family)
-        uint32   GraphicsQueueFamily = ~0u;
+        uint32   GraphicsQueueFamily = Constants::kIndexNoneU32;
         void*    GetInstanceProcAddr = nullptr;   // Vulkan: PFN_vkGetInstanceProcAddr
         void*    GetDeviceProcAddr   = nullptr;   // Vulkan: PFN_vkGetDeviceProcAddr
         uint32   ApiVersion          = 0;         // Vulkan: VK_API_VERSION_*

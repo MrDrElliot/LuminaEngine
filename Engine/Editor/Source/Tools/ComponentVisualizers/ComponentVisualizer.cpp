@@ -1603,15 +1603,15 @@ namespace Lumina
         if (Selected >= NumPoints * kSplineHandleKinds)
         {
             Context.ClearSubElementSelection();
-            Selected = INDEX_NONE;
+            Selected = Constants::kIndexNone;
         }
 
-        const int32 SelectedPoint = (Selected >= 0) ? (Selected / kSplineHandleKinds) : INDEX_NONE;
+        const int32 SelectedPoint = (Selected >= 0) ? (Selected / kSplineHandleKinds) : Constants::kIndexNone;
         const ESplineHandle SelectedHandle = (Selected >= 0) ? (ESplineHandle)(Selected % kSplineHandleKinds) : ESplineHandle::Point;
 
         if (NumPoints == 0)
         {
-            DrawPointPanel(Context, Spline, Transform.GetWorldLocationCached(), INDEX_NONE);
+            DrawPointPanel(Context, Spline, Transform.GetWorldLocationCached(), Constants::kIndexNone);
             return;
         }
 
@@ -1725,7 +1725,7 @@ namespace Lumina
             }
         }
 
-        if (SelectedPoint == INDEX_NONE)
+        if (SelectedPoint == Constants::kIndexNone)
         {
             return;
         }

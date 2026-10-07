@@ -2,6 +2,7 @@
 
 #include "Vector.h"
 #include "Core/Math/Math.h"
+#include "Lumina.h"
 
 namespace Lumina
 {
@@ -32,7 +33,7 @@ namespace Lumina
     {
     public:
 
-        static constexpr uint32 kInvalidHandle = ~0u;
+        static constexpr uint32 kInvalidHandle = Constants::kIndexNoneU32;
 
         FHandleAllocator() = default;
         explicit FHandleAllocator(uint32 InCapacity) { Reset(InCapacity); }

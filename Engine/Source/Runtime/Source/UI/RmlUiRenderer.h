@@ -8,6 +8,7 @@
 #include "Core/Delegates/Delegate.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHITexture.h"
+#include "Lumina.h"
 
 #include <atomic>
 
@@ -89,7 +90,7 @@ namespace Lumina
     private:
         // Count in the low 8 bits, first PendingClipMasks index above them. Zero means unclipped.
         static constexpr uint32 kMaxClipMasksPerDraw = 8;
-        static constexpr uint32 kNoLayer    = 0xFFFFFFFFu;
+        static constexpr uint32 kNoLayer    = Constants::kIndexNoneU32;
 
         // CPU bytes cached per element, concatenated at EndFrame into the target's resident vertex and index buffers.
         struct FGeometry
@@ -363,7 +364,7 @@ namespace Lumina
 
         // Resource lifetimes measure against this, not FrameCounter, which ticks once per UI target.
         uint64                      EngineFrameCounter = 0;
-        uint32                      LastRenderFrameSlot = 0xFFFFFFFFu;
+        uint32                      LastRenderFrameSlot = Constants::kIndexNoneU32;
 
         TVector<FPendingTexture>    PendingTextureUploads;
         TVector<FDrawCall>          DrawCalls;

@@ -22,7 +22,7 @@ namespace Lumina::MCP
         {
             CDataTable* Table    = nullptr;
             CStruct*    RowType  = nullptr;
-            int32       Index    = INDEX_NONE;
+            int32       Index    = Constants::kIndexNone;
             void*       Memory   = nullptr;
         };
 
@@ -59,7 +59,7 @@ namespace Lumina::MCP
             }
 
             Out.Index = Out.Table->FindRowIndex(FName(RowName));
-            if (Out.Index == INDEX_NONE)
+            if (Out.Index == Constants::kIndexNone)
             {
                 OutError = Lumina::Format("No row named '{}'. Rows: {}.", RowName, RowNameHint(Out.Table));
                 return false;
@@ -236,8 +236,8 @@ namespace Lumina::MCP
                     }
 
                     // Checked before the row exists, so a bad copy source leaves the table untouched.
-                    const int32 SourceIndex = In.CopyFrom.empty() ? INDEX_NONE : Table->FindRowIndex(FName(In.CopyFrom));
-                    if (!In.CopyFrom.empty() && SourceIndex == INDEX_NONE)
+                    const int32 SourceIndex = In.CopyFrom.empty() ? Constants::kIndexNone : Table->FindRowIndex(FName(In.CopyFrom));
+                    if (!In.CopyFrom.empty() && SourceIndex == Constants::kIndexNone)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No row named '{}' to copy from. Rows: {}.",
                             In.CopyFrom, RowNameHint(Table)));
@@ -255,7 +255,7 @@ namespace Lumina::MCP
 
                     const FName Name = Table->MakeUniqueRowName(In.Name.empty() ? FName("NewRow") : FName(In.Name));
                     Out.Index = Table->AddRow(Name);
-                    if (Out.Index == INDEX_NONE)
+                    if (Out.Index == Constants::kIndexNone)
                     {
                         return Agent::FToolResult::Error(Lumina::Format(
                             "The row could not be added, since {} does not derive from SDataTableRowBase.", RowType->GetName().ToString()));
@@ -264,7 +264,7 @@ namespace Lumina::MCP
                     Out.Row = FString(Name.ToString().c_str());
                     void* Memory = Table->Rows[Out.Index].Value.GetMutableMemory();
 
-                    if (SourceIndex != INDEX_NONE)
+                    if (SourceIndex != Constants::kIndexNone)
                     {
                         RowType->CopyStruct(Memory, Table->Rows[SourceIndex].Value.GetMemory());
                     }

@@ -7,9 +7,6 @@
 
 namespace Lumina
 {
-    /** What the VectorFindIndex family returns when the value is not there. */
-    inline constexpr int32 kInvalidVectorIndex = -1;
-
     template<typename T>
     concept ContiguousContainer = requires(const T & t)
     {
@@ -148,7 +145,7 @@ namespace Lumina
         auto iter = Algo::Find( vector, value );
         if ( iter == vector.end() )
         {
-            return kInvalidVectorIndex;
+            return Constants::kIndexNone;
         }
         else
         {
@@ -162,7 +159,7 @@ namespace Lumina
         auto iter = Algo::Find( vector, value, predicate );
         if ( iter == vector.end() )
         {
-            return kInvalidVectorIndex;
+            return Constants::kIndexNone;
         }
         else
         {

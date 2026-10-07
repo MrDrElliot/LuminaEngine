@@ -172,7 +172,7 @@ namespace Lumina
         const ImVec2 Mouse  = ImGui::GetIO().MousePos;
 
         const FGPUProfileScope* Hovered = nullptr;
-        int32 HoveredIndex = INDEX_NONE;
+        int32 HoveredIndex = Constants::kIndexNone;
 
         for (int32 Index = 0; Index < (int32)GPUFrame.Scopes.size(); ++Index)
         {
@@ -233,7 +233,7 @@ namespace Lumina
 
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
-                SelectedScope = (SelectedScope == HoveredIndex) ? INDEX_NONE : HoveredIndex;
+                SelectedScope = (SelectedScope == HoveredIndex) ? Constants::kIndexNone : HoveredIndex;
             }
         }
 

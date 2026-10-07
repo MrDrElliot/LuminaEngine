@@ -10,7 +10,7 @@ namespace Lumina::SharedPtrDetail
         // Striped so unrelated pointers rarely collide, and padded so two slots never share a line.
         constexpr size_t kSlotCount = 64;
 
-        struct alignas(Threading::kCacheLineSize) FSlot
+        struct alignas(Constants::kCacheLineSize) FSlot
         {
             TAtomic<uint32> Taken{ 0 };
         };

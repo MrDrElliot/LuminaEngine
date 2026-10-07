@@ -50,7 +50,7 @@ namespace Lumina
 
         void* Find(const CObjectBase* Object) const
         {
-            if (Object == nullptr || Object->ManagedInstanceSlot == INDEX_NONE)
+            if (Object == nullptr || Object->ManagedInstanceSlot == Constants::kIndexNone)
             {
                 return nullptr;
             }
@@ -73,7 +73,7 @@ namespace Lumina
 
         void* FindScriptTwin(const CObjectBase* Object) const
         {
-            if (Object == nullptr || Object->ManagedInstanceSlot == INDEX_NONE)
+            if (Object == nullptr || Object->ManagedInstanceSlot == Constants::kIndexNone)
             {
                 return nullptr;
             }
@@ -90,7 +90,7 @@ namespace Lumina
 
         bool IsScriptTwin(const CObjectBase* Object) const
         {
-            if (Object == nullptr || Object->ManagedInstanceSlot == INDEX_NONE)
+            if (Object == nullptr || Object->ManagedInstanceSlot == Constants::kIndexNone)
             {
                 return false;
             }
@@ -129,13 +129,13 @@ namespace Lumina
                 FScopeLock Lock(Mutex);
 
                 const int32 Existing = Object->ManagedInstanceSlot;
-                if (Existing != INDEX_NONE && !IsValidSlot(Existing))
+                if (Existing != Constants::kIndexNone && !IsValidSlot(Existing))
                 {
                     ReportBadSlot("Set", Object, Existing);
-                    Object->ManagedInstanceSlot = INDEX_NONE;
+                    Object->ManagedInstanceSlot = Constants::kIndexNone;
                 }
 
-                if (Object->ManagedInstanceSlot != INDEX_NONE)
+                if (Object->ManagedInstanceSlot != Constants::kIndexNone)
                 {
                     // Replacing an instance (the previous wrapper was collected, or was the wrong type).
                     HandleGeneration.fetch_add(1u, std::memory_order_relaxed);
@@ -158,7 +158,7 @@ namespace Lumina
 
         void Release(CObjectBase* Object)
         {
-            if (Object == nullptr || Object->ManagedInstanceSlot == INDEX_NONE)
+            if (Object == nullptr || Object->ManagedInstanceSlot == Constants::kIndexNone)
             {
                 return;
             }
@@ -170,7 +170,7 @@ namespace Lumina
                 FScopeLock Lock(Mutex);
 
                 const int32 Slot = Object->ManagedInstanceSlot;
-                Object->ManagedInstanceSlot = INDEX_NONE;
+                Object->ManagedInstanceSlot = Constants::kIndexNone;
 
                 // A slot the table never handed out must not reach FreeSlots; it would be reissued as a valid one.
                 if (!IsValidSlot(Slot))
@@ -202,12 +202,12 @@ namespace Lumina
                 Released.reserve(Slots.size());
                 HandleGeneration.fetch_add(1u, std::memory_order_relaxed);
 
-                // Cleared through the back-reference list, so a later Find sees INDEX_NONE, not a recycled slot.
+                // Cleared through the back-reference list, so a later Find sees Constants::kIndexNone, not a recycled slot.
                 for (int32 Slot = 0; Slot < (int32)Slots.size(); ++Slot)
                 {
                     if (Owners[Slot] != nullptr)
                     {
-                        Owners[Slot]->ManagedInstanceSlot = INDEX_NONE;
+                        Owners[Slot]->ManagedInstanceSlot = Constants::kIndexNone;
                         Owners[Slot] = nullptr;
                     }
                     if (Slots[Slot] != nullptr)

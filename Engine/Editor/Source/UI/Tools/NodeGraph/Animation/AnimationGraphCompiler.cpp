@@ -52,7 +52,7 @@ namespace Lumina
     {
         if (Name.IsNone())
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         auto It = CurveNameToIndex.find(Name);
@@ -541,7 +541,7 @@ namespace Lumina
     {
         if (Skeleton == nullptr || BoneName.IsNone())
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
         return Skeleton->FindBoneIndex(BoneName);
     }
@@ -768,7 +768,7 @@ namespace Lumina
     int32 FAnimationGraphCompiler::FindBoneMaskIndex(const FName& Name) const
     {
         auto It = BoneMaskNameToIndex.find(Name);
-        return It == BoneMaskNameToIndex.end() ? INDEX_NONE : It->second;
+        return It == BoneMaskNameToIndex.end() ? Constants::kIndexNone : It->second;
     }
 
     uint16 FAnimationGraphCompiler::AddBoneSubtreeMask(int32 RootBoneIndex, bool bInclusive)

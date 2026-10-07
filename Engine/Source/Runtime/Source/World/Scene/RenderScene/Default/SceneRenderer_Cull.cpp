@@ -640,10 +640,10 @@ namespace Lumina
                 (uint32)CurrentView->Images[(int)ENamedImage::DepthAttachment].GetResourceID();
 
             const bool bDecals = !Frame.Primitives.DecalExtracts.empty();
-            SceneGlobalData.DBufferAIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferA].GetResourceID() : ~0u;
-            SceneGlobalData.DBufferBIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferB].GetResourceID() : ~0u;
-            SceneGlobalData.DBufferCIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferC].GetResourceID() : ~0u;
-            SceneGlobalData.DBufferDIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferD].GetResourceID() : ~0u;
+            SceneGlobalData.DBufferAIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferA].GetResourceID() : Constants::kIndexNoneU32;
+            SceneGlobalData.DBufferBIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferB].GetResourceID() : Constants::kIndexNoneU32;
+            SceneGlobalData.DBufferCIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferC].GetResourceID() : Constants::kIndexNoneU32;
+            SceneGlobalData.DBufferDIndex = bDecals ? (uint32)CurrentView->Images[(int)ENamedImage::DBufferD].GetResourceID() : Constants::kIndexNoneU32;
 
             PublishFogGlobals(SceneGlobalData);
 
@@ -838,8 +838,8 @@ namespace Lumina
         if (!LightData.bHasSun ||
             Frame.SceneGlobalData.CullData.bShadowOcclusionCull == 0u ||
             Frame.Geometry.DrawCommands.empty() ||
-            Frame.Lighting.Lights[0].ShadowDataIndex == INDEX_NONE ||
-            Frame.Views.CascadeViewBase == ~0u)
+            Frame.Lighting.Lights[0].ShadowDataIndex == Constants::kIndexNone ||
+            Frame.Views.CascadeViewBase == Constants::kIndexNoneU32)
         {
             bCascadePyramidValid.store(false, std::memory_order_release);
             return;

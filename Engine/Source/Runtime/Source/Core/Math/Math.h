@@ -44,12 +44,12 @@ namespace Lumina::Math
         return A + (B - A) * Alpha;
     }
 
-    [[nodiscard]] constexpr bool IsNearlyEqual(float LHS, float RHS, float Epsilon = LE_KINDA_SMALL_NUMBER)
+    [[nodiscard]] constexpr bool IsNearlyEqual(float LHS, float RHS, float Epsilon = Math::kKindaSmallNumber)
     {
         return Abs(LHS - RHS) <= Epsilon;
     }
 
-    [[nodiscard]] constexpr bool IsNearlyZero(float Value, float Epsilon = LE_KINDA_SMALL_NUMBER)
+    [[nodiscard]] constexpr bool IsNearlyZero(float Value, float Epsilon = Math::kKindaSmallNumber)
     {
         return Abs(Value) <= Epsilon;
     }

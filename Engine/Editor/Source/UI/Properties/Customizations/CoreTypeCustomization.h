@@ -211,7 +211,7 @@ namespace Lumina
             bool bChanged;
             if constexpr (std::is_floating_point_v<ValueType>)
             {
-                bChanged = !Math::IsNearlyEqual((float)CachedValue, (float)ActualValue, LE_SMALL_NUMBER);
+                bChanged = !Math::IsNearlyEqual((float)CachedValue, (float)ActualValue, Math::kSmallNumber);
             }
             else
             {

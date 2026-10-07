@@ -187,18 +187,23 @@ void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, 
 
     const uint Mask = StreamingResolutionBit(UV0Ddx, UV0Ddy) | StreamingResolutionBit(UV1Ddx, UV1Ddy);
 
-    // One pass per distinct slot, since the material varies per instance within a draw and a deferred bin.
-    while (true)
+    // One pass per distinct slot, with a wave-wide exit since a per-lane exit lets AMD's compiler merge every slot into one.
+    bool bPending = true;
+    [loop]
+    while (WaveActiveAnyTrue(bPending))
     {
-        const uint Candidate = WaveReadLaneFirst(MaterialSlot);
-        if (Candidate == MaterialSlot)
+        if (bPending)
         {
-            const uint WaveMask = WaveActiveBitOr(Mask);
-            if (WaveIsFirstLane())
+            const uint Candidate = WaveReadLaneFirst(MaterialSlot);
+            if (Candidate == MaterialSlot)
             {
-                InterlockedOr(SpanAt(&GetSceneRoot().StreamingFeedback, Candidate)[0], WaveMask);
+                const uint WaveMask = WaveActiveBitOr(Mask);
+                if (WaveIsFirstLane())
+                {
+                    InterlockedOr(SpanAt(&GetSceneRoot().StreamingFeedback, Candidate)[0], WaveMask);
+                }
+                bPending = false;
             }
-            break;
         }
     }
 }

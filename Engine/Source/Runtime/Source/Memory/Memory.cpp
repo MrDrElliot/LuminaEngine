@@ -243,7 +243,7 @@ namespace Lumina
         struct FThreadFrameArena
         {
             // A single container growth must fit one block, and chains beyond it on demand.
-            static constexpr SIZE_T FrameBlockSize = 8 * 1024 * 1024;
+            static constexpr SIZE_T FrameBlockSize = 8 * Constants::kMiB;
 
             FBlockLinearAllocator Allocator{ FrameBlockSize };
             FFrameArenaNode       Node;

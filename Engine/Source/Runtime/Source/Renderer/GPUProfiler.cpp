@@ -127,13 +127,13 @@ namespace Lumina
         if (!RHI::IsValid(Slot.Pool) || Slot.Scopes.size() >= MaxScopesPerFrame)
         {
             // A depth entry is still pushed so the matching EndScope stays balanced.
-            Slot.Stack.push_back(INDEX_NONE);
+            Slot.Stack.push_back(Constants::kIndexNone);
             return;
         }
 
         FPendingScope& Scope = Slot.Scopes.emplace_back();
         Scope.Name        = Name;
-        Scope.ParentIndex = Slot.Stack.empty() ? INDEX_NONE : Slot.Stack.back();
+        Scope.ParentIndex = Slot.Stack.empty() ? Constants::kIndexNone : Slot.Stack.back();
         Scope.Depth       = (int32)Slot.Stack.size();
         Scope.BeginQuery  = Slot.QueryCursor;
         Scope.EndQuery    = Slot.QueryCursor + 1;
@@ -167,7 +167,7 @@ namespace Lumina
         const int32 Index = Slot.Stack.back();
         Slot.Stack.pop_back();
 
-        if (Index == INDEX_NONE || !RHI::IsValid(Slot.Pool))
+        if (Index == Constants::kIndexNone || !RHI::IsValid(Slot.Pool))
         {
             return;
         }

@@ -299,7 +299,7 @@ namespace Lumina
             bDeviceInfoValid = !DeviceInfo.Name.empty();
         }
 
-        const float ToMB = 1.0f / (1024.0f * 1024.0f);
+        const float ToMB = 1.0f / float(Constants::kMiB);
         const size_t Process = Platform::GetProcessMemoryUsageBytes();
         const size_t Mapped  = Memory::GetCurrentMappedMemory();
         const size_t External = (Process > Mapped) ? (Process - Mapped) : 0;

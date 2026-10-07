@@ -156,7 +156,7 @@ namespace Lumina
         {
             if (IsNull())
             {
-                return INDEX_NONE;
+                return Constants::kIndexNone;
             }
 
             return IsExport() ? (Index - 1) : (-Index - 1);

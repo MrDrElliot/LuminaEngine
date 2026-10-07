@@ -617,7 +617,7 @@ namespace Lumina::ImGuiX
 
     int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon, FFixedString* OutCreatedText)
     {
-        int32 Result = INDEX_NONE;
+        int32 Result = Constants::kIndexNone;
         if (OutCreatedText != nullptr)
         {
             OutCreatedText->clear();
@@ -628,7 +628,7 @@ namespace Lumina::ImGuiX
 
         // Mirror the chosen item's icon into the closed preview so it matches the open list.
         FFixedString PreviewStr = Preview;
-        if (ItemIcon != nullptr && CurrentIndex != INDEX_NONE)
+        if (ItemIcon != nullptr && CurrentIndex != Constants::kIndexNone)
         {
             PreviewStr = ItemIcon;
             PreviewStr += "  ";
@@ -781,7 +781,7 @@ namespace Lumina::ImGuiX
         {
             const FAssetData* Current = InOutGUID.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(InOutGUID) : nullptr;
             const char* ClosedPreview = Current != nullptr ? Current->AssetName.c_str() : "Select an asset...";
-            SearchableCombo(StrId, ClosedPreview, 0, Current != nullptr ? 0 : INDEX_NONE, [](int32) { return FFixedString(); }, ItemIcon);
+            SearchableCombo(StrId, ClosedPreview, 0, Current != nullptr ? 0 : Constants::kIndexNone, [](int32) { return FFixedString(); }, ItemIcon);
             return false;
         }
 
@@ -803,7 +803,7 @@ namespace Lumina::ImGuiX
             return strcmp(A->AssetName.c_str(), B->AssetName.c_str()) < 0;
         });
 
-        int32 CurrentIndex = INDEX_NONE;
+        int32 CurrentIndex = Constants::kIndexNone;
         for (int32 i = 0; i < (int32)Assets.size(); ++i)
         {
             if (Assets[i]->AssetGUID == InOutGUID)
@@ -813,12 +813,12 @@ namespace Lumina::ImGuiX
             }
         }
 
-        const char* Preview = (CurrentIndex != INDEX_NONE) ? Assets[CurrentIndex]->AssetName.c_str() : "Select an asset...";
+        const char* Preview = (CurrentIndex != Constants::kIndexNone) ? Assets[CurrentIndex]->AssetName.c_str() : "Select an asset...";
 
         const int32 Picked = SearchableCombo(StrId, Preview, (int32)Assets.size(), CurrentIndex,
             [&Assets](int32 Index) { return FFixedString(Assets[Index]->AssetName.c_str()); }, ItemIcon);
 
-        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        if (Picked != Constants::kIndexNone && Picked != CurrentIndex)
         {
             InOutGUID = Assets[Picked]->AssetGUID;
             return true;
@@ -833,7 +833,7 @@ namespace Lumina::ImGuiX
         {
             const FFixedString ClosedPreview = InOutClass ? FFixedString(InOutClass->GetName().c_str())
                                                           : FFixedString(bAllowNone ? "None" : "Select a class...");
-            SearchableCombo(StrId, ClosedPreview.c_str(), 0, (InOutClass != nullptr || bAllowNone) ? 0 : INDEX_NONE,
+            SearchableCombo(StrId, ClosedPreview.c_str(), 0, (InOutClass != nullptr || bAllowNone) ? 0 : Constants::kIndexNone,
                 [](int32) { return FFixedString(); }, ItemIcon);
             return false;
         }
@@ -856,7 +856,7 @@ namespace Lumina::ImGuiX
         // "None" occupies index 0 when allowed, so every candidate sits one slot further along.
         const int32 Offset = bAllowNone ? 1 : 0;
 
-        int32 CurrentIndex = bAllowNone ? 0 : INDEX_NONE;
+        int32 CurrentIndex = bAllowNone ? 0 : Constants::kIndexNone;
         for (int32 i = 0; i < (int32)Candidates.size(); ++i)
         {
             if (Candidates[i] == InOutClass)
@@ -876,7 +876,7 @@ namespace Lumina::ImGuiX
                 return (Index < Offset) ? FFixedString("None") : FFixedString(Candidates[Index - Offset]->GetName().c_str());
             }, ItemIcon);
 
-        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        if (Picked != Constants::kIndexNone && Picked != CurrentIndex)
         {
             InOutClass = (Picked < Offset) ? nullptr : Candidates[Picked - Offset];
             return true;
@@ -891,7 +891,7 @@ namespace Lumina::ImGuiX
         {
             const FFixedString ClosedPreview = InOutStruct ? FFixedString(InOutStruct->GetName().c_str())
                                                            : FFixedString(bAllowNone ? "None" : "Select a type...");
-            SearchableCombo(StrId, ClosedPreview.c_str(), 0, (InOutStruct != nullptr || bAllowNone) ? 0 : INDEX_NONE,
+            SearchableCombo(StrId, ClosedPreview.c_str(), 0, (InOutStruct != nullptr || bAllowNone) ? 0 : Constants::kIndexNone,
                 [](int32) { return FFixedString(); }, ItemIcon);
             return false;
         }
@@ -917,7 +917,7 @@ namespace Lumina::ImGuiX
 
         const int32 Offset = bAllowNone ? 1 : 0;
 
-        int32 CurrentIndex = bAllowNone ? 0 : INDEX_NONE;
+        int32 CurrentIndex = bAllowNone ? 0 : Constants::kIndexNone;
         for (int32 i = 0; i < (int32)Candidates.size(); ++i)
         {
             if (Candidates[i] == InOutStruct)
@@ -937,7 +937,7 @@ namespace Lumina::ImGuiX
                 return (Index < Offset) ? FFixedString("None") : FFixedString(Candidates[Index - Offset]->GetName().c_str());
             }, ItemIcon);
 
-        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        if (Picked != Constants::kIndexNone && Picked != CurrentIndex)
         {
             InOutStruct = (Picked < Offset) ? nullptr : Candidates[Picked - Offset];
             return true;
@@ -947,7 +947,7 @@ namespace Lumina::ImGuiX
 
     ImTextureRef ToImTextureRef(const RHI::FManagedTexture& Texture)
     {
-        return ToImTextureRef(Texture.IsValid() ? Texture.SampledSlot : ~0u);
+        return ToImTextureRef(Texture.IsValid() ? Texture.SampledSlot : RHI::kInvalidHeapSlot);
     }
 
     ImTextureRef ToImTextureRef(FStringView Path)
@@ -961,7 +961,7 @@ namespace Lumina::ImGuiX
 
     ImTextureRef ToImTextureRef(uint32 ResourceID)
     {
-        if (ResourceID == ~0u)
+        if (ResourceID == RHI::kInvalidHeapSlot)
         {
             ResourceID = RHI::Textures::DefaultResourceID();
         }

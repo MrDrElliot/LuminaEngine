@@ -137,7 +137,7 @@ namespace Lumina::Physics
                 return true;
             }
 
-            if (Movement.bUseControllerRotation && Math::Abs(Movement.PendingLookYaw - Character.RestLookYaw) > LE_SMALL_NUMBER)
+            if (Movement.bUseControllerRotation && Math::Abs(Movement.PendingLookYaw - Character.RestLookYaw) > Math::kSmallNumber)
             {
                 return true;
             }
@@ -270,7 +270,7 @@ namespace Lumina::Physics
             SCharacterControllerComponent& Controller = Controllers.GetAtDense(DenseIndex);
             SCharacterMovementComponent& Movement = *FoundMovement;
 
-            if (Math::LengthSquared(Controller.MoveInput) > LE_SMALL_NUMBER || Math::LengthSquared(Controller.WorldMoveInput) > LE_SMALL_NUMBER)
+            if (Math::LengthSquared(Controller.MoveInput) > Math::kSmallNumber || Math::LengthSquared(Controller.WorldMoveInput) > Math::kSmallNumber)
             {
                 const FVector3 Forward = RenderUtils::GetForwardVector(Controller.LookInput.x, 0.0f);
                 const FVector3 Right = RenderUtils::GetRightVector(Controller.LookInput.x);
@@ -279,7 +279,7 @@ namespace Lumina::Physics
                 FVector3 Direction = Right * Controller.MoveInput.x + Up * Controller.MoveInput.y + Forward * Controller.MoveInput.z
                                    + Controller.WorldMoveInput;
                 const float Magnitude = Math::Length(Direction);
-                if (Magnitude > LE_SMALL_NUMBER)
+                if (Magnitude > Math::kSmallNumber)
                 {
                     Movement.PendingMoveDirection = Direction / Magnitude;
                     Movement.PendingMoveThrottle = Math::Min(Magnitude, 1.0f);
@@ -799,7 +799,7 @@ namespace Lumina::Physics
 
         auto FindWalkablePlane = [&]()
         {
-            int32 Best = INDEX_NONE;
+            int32 Best = Constants::kIndexNone;
             float BestUp = Character.CosMaxSlope;
             for (int32 i = 0; i < Gathered.Count; ++i)
             {
@@ -903,7 +903,7 @@ namespace Lumina::Physics
 
         // Only a move that actually left the ground gets pulled back down. Settling every frame would
         // re-seat the capsule in the floor so the next solve could push it out along the slope again.
-        if (GroundPlane == INDEX_NONE && bWasGrounded && !bJumpedThisStep && Character.Velocity.y <= 0.0f)
+        if (GroundPlane == Constants::kIndexNone && bWasGrounded && !bJumpedThisStep && Character.Velocity.y <= 0.0f)
         {
             const b3Vec3 Drop{ 0.0f, -Character.StickToFloorDistance, 0.0f };
             const float DropFraction = b3World_CastMover(WorldId, Position, &Mover, Drop, Character.Filter, &MoverCastFilter, &Gathered);
@@ -914,7 +914,7 @@ namespace Lumina::Physics
                 GatherAt(Landed);
 
                 const int32 LandedPlane = FindWalkablePlane();
-                if (LandedPlane != INDEX_NONE)
+                if (LandedPlane != Constants::kIndexNone)
                 {
                     Position = Landed;
                     GroundPlane = LandedPlane;
@@ -926,7 +926,7 @@ namespace Lumina::Physics
             }
         }
 
-        const bool bNowGrounded = GroundPlane != INDEX_NONE && !bJumpedThisStep;
+        const bool bNowGrounded = GroundPlane != Constants::kIndexNone && !bJumpedThisStep;
 
         // The landing edge is only visible here, where this step's ground has been resolved against the last one.
         if (bNowGrounded && !bWasGrounded)

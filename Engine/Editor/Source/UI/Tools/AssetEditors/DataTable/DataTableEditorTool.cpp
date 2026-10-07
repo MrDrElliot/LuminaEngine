@@ -210,8 +210,8 @@ namespace Lumina
 
     void FDataTableEditorTool::CancelCellEdit()
     {
-        EditingRow = INDEX_NONE;
-        EditingColumn = INDEX_NONE;
+        EditingRow = Constants::kIndexNone;
+        EditingColumn = Constants::kIndexNone;
         bEditorJustOpened = false;
     }
 
@@ -227,7 +227,7 @@ namespace Lumina
         SDataTableRow& Row = Table->Rows[EditingRow];
         const FStringView Text(EditBuffer);
 
-        if (EditingColumn == INDEX_NONE)
+        if (EditingColumn == Constants::kIndexNone)
         {
             const FString Trimmed(EditBuffer);
             const FName NewName(Trimmed);
@@ -236,7 +236,7 @@ namespace Lumina
             {
                 // Names key the table, so uniquify rather than reject and the edit is never silently lost.
                 const int32 Collision = Table->FindRowIndex(NewName);
-                Row.Name = (Collision == INDEX_NONE) ? NewName : Table->MakeUniqueRowName(NewName);
+                Row.Name = (Collision == Constants::kIndexNone) ? NewName : Table->MakeUniqueRowName(NewName);
 
                 MarkDirty();
                 bDisplayOrderDirty = true;
@@ -280,7 +280,7 @@ namespace Lumina
         CancelCellEdit();
 
         const int32 Index = Table->AddRow(Table->MakeUniqueRowName("NewRow"));
-        if (Index == INDEX_NONE)
+        if (Index == Constants::kIndexNone)
         {
             ImGuiX::Notifications::NotifyWarning("Set a row struct before adding rows.");
             return;
@@ -365,7 +365,7 @@ namespace Lumina
             return;
         }
 
-        SelectedRow = Table->GetRowCount() > 0 ? 0 : INDEX_NONE;
+        SelectedRow = Table->GetRowCount() > 0 ? 0 : Constants::kIndexNone;
         BoundRowMemory = nullptr;
         bDisplayOrderDirty = true;
         MarkDirty();
@@ -428,7 +428,7 @@ namespace Lumina
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(SelectedRow == INDEX_NONE);
+        ImGui::BeginDisabled(SelectedRow == Constants::kIndexNone);
         if (ImGui::Button(LE_ICON_CONTENT_COPY " Duplicate"))
         {
             DuplicateSelectedRow();
@@ -498,7 +498,7 @@ namespace Lumina
         CDataTable* Table = GetAsset<CDataTable>();
         SDataTableRow& Row = Table->Rows[RowIndex];
 
-        const bool bEditing = EditingRow == RowIndex && EditingColumn == INDEX_NONE;
+        const bool bEditing = EditingRow == RowIndex && EditingColumn == Constants::kIndexNone;
 
         if (bEditing)
         {
@@ -544,7 +544,7 @@ namespace Lumina
             {
                 CancelCellEdit();
                 EditingRow = RowIndex;
-                EditingColumn = INDEX_NONE;
+                EditingColumn = Constants::kIndexNone;
                 bEditorJustOpened = true;
 
                 Memory::Memzero(EditBuffer, sizeof(EditBuffer));
@@ -553,7 +553,7 @@ namespace Lumina
             }
         }
 
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && EditingRow == INDEX_NONE)
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && EditingRow == Constants::kIndexNone)
         {
             ImGui::SetTooltip(bCanReorder
                 ? "Double-click to rename. Drag to reorder."
@@ -686,7 +686,7 @@ namespace Lumina
 
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
-            DraggingRow = INDEX_NONE;
+            DraggingRow = Constants::kIndexNone;
         }
 
         // One extra for the name column, which is always present.
@@ -734,7 +734,7 @@ namespace Lumina
         // Clipping these away destroys the InputText mid-edit, and drops the drag's active id.
         for (const int32 KeepAlive : {EditingRow, DraggingRow})
         {
-            if (KeepAlive == INDEX_NONE)
+            if (KeepAlive == Constants::kIndexNone)
             {
                 continue;
             }
@@ -798,7 +798,7 @@ namespace Lumina
         {
             RebuildColumns();
             CancelCellEdit();
-            SelectedRow = Table->GetRowCount() > 0 ? 0 : INDEX_NONE;
+            SelectedRow = Table->GetRowCount() > 0 ? 0 : Constants::kIndexNone;
             BoundRowMemory = nullptr;
             bDisplayOrderDirty = true;
         }
@@ -996,9 +996,9 @@ namespace Lumina
             Table->SetRowStruct(PendingRowStruct);
 
             RebuildColumns();
-            SelectedRow = INDEX_NONE;
+            SelectedRow = Constants::kIndexNone;
             BoundRowMemory = nullptr;
-            SortColumn = INDEX_NONE;
+            SortColumn = Constants::kIndexNone;
             bSortActive = false;
             bDisplayOrderDirty = true;
             MarkDirty();

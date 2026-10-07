@@ -818,7 +818,7 @@ namespace Lumina::Platform
         PROCESS_MEMORY_COUNTERS_EX pmc;
         if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)))
         {
-            return pmc.PrivateUsage / (1024 * 1024);
+            return pmc.PrivateUsage / Constants::kMiB;
         }
         return 0;
     }

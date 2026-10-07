@@ -90,7 +90,7 @@ namespace Lumina
         NewSet->LayoutKey = Key;
 
         const int32 NumBones = Skeleton->GetNumBones();
-        NewSet->SkeletonToCompressed.assign(NumBones, INDEX_NONE);
+        NewSet->SkeletonToCompressed.assign(NumBones, Constants::kIndexNone);
         NewSet->CompressedBones.reserve(Compressed.Bones.size());
 
         int32 NumUnmatched = 0;
@@ -208,13 +208,13 @@ namespace Lumina
                 return i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     float CAnimation::EvaluateCurve(const FName& CurveName, float Time, float Default) const
     {
         const int32 Index = FindCurveIndex(CurveName);
-        return Index != INDEX_NONE ? AnimationResource->Curves[Index].Curve.Evaluate(Time) : Default;
+        return Index != Constants::kIndexNone ? AnimationResource->Curves[Index].Curve.Evaluate(Time) : Default;
     }
 
     void CAnimation::SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const
@@ -297,7 +297,7 @@ namespace Lumina
                 Local = AnimPose::ComposeTRS(T, R, S);
             }
 
-            OutBoneTransforms[i] = Bone.ParentIndex != INDEX_NONE ? OutBoneTransforms[Bone.ParentIndex] * Local : Local;
+            OutBoneTransforms[i] = Bone.ParentIndex != Constants::kIndexNone ? OutBoneTransforms[Bone.ParentIndex] * Local : Local;
         }
 
         // Pass 3 folds in InvBind to produce the GPU skinning matrix.
@@ -439,7 +439,7 @@ namespace Lumina
         }
 
         const int32 CompressedIndex = Resolved->SkeletonToCompressed[BoneIndex];
-        if (CompressedIndex == INDEX_NONE)
+        if (CompressedIndex == Constants::kIndexNone)
         {
             return;
         }

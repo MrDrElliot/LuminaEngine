@@ -28,7 +28,7 @@ namespace Lumina
                 return (int32)i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     int32 CMaterialParameterCollection::FindVectorIndex(const FName& Name) const
@@ -40,7 +40,7 @@ namespace Lumina
                 return (int32)i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     void CMaterialParameterCollection::RebuildUniforms()
@@ -65,7 +65,7 @@ namespace Lumina
             Uniforms.Vectors[i] = VectorParameters[i].DefaultValue;
         }
 
-        if (CollectionIndex != INDEX_NONE)
+        if (CollectionIndex != Constants::kIndexNone)
         {
             if (FRenderManager* RenderManager = TryRender())
             {
@@ -78,8 +78,8 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Materials");
 
-        // Headless has no table, and every consumer already treats INDEX_NONE as no GPU slot.
-        if (CollectionIndex == INDEX_NONE)
+        // Headless has no table, and every consumer already treats Constants::kIndexNone as no GPU slot.
+        if (CollectionIndex == Constants::kIndexNone)
         {
             if (FRenderManager* RenderManager = TryRender())
             {
@@ -94,13 +94,13 @@ namespace Lumina
     {
         CObject::OnDestroy();
 
-        if (CollectionIndex != INDEX_NONE)
+        if (CollectionIndex != Constants::kIndexNone)
         {
             if (FRenderManager* RenderManager = TryRender())
             {
                 RenderManager->GetCollectionManager().Release(CollectionIndex);
             }
-            CollectionIndex = INDEX_NONE;
+            CollectionIndex = Constants::kIndexNone;
         }
     }
 
@@ -115,14 +115,14 @@ namespace Lumina
     bool CMaterialParameterCollection::SetScalarValue(const FName& Name, float Value)
     {
         const int32 Index = FindScalarIndex(Name);
-        if (Index == INDEX_NONE)
+        if (Index == Constants::kIndexNone)
         {
             return false;
         }
 
         Uniforms.Scalars[Index] = Value;
 
-        if (CollectionIndex != INDEX_NONE)
+        if (CollectionIndex != Constants::kIndexNone)
         {
             if (FRenderManager* RenderManager = TryRender())
             {
@@ -137,14 +137,14 @@ namespace Lumina
     bool CMaterialParameterCollection::SetVectorValue(const FName& Name, FVector4 Value)
     {
         const int32 Index = FindVectorIndex(Name);
-        if (Index == INDEX_NONE)
+        if (Index == Constants::kIndexNone)
         {
             return false;
         }
 
         Uniforms.Vectors[Index] = Value;
 
-        if (CollectionIndex != INDEX_NONE)
+        if (CollectionIndex != Constants::kIndexNone)
         {
             if (FRenderManager* RenderManager = TryRender())
             {
@@ -159,12 +159,12 @@ namespace Lumina
     float CMaterialParameterCollection::GetScalarValue(const FName& Name, float Default) const
     {
         const int32 Index = FindScalarIndex(Name);
-        return Index != INDEX_NONE ? Uniforms.Scalars[Index] : Default;
+        return Index != Constants::kIndexNone ? Uniforms.Scalars[Index] : Default;
     }
 
     FVector4 CMaterialParameterCollection::GetVectorValue(const FName& Name, FVector4 Default) const
     {
         const int32 Index = FindVectorIndex(Name);
-        return Index != INDEX_NONE ? Uniforms.Vectors[Index] : Default;
+        return Index != Constants::kIndexNone ? Uniforms.Vectors[Index] : Default;
     }
 }

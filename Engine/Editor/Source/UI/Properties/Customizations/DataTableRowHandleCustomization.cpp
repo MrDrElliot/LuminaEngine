@@ -66,7 +66,7 @@ namespace Lumina
             }
 
             DisplayValue.DataTable = NewTable;
-            if (NewTable == nullptr || NewTable->FindRowIndex(DisplayValue.RowName) == INDEX_NONE)
+            if (NewTable == nullptr || NewTable->FindRowIndex(DisplayValue.RowName) == Constants::kIndexNone)
             {
                 DisplayValue.RowName = FName();
             }
@@ -164,7 +164,7 @@ namespace Lumina
                 return Index == 0 ? FFixedString("None") : FFixedString(Table->Rows[Index - 1].Name.c_str());
             }, LE_ICON_TABLE_ROW);
 
-        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        if (Picked != Constants::kIndexNone && Picked != CurrentIndex)
         {
             DisplayValue.RowName = Picked == 0 ? FName() : Table->Rows[Picked - 1].Name;
             bWasChanged = true;
@@ -181,7 +181,7 @@ namespace Lumina
                 ImGui::TextColored(GWarnText, LE_ICON_ALERT_CIRCLE_OUTLINE " Needs rows of %s, table holds %s.",
                     RequiredRowStruct->GetName().c_str(), RowStruct != nullptr ? RowStruct->GetName().c_str() : "nothing");
             }
-            else if (!DisplayValue.RowName.IsNone() && Table->FindRowIndex(DisplayValue.RowName) == INDEX_NONE)
+            else if (!DisplayValue.RowName.IsNone() && Table->FindRowIndex(DisplayValue.RowName) == Constants::kIndexNone)
             {
                 ImGui::TextColored(GWarnText, LE_ICON_ALERT_CIRCLE_OUTLINE " '%s' is not a row in this table.",
                     DisplayValue.RowName.c_str());

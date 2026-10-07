@@ -74,7 +74,7 @@ namespace Lumina
                 {
                     Axis = Math::Cross(FVector3(0.0f, 0.0f, 1.0f), From);
                 }
-                return Math::FromAxisAngle(Math::Normalize(Axis), LE_PI_F);
+                return Math::FromAxisAngle(Math::Normalize(Axis), Math::Pi<float>());
             }
             const FVector3 Axis = Math::Normalize(Math::Cross(From, To));
             return Math::FromAxisAngle(Axis, std::acos(D));

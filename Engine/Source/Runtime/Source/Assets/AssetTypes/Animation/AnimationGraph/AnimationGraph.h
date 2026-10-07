@@ -285,7 +285,7 @@ namespace Lumina
         }
     };
 
-    // Which graph curve slot each of a clip's authored curves feeds (INDEX_NONE = not referenced).
+    // Which graph curve slot each of a clip's authored curves feeds (Constants::kIndexNone = not referenced).
     // Resolved at compile so sampling a clip writes its curves by index, never by name.
     struct FAnimGraphClipCurveMap
     {

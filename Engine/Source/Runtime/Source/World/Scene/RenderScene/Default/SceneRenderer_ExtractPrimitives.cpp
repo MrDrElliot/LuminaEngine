@@ -723,7 +723,7 @@ namespace Lumina
         {
             const CTexture* T = Tex.Get();
             const int32 ID = T ? T->GetResourceID() : -1;
-            return ID >= 0 ? (uint32)ID : ~0u;
+            return ID >= 0 ? (uint32)ID : Constants::kIndexNoneU32;
         };
 
         WaterView.ForEach([&](ECS::FEntity Entity, const SWaterComponent& Water)

@@ -32,7 +32,7 @@ namespace Lumina
                 return i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     FName CDataTable::GetRowNameAt(int32 Index) const
@@ -52,7 +52,7 @@ namespace Lumina
         {
             InOutIndex = FindRowIndex(RowName);
         }
-        if (InOutIndex == INDEX_NONE || Rows[InOutIndex].Value.GetScriptStruct() != GetRowStruct())
+        if (InOutIndex == Constants::kIndexNone || Rows[InOutIndex].Value.GetScriptStruct() != GetRowStruct())
         {
             return nullptr;
         }
@@ -62,7 +62,7 @@ namespace Lumina
     const void* CDataTable::FindRow(const FName& RowName) const
     {
         const int32 Index = FindRowIndex(RowName);
-        if (Index == INDEX_NONE || Rows[Index].Value.GetScriptStruct() != GetRowStruct())
+        if (Index == Constants::kIndexNone || Rows[Index].Value.GetScriptStruct() != GetRowStruct())
         {
             return nullptr;
         }
@@ -91,7 +91,7 @@ namespace Lumina
         // A type outside the row hierarchy would quietly break every reader of the stored value.
         if (Struct == nullptr || !Struct->IsChildOf(SDataTableRowBase::StaticStruct()))
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         SDataTableRow& Row = Rows.emplace_back();
@@ -152,7 +152,7 @@ namespace Lumina
 
     FName CDataTable::MakeUniqueRowName(const FName& Base) const
     {
-        if (FindRowIndex(Base) == INDEX_NONE)
+        if (FindRowIndex(Base) == Constants::kIndexNone)
         {
             return Base;
         }
@@ -161,7 +161,7 @@ namespace Lumina
         for (int32 Suffix = 1; Suffix < 100000; ++Suffix)
         {
             const FName Candidate(BaseText + "_" + Format("{}", Suffix).c_str());
-            if (FindRowIndex(Candidate) == INDEX_NONE)
+            if (FindRowIndex(Candidate) == Constants::kIndexNone)
             {
                 return Candidate;
             }

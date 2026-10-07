@@ -2,6 +2,7 @@
 
 #include "Core/Math/Vector/Vector.h"
 #include "Core/LuminaMacros.h"
+#include "Core/Math/Scalar.h"
 #include "Core/Reflection/ReflectionMacros.h"
 #include <cmath>
 
@@ -229,7 +230,7 @@ namespace Lumina::Math
         }
 
         // Nearly parallel: fall back to normalized lerp to avoid div-by-zero.
-        if (CosTheta > T(1) - T(LE_KINDA_SMALL_NUMBER))
+        if (CosTheta > T(1) - T(Math::kKindaSmallNumber))
         {
             return Normalize(A + (End + (-A)) * Alpha);
         }

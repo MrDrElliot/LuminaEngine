@@ -209,7 +209,7 @@ namespace Lumina::Import
 
         /** One source-file material definition (PBR metallic-roughness). Indexed by the same value that
          *  FGeometrySurface::MaterialIndex references (for merge mode, see FMeshImportData::MergedMaterialSlotToSource).
-         *  Texture slots are indices into FMeshImportData::Images; INDEX_NONE means the channel has no texture. */
+         *  Texture slots are indices into FMeshImportData::Images; Constants::kIndexNone means the channel has no texture. */
         /**
          * Filtering + address mode for one texture slot. Values mirror EMaterialSampler in the editor's
          * material graph and RHI::EStockSampler; kept as a plain uint8 here so the runtime import types do
@@ -278,16 +278,16 @@ namespace Lumina::Import
             bool                bTwoSided         = false;
             bool                bUnlit            = false;
 
-            int32               BaseColorImage         = INDEX_NONE;
-            int32               MetallicRoughnessImage = INDEX_NONE;   // glTF packing: G = roughness, B = metallic.
-            int32               NormalImage            = INDEX_NONE;
-            int32               EmissiveImage          = INDEX_NONE;
-            int32               OcclusionImage         = INDEX_NONE;
+            int32               BaseColorImage         = Constants::kIndexNone;
+            int32               MetallicRoughnessImage = Constants::kIndexNone;   // glTF packing: G = roughness, B = metallic.
+            int32               NormalImage            = Constants::kIndexNone;
+            int32               EmissiveImage          = Constants::kIndexNone;
+            int32               OcclusionImage         = Constants::kIndexNone;
 
             /** Separate single-channel maps, read from the R channel. Set only by sources that author
              *  metalness and roughness as two textures (FBX); ignored when MetallicRoughnessImage is set. */
-            int32               MetallicImage          = INDEX_NONE;
-            int32               RoughnessImage         = INDEX_NONE;
+            int32               MetallicImage          = Constants::kIndexNone;
+            int32               RoughnessImage         = Constants::kIndexNone;
 
             /**
              * Refractive index (KHR_materials_ior). Drives the dielectric F0, which the engine expresses as
@@ -324,8 +324,8 @@ namespace Lumina::Import
          *  skinned and unskinned yields both. */
         struct FSourceMeshSlot
         {
-            int32 StaticResource  = INDEX_NONE;
-            int32 SkinnedResource = INDEX_NONE;
+            int32 StaticResource  = Constants::kIndexNone;
+            int32 SkinnedResource = Constants::kIndexNone;
         };
 
         /** One placement of a source mesh in the scene graph, keyed by FMeshImportData::MeshSlots. Kept flat
@@ -396,7 +396,7 @@ namespace Lumina::Import
         struct FSourceSceneNode
         {
             FName           Name;
-            int32           ParentIndex = INDEX_NONE;
+            int32           ParentIndex = Constants::kIndexNone;
 
             FVector3        Translation = FVector3(0.0f);
             FQuat           Rotation    = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
@@ -405,7 +405,7 @@ namespace Lumina::Import
             ESourceNodeKind Kind      = ESourceNodeKind::Empty;
 
             /** Index into FMeshImportData::MeshSlots when Kind is Mesh. */
-            int32           MeshSlot  = INDEX_NONE;
+            int32           MeshSlot  = Constants::kIndexNone;
 
             FSourceLight    Light;
             FSourceCamera   Camera;

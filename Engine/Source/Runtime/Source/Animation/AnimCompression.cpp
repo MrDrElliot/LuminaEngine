@@ -570,9 +570,9 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
 
         struct FBoneChannels
         {
-            int32 Translation = INDEX_NONE;
-            int32 Rotation    = INDEX_NONE;
-            int32 Scale       = INDEX_NONE;
+            int32 Translation = Constants::kIndexNone;
+            int32 Rotation    = Constants::kIndexNone;
+            int32 Scale       = Constants::kIndexNone;
         };
 
         TVector<FBoneChannels> BoneChannels(Compressed.Bones.size());
@@ -622,7 +622,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
                 const FBoneChannels& Sources = BoneChannels[b];
                 FValidationBoneError& Error = Report.Bones[b];
 
-                if (Bone.Translation.Format != EAnimTrackFormat::None && Sources.Translation != INDEX_NONE)
+                if (Bone.Translation.Format != EAnimTrackFormat::None && Sources.Translation != Constants::kIndexNone)
                 {
                     const FAnimationChannel& Channel = Resource.Channels[Sources.Translation];
                     const FVector3 Reference = SampleKeysVec3(Channel.Timestamps, Channel.Translations, Time);
@@ -630,7 +630,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
                     Error.MaxTranslationError = Math::Max(Error.MaxTranslationError, Math::Length(Decoded - Reference));
                 }
 
-                if (Bone.Rotation.Format != EAnimTrackFormat::None && Sources.Rotation != INDEX_NONE)
+                if (Bone.Rotation.Format != EAnimTrackFormat::None && Sources.Rotation != Constants::kIndexNone)
                 {
                     const FAnimationChannel& Channel = Resource.Channels[Sources.Rotation];
                     const FQuat Reference = SampleKeysQuat(Channel.Timestamps, Channel.Rotations, Time);
@@ -638,7 +638,7 @@ FQuat AnimCompression::SampleKeysQuat(const TVector<float>& Times, const TVector
                     Error.MaxRotationRadians = Math::Max(Error.MaxRotationRadians, AngleBetween(Decoded, Reference));
                 }
 
-                if (Bone.Scale.Format != EAnimTrackFormat::None && Sources.Scale != INDEX_NONE)
+                if (Bone.Scale.Format != EAnimTrackFormat::None && Sources.Scale != Constants::kIndexNone)
                 {
                     const FAnimationChannel& Channel = Resource.Channels[Sources.Scale];
                     const FVector3 Reference = SampleKeysVec3(Channel.Timestamps, Channel.Scales, Time);

@@ -49,7 +49,7 @@ namespace Lumina
         }
 
         const int32 Index = Graph->FindParameterIndex(ParameterName);
-        if (Index == INDEX_NONE || Index >= (int32)VMState.Parameters.size())
+        if (Index == Constants::kIndexNone || Index >= (int32)VMState.Parameters.size())
         {
             return Default;
         }
@@ -59,7 +59,7 @@ namespace Lumina
 
     bool SAnimationGraphComponent::HasParameter(const FName& ParameterName) const
     {
-        return Graph.IsValid() && Graph->FindParameterIndex(ParameterName) != INDEX_NONE;
+        return Graph.IsValid() && Graph->FindParameterIndex(ParameterName) != Constants::kIndexNone;
     }
 
     float SAnimationGraphComponent::GetCurveValue(const FName& CurveName, float Default) const
@@ -70,7 +70,7 @@ namespace Lumina
         }
 
         const int32 Index = Graph->FindCurveIndex(CurveName);
-        if (Index == INDEX_NONE || Index >= (int32)VMState.CurveValues.size())
+        if (Index == Constants::kIndexNone || Index >= (int32)VMState.CurveValues.size())
         {
             return Default;
         }
@@ -80,6 +80,6 @@ namespace Lumina
 
     bool SAnimationGraphComponent::HasCurve(const FName& CurveName) const
     {
-        return Graph.IsValid() && Graph->FindCurveIndex(CurveName) != INDEX_NONE;
+        return Graph.IsValid() && Graph->FindCurveIndex(CurveName) != Constants::kIndexNone;
     }
 }

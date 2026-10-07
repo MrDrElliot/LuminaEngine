@@ -113,7 +113,7 @@ namespace Lumina
 
         ImGui::PopItemWidth();
 
-        if (Picked != INDEX_NONE)
+        if (Picked != Constants::kIndexNone)
         {
             CachedValue = Candidates[Picked];
             bChanged = true;

@@ -650,7 +650,7 @@ namespace Lumina
         const ImVec2 MousePos = ImGui::GetMousePos();
         const bool bCanPick = !NodeEditor::GetHoveredNode() && !NodeEditor::GetHoveredPin();
 
-        int32 HoveredLink = INDEX_NONE;
+        int32 HoveredLink = Constants::kIndexNone;
         uint64 ClickLinkID = 0;
 
         for (int32 Index = 0; Index < (int32)Links.size(); ++Index)
@@ -817,7 +817,7 @@ namespace Lumina
             NodeEditor::SelectLink(ClickLinkID);
         }
 
-        if (HoveredLink != INDEX_NONE)
+        if (HoveredLink != Constants::kIndexNone)
         {
             CEdNodeGraphPin* InputPin  = Links[HoveredLink].first;
             CEdNodeGraphPin* OutputPin = Links[HoveredLink].second;

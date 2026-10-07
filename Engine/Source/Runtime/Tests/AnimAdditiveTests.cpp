@@ -22,7 +22,7 @@ namespace
 
     void MakeAdditiveTestChain(FSkeletonResource& Skeleton, std::initializer_list<const char*> BoneNames)
     {
-        int32 Parent = INDEX_NONE;
+        int32 Parent = Constants::kIndexNone;
         for (const char* Name : BoneNames)
         {
             FSkeletonResource::FBoneInfo Bone;

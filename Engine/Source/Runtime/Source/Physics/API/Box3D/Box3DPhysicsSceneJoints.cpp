@@ -22,7 +22,7 @@ namespace Lumina::Physics
         // Builds the local frame a joint needs on one body from a world-space anchor and axis.
         b3Transform MakeLocalFrame(b3BodyId Body, const FVector3& WorldAnchor, const FVector3& WorldAxis)
         {
-            FVector3 Axis = Math::LengthSquared(WorldAxis) > LE_SMALL_NUMBER
+            FVector3 Axis = Math::LengthSquared(WorldAxis) > Math::kSmallNumber
                 ? Math::Normalize(WorldAxis)
                 : FVector3(0.0f, 1.0f, 0.0f);
 

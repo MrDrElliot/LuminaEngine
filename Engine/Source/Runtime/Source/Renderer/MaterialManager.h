@@ -109,7 +109,7 @@ namespace Lumina::RHI
         ~FMaterialCollectionManager();
         LE_NO_COPYMOVE(FMaterialCollectionManager);
 
-        /** A free slot, or INDEX_NONE when the table is full. The slot reads zero until Update. */
+        /** A free slot, or Constants::kIndexNone when the table is full. The slot reads zero until Update. */
         RUNTIME_API int32 Acquire();
 
         RUNTIME_API void Release(int32 Index);

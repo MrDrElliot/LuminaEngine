@@ -45,7 +45,7 @@ namespace Lumina
         Compiler.SetPinRegister(PoseOutPin, SrcReg);
 
         const int32 PelvisIndex = Compiler.ResolveBoneIndex(PelvisBone);
-        if (PelvisIndex == INDEX_NONE)
+        if (PelvisIndex == Constants::kIndexNone)
         {
             ReportPlacementError(Compiler, this, "Unknown Pelvis Bone",
                         FString("Foot Placement references '") + PelvisBone.ToString() +
@@ -71,10 +71,10 @@ namespace Lumina
             const int32 CalfIndex  = Compiler.ResolveBoneIndex(Leg.CalfBone);
             const int32 FootIndex  = Compiler.ResolveBoneIndex(Leg.FootBone);
 
-            if (ThighIndex == INDEX_NONE || CalfIndex == INDEX_NONE || FootIndex == INDEX_NONE)
+            if (ThighIndex == Constants::kIndexNone || CalfIndex == Constants::kIndexNone || FootIndex == Constants::kIndexNone)
             {
-                const FName& Missing = ThighIndex == INDEX_NONE ? Leg.ThighBone
-                                     : CalfIndex == INDEX_NONE  ? Leg.CalfBone
+                const FName& Missing = ThighIndex == Constants::kIndexNone ? Leg.ThighBone
+                                     : CalfIndex == Constants::kIndexNone  ? Leg.CalfBone
                                                                 : Leg.FootBone;
                 ReportPlacementError(Compiler, this, "Unknown Leg Bone",
                             FString("Foot Placement references '") + Missing.ToString() +

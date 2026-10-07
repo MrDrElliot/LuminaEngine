@@ -5,6 +5,7 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Serialization/Archiver.h"
 #include "Platform/Platform.h"
+#include "Lumina.h"
 #include "MeshDistanceField.generated.h"
 
 namespace Lumina
@@ -77,7 +78,7 @@ namespace Lumina
 
     namespace DistanceField
     {
-        constexpr uint32 kInvalidIndex = 0xFFFFFFFFu;
+        constexpr uint32 kInvalidIndex = Constants::kIndexNoneU32;
 
         RUNTIME_API bool Build(const FMeshResource& Resource,
                                const SDistanceFieldBuildSettings& Settings,

@@ -105,12 +105,12 @@ namespace Lumina
         ImVec2              DragStartScreen = ImVec2(0.0f, 0.0f);
         ImVec2              DragStartCurve = ImVec2(0.0f, 0.0f);
 
-        int32               HoveredKey = INDEX_NONE;
-        int32               HoveredTangentKey = INDEX_NONE;
+        int32               HoveredKey = Constants::kIndexNone;
+        int32               HoveredTangentKey = Constants::kIndexNone;
         bool                bHoveredTangentLeave = false;
-        int32               TangentDragKey = INDEX_NONE;
+        int32               TangentDragKey = Constants::kIndexNone;
         bool                bTangentDragLeave = false;
-        int32               ContextKey = INDEX_NONE;
+        int32               ContextKey = Constants::kIndexNone;
 
         float               TimeMarker = 0.0f;
         bool                bShowTimeMarker = false;

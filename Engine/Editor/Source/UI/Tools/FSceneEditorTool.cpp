@@ -2987,7 +2987,7 @@ namespace Lumina
 
     bool FSceneEditorTool::HasVisualizerSubSelection() const
     {
-        if (VisualizerInteraction.SelectedSubElement == INDEX_NONE || VisualizerInteraction.SelectedComponentType == nullptr)
+        if (VisualizerInteraction.SelectedSubElement == Constants::kIndexNone || VisualizerInteraction.SelectedComponentType == nullptr)
         {
             return false;
         }

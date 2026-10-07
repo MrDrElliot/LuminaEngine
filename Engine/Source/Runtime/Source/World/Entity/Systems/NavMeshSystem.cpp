@@ -354,12 +354,12 @@ namespace Lumina
             FVector3 Verts[(Stacks + 1) * (Segments + 1)];
             for (int s = 0; s <= Stacks; ++s)
             {
-                const float Phi = LE_PI_F * (float)s / (float)Stacks;
+                const float Phi = Math::Pi<float>() * (float)s / (float)Stacks;
                 const float SinP = std::sin(Phi);
                 const float CosP = std::cos(Phi);
                 for (int g = 0; g <= Segments; ++g)
                 {
-                    const float Theta = (2.0f * LE_PI_F) * (float)g / (float)Segments;
+                    const float Theta = Math::TwoPi<float>() * (float)g / (float)Segments;
                     const FVector3 Local(Radius * SinP * std::cos(Theta), Radius * CosP, Radius * SinP * std::sin(Theta));
                     Verts[s * (Segments + 1) + g] = FVector3(W * FVector4(Local, 1.0f));
                 }
@@ -392,12 +392,12 @@ namespace Lumina
             // Top hemisphere at +Y * HalfHeight.
             for (int s = 0; s <= HemiStacks; ++s, ++RingIdx)
             {
-                const float Phi = (LE_PI_F * 0.5f) * (float)s / (float)HemiStacks;
+                const float Phi = Math::HalfPi<float>() * (float)s / (float)HemiStacks;
                 const float SinP = std::sin(Phi);
                 const float CosP = std::cos(Phi);
                 for (int g = 0; g <= Segments; ++g)
                 {
-                    const float Theta = (2.0f * LE_PI_F) * (float)g / (float)Segments;
+                    const float Theta = Math::TwoPi<float>() * (float)g / (float)Segments;
                     const FVector3 Local(Radius * SinP * std::cos(Theta), HalfHeight + Radius * CosP, Radius * SinP * std::sin(Theta));
                     Verts[RingIdx * (Segments + 1) + g] = FVector3(W * FVector4(Local, 1.0f));
                 }
@@ -405,12 +405,12 @@ namespace Lumina
             // Bottom hemisphere at -Y * HalfHeight.
             for (int s = 1; s <= HemiStacks + 1; ++s, ++RingIdx)
             {
-                const float Phi = (LE_PI_F * 0.5f) + (LE_PI_F * 0.5f) * (float)s / (float)(HemiStacks + 1);
+                const float Phi = Math::HalfPi<float>() + Math::HalfPi<float>() * (float)s / (float)(HemiStacks + 1);
                 const float SinP = std::sin(Phi);
                 const float CosP = std::cos(Phi);
                 for (int g = 0; g <= Segments; ++g)
                 {
-                    const float Theta = (2.0f * LE_PI_F) * (float)g / (float)Segments;
+                    const float Theta = Math::TwoPi<float>() * (float)g / (float)Segments;
                     const FVector3 Local(Radius * SinP * std::cos(Theta), -HalfHeight + Radius * CosP, Radius * SinP * std::sin(Theta));
                     Verts[RingIdx * (Segments + 1) + g] = FVector3(W * FVector4(Local, 1.0f));
                 }
@@ -438,7 +438,7 @@ namespace Lumina
             FVector3 Bot[Segments + 1];
             for (int i = 0; i <= Segments; ++i)
             {
-                const float Theta = (2.0f * LE_PI_F) * (float)i / (float)Segments;
+                const float Theta = Math::TwoPi<float>() * (float)i / (float)Segments;
                 const float C = std::cos(Theta);
                 const float S = std::sin(Theta);
                 Top[i] = FVector3(W * FVector4(Radius * C,  HalfHeight, Radius * S, 1.0f));

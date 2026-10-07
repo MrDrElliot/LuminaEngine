@@ -844,7 +844,7 @@ namespace Lumina
                 return (int32)Switch.BitIndex;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     uint64 CMaterial::MakeStaticSwitchKey(const THashMap<FName, bool>& Overrides) const

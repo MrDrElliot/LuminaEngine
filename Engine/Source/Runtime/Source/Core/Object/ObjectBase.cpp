@@ -68,7 +68,7 @@ namespace Lumina
     // Identity lands here rather than after the constructor, so a constructor body can read GetClass and GetName.
     CObjectBase::CObjectBase()
         : ObjectFlags()
-        , InternalIndex(INDEX_NONE)
+        , InternalIndex(Constants::kIndexNone)
     {
         if (const FConstructCObjectParams* Params = FScopedObjectConstruction::Current())
         {
@@ -92,22 +92,22 @@ namespace Lumina
         }
 
         // Guarded on the slot, so an object that was never wrapped pays only a compare.
-        if (ManagedInstanceSlot != INDEX_NONE)
+        if (ManagedInstanceSlot != Constants::kIndexNone)
         {
             ManagedInstances::Release(this);
         }
 
         FObjectHashTables::Get().RemoveObject(this);
-        if (InternalIndex != INDEX_NONE)
+        if (InternalIndex != Constants::kIndexNone)
         {
             GObjectArray.DeallocateObject(InternalIndex);
-            InternalIndex = INDEX_NONE;
+            InternalIndex = Constants::kIndexNone;
         }
     }
 
     CObjectBase::CObjectBase(EObjectFlags InFlags)
         : ObjectFlags(InFlags)
-        , InternalIndex(INDEX_NONE)
+        , InternalIndex(Constants::kIndexNone)
     {
     }
 
@@ -117,7 +117,7 @@ namespace Lumina
         , PackagePrivate(Package)
         , NamePrivate(Move(InName))
         , GUIDPrivate(GUID)
-        , InternalIndex(INDEX_NONE)
+        , InternalIndex(Constants::kIndexNone)
     {
     }
 
@@ -269,7 +269,7 @@ namespace Lumina
 
     void CObjectBase::AddObject()
     {
-        if (InternalIndex != INDEX_NONE)
+        if (InternalIndex != Constants::kIndexNone)
         {
             return;
         }
@@ -311,7 +311,7 @@ namespace Lumina
         TVector<CObjectBase*>& Pending = FPendingRegistrantInfo::Get();
         int32 Index = VectorFindIndex(Pending, Object);
         
-        if (Index != INDEX_NONE)
+        if (Index != Constants::kIndexNone)
         {
             Pending.erase(Pending.begin() + Index);
             Object->FinishRegister(static_cast<CClass*>(Object)->GetMetaClass(), TEXT(""));

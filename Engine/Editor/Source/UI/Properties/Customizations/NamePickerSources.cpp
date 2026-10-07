@@ -39,7 +39,7 @@ namespace Lumina
                 }
 
                 // Bones are parents-before-children, so a parent's node exists before its children's.
-                const FTreeNodeID Parent = (!bFiltering && Bone.ParentIndex != INDEX_NONE)
+                const FTreeNodeID Parent = (!bFiltering && Bone.ParentIndex != Constants::kIndexNone)
                     ? BoneNodes[Bone.ParentIndex]
                     : InvalidTreeNode;
 
@@ -165,7 +165,7 @@ namespace Lumina
                 const FSkeletonResource* Skeleton = GetSkeleton(Args.Context);
                 const bool bStale = Skeleton == nullptr
                     ? !Args.Current.IsNone()
-                    : (!Args.Current.IsNone() && Skeleton->FindBoneIndex(Args.Current) == INDEX_NONE);
+                    : (!Args.Current.IsNone() && Skeleton->FindBoneIndex(Args.Current) == Constants::kIndexNone);
 
                 FNamePickerResult Result;
 
@@ -294,7 +294,7 @@ namespace Lumina
                         return true;
                     }
                 }
-                return Sockets.Skeleton != nullptr && Sockets.Skeleton->FindBoneIndex(Name) != INDEX_NONE;
+                return Sockets.Skeleton != nullptr && Sockets.Skeleton->FindBoneIndex(Name) != Constants::kIndexNone;
             }
         };
 

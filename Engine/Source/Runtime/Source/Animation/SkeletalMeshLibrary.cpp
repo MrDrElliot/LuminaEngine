@@ -116,17 +116,17 @@ namespace Lumina
         ECS::FRegistry* Registry = RegistryOf(World);
         if (Registry == nullptr || !Registry->IsValid(Entity))
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         const SSkeletalMeshComponent* Mesh = Registry->TryGet<SSkeletalMeshComponent>(Entity);
         if (Mesh == nullptr)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         const FSkeletonResource* Skeleton = SkeletalUtils::GetSkeleton(*Mesh);
-        return Skeleton ? Skeleton->FindBoneIndex(BoneName) : INDEX_NONE;
+        return Skeleton ? Skeleton->FindBoneIndex(BoneName) : Constants::kIndexNone;
     }
 
     FName CSkeletalMeshLibrary::FindClosestBone(CWorld* World, ECS::FEntity Entity, FVector3 WorldLocation)

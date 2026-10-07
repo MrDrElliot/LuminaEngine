@@ -277,7 +277,7 @@ namespace Lumina
     int32 FInputActionMap::FindActionIndex(FName Name) const
     {
         const auto It = Lookup.find(Name);
-        return It != Lookup.end() ? It->second : INDEX_NONE;
+        return It != Lookup.end() ? It->second : Constants::kIndexNone;
     }
 
     const SInputMappingContext* FInputActionMap::FindMappingContext(FName Name) const
@@ -448,7 +448,7 @@ namespace Lumina
         static const FInputActionState Empty;
 
         const int32 Index = FindActionIndex(Name);
-        if (Index == INDEX_NONE)
+        if (Index == Constants::kIndexNone)
         {
             return Empty;
         }
@@ -474,7 +474,7 @@ namespace Lumina
             Handle.CachedName   = Handle.Name;
         }
 
-        if (Handle.CachedIndex == INDEX_NONE)
+        if (Handle.CachedIndex == Constants::kIndexNone)
         {
             return Empty;
         }

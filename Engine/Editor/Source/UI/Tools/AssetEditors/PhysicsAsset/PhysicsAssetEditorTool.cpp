@@ -276,7 +276,7 @@ namespace Lumina
             {
                 const FName BoneName = Resource->GetBone(BoneIndex).Name;
                 const int32 BodyIndex = PhysicsAsset->FindBodyIndex(BoneName);
-                const char* Icon = (BodyIndex != INDEX_NONE) ? ShapeIcon(PhysicsAsset->Bodies[BodyIndex].Shape) : LE_ICON_BONE;
+                const char* Icon = (BodyIndex != Constants::kIndexNone) ? ShapeIcon(PhysicsAsset->Bodies[BodyIndex].Shape) : LE_ICON_BONE;
 
                 // The widget draws IconText OVER the row, so without the prefix it lands on the name.
                 const FString Label = FString(Icon) + "  " + BoneName.c_str();
@@ -288,7 +288,7 @@ namespace Lumina
                 {
                     FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Node);
                     Display.IconText = Icon;
-                    if (BodyIndex != INDEX_NONE)
+                    if (BodyIndex != Constants::kIndexNone)
                     {
                         Display.IconColor = ImVec4(0.35f, 0.70f, 1.0f, 1.0f);
                         Display.DisplayColor = ImVec4(0.88f, 0.94f, 1.0f, 1.0f);
@@ -365,7 +365,7 @@ namespace Lumina
             // Restructuring under a live ragdoll leaves simulated bodies describing a setup that is gone.
             ImGui::BeginDisabled(bSimulating);
 
-            if (BodyIndex == INDEX_NONE)
+            if (BodyIndex == Constants::kIndexNone)
             {
                 if (ImGui::MenuItem(LE_ICON_PLUS " Add Body"))
                 {
@@ -526,7 +526,7 @@ namespace Lumina
             for (int32 i = 0; i < Resource->GetNumBones(); ++i)
             {
                 const int32 ParentIndex = Resource->GetBone(i).ParentIndex;
-                if (ParentIndex != INDEX_NONE)
+                if (ParentIndex != Constants::kIndexNone)
                 {
                     World->DrawLine(FVector3(BoneWorldTransforms[ParentIndex][3]), FVector3(BoneWorldTransforms[i][3]), BoneLineColor, 1.0f, false);
                 }
@@ -564,7 +564,7 @@ namespace Lumina
         for (int32 i = 0; i < Resource->GetNumBones(); ++i)
         {
             const FSkeletonResource::FBoneInfo& Bone = Resource->GetBone(i);
-            if (Bone.ParentIndex == INDEX_NONE)
+            if (Bone.ParentIndex == Constants::kIndexNone)
             {
                 BoneWorldTransforms[i] = EntityMatrix * Bone.LocalTransform;
             }
@@ -607,7 +607,7 @@ namespace Lumina
         }
 
         const int32 BoneIndex = Resource->FindBoneIndex(Body.BoneName);
-        if (BoneIndex == INDEX_NONE || BoneIndex >= (int32)BoneWorldTransforms.size())
+        if (BoneIndex == Constants::kIndexNone || BoneIndex >= (int32)BoneWorldTransforms.size())
         {
             return FMatrix4(1.0f);
         }
@@ -674,7 +674,7 @@ namespace Lumina
             const SPhysicsConstraintSetup& Constraint = PhysicsAsset->Constraints[i];
 
             const int32 ChildIndex = Resource->FindBoneIndex(Constraint.ChildBone);
-            if (ChildIndex == INDEX_NONE || ChildIndex >= (int32)BoneWorldTransforms.size())
+            if (ChildIndex == Constants::kIndexNone || ChildIndex >= (int32)BoneWorldTransforms.size())
             {
                 continue;
             }
@@ -687,7 +687,7 @@ namespace Lumina
             const FVector3 Pivot = FVector3(ChildMatrix[3]);
 
             const int32 ParentIndex = Resource->FindBoneIndex(Constraint.ParentBone);
-            if (ParentIndex != INDEX_NONE && ParentIndex < (int32)BoneWorldTransforms.size())
+            if (ParentIndex != Constants::kIndexNone && ParentIndex < (int32)BoneWorldTransforms.size())
             {
                 World->DrawLine(Pivot, FVector3(BoneWorldTransforms[ParentIndex][3]), Color, Thickness, false);
             }
@@ -702,7 +702,7 @@ namespace Lumina
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
 
-        int32 BestBody = INDEX_NONE;
+        int32 BestBody = Constants::kIndexNone;
         float BestDistance = 1e30f;
 
         for (int32 i = 0; i < (int32)PhysicsAsset->Bodies.size(); ++i)
@@ -850,7 +850,7 @@ namespace Lumina
         SPhysicsBodySetup& Body = PhysicsAsset->Bodies[SelectedBodyIndex];
 
         const int32 BoneIndex = Resource->FindBoneIndex(Body.BoneName);
-        if (BoneIndex == INDEX_NONE || BoneIndex >= (int32)BoneWorldTransforms.size())
+        if (BoneIndex == Constants::kIndexNone || BoneIndex >= (int32)BoneWorldTransforms.size())
         {
             return;
         }
@@ -879,7 +879,7 @@ namespace Lumina
         SelectedBone = PhysicsAsset->Bodies[BodyIndex].BoneName;
 
         const int32 BoneIndex = Resource->FindBoneIndex(SelectedBone);
-        if (BoneIndex == INDEX_NONE || BoneListView.IsDirty())
+        if (BoneIndex == Constants::kIndexNone || BoneListView.IsDirty())
         {
             return;
         }
@@ -977,7 +977,7 @@ namespace Lumina
     {
         const int32 Picked = PickBody(RayOrigin, RayDirection);
         SelectBody(Picked);
-        if (Picked != INDEX_NONE)
+        if (Picked != Constants::kIndexNone)
         {
             SyncTreeSelectionToBody(Picked);
         }
@@ -1046,7 +1046,7 @@ namespace Lumina
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
 
         const int32 Existing = PhysicsAsset->FindBodyIndex(BoneName);
-        if (Existing != INDEX_NONE)
+        if (Existing != Constants::kIndexNone)
         {
             return Existing;
         }
@@ -1060,7 +1060,7 @@ namespace Lumina
         if (Resource != nullptr)
         {
             const int32 BoneIndex = Resource->FindBoneIndex(BoneName);
-            if (BoneIndex != INDEX_NONE)
+            if (BoneIndex != Constants::kIndexNone)
             {
                 // No minimum here, since an explicit add always produces a body even on a stub bone.
                 TVector<FVector3> ChildOffsets;
@@ -1131,19 +1131,19 @@ namespace Lumina
         FSkeletonResource* Resource = GetSkeletonResource();
         if (Resource == nullptr)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         const int32 BoneIndex = Resource->FindBoneIndex(ChildBone);
-        if (BoneIndex == INDEX_NONE)
+        if (BoneIndex == Constants::kIndexNone)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         const FName ParentBone = FindAncestorBodyBone(Resource->GetBone(BoneIndex).ParentIndex);
         if (ParentBone == NAME_None)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
@@ -1198,7 +1198,7 @@ namespace Lumina
         while (Current >= 0 && Current < Resource->GetNumBones())
         {
             const FName BoneName = Resource->GetBone(Current).Name;
-            if (PhysicsAsset->FindBodyIndex(BoneName) != INDEX_NONE)
+            if (PhysicsAsset->FindBodyIndex(BoneName) != Constants::kIndexNone)
             {
                 return BoneName;
             }
@@ -1230,7 +1230,7 @@ namespace Lumina
         for (int32 i = 0; i < Resource->GetNumBones(); ++i)
         {
             const FName BoneName = Resource->GetBone(i).Name;
-            if (PhysicsAsset->FindBodyIndex(BoneName) != INDEX_NONE)
+            if (PhysicsAsset->FindBodyIndex(BoneName) != Constants::kIndexNone)
             {
                 continue;
             }
@@ -1255,7 +1255,7 @@ namespace Lumina
             const FName ChildBone = PhysicsAsset->Bodies[i].BoneName;
 
             const int32 BoneIndex = Resource->FindBoneIndex(ChildBone);
-            if (BoneIndex == INDEX_NONE)
+            if (BoneIndex == Constants::kIndexNone)
             {
                 continue;
             }
@@ -1294,23 +1294,23 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::SelectBody(int32 BodyIndex)
     {
-        SelectedConstraintIndex = INDEX_NONE;
+        SelectedConstraintIndex = Constants::kIndexNone;
         SelectedBodyIndex = BodyIndex;
-        SelectionMode = (BodyIndex != INDEX_NONE) ? EPhysicsAssetSelection::Body : EPhysicsAssetSelection::None;
+        SelectionMode = (BodyIndex != Constants::kIndexNone) ? EPhysicsAssetSelection::Body : EPhysicsAssetSelection::None;
     }
 
     void FPhysicsAssetEditorTool::SelectConstraint(int32 ConstraintIndex)
     {
-        SelectedBodyIndex = INDEX_NONE;
+        SelectedBodyIndex = Constants::kIndexNone;
         SelectedConstraintIndex = ConstraintIndex;
-        SelectionMode = (ConstraintIndex != INDEX_NONE) ? EPhysicsAssetSelection::Constraint : EPhysicsAssetSelection::None;
+        SelectionMode = (ConstraintIndex != Constants::kIndexNone) ? EPhysicsAssetSelection::Constraint : EPhysicsAssetSelection::None;
     }
 
     void FPhysicsAssetEditorTool::ClearSelection()
     {
         SelectionMode = EPhysicsAssetSelection::None;
-        SelectedBodyIndex = INDEX_NONE;
-        SelectedConstraintIndex = INDEX_NONE;
+        SelectedBodyIndex = Constants::kIndexNone;
+        SelectedConstraintIndex = Constants::kIndexNone;
     }
 
     void FPhysicsAssetEditorTool::DrawSimulationOverlay()
@@ -1358,12 +1358,12 @@ namespace Lumina
             const FMatrix4 BoneWorld = EntityMatrix * (MeshComponent->BoneTransforms[i] * Math::Inverse(Resource->GetBone(i).InvBindMatrix));
             const FVector3 Position = FVector3(BoneWorld[3]);
 
-            const bool bHasBody = GetAsset<CPhysicsAsset>()->FindBodyIndex(Resource->GetBone(i).Name) != INDEX_NONE;
+            const bool bHasBody = GetAsset<CPhysicsAsset>()->FindBodyIndex(Resource->GetBone(i).Name) != Constants::kIndexNone;
             World->DrawSphere(Position, bHasBody ? 0.03f : 0.015f,
                 bHasBody ? BodyColor : FVector4(0.5f, 0.5f, 0.55f, 1.0f), 8, 2.0f, false);
 
             const int32 ParentIndex = Resource->GetBone(i).ParentIndex;
-            if (ParentIndex != INDEX_NONE)
+            if (ParentIndex != Constants::kIndexNone)
             {
                 const FMatrix4 ParentWorld = EntityMatrix * (MeshComponent->BoneTransforms[ParentIndex] * Math::Inverse(Resource->GetBone(ParentIndex).InvBindMatrix));
                 World->DrawLine(FVector3(ParentWorld[3]), Position, BoneLineColor, 1.5f, false);
@@ -1589,7 +1589,7 @@ namespace Lumina
             ImGui::TableSetupColumn("##Actions", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() + ImGui::GetStyle().CellPadding.x * 2.0f);
             ImGui::TableHeadersRow();
 
-            int32 PendingRemoval = INDEX_NONE;
+            int32 PendingRemoval = Constants::kIndexNone;
 
             for (int32 i = 0; i < (int32)PhysicsAsset->Constraints.size(); ++i)
             {
@@ -1625,7 +1625,7 @@ namespace Lumina
             ImGui::EndTable();
 
             // Deferred, since erasing mid-iteration invalidates the loop and every row after it.
-            if (PendingRemoval != INDEX_NONE)
+            if (PendingRemoval != Constants::kIndexNone)
             {
                 RemoveConstraintAt(PendingRemoval);
             }

@@ -24,12 +24,17 @@ uint2 TileOrigin(uint Tile)
     return uint2(Tile % Pass().TilesX, Tile / Pass().TilesX);
 }
 
-// Lanes sharing a slot take one atomic between them, since one hot slot would otherwise serialize every lane.
+// Lanes sharing a slot take one atomic, and exit together since a per-lane exit lets AMD's compiler append once per wave.
 void AppendPair(uint Slot, uint Tile)
 {
+    bool bPending = true;
     [loop]
-    while (true)
+    while (WaveActiveAnyTrue(bPending))
     {
+        if (!bPending)
+        {
+            continue;
+        }
         const uint Leader = WaveReadLaneFirst(Slot);
         if (Slot != Leader)
         {
@@ -50,7 +55,7 @@ void AppendPair(uint Slot, uint Tile)
         {
             SpanSet(&Pass().PairList, Entry, PackVisPixel(TileOrigin(Tile)));
         }
-        break;
+        bPending = false;
     }
 }
 
@@ -58,9 +63,14 @@ void AppendPair(uint Slot, uint Tile)
 void AppendPixels(uint Slot, uint Tile, uint Lo, uint Hi)
 {
     const uint Run = Pass().NumSlots + Slot;
+    bool bPending = true;
     [loop]
-    while (true)
+    while (WaveActiveAnyTrue(bPending))
     {
+        if (!bPending)
+        {
+            continue;
+        }
         const uint Leader = WaveReadLaneFirst(Slot);
         if (Slot != Leader)
         {
@@ -94,7 +104,7 @@ void AppendPixels(uint Slot, uint Tile, uint Lo, uint Hi)
                 ++Entry;
             }
         }
-        break;
+        bPending = false;
     }
 }
 

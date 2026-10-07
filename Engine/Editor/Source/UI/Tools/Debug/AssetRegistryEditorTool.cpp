@@ -505,7 +505,7 @@ namespace Lumina
         else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !SelectedGUIDs.empty())
         {
             SelectedGUIDs.clear();
-            RangeAnchor = INDEX_NONE;
+            RangeAnchor = Constants::kIndexNone;
         }
     }
 
@@ -519,7 +519,7 @@ namespace Lumina
         const ImGuiIO& IO  = ImGui::GetIO();
         const FGuid    GUID = VisibleRows[VisibleIndex]->GUID;
 
-        if (IO.KeyShift && RangeAnchor != INDEX_NONE && (uint32)RangeAnchor < (uint32)VisibleRows.size())
+        if (IO.KeyShift && RangeAnchor != Constants::kIndexNone && (uint32)RangeAnchor < (uint32)VisibleRows.size())
         {
             // Range replaces the selection like every file browser, and Ctrl+Shift extends instead.
             if (!IO.KeyCtrl)

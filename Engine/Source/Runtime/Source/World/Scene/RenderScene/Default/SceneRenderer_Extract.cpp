@@ -521,7 +521,7 @@ namespace Lumina
 
         const uint32 NumProbes = (uint32)Bake.Captures.size();
 
-        uint32 ProbeIndex = ~0u;
+        uint32 ProbeIndex = Constants::kIndexNoneU32;
         bool   bFromQueue = false;
 
         while (!PendingProbeBakes.empty())
@@ -537,7 +537,7 @@ namespace Lumina
             PendingProbeBakes.erase(PendingProbeBakes.begin());
         }
 
-        if (ProbeIndex == ~0u)
+        if (ProbeIndex == Constants::kIndexNoneU32)
         {
             for (uint32 Step = 0; Step < NumProbes; ++Step)
             {
@@ -551,7 +551,7 @@ namespace Lumina
             }
         }
 
-        if (ProbeIndex == ~0u)
+        if (ProbeIndex == Constants::kIndexNoneU32)
         {
             return;
         }
@@ -600,7 +600,7 @@ namespace Lumina
             FViewVolume& Volume = Bake.FaceVolumes[Face];
             Volume = FViewVolume(90.0f, 1.0f, Capture.NearPlane, Capture.FarPlane);
             Volume.SetView(Capture.Position, FaceForward[Face], FaceUp[Face]);
-            Bake.FaceCullViews[Face] = ~0u;   // filled by BuildCullViews
+            Bake.FaceCullViews[Face] = Constants::kIndexNoneU32;   // filled by BuildCullViews
         }
 
         Bake.BakingProbe   = (int32)ProbeIndex;
@@ -1959,8 +1959,8 @@ namespace Lumina
     bool FDefaultSceneRenderer::CaptureCascadeShadowFit(const FFrameData& Frame)
     {
         // Same two gates CascadedShowPass uses, since the sun is what owns slot 0 and the cascade tiles.
-        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : INDEX_NONE;
-        if (Slot == INDEX_NONE || Slot >= (int32)MAX_SHADOWS)
+        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : Constants::kIndexNone;
+        if (Slot == Constants::kIndexNone || Slot >= (int32)MAX_SHADOWS)
         {
             return false;
         }
@@ -1979,8 +1979,8 @@ namespace Lumina
     // Written into whatever slot this frame assigned the sun, since the slot order is not itself frozen.
     void FDefaultSceneRenderer::RestoreCascadeShadowFit(FFrameData& Frame) const
     {
-        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : INDEX_NONE;
-        if (!FrozenCull.bHasCascadeShadow || Slot == INDEX_NONE || Slot >= (int32)MAX_SHADOWS)
+        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : Constants::kIndexNone;
+        if (!FrozenCull.bHasCascadeShadow || Slot == Constants::kIndexNone || Slot >= (int32)MAX_SHADOWS)
         {
             return;
         }
@@ -2867,7 +2867,7 @@ namespace Lumina
         Light.Intensity             = PointLight.Intensity;
         Light.Radius                = PointLight.Attenuation;
         Light.Position              = Position;
-        Light.ShadowDataIndex       = INDEX_NONE;
+        Light.ShadowDataIndex       = Constants::kIndexNone;
         if (PointLight.bVolumetric)
         {
             Light.Flags             |= ELightFlags::Volumetric;
@@ -2954,7 +2954,7 @@ namespace Lumina
         Light.Intensity             = SpotLight.Intensity;
         Light.Radius                = SpotLight.Attenuation;
         Light.Angles                = FVector2(InnerCos, OuterCos);
-        Light.ShadowDataIndex       = INDEX_NONE;
+        Light.ShadowDataIndex       = Constants::kIndexNone;
         if (SpotLight.bVolumetric)
         {
             Light.Flags             |= ELightFlags::Volumetric;
@@ -3162,7 +3162,7 @@ namespace Lumina
 
             if (Req.Type == ELightType::Point)
             {
-                int32 FaceTileIndices[6] = { INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE };
+                int32 FaceTileIndices[6] = { Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone };
                 bool  bAllAllocated = true;
                 for (uint32 Face = 0; Face < 6; ++Face)
                 {
@@ -3171,7 +3171,7 @@ namespace Lumina
                         continue;
                     }
                     FaceTileIndices[Face] = ShadowAtlas.AllocateTile(TileSize);
-                    if (FaceTileIndices[Face] == INDEX_NONE)
+                    if (FaceTileIndices[Face] == Constants::kIndexNone)
                     {
                         bAllAllocated = false;
                         break;
@@ -3214,10 +3214,10 @@ namespace Lumina
 
                     // A face no view reaches keeps no tile, which the shaders read as unshadowed.
                     FLightShadow& Shadow   = ShadowData.Shadow[Face];
-                    if (FaceTileIndices[Face] == INDEX_NONE)
+                    if (FaceTileIndices[Face] == Constants::kIndexNone)
                     {
                         Shadow = FLightShadow{};
-                        Shadow.ShadowMapIndex  = INDEX_NONE;
+                        Shadow.ShadowMapIndex  = Constants::kIndexNone;
                         Shadow.LightIndex      = (int32)Req.LightIndex;
                         Shadow.ShadowDataIndex = (int32)ShadowSlot;
                         continue;
@@ -3237,7 +3237,7 @@ namespace Lumina
             else // Spot
             {
                 const int32 TileIndex = ShadowAtlas.AllocateTile(TileSize);
-                if (TileIndex == INDEX_NONE)
+                if (TileIndex == Constants::kIndexNone)
                 {
                     continue;
                 }
@@ -3283,7 +3283,7 @@ namespace Lumina
         const uint32 NumDraws = Frame.Views.NumDrawsPerView;
 
         auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags,
-                            uint32 CascadeIndex = ~0u, float MinBoundsDiameter = 0.0f)
+                            uint32 CascadeIndex = Constants::kIndexNoneU32, float MinBoundsDiameter = 0.0f)
         {
             const uint32 ViewIndex = (uint32)CullViews.size();
             FFrustum Frustum = FFrustum::FromViewProjection(ViewProjection);
@@ -3314,7 +3314,7 @@ namespace Lumina
             }
             for (const FLightShadow& Face : Frame.Lighting.Shadows[PointShadow.ShadowDataIndex].Shadow)
             {
-                NumPointFaceViews += Face.ShadowMapIndex != INDEX_NONE ? 1u : 0u;
+                NumPointFaceViews += Face.ShadowMapIndex != Constants::kIndexNone ? 1u : 0u;
             }
         }
 
@@ -3333,7 +3333,7 @@ namespace Lumina
 
         CullViews.reserve(NumViews);
 
-        CascadeViewBase = ~0u;
+        CascadeViewBase = Constants::kIndexNoneU32;
         PointShadowCullViewBases.clear();
         PointShadowCullViewBases.reserve(PackedShadows[(uint32)ELightType::Point].size());
         SpotShadowCullViewBases.clear();
@@ -3363,7 +3363,7 @@ namespace Lumina
         if (LightData.bHasSun)
         {
             const int32 SunShadowIndex = Frame.Lighting.Lights[0].ShadowDataIndex;
-            if (SunShadowIndex != INDEX_NONE)
+            if (SunShadowIndex != Constants::kIndexNone)
             {
                 const FLightShadowData& SunShadow = Frame.Lighting.Shadows[SunShadowIndex];
                 const uint32 CascadeFlags =
@@ -3396,7 +3396,7 @@ namespace Lumina
         {
             if (PointShadow.ShadowDataIndex < 0)
             {
-                PointShadowCullViewBases.push_back(~0u);
+                PointShadowCullViewBases.push_back(Constants::kIndexNoneU32);
                 continue;
             }
 
@@ -3411,7 +3411,7 @@ namespace Lumina
             PointShadowCullViewBases.push_back((uint32)CullViews.size());
             for (int32 Face = 0; Face < 6; ++Face)
             {
-                if (ShadowData.Shadow[Face].ShadowMapIndex != INDEX_NONE)
+                if (ShadowData.Shadow[Face].ShadowMapIndex != Constants::kIndexNone)
                 {
                     PushView(ShadowData.ViewProjection[Face], Light.Position, FaceFlags);
                 }
@@ -3423,7 +3423,7 @@ namespace Lumina
         {
             if (SpotShadow.ShadowDataIndex < 0)
             {
-                SpotShadowCullViewBases.push_back(~0u);
+                SpotShadowCullViewBases.push_back(Constants::kIndexNoneU32);
                 continue;
             }
 
@@ -3523,7 +3523,7 @@ namespace Lumina
         Light.Color             = PackColor(FVector4(LightColor, 1.0));
         Light.Intensity         = DirectionalLight.GetLightingIntensity();
         Light.Direction         = DirectionalLight.GetLightingDirection();
-        Light.ShadowDataIndex   = INDEX_NONE;
+        Light.ShadowDataIndex   = Constants::kIndexNone;
         LightData.SunDirection  = Light.Direction;
         LightData.SkySunDirection = Math::Normalize(DirectionalLight.Direction);
         if (DirectionalLight.bVolumetric)
@@ -3681,7 +3681,7 @@ namespace Lumina
                 CascadeTile.AtlasUVScale = FVector2(
                     (float)GCSMCascadeSizes[i]  / (float)GCSMAtlasWidth,
                     (float)GCSMCascadeSizes[i]  / (float)GCSMAtlasHeight);
-                CascadeTile.ShadowMapIndex  = INDEX_NONE;
+                CascadeTile.ShadowMapIndex  = Constants::kIndexNone;
                 CascadeTile.LightIndex      = 0;
                 CascadeTile.ShadowDataIndex = (int32)ShadowSlot;
                 CascadeTile._Padding        = 0;
@@ -3795,17 +3795,17 @@ namespace Lumina
                 const FAABB LineBounds(Math::Min(Line.Start, Line.End), Math::Max(Line.Start, Line.End));
                 if (Frustum.IsInside(LineBounds))
                 {
-                    uint32 Idx = ~0u;
+                    uint32 Idx = Constants::kIndexNoneU32;
                     for (uint32 b = 0; b < S.NumBuckets; ++b)
                     {
                         if (S.BucketDepthTest[b] == Line.bDepthTest &&
-                            Math::EpsilonEqual(S.BucketThickness[b], Line.Thickness, LE_SMALL_NUMBER))
+                            Math::EpsilonEqual(S.BucketThickness[b], Line.Thickness, Math::kSmallNumber))
                         {
                             Idx = b;
                             break;
                         }
                     }
-                    if (Idx == ~0u)
+                    if (Idx == Constants::kIndexNoneU32)
                     {
                         Idx = (S.NumBuckets < kMaxBuckets) ? S.NumBuckets++ : (kMaxBuckets - 1);
                         S.BucketThickness[Idx] = Line.Thickness;
@@ -3862,21 +3862,21 @@ namespace Lumina
                 const uint32 VC = (uint32)S.BucketVerts[b].size();
                 if (VC == 0)
                 {
-                    S.GlobalBucket[b] = ~0u;
+                    S.GlobalBucket[b] = Constants::kIndexNoneU32;
                     continue;
                 }
 
-                uint32 G = ~0u;
+                uint32 G = Constants::kIndexNoneU32;
                 for (uint32 k = 0, n = (uint32)Global.size(); k < n; ++k)
                 {
                     if (Global[k].bDepthTest == S.BucketDepthTest[b] &&
-                        Math::EpsilonEqual(Global[k].Thickness, S.BucketThickness[b], LE_SMALL_NUMBER))
+                        Math::EpsilonEqual(Global[k].Thickness, S.BucketThickness[b], Math::kSmallNumber))
                     {
                         G = k;
                         break;
                     }
                 }
-                if (G == ~0u)
+                if (G == Constants::kIndexNoneU32)
                 {
                     G = (Global.size() < kMaxBuckets) ? (uint32)Global.size() : (kMaxBuckets - 1);
                     if (G == (uint32)Global.size())

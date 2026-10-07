@@ -76,7 +76,7 @@ namespace Lumina
     {
         const FString AttrName(Name);
 
-        int32 Index = INDEX_NONE;
+        int32 Index = Constants::kIndexNone;
         for (int32 i = 0; i < (int32)Attributes.size(); ++i)
         {
             if (Attributes[i].Name == AttrName)
@@ -86,7 +86,7 @@ namespace Lumina
             }
         }
 
-        if (Index == INDEX_NONE)
+        if (Index == Constants::kIndexNone)
         {
             Index = (int32)Attributes.size();
             FAttributeDecl& Decl = Attributes.emplace_back();

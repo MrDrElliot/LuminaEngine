@@ -70,7 +70,7 @@ namespace Lumina
         /** Timeline end of the last segment. */
         float GetEndTime() const;
 
-        /** Segment covering MontageTime, or INDEX_NONE when the time falls in a gap. */
+        /** Segment covering MontageTime, or Constants::kIndexNone when the time falls in a gap. */
         int32 FindSegment(float MontageTime) const;
     };
 
@@ -199,7 +199,7 @@ namespace Lumina
 
         int32 FindSectionIndex(const FName& SectionName) const;
 
-        /** Section covering MontageTime; INDEX_NONE when the montage has no sections. */
+        /** Section covering MontageTime; Constants::kIndexNone when the montage has no sections. */
         int32 FindSectionAtTime(float MontageTime) const;
 
         /** Where a section stops: the next section's start, or the montage end. */

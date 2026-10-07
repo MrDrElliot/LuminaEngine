@@ -6,6 +6,7 @@
 #include "Platform/GenericPlatform.h"
 #include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/RHIFwd.h"
+#include "Lumina.h"
 
 namespace Lumina
 {
@@ -52,7 +53,7 @@ namespace Lumina
 
         //~ Display output ------------------------------------------------------------------
 
-        virtual uint32 GetDisplayResourceID() const { return ~0u; }
+        virtual uint32 GetDisplayResourceID() const { return Constants::kIndexNoneU32; }
 
         // False until a frame has composited into the display target, which is what makes it opaque.
         virtual bool HasCompositedFrame() const { return true; }

@@ -54,7 +54,7 @@ namespace Lumina
         {
             if (TexName.empty() || !Options.bImportTextures)
             {
-                return INDEX_NONE;
+                return Constants::kIndexNone;
             }
 
             FFixedString Key(TexName.c_str());

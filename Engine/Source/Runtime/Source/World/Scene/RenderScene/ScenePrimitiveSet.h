@@ -15,6 +15,7 @@
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
+#include "Lumina.h"
 
 namespace Lumina
 {
@@ -438,7 +439,7 @@ namespace Lumina
 
         struct FBindingMemo
         {
-            uint32                      Generation = ~0u;   // FResolvedMesh::Generation it was built at
+            uint32                      Generation = Constants::kIndexNoneU32;   // FResolvedMesh::Generation it was built at
             uint64                      RecycleGeneration = 0;
             TVector<FSurfaceBinding>    Protos;             // InstanceSlot unused
         };
@@ -450,8 +451,8 @@ namespace Lumina
 
         struct FPrimitiveLink
         {
-            uint32 Entity = ~0u;
-            uint32 Index[kLinkedSources] = { ~0u, ~0u, ~0u };
+            uint32 Entity = Constants::kIndexNoneU32;
+            uint32 Index[kLinkedSources] = { Constants::kIndexNoneU32, Constants::kIndexNoneU32, Constants::kIndexNoneU32 };
         };
         static_assert(sizeof(FPrimitiveLink) == 16, "Four links per cache line is the point of this table.");
         static_assert(kLinkedSources == 3, "FPrimitiveLink::Index initializer must match kLinkedSources.");
@@ -535,14 +536,14 @@ namespace Lumina
 
         struct FCoalescedEntity
         {
-            uint32          Entity = ~0u;
+            uint32          Entity = Constants::kIndexNoneU32;
             EPrimitiveDirty Flags[(uint32)EPrimitiveSource::Num] = {};
         };
 
         struct FCoalesceSlot
         {
             uint32 Stamp = 0;
-            uint32 Index = ~0u;
+            uint32 Index = Constants::kIndexNoneU32;
         };
 
         TVector<FCoalescedEntity>   CoalescedScratch;
@@ -613,7 +614,7 @@ namespace Lumina
         TVector<uint32>                     SkeletalIndices;
         // Adds and removes only; StructureGeneration also moves on a transform, which would thrash this.
         uint32                              SkeletalSetGeneration = 0;
-        uint32                              SkeletalIndicesGeneration = ~0u;
+        uint32                              SkeletalIndicesGeneration = Constants::kIndexNoneU32;
         THashMap<uint32, TVector<uint32>>   BoneSliceFreeLists;
         uint32                              BoneSliceExtent = 0;
         uint32                              BoneSliceSweepCursor = 0;

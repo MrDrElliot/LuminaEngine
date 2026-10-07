@@ -93,7 +93,7 @@ namespace Lumina
         const FTextureStreamingManager::FStats Stats = Streaming->GetStats();
         Streaming->GetSnapshot(Snapshot, Pending);
 
-        ResidentHistory[HistoryCursor] = (float)((double)Stats.ResidentBytes / (1024.0 * 1024.0));
+        ResidentHistory[HistoryCursor] = (float)((double)Stats.ResidentBytes / double(Constants::kMiB));
         HistoryCursor = (HistoryCursor + 1) % kHistory;
 
         DrawSummary(Stats);

@@ -23,7 +23,7 @@ namespace Lumina
     void CAnimGraphNode_BoneTransform::GenerateBytecode(FAnimationGraphCompiler& Compiler)
     {
         const int32 BoneIndex = Compiler.ResolveBoneIndex(BoneName);
-        if (BoneIndex == INDEX_NONE)
+        if (BoneIndex == Constants::kIndexNone)
         {
             EdNodeGraph::FError NodeError;
             NodeError.Name        = "Unknown Bone";

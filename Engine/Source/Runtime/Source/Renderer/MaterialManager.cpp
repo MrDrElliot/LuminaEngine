@@ -84,7 +84,7 @@ namespace Lumina::RHI
         for (uint32 i = 0; i < MAX_TEXTURES && Count < MaxIDs; ++i)
         {
             const uint32 ID = Uniforms.Textures[i];
-            if (ID == 0 || ID == ~0u)
+            if (ID == 0 || ID == kInvalidHeapSlot)
             {
                 continue;
             }
@@ -364,7 +364,7 @@ namespace Lumina::RHI
         {
             LOG_ERROR("MaterialCollectionManager: the {} slot collection table is full; this collection "
                       "reads zeros for every parameter.", MAX_PARAMETER_COLLECTIONS);
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         return HighWater++;

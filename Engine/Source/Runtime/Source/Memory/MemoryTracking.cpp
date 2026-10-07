@@ -209,7 +209,7 @@ namespace Lumina::Memory
             const uint32 Mask  = Shard.Capacity - 1;
             const uint32 Start = (uint32)(Hash >> 8) & Mask;
 
-            uint32 Found = UINT32_MAX;
+            uint32 Found = Constants::kIndexNoneU32;
             for (uint32 Probe = 0; Probe < Shard.Capacity; ++Probe)
             {
                 const uint32 Idx = (Start + Probe) & Mask;
@@ -224,7 +224,7 @@ namespace Lumina::Memory
                     break;
                 }
             }
-            if (Found == UINT32_MAX)
+            if (Found == Constants::kIndexNoneU32)
             {
                 return false;
             }

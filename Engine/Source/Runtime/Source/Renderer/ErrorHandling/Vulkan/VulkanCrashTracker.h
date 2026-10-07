@@ -68,7 +68,7 @@ namespace Lumina::RHI
         };
 
         // Every material edit compiles new binaries, so without a ceiling the registry grows for the whole session.
-        static constexpr size_t kShaderRegistryBudgetBytes = 256ull * 1024 * 1024;
+        static constexpr size_t kShaderRegistryBudgetBytes = 256 * Constants::kMiB;
 
         // Caller holds ShaderRegistryMutex. Drops the oldest registrations until the binaries fit the budget.
         void EvictOldShadersLocked();

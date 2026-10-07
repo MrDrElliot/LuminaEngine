@@ -233,8 +233,8 @@ namespace Lumina
         CSkeleton* Skeleton = GetAsset<CSkeleton>();
         FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
 
-        const int32 SelectedIndex = (SelectedBone != NAME_None) ? SkeletonResource->FindBoneIndex(SelectedBone) : INDEX_NONE;
-        if (SelectedIndex == INDEX_NONE && Skeleton->Sockets.empty())
+        const int32 SelectedIndex = (SelectedBone != NAME_None) ? SkeletonResource->FindBoneIndex(SelectedBone) : Constants::kIndexNone;
+        if (SelectedIndex == Constants::kIndexNone && Skeleton->Sockets.empty())
         {
             return;
         }
@@ -251,7 +251,7 @@ namespace Lumina
         for (int i = 0; i < SkeletonResource->GetNumBones(); ++i)
         {
             const FSkeletonResource::FBoneInfo& Bone = SkeletonResource->GetBone(i);
-            if (Bone.ParentIndex == INDEX_NONE)
+            if (Bone.ParentIndex == Constants::kIndexNone)
             {
                 WorldTransforms[i] = EntityMatrix * Bone.LocalTransform;
             }
@@ -261,7 +261,7 @@ namespace Lumina
             }
         }
 
-        if (SelectedIndex != INDEX_NONE)
+        if (SelectedIndex != Constants::kIndexNone)
         {
             DrawBoneHierarchy(World.Get(), SkeletonResource, WorldTransforms, SelectedIndex);
         }
@@ -269,7 +269,7 @@ namespace Lumina
         for (const FMeshSocket& Socket : Skeleton->Sockets)
         {
             const int32 BoneIndex = SkeletonResource->FindBoneIndex(Socket.BoneName);
-            if (BoneIndex == INDEX_NONE)
+            if (BoneIndex == Constants::kIndexNone)
             {
                 continue;
             }
@@ -364,7 +364,7 @@ namespace Lumina
     
         DrawWorld->DrawSphere(BonePosition, 0.025f, FColor::Red, 8, 1.0f, false);
     
-        if (Bone.ParentIndex != INDEX_NONE)
+        if (Bone.ParentIndex != Constants::kIndexNone)
         {
             FVector3 ParentPosition = FVector3(WorldTransforms[Bone.ParentIndex][3]);
             DrawWorld->DrawLine(ParentPosition, BonePosition, FColor::Green, 10.0f, false);

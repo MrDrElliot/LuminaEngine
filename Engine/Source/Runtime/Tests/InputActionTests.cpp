@@ -339,7 +339,7 @@ TEST(InputActionTests, UnknownActionReadsAsZero)
     Tick(Context);
 
     const FInputActionMap& Map = FInputActionMap::Get();
-    EXPECT_EQ(Map.FindActionIndex(FName("NoSuchAction")), INDEX_NONE);
+    EXPECT_EQ(Map.FindActionIndex(FName("NoSuchAction")), Constants::kIndexNone);
     EXPECT_FALSE(Map.IsActionDown(FName("NoSuchAction"), Context));
     EXPECT_FLOAT_EQ(Map.GetActionAxis(FName("NoSuchAction"), Context), 0.0f);
 }

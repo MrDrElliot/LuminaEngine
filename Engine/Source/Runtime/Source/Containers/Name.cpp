@@ -19,7 +19,7 @@ namespace Lumina
     {
     public:
         // Default capacity reserved per chunk; a string larger than this gets its own exact-fit chunk.
-        static constexpr size_t CHUNK_SIZE = 1024 * 1024; // 1MB
+        static constexpr size_t CHUNK_SIZE = Constants::kMiB;
 
         const char* AllocateString(const char* Str, size_t Length);
 

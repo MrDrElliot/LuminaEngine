@@ -126,7 +126,7 @@ namespace Lumina
 
     void FBlendSpaceWeights::Add(int32 SampleIndex, float Weight)
     {
-        if (Count >= MaxContributions || Weight <= 1e-5f || SampleIndex == INDEX_NONE)
+        if (Count >= MaxContributions || Weight <= 1e-5f || SampleIndex == Constants::kIndexNone)
         {
             return;
         }
@@ -333,8 +333,8 @@ namespace Lumina
         // Falls back to the nearest pair projected onto their segment, which is what a 1D space does.
         if (Triangles.empty())
         {
-            int32 NearestA = INDEX_NONE;
-            int32 NearestB = INDEX_NONE;
+            int32 NearestA = Constants::kIndexNone;
+            int32 NearestB = Constants::kIndexNone;
             float BestA = 1e30f;
             float BestB = 1e30f;
 
@@ -357,7 +357,7 @@ namespace Lumina
                 }
             }
 
-            if (NearestB == INDEX_NONE)
+            if (NearestB == Constants::kIndexNone)
             {
                 OutWeights.Add(NearestA, 1.0f);
                 return;
@@ -378,7 +378,7 @@ namespace Lumina
         }
 
         // Clamping and renormalizing slides along the nearest edge instead of snapping between triangles.
-        int32 BestTriangle = INDEX_NONE;
+        int32 BestTriangle = Constants::kIndexNone;
         float BestScore = -1e30f;
         float BestU = 0.0f, BestV = 0.0f, BestW = 0.0f;
 
@@ -412,7 +412,7 @@ namespace Lumina
             }
         }
 
-        if (BestTriangle == INDEX_NONE)
+        if (BestTriangle == Constants::kIndexNone)
         {
             OutWeights.Add(0, 1.0f);
             return;

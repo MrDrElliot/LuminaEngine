@@ -23,7 +23,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Follower Pose")
         bool bWarnOnMissingBones = true;
 
-        // Follower bone to leader bone, by name. INDEX_NONE where the leader has no such bone. Transient.
+        // Follower bone to leader bone, by name. Constants::kIndexNone where the leader has no such bone. Transient.
         TVector<int32> BoneMap;
 
         // Leader bind times follower inverse bind, which is what lands a copy between two skeletons.

@@ -180,7 +180,7 @@ namespace Lumina
         // Long enough for a consumer a few instructions from its sequence store, past which it was preempted.
         static constexpr uint32 kEnqueuePauseSpins = 64;
 
-        static constexpr size_t kCacheLine = Threading::kCacheLineSize;
+        static constexpr size_t kCacheLine = Constants::kCacheLineSize;
 
         FORCEINLINE uint64 Mask() const
         {

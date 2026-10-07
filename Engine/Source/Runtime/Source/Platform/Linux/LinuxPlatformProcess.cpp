@@ -854,7 +854,7 @@ namespace Lumina::Platform
 
     size_t GetProcessMemoryUsageMegaBytes()
     {
-        return GetProcessMemoryUsageBytes() / (1024 * 1024);
+        return GetProcessMemoryUsageBytes() / Constants::kMiB;
     }
 
     void GetAddressSpaceStats(FAddressSpaceStats& Out, bool bIncludeHeaps)

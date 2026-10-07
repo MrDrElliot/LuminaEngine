@@ -8,6 +8,7 @@
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Physics/PhysicsTypes.h"
+#include "Lumina.h"
 #include "RayCast.generated.h"
 
 namespace Lumina
@@ -26,12 +27,12 @@ namespace Lumina
         uint64 Scene = 0;
 
         PROPERTY()
-        uint32 Slot = ~0u;
+        uint32 Slot = Constants::kIndexNoneU32;
 
         PROPERTY()
         uint32 Generation = 0;
 
-        bool IsSet() const { return Scene != 0 && Slot != ~0u; }
+        bool IsSet() const { return Scene != 0 && Slot != Constants::kIndexNoneU32; }
     };
 
     REFLECT()
@@ -64,9 +65,9 @@ namespace Lumina
         PROPERTY()
         float Distance;
 
-        /** Skeleton bone the hit body belongs to (ragdoll per-bone bodies); INDEX_NONE otherwise. */
+        /** Skeleton bone the hit body belongs to (ragdoll per-bone bodies); Constants::kIndexNone otherwise. */
         PROPERTY()
-        int32 BoneIndex = INDEX_NONE;
+        int32 BoneIndex = Constants::kIndexNone;
 
         /** Carries the optionality a by-value result cannot, so a miss is a zeroed struct rather than nothing. */
         PROPERTY()

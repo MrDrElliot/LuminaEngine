@@ -51,10 +51,10 @@ namespace Lumina
             const float Dx = Wind.x * ca - Wind.y * sa;
             const float Dz = Wind.x * sa + Wind.y * ca;
 
-            const float k       = 2.0f * LE_PI_F / (Math::Max(W.WaveLength, 0.5f) * Ratio);
+            const float k       = Math::TwoPi<float>() / (Math::Max(W.WaveLength, 0.5f) * Ratio);
             const float Omega   = Math::Sqrt(9.81f * k) * WindFactor;
             const float PhaseH  = (float)i * 0.7548776662f + 0.31f;
-            const float Phase   = (PhaseH - Math::Floor(PhaseH)) * 2.0f * LE_PI_F;
+            const float Phase   = (PhaseH - Math::Floor(PhaseH)) * Math::TwoPi<float>();
             const float Phi     = k * (Dx * WorldX + Dz * WorldZ) - Omega * Time + Phase;
             Y += Math::Min(W.WaveAmplitude * Math::Pow(Ratio, AmplitudePower), MaxSteepness / k) * Math::Sin(Phi);
         }

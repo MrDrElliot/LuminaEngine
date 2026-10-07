@@ -164,7 +164,7 @@ namespace Lumina
 
         friend class FInputActionMap;
 
-        mutable int32  CachedIndex = INDEX_NONE;
+        mutable int32  CachedIndex = Constants::kIndexNone;
         mutable uint32 CachedSerial = 0;
         mutable FName  CachedName;
     };

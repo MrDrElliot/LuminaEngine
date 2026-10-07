@@ -17,7 +17,7 @@ namespace Lumina
         FTransform    Relative;
         FMatrix4      Post       = FMatrix4(1.0f);
         FTransform    LastLocal;
-        int32         Bone       = INDEX_NONE;
+        int32         Bone       = Constants::kIndexNone;
         uint32        PoseSerial = 0;
         bool          bResolved  = false;
         bool          bWritten   = false;

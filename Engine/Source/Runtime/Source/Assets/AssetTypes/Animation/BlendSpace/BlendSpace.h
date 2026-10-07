@@ -107,7 +107,7 @@ namespace Lumina
     {
         static constexpr int32 MaxContributions = 3;
 
-        int32 SampleIndices[MaxContributions] = { INDEX_NONE, INDEX_NONE, INDEX_NONE };
+        int32 SampleIndices[MaxContributions] = { Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone };
         float Weights[MaxContributions] = { 0.0f, 0.0f, 0.0f };
         int32 Count = 0;
 

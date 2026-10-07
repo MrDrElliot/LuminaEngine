@@ -1338,7 +1338,7 @@ namespace Lumina
             {
                 const FMatrix4 Local = Detail::ComposeLocal(Pose, i);
                 const int32 Parent = Skeleton->GetBone(i).ParentIndex;
-                OutMatrices[i] = Parent != INDEX_NONE ? OutMatrices[Parent] * Local : Local;
+                OutMatrices[i] = Parent != Constants::kIndexNone ? OutMatrices[Parent] * Local : Local;
             }
 
             for (int32 i = 0; i < NumBones; ++i)
@@ -1366,7 +1366,7 @@ namespace Lumina
                                               FQuat(Rw[i], Rx[i], Ry[i], Rz[i]),
                                               FVector3(Sx[i], Sy[i], Sz[i]));
             const int32 Parent = Parents[i];
-            Globals[i] = Parent != INDEX_NONE ? Globals[Parent] * Local : Local;
+            Globals[i] = Parent != Constants::kIndexNone ? Globals[Parent] * Local : Local;
             OutMatrices[i] = Globals[i] * InvBind[i];
         }
     }

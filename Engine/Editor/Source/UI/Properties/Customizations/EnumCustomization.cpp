@@ -75,7 +75,7 @@ namespace Lumina
             const int64 EnumCount = (int64)Enum->Names.size();
 
             // Map the stored value to its row; values need not be contiguous with indices.
-            int32 CurrentIndex = INDEX_NONE;
+            int32 CurrentIndex = Constants::kIndexNone;
             for (int64 i = 0; i < EnumCount; ++i)
             {
                 if ((int64)Enum->GetValueAtIndex(i) == CachedValue)
@@ -91,7 +91,7 @@ namespace Lumina
                 return FFixedString(Enum->GetNameAtIndex(Index).c_str());
             }, LE_ICON_RHOMBUS_OUTLINE);
 
-            if (Picked != INDEX_NONE)
+            if (Picked != Constants::kIndexNone)
             {
                 CachedValue = (int64)Enum->GetValueAtIndex(Picked);
                 bWasChanged = true;

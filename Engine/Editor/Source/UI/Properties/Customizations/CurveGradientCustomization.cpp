@@ -383,7 +383,7 @@ namespace Lumina
                 if (ImGui::Button(LE_ICON_DELETE " Remove Stop"))
                 {
                     Value.RemoveKey(SelectedStop);
-                    SelectedStop = INDEX_NONE;
+                    SelectedStop = Constants::kIndexNone;
                     bDirty = true;
                 }
                 ImGui::EndDisabled();
@@ -416,7 +416,7 @@ namespace Lumina
         if (CachedValue.Keys.size() != Actual.Keys.size())
         {
             CachedValue = Value = Actual;
-            SelectedStop = INDEX_NONE;
+            SelectedStop = Constants::kIndexNone;
         }
     }
 }

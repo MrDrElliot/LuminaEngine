@@ -292,7 +292,7 @@ namespace PackageLoadBench
         if (Phases.ReadAndInflateMs > 0.0)
         {
             std::printf("  inflate     %.0f MiB/s of tagged stream\n",
-                ((double)Corpus.PlainBytes / (1024.0 * 1024.0)) / (Phases.ReadAndInflateMs / 1000.0));
+                ((double)Corpus.PlainBytes / double(Constants::kMiB)) / (Phases.ReadAndInflateMs / 1000.0));
         }
         std::printf("  save (untimed setup)    %9.2f ms   %8.1f us/pkg\n",
             Corpus.BuildMs, NumPkgs ? (Corpus.BuildMs * 1000.0) / NumPkgs : 0.0);

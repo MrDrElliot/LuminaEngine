@@ -52,8 +52,8 @@ namespace Lumina
         EXPECT_EQ(Collection->FindScalarIndex("SnowCoverage"), 1);
         EXPECT_EQ(Collection->FindVectorIndex("SeasonTint"), 0);
 
-        EXPECT_EQ(Collection->FindScalarIndex("NotDeclared"), INDEX_NONE);
-        EXPECT_EQ(Collection->FindVectorIndex("Wetness"), INDEX_NONE) << "a scalar is not a vector";
+        EXPECT_EQ(Collection->FindScalarIndex("NotDeclared"), Constants::kIndexNone);
+        EXPECT_EQ(Collection->FindVectorIndex("Wetness"), Constants::kIndexNone) << "a scalar is not a vector";
     }
 
     TEST(MaterialParameterCollection, DeclaredDefaultsAreReadableBeforeAnythingSetsThem)

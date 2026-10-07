@@ -185,12 +185,12 @@ namespace Lumina::RHI
     // Indexed by EMemoryType. The host-visible classes stay small because a non-ReBAR aperture is ~256 MiB total.
     constexpr uint64 kMemoryPageSize[3] =
     {
-        64ull  * 1024 * 1024,   // CPUWrite
-        32ull  * 1024 * 1024,   // CPURead
-        256ull * 1024 * 1024,   // GPUOnly
+        64  * Constants::kMiB,   // CPUWrite
+        32  * Constants::kMiB,   // CPURead
+        256 * Constants::kMiB,   // GPUOnly
     };
 
-    constexpr uint64 kMinMemoryPageSize = 8ull * 1024 * 1024;
+    constexpr uint64 kMinMemoryPageSize = 8 * Constants::kMiB;
 
 
     static constexpr VkAccessFlags2 ToVkAccess(EAccessFlags Flags)
@@ -1394,7 +1394,7 @@ namespace Lumina::RHI
 
     // Share of a small (non-ReBAR) CPU-visible VRAM aperture that any one CPU-write ring may reserve.
     static constexpr uint64 kCPUWriteApertureDivisor = 4;
-    static constexpr uint64 kMinCPUWriteSlice        = 8ull * 1024 * 1024;
+    static constexpr uint64 kMinCPUWriteSlice        = 8 * Constants::kMiB;
 
     uint64 ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount)
     {
@@ -1427,7 +1427,7 @@ namespace Lumina::RHI
         }
 
         const uint64 PerSlice = (Aperture / kCPUWriteApertureDivisor) / SliceCount;
-        const uint64 Cap      = Math::Max(kMinCPUWriteSlice, (PerSlice / kMegabyte) * kMegabyte);
+        const uint64 Cap      = Math::Max(kMinCPUWriteSlice, (PerSlice / Constants::kMiB) * Constants::kMiB);
         if (Cap >= DesiredSliceSize)
         {
             return DesiredSliceSize;
@@ -2372,7 +2372,7 @@ namespace Lumina::RHI
 
         VkQueue ComputeQueue = GraphicsQueue;
         uint32  ComputeQueueFamily = GraphicsFamily;
-        if (ComputeFamily != UINT32_MAX)
+        if (ComputeFamily != Constants::kIndexNoneU32)
         {
             vkGetDeviceQueue(GDevice->Device, ComputeFamily, 0, &ComputeQueue);
             ComputeQueueFamily = ComputeFamily;
@@ -2384,7 +2384,7 @@ namespace Lumina::RHI
 
         VkQueue TransferQueue = GraphicsQueue;
         uint32  TransferQueueFamily = GraphicsFamily;
-        if (TransferFamily != UINT32_MAX)
+        if (TransferFamily != Constants::kIndexNoneU32)
         {
             vkGetDeviceQueue(GDevice->Device, TransferFamily, 0, &TransferQueue);
             TransferQueueFamily = TransferFamily;
@@ -2403,18 +2403,18 @@ namespace Lumina::RHI
         GDevice->QueueFamilies[(uint32)EQueueType::Transfer] = TransferQueueFamily;
 
         GDevice->QueueLockIndex[(uint32)EQueueType::Graphics] = (uint32)EQueueType::Graphics;
-        GDevice->QueueLockIndex[(uint32)EQueueType::Compute]  = (ComputeFamily != UINT32_MAX)
+        GDevice->QueueLockIndex[(uint32)EQueueType::Compute]  = (ComputeFamily != Constants::kIndexNoneU32)
             ? (uint32)EQueueType::Compute  : (uint32)EQueueType::Graphics;
-        GDevice->QueueLockIndex[(uint32)EQueueType::Transfer] = (TransferFamily != UINT32_MAX)
+        GDevice->QueueLockIndex[(uint32)EQueueType::Transfer] = (TransferFamily != Constants::kIndexNoneU32)
             ? (uint32)EQueueType::Transfer : (uint32)EQueueType::Graphics;
 
         GDevice->NumSharedQueueFamilies = 0;
         GDevice->SharedQueueFamilies[GDevice->NumSharedQueueFamilies++] = GraphicsFamily;
-        if (ComputeFamily != UINT32_MAX)
+        if (ComputeFamily != Constants::kIndexNoneU32)
         {
             GDevice->SharedQueueFamilies[GDevice->NumSharedQueueFamilies++] = ComputeFamily;
         }
-        if (TransferFamily != UINT32_MAX)
+        if (TransferFamily != Constants::kIndexNoneU32)
         {
             GDevice->SharedQueueFamilies[GDevice->NumSharedQueueFamilies++] = TransferFamily;
         }
@@ -2869,9 +2869,9 @@ namespace Lumina::RHI
             .features = Features10,
         };
 
-        uint32 GraphicsFamily = UINT32_MAX;
-        uint32 ComputeFamily  = UINT32_MAX;
-        uint32 TransferFamily = UINT32_MAX;
+        uint32 GraphicsFamily = Constants::kIndexNoneU32;
+        uint32 ComputeFamily  = Constants::kIndexNoneU32;
+        uint32 TransferFamily = Constants::kIndexNoneU32;
         {
             uint32 FamilyCount = 0;
             vkGetPhysicalDeviceQueueFamilyProperties(GDevice->PhysicsDevice, &FamilyCount, nullptr);
@@ -2880,7 +2880,7 @@ namespace Lumina::RHI
 
             for (uint32 i = 0; i < FamilyCount; ++i)
             {
-                if (GraphicsFamily == UINT32_MAX && (Families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+                if (GraphicsFamily == Constants::kIndexNoneU32 && (Families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
                 {
                     GraphicsFamily = i;
                 }
@@ -2903,7 +2903,7 @@ namespace Lumina::RHI
             }
 
             // Selection refused any device without one, so reaching this means the two checks disagree.
-            if (GraphicsFamily == UINT32_MAX)
+            if (GraphicsFamily == Constants::kIndexNoneU32)
             {
                 ShowVulkanInitFailure("Vulkan Device Unsuitable",
                     FString("Selected GPU '") + GDevice->Properties.deviceName
@@ -2917,7 +2917,7 @@ namespace Lumina::RHI
             TVector<VkDeviceQueueCreateInfo> QueueInfos;
             auto AddQueue = [&](uint32 Family)
             {
-                if (Family == UINT32_MAX)
+                if (Family == Constants::kIndexNoneU32)
                 {
                     return;
                 }
@@ -3570,7 +3570,7 @@ namespace Lumina::RHI
         }
 
         // Past this, the nearest allocation is just whichever was closest in a 40-bit address space.
-        constexpr uint64 kNeighborWindow = 64ull * 1024 * 1024;
+        constexpr uint64 kNeighborWindow = 64 * Constants::kMiB;
 
         // try_lock, since a thread stuck mid-Malloc would turn a crash report into a hang.
         FReadScopeLock Lock(GDevice->MemoryMutex, TryToLock);
@@ -3665,7 +3665,7 @@ namespace Lumina::RHI
         if (!Nearest.bValid)
         {
             return FString(::Lumina::Format("no live or freed allocation within {} MiB",
-                                       kNeighborWindow / (1024ull * 1024ull)).c_str());
+                                       kNeighborWindow / Constants::kMiB).c_str());
         }
 
         const char* Relation = Nearest.bPastEnd ? "past the end of" : "before the start of";

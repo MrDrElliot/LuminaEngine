@@ -289,7 +289,7 @@ namespace Lumina
 
         //~ Embedded payloads stay VIEWS into the scene ufbx owns, and ReleaseSourceData is what frees them.
 
-        TVector<int32> FileToImage(Scene->texture_files.count, INDEX_NONE);
+        TVector<int32> FileToImage(Scene->texture_files.count, Constants::kIndexNone);
 
         if (bWantTextures && Scene->texture_files.count > 0)
         {
@@ -418,9 +418,9 @@ namespace Lumina
             const ufbx_texture* File = FindFileTexture(Map.texture);
             if (File == nullptr || !File->has_file || File->file_index == UFBX_NO_INDEX)
             {
-                return INDEX_NONE;
+                return Constants::kIndexNone;
             }
-            return (File->file_index < FileToImage.size()) ? FileToImage[File->file_index] : INDEX_NONE;
+            return (File->file_index < FileToImage.size()) ? FileToImage[File->file_index] : Constants::kIndexNone;
         };
 
         auto ResolveUVTransform = [&](const ufbx_material_map& Map) -> FTextureUVTransform
@@ -499,7 +499,7 @@ namespace Lumina
             return false;
         };
 
-        TVector<int32> MaterialToUnique(Scene->materials.count, INDEX_NONE);
+        TVector<int32> MaterialToUnique(Scene->materials.count, Constants::kIndexNone);
 
         if (Options.bImportMaterials)
         {
@@ -526,7 +526,7 @@ namespace Lumina
                 // The packed form is only assumed when both channels genuinely name the same file.
                 const int32 MetallicImage  = ResolveImage(PBR.metalness);
                 const int32 RoughnessImage = ResolveImage(PBR.roughness);
-                if (MetallicImage != INDEX_NONE && MetallicImage == RoughnessImage)
+                if (MetallicImage != Constants::kIndexNone && MetallicImage == RoughnessImage)
                 {
                     Material.MetallicRoughnessImage = MetallicImage;
                 }
@@ -539,13 +539,13 @@ namespace Lumina
                 // An FBX texture REPLACES its property's constant rather than tinting it the way a glTF factor does.
                 auto ScalarFactor = [](const ufbx_material_map& Map, int32 Image, float Default) -> float
                 {
-                    return (Image != INDEX_NONE) ? 1.0f : MapReal(Map, Default);
+                    return (Image != Constants::kIndexNone) ? 1.0f : MapReal(Map, Default);
                 };
 
                 const int32 OpacityImage = ResolveImage(PBR.opacity);
-                const float Opacity = (OpacityImage != INDEX_NONE) ? 1.0f : MapReal(PBR.opacity, 1.0f);
+                const float Opacity = (OpacityImage != Constants::kIndexNone) ? 1.0f : MapReal(PBR.opacity, 1.0f);
 
-                if (Material.BaseColorImage != INDEX_NONE)
+                if (Material.BaseColorImage != Constants::kIndexNone)
                 {
                     Material.BaseColorFactor = FVector4(1.0f, 1.0f, 1.0f, Opacity);
                 }
@@ -558,13 +558,13 @@ namespace Lumina
                 }
 
                 // No metalness value and no map means a dielectric, so a factor of 1 would import Phong as metal.
-                Material.MetallicFactor = (PBR.metalness.has_value || MetallicImage != INDEX_NONE)
+                Material.MetallicFactor = (PBR.metalness.has_value || MetallicImage != Constants::kIndexNone)
                     ? ScalarFactor(PBR.metalness, MetallicImage, 0.0f) : 0.0f;
 
                 Material.RoughnessFactor = ScalarFactor(PBR.roughness, RoughnessImage, 0.5f);
                 if (Feat.roughness_as_glossiness.enabled)
                 {
-                    if (RoughnessImage == INDEX_NONE)
+                    if (RoughnessImage == Constants::kIndexNone)
                     {
                         Material.RoughnessFactor = 1.0f - Material.RoughnessFactor;
                     }
@@ -576,7 +576,7 @@ namespace Lumina
                 }
 
                 const float EmissionFactor = MapReal(PBR.emission_factor, 1.0f);
-                if (Material.EmissiveImage != INDEX_NONE)
+                if (Material.EmissiveImage != Constants::kIndexNone)
                 {
                     // The map supplies the color; only the weight stays a constant.
                     Material.EmissiveColor = FVector3(EmissionFactor);
@@ -600,7 +600,7 @@ namespace Lumina
                 Material.bUnlit    = Feat.unlit.enabled;
 
                 // The engine clips on base-color alpha only, so say so rather than importing it opaque.
-                if (OpacityImage != INDEX_NONE)
+                if (OpacityImage != Constants::kIndexNone)
                 {
                     Material.AlphaMode   = EImportAlphaMode::Mask;
                     Material.AlphaCutoff = 0.5f;
@@ -629,7 +629,7 @@ namespace Lumina
                 Material.UVTransforms[(size_t)EMaterialTextureSlot::Metallic]          = ResolveUVTransform(PBR.metalness);
                 Material.UVTransforms[(size_t)EMaterialTextureSlot::Roughness]         = ResolveUVTransform(PBR.roughness);
                 Material.UVTransforms[(size_t)EMaterialTextureSlot::MetallicRoughness] =
-                    (Material.MetallicRoughnessImage != INDEX_NONE) ? ResolveUVTransform(PBR.roughness) : FTextureUVTransform();
+                    (Material.MetallicRoughnessImage != Constants::kIndexNone) ? ResolveUVTransform(PBR.roughness) : FTextureUVTransform();
 
                 Material.Samplers[(size_t)EMaterialTextureSlot::BaseColor]         = ResolveSampler(PBR.base_color);
                 Material.Samplers[(size_t)EMaterialTextureSlot::Normal]            = ResolveSampler(PBR.normal_map);
@@ -789,7 +789,7 @@ namespace Lumina
         // The root itself is the scene's implicit container, so its children start at the top level.
         for (const ufbx_node* Child : Scene->root_node->children)
         {
-            Stack.push_back(FStackEntry{ Child, INDEX_NONE });
+            Stack.push_back(FStackEntry{ Child, Constants::kIndexNone });
         }
 
         uint32 VisitedNodes = 0;
@@ -890,7 +890,7 @@ namespace Lumina
         //~ ufbx already shares a mesh across instances, so this only catches doubly-emitted geometry.
 
         TVector<uint32> UniqueMeshes;
-        TVector<int32>  MeshToUnique(Scene->meshes.count, INDEX_NONE);
+        TVector<int32>  MeshToUnique(Scene->meshes.count, Constants::kIndexNone);
         {
             FKeyDedup MeshDedup(Scene->meshes.count);
             UniqueMeshes.reserve(Scene->meshes.count);
@@ -920,7 +920,7 @@ namespace Lumina
                 Key.push_back((uint32)Mesh.skin_deformers.count);
                 for (const ufbx_material* Material : Mesh.materials)
                 {
-                    Key.push_back(Material != nullptr ? Material->typed_id : 0xFFFFFFFFu);
+                    Key.push_back(Material != nullptr ? Material->typed_id : Constants::kIndexNoneU32);
                 }
 
                 uint64 PositionHash = 0xCBF29CE484222325ull;
@@ -1062,7 +1062,7 @@ namespace Lumina
                 // Both sides carry ufbx's adjust, so it cancels and only the engine basis is left to apply.
                 Bone.InvBindMatrix  = Basis.InvBindToEngine(Math::Inverse(ToMatrix4(Node.node_to_world)) * SkinGeometryToWorld);
 
-                Bone.ParentIndex = INDEX_NONE;
+                Bone.ParentIndex = Constants::kIndexNone;
                 if (Node.parent != nullptr)
                 {
                     auto It = NodeToBone.find(Node.parent->typed_id);
@@ -1177,7 +1177,7 @@ namespace Lumina
             TVector<int32> ClusterToBone;
             if (bSkinned)
             {
-                ClusterToBone.resize(Skin->clusters.count, INDEX_NONE);
+                ClusterToBone.resize(Skin->clusters.count, Constants::kIndexNone);
                 for (size_t c = 0; c < Skin->clusters.count; ++c)
                 {
                     const ufbx_node* BoneNode = Skin->clusters.data[c]->bone_node;
@@ -1263,7 +1263,7 @@ namespace Lumina
                                 {
                                     const ufbx_skin_weight& Weight = Skin->weights.data[SkinVertex.weight_begin + w];
                                     const int32 Bone = (Weight.cluster_index < ClusterToBone.size())
-                                        ? ClusterToBone[Weight.cluster_index] : INDEX_NONE;
+                                        ? ClusterToBone[Weight.cluster_index] : Constants::kIndexNone;
                                     if (Bone < 0)
                                     {
                                         continue;

@@ -400,8 +400,8 @@ namespace Lumina::Physics
         }
 
         // Folding the collider offset into each shape here costs nothing at run time.
-        const bool bHasColliderOffset = Math::LengthSquared(ColliderTranslationOffset) > LE_SMALL_NUMBER
-                                     || Math::LengthSquared(ColliderRotationOffset) > LE_SMALL_NUMBER;
+        const bool bHasColliderOffset = Math::LengthSquared(ColliderTranslationOffset) > Math::kSmallNumber
+                                     || Math::LengthSquared(ColliderRotationOffset) > Math::kSmallNumber;
         if (bHasColliderOffset)
         {
             // In the entity's scaled local space, like the shape sizes above and the navmesh's reading of the same offset.
@@ -568,7 +568,7 @@ namespace Lumina::Physics
 
         b3Body_ApplyMassFromShapes(BodyId);
 
-        const bool bShiftCenterOfMass = Math::LengthSquared(Build.CenterOfMassOffset) > LE_SMALL_NUMBER;
+        const bool bShiftCenterOfMass = Math::LengthSquared(Build.CenterOfMassOffset) > Math::kSmallNumber;
 
         if (Build.BodyDef.type == b3_dynamicBody && (Build.bOverrideMass || bShiftCenterOfMass))
         {

@@ -28,7 +28,7 @@ namespace Lumina
 
         const FSkeletonResource* Skeleton = Compiler.GetSkeleton();
 
-        bool bChainOk = (RootIdx != INDEX_NONE && MidIdx != INDEX_NONE && EndIdx != INDEX_NONE);
+        bool bChainOk = (RootIdx != Constants::kIndexNone && MidIdx != Constants::kIndexNone && EndIdx != Constants::kIndexNone);
         if (bChainOk && Skeleton != nullptr)
         {
             if (Skeleton->GetBone(MidIdx).ParentIndex != RootIdx ||

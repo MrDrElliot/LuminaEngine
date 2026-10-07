@@ -1424,7 +1424,7 @@ namespace Lumina
 		if (!ClaimUniformSlot((uint32)BoundImages.size(), MAX_TEXTURES, "texture",
 			Texture ? Texture->GetName() : NAME_None, Node))
 		{
-			return INDEX_NONE;
+			return Constants::kIndexNone;
 		}
 
 		const int32 Index = (int32)BoundImages.size();
@@ -1443,7 +1443,7 @@ namespace Lumina
 
 		if (!ClaimUniformSlot((uint32)BoundImages.size(), MAX_TEXTURES, "texture", ParamID, Node))
 		{
-			return INDEX_NONE;
+			return Constants::kIndexNone;
 		}
 
 		const int32 Index = (int32)BoundImages.size();
@@ -1457,7 +1457,7 @@ namespace Lumina
 	{
 		if (Collection == nullptr)
 		{
-			return INDEX_NONE;
+			return Constants::kIndexNone;
 		}
 
 		auto It = Algo::Find(BoundCollections, Collection);
@@ -1469,7 +1469,7 @@ namespace Lumina
 		if (!ClaimUniformSlot((uint32)BoundCollections.size(), MAX_MATERIAL_COLLECTIONS, "parameter collection",
 			Collection->GetName(), Node))
 		{
-			return INDEX_NONE;
+			return Constants::kIndexNone;
 		}
 
 		BoundCollections.push_back(Collection);
@@ -1480,11 +1480,11 @@ namespace Lumina
 		const FName& ParamID, CEdGraphNode* Node)
 	{
 		const int32 Slot  = BindParameterCollection(Collection, Node);
-		const int32 Index = (Collection != nullptr) ? Collection->FindScalarIndex(ParamID) : INDEX_NONE;
+		const int32 Index = (Collection != nullptr) ? Collection->FindScalarIndex(ParamID) : Constants::kIndexNone;
 
-		if (Slot == INDEX_NONE || Index == INDEX_NONE)
+		if (Slot == Constants::kIndexNone || Index == Constants::kIndexNone)
 		{
-			if (Collection != nullptr && Index == INDEX_NONE)
+			if (Collection != nullptr && Index == Constants::kIndexNone)
 			{
 				EdNodeGraph::FError Error;
 				Error.Node        = Node;
@@ -1507,11 +1507,11 @@ namespace Lumina
 		const FName& ParamID, CEdGraphNode* Node)
 	{
 		const int32 Slot  = BindParameterCollection(Collection, Node);
-		const int32 Index = (Collection != nullptr) ? Collection->FindVectorIndex(ParamID) : INDEX_NONE;
+		const int32 Index = (Collection != nullptr) ? Collection->FindVectorIndex(ParamID) : Constants::kIndexNone;
 
-		if (Slot == INDEX_NONE || Index == INDEX_NONE)
+		if (Slot == Constants::kIndexNone || Index == Constants::kIndexNone)
 		{
-			if (Collection != nullptr && Index == INDEX_NONE)
+			if (Collection != nullptr && Index == Constants::kIndexNone)
 			{
 				EdNodeGraph::FError Error;
 				Error.Node        = Node;
@@ -1743,7 +1743,7 @@ namespace Lumina
 		}
 
 		const int32 Index = BindTexture(Texture, Node);
-		if (Index == INDEX_NONE)
+		if (Index == Constants::kIndexNone)
 		{
 			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
 			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");
@@ -1790,7 +1790,7 @@ namespace Lumina
 		}
 
 		const int32 Index = BindTextureParameter(ParamID, Texture, Node);
-		if (Index == INDEX_NONE)
+		if (Index == Constants::kIndexNone)
 		{
 			// Downstream nodes bind by name, so leaving it undeclared turns one error into a cascade.
 			GetActiveChunk().append("float4 " + ID + " = float4(0.0, 0.0, 0.0, 1.0);\n");

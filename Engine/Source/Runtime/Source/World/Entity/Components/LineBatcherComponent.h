@@ -49,7 +49,7 @@ namespace Lumina
             L.RemainingLifetime = Duration;
             L.Thickness         = Thickness;
             L.bDepthTest        = bDepthTest ? 1u : 0u;
-            L.bSingleFrame      = Math::EpsilonEqual(Duration, -1.0f, LE_SMALL_NUMBER) ? 1u : 0u;
+            L.bSingleFrame      = Math::EpsilonEqual(Duration, -1.0f, Math::kSmallNumber) ? 1u : 0u;
             ThreadBuffers[Slot].push_back(L);
         }
     };

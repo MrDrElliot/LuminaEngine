@@ -1058,7 +1058,7 @@ namespace Lumina::Algo
         return First1 == Last1 && First2 == Last2;
     }
 
-    /** Position of the first element whose projection equals Value, or INDEX_NONE. */
+    /** Position of the first element whose projection equals Value, or Constants::kIndexNone. */
     template <Private::Range TRange, typename T, typename TProj = FIdentity>
     NODISCARD constexpr int32 IndexOf(TRange&& Range, const T& Value, TProj Proj = {})
     {
@@ -1073,10 +1073,10 @@ namespace Lumina::Algo
             ++Index;
         }
 
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
-    /** Position of the first element satisfying Pred, or INDEX_NONE. */
+    /** Position of the first element satisfying Pred, or Constants::kIndexNone. */
     template <Private::Range TRange, typename TPred>
     NODISCARD constexpr int32 IndexOfIf(TRange&& Range, TPred Pred)
     {
@@ -1091,7 +1091,7 @@ namespace Lumina::Algo
             ++Index;
         }
 
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     /** Left fold over the projected elements, seeded with Init. */

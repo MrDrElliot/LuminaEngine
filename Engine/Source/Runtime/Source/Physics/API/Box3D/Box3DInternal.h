@@ -10,10 +10,11 @@
 #include "Box3DUtils.h"
 #include "Core/Math/Math.h"
 #include "Renderer/MeshData.h"
+#include "Lumina.h"
 
 namespace Lumina::Physics
 {
-    inline constexpr uint32 InvalidBodyHandle = 0xFFFFFFFFu;
+    inline constexpr uint32 InvalidBodyHandle = Constants::kIndexNoneU32;
 
     inline constexpr b3Transform IdentityTransform{ { 0.0f, 0.0f, 0.0f }, { { 0.0f, 0.0f, 0.0f }, 1.0f } };
     inline constexpr b3Vec3 UnitScale{ 1.0f, 1.0f, 1.0f };

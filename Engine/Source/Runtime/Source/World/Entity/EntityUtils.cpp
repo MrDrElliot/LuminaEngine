@@ -890,7 +890,7 @@ namespace Lumina::ECS::Utils
                 return;
             }
 
-            const uint32 Slot = Jobs::IsInitialized() ? Jobs::GetWorkerIndex() : ~0u;
+            const uint32 Slot = Jobs::IsInitialized() ? Jobs::GetWorkerIndex() : Constants::kIndexNoneU32;
             if (Slot < NumMovedSlots)
             {
                 FMovedSlot& Moved = *MovedSlots[Slot];

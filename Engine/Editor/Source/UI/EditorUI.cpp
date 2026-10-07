@@ -2765,7 +2765,7 @@ namespace Lumina
                             // Null once ReclaimIdleRenderer has freed it out from under a still-drawn tool.
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
 
-                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(~0u);
+                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(RHI::kInvalidHeapSlot);
                             if (SceneRenderer != nullptr)
                             {
                                 // ImGui works in physical pixels here, so the content region is already the right unit.
@@ -2798,7 +2798,7 @@ namespace Lumina
                             // Null once ReclaimIdleRenderer has freed it out from under a still-drawn tool.
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
 
-                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(~0u);
+                            ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(RHI::kInvalidHeapSlot);
                             if (SceneRenderer != nullptr)
                             {
                                 // ImGui works in physical pixels here, so the content region is already the right unit.
@@ -3532,7 +3532,7 @@ namespace Lumina
             LastMemorySampleSeconds = NowSeconds;
             const float SampleWeight = 1.0f - Math::Exp(-(float)Math::Min(SinceSample, 10.0) / MemorySmoothingSeconds);
 
-            const float MemoryMiB = (float)Platform::GetProcessMemoryUsageBytes() / (1024.0f * 1024.0f);
+            const float MemoryMiB = (float)Platform::GetProcessMemoryUsageBytes() / float(Constants::kMiB);
             SmoothedMemoryMiB = (SmoothedMemoryMiB <= 0.0f)
                 ? MemoryMiB
                 : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * SampleWeight;
@@ -3552,7 +3552,7 @@ namespace Lumina
                 }
             }
 
-            constexpr float BytesPerMiB = 1024.0f * 1024.0f;
+            constexpr float BytesPerMiB = float(Constants::kMiB);
             const float GPUMemoryMiB = (float)GPUUsedBytes / BytesPerMiB;
             SmoothedGPUMemoryMiB = (SmoothedGPUMemoryMiB <= 0.0f)
                 ? GPUMemoryMiB

@@ -138,20 +138,20 @@ namespace Lumina::MCP
                     return Index;
                 }
             }
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         // A binding by name or by index, where empty means none.
         bool ParseBinding(const CSequence* Sequence, const FString& Text, int32& Out, FString& OutError)
         {
-            Out = INDEX_NONE;
+            Out = Constants::kIndexNone;
             if (Text.empty())
             {
                 return true;
             }
 
             Out = FindBinding(Sequence, FStringView(Text));
-            if (Out != INDEX_NONE)
+            if (Out != Constants::kIndexNone)
             {
                 return true;
             }
@@ -229,7 +229,7 @@ namespace Lumina::MCP
                     return Index;
                 }
             }
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         bool ParseJson(const FString& Text, nlohmann::json& Out, FString& OutError)
@@ -645,7 +645,7 @@ namespace Lumina::MCP
                     {
                         return Agent::FToolResult::Error("A binding needs a name.");
                     }
-                    if (FindBinding(Sequence, FStringView(In.Name)) != INDEX_NONE)
+                    if (FindBinding(Sequence, FStringView(In.Name)) != Constants::kIndexNone)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("The sequence already has a binding named '{}'.", In.Name));
                     }
@@ -688,12 +688,12 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    int32 Removed = INDEX_NONE;
+                    int32 Removed = Constants::kIndexNone;
                     if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Removed, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
-                    if (Removed == INDEX_NONE)
+                    if (Removed == Constants::kIndexNone)
                     {
                         return Agent::FToolResult::Error("Name the binding to remove.");
                     }
@@ -732,7 +732,7 @@ namespace Lumina::MCP
                         {
                             if (LookAt->TargetBindingIndex == Removed)
                             {
-                                LookAt->TargetBindingIndex = INDEX_NONE;
+                                LookAt->TargetBindingIndex = Constants::kIndexNone;
                             }
                             Renumber(LookAt->TargetBindingIndex);
                         }
@@ -755,7 +755,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    int32 Binding = INDEX_NONE;
+                    int32 Binding = Constants::kIndexNone;
                     if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Binding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
@@ -766,7 +766,7 @@ namespace Lumina::MCP
                     {
                         return Agent::FToolResult::Error(Lumina::Format("'{}' is not a track type. sequence.track_types lists them.", In.Type));
                     }
-                    if (Type->bNeedsBinding && Binding == INDEX_NONE)
+                    if (Type->bNeedsBinding && Binding == Constants::kIndexNone)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("A {} track drives a binding, so name one.", Type->Name));
                     }
@@ -1000,8 +1000,8 @@ namespace Lumina::MCP
 
         int32 AddCut(CSequence* Sequence, int32 Camera, float Start, float End, float BlendTime)
         {
-            int32 TrackIndex = INDEX_NONE;
-            CSequenceTrack_CameraCut* Track = FindOrAddTrack<CSequenceTrack_CameraCut>(Sequence, INDEX_NONE, TrackIndex);
+            int32 TrackIndex = Constants::kIndexNone;
+            CSequenceTrack_CameraCut* Track = FindOrAddTrack<CSequenceTrack_CameraCut>(Sequence, Constants::kIndexNone, TrackIndex);
 
             // A new shot takes over its range, trimming or dropping the cuts it lands on.
             TVector<SSequenceCameraCut> Kept;
@@ -1051,12 +1051,12 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    int32 Camera = INDEX_NONE;
+                    int32 Camera = Constants::kIndexNone;
                     if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Camera, Camera, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
-                    if (Camera == INDEX_NONE || In.End <= In.Start)
+                    if (Camera == Constants::kIndexNone || In.End <= In.Start)
                     {
                         return Agent::FToolResult::Error("A cut needs a camera binding and an End after its Start.");
                     }
@@ -1077,7 +1077,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    int32 Binding = INDEX_NONE;
+                    int32 Binding = Constants::kIndexNone;
                     if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Binding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
@@ -1087,7 +1087,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error("An event needs a name.");
                     }
 
-                    int32 TrackIndex = INDEX_NONE;
+                    int32 TrackIndex = Constants::kIndexNone;
                     CSequenceTrack_Event* Track = FindOrAddTrack<CSequenceTrack_Event>(Sequence, Binding, TrackIndex);
 
                     SSequenceEventKey Key;
@@ -1114,7 +1114,7 @@ namespace Lumina::MCP
                 {
                     CSequence* Sequence = nullptr;
                     FString Error;
-                    int32 Binding = INDEX_NONE;
+                    int32 Binding = Constants::kIndexNone;
                     if (!ResolveSequence(In.Sequence, Sequence, Error) || !ParseBinding(Sequence, In.Binding, Binding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
@@ -1131,7 +1131,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("'{}' is not a sound.", In.Sound));
                     }
 
-                    int32 TrackIndex = INDEX_NONE;
+                    int32 TrackIndex = Constants::kIndexNone;
                     CSequenceTrack_Audio* Track = FindOrAddTrack<CSequenceTrack_Audio>(Sequence, Binding, TrackIndex);
                     SSequenceAudioClip Clip;
                     Clip.StartTime = Math::Max(In.Start, 0.0f);
@@ -1139,7 +1139,7 @@ namespace Lumina::MCP
                     Clip.Volume = Math::Max(In.Volume, 0.0f);
                     Clip.Pitch = Math::Max(In.Pitch, 0.01f);
                     // A clip bound to nothing is score, so it follows the music volume rather than the effects.
-                    Clip.Bus = Binding == INDEX_NONE ? EAudioBus::Music : EAudioBus::SFX;
+                    Clip.Bus = Binding == Constants::kIndexNone ? EAudioBus::Music : EAudioBus::SFX;
                     Track->Clips.push_back(Clip);
 
                     Out.Index = TrackIndex;
@@ -1151,7 +1151,7 @@ namespace Lumina::MCP
         void KeyProperty(CSequence* Sequence, int32 Camera, const char* Path, float Time, float Value, ECurveInterpMode Mode, TVector<int32>& OutTracks)
         {
             CSequenceTrack_Property* Found = nullptr;
-            int32 FoundIndex = INDEX_NONE;
+            int32 FoundIndex = Constants::kIndexNone;
             for (int32 Index = 0; Index < (int32)Sequence->Tracks.size(); ++Index)
             {
                 CSequenceTrack_Property* Track = Cast<CSequenceTrack_Property>(Sequence->Tracks[Index].Get());
@@ -1216,7 +1216,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error("A shot needs at least one key with a Location.");
                     }
 
-                    int32 LookAtBinding = INDEX_NONE;
+                    int32 LookAtBinding = Constants::kIndexNone;
                     if (!ParseBinding(Sequence, In.LookAt, LookAtBinding, Error))
                     {
                         return Agent::FToolResult::Error(Error);
@@ -1257,11 +1257,11 @@ namespace Lumina::MCP
                         {
                             CameraName = Lumina::Format("ShotCam{}", ++Cameras);
                         }
-                        while (FindBinding(Sequence, FStringView(CameraName)) != INDEX_NONE);
+                        while (FindBinding(Sequence, FStringView(CameraName)) != Constants::kIndexNone);
                     }
 
                     int32 Camera = FindBinding(Sequence, FStringView(CameraName));
-                    if (Camera == INDEX_NONE)
+                    if (Camera == Constants::kIndexNone)
                     {
                         SSequenceBinding Binding;
                         Binding.Name = FName(CameraName.c_str());
@@ -1270,11 +1270,11 @@ namespace Lumina::MCP
                         Sequence->Bindings.push_back(Binding);
                     }
 
-                    int32 TransformIndex = INDEX_NONE;
+                    int32 TransformIndex = Constants::kIndexNone;
                     CSequenceTrack_Transform* Transform = FindOrAddTrack<CSequenceTrack_Transform>(Sequence, Camera, TransformIndex);
                     Out.Tracks.push_back(TransformIndex);
 
-                    const bool bFollows = LookAtBinding != INDEX_NONE || bHasLookAtPoint;
+                    const bool bFollows = LookAtBinding != Constants::kIndexNone || bHasLookAtPoint;
                     for (const nlohmann::json& Entry : Keys)
                     {
                         FVector3 Location;
@@ -1336,10 +1336,10 @@ namespace Lumina::MCP
 
                     if (bFollows)
                     {
-                        int32 LookAtIndex = INDEX_NONE;
+                        int32 LookAtIndex = Constants::kIndexNone;
                         CSequenceTrack_LookAt* LookAt = FindOrAddTrack<CSequenceTrack_LookAt>(Sequence, Camera, LookAtIndex);
                         LookAt->TargetBindingIndex = LookAtBinding;
-                        LookAt->TargetOffset = LookAtBinding != INDEX_NONE ? LookAtOffset : LookAtPoint + LookAtOffset;
+                        LookAt->TargetOffset = LookAtBinding != Constants::kIndexNone ? LookAtOffset : LookAtPoint + LookAtOffset;
                         LookAt->bAutoFocus = In.bAutoFocus && In.FStop > 0.0f;
                         Out.Tracks.push_back(LookAtIndex);
                     }
@@ -1347,8 +1347,8 @@ namespace Lumina::MCP
                     if (In.Handheld > 0.0f)
                     {
                         // The shake runs over whatever view is live, so its strength is keyed to this shot's range alone.
-                        int32 ShakeIndex = INDEX_NONE;
-                        CSequenceTrack_CameraShake* Shake = FindOrAddTrack<CSequenceTrack_CameraShake>(Sequence, INDEX_NONE, ShakeIndex);
+                        int32 ShakeIndex = Constants::kIndexNone;
+                        CSequenceTrack_CameraShake* Shake = FindOrAddTrack<CSequenceTrack_CameraShake>(Sequence, Constants::kIndexNone, ShakeIndex);
                         Key(Shake->Intensity.Curve, In.Start - 0.001f, 0.0f, ECurveInterpMode::Constant);
                         Key(Shake->Intensity.Curve, In.Start, In.Handheld, ECurveInterpMode::Constant);
                         Key(Shake->Intensity.Curve, In.End, 0.0f, ECurveInterpMode::Constant);
@@ -1432,8 +1432,8 @@ namespace Lumina::MCP
                     for (const TStrongObjectPtr<CSequenceTrack>& Track : Sequence->Tracks)
                     {
                         const CSequenceTrack_CameraCut* Cuts = Cast<CSequenceTrack_CameraCut>(Track.Get());
-                        const int32 Cut = Cuts != nullptr ? Cuts->FindCutAt(Player.Time) : INDEX_NONE;
-                        if (Cut != INDEX_NONE)
+                        const int32 Cut = Cuts != nullptr ? Cuts->FindCutAt(Player.Time) : Constants::kIndexNone;
+                        if (Cut != Constants::kIndexNone)
                         {
                             Info.LiveCamera = BindingName(Sequence, Cuts->Cuts[Cut].BindingIndex);
                             break;

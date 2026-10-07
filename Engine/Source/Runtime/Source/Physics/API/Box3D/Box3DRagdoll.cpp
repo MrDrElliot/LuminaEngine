@@ -37,7 +37,7 @@ namespace Lumina::Physics
             }
             if (D < -0.9999f)
             {
-                return RagdollAxisAngle(FVector3(0.0f, 0.0f, 1.0f), LE_PI_F);
+                return RagdollAxisAngle(FVector3(0.0f, 0.0f, 1.0f), Math::Pi<float>());
             }
             return RagdollAxisAngle(Math::Normalize(Math::Cross(Y, Dir)), Math::Acos(D));
         }
@@ -50,7 +50,7 @@ namespace Lumina::Physics
 
         struct FRagdollBodyDef
         {
-            int32           BoneIndex = INDEX_NONE;
+            int32           BoneIndex = Constants::kIndexNone;
             int32           ParentBodyIndex = -1;
             FVector3        WorldPos;
             FQuat           WorldRot;
@@ -127,7 +127,7 @@ namespace Lumina::Physics
             Order.reserve(Request.Bodies.size());
             for (int32 i = 0; i < (int32)Request.Bodies.size(); ++i)
             {
-                if (Skeleton->FindBoneIndex(Request.Bodies[i].BoneName) != INDEX_NONE)
+                if (Skeleton->FindBoneIndex(Request.Bodies[i].BoneName) != Constants::kIndexNone)
                 {
                     Order.push_back(i);
                 }
@@ -501,7 +501,7 @@ namespace Lumina::Physics
         const FVector3 Min = Box3DUtils::FromB3Vec3(Bounds.lowerBound);
         const FVector3 Max = Box3DUtils::FromB3Vec3(Bounds.upperBound);
 
-        const FVector3 Normal = Math::LengthSquared(SurfaceNormal) > LE_SMALL_NUMBER
+        const FVector3 Normal = Math::LengthSquared(SurfaceNormal) > Math::kSmallNumber
             ? Math::Normalize(SurfaceNormal)
             : FVector3(0.0f, 1.0f, 0.0f);
 
@@ -510,7 +510,7 @@ namespace Lumina::Physics
 
         // Projected half-height of the bounds along the surface normal.
         const float Reach = Math::Abs(Extent.x * Normal.x) + Math::Abs(Extent.y * Normal.y) + Math::Abs(Extent.z * Normal.z);
-        if (Reach <= LE_SMALL_NUMBER)
+        if (Reach <= Math::kSmallNumber)
         {
             return;
         }

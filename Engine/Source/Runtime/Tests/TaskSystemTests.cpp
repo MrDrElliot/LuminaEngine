@@ -1104,7 +1104,7 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
 
     // Concurrently live external threads must still get distinct slots, minus the main one.
     const uint32 Concurrent = Slots - 1;
-    std::vector<uint32>      Indices(Concurrent, ~0u);
+    std::vector<uint32>      Indices(Concurrent, Lumina::Constants::kIndexNoneU32);
     std::vector<FThread> Threads;
     std::atomic<uint32>      Arrived{0};
 

@@ -5,6 +5,7 @@
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 #include "Memory/Construct.h"
+#include "Lumina.h"
 
 
 namespace Lumina
@@ -154,7 +155,7 @@ namespace Lumina
     private:
         
         static constexpr auto kSmallSegmentsToSkip = 6;
-        static constexpr auto kNotInFreeList = UINT32_MAX;
+        static constexpr uint32 kNotInFreeList = Constants::kIndexNoneU32;
         static constexpr auto kEndOfList = kNotInFreeList - 1;
         
         struct FEntry

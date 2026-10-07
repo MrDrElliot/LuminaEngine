@@ -97,7 +97,7 @@ namespace Lumina
         ECS::FEntity                MeshEntity = ECS::NullEntity;
         ECS::FEntity                LightEntity = ECS::NullEntity;
 
-        int32                       SelectedPrimitive = INDEX_NONE;
+        int32                       SelectedPrimitive = Constants::kIndexNone;
         FShapeHandleState           HandleState;
         ImGuizmo::OPERATION         GizmoOp = ImGuizmo::TRANSLATE;
 

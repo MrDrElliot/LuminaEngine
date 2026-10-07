@@ -34,7 +34,7 @@ namespace Lumina
         const FMeshSocket* Socket = FindSocket(SocketName);
         if (Socket == nullptr || !SkeletonResource)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
         return SkeletonResource->FindBoneIndex(Socket->BoneName);
     }
@@ -48,7 +48,7 @@ namespace Lumina
         for (int32 i = 0; i < NumBones; ++i)
         {
             const FSkeletonResource::FBoneInfo& Bone = SkeletonResource->GetBone(i);
-            const FMatrix4 World = (Bone.ParentIndex == INDEX_NONE)
+            const FMatrix4 World = (Bone.ParentIndex == Constants::kIndexNone)
                 ? Bone.LocalTransform
                 : OutMatrices[Bone.ParentIndex] * Bone.LocalTransform;
             OutMatrices[i] = World;

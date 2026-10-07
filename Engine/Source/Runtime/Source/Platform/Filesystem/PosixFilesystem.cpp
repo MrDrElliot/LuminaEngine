@@ -19,7 +19,7 @@ namespace Lumina::Filesystem
     {
         thread_local EResult GLastResult = EResult::Success;
 
-        constexpr size_t kMaxIoChunk = 32ull * 1024ull * 1024ull;
+        constexpr size_t kMaxIoChunk = 32 * Constants::kMiB;
 
         EResult TranslateError(int Error)
         {

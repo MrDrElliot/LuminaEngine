@@ -6,6 +6,7 @@
 #include "Renderer/CustomPrimitiveData.h"
 #include "Containers/Vector.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
+#include "Lumina.h"
 #include "MeshComponent.generated.h"
 
 namespace Lumina
@@ -41,7 +42,7 @@ namespace Lumina
         float MaxDrawDistance = 0.0f;
 
         /** Index into FMeshResolveCache; ~0u until first resolved. */
-        uint32          ResolveHandle = ~0u;
+        uint32          ResolveHandle = Constants::kIndexNoneU32;
 
         /** When true, this mesh writes to the shadow map. */
         PROPERTY(Editable, Category = "Shadows")

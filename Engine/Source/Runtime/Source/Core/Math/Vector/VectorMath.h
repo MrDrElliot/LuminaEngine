@@ -116,7 +116,7 @@ namespace Lumina::Math
     }
 
     template<typename T, int N>
-    [[nodiscard]] constexpr bool IsNearlyEqual(const TVec<T, N>& A, const TVec<T, N>& B, T Epsilon = T(LE_KINDA_SMALL_NUMBER))
+    [[nodiscard]] constexpr bool IsNearlyEqual(const TVec<T, N>& A, const TVec<T, N>& B, T Epsilon = T(Math::kKindaSmallNumber))
     {
         for (int i = 0; i < N; ++i)
         {

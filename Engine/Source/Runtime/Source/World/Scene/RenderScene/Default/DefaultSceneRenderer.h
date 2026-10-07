@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Lumina.h"
 #include "World/ECS/Registry.h"
 
 
@@ -265,7 +266,7 @@ namespace Lumina
             {
                 FSceneGlobalData    SceneGlobalData = {};
                 FViewVolume         ViewVolume      = {};
-                uint32              CameraViewIndex = ~0u;   // its cull-view index (frustum-only)
+                uint32              CameraViewIndex = Constants::kIndexNoneU32;   // its cull-view index (frustum-only)
                 int32               SceneViewIndex  = -1;    // index into FDefaultSceneRenderer::SceneViews
             };
 
@@ -322,7 +323,7 @@ namespace Lumina
             {
                 TVector<FCullView>               CullViews;
                 uint32                           NumDrawsPerView     = 0;
-                uint32                           CascadeViewBase     = ~0u;
+                uint32                           CascadeViewBase     = Constants::kIndexNoneU32;
                 TVector<uint32>                  PointShadowCullViewBases;
                 TVector<uint32>                  SpotShadowCullViewBases;
                 TVector<FCaptureViewData>        CaptureViews;
@@ -1160,7 +1161,7 @@ namespace Lumina
             FVector4           CascadeDepthRanges = {};
             bool               bHasCascadeShadow  = false;
 
-            uint32             CascadeViewBase  = ~0u;
+            uint32             CascadeViewBase  = Constants::kIndexNoneU32;
             bool               bValid           = false;
         };
         FFrozenCull FrozenCull;
@@ -1260,14 +1261,14 @@ namespace Lumina
         // Off unless the pass filling the volume dispatched, so the composite cannot read a stale one.
         struct FAtmosphereTerms
         {
-            uint32 AerialInScatterIndex     = ~0u;
-            uint32 AerialTransmittanceIndex = ~0u;
+            uint32 AerialInScatterIndex     = Constants::kIndexNoneU32;
+            uint32 AerialTransmittanceIndex = Constants::kIndexNoneU32;
             float  AerialRange              = 0.0f;
             float  AerialIntensity          = 0.0f;
-            uint32 CloudScatterIndex        = ~0u;
-            uint32 CloudDepthIndex          = ~0u;
-            uint32 FogShaftIndex            = ~0u;
-            uint32 FogShaftDepthIndex       = ~0u;
+            uint32 CloudScatterIndex        = Constants::kIndexNoneU32;
+            uint32 CloudDepthIndex          = Constants::kIndexNoneU32;
+            uint32 FogShaftIndex            = Constants::kIndexNoneU32;
+            uint32 FogShaftDepthIndex       = Constants::kIndexNoneU32;
         };
         FAtmosphereTerms                        AtmosphereTerms = {};
         

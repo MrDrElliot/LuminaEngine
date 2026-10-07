@@ -120,7 +120,7 @@ namespace Lumina
 
         ECS::FEntity SelectedEntity = ECS::NullEntity;
         CStruct* SelectedComponentType = nullptr;
-        int32 SelectedSubElement = INDEX_NONE;
+        int32 SelectedSubElement = Constants::kIndexNone;
 
         // Resolved at the end of a pass and read by the next one, which is how closest-handle-wins works.
         uint64 HoveredKey = 0;

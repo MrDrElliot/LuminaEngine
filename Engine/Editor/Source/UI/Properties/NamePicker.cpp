@@ -41,11 +41,11 @@ namespace Lumina::NamePicker
         constexpr int32 NoneOffset = 1;
 
         const int32 Found = Algo::IndexOf(Choices, Args.Current);
-        const int32 CurrentIndex = Found != INDEX_NONE ? Found + NoneOffset
-                                 : (Args.Current.IsNone() ? 0 : INDEX_NONE);
+        const int32 CurrentIndex = Found != Constants::kIndexNone ? Found + NoneOffset
+                                 : (Args.Current.IsNone() ? 0 : Constants::kIndexNone);
 
         // A name the provider no longer offers still shows, flagged, rather than reading as None.
-        const bool bStale = CurrentIndex == INDEX_NONE;
+        const bool bStale = CurrentIndex == Constants::kIndexNone;
         FFixedString Preview;
         if (bStale)
         {
@@ -74,7 +74,7 @@ namespace Lumina::NamePicker
             return { true, FName(Created.c_str()) };
         }
 
-        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        if (Picked != Constants::kIndexNone && Picked != CurrentIndex)
         {
             return { true, (Picked < NoneOffset) ? FName() : Choices[Picked - NoneOffset] };
         }

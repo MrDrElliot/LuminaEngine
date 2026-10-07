@@ -62,12 +62,12 @@ namespace Lumina
         FVector4 GetVectorValue(const FName& Name, FVector4 Default = FVector4(0.0f)) const;
 
         FUNCTION()
-        bool HasScalarParameter(const FName& Name) const { return FindScalarIndex(Name) != INDEX_NONE; }
+        bool HasScalarParameter(const FName& Name) const { return FindScalarIndex(Name) != Constants::kIndexNone; }
 
         FUNCTION()
-        bool HasVectorParameter(const FName& Name) const { return FindVectorIndex(Name) != INDEX_NONE; }
+        bool HasVectorParameter(const FName& Name) const { return FindVectorIndex(Name) != Constants::kIndexNone; }
 
-        /** Slot in the GPU collection table, or INDEX_NONE when the table had none left. */
+        /** Slot in the GPU collection table, or Constants::kIndexNone when the table had none left. */
         NODISCARD int32 GetCollectionIndex() const { return CollectionIndex; }
 
         NODISCARD int32 FindScalarIndex(const FName& Name) const;
@@ -86,7 +86,7 @@ namespace Lumina
         void RebuildUniforms();
 
         /** Deliberately not serialized, since a slot belongs to a session rather than to the asset. */
-        int32                       CollectionIndex = INDEX_NONE;
+        int32                       CollectionIndex = Constants::kIndexNone;
 
         /** The live values, which diverge from the declared defaults as soon as anything sets one. */
         FMaterialCollectionUniforms Uniforms = {};

@@ -24,7 +24,7 @@ namespace Lumina
     {
         // A wired Animation pin supplies the clip at runtime, so a missing static asset is fine there.
         const int32 ClipObjectReg = ResolveObjectInput(AnimationPin, Compiler);
-        const bool bDynamicClip = ClipObjectReg != INDEX_NONE;
+        const bool bDynamicClip = ClipObjectReg != Constants::kIndexNone;
 
         if (!bDynamicClip && !Clip.IsValid())
         {

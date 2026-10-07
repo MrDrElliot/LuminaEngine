@@ -88,22 +88,22 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GroupID : SV_GroupID, u
 
         gRWTextures2D[Pass().SlotImageUAV][int2(DTid.xy)] = float4(bShaded ? float(Slot + 1u) : 0.0, 0.0, 0.0, 0.0);
 
-        // One lane per distinct slot in the wave claims it, since lanes hitting one shared word serialize.
-        if (bShaded)
+        // One lane per slot claims it, and lanes exit together since a per-lane exit lets AMD's compiler claim once per wave.
+        bool bPending = bShaded;
+        [loop]
+        while (WaveActiveAnyTrue(bPending))
         {
-            [loop]
-            while (true)
+            if (bPending)
             {
                 const uint Leader = WaveReadLaneFirst(Slot);
-                if (Slot != Leader)
+                if (Slot == Leader)
                 {
-                    continue;
+                    if (WaveIsFirstLane())
+                    {
+                        ClaimTileSlot(Slot, TileIndex);
+                    }
+                    bPending = false;
                 }
-                if (WaveIsFirstLane())
-                {
-                    ClaimTileSlot(Slot, TileIndex);
-                }
-                break;
             }
         }
     }

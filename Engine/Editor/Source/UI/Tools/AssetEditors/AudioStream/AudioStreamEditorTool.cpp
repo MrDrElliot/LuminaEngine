@@ -343,13 +343,13 @@ namespace Lumina
 
             const size_t SizeBytes = Stream->IsValid() ? Stream->AudioData->Bytes.size() : 0;
             char SizeStr[64];
-            if (SizeBytes >= 1024 * 1024)
+            if (SizeBytes >= Constants::kMiB)
             {
-                snprintf(SizeStr, sizeof(SizeStr), "%.2f MB", (double)SizeBytes / (1024.0 * 1024.0));
+                snprintf(SizeStr, sizeof(SizeStr), "%.2f MB", (double)SizeBytes / double(Constants::kMiB));
             }
             else
             {
-                snprintf(SizeStr, sizeof(SizeStr), "%.1f KB", (double)SizeBytes / 1024.0);
+                snprintf(SizeStr, sizeof(SizeStr), "%.1f KB", (double)SizeBytes / double(Constants::kKiB));
             }
             PropertyRow("Source Size", SizeStr);
 

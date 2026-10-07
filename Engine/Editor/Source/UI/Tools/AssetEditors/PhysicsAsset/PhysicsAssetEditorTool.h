@@ -156,8 +156,8 @@ namespace Lumina
         ECS::FEntity                FloorBodyEntity = ECS::NullEntity;
 
         EPhysicsAssetSelection      SelectionMode = EPhysicsAssetSelection::None;
-        int32                       SelectedBodyIndex = INDEX_NONE;
-        int32                       SelectedConstraintIndex = INDEX_NONE;
+        int32                       SelectedBodyIndex = Constants::kIndexNone;
+        int32                       SelectedConstraintIndex = Constants::kIndexNone;
         FName                       SelectedBone;
 
         TStrongObjectPtr<CSkeleton> CachedSkeleton;

@@ -71,7 +71,7 @@ namespace Lumina
         }
 
         // The final frame sits exactly on the end boundary, so hold the last segment there.
-        int32 Last = INDEX_NONE;
+        int32 Last = Constants::kIndexNone;
         float LastEnd = 0.0f;
         for (int32 i = 0; i < (int32)Segments.size(); ++i)
         {
@@ -83,7 +83,7 @@ namespace Lumina
             }
         }
 
-        return (Last != INDEX_NONE && Math::Abs(MontageTime - LastEnd) < 1e-4f) ? Last : INDEX_NONE;
+        return (Last != Constants::kIndexNone && Math::Abs(MontageTime - LastEnd) < 1e-4f) ? Last : Constants::kIndexNone;
     }
 
     void CAnimationMontage::PostLoad()
@@ -112,7 +112,7 @@ namespace Lumina
                 return i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     int32 CAnimationMontage::FindSectionIndex(const FName& SectionName) const
@@ -124,12 +124,12 @@ namespace Lumina
                 return i;
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     int32 CAnimationMontage::FindSectionAtTime(float MontageTime) const
     {
-        int32 Best = INDEX_NONE;
+        int32 Best = Constants::kIndexNone;
         float BestStart = -1.0f;
 
         for (int32 i = 0; i < (int32)Sections.size(); ++i)
@@ -179,14 +179,14 @@ namespace Lumina
                                          FAnimMontageSlotSample& OutSample) const
     {
         const int32 SlotIndex = FindSlotIndex(SlotName);
-        if (SlotIndex == INDEX_NONE)
+        if (SlotIndex == Constants::kIndexNone)
         {
             return false;
         }
 
         const SAnimMontageSlotTrack& Track = SlotTracks[SlotIndex];
         const int32 SegmentIndex = Track.FindSegment(MontageTime);
-        if (SegmentIndex == INDEX_NONE)
+        if (SegmentIndex == Constants::kIndexNone)
         {
             return false;
         }

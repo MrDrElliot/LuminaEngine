@@ -203,7 +203,7 @@ namespace Lumina
         // Final-pose fixups + the skeleton every pose is authored against (valid for the frame).
         FSkeletonResource* Skeleton = nullptr;
         bool bLockRoot = false;
-        int32 RootBoneIndex = INDEX_NONE;
+        int32 RootBoneIndex = Constants::kIndexNone;
 
         // Skeleton LOD: bones sampled/blended this frame (0 = all). Bones past the cut ride along
         // at bind-pose locals; FK still runs the full hierarchy so skinning and attachments stay valid.
@@ -223,7 +223,7 @@ namespace Lumina
             OutputTask      = FAnimTask::NoTask;
             Skeleton        = nullptr;
             bLockRoot       = false;
-            RootBoneIndex   = INDEX_NONE;
+            RootBoneIndex   = Constants::kIndexNone;
             ActiveBoneCount = 0;
         }
     };

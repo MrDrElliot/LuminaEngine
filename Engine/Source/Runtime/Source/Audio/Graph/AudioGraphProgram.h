@@ -19,7 +19,7 @@ namespace Lumina
         int32           IntValue   = 0;
         bool            BoolValue  = false;
 
-        /** Index into the owning asset's ReferencedWaves, or INDEX_NONE. */
+        /** Index into the owning asset's ReferencedWaves, or Constants::kIndexNone. */
         int32           WaveIndex  = -1;
 
         friend RUNTIME_API FArchive& operator << (FArchive& Ar, FAudioGraphSlotInit& Data);

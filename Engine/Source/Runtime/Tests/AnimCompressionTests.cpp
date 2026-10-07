@@ -248,7 +248,7 @@ namespace
 {
     void MakeSkeleton(FSkeletonResource& Skeleton, std::initializer_list<const char*> BoneNames)
     {
-        int32 Parent = INDEX_NONE;
+        int32 Parent = Constants::kIndexNone;
         for (const char* Name : BoneNames)
         {
             FSkeletonResource::FBoneInfo Bone;
@@ -435,7 +435,7 @@ TEST(AnimCompressionSampler, SkinningMatricesMatchPoseChain)
         {
             const FMatrix4 Local = AnimPose::ComposeTRS(Pose.GetTranslation(b), Pose.GetRotation(b), Pose.GetScale(b));
             const int32 Parent = Skeleton.GetBone(b).ParentIndex;
-            Expected[b] = Parent != INDEX_NONE ? Expected[Parent] * Local : Local;
+            Expected[b] = Parent != Constants::kIndexNone ? Expected[Parent] * Local : Local;
         }
 
         ASSERT_EQ(Skinning.size(), Expected.size());

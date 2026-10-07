@@ -24,7 +24,7 @@ namespace
     {
         FSkeletonResource::FBoneInfo Bone;
         Bone.Name        = FName("Root");
-        Bone.ParentIndex = INDEX_NONE;
+        Bone.ParentIndex = Constants::kIndexNone;
         Skeleton.Bones.push_back(Bone);
         Skeleton.BoneNameToIndex[Bone.Name] = 0;
     }
@@ -72,7 +72,7 @@ namespace
         CAnimationGraph* Graph = nullptr;
         CAnimation*      ClipA = nullptr;
         CAnimation*      ClipB = nullptr;
-        int32            GoParam = INDEX_NONE;
+        int32            GoParam = Constants::kIndexNone;
     };
 
     // Two play-once states that swap on a Go parameter, optionally bracketed so the VM can skip the inactive one.

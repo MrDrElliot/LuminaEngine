@@ -2483,15 +2483,15 @@ namespace Lumina
         }
 
         // Under the RHI's dedicated-block size, so each piece is a pooled page suballocation that frees cheaply.
-        constexpr uint64 MaxStagePieceBytes = 16ull * 1024u * 1024u;
+        constexpr uint64 MaxStagePieceBytes = 16 * Constants::kMiB;
 
         // Past this the per-frame ring would grow to fit a one-off burst, and resizing it frees host memory, which stalls the queue.
-        constexpr uint64 RingStageLimitBytes = 8ull * 1024u * 1024u;
+        constexpr uint64 RingStageLimitBytes = 8 * Constants::kMiB;
         const bool bPooledStaging = Size > RingStageLimitBytes;
 
         // A full retained re-send is hundreds of megabytes, which one thread copies at a fraction of the bandwidth.
-        constexpr uint64 ParallelStageBytes = 4ull * 1024u * 1024u;
-        constexpr uint64 StageChunkBytes    = 1024u * 1024u;
+        constexpr uint64 ParallelStageBytes = 4 * Constants::kMiB;
+        constexpr uint64 StageChunkBytes    = Constants::kMiB;
 
         const uint8* Source = static_cast<const uint8*>(Data);
         for (uint64 PieceOffset = 0; PieceOffset < Size; PieceOffset += MaxStagePieceBytes)
@@ -2656,7 +2656,7 @@ namespace Lumina
                 LOG_ERROR("RenderScene: scene buffer '{}' could not grow to {} MiB; keeping the {} MiB it "
                           "already has and running degraded.",
                           Buffer.DebugName != nullptr ? Buffer.DebugName : "<unnamed>",
-                          NeededBytes / (1024ull * 1024ull), Buffer.Size / (1024ull * 1024ull));
+                          NeededBytes / Constants::kMiB, Buffer.Size / Constants::kMiB);
             }
             return;
         }
@@ -2686,10 +2686,10 @@ namespace Lumina
     {
         if (SceneViews.empty())
         {
-            return ~0u;
+            return Constants::kIndexNoneU32;
         }
         const int32 ID = SceneViews[0].Output.GetResourceID();
-        return ID < 0 ? ~0u : (uint32)ID;
+        return ID < 0 ? Constants::kIndexNoneU32 : (uint32)ID;
     }
 
     FUIntVector2 FDefaultSceneRenderer::GetRenderExtent() const

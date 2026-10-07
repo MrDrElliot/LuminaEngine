@@ -81,7 +81,7 @@ namespace Lumina
 
         SGradient   Value;
         SGradient   CachedValue;
-        int32       SelectedStop = INDEX_NONE;
+        int32       SelectedStop = Constants::kIndexNone;
         bool        bDirty       = false;
 
         FPropertyEditSession EditSession;

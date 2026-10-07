@@ -57,7 +57,7 @@ namespace Lumina
         Overrides["NotASwitchHere"] = true;
 
         EXPECT_EQ(Material->MakeStaticSwitchKey(Overrides), Material->GetDefaultStaticSwitchKey());
-        EXPECT_EQ(Material->FindStaticSwitchBit("NotASwitchHere"), INDEX_NONE);
+        EXPECT_EQ(Material->FindStaticSwitchBit("NotASwitchHere"), Constants::kIndexNone);
         EXPECT_EQ(Material->FindStaticSwitchBit("Tint"), 2);
     }
 

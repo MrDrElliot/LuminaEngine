@@ -15,7 +15,7 @@ namespace Lumina
     {
         constexpr float  kScriptRefreshSeconds = 0.25f;   // 4 Hz poll while open
         constexpr uint32 kHistoryMax     = 240;     // ~60 s of history
-        constexpr double kMB             = 1024.0 * 1024.0;
+        constexpr double kMB             = double(Constants::kMiB);
 
         void PushCapped(TVector<float>& History, float Value)
         {

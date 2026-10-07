@@ -263,11 +263,11 @@ namespace Lumina
         const uint32 Slot = (uint32)(Entity).GetIndex();
         if (Slot >= (uint32)LinksByEntityIndex.size())
         {
-            return ~0u;
+            return Constants::kIndexNoneU32;
         }
 
         const FPrimitiveLink& Link = LinksByEntityIndex[Slot];
-        return Link.Entity == (Entity).Value ? Link.Index[(uint32)Source] : ~0u;
+        return Link.Entity == (Entity).Value ? Link.Index[(uint32)Source] : Constants::kIndexNoneU32;
     }
 
     uint8 FScenePrimitiveSet::GetSourceMask(ECS::FEntity Entity) const
@@ -287,7 +287,7 @@ namespace Lumina
         uint8 Mask = 0u;
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
-            Mask |= (Link.Index[s] != ~0u) ? (uint8)(1u << s) : (uint8)0u;
+            Mask |= (Link.Index[s] != Constants::kIndexNoneU32) ? (uint8)(1u << s) : (uint8)0u;
         }
         return Mask;
     }
@@ -327,16 +327,16 @@ namespace Lumina
             return;
         }
 
-        Link.Index[(uint32)Source] = ~0u;
+        Link.Index[(uint32)Source] = Constants::kIndexNoneU32;
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
-            if (Link.Index[s] != ~0u)
+            if (Link.Index[s] != Constants::kIndexNoneU32)
             {
                 return;
             }
         }
-        Link.Entity = ~0u;
+        Link.Entity = Constants::kIndexNoneU32;
     }
 
     uint32 FScenePrimitiveSet::AddPrimitive(uint64 Key)
@@ -347,8 +347,8 @@ namespace Lumina
         CullData.emplace_back();
         Keys.push_back(Key);
         ResolveKeys.push_back(PackResolveKey(INVALID_MESH_RESOLVE_HANDLE, 0));
-        NextByHandle.push_back(~0u);
-        PrevByHandle.push_back(~0u);
+        NextByHandle.push_back(Constants::kIndexNoneU32);
+        PrevByHandle.push_back(Constants::kIndexNoneU32);
 
         const ECS::FEntity     Entity = (ECS::FEntity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
@@ -367,7 +367,7 @@ namespace Lumina
     void FScenePrimitiveSet::RemovePrimitive(uint64 Key)
     {
         const uint32 Index = FindPrimitive(Key);
-        if (Index == ~0u)
+        if (Index == Constants::kIndexNoneU32)
         {
             return;
         }
@@ -405,7 +405,7 @@ namespace Lumina
             const uint32 MovedPrev = PrevByHandle[Last];
             NextByHandle[Index] = MovedNext;
             PrevByHandle[Index] = MovedPrev;
-            if (MovedPrev != ~0u)
+            if (MovedPrev != Constants::kIndexNoneU32)
             {
                 NextByHandle[MovedPrev] = Index;
             }
@@ -414,7 +414,7 @@ namespace Lumina
             {
                 HandleListHead[Primitives[Index].ResolveHandle] = Index;
             }
-            if (MovedNext != ~0u)
+            if (MovedNext != Constants::kIndexNoneU32)
             {
                 PrevByHandle[MovedNext] = Index;
             }
@@ -579,13 +579,13 @@ namespace Lumina
         }
         if (Handle >= (uint32)HandleListHead.size())
         {
-            HandleListHead.resize(Handle + 1u, ~0u);
+            HandleListHead.resize(Handle + 1u, Constants::kIndexNoneU32);
         }
 
         const uint32 Head = HandleListHead[Handle];
         NextByHandle[Index] = Head;
-        PrevByHandle[Index] = ~0u;
-        if (Head != ~0u)
+        PrevByHandle[Index] = Constants::kIndexNoneU32;
+        if (Head != Constants::kIndexNoneU32)
         {
             PrevByHandle[Head] = Index;
         }
@@ -601,7 +601,7 @@ namespace Lumina
 
         const uint32 Next = NextByHandle[Index];
         const uint32 Prev = PrevByHandle[Index];
-        if (Prev != ~0u)
+        if (Prev != Constants::kIndexNoneU32)
         {
             NextByHandle[Prev] = Next;
         }
@@ -609,12 +609,12 @@ namespace Lumina
         {
             HandleListHead[Handle] = Next;
         }
-        if (Next != ~0u)
+        if (Next != Constants::kIndexNoneU32)
         {
             PrevByHandle[Next] = Prev;
         }
-        NextByHandle[Index] = ~0u;
-        PrevByHandle[Index] = ~0u;
+        NextByHandle[Index] = Constants::kIndexNoneU32;
+        PrevByHandle[Index] = Constants::kIndexNoneU32;
     }
 
     const TVector<uint32>& FScenePrimitiveSet::GetSkeletalIndices()
@@ -1086,7 +1086,7 @@ namespace Lumina
                 FSurfaceBinding& Proto = Entry.Protos.emplace_back();
 
                 Proto.BatchIndex            = Batches.FindOrAddBatch(Surface);
-                Proto.InstanceSlot          = ~0u;
+                Proto.InstanceSlot          = Constants::kIndexNoneU32;
                 Proto.SurfaceDescIndex      = InternSurfaceDesc(Surface);
                 Proto.MaterialIndex         = Surface.MaterialIdx;
                 Proto.MaterialFlags         = Surface.MaterialFlags;
@@ -1476,12 +1476,12 @@ namespace Lumina
         const uint64 Key = MakeKey(Entity, Source);
         uint32 Index = FindLinked(Entity, Source);
         
-        if (Index == ~0u && Flags == EPrimitiveDirty::Transform)
+        if (Index == Constants::kIndexNoneU32 && Flags == EPrimitiveDirty::Transform)
         {
             return;
         }
 
-        if (Index != ~0u && Flags == EPrimitiveDirty::Transform)
+        if (Index != Constants::kIndexNoneU32 && Flags == EPrimitiveDirty::Transform)
         {
             if (!Pools.Transform->Contains(Entity))
             {
@@ -1510,14 +1510,14 @@ namespace Lumina
 
         if (!bShouldExist)
         {
-            if (Index != ~0u)
+            if (Index != Constants::kIndexNoneU32)
             {
                 RemovePrimitive(Key);
             }
             return;
         }
 
-        const bool bNew = (Index == ~0u);
+        const bool bNew = (Index == Constants::kIndexNoneU32);
         if (bNew)
         {
             Index = AddPrimitive(Key);
@@ -2053,7 +2053,7 @@ namespace Lumina
                 }
 
                 uint32 Generation = GenSnapshot[Handle];
-                if (Generation == ~0u)
+                if (Generation == Constants::kIndexNoneU32)
                 {
                     Generation = Cache.GetEntry(Handle).Generation;
                     GenSnapshot[Handle] = Generation;
@@ -2325,7 +2325,7 @@ namespace Lumina
             {
                 const EPrimitiveDirty Flags = Record.Flags[s];
                 if (Flags != EPrimitiveDirty::None && Flags != EPrimitiveDirty::Transform
-                    && FindLinked(Entity, (EPrimitiveSource)s) == ~0u)
+                    && FindLinked(Entity, (EPrimitiveSource)s) == Constants::kIndexNoneU32)
                 {
                     ++NewPrimitives;
                 }
@@ -2459,7 +2459,7 @@ namespace Lumina
             }
 
             const uint32 Index = FindLinked(Entity, (EPrimitiveSource)s);
-            if (Index == ~0u)
+            if (Index == Constants::kIndexNoneU32)
             {
                 continue;
             }
@@ -2704,7 +2704,7 @@ namespace Lumina
             FMeshResolveCache& Cache = FMeshResolveCache::Get();
             RetryScratch.clear();
 
-            GenSnapshot.assign(Cache.NumEntries(), ~0u);
+            GenSnapshot.assign(Cache.NumEntries(), Constants::kIndexNoneU32);
 
             // Only handles rebuilt since the last sweep are walked, through their primitive lists.
             const uint32 NumHandles = Math::Min(Cache.NumEntries(), (uint32)HandleListHead.size());
@@ -2716,7 +2716,7 @@ namespace Lumina
                 }
 
                 const uint32 Generation = Cache.GetEntry(Handle).Generation;
-                for (uint32 i = HandleListHead[Handle]; i != ~0u; i = NextByHandle[i])
+                for (uint32 i = HandleListHead[Handle]; i != Constants::kIndexNoneU32; i = NextByHandle[i])
                 {
                     DEBUG_ASSERT(Primitives[i].ResolveHandle == Handle);
                     if (Generation != (uint32)(ResolveKeys[i] >> 32))

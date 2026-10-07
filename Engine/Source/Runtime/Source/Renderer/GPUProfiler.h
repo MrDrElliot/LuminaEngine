@@ -18,7 +18,7 @@ namespace Lumina
     struct FGPUProfileScope
     {
         FFixedString Name;
-        int32        ParentIndex = INDEX_NONE;
+        int32        ParentIndex = Constants::kIndexNone;
         int32        Depth       = 0;
         double       StartMs     = 0.0;
         double       EndMs       = 0.0;
@@ -70,7 +70,7 @@ namespace Lumina
         struct FPendingScope
         {
             FFixedString Name;
-            int32        ParentIndex = INDEX_NONE;
+            int32        ParentIndex = Constants::kIndexNone;
             int32        Depth       = 0;
             uint32       BeginQuery  = 0;
             uint32       EndQuery    = 0;

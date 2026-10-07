@@ -78,7 +78,7 @@ namespace Lumina
         FORCEINLINE int32 FindBoneIndex(const FName& BoneName) const
         {
             auto It = BoneNameToIndex.find(BoneName);
-            return It != BoneNameToIndex.end() ? It->second : INDEX_NONE;
+            return It != BoneNameToIndex.end() ? It->second : Constants::kIndexNone;
         }
 
         FORCEINLINE bool IsBoneIndexValid(int32 BoneIndex) const
@@ -131,7 +131,7 @@ namespace Lumina
             for (int32 Index = 0; Index < (int32)Bones.size(); ++Index)
             {
                 const int32 Parent = Bones[Index].ParentIndex;
-                if (Parent != INDEX_NONE && (Parent < 0 || Parent >= Index))
+                if (Parent != Constants::kIndexNone && (Parent < 0 || Parent >= Index))
                 {
                     return false;
                 }

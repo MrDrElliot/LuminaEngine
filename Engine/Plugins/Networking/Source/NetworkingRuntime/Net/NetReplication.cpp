@@ -720,7 +720,7 @@ namespace Lumina::Net
                 }
             }
         }
-        return INDEX_NONE;
+        return Constants::kIndexNone;
     }
 
     CEntityScript* GetScriptAt(ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Index)

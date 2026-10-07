@@ -31,7 +31,7 @@ namespace Lumina
         // Authored mapping layer by name, or null. Rebuilt alongside the actions.
         RUNTIME_API const SInputMappingContext* FindMappingContext(FName Name) const;
 
-        // Index into GetAllActions() / the context's state array, or INDEX_NONE.
+        // Index into GetAllActions() / the context's state array, or Constants::kIndexNone.
         RUNTIME_API int32 FindActionIndex(FName Name) const;
 
         // Evaluate every action into Context's state array. Called once per frame per context, before the

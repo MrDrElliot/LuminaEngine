@@ -85,7 +85,7 @@ namespace Lumina
 
             const FVector3 Delta = End - Start;
             const float Length = Math::Length(Delta);
-            if (Length > LE_SMALL_NUMBER)
+            if (Length > Math::kSmallNumber)
             {
                 World->DrawArrow(Start, Delta / Length, Length, kLinkColor, 2.0f, true, -1.0f, 0.25f);
                 if (!Link.bBidirectional)

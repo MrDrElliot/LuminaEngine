@@ -71,14 +71,14 @@ namespace Lumina
         {
             const int32 NumFollowerBones = FollowerSkeleton.GetNumBones();
 
-            Follower.BoneMap.assign(NumFollowerBones, INDEX_NONE);
+            Follower.BoneMap.assign(NumFollowerBones, Constants::kIndexNone);
             Follower.BindFixups.assign(NumFollowerBones, FMatrix4(1.0f));
 
             int32 NumMatched = 0;
             for (int32 i = 0; i < NumFollowerBones; ++i)
             {
                 const int32 LeaderIndex = LeaderSkeleton.FindBoneIndex(FollowerSkeleton.GetBone(i).Name);
-                if (LeaderIndex == INDEX_NONE)
+                if (LeaderIndex == Constants::kIndexNone)
                 {
                     continue;
                 }
@@ -451,7 +451,7 @@ namespace Lumina
             // Resolved only when consumed, since a named RootBoneName costs a hash and a random probe.
             const int32 RootIdx = (bLock || bExtract)
                 ? RootMotion::ResolveRootBoneIndex(Skeleton, Asset->RootBoneName)
-                : INDEX_NONE;
+                : Constants::kIndexNone;
 
             Anim.PendingRootMotion.bHasMotion = false;
 
@@ -492,7 +492,7 @@ namespace Lumina
                 Tasks.OutputTask = Tasks.Add(Sample);
             }
 
-            if (RootIdx != INDEX_NONE)
+            if (RootIdx != Constants::kIndexNone)
             {
                 if (bLock)
                 {
@@ -760,7 +760,7 @@ namespace Lumina
                     CAnimation* ValidateClip = nullptr;
                     float  ValidateTime = 0.0f;
                     bool   bValidateLock = false;
-                    int32  ValidateRoot = INDEX_NONE;
+                    int32  ValidateRoot = Constants::kIndexNone;
                     FSkeletonResource* ValidateSkeleton = Mesh.AnimTasks.Skeleton;
                     if (CVarValidateAnimTasks.GetValue() &&
                         Mesh.AnimTasks.Tasks.size() == 1 &&
@@ -801,14 +801,14 @@ namespace Lumina
                         thread_local FPose RefPose;
                         thread_local TVector<FMatrix4> RefMatrices;
                         ValidateClip->SampleLocalPose(ValidateTime, ValidateSkeleton, RefPose);
-                        if (bValidateLock && ValidateRoot != INDEX_NONE)
+                        if (bValidateLock && ValidateRoot != Constants::kIndexNone)
                         {
                             RootMotion::PinRootToBindPose(RefPose, ValidateSkeleton, ValidateRoot);
                         }
                         AnimPose::ToSkinningMatrices(RefPose, ValidateSkeleton, RefMatrices);
 
                         float MaxDiff = 0.0f;
-                        int32 WorstBone = INDEX_NONE;
+                        int32 WorstBone = Constants::kIndexNone;
                         const SIZE_T Num = Math::Min(RefMatrices.size(), PoseScratch.size());
                         for (SIZE_T b = 0; b < Num; ++b)
                         {

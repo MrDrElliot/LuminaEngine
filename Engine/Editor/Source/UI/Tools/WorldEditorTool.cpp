@@ -2864,10 +2864,10 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::SetNextItemWidth(260.0f);
         const int32 Picked = ImGuiX::SearchableCombo("##AssignScript", bHasScript ? "Swap to..." : "Select a script...",
-            (int32)Types.size(), INDEX_NONE,
+            (int32)Types.size(), Constants::kIndexNone,
             [&Types](int32 Index) { return FFixedString(Types[Index].c_str(), Types[Index].size()); }, LE_ICON_LANGUAGE_CSHARP);
 
-        if (Picked != INDEX_NONE)
+        if (Picked != Constants::kIndexNone)
         {
             AttachScriptToEntity(Entity, Types[Picked]);
             ImGui::CloseCurrentPopup();

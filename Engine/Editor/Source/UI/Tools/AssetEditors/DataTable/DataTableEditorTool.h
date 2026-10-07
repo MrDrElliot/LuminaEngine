@@ -92,16 +92,16 @@ namespace Lumina
         TVector<int32> DisplayOrder;
         bool bDisplayOrderDirty = true;
 
-        int32 SelectedRow = INDEX_NONE;
+        int32 SelectedRow = Constants::kIndexNone;
 
-        int32 DraggingRow = INDEX_NONE;
+        int32 DraggingRow = Constants::kIndexNone;
 
         // False under a sort or filter, where the view order is not the storage order a move writes.
         bool bCanReorder = false;
 
-        /** Cell currently being typed into. Column INDEX_NONE with a valid row means the name cell. */
-        int32 EditingRow = INDEX_NONE;
-        int32 EditingColumn = INDEX_NONE;
+        /** Cell currently being typed into. Column Constants::kIndexNone with a valid row means the name cell. */
+        int32 EditingRow = Constants::kIndexNone;
+        int32 EditingColumn = Constants::kIndexNone;
         bool bEditorJustOpened = false;
         char EditBuffer[256] = {};
 
@@ -110,7 +110,7 @@ namespace Lumina
         /** SortColumn indexes Columns, with -1 meaning the name column -- so it cannot also encode
          *  "unsorted", which is what bSortActive is for. */
         bool bSortActive = false;
-        int32 SortColumn = INDEX_NONE;
+        int32 SortColumn = Constants::kIndexNone;
         bool bSortAscending = true;
 
         FDataTableCSVResult LastImportResult;

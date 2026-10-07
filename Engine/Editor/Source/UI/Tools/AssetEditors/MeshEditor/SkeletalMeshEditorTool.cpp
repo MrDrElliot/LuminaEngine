@@ -263,7 +263,7 @@ namespace Lumina
         for (int32 i = 0; i < SkeletonResource->GetNumBones(); ++i)
         {
             const FSkeletonResource::FBoneInfo& Bone = SkeletonResource->GetBone(i);
-            OutTransforms[i] = (Bone.ParentIndex == INDEX_NONE)
+            OutTransforms[i] = (Bone.ParentIndex == Constants::kIndexNone)
                 ? EntityMatrix * Bone.LocalTransform
                 : OutTransforms[Bone.ParentIndex] * Bone.LocalTransform;
         }
@@ -949,7 +949,7 @@ namespace Lumina
 
                 World->DrawSphere(BonePosition, BoneRadius, FColor::Red, 8);
 
-                if (Bone.ParentIndex != INDEX_NONE)
+                if (Bone.ParentIndex != Constants::kIndexNone)
                 {
                     World->DrawLine(FVector3(BoneWorld[Bone.ParentIndex][3]), BonePosition, FColor::Green);
                 }
@@ -989,7 +989,7 @@ namespace Lumina
             for (const FMeshSocket& Socket : SkeletalMesh->Skeleton->Sockets)
             {
                 const int32 BoneIndex = SkeletonResource->FindBoneIndex(Socket.BoneName);
-                if (BoneIndex == INDEX_NONE || BoneIndex >= (int32)BoneWorld.size())
+                if (BoneIndex == Constants::kIndexNone || BoneIndex >= (int32)BoneWorld.size())
                 {
                     continue;
                 }

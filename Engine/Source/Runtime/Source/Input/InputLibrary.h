@@ -60,7 +60,7 @@ namespace Lumina
         FUNCTION()
         static float GetAxisPair(CWorld* World, const FName& Positive, const FName& Negative);
 
-        /** Row of the action in the per-frame state table, or INDEX_NONE. Resolve once per settings serial. */
+        /** Row of the action in the per-frame state table, or Constants::kIndexNone. Resolve once per settings serial. */
         FUNCTION()
         static int32 FindActionIndex(const FName& Action);
 

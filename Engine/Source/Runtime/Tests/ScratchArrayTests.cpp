@@ -175,7 +175,7 @@ TEST(ScratchArray, OversizedRequestBypassesThePool)
 {
     ScratchPool::Trim();
 
-    constexpr SIZE_T HugeFloats = ((SIZE_T)4 * 1024 * 1024 * 1024) / sizeof(float);
+    constexpr SIZE_T HugeFloats = (4 * Constants::kGiB) / sizeof(float);
     {
         TScratchArray<float> Array(HugeFloats / 2048);
         ASSERT_NE(Array.GetData(), nullptr);

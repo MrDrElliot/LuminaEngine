@@ -221,7 +221,7 @@ namespace Lumina
 
         // Searchable, because a project accumulates far more script classes than a flat list stays usable for.
         const int32 Picked = ImGuiX::SearchableCombo("##AddEntityScript", AddLabel,
-            (int32)Classes.size(), INDEX_NONE,
+            (int32)Classes.size(), Constants::kIndexNone,
             [&Classes](int32 ItemIndex) -> FFixedString
             {
                 FStringView Short;
@@ -235,7 +235,7 @@ namespace Lumina
             },
             GScriptIcon);
 
-        if (Picked != INDEX_NONE && Picked < (int32)Classes.size())
+        if (Picked != Constants::kIndexNone && Picked < (int32)Classes.size())
         {
             CClass* Class = Classes[Picked];
             PendingMutation = [Component, Class]

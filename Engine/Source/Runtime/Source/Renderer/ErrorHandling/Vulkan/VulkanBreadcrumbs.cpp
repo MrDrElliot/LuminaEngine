@@ -37,7 +37,7 @@ namespace Lumina::RHI
                 }
             }
 
-            return ~0u;
+            return Constants::kIndexNoneU32;
         }
     }
 
@@ -66,7 +66,7 @@ namespace Lumina::RHI
         vkGetBufferMemoryRequirements(InDevice, Buffer, &Requirements);
 
         const uint32 MemoryType = FindHostMemoryType(InPhysicalDevice, Requirements.memoryTypeBits);
-        if (MemoryType == ~0u)
+        if (MemoryType == Constants::kIndexNoneU32)
         {
             LOG_WARN("GPU breadcrumbs disabled: no host-visible, non-device-local memory type available.");
             Shutdown(InDevice);

@@ -44,7 +44,7 @@ namespace Lumina
 
         constexpr uint32 kPackageChunkMagic   = 0x32435A4C; // 'LZC2'
         constexpr uint32 kPackageChunkVersion = 2;
-        constexpr uint32 kPackageChunkSize    = 4u * 1024 * 1024; // 4 MiB uncompressed per chunk
+        constexpr uint32 kPackageChunkSize    = uint32(4 * Constants::kMiB); // uncompressed per chunk
         constexpr uint32 kMaxPackageChunkSize = 16u * kPackageChunkSize;
 
         // Deflate cannot expand a stream past about 1032 to 1, so a larger claimed size is a corrupt header.
@@ -107,7 +107,7 @@ namespace Lumina
         static_assert(std::is_trivially_copyable_v<FPackageBulkTrailer>);
 
         // Above the limit the tail is read first, so a huge bulk region is never pulled needlessly.
-        constexpr uint64 kWholeFileReadLimit = 1u * 1024 * 1024;
+        constexpr uint64 kWholeFileReadLimit = Constants::kMiB;
 
         // TailBytes must be the LAST bytes of the file, and the offsets are validated against its length.
         bool ParseBulkTrailer(const uint8* TailBytes, size_t TailSize, uint64 FileSize, CPackage::FBulkRegion& Out)

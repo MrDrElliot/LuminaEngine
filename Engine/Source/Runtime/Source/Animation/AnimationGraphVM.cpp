@@ -401,7 +401,7 @@ namespace Lumina
         thread_local TVector<FAnimNotifyEvent> EventScratch;
 
         const bool bExtractRootMotion = RootMotionInOut.Mode == ERootMotionLockMode::FromAsset &&
-                                        RootMotionInOut.RootBoneIndex != INDEX_NONE;
+                                        RootMotionInOut.RootBoneIndex != Constants::kIndexNone;
 
         ClockDeltas.assign(NumScalar, FRootMotionDelta());
         PoseDeltas.assign(NumPose, FRootMotionDelta());
@@ -2296,7 +2296,7 @@ namespace Lumina
                         for (const FAnimationCurve& Curve : Contribution.Clip->GetCurves())
                         {
                             const int32 Slot = Graph->FindCurveIndex(Curve.Name);
-                            if (Slot != INDEX_NONE)
+                            if (Slot != Constants::kIndexNone)
                             {
                                 const float Value = Curve.Curve.Evaluate(Contribution.ClipTime);
                                 DstCurves[Slot] += bAdditive ? Value * Alpha : (Value - DstCurves[Slot]) * Alpha;

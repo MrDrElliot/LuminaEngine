@@ -134,7 +134,7 @@ namespace Lumina
     {
         SelectedEntity = ECS::NullEntity;
         SelectedComponentType = nullptr;
-        SelectedSubElement = INDEX_NONE;
+        SelectedSubElement = Constants::kIndexNone;
     }
 
     void FVisualizerInteractionState::Reset()
@@ -358,7 +358,7 @@ namespace Lumina
     {
         if (State.SelectedEntity != Entity || State.SelectedComponentType != ComponentType)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         return State.SelectedSubElement;
@@ -375,7 +375,7 @@ namespace Lumina
     {
         State.SelectedEntity = ECS::NullEntity;
         State.SelectedComponentType = nullptr;
-        State.SelectedSubElement = INDEX_NONE;
+        State.SelectedSubElement = Constants::kIndexNone;
     }
 
     void FComponentVisualizerContext::NameEdit(FName Label)

@@ -36,7 +36,7 @@ namespace Lumina
             });
 
             const int32 Found = Algo::IndexOf(Candidates, Current);
-            const int32 CurrentIndex = Found != INDEX_NONE ? Found + 1 : 0;
+            const int32 CurrentIndex = Found != Constants::kIndexNone ? Found + 1 : 0;
 
             const char* Preview = Current ? Current->GetName().c_str() : "None";
 
@@ -48,7 +48,7 @@ namespace Lumina
                 });
             ImGui::PopItemWidth();
 
-            if (Picked != INDEX_NONE)
+            if (Picked != Constants::kIndexNone)
             {
                 bOutChanged = true;
                 return (Picked == 0) ? nullptr : Candidates[Picked - 1];

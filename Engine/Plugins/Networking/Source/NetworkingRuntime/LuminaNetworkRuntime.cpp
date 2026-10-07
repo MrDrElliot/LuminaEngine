@@ -262,7 +262,7 @@ namespace Lumina
         const ECS::FEntity Entity = Script->GetOwningEntity();
         const SNetworkComponent* Net = NetOf(World, Entity);
         const int32 ScriptIndex = Net::FindScriptIndex(Registry, Entity, Script);
-        if (Net == nullptr || Net->NetGUID.Value == 0 || ScriptIndex == INDEX_NONE)
+        if (Net == nullptr || Net->NetGUID.Value == 0 || ScriptIndex == Constants::kIndexNone)
         {
             return false;
         }

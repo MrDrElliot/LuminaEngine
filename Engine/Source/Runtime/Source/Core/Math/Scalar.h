@@ -17,6 +17,9 @@ namespace Lumina::Math
     template<typename T> [[nodiscard]] constexpr T HalfPi()   { return Pi<T>() / T(2); }
     template<typename T> [[nodiscard]] constexpr T Epsilon()  { return TNumericLimits<T>::Epsilon(); }
 
+    constexpr float kSmallNumber      = 1e-8f;
+    constexpr float kKindaSmallNumber = 1e-4f;
+
     template<std::floating_point T> [[nodiscard]] constexpr T Radians(T Degrees) { return Degrees * (Pi<T>() / T(180)); }
     template<std::floating_point T> [[nodiscard]] constexpr T Degrees(T Radians) { return Radians * (T(180) / Pi<T>()); }
 

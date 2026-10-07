@@ -15,7 +15,7 @@ namespace Lumina::Filesystem
         thread_local EResult GLastResult = EResult::Success;
 
         constexpr int64 kUnixEpochIn100ns   = 116444736000000000LL;
-        constexpr uint32 kMaxIoChunk        = 32u * 1024u * 1024u;
+        constexpr uint32 kMaxIoChunk        = uint32(32 * Constants::kMiB);
         constexpr int32 kLongPathThreshold  = 248;
 
         EResult TranslateError(DWORD Error)

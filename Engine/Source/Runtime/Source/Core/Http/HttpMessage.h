@@ -3,6 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/StringView.h"
 #include "Containers/Vector.h"
+#include "Lumina.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 
@@ -61,7 +62,7 @@ namespace Lumina::Http
     struct FParseLimits
     {
         int32 MaxHeaderBytes = 64 * 1024;
-        int32 MaxBodyBytes   = 8 * 1024 * 1024;
+        int32 MaxBodyBytes   = int32(8 * Constants::kMiB);
     };
 
     // Removes one complete request from the front of Buffer, leaving anything after it for the next call.

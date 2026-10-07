@@ -22,7 +22,7 @@ namespace Lumina
     namespace RootMotion
     {
         // Resolves the motion root bone: the named bone if NameOverride is set and present, else the
-        // first bone with ParentIndex < 0. Returns INDEX_NONE when the skeleton has no root.
+        // first bone with ParentIndex < 0. Returns Constants::kIndexNone when the skeleton has no root.
         RUNTIME_API int32 ResolveRootBoneIndex(const FSkeletonResource* Skeleton, const FName& NameOverride);
 
         // Pins the root bone to its bind-pose local transform so the mesh never drifts (the "lock").

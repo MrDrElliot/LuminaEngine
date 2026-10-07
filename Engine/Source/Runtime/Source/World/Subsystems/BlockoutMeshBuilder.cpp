@@ -235,8 +235,8 @@ namespace Lumina
 
             for (int32 Slice = 0; Slice < Segments; ++Slice)
             {
-                const float A0 = (LE_PI_F * 2.0f * float(Slice))       / float(Segments);
-                const float A1 = (LE_PI_F * 2.0f * float(Slice + 1))   / float(Segments);
+                const float A0 = (Math::TwoPi<float>() * float(Slice))       / float(Segments);
+                const float A1 = (Math::TwoPi<float>() * float(Slice + 1))   / float(Segments);
                 const FVector3 P0(RadiusX * std::cos(A0), Y, RadiusZ * std::sin(A0));
                 const FVector3 P1(RadiusX * std::cos(A1), Y, RadiusZ * std::sin(A1));
 
@@ -269,7 +269,7 @@ namespace Lumina
 
             for (int32 Slice = 0; Slice < Stride; ++Slice)
             {
-                const float Angle = (LE_PI_F * 2.0f * float(Slice)) / float(Segments);
+                const float Angle = (Math::TwoPi<float>() * float(Slice)) / float(Segments);
                 const float CosA = std::cos(Angle);
                 const float SinA = std::sin(Angle);
                 const FVector3 Normal = RadialNormal(Angle, RadiusX, RadiusZ) * (bInward ? -1.0f : 1.0f);
@@ -296,8 +296,8 @@ namespace Lumina
 
             for (int32 Slice = 0; Slice < Segments; ++Slice)
             {
-                const float A0 = (LE_PI_F * 2.0f * float(Slice))     / float(Segments);
-                const float A1 = (LE_PI_F * 2.0f * float(Slice + 1)) / float(Segments);
+                const float A0 = (Math::TwoPi<float>() * float(Slice))     / float(Segments);
+                const float A1 = (Math::TwoPi<float>() * float(Slice + 1)) / float(Segments);
                 const float AMid = (A0 + A1) * 0.5f;
 
                 const FVector3 P0(RadiusX * std::cos(A0), 0.0f, RadiusZ * std::sin(A0));
@@ -338,7 +338,7 @@ namespace Lumina
 
                 for (int32 Slice = 0; Slice < Stride; ++Slice)
                 {
-                    const float Phi = (LE_PI_F * 2.0f * float(Slice)) / float(Segments);
+                    const float Phi = (Math::TwoPi<float>() * float(Slice)) / float(Segments);
                     const float CosP = std::cos(Phi);
                     const float SinP = std::sin(Phi);
 
@@ -367,7 +367,7 @@ namespace Lumina
             const float TopCenter = Math::Max(Height - CapRadius, CapRadius);
 
             BuildEllipsoidBand(M, FVector3(0.0f, TopCenter, 0.0f), RadiusX, CapRadius, RadiusZ,
-                               0.0f, LE_PI_F * 0.5f, Segments, Math::Max(Rings / 2, 1), InvUVScale);
+                               0.0f, Math::HalfPi<float>(), Segments, Math::Max(Rings / 2, 1), InvUVScale);
 
             if (TopCenter > BottomCenter + kMinExtent)
             {
@@ -375,7 +375,7 @@ namespace Lumina
             }
 
             BuildEllipsoidBand(M, FVector3(0.0f, BottomCenter, 0.0f), RadiusX, CapRadius, RadiusZ,
-                               LE_PI_F * 0.5f, LE_PI_F, Segments, Math::Max(Rings / 2, 1), InvUVScale);
+                               Math::HalfPi<float>(), Math::Pi<float>(), Segments, Math::Max(Rings / 2, 1), InvUVScale);
         }
 
         void BuildTorus(FBlockoutMeshData& M, float MajorRadius, float TubeRadius, int32 MajorSegments, int32 MinorSegments, float InvUVScale)
@@ -388,13 +388,13 @@ namespace Lumina
 
             for (int32 Ring = 0; Ring < RingCount; ++Ring)
             {
-                const float U = (LE_PI_F * 2.0f * float(Ring)) / float(MajorSegments);
+                const float U = (Math::TwoPi<float>() * float(Ring)) / float(MajorSegments);
                 const float CosU = std::cos(U);
                 const float SinU = std::sin(U);
 
                 for (int32 Slice = 0; Slice < Stride; ++Slice)
                 {
-                    const float V = (LE_PI_F * 2.0f * float(Slice)) / float(MinorSegments);
+                    const float V = (Math::TwoPi<float>() * float(Slice)) / float(MinorSegments);
                     const float CosV = std::cos(V);
                     const float SinV = std::sin(V);
 
@@ -431,8 +431,8 @@ namespace Lumina
 
             for (int32 Step = 0; Step < Steps; ++Step)
             {
-                const float T0 = (LE_PI_F * float(Step))       / float(Steps);
-                const float T1 = (LE_PI_F * float(Step + 1))   / float(Steps);
+                const float T0 = (Math::Pi<float>() * float(Step))       / float(Steps);
+                const float T1 = (Math::Pi<float>() * float(Step + 1))   / float(Steps);
 
                 const FVector3 OuterNormal0 =  BandNormal(T0, OuterX, OuterY);
                 const FVector3 OuterNormal1 =  BandNormal(T1, OuterX, OuterY);
@@ -480,8 +480,8 @@ namespace Lumina
 
             for (int32 Slice = 0; Slice < Segments; ++Slice)
             {
-                const float A0 = (LE_PI_F * 2.0f * float(Slice))     / float(Segments);
-                const float A1 = (LE_PI_F * 2.0f * float(Slice + 1)) / float(Segments);
+                const float A0 = (Math::TwoPi<float>() * float(Slice))     / float(Segments);
+                const float A1 = (Math::TwoPi<float>() * float(Slice + 1)) / float(Segments);
 
                 const FVector3 OuterTop0(RadiusX * std::cos(A0), Height, RadiusZ * std::sin(A0));
                 const FVector3 OuterTop1(RadiusX * std::cos(A1), Height, RadiusZ * std::sin(A1));
@@ -552,7 +552,7 @@ namespace Lumina
 
             case EBlockoutShape::Sphere:
                 BuildEllipsoidBand(Out, FVector3(0.0f, Height * 0.5f, 0.0f), HalfX, Height * 0.5f, HalfZ,
-                                   0.0f, LE_PI_F, Radial, Rings, InvUVScale);
+                                   0.0f, Math::Pi<float>(), Radial, Rings, InvUVScale);
                 break;
 
             case EBlockoutShape::Capsule:

@@ -96,9 +96,9 @@ namespace Lumina
                 Row("Kerning", FontAsset->bHasKerning ? "Yes" : "No");
 
                 const size_t Bytes = FontAsset->GetFontData().size();
-                FString SizeStr = Bytes >= 1024 * 1024
-                    ? Format("{}", Bytes / (1024 * 1024)) + " MB"
-                    : Format("{}", Bytes / 1024) + " KB";
+                FString SizeStr = Bytes >= Constants::kMiB
+                    ? Format("{}", Bytes / Constants::kMiB) + " MB"
+                    : Format("{}", Bytes / Constants::kKiB) + " KB";
                 Row("File Size", SizeStr);
 
                 if (!FontAsset->SourcePath.empty())

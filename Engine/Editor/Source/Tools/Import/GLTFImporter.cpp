@@ -59,7 +59,7 @@ namespace Lumina
                 if (C >= '0' && C <= '9') return C - '0' + 52;
                 if (C == '+') return 62;
                 if (C == '/') return 63;
-                return INDEX_NONE;
+                return Constants::kIndexNone;
             };
 
             const size_t Length = strlen(Encoded);
@@ -79,7 +79,7 @@ namespace Lumina
                 }
 
                 const int32 Index = Sextet(C);
-                if (Index == INDEX_NONE)
+                if (Index == Constants::kIndexNone)
                 {
                     return false;
                 }
@@ -411,7 +411,7 @@ namespace Lumina
 
         //~ Deduplicated by source key and never copied, so an embedded payload stays a view into the buffer.
 
-        TVector<int32> ImageToUnique(Data.images_count, INDEX_NONE);
+        TVector<int32> ImageToUnique(Data.images_count, Constants::kIndexNone);
 
         if (Options.bImportTextures)
         {
@@ -536,7 +536,7 @@ namespace Lumina
         {
             if (View.texture == nullptr)
             {
-                return INDEX_NONE;
+                return Constants::kIndexNone;
             }
 
             const cgltf_image* Image = View.texture->image;
@@ -544,11 +544,11 @@ namespace Lumina
             if (Image == nullptr && View.texture->has_webp)   { Image = View.texture->webp_image; }
             if (Image == nullptr)
             {
-                return INDEX_NONE;
+                return Constants::kIndexNone;
             }
 
             const cgltf_size Index = cgltf_image_index(&Data, Image);
-            return (Index < ImageToUnique.size()) ? ImageToUnique[Index] : INDEX_NONE;
+            return (Index < ImageToUnique.size()) ? ImageToUnique[Index] : Constants::kIndexNone;
         };
 
         // Resolved from how each material uses the image rather than guessed from the filename.
@@ -562,7 +562,7 @@ namespace Lumina
 
         //~ Stage 2 and 3, materials deduplicated by their resolved parameter set.
 
-        TVector<int32> MaterialToUnique(Data.materials_count, INDEX_NONE);
+        TVector<int32> MaterialToUnique(Data.materials_count, Constants::kIndexNone);
 
         if (Options.bImportMaterials)
         {
@@ -808,7 +808,7 @@ namespace Lumina
         {
             for (cgltf_size i = 0; i < Scene->nodes_count; ++i)
             {
-                Stack.push_back(FStackEntry{ Scene->nodes[i], FMatrix4(1.0f), INDEX_NONE });
+                Stack.push_back(FStackEntry{ Scene->nodes[i], FMatrix4(1.0f), Constants::kIndexNone });
             }
 
             while (!Stack.empty())
@@ -934,7 +934,7 @@ namespace Lumina
         //~ Keyed by the accessors their primitives reference, so duplicates collapse without comparing vertices.
 
         TVector<uint32> UniqueMeshes;         // unique slot -> representative cgltf mesh index
-        TVector<int32>  MeshToUnique(Data.meshes_count, INDEX_NONE);
+        TVector<int32>  MeshToUnique(Data.meshes_count, Constants::kIndexNone);
         {
             FKeyDedup MeshDedup(Data.meshes_count);
             UniqueMeshes.reserve(Data.meshes_count);
@@ -961,10 +961,10 @@ namespace Lumina
                 {
                     const cgltf_primitive& Primitive = Mesh.primitives[p];
                     Key.push_back((uint32)Primitive.type);
-                    Key.push_back(Primitive.indices != nullptr ? (uint32)cgltf_accessor_index(&Data, Primitive.indices) : 0xFFFFFFFFu);
+                    Key.push_back(Primitive.indices != nullptr ? (uint32)cgltf_accessor_index(&Data, Primitive.indices) : Constants::kIndexNoneU32);
 
                     const int32 MaterialSlot = (Primitive.material != nullptr)
-                        ? MaterialToUnique[cgltf_material_index(&Data, Primitive.material)] : INDEX_NONE;
+                        ? MaterialToUnique[cgltf_material_index(&Data, Primitive.material)] : Constants::kIndexNone;
                     Key.push_back((uint32)MaterialSlot);
 
                     Key.push_back((uint32)Primitive.attributes_count);
@@ -1420,7 +1420,7 @@ namespace Lumina
                         ? FName(JointNode.name)
                         : FName("Bone_" + Format("{}", cgltf_node_index(&Data, &JointNode)));
 
-                    Bone.ParentIndex = INDEX_NONE;
+                    Bone.ParentIndex = Constants::kIndexNone;
                     if (JointNode.parent != nullptr)
                     {
                         auto It = NodeToJoint.find(JointNode.parent);

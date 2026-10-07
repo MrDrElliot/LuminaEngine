@@ -94,7 +94,7 @@ namespace Lumina::Physics
             FVector3 Previous = Center + AxisU * Radius;
             for (int32 i = 1; i <= Segments; ++i)
             {
-                const float Angle = ((2.0f * LE_PI_F) * (float)i) / (float)Segments;
+                const float Angle = (Math::TwoPi<float>() * (float)i) / (float)Segments;
                 const FVector3 Point = Center + (AxisU * Math::Cos(Angle) + AxisV * Math::Sin(Angle)) * Radius;
                 Out.push_back(Previous);
                 Out.push_back(Point);
@@ -119,7 +119,7 @@ namespace Lumina::Physics
 
             FVector3 Axis = B - A;
             const float Length = Math::Length(Axis);
-            Axis = Length > LE_SMALL_NUMBER ? Axis / Length : FVector3(0, 1, 0);
+            Axis = Length > Math::kSmallNumber ? Axis / Length : FVector3(0, 1, 0);
 
             FVector3 U = Math::Abs(Axis.y) < 0.99f ? Math::Cross(Axis, FVector3(0, 1, 0)) : Math::Cross(Axis, FVector3(1, 0, 0));
             U = Math::Normalize(U);
@@ -131,7 +131,7 @@ namespace Lumina::Physics
 
             for (int32 i = 0; i < 4; ++i)
             {
-                const float Angle = ((2.0f * LE_PI_F) * (float)i) / 4.0f;
+                const float Angle = (Math::TwoPi<float>() * (float)i) / 4.0f;
                 const FVector3 Offset = (U * Math::Cos(Angle) + V * Math::Sin(Angle)) * Radius;
                 Out.push_back(A + Offset);
                 Out.push_back(B + Offset);

@@ -139,7 +139,7 @@ namespace Lumina
         CBlendSpace* BlendSpace = GetAsset<CBlendSpace>();
         if (SelectedSample >= (int32)BlendSpace->Samples.size())
         {
-            SelectedSample = INDEX_NONE;
+            SelectedSample = Constants::kIndexNone;
         }
 
         BlendSpace->RebuildTopology();
@@ -361,7 +361,7 @@ namespace Lumina
     {
         CBlendSpace* BlendSpace = const_cast<FBlendSpaceEditorTool*>(this)->GetAsset<CBlendSpace>();
 
-        int32 Best = INDEX_NONE;
+        int32 Best = Constants::kIndexNone;
         float BestDistanceSq = GrabRadius * GrabRadius;
 
         for (int32 i = 0; i < (int32)BlendSpace->Samples.size(); ++i)
@@ -407,7 +407,7 @@ namespace Lumina
         BeginAssetTransaction("Remove Blend Sample");
 
         BlendSpace->Samples.erase(BlendSpace->Samples.begin() + SampleIndex);
-        SelectedSample = INDEX_NONE;
+        SelectedSample = Constants::kIndexNone;
 
         RefreshAfterStructuralEdit();
         EndAssetTransaction();
@@ -437,7 +437,7 @@ namespace Lumina
 
         if (SelectedSample >= NumSamples)
         {
-            SelectedSample = INDEX_NONE;
+            SelectedSample = Constants::kIndexNone;
         }
 
         void* Target = nullptr;
@@ -751,11 +751,11 @@ namespace Lumina
         const bool bHovered = ImGui::IsItemHovered();
         const ImVec2 MousePos = ImGui::GetMousePos();
 
-        if (DraggedSample != INDEX_NONE)
+        if (DraggedSample != Constants::kIndexNone)
         {
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
             {
-                DraggedSample = INDEX_NONE;
+                DraggedSample = Constants::kIndexNone;
                 if (bDragTransactionOpen)
                 {
                     bDragTransactionOpen = false;
@@ -777,7 +777,7 @@ namespace Lumina
         }
 
         // Double-click on empty space drops a new sample there; the clip is assigned in Details.
-        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && FindSampleAtCanvasPos(MousePos) == INDEX_NONE)
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && FindSampleAtCanvasPos(MousePos) == Constants::kIndexNone)
         {
             AddSampleAt(SnapToGrid(CanvasToAxis(MousePos)));
             return;
@@ -786,7 +786,7 @@ namespace Lumina
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
             const int32 Hit = FindSampleAtCanvasPos(MousePos);
-            if (Hit != INDEX_NONE)
+            if (Hit != Constants::kIndexNone)
             {
                 SelectedSample = Hit;
                 DraggedSample = Hit;
@@ -799,7 +799,7 @@ namespace Lumina
                 PreviewPosition = CanvasToAxis(MousePos);
             }
         }
-        else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && DraggedSample == INDEX_NONE)
+        else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && DraggedSample == Constants::kIndexNone)
         {
             PreviewPosition = CanvasToAxis(MousePos);
         }
@@ -807,7 +807,7 @@ namespace Lumina
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
         {
             const int32 Hit = FindSampleAtCanvasPos(MousePos);
-            if (Hit != INDEX_NONE)
+            if (Hit != Constants::kIndexNone)
             {
                 SelectedSample = Hit;
                 ImGui::OpenPopup("##SampleContext");

@@ -9,6 +9,7 @@
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
+#include "Lumina.h"
 #include "FoliageComponent.generated.h"
 
 namespace Lumina
@@ -117,7 +118,7 @@ namespace Lumina
         // Transient resolve cache (not serialized); refreshed by ResolveDirtyMeshComponents.
         uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
-        uint32          ResolveHandle = ~0u;
+        uint32          ResolveHandle = Constants::kIndexNoneU32;
         // Staleness token of the resolve entry this type last copied from. See SMeshComponent for why
         // this is per-entry rather than a stamp of the cache's global epoch.
         mutable uint32  CachedEntryState = MESH_RESOLVE_STATE_STALE;

@@ -16,7 +16,7 @@ namespace Lumina::ScratchPool
         constexpr SIZE_T kNumClasses     = 20;
 
         // Per class rather than per block count, so a 1 MiB class retains many and a 512 MiB class retains few.
-        constexpr SIZE_T kRetainedBytesPerClass = 32 * 1024 * 1024;
+        constexpr SIZE_T kRetainedBytesPerClass = 32 * Constants::kMiB;
         constexpr SIZE_T kMinRetainedBlocks     = 2;
 
         struct FSizeClass

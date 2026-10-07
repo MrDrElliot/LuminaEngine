@@ -214,7 +214,7 @@ TEST_F(PhysicsSceneLifecycle, RagdollRequestsOwnTemporaryPoseDataAndFilterByOwne
         FSkeletonResource Skeleton;
         FSkeletonResource::FBoneInfo Bone;
         Bone.Name = FName("root");
-        Bone.ParentIndex = INDEX_NONE;
+        Bone.ParentIndex = Constants::kIndexNone;
         Bone.LocalTransform = FMatrix4(1.0f);
         Bone.InvBindMatrix = FMatrix4(1.0f);
         Skeleton.Bones.push_back(Bone);

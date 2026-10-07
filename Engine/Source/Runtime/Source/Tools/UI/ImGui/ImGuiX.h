@@ -194,7 +194,7 @@ namespace Lumina::ImGuiX
 
     // A searchable single-select dropdown. Pass OutCreatedText for a list the user may extend: an entry
     // offering the typed text appears whenever it matches no item, and the pick lands there instead of
-    // in the return value, which stays INDEX_NONE.
+    // in the return value, which stays Constants::kIndexNone.
     RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr, FFixedString* OutCreatedText = nullptr);
 
     // Searchable combo for picking an asset of (or deriving from) FilterClass from the registry.

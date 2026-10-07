@@ -135,7 +135,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics Asset")
         TVector<SPhysicsConstraintSetup> Constraints;
 
-        /** Index into Bodies for a bone name, or INDEX_NONE. */
+        /** Index into Bodies for a bone name, or Constants::kIndexNone. */
         int32 FindBodyIndex(const FName& BoneName) const;
     };
 }

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <vector>
+#include "Lumina.h"
 #include "Memory/Memcpy.h"
 #include "Memory/Memory.h"
 
@@ -131,7 +132,7 @@ TEST(MemcpyTest, BothPointersVectorAlignedTakesTheAlignedPath)
 
 TEST(MemcpyTest, LargeCopiesPastTheVectorLimit)
 {
-    const size_t Sizes[] = { 256 * 1024, 256 * 1024 + 1, 1024 * 1024, 3 * 1024 * 1024 + 777 };
+    const size_t Sizes[] = { 256 * Constants::kKiB, 256 * Constants::kKiB + 1, Constants::kMiB, 3 * Constants::kMiB + 777 };
 
     for (size_t Size : Sizes)
     {

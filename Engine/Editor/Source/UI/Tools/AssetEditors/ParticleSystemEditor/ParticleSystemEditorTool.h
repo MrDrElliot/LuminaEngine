@@ -102,11 +102,11 @@ namespace Lumina
         FCompilationResultInfo  CompilationResult;
 
         // Emitter whose stack changed structurally (add / remove / reorder / toggle) this frame, or
-        // INDEX_NONE. Consumed at the end of DrawStack so the recompile happens after the UI loop rather
+        // Constants::kIndexNone. Consumed at the end of DrawStack so the recompile happens after the UI loop rather
         // than mid-iteration. Tracked per emitter rather than as a flag because a rebuild swaps the
         // FShaderEntry the dispatch binds, which restarts that emitter's particles -- recompiling all of
         // them would make editing one column visibly reset every other column.
-        int32                   DirtyEmitter = INDEX_NONE;
+        int32                   DirtyEmitter = Constants::kIndexNone;
 
         // A one-shot burst plays once and then shows nothing, so the preview re-fires it when this is on.
         bool                    bLoopPreview = true;

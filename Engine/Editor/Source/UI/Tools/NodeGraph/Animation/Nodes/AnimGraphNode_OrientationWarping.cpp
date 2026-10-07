@@ -57,7 +57,7 @@ namespace Lumina
         Compiler.SetPinRegister(PoseOutPin, SrcReg);
 
         const int32 PelvisIndex = Compiler.ResolveBoneIndex(PelvisBone);
-        if (PelvisIndex == INDEX_NONE)
+        if (PelvisIndex == Constants::kIndexNone)
         {
             ReportWarpError(Compiler, this, "Unknown Pelvis Bone",
                         FString("Orientation Warping references '") + PelvisBone.ToString() +
@@ -74,7 +74,7 @@ namespace Lumina
         for (const SAnimOrientationSpineBone& Spine : SpineBones)
         {
             const int32 SpineIndex = Compiler.ResolveBoneIndex(Spine.Bone);
-            if (SpineIndex == INDEX_NONE)
+            if (SpineIndex == Constants::kIndexNone)
             {
                 ReportWarpError(Compiler, this, "Unknown Spine Bone",
                             FString("Orientation Warping references '") + Spine.Bone.ToString() +

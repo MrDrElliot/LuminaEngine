@@ -60,7 +60,7 @@ namespace Lumina::SkeletalUtils
 
     bool ResolveSocket(const SSkeletalMeshComponent& Mesh, const FName& SocketOrBone, int32& OutBoneIndex, FMatrix4& OutSocketOffset)
     {
-        OutBoneIndex = INDEX_NONE;
+        OutBoneIndex = Constants::kIndexNone;
         OutSocketOffset = FMatrix4(1.0f);
 
         const FSkeletonResource* Skeleton = GetSkeleton(Mesh);
@@ -75,17 +75,17 @@ namespace Lumina::SkeletalUtils
             {
                 OutBoneIndex = Skeleton->FindBoneIndex(Socket->BoneName);
                 OutSocketOffset = Socket->RelativeTransform.GetMatrix();
-                return OutBoneIndex != INDEX_NONE;
+                return OutBoneIndex != Constants::kIndexNone;
             }
         }
 
         OutBoneIndex = Skeleton->FindBoneIndex(SocketOrBone);
-        return OutBoneIndex != INDEX_NONE;
+        return OutBoneIndex != Constants::kIndexNone;
     }
 
     bool GetSocketComponentTransform(const SSkeletalMeshComponent& Mesh, const FName& SocketOrBone, FMatrix4& OutTransform)
     {
-        int32 BoneIndex = INDEX_NONE;
+        int32 BoneIndex = Constants::kIndexNone;
         FMatrix4 SocketOffset;
         if (!ResolveSocket(Mesh, SocketOrBone, BoneIndex, SocketOffset))
         {
@@ -146,7 +146,7 @@ namespace Lumina::SkeletalUtils
 
         if (const SSkeletalMeshComponent* SkeletalMesh = Registry.TryGet<SSkeletalMeshComponent>(Entity))
         {
-            int32 BoneIndex = INDEX_NONE;
+            int32 BoneIndex = Constants::kIndexNone;
             FMatrix4 SocketOffset;
             return ResolveSocket(*SkeletalMesh, SocketOrBone, BoneIndex, SocketOffset);
         }
@@ -179,20 +179,20 @@ namespace Lumina::SkeletalUtils
     {
         if (!Registry.IsValid(Entity))
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         const SSkeletalMeshComponent* Mesh = Registry.TryGet<SSkeletalMeshComponent>(Entity);
         STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
         if (Mesh == nullptr || Transform == nullptr)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         const FSkeletonResource* Skeleton = GetSkeleton(*Mesh);
         if (Skeleton == nullptr || Skeleton->GetNumBones() == 0)
         {
-            return INDEX_NONE;
+            return Constants::kIndexNone;
         }
 
         // Compared in component space, one inverse instead of a matrix multiply per bone.
@@ -202,7 +202,7 @@ namespace Lumina::SkeletalUtils
         const bool bLivePose = (int32)Mesh->BoneTransforms.size() == Skeleton->GetNumBones();
         const bool bCachedBind = Skeleton->HasBindGlobalMatrices();
 
-        int32 Closest = INDEX_NONE;
+        int32 Closest = Constants::kIndexNone;
         float BestDistSq = FLT_MAX;
         for (int32 i = 0; i < Skeleton->GetNumBones(); ++i)
         {

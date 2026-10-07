@@ -96,8 +96,8 @@ namespace Lumina::SkeletalMeshMerge
                 }
 
                 // Sources are parents-first, so the parent is already in Out unless it roots elsewhere.
-                int32 ParentIndex = INDEX_NONE;
-                if (Bone.ParentIndex != INDEX_NONE)
+                int32 ParentIndex = Constants::kIndexNone;
+                if (Bone.ParentIndex != Constants::kIndexNone)
                 {
                     const auto It = Out.BoneNameToIndex.find(Source.GetBone(Bone.ParentIndex).Name);
                     if (It != Out.BoneNameToIndex.end())
@@ -195,7 +195,7 @@ namespace Lumina::SkeletalMeshMerge
 
             for (SIZE_T s = 0; s < Slots.size(); ++s)
             {
-                int32 Found = INDEX_NONE;
+                int32 Found = Constants::kIndexNone;
                 for (SIZE_T e = 0; e < MergedMaterials.size(); ++e)
                 {
                     if (MergedMaterials[e].Get() == Slots[s].Get())
@@ -205,7 +205,7 @@ namespace Lumina::SkeletalMeshMerge
                     }
                 }
 
-                if (Found == INDEX_NONE)
+                if (Found == Constants::kIndexNone)
                 {
                     Found = (int32)MergedMaterials.size();
                     MergedMaterials.push_back(Slots[s]);
