@@ -1280,15 +1280,66 @@ namespace Lumina
             });
             return Best;
         }
+
+        enum class ECodeEditorKind : uint8
+        {
+            Generic,
+            VisualStudio,
+            VSCode,
+            Rider,
+        };
+
+        // A custom path can still be one of the known editors, and each takes a line number its own way.
+        ECodeEditorKind CodeEditorKindFromExe(const FString& Exe)
+        {
+            FString Lower = Exe;
+            for (char& Char : Lower)
+            {
+                Char = (char)tolower((unsigned char)Char);
+            }
+
+            if (Lower.find("devenv") != FString::npos)
+            {
+                return ECodeEditorKind::VisualStudio;
+            }
+            if (Lower.find("rider") != FString::npos)
+            {
+                return ECodeEditorKind::Rider;
+            }
+            if (Lower.find("code.exe") != FString::npos || Lower.find("code.cmd") != FString::npos)
+            {
+                return ECodeEditorKind::VSCode;
+            }
+            return ECodeEditorKind::Generic;
+        }
+
+        FString MakeCodeEditorParams(ECodeEditorKind Kind, const FString& NativeFile, int32 Line)
+        {
+            const FString Quoted = "\"" + NativeFile + "\"";
+            const FString LineText = Format("{}", Line);
+
+            switch (Kind)
+            {
+            // /Edit reuses a running Visual Studio instance instead of spawning a new one.
+            case ECodeEditorKind::VisualStudio:
+                return Line > 0 ? FString("/Edit ") + Quoted + " /Command \"Edit.GoTo " + LineText + "\"" : FString("/Edit ") + Quoted;
+            case ECodeEditorKind::VSCode:
+                return Line > 0 ? FString("-r --goto \"") + NativeFile + ":" + LineText + "\"" : FString("-r ") + Quoted;
+            case ECodeEditorKind::Rider:
+                return Line > 0 ? FString("--line ") + LineText + " " + Quoted : Quoted;
+            case ECodeEditorKind::Generic:
+                break;
+            }
+            return Quoted;
+        }
     }
 
-    void FEditorUI::OpenScriptInExternalEditor(FStringView ScriptPath)
+    void FEditorUI::OpenScriptInExternalEditor(FStringView ScriptPath, int32 Line)
     {
         const FString File(ScriptPath.data(), ScriptPath.size());
         const CScriptEditorSettings* Settings = GetDefault<CScriptEditorSettings>();
 
         FString Exe;
-        bool bVisualStudio = false;
         if (!Settings->CustomEditorPath.empty())
         {
             Exe = Settings->CustomEditorPath;
@@ -1298,8 +1349,8 @@ namespace Lumina
             // Cached per editor choice; disk probing / the vswhere subprocess don't change in-session.
             switch (Settings->ScriptEditor)
             {
-            case EScriptEditor::VisualStudio2022: { static FString Found = FindDevEnv("[17.0,18.0)"); Exe = Found; bVisualStudio = true; break; }
-            case EScriptEditor::VisualStudio2026: { static FString Found = FindDevEnv("[18.0,19.0)"); Exe = Found; bVisualStudio = true; break; }
+            case EScriptEditor::VisualStudio2022: { static FString Found = FindDevEnv("[17.0,18.0)"); Exe = Found; break; }
+            case EScriptEditor::VisualStudio2026: { static FString Found = FindDevEnv("[18.0,19.0)"); Exe = Found; break; }
             case EScriptEditor::VSCode:           { static FString Found = FindVSCode(); Exe = Found; break; }
             case EScriptEditor::Rider:            { static FString Found = FindRider(); Exe = Found; break; }
             case EScriptEditor::SystemDefault:    break;
@@ -1313,10 +1364,7 @@ namespace Lumina
             Algo::Replace(NativeFile, '/', '\\');
         #endif
 
-            // /Edit reuses a running Visual Studio instance instead of spawning a new one.
-            FString Params = bVisualStudio ? FString("/Edit \"") : FString("\"");
-            Params += NativeFile;
-            Params += "\"";
+            const FString Params = MakeCodeEditorParams(CodeEditorKindFromExe(Exe), NativeFile, Line);
 
             FString ExeQuoted = "\"";
             ExeQuoted += Exe;

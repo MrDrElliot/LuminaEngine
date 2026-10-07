@@ -1,11 +1,11 @@
 ﻿#include "ConsoleLogEditorTool.h"
+#include "UI/EditorUI.h"
 
 #include <utility>
 
 #include "Core/Console/ConsoleVariable.h"
 #include "Log/LogMessage.h"
 #include "Log/Log.h"
-#include "Platform/Process/PlatformProcess.h"
 
 namespace Lumina
 {
@@ -320,7 +320,7 @@ namespace Lumina
 
                 if (bHasSource && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 {
-                    Platform::OpenSourceFile(UTF8_TO_TCHAR(SourcePath.c_str()), SourceLine);
+                    FEditorUI::OpenScriptInExternalEditor(FStringView(SourcePath.c_str(), SourcePath.size()), SourceLine);
                 }
                 else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
@@ -410,7 +410,7 @@ namespace Lumina
 
             if (ImGui::MenuItem("Open Source", nullptr, false, SourceLine > 0))
             {
-                Platform::OpenSourceFile(UTF8_TO_TCHAR(SourcePath.c_str()), SourceLine);
+                FEditorUI::OpenScriptInExternalEditor(FStringView(SourcePath.c_str(), SourcePath.size()), SourceLine);
             }
 
             ImGui::Separator();

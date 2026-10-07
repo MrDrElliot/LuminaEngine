@@ -72,7 +72,8 @@ namespace Lumina
         void OpenScriptEditor(FStringView ScriptPath) override;
 
         /** Opens a script source file in the editor chosen in CScriptEditorSettings (falls back to the OS association). */
-        static void OpenScriptInExternalEditor(FStringView ScriptPath);
+        // Opens the file in the script editor chosen in the editor settings, at Line when it is above zero.
+        static void OpenScriptInExternalEditor(FStringView ScriptPath, int32 Line = 0);
 
         void OpenAssetEditor(const FGuid& AssetGUID) override;
         void OpenFileEditor(FStringView VirtualPath) override;
