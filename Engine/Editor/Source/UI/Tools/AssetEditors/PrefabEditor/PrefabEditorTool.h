@@ -90,6 +90,7 @@ namespace Lumina
         void OnEntityCreatedInScene(ECS::FEntity Entity) override;
         ECS::FEntity DuplicateEntityForScene(ECS::FEntity Source) override { return DuplicatePrefabEntity(Source); }
         void AdoptSpawnedSubtree(ECS::FEntity Root) override;
+        FString GetReparentRefusal(ECS::FEntity Entity, ECS::FEntity NewParent) override;
         FTransform GetNewEntitySpawnTransform() const override;
 
         void RequestDestroyEntity(ECS::FEntity Entity);

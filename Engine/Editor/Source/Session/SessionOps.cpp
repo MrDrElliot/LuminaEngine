@@ -11,6 +11,7 @@
 #include "UI/EditorUI.h"
 #include "UI/Tools/EditorTool.h"
 #include "UI/Tools/FSceneEditorTool.h"
+#include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "UI/Tools/WorldEditorTool.h"
 
 namespace Lumina::SessionOps
@@ -67,6 +68,17 @@ namespace Lumina::SessionOps
         {
             FString Ignored;
             return RequireSceneTarget(Ignored);
+        }
+
+        FEditorTool* FindUndoTarget(FStringView Tab, FString& OutError)
+        {
+            if (Tab.empty())
+            {
+                return RequireSceneTarget(OutError);
+            }
+
+            FEditorUI* UI = FindUI();
+            return UI != nullptr ? UI->FindTab(Tab, OutError) : nullptr;
         }
     }
 
@@ -248,6 +260,23 @@ namespace Lumina::SessionOps
         return true;
     }
 
+    bool ReparentEntity(ECS::FEntity Entity, ECS::FEntity NewParent, bool bKeepWorldTransform, FString& OutError)
+    {
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
+        return Tool != nullptr && Tool->ReparentEntityTransacted(Entity, NewParent, bKeepWorldTransform, &OutError);
+    }
+
+    bool AddComponent(const TVector<ECS::FEntity>& Targets, CStruct* ComponentType, FString& OutError)
+    {
+        FSceneEditorTool* Tool = RequireSceneTarget(OutError);
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+        Tool->AddComponentTransacted(Targets, ComponentType);
+        return true;
+    }
+
     bool SelectEntities(const TVector<ECS::FEntity>& Entities, FString& OutError)
     {
         FSceneEditorTool* Tool = RequireSceneTarget(OutError);
@@ -315,10 +344,16 @@ namespace Lumina::SessionOps
         return true;
     }
 
-    FUndoState GetUndoState()
+    bool HasUndoTarget(FStringView Tab, FString& OutError)
+    {
+        return FindUndoTarget(Tab, OutError) != nullptr;
+    }
+
+    FUndoState GetUndoState(FStringView Tab)
     {
         FUndoState State;
-        if (FSceneEditorTool* Tool = FindSceneTarget())
+        FString Ignored;
+        if (FEditorTool* Tool = FindUndoTarget(Tab, Ignored))
         {
             const FName Undo = Tool->PeekUndoLabel();
             const FName Redo = Tool->PeekRedoLabel();
@@ -328,9 +363,10 @@ namespace Lumina::SessionOps
         return State;
     }
 
-    int32 Undo(int32 Steps)
+    int32 Undo(int32 Steps, FStringView Tab)
     {
-        FSceneEditorTool* Tool = FindSceneTarget();
+        FString Ignored;
+        FEditorTool* Tool = FindUndoTarget(Tab, Ignored);
         int32 Applied = 0;
         for (int32 Index = 0; Tool != nullptr && Index < Steps && Tool->RunUndo(); ++Index)
         {
@@ -339,9 +375,10 @@ namespace Lumina::SessionOps
         return Applied;
     }
 
-    int32 Redo(int32 Steps)
+    int32 Redo(int32 Steps, FStringView Tab)
     {
-        FSceneEditorTool* Tool = FindSceneTarget();
+        FString Ignored;
+        FEditorTool* Tool = FindUndoTarget(Tab, Ignored);
         int32 Applied = 0;
         for (int32 Index = 0; Tool != nullptr && Index < Steps && Tool->RunRedo(); ++Index)
         {
@@ -380,6 +417,109 @@ namespace Lumina::SessionOps
             return false;
         }
         return UI->FocusTab(Name, OutError);
+    }
+
+    namespace
+    {
+        CEdNodeGraph* FindTabGraph(FStringView Tab, FString& OutError)
+        {
+            FEditorUI* UI = FindUI();
+            if (UI == nullptr)
+            {
+                OutError = GNoSceneEditor;
+                return nullptr;
+            }
+
+            FEditorTool* Tool = UI->FindTab(Tab, OutError);
+            if (Tool == nullptr)
+            {
+                return nullptr;
+            }
+
+            CEdNodeGraph* Graph = Tool->GetActiveNodeGraph();
+            if (Graph == nullptr)
+            {
+                OutError = Lumina::Format("Tab '{}' shows no node graph.", Tab);
+            }
+            return Graph;
+        }
+    }
+
+    bool GetGraphView(FStringView Tab, FGraphView& Out, FString& OutError)
+    {
+        CEdNodeGraph* Graph = FindTabGraph(Tab, OutError);
+        if (Graph == nullptr)
+        {
+            return false;
+        }
+
+        ImVec2 Min, Max;
+        Out.bDrawn    = Graph->GetVisibleCanvasRect(Min, Max, Out.Zoom);
+        Out.MinX      = Min.x;
+        Out.MinY      = Min.y;
+        Out.MaxX      = Max.x;
+        Out.MaxY      = Max.y;
+        Out.NodeCount = (int32)Graph->Nodes.size();
+
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+        {
+            const bool bInside = Node->GetNodeX() >= Min.x && Node->GetNodeX() <= Max.x
+                && Node->GetNodeY() >= Min.y && Node->GetNodeY() <= Max.y;
+            if (Out.bDrawn && !bInside)
+            {
+                Out.Offscreen.push_back(Node->GetNodeID());
+            }
+        }
+        return true;
+    }
+
+    bool FrameGraph(FStringView Tab, const TVector<int64>& Nodes, FString& OutError)
+    {
+        CEdNodeGraph* Graph = FindTabGraph(Tab, OutError);
+        if (Graph == nullptr)
+        {
+            return false;
+        }
+
+        for (int64 NodeID : Nodes)
+        {
+            if (Graph->FindNode(NodeID) == nullptr)
+            {
+                OutError = Lumina::Format("Node {} is not on the canvas tab '{}' shows.", NodeID, Tab);
+                return false;
+            }
+        }
+
+        // A canvas only navigates while it draws, so a tab in the background would never apply it.
+        if (!FocusTab(Tab, OutError))
+        {
+            return false;
+        }
+
+        Graph->QueueFrameNodes(Nodes);
+        return true;
+    }
+
+    bool ArrangeGraph(FStringView Tab, FString& OutError)
+    {
+        CEdNodeGraph* Graph = FindTabGraph(Tab, OutError);
+        if (Graph == nullptr || !FocusTab(Tab, OutError))
+        {
+            return false;
+        }
+
+        Graph->QueueTidyGraph();
+        return true;
+    }
+
+    void AdoptNodeGraph(CObject* Asset, CEdNodeGraph* Graph)
+    {
+        FEditorUI* UI = FindUI();
+        FEditorTool* Tool = UI != nullptr && Asset != nullptr ? UI->FindAssetEditor(Asset) : nullptr;
+        if (Tool != nullptr && Graph != nullptr)
+        {
+            Tool->AdoptNodeGraph(Graph);
+        }
     }
 
     CWorld* GetTabWorld(FStringView Name, FString& OutError)

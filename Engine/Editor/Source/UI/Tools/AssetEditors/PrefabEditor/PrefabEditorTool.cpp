@@ -270,7 +270,6 @@ namespace Lumina
     {
         // Hotkeys are suppressed while right-mouse flying so W/E/R/Q act as fly keys, not mode switches.
         auto Hovered = [this]() { return bViewportHovered && !CameraState.bWasLooking; };
-        auto AlwaysOn = []() { return true; };
 
         RegisterAction({"Translate Mode", "Gizmo", "Switch the gizmo to translate (move) mode",
             FInputChord{ImGuiKey_W}, [this]{ GuizmoOp = ImGuizmo::TRANSLATE; }, Hovered});
@@ -292,12 +291,6 @@ namespace Lumina
 
         RegisterAction({"Reset Transform", "Selection", "Reset the selected entities' local transform to identity",
             FInputChord{ImGuiKey_R, true, true}, [this]{ ResetSelectionTransform(); }, Hovered});
-
-        RegisterAction({"Undo", "History", "Revert the last transacted edit",
-            FInputChord{ImGuiKey_Z, true}, [this]{ Undo(); }, AlwaysOn});
-
-        RegisterAction({"Redo", "History", "Re-apply the last undone edit",
-            FInputChord{ImGuiKey_Y, true}, [this]{ Redo(); }, AlwaysOn});
 
         // Advisory entries, inline-handled shortcuts surfaced under Help and Keybinds.
         RegisterAction({"Duplicate", "Selection", "Duplicate the selection in place",
@@ -848,30 +841,11 @@ namespace Lumina
                     return;
                 }
 
-                ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
-                if (!Registry.IsValid(Source) || (DropItem != ECS::NullEntity && !Registry.IsValid(DropItem)))
+                FString Refusal;
+                if (!ReparentEntityTransacted(Source, DropItem, true, &Refusal))
                 {
-                    return;
+                    ImGuiX::Notifications::NotifyError("{}", Refusal);
                 }
-
-                // Don't reparent the prefab root; hierarchy stays single-rooted.
-                if (Source == FindPrefabRoot() || DropItem == ECS::NullEntity)
-                {
-                    return;
-                }
-
-                // Dropping a parent into one of its own descendants would form a loop.
-                if (ECS::Utils::IsDescendantOf(Registry, DropItem, Source))
-                {
-                    ImGuiX::Notifications::NotifyError("Cannot reparent: target is a descendant of the dragged entity.");
-                    return;
-                }
-
-                BeginRelationshipTransaction({ Source }, DropItem);
-                ECS::Utils::ReparentEntity(Registry, Source, DropItem);
-                EndTransaction("Reparent");
-                OutlinerListView.MarkTreeDirty();
-                Asset->GetPackage()->MarkDirty();
             }
             return;
         }
@@ -881,6 +855,21 @@ namespace Lumina
         {
             HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), DropItem, /*bAttachToTarget*/ true);
         }
+    }
+
+    FString FPrefabEditorTool::GetReparentRefusal(ECS::FEntity Entity, ECS::FEntity NewParent)
+    {
+        // A prefab is single-rooted, so its root never moves and nothing else reaches the top level.
+        if (Entity == FindPrefabRoot())
+        {
+            return "The prefab root stays the root, so it cannot be moved.";
+        }
+        if (NewParent == ECS::NullEntity)
+        {
+            return "A prefab keeps a single root, so its entities cannot move to the top level.";
+        }
+
+        return FSceneEditorTool::GetReparentRefusal(Entity, NewParent);
     }
 
     void FPrefabEditorTool::AdoptSpawnedSubtree(ECS::FEntity Root)

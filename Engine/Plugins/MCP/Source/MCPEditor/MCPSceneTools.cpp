@@ -331,10 +331,10 @@ namespace Lumina::MCP
                             NameOf(Registry, Entity), In.Component));
                     }
 
-                    SessionOps::RunTransacted("Add Component (agent)", [&]()
+                    if (!SessionOps::AddComponent(TVector<ECS::FEntity>{ Entity }, Type, SceneError))
                     {
-                        SceneOps::ApplyAddComponent(Registry, Plan, Type);
-                    }, SceneError);
+                        return Agent::FToolResult::Error(SceneError);
+                    }
 
                     Out.bAdded = true;
 
@@ -617,7 +617,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    // Checked first, because opening the transaction snapshots the whole registry.
+                    // Checked before any undo step opens, so a bad value leaves the history untouched.
                     if (const Agent::FMarshalResult Check =
                             Agent::ValidatePropertyValue(Value, Target.Property, FStringView(In.Path));
                         !Check.IsValid())
@@ -635,21 +635,26 @@ namespace Lumina::MCP
                         Applied = Agent::ReadProperty(Value, Target.Property, Target.ValuePtr, FStringView(In.Path));
                     };
 
-                    SessionOps::RunTransacted("Set Property (agent)", [&]()
+                    // A script owns its own state outside any component record, so like the details panel it snapshots the scene.
+                    if (Ops == nullptr)
                     {
-                        // A script owns its own state, so there is no component record to rebake.
-                        if (Ops == nullptr)
+                        SessionOps::RunTransacted("Set Property (agent)", [&]()
                         {
                             Apply();
                             CPrefab::RecaptureComponentOverrides(Registry, Entity, SEntityScriptComponent::StaticStruct());
-                            return;
-                        }
-
-                        // A bare store reaches no hook, so the renderer keeps serving the old baked record.
-                        SceneOps::FPropertyEditScope Edit(Registry, Entity, Reflected, Data,
-                            Target.Property, Target.ValuePtr);
-                        Apply();
-                    }, SceneError);
+                        }, SceneError);
+                    }
+                    else
+                    {
+                        // The details panel's per-component record, which also recaptures any prefab override.
+                        SessionOps::RunComponentTransacted("Set Property (agent)", Entity, Reflected, [&]()
+                        {
+                            // A bare store reaches no hook, so the renderer keeps serving the old baked record.
+                            SceneOps::FPropertyEditScope Edit(Registry, Entity, Reflected, Data,
+                                Target.Property, Target.ValuePtr);
+                            Apply();
+                        }, SceneError);
+                    }
 
                     if (!Applied.IsValid())
                     {
@@ -702,7 +707,7 @@ namespace Lumina::MCP
                                 FindEntityScriptByName(Registry, Entity, FStringView(In.Component)))
                         {
                             bool bDetached = false;
-                            SessionOps::RunTransacted("Remove Script (agent)", [&]()
+                            SessionOps::RunComponentTransacted("Remove Script (agent)", Entity, SEntityScriptComponent::StaticStruct(), [&]()
                             {
                                 bDetached = EntityScripts::Remove(Registry, Entity, Script);
                             }, SceneError);
@@ -819,26 +824,8 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    if (Parent == Child || (Parent != ECS::NullEntity && ECS::Utils::IsDescendantOf(Registry, Parent, Child)))
-                    {
-                        return Agent::FToolResult::Error("The new parent is inside the entity's own subtree, which would make a cycle.");
-                    }
-
-                    // Matches the outliner, since a refresh would mirror an inherited node back to its prefab parent.
-                    auto IsInheritedPrefabNode = [&](ECS::FEntity Entity)
-                    {
-                        const SPrefabInstanceComponent* Instance = Entity != ECS::NullEntity ? Registry.TryGet<SPrefabInstanceComponent>(Entity) : nullptr;
-                        return Instance != nullptr && !Instance->bIsRoot;
-                    };
-                    if (IsInheritedPrefabNode(Child) || IsInheritedPrefabNode(Parent))
-                    {
-                        return Agent::FToolResult::Error("Cannot reparent prefab-instance children. Edit the source prefab instead.");
-                    }
-
-                    if (!SessionOps::RunTransacted("Reparent Entity (agent)", [&]()
-                    {
-                        ECS::Utils::ReparentEntity(Registry, Child, Parent, In.bKeepWorldTransform);
-                    }, SceneError))
+                    // The outliner's own reparent, so a scene's rules, such as a prefab's single root, apply here too.
+                    if (!SessionOps::ReparentEntity(Child, Parent, In.bKeepWorldTransform, SceneError))
                     {
                         return Agent::FToolResult::Error(SceneError);
                     }

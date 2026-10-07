@@ -11,6 +11,7 @@
 
 namespace Lumina
 {
+    class CEdNodeGraph;
     class CObject;
     class CStruct;
     class CWorld;
@@ -84,6 +85,12 @@ namespace Lumina::SessionOps
     // Replaces the target scene's selection, as clicking the entities in its outliner would.
     EDITOR_API bool SelectEntities(const TVector<ECS::FEntity>& Entities, FString& OutError);
 
+    // The outliner's reparent in the scene target, with that scene's rules, as one undo step. A null parent is the top level.
+    EDITOR_API bool ReparentEntity(ECS::FEntity Entity, ECS::FEntity NewParent, bool bKeepWorldTransform, FString& OutError);
+
+    // The add-component picker's apply in the scene target, for every target that lacks the component.
+    EDITOR_API bool AddComponent(const TVector<ECS::FEntity>& Targets, CStruct* ComponentType, FString& OutError);
+
     // Makes a spawned subtree belong to the target scene as a content drop would; call inside RunCreationTransacted.
     EDITOR_API void AdoptSpawnedSubtree(ECS::FEntity Root);
 
@@ -107,11 +114,15 @@ namespace Lumina::SessionOps
         FString NextRedo;
     };
 
-    NODISCARD EDITOR_API FUndoState GetUndoState();
+    // An empty Tab means the scene target, and any other names a tab whose own history is used.
+    NODISCARD EDITOR_API FUndoState GetUndoState(FStringView Tab = FStringView());
 
     // Steps actually taken, which stops early when the stack runs out.
-    EDITOR_API int32 Undo(int32 Steps);
-    EDITOR_API int32 Redo(int32 Steps);
+    EDITOR_API int32 Undo(int32 Steps, FStringView Tab = FStringView());
+    EDITOR_API int32 Redo(int32 Steps, FStringView Tab = FStringView());
+
+    // False with a reason when Tab names no open tab, so a caller can tell a typo from an empty history.
+    NODISCARD EDITOR_API bool HasUndoTarget(FStringView Tab, FString& OutError);
 
     //~ Open tabs.
 
@@ -127,6 +138,34 @@ namespace Lumina::SessionOps
 
     EDITOR_API void ForEachTab(const TFunction<void(const FTabInfo&)>& Functor);
     EDITOR_API bool FocusTab(FStringView Name, FString& OutError);
+
+    //~ The node graph canvas a tab shows, such as a material or animation graph editor's.
+
+    struct FGraphView
+    {
+        // False until the canvas has been drawn once, since the view only exists after a draw.
+        bool  bDrawn = false;
+        float MinX = 0.0f;
+        float MinY = 0.0f;
+        float MaxX = 0.0f;
+        float MaxY = 0.0f;
+        float Zoom = 1.0f;
+
+        // Nodes whose position lies outside the visible rectangle.
+        TVector<int64> Offscreen;
+        int32          NodeCount = 0;
+    };
+
+    NODISCARD EDITOR_API bool GetGraphView(FStringView Tab, FGraphView& Out, FString& OutError);
+
+    // Focuses the tab and frames these nodes on its next draw, or every node when the list is empty.
+    EDITOR_API bool FrameGraph(FStringView Tab, const TVector<int64>& Nodes, FString& OutError);
+
+    // Lays the canvas out by its links on the next draw, inputs left of what they feed, as one undo step.
+    EDITOR_API bool ArrangeGraph(FStringView Tab, FString& OutError);
+
+    // Hands a canvas of Asset to the editor that has Asset open, so a scripted edit there joins that editor's history.
+    EDITOR_API void AdoptNodeGraph(CObject* Asset, CEdNodeGraph* Graph);
     EDITOR_API bool CloseTab(FStringView Name, bool bDiscardUnsaved, FString& OutError);
     // The world a tab renders, which for an asset editor is its own preview world.
     EDITOR_API CWorld* GetTabWorld(FStringView Name, FString& OutError);

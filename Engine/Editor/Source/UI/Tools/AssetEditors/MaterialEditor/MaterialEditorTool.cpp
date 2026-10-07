@@ -14,6 +14,7 @@
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_CustomSlang.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Function.h"
+#include "Material/MaterialOps.h"
 #include "UI/Tools/EditorToolContext.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
@@ -82,16 +83,10 @@ namespace Lumina
 
         ConfigureCodeEditor();
 
-        FString GraphName = "AssetMaterialGraph";
-        NodeGraph = Cast<CMaterialNodeGraph>(Asset->GetPackage()->LoadObjectByName(GraphName));
-        
-        if (NodeGraph == nullptr)
-        {
-            NodeGraph = NewObject<CMaterialNodeGraph>(Asset->GetPackage(), GraphName);
-        }
-        
+        NodeGraph = MaterialOps::FindOrCreateGraph(Cast<CMaterial>(Asset.Get()));
         NodeGraph->SetMaterial(Cast<CMaterial>(Asset.Get()));
         NodeGraph->Initialize();
+        NodeGraph->SetTransactionManager(&GetTransactionManager());
         NodeGraph->SetNodeSelectedCallback( [this] (CEdGraphNode* Node)
         {
             if (Node != SelectedNode)
@@ -1337,5 +1332,10 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(MaterialPropertiesName).c_str(),  rightBottomDockID);
         // Tabbed behind the graph, since editing a node's code is the same task as editing the graph.
         ImGui::DockBuilderDockWindow(GetToolWindowName(CustomCodeName).c_str(),          leftDockID);
+    }
+
+    CEdNodeGraph* FMaterialEditorTool::GetActiveNodeGraph()
+    {
+        return NodeGraph.Get();
     }
 }

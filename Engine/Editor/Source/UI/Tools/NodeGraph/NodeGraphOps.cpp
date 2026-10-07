@@ -13,25 +13,6 @@
 
 namespace Lumina::NodeGraphOps
 {
-    namespace
-    {
-        void DisconnectEverything(CEdNodeGraphPin* Pin)
-        {
-            if (Pin == nullptr || !Pin->HasConnection())
-            {
-                return;
-            }
-
-            const TVector<CEdNodeGraphPin*> Existing = Pin->GetConnections();
-            for (CEdNodeGraphPin* Other : Existing)
-            {
-                Other->DisconnectFrom(Pin);
-            }
-
-            Pin->ClearConnections();
-        }
-    }
-
     TVector<CClass*> GetPlaceableNodeTypes(CClass* GraphClass)
     {
         TVector<CClass*> Types;
@@ -73,7 +54,7 @@ namespace Lumina::NodeGraphOps
     {
         if (Graph != nullptr)
         {
-            Graph->ValidateGraph();
+            Graph->CommitExternalNodeEdit("Set Node Property");
         }
     }
 
@@ -136,39 +117,14 @@ namespace Lumina::NodeGraphOps
 
     bool ConnectPins(CEdNodeGraph* Graph, CEdNodeGraphPin* Output, CEdNodeGraphPin* Input, FString& OutError)
     {
-        if (Graph == nullptr || Output == nullptr || Input == nullptr)
+        if (Graph == nullptr)
         {
-            OutError = "A connection needs a graph and both pins.";
+            OutError = "A connection needs a graph.";
             return false;
         }
 
-        if (Output->bInputPin || !Input->bInputPin)
-        {
-            OutError = "A connection runs from an output pin to an input pin.";
-            return false;
-        }
-
-        const FEdGraphSchema& Schema = Graph->GetSchema();
-
-        if (!Schema.CanCreateConnection(Output, Input))
-        {
-            OutError = Lumina::Format("'{}' and '{}' cannot be connected, since the graph refuses that pairing.",
-                Output->GetPinName(), Input->GetPinName());
-            return false;
-        }
-
-        // An input holding a second link is unrepresentable in the editor and loses one on reload.
-        if (Input->HasConnection() && !Schema.AllowsMultipleConnections(Input))
-        {
-            DisconnectEverything(Input);
-        }
-
-        Output->AddConnection(Input);
-        Input->AddConnection(Output);
-
-        Graph->ValidateGraph();
-
-        return true;
+        FNodeGraphEditScope Edit(Graph, "Connect Pins");
+        return Graph->ConnectPins(Output, Input, &OutError);
     }
 
     bool DisconnectPin(CEdNodeGraph* Graph, CEdNodeGraphPin* Pin, FString& OutError)
@@ -185,28 +141,20 @@ namespace Lumina::NodeGraphOps
             return false;
         }
 
-        DisconnectEverything(Pin);
-
-        Graph->ValidateGraph();
-
+        FNodeGraphEditScope Edit(Graph, "Break Links");
+        Graph->BreakPinLinks(Pin);
         return true;
     }
 
     CEdGraphNode* AddNode(CEdNodeGraph* Graph, CClass* NodeClass, float X, float Y)
     {
-        if (Graph == nullptr || NodeClass == nullptr)
+        if (Graph == nullptr)
         {
             return nullptr;
         }
 
-        CEdGraphNode* Node = Graph->CreateNode(NodeClass);
-        if (Node != nullptr)
-        {
-            Node->SetGridPos(X, Y);
-            Graph->ValidateGraph();
-        }
-
-        return Node;
+        FNodeGraphEditScope Edit(Graph, "Add Node");
+        return Graph->SpawnNode(NodeClass, X, Y);
     }
 
     bool RemoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, FString& OutError)
@@ -217,44 +165,19 @@ namespace Lumina::NodeGraphOps
             return false;
         }
 
-        if (!Node->IsDeletable())
+        FNodeGraphEditScope Edit(Graph, "Delete Node");
+        return Graph->RemoveNodes({ Node }, &OutError);
+    }
+
+    bool MoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, float X, float Y)
+    {
+        if (Graph == nullptr || Node == nullptr)
         {
-            OutError = Lumina::Format("{} belongs to the graph itself, so it cannot be removed.",
-                Node->GetNodeDisplayName());
             return false;
         }
 
-        auto Found = Graph->Nodes.end();
-        for (auto It = Graph->Nodes.begin(); It != Graph->Nodes.end(); ++It)
-        {
-            if (It->Get() == Node)
-            {
-                Found = It;
-                break;
-            }
-        }
-
-        if (Found == Graph->Nodes.end())
-        {
-            OutError = "That node is not in this graph.";
-            return false;
-        }
-
-        for (const auto& PinRef : Node->GetInputPins())
-        {
-            DisconnectEverything(PinRef.Get());
-        }
-
-        for (const auto& PinRef : Node->GetOutputPins())
-        {
-            DisconnectEverything(PinRef.Get());
-        }
-
-        // Erasing releases the container's reference, which destroys the node once nothing else holds one.
-        Graph->Nodes.erase(Found);
-
-        Graph->ValidateGraph();
-
+        FNodeGraphEditScope Edit(Graph, "Move Node");
+        Graph->MoveNode(Node, X, Y);
         return true;
     }
 

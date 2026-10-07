@@ -42,6 +42,8 @@ namespace Lumina::NodeGraphOps
     // Refuses a node the graph keeps for itself, such as the output node a graph compiles from.
     NODISCARD EDITOR_API bool RemoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, FString& OutError);
 
+    EDITOR_API bool MoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, float X, float Y);
+
     // Name of the tool with this asset open, empty when nothing has it, so a caller outside the editor can refuse.
     NODISCARD EDITOR_API FString FindOpenEditorName(CObject* Asset);
 }

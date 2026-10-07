@@ -28,6 +28,7 @@ namespace Lumina
     class FInputViewport;
     class CStruct;
     class FSceneEditorTool;
+    class CEdNodeGraph;
 }
 
 namespace Lumina
@@ -164,6 +165,12 @@ namespace Lumina
         NODISCARD CWorld* GetWorld() const { return World.Get(); }
         // Non-null for a tool that edits an entity scene, so session code can drive it without knowing its type.
         NODISCARD virtual FSceneEditorTool* AsSceneEditor() { return nullptr; }
+
+        // The node graph canvas this tool is showing, or null for a tool without one.
+        NODISCARD virtual CEdNodeGraph* GetActiveNodeGraph() { return nullptr; }
+
+        // Binds a canvas of this tool's asset that it has not opened yet, so edits made there join its history.
+        virtual void AdoptNodeGraph(CEdNodeGraph* Graph) {}
 
         // For an outside change that leaves recorded transactions unsafe to replay, such as a deleted prefab.
         void DiscardUndoHistory() { ClearTransactionHistory(); }

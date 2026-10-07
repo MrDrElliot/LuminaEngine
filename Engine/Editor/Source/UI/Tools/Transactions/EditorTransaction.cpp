@@ -30,6 +30,38 @@ namespace Lumina
         Open = FTransaction{};
     }
 
+    void FTransactionManager::AppendToLast(TUniquePtr<IUndoableCommand> Command)
+    {
+        if (Command == nullptr || bApplying)
+        {
+            return;
+        }
+
+        if (bOpen)
+        {
+            Open.Commands.push_back(Move(Command));
+            return;
+        }
+
+        Command->Finalize();
+        if (Command->IsNoOp())
+        {
+            return;
+        }
+
+        if (UndoStack.empty())
+        {
+            FTransaction Transaction;
+            Transaction.Name = Command->GetName();
+            Transaction.Commands.push_back(Move(Command));
+            PushCommitted(Move(Transaction));
+            return;
+        }
+
+        UndoStack.back().Commands.push_back(Move(Command));
+        RedoStack.clear();
+    }
+
     void FTransactionManager::AbortTransaction()
     {
         bOpen = false;
@@ -56,7 +88,9 @@ namespace Lumina
         FTransaction Transaction = Move(UndoStack.back());
         UndoStack.pop_back();
 
+        bApplying = true;
         Transaction.Undo();
+        bApplying = false;
 
         RedoStack.push_back(Move(Transaction));
 
@@ -76,7 +110,9 @@ namespace Lumina
         FTransaction Transaction = Move(RedoStack.back());
         RedoStack.pop_back();
 
+        bApplying = true;
         Transaction.Redo();
+        bApplying = false;
 
         UndoStack.push_back(Move(Transaction));
 

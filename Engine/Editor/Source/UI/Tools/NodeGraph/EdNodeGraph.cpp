@@ -138,6 +138,10 @@ namespace Lumina
 
         ax::NodeEditor::DestroyEditor(Context);
         Context = nullptr;
+
+        // The tool owning that history is going away with the canvas.
+        TransactionManager = nullptr;
+        UndoImage = FNodeGraphImage();
     }
 
     void CEdNodeGraph::Serialize(FArchive& Ar)
@@ -165,10 +169,20 @@ namespace Lumina
             }
         }
 
-        for (size_t i = 0; i + 1 < SavedConnections.size(); i += 2)
+        Connections = Move(SavedConnections);
+        RelinkFromConnections();
+
+        // The load's one reconcile, rebuilding Connections and re-matching link-keyed data against them.
+        bIsPostLoading = false;
+        ValidateGraph();
+    }
+
+    void CEdNodeGraph::RelinkFromConnections()
+    {
+        for (size_t i = 0; i + 1 < Connections.size(); i += 2)
         {
-            uint32 InputID = SavedConnections[i];
-            uint32 OutputID = SavedConnections[i + 1];
+            uint32 InputID = Connections[i];
+            uint32 OutputID = Connections[i + 1];
 
             CEdNodeGraphPin* InputPin = nullptr;
             CEdNodeGraphPin* OutputPin = nullptr;
@@ -203,10 +217,6 @@ namespace Lumina
             OutputPin->AddConnection(InputPin);
             InputPin->AddConnection(OutputPin);
         }
-
-        // The load's one reconcile, rebuilding Connections and re-matching link-keyed data against them.
-        bIsPostLoading = false;
-        ValidateGraph();
     }
 
     CPackage* CEdNodeGraph::GetNodeOuter()
@@ -612,6 +622,8 @@ namespace Lumina
 
     void CEdNodeGraph::AlignSelectedNodes(ENodeAlignment Alignment)
     {
+        SetPendingEditLabel("Align Nodes");
+
         using namespace ax;
 
         // GetSelectedObjectCount counts links too, so it is an upper bound on the node count.
@@ -778,6 +790,8 @@ namespace Lumina
 
     void CEdNodeGraph::TidyGraph()
     {
+        SetPendingEditLabel("Arrange Nodes");
+
         using namespace ax;
 
         // Column spacing is generous since cramped columns make long wires ambiguous.
@@ -1030,6 +1044,27 @@ namespace Lumina
             }
         }
 
+        // Positions written outside the draw loop, by an undo or a scripted edit, only reach the canvas here.
+        if (bSyncAllGridPositions)
+        {
+            for (const auto& NodeRef : Nodes)
+            {
+                NodeEditor::SetNodePosition(NodeRef->GetNodeID(), ImVec2(NodeRef->GridX, NodeRef->GridY));
+            }
+        }
+        else
+        {
+            for (int64 SyncID : PendingGridSync)
+            {
+                if (CEdGraphNode* SyncNode = FindNode(SyncID))
+                {
+                    NodeEditor::SetNodePosition(SyncID, ImVec2(SyncNode->GridX, SyncNode->GridY));
+                }
+            }
+        }
+        bSyncAllGridPositions = false;
+        PendingGridSync.clear();
+
         // Applied now that the editor context is current and the screen to canvas transform exists.
         for (const FPendingPlacement& Placement : PendingPlacements)
         {
@@ -1096,9 +1131,14 @@ namespace Lumina
         for (const auto& NodeRef : Nodes)
         {
             CEdGraphNode* Node = NodeRef.Get();
-            ImVec2 Position = NodeEditor::GetNodePosition(Node->GetNodeID());
-            Node->GridX = Position.x;
-            Node->GridY = Position.y;
+            // A node the canvas has not placed yet reports FLT_MAX, which must not overwrite its grid position.
+            const ImVec2 Position = NodeEditor::GetNodePosition(Node->GetNodeID());
+            if (Position.x != FLT_MAX && (Node->GridX != Position.x || Node->GridY != Position.y))
+            {
+                bLayoutChangedSinceImage |= !bFirstDraw;
+                Node->GridX = Position.x;
+                Node->GridY = Position.y;
+            }
 
             // This node reaches no output, so the compiler never emits it, and it costs nothing when connected.
             const bool bDeadNode = !ContributingNodes.empty()
@@ -1628,19 +1668,8 @@ namespace Lumina
                     }
                     else if (NodeEditor::AcceptNewItem(ImColor(128, 255, 128), 2.0f))
                     {
-                        if (EndPin->HasConnection() && !Schema.AllowsMultipleConnections(EndPin))
-                        {
-                            TVector<CEdNodeGraphPin*> Existing = EndPin->GetConnections();
-                            for (CEdNodeGraphPin* ConnectedPin : Existing)
-                            {
-                                EndPin->DisconnectFrom(ConnectedPin);
-                            }
-                        }
-
-                        StartPin->AddConnection(EndPin);
-                        EndPin->AddConnection(StartPin);
-                        NotifyContentChanged();
-                        ValidateGraph();
+                        SetPendingEditLabel("Connect Pins");
+                        ConnectPins(StartPin, EndPin);
                     }
                 }
             }
@@ -1673,71 +1702,19 @@ namespace Lumina
 
         NodeEditor::EndCreate();
         
+        TVector<CEdGraphNode*> DeletedNodes;
         if (NodeEditor::BeginDelete())
         {
             NodeEditor::NodeId NodeId = 0;
             while (NodeEditor::QueryDeletedNode(&NodeId))
             {
-                // O(n^2) scan mirrors the approach from the imgui-node-editor examples; acceptable for typical graph sizes.
-                auto NodeItr = Algo::FindIf(Nodes, [NodeId] (const TStrongObjectPtr<CEdGraphNode>& A)
+                CEdGraphNode* Node = FindNode((int64)NodeId.Get());
+                if (Node != nullptr && Node->IsDeletable() && NodeEditor::AcceptDeletedItem())
                 {
-                    return Cmp::Equal(A->GetNodeID(), NodeId.Get()) && A->IsDeletable();
-                });
-
-                if (NodeItr != Nodes.end())
-                {
-                    CEdGraphNode* Node = NodeItr->Get();
-                    if (!NodeEditor::AcceptDeletedItem())
-                    {
-                        continue;
-                    }
-
-                    if (PreNodeDeletedCallback)
-                    {
-                        PreNodeDeletedCallback(Node);
-                    }
-                    
-                    for (const auto& PinRef : Node->GetInputPins())
-                    {
-                        CEdNodeGraphPin* Pin = PinRef.Get();
-                        if (Pin->HasConnection())
-                        {
-                            TVector<CEdNodeGraphPin*> PinConnections = Pin->GetConnections();
-                            for (CEdNodeGraphPin* ConnectedPin : PinConnections)
-                            {
-                                ConnectedPin->DisconnectFrom(Pin);
-                            }
-                            Pin->ClearConnections();
-                        }
-                    }
-        
-                    for (const auto& PinRef : Node->GetOutputPins())
-                    {
-                        CEdNodeGraphPin* Pin = PinRef.Get();
-                        if (Pin->HasConnection())
-                        {
-                            TVector<CEdNodeGraphPin*> PinConnections = Pin->GetConnections();
-                            for (CEdNodeGraphPin* ConnectedPin : PinConnections)
-                            {
-                                ConnectedPin->DisconnectFrom(Pin);
-                            }
-                            Pin->ClearConnections();
-                        }
-                    }
-                    
-                    // The copy buffer holds raw pointers, so a node deleted between copy and paste would be cloned dead.
-                    ForgetClipboardNode(Node);
-
-                    // Erasing releases the container's reference, which destroys the node once nothing else holds one.
-                    Nodes.erase(NodeItr);
-                    Node = nullptr;
-
-                    NotifyContentChanged();
-                    ValidateGraph();
+                    DeletedNodes.push_back(Node);
                 }
             }
-            
-            
+
             NodeEditor::LinkId DeletedLinkId;
             while (NodeEditor::QueryDeletedLink(&DeletedLinkId))
             {
@@ -1747,15 +1724,20 @@ namespace Lumina
                     if (FindLinkIndex(DeletedLinkId, LinkIndex))
                     {
                         const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>& Pair = Links[LinkIndex];
-                        Pair.first->RemoveConnection(Pair.second);
-                        Pair.second->RemoveConnection(Pair.first);
-                        NotifyContentChanged();
-                        ValidateGraph();
+                        SetPendingEditLabel("Break Link");
+                        BreakLink(Pair.first, Pair.second);
                     }
                 }
             }
         }
         
+        // After the link pass, since a deleted node's wires are reported too and their pins must still be alive.
+        if (!DeletedNodes.empty())
+        {
+            SetPendingEditLabel(DeletedNodes.size() == 1 ? FName("Delete Node") : FName("Delete Nodes"));
+            RemoveNodes(DeletedNodes);
+        }
+
         NodeEditor::EndDelete();
 
         // Drawn first, since selection bounds count only nodes submitted this frame.
@@ -1766,6 +1748,53 @@ namespace Lumina
         }
         PendingFocusNode = nullptr;
 
+        // Instant rather than animated, so a caller reading the view back next frame sees where it landed.
+        if (bHasPendingFrame)
+        {
+            bHasPendingFrame = false;
+            // Positions and drawn sizes, since the editor's own content bounds count nodes this graph no longer has.
+            ImVec2 BoundsMin(FLT_MAX, FLT_MAX);
+            ImVec2 BoundsMax(-FLT_MAX, -FLT_MAX);
+            if (!PendingFrameNodes.empty())
+            {
+                NodeEditor::ClearSelection();
+            }
+            for (const auto& NodeRef : Nodes)
+            {
+                const int64 FrameID = NodeRef->GetNodeID();
+                if (!PendingFrameNodes.empty() && Algo::Find(PendingFrameNodes, FrameID) == PendingFrameNodes.end())
+                {
+                    continue;
+                }
+                if (!PendingFrameNodes.empty())
+                {
+                    NodeEditor::SelectNode(FrameID, true);
+                }
+                const ImVec2 Min(NodeRef->GridX, NodeRef->GridY);
+                const ImVec2 Max = Min + NodeEditor::GetNodeSize(FrameID);
+                BoundsMin = ImVec2(Math::Min(BoundsMin.x, Min.x), Math::Min(BoundsMin.y, Min.y));
+                BoundsMax = ImVec2(Math::Max(BoundsMax.x, Max.x), Math::Max(BoundsMax.y, Max.y));
+            }
+            if (BoundsMin.x <= BoundsMax.x)
+            {
+                constexpr float FrameMargin = 60.0f;
+                BoundsMin -= ImVec2(FrameMargin, FrameMargin);
+                BoundsMax += ImVec2(FrameMargin, FrameMargin);
+
+                // Grown to the canvas's own size so a small selection frames at 100% instead of magnified.
+                const ImVec2 Center   = (BoundsMin + BoundsMax) * 0.5f;
+                const ImVec2 Screen   = NodeEditor::GetScreenSize();
+                const ImVec2 HalfSize(Math::Max(BoundsMax.x - Center.x, Screen.x * 0.5f), Math::Max(BoundsMax.y - Center.y, Screen.y * 0.5f));
+                NodeEditor::NavigateToRect(Center - HalfSize, Center + HalfSize, 0.0f);
+            }
+            PendingFrameNodes.clear();
+        }
+
+        NodeEditor::GetVisibleCanvasRect(&VisibleCanvasMin, &VisibleCanvasMax);
+        const float VisibleWidth = VisibleCanvasMax.x - VisibleCanvasMin.x;
+        VisibleZoom     = VisibleWidth > 0.0f ? NodeEditor::GetScreenSize().x / VisibleWidth : 1.0f;
+        bHasVisibleRect = true;
+
         PopGraphStyle();
 
         NodeEditor::End();
@@ -1773,6 +1802,16 @@ namespace Lumina
 
         // The host window is current again, and a spawned node lands in PendingPlacements for next frame.
         DrawCanvasDropTarget();
+
+        // The first draw loads the saved layout into every node, which is opening the asset, not an edit.
+        if (bFirstDraw)
+        {
+            RebaseUndoImage();
+        }
+        else
+        {
+            CommitFrameEdits();
+        }
 
         bFirstDraw = false;
     }
@@ -1985,28 +2024,7 @@ namespace Lumina
         }
 
         const bool bSourceIsInput = SourcePin->bInputPin;
-        CEdNodeGraphPin* From = bSourceIsInput ? TargetPin : SourcePin;
-        CEdNodeGraphPin* To   = bSourceIsInput ? SourcePin : TargetPin;
-
-        const FEdGraphSchema& Schema = GetSchema();
-        if (From->IsDisabled() || To->IsDisabled() || !Schema.CanCreateConnection(From, To))
-        {
-            return;
-        }
-
-        if (To->HasConnection() && !Schema.AllowsMultipleConnections(To))
-        {
-            TVector<CEdNodeGraphPin*> Existing = To->GetConnections();
-            for (CEdNodeGraphPin* ConnectedPin : Existing)
-            {
-                To->DisconnectFrom(ConnectedPin);
-            }
-        }
-
-        From->AddConnection(To);
-        To->AddConnection(From);
-        NotifyContentChanged();
-        ValidateGraph();
+        ConnectPins(bSourceIsInput ? TargetPin : SourcePin, bSourceIsInput ? SourcePin : TargetPin);
     }
 
     int64 CEdNodeGraph::GenerateUniqueNodeID(int64 PreferredID) const
@@ -2083,4 +2101,362 @@ namespace Lumina
         return NodeID;
     }
     
+
+    void CEdNodeGraph::SetTransactionManager(FTransactionManager* InManager)
+    {
+        TransactionManager = InManager;
+        UndoImage = FNodeGraphImage();
+        RebaseUndoImage();
+    }
+
+    void CEdNodeGraph::RebaseUndoImage()
+    {
+        PendingEditLabel = FName();
+        bLayoutChangedSinceImage = false;
+        UndoImageContentVersion = ContentVersion;
+
+        if (TransactionManager != nullptr)
+        {
+            UndoImage = FNodeGraphImage::Capture(this);
+        }
+    }
+
+    void CEdNodeGraph::CommitEdit(FName Label)
+    {
+        if (TransactionManager == nullptr)
+        {
+            return;
+        }
+
+        // A change made while a step is being applied belongs to that step, so it only moves the baseline.
+        if (!UndoImage.IsValid() || TransactionManager->IsApplying())
+        {
+            RebaseUndoImage();
+            return;
+        }
+
+        FNodeGraphImage Current = FNodeGraphImage::Capture(this);
+        if (Current.Bytes == UndoImage.Bytes)
+        {
+            UndoImageContentVersion = ContentVersion;
+            bLayoutChangedSinceImage = false;
+            PendingEditLabel = FName();
+            return;
+        }
+
+        const FName Name = !Label.IsNone() ? Label : !PendingEditLabel.IsNone() ? PendingEditLabel : FName("Edit Graph");
+        TUniquePtr<IUndoableCommand> Command = MakeUnique<FNodeGraphSnapshotCommand>(this, Move(UndoImage), Current);
+
+        // Joins an edit already being recorded, such as a property change spanning the graph and its asset.
+        if (TransactionManager->IsRecording())
+        {
+            TransactionManager->Record(Move(Command));
+        }
+        else
+        {
+            TransactionManager->BeginTransaction(Name);
+            TransactionManager->Record(Move(Command));
+            TransactionManager->CommitTransaction();
+        }
+
+        UndoImage = Move(Current);
+        UndoImageContentVersion = ContentVersion;
+        bLayoutChangedSinceImage = false;
+        PendingEditLabel = FName();
+    }
+
+    void CEdNodeGraph::CommitEditIntoLastStep()
+    {
+        if (TransactionManager == nullptr || TransactionManager->IsApplying() || !UndoImage.IsValid())
+        {
+            RebaseUndoImage();
+            return;
+        }
+
+        FNodeGraphImage Current = FNodeGraphImage::Capture(this);
+        if (Current.Bytes != UndoImage.Bytes)
+        {
+            TransactionManager->AppendToLast(MakeUnique<FNodeGraphSnapshotCommand>(this, Move(UndoImage), Current));
+        }
+
+        UndoImage = Move(Current);
+        UndoImageContentVersion = ContentVersion;
+        bLayoutChangedSinceImage = false;
+    }
+
+    void CEdNodeGraph::LeaveEditScope(FName Label)
+    {
+        if (EditScopeDepth > 0 && --EditScopeDepth == 0)
+        {
+            CommitEdit(Label);
+        }
+    }
+
+    void CEdNodeGraph::BeginLongEdit()
+    {
+        ++LongEditDepth;
+    }
+
+    void CEdNodeGraph::EndLongEdit(FName Label)
+    {
+        if (LongEditDepth > 0 && --LongEditDepth == 0)
+        {
+            CommitEdit(Label);
+        }
+    }
+
+    void CEdNodeGraph::CommitFrameEdits()
+    {
+        if (TransactionManager == nullptr || EditScopeDepth > 0 || LongEditDepth > 0)
+        {
+            return;
+        }
+
+        const bool bContentChanged = ContentVersion != UndoImageContentVersion;
+        if (!bContentChanged && !bLayoutChangedSinceImage)
+        {
+            return;
+        }
+
+        // A drag, a wire being pulled or an inline value being scrubbed is one step, taken when it ends.
+        if (ImGui::IsAnyMouseDown() || ImGui::IsAnyItemActive())
+        {
+            return;
+        }
+
+        if (!bContentChanged && PendingEditLabel.IsNone())
+        {
+            PendingEditLabel = "Move Nodes";
+        }
+        CommitEdit(FName());
+    }
+
+    CEdGraphNode* CEdNodeGraph::SpawnNode(CClass* NodeClass, float X, float Y)
+    {
+        if (NodeClass == nullptr)
+        {
+            return nullptr;
+        }
+
+        CEdGraphNode* Node = CreateNode(NodeClass);
+        if (Node != nullptr)
+        {
+            Node->SetGridPos(X, Y);
+            PendingGridSync.insert(Node->GetNodeID());
+        }
+
+        return Node;
+    }
+
+    bool CEdNodeGraph::RemoveNodes(const TVector<CEdGraphNode*>& InNodes, FString* OutError)
+    {
+        for (CEdGraphNode* Node : InNodes)
+        {
+            const bool bInGraph = Node != nullptr
+                && Algo::FindIf(Nodes, [Node](const TStrongObjectPtr<CEdGraphNode>& N) { return N.Get() == Node; }) != Nodes.end();
+            if (!bInGraph)
+            {
+                if (OutError)
+                {
+                    *OutError = "That node is not in this graph.";
+                }
+                return false;
+            }
+
+            if (!Node->IsDeletable())
+            {
+                if (OutError)
+                {
+                    *OutError = Format("{} belongs to the graph itself, so it cannot be removed.", Node->GetNodeDisplayName());
+                }
+                return false;
+            }
+        }
+
+        for (CEdGraphNode* Node : InNodes)
+        {
+            // Held until the loop is done with it, since erasing drops what may be the last reference.
+            TStrongObjectPtr<CEdGraphNode> Keep = Node;
+
+            if (PreNodeDeletedCallback)
+            {
+                PreNodeDeletedCallback(Node);
+            }
+
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Node->GetInputPins())
+            {
+                Pin->ClearConnections();
+            }
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Node->GetOutputPins())
+            {
+                Pin->ClearConnections();
+            }
+
+            // The copy buffer holds raw pointers, so a node deleted between copy and paste would be cloned dead.
+            ForgetClipboardNode(Node);
+
+            Nodes.erase(Algo::RemoveIf(Nodes, [Node](const TStrongObjectPtr<CEdGraphNode>& N) { return N.Get() == Node; }), Nodes.end());
+        }
+
+        NotifyContentChanged();
+        ValidateGraph();
+        return true;
+    }
+
+    bool CEdNodeGraph::ConnectPins(CEdNodeGraphPin* Output, CEdNodeGraphPin* Input, FString* OutError)
+    {
+        auto Fail = [OutError](const FString& Message)
+        {
+            if (OutError)
+            {
+                *OutError = Message;
+            }
+            return false;
+        };
+
+        if (Output == nullptr || Input == nullptr)
+        {
+            return Fail("A connection needs both pins.");
+        }
+
+        if (Output->bInputPin || !Input->bInputPin)
+        {
+            return Fail("A connection runs from an output pin to an input pin.");
+        }
+
+        if (Output->IsDisabled() || Input->IsDisabled())
+        {
+            return Fail("One of those pins is disabled.");
+        }
+
+        const FEdGraphSchema& Schema = GetSchema();
+        if (!Schema.CanCreateConnection(Output, Input))
+        {
+            return Fail(Format("'{}' and '{}' cannot be connected, since the graph refuses that pairing.",
+                Output->GetPinName(), Input->GetPinName()));
+        }
+
+        const TVector<CEdNodeGraphPin*> Existing = Input->GetConnections();
+        if (Algo::Find(Existing, Output) != Existing.end())
+        {
+            return true;
+        }
+
+        // An input holding a second link is unrepresentable in the editor and loses one on reload.
+        if (Input->HasConnection() && !Schema.AllowsMultipleConnections(Input))
+        {
+            Input->ClearConnections();
+        }
+
+        Output->AddConnection(Input);
+        Input->AddConnection(Output);
+
+        NotifyContentChanged();
+        ValidateGraph();
+        return true;
+    }
+
+    void CEdNodeGraph::BreakPinLinks(CEdNodeGraphPin* Pin)
+    {
+        if (Pin == nullptr || !Pin->HasConnection())
+        {
+            return;
+        }
+
+        Pin->ClearConnections();
+        NotifyContentChanged();
+        ValidateGraph();
+    }
+
+    void CEdNodeGraph::BreakLink(CEdNodeGraphPin* PinA, CEdNodeGraphPin* PinB)
+    {
+        if (PinA == nullptr || PinB == nullptr)
+        {
+            return;
+        }
+
+        PinA->RemoveConnection(PinB);
+        PinB->RemoveConnection(PinA);
+        NotifyContentChanged();
+        ValidateGraph();
+    }
+
+    void CEdNodeGraph::MoveNode(CEdGraphNode* Node, float X, float Y)
+    {
+        if (Node == nullptr)
+        {
+            return;
+        }
+
+        Node->SetGridPos(X, Y);
+        PendingGridSync.insert(Node->GetNodeID());
+        bLayoutChangedSinceImage = true;
+    }
+
+    bool CEdNodeGraph::GetVisibleCanvasRect(ImVec2& OutMin, ImVec2& OutMax, float& OutZoom) const
+    {
+        OutMin  = VisibleCanvasMin;
+        OutMax  = VisibleCanvasMax;
+        OutZoom = VisibleZoom;
+        return bHasVisibleRect;
+    }
+
+    void CEdNodeGraph::CommitExternalNodeEdit(FName Label)
+    {
+        bSyncAllGridPositions = true;
+        NotifyContentChanged();
+        ValidateGraph();
+        CommitEdit(Label);
+    }
+
+    void CEdNodeGraph::FixupAfterRestore(const TVector<CEdGraphNode*>& PreviousNodes)
+    {
+        for (CEdGraphNode* Node : PreviousNodes)
+        {
+            const bool bStillPresent = Algo::FindIf(Nodes, [Node](const TStrongObjectPtr<CEdGraphNode>& N) { return N.Get() == Node; }) != Nodes.end();
+            if (Node != nullptr && !bStillPresent)
+            {
+                if (PreNodeDeletedCallback)
+                {
+                    PreNodeDeletedCallback(Node);
+                }
+                ForgetClipboardNode(Node);
+            }
+        }
+
+        // Links live on pins as raw pointers, so they are dropped everywhere and rebuilt from Connections.
+        auto ClearPins = [](CEdGraphNode* Node)
+        {
+            if (Node == nullptr)
+            {
+                return;
+            }
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Node->GetInputPins())
+            {
+                Pin->ClearConnections();
+            }
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Node->GetOutputPins())
+            {
+                Pin->ClearConnections();
+            }
+        };
+        for (CEdGraphNode* Node : PreviousNodes)
+        {
+            ClearPins(Node);
+        }
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            ClearPins(Node.Get());
+            if (Node.IsValid())
+            {
+                Node->OwningGraph = this;
+            }
+        }
+
+        RelinkFromConnections();
+
+        bSyncAllGridPositions = true;
+        NotifyContentChanged();
+        ValidateGraph();
+    }
 }

@@ -29,6 +29,8 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_WAVEFORM; }
 
         void OnInitialize() override;
+
+        CEdNodeGraph* GetActiveNodeGraph() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void Update(const FUpdateContext& UpdateContext) override;
 

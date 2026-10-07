@@ -17,6 +17,9 @@ namespace Lumina
         /** How many steps to take. Stops early when the stack runs out. */
         PROPERTY()
         int32 Steps = 1;
+
+        PROPERTY()
+        FString Tab;
     };
 
     REFLECT()
@@ -440,6 +443,48 @@ namespace Lumina
 
         PROPERTY()
         bool bDone = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SGraphFrameParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Tab;
+
+        PROPERTY()
+        TVector<int64> Nodes;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SGraphViewResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        bool bDrawn = false;
+
+        PROPERTY()
+        float MinX = 0.0f;
+
+        PROPERTY()
+        float MinY = 0.0f;
+
+        PROPERTY()
+        float MaxX = 0.0f;
+
+        PROPERTY()
+        float MaxY = 0.0f;
+
+        PROPERTY()
+        float Zoom = 1.0f;
+
+        PROPERTY()
+        int32 NodeCount = 0;
+
+        PROPERTY()
+        TVector<int64> Offscreen;
     };
 
     REFLECT()

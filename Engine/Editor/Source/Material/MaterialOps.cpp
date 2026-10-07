@@ -2,16 +2,37 @@
 #include "Material/MaterialOps.h"
 
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
+#include "Core/Object/ObjectIterator.h"
+#include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/MaterialNodeGraph.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialOutputNode.h"
 
 namespace Lumina::MaterialOps
 {
+    namespace
+    {
+        // A graph created since the last save is not in the export table LoadObjectByName reads.
+        template<typename GraphType>
+        GraphType* FindLiveGraph(CPackage* Package, FName GraphName)
+        {
+            for (TObjectIterator<GraphType> It; It; ++It)
+            {
+                if ((*It)->GetPackage() == Package && (*It)->GetName() == GraphName && !(*It)->HasAnyFlag(OF_MarkedDestroy))
+                {
+                    return *It;
+                }
+            }
+
+            return Cast<GraphType>(Package->LoadObjectByName(GraphName));
+        }
+    }
+
     TVector<CClass*> GetPlaceableNodeTypes()
     {
         return NodeGraphOps::GetPlaceableNodeTypes(CMaterialNodeGraph::StaticClass());
@@ -56,7 +77,7 @@ namespace Lumina::MaterialOps
         // The name the material editor looks for, so an agent-built graph opens as the same graph.
         const FString GraphName = "AssetMaterialGraph";
 
-        if (CMaterialNodeGraph* Existing = Cast<CMaterialNodeGraph>(Package->LoadObjectByName(GraphName)))
+        if (CMaterialNodeGraph* Existing = FindLiveGraph<CMaterialNodeGraph>(Package, FName(GraphName)))
         {
             return Existing;
         }
@@ -66,5 +87,22 @@ namespace Lumina::MaterialOps
         Graph->CreateNode(CMaterialOutputNode::StaticClass());
 
         return Graph;
+    }
+
+    CMaterialNodeGraph* FindOrCreateFunctionGraph(CMaterialFunction* Function)
+    {
+        CPackage* Package = Function != nullptr ? Function->GetPackage() : nullptr;
+        if (Package == nullptr)
+        {
+            return nullptr;
+        }
+
+        const FName GraphName(GMaterialFunctionGraphObjectName);
+        if (CMaterialFunctionGraph* Existing = FindLiveGraph<CMaterialFunctionGraph>(Package, GraphName))
+        {
+            return Existing;
+        }
+
+        return NewObject<CMaterialFunctionGraph>(Package, GraphName);
     }
 }

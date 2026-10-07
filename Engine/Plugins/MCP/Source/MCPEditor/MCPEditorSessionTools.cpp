@@ -75,27 +75,33 @@ namespace Lumina::MCP
         {
             Agent::FToolRegistry::Get().Register<SUndoParams, SUndoResult>(
                 Owner, "editor.undo",
-                "Undo the world editor's last steps, including any scene change an agent tool made.",
+                "Undo the last steps in the scene target, or in Tab when given, which is any open tab such as a material or animation graph editor.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SUndoParams& In, SUndoResult& Out)
                 {
                     FString SessionError;
-                    if (!SessionOps::HasSceneEditor())
+                    const FStringView Tab(In.Tab);
+                    if (Tab.empty() && !SessionOps::HasSceneEditor())
                     {
                         return Agent::FToolResult::Error(GNoWorldEditorSession);
                     }
 
-                    if (SessionOps::IsSceneTargetSimulating())
+                    if (!SessionOps::HasUndoTarget(Tab, SessionError))
+                    {
+                        return Agent::FToolResult::Error(SessionError);
+                    }
+
+                    if (Tab.empty() && SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Undo is blocked while playing in editor.");
                     }
 
-                    for (int32 Step = 0; Step < Math::Max(In.Steps, 1) && SessionOps::Undo(1) > 0; ++Step)
+                    for (int32 Step = 0; Step < Math::Max(In.Steps, 1) && SessionOps::Undo(1, Tab) > 0; ++Step)
                     {
                         ++Out.Applied;
                     }
 
-                    const SessionOps::FUndoState Undo = SessionOps::GetUndoState();
+                    const SessionOps::FUndoState Undo = SessionOps::GetUndoState(Tab);
                     Out.NextUndo = Undo.NextUndo;
                     Out.NextRedo = Undo.NextRedo;
 
@@ -110,27 +116,33 @@ namespace Lumina::MCP
 
             Agent::FToolRegistry::Get().Register<SUndoParams, SUndoResult>(
                 Owner, "editor.redo",
-                "Redo steps the world editor last undid.",
+                "Redo steps last undone in the scene target, or in Tab when given.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SUndoParams& In, SUndoResult& Out)
                 {
                     FString SessionError;
-                    if (!SessionOps::HasSceneEditor())
+                    const FStringView Tab(In.Tab);
+                    if (Tab.empty() && !SessionOps::HasSceneEditor())
                     {
                         return Agent::FToolResult::Error(GNoWorldEditorSession);
                     }
 
-                    if (SessionOps::IsSceneTargetSimulating())
+                    if (!SessionOps::HasUndoTarget(Tab, SessionError))
+                    {
+                        return Agent::FToolResult::Error(SessionError);
+                    }
+
+                    if (Tab.empty() && SessionOps::IsSceneTargetSimulating())
                     {
                         return Agent::FToolResult::Error("Redo is blocked while playing in editor.");
                     }
 
-                    for (int32 Step = 0; Step < Math::Max(In.Steps, 1) && SessionOps::Redo(1) > 0; ++Step)
+                    for (int32 Step = 0; Step < Math::Max(In.Steps, 1) && SessionOps::Redo(1, Tab) > 0; ++Step)
                     {
                         ++Out.Applied;
                     }
 
-                    const SessionOps::FUndoState Undo = SessionOps::GetUndoState();
+                    const SessionOps::FUndoState Undo = SessionOps::GetUndoState(Tab);
                     Out.NextUndo = Undo.NextUndo;
                     Out.NextRedo = Undo.NextRedo;
 
@@ -1060,8 +1072,83 @@ namespace Lumina::MCP
         }
     }
 
+    namespace
+    {
+        void RegisterGraphView(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<STabNameParams, SGraphViewResult>(
+                Owner, "graph.view",
+                "Report the canvas rectangle a graph editor tab is showing, in the same units as node X and Y, its zoom, "
+                "and which nodes lie outside it. Works for material, material function, animation and audio graph tabs.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+                [](const STabNameParams& In, SGraphViewResult& Out)
+                {
+                    FString Error;
+                    SessionOps::FGraphView View;
+                    if (!SessionOps::GetGraphView(FStringView(In.Tab), View, Error))
+                    {
+                        return Agent::FToolResult::Error(Error + " Call editor.list_tabs.");
+                    }
+
+                    Out.bDrawn    = View.bDrawn;
+                    Out.MinX      = View.MinX;
+                    Out.MinY      = View.MinY;
+                    Out.MaxX      = View.MaxX;
+                    Out.MaxY      = View.MaxY;
+                    Out.Zoom      = View.Zoom;
+                    Out.NodeCount = View.NodeCount;
+                    Out.Offscreen = Move(View.Offscreen);
+
+                    if (!Out.bDrawn)
+                    {
+                        return Agent::FToolResult::Ok("That canvas has not been drawn yet, so it has no view. Focus the tab first.");
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format("Showing ({:.0f}, {:.0f}) to ({:.0f}, {:.0f}) at zoom {:.2f}, {} of {} node(s) off screen.",
+                        Out.MinX, Out.MinY, Out.MaxX, Out.MaxY, Out.Zoom, Out.Offscreen.size(), Out.NodeCount));
+                });
+
+            Agent::FToolRegistry::Get().Register<SGraphFrameParams, STabActionResult>(
+                Owner, "graph.frame",
+                "Pan and zoom a graph editor tab to the given node ids, selecting them, or to every node when Nodes is empty. "
+                "The tab is brought to the front, and the view lands on its next frame, so read it back with graph.view.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SGraphFrameParams& In, STabActionResult& Out)
+                {
+                    FString Error;
+                    Out.bDone = SessionOps::FrameGraph(FStringView(In.Tab), In.Nodes, Error);
+                    if (!Out.bDone)
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    return Agent::FToolResult::Ok(In.Nodes.empty()
+                        ? Lumina::Format("Framing every node in '{}'.", In.Tab)
+                        : Lumina::Format("Framing {} node(s) in '{}'.", In.Nodes.size(), In.Tab));
+                });
+
+            Agent::FToolRegistry::Get().Register<STabNameParams, STabActionResult>(
+                Owner, "graph.arrange",
+                "Lay out a graph editor tab's canvas by its links, with each input to the left of what it feeds, as one undo "
+                "step in that tab. Applied on the tab's next frame, after which describe reports the new X and Y.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const STabNameParams& In, STabActionResult& Out)
+                {
+                    FString Error;
+                    Out.bDone = SessionOps::ArrangeGraph(FStringView(In.Tab), Error);
+                    if (!Out.bDone)
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format("Arranging '{}'.", In.Tab));
+                });
+        }
+    }
+
     void RegisterEditorSessionTools(FStringView Owner)
     {
+        RegisterGraphView(Owner);
         RegisterSendKey(Owner);
         RegisterSendText(Owner);
         RegisterUndoRedo(Owner);

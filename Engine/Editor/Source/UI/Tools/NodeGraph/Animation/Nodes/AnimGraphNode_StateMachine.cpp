@@ -49,6 +49,7 @@ namespace Lumina
         if (!StateMachineGraph.IsValid())
         {
             AllocateStateMachineGraph();
+            NotifySubGraphCreated();
         }
 
         // Context-free, since the compiler walks machines never opened and Initialize is deferred.

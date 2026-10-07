@@ -90,6 +90,12 @@ namespace Lumina
         bool bHasCanvas = false;
 
         PROPERTY()
+        float X = 0.0f;
+
+        PROPERTY()
+        float Y = 0.0f;
+
+        PROPERTY()
         TVector<SGraphPinInfo> Pins;
 
         /** Current values of this node's settable fields, as JSON. */

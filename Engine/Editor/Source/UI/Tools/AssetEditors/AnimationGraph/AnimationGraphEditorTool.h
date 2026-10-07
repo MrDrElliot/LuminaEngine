@@ -38,7 +38,11 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_RUN_FAST; }
 
         void OnInitialize() override;
+
+        CEdNodeGraph* GetActiveNodeGraph() override;
+        void AdoptNodeGraph(CEdNodeGraph* Graph) override { EnsureGraphReady(Graph); }
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
+        void OnPostUndoRedo() override;
 
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;

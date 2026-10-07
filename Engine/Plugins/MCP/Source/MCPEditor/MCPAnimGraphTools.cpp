@@ -9,6 +9,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
 #include "MCPTextMatch.h"
+#include "Session/SessionOps.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
@@ -26,7 +27,7 @@ namespace Lumina::MCP
             CEdNodeGraph*    Canvas = nullptr;
         };
 
-        // Read-only tools are fine against an open editor; only a write would desync its view.
+        // A read never allocates a sub-graph canvas, while a write creates one it passes through.
         enum class EAnimGraphAccess : uint8
         {
             Read,
@@ -39,18 +40,6 @@ namespace Lumina::MCP
             if (!Agent::ResolveAsset<CAnimationGraph>(FStringView(Guid), Out.Asset, OutError))
             {
                 return false;
-            }
-
-            if (Access == EAnimGraphAccess::Write)
-            {
-                const FString OpenIn = NodeGraphOps::FindOpenEditorName(Out.Asset);
-                if (!OpenIn.empty())
-                {
-                    OutError = Lumina::Format(
-                        "'{}' is open in {}, which would not see this change. Close it and try again.",
-                        Out.Asset->GetName(), OpenIn);
-                    return false;
-                }
             }
 
             CEdNodeGraph* Canvas = AnimGraphOps::FindOrCreateGraph(Out.Asset);
@@ -85,6 +74,12 @@ namespace Lumina::MCP
             }
 
             Out.Canvas = Canvas;
+
+            // A canvas the open editor has not visited yet would otherwise take this edit with no undo.
+            if (Access == EAnimGraphAccess::Write)
+            {
+                SessionOps::AdoptNodeGraph(Out.Asset, Canvas);
+            }
             return true;
         }
 
@@ -226,6 +221,8 @@ namespace Lumina::MCP
                         Info.Type       = FString(Node->GetClass()->GetName().ToString().c_str());
                         Info.Title      = Node->GetNodeTitleText();
                         Info.bHasCanvas = Node->GetOwnedSubGraph() != nullptr;
+                        Info.X          = Node->GetNodeX();
+                        Info.Y          = Node->GetNodeY();
 
                         CollectPins(Node.Get(), Info.Pins);
 
@@ -262,7 +259,7 @@ namespace Lumina::MCP
         {
             Agent::FToolRegistry::Get().Register<SAddAnimGraphNodeParams, SAddAnimGraphNodeResult>(
                 Owner, "animgraph.add_node",
-                "Add a node to one animation graph canvas and report the pins it came with.",
+                "Add a node to one animation graph canvas and report the pins it came with. X grows to the right and Y downward, and a graph reads left to right, so place a node left of (smaller X than) the node it feeds; describe reports every node's X and Y. When the graph is open, the edit is one undo step in its tab, graph.arrange lays the canvas out and graph.frame brings nodes into view.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SAddAnimGraphNodeParams& In, SAddAnimGraphNodeResult& Out)
                 {

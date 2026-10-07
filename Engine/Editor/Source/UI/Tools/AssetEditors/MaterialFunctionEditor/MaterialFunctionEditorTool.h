@@ -23,6 +23,8 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_FUNCTION; }
 
         void OnInitialize() override;
+
+        CEdNodeGraph* GetActiveNodeGraph() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 

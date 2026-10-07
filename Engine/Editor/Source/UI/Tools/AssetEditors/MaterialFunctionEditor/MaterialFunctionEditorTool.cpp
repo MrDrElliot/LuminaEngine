@@ -10,6 +10,7 @@
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Function.h"
+#include "Material/MaterialOps.h"
 #include "UI/Tools/EditorToolContext.h"
 
 namespace Lumina
@@ -44,13 +45,10 @@ namespace Lumina
         CreateToolWindow(FunctionPropertiesWindowName, [&](bool) { DrawPropertiesWindow(); });
         CreateToolWindow(FunctionSignatureWindowName,  [&](bool) { DrawSignatureWindow(); });
 
-        NodeGraph = Cast<CMaterialFunctionGraph>(Asset->GetPackage()->LoadObjectByName(FName(GMaterialFunctionGraphObjectName)));
-        if (NodeGraph == nullptr)
-        {
-            NodeGraph = NewObject<CMaterialFunctionGraph>(Asset->GetPackage(), FName(GMaterialFunctionGraphObjectName));
-        }
+        NodeGraph = static_cast<CMaterialFunctionGraph*>(MaterialOps::FindOrCreateFunctionGraph(Cast<CMaterialFunction>(Asset.Get())));
 
         NodeGraph->Initialize();
+        NodeGraph->SetTransactionManager(&GetTransactionManager());
         NodeGraph->SetNodeSelectedCallback([this](CEdGraphNode* Node)
         {
             if (Node != SelectedNode)
@@ -273,5 +271,10 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(FunctionGraphWindowName).c_str(),      leftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(FunctionPropertiesWindowName).c_str(), rightDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(FunctionSignatureWindowName).c_str(),  rightBottomDockID);
+    }
+
+    CEdNodeGraph* FMaterialFunctionEditorTool::GetActiveNodeGraph()
+    {
+        return NodeGraph.Get();
     }
 }

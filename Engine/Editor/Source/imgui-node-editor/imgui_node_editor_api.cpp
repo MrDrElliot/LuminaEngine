@@ -576,6 +576,18 @@ void ax::NodeEditor::NavigateToSelection(bool zoomIn, float duration)
     s_Editor->NavigateTo(s_Editor->GetSelectionBounds(), zoomIn, duration);
 }
 
+void ax::NodeEditor::NavigateToRect(const ImVec2& canvasMin, const ImVec2& canvasMax, float duration)
+{
+    s_Editor->NavigateTo(ImRect(canvasMin, canvasMax), true, duration);
+}
+
+void ax::NodeEditor::GetVisibleCanvasRect(ImVec2* canvasMin, ImVec2* canvasMax)
+{
+    const ImRect& rect = s_Editor->GetViewRect();
+    *canvasMin = rect.Min;
+    *canvasMax = rect.Max;
+}
+
 bool ax::NodeEditor::ShowNodeContextMenu(NodeId* nodeId)
 {
     return s_Editor->GetContextMenu().ShowNodeContextMenu(nodeId);

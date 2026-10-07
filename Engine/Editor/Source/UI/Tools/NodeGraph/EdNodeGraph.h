@@ -9,6 +9,7 @@
 #include "Containers/Function.h"
 #include "Containers/String.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "UI/Tools/Transactions/NodeGraphSnapshotCommand.h"
 #include "imgui-node-editor/imgui_node_editor.h"
 #include "EdNodeGraph.generated.h"
 
@@ -16,6 +17,7 @@ namespace Lumina
 {
     class CEdGraphNode;
     class CPackage;
+    class FTransactionManager;
 }
 
 namespace Lumina
@@ -141,6 +143,12 @@ namespace Lumina
         // Selects Node and pans to it; queued because navigation needs the laid-out canvas.
         void QueueFocusNode(CEdGraphNode* Node);
 
+        // Selects and frames these nodes on the next draw, or frames every node when the list is empty.
+        void QueueFrameNodes(const TVector<int64>& NodeIDs) { PendingFrameNodes = NodeIDs; bHasPendingFrame = true; }
+
+        // The canvas rectangle on screen at the last draw and its screen pixels per canvas unit, false before the first draw.
+        bool GetVisibleCanvasRect(ImVec2& OutMin, ImVec2& OutMax, float& OutZoom) const;
+
         // The pin carrying this GUID, or null. Linear, and only walked for the one pin under the cursor.
         CEdNodeGraphPin* FindPinByGUID(uint32 PinID) const;
 
@@ -211,6 +219,52 @@ namespace Lumina
         // Package for newly constructed nodes, defaulting to this graph's own package.
         virtual CPackage* GetNodeOuter();
 
+        //~ Edits. The canvas and scripted callers both come through here, so they share the rules and the undo.
+
+        // Records this graph's edits on that tool's history, or none when null.
+        void SetTransactionManager(FTransactionManager* InManager);
+        NODISCARD FTransactionManager* GetTransactionManager() const { return TransactionManager; }
+
+        // Records whatever changed since the last undo step, labeled Label, and no-ops when nothing did.
+        void CommitEdit(FName Label);
+
+        // Records what changed since the last step as part of that step, for a side effect such as a lazily created canvas.
+        void CommitEditIntoLastStep();
+
+        // Used by FNodeGraphEditScope, which is the way to bracket an edit.
+        void EnterEditScope() { ++EditScopeDepth; }
+        void LeaveEditScope(FName Label);
+
+        // Holds back the end-of-frame commit while an edit spanning frames, such as a property drag, is open.
+        void BeginLongEdit();
+        void EndLongEdit(FName Label);
+
+        // Adopts the current state as where the next undo step starts, without recording anything.
+        void RebaseUndoImage();
+
+        // The next commit's label, for a canvas action whose change is picked up at the end of the frame.
+        void SetPendingEditLabel(FName Label) { PendingEditLabel = Label; }
+
+        // Positions the node on the canvas even when called outside DrawGraph.
+        CEdGraphNode* SpawnNode(CClass* NodeClass, float X, float Y);
+
+        // Refuses the whole set when any node is one the graph keeps for itself.
+        bool RemoveNodes(const TVector<CEdGraphNode*>& InNodes, FString* OutError = nullptr);
+
+        // Applies the schema and the single-link input rule, replacing an input's existing link.
+        bool ConnectPins(CEdNodeGraphPin* Output, CEdNodeGraphPin* Input, FString* OutError = nullptr);
+
+        void BreakPinLinks(CEdNodeGraphPin* Pin);
+        void BreakLink(CEdNodeGraphPin* PinA, CEdNodeGraphPin* PinB);
+
+        void MoveNode(CEdGraphNode* Node, float X, float Y);
+
+        // For a caller that wrote node properties directly, so the canvas adopts them and the edit becomes one undo step.
+        void CommitExternalNodeEdit(FName Label);
+
+        // Repairs what an undo image cannot carry, after it rewrote Nodes and Connections.
+        void FixupAfterRestore(const TVector<CEdGraphNode*>& PreviousNodes);
+
 
     private:
 
@@ -247,8 +301,34 @@ namespace Lumina
         // Same deferral as alignment, since NodeEditor::GetNodeSize needs a node the editor has laid out.
         bool           bHasPendingTidy      = false;
 
+        bool           bHasPendingFrame     = false;
+        TVector<int64> PendingFrameNodes;
+
+        bool           bHasVisibleRect      = false;
+        ImVec2         VisibleCanvasMin;
+        ImVec2         VisibleCanvasMax;
+        float          VisibleZoom          = 1.0f;
+
         // Applies the layered layout. Must run inside DrawGraph.
         void TidyGraph();
+
+        // Rewires every pin from the serialized Connections, the one place links are persisted.
+        void RelinkFromConnections();
+
+        // Commits a change the canvas made this frame once no drag or widget edit is still in flight.
+        void CommitFrameEdits();
+
+        FTransactionManager*    TransactionManager = nullptr;
+        FNodeGraphImage         UndoImage;
+        uint64                  UndoImageContentVersion = 0;
+        int32                   EditScopeDepth = 0;
+        int32                   LongEditDepth = 0;
+        FName                   PendingEditLabel;
+        bool                    bLayoutChangedSinceImage = false;
+
+        // Nodes whose GridX and GridY the canvas must adopt on the next draw.
+        THashSet<int64>         PendingGridSync;
+        bool                    bSyncAllGridPositions = false;
 
         // Node the "Node Context Menu" popup was opened on; the popup outlives the frame that spawned it.
         uint64         ContextMenuNodeID = 0;
@@ -327,4 +407,21 @@ namespace Lumina
     };
     
     
+
+    // Brackets a graph edit as one undo step that commits when the outermost scope closes.
+    class FNodeGraphEditScope
+    {
+    public:
+
+        FNodeGraphEditScope(CEdNodeGraph* InGraph, FName InLabel) : Graph(InGraph), Label(InLabel) { if (Graph) { Graph->EnterEditScope(); } }
+        ~FNodeGraphEditScope() { if (Graph) { Graph->LeaveEditScope(Label); } }
+
+        FNodeGraphEditScope(const FNodeGraphEditScope&) = delete;
+        FNodeGraphEditScope& operator=(const FNodeGraphEditScope&) = delete;
+
+    private:
+
+        CEdNodeGraph* Graph;
+        FName         Label;
+    };
 }

@@ -1175,7 +1175,6 @@ namespace Lumina
     {
         // Hotkeys are suppressed while right-mouse flying so W/E/R/Q act as fly keys, not mode switches.
         auto Hovered      = [this]() { return bViewportHovered && !CameraState.bWasLooking; };
-        auto EditorWorld  = [this]() { return World && World->GetWorldType() == EWorldType::Editor; };
 
         RegisterAction({"Translate Mode", "Gizmo", "Switch the gizmo to translate (move) mode",
             FInputChord{ImGuiKey_W}, [this]
@@ -1266,18 +1265,6 @@ namespace Lumina
             {
                 PasteTransformToSelection();
             }, Hovered});
-
-        RegisterAction({"Undo", "History", "Revert the last transacted edit",
-            FInputChord{ImGuiKey_Z, true}, [this]
-            {
-                Undo();
-            }, EditorWorld});
-
-        RegisterAction({"Redo", "History", "Re-apply the last undone edit",
-            FInputChord{ImGuiKey_Y, true}, [this]
-            {
-                Redo();
-            }, EditorWorld});
 
         // FEditorUI routes Ctrl+S to the focused tool, so a live callback here would save twice.
         RegisterAction({"Save World", "File", "Save the current world",
@@ -4503,28 +4490,11 @@ namespace Lumina
             ECS::FEntity SourceEntity = ECS::NullEntity;
             if (DragDrop::AcceptEntity(&OutWorld, &SourceEntity) && OutWorld == World)
             {
-                ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
-
-                if (IsLockedPrefabChild(Registry, SourceEntity) || IsLockedPrefabChild(Registry, DropItem))
+                FString Refusal;
+                if (!ReparentEntityTransacted(SourceEntity, DropItem, true, &Refusal))
                 {
-                    ImGuiX::Notifications::NotifyError("Cannot reparent prefab-instance children. Edit the source prefab instead.");
-                    return;
+                    ImGuiX::Notifications::NotifyError("{}", Refusal);
                 }
-
-                BeginRelationshipTransaction({ SourceEntity }, DropItem);
-                RecordSceneFolderSnapshot();
-                ECS::Utils::ReparentEntity(Registry, SourceEntity, DropItem);
-
-                // An attached entity is shown under its parent, so its folder would be a hidden second home.
-                if (SSceneFolderComponent* Folders = GetEditableSceneFolders())
-                {
-                    Folders->RemoveEntity(SourceEntity);
-                }
-                EntityFolderCache.erase(SourceEntity);
-
-                EndTransaction("Reparent");
-
-                ReparentEntityInOutliner(SourceEntity);
             }
             return;
         }

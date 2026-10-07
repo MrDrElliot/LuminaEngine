@@ -165,6 +165,12 @@ namespace Lumina
                 }});
         }
 
+        // Every tool keeps a history, so every tool answers the same chords for it.
+        RegisterAction({"Undo", "History", "Revert the last transacted edit",
+            FInputChord{ImGuiKey_Z, true}, [this]{ Undo(); }});
+        RegisterAction({"Redo", "History", "Re-apply the last undone edit",
+            FInputChord{ImGuiKey_Y, true}, [this]{ Redo(); }});
+
         OnInitialize();
     }
 
@@ -579,7 +585,14 @@ namespace Lumina
         }
         ImGui::EndDisabled();
         
-        ImGuiX::TextTooltip("Undo last transaction");
+        if (CanUndo())
+        {
+            ImGuiX::TextTooltip("Undo {} (Ctrl+Z)", PeekUndoLabel().c_str());
+        }
+        else
+        {
+            ImGuiX::TextTooltip("Nothing to undo");
+        }
 
         ImGui::BeginDisabled(!AllowsUndoRedo() || !CanRedo());
 
@@ -589,7 +602,14 @@ namespace Lumina
         }
         ImGui::EndDisabled();
         
-        ImGuiX::TextTooltip("Redo last undo");
+        if (CanRedo())
+        {
+            ImGuiX::TextTooltip("Redo {} (Ctrl+Y)", PeekRedoLabel().c_str());
+        }
+        else
+        {
+            ImGuiX::TextTooltip("Nothing to redo");
+        }
         
 
         if (ImGui::BeginMenu(LE_ICON_HELP_CIRCLE_OUTLINE" Help"))

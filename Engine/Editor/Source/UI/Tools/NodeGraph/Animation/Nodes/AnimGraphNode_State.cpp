@@ -55,6 +55,7 @@ namespace Lumina
         if (!BlendTree.IsValid())
         {
             AllocateBlendTree();
+            NotifySubGraphCreated();
         }
 
         // Context-free, since the compiler evaluates states never opened and Initialize is deferred.

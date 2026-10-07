@@ -41,6 +41,7 @@ namespace Lumina
 
         NodeGraph->SetAudioGraph(GetAsset<CAudioGraph>());
         NodeGraph->Initialize();
+        NodeGraph->SetTransactionManager(&GetTransactionManager());
 
         NodeGraph->SetNodeSelectedCallback([this](CEdGraphNode* Node)
         {
@@ -351,5 +352,10 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(AudioGraphWindowName).c_str(),      LeftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(AudioPropertiesWindowName).c_str(), RightDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(AudioTransportWindowName).c_str(),  RightBottomDockID);
+    }
+
+    CEdNodeGraph* FAudioGraphEditorTool::GetActiveNodeGraph()
+    {
+        return NodeGraph.Get();
     }
 }

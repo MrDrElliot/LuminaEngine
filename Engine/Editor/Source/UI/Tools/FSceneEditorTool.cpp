@@ -2068,6 +2068,69 @@ namespace Lumina
         bDetailsDirty = true;
     }
 
+    FString FSceneEditorTool::GetReparentRefusal(ECS::FEntity Entity, ECS::FEntity NewParent)
+    {
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (!Registry.IsValid(Entity) || (NewParent != ECS::NullEntity && !Registry.IsValid(NewParent)))
+        {
+            return "That entity no longer exists.";
+        }
+
+        if (Entity == NewParent || (NewParent != ECS::NullEntity && ECS::Utils::IsDescendantOf(Registry, NewParent, Entity)))
+        {
+            return "The new parent is inside the entity's own subtree, which would make a cycle.";
+        }
+
+        // A refresh mirrors an inherited node back under its prefab parent, so moving one would not stick.
+        auto IsInheritedPrefabNode = [&Registry](ECS::FEntity Candidate)
+        {
+            const SPrefabInstanceComponent* Instance = Candidate != ECS::NullEntity ? Registry.TryGet<SPrefabInstanceComponent>(Candidate) : nullptr;
+            return Instance != nullptr && !Instance->bIsRoot;
+        };
+        if (IsInheritedPrefabNode(Entity) || IsInheritedPrefabNode(NewParent))
+        {
+            return "Cannot reparent prefab-instance children. Edit the source prefab instead.";
+        }
+
+        return FString();
+    }
+
+    bool FSceneEditorTool::ReparentEntityTransacted(ECS::FEntity Entity, ECS::FEntity NewParent, bool bKeepWorldTransform, FString* OutRefusal)
+    {
+        const FString Refusal = GetReparentRefusal(Entity, NewParent);
+        if (!Refusal.empty())
+        {
+            if (OutRefusal != nullptr)
+            {
+                *OutRefusal = Refusal;
+            }
+            return false;
+        }
+
+        ECS::FRegistry& Registry = GetSceneRegistry();
+
+        BeginRelationshipTransaction({ Entity }, NewParent);
+        RecordSceneFolderSnapshot();
+        ECS::Utils::ReparentEntity(Registry, Entity, NewParent, bKeepWorldTransform);
+
+        // An attached entity is shown under its parent, so its folder would be a hidden second home.
+        if (NewParent != ECS::NullEntity)
+        {
+            if (SSceneFolderComponent* Folders = GetEditableSceneFolders())
+            {
+                Folders->RemoveEntity(Entity);
+            }
+            EntityFolderCache.erase(Entity);
+        }
+
+        EndTransaction("Reparent");
+
+        ReparentEntityInOutliner(Entity);
+        MarkSceneDirty();
+        bDetailsDirty = true;
+        return true;
+    }
+
     void FSceneEditorTool::SelectEntities(const TVector<ECS::FEntity>& Entities)
     {
         ClearSelectedEntities();

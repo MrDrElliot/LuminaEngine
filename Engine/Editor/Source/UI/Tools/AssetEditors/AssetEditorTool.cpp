@@ -7,6 +7,9 @@
 #include "Thumbnails/ThumbnailManager.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
+#include "UI/Tools/NodeGraph/EdGraphNode.h"
+#include "UI/Tools/NodeGraph/EdNodeGraph.h"
+#include "Core/Object/Cast.h"
 
 
 namespace Lumina
@@ -50,25 +53,59 @@ namespace Lumina
 
     void FAssetEditorTool::SetupPropertyUndo()
     {
-        // On edit begin, open a transaction and snapshot the asset's before-image.
+        // The table often shows a graph node or another sub-object, so the snapshot follows what it shows.
         PropertyTable.SetStartEditCallback([this](const FPropertyChangedEvent& Event)
         {
-            if (Asset != nullptr)
+            CObject* Edited = GetPropertyTableObject();
+            if (Edited == nullptr)
             {
-                FTransactionManager& Manager = GetTransactionManager();
-                Manager.BeginTransaction(Event.PropertyName);
-                Manager.Record(MakeUnique<FObjectSnapshotCommand>(Asset.Get(), Event.PropertyName));
+                return;
             }
+
+            // A node's graph records it, so the canvas and the panel never make two steps of one change.
+            CEdGraphNode* Node = Cast<CEdGraphNode>(Edited);
+            CEdNodeGraph* Graph = Node != nullptr ? Node->GetOwningGraph() : nullptr;
+            if (Graph != nullptr && Graph->GetTransactionManager() == &GetTransactionManager())
+            {
+                PropertyEditGraph = Graph;
+                Graph->BeginLongEdit();
+                return;
+            }
+
+            FTransactionManager& Manager = GetTransactionManager();
+            Manager.BeginTransaction(Event.PropertyName);
+            Manager.Record(MakeUnique<FObjectSnapshotCommand>(Edited, Event.PropertyName));
         });
 
         // On edit end, commit, and the command self-drops if nothing actually changed.
         PropertyTable.SetFinishEditCallback([this](const FPropertyChangedEvent& Event)
         {
-            GetTransactionManager().CommitTransaction();
+            if (CEdNodeGraph* Graph = PropertyEditGraph.Get())
+            {
+                PropertyEditGraph = nullptr;
+                Graph->NotifyContentChanged();
+                Graph->EndLongEdit(Event.PropertyName);
+            }
+            else
+            {
+                GetTransactionManager().CommitTransaction();
+            }
 
             // After the commit, so a tool's response is its own transaction rather than joining the edit's.
             OnPropertyEditFinished(Event);
         });
+    }
+
+    CObject* FAssetEditorTool::GetPropertyTableObject() const
+    {
+        const CStruct* Type = PropertyTable.GetType();
+        return Type != nullptr && Type->IsA<CClass>() ? static_cast<CObject*>(PropertyTable.GetObject()) : nullptr;
+    }
+
+    void FAssetEditorTool::OnPostUndoRedo()
+    {
+        // A restore can resize containers the rows were built from, so the table rebuilds rather than trusts them.
+        PropertyTable.MarkDirty();
     }
 
     FAssetEditorTool::~FAssetEditorTool()

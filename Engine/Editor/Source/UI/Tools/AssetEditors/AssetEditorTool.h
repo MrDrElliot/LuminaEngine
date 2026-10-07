@@ -13,6 +13,8 @@
 
 namespace Lumina
 {
+    class CEdNodeGraph;
+
     class EDITOR_API FAssetEditorTool : public FEditorTool
     {
     public:
@@ -87,6 +89,11 @@ namespace Lumina
         /** One COMPLETED property edit: a released drag or an atomic commit, never once per frame of a drag. */
         virtual void OnPropertyEditFinished(const FPropertyChangedEvent& Event) {}
 
+        void OnPostUndoRedo() override;
+
+        // The object the details panel is showing, or null when it shows a plain struct.
+        NODISCARD CObject* GetPropertyTableObject() const;
+
         void OnSave() override;
 
         bool IsAssetEditorTool() const override;
@@ -128,8 +135,11 @@ namespace Lumina
 
     private:
 
-        // Wires the PropertyTable start/finish edit callbacks: undo snapshots, then OnPropertyEditFinished.
+        // Wires the PropertyTable start and finish callbacks to undo snapshots, then OnPropertyEditFinished.
         void SetupPropertyUndo();
+
+        // The graph whose node an open property edit belongs to, which commits that edit as its own step.
+        TWeakObjectPtr<CEdNodeGraph> PropertyEditGraph;
 
         void SubscribeToAssetDataChanges();
         void UnsubscribeFromAssetDataChanges();

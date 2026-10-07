@@ -182,6 +182,9 @@ namespace Lumina
         // watching GetContentVersion never learns it needs to recompile.
         void NotifyValueEdited();
 
+        // A node that creates its sub-graph lazily calls this, so the new canvas rides along with the newest undo step.
+        void NotifySubGraphCreated();
+
         /** Horizontal position of the node in the graph canvas. */
         PROPERTY(DuplicateTransient)
         float GridX;

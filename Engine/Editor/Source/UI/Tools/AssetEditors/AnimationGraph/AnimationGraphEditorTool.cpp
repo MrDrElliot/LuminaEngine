@@ -278,6 +278,28 @@ namespace Lumina
         NodeGraph = nullptr;
     }
 
+    void FAnimationGraphEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        // An undo can take away the node whose sub-graph is open, which leaves the canvas showing an orphan.
+        for (size_t Level = 1; Level < GraphStack.size(); ++Level)
+        {
+            const CEdNodeGraph* Parent = GraphStack[Level - 1].Graph;
+            const bool bReachable = Parent != nullptr && Algo::AnyOf(Parent->Nodes, [&](const TStrongObjectPtr<CEdGraphNode>& Node)
+            {
+                return Node.IsValid() && Node->GetEnterableSubGraph() == GraphStack[Level].Graph;
+            });
+
+            if (!bReachable)
+            {
+                GraphStack.resize(Level);
+                NavForwardStack.clear();
+                break;
+            }
+        }
+    }
+
     void FAnimationGraphEditorTool::WireGraphCallbacks(CEdNodeGraph* Graph)
     {
         Graph->SetNodeSelectedCallback([this](CEdGraphNode* Node)
@@ -386,6 +408,7 @@ namespace Lumina
         }
         InitializedGraphs.insert(Graph);
         Graph->Initialize();          // guarded internally; creates the context
+        Graph->SetTransactionManager(&GetTransactionManager());
         WireGraphCallbacks(Graph);
     }
 
@@ -1726,5 +1749,10 @@ namespace Lumina
     {
         Compile();
         FAssetEditorTool::OnSave();
+    }
+
+    CEdNodeGraph* FAnimationGraphEditorTool::GetActiveNodeGraph()
+    {
+        return GraphStack.empty() ? nullptr : GraphStack.back().Graph;
     }
 }

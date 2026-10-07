@@ -72,6 +72,15 @@ namespace Lumina
         }
     }
 
+    void CEdGraphNode::NotifySubGraphCreated()
+    {
+        if (OwningGraph != nullptr)
+        {
+            OwningGraph->NotifyContentChanged();
+            OwningGraph->CommitEditIntoLastStep();
+        }
+    }
+
     FString CEdGraphNode::GetNodeTitleText() const
     {
         return FString(GetNodeDisplayName());

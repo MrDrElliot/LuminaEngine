@@ -9,6 +9,7 @@ namespace Lumina
 {
     class CClass;
     class CMaterial;
+    class CMaterialFunction;
     class CMaterialNodeGraph;
 }
 
@@ -23,4 +24,7 @@ namespace Lumina::MaterialOps
 
     // The graph the material editor would open, created if the material has none yet.
     NODISCARD EDITOR_API CMaterialNodeGraph* FindOrCreateGraph(CMaterial* Material);
+
+    // The graph the material function editor would open, created if the function has none yet.
+    NODISCARD EDITOR_API CMaterialNodeGraph* FindOrCreateFunctionGraph(CMaterialFunction* Function);
 }

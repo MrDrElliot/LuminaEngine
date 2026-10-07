@@ -119,6 +119,15 @@ namespace Lumina
         // Replaces the selection, as clicking the entities in the outliner would.
         void SelectEntities(const TVector<ECS::FEntity>& Entities);
 
+        // Why Entity cannot move under NewParent in this scene, or empty when it can. A null parent means the top level.
+        NODISCARD virtual FString GetReparentRefusal(ECS::FEntity Entity, ECS::FEntity NewParent);
+
+        // The outliner's reparent, so a drag and a scripted call apply the same rules and make the same undo step.
+        bool ReparentEntityTransacted(ECS::FEntity Entity, ECS::FEntity NewParent, bool bKeepWorldTransform = true, FString* OutRefusal = nullptr);
+
+        // The add-component picker's apply, for a caller outside the details panel.
+        void AddComponentTransacted(const TVector<ECS::FEntity>& Targets, CStruct* ComponentType) { ApplyAddComponentToTargets(Targets, ComponentType); }
+
         // Removes one component as its own undo step, recording only that component type on that entity.
         // Mutate under a one-component undo step, which also records the edit as a prefab instance override.
         void RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, const TFunction<void()>& Mutate);

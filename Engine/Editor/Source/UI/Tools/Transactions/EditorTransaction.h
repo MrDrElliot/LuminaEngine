@@ -82,6 +82,12 @@ namespace Lumina
         // Open a builder that accumulates commands until CommitTransaction.
         void BeginTransaction(FName Name)
         {
+            // A restore that triggers an edit hook would otherwise record a step and wipe the redo history mid-undo.
+            if (bApplying)
+            {
+                return;
+            }
+
             // Discard any stale open transaction (a property edit whose Finish was lost) so it can't strand recording.
             Open = FTransaction{};
             Open.Name = Name;
@@ -107,8 +113,14 @@ namespace Lumina
 
         bool IsRecording() const { return bOpen; }
 
+        // True while an undo or redo is being applied, when nothing new may be recorded.
+        bool IsApplying() const { return bApplying; }
+
         void CommitTransaction();
         void AbortTransaction();
+
+        // Folds a side effect into the newest step, so undoing that step takes the side effect with it.
+        void AppendToLast(TUniquePtr<IUndoableCommand> Command);
 
         void Undo();
         void Redo();
@@ -135,5 +147,6 @@ namespace Lumina
         TVector<FTransaction> RedoStack;
         FTransaction          Open;
         bool                  bOpen = false;
+        bool                  bApplying = false;
     };
 }

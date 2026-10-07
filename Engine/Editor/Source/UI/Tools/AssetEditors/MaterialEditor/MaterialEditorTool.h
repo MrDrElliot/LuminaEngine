@@ -58,6 +58,7 @@ namespace Lumina
         bool IsSingleWindowTool() const override { return false; }
         const char* GetTitlebarIcon() const override { return LE_ICON_SPHERE; }
         void OnInitialize() override;
+        CEdNodeGraph* GetActiveNodeGraph() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void SetupWorldForTool() override;
 

@@ -34,14 +34,7 @@ namespace Lumina::MCP
             CMaterialNodeGraph* Graph    = nullptr;
         };
 
-        // Read-only tools are fine against an open editor; only a write would desync its view.
-        enum class EMaterialAccess : uint8
-        {
-            Read,
-            Write,
-        };
-
-        bool ResolveMaterial(const FString& Guid, EMaterialAccess Access, FMaterialTarget& Out, FString& OutError)
+        bool ResolveMaterial(const FString& Guid, FMaterialTarget& Out, FString& OutError)
         {
             if (!Agent::ResolveAssetObject(FStringView(Guid), Out.Asset, OutError))
             {
@@ -56,22 +49,9 @@ namespace Lumina::MCP
                 return false;
             }
 
-            if (Access == EMaterialAccess::Write)
-            {
-                const FString OpenIn = NodeGraphOps::FindOpenEditorName(Out.Asset);
-                if (!OpenIn.empty())
-                {
-                    OutError = Lumina::Format(
-                        "'{}' is open in {}, which would not see this change. Close it and try again.",
-                        Out.Asset->GetName(), OpenIn);
-                    return false;
-                }
-            }
-
             Out.Graph = Out.Material != nullptr
                 ? MaterialOps::FindOrCreateGraph(Out.Material)
-                // Cast is unavailable with CMaterialNodeGraph's class unexported, and that name only holds a function graph.
-                : static_cast<CMaterialNodeGraph*>(Function->GetPackage()->LoadObjectByName(FName(GMaterialFunctionGraphObjectName)));
+                : MaterialOps::FindOrCreateFunctionGraph(Function);
             if (Out.Graph == nullptr)
             {
                 OutError = "That material has no graph and one could not be created.";
@@ -143,7 +123,7 @@ namespace Lumina::MCP
                 {
                     FMaterialTarget Target;
                     FString Error;
-                    if (!ResolveMaterial(In.Material, EMaterialAccess::Read, Target, Error))
+                    if (!ResolveMaterial(In.Material, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -161,6 +141,8 @@ namespace Lumina::MCP
                         Info.Id          = Node->GetNodeID();
                         Info.Type        = FString(Node->GetClass()->GetName().ToString().c_str());
                         Info.DisplayName = FString(Node->GetNodeDisplayName());
+                        Info.X           = Node->GetNodeX();
+                        Info.Y           = Node->GetNodeY();
 
                         CollectPins(Node.Get(), Info.Pins);
 
@@ -246,13 +228,13 @@ namespace Lumina::MCP
         {
             Agent::FToolRegistry::Get().Register<SAddMaterialNodeParams, SAddMaterialNodeResult>(
                 Owner, "material.add_node",
-                "Add a node to a material graph and report the pins it came with.",
+                "Add a node to a material graph and report the pins it came with. X grows to the right and Y downward, and a graph reads left to right, so place a node left of (smaller X than) the node it feeds; describe reports every node's X and Y. When the graph is open, the edit is one undo step in its tab, graph.arrange lays the canvas out and graph.frame brings nodes into view.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SAddMaterialNodeParams& In, SAddMaterialNodeResult& Out)
                 {
                     FMaterialTarget Target;
                     FString Error;
-                    if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
+                    if (!ResolveMaterial(In.Material, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -289,7 +271,7 @@ namespace Lumina::MCP
                 {
                     FMaterialTarget Target;
                     FString Error;
-                    if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
+                    if (!ResolveMaterial(In.Material, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -322,7 +304,7 @@ namespace Lumina::MCP
                 {
                     FMaterialTarget Target;
                     FString Error;
-                    if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
+                    if (!ResolveMaterial(In.Material, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -379,7 +361,7 @@ namespace Lumina::MCP
                 {
                     FMaterialTarget Target;
                     FString Error;
-                    if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
+                    if (!ResolveMaterial(In.Material, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -426,7 +408,7 @@ namespace Lumina::MCP
                 {
                     FMaterialTarget Target;
                     FString Error;
-                    if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
+                    if (!ResolveMaterial(In.Material, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
@@ -496,7 +478,7 @@ namespace Lumina::MCP
                 {
                     FMaterialTarget Target;
                     FString Error;
-                    if (!ResolveMaterial(In.Material, EMaterialAccess::Write, Target, Error))
+                    if (!ResolveMaterial(In.Material, Target, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
