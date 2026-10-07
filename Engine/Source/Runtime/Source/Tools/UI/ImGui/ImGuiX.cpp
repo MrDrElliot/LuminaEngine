@@ -18,6 +18,7 @@
 #include "Paths/Paths.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
+#include "Assets/AssetTypes/Textures/Texture.h"
 
 namespace Lumina::ImGuiX
 {
@@ -41,6 +42,7 @@ namespace Lumina::ImGuiX
         // Mirrors IMGUI_DISPLAY_* in Includes/ImGuiCommon.slang.
         constexpr uint32 GDisplayModeDirect = 0u;
         constexpr uint32 GDisplayModeHDR    = 1u;
+        constexpr uint32 GDisplayModeLinear = 2u;
 
         static void DisplayStateCallback(const ImDrawList*, const ImDrawCmd*)
         {
@@ -80,7 +82,32 @@ namespace Lumina::ImGuiX
         DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
     }
 
-    void BeginArrayPreview(ImDrawList* DrawList, uint32 Slice)
+    static bool IsHDRFormat(EFormat Format)
+    {
+        return Format == EFormat::RGBA16_FLOAT || Format == EFormat::RGBA32_FLOAT || Format == EFormat::R11G11B10_FLOAT;
+    }
+
+    void BeginTextureDisplay(ImDrawList* DrawList, const CTexture* Texture, float ExposureStops, bool bToneMapHDR)
+    {
+        if (DrawList == nullptr || Texture == nullptr || Texture->TextureResource == nullptr)
+        {
+            return;
+        }
+
+        const EFormat Format = Texture->TextureResource->ImageDescription.Format;
+        if (IsHDRFormat(Format) && bToneMapHDR)
+        {
+            BeginHDRPreview(DrawList, ExposureStops);
+            return;
+        }
+
+        Detail::FImGuiDisplayState State;
+        State.DisplayMode = Texture->SamplesLinearColor() || IsHDRFormat(Format) ? Detail::GDisplayModeLinear : Detail::GDisplayModeDirect;
+        State.Exposure    = std::exp2(ExposureStops);
+        DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
+    void EndTextureDisplay(ImDrawList* DrawList)
     {
         if (DrawList == nullptr)
         {
@@ -88,8 +115,33 @@ namespace Lumina::ImGuiX
         }
 
         Detail::FImGuiDisplayState State;
-        State.bIsArray   = 1;
-        State.ArraySlice = Slice;
+        DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
+    void TextureImage(const CTexture* Texture, const ImVec2& Size)
+    {
+        if (Texture == nullptr)
+        {
+            return;
+        }
+
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        BeginTextureDisplay(DrawList, Texture);
+        ImGui::Image(ToImTextureRef((uint32)Texture->GetResourceID()), Size);
+        EndTextureDisplay(DrawList);
+    }
+
+    void BeginArrayPreview(ImDrawList* DrawList, uint32 Slice, bool bEncodeLinear)
+    {
+        if (DrawList == nullptr)
+        {
+            return;
+        }
+
+        Detail::FImGuiDisplayState State;
+        State.bIsArray    = 1;
+        State.ArraySlice  = Slice;
+        State.DisplayMode = bEncodeLinear ? Detail::GDisplayModeLinear : Detail::GDisplayModeDirect;
 
         // A non-zero size makes ImGui copy the payload into the draw list, so it outlives this call.
         DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));

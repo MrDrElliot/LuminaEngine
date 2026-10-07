@@ -383,6 +383,7 @@ namespace Lumina::RHI
         uint32 LayerCount = 1;
         uint32 SampleCount = 1;
         EFormat Format = EFormat::UNKNOWN;
+        ETextureSwizzle Swizzle = ETextureSwizzle::Identity;
         EImageUsageFlags Usage = EImageUsageFlags::None;
     };
     

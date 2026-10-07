@@ -76,6 +76,33 @@ namespace Lumina
         return true;
     }
 
+    bool CTexture::SamplesLinearColor() const
+    {
+        if (TextureResource == nullptr)
+        {
+            return false;
+        }
+
+        const EFormat Format = TextureResource->ImageDescription.Format;
+        if (RHI::Format::Info(Format).bIsSRGB)
+        {
+            return true;
+        }
+
+        // The cook linearizes an sRGB source for formats with no sRGB variant.
+        switch (Format)
+        {
+        case EFormat::BC4_UNORM:
+        case EFormat::BC5_UNORM:
+        case EFormat::R8_UNORM:
+        case EFormat::R16_FLOAT:
+        case EFormat::RGBA16_FLOAT:
+            return IsSRGB();
+        default:
+            return false;
+        }
+    }
+
     RHI::EStockSampler CTexture::GetStockSampler() const
     {
         const ETextureAddress Address = AddressMode;
@@ -301,6 +328,7 @@ namespace Lumina
                 .Mips   = ResidentNum,
                 .Format = Desc.Format,
                 .DebugName = DebugName.c_str(),
+                .Swizzle = Desc.Swizzle,
             });
         }
         else
@@ -313,6 +341,7 @@ namespace Lumina
                 .Mips   = ResidentNum,
                 .Format = Desc.Format,
                 .DebugName = DebugName.c_str(),
+                .Swizzle = Desc.Swizzle,
             });
         }
 

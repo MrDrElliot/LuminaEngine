@@ -18,6 +18,10 @@ float4 FragmentMain(FImGuiInterpolants Input) : SV_Target0
         float3 Color = ApplyTonemap(Texel.rgb * max(Args.Exposure, 0.0), TONEMAPPER_ACES);
         Texel.rgb = EncodeDisplayGamma(Color);
     }
+    else if (Args.DisplayMode == IMGUI_DISPLAY_LINEAR)
+    {
+        Texel.rgb = ImGuiEncodeSRGB(Texel.rgb * max(Args.Exposure, 0.0));
+    }
 
     // Vertex color stays a straight multiply: ImGui tints are already display-encoded, so applying
     // them after the transform is what keeps a tinted HDR image matching an untinted one.

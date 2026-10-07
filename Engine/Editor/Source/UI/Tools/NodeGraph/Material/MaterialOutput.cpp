@@ -78,7 +78,7 @@ namespace Lumina
 
                     if (Texture != nullptr && Texture->GetResourceID() >= 0)
                     {
-                        ImGui::Image(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()), ImVec2(164.0f, 164.0f));
+                        ImGuiX::TextureImage(Texture, ImVec2(164.0f, 164.0f));
                     }
                     
                     ReturnSize = 200.0f;

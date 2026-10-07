@@ -24,6 +24,8 @@ namespace Lumina::RHI
         bool    bRenderTarget = false;   // usable as a color attachment (UI widget/brush RTs)
 
         const char* DebugName = nullptr;
+
+        ETextureSwizzle Swizzle = ETextureSwizzle::Identity;
     };
 
     struct FTexture2DArrayDesc
@@ -36,6 +38,8 @@ namespace Lumina::RHI
         bool    bStorage = false;        // also allow per-mip UAV slots (compute writes)
 
         const char* DebugName = nullptr;
+
+        ETextureSwizzle Swizzle = ETextureSwizzle::Identity;
     };
 
     struct FTexture3DDesc

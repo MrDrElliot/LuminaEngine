@@ -91,6 +91,8 @@ namespace Lumina
         /** One COMPLETED property edit: a released drag or an atomic commit, never once per frame of a drag. */
         virtual void OnPropertyEditFinished(const FPropertyChangedEvent& Event) {}
 
+        void OnExternalPropertyEdit(CObject* Object, FProperty* Property) override;
+
         void OnPostUndoRedo() override;
 
         // Gives a secondary details table the same undo the main one has, snapshotting whatever object it shows.

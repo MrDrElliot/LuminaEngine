@@ -27,6 +27,7 @@ namespace Lumina
     class FUpdateContext;
     class FInputViewport;
     class CStruct;
+    class FProperty;
     class FSceneEditorTool;
     class CEdNodeGraph;
 }
@@ -448,6 +449,9 @@ namespace Lumina
 
         /** Records a before/after image of Object around Mutate, so an edit from outside the tool can be undone. */
         void RunObjectTransacted(FName Label, CObject* Object, const TFunction<void()>& Mutate);
+
+        // A property set from outside the tool's panels, answered the way the tool answers its own panel edit.
+        virtual void OnExternalPropertyEdit(CObject* Object, FProperty* Property) {}
 
         /** Undo or redo one step for a caller outside the tool; false when nothing ran. */
         bool RunUndo();

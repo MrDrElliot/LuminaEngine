@@ -332,7 +332,7 @@ namespace Lumina::SessionOps
         return true;
     }
 
-    bool RunObjectTransacted(CObject* Object, FName Label, const TFunction<void()>& Mutate)
+    bool RunObjectTransacted(CObject* Object, FName Label, const TFunction<void()>& Mutate, FProperty* EditedProperty)
     {
         FEditorUI* UI = FindUI();
         FEditorTool* Owner = UI != nullptr ? UI->FindAssetEditor(Object) : nullptr;
@@ -341,6 +341,10 @@ namespace Lumina::SessionOps
             return false;
         }
         Owner->RunObjectTransacted(Label, Object, Mutate);
+        if (EditedProperty != nullptr)
+        {
+            Owner->OnExternalPropertyEdit(Object, EditedProperty);
+        }
         return true;
     }
 

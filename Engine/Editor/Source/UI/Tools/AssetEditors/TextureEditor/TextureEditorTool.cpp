@@ -65,6 +65,18 @@ namespace Lumina
         }
     }
 
+    // Undo restores only the settings, so the pixels are cooked again to match them.
+    void FTextureEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        CTexture* Texture = Cast<CTexture>(Asset.Get());
+        if (Texture != nullptr && !RecookForPropertyChange(Texture))
+        {
+            ImGuiX::Notifications::NotifyError("Recook failed for '{0}', see the log.", Texture->GetName().c_str());
+        }
+    }
+
     bool FTextureEditorTool::RecookForPropertyChange(CTexture* Texture)
     {
         // Pristine bytes, on disk or stored on the asset, make an edit replace the last cook rather than layer on it.
@@ -223,15 +235,14 @@ namespace Lumina
                 2.0f,
                 0);
 
-            // Float formats hold LINEAR radiance, so they need the scene display transform to read correctly.
             const bool bIsArrayPreview = (PreviewArray != nullptr);
             if (bIsArrayPreview)
             {
-                ImGuiX::BeginArrayPreview(DrawList, PreviewSlice);
+                ImGuiX::BeginArrayPreview(DrawList, PreviewSlice, Texture->SamplesLinearColor());
             }
-            else if (bIsHDRPreview)
+            else
             {
-                ImGuiX::BeginHDRPreview(DrawList, ExposureStops);
+                ImGuiX::BeginTextureDisplay(DrawList, Texture, bIsHDRPreview ? ExposureStops : 0.0f, bToneMapPreview);
             }
 
             DrawList->AddImage(
@@ -246,9 +257,9 @@ namespace Lumina
             {
                 ImGuiX::EndArrayPreview(DrawList);
             }
-            else if (bIsHDRPreview)
+            else
             {
-                ImGuiX::EndHDRPreview(DrawList);
+                ImGuiX::EndTextureDisplay(DrawList);
             }
 
             ImVec2 MousePos = ImGui::GetMousePos();
@@ -295,6 +306,10 @@ namespace Lumina
                     ImGui::SetNextItemWidth(140);
                     ImGui::SliderFloat("##Exposure", &ExposureStops, -8.0f, 4.0f, "%+.1f stops");
                     ImGuiX::TextTooltip("Exposure bias on the preview, in stops. The image is tone-mapped with the same transform the viewport uses, so 0 stops shows the texture as the scene sees it; dial down to read detail in bright regions.");
+
+                    ImGui::SameLine(0, 20);
+                    ImGui::Checkbox("Tone Map", &bToneMapPreview);
+                    ImGuiX::TextTooltip("{}", "Off shows the stored values with only sRGB encoding, so an image cooked from an 8-bit source reads as that source.");
                 }
             }
             ImGui::EndChild();

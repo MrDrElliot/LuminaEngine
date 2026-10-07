@@ -72,6 +72,38 @@ namespace Lumina
         NoMipmaps,
     };
 
+    // The GPU format a texture cooks to, in the spirit of Unreal's compression settings.
+    REFLECT()
+    enum class ETextureCompressionSettings : uint8
+    {
+        // BC7 at 8 bits per texel, full color and alpha.
+        Default,
+
+        // BC1 at 4 bits per texel, color without alpha, half the memory of Default.
+        NoAlpha,
+
+        // BC4 at 4 bits per texel from the red channel, sampled as gray (r, r, r, 1). For masks, roughness and height.
+        Grayscale,
+
+        // BC4 at 4 bits per texel from the alpha channel, sampled as (1, 1, 1, a). For opacity masks and decals.
+        Alpha,
+
+        // BC5 at 8 bits per texel, red and green kept and blue sampled as zero. For flow maps and two-channel masks.
+        TwoChannel,
+
+        // RGBA8 at 32 bits per texel, exact. For UI and pixel art that cannot show block artifacts.
+        UserInterface2D,
+
+        // R8 at 8 bits per texel, exact, sampled as gray.
+        GrayscaleUncompressed,
+
+        // R16F at 16 bits per texel from the red channel at the source's full precision, sampled as gray. For heightmaps.
+        HalfFloat,
+
+        // RGBA16F at 64 bits per texel, unclamped. For HDR color.
+        HDR,
+    };
+
     // Encoder effort. Cook time scales with it; the runtime format and size do not change.
     REFLECT()
     enum class ETextureCompressionQuality : uint8
@@ -257,6 +289,9 @@ namespace Lumina
 
         bool IsSRGB() const { return ColorSpace == ETextureColorSpace::SRGB; }
 
+        // True when sampling returns linear light, so a UI preview has to encode it before display.
+        bool SamplesLinearColor() const;
+
         // Group policy with this texture's own overrides folded in. The cook and the sampler both read it.
         FTextureGroupPolicy GetResolvedPolicy() const
         {
@@ -299,6 +334,10 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Compression", RequiresRecook)
         ETextureColorSpace ColorSpace = ETextureColorSpace::SRGB;
+
+        // Formats without an sRGB variant store linear values, so an sRGB source still samples the same.
+        PROPERTY(Editable, Category = "Compression", RequiresRecook)
+        ETextureCompressionSettings CompressionSettings = ETextureCompressionSettings::Default;
 
         // Encoder effort. Higher settings cost cook time only; the stored format and size are unchanged.
         PROPERTY(Editable, Category = "Compression", RequiresRecook)

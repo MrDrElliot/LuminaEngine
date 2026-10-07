@@ -94,6 +94,9 @@ enum class ELuminaEngineVersion : uint32
 	// FPropertyTag's type is the 1-byte EPropertyTypeFlags and its dead Offset field is gone.
 	PACKAGE_NAME_TABLE,
 
+	// FTextureResource::FDescription carries the swizzle a single-channel format is sampled through.
+	TEXTURE_SWIZZLE,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

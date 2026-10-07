@@ -79,7 +79,7 @@ namespace Lumina
             return;
         }
 
-        ImGui::Image(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()), ImVec2(126.0f, 126.0f));
+        ImGuiX::TextureImage(Texture.Get(), ImVec2(126.0f, 126.0f));
     }
 
     void CMaterialExpression_TextureHandle::DrawContextMenu()

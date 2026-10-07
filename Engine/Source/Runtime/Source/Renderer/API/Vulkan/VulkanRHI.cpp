@@ -943,7 +943,22 @@ namespace Lumina::RHI
         return { Aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
     }
 
-    static VkImageView CreateImageView(VkImage Image, VkImageViewType Type, VkFormat Format, const VkImageSubresourceRange& Range)
+    static VkComponentMapping ComponentMappingFor(ETextureSwizzle Swizzle)
+    {
+        switch (Swizzle)
+        {
+        case ETextureSwizzle::Grayscale:
+            return { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE };
+        case ETextureSwizzle::Alpha:
+            return { VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R };
+        case ETextureSwizzle::Identity:
+            break;
+        }
+        return { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+    }
+
+    static VkImageView CreateImageView(VkImage Image, VkImageViewType Type, VkFormat Format, const VkImageSubresourceRange& Range,
+        ETextureSwizzle Swizzle = ETextureSwizzle::Identity)
     {
         const VkImageViewCreateInfo Info
         {
@@ -953,7 +968,7 @@ namespace Lumina::RHI
             .image            = Image,
             .viewType         = Type,
             .format           = Format,
-            .components       = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
+            .components       = ComponentMappingFor(Swizzle),
             .subresourceRange = Range,
         };
 
@@ -5019,7 +5034,11 @@ namespace Lumina::RHI
                 Desc.Dimension.x, Desc.Dimension.y, Depth, Info.mipLevels, Info.arrayLayers, (uint32)Format).c_str(), ImageResult);
         }
 
-        const VkImageView View = CreateImageView(Image, ViewType, Format, FullSubresourceRange(Aspect));
+        // Storage and attachment views have to be identity, so only a purely sampled image takes the swizzle.
+        const bool bSwizzleAllowed = !EnumHasAnyFlags(Desc.Usage,
+            EImageUsageFlags::Storage | EImageUsageFlags::ColorAttachment | EImageUsageFlags::DepthAttachment);
+        const VkImageView View = CreateImageView(Image, ViewType, Format, FullSubresourceRange(Aspect),
+            bSwizzleAllowed ? Desc.Swizzle : ETextureSwizzle::Identity);
 
         const bool bHostInitialized = (Usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT) != 0 && HostTransitionToGeneral(Image, Desc.Format);
 

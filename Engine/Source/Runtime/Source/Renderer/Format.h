@@ -77,3 +77,15 @@ enum class EFormat : uint8
 
     COUNT,
 };
+
+// How a sampled view presents a texture that stores fewer than four channels, so shaders read it like RGBA.
+enum class ETextureSwizzle : uint8
+{
+    Identity,
+
+    // One stored channel read as gray, (r, r, r, 1).
+    Grayscale,
+
+    // One stored channel read as coverage, (1, 1, 1, r).
+    Alpha,
+};

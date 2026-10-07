@@ -173,6 +173,7 @@ namespace Lumina::RHI::Textures
         TextureDesc.Dimension = FUIntVector3(Math::Max(Desc.Width, 1u), Math::Max(Desc.Height, 1u), 1u);
         TextureDesc.MipCount  = Math::Max(Desc.Mips, 1u);
         TextureDesc.Format    = Desc.Format;
+        TextureDesc.Swizzle   = Desc.Swizzle;
         TextureDesc.Usage     = EImageUsageFlags::Sampled | EImageUsageFlags::TransferDst | EImageUsageFlags::TransferSrc;
         if (Desc.bStorage)
         {
@@ -193,6 +194,7 @@ namespace Lumina::RHI::Textures
         TextureDesc.MipCount   = Math::Max(Desc.Mips, 1u);
         TextureDesc.LayerCount = Math::Max(Desc.Layers, 1u);
         TextureDesc.Format     = Desc.Format;
+        TextureDesc.Swizzle   = Desc.Swizzle;
         TextureDesc.Usage      = EImageUsageFlags::Sampled | EImageUsageFlags::TransferDst | EImageUsageFlags::TransferSrc;
         if (Desc.bStorage)
         {

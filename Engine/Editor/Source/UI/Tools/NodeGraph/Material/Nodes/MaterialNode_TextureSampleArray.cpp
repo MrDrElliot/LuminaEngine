@@ -32,7 +32,7 @@ namespace Lumina
 
         // The heap slot holds an array view, and ImGui's default 2D path would resolve to the null slot.
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
-        ImGuiX::BeginArrayPreview(DrawList, 0);
+        ImGuiX::BeginArrayPreview(DrawList, 0, TextureArray->SamplesLinearColor());
         ImGui::Image(ImGuiX::ToImTextureRef((uint32)TextureArray->GetResourceID()), ImVec2(126.0f, 126.0f));
         ImGuiX::EndArrayPreview(DrawList);
     }

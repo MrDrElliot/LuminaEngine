@@ -114,8 +114,10 @@ namespace Lumina
         const ImVec2 Origin = ImGui::GetCursorScreenPos();
 
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        ImGuiX::BeginTextureDisplay(DrawList, Texture);
         DrawList->AddImage(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()),
                            Origin, ImVec2(Origin.x + Size.x, Origin.y + Size.y));
+        ImGuiX::EndTextureDisplay(DrawList);
 
         const float CellW = Size.x / (float)HF;
         const float CellH = Size.y / (float)VF;
@@ -304,12 +306,16 @@ namespace Lumina
 
                 if (bHasTexture)
                 {
-                    if (ImGui::ImageButton("##Frame",
+                    ImDrawList* FrameDrawList = ImGui::GetWindowDrawList();
+                    ImGuiX::BeginTextureDisplay(FrameDrawList, Texture);
+                    const bool bFrameClicked = ImGui::ImageButton("##Frame",
                                            ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()),
                                            ImVec2(kThumb, kThumb),
                                            ImVec2(UV.x, UV.y), ImVec2(UV.z, UV.w),
                                            ImVec4(0, 0, 0, 0),
-                                           bSelected ? ImVec4(1.0f, 0.78f, 0.24f, 1.0f) : ImVec4(1, 1, 1, 1)))
+                                           bSelected ? ImVec4(1.0f, 0.78f, 0.24f, 1.0f) : ImVec4(1, 1, 1, 1));
+                    ImGuiX::EndTextureDisplay(FrameDrawList);
+                    if (bFrameClicked)
                     {
                         SelectedFrameSlot = Slot;
                     }
@@ -377,8 +383,11 @@ namespace Lumina
         const ImVec2 Avail = ImGui::GetContentRegionAvail();
         const float  Side  = Math::Max(Math::Min(Avail.x, Avail.y), 16.0f);
 
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        ImGuiX::BeginTextureDisplay(DrawList, Texture);
         ImGui::Image(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()),
                      ImVec2(Side, Side), ImVec2(UV.x, UV.y), ImVec2(UV.z, UV.w));
+        ImGuiX::EndTextureDisplay(DrawList);
     }
 
     void FSpriteSheetEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2&) const

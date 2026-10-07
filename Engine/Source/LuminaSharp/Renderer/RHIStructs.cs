@@ -36,6 +36,7 @@ public struct FTextureDesc
     public uint LayerCount;
     public uint SampleCount;
     public EFormat Format;
+    public ETextureSwizzle Swizzle;
     public EImageUsageFlags Usage;
 
     public static FTextureDesc Texture2D(uint Width, uint Height, EFormat Format, EImageUsageFlags Usage)

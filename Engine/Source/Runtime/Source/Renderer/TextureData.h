@@ -95,6 +95,8 @@ namespace Lumina
             // Set from CTexture::bNeverStream before a write; the split it produces is what persists.
             bool         bNeverStream = false;
 
+            ETextureSwizzle Swizzle = ETextureSwizzle::Identity;
+
             friend FArchive& operator << (FArchive& Ar, FDescription& Data)
             {
                 Ar << Data.Extent;
@@ -109,6 +111,11 @@ namespace Lumina
                 if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::PACKAGE_BULK_DATA)
                 {
                     Ar << Data.FirstInlineMip;
+                }
+
+                if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::TEXTURE_SWIZZLE)
+                {
+                    Ar << Data.Swizzle;
                 }
                 return Ar;
             }
@@ -202,7 +209,7 @@ namespace Lumina
         uint64 CalcTotalSizeBytes() const
         {
             return Algo::Accumulate(Mips, uint64(0),
-                [](const FMip& Mip) { return (uint64)Mip.RowPitch * Mip.Height * Mip.Depth; });
+                [](const FMip& Mip) { return Mip.SizeBytes(); });
         }
 
         /** Cook-time policy: index of the first mip small enough to keep inline.

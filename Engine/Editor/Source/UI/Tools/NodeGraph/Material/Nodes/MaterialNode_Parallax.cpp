@@ -51,7 +51,7 @@ namespace Lumina
     {
         if (HeightMap.IsValid() && HeightMap->GetResourceID() >= 0)
         {
-            ImGui::Image(ImGuiX::ToImTextureRef((uint32)HeightMap->GetResourceID()), ImVec2(126.0f, 126.0f));
+            ImGuiX::TextureImage(HeightMap.Get(), ImVec2(126.0f, 126.0f));
         }
     }
 

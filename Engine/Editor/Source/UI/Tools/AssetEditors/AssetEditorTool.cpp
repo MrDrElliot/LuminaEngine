@@ -102,6 +102,18 @@ namespace Lumina
         });
     }
 
+    void FAssetEditorTool::OnExternalPropertyEdit(CObject* Object, FProperty* Property)
+    {
+        if (Object == nullptr || Object != Asset.Get() || Property == nullptr)
+        {
+            return;
+        }
+
+        FPropertyChangedEvent Event{ Object->GetClass(), Property, Property->GetPropertyName() };
+        Event.bIsCommit = true;
+        OnPropertyEditFinished(Event);
+    }
+
     void FAssetEditorTool::SerializeAssetForUndo(FArchive& Ar, CObject* InAsset)
     {
         InAsset->GetClass()->SerializeTaggedProperties(Ar, InAsset);

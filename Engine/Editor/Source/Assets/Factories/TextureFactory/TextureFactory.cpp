@@ -13,6 +13,7 @@
 #include "Renderer/RenderManager.h"
 #include "Renderer/RendererUtils.h"
 #include "Renderer/RHITexture.h"
+#include "TaskSystem/TaskSystem.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "Thumbnails/ThumbnailUtils.h"
 #include "Core/Math/Math.h"
@@ -704,6 +705,581 @@ namespace Lumina
         }
     }
 
+    static float SRGBToLinear(float C)
+    {
+        return C <= 0.04045f ? C / 12.92f : std::pow((C + 0.055f) / 1.055f, 2.4f);
+    }
+
+    static float LinearToSRGB(float C)
+    {
+        C = Math::Clamp(C, 0.0f, 1.0f);
+        return C <= 0.0031308f ? C * 12.92f : 1.055f * std::pow(C, 1.0f / 2.4f) - 0.055f;
+    }
+
+    // Formats with no sRGB variant hold linear values, and these are the settings the cook writes without basisu.
+    static bool IsDirectEncoded(ETextureCompressionSettings Settings)
+    {
+        switch (Settings)
+        {
+        case ETextureCompressionSettings::Grayscale:
+        case ETextureCompressionSettings::Alpha:
+        case ETextureCompressionSettings::TwoChannel:
+        case ETextureCompressionSettings::UserInterface2D:
+        case ETextureCompressionSettings::GrayscaleUncompressed:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    struct FRGBA8Level
+    {
+        uint32         Width  = 0;
+        uint32         Height = 0;
+        TVector<uint8> Texels;
+    };
+
+    // Averaged in linear light for an sRGB source, since a gamma-space average darkens every mip.
+    static FRGBA8Level DownsampleRGBA8(const FRGBA8Level& Source, bool bSRGB)
+    {
+        static const TArray<float, 256> GToLinear = []
+        {
+            TArray<float, 256> Table;
+            for (int32 i = 0; i < 256; ++i)
+            {
+                Table[i] = SRGBToLinear(float(i) / 255.0f);
+            }
+            return Table;
+        }();
+
+        FRGBA8Level Next;
+        Next.Width  = Math::Max(1u, Source.Width / 2);
+        Next.Height = Math::Max(1u, Source.Height / 2);
+        Next.Texels.resize((size_t)Next.Width * Next.Height * 4);
+
+        for (uint32 Y = 0; Y < Next.Height; ++Y)
+        {
+            const uint32 Y0 = Math::Min(Y * 2, Source.Height - 1);
+            const uint32 Y1 = Math::Min(Y * 2 + 1, Source.Height - 1);
+            for (uint32 X = 0; X < Next.Width; ++X)
+            {
+                const uint32 X0 = Math::Min(X * 2, Source.Width - 1);
+                const uint32 X1 = Math::Min(X * 2 + 1, Source.Width - 1);
+                const size_t Taps[4] = { (size_t)Y0 * Source.Width + X0, (size_t)Y0 * Source.Width + X1,
+                                         (size_t)Y1 * Source.Width + X0, (size_t)Y1 * Source.Width + X1 };
+
+                uint8* Out = &Next.Texels[((size_t)Y * Next.Width + X) * 4];
+                for (uint32 Channel = 0; Channel < 4; ++Channel)
+                {
+                    const bool bGamma = bSRGB && Channel < 3;
+                    float Sum = 0.0f;
+                    for (size_t Tap : Taps)
+                    {
+                        const uint8 Value = Source.Texels[Tap * 4 + Channel];
+                        Sum += bGamma ? GToLinear[Value] : float(Value) / 255.0f;
+                    }
+                    const float Average = Sum * 0.25f;
+                    Out[Channel] = (uint8)std::lround((bGamma ? LinearToSRGB(Average) : Math::Clamp(Average, 0.0f, 1.0f)) * 255.0f);
+                }
+            }
+        }
+        return Next;
+    }
+
+    // BC4 decodes to these eight values, kept unrounded because hardware interpolates at higher precision.
+    static void BC4Palette(int32 E0, int32 E1, float Out[8])
+    {
+        Out[0] = float(E0);
+        Out[1] = float(E1);
+        if (E0 > E1)
+        {
+            for (int32 i = 1; i <= 6; ++i)
+            {
+                Out[i + 1] = float((7 - i) * E0 + i * E1) / 7.0f;
+            }
+            return;
+        }
+
+        for (int32 i = 1; i <= 4; ++i)
+        {
+            Out[i + 1] = float((5 - i) * E0 + i * E1) / 5.0f;
+        }
+        Out[6] = 0.0f;
+        Out[7] = 255.0f;
+    }
+
+    static float FitBC4Indices(const float Values[16], int32 E0, int32 E1, uint8 Indices[16])
+    {
+        float Palette[8];
+        BC4Palette(E0, E1, Palette);
+
+        float Error = 0.0f;
+        for (int32 Texel = 0; Texel < 16; ++Texel)
+        {
+            float BestError = FLT_MAX;
+            for (uint8 Index = 0; Index < 8; ++Index)
+            {
+                const float Delta = Values[Texel] - Palette[Index];
+                if (Delta * Delta < BestError)
+                {
+                    BestError = Delta * Delta;
+                    Indices[Texel] = Index;
+                }
+            }
+            Error += BestError;
+        }
+        return Error;
+    }
+
+    // Values are 0 to 255, texels row by row; SearchRadius widens the endpoint search for higher quality settings.
+    static void EncodeBC4Block(const float Values[16], int32 SearchRadius, uint8 Out[8])
+    {
+        float Lo = 255.0f, Hi = 0.0f;
+        float InnerLo = 255.0f, InnerHi = 0.0f;
+        for (int32 Texel = 0; Texel < 16; ++Texel)
+        {
+            const float Value = Values[Texel];
+            Lo = Math::Min(Lo, Value);
+            Hi = Math::Max(Hi, Value);
+            if (Value > 0.5f && Value < 254.5f)
+            {
+                InnerLo = Math::Min(InnerLo, Value);
+                InnerHi = Math::Max(InnerHi, Value);
+            }
+        }
+
+        int32 BestE0 = 0, BestE1 = 0;
+        uint8 BestIndices[16] = {};
+        float BestError = FLT_MAX;
+        auto Try = [&](int32 E0, int32 E1)
+        {
+            E0 = Math::Clamp(E0, 0, 255);
+            E1 = Math::Clamp(E1, 0, 255);
+            uint8 Indices[16];
+            const float Error = FitBC4Indices(Values, E0, E1, Indices);
+            if (Error < BestError)
+            {
+                BestError = Error;
+                BestE0 = E0;
+                BestE1 = E1;
+                Memory::Memcpy(BestIndices, Indices, sizeof(Indices));
+            }
+        };
+
+        const int32 HiQ = (int32)std::lround(Hi);
+        const int32 LoQ = (int32)std::lround(Lo);
+        for (int32 D0 = -SearchRadius; D0 <= SearchRadius; ++D0)
+        {
+            for (int32 D1 = -SearchRadius; D1 <= SearchRadius; ++D1)
+            {
+                if (HiQ + D0 > LoQ + D1)
+                {
+                    Try(HiQ + D0, LoQ + D1);
+                }
+            }
+        }
+
+        // The six-value mode, which decodes a flat block exactly and gets pure black and white for free.
+        Try(LoQ, HiQ);
+        if (InnerLo <= InnerHi)
+        {
+            Try((int32)std::lround(InnerLo), (int32)std::lround(InnerHi));
+        }
+
+        Out[0] = (uint8)BestE0;
+        Out[1] = (uint8)BestE1;
+        uint64 Bits = 0;
+        for (int32 Texel = 0; Texel < 16; ++Texel)
+        {
+            Bits |= uint64(BestIndices[Texel]) << (Texel * 3);
+        }
+        for (int32 Byte = 0; Byte < 6; ++Byte)
+        {
+            Out[2 + Byte] = uint8(Bits >> (Byte * 8));
+        }
+    }
+
+    static int32 BC4SearchRadius(ETextureCompressionQuality Quality)
+    {
+        switch (Quality)
+        {
+        case ETextureCompressionQuality::High:    return 1;
+        case ETextureCompressionQuality::Highest: return 2;
+        default:                                  return 0;
+        }
+    }
+
+    // One BC4 block per listed channel, so BC4 takes one channel and BC5 takes red then green.
+    static TVector<uint8> EncodeBC4Channels(const FRGBA8Level& Level, TSpan<const uint32> Channels, bool bLinearizeColor, int32 SearchRadius)
+    {
+        static const TArray<float, 256> GLinear255 = []
+        {
+            TArray<float, 256> Table;
+            for (int32 i = 0; i < 256; ++i)
+            {
+                Table[i] = SRGBToLinear(float(i) / 255.0f) * 255.0f;
+            }
+            return Table;
+        }();
+
+        const uint32 BlocksX = (Level.Width + 3) / 4;
+        const uint32 BlocksY = (Level.Height + 3) / 4;
+        const uint32 BlockBytes = 8u * (uint32)Channels.size();
+        TVector<uint8> Encoded((size_t)BlocksX * BlocksY * BlockBytes);
+
+        Task::ParallelFor(BlocksY, [&](uint32 By)
+        {
+            for (uint32 Bx = 0; Bx < BlocksX; ++Bx)
+            {
+                uint8* Block = &Encoded[((size_t)By * BlocksX + Bx) * BlockBytes];
+                for (size_t Slot = 0; Slot < Channels.size(); ++Slot)
+                {
+                    const uint32 Channel = Channels[Slot];
+                    const bool bLinearize = bLinearizeColor && Channel < 3;
+
+                    float Values[16];
+                    for (uint32 Ty = 0; Ty < 4; ++Ty)
+                    {
+                        const uint32 Y = Math::Min(By * 4 + Ty, Level.Height - 1);
+                        for (uint32 Tx = 0; Tx < 4; ++Tx)
+                        {
+                            const uint32 X = Math::Min(Bx * 4 + Tx, Level.Width - 1);
+                            const uint8 Value = Level.Texels[((size_t)Y * Level.Width + X) * 4 + Channel];
+                            Values[Ty * 4 + Tx] = bLinearize ? GLinear255[Value] : float(Value);
+                        }
+                    }
+                    EncodeBC4Block(Values, SearchRadius, Block + Slot * 8);
+                }
+            }
+        });
+        return Encoded;
+    }
+
+    static TVector<uint8> ExtractR8(const FRGBA8Level& Level, bool bLinearize)
+    {
+        TVector<uint8> Out((size_t)Level.Width * Level.Height);
+        for (size_t i = 0; i < Out.size(); ++i)
+        {
+            const uint8 Value = Level.Texels[i * 4];
+            Out[i] = bLinearize ? (uint8)std::lround(SRGBToLinear(float(Value) / 255.0f) * 255.0f) : Value;
+        }
+        return Out;
+    }
+
+    // Shared tail of every cook, so a recook keeps the ResourceID materials have already baked.
+    static bool PublishCookedMips(CTexture* Texture, bool bCreateGPUResource)
+    {
+        ApplyTextureGroupMipPolicy(Texture);
+        if (!bCreateGPUResource)
+        {
+            return true;
+        }
+
+        const FTextureResource::FDescription& Desc = Texture->TextureResource->ImageDescription;
+        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
+        const FString DebugName = "Texture." + Texture->GetName().ToString();
+        RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
+        {
+            .Width  = Desc.Extent.x,
+            .Height = Desc.Extent.y,
+            .Mips   = UploadMips,
+            .Format = Desc.Format,
+            .DebugName = DebugName.c_str(),
+            .Swizzle = Desc.Swizzle,
+        });
+        for (uint32 i = 0; i < UploadMips; ++i)
+        {
+            const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
+            if (!Mip.Pixels.empty())
+            {
+                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
+            }
+        }
+
+        // Skipping this leaves the swap unarmed forever, so the slot never changes residency again.
+        RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
+        Texture->OnFullyUploadedExternally();
+        return true;
+    }
+
+    static void ResetCookedResource(CTexture* Texture, EFormat Format, ETextureSwizzle Swizzle, FUIntVector2 Extent, uint32 NumMips)
+    {
+        if (!Texture->TextureResource)
+        {
+            Texture->TextureResource = MakeUnique<FTextureResource>();
+        }
+
+        FTextureResource::FDescription Desc;
+        Desc.Format  = Format;
+        Desc.Swizzle = Swizzle;
+        Desc.Extent  = Extent;
+        Desc.NumMips = (uint8)NumMips;
+
+        Texture->TextureResource->ImageDescription = Desc;
+        Texture->TextureResource->Mips.clear();
+        Texture->TextureResource->Mips.resize(NumMips);
+    }
+
+    static void StoreMip(CTexture* Texture, uint32 MipIndex, uint32 Width, uint32 Height, uint32 RowPitch, TVector<uint8>&& Bytes)
+    {
+        FTextureResource::FMip& Mip = Texture->TextureResource->Mips[MipIndex];
+        Mip.Width      = Width;
+        Mip.Height     = Height;
+        Mip.Depth      = 1;
+        Mip.RowPitch   = RowPitch;
+        Mip.SlicePitch = (uint32)Bytes.size();
+        Mip.Pixels     = Move(Bytes);
+    }
+
+    // The formats basisu cannot produce, encoded straight from the RGBA8 source with our own mips.
+    static bool CookDirectEncoded(CTexture* Texture, TVector<uint8>& Pixels, FUIntVector2 Dimensions, bool bSRGB, bool bCreateGPUResource)
+    {
+        const ETextureCompressionSettings Settings = Texture->CompressionSettings;
+        const bool bPreserveCoverage = Texture->bPreserveAlphaCoverage && !Texture->bCompressWithoutAlpha;
+        if (bPreserveCoverage)
+        {
+            BleedColorIntoCutout(Pixels, Dimensions, Texture->AlphaCoverageCutoff);
+        }
+
+        TVector<FRGBA8Level> Levels;
+        Levels.push_back(FRGBA8Level{ Dimensions.x, Dimensions.y, Pixels });
+
+        if (Texture->GetResolvedPolicy().bGenerateMips)
+        {
+            if (bPreserveCoverage)
+            {
+                basisu::vector<basisu::image> CoverageMips;
+                BuildCoveragePreservingMips(Pixels, Dimensions, bSRGB, Texture->AlphaCoverageCutoff, CoverageMips);
+                for (const basisu::image& Image : CoverageMips)
+                {
+                    FRGBA8Level& Level = Levels.emplace_back();
+                    Level.Width  = Image.get_width();
+                    Level.Height = Image.get_height();
+                    Level.Texels.resize((size_t)Level.Width * Level.Height * 4);
+                    for (uint32 Y = 0; Y < Level.Height; ++Y)
+                    {
+                        for (uint32 X = 0; X < Level.Width; ++X)
+                        {
+                            const basisu::color_rgba& Texel = Image(X, Y);
+                            uint8* Out = &Level.Texels[((size_t)Y * Level.Width + X) * 4];
+                            Out[0] = Texel.r;
+                            Out[1] = Texel.g;
+                            Out[2] = Texel.b;
+                            Out[3] = Texel.a;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                while (Levels.back().Width > 1 || Levels.back().Height > 1)
+                {
+                    FRGBA8Level Next = DownsampleRGBA8(Levels.back(), bSRGB);
+                    Levels.push_back(Move(Next));
+                }
+            }
+        }
+
+        EFormat Format = EFormat::RGBA8_UNORM;
+        ETextureSwizzle Swizzle = ETextureSwizzle::Identity;
+        switch (Settings)
+        {
+        case ETextureCompressionSettings::Grayscale:             Format = EFormat::BC4_UNORM; Swizzle = ETextureSwizzle::Grayscale; break;
+        case ETextureCompressionSettings::Alpha:                 Format = EFormat::BC4_UNORM; Swizzle = ETextureSwizzle::Alpha; break;
+        case ETextureCompressionSettings::TwoChannel:            Format = EFormat::BC5_UNORM; break;
+        case ETextureCompressionSettings::GrayscaleUncompressed: Format = EFormat::R8_UNORM; Swizzle = ETextureSwizzle::Grayscale; break;
+        default:                                                 Format = bSRGB ? EFormat::SRGBA8_UNORM : EFormat::RGBA8_UNORM; break;
+        }
+
+        ResetCookedResource(Texture, Format, Swizzle, Dimensions, (uint32)Levels.size());
+
+        const int32 SearchRadius = BC4SearchRadius(Texture->CompressionQuality);
+        constexpr uint32 RedOnly[]   = { 0 };
+        constexpr uint32 AlphaOnly[] = { 3 };
+        constexpr uint32 RedGreen[]  = { 0, 1 };
+
+        for (uint32 MipIndex = 0; MipIndex < (uint32)Levels.size(); ++MipIndex)
+        {
+            FRGBA8Level& Level = Levels[MipIndex];
+            const uint32 BlocksX = (Level.Width + 3) / 4;
+            switch (Format)
+            {
+            case EFormat::BC4_UNORM:
+            {
+                const bool bAlpha = Swizzle == ETextureSwizzle::Alpha;
+                TVector<uint8> Encoded = bAlpha
+                    ? EncodeBC4Channels(Level, TSpan<const uint32>(AlphaOnly), false, SearchRadius)
+                    : EncodeBC4Channels(Level, TSpan<const uint32>(RedOnly), bSRGB, SearchRadius);
+                StoreMip(Texture, MipIndex, Level.Width, Level.Height, BlocksX * 8, Move(Encoded));
+                break;
+            }
+            case EFormat::BC5_UNORM:
+                StoreMip(Texture, MipIndex, Level.Width, Level.Height, BlocksX * 16,
+                         EncodeBC4Channels(Level, TSpan<const uint32>(RedGreen), bSRGB, SearchRadius));
+                break;
+            case EFormat::R8_UNORM:
+                StoreMip(Texture, MipIndex, Level.Width, Level.Height, Level.Width, ExtractR8(Level, bSRGB));
+                break;
+            default:
+                StoreMip(Texture, MipIndex, Level.Width, Level.Height, Level.Width * 4, Move(Level.Texels));
+                break;
+            }
+        }
+
+        return PublishCookedMips(Texture, bCreateGPUResource);
+    }
+
+    static bool IsFloatSourceFormat(EFormat Format)
+    {
+        return Format == EFormat::R32_FLOAT || Format == EFormat::RG32_FLOAT || Format == EFormat::RGB32_FLOAT || Format == EFormat::RGBA32_FLOAT;
+    }
+
+    // The first channel at the source's own precision, so a 16-bit or float heightmap keeps its steps.
+    static bool ReadFirstChannel(const Import::Textures::FTextureImportResult& Source, TVector<float>& Out)
+    {
+        const uint64 Texels = (uint64)Source.Dimensions.x * Source.Dimensions.y;
+        uint32 Stride = 0;
+        uint32 Bytes  = 1;
+        switch (Source.Format)
+        {
+        case EFormat::R8_UNORM:     Stride = 1; break;
+        case EFormat::RG8_UNORM:    Stride = 2; break;
+        case EFormat::RGBA8_UNORM:
+        case EFormat::SRGBA8_UNORM: Stride = 4; break;
+        case EFormat::R16_UNORM:    Stride = 1; Bytes = 2; break;
+        case EFormat::RG16_UNORM:   Stride = 2; Bytes = 2; break;
+        case EFormat::RGBA16_UNORM: Stride = 4; Bytes = 2; break;
+        case EFormat::R32_FLOAT:    Stride = 1; Bytes = 4; break;
+        case EFormat::RG32_FLOAT:   Stride = 2; Bytes = 4; break;
+        case EFormat::RGB32_FLOAT:  Stride = 3; Bytes = 4; break;
+        case EFormat::RGBA32_FLOAT: Stride = 4; Bytes = 4; break;
+        default:
+            return false;
+        }
+
+        if (Texels == 0 || Source.Pixels.size() < Texels * Stride * Bytes)
+        {
+            return false;
+        }
+
+        Out.resize(Texels);
+        for (uint64 i = 0; i < Texels; ++i)
+        {
+            const uint8* Texel = &Source.Pixels[i * Stride * Bytes];
+            if (Bytes == 1)
+            {
+                Out[i] = float(Texel[0]) / 255.0f;
+            }
+            else if (Bytes == 2)
+            {
+                uint16 Value;
+                Memory::Memcpy(&Value, Texel, sizeof(Value));
+                Out[i] = float(Value) / 65535.0f;
+            }
+            else
+            {
+                float Value;
+                Memory::Memcpy(&Value, Texel, sizeof(Value));
+                Out[i] = std::isfinite(Value) ? Math::Clamp(Value, -65504.0f, 65504.0f) : 0.0f;
+            }
+        }
+        return true;
+    }
+
+    static bool CookHalfFloatTexture(CTexture* Texture, const Import::Textures::FTextureImportResult& Source, bool bCreateGPUResource)
+    {
+        TVector<float> Level;
+        if (!ReadFirstChannel(Source, Level))
+        {
+            LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for HalfFloat (format {1}).",
+                      Texture->GetName().c_str(), (uint32)Source.Format);
+            return false;
+        }
+
+        if (HasPerTexelAdjustments(Texture))
+        {
+            LOG_WARN("TextureFactory: '{0}' cooks as HalfFloat, which ignores per-texel adjustments to keep the source's precision.",
+                     Texture->GetName().c_str());
+        }
+
+        const bool bLinearize = Texture->IsSRGB() && !IsFloatSourceFormat(Source.Format);
+        if (bLinearize)
+        {
+            for (float& Value : Level)
+            {
+                Value = SRGBToLinear(Value);
+            }
+        }
+
+        uint32 Width = Source.Dimensions.x;
+        uint32 Height = Source.Dimensions.y;
+        const bool bGenerateMips = Texture->GetResolvedPolicy().bGenerateMips;
+        uint32 NumMips = 1;
+        if (bGenerateMips)
+        {
+            for (uint32 Size = Math::Max(Width, Height); Size > 1; Size /= 2)
+            {
+                ++NumMips;
+            }
+        }
+
+        ResetCookedResource(Texture, EFormat::R16_FLOAT, ETextureSwizzle::Grayscale, Source.Dimensions, NumMips);
+
+        for (uint32 MipIndex = 0; MipIndex < NumMips; ++MipIndex)
+        {
+            TVector<uint8> Bytes((size_t)Width * Height * 2);
+            for (size_t i = 0; i < (size_t)Width * Height; ++i)
+            {
+                const uint16 Half = (uint16)(Math::PackHalf2x16(FVector2(Level[i], 0.0f)) & 0xFFFFu);
+                Memory::Memcpy(&Bytes[i * 2], &Half, sizeof(Half));
+            }
+            StoreMip(Texture, MipIndex, Width, Height, Width * 2, Move(Bytes));
+
+            if (MipIndex + 1 < NumMips)
+            {
+                const uint32 NextWidth = Math::Max(1u, Width / 2);
+                const uint32 NextHeight = Math::Max(1u, Height / 2);
+                TVector<float> Next((size_t)NextWidth * NextHeight);
+                for (uint32 Y = 0; Y < NextHeight; ++Y)
+                {
+                    const uint32 Y0 = Math::Min(Y * 2, Height - 1);
+                    const uint32 Y1 = Math::Min(Y * 2 + 1, Height - 1);
+                    for (uint32 X = 0; X < NextWidth; ++X)
+                    {
+                        const uint32 X0 = Math::Min(X * 2, Width - 1);
+                        const uint32 X1 = Math::Min(X * 2 + 1, Width - 1);
+                        Next[(size_t)Y * NextWidth + X] = 0.25f * (Level[(size_t)Y0 * Width + X0] + Level[(size_t)Y0 * Width + X1]
+                                                                 + Level[(size_t)Y1 * Width + X0] + Level[(size_t)Y1 * Width + X1]);
+                    }
+                }
+                Level = Move(Next);
+                Width = NextWidth;
+                Height = NextHeight;
+            }
+        }
+
+        return PublishCookedMips(Texture, bCreateGPUResource);
+    }
+
+    // An 8-bit source widened to float, so an HDR setting on an ordinary image still cooks.
+    static void PromoteToFloat(const CTexture* Texture, Import::Textures::FTextureImportResult& Source)
+    {
+        const uint64 Texels = (uint64)Source.Dimensions.x * Source.Dimensions.y;
+        const bool bSRGB = Texture->IsSRGB();
+        TVector<uint8> Floats(Texels * 4 * sizeof(float));
+        float* Out = reinterpret_cast<float*>(Floats.data());
+        for (uint64 i = 0; i < Texels; ++i)
+        {
+            for (uint32 Channel = 0; Channel < 4; ++Channel)
+            {
+                const float Value = float(Source.Pixels[i * 4 + Channel]) / 255.0f;
+                Out[i * 4 + Channel] = (bSRGB && Channel < 3) ? SRGBToLinear(Value) : Value;
+            }
+        }
+        Source.Pixels = Move(Floats);
+        Source.Format = EFormat::RGBA32_FLOAT;
+    }
+
     static bool CookTexturePixels(CTexture* Texture, TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0, bool bCreateGPUResource = true)
     {
         const uint64 RequiredBytes = (uint64)Dimensions.x * Dimensions.y * 4;
@@ -716,9 +1292,14 @@ namespace Lumina
         
         ApplySourceAdjustments(Texture, Pixels, (uint64)Dimensions.x * Dimensions.y);
 
-        basisu::basisu_encoder_init();
-
         const bool bIsSRGB     = (ColorSpace == ETextureColorSpace::SRGB);
+
+        if (IsDirectEncoded(Texture->CompressionSettings))
+        {
+            return CookDirectEncoded(Texture, Pixels, Dimensions, bIsSRGB, bCreateGPUResource);
+        }
+
+        basisu::basisu_encoder_init();
 
         const uint32 TotalEncodeThreads = (EncodeThreads == 0)
             ? Math::Max(1u, Threading::GetNumThreads() - 1u)
@@ -783,34 +1364,16 @@ namespace Lumina
         const uint32 Width  = ImageInfo.m_orig_width;
         const uint32 Height = ImageInfo.m_orig_height;
 
-        // SRGB->BC7_UNORM_SRGB; NormalMap->BC5_UNORM (shader reconstructs Z); Linear/Packed->BC7_UNORM.
-        EFormat StoredFormat;
-        basist::transcoder_texture_format TranscodeTarget;
-        if (bIsSRGB)
-        {
-            StoredFormat    = EFormat::BC7_UNORM_SRGB;
-            TranscodeTarget = basist::transcoder_texture_format::cTFBC7_RGBA;
-        }
-        else
-        {
-            // BC5-packed normals are broken, so normals cook as full BC7 RGB and the output node rebuilds Z.
-            StoredFormat    = EFormat::BC7_UNORM;
-            TranscodeTarget = basist::transcoder_texture_format::cTFBC7_RGBA;
-        }
+        // Normals cook as full BC7 RGB rather than BC5, since basisu's BC5 takes red and alpha, not red and green.
+        const bool bNoAlpha = Texture->CompressionSettings == ETextureCompressionSettings::NoAlpha;
+        const EFormat StoredFormat = bNoAlpha
+            ? (bIsSRGB ? EFormat::BC1_UNORM_SRGB : EFormat::BC1_UNORM)
+            : (bIsSRGB ? EFormat::BC7_UNORM_SRGB : EFormat::BC7_UNORM);
+        const basist::transcoder_texture_format TranscodeTarget = bNoAlpha
+            ? basist::transcoder_texture_format::cTFBC1_RGB
+            : basist::transcoder_texture_format::cTFBC7_RGBA;
 
-        FTextureResource::FDescription ImageDescription;
-        ImageDescription.Format  = StoredFormat;
-        ImageDescription.Extent  = FUIntVector2(Width, Height);
-        ImageDescription.NumMips = static_cast<uint8>(NumMips);
-
-        if (!Texture->TextureResource)
-        {
-            Texture->TextureResource = MakeUnique<FTextureResource>();
-        }
-
-        Texture->TextureResource->ImageDescription = ImageDescription;
-        Texture->TextureResource->Mips.clear();
-        Texture->TextureResource->Mips.resize(NumMips);
+        ResetCookedResource(Texture, StoredFormat, ETextureSwizzle::Identity, FUIntVector2(Width, Height), NumMips);
 
         const uint32 BytesPerBlock = RHI::Format::BytesPerBlock(StoredFormat);
 
@@ -848,39 +1411,7 @@ namespace Lumina
             Mip.Pixels     = Move(TranscodedData);
         }
 
-        const FUIntVector2 Extent = Texture->TextureResource->ImageDescription.Extent;
-
-        ApplyTextureGroupMipPolicy(Texture);
-        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
-        
-        if (!bCreateGPUResource)
-        {
-            return true;
-        }
-        
-        const FString DebugName = "Texture." + Texture->GetName().ToString();
-        RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
-        {
-            .Width  = Extent.x,
-            .Height = Extent.y,
-            .Mips   = UploadMips,
-            .Format = StoredFormat,
-            .DebugName = DebugName.c_str(),
-        });
-        for (uint32 i = 0; i < UploadMips; ++i)
-        {
-            const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
-            if (!Mip.Pixels.empty())
-            {
-                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
-            }
-        }
-
-        // Skipping this leaves the swap unarmed forever, so the slot never changes residency again.
-        RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
-        Texture->OnFullyUploadedExternally();
-
-        return true;
+        return PublishCookedMips(Texture, bCreateGPUResource);
     }
 
     static uint32 ReadU32LE(const uint8* P)
@@ -1010,44 +1541,49 @@ namespace Lumina
         Desc.Format  = Format;
         Desc.Extent  = FUIntVector2(Width, Height);
         Desc.NumMips = (uint8)StoredMips;
+        if (Format == EFormat::BC4_UNORM)
+        {
+            Desc.Swizzle = ETextureSwizzle::Grayscale;
+            Texture->CompressionSettings = ETextureCompressionSettings::Grayscale;
+        }
         Texture->TextureResource->ImageDescription = Desc;
 
-        // Trimmed before the GPU texture exists, so the allocation is single-mip rather than a full chain.
-        ApplyTextureGroupMipPolicy(Texture);
-        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
-
-        if (!bCreateGPUResource)
-        {
-            return true;
-        }
-
-        // A re-cook must keep the published ResourceID, same as CookTexturePixels.
-        const FString DebugName = "Texture." + Texture->GetName().ToString();
-        RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
-        {
-            .Width  = Width,
-            .Height = Height,
-            .Mips   = UploadMips,
-            .Format = Format,
-            .DebugName = DebugName.c_str(),
-        });
-        for (uint32 i = 0; i < UploadMips; ++i)
-        {
-            const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
-            if (!Mip.Pixels.empty())
-            {
-                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
-            }
-        }
-
-        // Skipping this leaves the swap unarmed forever, so the slot never changes residency again.
-        RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
-        Texture->OnFullyUploadedExternally();
-
-        return true;
+        return PublishCookedMips(Texture, bCreateGPUResource);
     }
 
     // Filename suffix heuristic for Auto; falls back to SRGB. Editable in the inspector for misclassifications.
+    static bool CookImportedSource(CTexture* Texture, Import::Textures::FTextureImportResult& Source, uint32 EncodeThreads, bool bCreateGPUResource)
+    {
+        if (Texture->CompressionSettings == ETextureCompressionSettings::HalfFloat)
+        {
+            return CookHalfFloatTexture(Texture, Source, bCreateGPUResource);
+        }
+
+        const bool bFloatSource = IsFloatSourceFormat(Source.Format);
+        if (Texture->ColorSpace == ETextureColorSpace::Environment || Texture->CompressionSettings == ETextureCompressionSettings::HDR)
+        {
+            if (!bFloatSource)
+            {
+                if (!NormalizeToRGBA8(Source))
+                {
+                    return false;
+                }
+                PromoteToFloat(Texture, Source);
+            }
+            return CookEnvironmentTexture(Texture, Source, bCreateGPUResource);
+        }
+
+        if (!NormalizeToRGBA8(Source))
+        {
+            LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the cook (format {1}, {2}x{3}).",
+                      Texture->GetName().c_str(), (uint32)Source.Format, Source.Dimensions.x, Source.Dimensions.y);
+            return false;
+        }
+
+        TVector<uint8> Pixels = Move(Source.Pixels);
+        return CookTexturePixels(Texture, Pixels, Source.Dimensions, Texture->ColorSpace, EncodeThreads, bCreateGPUResource);
+    }
+
     ETextureColorSpace CTextureFactory::ClassifyColorSpaceByFilename(FStringView Path)
     {
         FString Stem(Path.data(), Path.size());
@@ -1229,30 +1765,100 @@ namespace Lumina
             return true;
         }
 
-        if (Format != EFormat::BC7_UNORM && Format != EFormat::BC7_UNORM_SRGB)
+        const ETextureSwizzle Swizzle = Texture->TextureResource->ImageDescription.Swizzle;
+        const uint64 Texels = (uint64)Width * Height;
+
+        // The cook linearized color for formats with no sRGB variant, so an sRGB texture gets its gamma back here.
+        static const TArray<uint8, 256> GLinearToSRGB8 = []
         {
+            TArray<uint8, 256> Table;
+            for (int32 i = 0; i < 256; ++i)
+            {
+                Table[i] = (uint8)std::lround(LinearToSRGB(float(i) / 255.0f) * 255.0f);
+            }
+            return Table;
+        }();
+        const bool bRestoreGamma = Texture->IsSRGB() && Swizzle != ETextureSwizzle::Alpha;
+        auto Color = [&](uint8 Value) { return bRestoreGamma ? GLinearToSRGB8[Value] : Value; };
+
+        auto WriteTexel = [&](uint64 Index, uint8 R, uint8 G, uint8 B, uint8 A)
+        {
+            uint8* Out = &OutResult.Pixels[Index * 4];
+            switch (Swizzle)
+            {
+            case ETextureSwizzle::Grayscale: Out[0] = Out[1] = Out[2] = Color(R); Out[3] = 0xFF; break;
+            case ETextureSwizzle::Alpha:     Out[0] = Out[1] = Out[2] = 0xFF; Out[3] = R; break;
+            case ETextureSwizzle::Identity:  Out[0] = R; Out[1] = G; Out[2] = B; Out[3] = A; break;
+            }
+        };
+
+        OutResult.Format = EFormat::RGBA8_UNORM;
+        OutResult.Pixels.resize((size_t)Texels * 4);
+
+        if (Format == EFormat::R8_UNORM)
+        {
+            if (Mip.Pixels.size() < Texels)
+            {
+                return false;
+            }
+            for (uint64 i = 0; i < Texels; ++i)
+            {
+                WriteTexel(i, Mip.Pixels[i], 0, 0, 0xFF);
+            }
+            return true;
+        }
+
+        if (Format == EFormat::R16_FLOAT)
+        {
+            if (Mip.Pixels.size() < Texels * 2)
+            {
+                return false;
+            }
+            for (uint64 i = 0; i < Texels; ++i)
+            {
+                uint16 Half;
+                Memory::Memcpy(&Half, &Mip.Pixels[i * 2], sizeof(Half));
+                const float Value = Math::UnpackHalf2x16((uint32)Half).x;
+                WriteTexel(i, (uint8)std::lround(Math::Clamp(Value, 0.0f, 1.0f) * 255.0f), 0, 0, 0xFF);
+            }
+            return true;
+        }
+
+        basisu::texture_format BlockFormat;
+        bool bLinearColor = false;
+        switch (Format)
+        {
+        case EFormat::BC7_UNORM:
+        case EFormat::BC7_UNORM_SRGB: BlockFormat = basisu::texture_format::cBC7; break;
+        case EFormat::BC1_UNORM:
+        case EFormat::BC1_UNORM_SRGB: BlockFormat = basisu::texture_format::cBC1; break;
+        case EFormat::BC4_UNORM:      BlockFormat = basisu::texture_format::cBC4; break;
+        case EFormat::BC5_UNORM:      BlockFormat = basisu::texture_format::cBC5; bLinearColor = true; break;
+        default:
             return false;
         }
 
         const uint32 BlocksX = (Width  + 3u) / 4u;
         const uint32 BlocksY = (Height + 3u) / 4u;
-        constexpr uint32 BytesPerBlock = 16;
+        const uint32 BytesPerBlock = RHI::Format::BytesPerBlock(Format);
 
         if (Mip.Pixels.size() < (uint64)BlocksX * BlocksY * BytesPerBlock)
         {
             return false;
         }
 
-        OutResult.Format = EFormat::RGBA8_UNORM;
-        OutResult.Pixels.resize((size_t)Width * Height * 4);
-
         for (uint32 By = 0; By < BlocksY; ++By)
         {
             for (uint32 Bx = 0; Bx < BlocksX; ++Bx)
             {
                 basisu::color_rgba Block[16];
+                for (basisu::color_rgba& Texel : Block)
+                {
+                    Texel.set(0, 0, 0, 255);
+                }
+
                 const uint8* Source = Mip.Pixels.data() + ((uint64)By * BlocksX + Bx) * BytesPerBlock;
-                if (!basisu::unpack_block(basisu::texture_format::cBC7, Source, Block, false))
+                if (!basisu::unpack_block(BlockFormat, Source, Block, false))
                 {
                     return false;
                 }
@@ -1274,11 +1880,15 @@ namespace Lumina
                         }
 
                         const basisu::color_rgba& Texel = Block[Ty * 4 + Tx];
-                        uint8* Out = &OutResult.Pixels[((size_t)Y * Width + X) * 4];
-                        Out[0] = Texel.r;
-                        Out[1] = Texel.g;
-                        Out[2] = Texel.b;
-                        Out[3] = Texel.a;
+                        const uint64 Index = (uint64)Y * Width + X;
+                        if (bLinearColor)
+                        {
+                            WriteTexel(Index, Color(Texel.r), Color(Texel.g), 0, 0xFF);
+                        }
+                        else
+                        {
+                            WriteTexel(Index, Texel.r, Texel.g, Texel.b, Texel.a);
+                        }
                     }
                 }
             }
@@ -1394,14 +2004,16 @@ namespace Lumina
             : ClassifyColorSpaceByFilename(SourcePath.c_str());
 
         // Float-source data must take the Environment path; Basis would silently corrupt it.
-        const bool bIsFloatSource =
-            Result.Format == EFormat::R32_FLOAT    ||
-            Result.Format == EFormat::RG32_FLOAT   ||
-            Result.Format == EFormat::RGB32_FLOAT  ||
-            Result.Format == EFormat::RGBA32_FLOAT;
-        if (bIsFloatSource)
+        if (IsFloatSourceFormat(Result.Format) && Texture->CompressionSettings != ETextureCompressionSettings::HalfFloat)
         {
             Texture->ColorSpace = ETextureColorSpace::Environment;
+        }
+
+        // A one-channel file would spend three quarters of a BC7 block on copies of the same value.
+        const bool bSingleChannelSource = Result.Format == EFormat::R8_UNORM || Result.Format == EFormat::R16_UNORM;
+        if (bSingleChannelSource && Texture->CompressionSettings == ETextureCompressionSettings::Default)
+        {
+            Texture->CompressionSettings = ETextureCompressionSettings::Grayscale;
         }
 
         #if USING(WITH_EDITOR)
@@ -1413,21 +2025,7 @@ namespace Lumina
             Texture->SourcePath = FString(SourcePath.c_str());
         }
 
-        if (Texture->ColorSpace == ETextureColorSpace::Environment)
-        {
-            return CookEnvironmentTexture(Texture, Result, Request.bCreateGPUResource);
-        }
-
-        if (Import::Textures::FTextureImportResult& Mutable = MaybeResult.value(); NormalizeToRGBA8(Mutable))
-        {
-            TVector<uint8> Pixels = Move(Mutable.Pixels);
-            return CookTexturePixels(Texture, Pixels, Mutable.Dimensions, Texture->ColorSpace,
-                                     Request.EncodeThreadBudget, Request.bCreateGPUResource);
-        }
-
-        LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}); import skipped.",
-                  Texture->GetName().c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
-        return false;
+        return CookImportedSource(Texture, MaybeResult.value(), Request.EncodeThreadBudget, Request.bCreateGPUResource);
     }
 
     bool CTextureFactory::CookLayerFromFile(CTexture* Scratch, FStringView SourcePath, ETextureColorSpace ColorSpace,
@@ -1546,10 +2144,9 @@ namespace Lumina
             }
 
             // Block-compressed pixels have already lost information, so re-encoding them loses more.
-            if (Texture->TextureResource->ImageDescription.Format == EFormat::BC7_UNORM
-             || Texture->TextureResource->ImageDescription.Format == EFormat::BC7_UNORM_SRGB)
+            if (RHI::Format::Info(Texture->TextureResource->ImageDescription.Format).BlockSize > 1)
             {
-                LOG_WARN("TextureFactory::Recook: '{0}' is re-cooking from its own BC7 blocks; this is a second "
+                LOG_WARN("TextureFactory::Recook: '{0}' is re-cooking from its own compressed blocks; this is a second "
                          "compression generation. Reimport it to give the asset a stored source.",
                          Texture->GetName().c_str());
             }
@@ -1584,33 +2181,12 @@ namespace Lumina
         }
 
         // Float-source data must stay on the Environment path even if the user changed ColorSpace.
-        const bool bIsFloatSource =
-            Source.Format == EFormat::R32_FLOAT    ||
-            Source.Format == EFormat::RG32_FLOAT   ||
-            Source.Format == EFormat::RGB32_FLOAT  ||
-            Source.Format == EFormat::RGBA32_FLOAT;
-        if (bIsFloatSource)
+        if (IsFloatSourceFormat(Source.Format) && Texture->CompressionSettings != ETextureCompressionSettings::HalfFloat)
         {
             Texture->ColorSpace = ETextureColorSpace::Environment;
         }
 
-        bool bCooked = false;
-        if (Texture->ColorSpace == ETextureColorSpace::Environment)
-        {
-            bCooked = CookEnvironmentTexture(Texture, Source);
-        }
-        else if (NormalizeToRGBA8(Source))
-        {
-            TVector<uint8> Pixels = Move(Source.Pixels);
-            bCooked = CookTexturePixels(Texture, Pixels, Source.Dimensions, Texture->ColorSpace);
-        }
-        else
-        {
-            LOG_ERROR("TextureFactory::CookFromSource: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}).",
-                      Texture->GetName().c_str(), (uint32)Source.Format, Source.Dimensions.x, Source.Dimensions.y);
-        }
-
-        if (!bCooked)
+        if (!CookImportedSource(Texture, Source, 0, true))
         {
             return false;
         }

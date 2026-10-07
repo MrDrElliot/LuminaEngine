@@ -19,6 +19,7 @@ namespace Lumina
 {
     class CClass;
     class CStruct;
+    class CTexture;
 }
 
 namespace Lumina::ImGuiX
@@ -233,6 +234,13 @@ namespace Lumina::ImGuiX
     RUNTIME_API void BeginHDRPreview(ImDrawList* DrawList, float ExposureStops);
     RUNTIME_API void EndHDRPreview(ImDrawList* DrawList);
 
+    // Presents the following images the way Texture's samples should look, so a texture asset reads as its source image.
+    RUNTIME_API void BeginTextureDisplay(ImDrawList* DrawList, const CTexture* Texture, float ExposureStops = 0.0f, bool bToneMapHDR = true);
+    RUNTIME_API void EndTextureDisplay(ImDrawList* DrawList);
+
+    // ImGui::Image of a texture asset, wrapped in BeginTextureDisplay.
+    RUNTIME_API void TextureImage(const CTexture* Texture, const ImVec2& Size);
+
     /**
      * Draws the following images as one slice of a Texture2DArray.
      *
@@ -249,7 +257,7 @@ namespace Lumina::ImGuiX
      *
      * Always pair with EndArrayPreview -- the mode persists for the rest of the draw list otherwise.
      */
-    RUNTIME_API void BeginArrayPreview(ImDrawList* DrawList, uint32 Slice);
+    RUNTIME_API void BeginArrayPreview(ImDrawList* DrawList, uint32 Slice, bool bEncodeLinear = false);
     RUNTIME_API void EndArrayPreview(ImDrawList* DrawList);
 
     namespace Detail

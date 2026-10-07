@@ -14,6 +14,7 @@ namespace Lumina
     class CEdNodeGraph;
     class CObject;
     class CStruct;
+    class FProperty;
     class CWorld;
     class IEditorToolContext;
 }
@@ -103,7 +104,9 @@ namespace Lumina::SessionOps
         FString& OutError);
 
     // Transacts through whichever open editor owns Object; false when none does, so undo cannot see it.
-    EDITOR_API bool RunObjectTransacted(CObject* Object, FName Label, const TFunction<void()>& Mutate);
+    // EditedProperty, when given, gets the response a panel edit of it would, such as a texture recook.
+    EDITOR_API bool RunObjectTransacted(CObject* Object, FName Label, const TFunction<void()>& Mutate,
+        FProperty* EditedProperty = nullptr);
 
     //~ Undo, reported and driven against the world editor.
 

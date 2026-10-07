@@ -228,7 +228,7 @@ namespace Lumina
             Args.Translate[0] = -1.0f - DrawData->DisplayPos.x * Args.Scale[0];
             Args.Translate[1] = -1.0f - DrawData->DisplayPos.y * Args.Scale[1];
             Args.SamplerIndex = (uint32)RHI::EStockSampler::LinearWrap;
-            Args.DisplayMode  = 0;      // cooked textures are already encoded
+            Args.DisplayMode  = 0;      // UI atlases hold display-encoded bytes
             Args.Exposure     = 1.0f;
             Args.ArraySlice   = 0;
             Args.bIsArray     = 0;      // the overwhelming majority of ImGui draws are plain Texture2D

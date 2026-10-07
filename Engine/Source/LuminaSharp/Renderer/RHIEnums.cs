@@ -82,6 +82,9 @@ public enum EStencilOp : byte
     Keep, Zero, Replace, IncrementAndClamp, DecrementAndClamp, Invert, IncrementAndWrap, DecrementAndWrap,
 }
 
+// How a sampled view presents a texture with fewer than four channels. Mirrors Format.h ETextureSwizzle.
+public enum ETextureSwizzle : byte { Identity, Grayscale, Alpha }
+
 // Texture/render format. Mirrors Format.h EFormat (uint8) exactly.
 public enum EFormat : byte
 {

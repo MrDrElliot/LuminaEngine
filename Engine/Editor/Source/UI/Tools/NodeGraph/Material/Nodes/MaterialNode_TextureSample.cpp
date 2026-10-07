@@ -128,7 +128,7 @@ namespace Lumina
         // An empty body reads as nothing-valid-assigned rather than as a purple square.
         if (Texture.IsValid() && Texture->GetResourceID() >= 0 && !Texture->IsA<CTextureArray>())
         {
-            ImGui::Image(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()), ImVec2(126.0f, 126.f));
+            ImGuiX::TextureImage(Texture.Get(), ImVec2(126.0f, 126.f));
         }
     }
 

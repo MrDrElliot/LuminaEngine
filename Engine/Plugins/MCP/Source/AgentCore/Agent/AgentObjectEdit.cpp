@@ -101,7 +101,7 @@ namespace Lumina::Agent
         };
 
         // Undoable only when an open editor owns it, so an edit to an unopened asset still applies.
-        Result.bUndoable = SessionOps::RunObjectTransacted(Owner, Label, Mutate);
+        Result.bUndoable = SessionOps::RunObjectTransacted(Owner, Label, Mutate, Target.Property);
         if (!Result.bUndoable)
         {
             Mutate();
