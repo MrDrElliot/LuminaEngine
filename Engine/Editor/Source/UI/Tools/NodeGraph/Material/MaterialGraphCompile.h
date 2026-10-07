@@ -3,6 +3,8 @@
 #include "Containers/Name.h"
 #include "Containers/Vector.h"
 #include "Containers/String.h"
+#include "Memory/SmartPtr.h"
+#include <atomic>
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 
@@ -27,9 +29,17 @@ namespace Lumina
         uint32 Generation = 0;
     };
 
+    // Stages a compile dispatched and stages the shader compiler handed back, since a failed stage leaves the last good bytecode in place.
+    struct FMaterialStageCommitLog
+    {
+        std::atomic<uint32> Dispatched{0};
+        std::atomic<uint32> Committed{0};
+    };
+
     struct FMaterialGraphCompileResult
     {
         bool                            bSuccess = false;
+        TSharedPtr<FMaterialStageCommitLog> StageLog;
         TVector<EdNodeGraph::FError>    Errors;
         // Non-fatal findings; populated on SUCCESS too, which is the point of them.
         TVector<EdNodeGraph::FError>    Warnings;

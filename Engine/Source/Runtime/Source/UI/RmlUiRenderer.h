@@ -110,6 +110,7 @@ namespace Lumina
             FString                    BrushSourcePath;            // resolved asset path; re-validated so a rename/delete breaks the brush
             bool                       bBrushStale = false;        // source path no longer resolves -> cleared + not rendered (material stays rooted so a rename-back can resume)
             bool                       bBrushCleared = false;      // RT has defined contents; until then a not-yet-ready material would leave the UI sampling garbage
+            bool                       bBrushRendered = false;     // Holds a frame of the material, which a compile keeps on screen and a domain change must not
             bool                       bStraightAlpha = false;     // asset textures are not premultiplied like RmlUi's own; the shader premultiplies them
         };
 

@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Cast.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
 #include "Renderer/RenderManager.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Log/Log.h"
@@ -408,7 +409,46 @@ namespace Lumina
     {
         Super::PostPropertyChange(ChangedProperty);
 
+        if (ChangedProperty != nullptr && ChangedProperty->GetPropertyName() == FName("Material"))
+        {
+            AdoptEditedParent();
+            return;
+        }
+
         RefreshSubtree();
+    }
+
+    // The details panel writes the parent field directly, so the registration load and SetParentMaterial do is redone here.
+    void CMaterialInstance::AdoptEditedParent()
+    {
+        CMaterialInterface* EditedParent = Material.Get();
+        Material = nullptr;
+        if (!SetParentMaterial(EditedParent))
+        {
+            SetReadyForRender(false);
+            return;
+        }
+
+        if (Material == nullptr)
+        {
+            SetReadyForRender(false);
+            return;
+        }
+
+        if (GetMaterialIndex() == -1)
+        {
+            if (FRenderManager* RenderManager = TryRender())
+            {
+                RenderManager->GetMaterialManager().AddMaterial(this);
+            }
+        }
+        else
+        {
+            UpdateMaterialUniforms();
+        }
+
+        SetReadyForRender(true);
+        RequestStaticSwitchPermutation();
     }
 
     uint32 CMaterialInstance::GetOverriddenTextureMask() const

@@ -202,6 +202,8 @@ namespace Lumina
         /** Editor-only. Asks the root to build the permutation this level's key selects, if it has not. */
         void RequestStaticSwitchPermutation();
 
+        void AdoptEditedParent();
+
         FMaterialUniforms                       MaterialUniforms;
     };
 }

@@ -365,10 +365,13 @@ namespace Lumina
         const bool   bPermutation = Target.bPermutation;
         const uint64 TargetKey    = Target.Key;
         const uint32 TargetGen    = Target.Generation;
-        auto CommitStage = [Material, bPermutation, TargetKey, TargetGen](EMaterialShaderStage Stage)
+        Result.StageLog = MakeShared<FMaterialStageCommitLog>();
+        auto CommitStage = [Material, bPermutation, TargetKey, TargetGen, Log = Result.StageLog](EMaterialShaderStage Stage)
         {
-            return [Material, Stage, bPermutation, TargetKey, TargetGen](const FShaderHeader& Header)
+            Log->Dispatched.fetch_or(1u << (uint32)Stage, std::memory_order_relaxed);
+            return [Material, Stage, bPermutation, TargetKey, TargetGen, Log](const FShaderHeader& Header)
             {
+                Log->Committed.fetch_or(1u << (uint32)Stage, std::memory_order_release);
                 const TSpan<const uint32> Spirv(Header.Binaries.data(), Header.Binaries.size());
                 if (bPermutation)
                 {
@@ -488,13 +491,20 @@ namespace Lumina
             return;
         }
 
+        const uint32 Dispatched = Result.StageLog ? Result.StageLog->Dispatched.load(std::memory_order_acquire) : 0u;
+        const uint32 Committed  = Result.StageLog ? Result.StageLog->Committed.load(std::memory_order_acquire) : 0u;
+
         // Checked against the permutation's own bytecode, since GetStageForKey would fall back and pass.
         auto StageEmpty = [&](EMaterialShaderStage Stage) -> bool
         {
+            const uint32 Bit = 1u << (uint32)Stage;
             const TVector<uint32>& Binaries = Target.bPermutation
                                             ? Material->GetPermutationStageBinaries(Target.Key, Stage)
                                             : Material->GetShaderStageBinaries(Stage);
-            if (!Binaries.empty())
+
+            // A stage this compile sent out that never came back failed, even with the previous compile's bytecode still loaded.
+            const bool bFailedThisCompile = (Dispatched & Bit) != 0u && (Committed & Bit) == 0u;
+            if (!Binaries.empty() && !bFailedThisCompile)
             {
                 return false;
             }

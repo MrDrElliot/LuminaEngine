@@ -2600,6 +2600,12 @@ namespace Lumina
             FShaderH PS;
             if (!Material->ResolveDomainShaders(EMaterialType::UI, VS, PS))
             {
+                // A recompile keeps the last frame up, but a material that left the UI domain should not freeze on one.
+                if (Tex.bBrushRendered && Material->GetMaterialType() != EMaterialType::UI)
+                {
+                    Tex.bBrushCleared  = false;
+                    Tex.bBrushRendered = false;
+                }
                 ClearBrushOnce(Tex);
                 continue;
             }
@@ -2640,7 +2646,8 @@ namespace Lumina
             RHI::CmdDraw(CL, ArgsPtr, 3, 1, 0, 0);
 
             RHI::CmdEndRenderPass(CL);
-            Tex.bBrushCleared = true;
+            Tex.bBrushCleared  = true;
+            Tex.bBrushRendered = true;
             bAnyWrites = true;
         }
 
