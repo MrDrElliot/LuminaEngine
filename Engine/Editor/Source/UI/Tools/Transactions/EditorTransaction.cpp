@@ -60,6 +60,11 @@ namespace Lumina
 
         UndoStack.back().Commands.push_back(Move(Command));
         RedoStack.clear();
+
+        if (OnCommitted)
+        {
+            OnCommitted();
+        }
     }
 
     void FTransactionManager::AbortTransaction()
@@ -76,6 +81,11 @@ namespace Lumina
         }
         UndoStack.push_back(Move(Transaction));
         RedoStack.clear();
+
+        if (OnCommitted)
+        {
+            OnCommitted();
+        }
     }
 
     void FTransactionManager::Undo()

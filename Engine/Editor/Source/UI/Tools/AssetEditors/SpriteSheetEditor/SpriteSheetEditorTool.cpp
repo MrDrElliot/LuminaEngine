@@ -395,4 +395,16 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(PreviewWindowName).c_str(), TopRightID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(SpriteSheetDetailsWindowName).c_str(), RightDockID);
     }
+
+    void FSpriteSheetEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        // The selection is an index into animations a restore may have shortened.
+        if (CSpriteSheet* Sheet = GetAsset<CSpriteSheet>())
+        {
+            SelectedAnimation = Math::Clamp(SelectedAnimation, 0, Math::Max((int32)Sheet->Animations.size() - 1, 0));
+        }
+        SelectedFrameSlot = -1;
+    }
 }

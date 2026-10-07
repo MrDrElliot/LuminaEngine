@@ -19,9 +19,18 @@ namespace Lumina
             return Image;
         }
 
+        // Versions are bookkeeping a restore keeps current anyway, so zeroed they leave equal content comparing equal.
+        const uint64 ContentVersion         = Graph->ContentVersion;
+        const uint64 CompiledContentVersion = Graph->CompiledContentVersion;
+        Graph->ContentVersion         = 0;
+        Graph->CompiledContentVersion = 0;
+
         FMemoryWriter Writer(Image.Bytes);
         FObjectProxyArchiver Ar(Writer, false);
         Graph->GetClass()->SerializeTaggedProperties(Ar, Graph);
+
+        Graph->ContentVersion         = ContentVersion;
+        Graph->CompiledContentVersion = CompiledContentVersion;
 
         auto Hold = [&Image](CObject* Object) -> CObject*
         {

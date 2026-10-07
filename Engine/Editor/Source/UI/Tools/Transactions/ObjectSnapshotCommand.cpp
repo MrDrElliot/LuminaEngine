@@ -12,19 +12,55 @@ namespace Lumina
         : Object(InObject)
         , Name(InName)
     {
-        Capture(Before);
+        Capture(InObject, Before);
+        CollectReferenced(InObject, Referenced);
+    }
+
+    FObjectSnapshotCommand::FObjectSnapshotCommand(CObject* InObject, FName InName, TVector<uint8> InBefore, TVector<uint8> InAfter,
+        FSerializer InSerializer, TVector<TStrongObjectPtr<CObject>> InReferenced)
+        : Object(InObject)
+        , Name(InName)
+        , Before(Move(InBefore))
+        , After(Move(InAfter))
+        , bAfterCaptured(true)
+        , Serializer(Move(InSerializer))
+        , Referenced(Move(InReferenced))
+    {
+        CollectReferenced(InObject, Referenced);
+    }
+
+    void FObjectSnapshotCommand::CollectReferenced(CObject* Object, TVector<TStrongObjectPtr<CObject>>& Out)
+    {
+        if (Object == nullptr)
+        {
+            return;
+        }
+
+        FObjectReferenceVisitor::VisitStruct(Object->GetClass(), Object, [&Out](CObject* Referenced) -> CObject*
+        {
+            if (Referenced != nullptr)
+            {
+                Out.push_back(Referenced);
+            }
+            return Referenced;
+        });
     }
 
     void FObjectSnapshotCommand::Finalize()
     {
-        Capture(After);
+        if (!bAfterCaptured)
+        {
+            Capture(Object.Get(), After, Serializer);
+            CollectReferenced(Object.Get(), Referenced);
+            bAfterCaptured = true;
+        }
     }
 
-    void FObjectSnapshotCommand::Capture(TVector<uint8>& Out) const
+    void FObjectSnapshotCommand::Capture(CObject* Obj, TVector<uint8>& Out, const FSerializer& Serializer)
     {
-        Out.clear();
+        LUMINA_PROFILE_SCOPE();
 
-        CObject* Obj = Object.Get();
+        Out.clear();
         if (Obj == nullptr)
         {
             return;
@@ -32,7 +68,14 @@ namespace Lumina
 
         FMemoryWriter Writer(Out);
         FObjectProxyArchiver Ar(Writer, false);
-        Obj->GetClass()->SerializeTaggedProperties(Ar, Obj);
+        if (Serializer)
+        {
+            Serializer(Ar, Obj);
+        }
+        else
+        {
+            Obj->GetClass()->SerializeTaggedProperties(Ar, Obj);
+        }
     }
 
     void FObjectSnapshotCommand::Restore(const TVector<uint8>& In) const
@@ -45,7 +88,14 @@ namespace Lumina
 
         FMemoryReader Reader(In);
         FObjectProxyArchiver Ar(Reader, true);
-        Obj->GetClass()->SerializeTaggedProperties(Ar, Obj);
+        if (Serializer)
+        {
+            Serializer(Ar, Obj);
+        }
+        else
+        {
+            Obj->GetClass()->SerializeTaggedProperties(Ar, Obj);
+        }
 
         Obj->PostPropertyChange(nullptr);
         if (CPackage* Package = Obj->GetPackage())

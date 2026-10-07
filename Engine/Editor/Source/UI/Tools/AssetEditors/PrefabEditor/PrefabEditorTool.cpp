@@ -227,6 +227,7 @@ namespace Lumina
             {
                 return;
             }
+            BeginComponentTransaction({ Data.Entity }, SDisabledTag::StaticStruct());
             if (State.bDisabled)
             {
                 World->EmplaceComponent<SDisabledTag>(Data.Entity);
@@ -235,6 +236,8 @@ namespace Lumina
             {
                 World->RemoveComponent<SDisabledTag>(Data.Entity);
             }
+            EndTransaction(State.bDisabled ? "Disable Entity" : "Enable Entity");
+            MarkSceneDirty();
         };
 
         OutlinerContext.HoveredFunction = [this](FTreeListView& Tree, FTreeNodeID Item)

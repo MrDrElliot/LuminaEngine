@@ -60,6 +60,7 @@ namespace Lumina
             GetAsset<CBlendSpace>()->RebuildTopology();
             NotifyAssetDataChanged();
         });
+        WirePropertyTableUndo(*SampleTable);
 
         // The Samples array and both axes live on this table, and all of them feed the topology.
         GetPropertyTable()->SetPostEditCallback([this](const FPropertyChangedEvent&)

@@ -832,6 +832,17 @@ namespace Lumina
                 {
                     TUniquePtr<FPropertyTable> NewTable = MakeUnique<FPropertyTable>(Transition);
                     NewTable->SetContext(&PropertyContext);
+
+                    // A transition edit changes what the machine compiles to, like any other edit on this canvas.
+                    NewTable->SetPostEditCallback([this](const FPropertyChangedEvent&)
+                    {
+                        NotifyAssetDataChanged();
+                        if (!GraphStack.empty() && GraphStack.back().Graph != nullptr)
+                        {
+                            GraphStack.back().Graph->NotifyContentChanged();
+                        }
+                    });
+                    WirePropertyTableUndo(*NewTable);
                     It = TransitionTables.emplace(Transition, Move(NewTable)).first;
                 }
                 It->second->DrawTree();

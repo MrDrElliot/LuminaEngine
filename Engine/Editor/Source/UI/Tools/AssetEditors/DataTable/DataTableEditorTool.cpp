@@ -79,6 +79,7 @@ namespace Lumina
             // A details edit can change a value the grid is sorting or filtering on.
             bDisplayOrderDirty = true;
         });
+        WirePropertyTableUndo(*RowPropertyTable);
 
         CreateToolWindow(TableWindowName, [this](bool bFocused)
         {
@@ -1014,5 +1015,21 @@ namespace Lumina
         }
 
         ImGui::EndPopup();
+    }
+
+    void FDataTableEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        // A restore can drop the selected row or change the row struct the columns came from.
+        if (CDataTable* Table = GetAsset<CDataTable>())
+        {
+            if (SelectedRow >= Table->GetRowCount())
+            {
+                SelectedRow = Constants::kIndexNone;
+            }
+        }
+        RebuildColumns();
+        bDisplayOrderDirty = true;
     }
 }

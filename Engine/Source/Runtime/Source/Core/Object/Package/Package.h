@@ -293,9 +293,12 @@ namespace Lumina
 
         RUNTIME_API NODISCARD FFixedString GetPackagePath() const;
         
-        RUNTIME_API void MarkDirty() { if (!IsTransientPackage()) bDirty = true; }
+        RUNTIME_API void MarkDirty() { if (!IsTransientPackage()) { bDirty = true; ++EditGeneration; } }
         RUNTIME_API void ClearDirty() { bDirty = false; }
         RUNTIME_API NODISCARD bool IsDirty() const { return bDirty; }
+
+        // Bumped by every MarkDirty, so an editor can tell an edit happened even while the package stays dirty.
+        NODISCARD uint32 GetEditGeneration() const { return EditGeneration; }
         
         template<typename T>
         static void AddPackageExt(T& String)
@@ -308,6 +311,7 @@ namespace Lumina
         RUNTIME_API static FPackageDestroyedDelegate OnPackageDestroyed;
 
         uint32                           bDirty:1 = false;
+        uint32                           EditGeneration = 0;
         
         TSharedPtr<FPackageFileBytes>    LoaderBytes;
         TVector<FObjectImport>           ImportTable;

@@ -149,6 +149,9 @@ namespace Lumina
         // Undo cursor at the last write-back; a change means the user actually edited the buffer,
         // so we don't rewrite (and dirty) the package every frame.
         size_t                          LastCodeEditorUndoIndex = 0;
+
+        // Open while a typing session in the code panel has unrecorded changes.
+        bool                            bCodeEditOpen = false;
         FCompilationResultInfo          CompilationResult;
         // False until the first compile, so a save before one never toasts a result nothing produced.
         bool                            bHasCompiled = false;

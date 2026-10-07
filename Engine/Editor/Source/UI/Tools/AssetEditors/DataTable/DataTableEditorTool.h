@@ -34,6 +34,7 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_TABLE; }
 
         void OnInitialize() override;
+        void OnPostUndoRedo() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override {}
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 

@@ -625,6 +625,8 @@ namespace Lumina
                 return;
             }
 
+            // Disabled is saved with the level and changes what the game runs, so it is an edit like any other.
+            BeginComponentTransaction({ Data.Entity }, SDisabledTag::StaticStruct());
             if (State.bDisabled)
             {
                 ECS::GetWorldRegistry(*World).Emplace<SDisabledTag>(Data.Entity);
@@ -633,6 +635,7 @@ namespace Lumina
             {
                 ECS::GetWorldRegistry(*World).Remove<SDisabledTag>(Data.Entity);
             }
+            EndTransaction(State.bDisabled ? "Disable Entity" : "Enable Entity");
         };
 
         OutlinerContext.SecondaryToggleFunction = [this](FTreeListView& Tree, FTreeNodeID Item)

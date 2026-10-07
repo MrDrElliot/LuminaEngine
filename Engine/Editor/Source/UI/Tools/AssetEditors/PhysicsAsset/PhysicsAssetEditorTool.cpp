@@ -247,6 +247,7 @@ namespace Lumina
         {
             NotifyAssetDataChanged();
         });
+        WirePropertyTableUndo(*DetailsTable);
 
         SetupTreeContext();
 

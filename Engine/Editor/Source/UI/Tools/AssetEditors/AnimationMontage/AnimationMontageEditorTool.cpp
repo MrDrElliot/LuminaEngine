@@ -1027,4 +1027,12 @@ namespace Lumina
             }
         }
     }
+
+    void FAnimationMontageEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        // The selection is an index into arrays a restore may have shortened.
+        ClearSelection();
+    }
 }

@@ -96,6 +96,7 @@ namespace Lumina
             RebuildHullWireframes();
             NotifyAssetDataChanged();
         });
+        WirePropertyTableUndo(*DetailsTable);
 
         CreateToolWindow(CollisionShapeListWindowName, [this](bool) { DrawShapeListWindow(); });
         CreateToolWindow(CollisionShapeDetailsWindowName, [this](bool) { DrawDetailsWindow(); });

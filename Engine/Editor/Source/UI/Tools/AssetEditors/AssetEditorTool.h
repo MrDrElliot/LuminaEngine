@@ -9,6 +9,7 @@
 #include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/EditorTool.h"
+#include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 
 namespace Lumina
@@ -53,6 +54,7 @@ namespace Lumina
 
                 // Property edits on the asset become undoable CObject snapshots -- undo for free, no per-editor code.
                 SetupPropertyUndo();
+                SetupAutoAssetUndo();
             }
 
             // Subscribed HERE and not in OnInitialize: every asset editor overrides OnInitialize to build
@@ -90,6 +92,15 @@ namespace Lumina
         virtual void OnPropertyEditFinished(const FPropertyChangedEvent& Event) {}
 
         void OnPostUndoRedo() override;
+
+        // Gives a secondary details table the same undo the main one has, snapshotting whatever object it shows.
+        void WirePropertyTableUndo(FPropertyTable& Table);
+
+        // Every edit that marks the package dirty becomes an undo step unless a tool opts out, as one holding bulk data should.
+        NODISCARD virtual bool WantsAutomaticAssetUndo() { return AsSceneEditor() == nullptr; }
+
+        // What an automatic undo step stores of the asset, its reflected properties unless a tool edits data beyond them.
+        virtual void SerializeAssetForUndo(FArchive& Ar, CObject* InAsset);
 
         // The object the details panel is showing, or null when it shows a plain struct.
         NODISCARD CObject* GetPropertyTableObject() const;
@@ -137,6 +148,20 @@ namespace Lumina
 
         // Wires the PropertyTable start and finish callbacks to undo snapshots, then OnPropertyEditFinished.
         void SetupPropertyUndo();
+
+        void SetupAutoAssetUndo();
+
+        FObjectSnapshotCommand::FSerializer MakeAssetUndoSerializer();
+
+        // Records any change to the asset since the last step, once no drag or widget edit is still in flight.
+        void CommitUntrackedAssetEdits();
+
+        // Taken lazily, so a step recorded elsewhere or an undo only marks it stale.
+        TVector<uint8> AssetUndoImage;
+        TVector<TStrongObjectPtr<CObject>> AssetUndoReferenced;
+        uint32         AssetUndoGeneration = 0;
+        bool           bAssetUndoImageStale = true;
+        bool           bAutoAssetUndoOff = false;
 
         // The graph whose node an open property edit belongs to, which commits that edit as its own step.
         TWeakObjectPtr<CEdNodeGraph> PropertyEditGraph;

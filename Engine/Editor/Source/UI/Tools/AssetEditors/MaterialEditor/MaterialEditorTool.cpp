@@ -599,6 +599,16 @@ namespace Lumina
     {
         CMaterialExpression_CustomSlang* Node = Cast<CMaterialExpression_CustomSlang>(SelectedNode);
 
+        // Leaving the panel or the node ends the typing session, before any early return can strand it open.
+        if (bCodeEditOpen && (Node != CodeEditorBoundNode || !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)))
+        {
+            bCodeEditOpen = false;
+            if (NodeGraph != nullptr)
+            {
+                NodeGraph->EndLongEdit("Edit Custom Code");
+            }
+        }
+
         if (Node == nullptr)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
@@ -721,7 +731,15 @@ namespace Lumina
             const std::string Text = CodeEditor.GetText();
             if (Node->Code.size() != Text.size() || memcmp(Node->Code.data(), Text.data(), Text.size()) != 0)
             {
+                // The editor keeps its own per-keystroke undo, so the graph takes one step per typing session.
+                if (!bCodeEditOpen && NodeGraph != nullptr)
+                {
+                    NodeGraph->BeginLongEdit();
+                    bCodeEditOpen = true;
+                }
+
                 Node->Code.assign(Text.c_str(), Text.size());
+                Node->NotifyValueEdited();
 
                 if (CPackage* Package = Node->GetPackage())
                 {
@@ -729,6 +747,7 @@ namespace Lumina
                 }
             }
         }
+
     }
 
     // Both are invisible while authoring and only show up in a GPU capture.

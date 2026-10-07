@@ -767,4 +767,13 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),   RightDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(SelectionWindowName).c_str(),  RightBottomDockID);
     }
+
+    void FParticleSystemEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        // The authoring stacks mirror the asset's emitters, so they are rebuilt from what the restore left.
+        SyncEmitterStacks();
+        Compile();
+    }
 }

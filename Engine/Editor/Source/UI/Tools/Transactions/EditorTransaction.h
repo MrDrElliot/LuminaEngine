@@ -139,6 +139,9 @@ namespace Lumina
         // Set by the owning tool to rebuild caches after any Undo/Redo (selection resync, outliner, etc.).
         TFunction<void()> OnPostApply;
 
+        // Fired whenever a step lands on the stack, so a tool watching for untracked edits can move its baseline.
+        TFunction<void()> OnCommitted;
+
     private:
 
         void PushCommitted(FTransaction&& Transaction);

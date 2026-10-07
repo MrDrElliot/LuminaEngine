@@ -163,6 +163,30 @@ namespace Lumina
         return World->TryGetComponent<SSimpleAnimationComponent>(MeshEntity);
     }
 
+    void FAnimationEditorTool::SerializeAssetForUndo(FArchive& Ar, CObject* InAsset)
+    {
+        FAssetEditorTool::SerializeAssetForUndo(Ar, InAsset);
+
+        // The timeline edits live in the resource, which reflection does not reach, while the pose data stays out.
+        CAnimation* Animation = Cast<CAnimation>(InAsset);
+        FAnimationResource* Resource = Animation != nullptr ? Animation->GetAnimationResource() : nullptr;
+        if (Resource == nullptr)
+        {
+            return;
+        }
+
+        Ar << Resource->Notifies;
+        Ar << Resource->NotifyStates;
+        Ar << Resource->NotifyTracks;
+        Ar << Resource->Curves;
+        Ar << Resource->SyncTrackName;
+
+        if (Ar.IsReading())
+        {
+            Resource->RebuildSyncTrack();
+        }
+    }
+
     void FAnimationEditorTool::MarkAnimationDirty()
     {
         if (CAnimation* Animation = GetAsset<CAnimation>())
@@ -1310,5 +1334,13 @@ namespace Lumina
             ImGui::TextDisabled("Select a channel to view its curves.");
         }
         ImGui::EndChild();
+    }
+
+    void FAnimationEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        // The selection is an index into notify arrays a restore may have shortened.
+        ClearSelection();
     }
 }

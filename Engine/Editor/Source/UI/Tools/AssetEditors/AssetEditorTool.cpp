@@ -53,10 +53,16 @@ namespace Lumina
 
     void FAssetEditorTool::SetupPropertyUndo()
     {
+        WirePropertyTableUndo(PropertyTable);
+    }
+
+    void FAssetEditorTool::WirePropertyTableUndo(FPropertyTable& Table)
+    {
         // The table often shows a graph node or another sub-object, so the snapshot follows what it shows.
-        PropertyTable.SetStartEditCallback([this](const FPropertyChangedEvent& Event)
+        Table.SetStartEditCallback([this, &Table](const FPropertyChangedEvent& Event)
         {
-            CObject* Edited = GetPropertyTableObject();
+            const CStruct* Type = Table.GetType();
+            CObject* Edited = Type != nullptr && Type->IsA<CClass>() ? static_cast<CObject*>(Table.GetObject()) : Asset.Get();
             if (Edited == nullptr)
             {
                 return;
@@ -78,7 +84,7 @@ namespace Lumina
         });
 
         // On edit end, commit, and the command self-drops if nothing actually changed.
-        PropertyTable.SetFinishEditCallback([this](const FPropertyChangedEvent& Event)
+        Table.SetFinishEditCallback([this](const FPropertyChangedEvent& Event)
         {
             if (CEdNodeGraph* Graph = PropertyEditGraph.Get())
             {
@@ -94,6 +100,97 @@ namespace Lumina
             // After the commit, so a tool's response is its own transaction rather than joining the edit's.
             OnPropertyEditFinished(Event);
         });
+    }
+
+    void FAssetEditorTool::SerializeAssetForUndo(FArchive& Ar, CObject* InAsset)
+    {
+        InAsset->GetClass()->SerializeTaggedProperties(Ar, InAsset);
+    }
+
+    FObjectSnapshotCommand::FSerializer FAssetEditorTool::MakeAssetUndoSerializer()
+    {
+        return [this](FArchive& Ar, CObject* InAsset) { SerializeAssetForUndo(Ar, InAsset); };
+    }
+
+    void FAssetEditorTool::SetupAutoAssetUndo()
+    {
+        FTransactionManager& Manager = GetTransactionManager();
+        Manager.OnCommitted = [this]() { bAssetUndoImageStale = true; };
+        Manager.OnPostApply = [this]()
+        {
+            bAssetUndoImageStale = true;
+            OnPostUndoRedo();
+        };
+    }
+
+    void FAssetEditorTool::CommitUntrackedAssetEdits()
+    {
+        if (bAutoAssetUndoOff || !Asset.IsValid() || Asset->GetPackage() == nullptr)
+        {
+            return;
+        }
+
+        if (!WantsAutomaticAssetUndo())
+        {
+            bAutoAssetUndoOff = true;
+            return;
+        }
+
+        FTransactionManager& Manager = GetTransactionManager();
+        const uint32 Generation = Asset->GetPackage()->GetEditGeneration();
+
+        if (bAssetUndoImageStale)
+        {
+            if (Manager.IsRecording())
+            {
+                return;
+            }
+            FObjectSnapshotCommand::Capture(Asset.Get(), AssetUndoImage, MakeAssetUndoSerializer());
+            AssetUndoReferenced.clear();
+            FObjectSnapshotCommand::CollectReferenced(Asset.Get(), AssetUndoReferenced);
+            AssetUndoGeneration = Generation;
+            bAssetUndoImageStale = false;
+            return;
+        }
+
+        if (Generation == AssetUndoGeneration)
+        {
+            return;
+        }
+
+        // A drag or a field being typed into is one step, taken when it ends.
+        if (Manager.IsRecording() || ImGui::IsAnyMouseDown() || ImGui::IsAnyItemActive())
+        {
+            return;
+        }
+
+        TVector<uint8> Current;
+        FObjectSnapshotCommand::Capture(Asset.Get(), Current, MakeAssetUndoSerializer());
+        AssetUndoGeneration = Generation;
+        if (Current == AssetUndoImage)
+        {
+            return;
+        }
+
+        // Two images per step of an asset this size would make the history cost more than the asset.
+        constexpr SIZE_T MaxAutomaticUndoBytes = 16ull * 1024 * 1024;
+        if (Current.size() > MaxAutomaticUndoBytes)
+        {
+            LOG_WARN("'{}' is too large to snapshot for undo, so edits made outside its details panel are not undoable.", Asset->GetName().c_str());
+            bAutoAssetUndoOff = true;
+            AssetUndoImage.clear();
+            return;
+        }
+
+        const FName Label(Format("Edit {}", Asset->GetName().c_str()).c_str());
+        Manager.BeginTransaction(Label);
+        Manager.Record(MakeUnique<FObjectSnapshotCommand>(Asset.Get(), Label, Move(AssetUndoImage), Current, MakeAssetUndoSerializer(), Move(AssetUndoReferenced)));
+        Manager.CommitTransaction();
+
+        AssetUndoImage = Move(Current);
+        AssetUndoReferenced.clear();
+        FObjectSnapshotCommand::CollectReferenced(Asset.Get(), AssetUndoReferenced);
+        bAssetUndoImageStale = false;
     }
 
     CObject* FAssetEditorTool::GetPropertyTableObject() const
@@ -141,6 +238,8 @@ namespace Lumina
     void FAssetEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FEditorTool::Update(UpdateContext);
+
+        CommitUntrackedAssetEdits();
 
         DrawWorldGrid();
 

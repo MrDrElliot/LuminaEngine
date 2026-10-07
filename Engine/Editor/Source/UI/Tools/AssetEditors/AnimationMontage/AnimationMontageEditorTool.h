@@ -28,6 +28,7 @@ namespace Lumina
         const char* GetTitlebarIcon() const override { return LE_ICON_ANIMATION_PLAY; }
 
         void OnInitialize() override;
+        void OnPostUndoRedo() override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;

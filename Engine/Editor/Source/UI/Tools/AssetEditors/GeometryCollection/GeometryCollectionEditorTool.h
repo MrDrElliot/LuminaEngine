@@ -28,6 +28,8 @@ namespace Lumina
 
         bool IsSingleWindowTool() const override { return false; }
         const char* GetTitlebarIcon() const override { return LE_ICON_CUBE_OUTLINE; }
+        // Bulk data, so a whole-asset snapshot per edit would cost more than the undo is worth.
+        bool WantsAutomaticAssetUndo() override { return false; }
         void OnInitialize() override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
