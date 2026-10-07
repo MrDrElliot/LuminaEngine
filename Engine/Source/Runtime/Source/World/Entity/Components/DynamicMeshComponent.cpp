@@ -301,6 +301,11 @@ namespace Lumina
         BD.Indices.assign(Data, Data + Math::Max(0, Count));
     }
 
+    void SDynamicMeshComponent::SetBuildData(FDynamicMeshBuildData&& Data)
+    {
+        BuildData = MakeShared<FDynamicMeshBuildData>(Move(Data));
+    }
+
     TUniquePtr<FMeshResource> BuildMeshResource(FDynamicMeshBuildData& BD, const FMeshBuildOptions& Options)
     {
         LUMINA_PROFILE_SCOPE();
@@ -335,7 +340,7 @@ namespace Lumina
         // An absent stream is one constant for the whole mesh, so it fills instead of packing per vertex.
         if (InColors != nullptr)
         {
-            Resource->Colors.assign(InColors, InColors + VertexCount);
+            Resource->Colors = std::move(BD.Colors);
         }
         else
         {

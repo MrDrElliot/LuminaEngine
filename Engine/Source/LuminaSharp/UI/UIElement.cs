@@ -190,6 +190,9 @@ public readonly unsafe struct UIElement
         // A struct can't be captured by a lambda, so copy the world handle into a local first.
         ulong WorldId = World;
 
+        // RmlUi dispatches outside every script callback, so the handler re-enters the subscriber's context.
+        EntityScript? Owner = Engine.ActiveScript;
+
         Lumina.FUIEventListener Listener = Lumina.CUILibrary.AddEventListener(UI.WorldOf(WorldId), Handle, EventType);
         if (!Listener.IsValid)
         {
@@ -200,7 +203,16 @@ public readonly unsafe struct UIElement
         // element, the world or the script generation is what goes away first.
         ulong Event = Lumina.CUILibrary.GetEventListenerDelegate(Listener);
         DelegateBinding Binding = DelegateBindings.Bind((void*)Event,
-            new PayloadInvoker<UIEventData> { Handler = Data => Handler(new UIEvent(WorldId, Data)) });
+            new PayloadInvoker<UIEventData>
+            {
+                Handler = Data =>
+                {
+                    using Engine.Scope Scope = Owner != null && !Owner.Entity.IsNull
+                        ? Engine.Push(Owner.World, Owner.Entity, Owner)
+                        : Engine.Push(UI.WorldOf(WorldId));
+                    Handler(new UIEvent(WorldId, Data));
+                },
+            });
 
         if (!Binding.IsValid)
         {

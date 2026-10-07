@@ -39,7 +39,7 @@ namespace Lumina
         bool   bFastMeshletBuild   = true;
     };
 
-    // Packs the streams into a resource ready for meshlet generation, deriving normals when absent. Consumes positions and indices.
+    // Packs the streams into a resource ready for meshlet generation, deriving normals when absent. Consumes positions, indices and colors.
     RUNTIME_API TUniquePtr<FMeshResource> BuildMeshResource(FDynamicMeshBuildData& Data, const FMeshBuildOptions& Options);
     
     struct FDynamicMeshRenderData
@@ -140,6 +140,9 @@ namespace Lumina
 
         FUNCTION()
         void SetIndicesData(const uint32* Data, int32 Count);
+
+        // Takes every stream and section without copying, replacing whatever was staged.
+        void SetBuildData(FDynamicMeshBuildData&& Data);
 
         /** How many LOD levels Commit() builds, 1 meaning LOD 0 only. Each extra level is another full
          *  meshopt_simplify pass over the WHOLE LOD-0 index range (levels are not cascaded), plus a

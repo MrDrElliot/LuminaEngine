@@ -133,6 +133,17 @@ public static partial class Engine
         return Prior;
     }
 
+    // For a callback that belongs to a world but to no script, such as a UI listener registered outside one.
+    internal static Scope Push(Lumina.CWorld World)
+    {
+        Scope Prior = Capture();
+        ActiveWorld = World;
+        ActiveHasEntity = false;
+        ActiveScriptField = null;
+        EventTarget = null;
+        return Prior;
+    }
+
     private static Scope Capture() => new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField, EventTarget, EventWorldCache);
 
     // The whole callback context, for code that resumes later and must see the same world, entity and script.
