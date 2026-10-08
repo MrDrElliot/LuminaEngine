@@ -12,7 +12,7 @@
 
 // BUMP whenever the binary interface to modules changes: type layout, enum values, exported
 // signatures, or vtable shape. A stale plugin then crashes somewhere unrelated instead of failing to load.
-#define LUMINA_MODULE_ABI_VERSION 33
+#define LUMINA_MODULE_ABI_VERSION 34
 
 #if defined(WITH_EDITOR) && WITH_EDITOR
     #define LUMINA_MODULE_ABI_PLATFORM "Editor"

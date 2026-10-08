@@ -149,6 +149,12 @@ namespace Lumina
         ++BakeSerial;
     }
 
+    void SFoliageComponent::PostEditChange(const FPropertyChangedEvent& Event)
+    {
+        MarkInstancesChanged();
+        FMeshResolveCache::MarkPendingWork();
+    }
+
     void MarkFoliageChanged(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage)
     {
         Foliage.MarkInstancesChanged();

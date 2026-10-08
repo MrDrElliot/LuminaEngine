@@ -118,6 +118,22 @@ bool IsBlockInReach(FInstanceBlockBounds Block, float3 CamPos)
     return dot(ToBox, ToBox) <= Block.Reach * Block.Reach;
 }
 
+// Thinned foliage keeps at least this share of its instances, which caps how wide the survivors grow.
+static const float kMinThinningKeep = 1.0 / 16.0;
+
+// Keyed on the exact position bits, so an instance that has not moved keeps its answer every frame.
+float ThinningHash(float3 Position)
+{
+    const uint3 Bits = asuint(Position);
+    uint H = (Bits.x * 0x8da6b343u) ^ (Bits.y * 0xd8163841u) ^ (Bits.z * 0xcb1ab31fu);
+    H ^= H >> 16u;
+    H *= 0x7feb352du;
+    H ^= H >> 15u;
+    H *= 0x846ca68bu;
+    H ^= H >> 16u;
+    return float(H >> 8u) * (1.0 / 16777216.0);
+}
+
 // Every lane tests every view, so the group stages them once rather than each lane streaming 128 bytes per view.
 groupshared FCullView gViews[MAX_CULL_VIEWS];
 
@@ -179,8 +195,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         }
     }
 
-    const float3 Center = Cull.SphereBounds.xyz;
-    const float  Radius = Cull.SphereBounds.w;
+    float3       Center = Cull.SphereBounds.xyz;
+    float        Radius = Cull.SphereBounds.w;
     const bool   bNoCull = Cull.HasFlag(EInstanceFlags::NoCull);
 
     // Cheapest reject, and the only view-independent one.
@@ -195,6 +211,29 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         {
             return;
         }
+    }
+
+    // Thinned foliage keeps a share falling with distance squared, so the count on screen stays level, and every view sees the same choice.
+    FTransform3x4 Transform = (FTransform3x4)0;
+    bool bWidened = false;
+    const float ThinningStart = Cull.ThinningStartDistance;
+    if (!bNoCull && ThinningStart > 0.0 && DistSq > ThinningStart * ThinningStart)
+    {
+        const float Keep = max(ThinningStart * ThinningStart / DistSq, kMinThinningKeep);
+        if (ThinningHash(Center) >= Keep)
+        {
+            return;
+        }
+
+        // Widened across the ground only, so a blade covers more without standing taller.
+        const float  Widen = rsqrt(Keep);
+        Transform = SpanGet(&Pass().RetainedTransforms, SlotIdx);
+        bWidened  = true;
+        const float3 Pivot = float3(Transform.Row0.w, Transform.Row1.w, Transform.Row2.w);
+        Transform.Row0.xyz *= Widen;
+        Transform.Row2.xyz *= Widen;
+        Center = Pivot + (Center - Pivot) * float3(Widen, 1.0, Widen);
+        Radius *= Widen;
     }
 
     // Past the table this reads whatever follows the allocation, and those counts become the block
@@ -253,6 +292,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // instance is visible to has to reserve room, which is what buys an exactly sized draw list.
     const bool bCaster     = Cull.HasFlag(EInstanceFlags::CastShadow);
     const bool bShadowOnly = Cull.HasFlag(EInstanceFlags::ShadowOnly);
+    const bool bFarCaster  = Cull.HasFlag(EInstanceFlags::CastFarShadow);
     const uint DrawID   = Cull.DrawID;
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
@@ -271,7 +311,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
     for (uint v = 0; v < NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(gViews[v], Center, Radius, bNoCull, bCaster, bShadowOnly))
+        if (IsInstanceVisibleToView(gViews[v], Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster))
         {
             bAnyView = true;
             break;
@@ -310,7 +350,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         uint2 Range   = uint2(0u, 0u);
         uint  Emitted = 0u;
 
-        if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly))
+        if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster))
         {
             const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 
@@ -401,8 +441,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // Safe to assemble in a local and store once now that FGPUInstance holds a header slot, not an address.
     FGPUInstance Inst            = (FGPUInstance)0;
-    Inst.Transform               = SpanGet(&Pass().RetainedTransforms, SlotIdx);   // straight copy
-    Inst.SphereBounds            = Cull.SphereBounds;
+    Inst.Transform               = bWidened ? Transform : SpanGet(&Pass().RetainedTransforms, SlotIdx);
+    Inst.SphereBounds            = float4(Center, Radius);
     Inst.MeshletHeaderSlot       = Static.MeshletHeaderSlot;
     Inst._HeaderPad0             = 0u;
     Inst.DrawID                  = DrawID;

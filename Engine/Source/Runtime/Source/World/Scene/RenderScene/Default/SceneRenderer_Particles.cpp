@@ -1211,7 +1211,7 @@ namespace Lumina
             PC.bShadowPass     = 1u;
             PC.ShadowDataIndex = SunShadowDataIndex;
 
-            for (uint32 Cascade = 0; Cascade < (uint32)NumCascades; ++Cascade)
+            for (uint32 Cascade = 0; Cascade < RenderFrame->Views.NumNearCascadeViews; ++Cascade)
             {
                 const int32 TileX = GCSMCascadeOriginX[Cascade];
                 const int32 TileY = GCSMCascadeOriginY[Cascade];

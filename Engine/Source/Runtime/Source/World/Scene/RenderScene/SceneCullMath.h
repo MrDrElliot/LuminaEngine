@@ -43,6 +43,21 @@ namespace Lumina::SceneCull
         return Out;
     }
 
+    // True when an active caster in [First, End) has a distance field, which is all the sun's distance-field cull looks at.
+    inline bool BlockHasDistanceFieldCaster(const FInstanceCullEntry* Entries, uint32 First, uint32 End)
+    {
+        constexpr uint32 Required = ((uint32)EInstanceFlags::Active | (uint32)EInstanceFlags::CastShadow |
+                                     (uint32)EInstanceFlags::HasDistanceField) << 16;
+        for (uint32 Slot = First; Slot < End; ++Slot)
+        {
+            if ((Entries[Slot].DrawIDAndFlags & Required) == Required)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // The local sphere carried through Transform, its radius grown by the largest axis scale.
     FORCEINLINE FVector4 TransformSphere(const FMatrix4& Transform, const FVector3& LocalCenter, float LocalRadius)
     {

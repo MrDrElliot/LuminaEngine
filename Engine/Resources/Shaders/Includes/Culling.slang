@@ -266,12 +266,16 @@ bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bo
 // The per-(instance, view) reject in ONE place: CullInstances sizes each bucket from this and
 // BuildMeshletBlocks appends against that sizing, so a disagreement silently drops an instance.
 bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster,
-                             bool bShadowOnly)
+                             bool bShadowOnly, bool bFarCaster)
 {
     const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 
     // Outside the NoCull gate: NoCull suppresses visibility culling, not whether the instance casts.
     if (bShadowView && !bCaster)
+    {
+        return false;
+    }
+    if (View.HasFlag(CULL_VIEW_FLAG_FAR_CASCADE) && !bFarCaster)
     {
         return false;
     }

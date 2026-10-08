@@ -28,6 +28,7 @@ static const float INV_PI = 0.31830988618;
 // skips it in the late one, and setting this would make both dispatches emit it.
 #define CULL_VIEW_FLAG_MESHLET_HIZ      BIT(6)
 #define CULL_VIEW_FLAG_CASCADE          BIT(7)
+#define CULL_VIEW_FLAG_FAR_CASCADE      BIT(8)
 
 
 #define BIT(X) (1u << (X))
@@ -67,6 +68,8 @@ enum EInstanceFlags
     ShadowOnly      = BIT(10),  // survives shadow views only; every camera view rejects it
     NoDecals        = BIT(11),  // decals pass over it
     NoContactShadows = BIT(12), // thin geometry whose screen-space contact march only returns noise
+    CastFarShadow   = BIT(13),  // also drawn into the sun's far cascade, which every other caster skips
+    HasDistanceField = BIT(14), // the mesh carries a distance field the sun's far shadows can trace
 }
 
 // Mirror of Lumina::FMeshletVertex. Position is three 16-bit offsets from the meshlet anchor -- decode
@@ -240,7 +243,7 @@ struct FEntityAABB
 struct FGTAOSettings
 {
     uint   AOTextureIndex;    // bindless SRV the base pass samples; ~0u = no GTAO for this view
-    uint   _Pad0;
+    uint   SunShadowMaskIndex; // sun occlusion traced past the cascades; ~0u = none
     uint   _Pad1;
     uint   _Pad2;
 };
@@ -524,7 +527,12 @@ struct FInstanceCullEntry
     uint   DrawIDAndFlags;    // same packing as FGPUInstance; carries Active and HasGeometry
     uint   SurfaceDescIndex;
     float  MaxDrawDistance;   // 0 = never distance-culled
-    int    ForcedLODIndex;    // -1 = automatic
+    uint   LODAndThinning;    // Lumina::PackLODAndThinning
+
+    property int ForcedLODIndex { get { return int(LODAndThinning & 0xFFu) - 1; } }
+
+    // Past this camera distance a foliage instance thins out, 0 never.
+    property float ThinningStartDistance { get { return f16tof32(LODAndThinning >> 16u); } }
 
     bool HasFlag(EInstanceFlags Flag)
     {
@@ -926,7 +934,7 @@ struct FLightData
     // Directional shadow tuning (mirror FSceneLightData::ShadowParams).
     // x = normal-bias scale, y = constant depth bias, z = PCF radius in cascade-0 texels, w = cascade blend fraction.
     float4 ShadowParams;
-    // x = far-cascade distance-fade fraction, y = directional PCF tap count, zw unused.
+    // x = far-cascade distance-fade fraction, y = directional PCF tap count, z = active cascade count, w = 1 when the last cascade is the far one.
     float4 ShadowParams2;
     float4 AmbientLight;
     // Each carries its own live count, so no caller has to remember a separate bound.
@@ -1036,6 +1044,7 @@ struct FCullData
 #define DEBUG_MODE_LIGHT_COMPLEXITY     11u
 #define DEBUG_MODE_CLUSTER_GRID         12u
 #define DEBUG_MODE_SHADOW_CASCADES      13u
+#define DEBUG_MODE_SUN_FAR_SHADOW       14u
 #define DEBUG_MODE_GTAO                 15u
 #define DEBUG_MODE_MATERIAL_ID          16u
 #define DEBUG_MODE_TRIANGLE_ID          17u

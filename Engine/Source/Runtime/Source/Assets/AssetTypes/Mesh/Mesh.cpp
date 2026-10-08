@@ -533,6 +533,9 @@ namespace Lumina
 
         // GenerateGPUBuffers would rebuild the whole meshlet set to publish a volume the header can carry.
         MeshBuffers::RefreshDistanceField(*MeshResources);
+
+        // Instances carry whether their mesh has a field, so they re-resolve to pick the change up.
+        FMeshResolveCache::InvalidateDependency(this);
     }
 
     void CMesh::GenerateGPUBuffers()

@@ -134,3 +134,37 @@ TEST(SceneCullMath, TransformSphereMatchesTheScalarFormula)
         EXPECT_NEAR(Sphere.w, LocalRadius * Math::Sqrt(ScaleSq), 1e-4f);
     }
 }
+
+TEST(SceneCullMath, LODAndThinningRoundTrip)
+{
+    EXPECT_EQ(PackLODAndThinning(-1, 0.0f), 0u);
+
+    const uint32 Packed = PackLODAndThinning(2, 30.0f);
+    EXPECT_EQ((int32)(Packed & 0xFFu) - 1, 2);
+    EXPECT_NEAR((float)FHalf::FromBits((uint16)(Packed >> 16)), 30.0f, 0.05f);
+
+    // Negative distances mean off, and absurd ones clamp instead of overflowing the half.
+    EXPECT_EQ(PackLODAndThinning(-1, -5.0f), 0u);
+    EXPECT_LT((float)FHalf::FromBits((uint16)(PackLODAndThinning(-1, 1e9f) >> 16)), 65504.5f);
+}
+
+TEST(SceneCullMath, BlockHasDistanceFieldCasterNeedsEveryFlag)
+{
+    constexpr uint32 Active = (uint32)EInstanceFlags::Active << 16;
+    constexpr uint32 Caster = (uint32)EInstanceFlags::CastShadow << 16;
+    constexpr uint32 Field  = (uint32)EInstanceFlags::HasDistanceField << 16;
+
+    TVector<FInstanceCullEntry> Entries(64);
+    for (FInstanceCullEntry& Entry : Entries)
+    {
+        Entry.DrawIDAndFlags = Active | Caster;
+    }
+    EXPECT_FALSE(SceneCull::BlockHasDistanceFieldCaster(Entries.data(), 0u, 64u));
+
+    Entries[40].DrawIDAndFlags = Caster | Field;
+    EXPECT_FALSE(SceneCull::BlockHasDistanceFieldCaster(Entries.data(), 0u, 64u));
+
+    Entries[40].DrawIDAndFlags = Active | Caster | Field;
+    EXPECT_TRUE(SceneCull::BlockHasDistanceFieldCaster(Entries.data(), 0u, 64u));
+    EXPECT_FALSE(SceneCull::BlockHasDistanceFieldCaster(Entries.data(), 41u, 64u));
+}

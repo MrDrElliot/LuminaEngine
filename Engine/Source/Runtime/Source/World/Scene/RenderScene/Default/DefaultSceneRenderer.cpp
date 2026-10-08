@@ -279,6 +279,11 @@ namespace Lumina
         RetainedCullEntryBuffer.Release();
         RetainedTransformBuffer.Release();
         RetainedStaticBuffer.Release();
+        SunDFObjectBuffer.Release();
+        SunDFCellCountBuffer.Release();
+        SunDFCellItemBuffer.Release();
+        SunDFCounterBuffer.Release();
+        SunDFBlockListBuffer.Release();
         SkinnedMeshletBoundsBuffer.Release();
         SkinnedMeshletConeBuffer.Release();
         SurfaceDescBuffer.Release();
@@ -706,6 +711,16 @@ namespace Lumina
                 }
 
                 {
+                    SCENE_GPU_SCOPE(CL, "Sun DF Shadow Cull");
+                    SunDFShadowCullPass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Sun Far Shadows");
+                    SunFarShadowPass(CL);
+                }
+
+                {
                     SCENE_GPU_SCOPE(CL, "Sky Irradiance");
                     IrradianceConvolutionPass(CL);
                 }
@@ -1035,6 +1050,9 @@ namespace Lumina
         // This view's own depth, since the sky pass discards wherever that depth holds geometry.
         Globals.SceneDepthIndex = (uint32)CurrentView->Images[(int)ENamedImage::DepthAttachment].GetResourceID();
 
+        // The far shadow mask is traced from the primary camera's depth, which no other view shares.
+        Globals.GTAOSettings.SunShadowMaskIndex = Constants::kIndexNoneU32;
+
         PublishFogGlobals(Globals);
 
         return Globals;
@@ -1353,6 +1371,7 @@ namespace Lumina
         case ENamedImage::GTAO:               return "Scene.GTAO";
         case ENamedImage::GTAODenoise:        return "Scene.GTAODenoise";
         case ENamedImage::GTAOBlur:           return "Scene.GTAOBlur";
+        case ENamedImage::SunFarShadowMask:   return "Scene.SunFarShadowMask";
         case ENamedImage::SSRTrace:           return "Scene.SSRTrace";
         case ENamedImage::SSRPyramid:         return "Scene.SSRPyramid";
         case ENamedImage::SSRSurface:         return "Scene.SSRSurface";
@@ -1445,6 +1464,7 @@ namespace Lumina
         case ENamedImage::GTAO:
         case ENamedImage::GTAODenoise:
         case ENamedImage::GTAOBlur:
+        case ENamedImage::SunFarShadowMask:
         case ENamedImage::SSRTrace:
         case ENamedImage::SSRPyramid:
         case ENamedImage::SSRSurface:
@@ -1525,6 +1545,11 @@ namespace Lumina
                                 RHI::EImageUsageFlags::Storage;
             return true;
         }
+
+        case ENamedImage::SunFarShadowMask:
+            OutDesc.Format = EFormat::R8_UNORM;
+            OutDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            return true;
 
         // At the trace resolution, the traced reflection and the blur chain the resolve picks a level from by roughness.
         case ENamedImage::SSRTrace:
@@ -1644,6 +1669,7 @@ namespace Lumina
         Want(ENamedImage::GTAO,             bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::GTAODenoise,      bGTAO, /*bMipUAVs*/ true);
         Want(ENamedImage::GTAOBlur,         bGTAO, /*bMipUAVs*/ true);
+        Want(ENamedImage::SunFarShadowMask, View.bIsPrimary && WantsSunFarShadowMask(), /*bMipUAVs*/ true);
         Want(ENamedImage::SSRTrace,         bSSR,  /*bMipUAVs*/ true);
         Want(ENamedImage::SSRPyramid,       bSSR,  /*bMipUAVs*/ true);
         Want(ENamedImage::SSRSurface,       bSSR,  /*bMipUAVs*/ true);

@@ -48,6 +48,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows")
         bool bCastShadow = true;
 
+        // Also casts into the sun's far cascade. Meant for large landmarks seen from far away.
+        PROPERTY(Editable, Category = "Shadows")
+        bool bCastFarShadow = false;
+
         /** When true, this mesh samples and applies shadowing from shadow-casting lights. */
         PROPERTY(Editable, Category = "Shadows")
         bool bReceiveShadow = true;

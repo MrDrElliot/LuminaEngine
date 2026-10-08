@@ -23,4 +23,8 @@ namespace Lumina::DefaultScene
 
     // Kept beside the scene it frames, so moving the showcase cannot leave the camera aimed at nothing.
     FCameraPose GetWelcomeCameraPose();
+
+    // A mountain valley with marked tower pairs from 100 m to 2.4 km, for testing sun shadows at every range.
+    void PopulateShadowRangeDemo(CWorld* World);
+    FCameraPose GetShadowRangeCameraPose();
 }

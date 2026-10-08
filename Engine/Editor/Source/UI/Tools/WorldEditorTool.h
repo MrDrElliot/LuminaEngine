@@ -47,6 +47,9 @@ namespace Lumina
         // Hides the grid, billboards, AABBs and gizmos so the viewport shows what a runtime camera would.
         void ToggleGameViewMode();
 
+        // Swaps in a transient world holding the shadow range demo, discarding whatever world was open.
+        void OpenShadowRangeDemo();
+
         /** Frames the default scene's floor and sphere. */
         void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;

@@ -89,6 +89,14 @@ namespace Lumina
                 GActiveWorldEditor->ToggleGameViewMode();
             }
         });
+    static FAutoConsoleCommand GShadowRangeDemoCommand("Editor.ShadowRangeDemo",
+        "Open a transient world built to test sun shadows from a few meters out to several kilometers.", []
+        {
+            if (GActiveWorldEditor != nullptr)
+            {
+                GActiveWorldEditor->OpenShadowRangeDemo();
+            }
+        });
     static constexpr const char* SceneGraphName = "Scene Graph";
     static constexpr const char* SystemsName = "Systems";
     
@@ -1126,6 +1134,29 @@ namespace Lumina
                     RecallCameraBookmark(Slot);
                 }
             }
+        }
+    }
+
+    void FWorldEditorTool::OpenShadowRangeDemo()
+    {
+        if (HasSimulatingWorld())
+        {
+            LOG_WARN("Stop play before opening the shadow range demo.");
+            return;
+        }
+
+        CWorld* DemoWorld = NewObject<CWorld>(nullptr, "Shadow Range Demo", FGuid::New(), OF_Transient);
+        SetWorld(DemoWorld);
+        DefaultScene::PopulateShadowRangeDemo(DemoWorld);
+
+        const DefaultScene::FCameraPose Pose = DefaultScene::GetShadowRangeCameraPose();
+        const ECS::FEntity Camera = DemoWorld->GetActiveCameraEntity();
+        STransformComponent* Transform = Camera != ECS::NullEntity && DemoWorld->IsValidEntity(Camera)
+            ? DemoWorld->TryGetComponent<STransformComponent>(Camera) : nullptr;
+        if (Transform != nullptr)
+        {
+            Transform->SetLocation(Pose.Location);
+            Transform->SetRotation(Math::FindLookAtRotation(Pose.Target, Pose.Location));
         }
     }
 

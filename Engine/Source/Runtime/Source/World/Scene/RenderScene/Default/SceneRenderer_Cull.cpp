@@ -88,7 +88,20 @@ namespace Lumina
             const uint32 First = Block * kInstanceCullBlockSize;
             const uint32 End   = Math::Min(First + kInstanceCullBlockSize, NumSlots);
             InstanceBlockBounds[Block] = SceneCull::ComputeInstanceBlockBounds(Entries, First, End, OverlapsAny(GPUWrittenSlotRanges, First, End));
+
+            const uint8 bHasDF = SceneCull::BlockHasDistanceFieldCaster(Entries, First, End) ? 1u : 0u;
+            if (InstanceBlockHasDF[Block] != bHasDF)
+            {
+                InstanceBlockHasDF[Block] = bHasDF;
+                bDistanceFieldBlocksDirty = true;
+            }
         };
+
+        if (InstanceBlockHasDF.size() != NumBlocks)
+        {
+            InstanceBlockHasDF.assign(NumBlocks, 0u);
+            bDistanceFieldBlocksDirty = true;
+        }
 
         if (bRebuildAll)
         {
@@ -147,6 +160,28 @@ namespace Lumina
                 StageWrite(InstanceBlockBoundsBuffer.Gpu + (uint64)RunStart * sizeof(FInstanceBlockBounds),
                            &InstanceBlockBounds[RunStart], (uint64)(RunEnd - RunStart) * sizeof(FInstanceBlockBounds));
             }
+        }
+
+        if (bDistanceFieldBlocksDirty)
+        {
+            DistanceFieldBlocks.clear();
+            for (uint32 Block = 0; Block < NumBlocks; ++Block)
+            {
+                if (InstanceBlockHasDF[Block] != 0u)
+                {
+                    DistanceFieldBlocks.push_back(Block);
+                }
+            }
+            if (!DistanceFieldBlocks.empty())
+            {
+                const uint64 Bytes = (uint64)DistanceFieldBlocks.size() * sizeof(uint32);
+                ReserveBuffer(CL, SunDFBlockListBuffer, Bytes, /*bAllowShrink*/ true, /*bPreserveContents*/ false);
+                if (SunDFBlockListBuffer.Size >= Bytes)
+                {
+                    StageWrite(SunDFBlockListBuffer.Gpu, DistanceFieldBlocks.data(), Bytes);
+                }
+            }
+            bDistanceFieldBlocksDirty = false;
         }
 
         FlushStagedWrites(CL);
@@ -757,6 +792,10 @@ namespace Lumina
             if (IsGTAOEnabled())
             {
                 SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
+            }
+            if (CurrentView->Images[(int)ENamedImage::SunFarShadowMask].IsValid() && WantsSunFarShadowMask())
+            {
+                SceneGlobalData.GTAOSettings.SunShadowMaskIndex = (uint32)CurrentView->Images[(int)ENamedImage::SunFarShadowMask].GetResourceID();
             }
 
             SceneGlobalData.SceneDepthIndex =

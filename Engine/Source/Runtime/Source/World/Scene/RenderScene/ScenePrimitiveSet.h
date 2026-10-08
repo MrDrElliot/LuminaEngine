@@ -216,6 +216,7 @@ namespace Lumina
         EInstanceFlags                      BaseFlags = EInstanceFlags::None;
         EPrimitiveSource                    Source = EPrimitiveSource::StaticMesh;
         bool                                bCastShadow = true;
+        bool                                bCastFarShadow = false;
 
         // Cached skeleton bone count; 0 means unresolved, which holds the instance inactive.
         uint32                              BoneCount = 0;
@@ -485,6 +486,8 @@ namespace Lumina
             float                               MaxDrawDistance = 0.0f;
             EInstanceFlags                      BaseFlags = EInstanceFlags::None;
             bool                                bCastShadow = true;
+            bool                                bCastFarShadow = false;
+            float                               ThinningStartDistance = 0.0f;
         };
         TVector<FFoliageTypeResolve>        FoliageTypeScratch;
         TVector<bool>                       FoliageTypeChangedScratch;

@@ -187,15 +187,17 @@ namespace Lumina
         PROPERTY(Editable, Category = "Cascaded Shadows")
         bool bCastShadows = true;
 
-        // Blend uniform (0) to logarithmic (1) cascade split distribution. Higher packs near-camera detail
-        // but shrinks cascade 0; ~0.85 pushes the first split outward for a longer high-quality range.
-        PROPERTY(Editable, Category = "Cascaded Shadows", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
-        float CascadeSplitLambda = 0.85f;
+        // How many cascades split the shadowed range. Fewer cover the same ground with fewer, coarser maps.
+        PROPERTY(Editable, Category = "Cascaded Shadows", ClampMin = 1, ClampMax = 4)
+        int32 CascadeCount = 3;
 
-        /** Maximum view distance that receives cascaded shadows; shadows fade out before this. Lower values
-        concentrate the 4 cascades over less ground for sharper shadows; raise it for long-vista scenes. */
+        // Each cascade covers this many times the distance of the one before, so higher keeps more detail near the camera. 1 splits evenly.
+        PROPERTY(Editable, Category = "Cascaded Shadows", ClampMin = 1.0f, ClampMax = 10.0f, Delta = 0.05f)
+        float CascadeDistributionExponent = 3.0f;
+
+        // Farthest view distance that receives cascaded shadows. Lower is sharper; raise it for long vistas at a raster cost.
         PROPERTY(Editable, Category = "Cascaded Shadows", ClampMin = 1.0f, Units = "m")
-        float ShadowMaxDistance = 500.0f;
+        float ShadowMaxDistance = 200.0f;
 
         /** Distance the light eye is pushed behind each cascade so off-screen occluders still cast.
         Low sun angles need larger values or tall casters clip at the ortho near plane and shadows go hollow. */
@@ -214,24 +216,54 @@ namespace Lumina
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 8.0f, Delta = 0.05f)
         float ShadowBlur = 1.0f;
 
-        /** Fraction of each cascade that cross-fades into the next. 0 is off; pixels in the band sample two cascades. */
+        // Fraction of each cascade that cross-fades into the next, where pixels sample both. 0 is off.
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.01f)
-        float CascadeBlend = 0.0f;
+        float CascadeBlend = 0.1f;
 
-        /** Fraction of the last cascade over which shadows fade to fully lit, so the edge doesn't pop at max distance. */
+        // Fraction of the last cascade over which shadows fade to fully lit, so the edge does not pop at max distance.
         PROPERTY(Editable, Category = "Cascaded Shadows|Tuning", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.01f)
-        float ShadowDistanceFade = 0.15f;
+        float ShadowDistanceFade = 0.1f;
 
-        /** Drop casters whose bounds cover fewer than this many texels of the cascade doing the rejecting
-        (0 = off). Trades shadow detail for geometry throughput. Thin geometry (railings, grates, wires)
-        loses its shadow entirely above 0, since its bounds are sub-texel in the coarser cascades. */
+        // Drops casters whose bounds cover fewer than this many texels of a cascade (0 is off). Thin geometry loses its shadow first.
         PROPERTY(Editable, Category = "Cascaded Shadows|Culling", ClampMin = 0.0f, ClampMax = 16.0f, Delta = 0.1f)
-        float CascadeMinTexels = 8.0f;
+        float CascadeMinTexels = 0.0f;
+
+        // Drops casters whose radius is below this fraction of their distance from the camera (0 is off), tested at each cascade's near edge.
+        PROPERTY(Editable, Category = "Cascaded Shadows|Culling", ClampMin = 0.0f, ClampMax = 0.1f, Delta = 0.001f)
+        float CasterMinScreenRadius = 0.01f;
 
         /** Reject casters hidden behind other casters, tested against last frame's cascade Hi-Z. The test
         is one frame stale and has no late re-test, so a caster exposed this frame casts a frame late. */
         PROPERTY(Editable, Category = "Cascaded Shadows|Culling")
         bool bCascadeOcclusionCull = true;
+
+        // Adds one coarse cascade past ShadowMaxDistance, drawn only by meshes and foliage marked Cast Far Shadow. Takes the fourth atlas tile, so near cascades cap at 3.
+        PROPERTY(Editable, Category = "Far Shadows")
+        bool bFarShadowCascade = false;
+
+        // View distance the far cascade reaches.
+        PROPERTY(Editable, Category = "Far Shadows", ClampMin = 1.0f, Units = "m")
+        float FarShadowDistance = 3000.0f;
+
+        // Lets terrain shade everything behind it, at any distance, by marching each pixel's ray over the heightmap.
+        PROPERTY(Editable, Category = "Far Shadows")
+        bool bTerrainShadows = true;
+
+        // How far each pixel's ray looks for terrain in the way.
+        PROPERTY(Editable, Category = "Far Shadows", ClampMin = 1.0f, Units = "m")
+        float TerrainShadowDistance = 6000.0f;
+
+        // Meshes with a distance field keep casting past the cascades, traced per pixel against their fields.
+        PROPERTY(Editable, Category = "Far Shadows")
+        bool bDistanceFieldShadows = true;
+
+        // View distance the distance-field shadows reach before fading out.
+        PROPERTY(Editable, Category = "Far Shadows", ClampMin = 1.0f, Units = "m")
+        float DistanceFieldShadowDistance = 600.0f;
+
+        // Angular diameter of the sun in degrees, which sets how fast traced shadows soften with distance.
+        PROPERTY(Editable, Category = "Far Shadows", ClampMin = 0.0f, ClampMax = 10.0f, Delta = 0.01f)
+        float SourceAngle = 0.5357f;
 
         /** When true, the sun scatters through participating media (god rays / light shafts). */
         PROPERTY(Editable, Category = "Advanced")

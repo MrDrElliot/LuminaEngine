@@ -19,6 +19,7 @@ struct FMeshletCullContext
     uint     SkinnedBoundsBase;
     bool     bNoCull;
     bool     bCaster;
+    bool     bFarCaster;
     bool     bShadowOnly;
     bool     bTwoSided;
     float4x4 Model;
@@ -43,6 +44,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.bSkinned    = I.HasFlag(EInstanceFlags::Skinned);
     Ctx.bNoCull     = I.HasFlag(EInstanceFlags::NoCull);
     Ctx.bCaster     = I.HasFlag(EInstanceFlags::CastShadow);
+    Ctx.bFarCaster  = I.HasFlag(EInstanceFlags::CastFarShadow);
     Ctx.bShadowOnly = I.HasFlag(EInstanceFlags::ShadowOnly);
     Ctx.bTwoSided   = I.HasFlag(EInstanceFlags::TwoSided);
 
@@ -170,6 +172,7 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
     const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 
     bool bKeep = !(bShadowView && !Ctx.bCaster)
+              && !(View.HasFlag(CULL_VIEW_FLAG_FAR_CASCADE) && !Ctx.bFarCaster)
               && !(!bShadowView && Ctx.bShadowOnly)
               && !(View.HasFlag(CULL_VIEW_FLAG_DISTANCE) && (Ctx.DistToCamera - Ctx.InstRadius > Ctx.MaxShadowDist));
 

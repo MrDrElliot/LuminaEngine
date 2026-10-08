@@ -14,6 +14,8 @@
 
 namespace Lumina
 {
+    struct FPropertyChangedEvent;
+
     class CWorld;
     class CCollisionShape;
     class CPhysicsMaterial;
@@ -95,6 +97,14 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Rendering")
         bool bCastShadow = true;
+
+        // Also casts into the sun's far cascade, for trees that should shade distant hills.
+        PROPERTY(Editable, Category = "Rendering")
+        bool bCastFarShadow = false;
+
+        // Past this view distance instances thin out so the count on screen stays level, and the survivors widen to keep the coverage. 0 keeps every instance.
+        PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
+        float ThinningStartDistance = 0.0f;
 
         PROPERTY(Editable, Category = "Rendering")
         bool bReceiveShadow = true;
@@ -193,6 +203,9 @@ namespace Lumina
 
         /** Marks the render cache stale so the next frame rebakes. Call after any edit to Instances/Types. */
         void MarkInstancesChanged() { ++InstancesVersion; }
+
+        // A details panel or tool edit to a type rebakes like a paint stroke, or the renderer keeps the old values.
+        void PostEditChange(const FPropertyChangedEvent& Event);
 
         void AddInstance(const SFoliageInstance& Instance)
         {

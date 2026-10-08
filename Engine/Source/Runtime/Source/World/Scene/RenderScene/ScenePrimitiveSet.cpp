@@ -923,6 +923,10 @@ namespace Lumina
             if (Prim.bCastShadow && Binding.bMaterialCastsShadows)
             {
                 Flags |= EInstanceFlags::CastShadow;
+                if (Prim.bCastFarShadow)
+                {
+                    Flags |= EInstanceFlags::CastFarShadow;
+                }
             }
 
             // Skeletal primitives are Active now, so CullInstances compacts them like everything else.
@@ -943,7 +947,7 @@ namespace Lumina
             NewCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
             NewCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
             NewCull.MaxDrawDistance  = Cull.MaxDrawDistance;
-            NewCull.ForcedLODIndex   = Prim.ForcedLODIndex;
+            NewCull.LODAndThinning   = PackLODAndThinning(Prim.ForcedLODIndex, 0.0f);
 
             const FTransform3x4 NewTransform = PackTransform3x4(Prim.Transform);
 
@@ -1259,6 +1263,7 @@ namespace Lumina
             Prim.BoundsScale     = Component.BoundsScale;
             Prim.ForcedLODIndex  = Component.ForcedLODIndex;
             Prim.bCastShadow     = Component.bCastShadow;
+            Prim.bCastFarShadow  = Component.bCastFarShadow;
 
             Cull.MaxDrawDistance = Component.MaxDrawDistance;
             Cull.bCastShadow     = Component.bCastShadow ? 1u : 0u;
@@ -1664,6 +1669,10 @@ namespace Lumina
         if (Type.bCastShadow && Binding.bMaterialCastsShadows)
         {
             Flags |= EInstanceFlags::CastShadow;
+            if (Type.bCastFarShadow)
+            {
+                Flags |= EInstanceFlags::CastFarShadow;
+            }
         }
         if (Type.Surfaces != nullptr && !bHidden)
         {
@@ -1680,7 +1689,7 @@ namespace Lumina
         OutCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
         OutCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
         OutCull.MaxDrawDistance  = Type.MaxDrawDistance;
-        OutCull.ForcedLODIndex   = -1;
+        OutCull.LODAndThinning   = PackLODAndThinning(-1, Type.ThinningStartDistance);
 
         OutTransform = PackTransform3x4(Instance.Transform);
 
@@ -1829,6 +1838,8 @@ namespace Lumina
             Out.BaseFlags            = Type.CachedBaseFlags;
             Out.ResolveHandle        = Type.ResolveHandle;
             Out.bCastShadow          = Type.bCastShadow;
+            Out.bCastFarShadow       = Type.bCastFarShadow;
+            Out.ThinningStartDistance = Type.ThinningStartDistance;
             Out.MaxDrawDistance      = Type.CullDistance;
 
             if (Type.ResolveHandle != INVALID_MESH_RESOLVE_HANDLE

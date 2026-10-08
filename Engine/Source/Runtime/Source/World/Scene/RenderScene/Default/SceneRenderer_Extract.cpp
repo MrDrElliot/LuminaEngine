@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "World/Scene/RenderScene/SunShadowMath.h"
 
 #include <bit>
 
@@ -150,6 +151,7 @@ namespace Lumina
         SceneGlobalData.FarPlane                        = ViewVolume.GetFar();
         SceneGlobalData.NearPlane                       = ViewVolume.GetNear();
         SceneGlobalData.GTAOSettings                    = FGTAOSettings{};
+        Frame.Lighting.SunFarShadow                     = {};
         SceneGlobalData.ParallaxSettings.SampleScale       = 1.0f;
         SceneGlobalData.ParallaxSettings.LODBias           = 0.0f;
         SceneGlobalData.ParallaxSettings.ShadowSampleScale = 1.0f;
@@ -1934,6 +1936,8 @@ namespace Lumina
 
             FrozenCull.bHasCascadeShadow = CaptureCascadeShadowFit(Frame);
             FrozenCull.CascadeViewBase   = Frame.Views.CascadeViewBase;
+            FrozenCull.NumCascadeViews   = Frame.Views.NumCascadeViews;
+            FrozenCull.NumNearCascadeViews = Frame.Views.NumNearCascadeViews;
             FrozenCull.bValid            = true;
             return;
         }
@@ -1941,6 +1945,8 @@ namespace Lumina
         // The view COUNT freezes too, since bucket indices and the dispatch grid all derive from it.
         Frame.Views.CullViews       = FrozenCull.Views;
         Frame.Views.CascadeViewBase = FrozenCull.CascadeViewBase;
+        Frame.Views.NumCascadeViews = FrozenCull.NumCascadeViews;
+        Frame.Views.NumNearCascadeViews = FrozenCull.NumNearCascadeViews;
 
         // Batches are still live, so the only per-view field that tracks them has to be restamped.
         const uint32 NumDraws = Frame.Views.NumDrawsPerView;
@@ -3046,7 +3052,7 @@ namespace Lumina
         }
 
         {
-            const uint32 SunViews        = LightData.bHasSun ? (uint32)NumCascades : 0u;
+            const uint32 SunViews        = LightData.bHasSun ? (uint32)ActiveCascadeCount : 0u;
             const uint32 ReservedViews   = 1u                                     // Camera (early)
                                          + SunViews                               // CSM cascades
                                          + SunViews                               // CSM cascades (late, phase 2)
@@ -3317,6 +3323,8 @@ namespace Lumina
         auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
         auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
         uint32& CascadeViewBase        = Frame.Views.CascadeViewBase;
+        Frame.Views.NumCascadeViews    = 0;
+        Frame.Views.NumNearCascadeViews = 0;
 
         const uint32 NumDraws = Frame.Views.NumDrawsPerView;
 
@@ -3359,7 +3367,7 @@ namespace Lumina
         // Both VisBuffer phases rasterize the SAME camera view, so it contributes one entry.
         const uint32 NumViews =
             1u +                                                        // Camera
-            (LightData.bHasSun ? (uint32)NumCascades : 0u) +            // CSM cascades
+            (LightData.bHasSun ? (uint32)ActiveCascadeCount : 0u) +     // CSM cascades
             NumPointFaceViews +
             (uint32)PackedShadows[(uint32)ELightType::Spot].size() +
             (uint32)Frame.Views.CaptureViews.size() +                         // Capture cameras (frustum-only)
@@ -3416,16 +3424,27 @@ namespace Lumina
                 const float MinTexels = CascadeMinTexels;
 
                 CascadeViewBase = (uint32)CullViews.size();
-                for (int32 c = 0; c < NumCascades; ++c)
+                for (int32 c = 0; c < ActiveCascadeCount; ++c)
                 {
                     // Micro-poly threshold in world units, from this cascade's own texel pitch.
                     const float Radius     = LightData.CascadeRadii[c];
                     const float Resolution = Math::Max(LightData.CascadeResolutions[c], 1.0f);
                     const float TexelWorld = (Radius * 2.0f) / Resolution;
 
-                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeFlags,
-                             (uint32)c, MinTexels * TexelWorld);
+                    // Unreal's screen-size rule taken at the cascade's near edge, so it never drops a caster Unreal would keep.
+                    const float CascadeNear    = (c == 0) ? 0.0f : LightData.CascadeSplits[c - 1];
+                    const float ScreenDiameter = 2.0f * CasterMinScreenRadius * CascadeNear;
+
+                    // The far cascade lies wholly past ShadowMaxDistance, which the distance reject would empty.
+                    const uint32 Flags = (c < NearCascadeCount)
+                        ? CascadeFlags
+                        : ((CascadeFlags & ~(uint32)ECullViewFlags::Distance) | ECullViewFlags::FarCascade);
+
+                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), Flags,
+                             (uint32)c, Math::Max(MinTexels * TexelWorld, ScreenDiameter));
                 }
+                Frame.Views.NumCascadeViews     = (uint32)ActiveCascadeCount;
+                Frame.Views.NumNearCascadeViews = (uint32)NearCascadeCount;
 
             }
         }
@@ -3584,11 +3603,52 @@ namespace Lumina
         
         SceneGlobalData.CullData.ShadowMaxDistance = DirectionalLight.ShadowMaxDistance;
 
+        auto& SunFarShadow           = Frame.Lighting.SunFarShadow;
+        SunFarShadow.bTerrain        = DirectionalLight.bCastShadows && DirectionalLight.bTerrainShadows;
+        SunFarShadow.ToSun           = Math::Normalize(Light.Direction);
+        SunFarShadow.TanHalfAngle    = std::tan(Math::Radians(Math::Clamp(DirectionalLight.SourceAngle, 0.0f, 10.0f)) * 0.5f);
+        SunFarShadow.TerrainDistance = Math::Max(DirectionalLight.TerrainShadowDistance, 1.0f);
+
+        // Starts where the cascades begin to fade, so the hand-off has no gap.
+        const float CascadeEnd = Math::Min(FarClip, DirectionalLight.ShadowMaxDistance);
+        SunFarShadow.DFNear         = CascadeEnd * (1.0f - Math::Clamp(DirectionalLight.ShadowDistanceFade, 0.0f, 1.0f));
+        SunFarShadow.DFFar          = Math::Min(FarClip, DirectionalLight.DistanceFieldShadowDistance);
+        SunFarShadow.bDistanceField = DirectionalLight.bCastShadows && DirectionalLight.bDistanceFieldShadows
+                                   && SunFarShadow.DFFar > SunFarShadow.DFNear;
+        SunFarShadow.DFMinRadius    = Math::Max(DirectionalLight.CasterMinScreenRadius, 0.0f) * SunFarShadow.DFNear;
+        if (SunFarShadow.bDistanceField)
+        {
+            // A pixel's distance exceeds its view depth toward the screen corners, so the slice starts a little nearer.
+            const FMatrix4 SliceProj = Math::Perspective(Math::Radians(ViewVolume.GetFOV()), ViewVolume.GetAspectRatio(),
+                                                         Math::Max(SunFarShadow.DFNear * 0.8f, NearClip), SunFarShadow.DFFar);
+            FVector3 Corners[8];
+            FFrustum::ComputeFrustumCorners(SliceProj * ViewVolume.GetViewMatrix(), Corners);
+
+            const SunShadow::FSunGrid Grid = SunShadow::FitSunGrid(SunFarShadow.ToSun, Corners, kSunDFGridDimension);
+            SunFarShadow.SunRight     = Grid.Right;
+            SunFarShadow.SunUp        = Grid.Up;
+            SunFarShadow.GridOrigin   = Grid.Origin;
+            SunFarShadow.GridCellSize = Grid.CellSize;
+        }
+
         if (!DirectionalLight.bCascadeOcclusionCull)
         {
             SceneGlobalData.CullData.bShadowOcclusionCull = 0u;
         }
-        CascadeMinTexels = Math::Max(DirectionalLight.CascadeMinTexels, 0.0f);
+        CascadeMinTexels      = Math::Max(DirectionalLight.CascadeMinTexels, 0.0f);
+        CasterMinScreenRadius = Math::Max(DirectionalLight.CasterMinScreenRadius, 0.0f);
+
+        constexpr float ShadowMinDistance = 1.0f;
+
+        const float ShadowFar  = Math::Min(FarClip, DirectionalLight.ShadowMaxDistance);
+        const float ShadowNear = Math::Max(NearClip, ShadowMinDistance);
+        const float ClipRange  = ShadowFar - ShadowNear;
+
+        // The far cascade takes the last atlas tile, so it costs the near split one cascade when all four are asked for.
+        const float FarCascadeDistance = Math::Min(FarClip, DirectionalLight.FarShadowDistance);
+        const bool  bFarCascade        = DirectionalLight.bFarShadowCascade && FarCascadeDistance > ShadowFar;
+        NearCascadeCount   = Math::Clamp(DirectionalLight.CascadeCount, 1, bFarCascade ? NumCascades - 1 : NumCascades);
+        ActiveCascadeCount = NearCascadeCount + (bFarCascade ? 1 : 0);
 
         // A hard edge needs only the center tap, so a blur of zero drops the rest.
         const FSunShadowFilter Filter       = GetSunShadowFilter();
@@ -3602,29 +3662,17 @@ namespace Lumina
                                             DirectionalLight.CascadeBlend);
         LightData.ShadowParams2 = FVector4(DirectionalLight.ShadowDistanceFade,
                                             float(FilterTaps),
-                                            0.0f,
-                                            0.0f);
+                                            float(ActiveCascadeCount),
+                                            bFarCascade ? 1.0f : 0.0f);
 
-        const float CascadeSplitLambda = Math::Clamp(DirectionalLight.CascadeSplitLambda, 0.0f, 1.0f);
+        const float DistributionExponent = Math::Clamp(DirectionalLight.CascadeDistributionExponent, 1.0f, 10.0f);
 
-        constexpr float ShadowMinDistance   = 1.0f;
-
-        const float ShadowFar  = Math::Min(FarClip, DirectionalLight.ShadowMaxDistance);
-        const float ShadowNear = Math::Max(NearClip, ShadowMinDistance);
-        const float ClipRange  = ShadowFar - ShadowNear;
-        const float MinDepth   = ShadowNear;
-        const float MaxDepth   = ShadowFar;
-        const float DepthRatio = MaxDepth / Math::Max(MinDepth, 0.0001f);
-        
         float CascadeFarDistances[NumCascades];
+        SunShadow::ComputeCascadeSplits(ShadowNear, ShadowFar, NearCascadeCount, DistributionExponent, bFarCascade,
+                                        FarCascadeDistance, CascadeFarDistances);
         for (int i = 0; i < NumCascades; ++i)
         {
-            const float P       = (float)(i + 1) / (float)NumCascades;
-            const float LogD    = MinDepth * Math::Pow(DepthRatio, P);
-            const float UniD    = MinDepth + ClipRange * P;
-            const float D       = CascadeSplitLambda * (LogD - UniD) + UniD;
-            CascadeFarDistances[i]      = D;
-            LightData.CascadeSplits[i]  = D; // World-distance, view-space Z.
+            LightData.CascadeSplits[i] = CascadeFarDistances[i]; // World-distance, view-space Z.
         }
         
         const FMatrix4& CamView   = ViewVolume.GetViewMatrix();
@@ -3650,7 +3698,7 @@ namespace Lumina
         const float CascadeBlendFraction = Math::Clamp(DirectionalLight.CascadeBlend, 0.0f, 1.0f);
 
         float LastSplitDistance = ShadowNear;
-        for (int i = 0; i < NumCascades; ++i)
+        for (int i = 0; i < ActiveCascadeCount; ++i)
         {
             const float SplitNear = LastSplitDistance;
             const float SplitFar  = CascadeFarDistances[i];
@@ -3730,7 +3778,11 @@ namespace Lumina
 
             {
                 const float PrevBandNear = (i >= 2) ? CascadeFarDistances[i - 2] : 0.0f;
-                const float BlendBack    = (i == 0) ? 0.0f : CascadeBlendFraction * (SplitNear - PrevBandNear);
+                // The shader fades near shadows into the far cascade over the larger of the two fractions.
+                const float BandFraction = (bFarCascade && i == NearCascadeCount)
+                    ? Math::Max(CascadeBlendFraction, Math::Clamp(DirectionalLight.ShadowDistanceFade, 0.0f, 1.0f))
+                    : CascadeBlendFraction;
+                const float BlendBack    = (i == 0) ? 0.0f : BandFraction * (SplitNear - PrevBandNear);
 
                 const float MinCullNear = Math::Max(NearClip, 0.01f);
                 const float CullNear    = (i == 0) ? MinCullNear : Math::Max(SplitNear - BlendBack, MinCullNear);

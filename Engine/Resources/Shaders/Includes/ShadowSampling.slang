@@ -2,6 +2,13 @@
 #include "SceneGlobals.slang"
 #include "CloudCommon.slang"
 
+// The sun's cascade count; the atlas always holds NUM_CASCADES tiles but a light may use fewer.
+int ActiveCascadeCount() { return clamp(int(LightData().ShadowParams2.z), 1, NUM_CASCADES); }
+
+// The far cascade, when present, is the last active one and holds only far casters.
+bool HasFarCascade() { return LightData().ShadowParams2.w > 0.5; }
+int NearCascadeCount() { return max(ActiveCascadeCount() - (HasFarCascade() ? 1 : 0), 1); }
+
 // Cascade and atlas sampling shared by the lit passes, the volumetrics and the particles, so none of them drift.
 
 struct FShadowTex
@@ -85,7 +92,7 @@ float SampleSunCascadeFrom(FLight Light, float3 WorldPos, inout int FirstCascade
 
     // Unrolling holds all four cascade matrices live at once, and a volumetric march calls this per step.
     [loop]
-    for (int c = FirstCascade; c < NUM_CASCADES; ++c)
+    for (int c = FirstCascade; c < ActiveCascadeCount(); ++c)
     {
         float4x4 VP = GetShadowViewProjection(Light.ShadowDataIndex, c);
         float4   SC = mul(VP, float4(WorldPos, 1.0));
@@ -182,7 +189,7 @@ float SunOccluderDepthWS(FLight Light, float3 WorldPos)
 
     // Raw depth through the point sampler, so no derivatives and the compute lane can call it.
     [loop]
-    for (int c = 0; c < NUM_CASCADES; ++c)
+    for (int c = 0; c < ActiveCascadeCount(); ++c)
     {
         float4x4 VP = GetShadowViewProjection(Light.ShadowDataIndex, c);
         float4   SC = mul(VP, float4(WorldPos, 1.0));
@@ -291,7 +298,8 @@ float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float
     const float2       TileMax  = Tile.AtlasUVOffset + Tile.AtlasUVScale;
     const float        RefDepth = Proj.z - ComputeShadowBias(Light.Flags, Normal, ToLight, CascadeIndex);
 
-    const int Taps = clamp(int(LightData().ShadowParams2.y), 1, SHADOW_MAX_SAMPLE_COUNT);
+    // A far texel is meters wide, so one bilinear compare already filters more than the near kernel would.
+    const int Taps = CascadeIndex >= NearCascadeCount() ? 1 : clamp(int(LightData().ShadowParams2.y), 1, SHADOW_MAX_SAMPLE_COUNT);
     if (Taps == 1)
     {
         return ShadowCascade().SampleCmpLevelZero(BaseUV, RefDepth);
@@ -334,15 +342,16 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
     }
 
     const float4 CascadeSplits = LightData().CascadeSplits;
+    const int NumActive = ActiveCascadeCount();
     int CascadeIndex = 0;
-    for (int i = 0; i < NUM_CASCADES; ++i)
+    for (int i = 0; i < NumActive; ++i)
     {
         if (ViewPosition.z > CascadeSplits[i])
         {
             CascadeIndex = i + 1;
         }
     }
-    if (CascadeIndex >= NUM_CASCADES)
+    if (CascadeIndex >= NumActive)
     {
         return 1.0;
     }
@@ -357,9 +366,10 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
     const float CascadeLen  = max(CascadeSplits[CascadeIndex] - CascadeNear, 1e-4);
     const float LocalT      = saturate((ViewPosition.z - CascadeNear) / CascadeLen);
 
-    // Off by default, as in Godot; when a light enables it, pixels near a split pay for a second cascade.
-    const float BlendFraction = LightData().ShadowParams.w;
-    if (BlendFraction > 0.0 && CascadeIndex + 1 < NUM_CASCADES && LocalT > 1.0 - BlendFraction)
+    // Pixels in the blend band near a split pay for a second cascade. Near shadows fade out into the far cascade over the distance fade.
+    const bool  bIntoFar      = HasFarCascade() && CascadeIndex + 1 == NearCascadeCount();
+    const float BlendFraction = bIntoFar ? max(LightData().ShadowParams.w, LightData().ShadowParams2.x) : LightData().ShadowParams.w;
+    if (BlendFraction > 0.0 && CascadeIndex + 1 < NumActive && LocalT > 1.0 - BlendFraction)
     {
         bool InsideB;
         const float ShadowB = SampleSunCascadePCF(Light, CascadeIndex + 1, FragmentPos, Normal, ToLight, ScreenPos, InsideB);
@@ -370,7 +380,7 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
     }
 
     // Shadows dissolve over the outer slice of the last cascade instead of popping off at max distance.
-    if (CascadeIndex + 1 == NUM_CASCADES)
+    if (CascadeIndex + 1 == NumActive)
     {
         const float FadeStart = saturate(1.0 - LightData().ShadowParams2.x);
         if (LocalT > FadeStart)

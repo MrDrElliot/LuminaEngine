@@ -4,9 +4,11 @@
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Containers/String.h"
+#include "Containers/StringFormat.h"
 #include "Log/Log.h"
 #include "Renderer/MaterialTypes.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
+#include "UI/Tools/TerrainEditMode.h"
 #include "World/Entity/Components/CloudComponent.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/ExponentialHeightFogComponent.h"
@@ -15,6 +17,7 @@
 #include "World/Entity/Components/PostProcessComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TextComponent.h"
 #include "World/World.h"
 
@@ -319,5 +322,197 @@ namespace Lumina::DefaultScene
     {
         // Off to one side, so the lineup recedes a little instead of reading as a flat row.
         return { FVector3(3.2f, 3.4f, 11.5f), FVector3(0.0f, 1.5f, -0.6f) };
+    }
+
+    namespace
+    {
+        // The camera looks down a valley toward -Z, with ridges on both sides and a range closing it off.
+        constexpr float kRangeCameraZ       = 310.0f;
+        constexpr float kRangeTerrainSize   = 6144.0f;
+        constexpr int32 kRangeTerrainRes    = 1025;
+        constexpr float kRangeTerrainZ      = -2300.0f;
+        constexpr float kRangeMaxHeight     = 640.0f;
+        constexpr float kRangeValleyFloor   = 8.0f;
+
+        constexpr float kRangeTowerDistances[] = { 100.0f, 150.0f, 300.0f, 600.0f, 1000.0f, 1600.0f, 2400.0f };
+
+        float Hash2(int32 X, int32 Z)
+        {
+            uint32 H = (uint32)X * 374761393u + (uint32)Z * 668265263u;
+            H = (H ^ (H >> 13)) * 1274126177u;
+            return (float)((H ^ (H >> 16)) & 0xFFFFu) / 65535.0f;
+        }
+
+        float ValueNoise(float X, float Z)
+        {
+            const float X0 = std::floor(X);
+            const float Z0 = std::floor(Z);
+            const float Tx = Math::SmoothStep(0.0f, 1.0f, X - X0);
+            const float Tz = Math::SmoothStep(0.0f, 1.0f, Z - Z0);
+            const int32 Ix = (int32)X0;
+            const int32 Iz = (int32)Z0;
+            const float A = Math::Lerp(Hash2(Ix, Iz),     Hash2(Ix + 1, Iz),     Tx);
+            const float B = Math::Lerp(Hash2(Ix, Iz + 1), Hash2(Ix + 1, Iz + 1), Tx);
+            return Math::Lerp(A, B, Tz) * 2.0f - 1.0f;
+        }
+
+        float Fbm(float X, float Z)
+        {
+            float Sum       = 0.0f;
+            float Amplitude = 0.5f;
+            for (int32 Octave = 0; Octave < 5; ++Octave)
+            {
+                Sum       += ValueNoise(X, Z) * Amplitude;
+                X          = X * 2.03f + 17.0f;
+                Z          = Z * 2.03f + 31.0f;
+                Amplitude *= 0.5f;
+            }
+            return Sum;
+        }
+
+        // Height above the terrain's base, in meters, so props can sit on the ground the heightmap describes.
+        float RangeHeight(float X, float Z)
+        {
+            const float Walls  = 380.0f * Math::SmoothStep(150.0f, 1100.0f, std::abs(X));
+            const float Closer = 560.0f * Math::SmoothStep(-2600.0f, -4300.0f, Z);
+            const float Shape  = Math::Max(Walls, Closer);
+            const float Detail = Fbm(X * 0.0025f, Z * 0.0025f) * (6.0f + 0.4f * Shape);
+            return Math::Clamp(kRangeValleyFloor + Shape + Detail, 0.0f, kRangeMaxHeight);
+        }
+
+        void BuildRangeTerrain(CWorld* World)
+        {
+            const ECS::FEntity Entity = FTerrainEditMode::CreateDefaultTerrain(World);
+            if (Entity == ECS::NullEntity)
+            {
+                return;
+            }
+            World->SetEntityLocation(Entity, FVector3(0.0f, 0.0f, kRangeTerrainZ));
+
+            STerrainComponent& Terrain = World->GetComponent<STerrainComponent>(Entity);
+            Terrain.Resolution    = kRangeTerrainRes;
+            Terrain.TileWorldSize = kRangeTerrainSize;
+            Terrain.MaxHeight     = kRangeMaxHeight;
+
+            const size_t Count  = (size_t)kRangeTerrainRes * (size_t)kRangeTerrainRes;
+            const float  Stride = kRangeTerrainSize / (float)(kRangeTerrainRes - 1);
+            const float  MinX   = -kRangeTerrainSize * 0.5f;
+            const float  MinZ   = kRangeTerrainZ - kRangeTerrainSize * 0.5f;
+            Terrain.Heightmap.resize(Count);
+            for (int32 Row = 0; Row < kRangeTerrainRes; ++Row)
+            {
+                for (int32 Col = 0; Col < kRangeTerrainRes; ++Col)
+                {
+                    const float Height = RangeHeight(MinX + (float)Col * Stride, MinZ + (float)Row * Stride);
+                    Terrain.Heightmap[(size_t)Row * kRangeTerrainRes + Col] = Height / kRangeMaxHeight;
+                }
+            }
+            Terrain.LayerWeights.assign(Count * Terrain.Layers.size(), uint8(0));
+            Terrain.MarkHeightmapReplaced();
+        }
+
+        ECS::FEntity SpawnOnGround(CWorld* World, const char* Name, CStaticMesh* Mesh, float X, float Z, float BaseY,
+                                   const FVector3& Scale, CMaterialInterface* Material, bool bCastFarShadow)
+        {
+            const float Y = RangeHeight(X, Z) + BaseY + Scale.y * 0.5f;
+            const ECS::FEntity Entity = SpawnMesh(World, Name, Mesh, FVector3(X, Y, Z), Scale, Material);
+            World->GetComponent<SStaticMeshComponent>(Entity).bCastFarShadow = bCastFarShadow;
+            return Entity;
+        }
+
+        void SpawnLabel(CWorld* World, const char* Text, const FVector3& Location, float Size)
+        {
+            const ECS::FEntity Entity = World->ConstructEntity("Range Label", FTransform(Location, FVector3(0.0f), FVector3(1.0f)));
+            STextComponent& Label = World->EmplaceComponent<STextComponent>(Entity);
+            Label.Text            = Text;
+            Label.WorldSize       = Size;
+            Label.Color           = FVector4(1.0f, 0.95f, 0.85f, 1.0f);
+            Label.Intensity       = 1.5f;
+            Label.HorizontalAlign = ETextHorizontalAlign::Center;
+            Label.VerticalAlign   = ETextVerticalAlign::Middle;
+            Label.bBillboard      = true;
+            Label.bDepthTest      = true;
+        }
+
+        // Each distance gets a warm tower that casts into the far cascade and a cool one that does not.
+        void BuildRangeTowers(CWorld* World)
+        {
+            CStaticMesh* Cube = CPrimitiveManager::Get().CubeMesh.Get();
+            CMaterialInterface* FarCaster  = MakeSurface({ FVector3(0.72f, 0.55f, 0.38f), 0.0f, 0.8f });
+            CMaterialInterface* NearCaster = MakeSurface({ FVector3(0.36f, 0.42f, 0.50f), 0.0f, 0.8f });
+
+            for (const float Distance : kRangeTowerDistances)
+            {
+                const float Z      = kRangeCameraZ - Distance;
+                const float Height = 18.0f + Distance * 0.06f;
+                const float Width  = Height * 0.18f;
+                const float Offset = 25.0f + Distance * 0.06f;
+
+                SpawnOnGround(World, "Far Caster Tower", Cube, -Offset, Z, -2.0f, FVector3(Width, Height, Width), FarCaster, true);
+                SpawnOnGround(World, "Near Caster Tower", Cube, Offset, Z, -2.0f, FVector3(Width, Height, Width), NearCaster, false);
+
+                const FString Text = Lumina::Format("{:.0f} m", Distance);
+                const float   Size = 3.0f + Distance * 0.02f;
+                SpawnLabel(World, Text.c_str(), FVector3(0.0f, RangeHeight(0.0f, Z) + Size * 0.6f, Z), Size);
+            }
+        }
+
+        // Two blocks of simple trees on the valley walls, the left one marked as far casters.
+        void BuildRangeForests(CWorld* World)
+        {
+            CStaticMesh* Cylinder = CPrimitiveManager::Get().CylinderMesh.Get();
+            CStaticMesh* Sphere   = CPrimitiveManager::Get().SphereMesh.Get();
+            CMaterialInterface* Bark  = MakeSurface({ FVector3(0.20f, 0.14f, 0.09f), 0.0f, 0.9f });
+            CMaterialInterface* Crown = MakeSurface({ FVector3(0.10f, 0.20f, 0.07f), 0.0f, 0.85f });
+
+            constexpr int32 Columns = 14;
+            constexpr int32 Rows    = 16;
+            constexpr float Spacing = 26.0f;
+            for (const float Side : { -1.0f, 1.0f })
+            {
+                const bool bFar = Side < 0.0f;
+                for (int32 Row = 0; Row < Rows; ++Row)
+                {
+                    for (int32 Col = 0; Col < Columns; ++Col)
+                    {
+                        const int32 Seed    = (int32)(Side * 1000.0f) + Row * Columns + Col;
+                        const float X       = Side * (300.0f + (float)Col * Spacing + Hash2(Seed, 1) * Spacing);
+                        const float Z       = kRangeCameraZ - 510.0f - (float)Row * Spacing - Hash2(Seed, 2) * Spacing;
+                        const float Size    = 0.8f + Hash2(Seed, 3) * 0.5f;
+                        const float Trunk   = 9.0f * Size;
+                        const float CrownD  = 10.0f * Size;
+
+                        SpawnOnGround(World, "Tree Trunk", Cylinder, X, Z, -1.0f, FVector3(1.2f * Size, Trunk, 1.2f * Size), Bark, bFar);
+                        SpawnOnGround(World, "Tree Crown", Sphere, X, Z, Trunk - 2.0f, FVector3(CrownD), Crown, bFar);
+                    }
+                }
+            }
+        }
+    }
+
+    void PopulateShadowRangeDemo(CWorld* World)
+    {
+        if (World == nullptr)
+        {
+            return;
+        }
+
+        const ECS::FEntity Sun = BuildSunAndSky(World);
+        BuildAtmosphereAndGrading(World);
+
+        // Low from the side and behind the camera, so every shadow runs across the valley and away from the viewer.
+        SDirectionalLightComponent& Light = World->GetComponent<SDirectionalLightComponent>(Sun);
+        Light.Direction         = Math::Normalize(FVector3(0.9f, 0.45f, -0.35f));
+        Light.bFarShadowCascade = true;
+
+        BuildRangeTerrain(World);
+        BuildRangeTowers(World);
+        BuildRangeForests(World);
+    }
+
+    FCameraPose GetShadowRangeCameraPose()
+    {
+        const float GroundY = RangeHeight(0.0f, kRangeCameraZ);
+        return { FVector3(0.0f, GroundY + 50.0f, kRangeCameraZ), FVector3(0.0f, GroundY, kRangeCameraZ - 600.0f) };
     }
 }

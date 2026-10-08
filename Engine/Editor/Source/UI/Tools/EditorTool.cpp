@@ -1250,6 +1250,7 @@ namespace Lumina
                     { ERenderSceneDebugFlags::LightComplexity, "Light Complexity" },
                     { ERenderSceneDebugFlags::ClusterGrid,     "Light Clusters"   },
                     { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
+                    { ERenderSceneDebugFlags::SunFarShadow,    "Sun Far Shadow"   },
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
                     // The two failure modes look identical in a lit view, hence two separate inspectors.
                     { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },

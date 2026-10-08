@@ -583,13 +583,14 @@ namespace Lumina
         RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
         const int32 SunShadowDataIndex = Frame.Lighting.Lights[0].ShadowDataIndex;
+        const uint32 NumCascadeViews = Frame.Views.NumCascadeViews;
 
         for (uint32 OpaqueIdx : OpaqueDrawList)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
             const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, FShaderH{});
 
-            for (uint32 c = 0; c < (uint32)NumCascades; ++c)
+            for (uint32 c = 0; c < NumCascadeViews; ++c)
             {
                 const int32 TileX = GCSMCascadeOriginX[c];
                 const int32 TileY = GCSMCascadeOriginY[c];
@@ -612,7 +613,7 @@ namespace Lumina
         {
             const EFormat CascadeFormat = GetNamedImage(ENamedImage::Cascade).Desc.Format;
             const FLightShadowData& SunShadow = Frame.Lighting.Shadows[SunShadowDataIndex];
-            for (uint32 c = 0; c < (uint32)NumCascades; ++c)
+            for (uint32 c = 0; c < Frame.Views.NumNearCascadeViews; ++c)
             {
                 const int32 TileX = GCSMCascadeOriginX[c];
                 const int32 TileY = GCSMCascadeOriginY[c];

@@ -213,6 +213,20 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
     return ComputeLocalShadow(Light, FragmentPos, Normal, LocalShadowNoiseDir(ScreenPos));
 }
 
+// Sun occlusion traced past the cascades from the opaque depth, so translucency never reads it.
+float SunFarShadowMask(float2 ScreenPos)
+{
+// A forward masked surface writes its own depth after the trace, so its pixels describe whatever was behind it.
+#if !defined(TRANSLUCENT) && !(defined(MASKED) && !defined(SHADING_COMPUTE))
+    const uint Index = Scene().GTAOSettings.SunShadowMaskIndex;
+    if (Index != 0xFFFFFFFFu)
+    {
+        return gTextures2D[Index].Load(int3(int2(ScreenPos), 0)).r;
+    }
+#endif
+    return 1.0;
+}
+
 static const float kLocalContactReachMeters = 0.15;
 static const uint  kLocalContactSteps       = 8u;
 
@@ -262,13 +276,14 @@ float3 CascadeDebugColor(float3 FragmentPos, float3 ViewPosition, float3 ShadedB
         return float3(0.08, 0.08, 0.08);
     }
 
+    const int NumActive = ActiveCascadeCount();
     int CascadeIndex = 0;
-    for (int i = 0; i < NUM_CASCADES; ++i)
+    for (int i = 0; i < NumActive; ++i)
     {
         if (ViewPosition.z > LightData().CascadeSplits[i])
             CascadeIndex = i + 1;
     }
-    if (CascadeIndex >= NUM_CASCADES)
+    if (CascadeIndex >= NumActive)
     {
         return float3(0.18, 0.18, 0.18);
     }
@@ -280,12 +295,13 @@ float3 CascadeDebugColor(float3 FragmentPos, float3 ViewPosition, float3 ShadedB
     bool     Inside      = !(any(ProjUV < 0.0) || any(ProjUV > 1.0) ||
                               ProjCoords.z < 0.0 || ProjCoords.z > 1.0);
 
-    const float3 CascadeTints[3] = {
+    const float3 CascadeTints[NUM_CASCADES] = {
         float3(1.00, 0.25, 0.25),
         float3(0.25, 1.00, 0.30),
         float3(0.30, 0.45, 1.00),
+        float3(1.00, 0.85, 0.25),
     };
-    float3 Tint = CascadeTints[CascadeIndex];
+    float3 Tint = CascadeIndex >= NearCascadeCount() ? float3(0.85, 0.30, 1.00) : CascadeTints[CascadeIndex];
 
     // Blend with a luminance proxy from the lit shading so silhouettes stay
     // readable while the cascade color dominates.
@@ -635,6 +651,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     if (LightData().bHasSun != 0)
     {
         FLight Light = GetLightAt(0);
+        const float FarShadow = bReceiveShadow ? SunFarShadowMask(ScreenPos) : 1.0;
 
         // Pixels facing away from the sun are self-shadowed, so they skip the cascade lookup; SunL feeds the BRDF too.
         float3 SunL    = normalize(Light.Direction.xyz);
@@ -643,7 +660,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         // Backlit foliage, which the lit path below early-outs on. Both lanes now read the cascade depth.
         if (bFoliage && SunNdotL <= 0.0)
         {
-            const float BackShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow;
+            const float BackShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow * FarShadow;
             Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
                                        G.Transmission, G.Thickness) * BackShadow;
         }
@@ -653,12 +670,12 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             // Cascade shadow, then the material's own height-field self-occlusion. Applied here and not
             // to the whole light loop because the parallax trace only ever ran against the sun.
             float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
-            Shadow *= G.SelfShadow;
+            Shadow *= G.SelfShadow * FarShadow;
 
             // A leaf lit from the front still passes some light forward at grazing view angles.
             if (bFoliage)
             {
-                const float FrontShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow;
+                const float FrontShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow * FarShadow;
                 Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
                                            G.Transmission, G.Thickness) * FrontShadow;
             }
@@ -971,6 +988,13 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
     case DEBUG_MODE_SHADOW_CASCADES:
         Color = CascadeDebugColor(WorldPosition, ViewPosition, Color);
         break;
+    case DEBUG_MODE_SUN_FAR_SHADOW:
+    {
+        // Terrain and distance-field occlusion past the cascades. White where nothing was traced.
+        const float Far = SunFarShadowMask(ScreenPos);
+        Color = float3(Far, Far, Far);
+        break;
+    }
     case DEBUG_MODE_GTAO:
     {
         // Show the (blurred) screen-space AO factor. White where GTAO is off for this view.

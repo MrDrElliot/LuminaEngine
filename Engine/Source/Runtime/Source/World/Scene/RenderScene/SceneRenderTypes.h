@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Math/Math.h"
+#include "Core/Math/Half.h"
 
 #include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
@@ -112,6 +113,7 @@ namespace Lumina
         LightComplexity     = 11,
         ClusterGrid         = 12,
         ShadowCascades      = 13,
+        SunFarShadow        = 14,
         GTAO                = 15,
         MaterialID          = 16,
         TriangleID          = 17,
@@ -149,6 +151,7 @@ namespace Lumina
             case ERenderSceneDebugFlags::LightComplexity:   return "Light Complexity";
             case ERenderSceneDebugFlags::ClusterGrid:       return "Light Clusters";
             case ERenderSceneDebugFlags::ShadowCascades:    return "Shadow Cascades";
+            case ERenderSceneDebugFlags::SunFarShadow:      return "Sun Far Shadow";
             case ERenderSceneDebugFlags::GTAO:              return "GTAO";
             case ERenderSceneDebugFlags::MaterialID:        return "Material ID";
             case ERenderSceneDebugFlags::TriangleID:        return "Triangle ID";
@@ -205,6 +208,8 @@ namespace Lumina
         ShadowOnly              = BIT(10),  // survives shadow views only; every camera view rejects it
         NoDecals                = BIT(11),  // decals pass over it, for things that move through them
         NoContactShadows        = BIT(12),  // thin geometry whose screen-space contact march only returns noise
+        CastFarShadow           = BIT(13),  // also drawn into the sun's far cascade, which every other caster skips
+        HasDistanceField        = BIT(14),  // the mesh carries a distance field the sun's far shadows can trace
     };
 
     ENUM_CLASS_FLAGS(EInstanceFlags);
@@ -557,8 +562,8 @@ namespace Lumina
 
         // x = normal-bias scale, y = constant depth bias, z = PCF radius in cascade-0 texels, w = cascade blend fraction.
         FVector4           ShadowParams{ 1.0f, 0.0f, 2.0f, 0.0f };
-        // x = far-cascade distance-fade fraction, y = PCF tap count, zw unused.
-        FVector4           ShadowParams2{ 0.15f, 4.0f, 0.0f, 0.0f };
+        // x = far-cascade distance-fade fraction, y = PCF tap count, z = active cascade count, w = 1 when the last cascade is the far one.
+        FVector4           ShadowParams2{ 0.1f, 4.0f, (float)NumCascades, 0.0f };
 
         FVector4           AmbientLight{};
 
@@ -591,7 +596,8 @@ namespace Lumina
     struct FGTAOSettings
     {
         uint32 AOTextureIndex = Constants::kIndexNoneU32;
-        uint32 _Pad0 = 0;
+        // Sun occlusion traced past the cascades, read pixel for pixel by the opaque lighting.
+        uint32 SunShadowMaskIndex = Constants::kIndexNoneU32;
         uint32 _Pad1 = 0;
         uint32 _Pad2 = 0;
     };
@@ -907,7 +913,7 @@ namespace Lumina
         uint32      DrawIDAndFlags;     // PackDrawIDAndFlags; carries Active and HasGeometry
         uint32      SurfaceDescIndex;   // into the interned LOD tables
         float       MaxDrawDistance;    // 0 = never distance-culled
-        int32       ForcedLODIndex;     // -1 = automatic (distance / radius)
+        uint32      LODAndThinning;     // PackLODAndThinning
     };
     static_assert(sizeof(FInstanceCullEntry) == 32, "FInstanceCullEntry layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceCullEntry);
@@ -1029,6 +1035,13 @@ namespace Lumina
     // Unpadded on purpose; 48 straddles a 64-byte line as often as 40, on a retained-slot-sized array.
     static_assert(sizeof(FSkinnedFrameData) == 40, "FSkinnedFrameData must match shader");
 
+    // The forced LOD plus one in the low byte (0 is automatic) and the foliage thinning start distance as a half float in the high half.
+    inline uint32 PackLODAndThinning(int32 ForcedLODIndex, float ThinningStartDistance)
+    {
+        const uint32 LOD = (uint32)Math::Clamp(ForcedLODIndex + 1, 0, 255);
+        return LOD | ((uint32)FHalf(Math::Clamp(ThinningStartDistance, 0.0f, 65000.0f)).Bits << 16);
+    }
+
     constexpr uint32 PackDrawIDAndFlags(uint32 DrawID, EInstanceFlags Flags)
     {
         return (DrawID & 0xFFFFu) | (((uint32)Flags & 0xFFFFu) << 16);
@@ -1127,6 +1140,7 @@ namespace Lumina
             SunAligned      = BIT(5),
             MeshletHiZ      = BIT(6),
             Cascade         = BIT(7),
+            FarCascade      = BIT(8),
         };
     }
 

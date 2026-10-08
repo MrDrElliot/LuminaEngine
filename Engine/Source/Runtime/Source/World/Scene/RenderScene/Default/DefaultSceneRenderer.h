@@ -324,6 +324,9 @@ namespace Lumina
                 TVector<FCullView>               CullViews;
                 uint32                           NumDrawsPerView     = 0;
                 uint32                           CascadeViewBase     = Constants::kIndexNoneU32;
+                uint32                           NumCascadeViews     = 0;
+                // The far cascade, when present, follows these and takes only far casters.
+                uint32                           NumNearCascadeViews = 0;
                 TVector<uint32>                  PointShadowCullViewBases;
                 TVector<uint32>                  SpotShadowCullViewBases;
                 TVector<FCaptureViewData>        CaptureViews;
@@ -342,6 +345,25 @@ namespace Lumina
                 TVector<FShadowRequest>          ShadowRequests;
                 FMutex                           ShadowRequestMutex;
                 TVector<FShadowTile>             AtlasTiles;
+
+                // What the sun's screen-space far shadow pass traces this frame.
+                struct FSunFarShadow
+                {
+                    bool                         bTerrain = false;
+                    FVector3                     ToSun = FVector3(0.0f, 1.0f, 0.0f);
+                    float                        TanHalfAngle = 0.0f;
+                    float                        TerrainDistance = 0.0f;
+
+                    bool                         bDistanceField = false;
+                    float                        DFNear = 0.0f;
+                    float                        DFFar = 0.0f;
+                    float                        DFMinRadius = 0.0f;
+                    // The grid the casters are binned into, square in the plane facing the sun.
+                    FVector3                     SunRight = FVector3(1.0f, 0.0f, 0.0f);
+                    FVector3                     SunUp = FVector3(0.0f, 0.0f, 1.0f);
+                    FVector2                     GridOrigin = FVector2(0.0f);
+                    float                        GridCellSize = 1.0f;
+                } SunFarShadow;
             } Lighting;
 
             struct FPrimitives
@@ -469,6 +491,7 @@ namespace Lumina
             GTAO,
             GTAODenoise,
             GTAOBlur,
+            SunFarShadowMask,
             SSRTrace,
             SSRPyramid,
             SSRSurface,
@@ -785,6 +808,9 @@ namespace Lumina
         // The prefilter reads scene depth into GTAO's own working depth, and the trace reads only that.
         enum class EGTAOStage : uint8 { Prefilter, Trace };
         bool GTAOPass(RHI::FCmdListH CL, EGTAOStage Stage);
+        bool WantsSunFarShadowMask() const;
+        bool SunFarShadowPass(RHI::FCmdListH CL);
+        bool SunDFShadowCullPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
         void UnorderedTranslucentPass(RHI::FCmdListH CL);
@@ -1165,6 +1191,8 @@ namespace Lumina
             bool               bHasCascadeShadow  = false;
 
             uint32             CascadeViewBase  = Constants::kIndexNoneU32;
+            uint32             NumCascadeViews  = 0;
+            uint32             NumNearCascadeViews = 0;
             bool               bValid           = false;
         };
         FFrozenCull FrozenCull;
@@ -1339,8 +1367,23 @@ namespace Lumina
 
         FSceneBuffer RetainedCullEntryBuffer { "Retained.CullEntries", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer InstanceBlockBoundsBuffer { "Retained.InstanceBlockBounds", 1.5f, EBufferInit::Zeroed };
+
+        // The sun's distance-field casters for this frame and the grid they are binned into.
+        FSceneBuffer SunDFObjectBuffer    { "SunDF.Objects",    1.0f, EBufferInit::Undefined, false };
+        FSceneBuffer SunDFCellCountBuffer { "SunDF.CellCounts", 1.0f, EBufferInit::Zeroed,    false };
+        FSceneBuffer SunDFCellItemBuffer  { "SunDF.CellItems",  1.0f, EBufferInit::Undefined, false };
+        FSceneBuffer SunDFCounterBuffer   { "SunDF.Counters",   1.0f, EBufferInit::Zeroed,    false };
+        FSceneBuffer SunDFBlockListBuffer { "SunDF.Blocks",     1.5f, EBufferInit::Undefined };
+        static constexpr uint32 kSunDFGridDimension = 128u;
+        static constexpr uint32 kSunDFCellCapacity  = 32u;
+        static constexpr uint32 kSunDFMaxObjects    = 16384u;
+        bool                    bSunDFGridReady     = false;
         TVector<FInstanceBlockBounds> InstanceBlockBounds;
         TVector<uint32>               DirtyInstanceBlocks;
+        // Per block, whether it holds a distance-field caster, and the compact list the sun's distance-field cull walks.
+        TVector<uint8>                InstanceBlockHasDF;
+        TVector<uint32>               DistanceFieldBlocks;
+        bool                          bDistanceFieldBlocksDirty = true;
         TVector<FUIntVector2>         GPUWrittenSlotRanges;
         bool                          bInstanceBlockBoundsValid = false;
         FSceneBuffer RetainedTransformBuffer { "Retained.Transforms", 1.5f, EBufferInit::Zeroed };
@@ -1401,6 +1444,9 @@ namespace Lumina
         bool                                                bCascadeHZBTransformsValid = false;
 
         float                                               CascadeMinTexels = 1.0f;
+        float                                               CasterMinScreenRadius = 0.0f;
+        int32                                               ActiveCascadeCount = NumCascades;
+        int32                                               NearCascadeCount = NumCascades;
 
         static constexpr uint32                             kTotalsSlots = 8;
 

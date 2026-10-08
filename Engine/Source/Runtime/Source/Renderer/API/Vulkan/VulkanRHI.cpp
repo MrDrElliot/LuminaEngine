@@ -594,6 +594,10 @@ namespace Lumina::RHI
 
         // Tracked per list, since a submitted list is not reset until its frame slot comes back around.
         bool bOpen = false;
+
+        // A failed bind leaves the previous pipeline live, and running it with this pass's arguments loses the device.
+        bool bGraphicsPipelineBound = false;
+        bool bComputePipelineBound  = false;
     };
 
     struct FSurface
@@ -6557,6 +6561,8 @@ namespace Lumina::RHI
 #endif
         CommandList.BreadcrumbDepth = 0;
         CommandList.bOpen = true;
+        CommandList.bGraphicsPipelineBound = false;
+        CommandList.bComputePipelineBound  = false;
         GDevice->OpenCommandLists[(uint32)Type].fetch_add(1, std::memory_order_release);
 
         // A recycled list's pool was already reset by ResetCommandList.
@@ -7600,7 +7606,22 @@ namespace Lumina::RHI
     {
         FPipeline PL = GDevice->Pipelines[Pipeline];
         FCommandList& List = GDevice->CommandLists[CL];
+        if (PL.Pipeline == VK_NULL_HANDLE)
+        {
+            // The bind point of a pipeline that never built is unknown, so neither kind may run until a real bind.
+            List.bGraphicsPipelineBound = false;
+            List.bComputePipelineBound  = false;
+            return;
+        }
         vkCmdBindPipeline(List.CommandBuffer, PL.BindPoint, PL.Pipeline);
+        if (PL.BindPoint == VK_PIPELINE_BIND_POINT_COMPUTE)
+        {
+            List.bComputePipelineBound = true;
+        }
+        else
+        {
+            List.bGraphicsPipelineBound = true;
+        }
     }
 
     void CmdSetScissor(FCmdListH CL, const FRect& Rect)
@@ -7668,6 +7689,11 @@ namespace Lumina::RHI
 
     void CmdDispatch(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupX, uint32 GroupY, uint32 GroupZ)
     {
+        if (!GDevice->CommandLists[CL].bComputePipelineBound)
+        {
+            return;
+        }
+
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         PushDrawArgs(VkCmdBuf, DrawArgs);
 
@@ -7676,6 +7702,11 @@ namespace Lumina::RHI
 
     void CmdDraw(FCmdListH CL, GPUPtr DrawArgs, uint32 VertexCount, uint32 InstanceCount, uint32 FirstVertex, uint32 FirstInstance)
     {
+        if (!GDevice->CommandLists[CL].bGraphicsPipelineBound)
+        {
+            return;
+        }
+
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         PushDrawArgs(VkCmdBuf, DrawArgs);
         
@@ -7684,6 +7715,11 @@ namespace Lumina::RHI
 
     void CmdDrawIndexed(FCmdListH CL, FGPURange Indices, GPUPtr DrawArgs, uint32 IndexCount, uint32 InstanceCount, uint32 FirstIndex, int32 VertexOffset, uint32 FirstInstance, EIndexType IndexType)
     {
+        if (!GDevice->CommandLists[CL].bGraphicsPipelineBound)
+        {
+            return;
+        }
+
         auto& CommandList           = GDevice->CommandLists[CL];
         VkCommandBuffer VkCmdBuf    = CommandList.CommandBuffer;
 
@@ -7699,6 +7735,11 @@ namespace Lumina::RHI
 
     void CmdDrawIndirect(FCmdListH CL, GPUPtr Args, FGPURange Arguments, uint32 DrawCount, uint32 Stride)
     {
+        if (!GDevice->CommandLists[CL].bGraphicsPipelineBound)
+        {
+            return;
+        }
+
         DEBUG_ASSERT((uint64)DrawCount * Stride <= Arguments.Size, "Indirect draw reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
         const uint32 Offset = 0;
@@ -7725,6 +7766,11 @@ namespace Lumina::RHI
 
     void CmdDispatchIndirect(FCmdListH CL, GPUPtr Args, FGPURange Arguments)
     {
+        if (!GDevice->CommandLists[CL].bComputePipelineBound)
+        {
+            return;
+        }
+
         DEBUG_ASSERT(sizeof(FDispatchIndirectArguments) <= Arguments.Size, "Indirect dispatch reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
         const uint32 Offset = 0;
@@ -7756,6 +7802,11 @@ namespace Lumina::RHI
 
     void CmdDrawIndexedIndirect(FCmdListH CL, FGPURange Indices, GPUPtr Args, FGPURange Arguments, uint32 DrawCount, uint32 Stride, EIndexType IndexType)
     {
+        if (!GDevice->CommandLists[CL].bGraphicsPipelineBound)
+        {
+            return;
+        }
+
         DEBUG_ASSERT((uint64)DrawCount * Stride <= Arguments.Size, "Indexed indirect draw reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
         const uint32 Offset = 0;
@@ -7788,6 +7839,11 @@ namespace Lumina::RHI
 
     void CmdDrawMeshTasks(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupCountX, uint32 GroupCountY, uint32 GroupCountZ)
     {
+        if (!GDevice->CommandLists[CL].bGraphicsPipelineBound)
+        {
+            return;
+        }
+
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         PushDrawArgs(VkCmdBuf, DrawArgs);
 
@@ -7796,6 +7852,11 @@ namespace Lumina::RHI
 
     void CmdDrawMeshTasksIndirect(FCmdListH CL, GPUPtr DrawArgs, FGPURange Arguments, uint32 DrawCount, uint32 Stride)
     {
+        if (!GDevice->CommandLists[CL].bGraphicsPipelineBound)
+        {
+            return;
+        }
+
         DEBUG_ASSERT((uint64)DrawCount * Stride <= Arguments.Size, "Mesh task indirect draw reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
         const uint32 Offset = 0;
@@ -7822,6 +7883,11 @@ namespace Lumina::RHI
 
     void CmdDrawMeshTasksIndirectCount(FCmdListH CL, GPUPtr DrawArgs, FGPURange Arguments, FGPURange CountRange, uint32 MaxDrawCount, uint32 Stride)
     {
+        if (!GDevice->CommandLists[CL].bGraphicsPipelineBound)
+        {
+            return;
+        }
+
         DEBUG_ASSERT((uint64)MaxDrawCount * Stride <= Arguments.Size, "Mesh task indirect count draw reads past its argument range.");
         DEBUG_ASSERT(sizeof(uint32) <= CountRange.Size, "Mesh task indirect count reads past its count range.");
         const GPUPtr IndirectBuffer = Arguments.Address;

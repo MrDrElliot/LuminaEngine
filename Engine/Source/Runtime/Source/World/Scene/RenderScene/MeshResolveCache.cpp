@@ -455,6 +455,10 @@ namespace Lumina
             {
                 Out.bAllMaterialsReady = false;
             }
+            if (Mesh->HasDistanceField())
+            {
+                R.MaterialFlags |= EInstanceFlags::HasDistanceField;
+            }
 
             AddDependency(Out, (const void*)RawMaterial);
             AddDependency(Out, (const void*)(uintptr_t)R.MaterialID);
