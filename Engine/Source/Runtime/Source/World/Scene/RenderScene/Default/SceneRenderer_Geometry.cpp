@@ -1188,14 +1188,43 @@ namespace Lumina
                     continue;
                 }
 
-                // A species may cap its own radius, and dense grass keeps a bounded candidate grid rather than a huge dispatch.
+                // Dense grass keeps a bounded candidate grid rather than a huge dispatch, which can cut a long radius short.
                 constexpr float GrassMaxGridSide = 2048.0f;
-                const float Radius = Math::Min(Species.CullDistance > 0.0f
-                                   ? Math::Min(Species.CullDistance, TerrainItem.GrassMaxDrawDistance)
-                                   : TerrainItem.GrassMaxDrawDistance, Species.CellSize * GrassMaxGridSide * 0.5f);
+                const float GridRadius = Species.CellSize * GrassMaxGridSide * 0.5f;
+                const float Radius     = Math::Min(Species.CullDistance, GridRadius);
                 if (Radius <= 0.0f || Species.CellSize <= 0.0f)
                 {
                     continue;
+                }
+
+                if (Species.CullDistance > GridRadius && !State.bWarnedGridCap)
+                {
+                    State.bWarnedGridCap = true;
+                    LOG_WARN("Grass: {} reaches {:.0f} m, not its CullDistance of {:.0f} m, because its density fills the "
+                             "2048-cell scatter grid. Lower Density or CullDistance.",
+                             Species.TypeName.ToString(), GridRadius, Species.CullDistance);
+                }
+
+                // Read back from kFramesInFlight ago, which the frame fence has already retired.
+                const uint8 ReadbackSlot = CurrentFrameSlot;
+                if (const uint32* Landed = State.CursorReadback[ReadbackSlot].CpuAs<const uint32>())
+                {
+                    if (*Landed >= Binding.Capacity && !State.bWarnedOverBudget)
+                    {
+                        State.bWarnedOverBudget = true;
+                        LOG_WARN("Grass: {} wanted more than its {} instance budget and lost blades. Raise the terrain's "
+                                 "MaxInstancesPerSpecies, lower Density or CullDistance, or start the thinning nearer with a smaller nonzero FullDensityDistance.",
+                                 Species.TypeName.ToString(), Binding.Capacity);
+                    }
+                }
+                else if (State.CursorReadback[ReadbackSlot].Gpu == 0)
+                {
+                    State.CursorReadback[ReadbackSlot] = RHI::Malloc(sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+                    RHI::SetDebugName(State.CursorReadback[ReadbackSlot].Gpu, "Readback.GrassCursor");
+                    if (void* Host = State.CursorReadback[ReadbackSlot].Cpu)
+                    {
+                        Memory::Memzero(Host, sizeof(uint32));
+                    }
                 }
 
                 // Candidates cover the square inscribing the radius; the shader rejects the corners.
@@ -1229,6 +1258,7 @@ namespace Lumina
                 Retire.Capacity   = Binding.Capacity;
                 Retire.Cursor     = Cursor;
                 Retire.PrevCursor = State.PrevCursorBuffer;
+                Retire.CursorReadback = State.CursorReadback[ReadbackSlot];
 
                 if (!bAnyDispatched)
                 {
@@ -1314,7 +1344,7 @@ namespace Lumina
                     RHI::CmdDispatch(CL, MakeArgs(Push), (Item.Capacity + 63u) / 64u, 1u, 1u);
                 }
 
-                // Four bytes each, on the GPU; the count never comes back to the CPU.
+                // Four bytes each, kept on the GPU for the retire and copied out for the budget warning.
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
                     RHI::EStageFlags::Transfer,
@@ -1322,6 +1352,10 @@ namespace Lumina
                 for (const FGrassRetireItem& Item : GrassRetireScratch)
                 {
                     RHI::CmdMemcpy(CL, { Item.PrevCursor.Gpu, sizeof(uint32) }, Item.Cursor);
+                    if (Item.CursorReadback.Gpu != 0)
+                    {
+                        RHI::CmdMemcpy(CL, { Item.CursorReadback.Gpu, sizeof(uint32) }, Item.Cursor);
+                    }
                 }
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,

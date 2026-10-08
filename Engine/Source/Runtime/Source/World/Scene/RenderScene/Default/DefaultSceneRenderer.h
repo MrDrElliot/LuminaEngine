@@ -152,6 +152,7 @@ namespace Lumina
             struct FGrassSpeciesExtract
             {
                 CStaticMesh* Mesh      = nullptr;
+                FName   TypeName;
                 uint32  LayerIndex     = 0;
                 float   CellSize       = 1.0f;   // world units between candidates, from density
                 float   MinWeight      = 0.25f;
@@ -189,7 +190,6 @@ namespace Lumina
                 /** Empty unless the terrain carries SGrassComponent and its material declares species. */
                 TVector<FGrassSpeciesExtract> Grass;
                 uint32              GrassMaxInstances = 0;
-                float               GrassMaxDrawDistance = 0.0f;
 
                 // Height upload: 0 none, 1 full map, 2 packed dirty rect.
                 uint8               HeightUpload    = 0;
@@ -1495,6 +1495,7 @@ namespace Lumina
             uint32              Capacity = 0;
             RHI::FGPURange      Cursor;
             RHI::FGPUAllocation PrevCursor;
+            RHI::FGPUAllocation CursorReadback;
         };
         TVector<FGrassRetireItem>                       GrassRetireScratch;
         uint32                                          GrassCursorCursor = 0;

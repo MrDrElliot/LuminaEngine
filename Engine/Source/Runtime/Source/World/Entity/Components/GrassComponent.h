@@ -15,10 +15,6 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        /** Scatter radius around the camera. Species with a shorter CullDistance stop before this. */
-        PROPERTY(Editable, Category = "Grass", ClampMin = 1.0f, NoDrag, Delta = 1.0f)
-        float MaxDrawDistance = 80.0f;
-
         /**
          * Per-species instance budget. The scatter clamps its append against this, so a dense species on
          * a large radius loses blades rather than writing past the allocation.

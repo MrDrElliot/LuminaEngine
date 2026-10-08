@@ -55,11 +55,8 @@ namespace Lumina
         PROPERTY(Editable, Category = "Scatter", ClampMin = 0.0f, ClampMax = 90.0f)
         float MaxSlopeDegrees = 45.0f;
 
-        /**
-         * Chunks are scattered when they come within this distance of the camera and released when they
-         * leave, so this bounds both the draw distance and the resident instance count.
-         */
-        PROPERTY(Editable, Category = "Rendering", ClampMin = 1.0f, NoDrag, Delta = 1.0f)
+        // Scatter radius around the camera, bounded only by a 2048-cell grid and the terrain's per-species instance budget.
+        PROPERTY(Editable, Category = "Rendering", ClampMin = 1.0f, NoDrag, Delta = 1.0f, Units = "m")
         float CullDistance = 60.0f;
 
         // Past this, blades thin with the square of distance and the survivors grow, so far grass costs little and still reads as a field. Zero keeps full density everywhere.

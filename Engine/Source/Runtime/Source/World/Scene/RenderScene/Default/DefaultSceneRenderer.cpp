@@ -293,6 +293,14 @@ namespace Lumina
             for (FGrassGPUState& State : States)
             {
                 FreeBuffer(State.PrevCursorBuffer);
+                for (RHI::FGPUAllocation& Readback : State.CursorReadback)
+                {
+                    if (Readback.Gpu != 0)
+                    {
+                        RHI::Retire(Readback);
+                        Readback = {};
+                    }
+                }
             }
         }
 

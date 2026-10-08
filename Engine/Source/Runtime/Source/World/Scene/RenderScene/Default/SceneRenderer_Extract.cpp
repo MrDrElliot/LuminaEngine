@@ -4182,7 +4182,6 @@ namespace Lumina
         {
             Out.Grass.clear();
             Out.GrassMaxInstances = 0;
-            Out.GrassMaxDrawDistance = 0.0f;
 
             const SGrassComponent* Grass = Registry.TryGet<SGrassComponent>(Entity);
             if (Grass == nullptr || !Grass->bEnabled)
@@ -4198,7 +4197,6 @@ namespace Lumina
             }
 
             Out.GrassMaxInstances    = Grass->MaxInstancesPerSpecies;
-            Out.GrassMaxDrawDistance = Grass->MaxDrawDistance;
 
             for (const FGrassOutput& Output : Material->GrassOutputs)
             {
@@ -4222,6 +4220,7 @@ namespace Lumina
 
                 FDefaultSceneRenderer::FFrameData::FGrassSpeciesExtract Species;
                 Species.Mesh       = Type->Mesh.Get();
+                Species.TypeName   = Type->GetName();
                 Species.LayerIndex = Output.LayerIndex;
 
                 // Density is instances per square meter and a world unit is a meter, so the spacing is its inverse root.

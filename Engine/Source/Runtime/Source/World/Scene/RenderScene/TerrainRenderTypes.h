@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Math/Math.h"
+#include "Containers/StaticArray.h"
 #include "Platform/GenericPlatform.h"
 #include "Renderer/RenderResource.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
@@ -144,6 +145,12 @@ namespace Lumina
     {
         // Last frame's cursor, so the retire pass can deactivate exactly the slots that fell out of use.
         RHI::FGPUAllocation PrevCursorBuffer;
+
+        // The scatter parks its cursor at capacity when the budget runs out, so a read of exactly capacity means blades were cut.
+        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight> CursorReadback = {};
+
+        bool bWarnedGridCap   = false;
+        bool bWarnedOverBudget = false;
     };
 
     struct FTerrainPushConstants
