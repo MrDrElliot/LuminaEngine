@@ -19,18 +19,13 @@ namespace Lumina
                 continue;
             }
 
-            // Ancestors first, so a restore recreates a parent before the child that points at it.
+            // Ancestors first, so the reversed redo destroys every child before its parent.
             Out.AddUnique(Root);
 
-            TVector<ECS::FEntity> Descendants;
-            ECS::Utils::CollectDescendants(Registry, Root, Descendants);
-            for (ECS::FEntity Descendant : Descendants)
+            Registry.GetHierarchy().ForEachDescendant(Root, [&](ECS::FEntity Descendant)
             {
-                if (Registry.IsValid(Descendant))
-                {
-                    Out.AddUnique(Descendant);
-                }
-            }
+                Out.AddUnique(Descendant);
+            });
         }
     }
 
@@ -109,13 +104,15 @@ namespace Lumina
         FMemoryReader Reader(Data);
         FObjectProxyArchiver Ar(Reader, true);
 
+        ECS::Utils::FParentLinks Links;
         for (const FEntry& Entry : Entries)
         {
             Ar.Seek(Entry.Offset);
 
             ECS::FEntity Restored = ECS::NullEntity;
-            ECS::Utils::SerializeEntity(Ar, Registry, Restored);
+            ECS::Utils::SerializeEntity(Ar, Registry, Restored, &Links);
         }
+        Links.Apply(Registry);
 
         if (W->GetPackage())
         {
@@ -135,7 +132,7 @@ namespace Lumina
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
-        // Reverse, so a child goes before the parent whose link list would otherwise still name it.
+        // Reverse, so each child goes before the parent that would otherwise take it along.
         for (auto It = Entries.rbegin(); It != Entries.rend(); ++It)
         {
             if (Registry.IsValid(It->Entity))

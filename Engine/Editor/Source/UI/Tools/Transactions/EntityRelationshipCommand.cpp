@@ -8,19 +8,6 @@
 
 namespace Lumina
 {
-    namespace
-    {
-        bool SameLink(const FRelationshipComponent& A, const FRelationshipComponent& B)
-        {
-            return A.Children == B.Children
-                && A.First    == B.First
-                && A.Prev     == B.Prev
-                && A.Next     == B.Next
-                && A.Parent   == B.Parent;
-        }
-
-    }
-
     void FEntityRelationshipCommand::CollectAffected(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Seeds,
                                                      ECS::FEntity NewParent, TVector<ECS::FEntity>& Out)
     {
@@ -32,7 +19,7 @@ namespace Lumina
             }
 
             Out.AddUnique(Entity);
-            ECS::Utils::ForEachChild(Registry, Entity, [&](ECS::FEntity Child) { Out.AddUnique(Child); });
+            Registry.GetHierarchy().ForEachChild(Entity, [&](ECS::FEntity Child) { Out.AddUnique(Child); });
         };
 
         for (ECS::FEntity Seed : Seeds)
@@ -44,11 +31,8 @@ namespace Lumina
 
             AddWithChildren(Seed);
 
-            // The old parent's whole child list, since unlinking rewrites First and the Prev/Next neighbors.
-            if (const FRelationshipComponent* Link = Registry.TryGet<FRelationshipComponent>(Seed))
-            {
-                AddWithChildren(Link->Parent);
-            }
+            // The old parent's whole child list, since moving one child shifts the sibling index of the rest.
+            AddWithChildren(Registry.GetHierarchy().GetParent(Seed));
         }
 
         AddWithChildren(NewParent);
@@ -68,32 +52,14 @@ namespace Lumina
 
     bool FEntityRelationshipCommand::IsNoOp() const
     {
-        if (Before.size() != After.size())
-        {
-            return false;
-        }
-
-        for (SIZE_T i = 0; i < Before.size(); ++i)
-        {
-            if (Before[i].bPresent != After[i].bPresent)
-            {
-                return false;
-            }
-
-            if (Before[i].bPresent && !SameLink(Before[i].Link, After[i].Link))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return Before == After;
     }
 
     void FEntityRelationshipCommand::Capture(TVector<FRecord>& Out) const
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Index-aligned even if an entity dies mid-edit, which records an absent link and is skipped.
+        // Index-aligned even if an entity dies mid-edit, which records no parent and is skipped.
         Out.assign(Entities.size(), FRecord());
 
         CWorld* W = World.Get();
@@ -112,11 +78,9 @@ namespace Lumina
                 continue;
             }
 
-            if (const FRelationshipComponent* Link = Registry.TryGet<FRelationshipComponent>(Entity))
-            {
-                Out[i].bPresent = true;
-                Out[i].Link = *Link;
-            }
+            const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
+            Out[i].Parent = Hierarchy.GetParent(Entity);
+            Out[i].SiblingIndex = Out[i].Parent.IsNull() ? 0u : Hierarchy.GetSiblingIndex(Entity);
         }
     }
 
@@ -132,6 +96,8 @@ namespace Lumina
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*W);
 
+        // Every sibling of each affected parent is in the set, so detaching them all and reattaching by index reproduces the image.
+        ECS::Utils::FParentLinks Links;
         for (SIZE_T i = 0; i < Entities.size(); ++i)
         {
             const ECS::FEntity Entity = Entities[i];
@@ -140,13 +106,10 @@ namespace Lumina
                 continue;   // destroyed since the edit; its own transaction owns bringing it back
             }
 
-            if (In[i].bPresent)
+            Registry.DetachFromParent(Entity);
+            if (!In[i].Parent.IsNull())
             {
-                Registry.EmplaceOrReplace<FRelationshipComponent>(Entity, In[i].Link);
-            }
-            else if (Registry.HasAll<FRelationshipComponent>(Entity))
-            {
-                Registry.Remove<FRelationshipComponent>(Entity);
+                Links.Links.push_back({ Entity, In[i].Parent, In[i].SiblingIndex });
             }
 
             // The parent chain moved, so every restored entity owes a world-matrix recompute.
@@ -155,6 +118,7 @@ namespace Lumina
                 Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
             }
         }
+        Links.Apply(Registry);
 
         if (W->GetPackage())
         {

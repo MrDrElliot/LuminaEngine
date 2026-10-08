@@ -1,12 +1,22 @@
 #include <gtest/gtest.h>
 #include "World/ECS/Registry.h"
+#include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Versioning/CoreVersion.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/DirtyComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 
 using namespace Lumina;
+
+namespace
+{
+    ECS::FHierarchyNode LinkOf(const ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const ECS::FHierarchyNode* Node = Registry.GetHierarchy().Find(Entity);
+        return Node != nullptr ? *Node : ECS::FHierarchyNode();
+    }
+}
 
 TEST(ECSTests, Parent_SingleChild)
 {
@@ -19,17 +29,17 @@ TEST(ECSTests, Parent_SingleChild)
     Registry.Emplace<STransformComponent>(Child);
     ECS::Utils::ReparentEntity(Registry, Child, Parent);
 
-    const auto& ParentRel = Registry.Get<FRelationshipComponent>(Parent);
-    const auto& ChildRel  = Registry.Get<FRelationshipComponent>(Child);
+    const ECS::FHierarchyNode ParentNode = LinkOf(Registry, Parent);
+    const ECS::FHierarchyNode ChildNode = LinkOf(Registry, Child);
 
-    EXPECT_EQ(ParentRel.Parent, ECS::FEntity{ECS::NullEntity});
-    EXPECT_EQ(ChildRel.Parent, Parent);
+    EXPECT_EQ(ParentNode.Parent, ECS::FEntity{ECS::NullEntity});
+    EXPECT_EQ(ChildNode.Parent, Parent);
 
-    EXPECT_EQ(ParentRel.First, Child);
-    EXPECT_EQ(ParentRel.Children, 1);
+    EXPECT_EQ(ParentNode.First, Child);
+    EXPECT_EQ(ParentNode.ChildCount, 1u);
 
-    EXPECT_EQ(ChildRel.Prev, ECS::FEntity{ECS::NullEntity});
-    EXPECT_EQ(ChildRel.Next, ECS::FEntity{ECS::NullEntity});
+    EXPECT_EQ(ChildNode.Prev, ECS::FEntity{ECS::NullEntity});
+    EXPECT_EQ(ChildNode.Next, ECS::FEntity{ECS::NullEntity});
 }
 
 TEST(ECSTests, Parent_MultipleChildren_Order)
@@ -51,23 +61,25 @@ TEST(ECSTests, Parent_MultipleChildren_Order)
     ECS::Utils::ReparentEntity(Registry, ChildB, Parent);
     ECS::Utils::ReparentEntity(Registry, ChildC, Parent);
 
-    const auto& ParentRel = Registry.Get<FRelationshipComponent>(Parent);
+    const ECS::FHierarchyNode ParentNode = LinkOf(Registry, Parent);
 
-    EXPECT_EQ(ParentRel.Children, 3);
-    EXPECT_EQ(ParentRel.First, ChildC);
+    EXPECT_EQ(ParentNode.ChildCount, 3u);
+    EXPECT_EQ(ParentNode.First, ChildA) << "children append, so the list keeps attach order";
+    EXPECT_EQ(ParentNode.Last, ChildC);
 
-    const auto& A = Registry.Get<FRelationshipComponent>(ChildA);
-    const auto& B = Registry.Get<FRelationshipComponent>(ChildB);
-    const auto& C = Registry.Get<FRelationshipComponent>(ChildC);
+    const ECS::FHierarchyNode A = LinkOf(Registry, ChildA);
+    const ECS::FHierarchyNode B = LinkOf(Registry, ChildB);
+    const ECS::FHierarchyNode C = LinkOf(Registry, ChildC);
 
     EXPECT_EQ(A.Parent, Parent);
     EXPECT_EQ(B.Parent, Parent);
     EXPECT_EQ(C.Parent, Parent);
 
-    EXPECT_EQ(C.Next, ChildB);
-    EXPECT_EQ(B.Prev, ChildC);
-    EXPECT_EQ(B.Next, ChildA);
-    EXPECT_EQ(A.Prev, ChildB);
+    EXPECT_EQ(A.Next, ChildB);
+    EXPECT_EQ(B.Prev, ChildA);
+    EXPECT_EQ(B.Next, ChildC);
+    EXPECT_EQ(C.Prev, ChildB);
+    EXPECT_EQ(Registry.GetHierarchy().GetSiblingIndex(ChildC), 2u);
 }
 
 TEST(ECSTests, Parent_Reparent_MovesCorrectly)
@@ -85,15 +97,15 @@ TEST(ECSTests, Parent_Reparent_MovesCorrectly)
     ECS::Utils::ReparentEntity(Registry, Child, ParentA);
     ECS::Utils::ReparentEntity(Registry, Child, ParentB);
 
-    const auto& A = Registry.Get<FRelationshipComponent>(ParentA);
-    const auto& B = Registry.Get<FRelationshipComponent>(ParentB);
-    const auto& C = Registry.Get<FRelationshipComponent>(Child);
+    const ECS::FHierarchyNode A = LinkOf(Registry, ParentA);
+    const ECS::FHierarchyNode B = LinkOf(Registry, ParentB);
+    const ECS::FHierarchyNode C = LinkOf(Registry, Child);
 
     EXPECT_EQ(C.Parent, ParentB);
     EXPECT_EQ(B.First, Child);
-    EXPECT_EQ(B.Children, 1);
+    EXPECT_EQ(B.ChildCount, 1u);
 
-    EXPECT_EQ(A.Children, 0);
+    EXPECT_EQ(A.ChildCount, 0u);
 }
 
 TEST(ECSTests, ComputeWorldTransform_GrandchildFollowsRootMoveWithoutWriting)
@@ -109,8 +121,8 @@ TEST(ECSTests, ComputeWorldTransform_GrandchildFollowsRootMoveWithoutWriting)
     Registry.Emplace<STransformComponent>(C).LocalTransform.SetLocation(FVector3(2.f,  0.f, 0.f));
 
     // AddToParent only links, while ReparentEntity would bake the zeroed world matrix in.
-    ECS::Utils::AddToParent(Registry, B, A);
-    ECS::Utils::AddToParent(Registry, C, B);
+    Registry.AttachChild(B, A);
+    Registry.AttachChild(C, B);
 
     Registry.Emplace<FNeedsTransformUpdate>(A);
     Registry.Emplace<FNeedsTransformUpdate>(B);
@@ -148,9 +160,9 @@ TEST(ECSTests, ComputeWorldTransform_SiblingOfAMovedChainIsCurrent)
     Registry.Emplace<STransformComponent>(C).LocalTransform.SetLocation(FVector3(2.f,  0.f, 0.f));
     Registry.Emplace<STransformComponent>(D).LocalTransform.SetLocation(FVector3(0.f,  3.f, 0.f));
 
-    ECS::Utils::AddToParent(Registry, B, A);
-    ECS::Utils::AddToParent(Registry, C, B);
-    ECS::Utils::AddToParent(Registry, D, A);
+    Registry.AttachChild(B, A);
+    Registry.AttachChild(C, B);
+    Registry.AttachChild(D, A);
 
     Registry.Emplace<FNeedsTransformUpdate>(A);
     Registry.Emplace<FNeedsTransformUpdate>(B);
@@ -186,7 +198,7 @@ TEST(ECSTests, ComputeWorldTransform_MatchesThePropagationAcrossADeepRotatedChai
         Registry.Emplace<STransformComponent>(E).LocalTransform = Local;
         if (!Chain.empty())
         {
-            ECS::Utils::AddToParent(Registry, E, Chain.back());
+            Registry.AttachChild(E, Chain.back());
         }
         Registry.Emplace<FNeedsTransformUpdate>(E);
         Chain.push_back(E);
@@ -226,12 +238,12 @@ TEST(ECSTests, Parent_Unparent)
     ECS::Utils::ReparentEntity(Registry, Child, Parent);
     ECS::Utils::ReparentEntity(Registry, Child, ECS::NullEntity);
 
-    const auto& ParentRel = Registry.Get<FRelationshipComponent>(Parent);
-    const auto& ChildRel  = Registry.Get<FRelationshipComponent>(Child);
+    const ECS::FHierarchyNode ParentNode = LinkOf(Registry, Parent);
+    const ECS::FHierarchyNode ChildNode = LinkOf(Registry, Child);
 
-    EXPECT_EQ(ChildRel.Parent, ECS::FEntity{ECS::NullEntity});
-    EXPECT_EQ(ParentRel.Children, 0);
-    EXPECT_EQ(ParentRel.First, ECS::FEntity{ECS::NullEntity});
+    EXPECT_EQ(ChildNode.Parent, ECS::FEntity{ECS::NullEntity});
+    EXPECT_EQ(ParentNode.ChildCount, 0u);
+    EXPECT_EQ(ParentNode.First, ECS::FEntity{ECS::NullEntity});
 }
 
 // After a clean phase the on_construct hook must re-arm bAnyDirty for the lazy read.
@@ -243,7 +255,7 @@ TEST(ECSTests, LazyResolve_AfterCleanPhase_SeesUpdatedWorld)
     ECS::FEntity Child  = Registry.Create();
     Registry.Emplace<STransformComponent>(Parent).LocalTransform.SetLocation(FVector3(10.f, 0.f, 0.f));
     Registry.Emplace<STransformComponent>(Child).LocalTransform.SetLocation(FVector3(5.f, 0.f, 0.f));
-    ECS::Utils::AddToParent(Registry, Child, Parent);
+    Registry.AttachChild(Child, Parent);
 
     Registry.Get<STransformComponent>(Parent).Bind(Registry, Parent);
     Registry.Get<STransformComponent>(Child).Bind(Registry, Child);
@@ -369,4 +381,239 @@ TEST(ECSTests, LayoutEpoch_ReadsDeadAfterThePoolIsDestroyed)
     }
 
     EXPECT_EQ(*Epoch, ECS::FSparseSet::DeadLayoutEpoch);
+}
+
+TEST(ECSTests, Hierarchy_PreorderKeepsEverySubtreeContiguous)
+{
+    ECS::FRegistry Registry{};
+
+    const ECS::FEntity Root = Registry.Create();
+    const ECS::FEntity A = Registry.Create();
+    const ECS::FEntity B = Registry.Create();
+    const ECS::FEntity A1 = Registry.Create();
+    const ECS::FEntity A2 = Registry.Create();
+    const ECS::FEntity Other = Registry.Create();
+    const ECS::FEntity OtherChild = Registry.Create();
+
+    Registry.AttachChild(A, Root);
+    Registry.AttachChild(B, Root);
+    Registry.AttachChild(A1, A);
+    Registry.AttachChild(A2, A);
+    Registry.AttachChild(OtherChild, Other);
+
+    const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
+    Hierarchy.EnsureOrder();
+
+    const TVector<ECS::FEntity>& Order = Hierarchy.GetOrder();
+    ASSERT_EQ(Order.size(), 7u);
+
+    for (uint32 Slot = 0; Slot < (uint32)Order.size(); ++Slot)
+    {
+        const uint32 Parent = Hierarchy.GetParentSlots()[Slot];
+        if (Parent != ECS::FHierarchy::NoSlot)
+        {
+            EXPECT_LT(Parent, Slot) << "a parent precedes its children";
+            EXPECT_LT(Slot, Parent + Hierarchy.GetSubtreeSizes()[Parent]) << "a child sits inside its parent's range";
+            EXPECT_EQ(Order[Parent], Hierarchy.GetParent(Order[Slot]));
+        }
+    }
+
+    EXPECT_EQ(Hierarchy.GetSubtreeSizes()[Hierarchy.GetSlot(Root)], 5u);
+    EXPECT_EQ(Hierarchy.GetSubtreeSizes()[Hierarchy.GetSlot(A)], 3u);
+    EXPECT_EQ(Hierarchy.GetSlot(A) + 1, Hierarchy.GetSlot(A1)) << "siblings keep their list order";
+    EXPECT_EQ(Hierarchy.GetSlot(A1) + 1, Hierarchy.GetSlot(A2));
+}
+
+TEST(ECSTests, Hierarchy_AttachRefusesACycle)
+{
+    ECS::FRegistry Registry{};
+
+    const ECS::FEntity Parent = Registry.Create();
+    const ECS::FEntity Child = Registry.Create();
+    ASSERT_TRUE(Registry.AttachChild(Child, Parent));
+
+    EXPECT_FALSE(Registry.AttachChild(Parent, Child));
+    EXPECT_FALSE(Registry.AttachChild(Parent, Parent));
+    EXPECT_EQ(Registry.GetHierarchy().GetParent(Parent), ECS::FEntity{ECS::NullEntity});
+}
+
+TEST(ECSTests, Hierarchy_DestroyOrphansChildrenUnlessCascading)
+{
+    {
+        ECS::FRegistry Registry{};
+        const ECS::FEntity Parent = Registry.Create();
+        const ECS::FEntity Child = Registry.Create();
+        Registry.AttachChild(Child, Parent);
+
+        Registry.Destroy(Parent);
+        EXPECT_TRUE(Registry.IsValid(Child));
+        EXPECT_FALSE(Registry.GetHierarchy().IsLinked(Child));
+        EXPECT_EQ(Registry.GetHierarchy().NumLinked(), 0u);
+    }
+
+    {
+        ECS::FRegistry Registry{};
+        Registry.SetDestroyDescendantsWithParent(true);
+
+        const ECS::FEntity Root = Registry.Create();
+        const ECS::FEntity Parent = Registry.Create();
+        const ECS::FEntity Child = Registry.Create();
+        const ECS::FEntity Sibling = Registry.Create();
+        Registry.AttachChild(Parent, Root);
+        Registry.AttachChild(Sibling, Root);
+        Registry.AttachChild(Child, Parent);
+
+        Registry.Destroy(Parent);
+        EXPECT_FALSE(Registry.IsValid(Child));
+        EXPECT_TRUE(Registry.IsValid(Sibling));
+        EXPECT_EQ(Registry.GetHierarchy().GetChildCount(Root), 1u);
+        EXPECT_EQ(Registry.GetHierarchy().GetFirstChild(Root), Sibling);
+    }
+}
+
+TEST(ECSTests, Resolve_DirtyChildUnderDirtyParentComposesWithTheNewParent)
+{
+    ECS::FRegistry Registry{};
+
+    const ECS::FEntity Root = Registry.Create();
+    const ECS::FEntity Child = Registry.Create();
+    const ECS::FEntity Grandchild = Registry.Create();
+    Registry.Emplace<STransformComponent>(Root);
+    Registry.Emplace<STransformComponent>(Child).LocalTransform.SetLocation(FVector3(1.f, 0.f, 0.f));
+    Registry.Emplace<STransformComponent>(Grandchild).LocalTransform.SetLocation(FVector3(1.f, 0.f, 0.f));
+    Registry.AttachChild(Child, Root);
+    Registry.AttachChild(Grandchild, Child);
+
+    Registry.Emplace<FNeedsTransformUpdate>(Root);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Grandchild).WorldTransform.GetLocation().x, 2.f);
+
+    // Both ends move, and the grandchild must compose with the root's new world rather than its cached one.
+    Registry.Get<STransformComponent>(Grandchild).LocalTransform.SetLocation(FVector3(3.f, 0.f, 0.f));
+    Registry.Emplace<FNeedsTransformUpdate>(Grandchild);
+    Registry.Get<STransformComponent>(Root).LocalTransform.SetLocation(FVector3(100.f, 0.f, 0.f));
+    Registry.Emplace<FNeedsTransformUpdate>(Root);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Child).WorldTransform.GetLocation().x, 101.f);
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Grandchild).WorldTransform.GetLocation().x, 104.f);
+    EXPECT_FALSE(Registry.Get<STransformComponent>(Grandchild).bWorldDirty);
+}
+
+TEST(ECSTests, Hierarchy_SurvivesASaveAndLoad)
+{
+    ECS::FRegistry Source{};
+    const ECS::FEntity Root = Source.Create();
+    const ECS::FEntity A = Source.Create();
+    const ECS::FEntity B = Source.Create();
+    const ECS::FEntity Leaf = Source.Create();
+    for (const ECS::FEntity E : { Root, A, B, Leaf })
+    {
+        Source.Emplace<STransformComponent>(E);
+    }
+    Source.AttachChild(A, Root);
+    Source.AttachChild(B, Root, 0);
+    Source.AttachChild(Leaf, A);
+
+    TVector<uint8> Bytes;
+    {
+        FMemoryWriter Writer(Bytes);
+        ASSERT_TRUE(ECS::Utils::SerializeRegistry(Writer, Source));
+    }
+
+    ECS::FRegistry Loaded{};
+    {
+        FMemoryReader Reader(Bytes);
+        ASSERT_TRUE(ECS::Utils::SerializeRegistry(Reader, Loaded));
+    }
+
+    const ECS::FHierarchy& Hierarchy = Loaded.GetHierarchy();
+    EXPECT_EQ(Hierarchy.NumLinked(), 4u);
+    EXPECT_EQ(Hierarchy.GetParent(A), Root);
+    EXPECT_EQ(Hierarchy.GetParent(Leaf), A);
+    EXPECT_EQ(Hierarchy.GetChildCount(Root), 2u);
+    EXPECT_EQ(Hierarchy.GetFirstChild(Root), B) << "sibling order is part of the saved links";
+    EXPECT_EQ(Hierarchy.GetNextSibling(B), A);
+    EXPECT_FALSE(ECS::Utils::IsEntityTransformFlat(Loaded, Leaf));
+
+    Hierarchy.EnsureOrder();
+    EXPECT_EQ(Hierarchy.GetSubtreeSizes()[Hierarchy.GetSlot(Root)], 4u);
+}
+
+TEST(ECSTests, Hierarchy_LoadsTheLegacyRelationshipLayout)
+{
+    const ECS::FEntity Root(0, 0), A(1, 0), B(2, 0);
+
+    // Children listed after their parent's First, as the removed component saved them, with B ahead of A.
+    struct FLegacyEntity { ECS::FEntity Self, First, Prev, Next, Parent; size_t Children; };
+    const FLegacyEntity Legacy[] = {
+        { A,    ECS::NullEntity, B,               ECS::NullEntity, Root, 0 },
+        { Root, B,               ECS::NullEntity, ECS::NullEntity, ECS::NullEntity, 2 },
+        { B,    ECS::NullEntity, ECS::NullEntity, A,               Root, 0 },
+    };
+
+    TVector<uint8> Bytes;
+    {
+        FMemoryWriter MemoryWriter(Bytes);
+        FArchive& Writer = MemoryWriter;
+        int32 Count = 3;
+        Writer << Count;
+        for (FLegacyEntity Entry : Legacy)
+        {
+            const int64 SizePos = Writer.Tell();
+            int64 Size = 0;
+            Writer << Size;
+            const int64 Start = Writer.Tell();
+
+            bool bHasRelationship = true;
+            size_t NumComponents = 0;
+            Writer << Entry.Self << bHasRelationship << Entry.Children << Entry.First << Entry.Prev << Entry.Next << Entry.Parent << NumComponents;
+
+            const int64 End = Writer.Tell();
+            Size = End - Start;
+            Writer.Seek(SizePos);
+            Writer << Size;
+            Writer.Seek(End);
+        }
+    }
+
+    ECS::FRegistry Loaded{};
+    {
+        FMemoryReader Reader(Bytes);
+        Reader.SetFileVersion((int32)ELuminaEngineVersion::PACKAGE_NAME_TABLE);
+        ASSERT_TRUE(ECS::Utils::SerializeRegistry(Reader, Loaded));
+    }
+
+    const ECS::FHierarchy& Hierarchy = Loaded.GetHierarchy();
+    EXPECT_EQ(Hierarchy.GetParent(A), Root);
+    EXPECT_EQ(Hierarchy.GetParent(B), Root);
+    EXPECT_EQ(Hierarchy.GetChildCount(Root), 2u);
+    EXPECT_EQ(Hierarchy.GetFirstChild(Root), B) << "the saved sibling chain decides the order, not the file order";
+    EXPECT_EQ(Hierarchy.GetNextSibling(B), A);
+}
+
+TEST(ECSTests, MaxLiveIndexSkipsTombstones)
+{
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Entities;
+    for (int32 i = 0; i < 21; ++i)
+    {
+        Entities.push_back(Registry.Create());
+        Registry.Emplace<STransformComponent>(Entities.back());
+    }
+
+    const ECS::FSparseSet* Pool = Registry.FindStorage<STransformComponent>().GetSet();
+    ASSERT_NE(Pool, nullptr);
+    EXPECT_EQ(Pool->MaxLiveIndex(), Entities.back().GetIndex());
+
+    // The removed slot stays in the dense array as a tombstone whose index bits link the free list.
+    Registry.Remove<STransformComponent>(Entities.back());
+    Registry.Remove<STransformComponent>(Entities[7]);
+    EXPECT_EQ(Pool->MaxLiveIndex(), Entities[19].GetIndex());
+
+    for (const ECS::FEntity Entity : Entities)
+    {
+        Registry.Remove<STransformComponent>(Entity);
+    }
+    EXPECT_EQ(Pool->MaxLiveIndex(), 0u);
 }

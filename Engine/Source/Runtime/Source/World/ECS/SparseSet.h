@@ -101,6 +101,9 @@ namespace Lumina::ECS
         NODISCARD FORCEINLINE const FEntity* GetDenseData() const { return Dense.data(); }
         NODISCARD FORCEINLINE FEntity GetDenseAt(size_t Index) const { return Dense[Index]; }
 
+        // The highest entity index in the pool, tombstones skipped, or 0 when it holds none. For sizing an index-keyed table.
+        NODISCARD RUNTIME_API uint32 MaxLiveIndex() const;
+
         // The entity whose payload starts at Payload, or null when the address is not a live element of this pool.
         NODISCARD FEntity FindPayloadOwner(const void* Payload) const;
 

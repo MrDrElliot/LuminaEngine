@@ -350,16 +350,7 @@ namespace Lumina
         // Dedup guard for the DirtyBodies queue
         mutable bool bBodyDirtyQueued = false;
 
-        /**
-         * Cached "this entity has no FRelationshipComponent", which is exactly what the resolve tests to
-         * take its flat path. When set, a setter resolves itself (world == local) instead of queueing --
-         * see MarkDirty.
-         *
-         * FALSE IS ALWAYS SAFE; only true is a claim. A missed update costs the slow path, never a wrong
-         * transform, which is what makes maintaining it out of band acceptable. Kept current by
-         * CWorld::OnTransformComponentConstruct, the on_construct<FRelationshipComponent> hook, and Bind
-         * (duplication / post-load). Lands in existing padding, so it costs no bytes.
-         */
+        // Cached "not linked in the registry hierarchy", which lets a setter resolve itself. Only true is a claim.
         bool bIsFlat = false;
 
         // Publish-once-per-frame guard for the flat path, compared against FTransformDirtyGate::PublishEpoch.

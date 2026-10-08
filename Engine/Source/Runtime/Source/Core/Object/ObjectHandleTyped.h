@@ -192,10 +192,6 @@ namespace Lumina
         template<typename U> friend class TWeakObjectPtr;
     };
 
-    // The old name, kept for one version so game modules can move over.
-    template<typename T>
-    using TObjectPtr LUM_DEPRECATED(0.1.12, "Renamed to TStrongObjectPtr.") = TStrongObjectPtr<T>;
-
 
     
     template<typename T>

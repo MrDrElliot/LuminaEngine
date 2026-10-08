@@ -4,7 +4,6 @@
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/DirtyComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include <cstdio>
 
@@ -40,7 +39,7 @@ namespace
         {
             const ECS::FEntity E = Registry.Create();
             Registry.Emplace<STransformComponent>(E);
-            ECS::Utils::AddToParent(Registry, E, Root);
+            Registry.AttachChild(E, Root);
             Registry.Get<STransformComponent>(E).Bind(Registry, E);
             Out.push_back(E);
         }
@@ -293,5 +292,112 @@ TEST(TransformBench, DISABLED_FlatWorldCopyCost)
                 sizeof(STransformComponent),
                 offsetof(STransformComponent, LocalTransform),
                 offsetof(STransformComponent, WorldTransform));
+    SUCCEED();
+}
+
+namespace
+{
+    // Capsule-like roots, each carrying a mesh, two pieces of gear and a light, with an item socketed under the mesh.
+    void MakeCharacters(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Roots, uint32 Count)
+    {
+        Roots.reserve(Count);
+        for (uint32 i = 0; i < Count; ++i)
+        {
+            const ECS::FEntity Root = Registry.Create();
+            Registry.Emplace<STransformComponent>(Root);
+
+            ECS::FEntity Mesh = ECS::NullEntity;
+            for (int32 c = 0; c < 4; ++c)
+            {
+                const ECS::FEntity Child = Registry.Create();
+                Registry.Emplace<STransformComponent>(Child).LocalTransform.SetLocation(FVector3(0.0f, (float)c, 0.0f));
+                Registry.AttachChild(Child, Root);
+                Registry.Get<STransformComponent>(Child).Bind(Registry, Child);
+                if (c == 0)
+                {
+                    Mesh = Child;
+                }
+            }
+            const ECS::FEntity Item = Registry.Create();
+            Registry.Emplace<STransformComponent>(Item).LocalTransform.SetLocation(FVector3(0.5f, 1.0f, 0.0f));
+            Registry.AttachChild(Item, Mesh);
+            Registry.Get<STransformComponent>(Item).Bind(Registry, Item);
+
+            Registry.Get<STransformComponent>(Root).Bind(Registry, Root);
+            Roots.push_back(Root);
+        }
+    }
+
+    // Chains Depth long, moved from the top, the shape where child chasing costs the most per entity.
+    void MakeChains(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Roots, uint32 Count, uint32 Depth)
+    {
+        Roots.reserve(Count);
+        for (uint32 i = 0; i < Count; ++i)
+        {
+            ECS::FEntity Parent = Registry.Create();
+            Registry.Emplace<STransformComponent>(Parent);
+            const ECS::FEntity Root = Parent;
+            for (uint32 d = 1; d < Depth; ++d)
+            {
+                const ECS::FEntity Child = Registry.Create();
+                Registry.Emplace<STransformComponent>(Child).LocalTransform.SetLocation(FVector3(1.0f, 0.0f, 0.0f));
+                Registry.AttachChild(Child, Parent);
+                Registry.Get<STransformComponent>(Child).Bind(Registry, Child);
+                Parent = Child;
+            }
+            Registry.Get<STransformComponent>(Root).Bind(Registry, Root);
+            Roots.push_back(Root);
+        }
+    }
+
+    // Moves every root each frame and times the propagation, per root moved.
+    double PropagateRootMoves(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Roots, int32 Frames)
+    {
+        auto Storage = Registry.GetStorage<STransformComponent>();
+        ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+        double ResolveTotal = 0.0;
+        for (int32 Frame = 0; Frame < Frames; ++Frame)
+        {
+            for (ECS::FEntity Root : Roots)
+            {
+                Storage.Get(Root).SetLocalLocation(FVector3((float)Frame, 0.0f, 0.0f));
+            }
+            const auto Start = Lumina::PlatformTime::Cycles();
+            ECS::Utils::ResolveAllDirtyTransforms(Registry);
+            ResolveTotal += Lumina::PlatformTime::ToSeconds(Lumina::PlatformTime::Cycles() - Start) * 1e9;
+        }
+        return ResolveTotal / (double)Frames;
+    }
+}
+
+TEST(TransformBench, DISABLED_CharacterHierarchyPropagation)
+{
+    constexpr uint32 Count  = 2000;
+    constexpr int32  Frames = 200;
+
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Roots;
+    MakeCharacters(Registry, Roots, Count);
+
+    const double FrameNs = PropagateRootMoves(Registry, Roots, Frames);
+    std::printf("\n  characters %u x 6 entities, %d frames:  propagate %8.1f us/frame  %6.2f ns/entity\n",
+                Count, Frames, FrameNs / 1000.0, FrameNs / (double)(Count * 6));
+    SUCCEED();
+}
+
+TEST(TransformBench, DISABLED_DeepChainPropagation)
+{
+    constexpr uint32 Count  = 1000;
+    constexpr uint32 Depth  = 20;
+    constexpr int32  Frames = 100;
+
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Roots;
+    MakeChains(Registry, Roots, Count, Depth);
+
+    const double FrameNs = PropagateRootMoves(Registry, Roots, Frames);
+    std::printf("\n  chains %u x depth %u, %d frames:  propagate %8.1f us/frame  %6.2f ns/entity\n",
+                Count, Depth, Frames, FrameNs / 1000.0, FrameNs / (double)(Count * Depth));
     SUCCEED();
 }

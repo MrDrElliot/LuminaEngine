@@ -74,6 +74,39 @@ namespace Lumina::ECS
         }
     }
 
+    uint32 FSparseSet::MaxLiveIndex() const
+    {
+        const uint32* Packed = reinterpret_cast<const uint32*>(Dense.data());
+        const size_t  Count  = Dense.size();
+
+        const __m256i IndexMask    = _mm256_set1_epi32((int32)FEntity::IndexMask);
+        const __m256i TombstoneTag = _mm256_set1_epi32((int32)(FEntity::TombstoneVersion << FEntity::IndexBits));
+        __m256i Highest = _mm256_setzero_si256();
+
+        size_t i = 0;
+        for (; i + 8 <= Count; i += 8)
+        {
+            const __m256i Handles     = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(Packed + i));
+            const __m256i bTombstone  = _mm256_cmpeq_epi32(_mm256_andnot_si256(IndexMask, Handles), TombstoneTag);
+            const __m256i LiveIndices = _mm256_andnot_si256(bTombstone, _mm256_and_si256(Handles, IndexMask));
+            Highest = _mm256_max_epu32(Highest, LiveIndices);
+        }
+
+        __m128i Folded = _mm_max_epu32(_mm256_castsi256_si128(Highest), _mm256_extracti128_si256(Highest, 1));
+        Folded = _mm_max_epu32(Folded, _mm_shuffle_epi32(Folded, _MM_SHUFFLE(1, 0, 3, 2)));
+        Folded = _mm_max_epu32(Folded, _mm_shuffle_epi32(Folded, _MM_SHUFFLE(2, 3, 0, 1)));
+        uint32 Result = (uint32)_mm_cvtsi128_si32(Folded);
+
+        for (; i < Count; ++i)
+        {
+            if (!Dense[i].IsTombstone())
+            {
+                Result = Math::Max(Result, Dense[i].GetIndex());
+            }
+        }
+        return Result;
+    }
+
     FEntity FSparseSet::FindPayloadOwner(const void* Payload) const
     {
         if (Payload == nullptr || ElementSize == 0)

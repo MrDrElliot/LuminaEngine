@@ -291,6 +291,7 @@ namespace Lumina::ECS
         }
 
         EntityDestroyed.Broadcast(*this, Entity);
+        DestroyHierarchyLinks(Entity);
         DetachFromAllStorages(Entity);
 
         const uint32 Index = Entity.GetIndex();
@@ -301,6 +302,85 @@ namespace Lumina::ECS
             FreeEntityHead = Index;
         }
         --LiveEntityCount;
+    }
+
+    void FRegistry::DestroyHierarchyLinks(FEntity Entity)
+    {
+        if (!Hierarchy.IsLinked(Entity))
+        {
+            Hierarchy.Forget(Entity);
+            return;
+        }
+
+        const FEntity Parent = Hierarchy.GetParent(Entity);
+        Hierarchy.Unlink(Entity);
+        if (!Parent.IsNull())
+        {
+            HierarchyChanged.Broadcast(*this, Parent);
+        }
+
+        if (bDestroyDescendantsWithParent)
+        {
+            TVector<FEntity> Subtree;
+            Hierarchy.ForEachDescendant(Entity, [&](FEntity Descendant) { Subtree.push_back(Descendant); });
+
+            // Reversed, so every child goes before its parent, and unlinked first, since nobody is left to tell.
+            for (size_t Index = Subtree.size(); Index-- > 0;)
+            {
+                Hierarchy.Unlink(Subtree[Index]);
+                Destroy(Subtree[Index]);
+            }
+        }
+        else
+        {
+            Hierarchy.ForEachChild(Entity, [&](FEntity Orphan)
+            {
+                Hierarchy.Unlink(Orphan);
+                HierarchyChanged.Broadcast(*this, Orphan);
+            });
+        }
+
+        Hierarchy.Forget(Entity);
+    }
+
+    bool FRegistry::AttachChild(FEntity Child, FEntity Parent, uint32 Position)
+    {
+        if (Child == Parent || !IsValid(Child) || !IsValid(Parent) || Hierarchy.IsDescendantOf(Parent, Child))
+        {
+            return false;
+        }
+
+        const bool bSameParent = Hierarchy.GetParent(Child) == Parent;
+        if (bSameParent && Position == FHierarchy::AppendPosition)
+        {
+            return true;
+        }
+
+        const FEntity OldParent = Hierarchy.GetParent(Child);
+        Hierarchy.Unlink(Child);
+        Hierarchy.Link(Child, Parent, Position);
+        if (!bSameParent)
+        {
+            HierarchyChanged.Broadcast(*this, Child);
+            HierarchyChanged.Broadcast(*this, Parent);
+            if (!OldParent.IsNull())
+            {
+                HierarchyChanged.Broadcast(*this, OldParent);
+            }
+        }
+        return true;
+    }
+
+    void FRegistry::DetachFromParent(FEntity Child)
+    {
+        const FEntity OldParent = Hierarchy.GetParent(Child);
+        if (OldParent.IsNull())
+        {
+            return;
+        }
+        Hierarchy.Unlink(Child);
+        HierarchyChanged.Broadcast(*this, Child);
+        HierarchyChanged.Broadcast(*this, OldParent);
     }
 
     void FRegistry::DetachFromAllStorages(FEntity Entity)
@@ -323,6 +403,7 @@ namespace Lumina::ECS
             Storage->ClearAll();
         }
 
+        Hierarchy.Reset();
         EntityRecords.clear();
         FreeEntityHead = NoFreeSlot;
         LiveEntityCount = 0;
@@ -350,6 +431,7 @@ namespace Lumina::ECS
         ActiveStorages.swap(Other.ActiveStorages);
         NamedStorages.swap(Other.NamedStorages);
         Context.Swap(Other.Context);
+        std::swap(Hierarchy, Other.Hierarchy);
 
         const uint32 FreeHead = FreeEntityHead;
         FreeEntityHead = Other.FreeEntityHead;

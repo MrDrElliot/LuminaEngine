@@ -79,14 +79,7 @@ namespace Lumina
                 continue;
             }
             bAnyConsumer = true;
-            const ECS::FEntity* Dense = Pool->GetDenseData();
-            for (size_t i = 0, Num = Pool->GetDenseSize(); i < Num; ++i)
-            {
-                if (!Dense[i].IsTombstone())
-                {
-                    MaxIndex = Math::Max(MaxIndex, Dense[i].GetIndex());
-                }
-            }
+            MaxIndex = Math::Max(MaxIndex, Pool->MaxLiveIndex());
         }
 
         ++State.Stamp;

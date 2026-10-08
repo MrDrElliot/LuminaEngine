@@ -19,7 +19,6 @@
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/FollowerPoseComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -114,7 +113,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
         Writes<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent, SFollowerPoseComponent>();
-        Reads<SCharacterMovementComponent, FRelationshipComponent, SystemResource::PhysicsQuery, SystemResource::Kinematics>();
+        Reads<SCharacterMovementComponent, SystemResource::Hierarchy, SystemResource::PhysicsQuery, SystemResource::Kinematics>();
     }
 
     // Slack so brief occlusion or culling flicker does not stutter the pose.
@@ -604,10 +603,10 @@ namespace Lumina
                 SceneContext.SelfEntity     = Entity;
 
                 // A mesh parented under its character has no body; the capsule it must not trace is the parent's.
-                const FRelationshipComponent* Relationship = SystemContext.TryGet<FRelationshipComponent>(Entity);
-                if (SceneContext.Scene != nullptr && SceneContext.Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Missing && Relationship != nullptr && Relationship->Parent != ECS::NullEntity)
+                const ECS::FEntity Parent = SystemContext.GetHierarchy().GetParent(Entity);
+                if (SceneContext.Scene != nullptr && SceneContext.Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Missing && Parent != ECS::NullEntity)
                 {
-                    SceneContext.SelfEntity = Relationship->Parent;
+                    SceneContext.SelfEntity = Parent;
                 }
 
                 SceneContext.Velocity = Kinematics::GetVelocity(KinematicsState, Entity);

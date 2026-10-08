@@ -6,13 +6,12 @@
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "EditorTransaction.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 
 namespace Lumina
 {
     class CWorld;
 
-    // Undo record for a hierarchy edit, holding the parent and sibling links it rewires.
+    // Undo record for a hierarchy edit, holding where each affected entity sat among its parent's children.
     class FEntityRelationshipCommand final : public IUndoableCommand
     {
     public:
@@ -36,8 +35,10 @@ namespace Lumina
 
         struct FRecord
         {
-            bool                   bPresent = false;
-            FRelationshipComponent Link;
+            ECS::FEntity Parent;
+            uint32       SiblingIndex = 0;
+
+            bool operator == (const FRecord&) const = default;
         };
 
         void Capture(TVector<FRecord>& Out) const;

@@ -1417,9 +1417,7 @@ namespace Lumina::Reflection
                 return true;
             }
             // A reflected container of objects holds TStrongObjectPtr, since LRT1001 refuses a raw pointer there.
-            const bool bStrong = Elem.rfind("TStrongObjectPtr<", 0) == 0 || Elem.rfind("Lumina::TStrongObjectPtr<", 0) == 0;
-            const bool bOldName = Elem.rfind("TObjectPtr<", 0) == 0 || Elem.rfind("Lumina::TObjectPtr<", 0) == 0;
-            if (bStrong || bOldName)
+            if (Elem.rfind("TStrongObjectPtr<", 0) == 0 || Elem.rfind("Lumina::TStrongObjectPtr<", 0) == 0)
             {
                 const std::string Target = ResolveTargetType(Db, FirstTemplateArgument(Elem));
                 const bool bRoot = IsObjectRootType(Target);

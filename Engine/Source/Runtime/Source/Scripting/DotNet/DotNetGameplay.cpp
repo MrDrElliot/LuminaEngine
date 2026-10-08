@@ -10,7 +10,6 @@
 #include "World/Entity/Systems/NavMeshSystem.h"
 #include "World/Entity/Systems/CameraSystem.h"
 #include "World/Entity/Systems/SystemSingletons.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "AI/Navigation/NavTypes.h"
 #include "GameplayTags/GameplayTagRegistry.h"
 #include "GameplayTags/GameplayTagComponent.h"

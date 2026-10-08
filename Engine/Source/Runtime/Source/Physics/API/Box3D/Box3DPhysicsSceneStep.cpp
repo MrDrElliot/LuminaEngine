@@ -16,7 +16,6 @@
 #include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Subsystems/WorldSettings.h"

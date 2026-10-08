@@ -41,7 +41,6 @@
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/NameComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SceneFolderComponent.h"
 #include "World/Entity/Components/SingletonEntityComponent.h"
 #include "Scripting/EntityScript.h"
@@ -596,13 +595,13 @@ namespace Lumina
     {
         ECS::FRegistry& Registry = GetSceneRegistry();
 
-        const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Entity);
-        if (Relationship == nullptr || Relationship->Parent == ECS::NullEntity || !Registry.IsValid(Relationship->Parent))
+        const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
+        if (Parent == ECS::NullEntity)
         {
             return;
         }
 
-        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.TryGet<SSkeletalMeshComponent>(Relationship->Parent))
+        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.TryGet<SSkeletalMeshComponent>(Parent))
         {
             if (CSkeleton* Skeleton = SkeletalUtils::GetSkeletonAsset(*SkeletalMesh))
             {
@@ -613,7 +612,7 @@ namespace Lumina
                 Out.Skeleton = Skeleton->GetSkeletonResource();
             }
         }
-        else if (const SStaticMeshComponent* StaticMesh = Registry.TryGet<SStaticMeshComponent>(Relationship->Parent))
+        else if (const SStaticMeshComponent* StaticMesh = Registry.TryGet<SStaticMeshComponent>(Parent))
         {
             if (StaticMesh->StaticMesh.IsValid())
             {
@@ -1019,12 +1018,9 @@ namespace Lumina
             {
                 continue;
             }
-            if (FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity))
+            if (Registry.GetHierarchy().GetParent(Entity) != ECS::NullEntity)
             {
-                if (Rel->Parent != ECS::NullEntity)
-                {
-                    continue;
-                }
+                continue;
             }
 
             Roots.push_back(Entity);
@@ -1065,23 +1061,16 @@ namespace Lumina
 
         // Attach under parent if it's already in the tree.
         FTreeNodeID ParentNode = InvalidTreeNode;
-        bool bHasEntityParent = false;
-        if (FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity))
+        const ECS::FEntity ParentEntity = Registry.GetHierarchy().GetParent(Entity);
+        const bool bHasEntityParent = ParentEntity != ECS::NullEntity;
+        if (bHasEntityParent)
         {
-            if (Rel->Parent != ECS::NullEntity)
+            auto ParentIt = EntityToTreeNode.find(ParentEntity);
+            if (ParentIt == EntityToTreeNode.end())
             {
-                bHasEntityParent = true;
-
-                auto ParentIt = EntityToTreeNode.find(Rel->Parent);
-                if (ParentIt != EntityToTreeNode.end())
-                {
-                    ParentNode = ParentIt->second;
-                }
-                else
-                {
-                    return InvalidTreeNode;
-                }
+                return InvalidTreeNode;
             }
+            ParentNode = ParentIt->second;
         }
 
         // Only unparented entities are filed in folders; an attached one lives under its parent's row.
@@ -1160,8 +1149,7 @@ namespace Lumina
         }
 
         // Only show an expander if the entity actually has child entities; lazy expansion populates them.
-        const FRelationshipComponent* RelForChildren = Registry.TryGet<FRelationshipComponent>(Entity);
-        const bool bHasChildren = RelForChildren != nullptr && RelForChildren->Children > 0;
+        const bool bHasChildren = Registry.GetHierarchy().GetChildCount(Entity) > 0;
         OutlinerListView.MarkHasLazyChildren(ItemEntity, bHasChildren);
 
         return ItemEntity;
@@ -1232,7 +1220,7 @@ namespace Lumina
         ECS::FRegistry& Registry = GetSceneRegistry();
         if (Registry.IsValid(Entity))
         {
-            ECS::Utils::ForEachChild(Registry, Entity, [&](ECS::FEntity Child)
+            Registry.GetHierarchy().ForEachChild(Entity, [&](ECS::FEntity Child)
             {
                 RemoveEntityFromOutliner(Child);
             });
@@ -1276,8 +1264,7 @@ namespace Lumina
         }
 
         ECS::FRegistry& Registry = GetSceneRegistry();
-        const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
-        const bool bHasChildren = Rel != nullptr && Rel->Children > 0;
+        const bool bHasChildren = Registry.GetHierarchy().GetChildCount(Entity) > 0;
         OutlinerListView.MarkHasLazyChildren(It->second, bHasChildren);
     }
 
@@ -1303,12 +1290,7 @@ namespace Lumina
         {
             Chain.push_back(Cursor);
 
-            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Cursor);
-            Cursor = (Rel != nullptr) ? Rel->Parent : ECS::NullEntity;
-            if (Cursor != ECS::NullEntity && !Registry.IsValid(Cursor))
-            {
-                break;
-            }
+            Cursor = Registry.GetHierarchy().GetParent(Cursor);
         }
 
         // Root-down, skipping the entity itself (index 0).
@@ -1338,7 +1320,7 @@ namespace Lumina
         }
 
         // Skips filtered-out children and ones already present from an on_construct race.
-        ECS::Utils::ForEachChild(Registry, Data.Entity, [&](ECS::FEntity Child)
+        Registry.GetHierarchy().ForEachChild(Data.Entity, [&](ECS::FEntity Child)
         {
             if (!IsOutlinerEntityVisible(Child))
             {
@@ -1359,7 +1341,7 @@ namespace Lumina
         {
             return;
         }
-        // Defer to next flush; FRelationshipComponent may not be set yet.
+        // Defer to next flush, since the parent link may not be set yet.
         PendingOutlinerAdds.push_back(Entity);
     }
 
@@ -1377,9 +1359,9 @@ namespace Lumina
                 ParentEntity = OutlinerListView.Get<FEntityListViewItemData>(ParentNode).Entity;
             }
         }
-        else if (const FRelationshipComponent* Rel = GetSceneRegistry().TryGet<FRelationshipComponent>(Entity))
+        else
         {
-            ParentEntity = Rel->Parent;
+            ParentEntity = GetSceneRegistry().GetHierarchy().GetParent(Entity);
         }
 
         RemoveEntityFromOutliner(Entity);
@@ -1716,8 +1698,7 @@ namespace Lumina
             {
                 Chain.AddUnique(Cursor);
 
-                const FRelationshipComponent* Link = Registry.TryGet<FRelationshipComponent>(Cursor);
-                Cursor = Link != nullptr ? Link->Parent : ECS::NullEntity;
+                Cursor = Registry.GetHierarchy().GetParent(Cursor);
             }
         }
 
@@ -1859,7 +1840,7 @@ namespace Lumina
             }
 
             // Folders only hold unparented entities, so filing one detaches it from its entity parent.
-            if (ECS::Utils::IsChild(Registry, Entity))
+            if (Registry.GetHierarchy().GetParent(Entity) != ECS::NullEntity)
             {
                 ECS::Utils::RemoveFromParent(Registry, Entity);
             }
@@ -2185,7 +2166,7 @@ namespace Lumina
             return "That entity no longer exists.";
         }
 
-        if (Entity == NewParent || (NewParent != ECS::NullEntity && ECS::Utils::IsDescendantOf(Registry, NewParent, Entity)))
+        if (Entity == NewParent || (NewParent != ECS::NullEntity && Registry.GetHierarchy().IsDescendantOf(NewParent, Entity)))
         {
             return "The new parent is inside the entity's own subtree, which would make a cycle.";
         }
@@ -3284,7 +3265,7 @@ namespace Lumina
                 {
                     const ECS::FEntity SelectedEntity = Selected[Index];
                     DrawFor(SelectedEntity);
-                    ECS::Utils::ForEachChild(Registry, SelectedEntity, [&](ECS::FEntity Child)
+                    Registry.GetHierarchy().ForEachChild(SelectedEntity, [&](ECS::FEntity Child)
                     {
                         DrawFor(Child);
                     });
@@ -3344,7 +3325,7 @@ namespace Lumina
         {
             const ECS::FEntity SelectedEntity = SelectedList[Index];
             DrawFor(SelectedEntity);
-            ECS::Utils::ForEachChild(Registry, SelectedEntity, [&](ECS::FEntity Child)
+            Registry.GetHierarchy().ForEachChild(SelectedEntity, [&](ECS::FEntity Child)
             {
                 DrawFor(Child);
             });

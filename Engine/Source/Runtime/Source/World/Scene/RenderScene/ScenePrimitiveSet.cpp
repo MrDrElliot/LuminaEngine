@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "ScenePrimitiveSet.h"
+#include "SceneCullMath.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/Mesh.h"
@@ -467,23 +468,8 @@ namespace Lumina
     void FScenePrimitiveSet::RebuildWorldBounds(uint32 Index)
     {
         const FScenePrimitive& Prim = Primitives[Index];
-        const FMatrix4& M = Prim.Transform;
-
-        const FVector3& C = Prim.LocalCenter;
-        const FVector3  Center = FVector3(M[0]) * C.x
-                               + FVector3(M[1]) * C.y
-                               + FVector3(M[2]) * C.z
-                               + FVector3(M[3]);
-
-        const float ScaleSq = Math::Max(Math::Max(
-            Math::Dot(FVector3(M[0]), FVector3(M[0])),
-            Math::Dot(FVector3(M[1]), FVector3(M[1]))),
-            Math::Dot(FVector3(M[2]), FVector3(M[2])));
-
         const float CullScale = Math::Max(Prim.BoundsScale, 1.0f);
-        const float Radius    = Prim.LocalRadius * Math::Sqrt(ScaleSq) * CullScale;
-
-        Bounds[Index] = FVector4(Center, Radius);
+        Bounds[Index] = SceneCull::TransformSphere(Prim.Transform, Prim.LocalCenter, Prim.LocalRadius * CullScale);
     }
 
     void FScenePrimitiveSet::CompactBindings()

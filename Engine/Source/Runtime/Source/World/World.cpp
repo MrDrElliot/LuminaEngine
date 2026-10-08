@@ -75,7 +75,6 @@
 #include "Networking/INetworkRuntime.h"
 #include "Subsystems/WorldSettings.h"
 #include "UI/RmlUiBridge.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
@@ -380,6 +379,9 @@ namespace Lumina
         EntityRegistry.Ctx().Emplace<FSystemContext*>(&SystemContext);
         EntityRegistry.Ctx().Emplace<CWorld*>(this);
 
+        // A world entity owns its subtree, so destroying one takes its descendants along.
+        EntityRegistry.SetDestroyDescendantsWithParent(true);
+
         // Per-world subsystem singleton ticked by STimerSystem and reached by ctx address.
         EntityRegistry.Ctx().Emplace<FTimerManager>();
         EntityRegistry.Ctx().Emplace<FTweenManager>();
@@ -419,9 +421,7 @@ namespace Lumina
             StartupPendingSystems();
         }
 
-        EntityRegistry.GetSignals<FRelationshipComponent>().OnDestroy      .Connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
         EntityRegistry.GetSignals<STransformComponent>().OnConstruct         .Connect<&ThisClass::OnTransformComponentConstruct>(this);
-        EntityRegistry.GetSignals<FRelationshipComponent>().OnConstruct      .Connect<&ThisClass::OnRelationshipComponentConstruct>(this);
         EntityRegistry.GetSignals<SEntityScriptComponent>().OnDestroy      .Connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         // Also per entity, which fires before any storage drops its component, so OnDetach can still reach
         // the sibling components it bound to. Storage order decides the component signal, so it cannot.
@@ -523,8 +523,6 @@ namespace Lumina
         Input::ClearLayers(this);
 
         Audio::Context().StopAllSounds();
-
-        EntityRegistry.GetSignals<FRelationshipComponent>().OnDestroy.Disconnect<&ThisClass::OnRelationshipComponentDestroyed>(this);
 
         EntitySystems::DestroyAll(Systems);
         for (int32 i = 0; i < (int32)EUpdateStage::Max; ++i)
@@ -981,8 +979,7 @@ namespace Lumina
                 }
 
                 // Rigid bodies can't be bit-copied; re-emplaced below so on_construct fires fresh.
-                if (ID == ECS::GetComponentTypeID<FRelationshipComponent>()
-                    || ID == ECS::GetComponentTypeID<SRigidBodyComponent>())
+                if (ID == ECS::GetComponentTypeID<SRigidBodyComponent>())
                 {
                     continue;
                 }
@@ -1022,15 +1019,13 @@ namespace Lumina
             {
                 ECS::Utils::ReparentEntity(EntityRegistry, NewEntity, NewParent, false);
             }
-            else if (FRelationshipComponent* Rel = EntityRegistry.TryGet<FRelationshipComponent>(Source))
+            else if (const ECS::FEntity SourceParent = EntityRegistry.GetHierarchy().GetParent(Source); SourceParent != ECS::NullEntity)
             {
-                if (Rel->Parent != ECS::NullEntity)
-                {
-                    ECS::Utils::ReparentEntity(EntityRegistry, NewEntity, Rel->Parent, false);
-                }
+                ECS::Utils::ReparentEntity(EntityRegistry, NewEntity, SourceParent, false);
             }
 
-            ECS::Utils::ForEachChild(EntityRegistry, Source, [&](ECS::FEntity Child)
+            // Attaching appends, so walking the children in order keeps the copy's sibling order.
+            EntityRegistry.GetHierarchy().ForEachChild(Source, [&](ECS::FEntity Child)
             {
                 Self(Child, NewEntity);
             });
@@ -1070,13 +1065,12 @@ namespace Lumina
 
     ECS::FEntity CWorld::GetParent(ECS::FEntity Entity)
     {
-        const FRelationshipComponent* Relationship = EntityRegistry.TryGet<FRelationshipComponent>(Entity);
-        return Relationship ? Relationship->Parent : ECS::NullEntity;
+        return EntityRegistry.GetHierarchy().GetParent(Entity);
     }
 
     ECS::FEntity CWorld::GetRootEntity(ECS::FEntity Entity)
     {
-        return ECS::Utils::GetRootEntity(EntityRegistry, Entity);
+        return EntityRegistry.GetHierarchy().GetRoot(Entity);
     }
 
     void CWorld::DestroyEntity(ECS::FEntity Entity)
@@ -1418,44 +1412,6 @@ namespace Lumina
         PIEWorld->PostLoad();
 
         return PIEWorld;
-    }
-
-    void CWorld::OnRelationshipComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        Registry.GetSignals<FRelationshipComponent>().OnDestroy.Disconnect<&CWorld::OnRelationshipComponentDestroyed>(this);
-        ECS::Utils::RemoveFromParent(Registry, Entity);
-
-        TVector<ECS::FEntity> SubTree;
-    
-        auto CollectRecursive = [&](this auto const& Self, ECS::FEntity Current) -> void
-        {
-            ECS::Utils::ForEachChild(Registry, Current, [&](ECS::FEntity Child)
-            {
-                Self(Child);
-                SubTree.push_back(Child);
-            });
-        };
-    
-        CollectRecursive(Entity);
-
-        for (int32 i = (int32)SubTree.size() - 1; i >= 0; i--)
-        {
-            if (Registry.IsValid(SubTree[i]))
-            {
-                Registry.Destroy(SubTree[i]);
-            }
-        }
-        
-        Registry.GetSignals<FRelationshipComponent>().OnDestroy.Connect<&CWorld::OnRelationshipComponentDestroyed>(this);
-    }
-
-    void CWorld::OnRelationshipComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        // Only ever CLEARS the bit, since the reverse transition means the entity is being torn down.
-        if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
-        {
-            Transform->bIsFlat = false;
-        }
     }
 
     void CWorld::OnTransformComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity)

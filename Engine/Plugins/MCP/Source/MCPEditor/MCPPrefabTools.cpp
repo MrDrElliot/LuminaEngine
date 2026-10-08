@@ -18,7 +18,6 @@
 #include "World/ECS/Registry.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/NameComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/World.h"
@@ -123,8 +122,7 @@ namespace Lumina::MCP
                     {
                         ++Out.EntityCount;
 
-                        const FRelationshipComponent* Link = Registry.TryGet<FRelationshipComponent>(Entity);
-                        if (Link != nullptr && Link->Parent != ECS::NullEntity)
+                        if (Registry.GetHierarchy().GetParent(Entity) != ECS::NullEntity)
                         {
                             return;
                         }
@@ -275,9 +273,8 @@ namespace Lumina::MCP
                     FName PreviousRootName;
                     Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
                     {
-                        const FRelationshipComponent* Rel = Prefab->Registry.TryGet<FRelationshipComponent>(E);
                         const SNameComponent* Name = Prefab->Registry.TryGet<SNameComponent>(E);
-                        if ((Rel == nullptr || Rel->Parent == ECS::NullEntity) && Name != nullptr)
+                        if (Prefab->Registry.GetHierarchy().GetParent(E) == ECS::NullEntity && Name != nullptr)
                         {
                             PreviousRootName = Name->Name;
                         }
@@ -288,7 +285,7 @@ namespace Lumina::MCP
 
                     // A plain source becomes the prefab's first instance, so a later capture from it still matches the others.
                     bool bPlainSource = Instance == nullptr;
-                    ECS::Utils::ForEachDescendant(Registry, Root, [&](ECS::FEntity E)
+                    Registry.GetHierarchy().ForEachDescendant(Root, [&](ECS::FEntity E)
                     {
                         bPlainSource = bPlainSource && !Registry.HasAll<SPrefabInstanceComponent>(E);
                     });
@@ -298,8 +295,7 @@ namespace Lumina::MCP
                     {
                         Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
                         {
-                            const FRelationshipComponent* Rel = Prefab->Registry.TryGet<FRelationshipComponent>(E);
-                            if (Rel == nullptr || Rel->Parent == ECS::NullEntity)
+                            if (Prefab->Registry.GetHierarchy().GetParent(E) == ECS::NullEntity)
                             {
                                 if (SNameComponent* Name = Prefab->Registry.TryGet<SNameComponent>(E))
                                 {
@@ -313,8 +309,7 @@ namespace Lumina::MCP
                     Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
                     {
                         Out.EntityCount++;
-                        const FRelationshipComponent* Rel = Prefab->Registry.TryGet<FRelationshipComponent>(E);
-                        if (Rel != nullptr && Rel->Parent != ECS::NullEntity)
+                        if (Prefab->Registry.GetHierarchy().GetParent(E) != ECS::NullEntity)
                         {
                             return;
                         }

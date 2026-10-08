@@ -114,6 +114,9 @@ namespace Lumina
             return Registry.Ctx();
         }
 
+        // The parent links, which a system walking them declares as SystemResource::Hierarchy.
+        NODISCARD RUNTIME_API const ECS::FHierarchy& GetHierarchy() const;
+
         NODISCARD ECS::FRegistry& GetRegistry() const
         {
             return Registry;

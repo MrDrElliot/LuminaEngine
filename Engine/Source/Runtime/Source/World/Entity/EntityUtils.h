@@ -5,7 +5,6 @@
 #include "Containers/Invoke.h"
 #include <atomic>
 #include "Components/Component.h"
-#include "Components/RelationshipComponent.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
@@ -25,26 +24,36 @@ namespace Lumina::ECS::Utils
 	// Serialization
 	//-------------------------------------------------------------------------
 
-	RUNTIME_API bool SerializeEntity(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity& Entity);
+	// Parent links read before every entity of a batch exists, attached together once they all do.
+	struct FParentLinks
+	{
+		struct FLink
+		{
+			ECS::FEntity Child;
+			ECS::FEntity Parent;
+			uint32       SiblingIndex = 0;
+		};
+
+		TVector<FLink> Links;
+
+		// Each legacy child's next sibling, the only order a file older than REGISTRY_PARENT_LINKS kept. Goes with that format.
+		THashMap<ECS::FEntity, ECS::FEntity> LegacyNextSibling;
+
+		// Attaches every link whose parent is live, siblings in their saved order.
+		RUNTIME_API void Apply(ECS::FRegistry& Registry);
+	};
+
+	// Without Links, a loaded parent link is attached at once, so its parent has to exist already.
+	RUNTIME_API bool SerializeEntity(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity& Entity, FParentLinks* Links = nullptr);
 	RUNTIME_API bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry);
 
 	//-------------------------------------------------------------------------
 	// Hierarchy
 	//-------------------------------------------------------------------------
 
+	// Queries and plain links live on Registry.GetHierarchy() and Registry.AttachChild; these also keep the world transform.
 	RUNTIME_API void ReparentEntity(ECS::FRegistry& Registry, ECS::FEntity Child, ECS::FEntity Parent, bool bPreserveWorld = true);
-	RUNTIME_API void AddToParent(ECS::FRegistry& Registry, ECS::FEntity Child, ECS::FEntity Parent);
 	RUNTIME_API void RemoveFromParent(ECS::FRegistry& Registry, ECS::FEntity Child);
-	RUNTIME_API bool IsDescendantOf(ECS::FRegistry& Registry, ECS::FEntity Potential, ECS::FEntity Ancestor);
-	RUNTIME_API bool IsChild(ECS::FRegistry& Registry, ECS::FEntity Entity);
-	RUNTIME_API bool IsParent(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
-	// Walk up the parent chain to the topmost ancestor; returns Entity itself when it has no parent.
-	RUNTIME_API ECS::FEntity GetRootEntity(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
-	RUNTIME_API size_t GetChildCount(ECS::FRegistry& Registry, ECS::FEntity Parent);
-	RUNTIME_API void CollectChildren(ECS::FRegistry& Registry, ECS::FEntity Entity, TVector<ECS::FEntity>& OutChildren);
-	RUNTIME_API void CollectDescendants(ECS::FRegistry& Registry, ECS::FEntity Entity, TVector<ECS::FEntity>& OutDescendants);
 
 	//-------------------------------------------------------------------------
 	// Lifetime
@@ -103,9 +112,7 @@ namespace Lumina::ECS::Utils
 	// cannot perform the derived-to-base conversion itself; this is what components cache.
 	RUNTIME_API FTransformDirtyGate* EnsureTransformDirtyGate(ECS::FRegistry& Registry);
 
-	// True when the entity carries no FRelationshipComponent. This is the EXACT test the resolve uses to
-	// take its flat path, so STransformComponent::bIsFlat (which caches it) can never disagree with the
-	// resolver about what flat means.
+	// The exact test the resolve uses for its flat path, so STransformComponent::bIsFlat never disagrees with it.
 	RUNTIME_API bool IsEntityTransformFlat(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
 	// A flat setter already made world equal local, so this only records the move for the render sync and queues a bodied entity's physics re-sync, without raising the dirty signal.
@@ -176,8 +183,7 @@ namespace Lumina::ECS::Utils
 	RUNTIME_API void RebuildTagStorages(ECS::FRegistry& Registry);
 	RUNTIME_API bool HasComponent(ECS::FRegistry& Registry, ECS::FEntity Entity, const CStruct* Type);
 
-	// Remap every reflected "Entity"-tagged uint32 field (nested structs too) through Map. FRelationshipComponent
-	// links are NOT touched here. Unmapped ids stay put when bClearUnmapped is false, else reset to null.
+	// Remaps every reflected entity field through Map, leaving hierarchy links alone. Unmapped ids stay unless bClearUnmapped.
 	RUNTIME_API void RemapEntityReferences(ECS::FRegistry& Registry, ECS::FEntity Entity, const THashMap<ECS::FEntity, ECS::FEntity>& Map, bool bClearUnmapped);
 
 	// Appends every non-null entity RemapEntityReferences would rewrite, duplicates included.
@@ -199,40 +205,6 @@ namespace Lumina::ECS::Utils
 				}
 			}
 		}
-	}
-
-	template<typename TFunc>
-	void ForEachChild(ECS::FRegistry& Registry, ECS::FEntity Parent, TFunc&& Func)
-	{
-		FRelationshipComponent* ParentRelationship = Registry.TryGet<FRelationshipComponent>(Parent);
-		if (!ParentRelationship || ParentRelationship->First == ECS::NullEntity)
-		{
-			return;
-		}
-
-		ECS::FEntity Current = ParentRelationship->First;
-		while (Current != ECS::NullEntity)
-		{
-			ECS::FEntity Next = ECS::NullEntity;
-			if (FRelationshipComponent* CurrentRelationship = Registry.TryGet<FRelationshipComponent>(Current))
-			{
-				Next = CurrentRelationship->Next;
-			}
-
-			Invoke(Func, Current);
-
-			Current = Next;
-		}
-	}
-
-	template<typename TFunc>
-	void ForEachDescendant(ECS::FRegistry& Registry, ECS::FEntity Parent, TFunc&& Func)
-	{
-		ForEachChild(Registry, Parent, [&](ECS::FEntity Child)
-		{
-			Invoke(Func, Child);
-			ForEachDescendant(Registry, Child, Func);
-		});
 	}
 
 }

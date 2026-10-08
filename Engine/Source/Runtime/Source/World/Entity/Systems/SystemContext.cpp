@@ -20,6 +20,10 @@ namespace Lumina
             ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::PhysicsQuery>()), bWrite,
                 bWrite ? "Write<SystemResource::PhysicsQuery>" : "Read<SystemResource::PhysicsQuery>");
         }
+        void CheckHierarchyRead()
+        {
+            ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::Hierarchy>()), false, "Read<SystemResource::Hierarchy>");
+        }
         void CheckStructure()
         {
             ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<SystemResource::EntityStructure>()), true, "Write<SystemResource::EntityStructure>");
@@ -33,6 +37,12 @@ namespace Lumina
         , CommandBus(InWorld->CommandBus)
     {}
 
+
+    const ECS::FHierarchy& FSystemContext::GetHierarchy() const
+    {
+        CheckHierarchyRead();
+        return Registry.GetHierarchy();
+    }
 
     void FSystemContext::SetEntityLifetime(ECS::FEntity Entity, float Lifetime) const
     {

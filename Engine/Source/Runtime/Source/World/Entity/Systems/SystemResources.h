@@ -12,6 +12,7 @@ namespace Lumina::SystemResource
     struct Significance {};     // publishes the per-entity significance scores
     struct Kinematics {};       // publishes the per-entity velocities
     struct Timers {};           // creates, clears or ticks timers in the world's timer manager
+    struct Hierarchy {};        // walks or edits the registry's parent links
 }
 
 namespace Lumina
@@ -28,4 +29,5 @@ namespace Lumina
     template<> inline constexpr bool TIsSystemResource<SystemResource::Significance>    = true;
     template<> inline constexpr bool TIsSystemResource<SystemResource::Kinematics>      = true;
     template<> inline constexpr bool TIsSystemResource<SystemResource::Timers>          = true;
+    template<> inline constexpr bool TIsSystemResource<SystemResource::Hierarchy>       = true;
 }

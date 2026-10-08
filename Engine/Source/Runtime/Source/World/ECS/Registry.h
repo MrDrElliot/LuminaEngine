@@ -2,6 +2,7 @@
 
 #include "ComponentStorage.h"
 #include "Context.h"
+#include "Hierarchy.h"
 #include "Signal.h"
 #include "Containers/HashTable.h"
 #include "Containers/Name.h"
@@ -312,6 +313,22 @@ namespace Lumina::ECS
         NODISCARD RUNTIME_API FSparseSet* FindNamedStorage(FComponentTypeID TypeID, const FName& Name) const;
 
 
+        //~ Hierarchy
+
+        NODISCARD FORCEINLINE const FHierarchy& GetHierarchy() const { return Hierarchy; }
+
+        // Puts Child at Position among Parent's children, detaching it from any old parent. Refuses a cycle or a dead handle.
+        RUNTIME_API bool AttachChild(FEntity Child, FEntity Parent, uint32 Position = FHierarchy::AppendPosition);
+
+        RUNTIME_API void DetachFromParent(FEntity Child);
+
+        // Off by default, which orphans the children of a destroyed entity instead of destroying them.
+        void SetDestroyDescendantsWithParent(bool bEnable) { bDestroyDescendantsWithParent = bEnable; }
+
+        // Fires for an entity whose parent changed and for each surviving parent that gained or lost a child.
+        NODISCARD FComponentSignal& OnHierarchyChanged() { return HierarchyChanged; }
+
+
         //~ Context
 
         template<typename Self> NODISCARD FORCEINLINE auto& Ctx(this Self&& S) { return S.Context; }
@@ -366,6 +383,7 @@ namespace Lumina::ECS
 
         NODISCARD static uint64 MakeNamedStorageKey(FComponentTypeID TypeID, const FName& Name);
         RUNTIME_API void DetachFromAllStorages(FEntity Entity);
+        void DestroyHierarchyLinks(FEntity Entity);
 
         // Caller holds the allocation lock.
         uint32 TakeSlotLocked(uint32& OutVersion);
@@ -389,6 +407,10 @@ namespace Lumina::ECS
         THashMap<uint64, TUniquePtr<FSparseSet>> NamedStorages;
 
         FRegistryContext Context;
+
+        FHierarchy Hierarchy;
+        bool       bDestroyDescendantsWithParent = false;
+        FComponentSignal HierarchyChanged;
 
         FComponentSignal EntityCreated;
         FComponentSignal EntityDestroyed;
