@@ -410,7 +410,7 @@ namespace Lumina
             Entry.Gpu.Params          = FVector4(Math::Max(Probe.Brightness, 0.0f),
                                                  Probe.Shape == EReflectionProbeShape::Sphere ? 1.0f : 0.0f,
                                                  0.0f,  // slice, assigned after sorting
-                                                 Math::Clamp(Probe.BlendDistance, 0.0f, 1.0f));
+                                                 Math::Max(Probe.BlendDistance, 0.0f));
 
             Entry.Capture.Position  = CaptureWorld;
             Entry.Capture.NearPlane = Math::Max(Probe.CaptureNearPlane, 0.001f);

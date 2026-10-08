@@ -14,29 +14,20 @@ struct FProbeSample
     float  Weight;    // total influence consumed, in [0,1]; the remainder belongs to the sky
 };
 
-// Normalized so 0 is exactly on the surface and 1 the deepest interior. Box uses Chebyshev distance
-// (its iso-surfaces are nested boxes), sphere the Euclidean one.
-float Probe_BoundaryDistance(FGPUReflectionProbe Probe, float3 LocalPos)
+float3 Probe_ClampToVolume(FGPUReflectionProbe Probe, float3 LocalPos)
 {
     if (Probe.IsSphere)
     {
-        return 1.0 - length(LocalPos);
+        return LocalPos / max(length(LocalPos), 1.0);
     }
-    float3 D = abs(LocalPos);
-    return 1.0 - max(max(D.x, D.y), D.z);
+    return clamp(LocalPos, -1.0, 1.0);
 }
 
-// 0 at the boundary rising to 1 once BlendFraction inside. Smoothstep rather than linear so
-// overlapping probes cross-fade without a gradient discontinuity where one edge cuts another.
+// Full weight inside, so a box fitted to a room owns its own walls, then a fade over BlendDistance meters outside it.
 float Probe_InfluenceWeight(FGPUReflectionProbe Probe, float3 LocalPos)
 {
-    float Depth = Probe_BoundaryDistance(Probe, LocalPos);
-    if (Depth <= 0.0)
-    {
-        return 0.0;
-    }
-    float Blend = max(Probe.BlendFraction, 1e-3);
-    return smoothstep(0.0, Blend, Depth);
+    float Outside = length(mul((float3x3)Probe.ProbeToWorld, LocalPos - Probe_ClampToVolume(Probe, LocalPos)));
+    return 1.0 - smoothstep(0.0, max(Probe.BlendDistance, 1e-3), Outside);
 }
 
 // Without this every probe behaves like an infinitely distant cubemap: reflections slide across
@@ -118,7 +109,8 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
         // Front-to-back: each probe can only claim what higher-priority ones left behind.
         float Weight = min(Influence, Remaining);
 
-        float3 Dir = Probe_ParallaxDirection(Probe, LocalPos, WorldR);
+        // A pixel in the fade band lies outside the proxy, so it traces from the nearest point on it.
+        float3 Dir = Probe_ParallaxDirection(Probe, Probe_ClampToVolume(Probe, LocalPos), WorldR);
         float3 Radiance = SampleTextureCubeArrayLevel(ArraySRV, SAMPLER_LINEAR_CLAMP, Dir, Probe.Slice, Lod).rgb;
 
         Result.Radiance += Weight * Radiance * Probe.Brightness;

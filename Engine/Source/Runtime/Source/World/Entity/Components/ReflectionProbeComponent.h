@@ -90,9 +90,8 @@ namespace Lumina
         PROPERTY(Editable, Category = "Reflection Probe", Units = "m")
         FVector3 Extent = FVector3(5.0f, 5.0f, 5.0f);
 
-        /** Fraction of the volume over which influence ramps from 0 at the boundary to 1 inside.
-            Larger values cross-fade more smoothly between overlapping probes at more overlap cost. */
-        PROPERTY(Editable, Category = "Reflection Probe", ClampMin = 0.0f, ClampMax = 1.0f)
+        // Meters outside the volume over which influence fades to zero, since everything inside gets full weight.
+        PROPERTY(Editable, Category = "Reflection Probe", ClampMin = 0.0f, ClampMax = 10.0f, Units = "m")
         float BlendDistance = 0.25f;
 
         /** Ties break toward the higher value where volumes overlap, letting a small interior probe

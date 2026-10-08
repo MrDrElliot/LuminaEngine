@@ -47,15 +47,16 @@ float3 SampleSpecularRadiance(float3 WorldPos, float3 R, float Roughness)
 {
     if (SPEC_REFLECTION_PROBES == 0)
     {
-        return SamplePrefilter(R, Roughness);
+        return SamplePrefilter(R, Roughness) * GetAmbientLightIntensity();
     }
 
+    // A capture already holds the skylight it was lit with, so only the sky's own share takes the intensity.
     FProbeSample Probes = SampleReflectionProbes(WorldPos, R, Roughness);
     if (Probes.Weight >= 0.999)
     {
         return Probes.Radiance;
     }
-    return Probes.Radiance + (1.0 - Probes.Weight) * SamplePrefilter(R, Roughness);
+    return Probes.Radiance + (1.0 - Probes.Weight) * SamplePrefilter(R, Roughness) * GetAmbientLightIntensity();
 }
 
 // A probe's roughest mip stands in for its irradiance, so walls inside a probe stop receiving the open sky.
@@ -63,11 +64,11 @@ float3 SampleDiffuseIrradiance(float3 WorldPos, float3 N)
 {
     if (SPEC_REFLECTION_PROBES == 0)
     {
-        return SampleIrradiance(N);
+        return SampleIrradiance(N) * GetAmbientLightIntensity();
     }
 
     FProbeSample Probes = SampleReflectionProbes(WorldPos, N, 1.0);
-    return Probes.Radiance + (1.0 - Probes.Weight) * SampleIrradiance(N);
+    return Probes.Radiance + (1.0 - Probes.Weight) * SampleIrradiance(N) * GetAmbientLightIntensity();
 }
 
 float2 SampleBRDFLUT(float NdotV, float Roughness)

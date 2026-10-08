@@ -814,12 +814,12 @@ struct FGPUReflectionProbe
     float4x4    WorldToProbe;
     float4x4    ProbeToWorld;
     float4      CapturePosition;   // xyz = world capture origin, w = 1 once this probe has been baked
-    float4      Params;            // x=brightness, y=shape, z=array slice, w=blend fraction
+    float4      Params;            // x=brightness, y=shape, z=array slice, w=blend distance in meters
 
     property float  Brightness   { get { return Params.x; }}
     property bool   IsSphere     { get { return Params.y > 0.5; }}
     property uint   Slice        { get { return (uint)Params.z; }}
-    property float  BlendFraction{ get { return Params.w; }}
+    property float  BlendDistance{ get { return Params.w; }}
     // A probe waiting in the bake queue owns a slice but has nothing in it. Skip rather than sample: it
     // would consume influence and return black, darkening instead of letting the sky cover the pixel.
     property bool   IsBaked      { get { return CapturePosition.w > 0.5; }}

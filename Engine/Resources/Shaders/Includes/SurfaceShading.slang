@@ -833,11 +833,11 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 #ifdef TRANSLUCENT
         float3 IBLDiffuse, IBLSpec;
         EvaluateIBLAmbientSplit(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO, IBLDiffuse, IBLSpec);
-        Ambient = IBLDiffuse * GetAmbientLightIntensity();
-        LoSpec += IBLSpec * GetAmbientLightIntensity();
+        Ambient = IBLDiffuse;
+        LoSpec += IBLSpec;
 #else
         float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO);
-        Ambient = IBLAmbient * GetAmbientLightIntensity();
+        Ambient = IBLAmbient;
 #endif
     }
     else

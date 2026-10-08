@@ -973,33 +973,33 @@ namespace Lumina
         // Dimmed when switched off, so a disabled probe shows where it sits without reading as active.
         const float Alpha = Probe.bEnabled ? 1.0f : 0.35f;
 
-        // The gap between the shells is the cross-fade band, which is what matters for overlapping probes.
-        const float InnerScale = Math::Clamp(1.0f - Probe.BlendDistance, 0.0f, 1.0f);
+        // The gap between the shells is the fade band outside the volume, which is what matters for overlapping probes.
+        const float Band = Math::Max(Probe.BlendDistance, 0.0f);
 
         // Always probes cost six scene renders per turn, so one left on by accident is worth seeing.
         const bool bAlways = (Probe.UpdateMode == EReflectionProbeUpdateMode::Always);
         const FVector3 Hue = bAlways ? FVector3(1.00f, 0.45f, 0.25f) : FVector3(0.30f, 0.85f, 1.00f);
 
         const FVector4 OuterColor(Hue.x, Hue.y, Hue.z, Alpha);
-        const FVector4 InnerColor(Hue.x, Hue.y, Hue.z, Alpha * 0.45f);
+        const FVector4 BandColor(Hue.x, Hue.y, Hue.z, Alpha * 0.45f);
 
         if (Probe.Shape == EReflectionProbeShape::Sphere)
         {
             // Sphere mode ignores Y and Z, and extraction collapses them too, so the shader test matches.
             const float Radius = Math::Max(Probe.Extent.x, 0.001f) * Transform.MaxScale();
             PDI->DrawSphere(Location, Radius, OuterColor, 24, 2.0f, true, 0.0f);
-            if (InnerScale > 0.01f)
+            if (Band > 0.01f)
             {
-                PDI->DrawSphere(Location, Radius * InnerScale, InnerColor, 24, 1.0f, true, 0.0f);
+                PDI->DrawSphere(Location, Radius + Band, BandColor, 24, 1.0f, true, 0.0f);
             }
         }
         else
         {
             const FVector3 HalfExtent = Math::Max(Probe.Extent, FVector3(0.001f)) * Transform.GetWorldScaleCached();
             PDI->DrawBox(Location, HalfExtent, Rotation, OuterColor, 2.0f, true, 0.0f);
-            if (InnerScale > 0.01f)
+            if (Band > 0.01f)
             {
-                PDI->DrawBox(Location, HalfExtent * InnerScale, Rotation, InnerColor, 1.0f, true, 0.0f);
+                PDI->DrawBox(Location, HalfExtent + FVector3(Band), Rotation, BandColor, 1.0f, true, 0.0f);
             }
         }
 
