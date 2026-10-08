@@ -48,8 +48,7 @@ public static class ScriptProjectGenerator
                 continue;
             }
 
-            bool bUnderProject = Directories.ProjectRoot is not null
-                && PathUtils.IsUnder(Plugin.RootDirectory, Directories.ProjectRoot);
+            bool bUnderProject = Directories.IsProjectOwned(Plugin.RootDirectory);
 
             Discovered.Add(new ScriptProject
             {

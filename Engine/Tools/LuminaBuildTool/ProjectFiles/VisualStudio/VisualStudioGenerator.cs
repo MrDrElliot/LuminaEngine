@@ -196,7 +196,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             return Target.PrimaryVariant.Rules.bIsStartupTarget;
         }
 
-        return PathUtils.IsUnder(Target.PrimaryVariant.Rules.RulesDirectory, Directories.ProjectRoot);
+        return Directories.IsProjectOwned(Target.PrimaryVariant.Rules.RulesDirectory);
     }
 
     /// <summary>Solution folder for a target's own project.</summary>
@@ -210,7 +210,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
     /// <summary>"Games/&lt;ProjectName&gt;" when a path belongs to the game project being built, else null.</summary>
     private static string? ResolveGameFolder(BuildDirectories Directories, string Location)
     {
-        if (Directories.ProjectRoot is null || !PathUtils.IsUnder(Location, Directories.ProjectRoot))
+        if (Directories.ProjectRoot is null || !Directories.IsProjectOwned(Location))
         {
             return null;
         }
