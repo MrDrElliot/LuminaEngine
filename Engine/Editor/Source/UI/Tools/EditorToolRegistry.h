@@ -113,8 +113,7 @@ namespace Lumina
         // module's ShutdownModule wants. A default-constructed owner is refused.
         int32 UnregisterAll(FName Owner);
 
-        // Walks the asset's class chain most-derived first, so a concrete registration wins over
-        // one for a base type. Null when no class in the chain is registered.
+        // The most-derived registered class wins, and an unregistered one falls back to the generic property grid.
         FEditorToolPtr CreateAssetEditor(IEditorToolContext* Context, CObject* Asset) const;
 
         FEditorToolPtr CreateFileEditor(IEditorToolContext* Context, FStringView VirtualPath) const;

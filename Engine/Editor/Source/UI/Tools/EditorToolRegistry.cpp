@@ -4,6 +4,7 @@
 #include "Core/Object/Object.h"
 #include "EditorTool.h"
 #include "FileSystem/FileSystem.h"
+#include "UI/Tools/AssetEditors/DataAsset/DataAssetEditorTool.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -174,7 +175,8 @@ namespace Lumina
             }
         }
 
-        return nullptr;
+        // An asset class nobody wrote a tool for still opens, as a grid over its reflected properties.
+        return FEditorToolPtr(Memory::New<FDataAssetEditorTool>(Context, Asset));
     }
 
     FEditorToolPtr FEditorToolRegistry::CreateFileEditor(IEditorToolContext* Context, FStringView VirtualPath) const
