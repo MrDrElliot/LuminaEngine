@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "World/Scene/RenderScene/SceneCullMath.h"
 
 namespace Lumina
 {
@@ -45,42 +46,6 @@ namespace Lumina
 
     namespace
     {
-        FInstanceBlockBounds ComputeInstanceBlockBounds(const FInstanceCullEntry* Entries, uint32 First, uint32 End, bool bGPUWritten)
-        {
-            constexpr uint32 ActiveBit   = (uint32)EInstanceFlags::Active << 16;
-            constexpr uint32 NoCullBit   = (uint32)EInstanceFlags::IgnoreOcclusionCulling << 16;
-            constexpr float  Unreachable = -1.0f;
-
-            FVector3 Lo(std::numeric_limits<float>::max());
-            FVector3 Hi(-std::numeric_limits<float>::max());
-            float    Reach      = Unreachable;
-            bool     bUnbounded = bGPUWritten;
-            for (uint32 Slot = First; Slot < End; ++Slot)
-            {
-                const FInstanceCullEntry& Entry = Entries[Slot];
-                if ((Entry.DrawIDAndFlags & ActiveBit) == 0u)
-                {
-                    continue;
-                }
-
-                // Matches the instance test, which skips the distance cut for these.
-                bUnbounded = bUnbounded || (Entry.DrawIDAndFlags & NoCullBit) != 0u || Entry.MaxDrawDistance <= 0.0f;
-
-                const FVector3 Center = FVector3(Entry.SphereBounds);
-                const FVector3 Radius = FVector3(Entry.SphereBounds.w);
-                Lo    = Math::Min(Lo, Center - Radius);
-                Hi    = Math::Max(Hi, Center + Radius);
-                Reach = Math::Max(Reach, Entry.MaxDrawDistance);
-            }
-
-            FInstanceBlockBounds Out;
-            Out.bAlwaysScan = bUnbounded ? 1u : 0u;
-            Out.Reach       = Reach;
-            Out.Min         = Reach < 0.0f ? FVector3(0.0f) : Lo;
-            Out.Max         = Reach < 0.0f ? FVector3(0.0f) : Hi;
-            return Out;
-        }
-
         bool OverlapsAny(const TVector<FUIntVector2>& Ranges, uint32 First, uint32 End)
         {
             for (const FUIntVector2& Range : Ranges)
@@ -122,7 +87,7 @@ namespace Lumina
         {
             const uint32 First = Block * kInstanceCullBlockSize;
             const uint32 End   = Math::Min(First + kInstanceCullBlockSize, NumSlots);
-            InstanceBlockBounds[Block] = ComputeInstanceBlockBounds(Entries, First, End, OverlapsAny(GPUWrittenSlotRanges, First, End));
+            InstanceBlockBounds[Block] = SceneCull::ComputeInstanceBlockBounds(Entries, First, End, OverlapsAny(GPUWrittenSlotRanges, First, End));
         };
 
         if (bRebuildAll)
@@ -139,16 +104,35 @@ namespace Lumina
         }
         else
         {
+            // DirtySlots arrives sorted and unique, so its blocks come out sorted and only repeat back to back.
             DirtyInstanceBlocks.clear();
             for (uint32 Slot : DirtySlots)
             {
-                if (Slot < NumSlots)
+                const uint32 Block = Slot / kInstanceCullBlockSize;
+                if (Slot < NumSlots && (DirtyInstanceBlocks.empty() || DirtyInstanceBlocks.back() != Block))
                 {
-                    DirtyInstanceBlocks.push_back(Slot / kInstanceCullBlockSize);
+                    DirtyInstanceBlocks.push_back(Block);
                 }
             }
-            Algo::Sort(DirtyInstanceBlocks);
-            DirtyInstanceBlocks.erase(std::unique(DirtyInstanceBlocks.begin(), DirtyInstanceBlocks.end()), DirtyInstanceBlocks.end());
+
+            constexpr uint32 SerialBlockLimit = 64;
+            if (DirtyInstanceBlocks.size() > SerialBlockLimit)
+            {
+                Task::ParallelFor((uint32)DirtyInstanceBlocks.size(), [&](const Task::FParallelRange& Range)
+                {
+                    for (uint32 i = Range.Start; i < Range.End; ++i)
+                    {
+                        BuildBlock(DirtyInstanceBlocks[i]);
+                    }
+                }, SerialBlockLimit);
+            }
+            else
+            {
+                for (uint32 Block : DirtyInstanceBlocks)
+                {
+                    BuildBlock(Block);
+                }
+            }
 
             // Consecutive dirty blocks go up as one write.
             for (SIZE_T i = 0; i < DirtyInstanceBlocks.size();)
@@ -157,7 +141,6 @@ namespace Lumina
                 uint32 RunEnd = RunStart;
                 while (i < DirtyInstanceBlocks.size() && DirtyInstanceBlocks[i] == RunEnd)
                 {
-                    BuildBlock(RunEnd);
                     ++RunEnd;
                     ++i;
                 }

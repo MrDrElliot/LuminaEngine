@@ -256,6 +256,8 @@ struct ImGui_ImplGlfw_Data
     bool                    IsWayland;
     bool                    InstalledCallbacks;
     bool                    CallbacksChainForAllWindows;
+    bool                    WantUpdateMonitors;
+    double                  LastMonitorUpdateTime;
     char                    BackendPlatformName[40];
 #ifdef EMSCRIPTEN_USE_EMBEDDED_GLFW3
     const char*             CanvasSelector;
@@ -628,7 +630,9 @@ void ImGui_ImplGlfw_CharCallback(GLFWwindow* window, unsigned int c)
 
 void ImGui_ImplGlfw_MonitorCallback(GLFWmonitor*, int)
 {
-    // This function is technically part of the API even if we stopped using the callback, so leaving it around.
+    // Lumina patch, so a connected or removed monitor refreshes the next frame instead of waiting for the poll.
+    if (ImGui_ImplGlfw_Data* bd = ImGui_ImplGlfw_GetBackendData())
+        bd->WantUpdateMonitors = true;
 }
 
 #ifdef EMSCRIPTEN_USE_EMBEDDED_GLFW3
@@ -1202,11 +1206,19 @@ void ImGui_ImplGlfw_NewFrame()
 
     // Setup main viewport size (every frame to accommodate for window resizing)
     ImGui_ImplGlfw_GetWindowSizeAndFramebufferScale(bd->Window, &io.DisplaySize, &io.DisplayFramebufferScale);
-    ImGui_ImplGlfw_UpdateMonitors();
 
     // Setup time step
     // (Accept glfwGetTime() not returning a monotonically increasing value. Seems to happens on disconnecting peripherals and probably on VMs and Emscripten, see #6491, #6189, #6114, #3644)
     double current_time = glfwGetTime();
+
+    // Lumina patch, since querying every monitor's mode each frame cost about 20 microseconds; work area and DPI changes still land within the poll.
+    constexpr double MonitorPollSeconds = 0.25;
+    if (bd->WantUpdateMonitors || current_time - bd->LastMonitorUpdateTime >= MonitorPollSeconds)
+    {
+        ImGui_ImplGlfw_UpdateMonitors();
+        bd->WantUpdateMonitors = false;
+        bd->LastMonitorUpdateTime = current_time;
+    }
     if (current_time <= bd->Time)
         current_time = bd->Time + 0.00001;
     io.DeltaTime = bd->Time > 0.0 ? (float)(current_time - bd->Time) : (float)(1.0f / 60.0f);

@@ -33,7 +33,7 @@ namespace Lumina
 
         // Ragdoll bodies are built and torn down at the sync point, so only the pose side is declared.
         Writes<SRagdollComponent, SSkeletalMeshComponent, STransformComponent>();
-        Reads<FRelationshipComponent, SystemResource::PhysicsQuery>();
+        Reads<SystemResource::Hierarchy, SystemResource::PhysicsQuery>();
     }
 
     void SRagdollSystem::OnUpdate()

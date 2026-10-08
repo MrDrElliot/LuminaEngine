@@ -28,6 +28,12 @@ namespace Lumina::Physics
             FVector3                End;
             float                   Length = 0.0f;
             bool                    bFound = false;
+
+            // The nearest hit so far, filled into Closest once the traversal ends rather than at every closer hit.
+            b3ShapeId               ClosestShape{};
+            b3Pos                   ClosestPoint{};
+            b3Vec3                  ClosestNormal{};
+            float                   ClosestFraction = 0.0f;
         };
 
         // The ignore list is inline and tiny, so a linear scan beats any set on both branches and cache.
@@ -83,11 +89,24 @@ namespace Lumina::Physics
                 return -1.0f;
             }
 
-            FillRayResult(*Query.Closest, *Query.Scene, ShapeId, Query.Start, Query.End, Query.Length, Point, Normal, Fraction);
-            Query.bFound = true;
+            Query.ClosestShape    = ShapeId;
+            Query.ClosestPoint    = Point;
+            Query.ClosestNormal   = Normal;
+            Query.ClosestFraction = Fraction;
+            Query.bFound          = true;
 
             // Returning the fraction clips the ray, so the traversal keeps narrowing toward the nearest hit.
             return Fraction;
+        }
+
+        bool FinishClosest(FQueryContext& Query)
+        {
+            if (Query.bFound)
+            {
+                FillRayResult(*Query.Closest, *Query.Scene, Query.ClosestShape, Query.Start, Query.End, Query.Length,
+                              Query.ClosestPoint, Query.ClosestNormal, Query.ClosestFraction);
+            }
+            return Query.bFound;
         }
 
         float AllHitsCastCallback(b3ShapeId ShapeId, b3Pos Point, b3Vec3 Normal, float Fraction,
@@ -207,7 +226,7 @@ namespace Lumina::Physics
         b3World_CastRay(WorldId, Box3DUtils::ToB3Vec3(Settings.Start), Box3DUtils::ToB3Vec3(Delta),
                         Filter, &ClosestCastCallback, &Query);
 
-        if (!Query.bFound)
+        if (!FinishClosest(Query))
         {
             return {};
         }
@@ -300,7 +319,7 @@ namespace Lumina::Physics
         b3World_CastShape(WorldId, Box3DUtils::ToB3Vec3(Settings.Start), &Proxy, Box3DUtils::ToB3Vec3(Delta),
                           MakeLayerFilter(Settings.LayerMask), &ClosestCastCallback, &Query);
 
-        if (!Query.bFound)
+        if (!FinishClosest(Query))
         {
             return {};
         }

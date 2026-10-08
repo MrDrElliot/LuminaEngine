@@ -16,7 +16,6 @@
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
@@ -31,8 +30,6 @@ namespace Lumina
         /** Component types skipped by the cross-registry copy pass. */
         bool IsNonReplicatedStorage(uint32 ID)
         {
-            // Relationships are remapped manually after the copy pass.
-            if (ID == ECS::GetComponentTypeID<FRelationshipComponent>()) return true;
             // Editor-only state must not leak between worlds and prefabs.
             if (ID == ECS::GetComponentTypeID<FSelectedInEditorComponent>()) return true;
             if (ID == ECS::GetComponentTypeID<FHideInSceneOutliner>()) return true;
@@ -235,7 +232,7 @@ namespace Lumina
                 return;
             }
             Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Root);
-            ECS::Utils::ForEachDescendant(Registry, Root, [&](ECS::FEntity Desc)
+            Registry.GetHierarchy().ForEachDescendant(Root, [&](ECS::FEntity Desc)
             {
                 Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Desc);
             });
@@ -372,30 +369,21 @@ namespace Lumina
             }
         }
 
-        auto Remap = [&](ECS::FEntity& E)
-        {
-            if (E != ECS::NullEntity)
-            {
-                auto It = OutMap.find(E);
-                E = (It != OutMap.end()) ? It->second : ECS::NullEntity;
-            }
-        };
+        // A link whose parent was not copied is dropped, so that child becomes a root of the copy.
+        const ECS::FHierarchy& SourceHierarchy = Source.GetHierarchy();
+        TVector<uint32> SiblingIndices;
+        SourceHierarchy.BuildSiblingIndices(SiblingIndices);
 
-        Source.View<FRelationshipComponent>().ForEach([&](ECS::FEntity SrcE, const FRelationshipComponent& SrcRel)
+        ECS::Utils::FParentLinks Links;
+        for (const auto& [SrcE, DestE] : OutMap)
         {
-            auto It = OutMap.find(SrcE);
-            if (It == OutMap.end())
+            const auto ParentIt = OutMap.find(SourceHierarchy.GetParent(SrcE));
+            if (ParentIt != OutMap.end())
             {
-                return;
+                Links.Links.push_back({ DestE, ParentIt->second, SiblingIndices[SrcE.GetIndex()] });
             }
-
-            FRelationshipComponent DestRel = SrcRel;
-            Remap(DestRel.First);
-            Remap(DestRel.Prev);
-            Remap(DestRel.Next);
-            Remap(DestRel.Parent);
-            Dest.EmplaceOrReplace<FRelationshipComponent>(It->second, DestRel);
-        });
+        }
+        Links.Apply(Dest);
 
         // References escaping the copied set are cleared, so a stale id cannot alias an unrelated entity.
         for (auto& [SrcE, DestE] : OutMap)
@@ -434,9 +422,7 @@ namespace Lumina
         PrefabRoots.reserve(2);
         Registry.ForEachEntity([&](ECS::FEntity E)
         {
-            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(E);
-            const bool bHasParent = Rel && Rel->Parent != ECS::NullEntity;
-            if (!bHasParent)
+            if (Registry.GetHierarchy().GetParent(E) == ECS::NullEntity)
             {
                 PrefabRoots.push_back(E);
             }
@@ -583,7 +569,7 @@ namespace Lumina
         // Index instance entities by StableID.
         THashMap<FName, ECS::FEntity> InstanceByStableID;
         InstanceByStableID[RootInstance->StableID] = InstanceRoot;
-        ECS::Utils::ForEachDescendant(WorldRegistry, InstanceRoot, [&](ECS::FEntity Descendant)
+        WorldRegistry.GetHierarchy().ForEachDescendant(InstanceRoot, [&](ECS::FEntity Descendant)
         {
             if (const SPrefabInstanceComponent* Inst = WorldRegistry.TryGet<SPrefabInstanceComponent>(Descendant))
             {
@@ -631,7 +617,7 @@ namespace Lumina
                 continue;
             }
             TVector<ECS::FEntity> Survivors;
-            ECS::Utils::ForEachDescendant(WorldRegistry, Dead, [&](ECS::FEntity Desc)
+            WorldRegistry.GetHierarchy().ForEachDescendant(Dead, [&](ECS::FEntity Desc)
             {
                 if (DeadSet.find(Desc) == DeadSet.end())
                 {
@@ -690,8 +676,7 @@ namespace Lumina
                 {
                     return true;
                 }
-                const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Cur);
-                Cur = Rel ? Rel->Parent : ECS::NullEntity;
+                Cur = Registry.GetHierarchy().GetParent(Cur);
             }
             return false;
         };
@@ -964,8 +949,7 @@ namespace Lumina
             const auto PrefabIt = PrefabByStableID.find(StableID);
             if (PrefabIt == PrefabByStableID.end()) continue;
 
-            const FRelationshipComponent* PrefabRel = Registry.TryGet<FRelationshipComponent>(PrefabIt->second);
-            const ECS::FEntity PrefabParent = PrefabRel ? PrefabRel->Parent : ECS::NullEntity;
+            const ECS::FEntity PrefabParent = Registry.GetHierarchy().GetParent(PrefabIt->second);
 
             ECS::FEntity DesiredWorldParent = InstanceRoot;
             if (PrefabParent != ECS::NullEntity)
@@ -980,8 +964,7 @@ namespace Lumina
                 }
             }
 
-            const FRelationshipComponent* CurrentRel = WorldRegistry.TryGet<FRelationshipComponent>(WorldE);
-            const ECS::FEntity CurrentParent = CurrentRel ? CurrentRel->Parent : ECS::NullEntity;
+            const ECS::FEntity CurrentParent = WorldRegistry.GetHierarchy().GetParent(WorldE);
             // ReparentEntity requires a transform on both sides, so a transform-less node would crash the refresh.
             if (CurrentParent != DesiredWorldParent
                 && WorldRegistry.IsValid(DesiredWorldParent)
@@ -1166,7 +1149,7 @@ namespace Lumina
         TVector<ECS::FEntity> ToStrip;
         ToStrip.reserve(16);
         ToStrip.push_back(InstanceRoot);
-        ECS::Utils::ForEachDescendant(WorldRegistry, InstanceRoot, [&](ECS::FEntity Desc)
+        WorldRegistry.GetHierarchy().ForEachDescendant(InstanceRoot, [&](ECS::FEntity Desc)
         {
             const SPrefabInstanceComponent* Inst = WorldRegistry.TryGet<SPrefabInstanceComponent>(Desc);
             if (Inst != nullptr && !Inst->bIsRoot && Inst->SourcePrefab.Get() == Source)
@@ -1201,7 +1184,7 @@ namespace Lumina
         TVector<ECS::FEntity> EntitiesToCapture;
         EntitiesToCapture.reserve(16);
         EntitiesToCapture.push_back(RootEntity);
-        ECS::Utils::ForEachDescendant(WorldRegistry, RootEntity, [&](ECS::FEntity E)
+        WorldRegistry.GetHierarchy().ForEachDescendant(RootEntity, [&](ECS::FEntity E)
         {
             EntitiesToCapture.push_back(E);
         });
@@ -1210,8 +1193,7 @@ namespace Lumina
         FName PreviousRootID;
         Registry.View<SPrefabComponent>().ForEach([&](ECS::FEntity PrefabE, const SPrefabComponent& PrefabComp)
         {
-            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(PrefabE);
-            if ((Rel == nullptr || Rel->Parent == ECS::NullEntity) && PreviousRootID.IsNone())
+            if (Registry.GetHierarchy().GetParent(PrefabE) == ECS::NullEntity && PreviousRootID.IsNone())
             {
                 PreviousRootID = PrefabComp.StableID;
             }
@@ -1292,12 +1274,8 @@ namespace Lumina
 
         FName ParentStableIDOf(ECS::FRegistry& Registry, ECS::FEntity E)
         {
-            const FRelationshipComponent* Rel = Registry.IsValid(E) ? Registry.TryGet<FRelationshipComponent>(E) : nullptr;
-            if (Rel == nullptr || Rel->Parent == ECS::NullEntity)
-            {
-                return FName();
-            }
-            return StableIDOf(Registry, Rel->Parent);
+            const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(E);
+            return Parent != ECS::NullEntity ? StableIDOf(Registry, Parent) : FName();
         }
 
         CStruct* StructOfStorage(const ECS::FSparseSet& Storage)
@@ -1305,11 +1283,10 @@ namespace Lumina
             return FindComponentStructByTypeId(Storage.GetTypeInfo().TypeID);
         }
 
-        // The delta records these separately by StableID, so they are never diffed as component data.
+        // The delta records it separately by StableID, so it is never diffed as component data.
         bool IsStructuralStorage(uint32 ID)
         {
-            return ID == ECS::GetComponentTypeID<SPrefabComponent>()
-                || ID == ECS::GetComponentTypeID<FRelationshipComponent>();
+            return ID == ECS::GetComponentTypeID<SPrefabComponent>();
         }
 
         void RemapAllHandles(ECS::FRegistry& Registry, const THashMap<ECS::FEntity, ECS::FEntity>& Map)
@@ -1463,7 +1440,7 @@ namespace Lumina
 
             const ECS::FEntity Dead = It->second;
             TVector<ECS::FEntity> Survivors;
-            ECS::Utils::ForEachDescendant(Registry, Dead, [&](ECS::FEntity Desc)
+            Registry.GetHierarchy().ForEachDescendant(Dead, [&](ECS::FEntity Desc)
             {
                 const FName DescID = StableIDOf(Registry, Desc);
                 if (DescID.IsNone() || !Algo::Contains(VariantRemovedEntities, DescID))
@@ -1915,8 +1892,7 @@ namespace Lumina
             {
                 return Cur;
             }
-            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Cur);
-            Cur = Rel ? Rel->Parent : ECS::NullEntity;
+            Cur = Registry.GetHierarchy().GetParent(Cur);
         }
         return ECS::NullEntity;
     }

@@ -6,7 +6,6 @@
 #include "Physics/Ray/RayCast.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/CameraFollowComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SpringArmComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Components/EntityTags.h"
@@ -14,12 +13,12 @@
 
 namespace Lumina
 {
-    // SetEntityWorldTransform reads FRelationshipComponent, and CastSphere reads the physics scene.
+    // SetEntityWorldTransform reads the parent links, and CastSphere reads the physics scene.
     void SCameraRigSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Medium);
         Writes<STransformComponent, SCameraFollowComponent, SSpringArmComponent>();
-        Reads<SystemResource::PhysicsQuery, FRelationshipComponent>();
+        Reads<SystemResource::PhysicsQuery, SystemResource::Hierarchy>();
     }
 
     namespace Detail

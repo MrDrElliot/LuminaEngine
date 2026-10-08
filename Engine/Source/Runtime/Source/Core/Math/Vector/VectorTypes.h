@@ -78,13 +78,22 @@ namespace Lumina
         template<typename U>
         constexpr TVec(const TVec<U, 2>& V) : x(T(V.x)), y(T(V.y)) {}
 
+        // Named members in constant evaluation, which may not read an inactive union member; the array at runtime, which a switch would branch on.
         constexpr T& operator[](int i)
         {
-            switch (i) { case 0: return x; default: return y; }
+            if consteval
+            {
+                switch (i) { case 0: return x; default: return y; }
+            }
+            return Data[i];
         }
         constexpr const T& operator[](int i) const
         {
-            switch (i) { case 0: return x; default: return y; }
+            if consteval
+            {
+                switch (i) { case 0: return x; default: return y; }
+            }
+            return Data[i];
         }
     };
 
@@ -127,11 +136,19 @@ namespace Lumina
 
         constexpr T& operator[](int i)
         {
-            switch (i) { case 0: return x; case 1: return y; default: return z; }
+            if consteval
+            {
+                switch (i) { case 0: return x; case 1: return y; default: return z; }
+            }
+            return Data[i];
         }
         constexpr const T& operator[](int i) const
         {
-            switch (i) { case 0: return x; case 1: return y; default: return z; }
+            if consteval
+            {
+                switch (i) { case 0: return x; case 1: return y; default: return z; }
+            }
+            return Data[i];
         }
         
         constexpr T Right()   const { return x; }
@@ -181,11 +198,19 @@ namespace Lumina
 
         constexpr T& operator[](int i)
         {
-            switch (i) { case 0: return x; case 1: return y; case 2: return z; default: return w; }
+            if consteval
+            {
+                switch (i) { case 0: return x; case 1: return y; case 2: return z; default: return w; }
+            }
+            return Data[i];
         }
         constexpr const T& operator[](int i) const
         {
-            switch (i) { case 0: return x; case 1: return y; case 2: return z; default: return w; }
+            if consteval
+            {
+                switch (i) { case 0: return x; case 1: return y; case 2: return z; default: return w; }
+            }
+            return Data[i];
         }
     };
 

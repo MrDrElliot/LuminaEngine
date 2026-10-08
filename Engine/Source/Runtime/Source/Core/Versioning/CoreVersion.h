@@ -97,6 +97,9 @@ enum class ELuminaEngineVersion : uint32
 	// FTextureResource::FDescription carries the swizzle a single-channel format is sampled through.
 	TEXTURE_SWIZZLE,
 
+	// An entity stores its parent and sibling index, replacing the removed FRelationshipComponent's raw links.
+	REGISTRY_PARENT_LINKS,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

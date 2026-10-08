@@ -350,6 +350,8 @@ namespace Lumina
         FUNCTION()
         ECS::FEntity GetRootEntity(ECS::FEntity Entity);
 
+        NODISCARD const ECS::FHierarchy& GetHierarchy() const { return EntityRegistry.GetHierarchy(); }
+
         //~ Entity scripts.
 
         // Attaches a script of the given class to an entity (emplacing SEntityScriptComponent if needed) and
@@ -692,10 +694,6 @@ namespace Lumina
         const FTimerManager& GetTimerManager() const { return EntityRegistry.Ctx().Get<FTimerManager>(); }
 
         //~ Registry signal handlers, connected during world initialization.
-
-        void OnRelationshipComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
-        void OnRelationshipComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         void OnTransformComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity);
 

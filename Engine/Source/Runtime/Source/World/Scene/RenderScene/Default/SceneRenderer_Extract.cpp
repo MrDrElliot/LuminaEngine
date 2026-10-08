@@ -671,6 +671,22 @@ namespace Lumina
             DirtySlotBits.resize(((SIZE_T)SlotCount + 63u) / 64u);
             auto Collect = [this, SlotCount](const TVector<uint32>& In, TVector<uint32>& OutList)
             {
+                // A few slots sort faster than a walk over every bitmap word.
+                constexpr SIZE_T SortedWordRatio = 16;
+                if (In.size() * SortedWordRatio < DirtySlotBits.size())
+                {
+                    for (uint32 DirtySlot : In)
+                    {
+                        if (DirtySlot < SlotCount)
+                        {
+                            OutList.push_back(DirtySlot);
+                        }
+                    }
+                    Algo::Sort(OutList);
+                    OutList.erase(std::unique(OutList.begin(), OutList.end()), OutList.end());
+                    return;
+                }
+
                 for (uint32 DirtySlot : In)
                 {
                     if (DirtySlot < SlotCount)   // a slot freed after being marked is simply dropped
@@ -2191,6 +2207,27 @@ namespace Lumina
         // Dense, since the range indexes skeletal primitives rather than the whole table.
         const uint32* RESTRICT Skeletal = SkeletalPrimitiveIndices;
 
+        // Claimed from the shared cursor a batch at a time, since every worker bumping it per primitive fights over one line.
+        constexpr uint32 AcceptBatch = 64;
+        uint32 Accepted[AcceptBatch];
+        uint32 NumAccepted = 0;
+
+        const auto Flush = [&]()
+        {
+            if (NumAccepted == 0u)
+            {
+                return;
+            }
+            const uint32 Base = SkinnedCandidateCursor.fetch_add(NumAccepted, std::memory_order_relaxed);
+            const uint32 Capacity = (uint32)SkinnedCandidates.size();
+            for (uint32 i = 0; i < NumAccepted && Base + i < Capacity; ++i)
+            {
+                SkinnedCandidates[Base + i]     = Accepted[i];
+                SkinnedCandidateBones[Base + i] = Prims[Accepted[i]].BoneCount;
+            }
+            NumAccepted = 0;
+        };
+
         const auto Accept = [&](uint32 PrimIndex)
         {
             const FScenePrimitive& Prim = Prims[PrimIndex];
@@ -2199,12 +2236,11 @@ namespace Lumina
                 return;   // parked awaiting resolve or a skeleton; the sync pass retries it
             }
 
-            // A SUPERSET of what the emit pass accepts; anything it rejects just leaves an unused hole.
-            const uint32 Slot = SkinnedCandidateCursor.fetch_add(1, std::memory_order_relaxed);
-            if (Slot < (uint32)SkinnedCandidates.size())
+            // A superset of what the emit pass accepts; anything it rejects just leaves an unused hole.
+            Accepted[NumAccepted++] = PrimIndex;
+            if (NumAccepted == AcceptBatch)
             {
-                SkinnedCandidates[Slot]     = PrimIndex;
-                SkinnedCandidateBones[Slot] = Prim.BoneCount;
+                Flush();
             }
         };
 
@@ -2214,6 +2250,7 @@ namespace Lumina
             {
                 Accept(Skeletal[d]);
             }
+            Flush();
             return;
         }
 
@@ -2276,6 +2313,7 @@ namespace Lumina
 
             Accept(PrimIndex);
         }
+        Flush();
     }
 
     void FDefaultSceneRenderer::LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal)

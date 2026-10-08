@@ -51,21 +51,10 @@ namespace Lumina
         // Sorted live handles at the moment the transaction opened.
         TVector<ECS::FEntity>   LiveBefore;
 
-        // What the operation added. Sorted (it is built by walking the sorted after-set), which is what
-        // lets Finalize binary-search it when classifying parent links as internal or external.
+        // What the operation added, in handle order.
         TVector<ECS::FEntity>   Created;
 
         // Serialized image of every entity in Created, for Redo.
         TVector<uint8>          CreatedData;
-
-        // Re-attaching a created root to a PRE-EXISTING parent is the one link the per-entity images
-        // cannot carry: the child's own relationship component is restored with it, but the parent's
-        // child list belongs to an entity this command never captured.
-        struct FExternalParent
-        {
-            ECS::FEntity Child;
-            ECS::FEntity Parent;
-        };
-        TVector<FExternalParent> ExternalParents;
     };
 }

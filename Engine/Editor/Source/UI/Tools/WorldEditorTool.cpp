@@ -61,7 +61,6 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SocketAttachmentComponent.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
@@ -136,10 +135,9 @@ namespace Lumina
             }
         }
 
-        const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Entity);
-        while (Relationship != nullptr && Relationship->Parent != ECS::NullEntity)
+        const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
+        for (ECS::FEntity Parent = Hierarchy.GetParent(Entity); Parent != ECS::NullEntity; Parent = Hierarchy.GetParent(Parent))
         {
-            ECS::FEntity Parent = Relationship->Parent;
             if (Registry.HasAll<FSelectionRoot>(Parent))
             {
                 return Parent;
@@ -151,7 +149,6 @@ namespace Lumina
                     return Parent;
                 }
             }
-            Relationship = Registry.TryGet<FRelationshipComponent>(Parent);
         }
 
         return Entity;
@@ -476,7 +473,7 @@ namespace Lumina
             ImGui::Separator();
 
             // --- Hierarchy ---
-            if (!bLocked && ECS::Utils::IsChild(Registry, Data.Entity))
+            if (!bLocked && Registry.GetHierarchy().GetParent(Data.Entity) != ECS::NullEntity)
             {
                 if (ImGui::MenuItem(LE_ICON_ARROW_UP_BOLD " Unparent"))
                 {
@@ -498,9 +495,9 @@ namespace Lumina
                         const bool bCurrent = Attachment != nullptr && Attachment->SocketName == Socket;
                         if (ImGui::MenuItem(Socket.c_str(), nullptr, bCurrent))
                         {
-                            const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Data.Entity);
-                            BeginRelationshipTransaction({ Data.Entity }, Relationship->Parent);
-                            CSkeletalMeshLibrary::AttachEntityToSocket(World.Get(), Data.Entity, Relationship->Parent, Socket);
+                            const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Data.Entity);
+                            BeginRelationshipTransaction({ Data.Entity }, Parent);
+                            CSkeletalMeshLibrary::AttachEntityToSocket(World.Get(), Data.Entity, Parent, Socket);
                             EndTransaction("Attach to Socket");
                             if (Data.Entity == DetailsEntity)
                             {
@@ -523,13 +520,13 @@ namespace Lumina
                 }
             }
 
-            if (!bLocked && ECS::Utils::IsParent(Registry, Data.Entity))
+            if (!bLocked && Registry.GetHierarchy().GetChildCount(Data.Entity) != 0)
             {
                 if (ImGui::MenuItem(LE_ICON_CALL_SPLIT " Detach Children"))
                 {
                     // Snapshot child IDs before mutating relationships, then move each in the tree.
                     TFixedVector<ECS::FEntity, 20> Children;
-                    ECS::Utils::ForEachChild(Registry, Data.Entity, [&](ECS::FEntity Child) { Children.push_back(Child); });
+                    Registry.GetHierarchy().ForEachChild(Data.Entity, [&](ECS::FEntity Child) { Children.push_back(Child); });
                     BeginRelationshipTransaction({ Data.Entity });
                     ECS::Utils::DetachImmediateChildren(Registry, Data.Entity);
                     EndTransaction("Detach Children");
@@ -1952,10 +1949,9 @@ namespace Lumina
                                     break;
                                 }
 
-                                FRelationshipComponent* Rel = ECS::GetWorldRegistry(*World).TryGet<FRelationshipComponent>(Entity);
-                                if (Rel && Rel->Parent != ECS::NullEntity)
+                                if (const ECS::FEntity Parent = ECS::GetWorldRegistry(*World).GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
                                 {
-                                    STransformComponent& ParentTransform = ECS::GetWorldRegistry(*World).Get<STransformComponent>(Rel->Parent);
+                                    STransformComponent& ParentTransform = ECS::GetWorldRegistry(*World).Get<STransformComponent>(Parent);
                                     FMatrix4 LocalMatrix = Math::Inverse(ParentTransform.GetWorldMatrix()) * DesiredWorldMatrix;
 
                                     FVector3 LocalTranslation, LocalScale, LocalSkew;
@@ -2414,7 +2410,7 @@ namespace Lumina
                     }
                 }
 
-                if (!bLastSelectedLocked && ECS::Utils::IsChild(Registry, LastSelected))
+                if (!bLastSelectedLocked && Registry.GetHierarchy().GetParent(LastSelected) != ECS::NullEntity)
                 {
                     if (ImGui::MenuItem("Unparent"))
                     {
@@ -2426,12 +2422,12 @@ namespace Lumina
                     }
                 }
 
-                if (!bLastSelectedLocked && ECS::Utils::IsParent(Registry, LastSelected))
+                if (!bLastSelectedLocked && Registry.GetHierarchy().GetChildCount(LastSelected) != 0)
                 {
                     if (ImGui::MenuItem("Detach Children"))
                     {
                         TVector<ECS::FEntity> Children;
-                        ECS::Utils::ForEachChild(Registry, LastSelected, [&](ECS::FEntity Child) { Children.push_back(Child); });
+                        Registry.GetHierarchy().ForEachChild(LastSelected, [&](ECS::FEntity Child) { Children.push_back(Child); });
                         BeginRelationshipTransaction({ LastSelected });
                         ECS::Utils::DetachImmediateChildren(Registry, LastSelected);
                         EndTransaction("Detach Children");
@@ -3098,7 +3094,7 @@ namespace Lumina
             {
                 Out.Pivot += Registry.Get<STransformComponent>(Entity).GetWorldLocation();
                 Out.TotalEntityCount += 1;
-                ECS::Utils::ForEachDescendant(Registry, Entity, [&](ECS::FEntity)
+                Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity)
                 {
                     Out.TotalEntityCount += 1;
                 });
@@ -3151,18 +3147,15 @@ namespace Lumina
         Roots.reserve(Filtered.size());
         for (ECS::FEntity Entity : Filtered)
         {
-            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
-            ECS::FEntity Walk = Rel ? Rel->Parent : ECS::NullEntity;
+            const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
             bool bAncestorInSet = false;
-            while (Walk != ECS::NullEntity)
+            for (ECS::FEntity Walk = Hierarchy.GetParent(Entity); Walk != ECS::NullEntity; Walk = Hierarchy.GetParent(Walk))
             {
                 if (Filtered.find(Walk) != Filtered.end())
                 {
                     bAncestorInSet = true;
                     break;
                 }
-                const FRelationshipComponent* WalkRel = Registry.TryGet<FRelationshipComponent>(Walk);
-                Walk = WalkRel ? WalkRel->Parent : ECS::NullEntity;
             }
             if (!bAncestorInSet)
             {
@@ -3286,8 +3279,7 @@ namespace Lumina
                 OriginalParents.reserve(Req.Roots.size());
                 for (ECS::FEntity Entity : Req.Roots)
                 {
-                    const FRelationshipComponent* Rel = WorkingRegistry.TryGet<FRelationshipComponent>(Entity);
-                    OriginalParents.push_back(Rel ? Rel->Parent : ECS::NullEntity);
+                    OriginalParents.push_back(WorkingRegistry.GetHierarchy().GetParent(Entity));
                     ECS::Utils::ReparentEntity(WorkingRegistry, Entity, ScratchRoot);
                 }
                 CaptureRoot = ScratchRoot;
@@ -3298,8 +3290,7 @@ namespace Lumina
             // Anchor the captured root at origin so the prefab opens centered in its editor.
             Prefab->Registry.ForEachEntity([&](ECS::FEntity E)
             {
-                const FRelationshipComponent* Rel = Prefab->Registry.TryGet<FRelationshipComponent>(E);
-                if (Rel != nullptr && Rel->Parent != ECS::NullEntity)
+                if (Prefab->Registry.GetHierarchy().GetParent(E) != ECS::NullEntity)
                 {
                     return;
                 }
@@ -5146,10 +5137,9 @@ namespace Lumina
         {
             STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-            const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
-            if (Rel != nullptr && Rel->Parent != ECS::NullEntity && Registry.IsValid(Rel->Parent))
+            if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
             {
-                const FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Rel->Parent).GetWorldMatrix();
+                const FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).GetWorldMatrix();
                 const FMatrix4 NewLocal    = Math::Inverse(ParentWorld) * DesiredWorld.GetMatrix();
 
                 FVector3 LocalTranslation, LocalScale, Skew;
@@ -5383,7 +5373,7 @@ namespace Lumina
         for (ECS::FEntity Entity : Targets)
         {
             Exclude.insert(Entity);
-            ECS::Utils::ForEachDescendant(Registry, Entity, [&](ECS::FEntity Desc)
+            Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity Desc)
             {
                 Exclude.insert(Desc);
             });
@@ -5440,10 +5430,9 @@ namespace Lumina
             NewLoc.y = NewY;
             NewWorld.SetLocation(NewLoc);
 
-            FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
-            if (Rel != nullptr && Rel->Parent != ECS::NullEntity && Registry.IsValid(Rel->Parent))
+            if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
             {
-                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Rel->Parent).GetWorldMatrix();
+                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).GetWorldMatrix();
                 FMatrix4 NewLocalMat = Math::Inverse(ParentWorld) * NewWorld.GetMatrix();
 
                 FVector3 LT, LS, LSkew; FQuat LR; FVector4 LP;
@@ -5570,10 +5559,9 @@ namespace Lumina
         {
             STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-            FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
-            if (Rel != nullptr && Rel->Parent != ECS::NullEntity && Registry.IsValid(Rel->Parent))
+            if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
             {
-                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Rel->Parent).GetWorldMatrix();
+                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).GetWorldMatrix();
                 FMatrix4 NewLocalMat = Math::Inverse(ParentWorld) * CopiedTransform.GetMatrix();
 
                 FVector3 LT, LS, LSkew; FQuat LR; FVector4 LP;

@@ -967,7 +967,7 @@ namespace Lumina
             const ECS::FEntity Parent = (Node.ParentIndex != Constants::kIndexNone) ? NodeEntities[Node.ParentIndex] : SharedRoot;
             if (Parent != ECS::NullEntity)
             {
-                ECS::Utils::AddToParent(Registry, Entity, Parent);
+                Registry.AttachChild(Entity, Parent);
             }
 
             switch (Node.Kind)

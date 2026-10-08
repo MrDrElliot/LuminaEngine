@@ -9,7 +9,6 @@
 #include "World/World.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/EditorComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 
 namespace Lumina
 {
@@ -43,7 +42,6 @@ namespace Lumina
     {
         Created.clear();
         CreatedData.clear();
-        ExternalParents.clear();
 
         CWorld* W = World.Get();
         if (W == nullptr)
@@ -78,7 +76,7 @@ namespace Lumina
             return;
         }
 
-        // SerializeEntity records each relationship component, so links within the created set restore.
+        // SerializeEntity records each parent and sibling index, so links inside and outside the created set restore.
         FMemoryWriter Writer(CreatedData);
         FObjectProxyArchiver Ar(Writer, false);
 
@@ -89,16 +87,6 @@ namespace Lumina
         {
             ECS::FEntity Mutable = E;
             ECS::Utils::SerializeEntity(Ar, Registry, Mutable);
-
-            // A parent outside the created set is the one link the images cannot carry.
-            if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(E))
-            {
-                if (Rel->Parent != ECS::NullEntity
-                    && !Algo::BinarySearch(Created, Rel->Parent))
-                {
-                    ExternalParents.push_back({ E, Rel->Parent });
-                }
-            }
         }
     }
 
@@ -143,20 +131,13 @@ namespace Lumina
         int32 NumCreated = 0;
         Ar << NumCreated;
 
+        ECS::Utils::FParentLinks Links;
         for (int32 i = 0; i < NumCreated; ++i)
         {
             ECS::FEntity Entity = ECS::NullEntity;
-            ECS::Utils::SerializeEntity(Ar, Registry, Entity);
+            ECS::Utils::SerializeEntity(Ar, Registry, Entity, &Links);
         }
-
-        // Preserving world here would recompute the local transform and drift the entity every redo.
-        for (const FExternalParent& Link : ExternalParents)
-        {
-            if (Registry.IsValid(Link.Child) && Registry.IsValid(Link.Parent))
-            {
-                ECS::Utils::ReparentEntity(Registry, Link.Child, Link.Parent, false);
-            }
-        }
+        Links.Apply(Registry);
 
         if (W->GetPackage())
         {

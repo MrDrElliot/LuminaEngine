@@ -17,7 +17,6 @@
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "World/World.h"
@@ -157,10 +156,9 @@ namespace Lumina::MCP
                         SEntityInfo Info;
                         Info.Id   = Agent::FEntityTokens::Mint(Registry, Entity);
                         Info.Name = Name;
-                        if (const FRelationshipComponent* Relationship = Registry.TryGet<FRelationshipComponent>(Entity);
-                            Relationship != nullptr && Relationship->Parent != ECS::NullEntity && Registry.IsValid(Relationship->Parent))
+                        if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
                         {
-                            Info.Parent = Agent::FEntityTokens::Mint(Registry, Relationship->Parent);
+                            Info.Parent = Agent::FEntityTokens::Mint(Registry, Parent);
                         }
                         if (const SPrefabInstanceComponent* Instance = Registry.TryGet<SPrefabInstanceComponent>(Entity))
                         {

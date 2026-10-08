@@ -4,20 +4,11 @@
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/EntityUtils.h"
 
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
 
 namespace Lumina
 {
-    namespace
-    {
-        const FRelationshipComponent* RelationshipOf(CWorld* World, ECS::FEntity Entity)
-        {
-            return World != nullptr ? World->TryGetComponent<FRelationshipComponent>(Entity) : nullptr;
-        }
-    }
-
     void CEntityLibrary::SetTag(CWorld* World, ECS::FEntity Entity, const FName& Tag)
     {
         if (World != nullptr)
@@ -39,14 +30,12 @@ namespace Lumina
 
     ECS::FEntity CEntityLibrary::GetFirstChild(CWorld* World, ECS::FEntity Entity)
     {
-        const FRelationshipComponent* Relationship = RelationshipOf(World, Entity);
-        return Relationship != nullptr ? Relationship->First : ECS::NullEntity;
+        return World != nullptr ? World->GetHierarchy().GetFirstChild(Entity) : ECS::NullEntity;
     }
 
     ECS::FEntity CEntityLibrary::GetNextSibling(CWorld* World, ECS::FEntity Entity)
     {
-        const FRelationshipComponent* Relationship = RelationshipOf(World, Entity);
-        return Relationship != nullptr ? Relationship->Next : ECS::NullEntity;
+        return World != nullptr ? World->GetHierarchy().GetNextSibling(Entity) : ECS::NullEntity;
     }
 
     void CEntityLibrary::GetAncestorChain(CWorld* World, ECS::FEntity Entity, TVector<ECS::FEntity>& Out)
@@ -56,11 +45,10 @@ namespace Lumina
             return;
         }
 
-        for (ECS::FEntity Current = Entity; Current != ECS::NullEntity; )
+        const ECS::FHierarchy& Hierarchy = World->GetHierarchy();
+        for (ECS::FEntity Current = Entity; Current != ECS::NullEntity; Current = Hierarchy.GetParent(Current))
         {
             Out.push_back(Current);
-            const FRelationshipComponent* Relationship = RelationshipOf(World, Current);
-            Current = Relationship != nullptr ? Relationship->Parent : ECS::NullEntity;
         }
     }
 
@@ -91,22 +79,7 @@ namespace Lumina
             return;
         }
 
-        TVector<ECS::FEntity> Stack;
-        Stack.push_back(Entity);
-        while (!Stack.empty())
-        {
-            const ECS::FEntity Node = Stack.back();
-            Stack.pop_back();
-            Out.push_back(Node);
-
-            const FRelationshipComponent* Relationship = RelationshipOf(World, Node);
-            for (ECS::FEntity Child = Relationship != nullptr ? Relationship->First : ECS::NullEntity;
-                 Child != ECS::NullEntity; )
-            {
-                Stack.push_back(Child);
-                const FRelationshipComponent* ChildRelationship = RelationshipOf(World, Child);
-                Child = ChildRelationship != nullptr ? ChildRelationship->Next : ECS::NullEntity;
-            }
-        }
+        Out.push_back(Entity);
+        World->GetHierarchy().ForEachDescendant(Entity, [&Out](ECS::FEntity Descendant) { Out.push_back(Descendant); });
     }
 }

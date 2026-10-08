@@ -339,6 +339,10 @@ namespace Lumina
         // Rewind to EntryState whenever the state hosting this machine is not the active one.
         bool bResetOnEntry = false;
 
+        // Built after load and after a compile, never saved. Per state, the transitions that can leave it, in authored order.
+        TVector<uint16> TransitionsByState;
+        TVector<uint32> TransitionsByStateStart;
+
         // Slots into FAnimGraphVMState.StateSlots: Current/From state indices (From -1 when not
         // transitioning), seconds spent in the current state, Duration of the active transition.
         uint16 CurrentStateSlot = 0;

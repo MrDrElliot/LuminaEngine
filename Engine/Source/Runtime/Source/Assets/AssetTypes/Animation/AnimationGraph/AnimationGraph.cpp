@@ -189,6 +189,24 @@ namespace Lumina
                         : FindParameterIndex(Term.Name);
                 }
             }
+
+            // An any-state edge sits in every list at its authored position, so the first passing edge stays the same one.
+            const int32 NumStates = (int32)SM.StatePoseRegisters.size();
+            SM.TransitionsByState.clear();
+            SM.TransitionsByStateStart.assign((SIZE_T)NumStates + 1, 0u);
+            for (int32 StateIndex = 0; StateIndex < NumStates; ++StateIndex)
+            {
+                SM.TransitionsByStateStart[StateIndex] = (uint32)SM.TransitionsByState.size();
+                for (SIZE_T TransitionIndex = 0; TransitionIndex < SM.Transitions.size(); ++TransitionIndex)
+                {
+                    const int32 From = SM.Transitions[TransitionIndex].FromState;
+                    if (From == StateIndex || From < 0)
+                    {
+                        SM.TransitionsByState.push_back((uint16)TransitionIndex);
+                    }
+                }
+            }
+            SM.TransitionsByStateStart[NumStates] = (uint32)SM.TransitionsByState.size();
         }
     }
 }

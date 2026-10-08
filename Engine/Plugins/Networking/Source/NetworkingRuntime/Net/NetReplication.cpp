@@ -15,7 +15,6 @@
 #include "Assets/AssetRef.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/EntityUtils.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "Components/NetworkComponent.h"
 #include "Networking/INetworkTransport.h"
@@ -98,9 +97,9 @@ namespace Lumina::Net
             }
 
             uint32 CurParentGuid = 0;
-            if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Child); Rel && Rel->Parent != ECS::NullEntity)
+            if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Child); Parent != ECS::NullEntity)
             {
-                if (const SNetworkComponent* PNet = Registry.TryGet<SNetworkComponent>(Rel->Parent))
+                if (const SNetworkComponent* PNet = Registry.TryGet<SNetworkComponent>(Parent))
                 {
                     CurParentGuid = PNet->NetGUID.Value;
                 }
@@ -326,10 +325,10 @@ namespace Lumina::Net
         }
 
         uint32 ParentGuid = 0;
-        if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
-            Rel && Rel->Parent != ECS::NullEntity && ParentReplicates(Registry, Rel->Parent))
+        if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
+            Parent != ECS::NullEntity && ParentReplicates(Registry, Parent))
         {
-            ParentGuid = Registry.Get<SNetworkComponent>(Rel->Parent).NetGUID.Value;
+            ParentGuid = Registry.Get<SNetworkComponent>(Parent).NetGUID.Value;
         }
         WriteNetGuid(Ar, ParentGuid);
     }
@@ -819,10 +818,10 @@ namespace Lumina::Net
         }
 
         uint32 ParentGuid = 0;
-        if (const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity);
-            Rel && Rel->Parent != ECS::NullEntity && ParentReplicates(Registry, Rel->Parent))
+        if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
+            Parent != ECS::NullEntity && ParentReplicates(Registry, Parent))
         {
-            ParentGuid = Registry.Get<SNetworkComponent>(Rel->Parent).NetGUID.Value;
+            ParentGuid = Registry.Get<SNetworkComponent>(Parent).NetGUID.Value;
         }
         WriteNetGuid(Ar, ParentGuid);
     }

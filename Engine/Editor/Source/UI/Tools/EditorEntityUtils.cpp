@@ -10,7 +10,6 @@
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/NameComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TextComponent.h"
@@ -31,8 +30,7 @@ namespace Lumina::EditorEntityUtils
     bool IsEditorOnlyComponent(uint32 TypeHash)
     {
         // Mirror this list in the prefab commit and duplicate filters, so editor-only state has one source.
-        return TypeHash == ECS::GetComponentTypeID<FRelationshipComponent>()
-            || TypeHash == ECS::GetComponentTypeID<FSelectedInEditorComponent>()
+        return TypeHash == ECS::GetComponentTypeID<FSelectedInEditorComponent>()
             || TypeHash == ECS::GetComponentTypeID<FHideInSceneOutliner>()
             || TypeHash == ECS::GetComponentTypeID<FEditorComponent>()
             || TypeHash == ECS::GetComponentTypeID<FLastSelectedTag>()
@@ -79,14 +77,11 @@ namespace Lumina::EditorEntityUtils
         }
 
         FMatrix4 LocalMatrix = WorldMatrix;
-        if (FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Entity))
+        if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
         {
-            if (Rel->Parent != ECS::NullEntity && Registry.IsValid(Rel->Parent))
+            if (STransformComponent* ParentTransform = Registry.TryGet<STransformComponent>(Parent))
             {
-                if (STransformComponent* ParentTransform = Registry.TryGet<STransformComponent>(Rel->Parent))
-                {
-                    LocalMatrix = Math::Inverse(ParentTransform->GetWorldMatrix()) * WorldMatrix;
-                }
+                LocalMatrix = Math::Inverse(ParentTransform->GetWorldMatrix()) * WorldMatrix;
             }
         }
 
@@ -169,7 +164,7 @@ namespace Lumina::EditorEntityUtils
         };
 
         Accumulate(Entity);
-        ECS::Utils::ForEachDescendant(Registry, Entity, [&](ECS::FEntity Desc)
+        Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity Desc)
         {
             Accumulate(Desc);
         });

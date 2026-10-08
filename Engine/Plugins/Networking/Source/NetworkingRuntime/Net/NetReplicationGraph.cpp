@@ -5,7 +5,6 @@
 #include "Core/Profiler/Profile.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Components/NetworkComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "Components/RepTransformComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Components/CharacterControllerComponent.h"
@@ -88,8 +87,8 @@ namespace Lumina::NetGraph
                     STransformComponent& T = TformStorage.Get(E);
 
                     // Must match the parent-NetGUID gate in WriteEntityComponents.
-                    const FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(E);
-                    const bool bNetParent = (Rel != nullptr && Rel->Parent != ECS::NullEntity && Net::ParentReplicates(Registry, Rel->Parent));
+                    const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(E);
+                    const bool bNetParent = Parent != ECS::NullEntity && Net::ParentReplicates(Registry, Parent);
                     FVector3 Pos;
                     FQuat    Rot;
                     FVector3 Scale;
