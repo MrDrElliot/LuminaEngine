@@ -2482,69 +2482,55 @@ namespace Lumina
             return;
         }
 
-        // Under the RHI's dedicated-block size, so each piece is a pooled page suballocation that frees cheaply.
-        constexpr uint64 MaxStagePieceBytes = 16 * Constants::kMiB;
-
-        // Past this the per-frame ring would grow to fit a one-off burst, and resizing it frees host memory, which stalls the queue.
-        constexpr uint64 RingStageLimitBytes = 8 * Constants::kMiB;
-        const bool bPooledStaging = Size > RingStageLimitBytes;
-
-        // A full retained re-send is hundreds of megabytes, which one thread copies at a fraction of the bandwidth.
-        constexpr uint64 ParallelStageBytes = 4 * Constants::kMiB;
-        constexpr uint64 StageChunkBytes    = Constants::kMiB;
-
         const uint8* Source = static_cast<const uint8*>(Data);
-        for (uint64 PieceOffset = 0; PieceOffset < Size; PieceOffset += MaxStagePieceBytes)
-        {
-            const uint64 PieceBytes = Math::Min(MaxStagePieceBytes, Size - PieceOffset);
-            RHI::GPUPtr StagingGpu = 0;
-            uint8*      Dest       = nullptr;
-            if (bPooledStaging)
-            {
-                const RHI::FGPUAllocation Pooled = RHI::Malloc(PieceBytes, RHI::EMemoryType::CPUWrite);
-                if (Pooled.Gpu == 0)
-                {
-                    LOG_ERROR("Scene renderer: no staging for a {} MiB upload piece; that range keeps its old contents.", PieceBytes >> 20);
-                    continue;
-                }
-                RHI::Retire(Pooled);
-                StagingGpu = Pooled.Gpu;
-                Dest       = reinterpret_cast<uint8*>(Pooled.Cpu);
-            }
-            else
-            {
-                const RHI::FTransientAlloc Staging = RHI::AllocTransient(PieceBytes);
-                StagingGpu = Staging.Gpu;
-                Dest       = static_cast<uint8*>(Staging.Cpu);
-            }
-            const uint8* Piece = Source + PieceOffset;
 
-            if (bFillBeforeSubmit)
+        // Past this the per-frame ring would grow to fit a one-off burst, so the bounded upload ring takes it instead.
+        constexpr uint64 RingStageLimitBytes = 8 * Constants::kMiB;
+        if (Size > RingStageLimitBytes)
+        {
+            // Small enough that a full ring stalls one chunk at a time rather than one whole buffer.
+            constexpr uint64 UploadChunkBytes = 4 * Constants::kMiB;
+
+            const uint32 FirstChunk = (uint32)DeferredStageFills.size();
+            for (uint64 Offset = 0; Offset < Size; Offset += UploadChunkBytes)
             {
-                constexpr uint64 DeferredFillBytes = 256u * 1024u;
-                for (uint64 Offset = 0; Offset < PieceBytes; Offset += DeferredFillBytes)
-                {
-                    DeferredStageFills.push_back({ Dest + Offset, Piece + Offset, Math::Min(DeferredFillBytes, PieceBytes - Offset) });
-                }
+                DeferredStageFills.push_back({ nullptr, Source + Offset, Math::Min(UploadChunkBytes, Size - Offset), Dst + Offset });
             }
-            else if (PieceBytes >= ParallelStageBytes)
+            bDeferredUploadsQueued = true;
+
+            if (!bFillBeforeSubmit)
             {
-                const uint32 NumChunks = (uint32)((PieceBytes + StageChunkBytes - 1u) / StageChunkBytes);
-                Task::ParallelFor(NumChunks, [Dest, Piece, PieceBytes, ChunkBytes = StageChunkBytes](const Task::FParallelRange& Range)
+                const uint32 NumChunks = (uint32)DeferredStageFills.size() - FirstChunk;
+                Task::ParallelFor(NumChunks, [this, FirstChunk](const Task::FParallelRange& Range)
                 {
-                    for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
+                    for (uint32 i = Range.Start; i < Range.End; ++i)
                     {
-                        const uint64 Offset = (uint64)Chunk * ChunkBytes;
-                        Memory::Memcpy(Dest + Offset, Piece + Offset, Math::Min(ChunkBytes, PieceBytes - Offset));
+                        const FDeferredStageFill& Fill = DeferredStageFills[FirstChunk + i];
+                        RHI::UploadBuffer(RHI::FGPUAllocation{ .Gpu = Fill.UploadDest, .Size = Fill.Bytes }, Fill.Source, Fill.Bytes);
                     }
                 });
+                DeferredStageFills.resize(FirstChunk);
+                RHI::FlushUploads();
             }
-            else
-            {
-                Memory::Memcpy(Dest, Piece, PieceBytes);
-            }
-            StagedWrites.push_back(RHI::FBufferCopy{ { Dst + PieceOffset, PieceBytes }, { StagingGpu, PieceBytes } });
+            return;
         }
+
+        const RHI::FTransientAlloc Staging = RHI::AllocTransient(Size);
+        uint8* Dest = static_cast<uint8*>(Staging.Cpu);
+
+        if (bFillBeforeSubmit)
+        {
+            constexpr uint64 DeferredFillBytes = 256u * 1024u;
+            for (uint64 Offset = 0; Offset < Size; Offset += DeferredFillBytes)
+            {
+                DeferredStageFills.push_back({ Dest + Offset, Source + Offset, Math::Min(DeferredFillBytes, Size - Offset) });
+            }
+        }
+        else
+        {
+            Memory::Memcpy(Dest, Source, Size);
+        }
+        StagedWrites.push_back(RHI::FBufferCopy{ { Dst, Size }, { Staging.Gpu, Size } });
     }
 
     void FDefaultSceneRenderer::FlushStagedWrites(RHI::FCmdListH CL)
@@ -2576,7 +2562,14 @@ namespace Lumina
              i = DeferredFillCursor.fetch_add(1, std::memory_order_relaxed))
         {
             const FDeferredStageFill& Fill = DeferredStageFills[i];
-            Memory::Memcpy(Fill.Dest, Fill.Source, Fill.Bytes);
+            if (Fill.UploadDest != 0)
+            {
+                RHI::UploadBuffer(RHI::FGPUAllocation{ .Gpu = Fill.UploadDest, .Size = Fill.Bytes }, Fill.Source, Fill.Bytes);
+            }
+            else
+            {
+                Memory::Memcpy(Fill.Dest, Fill.Source, Fill.Bytes);
+            }
         }
     }
 
@@ -2591,6 +2584,13 @@ namespace Lumina
             DeferredStageFillTask = nullptr;
         }
         DeferredStageFills.clear();
+
+        // Submitted ahead of the scene list, so its reads of the retained buffers see the re-sent bytes.
+        if (bDeferredUploadsQueued)
+        {
+            bDeferredUploadsQueued = false;
+            RHI::FlushUploads();
+        }
     }
 
     void FDefaultSceneRenderer::ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink,

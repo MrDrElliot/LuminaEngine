@@ -12,6 +12,7 @@
 #include "Core/Engine/EngineURL.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"
+#include "Renderer/RHI.h"
 #include "World/WorldManager.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
@@ -210,6 +211,7 @@ namespace Lumina::Benchmark
 
             // A profiler connects on this line, so the capture lands in the measured window and not the load.
             LOG_DISPLAY("Benchmark: warmup complete, measuring {} frames.", GState.MeasureFrames);
+            RHI::LogGPUPoolStats("after warmup");
         }
 
         GState.FrameMilliseconds.push_back(DeltaSeconds * 1000.0);
@@ -263,6 +265,8 @@ namespace Lumina::Benchmark
         const bool bWritten = Filesystem::WriteFile(
             FStringView(Path.c_str(), Path.size()),
             TSpan<const uint8>(reinterpret_cast<const uint8*>(Csv.data()), Csv.size()));
+
+        RHI::LogGPUPoolStats("end of run");
 
         LOG_DISPLAY("Benchmark: {} frames, mean {:.3f} ms ({:.1f} fps), median {:.3f}, "
                     "p95 {:.3f}, p99 {:.3f}, min {:.3f}, max {:.3f}",

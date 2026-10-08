@@ -13,13 +13,14 @@ namespace Lumina::RHI
 {
     namespace
     {
-        constexpr uint64 kStagingSliceRequest = 64 * Constants::kMiB;
+        // Twice what one frame used to stage, since a ring can hand the space back as soon as a batch finishes.
+        constexpr uint64 kStagingRingRequest = 128 * Constants::kMiB;
 
-        // Resolved against the CPU-visible VRAM aperture in Initialize.
-        uint64 GStagingSliceSize = kStagingSliceRequest;
+        // A buffer upload past this goes in pieces, so one large write cannot occupy the whole ring.
+        constexpr uint64 kRingPieceDivisor = 4;
 
-        // Staging that came from a dedicated allocation rather than one of the slices.
-        constexpr uint8 kNoSlice = 0xFF;
+        // Marks staging that lives outside the ring, which only a texture region larger than half the ring takes.
+        constexpr uint64 kNotInRing = ~0ull;
 
         enum class EUploadOp : uint8 { Buffer, Texture, Clear, TextureCopy };
 
@@ -27,13 +28,12 @@ namespace Lumina::RHI
         {
             EUploadOp   Type;
             GPUPtr      Staging        = 0;         // source for Buffer/Texture, 0 for Clear/TextureCopy
-            uint8       Slice          = kNoSlice;  // slice the staging was reserved from
             GPUPtr      BufferDest     = 0;         // Buffer
             FTextureH   TextureDest    = {};        // Texture/Clear/TextureCopy
             FTextureH   TextureSource  = {};        // TextureCopy
             uint64      Size           = 0;
             uint32      RowPitchTexels = 0;         // Texture
-            uint32      Mip            = 0;         // the DESTINATION mip
+            uint32      Mip            = 0;         // the destination mip
             uint32      Layer          = 0;         // Texture/TextureCopy (array slice; 0 for non-array)
             uint32      SourceMip      = 0;         // TextureCopy
             uint32      SourceLayer    = 0;         // TextureCopy
@@ -48,37 +48,35 @@ namespace Lumina::RHI
 
         static constexpr uint32 kNumUploadQueues = 3;
 
-        struct FStagingSlice
+        // Positions are monotonic byte counts, so a position modulo the capacity is the offset in the buffer.
+        struct FStagingRing
         {
-            FGPUAllocation Memory = {};
-            uint64      Cursor   = 0;
-            uint64      Capacity = 0;   // resolved slice size; 0 until Initialize runs
+            FGPUAllocation   Memory   = {};
+            uint64           Capacity = 0;
+            uint64           Head     = 0;
+            uint64           Tail     = 0;
 
-            TAtomic<uint32> Writers{0};
+            // Reservations whose bytes are still being written, so no flush may count them as submitted.
+            TVector<uint64>  ActiveStarts;
 
-            // One gate per queue, since a flush splits across two timelines whose values are unrelated.
-            FSemaphoreH ReadSemaphore[kNumUploadQueues] = {};
-            uint64      ReadValue[kNumUploadQueues]     = {};
-
-            uint64      OverflowBytes = 0;
-            uint32      LowStreak     = 0;   // consecutive cycles demand stayed below half capacity
-
-            // Latched so a slice that cannot grow says so once instead of once per frame forever.
-            bool        bWarnedGrowFailed = false;
+            uint64           PeakInUse   = 0;
+            uint64           FullWaits   = 0;
+            uint64           FullFlushes = 0;
+            uint64           Oversized   = 0;
         };
 
         // One entry per swept flush, retired once every queue it was submitted on has signaled past it.
         struct FBatchGate
         {
-            uint64      Batch = 0;
+            uint64      Batch   = 0;
+            uint64      RingEnd = 0;   // every ring byte below this belongs to this batch or an earlier one
             FSemaphoreH Semaphore[kNumUploadQueues] = {};
             uint64      Value[kNumUploadQueues]     = {};
         };
 
         struct FUploadState
         {
-            FStagingSlice       Slices[kFramesInFlight];
-            uint32              CurrentSlot = 0;
+            FStagingRing        Ring;
             TVector<FUploadOp>  Queue;
             // Parked between flushes so the queue is handed a buffer that already has capacity.
             TVector<FUploadOp>  QueueSpare;
@@ -86,8 +84,9 @@ namespace Lumina::RHI
 
             // Never held while taking the other locks, since the flush path already holds the core submit lock.
             FMutex              BatchMutex;
-            uint64              BatchCounter   = 1;   // the flush queued ops will leave in
-            uint64              CompletedBatch = 0;   // every batch at or below this has executed
+            uint64              BatchCounter     = 1;   // the flush queued ops will leave in
+            uint64              CompletedBatch   = 0;   // every batch at or below this has executed
+            uint64              CompletedRingEnd = 0;   // ring bytes below this are no longer read by any copy
             TVector<FBatchGate> InFlightBatches;
 
             TAtomic<uint32>     QueuedOps{0};
@@ -99,40 +98,213 @@ namespace Lumina::RHI
 
         struct FStaging
         {
-            std::byte*  Cpu    = nullptr;
-            GPUPtr      Gpu    = 0;
-            uint8       Slice  = kNoSlice;
+            std::byte*  Cpu       = nullptr;
+            GPUPtr      Gpu       = 0;
+            uint64      RingStart = kNotInRing;
 
-            // Non-null only on the overflow path, where the caller inherits the allocation.
+            // Non-null only for staging outside the ring, where the caller inherits the allocation.
             FGPUAllocation Owned = {};
         };
 
-        FStaging ReserveLocked(uint64 Size, uint64 Alignment)
+        // Caller holds BatchMutex. Batches execute in order per queue, so the first one still running blocks the rest.
+        void PopCompletedBatchesLocked()
         {
-            const uint32 Slot = GUpload.CurrentSlot;
-            FStagingSlice& Slice = GUpload.Slices[Slot];
-            const uint64 Aligned = Math::AlignUp(Slice.Cursor, Alignment);
-            if (Aligned + Size <= Slice.Capacity)
+            while (!GUpload.InFlightBatches.empty())
             {
-                Slice.Cursor = Aligned + Size;
-                Slice.Writers.fetch_add(1, std::memory_order_relaxed);
-                return { Slice.Memory.Cpu + Aligned, Slice.Memory.Gpu + Aligned, (uint8)Slot, {} };
+                const FBatchGate& Gate = GUpload.InFlightBatches.front();
+
+                bool bSubmitted = false;
+                bool bExecuted  = true;
+                for (uint32 QueueIndex = 0; QueueIndex < kNumUploadQueues; ++QueueIndex)
+                {
+                    if (Gate.Value[QueueIndex] == 0)
+                    {
+                        continue;
+                    }
+
+                    bSubmitted = true;
+                    if (GetSemaphoreValue(Gate.Semaphore[QueueIndex]) < Gate.Value[QueueIndex])
+                    {
+                        bExecuted = false;
+                        break;
+                    }
+                }
+
+                // No recorded queue means the flush is unsubmitted, so the copies have not been issued.
+                if (!bSubmitted || !bExecuted)
+                {
+                    break;
+                }
+
+                GUpload.CompletedBatch   = Gate.Batch;
+                GUpload.CompletedRingEnd = Math::Max(GUpload.CompletedRingEnd, Gate.RingEnd);
+                GUpload.InFlightBatches.erase(GUpload.InFlightBatches.begin());
             }
-
-            Slice.OverflowBytes += Size + Alignment;
-
-            // A separate zone, since a fresh host-visible allocation is a different cost from a ring write.
-            LUMINA_PROFILE_SECTION("Upload::StagingOverflowAlloc");
-            const FGPUAllocation Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
-            SetDebugName(Owned.Gpu, "Upload.Overflow");
-            return { Owned.Cpu, Owned.Gpu, kNoSlice, Owned };
         }
 
-        void EndWrite(const FStaging& Staging)
+        // Caller holds the upload mutex.
+        uint64 SubmittableRingEndLocked()
         {
-            if (Staging.Slice != kNoSlice)
+            const FStagingRing& Ring = GUpload.Ring;
+            uint64 End = Ring.Head;
+            for (uint64 Start : Ring.ActiveStarts)
             {
-                GUpload.Slices[Staging.Slice].Writers.fetch_sub(1, std::memory_order_release);
+                End = Math::Min(End, Start);
+            }
+            return End;
+        }
+
+        struct FRingWait
+        {
+            FSemaphoreH Semaphore[kNumUploadQueues] = {};
+            uint64      Value[kNumUploadQueues]     = {};
+            bool        bAny = false;
+        };
+
+        enum class ERingStall : uint8 { Retry, Flush, Wait, Yield };
+
+        // Caller holds the upload mutex. Frees what finished copies released, then says how to make room.
+        ERingStall ReclaimRingLocked(FRingWait& OutWait)
+        {
+            FStagingRing& Ring = GUpload.Ring;
+            const uint64 TailBefore = Ring.Tail;
+
+            FScopeLock BatchLock(GUpload.BatchMutex);
+            PopCompletedBatchesLocked();
+            Ring.Tail = Math::Max(Ring.Tail, GUpload.CompletedRingEnd);
+
+            // Nothing queued, writing or in flight means no copy can read the ring, so all of it is free.
+            if (GUpload.InFlightBatches.empty() && GUpload.Queue.empty() && Ring.ActiveStarts.empty())
+            {
+                Ring.Tail = Ring.Head;
+            }
+
+            if (Ring.Tail != TailBefore)
+            {
+                return ERingStall::Retry;
+            }
+
+            for (const FBatchGate& Gate : GUpload.InFlightBatches)
+            {
+                if (Gate.RingEnd <= Ring.Tail)
+                {
+                    continue;
+                }
+
+                for (uint32 QueueIndex = 0; QueueIndex < kNumUploadQueues; ++QueueIndex)
+                {
+                    OutWait.Semaphore[QueueIndex] = Gate.Semaphore[QueueIndex];
+                    OutWait.Value[QueueIndex]     = Gate.Value[QueueIndex];
+                    OutWait.bAny |= Gate.Value[QueueIndex] != 0;
+                }
+
+                // Flushed but not yet submitted, which the flushing thread finishes in a moment.
+                return OutWait.bAny ? ERingStall::Wait : ERingStall::Yield;
+            }
+
+            // The space is held by queued ops no flush has taken yet, or by writers still copying in.
+            return GUpload.Queue.empty() ? ERingStall::Yield : ERingStall::Flush;
+        }
+
+        FStaging ReserveOutsideRing(uint64 Size, uint64 Alignment)
+        {
+            {
+                FScopeLock Lock(GUpload.Mutex);
+                if (GUpload.Ring.Oversized++ == 0)
+                {
+                    LOG_WARN("RHI: a {} MiB upload region is larger than half the {} MiB staging ring and takes its own "
+                             "staging allocation.", Size >> 20, GUpload.Ring.Capacity >> 20);
+                }
+            }
+
+            LUMINA_PROFILE_SECTION("Upload::OversizedStagingAlloc");
+            const FGPUAllocation Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
+            SetDebugName(Owned.Gpu, "Upload.Oversized");
+            return { Owned.Cpu, Owned.Gpu, kNotInRing, Owned };
+        }
+
+        // A full ring makes the caller wait for the oldest batch rather than allocate, so staging never grows.
+        FStaging Reserve(uint64 Size, uint64 Alignment)
+        {
+            FStagingRing& Ring = GUpload.Ring;
+            if (Size > Ring.Capacity / 2)
+            {
+                return ReserveOutsideRing(Size, Alignment);
+            }
+
+            for (;;)
+            {
+                FRingWait  Wait;
+                ERingStall Stall = ERingStall::Retry;
+                {
+                    FScopeLock Lock(GUpload.Mutex);
+
+                    const uint64 LapStart = Ring.Head - Ring.Head % Ring.Capacity;
+                    const uint64 Offset   = Math::AlignUp(Ring.Head - LapStart, Alignment);
+
+                    // A region never straddles the end of the buffer, so one that would starts the next lap.
+                    const uint64 Start = Offset + Size <= Ring.Capacity ? LapStart + Offset : LapStart + Ring.Capacity;
+                    if (Start + Size - Ring.Tail <= Ring.Capacity)
+                    {
+                        Ring.Head = Start + Size;
+                        Ring.ActiveStarts.push_back(Start);
+                        Ring.PeakInUse = Math::Max(Ring.PeakInUse, Ring.Head - Ring.Tail);
+
+                        const uint64 RingOffset = Start % Ring.Capacity;
+                        return { Ring.Memory.Cpu + RingOffset, Ring.Memory.Gpu + RingOffset, Start, {} };
+                    }
+
+                    Stall = ReclaimRingLocked(Wait);
+                    Ring.FullFlushes += Stall == ERingStall::Flush ? 1 : 0;
+                    Ring.FullWaits   += Stall == ERingStall::Wait ? 1 : 0;
+                }
+
+                switch (Stall)
+                {
+                case ERingStall::Retry:
+                    break;
+                case ERingStall::Flush:
+                    FlushUploads();
+                    break;
+                case ERingStall::Wait:
+                    {
+                        // A wait here means uploads outran the GPU's copies, which is the backpressure doing its job.
+                        LUMINA_PROFILE_SECTION("Upload::StagingRingFullWait");
+                        for (uint32 QueueIndex = 0; QueueIndex < kNumUploadQueues; ++QueueIndex)
+                        {
+                            if (Wait.Value[QueueIndex] != 0)
+                            {
+                                WaitSemaphore(Wait.Semaphore[QueueIndex], Wait.Value[QueueIndex]);
+                            }
+                        }
+                    }
+                    break;
+                case ERingStall::Yield:
+                    Threading::ThreadYield();
+                    break;
+                }
+            }
+        }
+
+        // Queues the op and ends the reservation together, so a flush never sees one without the other.
+        void QueueStagedOp(const FUploadOp& Op, const FStaging& Staging)
+        {
+            FScopeLock Lock(GUpload.Mutex);
+            GUpload.Queue.push_back(Op);
+            GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
+
+            if (Staging.RingStart != kNotInRing)
+            {
+                TVector<uint64>& Active = GUpload.Ring.ActiveStarts;
+                for (SIZE_T i = 0; i < Active.size(); ++i)
+                {
+                    if (Active[i] == Staging.RingStart)
+                    {
+                        Active[i] = Active.back();
+                        Active.pop_back();
+                        break;
+                    }
+                }
             }
         }
     }
@@ -153,35 +325,28 @@ namespace Lumina::RHI
             return true;
         }
 
-        FStaging S;
+        const uint64 MaxPiece = Math::Max<uint64>(GUpload.Ring.Capacity / kRingPieceDivisor, kDefaultAlign);
+        const uint8* Source   = static_cast<const uint8*>(Data);
+        for (uint64 PieceOffset = 0; PieceOffset < Size; PieceOffset += MaxPiece)
         {
-            FScopeLock Lock(GUpload.Mutex);
-            S = ReserveLocked(Size, kDefaultAlign);
+            const uint64 PieceSize = Math::Min(MaxPiece, Size - PieceOffset);
+            const FStaging S = Reserve(PieceSize, kDefaultAlign);
+            if (S.Cpu == nullptr)
+            {
+                LOG_ERROR("RHI: dropped a {} KiB buffer upload, staging allocation failed.", Size / 1024);
+                return false;
+            }
+
+            Memory::MemcpyToWriteCombined(S.Cpu, Source + PieceOffset, PieceSize);
+
+            FUploadOp Op;
+            Op.Type          = EUploadOp::Buffer;
+            Op.Staging       = S.Gpu;
+            Op.OwnedStaging  = S.Owned;
+            Op.BufferDest    = Dest.Gpu + Offset + PieceOffset;
+            Op.Size          = PieceSize;
+            QueueStagedOp(Op, S);
         }
-
-        if (S.Cpu == nullptr)
-        {
-            LOG_ERROR("RHI: dropped a {} KiB buffer upload, staging allocation failed.", Size / 1024);
-            return false;
-        }
-
-        Memory::MemcpyToWriteCombined(S.Cpu, Data, Size);
-
-        FUploadOp Op;
-        Op.Type          = EUploadOp::Buffer;
-        Op.Staging       = S.Gpu;
-        Op.OwnedStaging  = S.Owned;
-        Op.Slice         = S.Slice;
-        Op.BufferDest    = Dest.Gpu + Offset;
-        Op.Size          = Size;
-
-        {
-            FScopeLock Lock(GUpload.Mutex);
-            GUpload.Queue.push_back(Op);
-            GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
-        }
-
-        EndWrite(S);
         return true;
     }
 
@@ -203,12 +368,11 @@ namespace Lumina::RHI
         LUMINA_PROFILE_SECTION("Upload::StageTextureMip");
         LUMINA_PROFILE_VALUE("Upload/StagedMipKiB", (int64)(Size / 1024));
 
-        // Split from the copy, since this arm is a cursor bump or a fresh allocation on overflow.
+        // Split from the copy, since this arm is a cursor bump or a wait on a full ring.
         FStaging S;
         {
             LUMINA_PROFILE_SECTION("Upload::ReserveStaging");
-            FScopeLock Lock(GUpload.Mutex);
-            S = ReserveLocked(Size, kDefaultAlign);
+            S = Reserve(Size, kDefaultAlign);
         }
 
         if (S.Cpu == nullptr)
@@ -227,7 +391,6 @@ namespace Lumina::RHI
         Op.Type           = EUploadOp::Texture;
         Op.Staging        = S.Gpu;
         Op.OwnedStaging   = S.Owned;
-        Op.Slice          = S.Slice;
         Op.TextureDest    = Dest;
         Op.Size           = Size;
         Op.RowPitchTexels = RowPitchTexels;
@@ -237,13 +400,7 @@ namespace Lumina::RHI
         Op.Height         = Height;
         Op.OffsetY        = OffsetY;
 
-        {
-            FScopeLock Lock(GUpload.Mutex);
-            GUpload.Queue.push_back(Op);
-            GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
-        }
-
-        EndWrite(S);
+        QueueStagedOp(Op, S);
         return true;
     }
 
@@ -304,7 +461,7 @@ namespace Lumina::RHI
 
         uint64 Batch = 0;
         const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
-        if (!Upload::Flush(CL, OwnedStaging, nullptr, &Batch))
+        if (!Upload::Flush(CL, OwnedStaging, &Batch))
         {
             ResetCommandList(CL);
             return;
@@ -312,7 +469,7 @@ namespace Lumina::RHI
 
         // Resetting here too would recycle one command buffer twice, which is a device loss.
         const uint64 Value = Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
-        Upload::NoteFlushSubmitted(Batch, 0, EQueueType::Graphics, GetQueueTimeline(EQueueType::Graphics), Value);
+        Upload::NoteFlushSubmitted(Batch, EQueueType::Graphics, GetQueueTimeline(EQueueType::Graphics), Value);
 
         WaitSemaphore(GetQueueTimeline(EQueueType::Graphics), Value);
 
@@ -331,17 +488,16 @@ namespace Lumina::RHI
 
         TVector<FGPUAllocation> OwnedStaging;
 
-        uint32 SliceMask = 0;
         uint64 Batch = 0;
         const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
-        if (!Upload::Flush(CL, OwnedStaging, &SliceMask, &Batch))
+        if (!Upload::Flush(CL, OwnedStaging, &Batch))
         {
             ResetCommandList(CL);
             return;
         }
 
         const uint64 Value = Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
-        Upload::NoteFlushSubmitted(Batch, SliceMask, EQueueType::Graphics, GetQueueTimeline(EQueueType::Graphics), Value);
+        Upload::NoteFlushSubmitted(Batch, EQueueType::Graphics, GetQueueTimeline(EQueueType::Graphics), Value);
 
         // After the submit, so each retire is gated on a queue value that covers the copy.
         for (const FGPUAllocation& Staging : OwnedStaging)
@@ -354,21 +510,13 @@ namespace Lumina::RHI
     {
         void Initialize()
         {
-            GStagingSliceSize = ClampCPUWriteSlice("Staging", kStagingSliceRequest, kFramesInFlight);
-
-            for (FStagingSlice& Slice : GUpload.Slices)
-            {
-                Slice.Memory   = Malloc(GStagingSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
-                SetDebugName(Slice.Memory.Gpu, "Upload.StagingSlice");
-                Slice.Cursor   = 0;
-                Slice.Capacity = GStagingSliceSize;
-                Slice.Writers.store(0, std::memory_order_relaxed);
-                for (uint64& Value : Slice.ReadValue)
-                {
-                    Value = 0;
-                }
-            }
-            GUpload.CurrentSlot  = 0;
+            FStagingRing& Ring = GUpload.Ring;
+            Ring.Capacity = ClampCPUWriteSlice("Staging", kStagingRingRequest, 1);
+            Ring.Memory   = Malloc(Ring.Capacity, kDefaultAlign, EMemoryType::CPUWrite);
+            SetDebugName(Ring.Memory.Gpu, "Upload.StagingRing");
+            Ring.Head = 0;
+            Ring.Tail = 0;
+            Ring.ActiveStarts.clear();
             GUpload.bInitialized = true;
         }
 
@@ -401,27 +549,14 @@ namespace Lumina::RHI
                 Retire(Staging);
             }
 
-            for (FStagingSlice& Slice : GUpload.Slices)
-            {
-                Retire(Slice.Memory);
-                Slice.Memory   = {};
-                Slice.Cursor   = 0;
-                Slice.Capacity = 0;
-                Slice.Writers.store(0, std::memory_order_relaxed);
-                for (FSemaphoreH& Semaphore : Slice.ReadSemaphore)
-                {
-                    Semaphore = {};
-                }
-                for (uint64& Value : Slice.ReadValue)
-                {
-                    Value = 0;
-                }
-            }
+            Retire(GUpload.Ring.Memory);
+            GUpload.Ring = FStagingRing{};
 
             // Device idle above, so every recorded gate has executed by definition.
             {
                 FScopeLock Lock(GUpload.BatchMutex);
-                GUpload.CompletedBatch = GUpload.BatchCounter;
+                GUpload.CompletedBatch   = GUpload.BatchCounter;
+                GUpload.CompletedRingEnd = 0;
                 GUpload.InFlightBatches.clear();
             }
 
@@ -435,9 +570,8 @@ namespace Lumina::RHI
         {
             struct FWrittenRange { GPUPtr Begin; GPUPtr End; };
 
-            FCmdListH CL        = {};
-            uint32    SliceMask = 0;
-            bool      bAny      = false;
+            FCmdListH CL   = {};
+            bool      bAny = false;
 
             // Inline, since the window above bounds both lists and a flush runs every frame.
             TFixedVector<FTextureH, kMaxWrittenTracked>    WrittenTextures;
@@ -468,9 +602,7 @@ namespace Lumina::RHI
             }
         };
 
-        uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
-                          uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
-                          TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch)
+        uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL, TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch)
         {
             LUMINA_PROFILE_SECTION("Upload::FlushSplit");
 
@@ -491,7 +623,7 @@ namespace Lumina::RHI
                 // Under the queue lock, so BatchForQueuedOps cannot hand out a batch whose ops already went out.
                 FScopeLock BatchLock(GUpload.BatchMutex);
                 Batch = GUpload.BatchCounter++;
-                GUpload.InFlightBatches.push_back(FBatchGate{ Batch });
+                GUpload.InFlightBatches.push_back(FBatchGate{ .Batch = Batch, .RingEnd = SubmittableRingEndLocked() });
             }
 
             if (OutBatch != nullptr)
@@ -523,11 +655,6 @@ namespace Lumina::RHI
                         RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                 }
                 T.bAny = true;
-
-                if (Op.Slice != kNoSlice)
-                {
-                    T.SliceMask |= (1u << Op.Slice);
-                }
 
                 // A copy reads as well as writes, so an earlier write to its source has to be ordered against.
                 const bool bReadsWritten = Op.Type == EUploadOp::TextureCopy && T.AlreadyWritten(Op.TextureSource);
@@ -618,15 +745,6 @@ namespace Lumina::RHI
                 }
             }
 
-            if (OutBufferSliceMask != nullptr)
-            {
-                *OutBufferSliceMask = Targets[0].SliceMask;
-            }
-            if (OutImageSliceMask != nullptr)
-            {
-                *OutImageSliceMask = Targets[1].SliceMask;
-            }
-
             // Hands the drained buffer back so the next flush swaps it in rather than allocating.
             {
                 FScopeLock Lock(GUpload.Mutex);
@@ -637,17 +755,9 @@ namespace Lumina::RHI
             return Result;
         }
 
-        bool Flush(FCmdListH CL, TVector<FGPUAllocation>& OutOwnedStaging, uint32* OutSliceMask, uint64* OutBatch)
+        bool Flush(FCmdListH CL, TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch)
         {
-            uint32 BufferSlices = 0;
-            uint32 ImageSlices  = 0;
-            const uint32 Used = FlushSplit(CL, CL, &BufferSlices, &ImageSlices, OutOwnedStaging, OutBatch);
-
-            if (OutSliceMask != nullptr)
-            {
-                *OutSliceMask = BufferSlices | ImageSlices;
-            }
-            return Used != 0u;
+            return FlushSplit(CL, CL, OutOwnedStaging, OutBatch) != 0u;
         }
 
         template<typename TPredicate>
@@ -718,41 +828,9 @@ namespace Lumina::RHI
             });
         }
 
-        void DrainSliceWriters(uint32 Slot)
-        {
-            if (!GUpload.bInitialized)
-            {
-                return;
-            }
-
-            // Blocks the frame on worker threads, not on the GPU, and it sits inside BeginFrame.
-            LUMINA_PROFILE_SECTION_COLORED("Upload::DrainSliceWriters (Workers)", tracy::Color::Goldenrod);
-
-            const FStagingSlice& Slice = GUpload.Slices[Slot];
-            for (;;)
-            {
-                {
-                    FScopeLock Lock(GUpload.Mutex);
-                    if (Slice.Writers.load(std::memory_order_acquire) == 0)
-                    {
-                        return;
-                    }
-                }
-                Threading::ThreadYield();
-            }
-        }
-
-        void NoteFlushSubmitted(uint64 Batch, uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value)
+        void NoteFlushSubmitted(uint64 Batch, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value)
         {
             const uint32 QueueIndex = (uint32)Queue;
-            for (uint32 Slot = 0; Slot < kFramesInFlight; ++Slot)
-            {
-                if ((SliceMask & (1u << Slot)) != 0)
-                {
-                    GUpload.Slices[Slot].ReadSemaphore[QueueIndex] = Semaphore;
-                    GUpload.Slices[Slot].ReadValue[QueueIndex]     = Value;
-                }
-            }
 
             // A flush can straddle two queues, so the gate accumulates rather than overwrites.
             FScopeLock Lock(GUpload.BatchMutex);
@@ -793,120 +871,23 @@ namespace Lumina::RHI
                 return true;
             }
 
-            // Batches submit in order per queue, so the first still running blocks the rest.
-            while (!GUpload.InFlightBatches.empty())
-            {
-                const FBatchGate& Gate = GUpload.InFlightBatches.front();
-
-                bool bSubmitted = false;
-                bool bExecuted  = true;
-                for (uint32 QueueIndex = 0; QueueIndex < kNumUploadQueues; ++QueueIndex)
-                {
-                    if (Gate.Value[QueueIndex] == 0)
-                    {
-                        continue;
-                    }
-
-                    bSubmitted = true;
-                    if (GetSemaphoreValue(Gate.Semaphore[QueueIndex]) < Gate.Value[QueueIndex])
-                    {
-                        bExecuted = false;
-                        break;
-                    }
-                }
-
-                // No recorded queue means the flush is unsubmitted, so the copies have not been issued.
-                if (!bSubmitted || !bExecuted)
-                {
-                    break;
-                }
-
-                GUpload.CompletedBatch = Gate.Batch;
-                GUpload.InFlightBatches.erase(GUpload.InFlightBatches.begin());
-            }
-
+            PopCompletedBatchesLocked();
             return Batch <= GUpload.CompletedBatch;
         }
 
-        void BeginSlot(uint32 Slot)
+        void LogStats(FStringView Label)
         {
-            FStagingSlice& Slice = GUpload.Slices[Slot];
+            FScopeLock Lock(GUpload.Mutex);
+            const FStagingRing& Ring = GUpload.Ring;
+            LOG_DISPLAY("RHI upload ring [{}]: {} MiB, {} MiB peak in use, {} waits on the GPU, {} flushes to make room, "
+                        "{} regions staged outside the ring.",
+                Label, Ring.Capacity >> 20, Ring.PeakInUse >> 20, Ring.FullWaits, Ring.FullFlushes, Ring.Oversized);
+        }
 
-            for (uint32 QueueIndex = 0; QueueIndex < kNumUploadQueues; ++QueueIndex)
-            {
-                const uint64 Gate = Slice.ReadValue[QueueIndex];
-                if (Gate == 0)
-                {
-                    continue;
-                }
-
-                if (GetSemaphoreValue(Slice.ReadSemaphore[QueueIndex]) < Gate)
-                {
-                    // A hitch here means the frame caught up with the upload, not that the upload was slow.
-                    LUMINA_PROFILE_SECTION("Upload::BeginSlot Wait");
-                    WaitSemaphore(Slice.ReadSemaphore[QueueIndex], Gate);
-                }
-                Slice.ReadValue[QueueIndex] = 0;
-            }
-
-            FGPUAllocation OldMemory = {};
-            {
-                FScopeLock Lock(GUpload.Mutex);
-
-                const uint64 Demand = Slice.Cursor + Slice.OverflowBytes;
-
-                uint64 NewCapacity = Slice.Capacity;
-                if (Demand > Slice.Capacity)
-                {
-                    NewCapacity     = Math::AlignUp(Demand + Demand / 2, Constants::kMiB);
-                    Slice.LowStreak = 0;
-                }
-                else if (Slice.Capacity > GStagingSliceSize && Demand * 2 < Slice.Capacity)
-                {
-                    if (++Slice.LowStreak >= 64)
-                    {
-                        NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, Constants::kMiB));
-                        Slice.LowStreak = 0;
-                    }
-                }
-                else
-                {
-                    Slice.LowStreak = 0;
-                }
-
-                if (NewCapacity != Slice.Capacity)
-                {
-                    const FGPUAllocation NewMemory = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
-                    if (NewMemory.Gpu != 0)
-                    {
-                        SetDebugName(NewMemory.Gpu, "Upload.StagingSlice");
-                        OldMemory      = Slice.Memory;
-                        Slice.Memory   = NewMemory;
-                        Slice.Capacity = NewCapacity;
-                        Slice.bWarnedGrowFailed = false;
-                    }
-                    else if (NewCapacity > Slice.Capacity && !Slice.bWarnedGrowFailed)
-                    {
-                        // Silent before this, so every oversized upload paid a fresh allocation on the calling thread.
-                        Slice.bWarnedGrowFailed = true;
-                        LOG_WARN("RHI: upload staging slice could not grow {} -> {} MiB (CPU-visible VRAM "
-                                 "exhausted). Uploads larger than the slice will allocate dedicated staging "
-                                 "on the calling thread until demand drops.",
-                            Slice.Capacity >> 20, NewCapacity >> 20);
-                    }
-                }
-
-                // Non-zero means uploads are falling out of the ring and paying for their own allocation.
-                LUMINA_PROFILE_VALUE("Upload/StagingOverflowKiB", (int64)(Slice.OverflowBytes / 1024));
-                LUMINA_PROFILE_VALUE("Upload/StagingUsedKiB",     (int64)(Slice.Cursor / 1024));
-
-                GUpload.CurrentSlot   = Slot;
-                Slice.Cursor          = 0;
-                Slice.OverflowBytes   = 0;
-            }
-
-            // Outside the lock, since Retire re-enters CancelBuffer, which takes the upload mutex.
-            Retire(OldMemory);
+        void PublishProfileCounters()
+        {
+            FScopeLock Lock(GUpload.Mutex);
+            LUMINA_PROFILE_VALUE("Upload/StagingInUseKiB", (int64)((GUpload.Ring.Head - GUpload.Ring.Tail) / 1024));
         }
     }
 }

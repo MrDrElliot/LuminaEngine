@@ -1280,15 +1280,18 @@ namespace Lumina
         RHI::FSceneBindings                                             SceneBindings = {};
         TVector<RHI::FBufferCopy>                                       StagedWrites;
 
+        // Dest is a mapped staging pointer, or null when the bytes go through the upload ring to UploadDest.
         struct FDeferredStageFill
         {
             uint8*          Dest;
             const uint8*    Source;
             uint64          Bytes;
+            RHI::GPUPtr     UploadDest = 0;
         };
         TVector<FDeferredStageFill>                                     DeferredStageFills;
         FTaskHandle                                                     DeferredStageFillTask;
         std::atomic<uint32>                                             DeferredFillCursor{0};
+        bool                                                            bDeferredUploadsQueued = false;
         TVector<RHI::FBufferCopy>                                       UploadCopyScratch;
         TVector<uint64>                                                 UploadCursorScratch;
         uint64                                                          CurrentSceneRootAddr = 0;

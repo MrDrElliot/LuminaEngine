@@ -558,6 +558,25 @@ namespace Lumina::RHI
     };
 
     RUNTIME_API void           GetGPUMemoryStats(FGPUMemoryStats& Out);
+
+    static constexpr uint32 kNumMemoryTypes = 3;
+
+    // What the allocator holds per EMemoryType, with the most it has held at once since startup.
+    struct FGPUPoolStats
+    {
+        uint64 PageBytes[kNumMemoryTypes]      = {};
+        uint64 PageUsedBytes[kNumMemoryTypes]  = {};
+        uint32 PageCount[kNumMemoryTypes]      = {};
+        uint64 DedicatedBytes[kNumMemoryTypes] = {};
+        uint64 PeakHeldBytes[kNumMemoryTypes]  = {};
+        uint64 ReleasedPages                   = 0;
+    };
+
+    RUNTIME_API void GetGPUPoolStats(FGPUPoolStats& Out);
+    RUNTIME_API void LogGPUPoolStats(FStringView Label);
+
+    // Once per frame, after the retire queue drains. Gives back pages that have stayed empty for a while.
+    RUNTIME_API void TrimMemoryPages();
     RUNTIME_API FGPUDeviceInfo GetDeviceInfo();
 
 #if USING(WITH_EDITOR)
@@ -586,6 +605,9 @@ namespace Lumina::RHI
 #endif
 
     RUNTIME_API uint64         ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount);
+
+    // The most one of SliceCount ring slices may take of a small CPU-visible aperture, or no limit with ReBAR.
+    RUNTIME_API uint64         GetCPUWriteSliceCap(uint32 SliceCount);
     
     RUNTIME_API uint32         GetMaxMeshWorkGroupCount();
 

@@ -10,6 +10,7 @@
 
 #include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Renderer/RHIUpload.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Windows/GLFWInclude.h"
 #include "Memory/SmartPtr.h"
@@ -460,6 +461,7 @@ namespace Lumina::RHI
         GPUPtr          Device;
         uint64          Size;
         EMemoryType     MemType;
+        uint64          EmptySinceTrim = 0;
     };
 
     // One entry per allocation, keyed by base address, so Free is a lookup and tools name tenants, not pages.
@@ -696,6 +698,12 @@ namespace Lumina::RHI
         // Both address-sorted. Malloc walks only the pages, so dedicated blocks never lengthen that scan.
         TVector<FMemoryBlock>           MemoryPages;
         TVector<FMemoryBlock>           DedicatedBlocks;
+
+        // Pages plus dedicated blocks per EMemoryType, guarded by MemoryMutex like the lists themselves.
+        uint64                          HeldBytes[kNumMemoryTypes] = {};
+        uint64                          PeakHeldBytes[kNumMemoryTypes] = {};
+        uint64                          TrimCount = 0;
+        uint64                          ReleasedPages = 0;
 
         // Peak live is what the buffer count would be without pooling, so the pair reports the win.
 #if USING(WITH_EDITOR)
@@ -1411,11 +1419,11 @@ namespace Lumina::RHI
     static constexpr uint64 kCPUWriteApertureDivisor = 4;
     static constexpr uint64 kMinCPUWriteSlice        = 8 * Constants::kMiB;
 
-    uint64 ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount)
+    uint64 GetCPUWriteSliceCap(uint32 SliceCount)
     {
         if (GDevice == nullptr || SliceCount == 0)
         {
-            return DesiredSliceSize;
+            return ~0ull;
         }
 
         FGPUMemoryStats Stats;
@@ -1430,7 +1438,7 @@ namespace Lumina::RHI
             }
             if (Heap.bReBAR)
             {
-                return DesiredSliceSize;
+                return ~0ull;
             }
             Aperture = Math::Max(Aperture, Heap.BudgetBytes);
         }
@@ -1438,14 +1446,30 @@ namespace Lumina::RHI
         // With no host-visible VRAM heap, a CPU write already lands in system memory.
         if (Aperture == 0)
         {
-            return DesiredSliceSize;
+            return ~0ull;
         }
 
         const uint64 PerSlice = (Aperture / kCPUWriteApertureDivisor) / SliceCount;
-        const uint64 Cap      = Math::Max(kMinCPUWriteSlice, (PerSlice / Constants::kMiB) * Constants::kMiB);
+        return Math::Max(kMinCPUWriteSlice, (PerSlice / Constants::kMiB) * Constants::kMiB);
+    }
+
+    uint64 ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount)
+    {
+        const uint64 Cap = GetCPUWriteSliceCap(SliceCount);
         if (Cap >= DesiredSliceSize)
         {
             return DesiredSliceSize;
+        }
+
+        uint64 Aperture = 0;
+        FGPUMemoryStats Stats;
+        GetGPUMemoryStats(Stats);
+        for (const FGPUMemoryHeapStats& Heap : Stats.Heaps)
+        {
+            if (Heap.bDeviceLocal && Heap.bHostVisible)
+            {
+                Aperture = Math::Max(Aperture, Heap.BudgetBytes);
+            }
         }
 
         LOG_DISPLAY("RHI: {} ring clamped {} MiB -> {} MiB/slice x{} (ReBAR off, {} MiB CPU-visible aperture).",
@@ -3321,6 +3345,10 @@ namespace Lumina::RHI
         TVector<FMemoryBlock>& Blocks = Block.Suballocator != nullptr ? GDevice->MemoryPages : GDevice->DedicatedBlocks;
         const FMemoryBlock* Pos = std::ranges::lower_bound(Blocks, Block.Device, {}, &FMemoryBlock::Device);
         FMemoryBlock* Inserted = Blocks.insert(Pos, Block);
+
+        const uint32 TypeIndex = (uint32)Block.MemType;
+        GDevice->HeldBytes[TypeIndex] += Block.Size;
+        GDevice->PeakHeldBytes[TypeIndex] = Math::Max(GDevice->PeakHeldBytes[TypeIndex], GDevice->HeldBytes[TypeIndex]);
         GMemoryBlockGeneration.fetch_add(1, std::memory_order_release);
         return Inserted;
     }
@@ -3538,6 +3566,118 @@ namespace Lumina::RHI
 #endif
     }
 
+    // Long enough that a page emptied between two loads is reused rather than released and created again.
+    static constexpr uint64 kPageIdleTrimsBeforeRelease = 120;
+
+    // Caller holds MemoryMutex exclusively.
+    static void ReleasePageLocked(SIZE_T PageIndex)
+    {
+        const FMemoryBlock Page = GDevice->MemoryPages[PageIndex];
+        GDevice->MemoryPages.erase(GDevice->MemoryPages.begin() + PageIndex);
+        GDevice->HeldBytes[(uint32)Page.MemType] -= Page.Size;
+        ++GDevice->ReleasedPages;
+
+        vmaDestroyVirtualBlock(Page.Suballocator);
+        vmaDestroyBuffer(GDevice->Allocator, Page.Buffer, Page.Allocation);
+        GMemoryBlockGeneration.fetch_add(1, std::memory_order_release);
+
+        LOG_INFO("RHI: released an empty {} MiB {} memory page at {:#x}.", Page.Size >> 20, MemoryTypeToString(Page.MemType), Page.Device);
+    }
+
+    void TrimMemoryPages()
+    {
+        if (GDevice == nullptr)
+        {
+            return;
+        }
+
+        FWriteScopeLock Lock(GDevice->MemoryMutex);
+        const uint64 Trim = ++GDevice->TrimCount;
+
+        // One empty page per type stays, so allocation churn around a single page never reaches the driver.
+        bool bKeptSpare[kNumMemoryTypes] = {};
+        for (SIZE_T i = GDevice->MemoryPages.size(); i-- > 0;)
+        {
+            FMemoryBlock& Page = GDevice->MemoryPages[i];
+            if (vmaIsVirtualBlockEmpty(Page.Suballocator) == VK_FALSE)
+            {
+                Page.EmptySinceTrim = 0;
+                continue;
+            }
+
+            if (Page.EmptySinceTrim == 0)
+            {
+                Page.EmptySinceTrim = Trim;
+            }
+
+            const uint32 TypeIndex = (uint32)Page.MemType;
+            if (!bKeptSpare[TypeIndex])
+            {
+                bKeptSpare[TypeIndex] = true;
+                continue;
+            }
+
+            if (Trim - Page.EmptySinceTrim >= kPageIdleTrimsBeforeRelease)
+            {
+                ReleasePageLocked(i);
+            }
+        }
+    }
+
+    void GetGPUPoolStats(FGPUPoolStats& Out)
+    {
+        Out = {};
+        if (GDevice == nullptr)
+        {
+            return;
+        }
+
+        FReadScopeLock Lock(GDevice->MemoryMutex);
+        for (const FMemoryBlock& Page : GDevice->MemoryPages)
+        {
+            VmaStatistics Stats = {};
+            vmaGetVirtualBlockStatistics(Page.Suballocator, &Stats);
+
+            const uint32 TypeIndex = (uint32)Page.MemType;
+            Out.PageBytes[TypeIndex]     += Page.Size;
+            Out.PageUsedBytes[TypeIndex] += Stats.allocationBytes;
+            Out.PageCount[TypeIndex]     += 1;
+        }
+        for (const FMemoryBlock& Block : GDevice->DedicatedBlocks)
+        {
+            Out.DedicatedBytes[(uint32)Block.MemType] += Block.Size;
+        }
+        for (uint32 TypeIndex = 0; TypeIndex < kNumMemoryTypes; ++TypeIndex)
+        {
+            Out.PeakHeldBytes[TypeIndex] = GDevice->PeakHeldBytes[TypeIndex];
+        }
+        Out.ReleasedPages = GDevice->ReleasedPages;
+    }
+
+    void LogGPUPoolStats(FStringView Label)
+    {
+        FGPUPoolStats Stats;
+        GetGPUPoolStats(Stats);
+
+        for (uint32 TypeIndex = 0; TypeIndex < kNumMemoryTypes; ++TypeIndex)
+        {
+            LOG_DISPLAY("RHI pools [{}] {}: {} pages, {} MiB held, {} MiB used, {} MiB dedicated, {} MiB peak held.",
+                Label, MemoryTypeToString((EMemoryType)TypeIndex), Stats.PageCount[TypeIndex],
+                Stats.PageBytes[TypeIndex] >> 20, Stats.PageUsedBytes[TypeIndex] >> 20,
+                Stats.DedicatedBytes[TypeIndex] >> 20, Stats.PeakHeldBytes[TypeIndex] >> 20);
+        }
+        LOG_DISPLAY("RHI pools [{}]: {} empty pages released so far.", Label, Stats.ReleasedPages);
+        Upload::LogStats(Label);
+    }
+
+    namespace
+    {
+        FAutoConsoleCommand GMemoryPoolsCommand(
+            "RHI.MemoryPools",
+            "Log the GPU memory pages, dedicated blocks and peak held bytes per memory type.",
+            [] { LogGPUPoolStats("console"); });
+    }
+
     void Internal::DestroyNow(const FGPUAllocation& Allocation)
     {
         if (GDevice == nullptr || Allocation.Gpu == 0)
@@ -3570,6 +3710,7 @@ namespace Lumina::RHI
         auto It = std::ranges::lower_bound(GDevice->DedicatedBlocks, Allocation.Gpu, {}, &FMemoryBlock::Device);
         if (It != GDevice->DedicatedBlocks.end() && It->Device == Allocation.Gpu)
         {
+            GDevice->HeldBytes[(uint32)It->MemType] -= It->Size;
             vmaDestroyBuffer(GDevice->Allocator, It->Buffer, It->Allocation);
             GDevice->DedicatedBlocks.erase(It);
             GMemoryBlockGeneration.fetch_add(1, std::memory_order_release);

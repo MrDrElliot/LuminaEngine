@@ -22,6 +22,7 @@ namespace Lumina::RHI
     static constexpr uint64 kTransientSliceRequest = 32 * Constants::kMiB;
 
     static uint64 GTransientSliceSize = kTransientSliceRequest;
+    static uint64 GTransientSliceCap  = ~0ull;
 
     struct FTransientSlice
     {
@@ -110,6 +111,7 @@ namespace Lumina::RHI
         Upload::Initialize();
 
         GTransientSliceSize = ClampCPUWriteSlice("Transient", kTransientSliceRequest, kFramesInFlight);
+        GTransientSliceCap  = GetCPUWriteSliceCap(kFramesInFlight);
 
         for (FTransientSlice& Slice : GCore.Slices)
         {
@@ -530,6 +532,7 @@ namespace Lumina::RHI
         RHI::ApplyDeferredHeapWrites(Slot);
         DrainRetireQueue(Slot);
         RHI::RetireSlot(Slot);
+        RHI::TrimMemoryPages();
 
 #if defined(LUMINA_WITH_GPU_PROFILING)
         // After the slot wait, so last cycle's timestamps in this pool are guaranteed readable.
@@ -538,8 +541,6 @@ namespace Lumina::RHI
 
         
         FShaderLibrary::FlushPendingReleases();
-
-        Upload::DrainSliceWriters(Slot);
 
         for (FCmdListH CommandList : GCore.SlotCommandLists[Slot])
         {
@@ -571,12 +572,10 @@ namespace Lumina::RHI
             const FCmdListH ImageCL  = OpenCommandList(EQueueType::Graphics);
             const FCmdListH BufferCL = bAsyncTransfer ? OpenCommandList(EQueueType::Transfer) : ImageCL;
 
-            uint32 BufferSlices = 0;
-            uint32 ImageSlices  = 0;
-            uint64 Batch        = 0;
-            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, &BufferSlices, &ImageSlices, UploadStaging, &Batch);
+            uint64 Batch = 0;
+            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, UploadStaging, &Batch);
 
-            auto SubmitUpload = [&](EQueueType Queue, FCmdListH CL, uint32 SliceMask) -> uint64
+            auto SubmitUpload = [&](EQueueType Queue, FCmdListH CL) -> uint64
             {
                 const uint32 QueueIndex = (uint32)Queue;
 
@@ -601,26 +600,25 @@ namespace Lumina::RHI
                     GCore.PendingTransferWait = Value;
                 }
 
-                Upload::NoteFlushSubmitted(Batch, SliceMask, Queue, GCore.QueueTimeline[QueueIndex], Value);
+                Upload::NoteFlushSubmitted(Batch, Queue, GCore.QueueTimeline[QueueIndex], Value);
                 return Value;
             };
 
             if (bAsyncTransfer && (Used & 1u) != 0u)
             {
-                SubmitUpload(EQueueType::Transfer, BufferCL, BufferSlices);
+                SubmitUpload(EQueueType::Transfer, BufferCL);
             }
             else if (bAsyncTransfer)
             {
                 ResetCommandList(BufferCL);
             }
 
-            // When not split, ImageCL carries both halves and both slice masks apply to it.
-            const uint32 GraphicsSlices = bAsyncTransfer ? ImageSlices : (BufferSlices | ImageSlices);
-            const uint32 GraphicsBit    = bAsyncTransfer ? 2u : 3u;
+            // When not split, ImageCL carries both halves.
+            const uint32 GraphicsBit = bAsyncTransfer ? 2u : 3u;
 
             if ((Used & GraphicsBit) != 0u)
             {
-                SubmitUpload(EQueueType::Graphics, ImageCL, GraphicsSlices);
+                SubmitUpload(EQueueType::Graphics, ImageCL);
             }
             else
             {
@@ -632,10 +630,13 @@ namespace Lumina::RHI
             FTransientSlice& Slice = GCore.Slices[Slot];
             const uint64 Demand = Slice.Cursor.load(std::memory_order_relaxed);
 
+            // Past the cap a burst overflows into its own allocations instead of keeping the slice large.
+            const uint64 MaxCapacity = Math::Max(GTransientSliceSize, GTransientSliceCap);
+
             uint64 NewCapacity = Slice.Capacity;
-            if (Demand > Slice.Capacity)
+            if (Demand > Slice.Capacity && Slice.Capacity < MaxCapacity)
             {
-                NewCapacity = Math::AlignUp(Demand + Demand / 2, Constants::kMiB); // grow 1.5x, MiB-rounded
+                NewCapacity = Math::Min(MaxCapacity, Math::AlignUp(Demand + Demand / 2, Constants::kMiB));
                 Slice.LowStreak = 0;
             }
             else if (Slice.Capacity > GTransientSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
@@ -667,7 +668,7 @@ namespace Lumina::RHI
             Retire(Staging);
         }
 
-        Upload::BeginSlot(Slot);
+        Upload::PublishProfileCounters();
 
         // A retire landing on the previous slot would be gated by a value older than this frame's work.
         Textures::TickPendingSwaps();

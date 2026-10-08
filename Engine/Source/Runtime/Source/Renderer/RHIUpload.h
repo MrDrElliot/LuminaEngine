@@ -35,11 +35,9 @@ namespace Lumina::RHI
         // retire. Releasing inside the flush retires against the PREVIOUS slot during BeginFrame.
         //
         // OutBatch names the flush the swept-out ops went into, for NoteFlushSubmitted and IsBatchComplete.
-        bool Flush(FCmdListH CL, TVector<FGPUAllocation>& OutOwnedStaging, uint32* OutSliceMask = nullptr, uint64* OutBatch = nullptr);
+        bool Flush(FCmdListH CL, TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch = nullptr);
 
-        uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
-                          uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
-                          TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch = nullptr);
+        uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL, TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch = nullptr);
 
         /** The flush that ops queued right now will leave in. Read it AFTER queueing the ops you care
          *  about: the answer is then either the batch they are in, or -- if a flush raced in between -- a
@@ -62,12 +60,10 @@ namespace Lumina::RHI
         void CancelTexture(FTextureH Texture);
         void CancelBuffer(const FGPUAllocation& Dest);
 
-        void DrainSliceWriters(uint32 Slot);
+        // Records the value the flush signals, which frees its staging and tells IsBatchComplete the copies ran.
+        void NoteFlushSubmitted(uint64 Batch, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value);
 
-        // Records the fence the flush signals: per staging slice (so BeginSlot knows when the slice is
-        // reusable) and per batch (so IsBatchComplete knows when the copies have actually run).
-        void NoteFlushSubmitted(uint64 Batch, uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value);
-
-        void BeginSlot(uint32 Slot);
+        RUNTIME_API void LogStats(FStringView Label);
+        void PublishProfileCounters();
     }
 }
