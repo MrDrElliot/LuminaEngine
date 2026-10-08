@@ -83,7 +83,9 @@ namespace Lumina
         CVarValueType DefaultValue;
         void (*OnChange)(const CVarValueType&);
 
-        constexpr FConsoleVariable(FStringView InName, FStringView InHint, CVarValueType* InPtr, const CVarValueType& InDefault, void (*InCallback)(const CVarValueType&) = nullptr)
+        // Not constexpr: TVariant's copy runs through a type-erased table, and MSVC 14.50 rejects a constexpr
+        // constructor that can never be constant-evaluated (C3615).
+        FConsoleVariable(FStringView InName, FStringView InHint, CVarValueType* InPtr, const CVarValueType& InDefault, void (*InCallback)(const CVarValueType&) = nullptr)
             : Name(InName)
             , Hint(InHint)
             , ValuePtr(InPtr)
