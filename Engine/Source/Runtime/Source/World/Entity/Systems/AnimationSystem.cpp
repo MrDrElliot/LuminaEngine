@@ -421,6 +421,7 @@ namespace Lumina
                     Event.Type      = Type;
                     Event.Animation = Asset;
                     Event.State     = Authored.Notify.Get();
+                    Event.Source    = Asset;
                     Event.Alpha     = Span > 0.0f ? Math::Clamp((Anim.CurrentTime - Authored.StartTime) / Span, 0.0f, 1.0f) : 0.0f;
                 };
 
@@ -694,6 +695,8 @@ namespace Lumina
         // Relaxed throughout, since the TaskGraph::Wait() before the read is the ordering edge.
         std::atomic<bool> bAnyRootMotion{ false };
 
+        NotifyQueue.Prepare();
+
         FTaskGraph TaskGraph;
 
         // The graph pass runs after the simple pass so a dual-component entity resolves the same way.
@@ -708,6 +711,11 @@ namespace Lumina
                     [&](ECS::FEntity Entity, SSimpleAnimationComponent& Anim, SSkeletalMeshComponent& Mesh)
                 {
                     UpdateSimple(Anim, Mesh, Entity, DeltaTime, Now);
+
+                    if (!Anim.NotifyEvents.empty())
+                    {
+                        NotifyQueue.Record(Entity, EAnimNotifyPass::Simple, Anim.NotifyEvents);
+                    }
 
                     // Recording that ANY entity produced root motion lets the serial apply skip its sweep.
                     if (Anim.PendingRootMotion.bHasMotion)
@@ -726,6 +734,11 @@ namespace Lumina
                     [&](ECS::FEntity Entity, SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh)
                 {
                     UpdateGraph(SystemContext, Entity, AnimGraph, Mesh, DeltaTime, Now, KinematicsState);
+
+                    if (!AnimGraph.NotifyEvents.empty())
+                    {
+                        NotifyQueue.Record(Entity, EAnimNotifyPass::Graph, AnimGraph.NotifyEvents);
+                    }
 
                     if (AnimGraph.PendingRootMotion.bHasMotion)
                     {
@@ -957,30 +970,8 @@ namespace Lumina
         TaskGraph.Dispatch();
         TaskGraph.Wait();
 
-        // Serial because a typed notify runs user code, which the parallel passes must never do.
-        {
-            ECS::FRegistry& Registry = SystemContext.GetRegistry();
-            if (bHasSimple)
-            {
-                for (auto&& [Entity, Anim] : SystemContext.GetStorage<SSimpleAnimationComponent>().Each())
-                {
-                    if (!Anim.NotifyEvents.empty())
-                    {
-                        AnimEvents::DispatchTypedNotifies(Anim.NotifyEvents, Registry, Entity);
-                    }
-                }
-            }
-            if (bHasGraph)
-            {
-                for (auto&& [Entity, AnimGraph] : SystemContext.GetStorage<SAnimationGraphComponent>().Each())
-                {
-                    if (!AnimGraph.NotifyEvents.empty())
-                    {
-                        AnimEvents::DispatchTypedNotifies(AnimGraph.NotifyEvents, Registry, Entity);
-                    }
-                }
-            }
-        }
+        // Handlers run user code that may touch any component, so they wait for the flush after this batch.
+        NotifyQueue.Submit(SystemContext.GetCommandBus());
 
         // Nothing moved, so everything below is dead work.
         if (!bAnyRootMotion.load(std::memory_order_relaxed))

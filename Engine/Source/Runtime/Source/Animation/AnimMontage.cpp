@@ -353,6 +353,7 @@ namespace Lumina
                     Event.Type   = EAnimNotifyEventType::Trigger;
                     Event.Weight = Instance.Weight;
                     Event.Notify = Notify.Notify.Get();
+                    Event.Source = Montage;
                 }
             }
         }
@@ -383,6 +384,7 @@ namespace Lumina
             Event.Type   = Type;
             Event.Weight = Instance.Weight;
             Event.State  = State.Notify.Get();
+            Event.Source = Montage;
             Event.Alpha  = Span > 0.0f ? Math::Clamp((Cur - State.StartTime) / Span, 0.0f, 1.0f) : 0.0f;
         };
 
@@ -419,6 +421,7 @@ namespace Lumina
                     Event.Type   = EAnimNotifyEventType::End;
                     Event.Weight = Instance.Weight;
                     Event.State  = State.Notify.Get();
+                    Event.Source = Montage;
                     Event.Alpha  = 1.0f;
                 }
             }

@@ -2,7 +2,6 @@
 #include "AnimEvents.h"
 #include "World/ECS/Registry.h"
 
-#include "AnimNotify.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 
 namespace Lumina
@@ -42,40 +41,7 @@ namespace Lumina
             Event.Alpha     = 0.0f;
             Event.Animation = Clip;
             Event.Notify    = Notify.Notify.Get();
-        }
-    }
-
-    void AnimEvents::DispatchTypedNotifies(const TVector<FAnimNotifyEvent>& Events, ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        for (const FAnimNotifyEvent& Event : Events)
-        {
-            switch (Event.Type)
-            {
-            case EAnimNotifyEventType::Trigger:
-                if (Event.Notify != nullptr)
-                {
-                    Event.Notify->Notify(Registry, Entity);
-                }
-                break;
-            case EAnimNotifyEventType::Begin:
-                if (Event.State != nullptr)
-                {
-                    Event.State->NotifyBegin(Registry, Entity);
-                }
-                break;
-            case EAnimNotifyEventType::Tick:
-                if (Event.State != nullptr)
-                {
-                    Event.State->NotifyTick(Registry, Entity, Event.Alpha);
-                }
-                break;
-            case EAnimNotifyEventType::End:
-                if (Event.State != nullptr)
-                {
-                    Event.State->NotifyEnd(Registry, Entity);
-                }
-                break;
-            }
+            Event.Source    = Clip;
         }
     }
 }

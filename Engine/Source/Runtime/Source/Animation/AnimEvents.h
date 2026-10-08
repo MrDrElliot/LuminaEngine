@@ -9,6 +9,7 @@
 namespace Lumina
 {
     class CAnimation;
+    class CObject;
     struct SAnimNotify;
     struct SAnimNotifyState;
 
@@ -42,6 +43,9 @@ namespace Lumina
         // Authored instance, null when the entry is name-only; points into asset data, valid this frame only.
         const SAnimNotify* Notify = nullptr;
         const SAnimNotifyState* State = nullptr;
+
+        // The asset that owns Notify or State, which the notify queue pins until the handler has run.
+        const CObject* Source = nullptr;
     };
 
     namespace AnimEvents
@@ -50,8 +54,5 @@ namespace Lumina
         // single loop wrap when CurTime landed behind PrevTime. Equal times append nothing.
         RUNTIME_API void CollectTriggeredNotifies(const CAnimation* Clip, float PrevTime, float CurTime,
                                                   bool bLooping, float Weight, TVector<FAnimNotifyEvent>& Out);
-
-        // Runs the typed notify on every event that carries one. Serial pass only: these call user code.
-        RUNTIME_API void DispatchTypedNotifies(const TVector<FAnimNotifyEvent>& Events, ECS::FRegistry& Registry, ECS::FEntity Entity);
     }
 }

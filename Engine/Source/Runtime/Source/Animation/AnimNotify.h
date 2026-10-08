@@ -15,6 +15,7 @@ namespace Lumina
 
         virtual ~SAnimNotify() = default;
 
+        // Runs on the main thread after the animation batch, so it may add, remove or write any component.
         virtual void Notify(ECS::FRegistry& Registry, ECS::FEntity Entity) const {}
     };
 
@@ -26,6 +27,7 @@ namespace Lumina
 
         virtual ~SAnimNotifyState() = default;
 
+        // Every callback runs on the main thread after the animation batch, as SAnimNotify::Notify does.
         virtual void NotifyBegin(ECS::FRegistry& Registry, ECS::FEntity Entity) const {}
 
         // Alpha is 0..1 across the window.
