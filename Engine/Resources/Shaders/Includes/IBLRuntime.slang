@@ -58,6 +58,18 @@ float3 SampleSpecularRadiance(float3 WorldPos, float3 R, float Roughness)
     return Probes.Radiance + (1.0 - Probes.Weight) * SamplePrefilter(R, Roughness);
 }
 
+// A probe's roughest mip stands in for its irradiance, so walls inside a probe stop receiving the open sky.
+float3 SampleDiffuseIrradiance(float3 WorldPos, float3 N)
+{
+    if (SPEC_REFLECTION_PROBES == 0)
+    {
+        return SampleIrradiance(N);
+    }
+
+    FProbeSample Probes = SampleReflectionProbes(WorldPos, N, 1.0);
+    return Probes.Radiance + (1.0 - Probes.Weight) * SampleIrradiance(N);
+}
+
 float2 SampleBRDFLUT(float NdotV, float Roughness)
 {
     return SampleTexture2DLevel(GetSceneRoot().BRDFLutIndex, SAMPLER_LINEAR_CLAMP,
@@ -107,9 +119,7 @@ void EvaluateIBLAmbientSplit(float3 WorldPos, float3 N, float3 V, float NdotV, f
     float3 DiffuseColor = Albedo * (1.0 - Metallic);
     float3 kD           = DiffuseColor * (1.0 - FssEss - FmsEms);
 
-    float3 Irradiance = SampleIrradiance(N);
-    // Local probes override the sky here; diffuse irradiance stays sky-only (probes carry no
-    // irradiance convolution, so a diffuse local bounce would need a second bake per probe).
+    float3 Irradiance = SampleDiffuseIrradiance(WorldPos, N);
     float3 PreFilt    = SampleSpecularRadiance(WorldPos, R, Roughness);
 
     float SpecAO = ComputeSpecularOcclusion(NdotV, AO, Roughness);
