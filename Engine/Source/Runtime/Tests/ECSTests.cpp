@@ -96,7 +96,7 @@ TEST(ECSTests, Parent_Reparent_MovesCorrectly)
     EXPECT_EQ(A.Children, 0);
 }
 
-TEST(ECSTests, ResolveTransformChain_GrandchildFollowsRootMove)
+TEST(ECSTests, ComputeWorldTransform_GrandchildFollowsRootMoveWithoutWriting)
 {
     ECS::FRegistry Registry{};
 
@@ -122,20 +122,19 @@ TEST(ECSTests, ResolveTransformChain_GrandchildFollowsRootMove)
     Registry.Get<STransformComponent>(A).LocalTransform.SetLocation(FVector3(20.f, 0.f, 0.f));
     Registry.EmplaceOrReplace<FNeedsTransformUpdate>(A);
 
-    // ResolveTransformChain must walk up to the dirty A rather than serving C's stale matrix.
-    ECS::Utils::ResolveTransformChain(Registry, C);
+    // The compute must walk up to the dirty A rather than serving C's stale matrix.
+    EXPECT_FLOAT_EQ(ECS::Utils::ComputeWorldTransform(Registry, A).GetLocation().x, 20.f);
+    EXPECT_FLOAT_EQ(ECS::Utils::ComputeWorldTransform(Registry, B).GetLocation().x, 25.f);
+    EXPECT_FLOAT_EQ(ECS::Utils::ComputeWorldTransform(Registry, C).GetLocation().x, 27.f);
 
-    const STransformComponent& WorldC = Registry.Get<STransformComponent>(C);
-    const STransformComponent& WorldB = Registry.Get<STransformComponent>(B);
-    const STransformComponent& WorldA = Registry.Get<STransformComponent>(A);
+    // Only a propagation writes, so the cached value still shows the last one.
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(C).WorldTransform.GetLocation().x, 17.f);
 
-    EXPECT_FLOAT_EQ(WorldA.WorldTransform.GetLocation().x, 20.f);
-    EXPECT_FLOAT_EQ(WorldB.WorldTransform.GetLocation().x, 25.f);
-    EXPECT_FLOAT_EQ(WorldC.WorldTransform.GetLocation().x, 27.f);
-    EXPECT_FLOAT_EQ(WorldC.WorldTransform.GetLocation().x - WorldB.WorldTransform.GetLocation().x, 2.f);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(C).WorldTransform.GetLocation().x, 27.f);
 }
 
-TEST(ECSTests, ResolveTransformChain_SiblingSubtreeStaysConsistent)
+TEST(ECSTests, ComputeWorldTransform_SiblingOfAMovedChainIsCurrent)
 {
     ECS::FRegistry Registry{};
 
@@ -162,12 +161,56 @@ TEST(ECSTests, ResolveTransformChain_SiblingSubtreeStaysConsistent)
     Registry.Get<STransformComponent>(A).LocalTransform.SetLocation(FVector3(20.f, 0.f, 0.f));
     Registry.EmplaceOrReplace<FNeedsTransformUpdate>(A);
 
-    // Resolving via C must also refresh sibling D, which is not dirty itself.
-    ECS::Utils::ResolveTransformChain(Registry, C);
-    ECS::Utils::ResolveTransformChain(Registry, D);
+    // D is not dirty itself, but its parent is, so its computed world must include the move.
+    const FTransform WorldD = ECS::Utils::ComputeWorldTransform(Registry, D);
+    EXPECT_FLOAT_EQ(WorldD.GetLocation().x, 20.f);
+    EXPECT_FLOAT_EQ(WorldD.GetLocation().y, 3.f);
 
-    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(D).WorldTransform.GetLocation().x, 20.f);
-    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(D).WorldTransform.GetLocation().y, 3.f);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(D).WorldTransform.GetLocation().x, WorldD.GetLocation().x);
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(D).WorldTransform.GetLocation().y, WorldD.GetLocation().y);
+}
+
+TEST(ECSTests, ComputeWorldTransform_MatchesThePropagationAcrossADeepRotatedChain)
+{
+    ECS::FRegistry Registry{};
+
+    constexpr int32 Depth = 12;
+    TVector<ECS::FEntity> Chain;
+    for (int32 i = 0; i < Depth; ++i)
+    {
+        const ECS::FEntity E = Registry.Create();
+        FTransform Local;
+        Local.SetLocation(FVector3(1.0f, 0.5f * (float)i, 0.0f));
+        Local.SetRotation(FQuat(Math::Radians(FVector3(0.0f, 15.0f, 0.0f))));
+        Registry.Emplace<STransformComponent>(E).LocalTransform = Local;
+        if (!Chain.empty())
+        {
+            ECS::Utils::AddToParent(Registry, E, Chain.back());
+        }
+        Registry.Emplace<FNeedsTransformUpdate>(E);
+        Chain.push_back(E);
+    }
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    // A move halfway down leaves everything above it clean, which is the base the compute must start from.
+    Registry.Get<STransformComponent>(Chain[Depth / 2]).LocalTransform.SetLocation(FVector3(3.0f, -2.0f, 1.0f));
+    Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Chain[Depth / 2]);
+
+    TVector<FVector3> Computed;
+    for (ECS::FEntity E : Chain)
+    {
+        Computed.push_back(ECS::Utils::ComputeWorldTransform(Registry, E).GetLocation());
+    }
+
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+    for (int32 i = 0; i < Depth; ++i)
+    {
+        const FVector3 Resolved = Registry.Get<STransformComponent>(Chain[i]).WorldTransform.GetLocation();
+        EXPECT_NEAR(Computed[i].x, Resolved.x, 1e-4f) << "level " << i;
+        EXPECT_NEAR(Computed[i].y, Resolved.y, 1e-4f) << "level " << i;
+        EXPECT_NEAR(Computed[i].z, Resolved.z, 1e-4f) << "level " << i;
+    }
 }
 
 TEST(ECSTests, Parent_Unparent)

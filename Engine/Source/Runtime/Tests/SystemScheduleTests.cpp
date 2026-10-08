@@ -98,19 +98,6 @@ TEST(SystemSchedule, EqualPriorityPutsExclusiveSystemsLastWhateverTheInputOrder)
     EXPECT_EQ(Batches[0].Members.size(), 2u) << "the declared systems at that priority share the first batch";
 }
 
-TEST(SystemSchedule, OnlyBatchesThatTouchTransformsAskForThemResolved)
-{
-    FScheduleSystems S;
-
-    TVector<CWorld::FStageSlot> Stage = { { S.Reader, 0 }, { S.Exclusive, 64 }, { S.Writer, 128 } };
-    const TVector<CWorld::FSystemBatch> Batches = SystemSchedule::BuildBatches(Stage, AllWork(Stage));
-    ASSERT_EQ(Batches.size(), 3u);
-
-    EXPECT_FALSE(Batches[0].bNeedsResolvedTransforms) << "the reader never touches transforms";
-    EXPECT_TRUE(Batches[1].bNeedsResolvedTransforms) << "an exclusive system may touch anything";
-    EXPECT_TRUE(Batches[2].bNeedsResolvedTransforms) << "a transform writer reads parents' world transforms";
-}
-
 TEST(SystemSchedule, AHigherPriorityConflictStillRunsFirst)
 {
     FScheduleSystems S;

@@ -10,7 +10,6 @@
 #include "World/Entity/Components/NavMeshComponent.h"
 #include "World/Entity/Components/PathFollowComponent.h"
 #include "World/Entity/Components/RVOAgentComponent.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Components/VehicleComponent.h"
 #include "World/Entity/Systems/NavMeshSystem.h"
@@ -23,7 +22,7 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         Writes<SPathFollowComponent, SCharacterControllerComponent, SRVOAgentComponent, SVehicleComponent>();
-        Reads<STransformComponent, FRelationshipComponent, SNavMeshComponent,
+        Reads<STransformComponent, SNavMeshComponent,
               SCharacterMovementComponent, SystemResource::Significance>();
     }
 

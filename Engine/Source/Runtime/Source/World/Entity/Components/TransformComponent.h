@@ -15,34 +15,7 @@ namespace Lumina
 {
     struct FPropertyChangedEvent;
 
-    /**
-     * OWNERSHIP AND SYNCHRONIZATION CONTRACT
-     *
-     * The scheduler, not this component, is what orders transform access. Systems declare Read/Write and
-     * are batched so that conflicting ones never run together, batches run in sequence, and the frame's
-     * stages (FrameStart -> PrePhysics -> DuringPhysics -> physics step -> PostPhysics -> FrameEnd ->
-     * Extract) are strictly ordered on the game thread. Nothing here re-implements that.
-     *
-     *   LocalTransform  -- authored state. Owned by whichever system declared Write this batch. Safe to
-     *                      write from ANY thread, including a bare user job, as long as writers touch
-     *                      disjoint entities: every setter mutates only this component and a lock-free
-     *                      channel. What it does NOT promise is immediate visibility, see below.
-     *
-     *   WorldTransform  -- derived state, owned by the resolve. Guaranteed correct at the start of every
-     *                      batch, because CWorld::TickSystems resolves before each one. Never write it
-     *                      from outside the resolve or the flat fast path in MarkDirty.
-     *
-     *   The visibility rule -- a write becomes visible to other systems at the NEXT BARRIER, not at the
-     *                      instant it happens. That is the whole contract, and it is why writing from an
-     *                      arbitrary thread is safe without a lock.
-     *
-     * Deferral exists for exactly one reason: HIERARCHY. Locals are written in arbitrary order, so a
-     * parent may be written after its child and world transforms cannot be composed incrementally. A flat
-     * entity has no such dependency -- world IS local -- so its setter resolves itself inline and never
-     * touches the queue at all (see bIsFlat). The queue is not a race fix; it is a dependency-ordering
-     * mechanism that only hierarchical entities need.
-     */
-    // ScriptFastCalls: local accessors are bound SuppressGCTransition. World getters opt out (they resolve).
+    // Only LocalTransform is written, and WorldTransform follows at the frame's propagation, so GetWorld* computes the current value while GetWorld*Cached lags a moved child by a frame.
     REFLECT(Component, HideInComponentList, ScriptFastCalls)
     struct RUNTIME_API CACHE_ALIGN STransformComponent
     {
@@ -154,33 +127,46 @@ namespace Lumina
             return bIsFlat ? LocalTransform : WorldTransform;
         }
 
+        // Writes nothing and takes no lock, so any thread may read a world transform between propagations.
+        FTransform ComputeWorldTransform() const
+        {
+            if (bIsFlat)
+            {
+                return LocalTransform;
+            }
+
+            // Nothing has moved since the last propagation in the common case, so the cached value is exact.
+            if (Registry == nullptr || (DirtyState != nullptr && !DirtyState->bAnyDirty.load(std::memory_order_acquire)))
+            {
+                return WorldTransform;
+            }
+
+            return ECS::Utils::ComputeWorldTransform(*Registry, Entity);
+        }
+
         // World getters opt out of SuppressGCTransition: a dirty-chain resolve can exceed the ~1us budget.
         FUNCTION(NoSuppressGCTransition)
         FVector3 GetWorldLocation() const
         {
-            ResolveIfDirty();
-            return GetWorldTransformCached().GetLocation();
+            return ComputeWorldTransform().GetLocation();
         }
 
         FUNCTION(NoSuppressGCTransition)
         FQuat GetWorldRotation() const
         {
-            ResolveIfDirty();
-            return GetWorldTransformCached().GetRotation();
+            return ComputeWorldTransform().GetRotation();
         }
 
         FUNCTION(NoSuppressGCTransition)
         FVector3 GetWorldScale() const
         {
-            ResolveIfDirty();
-            return GetWorldTransformCached().GetScale();
+            return ComputeWorldTransform().GetScale();
         }
 
         FUNCTION(NoSuppressGCTransition)
         FVector3 GetWorldRotationAsEuler() const
         {
-            ResolveIfDirty();
-            return Math::Degrees(Math::EulerAngles(GetWorldTransformCached().GetRotation()));
+            return Math::Degrees(Math::EulerAngles(ComputeWorldTransform().GetRotation()));
         }
 
         // Composed on demand rather than cached: the matrix is ~20 SIMD instructions out of a
@@ -189,19 +175,16 @@ namespace Lumina
         FUNCTION(NoSuppressGCTransition)
         FMatrix4 GetWorldMatrix() const
         {
-            ResolveIfDirty();
-            return GetWorldTransformCached().GetMatrix();
+            return ComputeWorldTransform().GetMatrix();
         }
 
         FUNCTION(NoSuppressGCTransition)
-        const FTransform& GetWorldTransform() const
+        FTransform GetWorldTransform() const
         {
-            ResolveIfDirty();
-            return GetWorldTransformCached();
+            return ComputeWorldTransform();
         }
 
-        // Cached world transform WITHOUT a resolve. All by value; the SIMD transform has no scalar member
-        // to reference and the matrix is composed on the spot.
+        // The world transform as of the last propagation, which a child moved since then has not caught up with.
         FVector3 GetWorldLocationCached() const { return GetWorldTransformCached().GetLocation(); }
         FQuat    GetWorldRotationCached() const { return GetWorldTransformCached().GetRotation(); }
         FVector3 GetWorldScaleCached()    const { return GetWorldTransformCached().GetScale(); }
@@ -216,7 +199,7 @@ namespace Lumina
             }
         }
 
-        // World rotation from the parent as resolved at the last barrier, lock-free and safe from parallel writers of disjoint entities.
+        // World rotation against the parent's current world rotation, computed without a lock so parallel writers of disjoint entities may call it.
         FUNCTION()
         void SetWorldRotationCached(const FQuat& InRotation)
         {
@@ -242,24 +225,21 @@ namespace Lumina
             }
         }
     
-        FUNCTION(NoSuppressGCTransition)
+        FUNCTION()
         FVector3 GetForward() const
         {
-            ResolveIfDirty();
             return LocalTransform.GetForward();
         }
 
-        FUNCTION(NoSuppressGCTransition)
+        FUNCTION()
         FVector3 GetRight()   const
         {
-            ResolveIfDirty();
             return LocalTransform.GetRight();
         }
 
-        FUNCTION(NoSuppressGCTransition)
+        FUNCTION()
         FVector3 GetUp()      const
         {
-            ResolveIfDirty();
             return LocalTransform.GetUp();
         }
     
@@ -301,7 +281,7 @@ namespace Lumina
         FVector3 GetRotationAsEuler() const { return GetLocalRotationAsEuler(); }
 
         // Bind this component to its owning entity. Called after duplication or post-load to rewire the
-        // self-referential pointers used by MarkDirty/ResolveIfDirty. World init also does this directly via friend access.
+        // self-referential pointers used by MarkDirty and ComputeWorldTransform. World init also does this directly via friend access.
         void Bind(ECS::FRegistry& InRegistry, ECS::FEntity InEntity)
         {
             Registry = &InRegistry;
@@ -423,9 +403,7 @@ namespace Lumina
                 LastPublishEpoch     = Epoch;
                 bBodyDirtyQueued    |= bQueueBody;
 
-                // bWorldDirty stays clear: nothing is owed. The dirty signal stays down too, so the next
-                // barrier can still skip, and later GetWorld* reads take the guard-free path and find the
-                // value already correct.
+                // Nothing is owed, so bWorldDirty and the dirty signal both stay down and the next propagation can skip.
                 if (bPublish || bQueueBody)
                 {
                     ECS::Utils::PublishFlatMove(DirtyState, Entity, bPublish, bQueueBody);
@@ -444,24 +422,6 @@ namespace Lumina
             bBodyDirtyQueued |= bQueueBody;
 
             ECS::Utils::QueueDirtyTransform(DirtyState, Entity, bQueueTransform, bQueueBody);
-        }
-
-        void ResolveIfDirty() const
-        {
-            // The whole point of the pre-batch barrier is that this is the common case: nothing has moved
-            // since the last resolve, so the read is already correct. Answered here with one relaxed load
-            // through a pointer cached at Bind. ResolveTransformChain would make the same decision, but only
-            // after re-deriving the dirty state from the registry context -- a type-keyed hash lookup on
-            // every world read in the engine.
-            if (DirtyState != nullptr && !DirtyState->bAnyDirty.load(std::memory_order_acquire))
-            {
-                return;
-            }
-
-            if (Registry)
-            {
-                ECS::Utils::ResolveTransformChain(*Registry, Entity);
-            }
         }
 
         ECS::FRegistry*                 Registry = nullptr;

@@ -115,9 +115,6 @@ namespace Lumina
         struct FSystemBatch
         {
             TVector<uint16> Members;
-
-            // Exclusive, or declares transform access, so world transforms must be resolved before it starts.
-            bool bNeedsResolvedTransforms = false;
         };
 
         // One reflected engine system, as surfaced to the World Editor's Systems panel.

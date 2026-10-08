@@ -651,7 +651,6 @@ namespace Lumina::Physics
         enum : uint8 { kInterpSkip = 0, kInterpFlat = 1, kInterpParented = 2, kInterpKill = 3 };
         InterpCategory.resize(Count);
         std::atomic<uint32> KillCount{0};
-        std::atomic<uint32> ParentedCount{0};
 
         // Reads only, so it fans out; a kill is structural and is handled serially below.
         const auto Classify = [&](uint32 i)
@@ -670,10 +669,6 @@ namespace Lumina::Physics
                 else if (TransformStorage.Contains(Entity) && !PendingTeleport.Contains(Entity))
                 {
                     Category = TransformStorage.Get(Entity).bIsFlat ? kInterpFlat : kInterpParented;
-                    if (Category == kInterpParented)
-                    {
-                        ParentedCount.fetch_add(1, std::memory_order_relaxed);
-                    }
                 }
             }
             InterpCategory[i] = Category;
@@ -743,7 +738,6 @@ namespace Lumina::Physics
                 FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i], InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
         };
 
-        const uint32 NumParented = ParentedCount.load(std::memory_order_relaxed);
         if (bAnyKill)
         {
             const uint32 FlatCount = (uint32)InterpApplied.size();
@@ -806,12 +800,6 @@ namespace Lumina::Physics
                     WritePose(i);
                 }
             }
-        }
-
-        // The resolve carries a parented body's pose down to everything attached to it.
-        if (!InterpAppliedParented.empty() || (!bAnyKill && NumParented != 0))
-        {
-            ECS::Utils::ResolveAllDirtyTransforms(Registry);
         }
     }
 

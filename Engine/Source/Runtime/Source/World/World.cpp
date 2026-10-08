@@ -613,6 +613,12 @@ namespace Lumina
 
         // Deferred timers run inside TickSystems now, still before gameplay systems.
         TickSystems(SystemContext);
+
+        // The frame's one propagation, owned here so a world with no renderer still settles, since physics syncs bodies from local transforms.
+        if ((Stage == EUpdateStage::FrameEnd || Stage == EUpdateStage::Paused) && ECS::Utils::AnyTransformsDirty(EntityRegistry))
+        {
+            ECS::Utils::ResolveAllDirtyTransforms(EntityRegistry);
+        }
     }
 
     Physics::IPhysicsScene* CWorld::EnsurePhysicsScene()
@@ -1516,8 +1522,6 @@ namespace Lumina
 
     TVector<CWorld::FSystemBatch> SystemSchedule::BuildBatches(const TVector<CWorld::FStageSlot>& Systems, const TVector<uint8>& WithWork)
     {
-        const uint32 TransformId = static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>());
-
         TVector<CWorld::FSystemBatch> Batches;
         for (uint16 s = 0; s < (uint16)Systems.size(); ++s)
         {
@@ -1545,7 +1549,6 @@ namespace Lumina
                 Batches.emplace_back();
             }
             Batches[Earliest].Members.push_back(s);
-            Batches[Earliest].bNeedsResolvedTransforms |= Access.DeclaresRead(TransformId);
         }
         return Batches;
     }
@@ -1967,12 +1970,6 @@ namespace Lumina
         const TVector<FSystemBatch>& Batches = SystemBatches[(uint32)StageId];
         for (const FSystemBatch& Batch : Batches)
         {
-            // Whoever reads world transforms next resolves them, so a batch that never does skips the walk.
-            if (Batch.bNeedsResolvedTransforms && ECS::Utils::AnyTransformsDirty(EntityRegistry))
-            {
-                ECS::Utils::ResolveAllDirtyTransforms(EntityRegistry);
-            }
-
             const TVector<uint16>& Members = Batch.Members;
             if (Members.size() == 1)
             {

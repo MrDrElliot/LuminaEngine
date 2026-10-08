@@ -58,16 +58,13 @@ namespace Lumina::ECS::Utils
 	// Transform resolve
 	//-------------------------------------------------------------------------
 
-	RUNTIME_API void ResolveTransformChain(ECS::FRegistry& Registry, ECS::FEntity Entity);
+	// The current world transform composed from the nearest ancestor that has not moved, writing nothing, so any thread may call it.
+	RUNTIME_API FTransform ComputeWorldTransform(const ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-	// Resolve every dirty transform + descendants by draining the lock-free dirty queue (O(dirty), not a
-	// scan). Serialized by the state's resolve guard so concurrent boundary/lazy resolves never write the
-	// same WorldTransform; the per-entity work fans out via Task::ParallelFor for large sets.
+	// The frame's propagation, which drains the dirty queue so the cost follows what moved, and fans out across workers for large sets.
 	RUNTIME_API void ResolveAllDirtyTransforms(ECS::FRegistry& Registry);
 
-	// True if any transform has been dirtied since the last resolve (one relaxed atomic load). Lets the
-	// scheduler skip the resolve barrier when nothing moved. After ResolveAllDirtyTransforms this is false,
-	// so subsequent GetWorld* reads take the guard-free fast path (pure cached reads => safe in parallel).
+	// True if any hierarchical transform moved since the last propagation, one relaxed load, so a propagation point can skip when nothing did.
 	RUNTIME_API bool AnyTransformsDirty(ECS::FRegistry& Registry);
 
 	/**
@@ -111,10 +108,7 @@ namespace Lumina::ECS::Utils
 	// resolver about what flat means.
 	RUNTIME_API bool IsEntityTransformFlat(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-	// A flat entity's setter resolved itself: world == local, written in place while it was still in
-	// registers. All that is left is to record the move for the render sync and, for a bodied entity, to
-	// queue the physics re-sync. Deliberately does NOT raise the dirty signal -- there is nothing for the
-	// resolve to do, and raising it would make the next barrier drain a queue this entity is not in.
+	// A flat setter already made world equal local, so this only records the move for the render sync and queues a bodied entity's physics re-sync, without raising the dirty signal.
 	RUNTIME_API void PublishFlatMove(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bPublish, bool bQueueBody);
 
 	// Enqueue an entity whose local transform changed (lock-free, any thread); raises the dirty signal.
@@ -163,7 +157,7 @@ namespace Lumina::ECS::Utils
 	// The single source of truth for world->local conversion; writing WorldTransform directly is discarded next resolve.
 	RUNTIME_API void SetEntityWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& WorldTransform);
 
-	// Rotates in world space against the parent world resolved at the last barrier, so parallel writers never take the resolve lock.
+	// Rotates in world space against the parent's current world rotation, computed without a lock so parallel writers of disjoint entities may call it.
 	RUNTIME_API void SetEntityWorldRotationCached(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation);
 
 	//-------------------------------------------------------------------------

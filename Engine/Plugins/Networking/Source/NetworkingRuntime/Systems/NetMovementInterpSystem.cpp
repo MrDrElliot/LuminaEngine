@@ -8,7 +8,6 @@
 #include "Core/Object/ObjectCore.h"
 #include "Net/NetWorldState.h"
 #include "World/Entity/EntityUtils.h"
-#include "World/Entity/Components/RelationshipComponent.h"
 #include "Components/RepTransformComponent.h"
 #include "Components/NetworkComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -21,7 +20,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PostPhysics, EUpdatePriority::High);
         Writes<STransformComponent>();
         Writes<FRepTransform>();
-        Reads<SNetworkComponent, FRelationshipComponent>();
+        Reads<SNetworkComponent>();
     }
 
     void SNetMovementInterpSystem::OnUpdate()
@@ -149,6 +148,5 @@ namespace Lumina
                 Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
             }
         }
-        ECS::Utils::ResolveAllDirtyTransforms(Registry);
     }
 }

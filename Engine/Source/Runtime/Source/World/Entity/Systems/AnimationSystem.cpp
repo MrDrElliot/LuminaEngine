@@ -593,7 +593,8 @@ namespace Lumina
             FAnimGraphSceneContext SceneContext;
             if (const STransformComponent* Transform = SystemContext.TryGet<STransformComponent>(Entity))
             {
-                const VTransform World = Transform->GetWorldTransformCached();
+                // Computed rather than cached, since the capsule this mesh hangs from moved earlier this frame and a stale pose slips the feet.
+                const VTransform World = Transform->GetWorldTransform();
 
                 SceneContext.Scene          = SystemContext.GetPhysicsScene();
                 SceneContext.BoneTransforms = &Mesh.BoneTransforms;

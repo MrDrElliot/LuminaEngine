@@ -1118,73 +1118,55 @@ namespace Lumina::ECS::Utils
         return State != nullptr && State->bAnyDirty.load(std::memory_order_acquire);
     }
 
-    void ResolveTransformChain(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    FTransform ComputeWorldTransform(const ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        FTransformDirtyState& DirtyState = *EnsureTransformDirtyState(Registry);
-        if (!DirtyState.bAnyDirty.load(std::memory_order_acquire))
+        const auto XFormStorage = Registry.FindStorage<STransformComponent>();
+        if (!XFormStorage || !XFormStorage.Contains(Entity))
         {
-            return;
+            return FTransform();
         }
+        const auto RelStorage = Registry.FindStorage<FRelationshipComponent>();
 
-        // Serialized against the other resolvers so a shared ancestor is never written concurrently.
-        FFiberScopeLock ResolveLock(DirtyState.ResolveGuard);
-
-        TFixedVector<ECS::FEntity, 64> AncestorChain;
-        int32 TopmostDirtyIndex = -1;
+        // Everything above the highest ancestor that moved still has a current cached world, so the walk stops being needed there.
+        TFixedVector<ECS::FEntity, 64> Chain;
+        int32 TopmostDirty = -1;
 
         ECS::FEntity Current = Entity;
-        auto RelStorage = Registry.GetStorage<FRelationshipComponent>();
-        auto XFormStorage = Registry.GetStorage<STransformComponent>();
-        
         while (Current != ECS::NullEntity)
         {
             if (XFormStorage.Contains(Current) && XFormStorage.Get(Current).bWorldDirty)
             {
-                TopmostDirtyIndex = (int32)AncestorChain.size();
+                TopmostDirty = (int32)Chain.size();
             }
+            Chain.push_back(Current);
 
-            AncestorChain.push_back(Current);
-
-            if (!Registry.HasAll<FRelationshipComponent>(Current))
+            if (!RelStorage || !RelStorage.Contains(Current))
             {
                 break;
             }
-
-            ECS::FEntity Parent = RelStorage.Get(Current).Parent;
-            if (Parent == ECS::NullEntity || !Registry.IsValid(Parent))
+            const ECS::FEntity Parent = RelStorage.Get(Current).Parent;
+            if (Parent == ECS::NullEntity || !Registry.IsValid(Parent) || !XFormStorage.Contains(Parent))
             {
                 break;
             }
-
             Current = Parent;
         }
 
-        if (TopmostDirtyIndex < 0)
+        if (TopmostDirty < 0)
         {
-            return;
+            return XFormStorage.Get(Entity).GetWorldTransformCached();
         }
 
-        for (int32 i = TopmostDirtyIndex; i >= 0; --i)
+        FTransform World = XFormStorage.Get(Chain[TopmostDirty]).LocalTransform;
+        if (TopmostDirty + 1 < (int32)Chain.size())
         {
-            ECS::FEntity Ancestor = AncestorChain[i];
-            auto& Transform = XFormStorage.Get(Ancestor);
-
-            FRelationshipComponent* Rel = Registry.TryGet<FRelationshipComponent>(Ancestor);
-            if (Rel && Rel->Parent != ECS::NullEntity && Registry.IsValid(Rel->Parent))
-            {
-                const FTransform& ParentWorld = XFormStorage.Get(Rel->Parent).GetWorldTransformCached();
-                Transform.WorldTransform = ParentWorld * Transform.LocalTransform;
-            }
-            else
-            {
-                Transform.WorldTransform = Transform.LocalTransform;
-            }
-
-            DirtyState.PublishMoved(Ancestor);
+            World = XFormStorage.Get(Chain[TopmostDirty + 1]).GetWorldTransformCached() * World;
         }
-
-        // Propagate to the full subtree. Compute-only (no flag clearing), so no lock needed.
-        PropagateTransformsToDescendants(XFormStorage, RelStorage, AncestorChain[TopmostDirtyIndex], /*bClearDirty*/ false, &DirtyState);
+        for (int32 i = TopmostDirty - 1; i >= 0; --i)
+        {
+            World = World * XFormStorage.Get(Chain[i]).LocalTransform;
+        }
+        return World;
     }
 
     void SetPublishMovedTransforms(ECS::FRegistry& Registry, bool bEnable)
@@ -1563,7 +1545,7 @@ namespace Lumina::ECS::Utils
             {
                 if (const STransformComponent* Parent = Registry.TryGet<STransformComponent>(Relationship->Parent))
                 {
-                    LocalRotation = Math::Normalize(Math::Inverse(Parent->GetWorldTransformCached().GetRotation()) * WorldRotation);
+                    LocalRotation = Math::Normalize(Math::Inverse(Parent->ComputeWorldTransform().GetRotation()) * WorldRotation);
                 }
             }
         }
