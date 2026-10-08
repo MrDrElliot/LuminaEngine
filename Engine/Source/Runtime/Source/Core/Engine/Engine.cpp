@@ -1099,6 +1099,9 @@ namespace Lumina
         // A TSubclassOf naming a C# subclass could not resolve at first config load, since scripts were unminted.
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
+        // Before the startup map builds any bodies, since Box3D reads its tolerances as shapes are made.
+        Physics::SetLengthUnitsPerMeter(GetDefault<CProjectSettings>()->PhysicsLengthUnitsPerMeter);
+
         RefreshWindowTitle();
         ApplyUserSettings();
         CreateGameInstance();
@@ -1696,6 +1699,9 @@ namespace Lumina
 
         // Cooked settings loaded before the scripts minted, so re-resolve now that a C# class exists.
         GConfig->ReloadSettings(CProjectSettings::StaticClass());
+
+        // Before the startup map builds any bodies, since Box3D reads its tolerances as shapes are made.
+        Physics::SetLengthUnitsPerMeter(GetDefault<CProjectSettings>()->PhysicsLengthUnitsPerMeter);
 
         RefreshWindowTitle();
         ApplyUserSettings();

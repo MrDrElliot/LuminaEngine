@@ -2,6 +2,7 @@
 #include "Physics.h"
 
 #include "API/Box3D/Box3DPhysics.h"
+#include <box3d/constants.h>
 
 namespace Lumina::Physics
 {
@@ -27,5 +28,15 @@ namespace Lumina::Physics
     IPhysicsContext* GetPhysicsContext()
     {
         return GPhysicsContext.get();
+    }
+
+    void SetLengthUnitsPerMeter(float LengthUnits)
+    {
+        b3SetLengthUnitsPerMeter(LengthUnits);
+    }
+
+    float GetLengthUnitsPerMeter()
+    {
+        return b3GetLengthUnitsPerMeter();
     }
 }
