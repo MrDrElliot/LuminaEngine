@@ -1,7 +1,7 @@
 #pragma once
 
-// Supports a 1024-thread group at wave32, the narrowest wave the scan has to cover.
-#define GROUP_SCAN_MAX_WAVES 32u
+// A 1024-thread group at wave4, the floor for a device that cannot pin compute to 32 lanes.
+#define GROUP_SCAN_MAX_WAVES 256u
 
 groupshared uint2 gGroupScanWaveTotals[GROUP_SCAN_MAX_WAVES];
 

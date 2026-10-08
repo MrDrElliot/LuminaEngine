@@ -92,12 +92,10 @@ public sealed class BuildDirectories
             return false;
         }
 
-        // Inside both roots the nearer one owns it: a project kept in the engine tree owns its own code, and an
-        // engine kept inside its project (a submodule) still owns the engine's.
+        // Inside both roots the nearer one owns it, which keeps an engine submodule's code with the engine.
         return !PathUtils.IsUnder(ModuleDirectory, ProjectRoot) || PathUtils.IsUnder(EngineRoot, ProjectRoot);
     }
 
-    /// <summary>Whether the code at this path belongs to the game project rather than the engine.</summary>
     public bool IsProjectOwned(string Location)
     {
         return ProjectRoot is not null && PathUtils.IsUnder(Location, ProjectRoot) && !IsEngineOwned(Location);

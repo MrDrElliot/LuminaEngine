@@ -49,8 +49,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Server", ClampMin = 1, ClampMax = 1000)
         int32 HeadlessTickRate = 60;
 
-        // Scales Box3D's length tolerances (see Physics::SetLengthUnitsPerMeter). 1 suits meter-scale content;
-        // a game of millimeter-thin bodies, such as coins, wants 0.1. Applied when the project loads.
+        // Scales Box3D's length tolerances, 1 for meter-scale content and about 0.1 for millimeter-thin bodies such as coins.
         PROPERTY(Editable, Category = "Physics", ClampMin = 0.01f, ClampMax = 100.0f)
         float PhysicsLengthUnitsPerMeter = 1.0f;
     };

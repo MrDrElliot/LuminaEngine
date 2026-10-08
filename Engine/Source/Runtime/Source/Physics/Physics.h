@@ -35,9 +35,7 @@ namespace Lumina::Physics
 
     IPhysicsContext* GetPhysicsContext();
 
-    // Box3D derives its tolerances (linear slop, speculative distance, AABB margins) from this, and at 1 they
-    // suit meter-scale bodies: a 5 mm slop swallows a 1.75 mm coin. Below 1 tightens them for small objects,
-    // so 0.1 gives a 0.5 mm slop. Process-wide, and read when shapes are built, so set it before bodies exist.
+    // Process-wide and read as shapes are built, so it has to be set before any body exists.
     RUNTIME_API void SetLengthUnitsPerMeter(float LengthUnits);
     RUNTIME_API float GetLengthUnitsPerMeter();
 }

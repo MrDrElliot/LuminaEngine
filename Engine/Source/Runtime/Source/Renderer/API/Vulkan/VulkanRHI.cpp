@@ -205,11 +205,8 @@ namespace Lumina::RHI
         VkAccessFlags2 Out = 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::TransferRead)      ? VK_ACCESS_2_TRANSFER_READ_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::TransferWrite)     ? VK_ACCESS_2_TRANSFER_WRITE_BIT : 0;
-        // The generic SHADER_READ/WRITE bits, not their STORAGE/SAMPLED subsets. The spec makes the two equivalent,
-        // but Intel's Windows driver (101.9034, Arc iGPU) does not make buffer-device-address writes visible
-        // across a compute-to-compute barrier given only the subsets, and the meshlet cull then read half-written
-        // bucket counters and dropped a different set of instances every frame.
-        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderRead)        ? VK_ACCESS_2_SHADER_READ_BIT : 0;
+        // Generic bits, since Intel's driver (101.9034) ignores device-address writes in a barrier naming only the storage subset.
+        Out |=EnumHasAnyFlags(Flags, EAccessFlags::ShaderRead)        ? VK_ACCESS_2_SHADER_READ_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderWrite)       ? VK_ACCESS_2_SHADER_WRITE_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::ColorRead)         ? VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::ColorWrite)        ? VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT : 0;
@@ -644,7 +641,6 @@ namespace Lumina::RHI
         uint32                          MaxMeshWorkGroupCountX = 0;
         // Non-zero when the mesh stage must be pinned at pipeline creation, see the shuffle note.
         uint32                          MeshRequiredSubgroupSize = 0;
-        // Non-zero when compute pipelines are pinned to this width, see ComputeSubgroupWidth.
         uint32                          ComputeRequiredSubgroupSize = 0;
         // Commands can take a device address directly, so recording one needs no buffer lookup.
         bool                            bDeviceAddressCommands = false;
@@ -2397,10 +2393,7 @@ namespace Lumina::RHI
         GDevice->bMeshShaderSupported     = Chosen.bMeshCapable;
         GDevice->MeshRequiredSubgroupSize = Chosen.MeshRequiredSubgroupSize;
 
-        // The compute shaders are written for 32-lane waves: MeshletCull votes a block visible with one
-        // WaveActiveAnyTrue over its 32-thread group, and the group scans size their wave tables for wave32.
-        // A device free to run compute 8 or 16 wide (Intel) splits those votes and drops random instances, so
-        // compute is pinned to 32 wherever the device can pin it.
+        // MeshletCull votes a 32-thread block visible with one wave op, which a 16-lane Intel subgroup splits in two.
         {
             constexpr uint32 ComputeSubgroupWidth = 32;
             VkPhysicalDeviceSubgroupSizeControlProperties SubgroupProps
