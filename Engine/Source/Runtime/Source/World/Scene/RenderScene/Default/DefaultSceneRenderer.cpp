@@ -417,7 +417,7 @@ namespace Lumina
         TConsoleVar<bool> CVarAsyncCompute(
             "r.AsyncCompute",
             true,
-            "Run GTAO, cluster build, light cull and clouds on the async compute queue, overlapping the shadow raster.");
+            "Run the GTAO trace and aerial perspective on the async compute queue, overlapping the shadow raster.");
 
         // Clockwise front faces because the projection bakes the Y-flip, and the caller sets the scene root since it is per-list too.
         RHI::FCmdListH OpenSceneCommandList(RHI::EQueueType Queue)
