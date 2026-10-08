@@ -133,6 +133,80 @@ namespace Lumina
         int32 Destroyed = 0;
     };
 
+    REFLECT()
+    struct MCPEDITOR_API SStressGridParams
+    {
+        GENERATED_BODY()
+
+        // Cells per row; cell i sits at column i % Columns and row i / Columns.
+        PROPERTY()
+        int32 Columns = 32;
+
+        // Meters per cell. Each mesh covers the middle 60 percent of its cell, so a cell's center is inside it.
+        PROPERTY()
+        float CellSize = 2.0f;
+
+        // Corner of cell 0 as [x, z].
+        PROPERTY()
+        FString Origin;
+
+        // When set, Occupied becomes the exact set of cells holding a mesh after this call.
+        PROPERTY()
+        bool bSetOccupancy = false;
+
+        PROPERTY()
+        TVector<int32> Occupied;
+
+        // Occupied cells whose mesh shifts and turns inside its cell, which dirties only transforms.
+        PROPERTY()
+        TVector<int32> Move;
+
+        // Occupied cells that flip between the cube and the sphere.
+        PROPERTY()
+        TVector<int32> Swap;
+
+        // Occupied cells destroyed and created again in the same frame, so the new entity can reuse the freed slot.
+        PROPERTY()
+        TVector<int32> Respawn;
+
+        // Off-screen meshes added in the same frame, which grows the retained buffers under the grid's own changes.
+        PROPERTY()
+        int32 Decoys = 0;
+
+        PROPERTY()
+        bool bClearDecoys = false;
+
+        PROPERTY()
+        int32 Seed = 1;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SStressGridResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int32 Created = 0;
+
+        PROPERTY()
+        int32 Destroyed = 0;
+
+        PROPERTY()
+        int32 Moved = 0;
+
+        PROPERTY()
+        int32 Swapped = 0;
+
+        PROPERTY()
+        int32 Respawned = 0;
+
+        PROPERTY()
+        int32 GridMeshes = 0;
+
+        PROPERTY()
+        int32 DecoyMeshes = 0;
+    };
+
     namespace MCP
     {
         // Bulk scene content for stress testing, which bypasses undo so thousands of entities stay cheap to add.

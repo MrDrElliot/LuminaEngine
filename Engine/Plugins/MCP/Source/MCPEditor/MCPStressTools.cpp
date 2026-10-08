@@ -2,6 +2,7 @@
 #include "World/ECS/Registry.h"
 
 #include "Agent/AgentAssetResolve.h"
+#include "Containers/HashTable.h"
 #include "Agent/AgentToolRegistry.h"
 #include "Core/Math/Random.h"
 #include "Core/Object/Cast.h"
@@ -345,6 +346,189 @@ namespace Lumina::MCP
             Out.Destroyed = (int32)Doomed.size();
             return Agent::FToolResult::Ok(Lumina::Format("Destroyed {} stress entities in the {} world.", Out.Destroyed, Label));
         }
+
+        constexpr const char* GridPrefix = "StressGrid_";
+        constexpr const char* DecoyName = "StressDecoy";
+        constexpr float GridMeshFill = 0.6f;
+        constexpr float GridMoveFraction = 0.08f;
+        constexpr float DecoyOffset = 3000.0f;
+
+        // Cell index from a grid entity's name, or none for every other entity.
+        TOptional<int32> GridCellOf(const SNameComponent& Name)
+        {
+            const FString Text(Name.Name.ToString().c_str());
+            const FStringView View(Text);
+            if (!View.starts_with(FStringView(GridPrefix)))
+            {
+                return {};
+            }
+            return (int32)std::strtol(Text.c_str() + std::strlen(GridPrefix), nullptr, 10);
+        }
+
+        FVector3 GridCellCenter(const SStressGridParams& In, const FVector2& Origin, int32 Cell)
+        {
+            const int32 Column = Cell % In.Columns;
+            const int32 Row = Cell / In.Columns;
+            const float Size = In.CellSize * GridMeshFill;
+            return FVector3(Origin.x + ((float)Column + 0.5f) * In.CellSize, Size * 0.5f, Origin.y + ((float)Row + 0.5f) * In.CellSize);
+        }
+
+        ECS::FEntity SpawnGridMesh(CWorld* World, const SStressGridParams& In, const FVector2& Origin, int32 Cell, CStaticMesh* Mesh)
+        {
+            const FVector3 Location = GridCellCenter(In, Origin, Cell);
+            const FName Name(Lumina::Format("{}{}", GridPrefix, Cell).c_str());
+            const ECS::FEntity Entity = World->ConstructEntity(Name, FTransform(Location, FVector3(0.0f), FVector3(In.CellSize * GridMeshFill)));
+            if (Entity != ECS::NullEntity)
+            {
+                World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(Mesh);
+            }
+            return Entity;
+        }
+
+        Agent::FToolResult Grid(const SStressGridParams& In, SStressGridResult& Out)
+        {
+            FString Label;
+            FString Error;
+            CWorld* World = ResolveWorld(/*bEditorWorld*/ true, Label, Error);
+            if (World == nullptr)
+            {
+                return Agent::FToolResult::Error(Error.empty() ? FString("No world is open.") : Error);
+            }
+            if (In.Columns <= 0 || In.CellSize <= 0.0f)
+            {
+                return Agent::FToolResult::Error("Columns and CellSize must be positive.");
+            }
+
+            FVector2 Origin(0.0f);
+            if (!In.Origin.empty() && !ResolveCenter(World, In.Origin, Origin, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            CStaticMesh* Cube = CPrimitiveManager::Get().CubeMesh.Get();
+            CStaticMesh* Sphere = CPrimitiveManager::Get().SphereMesh.Get();
+
+            THashMap<int32, ECS::FEntity> Cells;
+            TVector<ECS::FEntity> Decoys;
+            {
+                auto View = ECS::GetWorldRegistry(*World).View<SNameComponent>();
+                for (ECS::FEntity Entity : View)
+                {
+                    const SNameComponent& Name = View.Get<SNameComponent>(Entity);
+                    if (const TOptional<int32> Cell = GridCellOf(Name))
+                    {
+                        Cells[*Cell] = Entity;
+                    }
+                    else if (Name.Name == FName(DecoyName))
+                    {
+                        Decoys.push_back(Entity);
+                    }
+                }
+            }
+
+            if (In.bSetOccupancy)
+            {
+                THashSet<int32> Wanted;
+                for (int32 Cell : In.Occupied)
+                {
+                    Wanted.insert(Cell);
+                }
+                for (auto It = Cells.begin(); It != Cells.end();)
+                {
+                    if (!Wanted.contains(It->first))
+                    {
+                        World->DestroyEntity(It->second);
+                        ++Out.Destroyed;
+                        It = Cells.erase(It);
+                    }
+                    else
+                    {
+                        ++It;
+                    }
+                }
+                for (int32 Cell : Wanted)
+                {
+                    if (Cell >= 0 && !Cells.contains(Cell))
+                    {
+                        const ECS::FEntity Entity = SpawnGridMesh(World, In, Origin, Cell, Cube);
+                        if (Entity != ECS::NullEntity)
+                        {
+                            Cells[Cell] = Entity;
+                            ++Out.Created;
+                        }
+                    }
+                }
+            }
+
+            FRandomStream Random((uint64)(uint32)In.Seed, 11u);
+            for (int32 Cell : In.Move)
+            {
+                auto Found = Cells.find(Cell);
+                if (Found == Cells.end())
+                {
+                    continue;
+                }
+                const float Reach = In.CellSize * GridMoveFraction;
+                const FVector3 Offset((Random.NextFloat() * 2.0f - 1.0f) * Reach, 0.0f, (Random.NextFloat() * 2.0f - 1.0f) * Reach);
+                STransformComponent& Transform = World->GetComponent<STransformComponent>(Found->second);
+                Transform.SetLocation(GridCellCenter(In, Origin, Cell) + Offset);
+                Transform.SetRotationFromEuler(FVector3(0.0f, Random.NextFloat() * 360.0f, 0.0f));
+                ++Out.Moved;
+            }
+
+            for (int32 Cell : In.Swap)
+            {
+                auto Found = Cells.find(Cell);
+                if (Found == Cells.end())
+                {
+                    continue;
+                }
+                SStaticMeshComponent& MeshComponent = World->GetComponent<SStaticMeshComponent>(Found->second);
+                MeshComponent.SetStaticMesh(MeshComponent.GetStaticMesh() == Cube ? Sphere : Cube);
+                ++Out.Swapped;
+            }
+
+            for (int32 Cell : In.Respawn)
+            {
+                auto Found = Cells.find(Cell);
+                if (Found == Cells.end())
+                {
+                    continue;
+                }
+                World->DestroyEntity(Found->second);
+                Found->second = SpawnGridMesh(World, In, Origin, Cell, Cube);
+                ++Out.Respawned;
+            }
+
+            if (In.bClearDecoys)
+            {
+                for (ECS::FEntity Entity : Decoys)
+                {
+                    World->DestroyEntity(Entity);
+                }
+                Decoys.clear();
+            }
+
+            constexpr int32 MaxDecoysPerCall = 200000;
+            const int32 DecoyCount = Math::Clamp(In.Decoys, 0, MaxDecoysPerCall);
+            for (int32 Index = 0; Index < DecoyCount; ++Index)
+            {
+                // Far off to the side, so they cost slots and uploads but never reach the picture being checked.
+                const FVector3 Location(DecoyOffset + Random.NextFloat() * 400.0f, 0.0f, Random.NextFloat() * 400.0f - 200.0f);
+                const ECS::FEntity Entity = World->ConstructEntity(FName(DecoyName), FTransform(Location, FVector3(0.0f), FVector3(1.0f)));
+                if (Entity != ECS::NullEntity)
+                {
+                    World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(Cube);
+                    Decoys.push_back(Entity);
+                }
+            }
+
+            Out.GridMeshes = (int32)Cells.size();
+            Out.DecoyMeshes = (int32)Decoys.size();
+            return Agent::FToolResult::Ok(Lumina::Format(
+                "Grid now holds {} meshes ({} created, {} destroyed, {} moved, {} swapped, {} respawned); {} decoys.",
+                Out.GridMeshes, Out.Created, Out.Destroyed, Out.Moved, Out.Swapped, Out.Respawned, Out.DecoyMeshes));
+        }
     }
 
     void RegisterStressTools(FStringView Owner)
@@ -362,5 +546,12 @@ namespace Lumina::MCP
             Owner, "stress.clear",
             "Destroy every entity stress.spawn made.",
             Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread, &Clear);
+
+        Registry.Register<SStressGridParams, SStressGridResult>(
+            Owner, "stress.grid",
+            "Edit a grid of meshes in the edited world in one frame, for checking the renderer against a known layout. "
+            "Sets which cells hold a mesh, moves, swaps or respawns cells, and adds or clears off-screen decoys that grow "
+            "the scene's buffers under those changes. Bypasses undo; stress.clear removes it all.",
+            Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread, &Grid);
     }
 }
