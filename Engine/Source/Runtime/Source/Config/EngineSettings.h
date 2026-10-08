@@ -48,6 +48,11 @@ namespace Lumina
         // Frames per second for a process with no window, such as a dedicated server or bot clients. -tickrate overrides it.
         PROPERTY(Editable, Category = "Server", ClampMin = 1, ClampMax = 1000)
         int32 HeadlessTickRate = 60;
+
+        // Scales Box3D's length tolerances (see Physics::SetLengthUnitsPerMeter). 1 suits meter-scale content;
+        // a game of millimeter-thin bodies, such as coins, wants 0.1. Applied when the project loads.
+        PROPERTY(Editable, Category = "Physics", ClampMin = 0.01f, ClampMax = 100.0f)
+        float PhysicsLengthUnitsPerMeter = 1.0f;
     };
 
     // Texture streaming budget and policy. Project-scoped rather than per-user: the pool size a project

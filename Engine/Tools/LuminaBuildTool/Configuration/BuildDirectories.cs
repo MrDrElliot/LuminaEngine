@@ -87,7 +87,20 @@ public sealed class BuildDirectories
             return true;
         }
 
-        return PathUtils.IsUnder(ModuleDirectory, EngineRoot) && !PathUtils.IsUnder(ModuleDirectory, ProjectRoot);
+        if (!PathUtils.IsUnder(ModuleDirectory, EngineRoot))
+        {
+            return false;
+        }
+
+        // Inside both roots the nearer one owns it: a project kept in the engine tree owns its own code, and an
+        // engine kept inside its project (a submodule) still owns the engine's.
+        return !PathUtils.IsUnder(ModuleDirectory, ProjectRoot) || PathUtils.IsUnder(EngineRoot, ProjectRoot);
+    }
+
+    /// <summary>Whether the code at this path belongs to the game project rather than the engine.</summary>
+    public bool IsProjectOwned(string Location)
+    {
+        return ProjectRoot is not null && PathUtils.IsUnder(Location, ProjectRoot) && !IsEngineOwned(Location);
     }
 
     public string EnginePath(string RelativePath) => PathUtils.Combine(EngineRoot, RelativePath);

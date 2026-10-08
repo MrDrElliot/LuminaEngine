@@ -918,6 +918,12 @@ namespace Lumina
             LUMINA_PROFILE_SECTION_COLORED("Retained Upload", tracy::Color::Magenta4);
             SCENE_GPU_SCOPE(CL, "Retained Upload");
 
+            // The uploads below overwrite ranges the previous frame read in every stage and wrote by transfer, so
+            // they wait on both.
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+
             const SIZE_T CullBytes      = Math::Max<SIZE_T>(sizeof(FInstanceCullEntry), (SIZE_T)RetainedSlots * sizeof(FInstanceCullEntry));
             const SIZE_T TransformBytes = Math::Max<SIZE_T>(sizeof(FTransform3x4),      (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
             const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
@@ -1221,6 +1227,8 @@ namespace Lumina
 
         if (MeshletBoundReadback[Slot].Gpu != 0)
         {
+            // No barrier before this reaches the transfer stage, so the copy could read the totals mid-write.
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
             RHI::CmdMemcpy(CL, { MeshletBoundReadback[Slot].Gpu, sizeof(uint32) * kTotalsSlots }, { GetTotals().Gpu, sizeof(uint32) * kTotalsSlots });
         }
     }

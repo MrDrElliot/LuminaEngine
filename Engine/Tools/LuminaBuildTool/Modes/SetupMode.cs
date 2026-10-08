@@ -362,7 +362,9 @@ public static class SetupMode
 
     private static void ConfigureGitHooks(string EngineRoot)
     {
-        if (!Directory.Exists(Path.Combine(EngineRoot, ".git")))
+        // A submodule or worktree has a .git file pointing at its real repository rather than a .git directory.
+        string GitPath = Path.Combine(EngineRoot, ".git");
+        if (!Directory.Exists(GitPath) && !File.Exists(GitPath))
         {
             Log.Info("Not a git repository; skipping hooks configuration.");
             return;
