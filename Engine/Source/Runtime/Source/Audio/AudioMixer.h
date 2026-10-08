@@ -75,6 +75,12 @@ namespace Lumina
 		EAudioVoiceState GetSlotState(uint32 Slot) const;
 		uint64 GetSlotFrame(uint32 Slot) const;
 
+		// The voice the device thread has actually started in this slot, zero before any.
+		uint32 GetSlotGeneration(uint32 Slot) const;
+
+		// True while the device thread may still read the source of this exact voice.
+		bool IsVoiceLive(uint32 Slot, uint32 Generation) const;
+
 		uint32 GetActiveVoiceCount() const { return ActiveVoices.load(Atomic::MemoryOrderRelaxed); }
 
 		// Bumped once per device callback, so the pump can tell when an unhooked source is safe to free.
@@ -192,6 +198,9 @@ namespace Lumina
 
 		TAtomic<uint8>  SlotState[MaxVoices];
 		TAtomic<uint64> SlotFrame[MaxVoices];
+
+		// Stored after SlotState, so a reader that loads it first is guaranteed that voice's state or a later one.
+		TAtomic<uint32> SlotGeneration[MaxVoices];
 
 		TAtomic<float> BusVolumes[NumAudioBuses];
 		TAtomic<bool>  BusMuted[NumAudioBuses];

@@ -116,11 +116,13 @@ namespace Lumina
 			uint32 StopEpoch = 0;
 		};
 
-		/** A source unhooked from the mixer, freed once the device thread has finished the block using it. */
+		// A source unhooked from its slot, freed only once the device thread can no longer be reading it.
 		struct FRetiredSource
 		{
 			TSharedPtr<IAudioSource> Source;
 			uint64 RenderCountAtRetire = 0;
+			uint32 Slot = 0;
+			uint32 Generation = 0;
 		};
 
 		bool AcquireVoiceSlot(uint8 Priority, FAudioHandle& OutHandle);
@@ -167,8 +169,8 @@ namespace Lumina
 		// The pump owns every source; the mixer only ever sees the raw pointer.
 		TSharedPtr<IAudioSource> SlotSources[MaxVoiceSlots];
 
-		// Render count when the start was queued, so a slot is not collected before the mixer picks it up.
-		uint64 SlotStartRenderCount[MaxVoiceSlots] = {};
+		// The voice each source was started for, which a priority takeover leaves behind SlotGeneration.
+		uint32 SlotSourceGeneration[MaxVoiceSlots] = {};
 		TVector<FRetiredSource>  RetiredSources;
 
 		TBoundedMPSCQueue<FAudioCommand> CommandQueue;

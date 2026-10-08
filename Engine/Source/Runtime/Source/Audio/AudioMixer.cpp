@@ -160,6 +160,7 @@ namespace Lumina
 			Voices[i] = FVoice();
 			SlotState[i].store((uint8)EAudioVoiceState::Free, Atomic::MemoryOrderRelaxed);
 			SlotFrame[i].store(0, Atomic::MemoryOrderRelaxed);
+			SlotGeneration[i].store(0, Atomic::MemoryOrderRelaxed);
 		}
 
 		for (uint32 i = 0; i < NumAudioBuses; ++i)
@@ -196,6 +197,7 @@ namespace Lumina
 		{
 			Voices[i] = FVoice();
 			SlotState[i].store((uint8)EAudioVoiceState::Free, Atomic::MemoryOrderRelease);
+			SlotGeneration[i].store(0, Atomic::MemoryOrderRelease);
 		}
 
 		StartQueue.Shutdown();
@@ -240,6 +242,19 @@ namespace Lumina
 			return EAudioVoiceState::Free;
 		}
 		return (EAudioVoiceState)SlotState[Slot].load(Atomic::MemoryOrderAcquire);
+	}
+
+	uint32 FAudioMixer::GetSlotGeneration(uint32 Slot) const
+	{
+		return Slot < MaxVoices ? SlotGeneration[Slot].load(Atomic::MemoryOrderAcquire) : 0u;
+	}
+
+	bool FAudioMixer::IsVoiceLive(uint32 Slot, uint32 Generation) const
+	{
+		// Generation first, so a match pairs it with that voice's own state rather than its predecessor's Free.
+		return Slot < MaxVoices
+			&& SlotGeneration[Slot].load(Atomic::MemoryOrderAcquire) == Generation
+			&& SlotState[Slot].load(Atomic::MemoryOrderAcquire) != (uint8)EAudioVoiceState::Free;
 	}
 
 	uint64 FAudioMixer::GetSlotFrame(uint32 Slot) const
@@ -449,6 +464,7 @@ namespace Lumina
 			}
 
 			PublishSlot(Desc.Slot, Voice.bPaused ? EAudioVoiceState::Paused : EAudioVoiceState::Playing, 0);
+			SlotGeneration[Desc.Slot].store(Desc.Generation, Atomic::MemoryOrderRelease);
 		}
 	}
 

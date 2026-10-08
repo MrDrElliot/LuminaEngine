@@ -123,6 +123,7 @@ namespace Lumina
 		{
 			SlotState[Slot].store((uint8)EAudioVoiceState::Free, Atomic::MemoryOrderRelaxed);
 			SlotGeneration[Slot].store(0, Atomic::MemoryOrderRelaxed);
+			SlotSourceGeneration[Slot] = 0;
 			SlotPriority[Slot].store(0, Atomic::MemoryOrderRelaxed);
 			SlotCanceled[Slot].store(false, Atomic::MemoryOrderRelaxed);
 			FreeSlots.Enqueue(Slot);
@@ -224,6 +225,8 @@ namespace Lumina
 		FRetiredSource Retired;
 		Retired.Source = Move(SlotSources[Slot]);
 		Retired.RenderCountAtRetire = Mixer.GetRenderCount();
+		Retired.Slot = Slot;
+		Retired.Generation = SlotSourceGeneration[Slot];
 
 		SlotSources[Slot].reset();
 		RetiredSources.push_back(Move(Retired));
@@ -243,7 +246,10 @@ namespace Lumina
 		for (size_t i = RetiredSources.size(); i > 0; --i)
 		{
 			const size_t Index = i - 1;
-			if (bForce || bDeviceIdle || Now > RetiredSources[Index].RenderCountAtRetire + kRetireRenderDelay)
+			// A takeover that fails after retiring leaves the old voice playing, so its source also waits for that voice to end.
+			const FRetiredSource& Retired = RetiredSources[Index];
+			const bool bReleased = Now > Retired.RenderCountAtRetire + kRetireRenderDelay && !Mixer.IsVoiceLive(Retired.Slot, Retired.Generation);
+			if (bForce || bDeviceIdle || bReleased)
 			{
 				RetiredSources.erase(RetiredSources.begin() + (ptrdiff_t)Index);
 			}
@@ -437,7 +443,7 @@ namespace Lumina
 
 		// Published before the start is queued, so the device thread never sees a slot without its source.
 		SlotSources[Slot] = Move(Source);
-		SlotStartRenderCount[Slot] = Mixer.GetRenderCount();
+		SlotSourceGeneration[Slot] = Play.Handle.Generation;
 
 		if (!Mixer.StartVoice(Desc))
 		{
@@ -459,7 +465,6 @@ namespace Lumina
 	{
 		// With no device nothing will ever drain the start queue, so a queued voice is collected at once, but a suspended device drains it on resume.
 		const bool bDeviceIdle = !Device;
-		const uint64 Now = Mixer.GetRenderCount();
 
 		for (uint32 Slot = 0; Slot < MaxVoiceSlots; ++Slot)
 		{
@@ -468,8 +473,8 @@ namespace Lumina
 				continue;
 			}
 
-			// A slot reads Free until the device thread drains the start queue, which is one render away.
-			if (!bDeviceIdle && Now <= SlotStartRenderCount[Slot])
+			// The slot still shows the previous voice's Free until the device thread starts this one, however many renders that takes.
+			if (!bDeviceIdle && Mixer.GetSlotGeneration(Slot) != SlotSourceGeneration[Slot])
 			{
 				continue;
 			}

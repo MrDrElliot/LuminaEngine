@@ -464,3 +464,62 @@ TEST(AudioMixer, LimitsTheMasterBelowFullScale)
     EXPECT_LE(MixerPeak(Out), 0.8901f);
     EXPECT_GT(MixerPeak(Out), 0.8f);
 }
+
+TEST(AudioMixer, AQueuedStartLeavesThePreviousVoicesGenerationUntilARenderPicksItUp)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    TVector<float> Out(512, 0.0f);
+
+    FMixerTestSource Short(kMixRate, 1, 8);
+    FMixerVoiceDesc First = MakeDesc(3, &Short);
+    First.Generation = 5;
+    ASSERT_TRUE(Mixer.StartVoice(First));
+    Mixer.RenderAudio(Out.data(), 64);
+    ASSERT_EQ(Mixer.GetSlotState(3), EAudioVoiceState::Free);
+    ASSERT_EQ(Mixer.GetSlotGeneration(3), 5u);
+
+    // The crash window, a new voice queued while the slot still reads Free from the one before it.
+    FMixerConstantSource Long(1, 0.25f);
+    FMixerVoiceDesc Second = MakeDesc(3, &Long);
+    Second.Generation = 7;
+    ASSERT_TRUE(Mixer.StartVoice(Second));
+    EXPECT_EQ(Mixer.GetSlotState(3), EAudioVoiceState::Free);
+    EXPECT_NE(Mixer.GetSlotGeneration(3), 7u);
+    EXPECT_FALSE(Mixer.IsVoiceLive(3, 7));
+
+    Mixer.RenderAudio(Out.data(), 64);
+    EXPECT_EQ(Mixer.GetSlotGeneration(3), 7u);
+    EXPECT_TRUE(Mixer.IsVoiceLive(3, 7));
+    EXPECT_FALSE(Mixer.IsVoiceLive(3, 5));
+}
+
+TEST(AudioMixer, AVoiceStaysLiveUntilItIsReplacedOrStopped)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    TVector<float> Out(512, 0.0f);
+
+    FMixerConstantSource Victim(1, 0.25f);
+    FMixerVoiceDesc Old = MakeDesc(0, &Victim);
+    Old.Generation = 10;
+    ASSERT_TRUE(Mixer.StartVoice(Old));
+    Mixer.RenderAudio(Out.data(), 64);
+    EXPECT_TRUE(Mixer.IsVoiceLive(0, 10));
+
+    // A takeover is queued but not yet rendered, so the old voice still reads its source.
+    FMixerConstantSource Taker(1, 0.5f);
+    FMixerVoiceDesc New = MakeDesc(0, &Taker);
+    New.Generation = 11;
+    ASSERT_TRUE(Mixer.StartVoice(New));
+    EXPECT_TRUE(Mixer.IsVoiceLive(0, 10));
+
+    Mixer.RenderAudio(Out.data(), 64);
+    EXPECT_FALSE(Mixer.IsVoiceLive(0, 10));
+    EXPECT_TRUE(Mixer.IsVoiceLive(0, 11));
+
+    Mixer.PostCommand(FAudioCommand::MakeStop(FAudioHandle{ 11, 0 }, EAudioStopMode::Immediate, 0.0f));
+    Mixer.RenderAudio(Out.data(), 64);
+    EXPECT_FALSE(Mixer.IsVoiceLive(0, 11));
+    EXPECT_EQ(Mixer.GetSlotGeneration(0), 11u);
+}
