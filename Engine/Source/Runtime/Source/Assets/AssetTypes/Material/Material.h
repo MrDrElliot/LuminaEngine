@@ -24,29 +24,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    // Compiled shader stages a material carries. Each stage pairs a serialized SPIR-V blob with a
-    // shader library entry; the (blob member, entry member, GUID suffix, type) tuple per stage lives
-    // in a single table in Material.cpp that PostLoad and the editor graph compile both walk, so
-    // adding a stage means touching exactly one place.
-    enum class EMaterialShaderStage : uint8
-    {
-        Pixel,
-        // Non-meshlet domains only: UI, PostProcess, Decal and Terrain raster through a real vertex
-        // shader. PBR geometry has no vertex stage at all -- it is task + mesh, end to end.
-        Vertex,
-        MeshShadow,                 // MeshletMesh.slang (depth-only output); shadow geometry
-        MeshBase,                   // MeshletMesh.slang + MESHLET_MESH_BASE; translucent / additive geometry
-        VisBufferMesh,              // MeshletVisBuffer.slang (opaque, position-only output)
-        VisBufferMeshMasked,        // MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM; masked materials only
-        MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID; masked materials only
-        Deferred,                   // DeferredMaterial.slang
-        MeshShadowMasked,           // MeshletMesh.slang + MESHLET_MESH_MASKED_SHADOW; masked materials only
-        ShadowMaskedPixel,          // ShadowMaskedPixel.slang; masked materials only
-
-        Count,
-    };
-
-    /** One compiled stage of a permutation; only stages that produced output are stored. */
+    // One compiled stage of a shader set. Only stages that produced output are stored.
     REFLECT()
     struct RUNTIME_API FMaterialStageBlob
     {
@@ -59,7 +37,7 @@ namespace Lumina
         TVector<uint32> Spirv;
     };
 
-    /** One switch combination's shader set, owned by the master so two instances selecting it share one. */
+    // The shader set for one static switch combination, owned by the root so every instance selecting it shares one.
     REFLECT()
     struct RUNTIME_API FMaterialShaderPermutation
     {
@@ -71,10 +49,11 @@ namespace Lumina
         PROPERTY()
         TVector<FMaterialStageBlob> Stages;
 
-        // Minted from Stages by PostLoad, so never serialized.
+        // Library entries minted from Stages, so never serialized.
         FShaderH Entries[(size_t)EMaterialShaderStage::Count] = {};
     };
 
+    // A compiled material graph. It declares the parameters, textures and static switches, and owns the shaders for its default switch values and every permutation an instance has asked for.
     REFLECT()
     class RUNTIME_API CMaterial : public CMaterialInterface
     {
@@ -82,265 +61,232 @@ namespace Lumina
 
     public:
 
-        CMaterial();
-
         void Serialize(FArchive& Ar) override;
         bool IsAsset() const override { return true; }
         void PostCreateCDO() override;
         void PostLoad() override;
         void OnDestroy() override;
-        
+        void PostPropertyChange(FProperty* ChangedProperty) override;
+        void OnReferencesReplaced() override;
+
+        CMaterial* GetMaterial() const override { return const_cast<CMaterial*>(this); }
         bool SetScalarValue(const FName& Name, const float Value) override;
         bool SetVectorValue(const FName& Name, const FVector4& Value) override;
         bool GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param) override;
-        FMaterialUniforms* GetMaterialUniforms() override { return &MaterialUniforms; }
-        
-        CMaterial* GetMaterial() const override;
-        FShaderH GetPixelShader() const override;
-        FShaderH GetVertexShader() const override;
+        uint64 GetStaticSwitchKey() const override { return GetDefaultStaticSwitchKey(); }
+        uint32 GetResolvedTextureSlot(uint32 Index) override { return ResolveTextureSlot(Index); }
+        CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) override;
+        bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
+        bool RequestTexturesResolved() override;
 
-        // This master's own entry for Stage; null when the domain or blend mode does not produce it.
-        FShaderH GetStage(EMaterialShaderStage Stage) const { return StageEntries[(size_t)Stage]; }
+        // Folds settings the current domain cannot draw back to their defaults.
+        void NormalizeRenderStateForDomain();
 
-        // The shadow geometry stage emits position only; carrying interpolants there halved cascade occupancy.
-        FShaderH GetMeshShaderShadow() const { return GetStage(EMaterialShaderStage::MeshShadow); }
-        FShaderH GetMeshShaderBase() const { return GetStage(EMaterialShaderStage::MeshBase); }
-        FShaderH GetVisBufferMeshShader() const { return GetStage(EMaterialShaderStage::VisBufferMesh); }
-        FShaderH GetVisBufferMeshShaderMasked() const { return GetStage(EMaterialShaderStage::VisBufferMeshMasked); }
-        FShaderH GetMaskedVisBufferPixelShader() const { return GetStage(EMaterialShaderStage::MaskedVisBufferPixel); }
-        FShaderH GetMeshShaderShadowMasked() const { return GetStage(EMaterialShaderStage::MeshShadowMasked); }
-        FShaderH GetShadowMaskedPixelShader() const { return GetStage(EMaterialShaderStage::ShadowMaskedPixel); }
-        FShaderH GetDeferredShader() const { return GetStage(EMaterialShaderStage::Deferred); }
+        // Whether the domain and blend mode produce Stage. A compile clears every other one.
+        NODISCARD bool IsStageRequired(EMaterialShaderStage Stage) const;
 
-        /** Bumped whenever a recompile actually swaps a shader-library entry, and only then -- the library
-            is content-keyed, so a recompile producing identical SPIR-V returns the same entry and does not
-            move this. Anything caching a resolved FShaderEntry* can compare it to know its copy went stale.
-            Consumers that own an FMeshResolveCache entry do not need it (dependency invalidation covers
-            them); SDynamicMeshComponent has no cache entry and does. */
-        uint32 GetShaderRevision() const { return ShaderRevision; }
+        // Every required stage of the default set has a library entry, which is what readiness derives from.
+        NODISCARD bool HasRequiredStages() const;
+
+        // The default set's entry for Stage, null when this material does not produce it.
+        NODISCARD FShaderH GetStage(EMaterialShaderStage Stage) const;
+
+        // Stage at permutation Key, falling back to the default set when Key has none for it.
+        NODISCARD FShaderH GetStageForKey(EMaterialShaderStage Stage, uint64 Key) const;
+
+        // Bumped only when a recompile swaps an entry, so anything caching a resolved shader without a resolve cache entry can tell it went stale.
+        NODISCARD uint32 GetShaderRevision() const { return ShaderRevision; }
+
+        // Stores the bytecode in the default set and commits its library entry.
+        void CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        // Stores the bytecode without committing, for compile callbacks off the game thread. PostLoad commits it.
+        void SetStageBinaries(EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        // Drops one stage of the default set, such as the masked stages on a masked to opaque recompile.
+        void ClearShaderStage(EMaterialShaderStage Stage);
+
+        NODISCARD const TVector<uint32>& GetShaderStageBinaries(EMaterialShaderStage Stage) const;
+
+        // Whether Key is the default permutation or one that has been compiled.
+        NODISCARD bool HasPermutation(uint64 Key) const;
+
+        // Stores and commits one stage of permutation Key, adding the permutation when Key is new.
+        void CommitPermutationStage(uint64 Key, EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        // CommitPermutationStage, refused when a recompile has renumbered the switches since Generation.
+        bool CommitPermutationStageIfCurrent(uint64 Key, uint32 Generation, EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        // Permutation Key's own bytecode, with no fallback, so an unbuilt stage reads empty.
+        NODISCARD const TVector<uint32>& GetPermutationStageBinaries(uint64 Key, EMaterialShaderStage Stage) const;
+
+        // Drops one permutation, so its recompile cannot keep a stage the new graph no longer emits.
+        void ClearPermutation(uint64 Key);
+
+        // Drops every permutation, which a recompile must do because it renumbers switch bits by name.
+        void ClearPermutations();
+
+        // Bumped by ClearPermutations, so a compile dispatched before a recompile can refuse to land.
+        NODISCARD uint32 GetPermutationGeneration() const { return PermutationGeneration; }
+
+        // The bit ParameterName owns in a permutation key, or kIndexNone when no switch has that name.
+        NODISCARD int32 FindStaticSwitchBit(const FName& ParameterName) const;
+
+        // Permutation key for Overrides, where a switch missing from it contributes its authored default.
+        NODISCARD uint64 MakeStaticSwitchKey(const THashMap<FName, bool>& Overrides) const;
+
+        // The key the default set was compiled at, every switch at its authored default.
+        NODISCARD uint64 GetDefaultStaticSwitchKey() const;
+
+        // Resolves slot Index if it is not already and returns its bindless ID, or the placeholder while it cannot be.
+        uint32 ResolveTextureSlot(uint32 Index);
+
+        // Whether a resolved slot binds ChangedTexture. Never resolves to answer, since it runs for every material on a reimport.
+        NODISCARD bool ReferencesTexture(const CTexture* ChangedTexture) const;
 
         static CMaterial* GetDefaultMaterial();
         static CMaterial* GetDefaultTerrainMaterial();
-
         static void CreateDefaultMaterial();
-
-        // Compiles a rooted material from a pixel-inputs snippet; the caller owns the root reference.
-        static CMaterial* CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const FMaterialParameter> InParameters = {});
         static void CreateDefaultTerrainMaterial();
 
-        /** Copy Spirv into the stage's serialized blob (no-op self-copy safe) and (re)commit its
-            shader library entry. Shared by PostLoad and the editor material compile. */
-        void CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+        // Compiles a rooted PBR material from a pixel-inputs snippet. The caller owns the root reference.
+        static CMaterial* CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const FMaterialParameter> InParameters = {});
 
-        /** The blob half of CommitShaderStage only; PostLoad mints the entry. For compile callbacks off the game thread. */
-        void SetStageBinaries(EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
-
-        /** Drop a stage's binaries and library pointer (e.g. masked-only stages on a masked->opaque recompile). */
-        void ClearShaderStage(EMaterialShaderStage Stage);
-
-        /** Whether the domain and blend mode produce Stage; the compile clears every other one. */
-        NODISCARD bool IsStageRequired(EMaterialShaderStage Stage) const;
-
-        /** Every required stage has a library entry, which is what ready-for-render is derived from. */
-        NODISCARD bool HasRequiredStages() const;
-
-        const TVector<uint32>& GetShaderStageBinaries(EMaterialShaderStage Stage) const;
-
-        /** Shader for Stage at permutation Key, falling back to this master's own stage when Key has none. */
-        NODISCARD FShaderH GetStageForKey(EMaterialShaderStage Stage, uint64 Key) const;
-
-        /** Whether Key is either the default permutation or one that has been compiled. */
-        NODISCARD bool HasPermutation(uint64 Key) const;
-
-        /** CommitShaderStage for one permutation, adding the permutation when Key is new. */
-        void CommitPermutationStage(uint64 Key, EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
-
-        /** CommitPermutationStage, dropped when Generation is no longer the one the key was minted under. */
-        bool CommitPermutationStageIfCurrent(uint64 Key, uint32 Generation, EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
-
-        /** Bumped by ClearPermutations, so a compile dispatched before a recompile can refuse to land. */
-        NODISCARD uint32 GetPermutationGeneration() const { return PermutationGeneration; }
-
-        /** Permutation Key's own bytecode for Stage, with no fallback, so an unbuilt stage reads empty. */
-        NODISCARD const TVector<uint32>& GetPermutationStageBinaries(uint64 Key, EMaterialShaderStage Stage) const;
-
-        /** Drops one permutation, so a recompile of it cannot leave a stage the new graph no longer emits. */
-        void ClearPermutation(uint64 Key);
-
-        /** Drops every permutation, which a recompile must do because it renumbers switch bits by name. */
-        void ClearPermutations();
-
-        /** Content hash of the material shader template sources */
+        // Content hash of every source a material template can reach.
         static uint64 GetShaderTemplateHash();
 
         // Where a cook writes the template hash, so the shipped game compares against what its materials were built with.
         static constexpr const char* CookedShaderTemplateHashPath = "/Engine/ShaderTemplateHash.txt";
 
 #if USING(WITH_EDITOR)
-        /** Next asset material whose serialized stages predate the current shader templates  */
+        // Next loaded material whose bytecode predates the current shader templates.
         static TStrongObjectPtr<CMaterial> PopStaleTemplateMaterial();
 
-        /** Ask the editor to compile Key's permutation; idempotent, so an instance may call it freely. */
+        // Asks the editor to compile permutation Key. Idempotent, so every instance may call it freely.
         static void RequestPermutation(CMaterial* Material, uint64 Key);
 
-        /** Next queued permutation request, or false when none remain. */
+        // Next queued permutation request, false when none remain.
         static bool PopPermutationRequest(TStrongObjectPtr<CMaterial>& OutMaterial, uint64& OutKey);
 #endif
 
-        EMaterialType GetMaterialType() const override { return MaterialType; }
-        bool DoesCastShadows() const override { return bCastShadows; }
-        bool IsTwoSided() const override { return bTwoSided; }
-        bool IsOITResolved() override { return BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::AlphaComposite; }
-        bool IsUnorderedBlend() override { return BlendMode == EBlendMode::Additive || BlendMode == EBlendMode::Modulate; }
-        bool ReceivesDecals() const override { return bReceivesDecals; }
-        bool WritesDepth() const override { return bWriteDepth; }
-        bool IsShadowOnly() const override { return bShadowOnly; }
-        EBlendMode GetBlendMode() override { return BlendMode; }
-        EMaterialShadingModel GetShadingModel() override { return ShadingModel; }
-
-        void PostPropertyChange(FProperty* ChangedProperty) override;
-        void OnReferencesReplaced() override;
-
-        /** Folds settings the current domain cannot draw back to their defaults; see MaterialDomain. */
-        void NormalizeRenderStateForDomain();
-
-        PROPERTY(Editable)
+        PROPERTY(Editable, Category = "Material")
         EMaterialType MaterialType = EMaterialType::PBR;
 
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR || MaterialType == Particle || MaterialType == Terrain")
+        PROPERTY(Editable, Category = "Material", EditCondition = "MaterialType == PBR || MaterialType == Particle || MaterialType == Terrain")
         EBlendMode BlendMode = EBlendMode::Opaque;
 
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR || MaterialType == Terrain")
+        PROPERTY(Editable, Category = "Material", EditCondition = "MaterialType == PBR || MaterialType == Terrain")
         EMaterialShadingModel ShadingModel = EMaterialShadingModel::Lit;
 
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
-        bool bCastShadows = true;
-
-        /** Drawn into shadow maps only; every camera view culls it. Needs bCastShadows to do anything. */
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
-        bool bShadowOnly = false;
-
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
-        bool bTwoSided = false;
-
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
-        bool bDisableDepthTest = false;
-
-        /** Whether DBuffer decals composite onto this surface before it is lit. */
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR")
-        bool bReceivesDecals = true;
-
-        /** Depth write for Additive and Modulate. Ignored by the OIT lane, which accumulates instead. */
-        PROPERTY(Editable, EditCondition = "MaterialType == PBR || MaterialType == Particle")
-        bool bWriteDepth = false;
-
-        /** Masked blend threshold; pixels below are discarded. */
-        PROPERTY(Editable, EditCondition = "BlendMode == Masked")
+        // Pixels whose opacity falls below this are discarded.
+        PROPERTY(Editable, Category = "Material", EditCondition = "BlendMode == Masked")
         float OpacityMaskClipValue = 0.333f;
 
-        /** Default texture binding per texture-parameter index.  */
+        PROPERTY(Editable, Category = "Material|Surface", EditCondition = "MaterialType == PBR")
+        bool bCastShadows = true;
+
+        // Drawn into shadow maps only, culled from every camera view. Needs bCastShadows.
+        PROPERTY(Editable, Category = "Material|Surface", EditCondition = "MaterialType == PBR")
+        bool bShadowOnly = false;
+
+        PROPERTY(Editable, Category = "Material|Surface", EditCondition = "MaterialType == PBR")
+        bool bTwoSided = false;
+
+        PROPERTY(Editable, Category = "Material|Surface", EditCondition = "MaterialType == PBR")
+        bool bDisableDepthTest = false;
+
+        // Whether DBuffer decals composite onto this surface before it is lit.
+        PROPERTY(Editable, Category = "Material|Surface", EditCondition = "MaterialType == PBR")
+        bool bReceivesDecals = true;
+
+        // Depth write for Additive and Modulate. The OIT lane accumulates instead and ignores it.
+        PROPERTY(Editable, Category = "Material|Surface", EditCondition = "MaterialType == PBR || MaterialType == Particle")
+        bool bWriteDepth = false;
+
+        // Declared by the graph, in the slot order the shader compiled.
         PROPERTY()
-        TVector<TSoftObjectPtr<CTexture>>       Textures;
+        TVector<FMaterialParameter> Parameters;
 
-        /** Strong refs for the slots that have actually been demanded */
-        TVector<TStrongObjectPtr<CTexture>>     ResolvedTextures;
-
-        // Guards Textures and ResolvedTextures; the async load completion writes them from a loader thread.
-        mutable FRecursiveMutex                 TextureSlotMutex;
-
-        /** Slots whose async load came back empty; they stay on the placeholder instead of being re-requested. */
-        uint64                                  UnresolvableTextureMask = 0;
-
-        /** Set once RequestTexturesResolved has issued its async loads, so the per-frame render-path
-         *  demand does not re-queue the same textures every frame until the first load lands. */
-        bool                                    bTextureLoadRequested = false;
-
-        /** Resolves slot Index if it has not been already and returns its bindless resource ID, or the
-         *  placeholder ID while it cannot be resolved. */
-        uint32 ResolveTextureSlot(uint32 Index);
-
-        uint32 GetResolvedTextureSlot(uint32 Index) override { return ResolveTextureSlot(Index); }
-
-        CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) override;
-
-        /** Non-blocking demand for the render path.  */
-        bool RequestTexturesResolved() override;
-
-        /** Compiled stages, only the ones that produced output, in the same shape a permutation stores. */
+        // The default texture per texture parameter slot.
         PROPERTY()
-        TVector<FMaterialStageBlob>             Stages;
+        TVector<TSoftObjectPtr<CTexture>> Textures;
 
-        // Guards Stages, Permutations and StageEntries, which one compile writes from a worker per stage.
-        mutable FRecursiveMutex                 ShaderStageMutex;
-
-        PROPERTY()
-        TVector<FMaterialParameter>             Parameters;
-
-        /** Collections this graph reads, in the slot order the shader compiled. Hard refs, since a
-            collection is tiny and a material that samples one is useless without it. */
+        // Collections the graph reads, in slot order. Hard refs, since a material sampling one is useless without it.
         PROPERTY()
         TVector<TStrongObjectPtr<CMaterialParameterCollection>> ParameterCollections;
 
-        /** Named static switches this graph declares, ordered by name with BitIndex assigned. */
+        // Named compile-time branches, ordered by name with their key bits assigned.
         PROPERTY()
-        TVector<FMaterialStaticSwitch>          StaticSwitches;
+        TVector<FMaterialStaticSwitch> StaticSwitches;
 
-        /** Grass species this terrain graph scatters, collected from its GrassOutput node at compile.
-            Empty for every material that has no such node, which is all of them but terrain. */
+        // Grass species a terrain graph scatters, from its GrassOutput node. Empty for everything but terrain.
         PROPERTY()
-        TVector<FGrassOutput>                   GrassOutputs;
+        TVector<FGrassOutput> GrassOutputs;
 
-        /** Compiled non-default permutations, keyed by MakeStaticSwitchKey; empty unless switches exist. */
+        // The default shader set, compiled with every switch at its authored default.
         PROPERTY()
-        TVector<FMaterialShaderPermutation>     Permutations;
+        TVector<FMaterialStageBlob> Stages;
 
-        /** Bit ParameterName owns in a permutation key, or Constants::kIndexNone when this material has no such switch. */
-        NODISCARD int32 FindStaticSwitchBit(const FName& ParameterName) const;
+        // Every other switch combination an instance has asked for.
+        PROPERTY()
+        TVector<FMaterialShaderPermutation> Permutations;
 
-        /** Permutation key for Overrides; a switch absent from it contributes its authored default. */
-        NODISCARD uint64 MakeStaticSwitchKey(const THashMap<FName, bool>& Overrides) const;
-
-        /** The key this master's own shaders were compiled at, which is every switch at its default. */
-        NODISCARD uint64 GetDefaultStaticSwitchKey() const;
-
-        uint64 GetStaticSwitchKey() const override { return GetDefaultStaticSwitchKey(); }
-
-        /** GetShaderTemplateHash() value the stage binaries were last compiled against. 0 = legacy asset
-            (predates hashing) -> treated as stale, so it auto-recompiles once in the editor and heals on save. */
+        // GetShaderTemplateHash at the last compile. 0 marks an asset older than the hash, which recompiles once in the editor.
         PROPERTY()
         uint64 CompiledTemplateHash = 0;
 
-        FMaterialUniforms                       MaterialUniforms;
+        // Strong refs for the texture slots that have been demanded, written by the graph compile and the async loads.
+        TVector<TStrongObjectPtr<CTexture>> ResolvedTextures;
 
-        // Library entries keyed by asset GUID, indexed by EMaterialShaderStage; recompiles refresh them in place.
-        FShaderH                                StageEntries[(size_t)EMaterialShaderStage::Count] = {};
-
-        // See GetShaderRevision. Starts at 1 so a zeroed cached copy always reads as "never seen".
-        uint32                                  ShaderRevision = 1;
-
-        void BumpShaderRevision();
-
-        // See GetPermutationGeneration. Runtime only, since a load starts every permutation current.
-        uint32                                  PermutationGeneration = 1;
-
-        bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
-
-        /** Whether this material binds ChangedTexture in any of its texture slots. */
-        NODISCARD bool ReferencesTexture(const CTexture* ChangedTexture) const;
-
-
-    protected:
-
-        void UpdateMaterialUniforms() override;
+        // Guards Textures and ResolvedTextures, which the async load completion writes from a loader thread.
+        mutable FRecursiveMutex TextureSlotMutex;
 
     private:
 
+        FMaterialShaderPermutation* FindPermutation(uint64 Key);
+        const FMaterialShaderPermutation* FindPermutation(uint64 Key) const;
+
+        // The library name for one stage, unique per material and permutation.
+        FName MakeStageEntryName(EMaterialShaderStage Stage, uint64 Key, bool bPermutation) const;
+
+        // Commits Spirv and swaps it into Entry, keeping exactly one library reference.
+        void SwapStageEntry(FShaderH& Entry, const FName& EntryName, EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        // Surfaces cache the entries this guards, so every bump wakes them.
+        void BumpShaderRevision();
+
+        bool HasCompiledStage() const;
+        void CommitSerializedShaders();
+        void ApplyParameterDefaults();
+        void BindTextureSlots();
+        void StampRenderFlags();
+        void BindParameterCollections();
         void RebuildParameterLookup();
 
-        THashMap<FName, FMaterialParameter>     ParameterLookup;
+        // The library owns the bytecode once committed, and a cooked build never recompiles.
+        void DropCommittedBinaries();
+
+        // Guards Stages, Permutations and DefaultEntries, which a compile writes from a worker per stage.
+        mutable FRecursiveMutex ShaderStageMutex;
+
+        // The default set's library entries, indexed by stage.
+        FShaderH DefaultEntries[(size_t)EMaterialShaderStage::Count] = {};
+
+        // Starts at 1 so a zeroed cached copy always reads as never seen.
+        uint32 ShaderRevision = 1;
+
+        // Runtime only, since a load starts every permutation current.
+        uint32 PermutationGeneration = 1;
+
+        // Slots whose async load came back empty. They stay on the placeholder instead of being re-requested.
+        uint64 UnresolvableTextureMask = 0;
+
+        // Latched once the async loads are issued, since Extract asks every frame until they land.
+        bool bTextureLoadRequested = false;
+
+        THashMap<FName, FMaterialParameter> ParameterLookup;
     };
 
-    /** Re-uploads the texture bindings of every material that references ChangedTexture (null = all of
-     *  them), and returns how many were touched. */
+    // Re-uploads the texture bindings of every material that references ChangedTexture, or all of them when it is null, and returns how many changed.
     RUNTIME_API uint32 RefreshMaterialsReferencingTexture(const CTexture* ChangedTexture);
 }

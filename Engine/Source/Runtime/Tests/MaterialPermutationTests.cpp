@@ -145,7 +145,7 @@ namespace Lumina
         Material->CommitPermutationStage(Key, EMaterialShaderStage::Pixel, TSpan<const uint32>(Perm.data(), Perm.size()));
 
         EXPECT_NE(Material->GetStageForKey(EMaterialShaderStage::Pixel, Key), Material->GetPixelShader());
-        EXPECT_EQ(Material->GetStageForKey(EMaterialShaderStage::MeshShadow, Key), Material->GetMeshShaderShadow());
+        EXPECT_EQ(Material->GetStageForKey(EMaterialShaderStage::MeshShadow, Key), Material->GetStage(EMaterialShaderStage::MeshShadow));
     }
 
     TEST(MaterialPermutation, CommittingAPermutationMovesTheShaderRevision)

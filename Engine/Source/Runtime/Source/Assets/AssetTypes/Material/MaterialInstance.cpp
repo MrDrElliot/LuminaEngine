@@ -16,11 +16,22 @@ namespace Lumina
 {
     namespace
     {
+        const char* ParameterKindName(EMaterialParameterType Type)
+        {
+            switch (Type)
+            {
+            case EMaterialParameterType::Scalar:  return "scalar";
+            case EMaterialParameterType::Vector:  return "vector";
+            case EMaterialParameterType::Texture: return "texture";
+            }
+            return "unknown";
+        }
+
+        // Once per name, since a script setting a missing parameter every frame would flood the log.
         void WarnMissingParameterOnce(const char* Kind, const FName& Name)
         {
             static FMutex          Mutex;
             static THashSet<FName> Reported;
-
             {
                 FScopeLock Lock(Mutex);
                 if (!Reported.insert(Name).second)
@@ -28,19 +39,134 @@ namespace Lumina
                     return;
                 }
             }
-
             LOG_WARN("Material instance: no parent {} parameter named '{}'.", Kind, Name);
+        }
+
+        // Writes an override into a block without uploading, for the full rebuild that uploads once at the end.
+        void ApplyOverride(const FMaterialParameter& Param, const FMaterialParameterOverride& Override, FMaterialUniforms& Uniforms)
+        {
+            switch (Override.Type)
+            {
+            case EMaterialParameterType::Scalar:
+                if (Param.Index < MAX_SCALARS)
+                {
+                    Uniforms.Scalars[Param.Index] = Override.Scalar;
+                }
+                break;
+
+            case EMaterialParameterType::Vector:
+                if (Param.Index < MAX_VECTORS)
+                {
+                    Uniforms.Vectors[Param.Index] = Override.Vector;
+                }
+                break;
+
+            case EMaterialParameterType::Texture:
+                if (Param.Index < MAX_TEXTURES && Override.Texture && Override.Texture->GetResourceID() >= 0)
+                {
+                    Uniforms.Textures[Param.Index] = (uint32)Override.Texture->GetResourceID();
+                }
+                break;
+            }
         }
     }
 
-    CMaterialInstance::CMaterialInstance()
+    CMaterialInstance* CMaterialInstance::CreateDynamic(CMaterialInterface* Parent)
     {
-        Memory::Memzero(&MaterialUniforms, sizeof(FMaterialUniforms));
+        if (Parent == nullptr)
+        {
+            LOG_ERROR("CreateDynamic: no parent material.");
+            return nullptr;
+        }
+
+        CMaterialInstance* Instance = NewObject<CMaterialInstance>(nullptr, "DynamicMaterialInstance");
+        if (Instance == nullptr)
+        {
+            return nullptr;
+        }
+
+        // Parented before the slot is taken, so the slot starts from a resolved block rather than zeros.
+        if (!Instance->SetParentMaterial(Parent))
+        {
+            Instance->ConditionalBeginDestroy();
+            return nullptr;
+        }
+
+        Instance->AcquireOrUploadMaterialSlot();
+        Instance->SetReadyForRender(true);
+        return Instance;
+    }
+
+    void CMaterialInstance::PostLoad()
+    {
+        LUMINA_MEMORY_SCOPE("Materials");
+        if (!Material)
+        {
+            return;
+        }
+
+        // Registered before the parent's PostLoad, so its PropagateToChildren reaches this level.
+        Material->RegisterChild(this);
+
+        // The loader's own guard, so a parent that already ran, or is stale for good, never runs twice.
+        if (Material->HasAnyFlag(OF_NeedsPostLoad))
+        {
+            Material->ClearFlags(OF_NeedsPostLoad);
+            Material->PostLoad();
+        }
+        else
+        {
+            RebuildUniformsFromOverrides();
+        }
+
+        AcquireOrUploadMaterialSlot();
+        SetReadyForRender(true);
+
+        // A loaded instance may name a permutation the root has never built, and nothing else asks for it.
+        RequestStaticSwitchPermutation();
+
+        // Surfaces that fell back to the default still record this as a dependency, so they wake here.
+        FMeshResolveCache::InvalidateDependency(this);
+    }
+
+    void CMaterialInstance::OnDestroy()
+    {
+        CMaterialInterface::OnDestroy();
+
+        // Resolves are keyed partly on this pointer, so they go before it can be recycled.
+        FMeshResolveCache::InvalidateDependency(this);
+
+        if (Material)
+        {
+            Material->UnregisterChild(this);
+        }
+        ReleaseMaterialSlot();
+    }
+
+    void CMaterialInstance::PostPropertyChange(FProperty* ChangedProperty)
+    {
+        Super::PostPropertyChange(ChangedProperty);
+
+        if (ChangedProperty != nullptr && ChangedProperty->GetPropertyName() == FName("Material"))
+        {
+            AdoptEditedParent();
+            return;
+        }
+
+        // The shading model override has to be re-stamped and uploaded to show.
+        RefreshSubtree();
+    }
+
+    void CMaterialInstance::OnReferencesReplaced()
+    {
+        // A nulled override or parent stays baked in the block until it is rebuilt, and surfaces keep the old resolve.
+        RefreshSubtree();
+        FMeshResolveCache::InvalidateDependency(this);
     }
 
     CMaterial* CMaterialInstance::GetMaterial() const
     {
-        // Bounded rather than unbounded, so a cycle that slipped past SetParentMaterial cannot hang.
+        // Bounded, so a cycle that slipped past SetParentMaterial cannot hang.
         CMaterialInterface* Parent = Material.Get();
         for (uint32 Depth = 0; Parent != nullptr && Depth < MaxChainDepth; ++Depth)
         {
@@ -50,7 +176,6 @@ namespace Lumina
             }
             Parent = Parent->GetParentMaterial();
         }
-
         return nullptr;
     }
 
@@ -75,11 +200,9 @@ namespace Lumina
                 LOG_ERROR("Reparenting '{}' to '{}' would form a cycle.", GetName(), NewParent->GetName());
                 return false;
             }
-
             if (++Depth >= MaxChainDepth)
             {
-                LOG_ERROR("Reparenting '{}' to '{}' exceeds the {} level instance chain limit.",
-                    GetName(), NewParent->GetName(), MaxChainDepth);
+                LOG_ERROR("Reparenting '{}' to '{}' exceeds the {} level instance chain limit.", GetName(), NewParent->GetName(), MaxChainDepth);
                 return false;
             }
         }
@@ -90,7 +213,6 @@ namespace Lumina
         }
 
         Material = NewParent;
-
         if (NewParent != nullptr)
         {
             NewParent->RegisterChild(this);
@@ -98,71 +220,24 @@ namespace Lumina
 
         RefreshSubtree();
 
-        // A new parent can mean a new ROOT, so the shaders and blend mode a surface resolved are stale.
+        // A new parent can mean a new root, so the shaders and blend mode a surface resolved are stale.
         FMeshResolveCache::InvalidateDependency(this);
         return true;
     }
 
-    CMaterialInstance* CMaterialInstance::CreateDynamic(CMaterialInterface* Parent)
+    void CMaterialInstance::AdoptEditedParent()
     {
-        if (Parent == nullptr)
+        CMaterialInterface* EditedParent = Material.Get();
+        Material = nullptr;
+        if (!SetParentMaterial(EditedParent) || Material == nullptr)
         {
-            LOG_ERROR("CreateDynamic: no parent material.");
-            return nullptr;
-        }
-
-        CMaterialInstance* Instance = NewObject<CMaterialInstance>(nullptr, "DynamicMaterialInstance");
-        if (Instance == nullptr)
-        {
-            return nullptr;
-        }
-
-        // Before the slot is taken, so AddMaterial writes an already-resolved block rather than zeroes.
-        if (!Instance->SetParentMaterial(Parent))
-        {
-            Instance->ConditionalBeginDestroy();
-            return nullptr;
-        }
-
-        if (FRenderManager* RenderManager = TryRender())
-        {
-            RenderManager->GetMaterialManager().AddMaterial(Instance);
-        }
-
-        Instance->SetReadyForRender(true);
-        return Instance;
-    }
-
-    static void ApplyOverride(CMaterial* Root, const FMaterialParameterOverride& Override, FMaterialUniforms& Uniforms)
-    {
-        // Through the root's name map rather than a scan, since a material carries up to 72 parameters.
-        FMaterialParameter Param;
-        if (!Root->GetParameterValue(Override.Type, Override.ParameterName, Param))
-        {
+            SetReadyForRender(false);
             return;
         }
 
-        switch (Override.Type)
-        {
-        case EMaterialParameterType::Scalar:
-            if (Param.Index < MAX_SCALARS)
-            {
-                Uniforms.Scalars[Param.Index] = Override.Scalar;
-            }
-            break;
-        case EMaterialParameterType::Vector:
-            if (Param.Index < MAX_VECTORS)
-            {
-                Uniforms.Vectors[Param.Index] = Override.Vector;
-            }
-            break;
-        case EMaterialParameterType::Texture:
-            if (Param.Index < MAX_TEXTURES && Override.Texture && Override.Texture->GetResourceID() >= 0)
-            {
-                Uniforms.Textures[Param.Index] = (uint32)Override.Texture->GetResourceID();
-            }
-            break;
-        }
+        AcquireOrUploadMaterialSlot();
+        SetReadyForRender(true);
+        RequestStaticSwitchPermutation();
     }
 
     void CMaterialInstance::EnsureRegisteredWithParent()
@@ -173,6 +248,21 @@ namespace Lumina
         }
     }
 
+    bool CMaterialInstance::IsReadyForRender() const
+    {
+        return CMaterialInterface::IsReadyForRender() && Material != nullptr && Material->IsReadyForRender();
+    }
+
+    EMaterialShadingModel CMaterialInstance::GetShadingModel() const
+    {
+        // The parent, not the root, since an instance between them may override it too.
+        if (bOverrideShadingModel)
+        {
+            return ShadingModelOverride;
+        }
+        return Material ? Material->GetShadingModel() : EMaterialShadingModel::Lit;
+    }
+
     void CMaterialInstance::RebuildUniformsFromOverrides()
     {
         CMaterial* Root = GetMaterial();
@@ -181,514 +271,178 @@ namespace Lumina
             return;
         }
 
-        // An override flipping changes which texture a slot samples, so it changes what is owed the streamer.
-
         EnsureRegisteredWithParent();
 
-        // The IMMEDIATE parent's resolved block, which composes a chain only because propagation is top-down.
+        // The immediate parent's resolved block, which composes a chain only because propagation runs top down.
         MaterialUniforms = *Material->GetMaterialUniforms();
 
         // Overrides are never pruned here, so a recompile that drops a parameter cannot destroy its value.
-
-        // Runs BEFORE the override loop, which has the last word, so an override never resolves the parent default.
         const uint32 OverriddenMask = GetOverriddenTextureMask();
         for (const FMaterialParameter& Param : Root->Parameters)
         {
-            if (Param.Type != EMaterialParameterType::Texture || Param.Index >= MAX_TEXTURES)
+            if (Param.Type == EMaterialParameterType::Texture && Param.Index < MAX_TEXTURES && (OverriddenMask & (1u << Param.Index)) == 0)
             {
-                continue;
+                MaterialUniforms.Textures[Param.Index] = Material->GetResolvedTextureSlot(Param.Index);
             }
-
-            if ((OverriddenMask & (1u << Param.Index)) != 0)
-            {
-                continue;   // ApplyOverride supplies this slot; the inherited value is dead weight
-            }
-
-            MaterialUniforms.Textures[Param.Index] = Material->GetResolvedTextureSlot(Param.Index);
         }
 
         for (const FMaterialParameterOverride& Override : Overrides)
         {
-            // Disabled overrides keep their stored value but are not applied; the parent value shows through.
-            if (Override.bEnabled)
+            FMaterialParameter Param;
+            if (Override.bEnabled && Root->GetParameterValue(Override.Type, Override.ParameterName, Param))
             {
-                ApplyOverride(Root, Override, MaterialUniforms);
+                ApplyOverride(Param, Override, MaterialUniforms);
             }
         }
 
-        // Re-stamped last so an instance override lands and nothing above can undo it.
-        const uint32 ModelBits =
-            ((uint32)GetShadingModel() & kMaterialShadingModelMask) << kMaterialShadingModelShift;
-
+        // Stamped last so nothing above can undo an instance's shading model.
         MaterialUniforms.Flags &= ~(kMaterialShadingModelMask << kMaterialShadingModelShift);
-        MaterialUniforms.Flags |= ModelBits;
+        MaterialUniforms.Flags |= ((uint32)GetShadingModel() & kMaterialShadingModelMask) << kMaterialShadingModelShift;
     }
 
     void CMaterialInstance::RefreshFromParent()
     {
         RebuildUniformsFromOverrides();
-        UpdateMaterialUniforms();
+        UploadMaterialUniforms();
 
         // The parent may have just recompiled, which drops every permutation and renumbers the bits.
         RequestStaticSwitchPermutation();
-
-        // No invalidate, since a resolve stamps the slot INDEX and a value change never moves it.
     }
 
-    void CMaterialInstance::GatherStaticSwitchValues(THashMap<FName, bool>& OutValues, uint32 Depth) const
+    bool CMaterialInstance::InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index)
     {
-        if (Depth >= MaxChainDepth)
+        if (!Material)
         {
-            return;
-        }
-
-        // Parent first, so this level's overrides land on top of everything it inherits.
-        if (const CMaterialInstance* ParentInstance = Cast<CMaterialInstance>(Material.Get()))
-        {
-            ParentInstance->GatherStaticSwitchValues(OutValues, Depth + 1);
-        }
-
-        for (const FMaterialStaticSwitchOverride& Override : StaticSwitchOverrides)
-        {
-            OutValues[Override.ParameterName] = Override.bValue;
-        }
-    }
-
-    uint64 CMaterialInstance::GetStaticSwitchKey() const
-    {
-        CMaterial* Root = GetMaterial();
-        if (Root == nullptr || Root->StaticSwitches.empty())
-        {
-            return 0;
-        }
-
-        // Cheap out before the map allocation for the common chain that overrides no switch at all.
-        THashMap<FName, bool> Values;
-        GatherStaticSwitchValues(Values);
-        if (Values.empty())
-        {
-            return Root->GetDefaultStaticSwitchKey();
-        }
-
-        return Root->MakeStaticSwitchKey(Values);
-    }
-
-    bool CMaterialInstance::HasStaticSwitchOverride(const FName& Name) const
-    {
-        return Algo::AnyOf(StaticSwitchOverrides,
-            [&Name](const FMaterialStaticSwitchOverride& O) { return O.ParameterName == Name; });
-    }
-
-    bool CMaterialInstance::GetStaticSwitchValue(const FName& Name) const
-    {
-        for (const FMaterialStaticSwitchOverride& Override : StaticSwitchOverrides)
-        {
-            if (Override.ParameterName == Name)
-            {
-                return Override.bValue;
-            }
-        }
-
-        if (const CMaterialInstance* ParentInstance = Cast<CMaterialInstance>(Material.Get()))
-        {
-            return ParentInstance->GetStaticSwitchValue(Name);
-        }
-
-        if (CMaterial* Root = GetMaterial())
-        {
-            for (const FMaterialStaticSwitch& Switch : Root->StaticSwitches)
-            {
-                if (Switch.ParameterName == Name)
-                {
-                    return Switch.bDefaultValue;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    bool CMaterialInstance::SetStaticSwitchValue(const FName& Name, bool bValue)
-    {
-        CMaterial* Root = GetMaterial();
-        if (Root == nullptr || Root->FindStaticSwitchBit(Name) == Constants::kIndexNone)
-        {
-            WarnMissingParameterOnce("static switch", Name);
             return false;
         }
 
-        for (FMaterialStaticSwitchOverride& Override : StaticSwitchOverrides)
+        const bool bOverridden = Algo::AnyOf(Overrides, [&](const FMaterialParameterOverride& Override)
         {
-            if (Override.ParameterName != Name)
+            return Override.Type == Type && Override.bEnabled && Override.ParameterName == Name;
+        });
+        if (bOverridden)
+        {
+            return false;
+        }
+
+        const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();
+        switch (Type)
+        {
+        case EMaterialParameterType::Scalar:
+            if (Index < MAX_SCALARS)
             {
-                continue;
-            }
-            if (Override.bValue == bValue)
-            {
+                WriteScalarSlot(Index, Inherited.Scalars[Index]);
                 return true;
             }
-            Override.bValue = bValue;
-            OnStaticSwitchesChanged();
-            return true;
+            break;
+
+        case EMaterialParameterType::Vector:
+            if (Index < MAX_VECTORS)
+            {
+                WriteVectorSlot(Index, Inherited.Vectors[Index]);
+                return true;
+            }
+            break;
+
+        case EMaterialParameterType::Texture:
+            if (Index < MAX_TEXTURES)
+            {
+                WriteTextureSlot(Index, Inherited.Textures[Index]);
+                return true;
+            }
+            break;
+        }
+        return false;
+    }
+
+    template <typename TApply>
+    bool CMaterialInstance::SetOverride(EMaterialParameterType Type, const FName& Name, TApply&& Apply)
+    {
+        if (!Material)
+        {
+            return false;
         }
 
-        FMaterialStaticSwitchOverride Override;
-        Override.ParameterName = Name;
-        Override.bValue        = bValue;
-        StaticSwitchOverrides.push_back(Override);
-        OnStaticSwitchesChanged();
+        EnsureRegisteredWithParent();
+
+        FMaterialParameter Param;
+        if (!GetParameterValue(Type, Name, Param))
+        {
+            WarnMissingParameterOnce(ParameterKindName(Type), Name);
+            return false;
+        }
+
+        FMaterialParameterOverride& Override = FindOrAddOverride(Name, Type);
+        Override.bEnabled = true;
+        Apply(Override, Param.Index);
+
+        PropagateParameterToChildren(Type, Name, Param.Index);
         return true;
-    }
-
-    void CMaterialInstance::RemoveStaticSwitchOverride(const FName& Name)
-    {
-        auto NewEnd = Algo::RemoveIf(StaticSwitchOverrides, [Name](const FMaterialStaticSwitchOverride& O)
-        {
-            return O.ParameterName == Name;
-        });
-
-        if (NewEnd == StaticSwitchOverrides.end())
-        {
-            return;
-        }
-
-        StaticSwitchOverrides.erase(NewEnd, StaticSwitchOverrides.end());
-        OnStaticSwitchesChanged();
-    }
-
-    void CMaterialInstance::OnStaticSwitchesChanged()
-    {
-        RequestStaticSwitchPermutation();
-
-        // A switch change swaps the shader set every resolved surface below here caches by handle.
-        FMeshResolveCache::InvalidateDependency(this);
-        PropagateStaticSwitchChange();
-    }
-
-    void CMaterialInstance::PropagateStaticSwitchChange(uint32 Depth)
-    {
-        if (Depth >= MaxChainDepth)
-        {
-            return;
-        }
-
-        // Snapshotted rather than held, the same way every other propagation down this chain works.
-        TVector<CMaterialInterface*> Snapshot;
-        {
-            FScopeLock Lock(ChildrenMutex);
-            Snapshot = Children;
-        }
-
-        for (CMaterialInterface* Child : Snapshot)
-        {
-            CMaterialInstance* ChildInstance = Cast<CMaterialInstance>(Child);
-            if (ChildInstance == nullptr || ChildInstance->GetParentMaterial() != this)
-            {
-                continue;
-            }
-
-            ChildInstance->RequestStaticSwitchPermutation();
-            FMeshResolveCache::InvalidateDependency(ChildInstance);
-            ChildInstance->PropagateStaticSwitchChange(Depth + 1);
-        }
-    }
-
-    void CMaterialInstance::RequestStaticSwitchPermutation()
-    {
-#if USING(WITH_EDITOR)
-        CMaterial* Root = GetMaterial();
-        if (Root == nullptr || Root->StaticSwitches.empty())
-        {
-            return;
-        }
-        CMaterial::RequestPermutation(Root, GetStaticSwitchKey());
-#endif
-    }
-
-    void CMaterialInstance::PostPropertyChange(FProperty* ChangedProperty)
-    {
-        Super::PostPropertyChange(ChangedProperty);
-
-        if (ChangedProperty != nullptr && ChangedProperty->GetPropertyName() == FName("Material"))
-        {
-            AdoptEditedParent();
-            return;
-        }
-
-        RefreshSubtree();
-    }
-
-    // The details panel writes the parent field directly, so the registration load and SetParentMaterial do is redone here.
-    void CMaterialInstance::AdoptEditedParent()
-    {
-        CMaterialInterface* EditedParent = Material.Get();
-        Material = nullptr;
-        if (!SetParentMaterial(EditedParent))
-        {
-            SetReadyForRender(false);
-            return;
-        }
-
-        if (Material == nullptr)
-        {
-            SetReadyForRender(false);
-            return;
-        }
-
-        if (GetMaterialIndex() == -1)
-        {
-            if (FRenderManager* RenderManager = TryRender())
-            {
-                RenderManager->GetMaterialManager().AddMaterial(this);
-            }
-        }
-        else
-        {
-            UpdateMaterialUniforms();
-        }
-
-        SetReadyForRender(true);
-        RequestStaticSwitchPermutation();
-    }
-
-    uint32 CMaterialInstance::GetOverriddenTextureMask() const
-    {
-        CMaterial* Root = GetMaterial();
-        if (Root == nullptr)
-        {
-            return 0;
-        }
-
-        uint32 Mask = 0;
-
-        for (const FMaterialParameterOverride& Override : Overrides)
-        {
-            if (Override.Type != EMaterialParameterType::Texture || !Override.bEnabled || Override.Texture == nullptr)
-            {
-                continue;
-            }
-
-            FMaterialParameter Param;
-            if (Root->GetParameterValue(EMaterialParameterType::Texture, Override.ParameterName, Param)
-                && Param.Index < MAX_TEXTURES)
-            {
-                Mask |= (1u << Param.Index);
-            }
-        }
-
-        return Mask;
-    }
-
-    uint32 CMaterialInstance::GetResolvedTextureSlot(uint32 Index)
-    {
-        if (Index >= MAX_TEXTURES)
-        {
-            return RHI::Textures::DefaultResourceID();
-        }
-
-        // This level's block is already resolved, so a child inherits from it without touching the root.
-        return MaterialUniforms.Textures[Index];
-    }
-
-    CTexture* CMaterialInstance::GetTextureParameterTexture(const FName& Name, uint32 Index)
-    {
-        for (const FMaterialParameterOverride& Override : Overrides)
-        {
-            if (Override.Type == EMaterialParameterType::Texture && Override.bEnabled
-                && Override.ParameterName == Name && Override.Texture != nullptr)
-            {
-                return Override.Texture.Get();
-            }
-        }
-
-        return Material ? Material->GetTextureParameterTexture(Name, Index) : nullptr;
-    }
-
-    bool CMaterialInstance::IsTextureSlotOverridden(uint32 Index) const
-    {
-        // A slot no parameter names is plainly bound on the parent, and the mask has no bit for it.
-        return Index < MAX_TEXTURES && (GetOverriddenTextureMask() & (1u << Index)) != 0;
-    }
-
-    void CMaterialInstance::RefreshInheritedTextureSlots()
-    {
-        CMaterial* Root = GetMaterial();
-        if (!Material || Root == nullptr)
-        {
-            return;
-        }
-
-        const uint32 OverriddenMask = GetOverriddenTextureMask();
-
-        uint32 FirstChanged = MAX_TEXTURES;
-        uint32 LastChanged  = 0;
-
-        // Slot COUNT comes from the root, which declares the texture table; the VALUES come from the parent.
-        const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();
-
-        const uint32 NumSlots = (uint32)Math::Min<size_t>(Root->Textures.size(), MAX_TEXTURES);
-        for (uint32 i = 0; i < NumSlots; ++i)
-        {
-            if ((OverriddenMask & (1u << i)) != 0)
-            {
-                continue;
-            }
-
-            if (MaterialUniforms.Textures[i] != Inherited.Textures[i])
-            {
-                MaterialUniforms.Textures[i] = Inherited.Textures[i];
-                FirstChanged = Math::Min(FirstChanged, i);
-                LastChanged  = i;
-            }
-        }
-
-        if (FirstChanged <= LastChanged)
-        {
-            UploadUniformField(TextureFieldOffset(FirstChanged), &MaterialUniforms.Textures[FirstChanged],
-                (LastChanged - FirstChanged + 1) * (uint32)sizeof(uint32));
-        }
-    }
-
-    static FMaterialParameterOverride& FindOrAddOverride(TVector<FMaterialParameterOverride>& Overrides, const FName& Name, EMaterialParameterType Type)
-    {
-        for (FMaterialParameterOverride& O : Overrides)
-        {
-            if (O.ParameterName == Name && O.Type == Type)
-            {
-                return O;
-            }
-        }
-
-        FMaterialParameterOverride New;
-        New.ParameterName = Name;
-        New.Type = Type;
-        Overrides.push_back(New);
-        return Overrides.back();
     }
 
     bool CMaterialInstance::SetScalarValue(const FName& Name, const float Value)
     {
-        if (!Material)
+        return SetOverride(EMaterialParameterType::Scalar, Name, [&](FMaterialParameterOverride& Override, uint16 Index)
         {
-            return false;
-        }
-
-        EnsureRegisteredWithParent();
-
-        FMaterialParameter Param;
-        if (!GetParameterValue(EMaterialParameterType::Scalar, Name, Param))
-        {
-            WarnMissingParameterOnce("scalar", Name);
-            return false;
-        }
-
-        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, EMaterialParameterType::Scalar);
-        Override.Scalar = Value;
-        Override.bEnabled = true;
-
-        if (Param.Index < MAX_SCALARS)
-        {
-            MaterialUniforms.Scalars[Param.Index] = Value;
-            UploadUniformField(ScalarFieldOffset(Param.Index), &MaterialUniforms.Scalars[Param.Index], sizeof(float));
-        }
-
-        PropagateParameterToChildren(EMaterialParameterType::Scalar, Name, Param.Index);
-        return true;
+            Override.Scalar = Value;
+            WriteScalarSlot(Index, Value);
+        });
     }
 
     bool CMaterialInstance::SetVectorValue(const FName& Name, const FVector4& Value)
     {
-        if (!Material)
+        return SetOverride(EMaterialParameterType::Vector, Name, [&](FMaterialParameterOverride& Override, uint16 Index)
         {
-            return false;
-        }
-
-        EnsureRegisteredWithParent();
-
-        FMaterialParameter Param;
-        if (!GetParameterValue(EMaterialParameterType::Vector, Name, Param))
-        {
-            WarnMissingParameterOnce("vector", Name);
-            return false;
-        }
-
-        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, EMaterialParameterType::Vector);
-        Override.Vector = Value;
-        Override.bEnabled = true;
-
-        // A targeted 16-byte write rather than a rebuild of the whole block, as in SetScalarValue.
-        if (Param.Index < MAX_VECTORS)
-        {
-            MaterialUniforms.Vectors[Param.Index] = Value;
-            UploadUniformField(VectorFieldOffset(Param.Index), &MaterialUniforms.Vectors[Param.Index], sizeof(FVector4));
-        }
-
-        PropagateParameterToChildren(EMaterialParameterType::Vector, Name, Param.Index);
-        return true;
+            Override.Vector = Value;
+            WriteVectorSlot(Index, Value);
+        });
     }
 
     bool CMaterialInstance::SetTextureValue(const FName& Name, CTexture* TextureValue)
     {
-        if (!Material)
+        return SetOverride(EMaterialParameterType::Texture, Name, [&](FMaterialParameterOverride& Override, uint16 Index)
         {
-            return false;
-        }
+            Override.Texture = TextureValue;
 
-        EnsureRegisteredWithParent();
+            // A texture not resident yet shows the parent's until RequestTexturesResolved rebuilds the block.
+            const int32 ResourceID = TextureValue != nullptr ? TextureValue->GetResourceID() : -1;
+            WriteTextureSlot(Index, ResourceID >= 0 ? (uint32)ResourceID : Material->GetResolvedTextureSlot(Index));
+        });
+    }
 
-        FMaterialParameter Param;
-        if (!GetParameterValue(EMaterialParameterType::Texture, Name, Param))
-        {
-            WarnMissingParameterOnce("texture", Name);
-            return false;
-        }
-
-        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, EMaterialParameterType::Texture);
-        Override.Texture = TextureValue;
-        Override.bEnabled = true;
-
-        // Writes the uniform slot directly rather than rebuilding, so it has to mark dirty itself.
-
-        if (Param.Index < MAX_TEXTURES)
-        {
-            const int32 ResourceID = (TextureValue != nullptr) ? TextureValue->GetResourceID() : -1;
-            MaterialUniforms.Textures[Param.Index] = (ResourceID >= 0)
-                ? (uint32)ResourceID
-                : Material->GetResolvedTextureSlot(Param.Index);
-
-            UploadUniformField(TextureFieldOffset(Param.Index), &MaterialUniforms.Textures[Param.Index], sizeof(uint32));
-        }
-
-        PropagateParameterToChildren(EMaterialParameterType::Texture, Name, Param.Index);
-        return true;
+    bool CMaterialInstance::GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param)
+    {
+        // Straight to the root, the only level that declares parameters.
+        Param = {};
+        CMaterial* Root = GetMaterial();
+        return Root != nullptr && Root->GetParameterValue(Type, Name, Param);
     }
 
     const TVector<FMaterialParameter>& CMaterialInstance::GetMaterialParams() const
     {
         static const TVector<FMaterialParameter> Empty;
-        CMaterial* Root = GetMaterial();
-        return Root ? Root->Parameters : Empty;
+        const CMaterial* Root = GetMaterial();
+        return Root != nullptr ? Root->Parameters : Empty;
     }
 
-    bool CMaterialInstance::GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param)
+    FMaterialParameterOverride& CMaterialInstance::FindOrAddOverride(const FName& Name, EMaterialParameterType Type)
     {
-        Param = {};
+        auto It = Algo::FindIf(Overrides, [&](const FMaterialParameterOverride& Override) { return Override.ParameterName == Name && Override.Type == Type; });
+        if (It != Overrides.end())
+        {
+            return *It;
+        }
 
-        // Straight to the ROOT, the only level that declares parameters; no level between could differ.
-        CMaterial* Root = GetMaterial();
-        return Root != nullptr && Root->GetParameterValue(Type, Name, Param);
+        FMaterialParameterOverride& Added = Overrides.emplace_back();
+        Added.ParameterName = Name;
+        Added.Type = Type;
+        return Added;
     }
 
     const FMaterialParameterOverride* CMaterialInstance::FindOverride(const FName& Name) const
     {
-        for (const FMaterialParameterOverride& O : Overrides)
-        {
-            if (O.ParameterName == Name)
-            {
-                return &O;
-            }
-        }
-        return nullptr;
+        auto It = Algo::FindIf(Overrides, [&Name](const FMaterialParameterOverride& Override) { return Override.ParameterName == Name; });
+        return It != Overrides.end() ? &*It : nullptr;
     }
 
     bool CMaterialInstance::IsOverrideEnabled(const FName& Name) const
@@ -704,54 +458,44 @@ namespace Lumina
             return;
         }
 
-        // The stored value is retained, so re-enabling restores the user's edits rather than resetting.
-        for (FMaterialParameterOverride& O : Overrides)
+        // An existing override keeps its value, so re-enabling restores the user's edit rather than resetting it.
+        auto It = Algo::FindIf(Overrides, [&Name](const FMaterialParameterOverride& Override) { return Override.ParameterName == Name; });
+        if (It != Overrides.end())
         {
-            if (O.ParameterName == Name)
+            if (It->bEnabled != bEnabled)
             {
-                if (O.bEnabled == bEnabled)
-                {
-                    return;
-                }
-
-                O.bEnabled = bEnabled;
-
-                // Disabling has to restore the parent's value, which for a texture means resolving its default.
+                It->bEnabled = bEnabled;
                 RefreshSubtree();
-                return;
             }
+            return;
         }
 
-        // Disabling a parameter that was never overridden has nothing to do.
         if (!bEnabled)
         {
             return;
         }
 
-        // Seeded with the parent's current value, and from here it persists across toggles.
         FMaterialParameter Param;
-        const bool bFound =
-            GetParameterValue(EMaterialParameterType::Scalar,  Name, Param) ||
-            GetParameterValue(EMaterialParameterType::Vector,  Name, Param) ||
-            GetParameterValue(EMaterialParameterType::Texture, Name, Param);
+        const bool bFound = GetParameterValue(EMaterialParameterType::Scalar,  Name, Param)
+                         || GetParameterValue(EMaterialParameterType::Vector,  Name, Param)
+                         || GetParameterValue(EMaterialParameterType::Texture, Name, Param);
         if (!bFound)
         {
             LOG_ERROR("Cannot override unknown parameter '{}'", Name);
             return;
         }
 
-        // From the IMMEDIATE parent, so this starts where the instance already renders, not at the root.
+        // Seeded from the immediate parent, so the override starts where the instance already renders.
         const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();
-
-        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, Param.Type);
+        FMaterialParameterOverride& Override = FindOrAddOverride(Name, Param.Type);
         Override.bEnabled = true;
         switch (Param.Type)
         {
         case EMaterialParameterType::Scalar:
-            Override.Scalar = (Param.Index < MAX_SCALARS) ? Inherited.Scalars[Param.Index] : 0.0f;
+            Override.Scalar = Param.Index < MAX_SCALARS ? Inherited.Scalars[Param.Index] : 0.0f;
             break;
         case EMaterialParameterType::Vector:
-            Override.Vector = (Param.Index < MAX_VECTORS) ? Inherited.Vectors[Param.Index] : FVector4(0.0f);
+            Override.Vector = Param.Index < MAX_VECTORS ? Inherited.Vectors[Param.Index] : FVector4(0.0f);
             break;
         case EMaterialParameterType::Texture:
             Override.Texture = Material->GetTextureParameterTexture(Name, Param.Index);
@@ -763,113 +507,102 @@ namespace Lumina
 
     void CMaterialInstance::RemoveOverride(const FName& Name)
     {
-        auto NewEnd = Algo::RemoveIf(Overrides, [Name](const FMaterialParameterOverride& O)
-        {
-            return O.ParameterName == Name;
-        });
-
-        // Nothing matched, so nothing this could have changed.
+        auto NewEnd = Algo::RemoveIf(Overrides, [&Name](const FMaterialParameterOverride& Override) { return Override.ParameterName == Name; });
         if (NewEnd == Overrides.end())
         {
             return;
         }
-
         Overrides.erase(NewEnd, Overrides.end());
 
         // A texture restore means resolving the parent default this instance had been skipping.
         RefreshSubtree();
     }
 
-    void CMaterialInstance::UpdateMaterialUniforms()
+    uint32 CMaterialInstance::GetOverriddenTextureMask() const
     {
-        // A slot is only ever handed out by the material manager, so holding one implies a renderer.
-        if (MaterialIndex != -1)
+        CMaterial* Root = GetMaterial();
+        if (Root == nullptr)
         {
-            Render().GetMaterialManager().UpdateMaterialUniforms(&MaterialUniforms, (uint32)MaterialIndex);
+            return 0;
         }
+
+        uint32 Mask = 0;
+        for (const FMaterialParameterOverride& Override : Overrides)
+        {
+            FMaterialParameter Param;
+            if (Override.Type == EMaterialParameterType::Texture && Override.bEnabled && Override.Texture != nullptr
+                && Root->GetParameterValue(EMaterialParameterType::Texture, Override.ParameterName, Param) && Param.Index < MAX_TEXTURES)
+            {
+                Mask |= (1u << Param.Index);
+            }
+        }
+        return Mask;
     }
 
-    bool CMaterialInstance::InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index)
+    bool CMaterialInstance::IsTextureSlotOverridden(uint32 Index) const
     {
-        if (!Material)
+        return Index < MAX_TEXTURES && (GetOverriddenTextureMask() & (1u << Index)) != 0;
+    }
+
+    uint32 CMaterialInstance::GetResolvedTextureSlot(uint32 Index)
+    {
+        // This level's block is already resolved, so a child inherits from it without touching the root.
+        return Index < MAX_TEXTURES ? MaterialUniforms.Textures[Index] : RHI::Textures::DefaultResourceID();
+    }
+
+    CTexture* CMaterialInstance::GetTextureParameterTexture(const FName& Name, uint32 Index)
+    {
+        for (const FMaterialParameterOverride& Override : Overrides)
         {
-            return false;
+            if (Override.Type == EMaterialParameterType::Texture && Override.bEnabled && Override.ParameterName == Name && Override.Texture != nullptr)
+            {
+                return Override.Texture.Get();
+            }
+        }
+        return Material ? Material->GetTextureParameterTexture(Name, Index) : nullptr;
+    }
+
+    void CMaterialInstance::RefreshInheritedTextureSlots()
+    {
+        CMaterial* Root = GetMaterial();
+        if (!Material || Root == nullptr)
+        {
+            return;
         }
 
-        const bool bOverridden = Algo::AnyOf(Overrides, [&](const FMaterialParameterOverride& Override)
-        {
-            return Override.Type == Type && Override.bEnabled && Override.ParameterName == Name;
-        });
-
-        if (bOverridden)
-        {
-            return false;
-        }
-
+        // Narrower than RefreshFromParent, with no parameter rebuild and no synchronous resolve, so the async load completion can call it.
+        const uint32 OverriddenMask = GetOverriddenTextureMask();
         const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();
 
-        switch (Type)
+        // The slot count comes from the root, which declares the table, and the values from the parent.
+        uint32 FirstChanged = MAX_TEXTURES;
+        uint32 LastChanged  = 0;
+        const uint32 NumSlots = (uint32)Math::Min<size_t>(Root->Textures.size(), MAX_TEXTURES);
+        for (uint32 i = 0; i < NumSlots; ++i)
         {
-        case EMaterialParameterType::Scalar:
-            if (Index >= MAX_SCALARS)
+            if ((OverriddenMask & (1u << i)) == 0 && MaterialUniforms.Textures[i] != Inherited.Textures[i])
             {
-                return false;
+                MaterialUniforms.Textures[i] = Inherited.Textures[i];
+                FirstChanged = Math::Min(FirstChanged, i);
+                LastChanged  = i;
             }
-            MaterialUniforms.Scalars[Index] = Inherited.Scalars[Index];
-            UploadUniformField(ScalarFieldOffset(Index), &MaterialUniforms.Scalars[Index], sizeof(float));
-            return true;
-
-        case EMaterialParameterType::Vector:
-            if (Index >= MAX_VECTORS)
-            {
-                return false;
-            }
-            MaterialUniforms.Vectors[Index] = Inherited.Vectors[Index];
-            UploadUniformField(VectorFieldOffset(Index), &MaterialUniforms.Vectors[Index], sizeof(FVector4));
-            return true;
-
-        case EMaterialParameterType::Texture:
-            if (Index >= MAX_TEXTURES)
-            {
-                return false;
-            }
-            MaterialUniforms.Textures[Index] = Inherited.Textures[Index];
-            UploadUniformField(TextureFieldOffset(Index), &MaterialUniforms.Textures[Index], sizeof(uint32));
-            return true;
         }
 
-        return false;
-    }
-
-    void CMaterialInstance::OnReferencesReplaced()
-    {
-        // A nulled override or parent stays baked in the block until it is rebuilt, and surfaces keep the old resolve.
-        RefreshSubtree();
-        FMeshResolveCache::InvalidateDependency(this);
+        if (FirstChanged <= LastChanged)
+        {
+            UploadUniformField(TextureFieldOffset(FirstChanged), &MaterialUniforms.Textures[FirstChanged], (LastChanged - FirstChanged + 1) * (uint32)sizeof(uint32));
+        }
     }
 
     bool CMaterialInstance::RefreshTextureBindings(const CTexture* ChangedTexture)
     {
-        bool bReferences = (ChangedTexture == nullptr);
-
-        if (!bReferences)
-        {
-            for (const FMaterialParameterOverride& Override : Overrides)
-            {
-                if (Override.Type == EMaterialParameterType::Texture && Override.Texture.Get() == ChangedTexture)
-                {
-                    bReferences = true;
-                    break;
-                }
-            }
-        }
-
-        // Inherited textures come from the root, which is why the driver refreshes masters before instances.
-        if (!bReferences)
-        {
-            const CMaterial* Root = GetMaterial();
-            bReferences = Root != nullptr && Root->ReferencesTexture(ChangedTexture);
-        }
+        // Inherited textures come from the root, which is why roots refresh before instances.
+        const bool bReferences = ChangedTexture == nullptr
+            || Algo::AnyOf(Overrides, [ChangedTexture](const FMaterialParameterOverride& Override)
+               {
+                   return Override.Type == EMaterialParameterType::Texture && Override.Texture.Get() == ChangedTexture;
+               })
+            || (GetMaterial() != nullptr && GetMaterial()->ReferencesTexture(ChangedTexture));
 
         if (!bReferences)
         {
@@ -887,28 +620,19 @@ namespace Lumina
             return true;
         }
 
-        // Asking the parent first, which owns every unoverridden slot, is what makes the rebuild non-blocking.
+        // The parent owns every slot not overridden here, and asking it first keeps the rebuild below non-blocking.
         if (!Material->RequestTexturesResolved())
         {
             return false;
         }
 
-        // Loaded is not GPU-resident, and losing the race with the texture's PostLoad bakes the placeholder.
+        // Loaded is not resident, and losing the race with the texture's PostLoad would bake the placeholder.
         for (const FMaterialParameterOverride& Override : Overrides)
         {
-            if (Override.Type != EMaterialParameterType::Texture || !Override.bEnabled)
-            {
-                continue;
-            }
-
-            // A retained override for a parameter the root dropped binds nothing, so it cannot gate this.
             FMaterialParameter Param;
-            if (!GetParameterValue(EMaterialParameterType::Texture, Override.ParameterName, Param))
-            {
-                continue;
-            }
-
-            if (Override.Texture != nullptr && Override.Texture->GetResourceID() < 0)
+            const bool bBinds = Override.Type == EMaterialParameterType::Texture && Override.bEnabled
+                             && GetParameterValue(EMaterialParameterType::Texture, Override.ParameterName, Param);
+            if (bBinds && Override.Texture != nullptr && Override.Texture->GetResourceID() < 0)
             {
                 return false;
             }
@@ -920,178 +644,161 @@ namespace Lumina
             return true;
         }
 
+        // Rebuilt when an inherited slot lags the parent, or an overridden slot still holds the placeholder.
         const uint32 OverriddenMask = GetOverriddenTextureMask();
         const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();
+        const uint32 Placeholder = RHI::Textures::DefaultResourceID();
+        const uint32 NumSlots = (uint32)Math::Min<size_t>(Root->Textures.size(), MAX_TEXTURES);
 
         bool bNeedsRebuild = false;
-
-        const uint32 NumSlots = (uint32)Math::Min<size_t>(Root->Textures.size(), MAX_TEXTURES);
-        for (uint32 i = 0; i < NumSlots && !bNeedsRebuild; ++i)
-        {
-            if ((OverriddenMask & (1u << i)) == 0)
-            {
-                bNeedsRebuild = MaterialUniforms.Textures[i] != Inherited.Textures[i];
-            }
-        }
-
-        const uint32 Placeholder = RHI::Textures::DefaultResourceID();
         for (uint32 i = 0; i < MAX_TEXTURES && !bNeedsRebuild; ++i)
         {
-            bNeedsRebuild = (OverriddenMask & (1u << i)) != 0
-                         && MaterialUniforms.Textures[i] == Placeholder;
+            const bool bOverridden = (OverriddenMask & (1u << i)) != 0;
+            bNeedsRebuild = bOverridden ? MaterialUniforms.Textures[i] == Placeholder
+                                        : (i < NumSlots && MaterialUniforms.Textures[i] != Inherited.Textures[i]);
         }
 
         if (bNeedsRebuild)
         {
             RebuildUniformsFromOverrides();
-            UpdateMaterialUniforms();
+            UploadMaterialUniforms();
         }
-
-        // Only reachable once the parent resolved, and queued since this gate runs on a worker fiber.
-
         return true;
     }
 
-    FShaderH CMaterialInstance::GetVertexShader() const
+    uint64 CMaterialInstance::GetStaticSwitchKey() const
     {
         CMaterial* Root = GetMaterial();
-        return Root ? Root->GetStageForKey(EMaterialShaderStage::Vertex, GetStaticSwitchKey()) : FShaderH{};
-    }
-
-    FShaderH CMaterialInstance::GetPixelShader() const
-    {
-        CMaterial* Root = GetMaterial();
-        return Root ? Root->GetStageForKey(EMaterialShaderStage::Pixel, GetStaticSwitchKey()) : FShaderH{};
-    }
-
-    bool CMaterialInstance::IsReadyForRender() const
-    {
-        return CMaterialInterface::IsReadyForRender() && Material != nullptr && Material->IsReadyForRender();
-    }
-
-    EMaterialType CMaterialInstance::GetMaterialType() const
-    {
-        return Material ? Material->GetMaterialType() : EMaterialType::None;
-    }
-
-    bool CMaterialInstance::DoesCastShadows() const
-    {
-        return Material ? Material->DoesCastShadows() : false;
-    }
-
-    bool CMaterialInstance::IsTwoSided() const
-    {
-        return Material ? Material->IsTwoSided() : false;
-    }
-
-    bool CMaterialInstance::IsOITResolved()
-    {
-        return Material ? Material->IsOITResolved() : false;
-    }
-
-    bool CMaterialInstance::IsUnorderedBlend()
-    {
-        return Material ? Material->IsUnorderedBlend() : false;
-    }
-
-    bool CMaterialInstance::ReceivesDecals() const
-    {
-        return Material ? Material->ReceivesDecals() : true;
-    }
-
-    bool CMaterialInstance::WritesDepth() const
-    {
-        return Material ? Material->WritesDepth() : false;
-    }
-
-    bool CMaterialInstance::IsShadowOnly() const
-    {
-        return Material ? Material->IsShadowOnly() : false;
-    }
-
-    EBlendMode CMaterialInstance::GetBlendMode()
-    {
-        return Material ? Material->GetBlendMode() : EBlendMode::Opaque;
-    }
-
-    EMaterialShadingModel CMaterialInstance::GetShadingModel()
-    {
-        if (bOverrideShadingModel)
+        if (Root == nullptr || Root->StaticSwitches.empty())
         {
-            return ShadingModelOverride;
+            return 0;
         }
-        return Material ? Material->GetShadingModel() : EMaterialShadingModel::Lit;
+
+        // The common chain overrides no switch at all, which skips the key build.
+        THashMap<FName, bool> Values;
+        GatherStaticSwitchValues(Values);
+        return Values.empty() ? Root->GetDefaultStaticSwitchKey() : Root->MakeStaticSwitchKey(Values);
     }
 
-    void CMaterialInstance::PostLoad()
+    void CMaterialInstance::GatherStaticSwitchValues(THashMap<FName, bool>& OutValues, uint32 Depth) const
     {
-        LUMINA_MEMORY_SCOPE("Materials");
-        if (!Material)
+        if (Depth >= MaxChainDepth)
         {
             return;
         }
 
-        // Register before the parent's PostLoad so its PropagateToChildren reaches this level.
-        Material->RegisterChild(this);
-
-        // The loader's own guard, so a parent that already ran (or is stale for good) is never run twice.
-        if (Material->HasAnyFlag(OF_NeedsPostLoad))
+        if (const CMaterialInstance* ParentInstance = Cast<CMaterialInstance>(Material.Get()))
         {
-            Material->ClearFlags(OF_NeedsPostLoad);
-            Material->PostLoad();
+            ParentInstance->GatherStaticSwitchValues(OutValues, Depth + 1);
         }
-        else
+        for (const FMaterialStaticSwitchOverride& Override : StaticSwitchOverrides)
         {
-            RebuildUniformsFromOverrides();
+            OutValues[Override.ParameterName] = Override.bValue;
         }
-
-        // Headless has no material table; the slot stays -1, which every consumer already handles.
-        if (GetMaterialIndex() == -1)
-        {
-            if (FRenderManager* RenderManager = TryRender())
-            {
-                RenderManager->GetMaterialManager().AddMaterial(this);
-            }
-        }
-        else
-        {
-            UpdateMaterialUniforms();
-        }
-
-        SetReadyForRender(true);
-
-        // A loaded instance may name a permutation the master has never built, and nothing else asks.
-        RequestStaticSwitchPermutation();
-
-        // Surfaces that fell back to the default still record this as a dependency, so they wake here.
-        FMeshResolveCache::InvalidateDependency(this);
     }
 
-    void CMaterialInstance::OnDestroy()
+    bool CMaterialInstance::HasStaticSwitchOverride(const FName& Name) const
     {
-        CMaterialInterface::OnDestroy();
+        return Algo::AnyOf(StaticSwitchOverrides, [&Name](const FMaterialStaticSwitchOverride& Override) { return Override.ParameterName == Name; });
+    }
 
-        // Before MaterialIndex can be recycled by the next material.
-
-        // Resolves are keyed partly on this pointer; drop them before it can be recycled.
-        FMeshResolveCache::InvalidateDependency(this);
-
-        if (Material)
+    bool CMaterialInstance::GetStaticSwitchValue(const FName& Name) const
+    {
+        auto It = Algo::FindIf(StaticSwitchOverrides, [&Name](const FMaterialStaticSwitchOverride& Override) { return Override.ParameterName == Name; });
+        if (It != StaticSwitchOverrides.end())
         {
-            Material->UnregisterChild(this);
+            return It->bValue;
         }
 
-        // An instance outliving the renderer must release quietly rather than assert.
-        if (GetMaterialIndex() != -1)
+        if (const CMaterialInstance* ParentInstance = Cast<CMaterialInstance>(Material.Get()))
         {
-            if (FRenderManager* RenderManager = TryRender())
+            return ParentInstance->GetStaticSwitchValue(Name);
+        }
+
+        if (const CMaterial* Root = GetMaterial())
+        {
+            auto Switch = Algo::FindIf(Root->StaticSwitches, [&Name](const FMaterialStaticSwitch& S) { return S.ParameterName == Name; });
+            return Switch != Root->StaticSwitches.end() && Switch->bDefaultValue;
+        }
+        return false;
+    }
+
+    bool CMaterialInstance::SetStaticSwitchValue(const FName& Name, bool bValue)
+    {
+        CMaterial* Root = GetMaterial();
+        if (Root == nullptr || Root->FindStaticSwitchBit(Name) == Constants::kIndexNone)
+        {
+            WarnMissingParameterOnce("static switch", Name);
+            return false;
+        }
+
+        auto It = Algo::FindIf(StaticSwitchOverrides, [&Name](const FMaterialStaticSwitchOverride& Override) { return Override.ParameterName == Name; });
+        if (It != StaticSwitchOverrides.end())
+        {
+            if (It->bValue == bValue)
             {
-                RHI::FRenderRelease Release;
-                Release.MaterialSlot = GetMaterialIndex();
-                RenderManager->GetReleaseQueue().Post(Release);
+                return true;
             }
-
-            SetMaterialIndex(-1);
+            It->bValue = bValue;
         }
+        else
+        {
+            FMaterialStaticSwitchOverride& Added = StaticSwitchOverrides.emplace_back();
+            Added.ParameterName = Name;
+            Added.bValue        = bValue;
+        }
+
+        OnStaticSwitchesChanged();
+        return true;
+    }
+
+    void CMaterialInstance::RemoveStaticSwitchOverride(const FName& Name)
+    {
+        auto NewEnd = Algo::RemoveIf(StaticSwitchOverrides, [&Name](const FMaterialStaticSwitchOverride& Override) { return Override.ParameterName == Name; });
+        if (NewEnd == StaticSwitchOverrides.end())
+        {
+            return;
+        }
+        StaticSwitchOverrides.erase(NewEnd, StaticSwitchOverrides.end());
+        OnStaticSwitchesChanged();
+    }
+
+    void CMaterialInstance::OnStaticSwitchesChanged()
+    {
+        RequestStaticSwitchPermutation();
+
+        // A switch change swaps the shader set every surface below here cached by handle.
+        FMeshResolveCache::InvalidateDependency(this);
+        PropagateStaticSwitchChange();
+    }
+
+    void CMaterialInstance::PropagateStaticSwitchChange(uint32 Depth)
+    {
+        if (Depth >= MaxChainDepth)
+        {
+            return;
+        }
+
+        for (CMaterialInterface* Child : SnapshotChildren())
+        {
+            CMaterialInstance* ChildInstance = Cast<CMaterialInstance>(Child);
+            if (ChildInstance != nullptr && ChildInstance->GetParentMaterial() == this)
+            {
+                ChildInstance->RequestStaticSwitchPermutation();
+                FMeshResolveCache::InvalidateDependency(ChildInstance);
+                ChildInstance->PropagateStaticSwitchChange(Depth + 1);
+            }
+        }
+    }
+
+    void CMaterialInstance::RequestStaticSwitchPermutation()
+    {
+#if USING(WITH_EDITOR)
+        CMaterial* Root = GetMaterial();
+        if (Root != nullptr && !Root->StaticSwitches.empty())
+        {
+            CMaterial::RequestPermutation(Root, GetStaticSwitchKey());
+        }
+#endif
     }
 }

@@ -5,22 +5,19 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/Object.h"
 #include "Core/Threading/Thread.h"
+#include "Renderer/MaterialTypes.h"
 #include "Renderer/RHIFwd.h"
 #include "Renderer/Vertex.h"
 #include "MaterialInterface.generated.h"
 
 namespace Lumina
 {
-    struct FMaterialUniforms;
     class CMaterial;
     class CTexture;
-    struct FMaterialParameter;
-    enum class EMaterialParameterType : uint8;
 }
 
 namespace Lumina
 {
-
     REFLECT()
     enum class EMaterialType : uint8
     {
@@ -31,7 +28,7 @@ namespace Lumina
         Terrain,
         Decal,
 
-        /** Sprite particles. Expands the emitter's billboard quads and shades them unlit into HDR. */
+        // Sprite particles, expanded to billboard quads and shaded unlit into HDR.
         Particle,
     };
 
@@ -43,17 +40,47 @@ namespace Lumina
         Translucent,
         Additive,
 
-        /** Multiplies the scene by the material color. Commutative, so it needs no sorting and no OIT. */
+        // Multiplies the scene by the material color, which is commutative and so needs no sorting.
         Modulate,
 
-        /** Alpha blending over an already-premultiplied color, resolved through OIT like Translucent. */
+        // Alpha blending over premultiplied color, resolved through OIT like Translucent.
         AlphaComposite,
     };
 
-    // What each domain consumes of a material; the editor, the graph compile and the passes all ask here.
+    // Packed into the GBuffer flags and read back by lighting, so the values match EShadingModel in GBuffer.slang.
+    REFLECT()
+    enum class EMaterialShadingModel : uint8
+    {
+        Lit       = 0,
+        Unlit     = 1,
+
+        // A clear dielectric layer over the base, as on car paint, lacquer and varnish.
+        Clearcoat = 2,
+
+        // Thin two-sided translucency for leaves and grass, paid for with the emissive channels.
+        Foliage   = 3,
+    };
+
+    // Every compiled stage a material can carry, each named by a row of the stage table in Material.cpp.
+    enum class EMaterialShaderStage : uint8
+    {
+        Pixel,
+        Vertex,                     // Non-meshlet domains only, since PBR geometry is mesh shaded end to end.
+        MeshShadow,                 // MeshletMesh.slang, depth only.
+        MeshBase,                   // MeshletMesh.slang with MESHLET_MESH_BASE, for blended geometry.
+        VisBufferMesh,              // MeshletVisBuffer.slang, position only.
+        VisBufferMeshMasked,        // MeshletVisBuffer.slang with VISBUFFER_MASKED_GEOM.
+        MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang, the alpha test for the visibility buffer.
+        Deferred,                   // DeferredMaterial.slang.
+        MeshShadowMasked,           // MeshletMesh.slang with MESHLET_MESH_MASKED_SHADOW.
+        ShadowMaskedPixel,          // ShadowMaskedPixel.slang, the alpha test for shadow maps.
+
+        Count,
+    };
+
+    // What each domain consumes of a material, asked by the editor, the graph compile and the passes alike.
     namespace MaterialDomain
     {
-        // Only PBR draws through the meshlet pipeline; every other domain rasters a vertex stage.
         constexpr bool IsMeshlet(EMaterialType Type)        { return Type == EMaterialType::PBR; }
         constexpr bool UsesVertexStage(EMaterialType Type)  { return Type != EMaterialType::PBR && Type != EMaterialType::None; }
         constexpr bool IsFullscreen(EMaterialType Type)     { return Type == EMaterialType::PostProcess || Type == EMaterialType::UI; }
@@ -71,6 +98,7 @@ namespace Lumina
 
         // Lit through ShadeSurface, which reads the model off the material flags at runtime.
         constexpr bool SupportsShadingModel(EMaterialType Type)       { return Type == EMaterialType::PBR || Type == EMaterialType::Terrain; }
+
         // Shadow casting, two-sidedness, decal receipt and depth test only mean something on a mesh surface.
         constexpr bool SupportsSurfaceRenderState(EMaterialType Type) { return Type == EMaterialType::PBR; }
         constexpr bool SupportsDepthWrite(EMaterialType Type)         { return Type == EMaterialType::PBR || Type == EMaterialType::Particle; }
@@ -78,39 +106,50 @@ namespace Lumina
         RUNTIME_API const char* ToString(EMaterialType Type);
     }
 
-    /**
-     * How a surface is lit. Values MUST match EShadingModel in GBuffer.slang -- they are packed into the
-     * GBuffer flags byte and read back by the lighting pass.
-     *
-     * Note the ordering: Lit is the shader's Default (0), so a material that never sets this behaves as it
-     * always has.
-     */
-    REFLECT()
-    enum class EMaterialShadingModel : uint8
-    {
-        Lit       = 0,
-        Unlit     = 1,
-
-        /** Adds a clear dielectric layer over the base: car paint, lacquer, varnish. */
-        Clearcoat = 2,
-
-        /** Thin two-sided translucency for leaves and grass. Costs the emissive channels. */
-        Foliage   = 3,
-    };
-
+    // A base material or an instance of one. Parameters, textures and shaders are declared by the root, and every level owns a GPU uniform block.
     REFLECT()
     class RUNTIME_API CMaterialInterface : public CObject
     {
         GENERATED_BODY()
     public:
 
-        /** Immediate parent in the instance chain; null on a base material, which is always the root. */
+        CMaterialInterface();
+
+        // Longest parent chain allowed, since resolution is linear in depth and every level costs a GPU slot.
+        static constexpr uint32 MaxChainDepth = 8;
+
+        // The immediate parent, null on a base material.
         FUNCTION()
         virtual CMaterialInterface* GetParentMaterial() const { return nullptr; }
 
-        /** The root base material, which is the only level that DECLARES parameters, textures and stages. */
+        // The root base material.
         FUNCTION()
         virtual CMaterial* GetMaterial() const { return nullptr; }
+
+        // Idempotent, since children of one parent register concurrently during the parallel PostLoad wave.
+        void RegisterChild(CMaterialInterface* Child);
+        void UnregisterChild(CMaterialInterface* Child);
+
+        // Refreshes this level and then every descendant.
+        void RefreshSubtree();
+
+        // Depth-first RefreshFromParent over every descendant, excluding this level.
+        void PropagateToChildren(uint32 Depth = 0);
+
+        // Depth-first RefreshInheritedTextureSlots over every descendant.
+        void PropagateInheritedTextureSlots(uint32 Depth = 0);
+
+        // Pushes one parameter's value down the subtree, skipping every branch that overrides it.
+        void PropagateParameterToChildren(EMaterialParameterType Type, const FName& Name, uint16 Index, uint32 Depth = 0);
+
+        // Re-derives this level from its parent and uploads the result.
+        virtual void RefreshFromParent() { }
+
+        // Copies the parent's texture slots into every slot this level does not override.
+        virtual void RefreshInheritedTextureSlots() { }
+
+        // Adopts the parent's value for one parameter, returning false when this level overrides it.
+        virtual bool InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index) { return false; }
 
         FUNCTION()
         virtual bool SetVectorValue(const FName& Name, const FVector4& Value) { return false; }
@@ -118,18 +157,18 @@ namespace Lumina
         FUNCTION()
         virtual bool SetScalarValue(const FName& Name, const float Value) { return false; }
 
-        /** Only an instance can diverge on a texture, so a base material refuses this. */
+        // Only an instance can diverge on a texture, so a base material refuses this.
         FUNCTION()
         virtual bool SetTextureValue(const FName& Name, CTexture* Value) { return false; }
 
-        /** This level's effective value for Name, or Default when the root declares no such parameter. */
+        // This level's effective value, or Default when the root declares no such parameter.
         FUNCTION()
         float GetScalarValue(const FName& Name, float Default = 0.0f);
 
         FUNCTION()
         FVector4 GetVectorValue(const FName& Name, FVector4 Default = FVector4(0.0f));
 
-        /** The texture bound at this level for Name, found by walking up the chain. */
+        // The texture bound at this level for Name, found by walking up the chain.
         FUNCTION()
         CTexture* GetTextureValue(const FName& Name);
 
@@ -142,124 +181,94 @@ namespace Lumina
         FUNCTION()
         bool HasTextureParameter(const FName& Name);
 
+        // The root's declaration of Name, which every level shares.
         virtual bool GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param) { return false; }
-        virtual FMaterialUniforms* GetMaterialUniforms() { return nullptr; }
+
+        FMaterialUniforms* GetMaterialUniforms() { return &MaterialUniforms; }
+        const FMaterialUniforms* GetMaterialUniforms() const { return &MaterialUniforms; }
 
         int32 GetMaterialIndex() const { return MaterialIndex; }
-
         void SetMaterialIndex(int32 Index) { MaterialIndex = Index; }
 
-        virtual FShaderH GetVertexShader() const { return {}; }
-        virtual FShaderH GetPixelShader() const { return {}; }
+        EMaterialType GetMaterialType() const;
+        EBlendMode GetBlendMode() const;
+        virtual EMaterialShadingModel GetShadingModel() const;
+        bool DoesCastShadows() const;
+        bool IsTwoSided() const;
 
-        virtual EMaterialType GetMaterialType() const { return EMaterialType::None; }
+        // False keeps DBuffer decals off the surface, which skin, glass, foliage and water all want.
+        bool ReceivesDecals() const;
 
-        /** Ready to draw and rooted in a master compiled for Domain. PBR resolves through FMeshResolveCache instead. */
-        bool IsUsableInDomain(EMaterialType Domain) const;
+        // Depth write for the unordered blend passes, which the OIT lane cannot honor.
+        bool WritesDepth() const;
 
-        /** IsUsableInDomain plus both raster stages at this level's static-switch key; false leaves the outputs null. */
-        bool ResolveDomainShaders(EMaterialType Domain, FShaderH& OutVertex, FShaderH& OutPixel) const;
+        // Casts into shadow maps but is culled from every camera view, for invisible shadow proxies.
+        bool IsShadowOnly() const;
 
-        virtual bool DoesCastShadows() const { return false; }
-        virtual bool IsTwoSided() const { return false; }
-        virtual EBlendMode GetBlendMode() { return EBlendMode::Opaque; }
-        virtual EMaterialShadingModel GetShadingModel() { return EMaterialShadingModel::Lit; }
+        // Accumulated into the weighted blended OIT targets rather than blended in draw order.
+        bool IsOITResolved() const;
 
-        /** False keeps DBuffer decals off the surface, which skin, glass, foliage and water all want. */
-        virtual bool ReceivesDecals() const { return true; }
+        // Blends straight into scene color with a commutative operator, so it needs no sorting.
+        bool IsUnorderedBlend() const;
 
-        /** Depth write for the unordered blend passes; the OIT lane accumulates and cannot honor it. */
-        virtual bool WritesDepth() const { return false; }
-
-        /** Casts into shadow maps but is culled out of every camera view, for invisible shadow proxies. */
-        virtual bool IsShadowOnly() const { return false; }
-
-        /** Accumulated into the weighted blended OIT targets rather than blended in draw order. */
-        virtual bool IsOITResolved() { return false; }
-
-        /** Blends straight into scene color with a commutative operator, so no moments and no sorting. */
-        virtual bool IsUnorderedBlend() { return false; }
-
-        /** Permutation key this level selects, derived per call so a master recompile cannot stale it. */
+        // The permutation this level selects, derived per call so a root recompile cannot leave it stale.
         virtual uint64 GetStaticSwitchKey() const { return 0; }
 
+        // Stage at this level's permutation, falling back to the root's default set.
+        FShaderH GetShader(EMaterialShaderStage Stage) const;
+        FShaderH GetVertexShader() const { return GetShader(EMaterialShaderStage::Vertex); }
+        FShaderH GetPixelShader() const { return GetShader(EMaterialShaderStage::Pixel); }
+
+        // Ready to draw and rooted in a material compiled for Domain. PBR resolves through FMeshResolveCache instead.
+        bool IsUsableInDomain(EMaterialType Domain) const;
+
+        // IsUsableInDomain plus both raster stages at this level's permutation, leaving the outputs null on failure.
+        bool ResolveDomainShaders(EMaterialType Domain, FShaderH& OutVertex, FShaderH& OutPixel) const;
+
         void SetReadyForRender(bool bReady) { bReadyForRender.store(bReady, std::memory_order_release); }
+
         // An instance also needs its whole parent chain ready, since the shaders live at the root.
         virtual bool IsReadyForRender() const { return bReadyForRender.load(std::memory_order_acquire); }
 
-        /** Longest parent chain allowed. Resolution is linear in depth and every level costs a GPU slot. */
-        static constexpr uint32 MaxChainDepth = 8;
-
-        /** Idempotent. Children of one parent register concurrently during the parallel PostLoad wave. */
-        void RegisterChild(CMaterialInterface* Child);
-        void UnregisterChild(CMaterialInterface* Child);
-
-        /** THIS level only. Re-derive values from the parent and push them to this material's GPU slot. */
-        virtual void RefreshFromParent() { }
-
-        /** Copy the parent's texture slots for every slot this level does not override. */
-        virtual void RefreshInheritedTextureSlots() { }
-
-        /** Bindless resource ID this level's resolved block holds for texture slot Index. */
+        // The bindless ID this level's block holds for texture slot Index.
         virtual uint32 GetResolvedTextureSlot(uint32 Index);
 
-        /** The texture actually bound to parameter Name at slot Index, found by walking up the chain. */
+        // The texture bound to parameter Name at slot Index, found by walking up the chain.
         virtual CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) { return nullptr; }
 
-        /** Refreshes this level and then every descendant. */
-        void RefreshSubtree();
-
-        /** Depth-first RefreshFromParent over every descendant, excluding this level. */
-        void PropagateToChildren(uint32 Depth = 0);
-
-        /** Depth-first RefreshInheritedTextureSlots over every descendant. */
-        void PropagateInheritedTextureSlots(uint32 Depth = 0);
-
-        /** Pushes ONE parameter's value down the subtree, skipping any branch that overrides it. */
-        void PropagateParameterToChildren(EMaterialParameterType Type, const FName& Name, uint16 Index, uint32 Depth = 0);
-
-        /** Adopts the parent's value for one parameter. False = overridden here, so the branch below is unaffected. */
-        virtual bool InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index) { return false; }
-
-        /** Re-reads this material's texture ResourceIDs into its uniform block and re-uploads it, if it
-         *  binds ChangedTexture (null = refresh unconditionally). Returns whether it did.
-         *
-         *  The bindless index itself is stable across a re-cook (RHI::Textures::Recreate repoints the slot
-         *  rather than allocating a new one), so this is NOT about a moved slot. It is about the two cases
-         *  where the baked value is simply WRONG: a texture that had no valid ResourceID when the block was
-         *  written -- an asset that failed to cook, or was not resident yet -- was baked as the fallback and
-         *  stays there forever, and a texture reference that was null at bake time never got written at all. */
+        // Re-bakes texture IDs when this level binds ChangedTexture, or always when it is null, so a slot baked before residency heals.
         virtual bool RefreshTextureBindings(const CTexture* ChangedTexture) { return false; }
 
-        /** True when every texture this material samples is GPU-resident. False kicks async loads for the
-         *  ones that are not and asks the caller to fall back to the default material for now; the load
-         *  completion calls FMeshResolveCache::InvalidateDependency to wake the surface.
-         *
-         *  Non-blocking: the resolve gate runs on a worker fiber inside Extract. */
+        // Non-blocking, since it runs on an Extract worker. False kicks async loads and asks the caller to draw the default material for now.
         virtual bool RequestTexturesResolved() { return true; }
 
-        /** Tell the texture streamer which textures this material's GPU slot samples.
-         *
-         *  The renderer reports screen coverage per material slot (an integer it already has in the draw
-         *  path) and knows nothing about textures; this mapping is what turns that into per-texture
-         *  residency demand. A stale mapping means a visible texture is never demanded and stays at its
-         *  inline tail.
-         *
-         *  GAME THREAD ONLY -- it walks ResolvedTextures, which the async load completion writes. Every
-         *  other thread marks/queues instead and lets the streamer's drain call this. */
     protected:
 
-        virtual void UpdateMaterialUniforms() { }
+        // Takes a GPU slot when this level has none, otherwise uploads the whole block to it.
+        void AcquireOrUploadMaterialSlot();
 
-        /** Pushes one already-written field of this level's block to its slot; a matching write is dropped. */
+        // Hands the slot back to the renderer's release queue, before the index can be recycled.
+        void ReleaseMaterialSlot();
+
+        // Uploads the whole block. A slot is only ever handed out by the material manager, so holding one implies a renderer.
+        void UploadMaterialUniforms();
+
+        // Uploads one field of the block that has already been written.
         void UploadUniformField(uint32 ByteOffset, const void* Data, uint32 ByteSize);
 
+        // Write one slot of the block and upload it, ignoring indices past the budget.
+        void WriteScalarSlot(uint32 Index, float Value);
+        void WriteVectorSlot(uint32 Index, const FVector4& Value);
+        void WriteTextureSlot(uint32 Index, uint32 ResourceID);
 
-        std::atomic_bool        bReadyForRender;
+        // A snapshot, so no lock is held down the chain while each child refreshes.
+        TVector<CMaterialInterface*> SnapshotChildren();
 
-        int32                   MaterialIndex = -1;
+        FMaterialUniforms               MaterialUniforms;
+        int32                           MaterialIndex = -1;
+        std::atomic_bool                bReadyForRender { false };
 
-        /** Instances parented to this level. Raw pointers; a child unregisters in its OnDestroy. */
+        // Raw pointers, since a child unregisters itself in its OnDestroy.
         TVector<CMaterialInterface*>    Children;
         FMutex                          ChildrenMutex;
     };

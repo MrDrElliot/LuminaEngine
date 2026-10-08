@@ -121,7 +121,7 @@ namespace Lumina
         // Slot 0 is the reserved zero collection, so an unbound material reads zeros with no sentinel.
         for (uint32 i = 0; i < MAX_MATERIAL_COLLECTIONS; ++i)
         {
-            EXPECT_EQ(Material->MaterialUniforms.CollectionIndices[i], 0u);
+            EXPECT_EQ(Material->GetMaterialUniforms()->CollectionIndices[i], 0u);
         }
     }
 

@@ -830,7 +830,7 @@ namespace Lumina
         // The deferred permutation shades opaque geometry, so its register count is the one that matters.
         const struct { const char* Label; FShaderH Entry; } Lanes[] =
         {
-            { "Deferred (VisBuffer)", Material->GetDeferredShader() },
+            { "Deferred (VisBuffer)", Material->GetStage(EMaterialShaderStage::Deferred) },
             { "Forward Pixel",        Material->GetPixelShader()    },
         };
 

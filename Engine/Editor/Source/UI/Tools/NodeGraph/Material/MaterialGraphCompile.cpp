@@ -300,7 +300,7 @@ namespace Lumina
                 Material->ResolveTextureSlot(i);
                 Resolved.push_back(i < (uint32)Material->ResolvedTextures.size() ? Material->ResolvedTextures[i] : nullptr);
             }
-            Compiler.SeedManifest(Material->Parameters, Material->MaterialUniforms, Resolved,
+            Compiler.SeedManifest(Material->Parameters, *Material->GetMaterialUniforms(), Resolved,
                 Material->ParameterCollections);
 
             // Rebuilt from nothing, so a stage the new graph no longer emits cannot linger.
@@ -591,9 +591,9 @@ namespace Lumina
         // Slot order is what the shader compiled against, so this is an assign, never a merge.
         Compiler.GetBoundCollections(Material->ParameterCollections);
 
-        Memory::Memzero(&Material->MaterialUniforms, sizeof(FMaterialUniforms));
+        Memory::Memzero(Material->GetMaterialUniforms(), sizeof(FMaterialUniforms));
         Material->Parameters.clear();
-        Compiler.GetParameters(Material->Parameters, Material->MaterialUniforms);
+        Compiler.GetParameters(Material->Parameters, *Material->GetMaterialUniforms());
 
         // A permutation never reaches a switch nested under a dropped branch, so it must not renumber.
         if (!Target.bPermutation)

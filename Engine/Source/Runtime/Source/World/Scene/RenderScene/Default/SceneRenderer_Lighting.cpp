@@ -286,7 +286,7 @@ namespace Lumina
         // Overflow shades through the default material rather than not at all. It reads the overflowed
         // material's own uniforms, so the surface is wrong but lit, which reads as a bug instead of a hole.
         CMaterial* DefaultMaterial = CMaterial::GetDefaultMaterial();
-        const FShaderH FallbackShader = IsValid(DefaultMaterial) ? DefaultMaterial->GetDeferredShader() : FShaderH{};
+        const FShaderH FallbackShader = IsValid(DefaultMaterial) ? DefaultMaterial->GetStage(EMaterialShaderStage::Deferred) : FShaderH{};
 
         // One slot held back for the fallback, so a frame that fills the table can still claim it.
         const uint32 SlotBudget = FallbackShader ? (GMaterialMaxSlots - 1u) : GMaterialMaxSlots;
