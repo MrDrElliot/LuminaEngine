@@ -776,6 +776,12 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdBarrier(FCmdListH CL, EStageFlags Before, EAccessFlags BeforeAccess,
                                        EStageFlags After, EAccessFlags AfterAccess);
 
+    // A pair recorded on the giving and receiving queues, which a family reading another family's image writes needs.
+    RUNTIME_API void        CmdReleaseTexture(FCmdListH CL, FTextureH Texture, EQueueType ToQueue);
+    RUNTIME_API void        CmdAcquireTexture(FCmdListH CL, FTextureH Texture, EQueueType FromQueue);
+
+    RUNTIME_API EQueueType  GetCommandListQueue(FCmdListH CL);
+
     inline void CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After)
     {
         CmdBarrier(CL, Before, EAccessFlags::Any, After, EAccessFlags::Any);

@@ -7383,6 +7383,57 @@ namespace Lumina::RHI
         vkCmdPipelineBarrier2(VkCmdBuf, &DepInfo);
     }
 
+    static void CmdQueueOwnershipTransfer(FCmdListH CL, FTextureH Texture, EQueueType From, EQueueType To, bool bRelease)
+    {
+        const uint32 FromFamily = GDevice->QueueFamilies[(uint32)From];
+        const uint32 ToFamily   = GDevice->QueueFamilies[(uint32)To];
+        const FTexture* Tex     = GDevice->Textures.TryGet(Texture);
+        if (FromFamily == ToFamily || Tex == nullptr)
+        {
+            return;
+        }
+
+        // The release half carries only the source scope and the acquire half only the destination, as the spec reads them.
+        const VkImageMemoryBarrier2 Barrier
+        {
+            .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .pNext               = nullptr,
+            .srcStageMask        = bRelease ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_2_NONE,
+            .srcAccessMask       = bRelease ? VK_ACCESS_2_MEMORY_WRITE_BIT : VK_ACCESS_2_NONE,
+            .dstStageMask        = bRelease ? VK_PIPELINE_STAGE_2_NONE : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .dstAccessMask       = bRelease ? VK_ACCESS_2_NONE : (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT),
+            .oldLayout           = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout           = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = FromFamily,
+            .dstQueueFamilyIndex = ToFamily,
+            .image               = Tex->Image,
+            .subresourceRange    = FullSubresourceRange(AspectsForFormat(Tex->Desc.Format)),
+        };
+
+        const VkDependencyInfo DepInfo
+        {
+            .sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers    = &Barrier,
+        };
+        vkCmdPipelineBarrier2(GDevice->CommandLists[CL].CommandBuffer, &DepInfo);
+    }
+
+    void CmdReleaseTexture(FCmdListH CL, FTextureH Texture, EQueueType ToQueue)
+    {
+        CmdQueueOwnershipTransfer(CL, Texture, GDevice->CommandLists[CL].Queue, ToQueue, true);
+    }
+
+    void CmdAcquireTexture(FCmdListH CL, FTextureH Texture, EQueueType FromQueue)
+    {
+        CmdQueueOwnershipTransfer(CL, Texture, FromQueue, GDevice->CommandLists[CL].Queue, false);
+    }
+
+    EQueueType GetCommandListQueue(FCmdListH CL)
+    {
+        return GDevice->CommandLists[CL].Queue;
+    }
+
     void CmdBeginRenderPass(FCmdListH CL, const FRenderPassDesc& Desc)
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;

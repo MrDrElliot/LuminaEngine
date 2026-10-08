@@ -30,6 +30,146 @@ namespace Lumina
         return Wanted;
     }
 
+    namespace
+    {
+        TConsoleVar<bool> CVarSplitMeshletPhases(
+            "r.SplitMeshletPhases",
+            true,
+            "Build late-phase meshlet blocks after the pyramid, only for instances it leaves visible, instead of culling every block twice.");
+
+        TConsoleVar<bool> CVarInstanceBlockCull(
+            "r.InstanceBlockCull",
+            true,
+            "Skip whole groups of 64 retained instances the camera is farther from than any of them can draw.");
+    }
+
+    namespace
+    {
+        FInstanceBlockBounds ComputeInstanceBlockBounds(const FInstanceCullEntry* Entries, uint32 First, uint32 End, bool bGPUWritten)
+        {
+            constexpr uint32 ActiveBit   = (uint32)EInstanceFlags::Active << 16;
+            constexpr uint32 NoCullBit   = (uint32)EInstanceFlags::IgnoreOcclusionCulling << 16;
+            constexpr float  Unreachable = -1.0f;
+
+            FVector3 Lo(std::numeric_limits<float>::max());
+            FVector3 Hi(-std::numeric_limits<float>::max());
+            float    Reach      = Unreachable;
+            bool     bUnbounded = bGPUWritten;
+            for (uint32 Slot = First; Slot < End; ++Slot)
+            {
+                const FInstanceCullEntry& Entry = Entries[Slot];
+                if ((Entry.DrawIDAndFlags & ActiveBit) == 0u)
+                {
+                    continue;
+                }
+
+                // Matches the instance test, which skips the distance cut for these.
+                bUnbounded = bUnbounded || (Entry.DrawIDAndFlags & NoCullBit) != 0u || Entry.MaxDrawDistance <= 0.0f;
+
+                const FVector3 Center = FVector3(Entry.SphereBounds);
+                const FVector3 Radius = FVector3(Entry.SphereBounds.w);
+                Lo    = Math::Min(Lo, Center - Radius);
+                Hi    = Math::Max(Hi, Center + Radius);
+                Reach = Math::Max(Reach, Entry.MaxDrawDistance);
+            }
+
+            FInstanceBlockBounds Out;
+            Out.bAlwaysScan = bUnbounded ? 1u : 0u;
+            Out.Reach       = Reach;
+            Out.Min         = Reach < 0.0f ? FVector3(0.0f) : Lo;
+            Out.Max         = Reach < 0.0f ? FVector3(0.0f) : Hi;
+            return Out;
+        }
+
+        bool OverlapsAny(const TVector<FUIntVector2>& Ranges, uint32 First, uint32 End)
+        {
+            for (const FUIntVector2& Range : Ranges)
+            {
+                if (First < Range.x + Range.y && Range.x < End)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    // Every instance in a block the camera can reach is still tested one by one, so the skip never changes what is drawn.
+    void FDefaultSceneRenderer::UpdateInstanceBlockBounds(RHI::FCmdListH CL, bool bFull, const TVector<uint32>& DirtySlots, uint32 NumSlots)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const FInstanceCullEntry* Entries = ScenePrimitives.GetRetainedCullEntries();
+        const uint32 NumBlocks = (NumSlots + kInstanceCullBlockSize - 1u) / kInstanceCullBlockSize;
+        if (NumBlocks == 0u || Entries == nullptr)
+        {
+            bInstanceBlockBoundsValid = false;
+            return;
+        }
+
+        ScenePrimitives.GetGPUWrittenSlotRanges(GPUWrittenSlotRanges);
+
+        const bool bRebuildAll = bFull || !bInstanceBlockBoundsValid || InstanceBlockBounds.size() != NumBlocks;
+        ReserveBuffer(CL, InstanceBlockBoundsBuffer, (uint64)NumBlocks * sizeof(FInstanceBlockBounds),
+                      /*bAllowShrink*/ bRebuildAll, /*bPreserveContents*/ !bRebuildAll);
+        if (InstanceBlockBoundsBuffer.CapacityOf<FInstanceBlockBounds>() < NumBlocks)
+        {
+            bInstanceBlockBoundsValid = false;
+            return;
+        }
+
+        const auto BuildBlock = [&](uint32 Block)
+        {
+            const uint32 First = Block * kInstanceCullBlockSize;
+            const uint32 End   = Math::Min(First + kInstanceCullBlockSize, NumSlots);
+            InstanceBlockBounds[Block] = ComputeInstanceBlockBounds(Entries, First, End, OverlapsAny(GPUWrittenSlotRanges, First, End));
+        };
+
+        if (bRebuildAll)
+        {
+            InstanceBlockBounds.resize(NumBlocks);
+            Task::ParallelFor(NumBlocks, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 Block = Range.Start; Block < Range.End; ++Block)
+                {
+                    BuildBlock(Block);
+                }
+            }, 256);
+            StageWrite(InstanceBlockBoundsBuffer.Gpu, InstanceBlockBounds.data(), (uint64)NumBlocks * sizeof(FInstanceBlockBounds));
+        }
+        else
+        {
+            DirtyInstanceBlocks.clear();
+            for (uint32 Slot : DirtySlots)
+            {
+                if (Slot < NumSlots)
+                {
+                    DirtyInstanceBlocks.push_back(Slot / kInstanceCullBlockSize);
+                }
+            }
+            Algo::Sort(DirtyInstanceBlocks);
+            DirtyInstanceBlocks.erase(std::unique(DirtyInstanceBlocks.begin(), DirtyInstanceBlocks.end()), DirtyInstanceBlocks.end());
+
+            // Consecutive dirty blocks go up as one write.
+            for (SIZE_T i = 0; i < DirtyInstanceBlocks.size();)
+            {
+                const uint32 RunStart = DirtyInstanceBlocks[i];
+                uint32 RunEnd = RunStart;
+                while (i < DirtyInstanceBlocks.size() && DirtyInstanceBlocks[i] == RunEnd)
+                {
+                    BuildBlock(RunEnd);
+                    ++RunEnd;
+                    ++i;
+                }
+                StageWrite(InstanceBlockBoundsBuffer.Gpu + (uint64)RunStart * sizeof(FInstanceBlockBounds),
+                           &InstanceBlockBounds[RunStart], (uint64)(RunEnd - RunStart) * sizeof(FInstanceBlockBounds));
+            }
+        }
+
+        FlushStagedWrites(CL);
+        bInstanceBlockBoundsValid = true;
+    }
+
     void FDefaultSceneRenderer::UploadBoneArena(RHI::FCmdListH CL, const FFrameData& Frame)
     {
         const TVector<FBoneTransform>& Mirror = Frame.Geometry.BonesData;
@@ -1036,7 +1176,12 @@ namespace Lumina
                     CollectRuns(Upload.DirtyStaticSlots, RetainedRunScratch);
                     WriteBufferRuns(CL, RetainedStaticBuffer.Gpu, SrcStatic, sizeof(FInstanceStatic), RetainedRunScratch, true);
                 }
+                UpdateInstanceBlockBounds(CL, Upload.bFull, Upload.DirtySlots, RetainedSlots);
                 LaunchDeferredStageFills();
+            }
+            else
+            {
+                bInstanceBlockBoundsValid = false;
             }
             const uint32 CullCap      = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>();
             const uint32 TransformCap = RetainedTransformBuffer.CapacityOf<FTransform3x4>();
@@ -1115,8 +1260,9 @@ namespace Lumina
                 RHI::TGPUSpan<FSkinnedFrameData>  SkinnedFrameData;
                 RHI::TGPUSpan<FPreSkinnedVertex>  PreSkinArena;
                 RHI::TGPUSpan<uint32>             OutPreSkinCursor;
+                RHI::TGPUSpan<FInstanceBlockBounds> BlockBounds;
             };
-            static_assert(sizeof(FCullInstancesPC) == 208, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 224, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
             PC.NumViews               = NumCullViews;
@@ -1135,6 +1281,10 @@ namespace Lumina
             PC.SkinnedFrameData       = { SkinnedFrameDataBuffer };
             PC.PreSkinArena           = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
             PC.OutPreSkinCursor       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address + sizeof(uint32) * 2, 1u);
+            // An empty span turns the block skip off, which is the safe answer whenever the bounds are not current.
+            PC.BlockBounds            = bInstanceBlockBoundsValid && CVarInstanceBlockCull.GetValue()
+                                      ? RHI::TGPUSpan<FInstanceBlockBounds>{ InstanceBlockBoundsBuffer, (uint32)InstanceBlockBounds.size() }
+                                      : RHI::TGPUSpan<FInstanceBlockBounds>{};
 
             // Blades are appended into the retained block here, between its upload and the cull that
             // reads it, so grass is just more instances by the time anything downstream looks.
@@ -1187,45 +1337,11 @@ namespace Lumina
                 RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
         }
 
+        if (NumCullViews > 0u)
         {
-            static const FShaderH BlocksShader = FShaderLibrary::Get("BuildMeshletBlocks.slang");
-            if (BlocksShader && NumCullViews > 0u)
-            {
-                LUMINA_PROFILE_SECTION_COLORED("Build Meshlet Blocks", tracy::Color::Magenta2);
-                SCENE_GPU_SCOPE(CL, "Build Meshlet Blocks");
-
-                struct FBuildMeshletBlocksPC
-                {
-                    uint32 NumViews;
-                    uint32 NumBatches;
-                    RHI::TGPUSpan<uint32>           InstanceCount;
-                    RHI::TGPUSpan<FGPUInstance>     VisibleInstances;
-                    RHI::TGPUSpan<FUIntVector2>     InstanceViewRanges;
-                    RHI::TGPUSpan<FRenderBucketGPU> Buckets;
-                    RHI::TGPUSpan<FUIntVector2>     OutBlockList;
-                    RHI::TGPUSpan<FSurfaceDescGPU>  SurfaceDescs;
-                } BPC = {};
-                static_assert(sizeof(FBuildMeshletBlocksPC) == 104, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
-
-                BPC.NumViews           = NumCullViews;
-                BPC.NumBatches         = NumBatches;
-                BPC.InstanceCount      = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 4u);
-                BPC.VisibleInstances   = { VisibleInstanceRing[Slot], VisibleCapacity };
-                BPC.InstanceViewRanges = { GetInstanceViewRanges() };
-                BPC.Buckets            = { GetRenderBuckets() };
-                BPC.OutBlockList       = { GetMeshletBlocks(), BlockListCapacity };
-                BPC.SurfaceDescs       = { SurfaceDescBuffer, UploadedSurfaceDescs };
-
-                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BlocksShader));
-
-                RHI::CmdDispatchIndirect(CL, MakeArgs(BPC), GetBlockDispatchArgs());
-
-                // The block list has exactly one reader, and it is compute now in MeshletCullPass below.
-                RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                    RHI::EStageFlags::Compute,
-                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-            }
+            LUMINA_PROFILE_SECTION_COLORED("Build Meshlet Blocks", tracy::Color::Magenta2);
+            SCENE_GPU_SCOPE(CL, "Build Meshlet Blocks");
+            DispatchMeshletBlockBuild(CL, /*bLatePass*/ false);
         }
 
         // Every view's meshlets, culled once; everything after reads what this wrote.
@@ -1240,6 +1356,58 @@ namespace Lumina
     }
 
     //~ Begin new-RHI helpers
+
+    void FDefaultSceneRenderer::DispatchMeshletBlockBuild(RHI::FCmdListH CL, bool bLatePass)
+    {
+        static const FShaderH BlocksShader = FShaderLibrary::Get("BuildMeshletBlocks.slang");
+        const uint32 NumCullViews = RenderFrame != nullptr ? (uint32)RenderFrame->Views.CullViews.size() : 0u;
+        if (!BlocksShader || NumCullViews == 0u)
+        {
+            return;
+        }
+
+        struct FBuildMeshletBlocksPC
+        {
+            uint32 NumViews;
+            uint32 NumBatches;
+            RHI::TGPUSpan<uint32>           InstanceCount;
+            RHI::TGPUSpan<FGPUInstance>     VisibleInstances;
+            RHI::TGPUSpan<FUIntVector2>     InstanceViewRanges;
+            RHI::TGPUSpan<FRenderBucketGPU> Buckets;
+            RHI::TGPUSpan<FUIntVector2>     OutBlockList;
+            RHI::TGPUSpan<FSurfaceDescGPU>  SurfaceDescs;
+            uint32 BuildMode;
+            uint32 VisibilityTag;
+            RHI::TGPUSpan<uint32>           PrevVisibility;
+        } BPC = {};
+        static_assert(sizeof(FBuildMeshletBlocksPC) == 128, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
+
+        BPC.NumViews           = NumCullViews;
+        BPC.NumBatches         = Math::Max(RenderFrame->Views.NumDrawsPerView, 1u);
+        BPC.InstanceCount      = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 4u);
+        BPC.VisibleInstances   = { VisibleInstanceRing[CurrentFrameSlot], FrameVisibleInstanceCapacity };
+        BPC.InstanceViewRanges = { GetInstanceViewRanges() };
+        BPC.Buckets            = { GetRenderBuckets() };
+        BPC.OutBlockList       = { GetMeshletBlocks(), BlockListCapacity };
+        BPC.SurfaceDescs       = { SurfaceDescBuffer, UploadedSurfaceDescs };
+        // Latched by the early build, so a console change between the two builds cannot split one phase and not the other.
+        if (!bLatePass)
+        {
+            bSplitMeshletPhasesThisFrame = CVarSplitMeshletPhases.GetValue();
+        }
+        BPC.BuildMode          = bLatePass ? 1u : (bSplitMeshletPhasesThisFrame ? 0u : 2u);
+        BPC.VisibilityTag      = InstanceVisibilityTag;
+        BPC.PrevVisibility     = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BlocksShader));
+        RHI::CmdDispatchIndirect(CL, MakeArgs(BPC), GetBlockDispatchArgs());
+
+        // The block list has exactly one reader, and it is compute now in MeshletCullPass below.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+    }
 
     void FDefaultSceneRenderer::MeshletCullPass(RHI::FCmdListH CL, EMeshletSlice Slice)
     {
@@ -1260,6 +1428,13 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Meshlet Cull", tracy::Color::Magenta);
         SCENE_GPU_SCOPE(CL, "Meshlet Cull");
 
+        // Instances last frame did not see get their blocks only now, and only if this frame's pyramid leaves them visible.
+        if (Slice == EMeshletSlice::Late && bSplitMeshletPhasesThisFrame)
+        {
+            SCENE_GPU_SCOPE(CL, "Build Late Meshlet Blocks");
+            DispatchMeshletBlockBuild(CL, /*bLatePass*/ true);
+        }
+
         struct FCullArgsPC
         {
             uint32 NumViews;
@@ -1268,7 +1443,7 @@ namespace Lumina
             uint32 bPost;
             uint32 MaxMeshGroups;
             uint32 SubDrawsPerSlice;
-            uint32 _Pad0;
+            uint32 bSplitPhases;
             uint32 _Pad1;
             RHI::TGPUSpan<FRenderBucketGPU> Buckets;
             RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutCullDispatchArgs;
@@ -1281,6 +1456,7 @@ namespace Lumina
         APC.Slice                   = (uint32)Slice;
         APC.MaxMeshGroups           = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
         APC.SubDrawsPerSlice        = MeshSubDrawsPerSlice;
+        APC.bSplitPhases            = bSplitMeshletPhasesThisFrame ? 1u : 0u;
         APC.Buckets             = { GetRenderBuckets() };
         APC.OutCullDispatchArgs = { GetMeshletCullDispatchArgs() };
         APC.OutMeshDrawArgs     = { GetMeshDrawArgs() };
@@ -1300,17 +1476,20 @@ namespace Lumina
             uint32 NumDraws;
             uint32 Slice;
             uint32 VisibilityTag;
+            uint32 bSplitPhases;
+            uint32 _Pad0;
             RHI::TGPUSpan<FRenderBucketGPU> Buckets;
             RHI::TGPUSpan<FUIntVector2>     BlockList;
             RHI::TGPUSpan<uint32>           PrevVisibility;
             RHI::TGPUSpan<uint32>           OutVisibility;
         } CPC = {};
-        static_assert(sizeof(FMeshletCullPC) == 80, "FMeshletCullPC must match MeshletCull.slang.");
+        static_assert(sizeof(FMeshletCullPC) == 88, "FMeshletCullPC must match MeshletCull.slang.");
 
         CPC.NumViews       = NumViews;
         CPC.NumDraws       = NumDraws;
         CPC.Slice          = (uint32)Slice;
         CPC.VisibilityTag  = InstanceVisibilityTag;
+        CPC.bSplitPhases   = APC.bSplitPhases;
         CPC.Buckets        = { GetRenderBuckets() };
         CPC.BlockList      = { GetMeshletBlocks() };
         CPC.PrevVisibility = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };

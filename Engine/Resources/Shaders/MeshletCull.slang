@@ -33,6 +33,9 @@ struct FMeshletCullArgs
     uint            Slice;
     // This frame's stamp. A slot is visible from last frame iff it holds VisibilityTag - 1.
     uint            VisibilityTag;
+    // Matches the block build, so the late phase reads the back region only when the build put blocks there.
+    uint            bSplitPhases;
+    uint            _Pad0;
 
     GPUSpan<FRenderBucket> Buckets;
     GPUSpan<FMeshletBlock> BlockList;
@@ -94,11 +97,16 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         const FRenderBucket Bucket = SpanGetAligned(&Pass().Buckets, ArgIdx);
         const uint BlockSlot = WorkIndex - Bucket.CullWorkBase;
 
-        // Bounded by what BuildMeshletBlocks APPENDED, not what CullInstances reserved: blocks above the
-        // cursor hold last frame's ring, and an InstanceID out of one is a wild pointer.
-        const uint BlocksWritten = min(Bucket.BlockCursor, Bucket.BlockCapacity);
+        // The late phase of a split bucket culls only the blocks the late build appended at the region's end.
+        const bool bBackRegion = bLate && Pass().bSplitPhases != 0u && CullViewHasFlag(ArgIdx / NumDraws, CULL_VIEW_FLAG_MESHLET_HIZ)
+                              && BucketFitsDemand(Bucket.DrawDemand, Bucket.DrawCapacity, Bucket.BlockDemand, Bucket.BlockCapacity);
+
+        // Bounded by what was APPENDED, not what CullInstances reserved, since unwritten blocks hold last frame's ring.
+        const uint Front         = min(Bucket.BlockCursor, Bucket.BlockCapacity);
+        const uint BlocksWritten = bBackRegion ? min(Bucket.BlockBackCount, Bucket.BlockCapacity - Front) : Front;
         bBlockInRange = BlockSlot < BlocksWritten;
-        BlockIdx      = Bucket.BlockBase + BlockSlot;
+        BlockIdx      = bBackRegion ? (Bucket.BlockBase + Bucket.BlockCapacity - BlocksWritten + BlockSlot)
+                                    : (Bucket.BlockBase + BlockSlot);
     }
 
     // Workgroup-uniform: ArgIdx is, and the view is a pure function of it.

@@ -834,7 +834,7 @@ namespace Lumina
         uint32 DrawBudgetCursor;
         uint32 DrawDemand;
         uint32 BlockDemand;
-        uint32 _BudgetPad;
+        uint32 BlockBackCount;
         // Per-slice (EMeshletSlice) view of the draw region, relative to DrawBase.
         uint32 SliceBase[kMeshletSliceCount];
         uint32 SliceCount[kMeshletSliceCount];
@@ -911,6 +911,20 @@ namespace Lumina
     };
     static_assert(sizeof(FInstanceCullEntry) == 32, "FInstanceCullEntry layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceCullEntry);
+
+    // One instance cull workgroup, so a block the camera is too far from is skipped by the whole group at once.
+    constexpr uint32 kInstanceCullBlockSize = 64;
+
+    // Conservative distance bounds of kInstanceCullBlockSize consecutive retained slots.
+    struct alignas(16) FInstanceBlockBounds
+    {
+        FVector3    Min;            // of every live slot's sphere
+        float       Reach;          // largest MaxDrawDistance in the block; negative when nothing in it can draw
+        FVector3    Max;
+        uint32      bAlwaysScan;    // a slot with no draw distance, or slots the GPU writes that the CPU never sees
+    };
+    static_assert(sizeof(FInstanceBlockBounds) == 32, "FInstanceBlockBounds layout must match CullInstances.slang");
+    VERIFY_SSBO_ALIGNMENT(FInstanceBlockBounds);
 
     struct alignas(16) FInstanceStatic
     {

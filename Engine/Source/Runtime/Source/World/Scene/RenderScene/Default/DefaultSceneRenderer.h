@@ -544,6 +544,7 @@ namespace Lumina
             FSceneImage                                     BloomChainImage;
             // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
             bool                                            bCloudNoiseBaked = false;
+            RHI::EQueueType                                 CloudNoiseQueue  = RHI::EQueueType::Graphics;
             RHI::FGPUAllocation                                    ClusterBuffer;
             RHI::FGPUAllocation                                    ClusterLightMaskBuffer;
             FMatrix4                                        LastClusterInvProjection = FMatrix4(0.0f);
@@ -781,18 +782,20 @@ namespace Lumina
         // Returns whether it cleared the VisBuffer and depth, which it does when bClear and any terrain drew.
         bool TerrainDepthPrePass(RHI::FCmdListH CL, bool bClear);
         void TerrainRenderPass(RHI::FCmdListH CL);
-        void GTAOPass(RHI::FCmdListH CL);
+        // The prefilter reads scene depth into GTAO's own working depth, and the trace reads only that.
+        enum class EGTAOStage : uint8 { Prefilter, Trace };
+        bool GTAOPass(RHI::FCmdListH CL, EGTAOStage Stage);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
         void UnorderedTranslucentPass(RHI::FCmdListH CL);
         // Single source of truth for every fog consumer, including the translucent material pass.
         void PublishFogGlobals(FSceneGlobalData& Globals) const;
-        void CloudShadowMapPass(RHI::FCmdListH CL);
+        bool CloudShadowMapPass(RHI::FCmdListH CL);
         bool BakeCloudNoiseIfNeeded(RHI::FCmdListH CL);
         void FroxelInjectPass(RHI::FCmdListH CL);
         void FroxelIntegratePass(RHI::FCmdListH CL);
-        void AerialPerspectivePass(RHI::FCmdListH CL);
-        void VolumetricCloudPass(RHI::FCmdListH CL);
+        bool AerialPerspectivePass(RHI::FCmdListH CL);
+        bool VolumetricCloudPass(RHI::FCmdListH CL);
         // One HDR read-modify-write for every term the three passes above produced a volume for.
         void FogShaftPass(RHI::FCmdListH CL);
         void AtmosphereCompositePass(RHI::FCmdListH CL);
@@ -1110,6 +1113,9 @@ namespace Lumina
         // Same staging as WriteBuffer, deferred so writes sharing a destination collapse into one copy
         // command. Stage all of one buffer's runs before starting the next, or nothing groups.
         void StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size, bool bFillBeforeSubmit = false);
+        void UpdateInstanceBlockBounds(RHI::FCmdListH CL, bool bFull, const TVector<uint32>& DirtySlots, uint32 NumSlots);
+        void DispatchMeshletBlockBuild(RHI::FCmdListH CL, bool bLatePass);
+        bool bSplitMeshletPhasesThisFrame = false;
         void FlushStagedWrites(RHI::FCmdListH CL);
 
         // The GPU reads staging only once the list is submitted, so these PCIe-bound fills overlap the rest of the recording.
@@ -1332,6 +1338,11 @@ namespace Lumina
         RHI::FGPUAllocation GetTotals() const { return TotalsRing[CurrentFrameSlot]; }
 
         FSceneBuffer RetainedCullEntryBuffer { "Retained.CullEntries", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer InstanceBlockBoundsBuffer { "Retained.InstanceBlockBounds", 1.5f, EBufferInit::Zeroed };
+        TVector<FInstanceBlockBounds> InstanceBlockBounds;
+        TVector<uint32>               DirtyInstanceBlocks;
+        TVector<FUIntVector2>         GPUWrittenSlotRanges;
+        bool                          bInstanceBlockBoundsValid = false;
         FSceneBuffer RetainedTransformBuffer { "Retained.Transforms", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer RetainedStaticBuffer { "Retained.Static", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer SurfaceDescBuffer { "Retained.SurfaceDescs", 1.5f, EBufferInit::Zeroed };

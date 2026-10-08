@@ -648,6 +648,12 @@ struct FMeshletBlock
     property uint Count       { get { return (PackedBaseAndCount >> MESHLET_DRAW_INDEX_BITS) & 63u; } }
 };
 
+// A bucket that fits its whole demand never steps an instance down a LOD, so its blocks can be split by cull phase.
+bool BucketFitsDemand(uint DrawDemand, uint DrawCapacity, uint BlockDemand, uint BlockCapacity)
+{
+    return DrawDemand <= DrawCapacity && BlockDemand <= BlockCapacity;
+}
+
 // One (view, draw) pair's slice of the cull arenas. Base, capacity and cursor travel together --
 // as parallel arrays, pairing a clamped base with an unclamped length overran the allocation.
 struct FRenderBucket
@@ -666,7 +672,8 @@ struct FRenderBucket
     // What CullInstances asked for before BuildDrawPrefix fitted the bucket into the arena.
     uint DrawDemand;
     uint BlockDemand;
-    uint _BudgetPad;
+    // Blocks the late pass appended from the END of the block region, in a two-phase bucket that fits its whole demand.
+    uint BlockBackCount;
     // What each cull phase appended, RELATIVE to DrawBase (DrawCursor is a count, not an index).
     // Indexed by MESHLET_SLICE_*: both VisBuffer phases share cull view 0, so one pair would be
     // clobbered by the late phase before the single-phase passes draw.

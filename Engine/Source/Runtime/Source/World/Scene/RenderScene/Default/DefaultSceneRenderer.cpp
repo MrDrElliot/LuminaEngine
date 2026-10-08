@@ -404,6 +404,31 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        TConsoleVar<bool> CVarAsyncCompute(
+            "r.AsyncCompute",
+            true,
+            "Run GTAO, cluster build, light cull and clouds on the async compute queue, overlapping the shadow raster.");
+
+        // Clockwise front faces because the projection bakes the Y-flip, and the caller sets the scene root since it is per-list too.
+        RHI::FCmdListH OpenSceneCommandList(RHI::EQueueType Queue)
+        {
+            const RHI::FCmdListH CL = RHI::OpenCommandList(Queue);
+            RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
+            if (Queue == RHI::EQueueType::Graphics)
+            {
+                RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
+            }
+            return CL;
+        }
+
+        bool IsAsyncComputeEnabled()
+        {
+            return CVarAsyncCompute.GetValue() && RHI::SupportsAsyncCompute();
+        }
+    }
+
     void FDefaultSceneRenderer::RenderView(uint8 FrameIndex)
     {
         LUMINA_PROFILE_SCOPE();
@@ -482,10 +507,10 @@ namespace Lumina
             bDepthPyramidValid.store(true, std::memory_order_release);
         }
 
-        RHI::FCmdListH CL = RHI::OpenCommandList();
-        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
-        // Projection bakes the Vulkan Y-flip, so CCW-wound geometry lands clockwise in framebuffer space.
-        RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
+        RHI::FCmdListH CL = OpenSceneCommandList(RHI::EQueueType::Graphics);
+
+        const bool bAsyncCompute = IsAsyncComputeEnabled();
+        RHI::FSemaphoreInfo AsyncComputeWait = {};
 
         BeginFrameScratch(CL, Frame);
         GrassCursorCursor = 0;
@@ -568,6 +593,79 @@ namespace Lumina
 
                 // No rebuild here. Nothing between this and the build after Terrain Render writes depth or reads it.
 
+                // GTAO's prefilter is the last reader of depth before shading, so compute only ever needs GTAO's own working depth.
+                bool bGTAOPrefiltered = false;
+                {
+                    SCENE_GPU_SCOPE(CL, "GTAO Prefilter");
+                    bGTAOPrefiltered = GTAOPass(CL, EGTAOStage::Prefilter);
+                }
+                const FSceneImage& GTAOWorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
+
+                RHI::FCmdListH ComputeCL = CL;
+                if (bAsyncCompute)
+                {
+                    if (bGTAOPrefiltered)
+                    {
+                        RHI::CmdReleaseTexture(CL, GTAOWorkingDepth.Texture, RHI::EQueueType::Compute);
+                    }
+                    RHI::CmdEndMarker(CL);
+
+                    // The retained re-send and its staging fills have to land before the first segment runs.
+                    WaitDeferredStageFills();
+                    const uint64 GeometryValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+
+                    ComputeCL = OpenSceneCommandList(RHI::EQueueType::Compute);
+                    RHI::CmdSetSceneRoot(ComputeCL, SceneBindings);
+                    RHI::CmdBeginMarker(ComputeCL, "RenderView Async Compute");
+                    if (bGTAOPrefiltered)
+                    {
+                        RHI::CmdAcquireTexture(ComputeCL, GTAOWorkingDepth.Texture, RHI::EQueueType::Graphics);
+                    }
+                    AsyncComputeWait = { RHI::GetQueueTimeline(RHI::EQueueType::Graphics), GeometryValue };
+                }
+
+                bool bGTAOWritten = false;
+                if (bGTAOPrefiltered)
+                {
+                    SCENE_GPU_SCOPE(ComputeCL, "GTAO");
+                    bGTAOWritten = GTAOPass(ComputeCL, EGTAOStage::Trace);
+                }
+
+                bool bAerialWritten = false;
+                {
+                    SCENE_GPU_SCOPE(ComputeCL, "Aerial Perspective");
+                    bAerialWritten = AerialPerspectivePass(ComputeCL);
+                }
+
+                // Only what graphics reads goes back; GTAO's scratch images stay on compute and are rewritten each frame.
+                TFixedVector<RHI::FTextureH, 3> ComputeOutputs;
+                if (bGTAOWritten)
+                {
+                    ComputeOutputs.push_back(GetNamedImage(ENamedImage::GTAOBlur).Texture);
+                }
+                if (bAerialWritten)
+                {
+                    ComputeOutputs.push_back(GetNamedImage(ENamedImage::AerialInScatter).Texture);
+                    ComputeOutputs.push_back(GetNamedImage(ENamedImage::AerialTransmittance).Texture);
+                }
+
+                if (bAsyncCompute)
+                {
+                    for (RHI::FTextureH Texture : ComputeOutputs)
+                    {
+                        RHI::CmdReleaseTexture(ComputeCL, Texture, RHI::EQueueType::Graphics);
+                    }
+                    RHI::CmdEndMarker(ComputeCL);
+                    const uint64 ComputeValue = RHI::Submit(RHI::EQueueType::Compute, TSpan<const RHI::FCmdListH>{&ComputeCL, 1},
+                                                            TSpan<const RHI::FSemaphoreInfo>{&AsyncComputeWait, 1});
+                    AsyncComputeWait = { RHI::GetQueueTimeline(RHI::EQueueType::Compute), ComputeValue };
+
+                    CL = OpenSceneCommandList(RHI::EQueueType::Graphics);
+                    RHI::CmdSetSceneRoot(CL, SceneBindings);
+                    RHI::CmdBeginMarker(CL, "RenderView Overlap");
+                }
+
+                // Nothing up to the lighting reads AO or the aerial LUTs, and the clusters are built here because the fog below needs them before the wait.
                 {
                     SCENE_GPU_SCOPE(CL, "Cluster Build");
                     ClusterBuildPass(CL);
@@ -577,7 +675,7 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "Light Cull");
                     LightCullPass(CL);
                 }
-                
+
                 {
                     SCENE_GPU_SCOPE(CL, "Point Shadows");
                     PointShadowPass(CL);
@@ -593,9 +691,6 @@ namespace Lumina
                     CascadedShowPass(CL, Frame.Views.CascadeViewBase);
                 }
 
-                RHI::CmdEndMarker(CL);
-                RHI::CmdBeginMarker(CL, "RenderView Shading");
-                
                 if (!FrameSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Cascade Pyramid");
@@ -617,11 +712,7 @@ namespace Lumina
                     DecalPass(CL);
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "GTAO");
-                    GTAOPass(CL);
-                }
-
+                // Shares the cloud noise volume with the clouds below, so both stay on the queue that baked it.
                 {
                     SCENE_GPU_SCOPE(CL, "Cloud Shadow Map");
                     CloudShadowMapPass(CL);
@@ -639,9 +730,48 @@ namespace Lumina
                     VelocityPass(CL);
                 }
 
+                VisBufferClassifyPass(CL);
+                MaterialGBufferPass(CL);
+
                 {
-                    VisBufferClassifyPass(CL);
-                    MaterialGBufferPass(CL);
+                    SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
+                    VolumetricCloudPass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Froxel Fog Inject");
+                    FroxelInjectPass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Froxel Fog Integrate");
+                    FroxelIntegratePass(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Fog Shafts");
+                    FogShaftPass(CL);
+                }
+
+                RHI::CmdEndMarker(CL);
+
+                // Its own submission, since the wait on the compute queue belongs only to the work that reads its outputs.
+                if (bAsyncCompute)
+                {
+                    RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+                    CL = OpenSceneCommandList(RHI::EQueueType::Graphics);
+                    RHI::CmdSetSceneRoot(CL, SceneBindings);
+                }
+                RHI::CmdBeginMarker(CL, "RenderView Shading");
+                if (bAsyncCompute)
+                {
+                    for (RHI::FTextureH Texture : ComputeOutputs)
+                    {
+                        RHI::CmdAcquireTexture(CL, Texture, RHI::EQueueType::Compute);
+                    }
+                }
+
+                {
                     DeferredLightingPass(CL);
 
                     #if USING(WITH_EDITOR)
@@ -666,31 +796,6 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Screen Space Reflections");
                     ScreenSpaceReflectionsPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Aerial Perspective");
-                    AerialPerspectivePass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
-                    VolumetricCloudPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Inject");
-                    FroxelInjectPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Integrate");
-                    FroxelIntegratePass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Fog Shafts");
-                    FogShaftPass(CL);
                 }
 
                 // Before translucency, which fogs itself in BasePixelPass; this sees only opaque depth.
@@ -889,7 +994,8 @@ namespace Lumina
         SnapshotMotionState(CL);
 
         WaitDeferredStageFills();
-        RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1},
+                    bAsyncCompute ? TSpan<const RHI::FSemaphoreInfo>{&AsyncComputeWait, 1} : TSpan<const RHI::FSemaphoreInfo>{});
 
         if (FramesComposited == 0)
         {

@@ -1,5 +1,6 @@
 #include "Includes/AppendBuffer.slang"
 #include "Includes/SceneGlobals.slang"
+#include "Includes/Culling.slang"
 
 // One thread per (visible instance, view), appending that pair's blocks into the region CullInstances
 // reserved for it. It reserved against a range it WROTE, and this reads that range back, so the two
@@ -19,8 +20,18 @@ struct FBuildMeshletBlocksArgs
     GPUSpan<FMeshletBlock> OutBlockList;
     // For the coarsest-LOD retry when a run does not fit its bucket's share.
     GPUSpan<FSurfaceDesc>  SurfaceDescs;
+
+    // MESHLET_BUILD_* below, which says which phase this build serves and whether two-phase buckets split at all.
+    uint                   BuildMode;
+    // This frame's stamp. A slot is visible from last frame iff it holds VisibilityTag - 1.
+    uint                   VisibilityTag;
+    GPUSpan<uint>          PrevVisibility;
 };
 FBuildMeshletBlocksArgs* Pass() { return GetPassArgs<FBuildMeshletBlocksArgs>(); }
+
+static const uint MESHLET_BUILD_EARLY         = 0u;
+static const uint MESHLET_BUILD_LATE          = 1u;
+static const uint MESHLET_BUILD_EARLY_NOSPLIT = 2u;
 
 // Claims Count units only while they fit, so a refused run never moves the counter and everything below it stays written.
 bool ClaimWithin(uint* Counter, uint Capacity, uint Count, out uint Old)
@@ -150,6 +161,64 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
     }
 
     FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ViewIndex * Pass().NumBatches + DrawID);
+
+    // A split bucket builds last frame's visible set now and its late blocks after the pyramid, so a hidden instance gets none.
+    const bool bSplit = Pass().BuildMode != MESHLET_BUILD_EARLY_NOSPLIT
+                     && CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_MESHLET_HIZ)
+                     && BucketFitsDemand(Bucket.DrawDemand, Bucket.DrawCapacity, Bucket.BlockDemand, Bucket.BlockCapacity);
+    const uint RetainedSlot = Inst.RetainedSlot;
+    const bool bWasVisible  = bSplit && SpanContains(&Pass().PrevVisibility, RetainedSlot)
+                           && SpanGet(&Pass().PrevVisibility, RetainedSlot) == (Pass().VisibilityTag - 1u);
+
+    if (Pass().BuildMode == MESHLET_BUILD_LATE)
+    {
+        if (!bSplit)
+        {
+            return;
+        }
+
+        // The same instance test the late meshlet cull applies, so what it rejects here it would have rejected there.
+        bool bOccluded = false;
+        if (!FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
+        {
+            const float4 Sphere = loadAligned<16>(&Inst.SphereBounds);
+            const FCullSphereProjection Proj = ProjectCullSphere(Sphere.xyz, Sphere.w);
+            bOccluded = Proj.bValid && IsHiZOccluded(Proj);
+        }
+        if (bOccluded)
+        {
+            return;
+        }
+
+        // Early-drawn instances come back too, since a sphere-level flag lets coarse pyramid tiles keep whole trees early for good.
+        const uint BackBlocks = (Range.y + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
+        uint OldBack;
+        InterlockedAdd(Bucket.BlockBackCount, BackBlocks, OldBack);
+
+        // Front and back together never pass the demand this bucket fits, so this only guards against a broken reservation.
+        const uint Front = min(Bucket.BlockCursor, Bucket.BlockCapacity);
+        if (OldBack + BackBlocks > Bucket.BlockCapacity - Front)
+        {
+            return;
+        }
+
+        const uint BackSlot = Bucket.BlockBase + Bucket.BlockCapacity - OldBack - BackBlocks;
+        for (uint b = 0u; b < BackBlocks; ++b)
+        {
+            const uint First = b * MESHLET_CULL_GROUP_SIZE;
+
+            FMeshletBlock Block;
+            Block.InstanceID         = InstanceID;
+            Block.PackedBaseAndCount = FMeshletBlock::Pack(Range.x + First, min(MESHLET_CULL_GROUP_SIZE, Range.y - First));
+            SpanSet(&Pass().OutBlockList, BackSlot + b, Block);
+        }
+        return;
+    }
+
+    if (bSplit && !bWasVisible)
+    {
+        return;
+    }
 
     // Only an instance that does not fit steps down, one LOD at a time, so a short frame degrades the overflow and nothing else.
     uint Slot;

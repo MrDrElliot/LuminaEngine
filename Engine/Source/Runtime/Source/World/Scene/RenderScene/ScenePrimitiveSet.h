@@ -311,6 +311,16 @@ namespace Lumina
          */
         FGrassSpeciesBinding AcquireGrassSpecies(CStaticMesh* Mesh, uint32 Capacity);
 
+        // Retained slot ranges (base, count) the grass scatter fills on the GPU, which the CPU arrays only hold as zeros.
+        void GetGPUWrittenSlotRanges(TVector<FUIntVector2>& Out) const
+        {
+            Out.clear();
+            for (const auto& [Mesh, Binding] : GrassSpecies)
+            {
+                Out.push_back(FUIntVector2(Binding.InstanceSlotBase, Binding.Capacity));
+            }
+        }
+
         // Points a species' block at its surface's current batch, material and surface desc.
         void BindGrassSurface(FGrassSpeciesBinding& Binding, const FResolvedMesh& Resolved);
 

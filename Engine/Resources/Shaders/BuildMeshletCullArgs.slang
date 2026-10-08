@@ -35,7 +35,8 @@ struct FBuildMeshletCullArgsArgs
     uint  MaxMeshGroups;
     // Sub-draw slots reserved per (bucket, slice).
     uint  SubDrawsPerSlice;
-    uint  _Pad0;
+    // 0 keeps every block in front for both phases, as the block build does when splitting is off.
+    uint  bSplitPhases;
     uint  _Pad1;
 
     GPUSpan<FRenderBucket>                   Buckets;
@@ -45,6 +46,23 @@ struct FBuildMeshletCullArgsArgs
     GPUSpan<FDrawMeshTasksIndirectArguments> OutMeshDrawArgs;
 };
 FBuildMeshletCullArgsArgs* Pass() { return GetPassArgs<FBuildMeshletCullArgsArgs>(); }
+
+// The blocks a phase culls. A split bucket holds the early blocks in front and the late ones at the back of its region.
+uint PhaseBlocks(FRenderBucket* Bucket, uint ViewIndex, bool bLate, bool bSplitPhases)
+{
+    const uint Front = min(Bucket.BlockCursor, Bucket.BlockCapacity);
+    if (!bLate)
+    {
+        return Front;
+    }
+    if (!CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_MESHLET_HIZ))
+    {
+        return 0u;
+    }
+    return bSplitPhases && BucketFitsDemand(Bucket.DrawDemand, Bucket.DrawCapacity, Bucket.BlockDemand, Bucket.BlockCapacity)
+         ? min(Bucket.BlockBackCount, Bucket.BlockCapacity - Front)
+         : Front;
+}
 
 // PRE is one workgroup scanning contiguous runs of buckets; POST is one thread per bucket over ceil(NumBuckets / 64) groups.
 #define BUILD_CULL_ARGS_GROUP 64
@@ -69,10 +87,8 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         uint Local = 0u;
         for (uint i = First; i < Last; ++i)
         {
-            FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
-            const bool bCulled = !bLate || CullViewHasFlag(i / NumDraws, CULL_VIEW_FLAG_MESHLET_HIZ);
             // Blocks are dense inside a bucket but sparse across the arena, so the flat dispatch needs its own prefix.
-            Local += bCulled ? min(Bucket.BlockCursor, Bucket.BlockCapacity) : 0u;
+            Local += PhaseBlocks(SpanAt(&Pass().Buckets, i), i / NumDraws, bLate, Pass().bSplitPhases != 0u);
         }
 
         uint2 Total;
@@ -81,10 +97,9 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         for (uint i = First; i < Last; ++i)
         {
             FRenderBucket* Bucket = SpanAt(&Pass().Buckets, i);
-            const bool bCulled = !bLate || CullViewHasFlag(i / NumDraws, CULL_VIEW_FLAG_MESHLET_HIZ);
 
             Bucket.CullWorkBase = Running;
-            Running += bCulled ? min(Bucket.BlockCursor, Bucket.BlockCapacity) : 0u;
+            Running += PhaseBlocks(Bucket, i / NumDraws, bLate, Pass().bSplitPhases != 0u);
 
             // Where this phase starts appending, relative to DrawBase like the cursor itself.
             Bucket.SliceBase[Slice]  = min(Bucket.DrawCursor, Bucket.DrawCapacity);

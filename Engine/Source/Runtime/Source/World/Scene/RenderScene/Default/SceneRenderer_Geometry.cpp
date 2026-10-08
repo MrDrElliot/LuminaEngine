@@ -1143,6 +1143,7 @@ namespace Lumina
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Grass Scatter", tracy::Color::ForestGreen);
+        SCENE_GPU_SCOPE(CL, "Grass Scatter");
 
         const FVector3 CameraPos = FVector3(Frame.SceneGlobalData.CameraData.Location);
         bool bAnyDispatched = false;

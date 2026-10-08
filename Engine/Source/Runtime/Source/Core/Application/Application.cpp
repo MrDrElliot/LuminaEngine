@@ -15,10 +15,44 @@
 #include "Log/Log.h"
 #include "Renderer/RenderManager.h"
 #include "Core/Diagnostics/BenchmarkRun.h"
+#include "Core/Console/ConsoleVariable.h"
 
 namespace Lumina
 {
     RUNTIME_API FApplication* GApp;
+
+    namespace
+    {
+        // Takes -cvars=Name=Value,Name=Value after every module has registered its variables.
+        void ApplyCommandLineConsoleVariables()
+        {
+            const TOptional<FFixedString> List = GCommandLine != nullptr ? GCommandLine->Get("cvars") : NullOpt;
+            if (!List.has_value())
+            {
+                return;
+            }
+
+            FStringView Remaining(List->c_str(), List->size());
+            while (!Remaining.empty())
+            {
+                const SIZE_T Comma = Remaining.find(',');
+                const FStringView Entry = Remaining.substr(0, Comma);
+                Remaining = Comma == FStringView::npos ? FStringView() : Remaining.substr(Comma + 1);
+
+                const SIZE_T Equals = Entry.find('=');
+                const FStringView Name  = Entry.substr(0, Equals);
+                const FStringView Value = Equals == FStringView::npos ? FStringView() : Entry.substr(Equals + 1);
+                if (Equals != FStringView::npos && FConsoleRegistry::Get().SetValueFromString(Name, Value))
+                {
+                    LOG_DISPLAY("Console variable {} set to {} from the command line.", Name, Value);
+                }
+                else
+                {
+                    LOG_WARN("-cvars entry '{}' is not Name=Value for a registered console variable.", Entry);
+                }
+            }
+        }
+    }
 
     FApplication::FApplication() = default;
     FApplication::~FApplication() = default;
@@ -60,6 +94,7 @@ namespace Lumina
 
         GEngine->Init();
 
+        ApplyCommandLineConsoleVariables();
         Benchmark::Start();
 
         bool bEngineWantsExit = false;

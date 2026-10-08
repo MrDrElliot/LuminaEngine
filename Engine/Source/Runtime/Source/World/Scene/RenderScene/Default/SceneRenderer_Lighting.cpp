@@ -809,12 +809,12 @@ namespace Lumina
                         RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
     }
     
-    void FDefaultSceneRenderer::GTAOPass(RHI::FCmdListH CL)
+    bool FDefaultSceneRenderer::GTAOPass(RHI::FCmdListH CL, EGTAOStage Stage)
     {
         FFrameData& Frame = *RenderFrame;
         if (Frame.Geometry.DrawCommands.empty() || !IsGTAOEnabled())
         {
-            return;
+            return false;
         }
 
         LUMINA_PROFILE_SECTION_COLORED("GTAO Pass", tracy::Color::Red);
@@ -825,7 +825,7 @@ namespace Lumina
         static const FShaderH UpsampleCS  = FShaderLibrary::Get("GTAOUpsample.slang");
         if (!PrefilterCS || !MainCS || !DenoiseCS || !UpsampleCS)
         {
-            return;
+            return false;
         }
 
         const FSceneImage& Depth        = GetNamedImage(ENamedImage::DepthAttachment);
@@ -839,7 +839,7 @@ namespace Lumina
         if (DepthSlot < 0 || !WorkingDepth.IsValid() || WorkingDepth.GetNumMips() < GTAODepthMipLevels)
         {
             LOG_ERROR("GTAO working depth pyramid is missing or too shallow; skipping the pass.");
-            return;
+            return false;
         }
 
         // The trace runs at the stage targets' size, half the view below ultra quality, and upsamples into Output.
@@ -875,6 +875,7 @@ namespace Lumina
         // Every heuristic in the reference is tuned against this pre-multiplied radius, never the raw one.
         const float EffectRadius = Radius * RadiusMultiplier;
 
+        if (Stage == EGTAOStage::Prefilter)
         {
             SCENE_GPU_SCOPE(CL, "GTAO Prefilter Depth");
 
@@ -901,7 +902,7 @@ namespace Lumina
                 if (Slot < 0)
                 {
                     LOG_ERROR("GTAO working depth mip {} has no storage heap slot; skipping the pass.", Mip);
-                    return;
+                    return false;
                 }
                 PC.MipUAV[Mip] = (uint32)Slot;
             }
@@ -918,6 +919,7 @@ namespace Lumina
                 RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
                 RHI::EStageFlags::Compute,
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            return true;
         }
 
         {
@@ -946,7 +948,7 @@ namespace Lumina
             if (WorkingDepthSlot < 0 || TermSlot < 0 || EdgesSlot < 0)
             {
                 LOG_ERROR("GTAO main pass is missing a heap slot; skipping the pass.");
-                return;
+                return false;
             }
 
             // Rotating the noise only pays off once something downstream accumulates across frames.
@@ -995,7 +997,7 @@ namespace Lumina
             if (EdgesSlot < 0)
             {
                 LOG_ERROR("GTAO edge texture has no sampled heap slot; skipping the denoise.");
-                return;
+                return false;
             }
 
             PC.ViewportSize[0] = Width;
@@ -1021,7 +1023,7 @@ namespace Lumina
                 if (SrcSlot < 0 || DstSlot < 0)
                 {
                     LOG_ERROR("GTAO denoise pass {} is missing a heap slot; stopping the chain.", PassIndex);
-                    return;
+                    return false;
                 }
 
                 PC.AOTermIndex = (uint32)SrcSlot;
@@ -1064,7 +1066,7 @@ namespace Lumina
             if (AOSlot < 0 || HalfDepthSlot < 0 || OutputSlot < 0)
             {
                 LOG_ERROR("GTAO upsample is missing a heap slot; skipping it.");
-                return;
+                return false;
             }
 
             PC.FullSize[0]    = Output.GetSizeX();
@@ -1085,6 +1087,7 @@ namespace Lumina
                 RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
+        return true;
     }
 
     // Weighted blended OIT (McGuire and Bavoil 2013), one pass into a weighted sum and a revealage product.
@@ -1554,31 +1557,31 @@ namespace Lumina
                                                 Math::Floor(Cam.z / Texel) * Texel);
     }
 
-    void FDefaultSceneRenderer::CloudShadowMapPass(RHI::FCmdListH CL)
+    bool FDefaultSceneRenderer::CloudShadowMapPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
         if (Frame.SceneGlobalData.FogCloudShadowIndex == Constants::kIndexNoneU32)
         {
-            return;
+            return false;
         }
 
         static const FShaderH CS = FShaderLibrary::Get("CloudShadowMap.slang");
         if (!CS)
         {
-            return;
+            return false;
         }
 
         const FSceneImage& Noise  = GetNamedImage(ENamedImage::CloudNoise);
         const FSceneImage& Shadow = GetNamedImage(ENamedImage::CloudShadow);
         if (!Noise.IsValid() || !Shadow.IsValid() || !BakeCloudNoiseIfNeeded(CL))
         {
-            return;
+            return false;
         }
 
         const int32 ShadowUAV = Shadow.GetMipUAVIndex(0);
         if (ShadowUAV < 0)
         {
-            return;
+            return false;
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Cloud Shadow Map", tracy::Color::LightSlateGray);
@@ -1636,6 +1639,7 @@ namespace Lumina
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
             RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        return true;
     }
 
     void FDefaultSceneRenderer::FroxelInjectPass(RHI::FCmdListH CL)
@@ -2469,7 +2473,8 @@ namespace Lumina
 
     bool FDefaultSceneRenderer::BakeCloudNoiseIfNeeded(RHI::FCmdListH CL)
     {
-        if (CurrentView->bCloudNoiseBaked)
+        const RHI::EQueueType Queue = RHI::GetCommandListQueue(CL);
+        if (CurrentView->bCloudNoiseBaked && CurrentView->CloudNoiseQueue == Queue)
         {
             return true;
         }
@@ -2495,10 +2500,11 @@ namespace Lumina
             RHI::EStageFlags::Compute,
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         CurrentView->bCloudNoiseBaked = true;
+        CurrentView->CloudNoiseQueue  = Queue;
         return true;
     }
 
-    void FDefaultSceneRenderer::VolumetricCloudPass(RHI::FCmdListH CL)
+    bool FDefaultSceneRenderer::VolumetricCloudPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
 
@@ -2507,13 +2513,13 @@ namespace Lumina
 
         if (!Frame.Volumetrics.bClouds)
         {
-            return;
+            return false;
         }
 
         static const FShaderH CloudCS = FShaderLibrary::Get("VolumetricClouds.slang");
         if (!CloudCS)
         {
-            return;
+            return false;
         }
 
         const FSceneImage& Noise   = GetNamedImage(ENamedImage::CloudNoise);
@@ -2522,14 +2528,14 @@ namespace Lumina
         const FSceneImage& Depth      = GetNamedImage(ENamedImage::DepthAttachment);
         if (!Noise.IsValid() || !Scatter.IsValid() || !CloudDepth.IsValid())
         {
-            return;
+            return false;
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Volumetric Clouds", tracy::Color::White);
 
         if (!BakeCloudNoiseIfNeeded(CL))
         {
-            return;
+            return false;
         }
 
         const SCloudComponent& C = Frame.Volumetrics.Clouds;
@@ -2558,7 +2564,7 @@ namespace Lumina
         const int32 CloudDepthUAV = CloudDepth.GetMipUAVIndex(0);
         if (ScatterUAV < 0 || CloudDepthUAV < 0)
         {
-            return;
+            return false;
         }
 
         FCloudPushConstants PC = {};
@@ -2602,6 +2608,7 @@ namespace Lumina
 
         AtmosphereTerms.CloudScatterIndex = (uint32)Scatter.GetResourceID();
         AtmosphereTerms.CloudDepthIndex   = (uint32)CloudDepth.GetResourceID();
+        return true;
     }
 
     void FDefaultSceneRenderer::ScreenSpaceReflectionsPass(RHI::FCmdListH CL)
@@ -2873,7 +2880,7 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::AerialPerspectivePass(RHI::FCmdListH CL)
+    bool FDefaultSceneRenderer::AerialPerspectivePass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
 
@@ -2884,13 +2891,13 @@ namespace Lumina
             || !Frame.Volumetrics.bAerialPerspective
             || Frame.Volumetrics.AerialIntensity <= 0.0f)
         {
-            return;
+            return false;
         }
 
         static const FShaderH LutCS = FShaderLibrary::Get("AerialPerspectiveLUT.slang");
         if (!LutCS)
         {
-            return;
+            return false;
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Aerial Perspective Pass", tracy::Color::LightSkyBlue);
@@ -2900,7 +2907,7 @@ namespace Lumina
 
         if (!InScatter.IsValid() || !Transmittance.IsValid())
         {
-            return;
+            return false;
         }
 
         const float Range = Math::Max(Frame.Volumetrics.AerialRange, 100.0f);
@@ -2935,5 +2942,6 @@ namespace Lumina
         AtmosphereTerms.AerialTransmittanceIndex = (uint32)Transmittance.GetResourceID();
         AtmosphereTerms.AerialRange              = Range;
         AtmosphereTerms.AerialIntensity          = Frame.Volumetrics.AerialIntensity;
+        return true;
     }
 }

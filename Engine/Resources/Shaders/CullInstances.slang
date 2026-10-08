@@ -44,6 +44,8 @@ struct FCullInstancesArgs
     // only by a comment. Runs past capacity by design: what it ends at is DEMAND, which is what the CPU
     // grows the buffer from.
     GPUSpan<uint>              OutPreSkinCursor;
+    // One per workgroup of consecutive retained slots; empty disables the skip.
+    GPUSpan<FInstanceBlockBounds> BlockBounds;
 };
 FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 
@@ -92,6 +94,30 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
     return Slot - FirstVertex;
 }
 
+// Mirror of Lumina::FInstanceBlockBounds, the distance bounds of one workgroup's slots.
+struct FInstanceBlockBounds
+{
+    float3 Min;
+    float  Reach;
+    float3 Max;
+    uint   bAlwaysScan;
+};
+
+// Conservative, so a block that passes still tests each of its instances exactly as before.
+bool IsBlockInReach(FInstanceBlockBounds Block, float3 CamPos)
+{
+    if (Block.bAlwaysScan != 0u)
+    {
+        return true;
+    }
+    if (Block.Reach < 0.0)
+    {
+        return false;
+    }
+    const float3 ToBox = clamp(CamPos, Block.Min, Block.Max) - CamPos;
+    return dot(ToBox, ToBox) <= Block.Reach * Block.Reach;
+}
+
 // Every lane tests every view, so the group stages them once rather than each lane streaming 128 bytes per view.
 groupshared FCullView gViews[MAX_CULL_VIEWS];
 
@@ -99,6 +125,13 @@ groupshared FCullView gViews[MAX_CULL_VIEWS];
 [numthreads(LOCAL_SIZE_X, 1, 1)]
 void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
 {
+    // The group's slots are one block, and the same answer for every lane keeps the barrier below uniform.
+    const uint BlockIdx = GroupID.x + GroupID.y * MAX_DISPATCH_AXIS;
+    if (SpanContains(&Pass().BlockBounds, BlockIdx) && !IsBlockInReach(SpanGet(&Pass().BlockBounds, BlockIdx), GetCullCameraPosition()))
+    {
+        return;
+    }
+
     // Ahead of every early return, since the whole group has to reach the barrier.
     const uint NumViews = min(Pass().NumViews, (uint)MAX_CULL_VIEWS);
     for (uint StageView = LocalID.x; StageView < NumViews; StageView += LOCAL_SIZE_X)
@@ -324,8 +357,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
             // Rounded up PER INSTANCE: blocks never span instances, so a ceil of the sum would
             // under-reserve one block for every instance with a partial tail.
-            InterlockedAdd(Bucket.BlockCapacity,
-                           (Emitted + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE);
+            const uint Blocks = (Emitted + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
+            // Doubled for a two-phase view, whose early-drawn instances are built again at the back for the late re-test.
+            InterlockedAdd(Bucket.BlockCapacity, View.HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ) ? Blocks * 2u : Blocks);
         }
 
         // Written for EVERY view, zero included. The builder indexes this slab directly from its flat
