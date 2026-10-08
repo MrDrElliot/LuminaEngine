@@ -219,6 +219,22 @@ namespace Lumina
         void Configure() override { RequireUpdate(EUpdateStage::FrameStart); }
     };
 
+    // Only reads what CEntitySystemTest reads, so the two never conflict and may share a batch.
+    REFLECT()
+    class RUNTIME_API CEntitySystemReaderTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override
+        {
+            RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::High);
+            DeclareRead("SStaticMeshComponent");
+        }
+    };
+
     /** Records what its own constructor could see, so a test can prove identity lands before the body runs. */
     REFLECT()
     class RUNTIME_API CConstructorIdentityTest : public CObject

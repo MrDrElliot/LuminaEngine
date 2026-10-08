@@ -111,6 +111,15 @@ namespace Lumina
             uint8          StagePriority = 255;
         };
 
+        // Slots that may run together, as indices into SystemUpdateList.
+        struct FSystemBatch
+        {
+            TVector<uint16> Members;
+
+            // Exclusive, or declares transform access, so world transforms must be resolved before it starts.
+            bool bNeedsResolvedTransforms = false;
+        };
+
         // One reflected engine system, as surfaced to the World Editor's Systems panel.
         struct FSystemInfo
         {
@@ -528,7 +537,7 @@ namespace Lumina
         void SetSystemEnabled(FName System, bool bEnabled);
 
         // Read-only snapshot of the per-stage parallel system batches + each system's declared access, for the
-        // Gameplay Insights editor tool. Replays the TickSystems batching; main thread.
+        // Gameplay Insights editor tool. Replays the last frame's batching, so idle systems are absent; main thread.
         void GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const;
 
         // One instance of every enabled system class; the per-stage FStageSlots only point into it.
@@ -748,9 +757,11 @@ namespace Lumina
         // Per-stage, priority-sorted update slots (direct-call fn-ptr + Self) consumed by TickSystems.
         TVector<FStageSlot>                                SystemUpdateList[(int32)EUpdateStage::Max];
 
-        // Which of those slots may run together, as index lists into SystemUpdateList. A pure function of
-        // the stage lists, so it is built once by RegisterSystems rather than per tick.
-        TVector<TVector<uint16>>                           SystemBatches[(int32)EUpdateStage::Max];
+        // Which of the slots with work may run together, rebuilt only when that set changes from one frame to the next.
+        TVector<FSystemBatch>                              SystemBatches[(int32)EUpdateStage::Max];
+
+        // Per slot, whether it had work when SystemBatches was last built. Empty forces a rebuild.
+        TVector<uint8>                                     SystemsWithWork[(int32)EUpdateStage::Max];
 
         // Set once the world has run its startup pass; gates StartupPendingSystems.
         bool                                               bSystemsStarted = false;
@@ -832,6 +843,16 @@ namespace Lumina
     T* CWorld::TryGetComponent(ECS::FEntity Entity)
     {
         return EntityRegistry.TryGet<T>(Entity);
+    }
+
+    // The scheduling CWorld::TickSystems runs, as free functions so it can be tested without a world.
+    namespace SystemSchedule
+    {
+        // Priority first. Equal priority promises no order, so exclusive systems go last there and the class name settles the rest the same way every run.
+        RUNTIME_API void SortStage(TVector<CWorld::FStageSlot>& Stage);
+
+        // A slot lands in the first batch after the last one holding anything it conflicts with, and slots without work are left out.
+        RUNTIME_API TVector<CWorld::FSystemBatch> BuildBatches(const TVector<CWorld::FStageSlot>& Stage, const TVector<uint8>& WithWork);
     }
 }
 

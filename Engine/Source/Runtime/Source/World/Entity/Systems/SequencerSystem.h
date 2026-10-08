@@ -19,5 +19,6 @@ namespace Lumina
     public:
 
         void OnUpdate() override;
+        bool HasWork(EUpdateStage Stage) override;
     };
 }

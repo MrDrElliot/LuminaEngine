@@ -41,6 +41,10 @@ namespace Lumina
         FUNCTION()
         virtual void OnUpdate() {}
 
+        // Asked on the main thread as each stage starts. False leaves this system out of that frame, so it neither runs nor separates the systems around it.
+        FUNCTION()
+        virtual bool HasWork(EUpdateStage Stage) { return true; }
+
         // Runs once when the world tears down, or when this system is disabled.
         FUNCTION()
         virtual void OnTeardown() {}

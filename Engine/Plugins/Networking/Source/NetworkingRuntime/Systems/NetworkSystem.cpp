@@ -1810,6 +1810,11 @@ namespace Lumina
         RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Low);
     }
 
+    bool SNetworkSystem::HasWork(EUpdateStage)
+    {
+        return GetWorld() != nullptr && GetWorld()->GetNetMode() != ENetMode::Standalone;
+    }
+
     void SNetworkSystem::OnUpdate()
     {
         const FSystemContext& Context = GetContext();

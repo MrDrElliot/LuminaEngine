@@ -112,6 +112,8 @@ namespace Lumina
 
         NODISCARD bool IsRunning(FTweenHandle Handle) const;
 
+        NODISCARD bool HasTweens() const { return Registry.NumEntities() != 0; }
+
         /** The registry the transform helpers write through, and the one owner liveness is checked against. */
         void SetWorldRegistry(ECS::FRegistry* InRegistry) { WorldRegistry = InRegistry; }
 

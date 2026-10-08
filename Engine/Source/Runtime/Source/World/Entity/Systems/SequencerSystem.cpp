@@ -12,6 +12,15 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::High);
     }
 
+    bool SSequencerSystem::HasWork(EUpdateStage)
+    {
+        CWorld* World = GetWorld();
+        const ECS::TComponentStorage<SSequencePlayerComponent> Players = World != nullptr
+            ? ECS::GetWorldRegistry(*World).FindStorage<SSequencePlayerComponent>()
+            : ECS::TComponentStorage<SSequencePlayerComponent>();
+        return Players && !Players.IsEmpty();
+    }
+
     void SSequencerSystem::OnUpdate()
     {
         const FSystemContext& SystemContext = GetContext();

@@ -2,12 +2,19 @@
 #include "TweenSystem.h"
 
 #include "World/Subsystems/TweenManager.h"
+#include "World/World.h"
 
 namespace Lumina
 {
     void STweenSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
+    }
+
+    bool STweenSystem::HasWork(EUpdateStage)
+    {
+        const FTweenManager* Tweens = GetWorld() != nullptr ? ECS::GetWorldRegistry(*GetWorld()).Ctx().Find<FTweenManager>() : nullptr;
+        return Tweens != nullptr && Tweens->HasTweens();
     }
 
     void STweenSystem::OnUpdate()
