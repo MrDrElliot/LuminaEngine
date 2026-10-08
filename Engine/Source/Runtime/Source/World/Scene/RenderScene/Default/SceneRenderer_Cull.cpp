@@ -930,9 +930,12 @@ namespace Lumina
 
             // Retained state is zeroed on growth because a free slot IS zero; the CPU writes zero on free too.
             // A full re-send rewrites every live slot through the upload ring ahead of this list, so a preserve copy would clobber it.
-            ReserveBuffer(CL, RetainedCullEntryBuffer, CullBytes,      /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ !Upload.bFull);
-            ReserveBuffer(CL, RetainedTransformBuffer, TransformBytes, /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ !Upload.bFull);
-            ReserveBuffer(CL, RetainedStaticBuffer,    StaticBytes,    /*bAllowShrink*/ Upload.bFullStatic, /*bPreserveContents*/ !Upload.bFullStatic);
+            ReserveBuffer(CL, RetainedCullEntryBuffer, CullBytes,      /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ !Upload.bFull,
+                          Upload.bFull ? CullBytes : 0u);
+            ReserveBuffer(CL, RetainedTransformBuffer, TransformBytes, /*bAllowShrink*/ Upload.bFull, /*bPreserveContents*/ !Upload.bFull,
+                          Upload.bFull ? TransformBytes : 0u);
+            ReserveBuffer(CL, RetainedStaticBuffer,    StaticBytes,    /*bAllowShrink*/ Upload.bFullStatic, /*bPreserveContents*/ !Upload.bFullStatic,
+                          Upload.bFullStatic ? StaticBytes : 0u);
 
             // Flipped so last frame's set stays readable all frame; both dispatches take their phase from it.
             InstanceVisibilityWriteIndex ^= 1u;

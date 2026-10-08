@@ -1125,12 +1125,9 @@ namespace Lumina
         void WriteBufferScatter(RHI::FCmdListH CL, RHI::GPUPtr Dst, uint64 DstBytes, const void* Src, uint64 Stride,
                                 RHI::FGPURange Slots, const TVector<uint32>& SlotList);
 
-        /** What a freshly (re)allocated scene buffer holds. Undefined is the honest description of what
-         *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
-         *  a buffer that is provably rewritten in full before anything reads it. */
-        // Grows to the buffer's policy, and shrinks only while both the policy and the caller allow it.
+        // The fill skips the first RewrittenBytes, which the upload ring rewrites ahead of this list and a later fill would erase.
         void ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink = true,
-                           bool bPreserveContents = false);
+                           bool bPreserveContents = false, uint64 RewrittenBytes = 0);
 
         // Freed when this slot's previous GPU work has completed.
         void DeferFree(const RHI::FGPUAllocation& Allocation);

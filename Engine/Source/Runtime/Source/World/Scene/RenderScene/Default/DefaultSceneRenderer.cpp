@@ -2594,7 +2594,7 @@ namespace Lumina
     }
 
     void FDefaultSceneRenderer::ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink,
-                                              bool bPreserveContents)
+                                              bool bPreserveContents, uint64 RewrittenBytes)
     {
         NeededBytes = Math::Max<uint64>(NeededBytes, 16ull);
 
@@ -2610,26 +2610,29 @@ namespace Lumina
             const RHI::FGPUAllocation Previous = Buffer;
             Buffer.Adopt(Grown);
 
-            if (Buffer.Init == EBufferInit::Zeroed)
+            const RHI::FGPURange FillRange = RHI::FGPURange{ Buffer.Gpu, Buffer.Size }.Skip(Math::Min(RewrittenBytes, Buffer.Size));
+            bool bFilled = false;
+            if (FillRange.Size != 0 && Buffer.Init == EBufferInit::Zeroed)
             {
-                RHI::CmdMemzero(CL, Buffer);
-                // Transfer is a destination too, since the preserve copy and the frame's uploads write this range next.
-                RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                    RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
-                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
+                RHI::CmdMemzero(CL, FillRange);
+                bFilled = true;
             }
             #if !defined(LE_SHIPPING)
-            else if (CVarPoisonUninitializedBuffers.GetValue())
+            else if (FillRange.Size != 0 && CVarPoisonUninitializedBuffers.GetValue())
             {
-                RHI::CmdMemset(CL, Buffer, kUninitializedBufferPoison);
+                RHI::CmdMemset(CL, FillRange, kUninitializedBufferPoison);
+                bFilled = true;
+            }
+            #endif
+
+            if (bFilled)
+            {
                 // Transfer is a destination too, since the preserve copy and the frame's uploads write this range next.
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
                     RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
                     RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
             }
-            #endif
 
             // Carried across on the GPU, so growing a large retained buffer costs a copy instead of a full re-upload.
             if (bPreserveContents && Previous.Gpu != 0)
