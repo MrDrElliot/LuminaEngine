@@ -422,12 +422,43 @@ namespace Lumina
             return FEventRange{ Math::Min(A.Start, B.Start), Math::Max(A.End, B.End) };
         };
 
-        const auto ScaleEventWeights = [](const FEventRange& Range, float Mul)
+        // Copy FAnimNotifyEvent instead of scaling in place as a pose can be reused on both sides of a blend.
+        const auto MixEvents = [](const FEventRange& A, float MulA, const FEventRange& B, float MulB, bool bSum) -> FEventRange
         {
-            for (uint16 i = Range.Start; i < Range.End && i < (uint16)EventScratch.size(); ++i)
+            const uint16 Start = (uint16)EventScratch.size();
+            const auto Append = [&](const FEventRange& Range, float Mul)
             {
-                EventScratch[i].Weight *= Mul;
-            }
+                for (uint16 i = Range.Start; i < Range.End && i < Start; ++i)
+                {
+                    FAnimNotifyEvent Event = EventScratch[i];
+                    Event.Weight *= Mul;
+
+                    FAnimNotifyEvent* Same = nullptr;
+                    for (uint16 j = Start; j < (uint16)EventScratch.size(); ++j)
+                    {
+                        const FAnimNotifyEvent& Other = EventScratch[j];
+                        if (Other.Notify == Event.Notify && Other.State == Event.State && Other.Animation == Event.Animation
+                            && Other.Type == Event.Type && Other.Name == Event.Name)
+                        {
+                            Same = &EventScratch[j];
+                            break;
+                        }
+                    }
+
+                    if (Same == nullptr)
+                    {
+                        EventScratch.push_back(Event);
+                    }
+                    else
+                    {
+                        Same->Weight = bSum ? Same->Weight + Event.Weight : Math::Max(Same->Weight, Event.Weight);
+                    }
+                }
+            };
+
+            Append(A, MulA);
+            Append(B, MulB);
+            return FEventRange{ Start, (uint16)EventScratch.size() };
         };
 
         const auto ReadScalar = [&](uint16 Reg, float Default) -> float
@@ -934,10 +965,12 @@ namespace Lumina
                     const float Duration = Clip ? Clip->GetDuration() : 0.0f;
 
                     // Seeding waits for a clip, so a dynamic clip that resolves late still starts where it was asked to.
+                    bool bStartedThisUpdate = false;
                     if (Clip != nullptr && SeededSlot < NumState && State.StateSlots[SeededSlot] < 0.5f)
                     {
                         State.StateSlots[SeededSlot] = 1.0f;
                         State.StateSlots[StateIdx]   = Math::Clamp(ReadScalar(StartPosReg, 0.0f), 0.0f, Duration);
+                        bStartedThisUpdate = true;
                     }
 
                     const float PrevClock = State.StateSlots[StateIdx];
@@ -1038,8 +1071,10 @@ namespace Lumina
                         // Point notifies crossed by this advance, tagged the same way.
                         if (OutEvents != nullptr && Clip != nullptr && Clock != PrevSampleTime && Clip->HasNotifies())
                         {
+                            // Crossing is (Prev, Cur], so a just-started clip would never fire a notify sitting on its start.
+                            const float NotifyFromTime = bStartedThisUpdate ? PrevSampleTime - 1e-4f : PrevSampleTime;
                             const uint16 EventStart = (uint16)EventScratch.size();
-                            AnimEvents::CollectTriggeredNotifies(Clip, PrevSampleTime, Clock, bLooping, 1.0f, EventScratch);
+                            AnimEvents::CollectTriggeredNotifies(Clip, NotifyFromTime, Clock, bLooping, 1.0f, EventScratch);
                             ClockEvents[DstClock] = { EventStart, (uint16)EventScratch.size() };
                         }
                     }
@@ -1340,12 +1375,10 @@ namespace Lumina
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
                 const float BlendAlpha = Math::Clamp(Task.Alpha, 0.0f, 1.0f);
-                ScaleEventWeights(EventsOf(A), 1.0f - BlendAlpha);
-                ScaleEventWeights(EventsOf(B), BlendAlpha);
                 LerpCurves(Dst, A, B, BlendAlpha);
                 SetPoseTags(Dst,
                             RootMotion::BlendRootMotion(DeltaOf(A), DeltaOf(B), BlendAlpha),
-                            UnionEvents(EventsOf(A), EventsOf(B)));
+                            MixEvents(EventsOf(A), 1.0f - BlendAlpha, EventsOf(B), BlendAlpha, true));
 
                 // Consumed next update, so the weights are one frame latent.
                 const FSyncTag SyncA = SyncOf(A);
@@ -1915,8 +1948,8 @@ namespace Lumina
                 Task.Alpha = ReadScalar(Alpha, 0.0f);
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
-                ScaleEventWeights(EventsOf(Delta), Math::Clamp(Task.Alpha, 0.0f, 1.0f));
-                SetPoseTags(Dst, DeltaOf(Base), UnionEvents(EventsOf(Base), EventsOf(Delta)));
+                SetPoseTags(Dst, DeltaOf(Base),
+                            MixEvents(EventsOf(Base), 1.0f, EventsOf(Delta), Math::Clamp(Task.Alpha, 0.0f, 1.0f), false));
                 SetPoseSync(Dst, SyncOf(Base));
                 AddCurves(Dst, Base, Delta, Math::Clamp(Task.Alpha, 0.0f, 1.0f));
                 break;
@@ -2321,7 +2354,7 @@ namespace Lumina
 
                     if (!bAdditive)
                     {
-                        ScaleEventWeights(CurrentEvents, 1.0f - Alpha);
+                        CurrentEvents = MixEvents(CurrentEvents, 1.0f - Alpha, FEventRange(), 0.0f, true);
                     }
                 }
 
