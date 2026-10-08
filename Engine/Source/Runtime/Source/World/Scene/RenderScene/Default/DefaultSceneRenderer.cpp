@@ -2613,19 +2613,21 @@ namespace Lumina
             if (Buffer.Init == EBufferInit::Zeroed)
             {
                 RHI::CmdMemzero(CL, Buffer);
+                // Transfer is a destination too, since the preserve copy and the frame's uploads write this range next.
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                    RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
-                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
+                    RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
             }
             #if !defined(LE_SHIPPING)
             else if (CVarPoisonUninitializedBuffers.GetValue())
             {
                 RHI::CmdMemset(CL, Buffer, kUninitializedBufferPoison);
+                // Transfer is a destination too, since the preserve copy and the frame's uploads write this range next.
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                    RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
-                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
+                    RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute | RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
+                    RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
             }
             #endif
 

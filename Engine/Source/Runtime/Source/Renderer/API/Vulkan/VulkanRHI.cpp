@@ -204,9 +204,12 @@ namespace Lumina::RHI
         VkAccessFlags2 Out = 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::TransferRead)      ? VK_ACCESS_2_TRANSFER_READ_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::TransferWrite)     ? VK_ACCESS_2_TRANSFER_WRITE_BIT : 0;
-        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderRead)        ? VK_ACCESS_2_SHADER_STORAGE_READ_BIT
-                                                                      | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0;
-        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderWrite)       ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : 0;
+        // The generic SHADER_READ/WRITE bits, not their STORAGE/SAMPLED subsets. The spec makes the two equivalent,
+        // but Intel's Windows driver (101.9034, Arc iGPU) does not make buffer-device-address writes visible
+        // across a compute-to-compute barrier given only the subsets, and the meshlet cull then read half-written
+        // bucket counters and dropped a different set of instances every frame.
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderRead)        ? VK_ACCESS_2_SHADER_READ_BIT : 0;
+        Out |= EnumHasAnyFlags(Flags, EAccessFlags::ShaderWrite)       ? VK_ACCESS_2_SHADER_WRITE_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::ColorRead)         ? VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::ColorWrite)        ? VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EAccessFlags::DepthStencilRead)  ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT : 0;
@@ -639,6 +642,8 @@ namespace Lumina::RHI
         uint32                          MaxMeshWorkGroupCountX = 0;
         // Non-zero when the mesh stage must be pinned at pipeline creation, see the shuffle note.
         uint32                          MeshRequiredSubgroupSize = 0;
+        // Non-zero when compute pipelines are pinned to this width, see ComputeSubgroupWidth.
+        uint32                          ComputeRequiredSubgroupSize = 0;
         // Commands can take a device address directly, so recording one needs no buffer lookup.
         bool                            bDeviceAddressCommands = false;
         // Present fences retire an old swapchain without idling every queue on the device.
@@ -2368,6 +2373,38 @@ namespace Lumina::RHI
         GDevice->bMeshShaderSupported     = Chosen.bMeshCapable;
         GDevice->MeshRequiredSubgroupSize = Chosen.MeshRequiredSubgroupSize;
 
+        // The compute shaders are written for 32-lane waves: MeshletCull votes a block visible with one
+        // WaveActiveAnyTrue over its 32-thread group, and the group scans size their wave tables for wave32.
+        // A device free to run compute 8 or 16 wide (Intel) splits those votes and drops random instances, so
+        // compute is pinned to 32 wherever the device can pin it.
+        {
+            constexpr uint32 ComputeSubgroupWidth = 32;
+            VkPhysicalDeviceSubgroupSizeControlProperties SubgroupProps
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES };
+            VkPhysicalDeviceProperties2 SubgroupQuery
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &SubgroupProps };
+            vkGetPhysicalDeviceProperties2(Best, &SubgroupQuery);
+
+            VkPhysicalDeviceVulkan13Features Supported13
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+            VkPhysicalDeviceFeatures2 FeatureQuery
+                { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &Supported13 };
+            vkGetPhysicalDeviceFeatures2(Best, &FeatureQuery);
+
+            if (SubgroupProps.minSubgroupSize < ComputeSubgroupWidth && SubgroupProps.maxSubgroupSize >= ComputeSubgroupWidth
+                && Supported13.subgroupSizeControl && (SubgroupProps.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT) != 0)
+            {
+                GDevice->ComputeRequiredSubgroupSize = ComputeSubgroupWidth;
+                LOG_DISPLAY("RHI: compute subgroups pinned to {} lanes (device runs {}-{}).",
+                    ComputeSubgroupWidth, SubgroupProps.minSubgroupSize, SubgroupProps.maxSubgroupSize);
+            }
+            else if (SubgroupProps.minSubgroupSize < ComputeSubgroupWidth)
+            {
+                LOG_WARN("RHI: compute may run {} lanes wide and cannot be pinned to {}; wave-voting passes can drop instances.",
+                    SubgroupProps.minSubgroupSize, ComputeSubgroupWidth);
+            }
+        }
+
         if (!Chosen.bMeshCapable)
         {
             LOG_DISPLAY("Mesh shading unavailable ({}); the mesh path is disabled.", Chosen.MeshReason);
@@ -2751,7 +2788,7 @@ namespace Lumina::RHI
         Features13.dynamicRendering = VK_TRUE;
         Features13.synchronization2 = VK_TRUE;
         Features13.shaderDemoteToHelperInvocation = VK_TRUE;
-        Features13.subgroupSizeControl = GDevice->MeshRequiredSubgroupSize != 0;
+        Features13.subgroupSizeControl = GDevice->MeshRequiredSubgroupSize != 0 || GDevice->ComputeRequiredSubgroupSize != 0;
 
         VkPhysicalDeviceVulkan14Features Features14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
         Features14.smoothLines = Supported14.smoothLines;
@@ -4598,6 +4635,12 @@ namespace Lumina::RHI
         FMemMark Mark{};
         VkSpecializationInfo SpecializationInfo = ConstructSpecializationInfo(Mark, Constants);
         
+        const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo ComputeSubgroupSize
+        {
+            .sType                = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+            .requiredSubgroupSize = GDevice->ComputeRequiredSubgroupSize,
+        };
+
         VkComputePipelineCreateInfo Info
         {
             .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -4606,7 +4649,7 @@ namespace Lumina::RHI
             .stage =
                 {
                     .sType                  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                    .pNext                  = nullptr,
+                    .pNext                  = GDevice->ComputeRequiredSubgroupSize != 0 ? &ComputeSubgroupSize : nullptr,
                     .flags                  = 0,
                     .stage                  = VK_SHADER_STAGE_COMPUTE_BIT,
                     .module                 = ShaderModule,
