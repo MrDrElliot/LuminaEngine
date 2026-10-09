@@ -19,8 +19,13 @@ namespace Lumina
     };
     
     // One 32 bit slot that every type reads and writes whole, so a narrow write cannot leave stale bytes.
-    struct ECustomPrimitiveDataUnion
+    REFLECT()
+    struct RUNTIME_API ECustomPrimitiveDataUnion
     {
+        GENERATED_BODY()
+
+        // Reflected so prefab override diffs and editing tools see the value, not only its type.
+        PROPERTY(Editable)
         uint32 Packed = 0;
 
         float      AsFloat() const { return std::bit_cast<float>(Packed); }
@@ -53,6 +58,7 @@ namespace Lumina
         PROPERTY(Editable)
         ECustomPrimitiveDataType Type = ECustomPrimitiveDataType::Float;
 
+        PROPERTY(Editable)
         ECustomPrimitiveDataUnion Data;
         
         bool Serialize(FArchive& Ar)

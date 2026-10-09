@@ -319,6 +319,12 @@ namespace Lumina::MCP
                         }
                     });
 
+                    // A variant saves only its delta, so without this the capture would be thrown away on save.
+                    if (Prefab->IsVariant())
+                    {
+                        Prefab->CaptureVariantDelta();
+                    }
+
                     CPackage* Package = Prefab->GetPackage();
                     if (Package == nullptr)
                     {

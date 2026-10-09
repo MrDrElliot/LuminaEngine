@@ -939,14 +939,25 @@ namespace Lumina::Reflection
                 case EBind::StructValue:
                 {
                     // A ref aliases the native field, since a by-value get would hand back a copy and drop per-field edits.
-                    if (WriteHook.empty())
+                    if (WriteHook.empty() || bRO)
                     {
                         Writer.Linef("public ref %s%s %s => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<%s>((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)));",
                             bRO ? "readonly " : "", CS, PropName.c_str(), CS, OffName.c_str());
                         EmitOffsetField(Writer, OffName, TypeName, Member);
                         break;
                     }
-                    [[fallthrough]];
+
+                    // A write through the ref cannot call the hook afterward, so handing the ref out is what marks it.
+                    Writer.Linef("public ref %s %s", CS, PropName.c_str());
+                    Writer.BeginBlock();
+                    Writer.Line("get");
+                    Writer.BeginBlock();
+                    Writer.Linef("%s();", WriteHook.c_str());
+                    Writer.Linef("return ref global::System.Runtime.CompilerServices.Unsafe.AsRef<%s>((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)));", CS, OffName.c_str());
+                    Writer.EndBlock();
+                    Writer.EndBlock();
+                    EmitOffsetField(Writer, OffName, TypeName, Member);
+                    break;
                 }
                 case EBind::Number:
                 case EBind::Bool:

@@ -2205,13 +2205,9 @@ namespace Lumina
             return "The new parent is inside the entity's own subtree, which would make a cycle.";
         }
 
-        // A refresh mirrors an inherited node back under its prefab parent, so moving one would not stick.
-        auto IsInheritedPrefabNode = [&Registry](ECS::FEntity Candidate)
-        {
-            const SPrefabInstanceComponent* Instance = Candidate != ECS::NullEntity ? Registry.TryGet<SPrefabInstanceComponent>(Candidate) : nullptr;
-            return Instance != nullptr && !Instance->bIsRoot;
-        };
-        if (IsInheritedPrefabNode(Entity) || IsInheritedPrefabNode(NewParent))
+        // Refresh mirrors a moved inherited node back, but a plain entity added beneath one stays and capture records it.
+        const SPrefabInstanceComponent* Instance = Registry.TryGet<SPrefabInstanceComponent>(Entity);
+        if (Instance != nullptr && !Instance->bIsRoot)
         {
             return "Cannot reparent prefab-instance children. Edit the source prefab instead.";
         }

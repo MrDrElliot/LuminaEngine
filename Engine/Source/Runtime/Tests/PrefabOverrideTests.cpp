@@ -9,6 +9,7 @@
 #include "Core/Object/ObjectCore.h"
 #include "GUID/GUID.h"
 #include "World/Entity/EntityUtils.h"
+#include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
 
@@ -73,6 +74,33 @@ TEST(PrefabOverrideDiff, AnInheritedLeafInheritsAndOverridesCorrectly)
     PrefabOverride::ApplyOverriddenLeaves(Layout, &Dest, &Instance, Overridden);
     EXPECT_EQ(Dest.Inherited, 99) << "the mirror copies only the overridden leaves";
     EXPECT_EQ(Dest.Own, 0);
+}
+
+// The color lives in a packed word, and a diff that saw only the type would drop every recolor.
+TEST(PrefabOverrideDiff, ACustomPrimitiveColorChangeIsAnOverride)
+{
+    ProcessNewlyLoadedCObjects();
+    CStruct* Layout = SStaticMeshComponent::StaticStruct();
+    ASSERT_NE(Layout, nullptr);
+
+    SStaticMeshComponent Prefab;
+    SStaticMeshComponent Instance;
+    Prefab.CustomPrimitiveData.SetAsColor(FVector4(1.0f, 0.0f, 0.0f, 1.0f));
+    Instance.CustomPrimitiveData.SetAsColor(FVector4(0.0f, 0.0f, 1.0f, 1.0f));
+
+    TVector<FName> Paths;
+    PrefabOverride::CollectOverriddenLeaves(Layout, &Instance, &Prefab, Paths);
+    ASSERT_FALSE(Paths.empty()) << "a recolor must read as an override";
+
+    THashSet<FName> Overridden;
+    for (const FName& Path : Paths)
+    {
+        Overridden.insert(Path);
+    }
+    SStaticMeshComponent Resolved;
+    Resolved.CustomPrimitiveData.SetAsColor(FVector4(1.0f, 0.0f, 0.0f, 1.0f));
+    PrefabOverride::ApplyOverriddenLeaves(Layout, &Resolved, &Instance, Overridden);
+    EXPECT_EQ(Resolved.CustomPrimitiveData.Data.Packed, Instance.CustomPrimitiveData.Data.Packed) << "and the override must land";
 }
 
 namespace
