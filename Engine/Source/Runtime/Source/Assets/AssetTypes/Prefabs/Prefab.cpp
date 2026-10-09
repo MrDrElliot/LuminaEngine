@@ -1604,16 +1604,17 @@ namespace Lumina
                 Registry.Emplace<STransformComponent>(ChildIt->second);
             }
 
+            // ReparentEntity with bPreserveWorld as false, otherwise child entities transforms are reset to 0,0,0.
             if (Node.ParentStableID.IsNone())
             {
-                ECS::Utils::ReparentEntity(Registry, ChildIt->second, ECS::NullEntity);
+                ECS::Utils::ReparentEntity(Registry, ChildIt->second, ECS::NullEntity, false);
                 continue;
             }
 
             auto ParentIt = Resolved.find(Node.ParentStableID);
             if (ParentIt != Resolved.end() && Registry.IsValid(ParentIt->second))
             {
-                ECS::Utils::ReparentEntity(Registry, ChildIt->second, ParentIt->second);
+                ECS::Utils::ReparentEntity(Registry, ChildIt->second, ParentIt->second, false);
             }
         }
     }
