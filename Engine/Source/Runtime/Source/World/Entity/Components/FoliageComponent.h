@@ -125,6 +125,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Collision")
         TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
+        // The type's own shape when it holds collision, else the mesh's loaded default, else null.
+        CCollisionShape* GetDefaultCollisionShape() const;
+
         // Transient resolve cache (not serialized); refreshed by ResolveDirtyMeshComponents.
         uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;

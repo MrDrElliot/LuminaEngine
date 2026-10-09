@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "FoliageComponent.h"
+#include "Assets/AssetTypes/Physics/CollisionShape.h"
 #include "World/ECS/Registry.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
@@ -7,6 +8,19 @@
 
 namespace Lumina
 {
+    CCollisionShape* SFoliageType::GetDefaultCollisionShape() const
+    {
+        CCollisionShape* Shape = CollisionShape.Get();
+        if (Shape != nullptr && Shape->HasCollision())
+        {
+            return Shape;
+        }
+        const CStaticMesh* StaticMesh = Mesh.Get();
+        return StaticMesh != nullptr && StaticMesh->GetDefaultCollisionShape() != nullptr
+            ? StaticMesh->DefaultCollisionShape.Get()
+            : nullptr;
+    }
+
     int32 SFoliageComponent::RemoveInRadius(const FVector3& WorldCenter, float Radius, int32 TypeFilter)
     {
         const float RadiusSq = Radius * Radius;
