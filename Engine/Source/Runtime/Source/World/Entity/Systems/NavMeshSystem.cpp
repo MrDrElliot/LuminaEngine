@@ -914,18 +914,6 @@ namespace Lumina
             uint64   ContentId = 0;
         };
 
-        // The type's own shape, then the mesh's default, matching SFoliageCollisionSystem.
-        const CCollisionShape* ResolveFoliageCollisionShape(const SFoliageType& Type)
-        {
-            const CCollisionShape* Shape = Type.CollisionShape.Get();
-            if (Shape != nullptr && Shape->HasCollision())
-            {
-                return Shape;
-            }
-            const CStaticMesh* Mesh = Type.Mesh.Get();
-            return Mesh != nullptr ? Mesh->GetDefaultCollisionShape() : nullptr;
-        }
-
         // Mirrors SFoliageCollisionSystem, an authored shape first and the mesh otherwise, read as triangles like a mesh collider.
         FFoliageNavTemplate BuildFoliageNavTemplate(const SFoliageType& Type)
         {
@@ -936,7 +924,7 @@ namespace Lumina
             }
 
             auto Children = MakeShared<TVector<FNavSourcePrim>>();
-            if (const CCollisionShape* Shape = ResolveFoliageCollisionShape(Type))
+            if (const CCollisionShape* Shape = Type.GetDefaultCollisionShape())
             {
                 ForEachCollisionShapePrim(*Shape, FMatrix4(1.0f), [&](ENavColliderType, uint32, FNavSourceEntry&& Entry)
                 {
@@ -972,7 +960,7 @@ namespace Lumina
             for (const SFoliageType& Type : Foliage.Types)
             {
                 Hash::HashCombine(Seed, (size_t)Type.bEnableCollision);
-                const CCollisionShape* Shape = ResolveFoliageCollisionShape(Type);
+                const CCollisionShape* Shape = Type.GetDefaultCollisionShape();
                 Hash::HashCombine(Seed, (size_t)(uintptr_t)Shape);
                 if (Shape != nullptr)
                 {
