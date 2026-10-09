@@ -457,6 +457,7 @@ namespace Lumina
             TransformComponent.Registry = &EntityRegistry;
             TransformComponent.Entity = Entity;
             TransformComponent.DirtyState = DirtyState;
+            TransformComponent.bIsFlat = ECS::Utils::IsEntityTransformFlat(EntityRegistry, Entity);
         });
 
         if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)

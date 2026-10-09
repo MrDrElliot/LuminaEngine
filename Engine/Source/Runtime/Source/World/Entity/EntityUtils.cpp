@@ -913,6 +913,17 @@ namespace Lumina::ECS::Utils
         FTransformDirtyState& State = *Registry.Ctx().Emplace<TUniquePtr<FTransformDirtyState>>(MakeUnique<FTransformDirtyState>());
         Registry.GetSignals<FNeedsTransformUpdate>().OnConstruct.Connect<&OnTransformDirtied>(&State);
         Registry.OnHierarchyChanged().Connect<&OnHierarchyChanged>(&State);
+
+        // A load links children before this state exists, so they raised no signal and would keep a never-resolved world transform.
+        const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
+        if (Hierarchy.NumLinked() != 0)
+        {
+            Hierarchy.EnsureOrder();
+            for (ECS::FEntity Linked : Hierarchy.GetOrder())
+            {
+                OnHierarchyChanged(&State, Registry, Linked);
+            }
+        }
         return &State;
     }
 

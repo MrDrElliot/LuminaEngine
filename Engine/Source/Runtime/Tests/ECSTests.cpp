@@ -146,6 +146,26 @@ TEST(ECSTests, ComputeWorldTransform_GrandchildFollowsRootMoveWithoutWriting)
     EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(C).WorldTransform.GetLocation().x, 27.f);
 }
 
+TEST(ECSTests, ChildrenLinkedBeforeTheDirtyStateStillResolve)
+{
+    ECS::FRegistry Registry{};
+
+    auto A = Registry.Create();
+    auto B = Registry.Create();
+    Registry.Emplace<STransformComponent>(A).LocalTransform.SetLocation(FVector3(10.f, 0.f, 0.f));
+    Registry.Emplace<STransformComponent>(B).LocalTransform.SetLocation(FVector3(5.f,  0.f, 0.f));
+
+    // A level load links its children this way, before anything has created the transform dirty state.
+    Registry.AttachChild(B, A);
+
+    // Two resolves, since the first clears the dirty flag and a child it missed would then never resolve.
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(B).WorldTransform.GetLocation().x, 15.f);
+    EXPECT_FLOAT_EQ(ECS::Utils::ComputeWorldTransform(Registry, B).GetLocation().x, 15.f);
+}
+
 TEST(ECSTests, ComputeWorldTransform_SiblingOfAMovedChainIsCurrent)
 {
     ECS::FRegistry Registry{};
