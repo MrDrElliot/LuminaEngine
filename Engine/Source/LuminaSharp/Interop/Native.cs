@@ -207,6 +207,7 @@ public static unsafe partial class Native
     // No suppressed transition, since the table locks and Set frees a GC handle, re-entering the runtime.
     [NativeCall] public static partial IntPtr ObjectGetManagedInstance(IntPtr Object);
     [NativeCall] public static partial void ObjectSetManagedInstance(IntPtr Object, IntPtr Handle);
+    [NativeCall] public static partial int ObjectAdoptScriptTwin(IntPtr Object, IntPtr WeakHandle);
 
     // Frees every cached managed instance. Called from the script teardown contract before the collectible ALC
     // unloads: Scriptable subclass instances are held by STRONG handles in that table and would pin it.

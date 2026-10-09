@@ -15,6 +15,7 @@
 
 namespace Lumina
 {
+    class CSaveGame;
     class CWorld;
 
     // One stage-scheduled worker over a world's component store, instanced once per world.
@@ -48,6 +49,14 @@ namespace Lumina
         // Runs once when the world tears down, or when this system is disabled.
         FUNCTION()
         virtual void OnTeardown() {}
+
+        // The world is about to be captured into SaveGame, so state kept outside SaveGame fields can be folded in.
+        FUNCTION()
+        virtual void OnWorldSaving(CSaveGame* SaveGame) {}
+
+        // SaveGame just restored the world, so anything this system derived from saved fields is stale.
+        FUNCTION()
+        virtual void OnWorldRestored(CSaveGame* SaveGame) {}
 
         // The owning world, valid from Configure onwards.
         FUNCTION()

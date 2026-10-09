@@ -46,10 +46,17 @@ namespace Lumina
 
     RUNTIME_API void AllocateStaticScriptClass(const TCHAR* Package, const TCHAR* Name, CScriptClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc)
     {
+        AllocateStaticScriptClass(Package, Name, OutClass, Size, Alignment, SuperClassFn(), FactoryFunc);
+    }
+
+    RUNTIME_API void AllocateStaticScriptClass(const TCHAR* Package, const TCHAR* Name, CScriptClass** OutClass, uint32 Size, uint32 Alignment, CClass* SuperClass, CClass::FactoryFunctionType FactoryFunc)
+    {
         DEBUG_ASSERT(*OutClass == nullptr);
 
         *OutClass = Memory::New<CScriptClass>(ResolveClassPackage(Package), FName(Name), Size, Alignment, OF_None, FactoryFunc);
-        LinkAndQueueStaticClass(*OutClass, SuperClassFn);
+        (*OutClass)->SetSuperStruct(SuperClass != *OutClass ? SuperClass : nullptr);
+        (*OutClass)->RegisterDependencies();
+        (*OutClass)->BeginRegister();
     }
     
 

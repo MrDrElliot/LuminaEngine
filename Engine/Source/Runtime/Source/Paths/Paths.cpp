@@ -211,6 +211,21 @@ namespace Lumina::Paths
         return CachedDirectories[EngineShadersDirectoryName];
     }
 
+    FString GetUserDataDirectory()
+    {
+        #if defined(_WIN32)
+        FString Directory = Platform::GetEnvVariable("LOCALAPPDATA");
+        #else
+        FString Directory = Platform::GetEnvVariable("XDG_CONFIG_HOME");
+        if (Directory.empty())
+        {
+            Directory = Platform::GetEnvVariable("HOME") + "/.config";
+        }
+        #endif
+        Normalize(Directory);
+        return Directory;
+    }
+
     FString Parent(FStringView Path, bool bRemoveTrailingSlash)
     {
         auto data = Path.data();

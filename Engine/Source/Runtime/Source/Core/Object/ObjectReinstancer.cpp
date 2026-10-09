@@ -97,6 +97,9 @@ namespace Lumina
             }
         });
 
+        // Repointing an original's last holder drops it to zero, so each one is held until the walk is done with it.
+        TVector<TStrongObjectPtr<CObject>> Pins(Originals.begin(), Originals.end());
+
         for (CObject* Old : Originals)
         {
             CClass* const NewClass = ClassMap.find(Old->GetClass())->second;
@@ -139,8 +142,7 @@ namespace Lumina
             return Found->second;
         };
 
-        // Raw is safe here, unlike a general replacement pass: every rewrite swaps one live object for
-        // another, so nothing loses its last reference and dies while the walk is still going.
+        // Raw is safe here because every original is pinned above, so none dies while the walk is still going.
         TVector<CObject*> Live;
         GObjectArray.ForEachObject([&](CObjectBase* Base, int32)
         {
@@ -177,6 +179,9 @@ namespace Lumina
             }
             Doomed.emplace_back(GObjectArray.GetHandleByObject(Old), Old);
         }
+
+        // An original nothing reaches any more dies here, which the handle check below then skips.
+        Pins.clear();
 
         FString Stranded;
         for (const TPair<FObjectHandle, CObject*>& Entry : Doomed)

@@ -322,6 +322,9 @@ namespace Lumina
         FVector3 GetEntityLocation(ECS::FEntity Entity);
 
         FUNCTION()
+        FQuat GetEntityRotation(ECS::FEntity Entity);
+
+        FUNCTION()
         void SetEntityLocation(ECS::FEntity Entity, FVector3 Location);
 
         FUNCTION()

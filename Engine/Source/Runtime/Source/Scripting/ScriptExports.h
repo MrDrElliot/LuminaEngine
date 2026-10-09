@@ -161,7 +161,8 @@ namespace Lumina::Scripting
          *  after the fields so a reader that only knows about fields stops at their count and ignores these. */
         TVector<FScriptExportFunction> Functions;
 
-        bool IsValid() const { return !Fields.empty(); }
+        // A behavior-only type still mints, for its functions, so a schema with either counts.
+        bool IsValid() const { return !Fields.empty() || !Functions.empty(); }
     };
 
     // A [Button] method exposed on a script type: a parameterless method drawn as an inspector button and

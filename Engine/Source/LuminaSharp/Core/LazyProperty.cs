@@ -16,10 +16,11 @@ public struct LazyPropertyOffset
     private bool bResolved;
 
     // A miss is not cached, since the class may still be gaining properties, and throws rather than reaching field 0.
-    public nint Get(string Type, string Property)
+    public nint Get(System.Type Owner, string Property)
     {
         if (!bResolved)
         {
+            string Type = NativeTypeName.Of(Owner);
             int Offset = NativeBindings.TryPropertyOffset(Type, Property);
             if (Offset < 0)
             {
@@ -39,12 +40,13 @@ public struct LazyPropertyToken
     private System.IntPtr Value;
     private bool bResolved;
 
-    public System.IntPtr Get(string Type, string Property)
+    // A miss is not cached either, for the same reason as the offset.
+    public System.IntPtr Get(System.Type Owner, string Property)
     {
         if (!bResolved)
         {
-            Value = NativeBindings.FindProperty(Type, Property);
-            bResolved = true;
+            Value = NativeBindings.FindProperty(NativeTypeName.Of(Owner), Property);
+            bResolved = Value != System.IntPtr.Zero;
         }
         return Value;
     }

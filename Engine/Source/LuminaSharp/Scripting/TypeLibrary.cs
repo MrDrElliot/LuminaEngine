@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Lumina;
+using LuminaSharp.ScriptProperties;
 
 namespace LuminaSharp;
 
@@ -31,15 +32,16 @@ internal sealed class TypeLibrary
         AllTypes = new List<Type>(Types);
         foreach (Type Type in AllTypes)
         {
-            if (Type.IsAbstract || Type.FullName is not { } FullName)
+            if (Type.FullName == null || Type.IsInterface || Type.ContainsGenericParameters)
             {
                 continue;
             }
-            if (typeof(EntityScript).IsAssignableFrom(Type))
+            string FullName = NativeTypeName.Of(Type);
+            if (!Type.IsAbstract && typeof(EntityScript).IsAssignableFrom(Type))
             {
                 EntityScripts[FullName] = Describe(Type);
             }
-            else if (typeof(EntitySystem).IsAssignableFrom(Type))
+            else if (!Type.IsAbstract && typeof(EntitySystem).IsAssignableFrom(Type))
             {
                 ++EntitySystemCount;
             }
@@ -50,6 +52,7 @@ internal sealed class TypeLibrary
             // that gives it a class to instantiate and the trailing block its [Property] members live in. As
             // an exclusive chain this silently published no EntityScript to the minter, so no script class
             // existed and no script property was ever appended.
+            // Abstract ones too, since a subclass is minted under its C# parent and needs that class to exist.
             if (IsScriptableSubclass(Type))
             {
                 Scriptables[FullName] = Type;
@@ -74,7 +77,7 @@ internal sealed class TypeLibrary
                 continue;
             }
 
-            string StableId = Type.Name;
+            string StableId = NativeTypeName.Of(Type);
             if (DataStructs.TryGetValue(StableId, out DataStructEntry Existing))
             {
                 Native.Log(ELogLevel.Warn,
@@ -93,8 +96,9 @@ internal sealed class TypeLibrary
         // this is a superset of what it used to walk.
         foreach (Type Scriptable in Scriptables.Values)
         {
-            string Current = Scriptable.FullName!;
-            foreach (AliasAttribute Alias in Scriptable.GetCustomAttributes<AliasAttribute>())
+            string Current = NativeTypeName.Of(Scriptable);
+            // Not inherited, since a subclass is not the class that used to have the name.
+            foreach (AliasAttribute Alias in Scriptable.GetCustomAttributes<AliasAttribute>(inherit: false))
             {
                 if (string.IsNullOrEmpty(Alias.Name)
                     || EntityScripts.ContainsKey(Alias.Name)
@@ -144,8 +148,26 @@ internal sealed class TypeLibrary
     /// the others being element and key/value -- so a view cannot be known to one and not the others.</summary>
     private static bool IsNativeOwnedViewType(Type Type) => ScriptPropertyViews.IsView(Type);
 
+    // The nearest C# class above Type that is minted too, which is what Type is minted under, or null below a native base.
+    public Type? MintedParentOf(Type Type)
+    {
+        for (Type? Base = Type.BaseType; Base != null; Base = Base.BaseType)
+        {
+            if (Scriptables.ContainsKey(NativeTypeName.Of(Base)) && Scriptables[NativeTypeName.Of(Base)] == Base)
+            {
+                return Base;
+            }
+        }
+        return null;
+    }
+
+    // A generated wrapper of a native class, a game module's included, names that class and is never minted.
     private static bool IsScriptableSubclass(Type Type)
     {
+        if (Type.GetCustomAttribute<NativeTypeAttribute>(inherit: false) != null)
+        {
+            return false;
+        }
         for (Type? Base = Type.BaseType; Base != null; Base = Base.BaseType)
         {
             if (Base.GetCustomAttribute<ScriptableTypeAttribute>(false) != null)
@@ -171,6 +193,17 @@ internal sealed class TypeLibrary
             return EntityScripts.TryGetValue(Current, out Description) ? Description : null;
         }
         return null;
+    }
+
+    // Any minted class's description, not only an EntityScript's, so a C# save game or subsystem gets its properties too.
+    public TypeDescription? GetMintedClass(string FullName)
+    {
+        if (GetEntityScript(FullName) is { } Script)
+        {
+            return Script;
+        }
+        string Name = ScriptAliases.TryGetValue(FullName, out string? Current) ? Current : FullName;
+        return GetScriptable(Name) is { } Type ? Describe(Type) : null;
     }
 
     /// <summary>Get-or-build the description for any type (used recursively for nested struct members).</summary>
@@ -474,93 +507,64 @@ internal sealed class TypeLibrary
         return EPropertyType.None;
     }
 
-    // Every field or property carrying [Property] or [Serialize] and not [Hide]. [Serialize] is stored but not drawn.
+    // Every member ScriptMemberRules stores, fields and properties alike, under its own name.
     internal List<ScriptProperty> BuildMembers(Type Type, int Depth, HashSet<Type> Visiting)
     {
         var Members = new List<ScriptProperty>();
         const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
         bool bClassSkip = Type.GetCustomAttribute<SkipHotReloadAttribute>() != null;
+        bool bNativeObject = typeof(NativeObject).IsAssignableFrom(Type);
 
-        foreach (FieldInfo Field in Type.GetFields(Flags))
+        foreach (MemberInfo Member in Type.GetMembers(Flags))
         {
-            PropertyAttribute? Meta = Field.GetCustomAttribute<PropertyAttribute>();
-            bool bSync = Field.GetCustomAttribute<SyncAttribute>() != null;
-            bool bSerializeOnly = Meta == null && (bSync || Field.GetCustomAttribute<SerializeAttribute>() != null);
-            if ((Meta == null && !bSerializeOnly) || Field.GetCustomAttribute<HideAttribute>() != null)
+            Type MemberType;
+            EScriptMemberKind Kind;
+            if (Member is FieldInfo Field)
+            {
+                MemberType = Field.FieldType;
+                Kind = EScriptMemberKind.Field;
+            }
+            else if (Member is PropertyInfo Property && Property.CanRead && Property.GetIndexParameters().Length == 0)
+            {
+                MemberType = Property.PropertyType;
+
+                // A get-only container is a view over storage native owns, so it is stored even with no setter.
+                Kind = Property.CanWrite || IsNativeOwnedViewType(MemberType) ? EScriptMemberKind.WritableProperty : EScriptMemberKind.ReadOnlyProperty;
+            }
+            else
             {
                 continue;
             }
 
-            ScriptType Resolved = ResolveType(Field.FieldType, Depth + 1, Visiting, Field.GetCustomAttribute<InstancedAttribute>() != null);
+            FScriptMemberRule Rule = RuleFor(Member, Kind, bNativeObject);
+            if (!Rule.bStored)
+            {
+                continue;
+            }
+
+            ScriptType Resolved = ResolveType(MemberType, Depth + 1, Visiting, Member.GetCustomAttribute<InstancedAttribute>() != null);
             if (Resolved.Kind == EPropertyType.None)
             {
                 continue;
             }
 
+            PropertyAttribute? Meta = Member.GetCustomAttribute<PropertyAttribute>();
+            bool bNativeOwnedView = Member is PropertyInfo AsProperty && !AsProperty.CanWrite;
             Members.Add(new ScriptProperty
             {
-                Name = Meta?.Name ?? Field.Name,
+                Name = Member.Name,
+                DeclaringType = Member.DeclaringType,
                 Type = Resolved,
                 Meta = Meta,
-                Hidden = bSerializeOnly,
-                Aliases = GatherAliases(Field),
-                SkipHotReload = bClassSkip || Field.GetCustomAttribute<SkipHotReloadAttribute>() != null,
-                ExtraFlags = bSync ? EPropertyFlags.Replicated : EPropertyFlags.None,
-                NetRate = Field.GetCustomAttribute<SyncAttribute>()?.Rate ?? 0.0f,
-                ExtraMeta = ExtraMetaOf(Field, Meta),
-                Get = Field.GetValue,
-                Set = Field.SetValue,
-            });
-        }
-
-        foreach (PropertyInfo Property in Type.GetProperties(Flags))
-        {
-            if (!Property.CanRead || Property.GetIndexParameters().Length > 0)
-            {
-                continue;
-            }
-
-            PropertyAttribute? Meta = Property.GetCustomAttribute<PropertyAttribute>();
-            bool bSync = Property.GetCustomAttribute<SyncAttribute>() != null;
-            bool bBindOnly = Meta == null && Property.GetCustomAttribute<BindAttribute>() != null
-                && (Property.CanWrite || IsNativeOwnedViewType(Property.PropertyType));
-            bool bSerializeOnly = Meta == null && (bSync || bBindOnly || Property.GetCustomAttribute<SerializeAttribute>() != null);
-            if ((Meta == null && !bSerializeOnly) || Property.GetCustomAttribute<HideAttribute>() != null)
-            {
-                continue;
-            }
-
-            ScriptType Resolved = ResolveType(Property.PropertyType, Depth + 1, Visiting, Property.GetCustomAttribute<InstancedAttribute>() != null);
-            if (Resolved.Kind == EPropertyType.None)
-            {
-                continue;
-            }
-
-            // A get-only property USED to mean "not editable, so not a property". That is still true for a
-            // value, but not for a container: a script's container property is a get-only VIEW over storage
-            // native owns, so assigning it is meaningless while its contents are fully editable. Requiring a
-            // setter dropped every such member from the schema, so no native property was appended and the
-            // view had nothing to point at.
-            bool bNativeOwnedView = !Property.CanWrite;
-            if (bNativeOwnedView && !IsNativeOwnedViewType(Property.PropertyType))
-            {
-                continue;
-            }
-
-            Members.Add(new ScriptProperty
-            {
-                Name = Meta?.Name ?? Property.Name,
-                Type = Resolved,
-                Meta = Meta,
-                Hidden = bSerializeOnly,
-                Aliases = GatherAliases(Property),
-                SkipHotReload = bClassSkip || Property.GetCustomAttribute<SkipHotReloadAttribute>() != null,
-                ExtraFlags = (bSync ? EPropertyFlags.Replicated : EPropertyFlags.None) | (bBindOnly && !bSync ? EPropertyFlags.NoSerialize : EPropertyFlags.None),
-                NetRate = Property.GetCustomAttribute<SyncAttribute>()?.Rate ?? 0.0f,
-                ExtraMeta = ExtraMetaOf(Property, Meta),
-                Get = Property.GetValue,
+                Hidden = !Rule.bVisible,
+                Aliases = GatherAliases(Member, Meta),
+                SkipHotReload = bClassSkip || Member.GetCustomAttribute<SkipHotReloadAttribute>() != null,
+                ExtraFlags = (EPropertyFlags)Rule.Flags,
+                NetRate = Member.GetCustomAttribute<SyncAttribute>()?.Rate ?? 0.0f,
+                ExtraMeta = ExtraMetaOf(Member, Meta),
+                Get = Member is FieldInfo F ? F.GetValue : ((PropertyInfo)Member).GetValue,
                 // Never Property.SetValue for a view: there is no setter to call, and reaching for one throws.
-                Set = bNativeOwnedView ? (Instance, Value) => { } : Property.SetValue,
+                Set = Member is FieldInfo G ? G.SetValue : bNativeOwnedView ? (Instance, Value) => { } : ((PropertyInfo)Member).SetValue,
                 IsNativeOwnedView = bNativeOwnedView,
             });
         }
@@ -568,11 +572,30 @@ internal sealed class TypeLibrary
         return Members;
     }
 
-    // Prior member names declared via [Alias], so a renamed field's saved value replays.
-    private static IReadOnlyList<string>? GatherAliases(MemberInfo Member)
+    // Only LuminaSharp's own attributes count, so a game attribute that happens to share a name changes nothing.
+    internal static FScriptMemberRule RuleFor(MemberInfo Member, EScriptMemberKind Kind, bool bOwnerIsNativeObject)
+    {
+        var Names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Attribute Attribute in Member.GetCustomAttributes(inherit: true))
+        {
+            Type AttributeType = Attribute.GetType();
+            if (AttributeType.Namespace == "LuminaSharp")
+            {
+                Names.Add(ScriptMemberRules.BareName(AttributeType.Name));
+            }
+        }
+        return ScriptMemberRules.Classify(Names.Contains, Kind, bOwnerIsNativeObject);
+    }
+
+    // Prior names a saved value may carry, [Alias] and the display Name that used to be the stored name.
+    private static IReadOnlyList<string>? GatherAliases(MemberInfo Member, PropertyAttribute? Meta)
     {
         List<string>? Result = null;
-        foreach (AliasAttribute Alias in Member.GetCustomAttributes<AliasAttribute>())
+        if (!string.IsNullOrEmpty(Meta?.Name) && Meta.Name != Member.Name)
+        {
+            (Result ??= new List<string>()).Add(Meta.Name);
+        }
+        foreach (AliasAttribute Alias in Member.GetCustomAttributes<AliasAttribute>(inherit: false))
         {
             if (!string.IsNullOrEmpty(Alias.Name))
             {
@@ -654,6 +677,10 @@ internal sealed class TypeLibrary
     private static List<KeyValuePair<string, string>>? ExtraMetaOf(MemberInfo Member, PropertyAttribute? Meta)
     {
         var Result = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrEmpty(Meta?.Name))
+        {
+            Result.Add(new("DisplayName", Meta.Name));
+        }
         if (!string.IsNullOrEmpty(Meta?.AssetType))
         {
             Result.Add(new("AssetType", Meta.AssetType));

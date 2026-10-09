@@ -36,6 +36,9 @@ enum class EArchiverFlags : uint8
      *  export must KEEP the FBulkDataRef it already has instead of re-emitting its payload. Region-relative
      *  offsets are what make this work: copy the whole region and every ref into it is still correct. */
     BulkPassthrough = 7,
+
+    // Writing or reading a save game, where an object reference may carry the object itself.
+    SaveGame    = 8,
 };
 
 namespace Lumina
@@ -90,7 +93,13 @@ namespace Lumina
          *  drop EditorOnly properties when this is set. */
         FORCEINLINE bool IsCooking() const { return HasFlag(EArchiverFlags::Cooking); }
 
-        FORCEINLINE void SetHasError(bool bIsError) { bHasError = bIsError; }
+        FORCEINLINE bool IsSaveGame() const { return HasFlag(EArchiverFlags::SaveGame); }
+
+        // A packed ECS entity id, which an archive between two worlds may translate.
+        virtual void SerializeEntityId(uint32& PackedEntity) { *this << PackedEntity; }
+
+        // Virtual so a proxy can hand the error to the archive that actually reports it.
+        virtual void SetHasError(bool bIsError) { bHasError = bIsError; }
         FORCEINLINE virtual bool HasError() const { return bHasError; }
 
         FORCEINLINE static FPackageFileVersion GetEngineVersion()

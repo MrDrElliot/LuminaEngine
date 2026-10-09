@@ -59,6 +59,28 @@ namespace Lumina
 
         RUNTIME_API CClass* GetMetaClass() const override;
 
+        bool IsAbstract() const override { return bAbstract; }
+        bool IsSuperseded() const override { return bSuperseded; }
+
+        // Every appended property of this class and of its C# parents, which together are an instance's script storage.
+        template<typename TFunc>
+        void ForEachScriptProperty(TFunc&& Func) const
+        {
+            for (const CScriptClass* Class = this; Class != nullptr; Class = Cast<CScriptClass>(Class->GetSuperClass()))
+            {
+                for (FProperty* Property : Class->ScriptProperties)
+                {
+                    Func(Property);
+                }
+            }
+        }
+
+        // Minted from an abstract C# class, so it exists for its subclasses' layout and is never instantiated.
+        bool bAbstract = false;
+
+        // Set while a reload has replaced or removed it, and cleared if the same C# type comes back.
+        bool bSuperseded = false;
+
         /** The events this C# subclass overrides, as real functions on this class whose body is managed.
          *
          *  A map rather than a mask: an override is a function like any other, found by the name it is

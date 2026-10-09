@@ -175,12 +175,12 @@ namespace Lumina::DotNet
     //~ Scriptable CObjects: a C# subclass of a REFLECT(Scriptable) native CObject. The Reflector mints a CClass
     //  per discovered C# subclass; native creates the CObject (a minted CClass) and binds the managed instance.
 
-    // One discovered C# Scriptable subclass: its full type name + the native base class it derives from (the
-    // [ScriptableType] wrapper's reflected name). The host mints a CClass(super = that native base) per entry.
+    // One discovered C# Scriptable subclass and the class it derives from, its C# parent when that is minted too.
     struct FScriptableTypeDesc
     {
         FString TypeName;
         FString NativeBaseName;
+        bool    bAbstract = false;
         // Which ScriptEvents the C# subclass overrides. Type-uniform, so it is carried on the minted CClass
         // rather than per instance (CClass::ScriptOverrides); bit i == the wrapper's [ScriptEvent(i)].
         /** Names of the ScriptEvents this type overrides. A list rather than a mask: an override is found

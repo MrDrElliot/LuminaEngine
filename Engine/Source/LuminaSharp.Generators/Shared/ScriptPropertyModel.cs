@@ -202,16 +202,21 @@ internal static class ScriptPropertyClassifier
 
     private static bool HasPropertyOrSerialize(IFieldSymbol Field)
     {
-        foreach (AttributeData Attribute in Field.GetAttributes())
+        return RuleFor(Field, EScriptMemberKind.Field, bOwnerIsNativeObject: false).bStored;
+    }
+
+    // ScriptMemberRules over a Roslyn symbol, reading only LuminaSharp's own attributes, as TypeLibrary.RuleFor does by reflection.
+    public static FScriptMemberRule RuleFor(ISymbol Member, EScriptMemberKind Kind, bool bOwnerIsNativeObject)
+    {
+        var Names = new HashSet<string>();
+        foreach (AttributeData Attribute in Member.GetAttributes())
         {
-            string? Name = Attribute.AttributeClass?.ToDisplayString();
-            if (Name == ScriptPropertyTypeNames.PropertyAttribute
-                || Name == ScriptPropertyTypeNames.SerializeAttribute)
+            if (Attribute.AttributeClass is { } Class && Class.ContainingNamespace?.ToDisplayString() == "LuminaSharp")
             {
-                return true;
+                Names.Add(ScriptMemberRules.BareName(Class.Name));
             }
         }
-        return false;
+        return ScriptMemberRules.Classify(Names.Contains, Kind, bOwnerIsNativeObject);
     }
 
     private static FScriptPropertyClassification ClassifyList(EScriptAccess Access, ITypeSymbol Element)

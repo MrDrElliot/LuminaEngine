@@ -29,16 +29,6 @@ namespace Lumina
             const EPresentMode Project = GetDefault<CRendererSettings>()->PresentMode;
             return Project != EPresentMode::FIFO ? Project : EPresentMode::Immediate;
         }
-
-        FString UserDataDirectory()
-        {
-            #if defined(_WIN32)
-            return Platform::GetEnvVariable("LOCALAPPDATA");
-            #else
-            const FString Xdg = Platform::GetEnvVariable("XDG_CONFIG_HOME");
-            return !Xdg.empty() ? Xdg : Platform::GetEnvVariable("HOME") + "/.config";
-            #endif
-        }
     }
 
     CGameUserSettings& CGameUserSettings::Get()
@@ -60,7 +50,7 @@ namespace Lumina
         }
 
         const FStringView ProjectName = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
-        FString Directory = UserDataDirectory();
+        FString Directory = Paths::GetUserDataDirectory();
         Directory += "/";
         Directory += ProjectName.empty() ? FString("Lumina") : FString(ProjectName.data(), ProjectName.size());
         return Directory + "/UserSettings.json";

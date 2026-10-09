@@ -95,8 +95,7 @@ namespace Lumina
          */
         static CClass* ResolveClass(const FName& Name);
 
-        /** Every minted class whose C# type is gone but whose name redirects to a live type, so a reload can
-         *  move its instances across before it is retired. */
+        // Every minted class whose name redirects elsewhere, so a reload can move its instances across.
         static void GatherRenamedClasses(THashSet<CClass*>& Out);
     };
 }

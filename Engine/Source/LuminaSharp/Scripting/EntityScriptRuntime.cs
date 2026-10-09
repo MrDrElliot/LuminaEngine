@@ -43,13 +43,13 @@ internal sealed class EntityScriptRuntime
 
     public byte[]? Schema(string TypeName)
     {
-        TypeDescription? Description = Library.GetEntityScript(TypeName);
-        return Description != null ? Serializer.WriteSchema(Description) : null;
+        TypeDescription? Description = Library.GetMintedClass(TypeName);
+        return Description != null ? Serializer.WriteSchema(Description, Library.MintedParentOf(Description.Type)) : null;
     }
 
     public byte[]? Buttons(string TypeName)
     {
-        TypeDescription? Description = Library.GetEntityScript(TypeName);
+        TypeDescription? Description = Library.GetMintedClass(TypeName);
         return Description != null ? Serializer.WriteButtons(Description) : null;
     }
 

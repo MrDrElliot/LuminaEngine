@@ -30,6 +30,22 @@ public static unsafe class ManagedCalls
         }
     }
 
+    // Lets the native instance table tell a collected weak twin from a live one.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int IsHandleAlive(IntPtr Handle)
+    {
+        try
+        {
+            return Handle != IntPtr.Zero && GCHandle.FromIntPtr(Handle).Target != null ? 1 : 0;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            return 0;
+        }
+    }
+
     /// <summary>Invokes an inspector <c>[Button]</c>: a parameterless instance method, by name, on the script
     /// instance behind <paramref name="Instance"/> (a GCHandle). <c>[Button]</c> methods are contractually
     /// parameterless (TypeLibrary.ComputeButtons rejects anything else), which is why this takes no arguments

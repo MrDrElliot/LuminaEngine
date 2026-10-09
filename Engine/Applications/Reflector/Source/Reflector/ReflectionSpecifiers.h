@@ -78,7 +78,7 @@ namespace Lumina::Reflection
     X(Rate,                 Value,  Runtime,   "The most times a second the host sends the Sync field. A change sooner than that waits for the next slot.") \
     X(Quantize,             Value,  Runtime,   "Snaps a numeric Sync field to multiples of this step, so a smaller wobble never reaches the wire.") \
     X(Validate,             Value,  Runtime,   "For a Sync = FromOwner field, a FUNCTION() taking the proposed value and returning whether the host accepts it.") \
-    X(DuplicateTransient,   Flag,   Runtime,   "Resets the property to its default when the owning object is duplicated.") \
+    X(DuplicateTransient,   Flag,   Runtime,   "Resets the property to its default when the owning object is duplicated.")     X(SaveGame,             Flag,   Runtime,   "Writes the property into save games, its whole value included. A SaveGame field marked NoSerialize is saved in games but kept out of levels and assets.") \
     X(StructBase,           Value,  Runtime,   "Constrains a bare FInstancedStruct to structs deriving from the named base.") \
     X(Editable,             Flag,   Editor,    "Shows the property in the details panel and allows editing.") \
     X(ReadOnly,             Flag,   Editor,    "Shows the property in the details panel with editing disabled. Do not combine with Editable.") \

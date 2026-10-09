@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
@@ -55,6 +56,24 @@ public unsafe class NativeObject : IDisposable
     internal void AddReference()
     {
         References?.Add();
+    }
+
+    // A handout from the instance cache. A twin of an object nothing native owns becomes C#'s, held like any wrapper.
+    internal void Acquire(IntPtr Pointer)
+    {
+        if (References != null)
+        {
+            References.Add();
+            return;
+        }
+
+        GCHandle Weak = GCHandle.Alloc(this, GCHandleType.Weak);
+        if (Native.ObjectAdoptScriptTwin(Pointer, GCHandle.ToIntPtr(Weak)) != 0)
+        {
+            StartCountingReferences();
+            return;
+        }
+        Weak.Free();
     }
 
     // For an object whose owner tears it down explicitly, such as a world, so held wrappers stop pinning its shell.

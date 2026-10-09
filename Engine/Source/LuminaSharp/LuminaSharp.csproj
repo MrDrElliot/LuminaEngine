@@ -58,6 +58,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\LuminaSharp.Generators\Shared\ScriptPropertyModel.cs">
       <Link>Scripting\Shared\ScriptPropertyModel.cs</Link>
     </Compile>
+    <Compile Include="$(MSBuildThisFileDirectory)..\LuminaSharp.Generators\Shared\ScriptMemberRules.cs">
+      <Link>Scripting\Shared\ScriptMemberRules.cs</Link>
+    </Compile>
   </ItemGroup>
 
   <!-- The runtime script compiler loads the generator itself, so it has to sit beside this assembly. -->

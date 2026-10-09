@@ -12,28 +12,43 @@ namespace Lumina
         return StaticClass();
     }
 
+    // A C# class minted under a C# parent stacks its block after the parent's, so the whole chain is the object's storage.
+    template<typename TFunc>
+    static void ForEachScriptClassInChain(const CScriptClass* Class, TFunc&& Func)
+    {
+        for (const CScriptClass* Current = Class; Current != nullptr; Current = ToScriptClass(Current->GetSuperClass()))
+        {
+            Func(*Current);
+        }
+    }
+
     bool CScriptClass::ConstructScriptProperties(void* Object) const
     {
-        if (Object == nullptr || ScriptProperties.empty())
+        if (Object == nullptr)
         {
             return false;
         }
 
+        bool bAny = false;
         uint8* Base = static_cast<uint8*>(Object);
-        for (FProperty* Property : ScriptLifecycleProperties)
+        const CObject* Defaults = GetDefaultObjectIfCreated();
+        ForEachScriptClassInChain(this, [&](const CScriptClass& Class)
         {
-            Property->ConstructValue(Base + Property->Offset);
-        }
-
-        if (const CObject* Defaults = GetDefaultObjectIfCreated(); Defaults != nullptr && Defaults != Object)
-        {
-            const uint8* DefaultBase = reinterpret_cast<const uint8*>(Defaults);
-            for (FProperty* Property : ScriptProperties)
+            bAny |= !Class.ScriptProperties.empty();
+            for (FProperty* Property : Class.ScriptLifecycleProperties)
             {
-                Property->CopyCompleteValue(Base + Property->Offset, DefaultBase + Property->Offset);
+                Property->ConstructValue(Base + Property->Offset);
             }
-        }
-        return true;
+            if (Defaults != nullptr && Defaults != Object)
+            {
+                const uint8* DefaultBase = reinterpret_cast<const uint8*>(Defaults);
+                for (FProperty* Property : Class.ScriptProperties)
+                {
+                    Property->CopyCompleteValue(Base + Property->Offset, DefaultBase + Property->Offset);
+                }
+            }
+        });
+        return bAny;
     }
 
     void CScriptClass::DestructScriptProperties(void* Object) const
@@ -42,10 +57,13 @@ namespace Lumina
         {
             return;
         }
-        for (FProperty* Property : ScriptLifecycleProperties)
+        ForEachScriptClassInChain(this, [&](const CScriptClass& Class)
         {
-            Property->DestructValue(static_cast<uint8*>(Object) + Property->Offset);
-        }
+            for (FProperty* Property : Class.ScriptLifecycleProperties)
+            {
+                Property->DestructValue(static_cast<uint8*>(Object) + Property->Offset);
+            }
+        });
     }
 }
 namespace Lumina

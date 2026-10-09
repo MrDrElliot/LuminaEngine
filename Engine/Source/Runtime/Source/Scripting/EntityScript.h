@@ -80,6 +80,14 @@ namespace Lumina
         FUNCTION()
         virtual void OnAction(FName Action, FInputActionState State) {}
 
+        // A save game just wrote this running script's SaveGame fields back, so anything built from them is stale.
+        FUNCTION()
+        virtual void OnRestored() {}
+
+        // A save game is about to read this script's SaveGame fields, so derived state can be folded into them.
+        FUNCTION()
+        virtual void OnSaving() {}
+
         /** The entity this script is attached to. Valid from OnAttach onwards.
          *  FUNCTION() so the C# base reads its entity from here rather than being handed one separately --
          *  one owner for the value in both languages. Non-virtual, so it binds as an ordinary call, not a

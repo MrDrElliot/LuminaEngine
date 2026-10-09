@@ -33,8 +33,9 @@ namespace Lumina::Scripting
         FScriptExportSchema Schema;
         bool                bHasSchema = false;
 
-        //~ ScriptableClass payload.
+        //~ ScriptableClass payload. The base is the C# parent's name when that class is minted as well.
         FString             NativeBaseName;
+        bool                bAbstract = false;
         TVector<FString>    OverriddenEvents;
         uint8               UpdatePhase = 0;
         bool                bParallelUpdate = false;

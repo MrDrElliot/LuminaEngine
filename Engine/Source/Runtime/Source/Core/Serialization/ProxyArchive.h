@@ -33,6 +33,7 @@ namespace Lumina
         void SerializeBool(bool& D) override { InnerArchive.SerializeBool(D); }
         
         
+        void SerializeEntityId(uint32& PackedEntity) override { InnerArchive.SerializeEntityId(PackedEntity); }
         void Seek(int64 InPos) override { InnerArchive.Seek(InPos); }
         int64 Tell() override { return InnerArchive.Tell(); }
         int64 TotalSize() override { return InnerArchive.TotalSize(); }
@@ -40,6 +41,7 @@ namespace Lumina
         bool IsReading() const override { return InnerArchive.IsReading(); }
         bool IsWriting() const override { return InnerArchive.IsWriting(); }
         bool HasError() const override { return InnerArchive.HasError(); }
+        void SetHasError(bool bIsError) override { InnerArchive.SetHasError(bIsError); }
         
         // Keeps the base overloads this class does not forward (CObject*&, FFixedString&, the
         // container and enum templates) visible instead of hidden by the ones below.

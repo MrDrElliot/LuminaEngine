@@ -146,6 +146,7 @@ namespace Lumina
         NODISCARD bool IsEditorOnly()   const       { return EnumHasAnyFlags(Flags, EPropertyFlags::EditorOnly); }
         NODISCARD bool IsReplicated()   const       { return EnumHasAnyFlags(Flags, EPropertyFlags::Replicated); }
         NODISCARD bool IsDuplicateTransient() const { return EnumHasAnyFlags(Flags, EPropertyFlags::DuplicateTransient); }
+        NODISCARD bool IsSaveGame()     const       { return EnumHasAnyFlags(Flags, EPropertyFlags::SaveGame); }
         NODISCARD bool IsOutParam()     const       { return EnumHasAnyFlags(Flags, EPropertyFlags::OutParam); }
         NODISCARD bool IsRefParam()     const       { return EnumHasAnyFlags(Flags, EPropertyFlags::RefParam); }
         NODISCARD bool ShouldSerialize()const       { return !EnumHasAnyFlags(Flags, EPropertyFlags::NoSerialize); }
@@ -516,6 +517,9 @@ namespace Lumina
         explicit FEntityProperty(const FPropertyParams* Params)
             : Super(Params)
         {}
+
+        // Routed through the archive so a save game can translate ids between worlds.
+        RUNTIME_API void Serialize(FArchive& Ar, void* Value) override;
 
         // Sent as the id both peers share when the archive can translate one, since a raw entity id is local.
         RUNTIME_API void NetSerialize(FNetArchive& Ar, void* Value) override;

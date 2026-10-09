@@ -314,6 +314,12 @@ namespace Lumina
          *  anything can look one up. A subclass returns its own so the object casts to it afterwards. */
         RUNTIME_API virtual CClass* GetMetaClass() const;
 
+        // A base other classes derive from, which nothing may instantiate.
+        RUNTIME_API virtual bool IsAbstract() const { return false; }
+
+        // Replaced or removed by a script reload, so it lives on only for the instances it already has.
+        RUNTIME_API virtual bool IsSuperseded() const { return false; }
+
         CClass() = default;
 
         CClass(CPackage* Package, const FName& InName, uint32 InSize, uint32 InAlignment, EObjectFlags InFlags, FactoryFunctionType InFactory)
@@ -372,6 +378,7 @@ namespace Lumina
 
     /** As above, but the class object itself is a CScriptClass, so a minted type casts to one. */
     RUNTIME_API void AllocateStaticScriptClass(const TCHAR* Package, const TCHAR* Name, class CScriptClass** OutClass, uint32 Size, uint32 Alignment, CClass* (*SuperClassFn)(), CClass::FactoryFunctionType FactoryFunc);
+    RUNTIME_API void AllocateStaticScriptClass(const TCHAR* Package, const TCHAR* Name, class CScriptClass** OutClass, uint32 Size, uint32 Alignment, CClass* SuperClass, CClass::FactoryFunctionType FactoryFunc);
     
 
     template<typename Class>

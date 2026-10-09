@@ -26,6 +26,7 @@
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
+#include "SaveGame/WorldSaveState.h"
 #include "Animation/Pose.h"
 #include "Animation/SkeletalMeshUtils.h"
 #include "Animation/SkeletalMeshLibrary.h"
@@ -332,6 +333,9 @@ namespace Lumina
             LUMINA_PROFILE_SECTION("CompactRegistry");
             EntityRegistry.Compact();
         }
+
+        // Before any system or script spawns, so a save can tell what the level made from what play made.
+        SaveGame::RecordLevelEntities(EntityRegistry);
         
         // Which entities a client may hold is a netcode question, so it is reported not decided.
         if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
@@ -1107,6 +1111,12 @@ namespace Lumina
     {
         const STransformComponent* Transform = FindScriptTransform(Entity, "GetEntityLocation");
         return Transform != nullptr ? Transform->GetWorldLocation() : FVector3(0.0f);
+    }
+
+    FQuat CWorld::GetEntityRotation(ECS::FEntity Entity)
+    {
+        const STransformComponent* Transform = FindScriptTransform(Entity, "GetEntityRotation");
+        return Transform != nullptr ? Transform->GetWorldRotation() : FQuat(1.0f, 0.0f, 0.0f, 0.0f);
     }
 
     void CWorld::SetEntityLocation(ECS::FEntity Entity, FVector3 Location)

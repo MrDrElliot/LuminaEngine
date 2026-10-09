@@ -272,6 +272,17 @@ namespace Lumina
     
     CObject* NewObject(CClass* InClass, CPackage* Package, const FName& Name, const FGuid& GUID, EObjectFlags Flags)
     {
+        if (InClass != nullptr && InClass->IsAbstract())
+        {
+            LOG_ERROR("NewObject: '{}' is abstract, so only its subclasses can be created.", InClass->GetName().c_str());
+            return nullptr;
+        }
+        if (InClass != nullptr && InClass->IsSuperseded())
+        {
+            LOG_WARN("NewObject: '{}' was replaced or removed by a script reload, so nothing new is built on it.", InClass->GetName().c_str());
+            return nullptr;
+        }
+
         FConstructCObjectParams Params(InClass);
 
         if (Name == NAME_None)

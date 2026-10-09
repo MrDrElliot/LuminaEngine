@@ -37,20 +37,13 @@ namespace
         {
             return nullptr;
         }
-        const FStringView Full(Type, (size_t)TLen);
-        const FName Name{Full};
-        if (CStruct* AsStruct = FindObject<CStruct>(Name))
-        {
-            return AsStruct;
-        }
+        // C# names every type by NativeTypeName.Of, which is exactly the name it was registered or minted under.
+        const FName Name{FStringView(Type, (size_t)TLen)};
         if (CClass* AsClass = FindObject<CClass>(Name))
         {
             return AsClass;
         }
-
-        // A script row's accessors name its C# type in full, while the minted struct is keyed by the bare type name.
-        const size_t Dot = Full.find_last_of('.');
-        return ResolveDataStructByName(FName(Dot == FStringView::npos ? Full : Full.substr(Dot + 1)));
+        return ResolveDataStructByName(Name);
     }
 }
 

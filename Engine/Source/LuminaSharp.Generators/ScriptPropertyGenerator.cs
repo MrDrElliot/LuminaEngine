@@ -54,21 +54,30 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    // Every attribute ScriptMemberRules stores a field for, so a bad [SaveGame] type is flagged as early as a bad [Property].
+    private static readonly string[] StorageAttributes =
+    {
+        PropertyAttribute, "LuminaSharp.SerializeAttribute", "LuminaSharp.SyncAttribute", "LuminaSharp.SaveGameAttribute",
+    };
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        IncrementalValuesProvider<Diagnostic?> Diagnostics = context.SyntaxProvider
-            .ForAttributeWithMetadataName(
-                PropertyAttribute,
-                static (_, _) => true,
-                static (Context, _) => Validate(Context.TargetSymbol, Context.TargetNode));
-
-        context.RegisterSourceOutput(Diagnostics, static (Context, Item) =>
+        foreach (string Attribute in StorageAttributes)
         {
-            if (Item != null)
+            IncrementalValuesProvider<Diagnostic?> Diagnostics = context.SyntaxProvider
+                .ForAttributeWithMetadataName(
+                    Attribute,
+                    static (_, _) => true,
+                    (Context, _) => ReportsFor(Context.TargetSymbol, Attribute) ? Validate(Context.TargetSymbol, Context.TargetNode) : null);
+
+            context.RegisterSourceOutput(Diagnostics, static (Context, Item) =>
             {
-                Context.ReportDiagnostic(Item);
-            }
-        });
+                if (Item != null)
+                {
+                    Context.ReportDiagnostic(Item);
+                }
+            });
+        }
     }
 
     private static Diagnostic? Validate(ISymbol Symbol, SyntaxNode Node)
@@ -108,6 +117,19 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         }
 
         return null;
+    }
+
+    // One member carrying two storage attributes is reported once, by whichever comes first in the list.
+    private static bool ReportsFor(ISymbol Symbol, string Attribute)
+    {
+        foreach (string Candidate in StorageAttributes)
+        {
+            if (Symbol.GetAttributes().Any(Data => Data.AttributeClass?.ToDisplayString() == Candidate))
+            {
+                return Candidate == Attribute;
+            }
+        }
+        return false;
     }
 
     private static bool IsPartial(IPropertySymbol Property)

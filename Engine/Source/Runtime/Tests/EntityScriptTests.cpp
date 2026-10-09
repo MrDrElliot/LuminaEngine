@@ -8,6 +8,8 @@
 #include "Core/Object/ObjectCore.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ScriptableObject.h"
+#include "Scripting/ManagedTypeRegistry.h"
+#include "World/World.h"
 #include "Core/Object/ObjectReinstancer.h"
 #include "Core/Reflection/Type/ObjectReferenceVisitor.h"
 #include "ScriptReshapeTestUtil.h"
@@ -1100,4 +1102,160 @@ TEST(EntityScriptUnification, AnUnresolvableScriptClassSkipsOnlyItself)
     EXPECT_EQ(RestoredSecond->Values[0], FName("KeptSecond"));
 
     EntityScripts::DetachAll(Registry, Entity);
+}
+
+namespace
+{
+    Scripting::FScriptExportSchema IntSchema(const char* FieldName)
+    {
+        Scripting::FScriptExportSchema Schema;
+        Scripting::FScriptExportField& Field = Schema.Fields.emplace_back();
+        Field.Name = FName(FieldName);
+        Field.Type = MakeShared<Scripting::FScriptExportType>();
+        Field.Type->Kind = EPropertyTypeFlags::Int32;
+        return Schema;
+    }
+}
+
+// A C# class derived from another C# class stacks its block after the parent's, so the two never share a slot.
+TEST(ScriptClassInheritance, ASubclassExtendsItsScriptParentsLayout)
+{
+    CScriptClass* Parent = FScriptableRegistry::Mint("Inherit_GTestParent", "CEntityScript");
+    ASSERT_NE(Parent, nullptr);
+    ASSERT_GT(Scripting::AppendScriptPropertiesToClass(Parent, IntSchema("ParentValue")), 0u);
+
+    CScriptClass* Child = FScriptableRegistry::Mint("Inherit_GTestChild", "Inherit_GTestParent");
+    ASSERT_NE(Child, nullptr);
+    ASSERT_GT(Scripting::AppendScriptPropertiesToClass(Child, IntSchema("ChildValue")), 0u);
+    ProcessNewlyLoadedCObjects();
+    Parent->GetDefaultObject();
+    Child->GetDefaultObject();
+
+    EXPECT_EQ(Child->GetSuperClass(), Parent);
+    EXPECT_TRUE(Child->IsChildOf(Parent));
+
+    FProperty* ParentValue = Parent->GetProperty(FName("ParentValue"));
+    FProperty* ChildValue = Child->GetProperty(FName("ChildValue"));
+    ASSERT_NE(ParentValue, nullptr);
+    ASSERT_NE(ChildValue, nullptr);
+    EXPECT_EQ(Child->GetProperty(FName("ParentValue")), ParentValue) << "the child reaches the parent's field through its super";
+    EXPECT_GE(ChildValue->Offset, ParentValue->Offset + sizeof(int32)) << "the child's block must start after the parent's";
+
+    *ParentValue->GetValuePtr<int32>(Parent->GetDefaultObject()) = 0;
+    *ParentValue->GetValuePtr<int32>(Child->GetDefaultObject()) = 41;
+    *ChildValue->GetValuePtr<int32>(Child->GetDefaultObject()) = 42;
+
+    CObject* Instance = NewObject(Child, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Instance, nullptr);
+    EXPECT_EQ(*ParentValue->GetValuePtr<int32>(Instance), 41) << "an instance takes its inherited defaults from its own class default object";
+    EXPECT_EQ(*ChildValue->GetValuePtr<int32>(Instance), 42);
+}
+
+TEST(ScriptClassInheritance, AnAbstractClassIsNeverInstantiated)
+{
+    CScriptClass* Abstract = FScriptableRegistry::Mint("Inherit_GTestAbstract", "CEntityScript");
+    ASSERT_NE(Abstract, nullptr);
+    Abstract->bAbstract = true;
+    ProcessNewlyLoadedCObjects();
+
+    EXPECT_TRUE(Abstract->IsAbstract());
+    EXPECT_FALSE(CEntityScript::StaticClass()->IsAbstract()) << "a native class is never abstract by this flag";
+    EXPECT_EQ(NewObject(Abstract, nullptr, NAME_None, FGuid::New(), OF_Transient), nullptr);
+
+    CScriptClass* Concrete = FScriptableRegistry::Mint("Inherit_GTestConcrete", "Inherit_GTestAbstract");
+    ASSERT_NE(Concrete, nullptr);
+    ProcessNewlyLoadedCObjects();
+    EXPECT_NE(NewObject(Concrete, nullptr, NAME_None, FGuid::New(), OF_Transient), nullptr);
+}
+
+namespace
+{
+    Scripting::FManagedTypeDefinition ScriptClassDefinition(const char* Name, const char* Base, const char* FieldName, bool bAbstract = false)
+    {
+        Scripting::FManagedTypeDefinition Definition;
+        Definition.Kind           = Scripting::EManagedTypeKind::ScriptableClass;
+        Definition.TypeName       = FName(Name);
+        Definition.NativeBaseName = Base;
+        Definition.bAbstract      = bAbstract;
+        Definition.Schema         = IntSchema(FieldName);
+        Definition.bHasSchema     = true;
+        return Definition;
+    }
+}
+
+// The stress harness's crash. A removed parent with no instances of its own was freed while a subclass still linked to it.
+TEST(ScriptClassInheritance, ARemovedParentOutlivesTheSubclassStillOnIt)
+{
+    TVector<Scripting::FManagedTypeDefinition> First;
+    First.push_back(ScriptClassDefinition("Retire_GTestParent", "CEntityScript", "ParentValue", /*bAbstract*/ true));
+    First.push_back(ScriptClassDefinition("Retire_GTestChild", "Retire_GTestParent", "ChildValue"));
+    FScriptableRegistry::RefreshMintedClasses(First);
+
+    CClass* OldChild = FindObject<CClass>(FName("Retire_GTestChild"));
+    ASSERT_NE(OldChild, nullptr);
+    ASSERT_EQ(OldChild->GetSuperClass(), FindObject<CClass>(FName("Retire_GTestParent")));
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
+    const ECS::FEntity Entity = Registry.Create();
+    CEntityScript* Script = EntityScripts::Attach(Registry, Entity, OldChild);
+    ASSERT_NE(Script, nullptr);
+    *OldChild->GetProperty(FName("ChildValue"))->GetValuePtr<int32>(Script) = 77;
+
+    // The parent goes and the child moves up to the native base, the way the stress run reshaped them.
+    TVector<Scripting::FManagedTypeDefinition> Second;
+    Second.push_back(ScriptClassDefinition("Retire_GTestChild", "CEntityScript", "ChildValue"));
+    FScriptableRegistry::RefreshMintedClasses(Second);
+
+    CClass* NewChild = FindObject<CClass>(FName("Retire_GTestChild"));
+    CClass* Parent = FindObject<CClass>(FName("Retire_GTestParent"));
+    ASSERT_NE(NewChild, nullptr);
+    EXPECT_NE(NewChild, OldChild);
+    EXPECT_EQ(NewChild->GetSuperClass(), CEntityScript::StaticClass());
+
+    // This bare world is outside the reinstancer's reach, so the old subclass keeps its instance and its parent.
+    ASSERT_NE(Parent, nullptr) << "a parent with a live subclass must not be freed";
+    EXPECT_EQ(OldChild->GetSuperClass(), Parent);
+    EXPECT_TRUE(Script->GetClass()->IsChildOf(CEntityScript::StaticClass()));
+    EXPECT_EQ(*OldChild->GetProperty(FName("ChildValue"))->GetValuePtr<int32>(Script), 77);
+
+    // With the instance gone, the next refresh retires the old subclass and then the parent it was holding.
+    EXPECT_TRUE(EntityScripts::Remove(Registry, Entity, Script));
+    Registry.Destroy(Entity);
+    FScriptableRegistry::RefreshMintedClasses(Second);
+    EXPECT_EQ(FindObject<CClass>(FName("Retire_GTestParent")), nullptr);
+    EXPECT_EQ(FindObject<CClass>(FName("Retire_GTestChild")), NewChild);
+}
+
+// The third stress crash. A parent minted with no fields gained one after a subclass was laid out at its old size.
+TEST(ScriptClassInheritance, AParentThatGainsItsFirstFieldRebuildsItsSubclasses)
+{
+    Scripting::FManagedTypeDefinition EmptyParent = ScriptClassDefinition("Grow_GTestParent", "CEntityScript", "Unused");
+    EmptyParent.Schema = Scripting::FScriptExportSchema();
+
+    TVector<Scripting::FManagedTypeDefinition> First;
+    First.push_back(EmptyParent);
+    First.push_back(ScriptClassDefinition("Grow_GTestChild", "Grow_GTestParent", "ChildValue"));
+    FScriptableRegistry::RefreshMintedClasses(First);
+
+    CClass* OldChild = FindObject<CClass>(FName("Grow_GTestChild"));
+    ASSERT_NE(OldChild, nullptr);
+
+    TVector<Scripting::FManagedTypeDefinition> Second;
+    Second.push_back(ScriptClassDefinition("Grow_GTestParent", "CEntityScript", "ParentValue"));
+    Second.push_back(ScriptClassDefinition("Grow_GTestChild", "Grow_GTestParent", "ChildValue"));
+    FScriptableRegistry::RefreshMintedClasses(Second);
+
+    CClass* Parent = FindObject<CClass>(FName("Grow_GTestParent"));
+    CClass* Child = FindObject<CClass>(FName("Grow_GTestChild"));
+    ASSERT_NE(Parent, nullptr);
+    ASSERT_NE(Child, nullptr);
+    EXPECT_NE(Child, OldChild) << "the subclass has to be rebuilt after its parent's new block";
+    EXPECT_EQ(Child->GetSuperClass(), Parent);
+
+    FProperty* ParentValue = Child->GetProperty(FName("ParentValue"));
+    FProperty* ChildValue = Child->GetProperty(FName("ChildValue"));
+    ASSERT_NE(ParentValue, nullptr);
+    ASSERT_NE(ChildValue, nullptr);
+    EXPECT_GE(ChildValue->Offset, ParentValue->Offset + sizeof(int32)) << "the two blocks must not overlap";
 }

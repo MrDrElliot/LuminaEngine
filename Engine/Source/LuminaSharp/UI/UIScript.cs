@@ -206,7 +206,7 @@ internal static class UIScriptLayout
         {
             if (!Info.Offsets.TryGetValue(Name, out int Value))
             {
-                Value = NativeBindings.PropertyOffset(Type.FullName ?? Type.Name, Name);
+                Value = NativeBindings.PropertyOffset(NativeTypeName.Of(Type), Name);
                 Info.Offsets[Name] = Value;
             }
             return Value;
@@ -220,7 +220,11 @@ internal static class UIScriptLayout
         {
             if (!Info.Tokens.TryGetValue(Name, out IntPtr Value))
             {
-                Value = NativeBindings.FindProperty(Type.FullName ?? Type.Name, Name);
+                Value = NativeBindings.FindProperty(NativeTypeName.Of(Type), Name);
+                if (Value == IntPtr.Zero)
+                {
+                    return Value;
+                }
                 Info.Tokens[Name] = Value;
             }
             return Value;

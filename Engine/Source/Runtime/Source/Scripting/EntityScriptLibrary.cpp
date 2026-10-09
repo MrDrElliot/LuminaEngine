@@ -2,26 +2,11 @@
 
 #include "EntityScriptLibrary.h"
 
-#include "Core/Object/ScriptClass.h"
 #include "Scripting/EntityScript.h"
-#include "Scripting/ScriptableObject.h"
 #include "World/World.h"
 
 namespace Lumina
 {
-    namespace
-    {
-        // Handed to C# before its own instance exists, a script would be wrapped as the base class and never become its real type.
-        CEntityScript* WithScriptInstance(CEntityScript* Script)
-        {
-            if (Script != nullptr && Cast<CScriptClass>(Script->GetClass()) != nullptr)
-            {
-                Scriptable::GetOrCreateInstance(Script);
-            }
-            return Script;
-        }
-    }
-
     CEntityScript* CEntityScriptLibrary::AddScript(CWorld* World, ECS::FEntity Entity,
         TSubclassOf<CEntityScript> ScriptClass)
     {
@@ -29,7 +14,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        return WithScriptInstance(EntityScripts::Attach(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get()));
+        return EntityScripts::Attach(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get());
     }
 
     CEntityScript* CEntityScriptLibrary::FindScript(CWorld* World, ECS::FEntity Entity,
@@ -39,7 +24,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        return WithScriptInstance(EntityScripts::Find(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get()));
+        return EntityScripts::Find(ECS::GetWorldRegistry(*World), Entity, ScriptClass.Get());
     }
 
     void CEntityScriptLibrary::FindScripts(CWorld* World, ECS::FEntity Entity,
@@ -56,7 +41,7 @@ namespace Lumina
         OutScripts.reserve(OutScripts.size() + Found.size());
         for (CEntityScript* Script : Found)
         {
-            OutScripts.emplace_back(WithScriptInstance(Script));
+            OutScripts.emplace_back(Script);
         }
     }
 
@@ -75,7 +60,6 @@ namespace Lumina
             {
                 if (Script.Get() != nullptr && Script->IsAttached() && Script->GetClass()->IsChildOf(ScriptClass.Get()))
                 {
-                    WithScriptInstance(Script.Get());
                     OutScripts.push_back(Script);
                 }
             }

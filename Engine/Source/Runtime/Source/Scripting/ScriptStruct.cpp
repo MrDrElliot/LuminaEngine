@@ -1695,13 +1695,13 @@ namespace Lumina::Scripting
             return;
         }
         // Only the C#-declared block can carry the attribute, and a native shim member is unaffected.
-        for (FProperty* Property : ScriptClass->ScriptProperties)
+        ScriptClass->ForEachScriptProperty([&](FProperty* Property)
         {
             if (Property != nullptr && Property->HasMetadata("SkipHotReload"))
             {
                 Property->CopyCompleteValue_InContainer(Object, Defaults);
             }
-        }
+        });
     }
 
     namespace
@@ -1742,7 +1742,7 @@ namespace Lumina::Scripting
         if (Target == nullptr || Record == nullptr)
         {
             // Nothing appended yet, so anything the schema asks for is a layout change.
-            const bool bWantsNothing = !Schema.IsValid() || Schema.Fields.empty();
+            const bool bWantsNothing = !Schema.IsValid();
             return bWantsNothing ? EScriptTypeDirty::None : EScriptTypeDirty::Layout;
         }
 

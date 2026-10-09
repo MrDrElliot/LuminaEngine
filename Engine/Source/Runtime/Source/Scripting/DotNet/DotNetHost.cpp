@@ -20,6 +20,7 @@
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/ManagedInstance.h"
+#include "Core/Object/ObjectReferenceProvider.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Threading/Atomic.h"
 #include "Scripting/ScriptStruct.h"
@@ -205,6 +206,7 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptButtonsFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* InvokeAssetCallbackFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ManagedFreeHandleFn)(void*);
+        typedef int32 (CORECLR_DELEGATE_CALLTYPE* ManagedIsHandleAliveFn)(void*);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* InvokeScriptButtonFn)(void*, const char*, int32);
 
         // NOT an ABI mirror, since each field is resolved by name and a missing one fails loudly.
@@ -220,6 +222,7 @@ namespace Lumina::DotNet
             EnumerateScriptStructsFn    EnumerateScriptStructs;
             GetScriptStructSchemaFn     GetScriptStructSchema;
             ManagedFreeHandleFn         FreeHandle;
+            ManagedIsHandleAliveFn      IsHandleAlive;
             InvokeScriptButtonFn        InvokeScriptButton;
             GetGenerationFn             GetGeneration;
             OnWorldTeardownFn           OnWorldTeardown;
@@ -323,6 +326,7 @@ namespace Lumina::DotNet
             Desc.UpdatePhase     = UpdatePhase;
             Desc.bParallelUpdate = (ParallelUpdate & 1) != 0;
             Desc.NetRealm        = static_cast<uint8>((ParallelUpdate >> 1) & 0x7);
+            Desc.bAbstract       = (ParallelUpdate & 16) != 0;
 
             // Lines of key, a tab, then value.
             if (Meta != nullptr && MetaLen > 0)
@@ -897,6 +901,11 @@ namespace Lumina::DotNet
                 GManaged.FreeHandle(Handle);
             }
         }
+
+        bool IsManagedGCHandleAlive(void* Handle)
+        {
+            return Handle != nullptr && (GManaged.IsHandleAlive == nullptr || GManaged.IsHandleAlive(Handle) != 0);
+        }
     }
 
     void Initialize()
@@ -1076,6 +1085,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(EnumerateScriptStructs, EnumerateScriptStructsFn);   // optional, only when scripts ship data types
         LM_RESOLVE(GetScriptStructSchema,  GetScriptStructSchemaFn);
         LM_RESOLVE(FreeHandle,             ManagedFreeHandleFn);
+        LM_RESOLVE(IsHandleAlive,          ManagedIsHandleAliveFn);
         LM_RESOLVE(InvokeScriptButton,     InvokeScriptButtonFn);   // optional, for editor button support
         LM_RESOLVE(GetGeneration,          GetGenerationFn);
         LM_RESOLVE(OnWorldTeardown,        OnWorldTeardownFn);
@@ -1102,6 +1112,7 @@ namespace Lumina::DotNet
         // Core must not know about GC handles, so hand it the free function once managed can service one.
         // A managed delegate binding hands its handle to the delegate, which frees it through the same call.
         Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedGCHandle);
+        Lumina::ManagedInstances::SetIsHandleAliveFn(&IsManagedGCHandleAlive);
         GFreeManagedDelegateContext = &FreeManagedGCHandle;
 
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled);
@@ -1127,6 +1138,7 @@ namespace Lumina::DotNet
         }
 
         Lumina::ManagedInstances::SetFreeHandleFn(nullptr);
+        Lumina::ManagedInstances::SetIsHandleAliveFn(nullptr);
 
         bInitialized = false;
         GFreeManagedDelegateContext = nullptr;
@@ -1825,6 +1837,7 @@ namespace Lumina::DotNet
             Definition.OverriddenEvents = Desc.OverriddenEvents;
             Definition.UpdatePhase    = Desc.UpdatePhase;
             Definition.bParallelUpdate = Desc.bParallelUpdate;
+            Definition.bAbstract       = Desc.bAbstract;
             Definition.NetRealm        = Desc.NetRealm;
             Definition.ClassMeta       = Desc.ClassMeta;
 
@@ -2163,15 +2176,26 @@ LUMINA_DOTNET_EXPORT(int32, ObjectLayoutOffset)(int32 Which)
     }
 }
 
-// Weak by design, so the cache never pins the collectible script load context across a reload.
+// Every C# wrap asks here first, so a C# class's own instance is made on demand at this one point.
 LUMINA_DOTNET_EXPORT(void*, ObjectGetManagedInstance)(void* Object)
 {
-    return Lumina::ManagedInstances::Find(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)));
+    Lumina::CObject* Typed = static_cast<Lumina::CObject*>(Object);
+    if (Typed != nullptr && Lumina::ToScriptClass(Typed->GetClass()) != nullptr && !Typed->HasAnyFlag(Lumina::OF_DefaultObject))
+    {
+        return Lumina::Scriptable::GetOrCreateInstance(Typed);
+    }
+    return Lumina::ManagedInstances::Find(Typed);
 }
 
 LUMINA_DOTNET_EXPORT(void, ObjectSetManagedInstance)(void* Object, void* Handle)
 {
     Lumina::ManagedInstances::Set(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)), Handle);
+}
+
+// Nonzero when C# took ownership, after which the table holds WeakHandle and C# keeps the object alive.
+LUMINA_DOTNET_EXPORT(int32, ObjectAdoptScriptTwin)(void* Object, void* WeakHandle)
+{
+    return Lumina::ManagedInstances::AdoptScriptTwin(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)), WeakHandle) ? 1 : 0;
 }
 
 // Called before the collectible load context unloads, since Scriptable instances are held strongly.
@@ -2190,6 +2214,70 @@ LUMINA_DOTNET_EXPORT(void*, LoadObject)(const char* Path, int Len)
     return Lumina::StaticLoadObject(Lumina::FStringView(Path, static_cast<size_t>(Len)));
 }
 
+namespace
+{
+    using FManagedPin = Lumina::TStrongObjectPtr<Lumina::CObject>;
+
+    // Without this a reinstance leaves the replacement unowned while C# keeps the original alive.
+    class FManagedPinProvider final : public Lumina::IObjectReferenceProvider
+    {
+    public:
+
+        static FManagedPinProvider& Get()
+        {
+            static FManagedPinProvider Instance;
+            return Instance;
+        }
+
+        const char* GetReferenceProviderName() const override { return "ManagedPins"; }
+
+        // Visited unlocked, since only the game thread removes a pin and a reinstance runs there too.
+        void VisitObjectReferences(Lumina::FObjectReferenceVisitor::FSlotFunc Func) override
+        {
+            Lumina::TVector<FManagedPin*> Snapshot;
+            {
+                Lumina::FScopeLock Lock(Mutex);
+                Snapshot.assign(Pins.begin(), Pins.end());
+            }
+            for (FManagedPin* Pin : Snapshot)
+            {
+                Lumina::CObject* const Current = Pin->Get();
+                if (Lumina::CObject* const Replacement = Func(Current); Replacement != Current)
+                {
+                    *Pin = Replacement;
+                }
+            }
+        }
+
+        FManagedPin* Pin(Lumina::CObject* Object)
+        {
+            FManagedPin* Pin = Lumina::Memory::New<FManagedPin>(Object);
+            Lumina::FScopeLock Lock(Mutex);
+            Pins.insert(Pin);
+            return Pin;
+        }
+
+        void Unpin(FManagedPin* Pin)
+        {
+            {
+                Lumina::FScopeLock Lock(Mutex);
+                Pins.erase(Pin);
+            }
+            Lumina::Memory::Delete(Pin);
+        }
+
+    private:
+
+        FManagedPinProvider()
+        {
+            Lumina::FObjectReferenceProviders::Register(this);
+        }
+
+        Lumina::FMutex                Mutex;
+        Lumina::THashSet<FManagedPin*> Pins;
+    };
+}
+
 // The strong reference a canonical C# wrapper owns, released once the wrapper is collected.
 LUMINA_DOTNET_EXPORT(void*, PinObject)(void* Object)
 {
@@ -2197,12 +2285,15 @@ LUMINA_DOTNET_EXPORT(void*, PinObject)(void* Object)
     {
         return nullptr;
     }
-    return Lumina::Memory::New<Lumina::TStrongObjectPtr<Lumina::CObject>>(static_cast<Lumina::CObject*>(Object));
+    return FManagedPinProvider::Get().Pin(static_cast<Lumina::CObject*>(Object));
 }
 
 LUMINA_DOTNET_EXPORT(void, UnpinObject)(void* Pin)
 {
-    Lumina::Memory::Delete(static_cast<Lumina::TStrongObjectPtr<Lumina::CObject>*>(Pin));
+    if (Pin != nullptr)
+    {
+        FManagedPinProvider::Get().Unpin(static_cast<FManagedPin*>(Pin));
+    }
 }
 
 // Registry probe with no load, returning bool because the generated binding marshals a C# bool as one byte.
@@ -2464,6 +2555,7 @@ LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(ReleaseAllManagedInstances),
     LUMINA_DOTNET_SIG(LoadObject),
     LUMINA_DOTNET_SIG(PinObject),
+    LUMINA_DOTNET_SIG(ObjectAdoptScriptTwin),
     LUMINA_DOTNET_SIG(UnpinObject),
     LUMINA_DOTNET_SIG(AssetExists),
     LUMINA_DOTNET_SIG(LoadObjectAsync),

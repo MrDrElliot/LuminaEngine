@@ -71,6 +71,10 @@ namespace Lumina
             {
                 PropertyFlags |= EPropertyFlags::DuplicateTransient;
             }
+            else if (MetadataPair.Key == "SaveGame")
+            {
+                PropertyFlags |= EPropertyFlags::SaveGame;
+            }
             else if (MetadataPair.Key == "ScriptReadOnly")
             {
                 PropertyFlags |= EPropertyFlags::ScriptReadOnly;

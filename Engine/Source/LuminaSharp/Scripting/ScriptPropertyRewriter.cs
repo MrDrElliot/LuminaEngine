@@ -38,7 +38,7 @@ internal static class ScriptPropertyRewriter
     public static SyntaxTree Rewrite(CSharpCompilation Probe, SyntaxTree Tree, List<string> OutErrors)
     {
         SyntaxNode Root = Tree.GetRoot();
-        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(Field => NeedsNativeStorage(Field) || HasAttributeNamed(Field.AttributeLists, "Bind"))
+        if (!Root.DescendantNodes().OfType<FieldDeclarationSyntax>().Any(MayNeedNativeStorage)
             && !Root.DescendantNodes().OfType<MethodDeclarationSyntax>().Any(MayBeRpc))
         {
             return Tree;
@@ -56,22 +56,13 @@ internal static class ScriptPropertyRewriter
         return CSharpSyntaxTree.Create((CSharpSyntaxNode)Rewritten, (CSharpParseOptions?)Tree.Options, Tree.FilePath, Encoding.UTF8);
     }
 
-    // [Serialize] is [Property] minus the inspector row, so it needs the same native-backed storage.
-    private static bool NeedsNativeStorage(FieldDeclarationSyntax Field)
+    // A syntax-only screen, so a file with no storage attribute anywhere costs no semantic model. ScriptMemberRules decides.
+    private static bool MayNeedNativeStorage(FieldDeclarationSyntax Field)
     {
         return Field.AttributeLists
             .SelectMany(List => List.Attributes)
-            .Any(Attribute =>
-            {
-                string Name = Attribute.Name.ToString();
-                int Dot = Name.LastIndexOf('.');
-                if (Dot >= 0)
-                {
-                    Name = Name.Substring(Dot + 1);
-                }
-                return Name is "Property" or "PropertyAttribute" or "Serialize" or "SerializeAttribute"
-                    or "Sync" or "SyncAttribute";
-            });
+            .Any(Attribute => ScriptMemberRules.BareName(Attribute.Name.ToString()) is ScriptMemberRules.Property
+                or ScriptMemberRules.Serialize or ScriptMemberRules.Sync or ScriptMemberRules.SaveGame or ScriptMemberRules.Bind);
     }
 
     private static bool HasAttributeNamed(SyntaxList<AttributeListSyntax> Lists, string Wanted)
@@ -113,10 +104,9 @@ internal static class ScriptPropertyRewriter
 
         public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax Node)
         {
-            // A [Bind] field lives natively only on a CObject, since a plain ViewModel has no native block to put it in.
             bool bNativeBacked = DerivesFromNativeObject(Model.GetDeclaredSymbol(Node));
             List<FieldDeclarationSyntax> Fields = Node.Members.OfType<FieldDeclarationSyntax>()
-                .Where(Field => NeedsNativeStorage(Field) || (bNativeBacked && HasAttributeNamed(Field.AttributeLists, "Bind"))).ToList();
+                .Where(Field => MayNeedNativeStorage(Field) && IsStored(Field, bNativeBacked)).ToList();
             List<FRpcMethod> Rpcs = CollectRpcs(Node);
             if (Fields.Count == 0 && Rpcs.Count == 0)
             {
@@ -128,7 +118,10 @@ internal static class ScriptPropertyRewriter
         private SyntaxNode RewriteClass(ClassDeclarationSyntax Node, List<FieldDeclarationSyntax> Fields, List<FRpcMethod> Rpcs)
         {
 
-            string TypeName = Model.GetDeclaredSymbol(Node)?.ToDisplayString() ?? Node.Identifier.Text;
+            // typeof rather than a spelled name, so the runtime identity rule names it and a nested class resolves too.
+            string TypeName = Model.GetDeclaredSymbol(Node) is { } Declared
+                ? Declared.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                : Node.Identifier.Text;
 
             // Keyed by field, because one field can declare several members (`float A, B;`) and each expands
             // to several: two lazy-resolve statics plus the property itself.
@@ -283,6 +276,14 @@ internal static class ScriptPropertyRewriter
             return Result;
         }
 
+        // Every declarator of one field shares its attributes, so the first one answers for all of them.
+        private bool IsStored(FieldDeclarationSyntax Field, bool bNativeBacked)
+        {
+            VariableDeclaratorSyntax? First = Field.Declaration.Variables.FirstOrDefault();
+            return First != null && Model.GetDeclaredSymbol(First) is IFieldSymbol Symbol
+                && ScriptPropertyClassifier.RuleFor(Symbol, EScriptMemberKind.Field, bNativeBacked).bStored;
+        }
+
         private static bool DerivesFromNativeObject(INamedTypeSymbol? Type)
         {
             for (INamedTypeSymbol? Current = Type; Current != null; Current = Current.BaseType)
@@ -348,8 +349,8 @@ internal static class ScriptPropertyRewriter
         {
             string Name = Symbol.Name;
             string Type = Symbol.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-            string Offset = $"__lazyoff_{Name}.Get(\"{TypeName}\", \"{Name}\")";
-            string Token = $"__lazyprop_{Name}.Get(\"{TypeName}\", \"{Name}\")";
+            string Offset = $"__lazyoff_{Name}.Get(typeof({TypeName}), \"{Name}\")";
+            string Token = $"__lazyprop_{Name}.Get(typeof({TypeName}), \"{Name}\")";
             bool bWritable = !Classification.IsView && !Symbol.IsReadOnly;
 
             string Get;
@@ -573,7 +574,7 @@ internal static class ScriptPropertyRewriter
             if (bFromOwner)
             {
                 Body.Append("if (global::LuminaSharp.SyncRuntime.ShouldForward(this)) { global::LuminaSharp.SyncRuntime.Forward(this, \"")
-                    .Append(NativeNameOf(Symbol)).Append("\"); } ");
+                    .Append(Symbol.Name).Append("\"); } ");
             }
 
             if (Change != null)
@@ -599,26 +600,6 @@ internal static class ScriptPropertyRewriter
                 }
             }
             return false;
-        }
-
-        // The name native knows the field by, which a [Property(Name = ...)] can change.
-        private static string NativeNameOf(IFieldSymbol Symbol)
-        {
-            foreach (AttributeData Data in Symbol.GetAttributes())
-            {
-                if (Data.AttributeClass?.Name != "PropertyAttribute")
-                {
-                    continue;
-                }
-                foreach (KeyValuePair<string, TypedConstant> Named in Data.NamedArguments)
-                {
-                    if (Named.Key == "Name" && Named.Value.Value is string Renamed && Renamed.Length > 0)
-                    {
-                        return Renamed;
-                    }
-                }
-            }
-            return Symbol.Name;
         }
 
         private SyntaxTriviaList Directive(int SourceLine)

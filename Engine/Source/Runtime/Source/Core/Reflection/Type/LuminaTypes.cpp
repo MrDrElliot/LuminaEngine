@@ -21,6 +21,11 @@ namespace Lumina
         Serialize(Ar, Value);
     }
 
+    void FEntityProperty::Serialize(FArchive& Ar, void* Value)
+    {
+        Ar.SerializeEntityId(*static_cast<uint32*>(Value));
+    }
+
     void FEntityProperty::NetSerialize(FNetArchive& Ar, void* Value)
     {
         uint32& Raw = *static_cast<uint32*>(Value);

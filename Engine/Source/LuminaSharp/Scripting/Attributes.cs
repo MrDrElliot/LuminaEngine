@@ -3,7 +3,7 @@
 namespace LuminaSharp;
 
 /// <summary>Declares a prior name this element was serialized under, so saved data survives a rename. Repeatable.</summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = true)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = true, Inherited = false)]
 public sealed class AliasAttribute : Attribute
 {
     public AliasAttribute(string Name)
@@ -82,6 +82,8 @@ public enum EPropertyFlags : uint
     Replicated         = 1u << 12,
     /// <summary>Duplication resets this to its default rather than copying it.</summary>
     DuplicateTransient = 1u << 16,
+    /// <summary>Written into save games. The same as <see cref="SaveGameAttribute"/>.</summary>
+    SaveGame           = 1u << 19,
 }
 
 // The parameter half of native EPropertyFlags, kept apart because neither is anything a [Property] declares.
@@ -144,6 +146,12 @@ public sealed class PropertyAttribute : Attribute
 /// </summary>
 [AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
 public sealed class SerializeAttribute : Attribute
+{
+}
+
+// Written into save games whole, and stored natively without [Property], so a save-only field stays out of the inspector.
+[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
+public sealed class SaveGameAttribute : Attribute
 {
 }
 

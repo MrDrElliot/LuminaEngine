@@ -138,6 +138,9 @@ public sealed class ScriptFunction
 public sealed class ScriptProperty
 {
     public string Name { get; init; } = "";
+
+    // The class that declared the member, so a class minted under a C# parent publishes only its own.
+    internal Type? DeclaringType { get; init; }
     public ScriptType Type { get; init; } = new();
     public PropertyAttribute? Meta { get; init; }
 

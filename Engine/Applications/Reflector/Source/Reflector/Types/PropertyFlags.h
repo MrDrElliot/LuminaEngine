@@ -112,6 +112,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         ScriptHidden    = BIT(15),
         // Duplication resets this property instead of copying it, and a flag survives where METADATA_PARAMS strips metadata.
         DuplicateTransient = BIT(16),
+        SaveGame        = BIT(19),
     };
 
     ENUM_CLASS_FLAGS(EPropertyFlags);
@@ -153,6 +154,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         AppendFlag(EPropertyFlags::ScriptWritable, "Lumina::EPropertyFlags::ScriptWritable");
         AppendFlag(EPropertyFlags::ScriptHidden, "Lumina::EPropertyFlags::ScriptHidden");
         AppendFlag(EPropertyFlags::DuplicateTransient, "Lumina::EPropertyFlags::DuplicateTransient");
+        AppendFlag(EPropertyFlags::SaveGame, "Lumina::EPropertyFlags::SaveGame");
 
         return Result;
     }

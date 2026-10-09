@@ -66,6 +66,9 @@ namespace Lumina::Paths
 
     RUNTIME_API FString Parent(FStringView Path, bool bRemoveTrailingSlash = true);
 
+    // The per-user writable root, LOCALAPPDATA on Windows and the XDG config directory elsewhere.
+    RUNTIME_API FString GetUserDataDirectory();
+
     template<typename T>
     concept ValidStringType = requires(T s)
     {

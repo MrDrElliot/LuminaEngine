@@ -5,6 +5,7 @@
 #include "Core/Object/ManagedInstance.h"
 #include "Core/Object/ObjectBase.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Scripting/ScriptableTest.h"
 
 using namespace Lumina;
@@ -196,4 +197,62 @@ TEST_F(FManagedInstanceFixture, WorksWithNoFreeFunctionInstalled)
 
     Object->ForceDestroyNow();
     EXPECT_EQ(ManagedInstances::GetLiveCount(), 0);
+}
+
+namespace
+{
+    bool GHandleAlive = true;
+
+    bool ReportHandleAlive(void*)
+    {
+        return GHandleAlive;
+    }
+}
+
+TEST_F(FManagedInstanceFixture, AnUnownedTwinIsAdoptedAndHeldWeakly)
+{
+    CObject* Object = NewTestObject();
+    ManagedInstances::Set(Object, FakeHandle(0x3000), /*bScriptTwin*/ true);
+
+    ASSERT_TRUE(ManagedInstances::AdoptScriptTwin(Object, FakeHandle(0x3001)));
+    EXPECT_EQ(GManagedInstanceFreeCount, 1) << "adopting swaps the strong handle out and frees it";
+    EXPECT_EQ(ManagedInstances::FindScriptTwin(Object), FakeHandle(0x3001));
+    EXPECT_FALSE(ManagedInstances::AdoptScriptTwin(Object, FakeHandle(0x3002))) << "a twin is adopted once";
+}
+
+TEST_F(FManagedInstanceFixture, AnOwnedTwinStaysStrong)
+{
+    CObject* Object = NewTestObject();
+    TStrongObjectPtr<CObject> Owner(Object);
+    ManagedInstances::Set(Object, FakeHandle(0x4000), /*bScriptTwin*/ true);
+
+    EXPECT_FALSE(ManagedInstances::AdoptScriptTwin(Object, FakeHandle(0x4001))) << "native owns it, so C# only observes";
+    EXPECT_EQ(ManagedInstances::FindScriptTwin(Object), FakeHandle(0x4000));
+    EXPECT_EQ(GManagedInstanceFreeCount, 0);
+}
+
+TEST_F(FManagedInstanceFixture, ACollectedWeakTwinReadsAsNone)
+{
+    CObject* Object = NewTestObject();
+    ManagedInstances::Set(Object, FakeHandle(0x5000), /*bScriptTwin*/ true);
+    ASSERT_TRUE(ManagedInstances::AdoptScriptTwin(Object, FakeHandle(0x5001)));
+
+    ManagedInstances::SetIsHandleAliveFn(&ReportHandleAlive);
+    GHandleAlive = false;
+    EXPECT_EQ(ManagedInstances::FindScriptTwin(Object), nullptr) << "a collected twin must be rebuilt, not dispatched to";
+
+    // A rebuilt twin is strong again, since whoever still holds the object natively owns it now.
+    ManagedInstances::Set(Object, FakeHandle(0x5002), /*bScriptTwin*/ true);
+    GHandleAlive = true;
+    EXPECT_EQ(ManagedInstances::FindScriptTwin(Object), FakeHandle(0x5002));
+    EXPECT_FALSE(ManagedInstances::AdoptScriptTwin(Object, nullptr));
+    ManagedInstances::SetIsHandleAliveFn(nullptr);
+}
+
+TEST_F(FManagedInstanceFixture, PlainWrappersAreNeverAdopted)
+{
+    CObject* Object = NewTestObject();
+    ManagedInstances::Set(Object, FakeHandle(0x6000));
+    EXPECT_FALSE(ManagedInstances::AdoptScriptTwin(Object, FakeHandle(0x6001)));
+    EXPECT_EQ(ManagedInstances::Find(Object), FakeHandle(0x6000));
 }

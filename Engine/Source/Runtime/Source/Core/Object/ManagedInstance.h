@@ -28,9 +28,13 @@ namespace Lumina
     namespace ManagedInstances
     {
         using FFreeHandleFn = void (*)(void* Handle);
+        using FIsHandleAliveFn = bool (*)(void* Handle);
 
         /** Installed by the .NET host. Cleared (nullptr) on host shutdown. */
         RUNTIME_API void SetFreeHandleFn(FFreeHandleFn Fn);
+
+        // Lets the table tell a collected weak twin from a live one without knowing what a GC handle is.
+        RUNTIME_API void SetIsHandleAliveFn(FIsHandleAliveFn Fn);
 
         /** The cached managed handle for Object, or null if it has none. */
         RUNTIME_API void* Find(const CObjectBase* Object);
@@ -43,8 +47,11 @@ namespace Lumina
         /** True when Object's cached handle is the script's own instance rather than a weak wrapper. */
         RUNTIME_API bool IsScriptTwin(const CObjectBase* Object);
 
-        // Find and IsScriptTwin under one lock, since every script event dispatch asks both.
+        // Find and IsScriptTwin under one lock, since every script event dispatch asks both. A collected weak twin reads as none.
         RUNTIME_API void* FindScriptTwin(const CObjectBase* Object);
+
+        // C# owns an object nothing native owns, so its twin is held weakly and lives as long as C# keeps it.
+        RUNTIME_API bool AdoptScriptTwin(CObjectBase* Object, void* WeakHandle);
 
         // Moves whenever a cached handle is freed or replaced, so a caller holding one can tell it is still good.
         RUNTIME_API uint32 GetHandleGeneration();

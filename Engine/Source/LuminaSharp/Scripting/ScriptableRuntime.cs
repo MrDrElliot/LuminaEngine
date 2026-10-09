@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -50,13 +51,12 @@ internal sealed class ScriptableRuntime
         Span<byte> BaseScratch = stackalloc byte[256];
         Span<byte> OverrideScratch = stackalloc byte[1024];
         Span<byte> MetaScratch = stackalloc byte[512];
-        foreach (Type Type in Library.ScriptableTypes)
+        // Parents first, since a class is minted under its C# parent and stacks its block after that parent's.
+        foreach (Type Type in Library.ScriptableTypes.OrderBy(Depth))
         {
-            if (Type.FullName is not { } FullName)
-            {
-                continue;
-            }
-            string? NativeBase = ScriptableNativeBaseName(Type);
+            string FullName = NativeTypeName.Of(Type);
+            Type? MintedParent = Library.MintedParentOf(Type);
+            string? NativeBase = MintedParent != null ? NativeTypeName.Of(MintedParent) : ScriptableNativeBaseName(Type);
             if (NativeBase == null)
             {
                 continue;
@@ -73,7 +73,8 @@ internal sealed class ScriptableRuntime
                     (byte)((Type.IsDefined(typeof(ParallelUpdateAttribute), inherit: true) ? 1 : 0)
                          | (Type.IsDefined(typeof(HostOnlyAttribute), inherit: true) ? 2 : 0)
                          | (Type.IsDefined(typeof(ClientOnlyAttribute), inherit: true) ? 4 : 0)
-                         | (Type.IsDefined(typeof(CosmeticAttribute), inherit: true) ? 8 : 0)),
+                         | (Type.IsDefined(typeof(CosmeticAttribute), inherit: true) ? 8 : 0)
+                         | (Type.IsAbstract ? 16 : 0)),
                     Meta.Pointer, Meta.Length);
             }
             finally
@@ -126,9 +127,9 @@ internal sealed class ScriptableRuntime
     public IntPtr Create(string TypeName, ulong NativePtr)
     {
         Type? Type = Library.GetScriptable(TypeName);
-        if (Type == null)
+        if (Type == null || Type.IsAbstract)
         {
-            Native.Log(ELogLevel.Warn, $"Scriptable type not found: '{TypeName}'.");
+            Native.Log(ELogLevel.Warn, $"Scriptable type not found or abstract: '{TypeName}'.");
             return IntPtr.Zero;
         }
 
@@ -201,8 +202,9 @@ internal sealed class ScriptableRuntime
             return;
         }
 
+        // An abstract class is never instantiated, and its subclasses' generated defaults chain through its own.
         Type? Type = Library.GetScriptable(TypeName);
-        if (Type == null || Activator.CreateInstance(Type) is not NativeObject Instance)
+        if (Type == null || Type.IsAbstract || Activator.CreateInstance(Type) is not NativeObject Instance)
         {
             return;
         }
@@ -271,6 +273,16 @@ internal sealed class ScriptableRuntime
     {
         UpdatePhaseAttribute? Marker = Type.GetCustomAttribute<UpdatePhaseAttribute>(inherit: true);
         return (byte)(Marker?.Phase ?? EScriptPhase.PrePhysics);
+    }
+
+    private static int Depth(Type Type)
+    {
+        int Count = 0;
+        for (Type? Base = Type.BaseType; Base != null; Base = Base.BaseType)
+        {
+            ++Count;
+        }
+        return Count;
     }
 
     // The [NativeType] name of the nearest [ScriptableType]-marked wrapper above Type, or null if none.

@@ -23,3 +23,4 @@ LE_PROPERTY_FLAG(ScriptHidden,       15)   // no C# wrapper member emitted
 LE_PROPERTY_FLAG(DuplicateTransient, 16)   // duplication resets rather than copies
 LE_PROPERTY_FLAG(OutParam,           17)   // a call frame slot the caller reads back after the call
 LE_PROPERTY_FLAG(RefParam,           18)   // an out param the callee also sees the incoming value of
+LE_PROPERTY_FLAG(SaveGame,           19)   // written into save games, whole value included

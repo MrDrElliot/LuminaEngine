@@ -39,7 +39,7 @@ namespace Lumina::WorldSubsystems
             }
 
             CClass* Class = static_cast<CClass*>(Object);
-            if (Class != BaseClass && Class->IsChildOf(BaseClass) && !AlreadyPresent(Out, Class))
+            if (Class != BaseClass && Class->IsChildOf(BaseClass) && !Class->IsAbstract() && !Class->IsSuperseded() && !AlreadyPresent(Out, Class))
             {
                 Candidates.push_back(Class);
             }

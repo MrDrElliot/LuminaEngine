@@ -173,7 +173,7 @@ internal static class SyncChanges
                 continue;
             }
 
-            string NativeName = Property.GetCustomAttribute<PropertyAttribute>()?.Name ?? Property.Name;
+            string NativeName = Property.Name;
             var Handler = new FHandler { Property = Property, Method = Method, bTakesValues = bTakesValues };
             Result.ByName[NativeName] = Handler;
             Result.ByMember[Property.Name] = Handler;

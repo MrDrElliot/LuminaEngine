@@ -41,7 +41,10 @@ internal static class Wrapper<T> where T : class
             // A type mismatch means the object was previously wrapped as a different (e.g. base) type.
             if (GCHandle.FromIntPtr(Existing).Target is T Cached)
             {
-                (Cached as NativeObject)?.AddReference();
+                if (Cached is NativeObject Object)
+                {
+                    Object.Acquire(Pointer);
+                }
                 return Cached;
             }
         }

@@ -15,14 +15,27 @@ public sealed class NativeTypeAttribute : Attribute
     }
 }
 
-/// The native CStruct/CClass name a wrapper stands for, cached per type; falls back to the C# type name.
+// The one rule for the native name of any C# type, so minting, lookups and accessors can never disagree.
 internal static class NativeTypeName
 {
     public static string Of<T>() => Cache<T>.Name;
 
+    // A wrapper names its native type, a data struct keeps the short name its assets store, and a script class its full name.
+    public static string Of(Type Type)
+    {
+        if (Type.GetCustomAttribute<NativeTypeAttribute>(inherit: false) is { } Native)
+        {
+            return Native.Name;
+        }
+        if (Type.GetCustomAttribute<ScriptStructBaseAttribute>(inherit: false) != null)
+        {
+            return Type.Name;
+        }
+        return Type.FullName ?? Type.Name;
+    }
+
     private static class Cache<T>
     {
-        public static readonly string Name =
-            typeof(T).GetCustomAttribute<NativeTypeAttribute>(inherit: false)?.Name ?? typeof(T).Name;
+        public static readonly string Name = Of(typeof(T));
     }
 }

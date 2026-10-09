@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -66,9 +67,13 @@ internal static class Serializer
 
     // ---- Schema (managed -> native): types + meta + default values, recursive ----
 
-    public static byte[] WriteSchema(TypeDescription Description)
+    // MintedParent's members already live in its own minted class, so only what derives below it is written.
+    public static byte[] WriteSchema(TypeDescription Description, Type? MintedParent = null)
     {
         object? Defaults = Description.Create();
+        List<ScriptProperty> Properties = MintedParent == null
+            ? new List<ScriptProperty>(Description.Properties)
+            : Description.Properties.Where(Property => Property.DeclaringType == null || !Property.DeclaringType.IsAssignableFrom(MintedParent)).ToList();
 
         using var Stream = new MemoryStream();
         using var Writer = new BinaryWriter(Stream, Encoding.UTF8, leaveOpen: true);
@@ -76,8 +81,8 @@ internal static class Serializer
         Writer.Write(SchemaMagic);
         Writer.Write(SchemaVersion);
 
-        Writer.Write(Description.Properties.Count);
-        foreach (ScriptProperty Property in Description.Properties)
+        Writer.Write(Properties.Count);
+        foreach (ScriptProperty Property in Properties)
         {
             WriteField(Writer, Property, Defaults, bTopLevel: true);
         }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
+using LuminaSharp.ScriptProperties;
 using System.Runtime.CompilerServices;
 using Lumina;
 
@@ -33,10 +34,7 @@ internal static unsafe partial class ScriptStructLayout
         const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
         foreach (FieldInfo Field in Type.GetFields(Flags))
         {
-            bool bStored = Field.GetCustomAttribute<PropertyAttribute>() != null
-                || Field.GetCustomAttribute<SerializeAttribute>() != null
-                || Field.GetCustomAttribute<SyncAttribute>() != null;
-            if (bStored && Field.GetCustomAttribute<HideAttribute>() == null)
+            if (TypeLibrary.RuleFor(Field, EScriptMemberKind.Field, bOwnerIsNativeObject: false).bStored)
             {
                 yield return Field;
             }
