@@ -33,9 +33,16 @@ namespace Lumina::PrimitiveMeshes
             {-1, -1, -1}, {1, -1, -1}, {1, -1, 1}, {-1, -1, 1},
         };
 
-        const FVector2 uvs[4] =
+        // The right and up of a viewer facing each face from outside, so every face shows a texture upright and unmirrored.
+        const FVector3 faceRights[] =
         {
-            {0, 0}, {1, 0}, {1, 1}, {0, 1}
+            {-1,  0,  0}, { 1,  0,  0}, { 0,  0, -1},
+            { 0,  0,  1}, {-1,  0,  0}, { 1,  0,  0}
+        };
+        const FVector3 faceUps[] =
+        {
+            { 0,  1,  0}, { 0,  1,  0}, { 0,  1,  0},
+            { 0,  1,  0}, { 0,  0, -1}, { 0,  0, -1}
         };
 
         OutVertices.clear();
@@ -52,7 +59,9 @@ namespace Lumina::PrimitiveMeshes
                 vertex.Position = positions[idx] * PrimitiveHalfSize;
                 vertex.Normal = PackNormal(normals[face]);
                 vertex.Tangent = 0; // GenerateMeshlets fills this in; zero so dedup byte-compare works.
-                vertex.UV = Math::PackHalf2x16(uvs[i]);
+                // V grows downward because a texture's first row is its top.
+                const FVector2 uv(0.5f + 0.5f * Math::Dot(positions[idx], faceRights[face]), 0.5f - 0.5f * Math::Dot(positions[idx], faceUps[face]));
+                vertex.UV = Math::PackHalf2x16(uv);
                 vertex.Color = 0xFFFFFFFF; // White
 
                 OutVertices.push_back(vertex);

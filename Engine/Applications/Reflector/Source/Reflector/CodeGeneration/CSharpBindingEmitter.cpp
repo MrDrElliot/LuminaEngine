@@ -936,10 +936,21 @@ namespace Lumina::Reflection
 
             switch (B.Kind)
             {
+                case EBind::StructValue:
+                {
+                    // A ref aliases the native field, since a by-value get would hand back a copy and drop per-field edits.
+                    if (WriteHook.empty())
+                    {
+                        Writer.Linef("public ref %s%s %s => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<%s>((void*)(global::LuminaSharp.NativeBindings.FieldAt(Handle, %s)));",
+                            bRO ? "readonly " : "", CS, PropName.c_str(), CS, OffName.c_str());
+                        EmitOffsetField(Writer, OffName, TypeName, Member);
+                        break;
+                    }
+                    [[fallthrough]];
+                }
                 case EBind::Number:
                 case EBind::Bool:
                 case EBind::Enum:
-                case EBind::StructValue:
                 {
                     // Bool is 1 byte and an enum mirror matches native width, so an Unsafe.Read at the offset is exact.
                     const char* T = (B.Kind == EBind::Bool) ? "bool" : CS;
