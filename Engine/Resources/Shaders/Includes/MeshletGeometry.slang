@@ -90,6 +90,14 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 FMeshletRef ResolveSurfaceMeshlet(uint MeshletSlot) { return ResolveMeshlet(MeshletSlot, false); }
 FMeshletRef ResolveShadowMeshlet(uint MeshletSlot)  { return ResolveMeshlet(MeshletSlot, true);  }
 
+// One view of a multi-view shadow draw, mirrored by FShadowRasterViewGPU.
+struct FShadowRasterView
+{
+    int    ShadowDataIndex;
+    int    ViewIndex;
+    float2 TileSize;
+};
+
 // Declared here because BOTH stages must agree byte for byte and nothing checks it: a payload is not
 // a linked interface, and task+mesh share one push range. Drift produces wrong geometry, not an error.
 struct FMeshletPassArgs
@@ -106,16 +114,51 @@ struct FMeshletPassArgs
     // interior padding under either block layout; the C++ push mirror matches.
     float                   ViewportW;
     float                   ViewportH;
+
+    // Set when one draw covers consecutive shadow cull views, and SV_DrawIndex then picks the view and its viewport.
+    GPUSpan<FShadowRasterView> ShadowViews;
+    // The bucket distance between consecutive cull views, which is NumDrawsPerView.
+    uint                    ArgViewStride;
+    uint                    _Pad0;
 };
 FMeshletPassArgs* MeshletPass() { return GetPassArgs<FMeshletPassArgs>(); }
+
+bool IsMultiViewShadowDraw()
+{
+    return MeshletPass().ShadowViews.Count > 0u;
+}
+
+uint MeshletCullViewForDraw(uint DrawIndex)
+{
+    return MeshletPass().CullViewIndex + (IsMultiViewShadowDraw() ? DrawIndex : 0u);
+}
+
+FShadowRasterView ShadowRasterViewForDraw(uint DrawIndex)
+{
+    if (IsMultiViewShadowDraw())
+    {
+        return SpanGet(&MeshletPass().ShadowViews, DrawIndex);
+    }
+
+    FShadowRasterView View;
+    View.ShadowDataIndex = MeshletPass().ShadowDataIndex;
+    View.ViewIndex       = MeshletPass().ViewIndex;
+    View.TileSize        = float2(MeshletPass().ViewportW, MeshletPass().ViewportH);
+    return View;
+}
 
 // The draw-list slot this mesh workgroup rasterizes, or kAppendFull past the slice. MeshletCull.slang
 // already compacted the survivors, so a workgroup maps to one directly -- no payload, no second cull.
 uint MeshletSlotForWorkgroup(uint DrawIndex, uint GroupIndex)
 {
-    const FRenderBucket Bucket = SpanGetAligned(&MeshletPass().Buckets, MeshletPass().ArgBase);
+    // A multi-view draw only runs when every slice fits one sub-draw, so its draw index walks views instead.
+    const bool bMultiView = IsMultiViewShadowDraw();
+    const uint ArgBase    = MeshletPass().ArgBase + (bMultiView ? DrawIndex * MeshletPass().ArgViewStride : 0u);
+    const uint SubDraw    = bMultiView ? 0u : DrawIndex;
+
+    const FRenderBucket Bucket = SpanGetAligned(&MeshletPass().Buckets, ArgBase);
     const uint Slice  = MeshletPass().Slice;
-    const uint Local  = DrawIndex * MeshletPass().MaxMeshGroups + GroupIndex;
+    const uint Local  = SubDraw * MeshletPass().MaxMeshGroups + GroupIndex;
 
     // The grid is sized from the same slice count, so this only rejects the tail of a partial sub-draw.
     if (Local >= Bucket.SliceCount[Slice])
@@ -141,7 +184,7 @@ FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint
         return Empty;
     }
 
-    return ResolveMeshlet(OutSlot, CullViewHasFlag(MeshletPass().CullViewIndex, CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
+    return ResolveMeshlet(OutSlot, CullViewHasFlag(MeshletCullViewForDraw(DrawIndex), CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
 }
 
 

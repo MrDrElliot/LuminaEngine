@@ -4812,6 +4812,11 @@ namespace Lumina::RHI
         return GDevice->MaxMeshWorkGroupCountX;
     }
 
+    uint32 GetMaxViewports()
+    {
+        return GDevice->Properties.limits.maxViewports;
+    }
+
     bool SupportsAsyncTransfer()
     {
         return GDevice != nullptr && HasDedicatedQueue(EQueueType::Transfer);
@@ -7634,6 +7639,27 @@ namespace Lumina::RHI
         
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         vkCmdSetScissorWithCount(VkCmdBuf, 1, &Scissor);
+    }
+
+    void CmdSetViewportArray(FCmdListH CL, TSpan<const FRect> Rects)
+    {
+        constexpr uint32 kMaxViewportArray = 16;
+        const uint32 Count = (uint32)Rects.size();
+        ASSERT(Count > 0u && Count <= kMaxViewportArray && Count <= GDevice->Properties.limits.maxViewports);
+
+        VkViewport Viewports[kMaxViewportArray];
+        VkRect2D   Scissors[kMaxViewportArray];
+        for (uint32 i = 0; i < Count; ++i)
+        {
+            const FRect& Rect = Rects[i];
+            Viewports[i] = VkViewport{ (float)Rect.MinX, (float)Rect.MinY, (float)Rect.MaxX - (float)Rect.MinX, (float)Rect.MaxY - (float)Rect.MinY, 0.0f, 1.0f };
+            Scissors[i]  = VkRect2D{ { (int32)Rect.MinX, (int32)Rect.MinY },
+                                     { (uint32)Math::Abs((int32)(Rect.MaxX - Rect.MinX)), (uint32)Math::Abs((int32)(Rect.MaxY - Rect.MinY)) } };
+        }
+
+        VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+        vkCmdSetViewportWithCount(VkCmdBuf, Count, Viewports);
+        vkCmdSetScissorWithCount(VkCmdBuf, Count, Scissors);
     }
 
     void CmdSetViewport(FCmdListH CL, const FRect& Rect)

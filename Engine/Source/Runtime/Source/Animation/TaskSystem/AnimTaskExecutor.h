@@ -19,6 +19,10 @@ namespace Lumina
         RUNTIME_API bool ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices,
                                          FAnimTaskSnapshot* OutSnapshot = nullptr);
 
+        // The inertialization capture, with bScalarOnly forcing the per-bone path the vector one has to match.
+        RUNTIME_API void InertCaptureForTest(FAnimInertializer& In, const FPose& Source, const FPose& SourcePrev, const FPose& Target,
+                                             float Dt, bool bHasVel, int32 NumActiveBones, bool bScalarOnly);
+
         // Debug capture. A tool arms one component (any stable pointer identifying the mesh); the
         // animation system then passes a snapshot for that component only. Disarmed, the cost is a
         // single relaxed atomic load per mesh, so this stays live-safe in a populated world.

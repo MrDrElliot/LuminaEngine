@@ -1,5 +1,6 @@
 ﻿#include <gtest/gtest.h>
 
+#include <bit>
 #include <cstdio>
 
 #include "Animation/AnimCompression.h"
@@ -515,4 +516,121 @@ TEST(AnimCompressionSerialization, PreCutoverFileStillReadsAndUpgrades)
     const AnimCompression::FValidationReport Report = AnimCompression::Validate(Loaded);
     ASSERT_TRUE(Report.bHasCompressedData);
     EXPECT_LT(Math::Degrees(Report.MaxRotationRadians), RotationBudgetDegrees);
+}
+
+namespace
+{
+    // Bind pose, then every track through the scalar decoders in clip order, which is what sampling has to reproduce.
+    void SampleReference(const FAnimationResource& Resource, FSkeletonResource& Skeleton, float Time, int32 ActiveBones, FPose& Out)
+    {
+        Out.ResetToBindPose(&Skeleton);
+        uint32 Frame0, Frame1;
+        float Alpha;
+        Resource.Compressed.GetFrameBlend(Time, Resource.Duration, Frame0, Frame1, Alpha);
+        for (const FCompressedAnimBone& Bone : Resource.Compressed.Bones)
+        {
+            const int32 Index = Skeleton.FindBoneIndex(Bone.BoneName);
+            if (Index < 0 || Index >= ActiveBones)
+            {
+                continue;
+            }
+            if (Bone.Translation.Format != EAnimTrackFormat::None)
+            {
+                Out.SetTranslation(Index, Resource.Compressed.DecodeTranslation(Bone.Translation, Frame0, Frame1, Alpha));
+            }
+            if (Bone.Scale.Format != EAnimTrackFormat::None)
+            {
+                Out.SetScale(Index, Resource.Compressed.DecodeScale(Bone.Scale, Frame0, Frame1, Alpha));
+            }
+            if (Bone.Rotation.Format != EAnimTrackFormat::None)
+            {
+                Out.SetRotation(Index, Resource.Compressed.DecodeRotation(Bone.Rotation, Frame0, Frame1, Alpha));
+            }
+        }
+    }
+}
+
+TEST(AnimCompressionSampler, ConstantOverlayMatchesPerTrackDecodeBitForBit)
+{
+    constexpr int32 NumBones = 45;
+
+    FSkeletonResource Skeleton;
+    for (int32 i = 0; i < NumBones; ++i)
+    {
+        FSkeletonResource::FBoneInfo Bone;
+        Bone.Name           = FName("B", i);
+        Bone.ParentIndex    = i == 0 ? Constants::kIndexNone : i - 1;
+        Bone.InvBindMatrix  = FMatrix4::Identity();
+        Bone.LocalTransform = AnimPose::ComposeTRS(FVector3(0.01f * (float)i, 0.25f, -0.02f), FQuat(FVector3(0.03f * (float)i, 0.1f, 0.0f)), FVector3(1.0f + 0.01f * (float)(i % 5)));
+        Skeleton.BoneNameToIndex[Bone.Name] = i;
+        Skeleton.Bones.push_back(Bone);
+    }
+    Skeleton.BuildBindPoseCache();
+
+    CAnimation* Clip = NewObject<CAnimation>();
+    FAnimationResource& Resource = *Clip->GetAnimationResource();
+    Resource.Duration = 1.0f;
+    AddTranslation(Resource, FName("B", 0), 1.0f, 31, FVector3(0.0f, 0.0f, 4.0f));
+    for (int32 i = 1; i < NumBones; ++i)
+    {
+        const FName Bone("B", i);
+        switch (i % 6)
+        {
+        case 0:
+            AddRotation(Resource, Bone, 1.0f, 31, Math::Radians(40.0f + (float)i));
+            AddConstantTranslation(Resource, Bone, 1.0f, 31, FVector3(0.1f, 0.2f + 0.001f * (float)i, 0.3f));
+            AddScale(Resource, Bone, 1.0f, 31, 1.0f, 1.0f);
+            break;
+        case 1:
+            AddRotation(Resource, Bone, 1.0f, 31, 0.0f);
+            AddScale(Resource, Bone, 1.0f, 31, 1.0f, 1.3f);
+            break;
+        case 2:
+            break;
+        case 3:
+            AddTranslation(Resource, Bone, 1.0f, 31, FVector3(0.0f, 0.0f, 0.5f));
+            AddRotation(Resource, Bone, 1.0f, 31, Math::Radians(-25.0f));
+            break;
+        case 4:
+            AddConstantTranslation(Resource, Bone, 1.0f, 31, FVector3(-0.05f, 0.3f, 0.01f * (float)i));
+            break;
+        default:
+            AddRotation(Resource, Bone, 1.0f, 31, Math::Radians(90.0f));
+            break;
+        }
+    }
+    AddRotation(Resource, FName("NotInSkeleton"), 1.0f, 31, Math::Radians(15.0f));
+    AnimCompression::Build(Resource);
+
+    bool bFormats[4] = {};
+    for (const FCompressedAnimBone& Bone : Resource.Compressed.Bones)
+    {
+        bFormats[(int32)Bone.Translation.Format] = true;
+        bFormats[(int32)Bone.Rotation.Format] = true;
+        bFormats[(int32)Bone.Scale.Format] = true;
+    }
+    ASSERT_TRUE(bFormats[(int32)EAnimTrackFormat::Constant] && bFormats[(int32)EAnimTrackFormat::Quantized] && bFormats[(int32)EAnimTrackFormat::Raw]);
+
+    for (const int32 MaxBones : { -1, NumBones - 1, 13, 8, 1, 0 })
+    {
+        const int32 ActiveBones = (MaxBones >= 0 && MaxBones < NumBones) ? MaxBones : NumBones;
+        for (uint32 Step = 0; Step <= 37; ++Step)
+        {
+            const float Time = (float)Step / 37.0f;
+
+            FPose Sampled;
+            Clip->SampleLocalPose(Time, &Skeleton, Sampled, MaxBones);
+            FPose Expected;
+            SampleReference(Resource, Skeleton, Time, ActiveBones, Expected);
+
+            for (int32 Stream = 0; Stream < FPose::NumStreams; ++Stream)
+            {
+                for (int32 b = 0; b < NumBones; ++b)
+                {
+                    EXPECT_EQ(std::bit_cast<uint32>(Sampled.Stream(Stream)[b]), std::bit_cast<uint32>(Expected.Stream(Stream)[b]))
+                        << "stream " << Stream << " bone " << b << " time " << Time << " max bones " << MaxBones;
+                }
+            }
+        }
+    }
 }

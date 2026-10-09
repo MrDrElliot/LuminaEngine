@@ -192,6 +192,9 @@ namespace Lumina
         // filter, since filtering overwrites bExpanded to reveal matches.
         bool                                    bPassesFilter = true;
         bool                                    bExpandedSaved = true;
+
+        // The row's own height when it was last drawn, which an offscreen row reserves instead of drawing.
+        float                                   LastDrawnHeight = 0.0f;
     };
 
     class FPropertyPropertyRow : public FPropertyRow
@@ -437,6 +440,12 @@ namespace Lumina
 
         void MarkDirty();
         void DrawTree(bool bReadOnly = false);
+
+        // What DrawTree does besides drawing, for a table scrolled out of view that still owes queued edits their apply.
+        void UpdateRows();
+
+        // Out-of-view rows and sections reserve their last height, and this frame draws them all so no height stays stale.
+        static bool IsDetailsRemeasureFrame() { return ImGui::GetFrameCount() % 32 == 0; }
 
         // Nested tables draw with the parent's args, which is how a struct row inherits its context.
         void DrawTree(const FPropertyDrawArgs& Args);

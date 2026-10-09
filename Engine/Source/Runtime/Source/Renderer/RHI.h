@@ -611,6 +611,9 @@ namespace Lumina::RHI
     
     RUNTIME_API uint32         GetMaxMeshWorkGroupCount();
 
+    // How many viewports one draw can address, which caps the views a multi-view shadow draw covers.
+    RUNTIME_API uint32         GetMaxViewports();
+
     RUNTIME_API bool           SupportsSwapchainMaintenance1();
     RUNTIME_API bool           SupportsAsyncCompute();
     RUNTIME_API bool           SupportsAsyncTransfer();
@@ -883,6 +886,8 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CmdSetScissor(FCmdListH CL, const FRect& Rect);
     RUNTIME_API void        CmdSetViewport(FCmdListH CL, const FRect& Rect);
+    // Viewport i and scissor i both cover Rects[i], for draws that pick a viewport per primitive.
+    RUNTIME_API void        CmdSetViewportArray(FCmdListH CL, TSpan<const FRect> Rects);
 
     
     // Held in push constants rather than chased through memory. Re-issue whenever the view changes.

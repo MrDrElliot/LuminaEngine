@@ -301,6 +301,65 @@ namespace Lumina
         return true;
     }
 
+    namespace
+    {
+        TConsoleVar<bool> CVarMultiViewShadowDraws(
+            "r.Shadows.MultiViewDraws",
+            true,
+            "Draw the views of a shadow pass with one indirect draw per batch per group of viewports, instead of one draw per view.");
+    }
+
+    bool FDefaultSceneRenderer::DrawShadowViewsTogether(RHI::FCmdListH CL, const FShadowViewRun& Run, FShaderH PixelShader)
+    {
+        // Consecutive views sit one view of indirect slots apart only while each slice holds a single sub-draw.
+        const uint32 ViewsPerDraw = Math::Min(RHI::GetMaxViewports(), kMaxShadowViewportsPerDraw);
+        if (!CVarMultiViewShadowDraws.GetValue() || Run.Views.empty() || !Run.bContiguous || MeshSubDrawsPerSlice != 1u || ViewsPerDraw < 2u)
+        {
+            return false;
+        }
+
+        const FFrameData& Frame = *RenderFrame;
+        const uint32 NumViews  = (uint32)Run.Views.size();
+        const uint32 NumGroups = (NumViews + ViewsPerDraw - 1u) / ViewsPerDraw;
+        const RHI::TGPUSpan<FShadowRasterViewGPU> AllViews = RHI::CopyTransientArray(Run.Views.data(), Run.Views.size());
+
+        const auto SetGroupViewports = [&](uint32 First)
+        {
+            const uint32 Count = Math::Min(ViewsPerDraw, NumViews - First);
+            RHI::CmdSetViewportArray(CL, TSpan<const RHI::FRect>(Run.Tiles.data() + First, Count));
+        };
+
+        // Batch-outer keeps one pipeline bind per batch, and the viewports only change between groups when there are several.
+        if (NumGroups == 1u)
+        {
+            SetGroupViewports(0u);
+        }
+
+        for (uint32 OpaqueIdx : Frame.Geometry.OpaqueDrawList)
+        {
+            const FMeshDrawCommand& Batch = Frame.Geometry.DrawCommands[OpaqueIdx];
+            if (!BindShadowBatchPipeline(CL, Batch, PixelShader))
+            {
+                continue;
+            }
+
+            for (uint32 First = 0; First < NumViews; First += ViewsPerDraw)
+            {
+                if (NumGroups > 1u)
+                {
+                    SetGroupViewports(First);
+                }
+
+                FMeshletPassContext Ctx;
+                Ctx.CullViewIndex       = Run.FirstCullView + First;
+                Ctx.ShadowViews.Address = AllViews.Address + (RHI::GPUPtr)First * sizeof(FShadowRasterViewGPU);
+                Ctx.ShadowViews.Count   = Math::Min(ViewsPerDraw, NumViews - First);
+                DrawMeshletBatch(CL, Batch, Ctx);
+            }
+        }
+        return true;
+    }
+
     void FDefaultSceneRenderer::DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
         uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
         const FUIntVector2& ViewportExtent)
@@ -372,7 +431,30 @@ namespace Lumina
         DepthDesc.DepthBiasSlopeFactor = 1.5f;
         RHI::CmdSetDepthStencil(CL, (DepthDesc));
 
-        for (uint32 OpaqueIdx : OpaqueDrawList)
+        FShadowViewRun Run;
+        for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
+        {
+            uint32 FaceView = PointShadowCullViewBases[LightIdx];
+            if (FaceView == Constants::kIndexNoneU32)
+            {
+                continue;
+            }
+
+            const FLightShadowData& ShadowData = Frame.Lighting.Shadows[PointShadows[LightIdx].ShadowDataIndex];
+            for (int32 Face = 0; Face < 6; ++Face)
+            {
+                const int32 ShadowMapIndex = ShadowData.Shadow[Face].ShadowMapIndex;
+                if (ShadowMapIndex != Constants::kIndexNone)
+                {
+                    Run.Add(FaceView++, PointShadows[LightIdx].ShadowDataIndex, Face, AtlasTileRect(AtlasTiles[ShadowMapIndex]));
+                }
+            }
+        }
+
+        // Empty when one draw per batch already covered every view.
+        const TSpan<const uint32> PerViewBatches = DrawShadowViewsTogether(CL, Run, PixelShader)
+            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.data(), OpaqueDrawList.size());
+        for (uint32 OpaqueIdx : PerViewBatches)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
             const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, PixelShader);
@@ -487,8 +569,20 @@ namespace Lumina
 
         const TVector<FLightShadow>& SpotShadows = PackedShadows[(uint32)ELightType::Spot];
 
-        // Batch-outer gives one pipeline bind per batch; per-spot tile viewports are dynamic state.
-        for (uint32 OpaqueIdx : OpaqueDrawList)
+        FShadowViewRun Run;
+        for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
+        {
+            if (SpotShadowCullViewBases[SpotIdx] != Constants::kIndexNoneU32)
+            {
+                const FLightShadow& Shadow = SpotShadows[SpotIdx];
+                Run.Add(SpotShadowCullViewBases[SpotIdx], Shadow.ShadowDataIndex, 0, AtlasTileRect(AtlasTiles[Shadow.ShadowMapIndex]));
+            }
+        }
+
+        // Empty when one draw per batch already covered every view.
+        const TSpan<const uint32> PerViewBatches = DrawShadowViewsTogether(CL, Run, PixelShader)
+            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.data(), OpaqueDrawList.size());
+        for (uint32 OpaqueIdx : PerViewBatches)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
             const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, PixelShader);
@@ -585,7 +679,18 @@ namespace Lumina
         const int32 SunShadowDataIndex = Frame.Lighting.Lights[0].ShadowDataIndex;
         const uint32 NumCascadeViews = Frame.Views.NumCascadeViews;
 
-        for (uint32 OpaqueIdx : OpaqueDrawList)
+        FShadowViewRun Run;
+        for (uint32 c = 0; c < NumCascadeViews; ++c)
+        {
+            const RHI::FRect TileRect{ GCSMCascadeOriginX[c], GCSMCascadeOriginX[c] + GCSMCascadeSizes[c],
+                                       GCSMCascadeOriginY[c], GCSMCascadeOriginY[c] + GCSMCascadeSizes[c] };
+            Run.Add(CascadeViewBase + c, SunShadowDataIndex, (int32)c, TileRect);
+        }
+
+        // Empty when one draw per batch already covered every view.
+        const TSpan<const uint32> PerViewBatches = DrawShadowViewsTogether(CL, Run, FShaderH{})
+            ? TSpan<const uint32>() : TSpan<const uint32>(OpaqueDrawList.data(), OpaqueDrawList.size());
+        for (uint32 OpaqueIdx : PerViewBatches)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
             const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, FShaderH{});

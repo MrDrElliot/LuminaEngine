@@ -66,6 +66,108 @@ namespace Lumina
         }
     }
 
+    namespace Detail
+    {
+        // Pure selects, so every constant lands as the exact bits its track stores.
+        void ApplyConstantOverlay(const FAnimationResource::FResolvedSkeleton& Resolved, FPose& Pose, int32 ActiveBones)
+        {
+            const int32 Stride = Resolved.OverlayStride;
+            const int32 Whole  = ActiveBones & ~7;
+            for (int32 Stream = 0; Stream < FPose::NumStreams; ++Stream)
+            {
+                if ((Resolved.OverlayStreams & (1u << Stream)) == 0u)
+                {
+                    continue;
+                }
+
+                float* RESTRICT        Out    = Pose.Stream(Stream);
+                const float* RESTRICT  Values = Resolved.OverlayValues.data() + (SIZE_T)Stream * Stride;
+                const uint32* RESTRICT Mask   = Resolved.OverlayMask.data() + (SIZE_T)Stream * Stride;
+
+                int32 i = 0;
+                for (; i < Whole; i += 8)
+                {
+                    const __m256 Select = _mm256_castsi256_ps(_mm256_loadu_si256(reinterpret_cast<const __m256i*>(Mask + i)));
+                    _mm256_storeu_ps(Out + i, _mm256_blendv_ps(_mm256_loadu_ps(Out + i), _mm256_loadu_ps(Values + i), Select));
+                }
+                for (; i < ActiveBones; ++i)
+                {
+                    if (Mask[i] != 0u)
+                    {
+                        Out[i] = Values[i];
+                    }
+                }
+            }
+        }
+    }
+
+    void FAnimationResource::BuildConstantOverlay(FResolvedSkeleton& Resolved, int32 NumBones) const
+    {
+        const int32 Stride = FPose::StrideFor(NumBones);
+        TVector<float>  Values((SIZE_T)Stride * FPose::NumStreams, 0.0f);
+        TVector<uint32> Mask((SIZE_T)Stride * FPose::NumStreams, 0u);
+        TVector<uint8>  Seen(NumBones, 0u);
+        uint16 Streams = 0;
+
+        const auto SetConstant = [&](int32 Stream, int32 Bone, float Value)
+        {
+            Values[(SIZE_T)Stream * Stride + Bone] = Value;
+            Mask[(SIZE_T)Stream * Stride + Bone]   = ~0u;
+            Streams |= (uint16)(1u << Stream);
+        };
+
+        // Mirrors the decoders, which hand back Track.Constant for every format they do not interpolate.
+        for (int32 i = 0; i < (int32)Compressed.Bones.size(); ++i)
+        {
+            const int32 Bone = Resolved.CompressedBones[i];
+            if (Bone < 0 || Bone >= NumBones)
+            {
+                continue;
+            }
+            if (Seen[Bone] != 0u)
+            {
+                Resolved.AnimatedBones.clear();
+                return;
+            }
+            Seen[Bone] = 1u;
+
+            const FCompressedAnimBone& Track = Compressed.Bones[i];
+            const bool bAnimatedT = Track.Translation.Format == EAnimTrackFormat::Quantized || Track.Translation.Format == EAnimTrackFormat::Raw;
+            const bool bAnimatedR = Track.Rotation.Format == EAnimTrackFormat::Quantized;
+            const bool bAnimatedS = Track.Scale.Format == EAnimTrackFormat::Quantized;
+
+            if (Track.Translation.Format == EAnimTrackFormat::Constant)
+            {
+                SetConstant(FPose::StreamTx, Bone, Track.Translation.Constant.x);
+                SetConstant(FPose::StreamTy, Bone, Track.Translation.Constant.y);
+                SetConstant(FPose::StreamTz, Bone, Track.Translation.Constant.z);
+            }
+            if (Track.Scale.Format != EAnimTrackFormat::None && !bAnimatedS)
+            {
+                SetConstant(FPose::StreamSx, Bone, Track.Scale.Constant.x);
+                SetConstant(FPose::StreamSy, Bone, Track.Scale.Constant.y);
+                SetConstant(FPose::StreamSz, Bone, Track.Scale.Constant.z);
+            }
+            if (Track.Rotation.Format != EAnimTrackFormat::None && !bAnimatedR)
+            {
+                SetConstant(FPose::StreamRx, Bone, Track.Rotation.Constant.x);
+                SetConstant(FPose::StreamRy, Bone, Track.Rotation.Constant.y);
+                SetConstant(FPose::StreamRz, Bone, Track.Rotation.Constant.z);
+                SetConstant(FPose::StreamRw, Bone, Track.Rotation.Constant.w);
+            }
+
+            if (bAnimatedT || bAnimatedR || bAnimatedS)
+            {
+                Resolved.AnimatedBones.push_back(i);
+            }
+        }
+
+        Resolved.OverlayStride  = Stride;
+        Resolved.OverlayValues  = Move(Values);
+        Resolved.OverlayMask    = Move(Mask);
+        Resolved.OverlayStreams = Streams;
+    }
+
     const FAnimationResource::FResolvedSkeleton* FAnimationResource::GetResolvedSkeleton(const FSkeletonResource* Skeleton)
     {
         // A skeleton built without its bind cache hashes here, which only costs that rare caller.
@@ -118,6 +220,8 @@ namespace Lumina
                 NewSet->SkeletonToCompressed[BoneIndex] = i;
             }
         }
+
+        BuildConstantOverlay(*NewSet, NumBones);
 
         // Unmatched bones silently freeze at bind pose, the telltale of the wrong skeleton.
         if (NumUnmatched > 0)
@@ -456,20 +560,22 @@ namespace Lumina
             BatchCount = 0;
         };
 
-        for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
+        // With the overlay in place only animated tracks remain, since a constant decode would write the overlay's value again.
+        const bool bOverlay = Resolved->OverlayStride == FPose::StrideFor(NumBones);
+        const auto DecodeBone = [&](SIZE_T b)
         {
             const int32 BoneIdx = Resolved->CompressedBones[b];
             if (BoneIdx < 0 || BoneIdx >= ActiveBones)
             {
-                continue;
+                return;
             }
 
             const FCompressedAnimBone& Bone = Compressed.Bones[b];
-            if (Bone.Translation.Format != EAnimTrackFormat::None)
+            if (Bone.Translation.Format != EAnimTrackFormat::None && (!bOverlay || Bone.Translation.IsAnimated()))
             {
                 OutPose.SetTranslation(BoneIdx, Compressed.DecodeTranslation(Bone.Translation, Frame0, Frame1, Alpha));
             }
-            if (Bone.Scale.Format != EAnimTrackFormat::None)
+            if (Bone.Scale.Format != EAnimTrackFormat::None && (!bOverlay || Bone.Scale.Format == EAnimTrackFormat::Quantized))
             {
                 OutPose.SetScale(BoneIdx, Compressed.DecodeScale(Bone.Scale, Frame0, Frame1, Alpha));
             }
@@ -483,9 +589,25 @@ namespace Lumina
                     FlushRotations();
                 }
             }
-            else if (Bone.Rotation.Format != EAnimTrackFormat::None)
+            else if (Bone.Rotation.Format != EAnimTrackFormat::None && !bOverlay)
             {
                 OutPose.SetRotation(BoneIdx, Compressed.DecodeRotation(Bone.Rotation, Frame0, Frame1, Alpha));
+            }
+        };
+
+        if (bOverlay)
+        {
+            Detail::ApplyConstantOverlay(*Resolved, OutPose, ActiveBones);
+            for (const int32 b : Resolved->AnimatedBones)
+            {
+                DecodeBone((SIZE_T)b);
+            }
+        }
+        else
+        {
+            for (SIZE_T b = 0; b < Compressed.Bones.size(); ++b)
+            {
+                DecodeBone(b);
             }
         }
 

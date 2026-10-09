@@ -113,6 +113,9 @@ namespace Lumina
 #endif
 
 #if USING(WITH_EDITOR)
+    static TConsoleVar<bool> CVarSelectionOutlineTiles("r.Editor.SelectionOutlineTiles", true,
+        "Skip the selection outline's neighborhood test outside the tiles a selected pixel can reach.");
+
     void FDefaultSceneRenderer::SelectionOutlinePass(RHI::FCmdListH CL)
     {
         const TVector<uint32>& SelectionBits = RenderFrame->Extracts.SelectionBits;
@@ -129,8 +132,10 @@ namespace Lumina
         }
 
         static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH QuadShader   = FShaderLibrary::Get("SelectionOutlineTileQuad.slang");
         static const FShaderH PixelShader  = FShaderLibrary::Get("SelectionOutline.slang");
-        if (!VertexShader || !PixelShader)
+        static const FShaderH TileShader   = FShaderLibrary::Get("SelectionOutlineTiles.slang");
+        if (!VertexShader || !QuadShader || !PixelShader || !TileShader)
         {
             return;
         }
@@ -139,6 +144,73 @@ namespace Lumina
         SCENE_GPU_SCOPE(CL, "Selection Outline");
 
         const FSceneImage& Output = CurrentView->Output;
+
+        constexpr float  OutlineThickness = 2.0f;
+        constexpr uint32 OutlineTileSize  = 8;
+        const FUIntVector2 Extent = Output.GetExtent();
+        const uint32 TilesX   = (Extent.x + OutlineTileSize - 1u) / OutlineTileSize;
+        const uint32 TilesY   = (Extent.y + OutlineTileSize - 1u) / OutlineTileSize;
+        const uint32 NumTiles = TilesX * TilesY;
+
+        const RHI::TGPUSpan<uint32> SelectionSpan = RHI::CopyTransientArray(SelectionBits.data(), SelectionBits.size());
+
+        ReserveBuffer(CL, SelectionTileStampBuffer, (uint64)NumTiles * sizeof(uint32));
+        ReserveBuffer(CL, SelectionTileListBuffer, (uint64)NumTiles * sizeof(uint32));
+        ReserveBuffer(CL, SelectionOutlineDrawArgsBuffer, sizeof(RHI::FDrawIndirectArguments));
+        const bool bTiled = CVarSelectionOutlineTiles.GetValue()
+                         && SelectionTileStampBuffer.CapacityOf<uint32>() >= NumTiles
+                         && SelectionTileListBuffer.CapacityOf<uint32>() >= NumTiles
+                         && SelectionOutlineDrawArgsBuffer.Size >= sizeof(RHI::FDrawIndirectArguments);
+
+        const RHI::FGPURange DrawArgs{ SelectionOutlineDrawArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments) };
+        const RHI::TGPUSpan<uint32> TileList{ SelectionTileListBuffer, NumTiles };
+
+        if (bTiled)
+        {
+            // Zero is what a fresh buffer holds, so no frame may stamp with it.
+            if (++SelectionTileStamp == 0u)
+            {
+                SelectionTileStamp = 1u;
+            }
+
+            struct FSelectionTilePC
+            {
+                RHI::TGPUSpan<uint32> SelectionBits;
+                RHI::TGPUSpan<uint32> TileStamps;
+                RHI::TGPUSpan<uint32> TileList;
+                RHI::TGPUSpan<uint32> DrawArgs;
+                uint32 PickerIndex;
+                uint32 EntityIndexMask;
+                uint32 TileStamp;
+                uint32 TilesX;
+                uint32 TilesY;
+                uint32 TileReach;
+                uint32 Pad0;
+                uint32 Pad1;
+            } TilePC = {};
+            static_assert(sizeof(FSelectionTilePC) == 96, "FSelectionTilePC must match SelectionOutlineTiles.slang.");
+
+            TilePC.SelectionBits   = SelectionSpan;
+            TilePC.TileStamps      = RHI::TGPUSpan<uint32>{ SelectionTileStampBuffer, NumTiles };
+            TilePC.TileList        = TileList;
+            TilePC.DrawArgs        = RHI::TGPUSpan<uint32>::FromAddress(DrawArgs.Address, 4u);
+            TilePC.PickerIndex     = (uint32)PickerSlot;
+            TilePC.EntityIndexMask = ECS::FEntity::IndexMask;
+            TilePC.TileStamp       = SelectionTileStamp;
+            TilePC.TilesX          = TilesX;
+            TilePC.TilesY          = TilesY;
+            TilePC.TileReach       = ((uint32)Math::Ceil(OutlineThickness) + OutlineTileSize - 1u) / OutlineTileSize;
+
+            // The previous frame's draw read the list and its arguments, and this frame rewrites both.
+            RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::IndirectRead,
+                            RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite);
+            RHI::CmdMemzero(CL, DrawArgs);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            DispatchCompute(CL, TileShader, TilePC, TilesX, TilesY, 1u);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                            RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::IndirectRead);
+        }
 
         RHI::FRenderAttachment Color;
         Color.Texture = Output.Texture;
@@ -161,8 +233,9 @@ namespace Lumina
         AlphaBlend.SrcAlphaFactor = RHI::EFactor::One;
         AlphaBlend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
 
+        // Tile quads cover only what the selection can reach, and every pixel they cover runs the full-screen test unchanged.
         FGraphicsPipelineKey Key;
-        Key.VS = VertexShader;
+        Key.VS = bTiled ? QuadShader : VertexShader;
         Key.PS = PixelShader;
         Key.ColorTargets.push_back({ Output.Desc.Format, AlphaBlend });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
@@ -176,19 +249,32 @@ namespace Lumina
             uint32      EntityIndexMask;
             float       Thickness;
             uint32      _Pad0;
+            RHI::TGPUSpan<uint32> TileList;
+            uint32      _Pad1;
+            uint32      _Pad2;
+            uint32      _Pad3;
+            uint32      _Pad4;
         } PC = {};
-        static_assert(sizeof(FSelectionOutlinePC) == 48, "FSelectionOutlinePC must match SelectionOutline.slang.");
+        static_assert(sizeof(FSelectionOutlinePC) == 80, "FSelectionOutlinePC must match SelectionOutline.slang.");
 
-        PC.SelectionBits     = RHI::CopyTransientArray(SelectionBits.data(), SelectionBits.size());
+        PC.SelectionBits     = SelectionSpan;
         PC.PickerIndex       = (uint32)PickerSlot;
         // From the handle traits rather than a literal, so a change there cannot mask off real index bits.
         PC.EntityIndexMask   = ECS::FEntity::IndexMask;
-        PC.Thickness         = 2.0f;
+        PC.Thickness         = OutlineThickness;
+        PC.TileList          = TileList;
         PC.OutlineColor      = FVector4(1.0f, 0.42f, 0.05f, 1.0f);
 
         if (!PC.SelectionBits.IsEmpty())
         {
-            RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+            if (bTiled)
+            {
+                RHI::CmdDrawIndirect(CL, MakeArgs(PC), DrawArgs, 1u, sizeof(RHI::FDrawIndirectArguments));
+            }
+            else
+            {
+                RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+            }
         }
 
         RHI::CmdEndRenderPass(CL);

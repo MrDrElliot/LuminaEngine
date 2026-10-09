@@ -686,7 +686,11 @@ namespace Lumina::ECS::Utils
             NewLocalTransform.SetScale(Scale);
         }
 
-        RemoveFromParent(Registry, Child);
+        // RemoveFromParent bakes the world into the local, which would undo a caller asking to keep its local.
+        if (Registry.GetHierarchy().GetParent(Child) != ECS::NullEntity)
+        {
+            Registry.DetachFromParent(Child);
+        }
 
         if (Parent != ECS::NullEntity)
         {

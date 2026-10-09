@@ -18,6 +18,10 @@ typedef FDepthOnlyVertexOutput FMeshVertexOutput;
 struct FMeshPrimitiveOut
 {
     bool CullPrimitive : SV_CullPrimitive;
+#ifndef MESHLET_MESH_BASE
+    // A multi-view draw sets one viewport and scissor per view on its atlas tile, in draw order.
+    uint ViewportIndex : SV_ViewportArrayIndex;
+#endif
 };
 
 // The material vertex graph, emitted ONCE outside the loop: the token substitutes raw statements that
@@ -53,6 +57,11 @@ void MeshMain(
     // phase rather than stalling it; see MeshletVisBuffer.slang for why it used to sit at the bottom.
     SetMeshOutputCounts(VertCount, TriCount);
 
+#ifndef MESHLET_MESH_BASE
+    const FShadowRasterView ShadowView = ShadowRasterViewForDraw(DrawIndex);
+    const uint ShadowViewport = IsMultiViewShadowDraw() ? DrawIndex : 0u;
+#endif
+
     // Only the clip position survives the vertex phase, and only because ShuffleMeshletClip reads it out
     // of the owning LANE's registers; see MeshletVisBuffer.slang.
     float4 Clip[MESHLET_VERT_ITERS];
@@ -79,7 +88,7 @@ void MeshMain(
         const uint     MaterialIndex  = Ref.Inst.MaterialIndex;
 #endif
 #ifndef MESHLET_MESH_BASE
-        const float4x4 ShadowViewProj = GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex);
+        const float4x4 ShadowViewProj = GetShadowViewProjection(ShadowView.ShadowDataIndex, (uint)ShadowView.ViewIndex);
 #endif
 
         [ForceUnroll]
@@ -125,7 +134,11 @@ void MeshMain(
 
     // The clip positions above are in THIS pass's space, so the frustum reject is against the volume
     // actually being rastered and the winding is the one the hardware will see.
+#ifdef MESHLET_MESH_BASE
     const float2 ViewportSize = float2(MeshletPass().ViewportW, MeshletPass().ViewportH);
+#else
+    const float2 ViewportSize = ShadowView.TileSize;
+#endif
 
     // Every triangle is declared and the dead ones carry SV_CullPrimitive, so there is no compaction
     // pass, no shared bitmask and no second barrier.
@@ -150,6 +163,9 @@ void MeshMain(
             {
                 Tris[StoreT]                = Idx;
                 Prims[StoreT].CullPrimitive = bCull;
+#ifndef MESHLET_MESH_BASE
+                Prims[StoreT].ViewportIndex = ShadowViewport;
+#endif
             }
         }
     }

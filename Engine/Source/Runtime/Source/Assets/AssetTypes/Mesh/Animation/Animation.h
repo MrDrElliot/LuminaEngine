@@ -175,9 +175,20 @@ namespace Lumina
 
             // Inverse of CompressedBones, so sampling one bone never scans.
             TVector<int32> SkeletonToCompressed;
+
+            // Every constant track laid out like a pose, left empty when a bone is mapped twice and its write order matters.
+            int32           OverlayStride = 0;
+            TVector<float>  OverlayValues;
+            TVector<uint32> OverlayMask;
+            uint16          OverlayStreams = 0;
+
+            // Compressed bones with at least one animated track, the only ones sampling still decodes.
+            TVector<int32>  AnimatedBones;
         };
 
         RUNTIME_API const FResolvedSkeleton* GetResolvedSkeleton(const FSkeletonResource* Skeleton);
+
+        void BuildConstantOverlay(FResolvedSkeleton& Resolved, int32 NumBones) const;
 
         RUNTIME_API void InvalidateResolvedSkeletons();
 

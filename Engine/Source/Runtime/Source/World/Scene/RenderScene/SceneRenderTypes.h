@@ -854,6 +854,15 @@ namespace Lumina
     static_assert(offsetof(FRenderBucketGPU, SubDrawCount) % 4 == 0,
                   "SubDrawCount is used as a countBufferOffset, which must be 4-byte aligned");
 
+    // One view of a multi-view shadow draw, mirroring FShadowRasterView in MeshletGeometry.slang.
+    struct FShadowRasterViewGPU
+    {
+        int32 ShadowDataIndex = -1;
+        int32 ViewIndex       = 0;
+        float TileSize[2]     = {};
+    };
+    static_assert(sizeof(FShadowRasterViewGPU) == 16, "FShadowRasterViewGPU must match FShadowRasterView in MeshletGeometry.slang.");
+
     struct FTransform3x4
     {
         FVector4   Row0;

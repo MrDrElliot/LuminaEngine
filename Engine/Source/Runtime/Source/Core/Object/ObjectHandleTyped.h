@@ -67,11 +67,14 @@ namespace Lumina
             }
         }
 
+        // Cleared before releasing, since the release can destroy this pointer's owner and run this destructor again.
         void ReleaseInternal()
         {
-            ReleaseRef(Object, Entry);
+            T* const             OldObject = Object;
+            FCObjectEntry* const OldEntry  = Entry;
             Object = nullptr;
             Entry  = nullptr;
+            ReleaseRef(OldObject, OldEntry);
         }
 
     public:

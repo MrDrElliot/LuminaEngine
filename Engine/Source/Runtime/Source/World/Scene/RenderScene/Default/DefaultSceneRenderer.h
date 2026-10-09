@@ -758,6 +758,10 @@ namespace Lumina
         #if USING(WITH_EDITOR)
         void PickerResolvePass(RHI::FCmdListH CL);
         void SelectionOutlinePass(RHI::FCmdListH CL);
+        FSceneBuffer SelectionTileStampBuffer { "Editor.SelectionOutlineTiles", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer SelectionTileListBuffer { "Editor.SelectionOutlineTileList", 1.5f };
+        FSceneBuffer SelectionOutlineDrawArgsBuffer { "Editor.SelectionOutlineDrawArgs", 1.0f, EBufferInit::Zeroed };
+        uint32       SelectionTileStamp = 0;
         #endif
         #if !defined(LE_SHIPPING)
         void SceneDebugViewPass(RHI::FCmdListH CL);
@@ -768,6 +772,31 @@ namespace Lumina
         void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
                              const FUIntVector2& ViewportExtent);
+
+        // The Vulkan minimum for maxViewports under multiViewport, and the size of the RHI's fixed viewport array.
+        static constexpr uint32 kMaxShadowViewportsPerDraw = 16;
+
+        struct FShadowViewRun
+        {
+            TVector<FShadowRasterViewGPU> Views;
+            TVector<RHI::FRect>           Tiles;
+            uint32                        FirstCullView = Constants::kIndexNoneU32;
+            bool                          bContiguous   = true;
+
+            void Add(uint32 CullView, int32 ShadowDataIndex, int32 ViewIndex, const RHI::FRect& Tile)
+            {
+                if (Views.empty())
+                {
+                    FirstCullView = CullView;
+                }
+                bContiguous = bContiguous && CullView == FirstCullView + (uint32)Views.size();
+                Views.push_back({ ShadowDataIndex, ViewIndex, { (float)(Tile.MaxX - Tile.MinX), (float)(Tile.MaxY - Tile.MinY) } });
+                Tiles.push_back(Tile);
+            }
+        };
+
+        // One indirect draw per batch for each group of up to 16 views, or false when the run cannot be drawn that way.
+        bool DrawShadowViewsTogether(RHI::FCmdListH CL, const FShadowViewRun& Run, FShaderH PixelShader);
         
 
         void ApplyCullFreeze(FFrameData& Frame);
@@ -1020,6 +1049,8 @@ namespace Lumina
             int32             ShadowViewIndex   = 0;
             float             ViewportW         = 0.0f;
             float             ViewportH         = 0.0f;
+            // Non-empty for a draw over consecutive shadow cull views starting at CullViewIndex.
+            RHI::TGPUSpan<FShadowRasterViewGPU> ShadowViews;
             /** Which part of the bucket's draw region to rasterize. The two VisBuffer phases each take
                 their own slice; every single-phase pass takes All, which is final by the time it runs. */
             EMeshletSlice     Slice             = EMeshletSlice::All;
@@ -1139,7 +1170,10 @@ namespace Lumina
         // Same staging as WriteBuffer, deferred so writes sharing a destination collapse into one copy
         // command. Stage all of one buffer's runs before starting the next, or nothing groups.
         void StageWrite(RHI::GPUPtr Dst, const void* Data, uint64 Size, bool bFillBeforeSubmit = false);
-        void UpdateInstanceBlockBounds(RHI::FCmdListH CL, bool bFull, const TVector<uint32>& DirtySlots, uint32 NumSlots);
+        // Launched once the retained slots are synced, so the bounds build on workers while the rest of the frame records.
+        void LaunchInstanceBlockBounds();
+        void JoinInstanceBlockBounds();
+        void FinishInstanceBlockBounds(RHI::FCmdListH CL);
         void DispatchMeshletBlockBuild(RHI::FCmdListH CL, bool bLatePass);
         bool bSplitMeshletPhasesThisFrame = false;
         void FlushStagedWrites(RHI::FCmdListH CL);
@@ -1155,7 +1189,7 @@ namespace Lumina
 
         // Stages each listed element compactly and scatters it to its slot on the GPU, for a fragmented dirty set.
         void WriteBufferScatter(RHI::FCmdListH CL, RHI::GPUPtr Dst, uint64 DstBytes, const void* Src, uint64 Stride,
-                                RHI::FGPURange Slots, const TVector<uint32>& SlotList);
+                                RHI::FGPURange Slots, const TVector<uint32>& SlotList, bool bFillBeforeSubmit = false);
 
         // The fill skips the first RewrittenBytes, which the upload ring rewrites ahead of this list and a later fill would erase.
         void ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink = true,
@@ -1318,11 +1352,15 @@ namespace Lumina
             const uint8*    Source;
             uint64          Bytes;
             RHI::GPUPtr     UploadDest = 0;
+            // Set for a gather, which copies Bytes of elements of GatherWords 16-byte words from Source at these slots.
+            const uint32*   GatherSlots = nullptr;
+            uint32          GatherWords = 0;
         };
         TVector<FDeferredStageFill>                                     DeferredStageFills;
         FTaskHandle                                                     DeferredStageFillTask;
         std::atomic<uint32>                                             DeferredFillCursor{0};
         bool                                                            bDeferredUploadsQueued = false;
+        bool                                                            bDeferredGatherQueued  = false;
         TVector<RHI::FBufferCopy>                                       UploadCopyScratch;
         TVector<uint64>                                                 UploadCursorScratch;
         uint64                                                          CurrentSceneRootAddr = 0;
@@ -1386,6 +1424,11 @@ namespace Lumina
         bool                          bDistanceFieldBlocksDirty = true;
         TVector<FUIntVector2>         GPUWrittenSlotRanges;
         bool                          bInstanceBlockBoundsValid = false;
+        FTaskHandle                   InstanceBlockBoundsTask;
+        std::atomic<bool>             bBlockDFChanged{ false };
+        bool                          bBlockBoundsLaunched   = false;
+        bool                          bBlockBoundsRebuildAll = false;
+        uint32                        BlockBoundsNumBlocks   = 0;
         FSceneBuffer RetainedTransformBuffer { "Retained.Transforms", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer RetainedStaticBuffer { "Retained.Static", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer SurfaceDescBuffer { "Retained.SurfaceDescs", 1.5f, EBufferInit::Zeroed };
@@ -1397,7 +1440,7 @@ namespace Lumina
         void SnapshotMotionState(RHI::FCmdListH CL);
         FSceneBuffer SkinnedFrameDataBuffer { "Skinning.FrameData", 1.25f };
         FSceneBuffer SkinnedSlotListBuffer { "Skinning.SlotList", 1.5f };
-        TVector<uint32>                                     SkinnedUploadScratch;
+        TVector<uint64>                                     SkinnedSlotBits;
         TVector<FUIntVector2>                               SkinnedRunScratch;
         uint32                                              CurrentSkinnedFrameTag = 0;
         // Per-frame posed meshlet spheres, so the cull can reject skinned geometry per meshlet.

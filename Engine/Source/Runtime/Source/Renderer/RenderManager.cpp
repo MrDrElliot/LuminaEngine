@@ -626,11 +626,8 @@ namespace Lumina
 
             {
                 LUMINA_PROFILE_SECTION_COLORED("Present", tracy::Color::Orange4);
-                #if WITH_EDITOR
-                SwapchainTarget.Present(CL);
-                #else
+                // A secondary viewport's present waits this one out, so only a frame with tool windows torn off serializes.
                 SwapchainTarget.PresentAsync(CL);
-                #endif
             }
 
             #if WITH_EDITOR

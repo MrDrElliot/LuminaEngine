@@ -336,6 +336,26 @@ namespace Lumina
         ImGui::Spacing();
     }
 
+    namespace
+    {
+        // Sections are drawn whole while anything in the window is being edited or a keyboard move is looking for its target.
+        bool IsSectionOutsideView(float Height)
+        {
+            if (FPropertyTable::IsDetailsRemeasureFrame())
+            {
+                return false;
+            }
+            const ImGuiContext& Context = *GImGui;
+            if (Context.NavMoveScoringItems || (Context.ActiveId != 0 && Context.ActiveIdWindow == Context.CurrentWindow))
+            {
+                return false;
+            }
+            const ImRect& Clip = Context.CurrentWindow->ClipRect;
+            const float   Top  = ImGui::GetCursorScreenPos().y;
+            return Top > Clip.Max.y || Top + Height < Clip.Min.y;
+        }
+    }
+
     void FSceneEditorTool::DrawComponentList(ECS::FEntity Entity)
     {
         const bool bFiltering = DetailsFilter.IsActive();
@@ -368,9 +388,23 @@ namespace Lumina
                 Entry.Table->SetSearchText(FStringView());
             }
 
+            ++VisibleCount;
+
+            // A search reshapes every section, so only the unfiltered list reuses heights.
+            if (!bFiltering && Entry.LastDrawnHeight > 0.0f && IsSectionOutsideView(Entry.LastDrawnHeight))
+            {
+                ImGui::Dummy(ImVec2(0.0f, Entry.LastDrawnHeight - ImGui::GetStyle().ItemSpacing.y));
+                if (Entry.Table)
+                {
+                    Entry.Table->UpdateRows();
+                }
+                continue;
+            }
+
+            const float SectionTop = ImGui::GetCursorPosY();
             DrawComponentHeader(Entry, Entity);
             ImGui::Spacing();
-            ++VisibleCount;
+            Entry.LastDrawnHeight = ImGui::GetCursorPosY() - SectionTop;
         }
 
         if (bFiltering && VisibleCount == 0)

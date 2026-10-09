@@ -314,6 +314,8 @@ namespace Lumina
             TUniquePtr<FPropertyTable> Table;
             const CStruct*             ReflectedType = nullptr;  // reflected component CStruct
             FString                    Title;                    // header label + sort key
+            // The section's height when last drawn, which it reserves instead while it is out of view.
+            float                      LastDrawnHeight = 0.0f;
         };
 
         // Rebuild PropertyTables for Entity (component intersection + multi-edit across the selection).

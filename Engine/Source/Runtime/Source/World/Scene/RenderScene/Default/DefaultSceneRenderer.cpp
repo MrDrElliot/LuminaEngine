@@ -222,6 +222,7 @@ namespace Lumina
 
     FDefaultSceneRenderer::~FDefaultSceneRenderer()
     {
+        JoinInstanceBlockBounds();
         RHI::WaitDeviceIdle();
 
         FRenderManager::OnSwapchainResized.Remove(SwapchainResizedHandle);
@@ -615,6 +616,7 @@ namespace Lumina
                 const FSceneImage& GTAOWorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
 
                 RHI::FCmdListH ComputeCL = CL;
+                RHI::FCmdListH GeometryCL = {};
                 if (bAsyncCompute)
                 {
                     if (bGTAOPrefiltered)
@@ -623,9 +625,8 @@ namespace Lumina
                     }
                     RHI::CmdEndMarker(CL);
 
-                    // The retained re-send and its staging fills have to land before the first segment runs.
-                    WaitDeferredStageFills();
-                    const uint64 GeometryValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+                    // Held until the overlap has recorded, so the staging fills run under the whole recording rather than its head.
+                    GeometryCL = CL;
 
                     ComputeCL = OpenSceneCommandList(RHI::EQueueType::Compute);
                     RHI::CmdSetSceneRoot(ComputeCL, SceneBindings);
@@ -634,7 +635,6 @@ namespace Lumina
                     {
                         RHI::CmdAcquireTexture(ComputeCL, GTAOWorkingDepth.Texture, RHI::EQueueType::Graphics);
                     }
-                    AsyncComputeWait = { RHI::GetQueueTimeline(RHI::EQueueType::Graphics), GeometryValue };
                 }
 
                 bool bGTAOWritten = false;
@@ -669,9 +669,6 @@ namespace Lumina
                         RHI::CmdReleaseTexture(ComputeCL, Texture, RHI::EQueueType::Graphics);
                     }
                     RHI::CmdEndMarker(ComputeCL);
-                    const uint64 ComputeValue = RHI::Submit(RHI::EQueueType::Compute, TSpan<const RHI::FCmdListH>{&ComputeCL, 1},
-                                                            TSpan<const RHI::FSemaphoreInfo>{&AsyncComputeWait, 1});
-                    AsyncComputeWait = { RHI::GetQueueTimeline(RHI::EQueueType::Compute), ComputeValue };
 
                     CL = OpenSceneCommandList(RHI::EQueueType::Graphics);
                     RHI::CmdSetSceneRoot(CL, SceneBindings);
@@ -781,6 +778,14 @@ namespace Lumina
                 // Its own submission, since the wait on the compute queue belongs only to the work that reads its outputs.
                 if (bAsyncCompute)
                 {
+                    // The retained re-send and its staging fills have to land before the first segment runs.
+                    WaitDeferredStageFills();
+                    const uint64 GeometryValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&GeometryCL, 1});
+                    AsyncComputeWait = { RHI::GetQueueTimeline(RHI::EQueueType::Graphics), GeometryValue };
+                    const uint64 ComputeValue = RHI::Submit(RHI::EQueueType::Compute, TSpan<const RHI::FCmdListH>{&ComputeCL, 1},
+                                                            TSpan<const RHI::FSemaphoreInfo>{&AsyncComputeWait, 1});
+                    AsyncComputeWait = { RHI::GetQueueTimeline(RHI::EQueueType::Compute), ComputeValue };
+
                     RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
                     CL = OpenSceneCommandList(RHI::EQueueType::Graphics);
                     RHI::CmdSetSceneRoot(CL, SceneBindings);
@@ -2533,6 +2538,8 @@ namespace Lumina
         const uint32 NumRuns = (uint32)Runs.size();
         if (bFillBeforeSubmit)
         {
+            // The fill workers walk this array once launched, so a push after the launch could move it under them.
+            ASSERT(!DeferredStageFillTask);
             for (uint32 i = 0; i < NumRuns; ++i)
             {
                 const uint64 Bytes = (uint64)Runs[i].y * Stride;
@@ -2560,8 +2567,24 @@ namespace Lumina
         RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(Copies.data(), Copies.size()));
     }
 
+    namespace
+    {
+        // Elements are a few 16-byte words, so copying them as words inline beats a sized memcpy call per element.
+        void GatherWords(FUIntVector4* Out, const FUIntVector4* In, const uint32* Slots, uint32 Count, uint32 Words)
+        {
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                const FUIntVector4* Element = In + (uint64)Slots[i] * Words;
+                for (uint32 w = 0; w < Words; ++w)
+                {
+                    *Out++ = Element[w];
+                }
+            }
+        }
+    }
+
     void FDefaultSceneRenderer::WriteBufferScatter(RHI::FCmdListH CL, RHI::GPUPtr Dst, uint64 DstBytes, const void* Src, uint64 Stride,
-                                                  RHI::FGPURange Slots, const TVector<uint32>& SlotList)
+                                                  RHI::FGPURange Slots, const TVector<uint32>& SlotList, bool bFillBeforeSubmit)
     {
         static const FShaderH ScatterCS = FShaderLibrary::Get("ScatterUpload.slang");
         const uint32 Count = (uint32)SlotList.size();
@@ -2577,22 +2600,29 @@ namespace Lumina
             return;
         }
 
-        // Elements are a few 16-byte words, so copying them as words inline beats a sized memcpy call per element.
         const uint32* SlotData = SlotList.data();
         const uint32  Words    = (uint32)(Stride / 16u);
-        Task::ParallelFor(Count, [StagingBytes, Src, Words, SlotData](const Task::FParallelRange& Range)
+        if (bFillBeforeSubmit)
         {
-            FUIntVector4*       Out = (FUIntVector4*)StagingBytes + (uint64)Range.Start * Words;
-            const FUIntVector4* In  = (const FUIntVector4*)Src;
-            for (uint32 i = Range.Start; i < Range.End; ++i)
+            // The fill workers walk this array once launched, so a push after the launch could move it under them.
+            ASSERT(!DeferredStageFillTask);
+            constexpr uint32 SlotsPerFill = 2048;
+            for (uint32 First = 0; First < Count; First += SlotsPerFill)
             {
-                const FUIntVector4* Element = In + (uint64)SlotData[i] * Words;
-                for (uint32 w = 0; w < Words; ++w)
-                {
-                    *Out++ = Element[w];
-                }
+                const uint32 Num = Math::Min(SlotsPerFill, Count - First);
+                DeferredStageFills.push_back({ StagingBytes + (uint64)First * Stride, (const uint8*)Src, (uint64)Num * Stride, 0,
+                                               SlotData + First, Words });
+                bDeferredGatherQueued = true;
             }
-        }, 1024);
+        }
+        else
+        {
+            Task::ParallelFor(Count, [StagingBytes, Src, Words, SlotData](const Task::FParallelRange& Range)
+            {
+                GatherWords((FUIntVector4*)StagingBytes + (uint64)Range.Start * Words, (const FUIntVector4*)Src, SlotData + Range.Start,
+                            Range.End - Range.Start, Words);
+            }, 1024);
+        }
 
         struct FScatterUploadPC
         {
@@ -2631,6 +2661,7 @@ namespace Lumina
             // Small enough that a full ring stalls one chunk at a time rather than one whole buffer.
             constexpr uint64 UploadChunkBytes = 4 * Constants::kMiB;
 
+            ASSERT(!DeferredStageFillTask);
             const uint32 FirstChunk = (uint32)DeferredStageFills.size();
             for (uint64 Offset = 0; Offset < Size; Offset += UploadChunkBytes)
             {
@@ -2660,6 +2691,7 @@ namespace Lumina
 
         if (bFillBeforeSubmit)
         {
+            ASSERT(!DeferredStageFillTask);
             constexpr uint64 DeferredFillBytes = 256u * 1024u;
             for (uint64 Offset = 0; Offset < Size; Offset += DeferredFillBytes)
             {
@@ -2685,12 +2717,13 @@ namespace Lumina
         {
             return;
         }
-        // Two workers already saturate the PCIe write path, and each further one costs the submitter a wake.
-        constexpr uint32 kFillWorkers = 2;
+        // Contiguous copies saturate the PCIe write path with two workers, while a gather also waits on scattered reads.
+        const uint32 FillWorkers = bDeferredGatherQueued ? 4u : 2u;
+        bDeferredGatherQueued = false;
         const uint32 NumFills = (uint32)DeferredStageFills.size();
         DeferredFillCursor.store(0, std::memory_order_relaxed);
 
-        DeferredStageFillTask = Task::AsyncTask(kFillWorkers, 1, [this, NumFills](uint32, uint32, uint32)
+        DeferredStageFillTask = Task::AsyncTask(FillWorkers, 1, [this, NumFills](uint32, uint32, uint32)
         {
             RunDeferredStageFills(NumFills);
         }, ETaskPriority::High);
@@ -2702,7 +2735,12 @@ namespace Lumina
              i = DeferredFillCursor.fetch_add(1, std::memory_order_relaxed))
         {
             const FDeferredStageFill& Fill = DeferredStageFills[i];
-            if (Fill.UploadDest != 0)
+            if (Fill.GatherSlots != nullptr)
+            {
+                GatherWords((FUIntVector4*)Fill.Dest, (const FUIntVector4*)Fill.Source, Fill.GatherSlots,
+                            (uint32)(Fill.Bytes / ((uint64)Fill.GatherWords * 16u)), Fill.GatherWords);
+            }
+            else if (Fill.UploadDest != 0)
             {
                 RHI::UploadBuffer(RHI::FGPUAllocation{ .Gpu = Fill.UploadDest, .Size = Fill.Bytes }, Fill.Source, Fill.Bytes);
             }

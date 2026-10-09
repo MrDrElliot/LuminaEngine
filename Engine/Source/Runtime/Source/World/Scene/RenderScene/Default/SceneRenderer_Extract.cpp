@@ -641,11 +641,15 @@ namespace Lumina
 
         ECS::FRegistry& Registry = ECS::GetWorldRegistry(*World);
 
+        // The bounds build reads the retained slots this sync rewrites.
+        JoinInstanceBlockBounds();
+
         MovedTransformScratch.clear();
         ECS::Utils::DrainMovedTransforms(Registry, MovedTransformScratch);
         ScenePrimitives.Sync(*World, TSpan<const ECS::FEntity>(MovedTransformScratch.data(), MovedTransformScratch.size()));
 
         PublishRetainedUpload();
+        LaunchInstanceBlockBounds();
     }
 
     // Collects what changed in the retained scene, before the render phase uploads it.

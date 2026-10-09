@@ -33,6 +33,11 @@ struct FSelectionOutlineArgs
     uint   EntityIndexMask;        // FEntity::IndexMask, supplied by the CPU rather than hardcoded
     float  Thickness;              // outline half-width in pixels
     uint   _Pad0;
+    GPUSpan<uint> TileList;        // read by SelectionOutlineTileQuad.slang, which shares this block
+    uint   _Pad1;
+    uint   _Pad2;
+    uint   _Pad3;
+    uint   _Pad4;
 };
 FSelectionOutlineArgs* Pass() { return GetPassArgs<FSelectionOutlineArgs>(); }
 

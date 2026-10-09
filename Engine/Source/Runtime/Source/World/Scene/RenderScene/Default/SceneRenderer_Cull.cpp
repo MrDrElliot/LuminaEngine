@@ -2,6 +2,8 @@
 #include "SceneRendererInternal.h"
 #include "World/Scene/RenderScene/SceneCullMath.h"
 
+#include <bit>
+
 namespace Lumina
 {
     #if !defined(LE_SHIPPING)
@@ -60,21 +62,116 @@ namespace Lumina
     }
 
     // Every instance in a block the camera can reach is still tested one by one, so the skip never changes what is drawn.
-    void FDefaultSceneRenderer::UpdateInstanceBlockBounds(RHI::FCmdListH CL, bool bFull, const TVector<uint32>& DirtySlots, uint32 NumSlots)
+    void FDefaultSceneRenderer::LaunchInstanceBlockBounds()
     {
         LUMINA_PROFILE_SCOPE();
 
+        // A launch whose render never consumed it left the device copy behind the CPU one.
+        if (bBlockBoundsLaunched)
+        {
+            bInstanceBlockBoundsValid = false;
+            bBlockBoundsLaunched = false;
+        }
+
+        const FFrameData::FGeometry::FRetainedUpload& Upload = ExtractFrame->Geometry.RetainedUpload;
         const FInstanceCullEntry* Entries = ScenePrimitives.GetRetainedCullEntries();
+        const uint32 NumSlots  = Upload.SlotCount;
         const uint32 NumBlocks = (NumSlots + kInstanceCullBlockSize - 1u) / kInstanceCullBlockSize;
         if (NumBlocks == 0u || Entries == nullptr)
         {
-            bInstanceBlockBoundsValid = false;
             return;
         }
 
         ScenePrimitives.GetGPUWrittenSlotRanges(GPUWrittenSlotRanges);
 
-        const bool bRebuildAll = bFull || !bInstanceBlockBoundsValid || InstanceBlockBounds.size() != NumBlocks;
+        bBlockBoundsRebuildAll = Upload.bFull || !bInstanceBlockBoundsValid || InstanceBlockBounds.size() != NumBlocks;
+        BlockBoundsNumBlocks   = NumBlocks;
+
+        if (InstanceBlockHasDF.size() != NumBlocks)
+        {
+            InstanceBlockHasDF.assign(NumBlocks, 0u);
+            bDistanceFieldBlocksDirty = true;
+        }
+
+        DirtyInstanceBlocks.clear();
+        if (bBlockBoundsRebuildAll)
+        {
+            InstanceBlockBounds.resize(NumBlocks);
+        }
+        else
+        {
+            // DirtySlots arrives sorted and unique, so its blocks come out sorted and only repeat back to back.
+            for (uint32 Slot : Upload.DirtySlots)
+            {
+                const uint32 Block = Slot / kInstanceCullBlockSize;
+                if (Slot < NumSlots && (DirtyInstanceBlocks.empty() || DirtyInstanceBlocks.back() != Block))
+                {
+                    DirtyInstanceBlocks.push_back(Block);
+                }
+            }
+        }
+
+        const uint32 NumWork = bBlockBoundsRebuildAll ? NumBlocks : (uint32)DirtyInstanceBlocks.size();
+        bBlockBoundsLaunched = true;
+        if (NumWork == 0u)
+        {
+            return;
+        }
+
+        constexpr uint32 BlocksPerTask = 256;
+        const uint32 NumTasks = (NumWork + BlocksPerTask - 1u) / BlocksPerTask;
+        const bool bAll = bBlockBoundsRebuildAll;
+        InstanceBlockBoundsTask = Task::AsyncTask(NumTasks, 1, [this, Entries, NumSlots, NumWork, bAll](uint32 Start, uint32 End, uint32)
+        {
+            for (uint32 TaskIndex = Start; TaskIndex < End; ++TaskIndex)
+            {
+                const uint32 WorkEnd = Math::Min((TaskIndex + 1u) * BlocksPerTask, NumWork);
+                for (uint32 Work = TaskIndex * BlocksPerTask; Work < WorkEnd; ++Work)
+                {
+                    const uint32 Block = bAll ? Work : DirtyInstanceBlocks[Work];
+                    const uint32 First = Block * kInstanceCullBlockSize;
+                    const uint32 Last  = Math::Min(First + kInstanceCullBlockSize, NumSlots);
+                    InstanceBlockBounds[Block] = SceneCull::ComputeInstanceBlockBounds(Entries, First, Last, OverlapsAny(GPUWrittenSlotRanges, First, Last));
+
+                    const uint8 bHasDF = SceneCull::BlockHasDistanceFieldCaster(Entries, First, Last) ? 1u : 0u;
+                    if (InstanceBlockHasDF[Block] != bHasDF)
+                    {
+                        InstanceBlockHasDF[Block] = bHasDF;
+                        bBlockDFChanged.store(true, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }, ETaskPriority::Medium);
+    }
+
+    void FDefaultSceneRenderer::JoinInstanceBlockBounds()
+    {
+        if (InstanceBlockBoundsTask)
+        {
+            LUMINA_PROFILE_SECTION("Wait Instance Block Bounds");
+            InstanceBlockBoundsTask->Wait();
+            InstanceBlockBoundsTask = nullptr;
+        }
+        if (bBlockDFChanged.exchange(false, std::memory_order_relaxed))
+        {
+            bDistanceFieldBlocksDirty = true;
+        }
+    }
+
+    void FDefaultSceneRenderer::FinishInstanceBlockBounds(RHI::FCmdListH CL)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        JoinInstanceBlockBounds();
+        if (!bBlockBoundsLaunched)
+        {
+            bInstanceBlockBoundsValid = false;
+            return;
+        }
+        bBlockBoundsLaunched = false;
+
+        const uint32 NumBlocks   = BlockBoundsNumBlocks;
+        const bool   bRebuildAll = bBlockBoundsRebuildAll;
         ReserveBuffer(CL, InstanceBlockBoundsBuffer, (uint64)NumBlocks * sizeof(FInstanceBlockBounds),
                       /*bAllowShrink*/ bRebuildAll, /*bPreserveContents*/ !bRebuildAll);
         if (InstanceBlockBoundsBuffer.CapacityOf<FInstanceBlockBounds>() < NumBlocks)
@@ -83,70 +180,14 @@ namespace Lumina
             return;
         }
 
-        const auto BuildBlock = [&](uint32 Block)
-        {
-            const uint32 First = Block * kInstanceCullBlockSize;
-            const uint32 End   = Math::Min(First + kInstanceCullBlockSize, NumSlots);
-            InstanceBlockBounds[Block] = SceneCull::ComputeInstanceBlockBounds(Entries, First, End, OverlapsAny(GPUWrittenSlotRanges, First, End));
-
-            const uint8 bHasDF = SceneCull::BlockHasDistanceFieldCaster(Entries, First, End) ? 1u : 0u;
-            if (InstanceBlockHasDF[Block] != bHasDF)
-            {
-                InstanceBlockHasDF[Block] = bHasDF;
-                bDistanceFieldBlocksDirty = true;
-            }
-        };
-
-        if (InstanceBlockHasDF.size() != NumBlocks)
-        {
-            InstanceBlockHasDF.assign(NumBlocks, 0u);
-            bDistanceFieldBlocksDirty = true;
-        }
-
+        // The bounds stay untouched until the next extract, which comes after the fills are joined.
         if (bRebuildAll)
         {
-            InstanceBlockBounds.resize(NumBlocks);
-            Task::ParallelFor(NumBlocks, [&](const Task::FParallelRange& Range)
-            {
-                for (uint32 Block = Range.Start; Block < Range.End; ++Block)
-                {
-                    BuildBlock(Block);
-                }
-            }, 256);
-            StageWrite(InstanceBlockBoundsBuffer.Gpu, InstanceBlockBounds.data(), (uint64)NumBlocks * sizeof(FInstanceBlockBounds));
+            StageWrite(InstanceBlockBoundsBuffer.Gpu, InstanceBlockBounds.data(), (uint64)NumBlocks * sizeof(FInstanceBlockBounds),
+                       /*bFillBeforeSubmit*/ true);
         }
         else
         {
-            // DirtySlots arrives sorted and unique, so its blocks come out sorted and only repeat back to back.
-            DirtyInstanceBlocks.clear();
-            for (uint32 Slot : DirtySlots)
-            {
-                const uint32 Block = Slot / kInstanceCullBlockSize;
-                if (Slot < NumSlots && (DirtyInstanceBlocks.empty() || DirtyInstanceBlocks.back() != Block))
-                {
-                    DirtyInstanceBlocks.push_back(Block);
-                }
-            }
-
-            constexpr uint32 SerialBlockLimit = 64;
-            if (DirtyInstanceBlocks.size() > SerialBlockLimit)
-            {
-                Task::ParallelFor((uint32)DirtyInstanceBlocks.size(), [&](const Task::FParallelRange& Range)
-                {
-                    for (uint32 i = Range.Start; i < Range.End; ++i)
-                    {
-                        BuildBlock(DirtyInstanceBlocks[i]);
-                    }
-                }, SerialBlockLimit);
-            }
-            else
-            {
-                for (uint32 Block : DirtyInstanceBlocks)
-                {
-                    BuildBlock(Block);
-                }
-            }
-
             // Consecutive dirty blocks go up as one write.
             for (SIZE_T i = 0; i < DirtyInstanceBlocks.size();)
             {
@@ -158,7 +199,8 @@ namespace Lumina
                     ++i;
                 }
                 StageWrite(InstanceBlockBoundsBuffer.Gpu + (uint64)RunStart * sizeof(FInstanceBlockBounds),
-                           &InstanceBlockBounds[RunStart], (uint64)(RunEnd - RunStart) * sizeof(FInstanceBlockBounds));
+                           &InstanceBlockBounds[RunStart], (uint64)(RunEnd - RunStart) * sizeof(FInstanceBlockBounds),
+                           /*bFillBeforeSubmit*/ true);
             }
         }
 
@@ -203,6 +245,7 @@ namespace Lumina
         // Sized by residency, so it tracks the meshes the cull keeps rather than every skeleton alive.
         const SIZE_T ArenaBytes = (SIZE_T)ArenaCount * sizeof(FBoneTransform);
 
+        // Every copy below is a deferred fill, since it is PCIe-bound and the frame can record while it runs.
         const RHI::GPUPtr PrevArena = BoneArenaBuffer.Gpu;
         ReserveBuffer(CL, BoneArenaBuffer, ArenaBytes);
         if (!BoneArenaBuffer)
@@ -213,7 +256,8 @@ namespace Lumina
         // A reallocation drops every resident pose, so the dirty set no longer describes the buffer.
         if (BoneArenaBuffer.Gpu != PrevArena)
         {
-            WriteBuffer(CL, BoneArenaBuffer.Gpu, Mirror.data(), ArenaBytes);
+            StageWrite(BoneArenaBuffer.Gpu, Mirror.data(), ArenaBytes, /*bFillBeforeSubmit*/ true);
+            FlushStagedWrites(CL);
             return;
         }
 
@@ -238,8 +282,8 @@ namespace Lumina
                 return;
             }
 
-            WriteBuffer(CL, BoneArenaBuffer.Gpu + (uint64)Start * sizeof(FBoneTransform),
-                        Mirror.data() + Start, (uint64)(End - Start) * sizeof(FBoneTransform));
+            StageWrite(BoneArenaBuffer.Gpu + (uint64)Start * sizeof(FBoneTransform), Mirror.data() + Start,
+                       (uint64)(End - Start) * sizeof(FBoneTransform), /*bFillBeforeSubmit*/ true);
         };
 
         uint32 RunStart = Ranges[0].x;
@@ -261,6 +305,7 @@ namespace Lumina
             RunEnd   = End;
         }
         Flush(RunStart, RunEnd);
+        FlushStagedWrites(CL);
     }
 
     // Vulkan guarantees at least this on maxComputeWorkGroupCount[1], and the bounds dispatch uses y per slot.
@@ -360,17 +405,21 @@ namespace Lumina
             BoundsCursor += Len;
         }
 
-        // Only the gathered slots, coalesced; ungathered slots are rejected by their frame tag.
-        // Every run is one slot wide, so this sorts the bare indices rather than (base, count) pairs.
-        TVector<uint32>& Sorted = SkinnedUploadScratch;
-        Sorted.assign(Slots.begin(), Slots.end());
-
-        Algo::Sort(Sorted);
-
         // A merged gap is still staged and copied, so this trades one copy region against ~1 KiB of bytes.
         constexpr uint32 kSkinnedMergeGap = 24;
 
         const uint32 Count = (uint32)Data.size();
+
+        // Only the gathered slots, coalesced, and a bitmap over the slot range orders them in linear time where a sort did not.
+        TVector<uint64>& SlotBits = SkinnedSlotBits;
+        SlotBits.assign(((SIZE_T)Count + 63u) / 64u, 0ull);
+        for (uint32 Slot : Slots)
+        {
+            if (Slot < Count)
+            {
+                SlotBits[Slot >> 6] |= 1ull << (Slot & 63u);
+            }
+        }
 
         TVector<FUIntVector2>& Runs = SkinnedRunScratch;
         Runs.clear();
@@ -384,24 +433,36 @@ namespace Lumina
             }
         };
 
-        uint32 RunStart = Sorted[0];
-        uint32 RunEnd   = Sorted[0] + 1u;
-        for (SIZE_T i = 1; i < Sorted.size(); ++i)
+        bool   bHaveRun = false;
+        uint32 RunStart = 0;
+        uint32 RunEnd   = 0;
+        for (SIZE_T Word = 0; Word < SlotBits.size(); ++Word)
         {
-            const uint32 Start = Sorted[i];
-            const uint32 End   = Sorted[i] + 1u;
-            if (Start <= RunEnd + kSkinnedMergeGap)
+            uint64 Bits = SlotBits[Word];
+            while (Bits != 0)
             {
-                RunEnd = Math::Max(RunEnd, End);
-                continue;
+                const uint32 Slot = (uint32)(Word * 64u) + (uint32)std::countr_zero(Bits);
+                Bits &= Bits - 1u;
+                if (bHaveRun && Slot <= RunEnd + kSkinnedMergeGap)
+                {
+                    RunEnd = Slot + 1u;
+                    continue;
+                }
+                if (bHaveRun)
+                {
+                    AddRun(RunStart, RunEnd);
+                }
+                RunStart = Slot;
+                RunEnd   = Slot + 1u;
+                bHaveRun = true;
             }
-            AddRun(RunStart, RunEnd);
-            RunStart = Start;
-            RunEnd   = End;
         }
-        AddRun(RunStart, RunEnd);
+        if (bHaveRun)
+        {
+            AddRun(RunStart, RunEnd);
+        }
 
-        WriteBufferRuns(CL, SkinnedFrameDataBuffer.Gpu, Data.data(), sizeof(FSkinnedFrameData), Runs);
+        WriteBufferRuns(CL, SkinnedFrameDataBuffer.Gpu, Data.data(), sizeof(FSkinnedFrameData), Runs, /*bFillBeforeSubmit*/ true);
 
         uint64 StagedSlots = 0;
         for (const FUIntVector2& Run : Runs)
@@ -547,9 +608,11 @@ namespace Lumina
             const uint32 MaxGroups = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
             const uint32 WantedSubDraws = (DrawListCapacity == 0u) ? 1u : (((DrawListCapacity - 1u) / MaxGroups) + 1u);
             const SIZE_T NumBucketSlices = NumArgSlots * (SIZE_T)kMeshletSliceCount;
+            // One spare view of slots, since a multi-view shadow draw's strided range runs a whole view past its last read.
+            const SIZE_T SpareViewSlots = (SIZE_T)Math::Max(NumDraws, 1u) * (SIZE_T)kMeshletSliceCount * (SIZE_T)WantedSubDraws;
             const SIZE_T MeshDrawArgsSize = Math::Max<SIZE_T>(
                 sizeof(RHI::FDrawMeshTasksIndirectArguments),
-                NumBucketSlices * (SIZE_T)WantedSubDraws
+                (NumBucketSlices * (SIZE_T)WantedSubDraws + SpareViewSlots)
                     * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
             ReserveBuffer(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize);
@@ -813,6 +876,9 @@ namespace Lumina
 
             DispatchGPUSceneCull(CL, Frame);
         }
+
+        // A frame with no retained slots never reaches the launch in the cull, and its bone fills still belong on the workers.
+        LaunchDeferredStageFills();
     }
 
     void FDefaultSceneRenderer::SkinningPass(RHI::FCmdListH CL)
@@ -1172,9 +1238,9 @@ namespace Lumina
                             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite);
 
                         WriteBufferScatter(CL, RetainedCullEntryBuffer.Gpu, RetainedCullEntryBuffer.Size, SrcCullEntries,
-                                           sizeof(FInstanceCullEntry), Slots, Upload.DirtySlots);
+                                           sizeof(FInstanceCullEntry), Slots, Upload.DirtySlots, /*bFillBeforeSubmit*/ true);
                         WriteBufferScatter(CL, RetainedTransformBuffer.Gpu, RetainedTransformBuffer.Size, SrcTransforms,
-                                           sizeof(FTransform3x4), Slots, Upload.DirtySlots);
+                                           sizeof(FTransform3x4), Slots, Upload.DirtySlots, /*bFillBeforeSubmit*/ true);
 
                         RHI::CmdBarrier(CL,
                             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
@@ -1198,11 +1264,13 @@ namespace Lumina
                     CollectRuns(Upload.DirtyStaticSlots, RetainedRunScratch);
                     WriteBufferRuns(CL, RetainedStaticBuffer.Gpu, SrcStatic, sizeof(FInstanceStatic), RetainedRunScratch, true);
                 }
-                UpdateInstanceBlockBounds(CL, Upload.bFull, Upload.DirtySlots, RetainedSlots);
+                FinishInstanceBlockBounds(CL);
                 LaunchDeferredStageFills();
             }
             else
             {
+                JoinInstanceBlockBounds();
+                bBlockBoundsLaunched      = false;
                 bInstanceBlockBoundsValid = false;
             }
             const uint32 CullCap      = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>();
@@ -1555,8 +1623,11 @@ namespace Lumina
             int32  ViewIndex;
             float  ViewportW;
             float  ViewportH;
+            RHI::TGPUSpan<FShadowRasterViewGPU> ShadowViews;
+            uint32 ArgViewStride;
+            uint32 Pad0;
         } Push;
-        static_assert(sizeof(FMeshletPassPush) == 48, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
+        static_assert(sizeof(FMeshletPassPush) == 72, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
 
         Push.Buckets              = { GetRenderBuckets() };
         Push.ArgBase              = ArgIndex;
@@ -1567,9 +1638,21 @@ namespace Lumina
         Push.ViewIndex            = Ctx.ShadowViewIndex;
         Push.ViewportW            = Ctx.ViewportW;
         Push.ViewportH            = Ctx.ViewportH;
+        Push.ShadowViews          = Ctx.ShadowViews;
+        Push.ArgViewStride        = NumDrawsPerView;
+        Push.Pad0                 = 0;
 
         // One mesh workgroup per surviving meshlet, so the grid IS the survivor count.
         const uint32 SliceArgBase = (ArgIndex * kMeshletSliceCount + Slice) * MeshSubDrawsPerSlice;
+
+        if (Ctx.ShadowViews.Count > 0u)
+        {
+            // An empty view's slot holds zero groups, so it costs the command processor a read and nothing more.
+            ASSERT(MeshSubDrawsPerSlice == 1u);
+            const uint32 ViewStride = NumDrawsPerView * kMeshletSliceCount * sizeof(RHI::FDrawMeshTasksIndirectArguments);
+            RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(Push), GetMeshDrawArgs().Skip(SliceArgBase * sizeof(RHI::FDrawMeshTasksIndirectArguments)), Ctx.ShadowViews.Count, ViewStride);
+            return;
+        }
 
         RHI::CmdDrawMeshTasksIndirectCount(CL, MakeArgs(Push), GetMeshDrawArgs().Skip(SliceArgBase * sizeof(RHI::FDrawMeshTasksIndirectArguments)), GetRenderBuckets().Skip(ArgIndex * sizeof(FRenderBucketGPU) + offsetof(FRenderBucketGPU, SubDrawCount) + Slice * sizeof(uint32)), MeshSubDrawsPerSlice, sizeof(RHI::FDrawMeshTasksIndirectArguments));
     }

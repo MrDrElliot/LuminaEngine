@@ -169,9 +169,148 @@ namespace Lumina
             return 2.0f * Math::Atan2(Math::Dot(FVector3(Q.x, Q.y, Q.z), Axis), Q.w);
         }
 
+        namespace InertSimd
+        {
+            struct FQuat8 { __m256 W, X, Y, Z; };
+
+            FORCEINLINE __m256 Add(__m256 A, __m256 B) { return _mm256_add_ps(A, B); }
+            FORCEINLINE __m256 Sub(__m256 A, __m256 B) { return _mm256_sub_ps(A, B); }
+            FORCEINLINE __m256 Mul(__m256 A, __m256 B) { return _mm256_mul_ps(A, B); }
+            FORCEINLINE __m256 Select(__m256 IfFalse, __m256 IfTrue, __m256 Mask) { return _mm256_blendv_ps(IfFalse, IfTrue, Mask); }
+
+            // Starts from zero like Math::Dot on a vector, since a sum of negative zeros has to come out positive the same way.
+            FORCEINLINE __m256 Dot3(__m256 Ax, __m256 Ay, __m256 Az, __m256 Bx, __m256 By, __m256 Bz)
+            {
+                return Add(Add(Add(_mm256_setzero_ps(), Mul(Ax, Bx)), Mul(Ay, By)), Mul(Az, Bz));
+            }
+
+            FORCEINLINE FQuat8 Load(const FPose& Pose, int32 i)
+            {
+                return { _mm256_loadu_ps(Pose.Rw() + i), _mm256_loadu_ps(Pose.Rx() + i), _mm256_loadu_ps(Pose.Ry() + i), _mm256_loadu_ps(Pose.Rz() + i) };
+            }
+
+            // Math::Inverse, Normalize and the Hamilton product, term for term.
+            FORCEINLINE FQuat8 Inverse(const FQuat8& Q)
+            {
+                const __m256 One   = _mm256_set1_ps(1.0f);
+                const __m256 LenSq = Add(Add(Add(Mul(Q.X, Q.X), Mul(Q.Y, Q.Y)), Mul(Q.Z, Q.Z)), Mul(Q.W, Q.W));
+                const __m256 Scale = _mm256_div_ps(One, LenSq);
+                const __m256 Valid = _mm256_cmp_ps(LenSq, _mm256_setzero_ps(), _CMP_GT_OQ);
+                const __m256 Sign  = _mm256_set1_ps(-0.0f);
+                return { Select(One, Mul(Q.W, Scale), Valid),
+                         Select(_mm256_setzero_ps(), Mul(_mm256_xor_ps(Q.X, Sign), Scale), Valid),
+                         Select(_mm256_setzero_ps(), Mul(_mm256_xor_ps(Q.Y, Sign), Scale), Valid),
+                         Select(_mm256_setzero_ps(), Mul(_mm256_xor_ps(Q.Z, Sign), Scale), Valid) };
+            }
+
+            FORCEINLINE FQuat8 Multiply(const FQuat8& A, const FQuat8& B)
+            {
+                return { Sub(Sub(Sub(Mul(A.W, B.W), Mul(A.X, B.X)), Mul(A.Y, B.Y)), Mul(A.Z, B.Z)),
+                         Sub(Add(Add(Mul(A.W, B.X), Mul(A.X, B.W)), Mul(A.Y, B.Z)), Mul(A.Z, B.Y)),
+                         Add(Add(Sub(Mul(A.W, B.Y), Mul(A.X, B.Z)), Mul(A.Y, B.W)), Mul(A.Z, B.X)),
+                         Add(Sub(Add(Mul(A.W, B.Z), Mul(A.X, B.Y)), Mul(A.Y, B.X)), Mul(A.Z, B.W)) };
+            }
+
+            FORCEINLINE FQuat8 NormalizeShortest(const FQuat8& Q)
+            {
+                const __m256 One   = _mm256_set1_ps(1.0f);
+                const __m256 Zero  = _mm256_setzero_ps();
+                const __m256 Len   = _mm256_sqrt_ps(Add(Add(Add(Mul(Q.X, Q.X), Mul(Q.Y, Q.Y)), Mul(Q.Z, Q.Z)), Mul(Q.W, Q.W)));
+                const __m256 Scale = _mm256_div_ps(One, Len);
+                const __m256 Valid = _mm256_cmp_ps(Len, Zero, _CMP_GT_OQ);
+                FQuat8 N = { Select(One, Mul(Q.W, Scale), Valid), Select(Zero, Mul(Q.X, Scale), Valid),
+                             Select(Zero, Mul(Q.Y, Scale), Valid), Select(Zero, Mul(Q.Z, Scale), Valid) };
+
+                const __m256 Flip    = _mm256_cmp_ps(N.W, Zero, _CMP_LT_OQ);
+                const __m256 MinusOne = _mm256_set1_ps(-1.0f);
+                return { Select(N.W, Mul(N.W, MinusOne), Flip), Select(N.X, Mul(N.X, MinusOne), Flip),
+                         Select(N.Y, Mul(N.Y, MinusOne), Flip), Select(N.Z, Mul(N.Z, MinusOne), Flip) };
+            }
+
+            // The library atan2 per lane, since no vector form returns its exact bits.
+            FORCEINLINE __m256 DoubledAtan2(__m256 Y, __m256 X)
+            {
+                alignas(32) float Ys[8];
+                alignas(32) float Xs[8];
+                alignas(32) float Out[8];
+                _mm256_store_ps(Ys, Y);
+                _mm256_store_ps(Xs, X);
+                for (int32 k = 0; k < 8; ++k)
+                {
+                    Out[k] = Math::Atan2(Ys[k], Xs[k]);
+                }
+                return Mul(_mm256_set1_ps(2.0f), _mm256_load_ps(Out));
+            }
+
+            FORCEINLINE void WriteVector(FInertChannelSet& Set, int32 i, const float* CurX, const float* CurY, const float* CurZ,
+                                         const float* PrevX, const float* PrevY, const float* PrevZ,
+                                         const float* DestX, const float* DestY, const float* DestZ, float InvDelta)
+            {
+                const __m256 Zero = _mm256_setzero_ps();
+                const __m256 Dx = _mm256_loadu_ps(DestX + i);
+                const __m256 Dy = _mm256_loadu_ps(DestY + i);
+                const __m256 Dz = _mm256_loadu_ps(DestZ + i);
+                const __m256 Ox = Sub(_mm256_loadu_ps(CurX + i), Dx);
+                const __m256 Oy = Sub(_mm256_loadu_ps(CurY + i), Dy);
+                const __m256 Oz = Sub(_mm256_loadu_ps(CurZ + i), Dz);
+                const __m256 X0 = _mm256_sqrt_ps(Dot3(Ox, Oy, Oz, Ox, Oy, Oz));
+
+                const __m256 Scale = _mm256_div_ps(_mm256_set1_ps(1.0f), X0);
+                const __m256 Valid = _mm256_cmp_ps(X0, _mm256_set1_ps(1e-6f), _CMP_GT_OQ);
+                const __m256 DirX = Select(Zero, Mul(Ox, Scale), Valid);
+                const __m256 DirY = Select(Zero, Mul(Oy, Scale), Valid);
+                const __m256 DirZ = Select(Zero, Mul(Oz, Scale), Valid);
+
+                __m256 V0 = Zero;
+                if (InvDelta > 0.0f)
+                {
+                    const __m256 Along = Dot3(Sub(_mm256_loadu_ps(PrevX + i), Dx), Sub(_mm256_loadu_ps(PrevY + i), Dy),
+                                              Sub(_mm256_loadu_ps(PrevZ + i), Dz), DirX, DirY, DirZ);
+                    V0 = Mul(Sub(X0, Along), _mm256_set1_ps(InvDelta));
+                }
+
+                _mm256_storeu_ps(Set.DirX() + i, DirX);
+                _mm256_storeu_ps(Set.DirY() + i, DirY);
+                _mm256_storeu_ps(Set.DirZ() + i, DirZ);
+                _mm256_storeu_ps(Set.X0() + i, X0);
+                _mm256_storeu_ps(Set.V0() + i, V0);
+            }
+
+            // Bones i to i + 7 of InertCapture's loop below, in its exact operation order, so every channel keeps its bits.
+            void CaptureEight(FAnimInertializer& In, int32 i, const FPose& Cur, const FPose& Prev, const FPose& Target, bool bVel, float InvDt)
+            {
+                const FQuat8 Inv = Inverse(Load(Target, i));
+                const FQuat8 Q0  = NormalizeShortest(Multiply(Load(Cur, i), Inv));
+
+                const __m256 Len  = _mm256_sqrt_ps(Dot3(Q0.X, Q0.Y, Q0.Z, Q0.X, Q0.Y, Q0.Z));
+                const __m256 X0   = DoubledAtan2(Len, Q0.W);
+                const __m256 Scale = _mm256_div_ps(_mm256_set1_ps(1.0f), Len);
+                const __m256 Valid = _mm256_cmp_ps(Len, _mm256_set1_ps(1e-5f), _CMP_GT_OQ);
+                const __m256 AxisX = Select(_mm256_setzero_ps(), Mul(Q0.X, Scale), Valid);
+                const __m256 AxisY = Select(_mm256_setzero_ps(), Mul(Q0.Y, Scale), Valid);
+                const __m256 AxisZ = Select(_mm256_set1_ps(1.0f), Mul(Q0.Z, Scale), Valid);
+
+                __m256 V0 = _mm256_setzero_ps();
+                if (bVel)
+                {
+                    const FQuat8 Qp = NormalizeShortest(Multiply(Load(Prev, i), Inv));
+                    V0 = Mul(Sub(X0, DoubledAtan2(Dot3(Qp.X, Qp.Y, Qp.Z, AxisX, AxisY, AxisZ), Qp.W)), _mm256_set1_ps(InvDt));
+                }
+
+                _mm256_storeu_ps(In.Rot.DirX() + i, AxisX);
+                _mm256_storeu_ps(In.Rot.DirY() + i, AxisY);
+                _mm256_storeu_ps(In.Rot.DirZ() + i, AxisZ);
+                _mm256_storeu_ps(In.Rot.X0() + i, X0);
+                _mm256_storeu_ps(In.Rot.V0() + i, V0);
+
+                WriteVector(In.Trans, i, Cur.Tx(), Cur.Ty(), Cur.Tz(), Prev.Tx(), Prev.Ty(), Prev.Tz(), Target.Tx(), Target.Ty(), Target.Tz(), InvDt);
+                WriteVector(In.Scale, i, Cur.Sx(), Cur.Sy(), Cur.Sz(), Prev.Sx(), Prev.Sy(), Prev.Sz(), Target.Sx(), Target.Sy(), Target.Sz(), InvDt);
+            }
+        }
+
         // Channels only, since the update pass sets the control fields, and the tail copies through.
         void InertCapture(FAnimInertializer& In, const FPose& Source, const FPose& SourcePrev,
-                          const FPose& Target, float Dt, bool bHasVel, int32 NumActiveBones)
+                          const FPose& Target, float Dt, bool bHasVel, int32 NumActiveBones, bool bScalarOnly = false)
         {
             const int32 N = (NumActiveBones >= 0 && NumActiveBones < Target.GetNumBones())
                 ? NumActiveBones
@@ -201,7 +340,16 @@ namespace Lumina
                 Set.V0()[i]   = InvDelta > 0.0f ? (X0 - Math::Dot(Previous - Dest, Dir)) * InvDelta : 0.0f;
             };
 
-            for (int32 i = 0; i < N; ++i)
+            int32 First = 0;
+            if (!bScalarOnly)
+            {
+                for (; First + 8 <= N; First += 8)
+                {
+                    InertSimd::CaptureEight(In, First, bSrc ? Source : Target, Prev, Target, bVel, InvDt);
+                }
+            }
+
+            for (int32 i = First; i < N; ++i)
             {
                 const FQuat TargetRot = Target.GetRotation(i);
 
@@ -436,6 +584,12 @@ namespace Lumina
     }
 
     // One zone per mesh and none per task, since fiber builds push every Tracy event through one lock.
+    void Anim::InertCaptureForTest(FAnimInertializer& In, const FPose& Source, const FPose& SourcePrev, const FPose& Target,
+                                   float Dt, bool bHasVel, int32 NumActiveBones, bool bScalarOnly)
+    {
+        InertCapture(In, Source, SourcePrev, Target, Dt, bHasVel, NumActiveBones, bScalarOnly);
+    }
+
     bool Anim::ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices, FAnimTaskSnapshot* OutSnapshot)
     {
         LUMINA_PROFILE_SCOPE();

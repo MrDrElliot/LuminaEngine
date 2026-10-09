@@ -614,6 +614,24 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        // Rows are drawn whole while anything in the window is being edited or a keyboard move is looking for its target.
+        bool IsRowOutsideView(const ImGuiTable& Table, float Height)
+        {
+            if (FPropertyTable::IsDetailsRemeasureFrame())
+            {
+                return false;
+            }
+            const ImGuiContext& Context = *GImGui;
+            if (Context.NavMoveScoringItems || (Context.ActiveId != 0 && Context.ActiveIdWindow == Context.CurrentWindow))
+            {
+                return false;
+            }
+            return Table.RowPosY1 > Table.InnerClipRect.Max.y || Table.RowPosY1 + Height < Table.InnerClipRect.Min.y;
+        }
+    }
+
     void FPropertyRow::DrawRow(float Offset, const FPropertyDrawArgs& Args)
     {
         const bool bReadOnly = Args.bReadOnly;
@@ -626,9 +644,6 @@ namespace Lumina
         ImGui::TableNextRow();
 
         const bool bIsCategory = IsCategory();
-        const bool bHasDefault = !bIsCategory && PropertyHandle && PropertyHandle->HasDefault();
-        const bool bDiffers = bHasDefault && PropertyHandle->DiffersFromDefault();
-        
         const bool bTopLevel = ParentRow && ParentRow->IsCategory();
         const bool bMultipleValues = bTopLevel && PropertyHandle && PropertyHandle->Property
             && Callbacks.IsMultiValueFn && Callbacks.IsMultiValueFn(PropertyHandle->Property);
@@ -636,6 +651,24 @@ namespace Lumina
         // Capture row top before drawing for later modified-marker rendering.
         ImGuiTable* CurrentTable = ImGui::GetCurrentTable();
         const float RowTopY = CurrentTable ? CurrentTable->RowPosY1 : 0.0f;
+
+        // Holding the measured height in an empty row keeps the scroll range and every row below exactly where drawing would put them.
+        if (CurrentTable != nullptr && LastDrawnHeight > 0.0f && IsRowOutsideView(*CurrentTable, LastDrawnHeight))
+        {
+            CurrentTable->RowPosY2 = ImMax(CurrentTable->RowPosY2, CurrentTable->RowPosY1 + LastDrawnHeight);
+            ImGui::PopID();
+
+            if (bExpanded && !Children.empty() && !bMultipleValues)
+            {
+                ImGui::BeginDisabled(IsReadOnly());
+                DrawChildren(Offset + ChildIndentStep, Args);
+                ImGui::EndDisabled();
+            }
+            return;
+        }
+
+        const bool bHasDefault = !bIsCategory && PropertyHandle && PropertyHandle->HasDefault();
+        const bool bDiffers = bHasDefault && PropertyHandle->DiffersFromDefault();
 
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
@@ -740,6 +773,14 @@ namespace Lumina
                 ImGui::EndTable();
             }
             ImGui::PopStyleVar();
+        }
+
+        // Fetched again, since a table first seen inside this row can grow ImGui's table pool and move the one above.
+        if (const ImGuiTable* RowTable = ImGui::GetCurrentTable())
+        {
+            // What TableEndCell will settle the row at, read before the children open rows of their own.
+            const float RowBottom = ImMax(RowTable->RowPosY2, ImGui::GetCurrentWindow()->DC.CursorMaxPos.y + RowTable->RowCellPaddingY);
+            LastDrawnHeight = RowBottom - RowTable->RowPosY1;
         }
 
         if (bDiffers)
@@ -2225,6 +2266,18 @@ namespace Lumina
         ImGui::PopID();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar();
+    }
+
+    void FPropertyTable::UpdateRows()
+    {
+        if (bDirty || Customization)
+        {
+            return;
+        }
+        for (auto& [Name, Row] : CategoryMap)
+        {
+            Row->UpdateRow();
+        }
     }
 
     void FPropertyTable::EnsureTreeBuilt()

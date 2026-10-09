@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <bit>
+
 #include "Animation/AnimCompression.h"
 #include "Animation/Pose.h"
 #include "Animation/TaskSystem/AnimTask.h"
@@ -182,4 +184,88 @@ TEST(AnimTaskExecutor, APartialBlendMixesBothInputs)
     FPose Expected;
     AnimPose::Blend(Rig.SamplePose(Rig.ClipA, 0.9f), Rig.SamplePose(Rig.ClipB, 0.9f), 0.35f, Expected, -1);
     ExpectMatricesNear(Rig.Execute(List), Rig.Reference(Expected));
+}
+
+namespace
+{
+    // Deterministic, so a mismatch reproduces from the seed alone.
+    struct FCaptureRandom
+    {
+        uint32 State;
+        float Next(float Min, float Max)
+        {
+            State = State * 1664525u + 1013904223u;
+            return Min + (Max - Min) * ((float)(State >> 8) / 16777216.0f);
+        }
+    };
+
+    void FillCapturePose(FPose& Pose, int32 NumBones, FCaptureRandom& Random)
+    {
+        Pose.SetNumBones(NumBones);
+        for (int32 i = 0; i < NumBones; ++i)
+        {
+            FQuat R(Random.Next(-1.0f, 1.0f), Random.Next(-1.0f, 1.0f), Random.Next(-1.0f, 1.0f), Random.Next(-1.0f, 1.0f));
+            if (i % 7 != 3)
+            {
+                R = Math::Normalize(R);
+            }
+            Pose.SetBone(i, FVector3(Random.Next(-2.0f, 2.0f), Random.Next(-2.0f, 2.0f), Random.Next(-2.0f, 2.0f)), R,
+                         FVector3(Random.Next(0.5f, 1.5f), Random.Next(0.5f, 1.5f), Random.Next(0.5f, 1.5f)));
+        }
+    }
+
+    void ExpectChannelsBitEqual(const FInertChannelSet& A, const FInertChannelSet& B, int32 NumBones, const char* What)
+    {
+        for (int32 Stream = 0; Stream < FInertChannelSet::NumStreams; ++Stream)
+        {
+            for (int32 i = 0; i < NumBones; ++i)
+            {
+                EXPECT_EQ(std::bit_cast<uint32>(A.Stream(Stream)[i]), std::bit_cast<uint32>(B.Stream(Stream)[i]))
+                    << What << " stream " << Stream << " bone " << i;
+            }
+        }
+    }
+}
+
+TEST(AnimTaskExecutor, InertializationCaptureVectorPathMatchesScalarBitForBit)
+{
+    constexpr int32 NumBones = 115;
+    FCaptureRandom Random{ 0x5eedu };
+
+    for (int32 Case = 0; Case < 24; ++Case)
+    {
+        FPose Source, Prev, Target;
+        FillCapturePose(Source, NumBones, Random);
+        FillCapturePose(Prev, NumBones, Random);
+        FillCapturePose(Target, NumBones, Random);
+
+        // Bones that sit exactly on the target, a zero quaternion, and offsets straddling the cutoffs.
+        for (int32 i = 0; i < NumBones; i += 5)
+        {
+            Source.SetRotation(i, Target.GetRotation(i));
+            Source.SetTranslation(i, Target.GetTranslation(i));
+            Prev.SetScale(i, Target.GetScale(i));
+        }
+        Target.SetRotation(9, FQuat(0.0f, 0.0f, 0.0f, 0.0f));
+        Source.SetTranslation(17, Target.GetTranslation(17) + FVector3(4e-7f, 0.0f, 0.0f));
+        Source.SetTranslation(18, Target.GetTranslation(18) + FVector3(2e-6f, 0.0f, 0.0f));
+
+        const bool  bHasVel = (Case % 2) == 0;
+        const int32 Active  = (Case % 3) == 0 ? 50 : -1;
+        const float Dt      = (Case % 4) == 1 ? 0.0f : 0.016f;
+
+        FPose Mismatched;
+        FillCapturePose(Mismatched, NumBones - 3, Random);
+        const FPose& CaptureSource = (Case % 5) == 4 ? Mismatched : Source;
+
+        FAnimInertializer Vector;
+        FAnimInertializer Scalar;
+        Anim::InertCaptureForTest(Vector, CaptureSource, Prev, Target, Dt, bHasVel, Active, false);
+        Anim::InertCaptureForTest(Scalar, CaptureSource, Prev, Target, Dt, bHasVel, Active, true);
+
+        const int32 N = Active >= 0 ? Active : NumBones;
+        ExpectChannelsBitEqual(Vector.Rot, Scalar.Rot, N, "rotation");
+        ExpectChannelsBitEqual(Vector.Trans, Scalar.Trans, N, "translation");
+        ExpectChannelsBitEqual(Vector.Scale, Scalar.Scale, N, "scale");
+    }
 }
