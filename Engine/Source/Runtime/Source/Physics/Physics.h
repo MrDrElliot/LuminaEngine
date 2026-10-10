@@ -30,10 +30,10 @@ namespace Lumina::Physics
         Box3D,
     };
     
-    void Initialize(EPhysicsAPI API = EPhysicsAPI::Box3D);
-    void Shutdown();
+    RUNTIME_API void Initialize(EPhysicsAPI API = EPhysicsAPI::Box3D);
+    RUNTIME_API void Shutdown();
 
-    IPhysicsContext* GetPhysicsContext();
+    RUNTIME_API IPhysicsContext* GetPhysicsContext();
 
     // Process-wide and read as shapes are built, so it has to be set before any body exists.
     RUNTIME_API void SetLengthUnitsPerMeter(float LengthUnits);
