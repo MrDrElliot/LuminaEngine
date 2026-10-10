@@ -97,6 +97,14 @@
 
 #define MAX_LIGHTS                      8192
 #define MAX_SHADOWS                     256
+
+// Light-function masks share one atlas of square tiles, so this many lights may carry one per frame.
+#define LIGHT_FUNCTION_ATLAS_TILES      4u
+#define LIGHT_FUNCTION_TILE_SIZE        512u
+#define MAX_LIGHT_FUNCTIONS             (LIGHT_FUNCTION_ATLAS_TILES * LIGHT_FUNCTION_ATLAS_TILES)
+// A light's atlas tile rides bits 8-15 of its flags, next to the LightFunction flag.
+#define LIGHT_FUNCTION_SLOT_SHIFT       8u
+#define LIGHT_FUNCTION_SLOT_MASK        255u
 #define NUM_CASCADES                    4
 
 // Hard cap on cull views, covering the camera, NUM_CASCADES, six per point light and one per spot.

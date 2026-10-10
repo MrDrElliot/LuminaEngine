@@ -172,6 +172,17 @@ namespace Lumina
         World->EmplaceComponent<SParticleSystemComponent>(ParticleEntity);
 
         const STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
+
+        LightFunctionSpotEntity = World->ConstructEntity("LightFunctionPreview");
+        SSpotLightComponent& Spot = World->EmplaceComponent<SSpotLightComponent>(LightFunctionSpotEntity);
+        Spot.Intensity      = 0.0f;
+        Spot.Attenuation    = 10.0f;
+        Spot.OuterConeAngle = 30.0f;
+        Spot.InnerConeAngle = 28.0f;
+        const FVector3 SpotPosition = MeshTransform.GetLocation() + FVector3(0.0f, 2.0f, 3.0f);
+        STransformComponent& SpotTransform = World->GetComponent<STransformComponent>(LightFunctionSpotEntity);
+        SpotTransform.SetLocation(SpotPosition);
+        SpotTransform.SetRotation(Math::FindLookAtRotation(MeshTransform.GetLocation(), SpotPosition));
         SetOrbitTarget(MeshTransform.GetLocation(), 2.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
 
@@ -211,12 +222,21 @@ namespace Lumina
                                        ? GetOrCreatePreviewParticleSystem(MaterialInterface)
                                        : nullptr;
 
+        const bool bLightFunction = MaterialType == EMaterialType::LightFunction;
+        SSpotLightComponent& Spot = World->GetComponent<SSpotLightComponent>(LightFunctionSpotEntity);
+        Spot.Intensity             = bLightFunction ? 60.0f : 0.0f;
+        Spot.LightFunctionMaterial = bLightFunction ? MaterialInterface : nullptr;
+
         if (MaterialType == EMaterialType::PostProcess)
         {
             if (Camera)
             {
                 Camera->PostProcessMaterials.push_back(MaterialInterface);
             }
+        }
+        else if (bLightFunction)
+        {
+            StaticMeshComponent.MaterialOverrides.clear();
         }
         else if (MaterialType == EMaterialType::UI)
         {

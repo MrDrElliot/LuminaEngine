@@ -241,6 +241,8 @@ namespace Lumina
             ScenePrimitives.Reset(&Registry);
         }
 
+        RetireSceneImage(LightFunctionAtlas);
+
         // Per-view images + cluster buffers.
         for (FSceneView& View : SceneViews)
         {
@@ -710,6 +712,11 @@ namespace Lumina
                     CascadedShowPass(CL, Frame.Views.CascadeViewBase);
                 }
 
+                {
+                    SCENE_GPU_SCOPE(CL, "Light Functions");
+                    LightFunctionPass(CL);
+                }
+
                 if (!FrameSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Cascade Pyramid");
@@ -1086,6 +1093,7 @@ namespace Lumina
         VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ !bTerrainCleared);
         ClusterBuildPass(CL);
         LightCullPass(CL);
+        LightFunctionPass(CL);
         EnvironmentPass(CL);
         DecalPass(CL);
         CloudShadowMapPass(CL);

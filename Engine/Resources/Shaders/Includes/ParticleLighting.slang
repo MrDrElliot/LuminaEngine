@@ -58,6 +58,10 @@ float3 ParticleLocalIrradiance(float3 WorldPos)
                 const float CosAngle = dot(normalize(L.Direction), ToLight / max(Distance, 1e-4));
                 Attenuation *= saturate((CosAngle - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
             }
+            else if (HasFlag(L.Flags, ELightFlags::Area))
+            {
+                Attenuation *= saturate(dot(normalize(L.Direction), ToLight / max(Distance, 1e-4)));
+            }
 
             Irradiance += UnpackColor(L.Color).rgb * L.Intensity * Attenuation;
         }

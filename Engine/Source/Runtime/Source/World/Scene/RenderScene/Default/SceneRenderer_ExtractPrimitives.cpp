@@ -425,6 +425,7 @@ namespace Lumina
         auto CharacterView = Registry.View<SCharacterControllerComponent>(ECS::TExclude<SDisabledTag>{});
         auto PointLightView = Registry.View<SPointLightComponent>(ECS::TExclude<SDisabledTag>{});
         auto SpotLightView = Registry.View<SSpotLightComponent>(ECS::TExclude<SDisabledTag>{});
+        auto AreaLightView = Registry.View<SAreaLightComponent>(ECS::TExclude<SDisabledTag>{});
         auto DirectionalView = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
         auto SkyLightView = Registry.View<SSkyLightComponent>(ECS::TExclude<SDisabledTag>{});
         auto ParticleView = Registry.View<SParticleSystemComponent>(ECS::TExclude<SDisabledTag>{});
@@ -464,6 +465,11 @@ namespace Lumina
             });
 
             SpotLightView.ForEach([&](ECS::FEntity Entity, const SSpotLightComponent& Light)
+            {
+                EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
+            });
+
+            AreaLightView.ForEach([&](ECS::FEntity Entity, const SAreaLightComponent& Light)
             {
                 EmplaceVisualizer(Entity, TransformStorage.Get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
             });

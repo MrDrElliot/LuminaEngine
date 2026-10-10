@@ -123,10 +123,12 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
             }
 
             // A soft core, so the source radius spreads the near-light glow over several froxels instead of one spike.
-            const float  R0    = L.Radius * L.VolumetricScatteringRadius;
+            // An area light keeps its right axis where the core radius would be, so its core is the rectangle's own half size.
+            const bool   bArea = HasFlag(L.Flags, ELightFlags::Area);
+            const float  R0    = bArea ? max(L.Angles.x, L.Angles.y) : L.Radius * L.VolumetricScatteringRadius;
             const float3 LC    = UnpackColor(L.Color).rgb * (L.Intensity * L.VolumetricIntensity);
             const bool   bSpot = HasFlag(L.Flags, ELightFlags::Spot);
-            const float3 SF    = bSpot ? normalize(L.Direction) : float3(0.0);
+            const float3 SF    = (bSpot || bArea) ? normalize(L.Direction) : float3(0.0);
 
             for (uint s = 0; s < NumSamples; ++s)
             {
@@ -143,7 +145,15 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
                 Atten *= 1.0 - smoothstep(clamp(L.Falloff, 0.0, 1.0), 1.0, DistR);
 
                 float Cone = 1.0;
-                if (bSpot)
+                if (bArea)
+                {
+                    Cone = saturate(dot(SF, Ldir));
+                    if (Cone <= 0.0)
+                    {
+                        continue;
+                    }
+                }
+                else if (bSpot)
                 {
                     float CosAt = dot(SF, Ldir);
                     Cone = saturate((CosAt - L.Angles.y) / max(L.Angles.x - L.Angles.y, 1e-3));
@@ -157,7 +167,7 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
 
                 // Negated because Ldir points at the light while the photon travels away from it, as the sun's phase expects.
                 float PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, SampleToCam[s]), G, Shadow);
-                InScatter += LC * Atten * Cone * PhaseShadow;
+                InScatter += LC * Atten * Cone * PhaseShadow * LightFunctionMask(L, Ldir, WorldPos);
             }
         }
     }
@@ -238,7 +248,8 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         FLight Sun      = GetLightAt(0);
         float  Shadow   = SampleSunShadowAA(Sun, DispatchID);
         float3 SunColor = UnpackColor(Sun.Color).rgb;
-        InScatter += SunColor * Sun.Intensity * Fog_MultiScatterPhaseShadow(uFog, CosSun, G, Shadow) * Sun.VolumetricIntensity;
+        InScatter += SunColor * Sun.Intensity * Fog_MultiScatterPhaseShadow(uFog, CosSun, G, Shadow) * Sun.VolumetricIntensity
+                   * LightFunctionMask(Sun, Sun.Direction, WorldPos);
     }
 
     // Supersampled because one center sample aliases the near-light core and cone edge into froxel-sized blocks.

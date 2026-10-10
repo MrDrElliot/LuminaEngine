@@ -506,6 +506,47 @@ uint GetInstanceEntityID(uint InstanceID)      { return Instances()[InstanceID].
 
 FLight GetLightAt(uint Index)       { return LightData().Lights.GetAligned(Index); }
 uint   GetNumLights()               { return LightData().Lights.Count;  }
+
+// Where a direction or world position lands in a light function's tile, in that tile's own 0-1 space.
+float2 LightFunctionTileUV(FLight Light, FLightFunction Function, float3 L, float3 WorldPos)
+{
+    if (HasFlag(Light.Flags, ELightFlags::Directional))
+    {
+        return frac(float2(dot(WorldPos, Function.Right.xyz), dot(WorldPos, Function.Up.xyz)) * Function.Right.w);
+    }
+
+    // L points at the light, so the light sees the surface along -L.
+    const float3 FromLight = -L;
+    if (HasFlag(Light.Flags, ELightFlags::Spot))
+    {
+        const float  Depth = max(dot(FromLight, -Light.Direction), 1e-4);
+        const float2 Plane = float2(dot(FromLight, Function.Right.xyz), dot(FromLight, Function.Up.xyz)) / Depth;
+        return Plane * (Function.Right.w * 0.5) + 0.5;
+    }
+    return OctEncode01(FromLight);
+}
+
+// The light function's color mask for this light at WorldPos, or white for a light without one.
+float3 LightFunctionMask(FLight Light, float3 L, float3 WorldPos)
+{
+    if (!HasFlag(Light.Flags, ELightFlags::LightFunction))
+    {
+        return float3(1.0);
+    }
+
+    const uint Slot = (Light.Flags >> LIGHT_FUNCTION_SLOT_SHIFT) & LIGHT_FUNCTION_SLOT_MASK;
+    if (!LightData().LightFunctions.Contains(Slot))
+    {
+        return float3(1.0);
+    }
+
+    // Inset by half a texel, so bilinear filtering never reads the neighboring tile.
+    const float  HalfTexel = 0.5 / float(LIGHT_FUNCTION_TILE_SIZE);
+    const float2 TileUV    = clamp(LightFunctionTileUV(Light, LightData().LightFunctions.Get(Slot), L, WorldPos), HalfTexel, 1.0 - HalfTexel);
+    const float2 Tile      = float2(Slot % LIGHT_FUNCTION_ATLAS_TILES, Slot / LIGHT_FUNCTION_ATLAS_TILES);
+    const float2 AtlasUV   = (Tile + TileUV) / float(LIGHT_FUNCTION_ATLAS_TILES);
+    return LightData().LightFunctionAtlas.SampleLevel(Samplers::LinearClamp, AtlasUV, 0.0).rgb;
+}
 float3 GetSunDirection()            { return LightData().SunDirection;  }
 float3 GetSkySunDirection()         { return LightData().SkySunDirection; }
 float3 GetAmbientLightColor()       { return LightData().AmbientLight.xyz; }

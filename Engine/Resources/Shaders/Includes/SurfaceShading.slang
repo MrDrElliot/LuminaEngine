@@ -352,6 +352,13 @@ float LightAttenuation(FLight Light, float3 L, float Distance)
         return 1.0;
     }
 
+    // The rectangle integral already carries the distance, so an area light takes only its window and its front face.
+    if (HasFlag(Light.Flags, ELightFlags::Area))
+    {
+        const float Window = 1.0 - smoothstep(clamp(Light.Falloff, 0.0, 1.0), 1.0, Distance / Light.Radius);
+        return dot(Light.Direction.xyz, L) > 0.0 ? Window : 0.0;
+    }
+
     float Attenuation = 1.0 / max(Distance * Distance, 1e-8);
     float DistRatio   = Distance / Light.Radius;
     Attenuation      *= 1.0 - smoothstep(clamp(Light.Falloff, 0.0, 1.0), 1.0, DistRatio);
@@ -363,6 +370,70 @@ float LightAttenuation(FLight Light, float3 L, float Distance)
         Attenuation    *= clamp((CosTheta - Light.Angles.y) / max(Light.Angles.x - Light.Angles.y, 0.001), 0.0, 1.0);
     }
     return Attenuation;
+}
+
+// Hill and Heitz's fit of theta over sin(theta), so a polygon edge integrates without acos.
+float3 IntegrateRectEdge(float3 A, float3 B)
+{
+    const float CosTheta = dot(A, B);
+    const float AbsCos   = abs(CosTheta);
+    const float Fit      = (0.8543985 + (0.4965155 + 0.0145206 * AbsCos) * AbsCos)
+                         / (3.4175940 + (4.1616724 + AbsCos) * AbsCos);
+    const float ThetaOverSin = CosTheta > 0.0 ? Fit : 0.5 * rsqrt(max(1.0 - CosTheta * CosTheta, 1e-7)) - Fit;
+    return cross(A, B) * ThetaOverSin;
+}
+
+// An area light split into a diffuse and a specular direction, each with the radiance a point light there would carry.
+struct FAreaLightTerms
+{
+    float3 DiffuseL;
+    float3 DiffuseRadiance;
+    float3 SpecularL;
+    float3 SpecularRadiance;
+};
+
+// Radiance is the light's color and intensity after its window, spread here over the rectangle's area.
+FAreaLightTerms EvaluateAreaLight(FLight Light, float3 Radiance, float3 P, float3 N, float3 V, float Roughness)
+{
+    const float3 Forward  = -normalize(Light.Direction.xyz);
+    const float3 Right    = UnpackNormal(asuint(Light.VolumetricScatteringRadius));
+    const float3 Up       = cross(Forward, Right);
+    const float2 HalfSize = max(Light.Angles, float2(1e-3, 1e-3));
+    const float  Area     = 4.0 * HalfSize.x * HalfSize.y;
+    const float3 Emitted  = Radiance / Area;
+    const float3 ToCenter = Light.Position - P;
+
+    const float3 X  = Right * HalfSize.x;
+    const float3 Y  = Up * HalfSize.y;
+    const float3 C0 = normalize(ToCenter - X - Y);
+    const float3 C1 = normalize(ToCenter + X - Y);
+    const float3 C2 = normalize(ToCenter + X + Y);
+    const float3 C3 = normalize(ToCenter - X + Y);
+    float3 FormFactor = 0.5 * (IntegrateRectEdge(C0, C1) + IntegrateRectEdge(C1, C2) + IntegrateRectEdge(C2, C3) + IntegrateRectEdge(C3, C0));
+    FormFactor = dot(FormFactor, ToCenter) < 0.0 ? -FormFactor : FormFactor;
+
+    FAreaLightTerms Terms;
+    Terms.DiffuseL        = FormFactor * rsqrt(max(dot(FormFactor, FormFactor), 1e-12));
+    Terms.DiffuseRadiance = Emitted * (max(dot(FormFactor, N), 0.0) / max(dot(N, Terms.DiffuseL), 1e-3));
+
+    // The reflection ray's hit on the plane, clamped into the rectangle, stands in for the whole light.
+    const float3 Reflected = reflect(-V, N);
+    const float  RdotF     = dot(Reflected, Forward);
+    const float  Depth     = dot(-ToCenter, Forward);
+    const float  RayT      = RdotF < -1e-4 ? Depth / -RdotF : length(ToCenter);
+    const float3 Local     = P + Reflected * RayT - Light.Position;
+    const float3 OnRect    = Light.Position + Right * clamp(dot(Local, Right), -HalfSize.x, HalfSize.x)
+                                            + Up * clamp(dot(Local, Up), -HalfSize.y, HalfSize.y);
+    const float3 ToRect    = OnRect - P;
+    const float  DistSq    = max(dot(ToRect, ToRect), 1e-8);
+    Terms.SpecularL        = ToRect * rsqrt(DistSq);
+
+    // Karis's widening, with the rectangle as the disk of equal area, keeps the lobe's energy as it spreads.
+    const float Alpha     = max(Roughness * Roughness, 1e-3);
+    const float WideAlpha = saturate(Alpha + sqrt(Area / PI) * 0.5 * rsqrt(DistSq));
+    const float Energy    = (Alpha / WideAlpha) * (Alpha / WideAlpha);
+    Terms.SpecularRadiance = Emitted * (Area * max(dot(-Terms.SpecularL, Forward), 0.0) / DistSq * Energy);
+    return Terms;
 }
 
 // Shared by the base BRDF and the clearcoat lobe so the two layers cannot disagree.
@@ -618,13 +689,14 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         // Pixels facing away from the sun are self-shadowed, so they skip the cascade lookup; SunL feeds the BRDF too.
         float3 SunL    = normalize(Light.Direction.xyz);
         float  SunNdotL = dot(N, SunL);
+        const float3 SunMask = LightFunctionMask(Light, SunL, WorldPosition);
 
         // Backlit foliage, which the lit path below early-outs on.
         if (bFoliage && SunNdotL <= 0.0)
         {
             const float BackShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow * FarShadow;
             Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
-                                       G.Transmission, G.Thickness) * BackShadow;
+                                       G.Transmission, G.Thickness) * (BackShadow * SunMask);
         }
 
         if (SunNdotL > 0.0)
@@ -638,7 +710,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             {
                 const float FrontShadow = SunTransmissionShadow(Light, WorldPosition, bReceiveShadow) * G.SelfShadow * FarShadow;
                 Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
-                                           G.Transmission, G.Thickness) * FrontShadow;
+                                           G.Transmission, G.Thickness) * (FrontShadow * SunMask);
             }
 
             if (Shadow > 0.0)
@@ -646,8 +718,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 #ifdef TRANSLUCENT
                 float3 SunDiffuse, SunSpec;
                 EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);
-                Lo     += SunDiffuse * Shadow;
-                LoSpec += SunSpec * Shadow;
+                Lo     += SunDiffuse * (Shadow * SunMask);
+                LoSpec += SunSpec * (Shadow * SunMask);
 #else
                 float3 SunBase = EvaluateLightContribution(Light, Ctx, SunL, 0.0);
 
@@ -657,10 +729,10 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                     float CoatF;
                     const float CoatSpec = EvaluateClearcoatLobe(N, V, SunL, G.ClearcoatRoughness, CoatF);
                     SunBase *= (1.0 - Coat * CoatF);
-                    LoCoat  += ComputeLightRadiance(Light, SunL, 0.0) * (CoatSpec * Coat) * Shadow;
+                    LoCoat  += ComputeLightRadiance(Light, SunL, 0.0) * (CoatSpec * Coat) * (Shadow * SunMask);
                 }
 
-                Lo += SunBase * Shadow;
+                Lo += SunBase * (Shadow * SunMask);
 #endif
             }
         }
@@ -736,7 +808,23 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             const float Attenuation = LightAttenuation(Light, L, DistToLight);
             if (bLit && Attenuation > 0.0)
             {
-                const float3 Radiance = GetLightColor(Light).rgb * Light.Intensity * Attenuation;
+                float3 Radiance = GetLightColor(Light).rgb * Light.Intensity * Attenuation
+                                * LightFunctionMask(Light, L, WorldPosition);
+
+                // An area light lights diffuse and specular from different directions; every other light uses L for both.
+                float3       DiffuseL         = L;
+                float3       SpecularL        = L;
+                float3       SpecularRadiance = Radiance;
+                const bool   bArea            = HasFlag(Light.Flags, ELightFlags::Area);
+                if (bArea)
+                {
+                    const FAreaLightTerms Terms = EvaluateAreaLight(Light, Radiance, WorldPosition, N, V,
+                                                                    max(Ctx.Roughness, GetLightMinRoughness(Light)));
+                    DiffuseL         = Terms.DiffuseL;
+                    Radiance         = Terms.DiffuseRadiance;
+                    SpecularL        = Terms.SpecularL;
+                    SpecularRadiance = Terms.SpecularRadiance;
+                }
 
                 float Shadow = 1.0;
                 if (SPEC_LOCAL_SHADOWS != 0 && Light.ShadowDataIndex != INDEX_NONE)
@@ -754,23 +842,29 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                 {
                     if (bFoliage)
                     {
-                        Lo += EvaluateTransmission(Ctx, L, Radiance, G.Transmission, G.Thickness) * Shadow;
+                        Lo += EvaluateTransmission(Ctx, DiffuseL, Radiance, G.Transmission, G.Thickness) * Shadow;
+                    }
+
+                    float3 LightDiffuse, LightSpec;
+                    EvaluateRadianceContributionSplit(Light, Ctx, DiffuseL, Radiance, LightDiffuse, LightSpec);
+                    if (bArea)
+                    {
+                        float3 Unused;
+                        EvaluateRadianceContributionSplit(Light, Ctx, SpecularL, SpecularRadiance, Unused, LightSpec);
                     }
 
 #ifdef TRANSLUCENT
-                    float3 LightDiffuse, LightSpec;
-                    EvaluateRadianceContributionSplit(Light, Ctx, L, Radiance, LightDiffuse, LightSpec);
                     Lo     += LightDiffuse * Shadow;
                     LoSpec += LightSpec * Shadow;
 #else
-                    float3 LightBase = EvaluateRadianceContribution(Light, Ctx, L, Radiance);
+                    float3 LightBase = LightDiffuse + LightSpec;
 
                     if (Coat > 0.0)
                     {
                         float CoatF;
-                        const float CoatSpec = EvaluateClearcoatLobe(N, V, L, G.ClearcoatRoughness, CoatF);
+                        const float CoatSpec = EvaluateClearcoatLobe(N, V, SpecularL, G.ClearcoatRoughness, CoatF);
                         LightBase *= (1.0 - Coat * CoatF);
-                        LoCoat    += Radiance * (CoatSpec * Coat) * Shadow;
+                        LoCoat    += SpecularRadiance * (CoatSpec * Coat) * Shadow;
                     }
 
                     Lo += LightBase * Shadow;

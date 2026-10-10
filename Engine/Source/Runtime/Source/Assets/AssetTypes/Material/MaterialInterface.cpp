@@ -21,6 +21,7 @@ namespace Lumina
         case EMaterialType::Terrain:     return "Terrain";
         case EMaterialType::Decal:       return "Decal";
         case EMaterialType::Particle:    return "Particle";
+        case EMaterialType::LightFunction: return "LightFunction";
         }
         return "Unknown";
     }

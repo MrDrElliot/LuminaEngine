@@ -48,7 +48,7 @@ namespace Lumina
         const EMaterialType Rejected[] =
         {
             EMaterialType::None, EMaterialType::PBR, EMaterialType::PostProcess,
-            EMaterialType::UI,   EMaterialType::Terrain, EMaterialType::Decal,
+            EMaterialType::UI,   EMaterialType::Terrain, EMaterialType::Decal, EMaterialType::LightFunction,
         };
 
         for (EMaterialType Type : Rejected)

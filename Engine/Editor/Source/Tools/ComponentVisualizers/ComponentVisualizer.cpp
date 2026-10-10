@@ -452,6 +452,31 @@ namespace Lumina
     }
 
 
+    CStruct* CComponentVisualizer_AreaLight::GetSupportedComponentType() const
+    {
+        return SAreaLightComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_AreaLight::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        const SAreaLightComponent& Light     = Registry.Get<SAreaLightComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+        const FQuat    Rotation = Transform.GetWorldRotationCached();
+        const FVector3 Center   = Transform.GetWorldLocationCached();
+        const FVector3 Right    = Rotation * FViewVolume::RightAxis * (Light.Width * 0.5f);
+        const FVector3 Up       = Rotation * FViewVolume::UpAxis * (Light.Height * 0.5f);
+        const FVector3 Forward  = Rotation * FViewVolume::ForwardAxis;
+        const FVector4 Color(Light.LightColor, 1.0f);
+
+        const FVector3 Corners[4] = { Center - Right - Up, Center + Right - Up, Center + Right + Up, Center - Right + Up };
+        for (uint32 i = 0; i < 4; ++i)
+        {
+            PDI->DrawLine(Corners[i], Corners[(i + 1) % 4], Color);
+        }
+        // Only the front face emits, so the stem shows which way that is.
+        PDI->DrawLine(Center, Center + Forward * Math::Max(Light.Width, Light.Height) * 0.5f, Color);
+    }
+
     CStruct* CComponentVisualizer_SpotLight::GetSupportedComponentType() const
     {
         return SSpotLightComponent::StaticStruct();

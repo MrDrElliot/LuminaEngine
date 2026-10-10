@@ -39,6 +39,7 @@ namespace Lumina
     struct SDirectionalLightComponent;
     struct SSpotLightComponent;
     struct SPointLightComponent;
+    struct SAreaLightComponent;
     struct SExponentialHeightFogComponent;
     struct SEnvironmentComponent;
     class CWorld;
@@ -112,6 +113,20 @@ namespace Lumina
             float       OuterFOVDegrees;
             // Point lights only, one bit per cube face that some view can see a receiver through.
             uint32      FaceMask = kAllCubeFaces;
+        };
+
+        // Gathered by the light tasks and resolved serially, since resolving touches the material.
+        struct FLightFunctionRequest
+        {
+            CMaterialInterface* Material = nullptr;
+            uint32      LightIndex = 0;
+            ELightFlags Type = ELightFlags::None;
+            FVector3    Position = FVector3(0.0f);
+            // The way the light travels, so a spot's aim and the sun's opposite of its to-light direction.
+            FVector3    Forward = FVector3(0.0f, 0.0f, -1.0f);
+            FVector3    Right = FVector3(1.0f, 0.0f, 0.0f);
+            FVector3    Up = FVector3(0.0f, 1.0f, 0.0f);
+            float       ProjectionScale = 1.0f;
         };
 
         static constexpr uint32 kAllCubeFaces = 0x3Fu;
@@ -352,6 +367,18 @@ namespace Lumina
                 TVector<FFrustum>                RelevanceFrusta;
                 TVector<FShadowRequest>          ShadowRequests;
                 FMutex                           ShadowRequestMutex;
+
+                struct FLightFunctionDraw
+                {
+                    FRenderMaterialShaders       Shaders;
+                    FLightFunctionRequest        Request;
+                    uint32                       MaterialIndex = 0;
+                    uint32                       Slot = 0;
+                };
+                TVector<FLightFunctionRequest>   LightFunctionRequests;
+                FMutex                           LightFunctionRequestMutex;
+                TVector<FLightFunctionDraw>      LightFunctionDraws;
+                TArray<FLightFunction, MAX_LIGHT_FUNCTIONS> LightFunctions = {};
                 TVector<FShadowTile>             AtlasTiles;
 
                 // What the sun's screen-space far shadow pass traces this frame.
@@ -780,6 +807,7 @@ namespace Lumina
         void VisBufferClassifyPass(RHI::FCmdListH CL);
         void MaterialGBufferPass(RHI::FCmdListH CL);
         void DeferredLightingPass(RHI::FCmdListH CL);
+        void LightFunctionPass(RHI::FCmdListH CL);
         #if USING(WITH_EDITOR)
         void PickerResolvePass(RHI::FCmdListH CL);
         void SelectionOutlinePass(RHI::FCmdListH CL);
@@ -1003,16 +1031,21 @@ namespace Lumina
             FLight         Lights[Capacity];
             // LightIndex holds the slot within Lights until the batch is committed.
             FShadowRequest Shadows[Capacity];
+            FLightFunctionRequest LightFunctions[Capacity];
             uint32         NumLights  = 0;
             uint32         NumShadows = 0;
+            uint32         NumLightFunctions = 0;
         };
 
         void ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
         void ProcessSpotLight(const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
+        void ProcessAreaLight(const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount);
         void FlushLightBatch(FLightBatch& Batch, TAtomic<uint32>& LightCount);
         void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight);
 
         void AllocateShadowTiles();
+        // Hands each resolvable light function an atlas tile and flags its light, serially after the light tasks.
+        void ResolveLightFunctions();
         
         void BuildCullViews(const FViewVolume& ViewVolume);
         
@@ -1421,6 +1454,8 @@ namespace Lumina
         // Live prefix of Frame.Lighting.Lights / .Shadows; the GPU side reads these off the spans.
         uint32                                              NumLiveLights  = 0;
         uint32                                              NumLiveShadows = 0;
+        // Created on the first frame any light carries a light function, then kept.
+        FSceneImage                                         LightFunctionAtlas;
         uint64                                              StreamingFeedbackFrame = 0;
         // Frames counted toward the current feedback window, and the newest window already handed to streaming.
         uint64                                              StreamingFeedbackTick = 0;

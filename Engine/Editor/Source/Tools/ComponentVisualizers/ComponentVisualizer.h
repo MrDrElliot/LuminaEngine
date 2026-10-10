@@ -71,6 +71,17 @@ namespace Lumina
     };
     
     REFLECT()
+    class EDITOR_API CComponentVisualizer_AreaLight : public CComponentVisualizer
+    {
+        GENERATED_BODY()
+    public:
+
+        CStruct* GetSupportedComponentType() const override;
+
+        void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+    };
+
+    REFLECT()
     class EDITOR_API CComponentVisualizer_SpotLight : public CComponentVisualizer
     {
         GENERATED_BODY()

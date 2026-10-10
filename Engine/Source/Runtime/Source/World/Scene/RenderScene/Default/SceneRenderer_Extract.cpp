@@ -1184,6 +1184,7 @@ namespace Lumina
         auto DirectionalView = Registry.View<SDirectionalLightComponent>(ECS::TExclude<SDisabledTag>{});
         auto SpotLightView   = Registry.View<SSpotLightComponent>(ECS::TExclude<SDisabledTag>{});
         auto PointLightView  = Registry.View<SPointLightComponent>(ECS::TExclude<SDisabledTag>{});
+        auto AreaLightView   = Registry.View<SAreaLightComponent>(ECS::TExclude<SDisabledTag>{});
 
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
         ResolveDynamicMeshMaterials(Registry, FRenderDirtyTracker::Ensure(Registry));
@@ -1260,6 +1261,19 @@ namespace Lumina
             FlushLightBatch(Batch, LightCount);
         });
 
+        auto AreaLightTask = EmitGraph.AddParallelFor((uint32)AreaLightView.NumDenseSlots(), 32, [&](Task::FParallelRange Range)
+        {
+            LUMINA_PROFILE_SECTION("Process Area Light Range");
+
+            FLightBatch Batch;
+            AreaLightView.ForEachInRange(Range.Start, Range.End,
+                [&](ECS::FEntity Entity, SAreaLightComponent& AreaLight)
+            {
+                ProcessAreaLight(AreaLight, TransformStorage.Get(Entity), Batch, LightCount);
+            });
+            FlushLightBatch(Batch, LightCount);
+        });
+
         EmitGraph.Add([this, &Registry, &Frame] { ExtractTerrain(Registry, Frame); },     ETaskPriority::Medium);
         EmitGraph.Add([this, &Registry, &Frame] { ExtractParticles(Registry, Frame); },   ETaskPriority::Medium);
         EmitGraph.Add([this, &Registry, &Frame] { ExtractDecals(Registry, Frame); },      ETaskPriority::Medium);
@@ -1273,6 +1287,7 @@ namespace Lumina
 
         EmitGraph.AddDependency(PointLightTask, DLightTask);
         EmitGraph.AddDependency(SpotLightTask, DLightTask);
+        EmitGraph.AddDependency(AreaLightTask, DLightTask);
 
         EmitGraph.Dispatch();
 
@@ -1303,6 +1318,7 @@ namespace Lumina
 
         // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
         AllocateShadowTiles();
+        ResolveLightFunctions();
 
         // Same overshoot as LightCount, and this is the last writer of the shadow counter.
         NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
@@ -2912,8 +2928,23 @@ namespace Lumina
             }
         }
 
+        if (Batch.NumLightFunctions != 0)
+        {
+            FScopeLock Lock(Frame.Lighting.LightFunctionRequestMutex);
+            for (uint32 Index = 0; Index < Batch.NumLightFunctions; ++Index)
+            {
+                FLightFunctionRequest& Request = Batch.LightFunctions[Index];
+                if (Request.LightIndex < Fits)
+                {
+                    Request.LightIndex += Base;
+                    Frame.Lighting.LightFunctionRequests.push_back(Request);
+                }
+            }
+        }
+
         Batch.NumLights  = 0;
         Batch.NumShadows = 0;
+        Batch.NumLightFunctions = 0;
     }
 
     void FDefaultSceneRenderer::ProcessPointLight(const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount)
@@ -2953,6 +2984,16 @@ namespace Lumina
             Light.Flags |= ELightFlags::ContactShadow;
         }
         Light.Flags = PackLightMinRoughness(Light.Flags, PointLight.MinRoughness);
+
+        if (PointLight.LightFunctionMaterial.Get() != nullptr)
+        {
+            FLightFunctionRequest& Request = Batch.LightFunctions[Batch.NumLightFunctions++];
+            Request            = {};
+            Request.Material   = PointLight.LightFunctionMaterial.Get();
+            Request.LightIndex = Lights;
+            Request.Type       = ELightFlags::Point;
+            Request.Position   = Position;
+        }
 
         if (PointLight.bCastShadows && ShouldRequestShadow(Light.Position, Light.Radius))
         {
@@ -3041,6 +3082,23 @@ namespace Lumina
         }
         Light.Flags = PackLightMinRoughness(Light.Flags, SpotLight.MinRoughness);
 
+        if (SpotLight.LightFunctionMaterial.Get() != nullptr)
+        {
+            const FVector3 Forward = Math::Normalize(UpdatedForward);
+            const FVector3 Right   = Math::Normalize(Math::Cross(Forward, UpdatedUp));
+
+            FLightFunctionRequest& Request = Batch.LightFunctions[Batch.NumLightFunctions++];
+            Request                 = {};
+            Request.Material        = SpotLight.LightFunctionMaterial.Get();
+            Request.LightIndex      = Lights;
+            Request.Type            = ELightFlags::Spot;
+            Request.Position        = Position;
+            Request.Forward         = Forward;
+            Request.Right           = Right;
+            Request.Up              = Math::Cross(Right, Forward);
+            Request.ProjectionScale = 1.0f / Math::Max(std::tan(Math::Radians(Math::Clamp(OuterDegrees, 0.1f, 89.0f))), 1e-3f);
+        }
+
         if (SpotLight.bCastShadows && ShouldRequestShadow(Light.Position, Light.Radius))
         {
             const FVector3 CamPos = ExtractFrame->ViewVolume.GetViewPosition();
@@ -3065,6 +3123,103 @@ namespace Lumina
         {
             FlushLightBatch(Batch, LightCount);
         }
+    }
+
+    void FDefaultSceneRenderer::ProcessAreaLight(const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch, TAtomic<uint32>& LightCount)
+    {
+        if (AreaLight.Intensity <= 0.0f)
+        {
+            return;
+        }
+
+        const FVector2 HalfSize    = FVector2(Math::Max(AreaLight.Width, 0.01f), Math::Max(AreaLight.Height, 0.01f)) * 0.5f;
+        const FVector3 Position    = TransformComponent.GetWorldLocationCached();
+        // Padded by the half diagonal, so the cluster sphere still covers the reach past the rectangle's corners.
+        const float    Radius      = Math::Max(AreaLight.Attenuation, 0.01f) + Math::Length(HalfSize);
+        if (!IsLightRelevant(Position, Radius))
+        {
+            return;
+        }
+
+        const FQuat    WorldRotation = TransformComponent.GetWorldRotation();
+        const FVector3 Forward       = Math::Normalize(WorldRotation * FViewVolume::ForwardAxis);
+        const FVector3 Right         = Math::Normalize(WorldRotation * FViewVolume::RightAxis);
+
+        FLight Light                = {};
+        Light.Flags                 = ELightFlags::Area;
+        Light.Position              = Position;
+        Light.Direction             = -Forward;
+        Light.Falloff               = AreaLight.Falloff;
+        Light.Color                 = PackColor(FVector4(AreaLight.LightColor, 1.0));
+        Light.Intensity             = AreaLight.Intensity;
+        Light.Radius                = Radius;
+        Light.Angles                = HalfSize;
+        Light.ShadowDataIndex       = Constants::kIndexNone;
+        Light.VolumetricScatteringRadius = std::bit_cast<float>(PackNormal(Right));
+        if (AreaLight.bVolumetric)
+        {
+            Light.Flags              |= ELightFlags::Volumetric;
+            Light.VolumetricIntensity = AreaLight.VolumetricIntensity;
+        }
+        Light.Flags = PackLightMinRoughness(Light.Flags, AreaLight.MinRoughness);
+
+        Batch.Lights[Batch.NumLights++] = Light;
+        if (Batch.NumLights == FLightBatch::Capacity)
+        {
+            FlushLightBatch(Batch, LightCount);
+        }
+    }
+
+    void FDefaultSceneRenderer::ResolveLightFunctions()
+    {
+        auto& Lighting = ExtractFrame->Lighting;
+        Lighting.LightFunctionDraws.clear();
+
+        // The tasks pushed in any order, so sorting keeps the sun first and a capped frame stable.
+        std::sort(Lighting.LightFunctionRequests.begin(), Lighting.LightFunctionRequests.end(),
+            [](const FLightFunctionRequest& A, const FLightFunctionRequest& B) { return A.LightIndex < B.LightIndex; });
+
+        for (const FLightFunctionRequest& Request : Lighting.LightFunctionRequests)
+        {
+            if (Lighting.LightFunctionDraws.size() == MAX_LIGHT_FUNCTIONS)
+            {
+                LOG_WARN_ONCE("Renderer: more than {} lights carry a light function, so the rest light unmasked.", MAX_LIGHT_FUNCTIONS);
+                break;
+            }
+            if (Request.LightIndex >= NumLiveLights)
+            {
+                continue;
+            }
+
+            FShaderH VS;
+            FShaderH PS;
+            CMaterialInterface* Material = Request.Material;
+            if (!Material->ResolveDomainShaders(EMaterialType::LightFunction, VS, PS) || !Material->RequestTexturesResolved())
+            {
+                continue;
+            }
+            const int32 MaterialIndex = Material->GetMaterialIndex();
+            if (MaterialIndex < 0)
+            {
+                continue;
+            }
+
+            const uint32 Slot = (uint32)Lighting.LightFunctionDraws.size();
+            FFrameData::FLighting::FLightFunctionDraw& Draw = Lighting.LightFunctionDraws.emplace_back();
+            Draw.Shaders.VertexShader = VS;
+            Draw.Shaders.PixelShader  = PS;
+            Draw.Request              = Request;
+            Draw.MaterialIndex        = (uint32)MaterialIndex;
+            Draw.Slot                 = Slot;
+
+            Lighting.LightFunctions[Slot].Right = FVector4(Request.Right, Request.ProjectionScale);
+            Lighting.LightFunctions[Slot].Up    = FVector4(Request.Up, 0.0f);
+
+            FLight& Light = Lighting.Lights[Request.LightIndex];
+            Light.Flags = (ELightFlags)((uint32)Light.Flags | (uint32)ELightFlags::LightFunction | (Slot << LIGHT_FUNCTION_SLOT_SHIFT));
+        }
+
+        Lighting.LightFunctionRequests.clear();
     }
 
     void FDefaultSceneRenderer::AllocateShadowTiles()
@@ -3850,6 +4005,25 @@ namespace Lumina
 
         SceneGlobalData.CullData.bCascadeHZBMidValid = 1u;
 
+        if (DirectionalLight.LightFunctionMaterial.Get() != nullptr)
+        {
+            const FVector3 Forward   = -Math::Normalize(Light.Direction);
+            const FVector3 Reference = Math::Abs(Forward.y) < 0.99f ? FVector3(0.0f, 1.0f, 0.0f) : FVector3(1.0f, 0.0f, 0.0f);
+            const FVector3 Right     = Math::Normalize(Math::Cross(Forward, Reference));
+
+            FLightFunctionRequest Request;
+            Request.Material        = DirectionalLight.LightFunctionMaterial.Get();
+            Request.LightIndex      = 0;
+            Request.Type            = ELightFlags::Directional;
+            Request.Forward         = Forward;
+            Request.Right           = Right;
+            Request.Up              = Math::Cross(Right, Forward);
+            Request.ProjectionScale = 1.0f / Math::Max(DirectionalLight.LightFunctionScale, 0.01f);
+
+            FScopeLock Lock(Frame.Lighting.LightFunctionRequestMutex);
+            Frame.Lighting.LightFunctionRequests.push_back(Request);
+        }
+
         // Slot 0 is reserved for the sun by CompileDrawCommands_Extract, which is why no index is taken here.
         Frame.Lighting.Lights[0] = Light;
     }
@@ -4203,6 +4377,8 @@ namespace Lumina
         ShadowAtlas.FreeTiles();
         Frame.Lighting.ShadowRequests.clear();
         Frame.Lighting.AtlasTiles.clear();
+        Frame.Lighting.LightFunctionRequests.clear();
+        Frame.Lighting.LightFunctionDraws.clear();
         Frame.Primitives.BillboardInstances.clear();
         Frame.Primitives.WidgetInstances.clear();
         Frame.Primitives.GlyphInstances.clear();

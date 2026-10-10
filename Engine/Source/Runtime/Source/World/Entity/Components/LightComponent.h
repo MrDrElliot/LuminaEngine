@@ -1,6 +1,8 @@
 #pragma once
 
+#include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Core/Math/Math.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "LightComponent.generated.h"
 
 namespace Lumina
@@ -50,6 +52,10 @@ namespace Lumina
             near-light in-scatter so it doesn't concentrate into a pixelated hot spot. 0 = hard 1/d^2. */
         PROPERTY(Editable, Category = "Advanced", ClampMin = 0.0f, ClampMax = 1.0f)
         float VolumetricScatteringRadius = 0.1f;
+
+        // LightFunction-domain material whose Emissive color masks this light, as a gobo or flicker.
+        PROPERTY(Editable, Category = "Light Function")
+        TStrongObjectPtr<CMaterialInterface> LightFunctionMaterial;
     };
 
     REFLECT(Component, Category = "Lights")
@@ -114,10 +120,51 @@ namespace Lumina
         PROPERTY(Editable, Category = "Advanced", ClampMin = 0.0f, ClampMax = 1.0f)
         float VolumetricScatteringRadius = 0.1f;
 
+        // LightFunction-domain material whose Emissive color masks this light, as a gobo or flicker.
+        PROPERTY(Editable, Category = "Light Function")
+        TStrongObjectPtr<CMaterialInterface> LightFunctionMaterial;
+
         /** Index into the shadow map atlas, managed by the renderer. */
         int32 ShadowMapIndex = -1;
     };
 
+
+    REFLECT(Component, Category = "Lights")
+    struct RUNTIME_API SAreaLightComponent
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Editable, Color, Category = "Light")
+        FVector3 LightColor = FVector3(1.0f);
+
+        // Matches a point light of the same value seen from afar, so swapping one for the other keeps the exposure.
+        PROPERTY(Editable, Category = "Light", ClampMin = 0.0f, Units = "lux")
+        float Intensity = 10.0f;
+
+        // Size of the emitting rectangle along the transform's right axis.
+        PROPERTY(Editable, Category = "Light", ClampMin = 0.01f, Units = "m")
+        float Width = 1.0f;
+
+        // Size of the emitting rectangle along the transform's up axis.
+        PROPERTY(Editable, Category = "Light", ClampMin = 0.01f, Units = "m")
+        float Height = 1.0f;
+
+        // How far past the rectangle the light reaches.
+        PROPERTY(Editable, Category = "Light", Units = "m")
+        float Attenuation = 10.0f;
+
+        PROPERTY(Editable, Category = "Light")
+        float Falloff = 0.8f;
+
+        PROPERTY(Editable, Category = "Light", ClampMin = 0.0f, ClampMax = 1.0f)
+        float MinRoughness = 0.0f;
+
+        PROPERTY(Editable, Category = "Advanced")
+        bool bVolumetric = false;
+
+        PROPERTY(Editable, Category = "Advanced")
+        float VolumetricIntensity = 0.5f;
+    };
 
     REFLECT(Component, Category = "Lights")
     struct RUNTIME_API SDirectionalLightComponent
@@ -272,5 +319,13 @@ namespace Lumina
         /** Strength of the volumetric scattering contribution. */
         PROPERTY(Editable, Category = "Advanced")
         float VolumetricIntensity = 1.0f;
+
+        // LightFunction-domain material whose Emissive color masks the sun, tiled across the world as cloud shadows.
+        PROPERTY(Editable, Category = "Light Function")
+        TStrongObjectPtr<CMaterialInterface> LightFunctionMaterial;
+
+        // World size in meters of one repeat of the light function, measured across the plane facing the sun.
+        PROPERTY(Editable, Category = "Light Function", ClampMin = 0.01f, Units = "m")
+        float LightFunctionScale = 50.0f;
     };
 }

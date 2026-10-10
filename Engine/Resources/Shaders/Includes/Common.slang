@@ -43,7 +43,11 @@ enum ELightFlags
     Volumetric  = BIT(4),
     // Local lights only.
     ContactShadow = BIT(5),
-    // Bits 24-31 are not free, see LIGHT_MIN_ROUGHNESS_SHIFT.
+    // Its atlas tile sits at LIGHT_FUNCTION_SLOT_SHIFT.
+    LightFunction = BIT(6),
+    // A one-sided rectangle. Angles holds its half width and height, and VolumetricScatteringRadius its packed right axis.
+    Area        = BIT(7),
+    // Bits 8-15 and 24-31 are not free, see LIGHT_FUNCTION_SLOT_SHIFT and LIGHT_MIN_ROUGHNESS_SHIFT.
 }
 
 enum EInstanceFlags
@@ -818,6 +822,14 @@ struct FLightShadowData
     FLightShadow Shadow[6];
 };
 
+// Mirror of Lumina::FLightFunction, indexed by the light's atlas tile.
+struct FLightFunction
+{
+    // Right.w is the projection scale, 1/tan of a spot's cone or 1/extent in meters for the sun.
+    float4 Right;
+    float4 Up;
+};
+
 struct FLightData
 {
     uint   bHasIBL;       // 0 falls back to flat skylight ambient
@@ -838,6 +850,9 @@ struct FLightData
     // Each carries its own live count, so no caller has to remember a separate bound.
     GPUSpan<FLight>           Lights;
     GPUSpan<FLightShadowData> Shadows;
+    GPUSpan<FLightFunction>   LightFunctions;
+    FTexture2D                LightFunctionAtlas;
+    uint                      _LightFunctionPad[3];
 };
 
 struct FCluster

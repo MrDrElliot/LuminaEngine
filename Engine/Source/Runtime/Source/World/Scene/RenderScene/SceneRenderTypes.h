@@ -243,7 +243,11 @@ namespace Lumina
         Volumetric  = BIT(4),
         // Screen-space contact trace on top of this light's shadow map; local lights only.
         ContactShadow = BIT(5),
-        // Bits 24-31 are not free, see kLightMinRoughnessShift.
+        // Masked by a light-function material whose atlas tile sits at LIGHT_FUNCTION_SLOT_SHIFT.
+        LightFunction = BIT(6),
+        // A one-sided rectangle. Angles holds its half width and height, and VolumetricScatteringRadius its packed right axis.
+        Area        = BIT(7),
+        // Bits 8-15 and 24-31 are not free, see LIGHT_FUNCTION_SLOT_SHIFT and kLightMinRoughnessShift.
     };
 
     ENUM_CLASS_FLAGS(ELightFlags);
@@ -536,6 +540,17 @@ namespace Lumina
     static_assert(sizeof(FLightShadowData) == 576, "FLightShadowData layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FLightShadowData);
 
+    // The plane a light function is projected through, indexed by the light's atlas tile.
+    struct FLightFunction
+    {
+        // Spot and directional only. Right.w is the projection scale, 1/tan of the cone or 1/extent in meters.
+        FVector4        Right;
+        FVector4        Up;
+    };
+
+    static_assert(sizeof(FLightFunction) == 32, "FLightFunction layout must match shader");
+    VERIFY_SSBO_ALIGNMENT(FLightFunction);
+
     struct FSkyLight
     {
         FVector4 Color;
@@ -569,9 +584,14 @@ namespace Lumina
 
         RHI::TGPUSpan<FLight>           Lights;
         RHI::TGPUSpan<FLightShadowData> Shadows;
+        RHI::TGPUSpan<FLightFunction>   LightFunctions;
+
+        // Bindless SRV of the light-function atlas, read only by lights flagged LightFunction.
+        uint32                          LightFunctionAtlas{};
+        uint32                          _LightFunctionPad[3]{};
     };
 
-    static_assert(sizeof(FSceneLightData) == 176, "FSceneLightData layout must match FLightData in Common.slang");
+    static_assert(sizeof(FSceneLightData) == 208, "FSceneLightData layout must match FLightData in Common.slang");
     static_assert(offsetof(FSceneLightData, SunDirection) == 16, "SunDirection must sit at 16, matching the scalar layout in Common.slang");
     VERIFY_SSBO_ALIGNMENT(FSceneLightData);
     // Relaxed block layout rejects a vector straddling 16, so the spans must follow the last one.

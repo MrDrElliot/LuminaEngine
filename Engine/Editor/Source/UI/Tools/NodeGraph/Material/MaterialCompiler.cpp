@@ -134,6 +134,7 @@ namespace Lumina
 		case EMaterialType::Decal:       return "DecalPixelPass.slang";
 		case EMaterialType::Terrain:     return "TerrainBasePixelPass.slang";
 		case EMaterialType::Particle:    return "ParticlePixelPass.slang";
+		case EMaterialType::LightFunction: return "LightFunctionPixelPass.slang";
 		default:                         return "BasePixelPass.slang";
 		}
 	}
@@ -2517,14 +2518,14 @@ namespace Lumina
 			return;
 		}
 
-		// UI and PostProcess are fullscreen passes with no tangent frame and no view ray to displace along.
+		// UI, PostProcess and LightFunction are fullscreen passes with no tangent frame and no view ray to displace along.
 		const EMaterialType Domain = GetMaterialType();
-		if (Domain == EMaterialType::UI || Domain == EMaterialType::PostProcess)
+		if (Domain == EMaterialType::UI || Domain == EMaterialType::PostProcess || Domain == EMaterialType::LightFunction)
 		{
 			EdNodeGraph::FError Error;
 			Error.Node        = Node;
 			Error.Name        = "Parallax Occlusion Mapping";
-			Error.Description = "ParallaxOcclusionMapping needs a surface to displace; it is not available in UI or PostProcess materials.";
+			Error.Description = "ParallaxOcclusionMapping needs a surface to displace; it is not available in UI, PostProcess or LightFunction materials.";
 			AddError(Error);
 			return;
 		}
@@ -2598,9 +2599,9 @@ namespace Lumina
 		};
 
 		const EMaterialType Domain = GetMaterialType();
-		if (Domain == EMaterialType::UI || Domain == EMaterialType::PostProcess)
+		if (Domain == EMaterialType::UI || Domain == EMaterialType::PostProcess || Domain == EMaterialType::LightFunction)
 		{
-			Reject("TriplanarSample projects onto a surface; it is not available in UI or PostProcess materials.");
+			Reject("TriplanarSample projects onto a surface; it is not available in UI, PostProcess or LightFunction materials.");
 			return;
 		}
 

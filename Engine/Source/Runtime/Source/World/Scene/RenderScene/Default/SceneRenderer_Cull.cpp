@@ -777,6 +777,19 @@ namespace Lumina
             // Only the live prefix of each array reaches the ring; the header carries where they landed.
             LightData.Lights  = RHI::CopyTransientArray(Frame.Lighting.Lights.data(),  NumLiveLights);
             LightData.Shadows = RHI::CopyTransientArray(Frame.Lighting.Shadows.data(), NumLiveShadows);
+            const uint32 NumLightFunctions = (uint32)Frame.Lighting.LightFunctionDraws.size();
+            if (NumLightFunctions != 0 && !LightFunctionAtlas)
+            {
+                RHI::FTextureDesc AtlasDesc;
+                AtlasDesc.Type      = RHI::ETextureType::Tex2D;
+                AtlasDesc.Dimension = FUIntVector3(LIGHT_FUNCTION_ATLAS_TILES * LIGHT_FUNCTION_TILE_SIZE,
+                                                   LIGHT_FUNCTION_ATLAS_TILES * LIGHT_FUNCTION_TILE_SIZE, 1);
+                AtlasDesc.Format    = EFormat::RGBA8_UNORM;
+                AtlasDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::ColorAttachment;
+                LightFunctionAtlas  = CreateSceneImage(AtlasDesc);
+            }
+            LightData.LightFunctions     = RHI::CopyTransientArray(Frame.Lighting.LightFunctions.data(), NumLightFunctions);
+            LightData.LightFunctionAtlas = LightFunctionAtlas ? (uint32)LightFunctionAtlas.GetResourceID() : 0u;
             SceneBindings.Lights = RHI::CopyTransient(LightData);
             if (VisibleInstanceRing[CurrentFrameSlot])
             {

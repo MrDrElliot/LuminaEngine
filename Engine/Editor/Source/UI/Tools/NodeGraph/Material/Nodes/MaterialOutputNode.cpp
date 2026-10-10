@@ -38,9 +38,10 @@ namespace Lumina
         const bool bUI          = MaterialType == EMaterialType::UI;
         const bool bDecal       = MaterialType == EMaterialType::Decal;
         const bool bParticle    = MaterialType == EMaterialType::Particle;
+        const bool bLightFunction = MaterialType == EMaterialType::LightFunction;
 
         // UI keeps Opacity as its brush alpha, while PostProcess does not.
-        const bool bFullscreen = bPostProcess || bUI;
+        const bool bFullscreen = bPostProcess || bUI || bLightFunction;
         // Sprites are never lit, so Emissive is their whole color and the surface pins have no consumer.
         const bool bUnshaded = bFullscreen || bParticle;
         // There is no DBuffer slot for Specular, and WPO and Emissive do not apply to a projected decal.
@@ -50,7 +51,7 @@ namespace Lumina
         if (SpecularPin)             SpecularPin->SetDisabled(bUnshaded || bDecal);
         if (AOPin)                   AOPin->SetDisabled(bUnshaded);
         if (NormalPin)               NormalPin->SetDisabled(bUnshaded);
-        if (OpacityPin)              OpacityPin->SetDisabled(bPostProcess);
+        if (OpacityPin)              OpacityPin->SetDisabled(bPostProcess || bLightFunction);
         // Self-shadowing modulates the sun's direct contribution, which only surface materials receive.
         if (SelfShadowPin)           SelfShadowPin->SetDisabled(bUnshaded || bDecal);
         // Clearcoat also needs the Shading Model set, so an enabled pin is necessary but not sufficient.
@@ -199,9 +200,16 @@ namespace Lumina
         // A field added to FMaterialPixelInputs without a matching pin here still starts initialized.
         PixelOut += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
 
-        // An unconnected Emissive passes SceneColor through, while surface materials default to black.
-        const bool bPostProcess = Compiler.GetMaterialType() == EMaterialType::PostProcess;
-        const FString EmissiveDefault = bPostProcess ? FString("SceneColor.rgb") : FString("float3(0.0, 0.0, 0.0)");
+        // An unconnected Emissive passes SceneColor through, leaves a light unmasked, and is black on a surface.
+        FString EmissiveDefault = "float3(0.0, 0.0, 0.0)";
+        if (Compiler.GetMaterialType() == EMaterialType::PostProcess)
+        {
+            EmissiveDefault = "SceneColor.rgb";
+        }
+        else if (Compiler.GetMaterialType() == EMaterialType::LightFunction)
+        {
+            EmissiveDefault = "float3(1.0, 1.0, 1.0)";
+        }
 
         PixelOut += EmitMaterialAssignment("Diffuse",          BaseColorPin, "float3(1.0, 1.0, 1.0)", 3);
         PixelOut += EmitMaterialAssignment("Metallic",         MetallicPin,  "0.0",                    1);

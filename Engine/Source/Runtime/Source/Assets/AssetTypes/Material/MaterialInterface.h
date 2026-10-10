@@ -30,6 +30,9 @@ namespace Lumina
 
         // Sprite particles, expanded to billboard quads and shaded unlit into HDR.
         Particle,
+
+        // A mask a light projects, rendered into the light-function atlas and multiplied into its radiance.
+        LightFunction,
     };
 
     REFLECT()
@@ -83,7 +86,10 @@ namespace Lumina
     {
         constexpr bool IsMeshlet(EMaterialType Type)        { return Type == EMaterialType::PBR; }
         constexpr bool UsesVertexStage(EMaterialType Type)  { return Type != EMaterialType::PBR && Type != EMaterialType::None; }
-        constexpr bool IsFullscreen(EMaterialType Type)     { return Type == EMaterialType::PostProcess || Type == EMaterialType::UI; }
+        constexpr bool IsFullscreen(EMaterialType Type)
+        {
+            return Type == EMaterialType::PostProcess || Type == EMaterialType::UI || Type == EMaterialType::LightFunction;
+        }
 
         constexpr bool SupportsBlendMode(EMaterialType Type, EBlendMode Mode)
         {
