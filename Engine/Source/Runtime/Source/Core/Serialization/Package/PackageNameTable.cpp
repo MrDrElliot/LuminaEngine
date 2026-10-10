@@ -89,6 +89,7 @@ namespace Lumina
                 continue;
             }
 
+            // Slots hold bases split at save, so re-splitting would read X_1_1 back as X_1.
             // checked before interning, or a corrupt file would leave junk in the process-wide name table
             if (Length < sizeof(Stack))
             {
@@ -100,7 +101,7 @@ namespace Lumina
                 }
 
                 Stack[Length] = '\0';
-                Slots.push_back(FName(Stack));
+                Slots.push_back(FName(Stack, 0).GetBaseName());
             }
             else
             {
@@ -113,7 +114,7 @@ namespace Lumina
                     return;
                 }
 
-                Slots.push_back(FName(Heap));
+                Slots.push_back(FName(Heap.c_str(), 0).GetBaseName());
             }
         }
     }

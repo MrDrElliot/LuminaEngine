@@ -88,6 +88,39 @@ TEST(PackageNameTable, ANameSurvivesTheSlotRoundTrip)
     }
 }
 
+TEST(PackageNameTable, ANameWithTwoNumericSuffixesKeepsBoth)
+{
+    TVector<FName> Written = { "SM_Tree_1_1", "SM_Tree_2_2" };
+
+    TVector<uint8>    Stream;
+    TVector<uint8>    TableBytes;
+    FPackageNameTable Table;
+
+    {
+        FNameMapWriter Writer(Stream);
+        for (FName& Name : Written)
+        {
+            Writer << Name;
+        }
+
+        FMemoryWriter TableWriter(TableBytes);
+        Writer.Map.Serialize(TableWriter);
+    }
+
+    {
+        FMemoryReader TableReader(TableBytes);
+        Table.Serialize(TableReader);
+    }
+
+    FNameMapReader Reader(Stream, Table);
+    for (const FName& Expected : Written)
+    {
+        FName Read;
+        Reader << Read;
+        EXPECT_EQ(Read.ToString(), Expected.ToString());
+    }
+}
+
 // numbers travel beside the slot, so every uniquely-numbered export name shares one table entry
 TEST(PackageNameTable, ANumberedNameSharesItsBaseSlot)
 {
