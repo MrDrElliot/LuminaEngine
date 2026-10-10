@@ -203,6 +203,7 @@ namespace Lumina
     CWorld::CWorld()
         : SingletonEntity(ECS::NullEntity)
         , CommandBus(EntityRegistry)
+        , MessageBus(EntityRegistry, CommandBus)
         , SystemContext(this)
         , LineBatcherComponent(nullptr)
         , TriangleBatcherComponent(nullptr)
@@ -1901,6 +1902,11 @@ namespace Lumina
     void CWorld::TickSystems(FSystemContext& Context)
     {
         LUMINA_PROFILE_SCOPE();
+
+        if (Context.GetUpdateStage() == EUpdateStage::FrameStart)
+        {
+            MessageBus.PruneDeadOwners();
+        }
 
         TVector<FStageSlot>& Stage = SystemUpdateList[(uint32)Context.GetUpdateStage()];
         

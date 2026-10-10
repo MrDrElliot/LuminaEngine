@@ -13,7 +13,7 @@ public unsafe partial class CWorld
     
     public EntityRegistry Registry => new(WorldHandle);
     public UI UI => new(WorldHandle);
-    public GameplayMessageBus Messages => new(WorldHandle);
+    public GameplayMessageBus Messages => new(this);
 
     public Tweens Tweens => new(this);
 

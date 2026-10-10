@@ -257,6 +257,12 @@ public static unsafe partial class Native
     [NativeCall] public static partial string NameToString(IntPtr Name);
 
     [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, IntPtr Thunk, IntPtr Context);
+
+    [NativeCall(EntryPoint = "LuminaSharp_MessageBus_TypeKey")] public static partial ulong MessageBusTypeKey(string Name);
+    [NativeCall(EntryPoint = "LuminaSharp_MessageBus_Subscribe")] public static partial ulong MessageBusSubscribe(ulong World, uint Channel, uint Owner, ulong Type, uint Match, IntPtr Thunk, IntPtr Context);
+    [NativeCall(EntryPoint = "LuminaSharp_MessageBus_Unsubscribe")] public static partial uint MessageBusUnsubscribe(ulong World, ulong Id);
+    [NativeCall(EntryPoint = "LuminaSharp_MessageBus_UnsubscribeAll")] public static partial void MessageBusUnsubscribeAll(ulong World, uint Owner);
+    [NativeCall(EntryPoint = "LuminaSharp_MessageBus_Send")] public static partial void MessageBusSend(ulong World, uint Route, uint Entity, uint Channel, uint Kind, ulong Type, IntPtr Data, uint Size, IntPtr Struct, uint IncludeSelf);
     [NativeCall] public static partial void DelegateUnbind(IntPtr Delegate, ulong Handle);
     [NativeCall] public static partial int DelegateArgCount(IntPtr DelegateProperty);
     [NativeCall] public static partial IntPtr DelegateArgProperty(IntPtr DelegateProperty, int Index);

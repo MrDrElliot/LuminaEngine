@@ -500,13 +500,7 @@ internal sealed class ScriptManager
             return;
         }
 
-        // Drop all message-bus subscriptions first: their listener delegates capture script instances, and the
-        // process-static BusRegistry would otherwise pin the collectible ALC. The next generation re-subscribes.
-        BusRegistry.ClearAll();
-
-        // Same rationale for the other process-static holders of script-side state: each roots user types, or
-        // GCHandles over user delegates, that would otherwise pin the collectible generation across the unload.
-        // The next generation rebuilds them lazily / re-subscribes.
+        // Each process-static holder of script state would otherwise pin the collectible generation across the unload.
         CTimerLibrary.ClearAllManaged();      // world timers whose Action captures a script instance
         UIDataModel.DisposeAll();             // MVVM bindings (user ViewModel + native data model)
         ObjectCore.PurgePendingLoads();                 // in-flight async asset-load callbacks

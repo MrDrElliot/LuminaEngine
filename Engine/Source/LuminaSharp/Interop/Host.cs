@@ -148,7 +148,6 @@ public static unsafe partial class Host
     {
         try
         {
-            BusRegistry.Remove(World);
             UIDataModel.RemoveForWorld(World);
             GameTaskRegistry.CancelWorld(World);
             DropWorldReference((IntPtr)World);

@@ -3,6 +3,7 @@
 #include "World/ECS/Registry.h"
 #include "World/ECS/EventDispatcher.h"
 #include "World/ECS/CommandBus.h"
+#include "GameplayTags/GameplayMessageBus.h"
 
 #include "Containers/BoundedQueue.h"
 #include "Core/Object/Object.h"
@@ -733,6 +734,8 @@ namespace Lumina
 
         ECS::FCommandBus& GetCommandBus() { return CommandBus; }
 
+        FGameplayMessageBus& GetMessageBus() { return MessageBus; }
+
     private:
 
     private:
@@ -744,6 +747,9 @@ namespace Lumina
 
         // After the registry it records against, before the context that hands it out.
         ECS::FCommandBus                                   CommandBus;
+
+        // After the command bus, since a send from a parallel system is replayed at its flush.
+        FGameplayMessageBus                                MessageBus;
 
         FSystemContext                                      SystemContext;
         
