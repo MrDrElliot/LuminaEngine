@@ -1,5 +1,6 @@
 #pragma once
 #include "ParticleSimCommon.slang"
+#include "Triplanar.slang"   // material-graph TriplanarSample node
 
 // Billboard expansion shared by the built-in particle shaders and the Particle material template.
 

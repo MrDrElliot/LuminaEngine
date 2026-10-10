@@ -1,6 +1,7 @@
 #pragma once
 #include "TerrainCommon.slang"
 #include "Wind.slang"   // material-graph WindAnimation node; TerrainBaseVertexPass needs it for WPO
+#include "Triplanar.slang"   // material-graph TriplanarSample node; TerrainBaseVertexPass reaches it only through here
 
 // Terrain data access + layer sampling + layer blending -- the single home for everything terrain-specific
 // a shader (vertex or pixel) or the material codegen needs. The shading itself is NOT here: terrain runs the

@@ -292,6 +292,21 @@ namespace Lumina
         void ParallaxOcclusionMapping(CMaterialGraphNode* Node, int32 HeightTextureIndex, const FParallaxInputs& Inputs,
                                       CMaterialOutput* UVOut, CMaterialOutput* ShadowOut, CMaterialOutput* HeightOut);
 
+        // Triplanar projection (Includes/Triplanar.slang). Declares a float4 named ID, like TextureSample, so
+        // the node's masked R/G/B/A pins resolve the same way. A connected TextureHandle wins; otherwise
+        // TextureIndex comes from BindTexture(Parameter), and a negative one declares the neutral value only.
+        // bNormalMap emits an encoded tangent-space normal.
+        struct FTriplanarInputs
+        {
+            CMaterialInput* TextureHandle = nullptr;
+            CMaterialInput* Position  = nullptr;
+            CMaterialInput* Normal    = nullptr;
+            CMaterialInput* Tiling    = nullptr;
+            CMaterialInput* Sharpness = nullptr;
+        };
+        void TriplanarSample(const FString& ID, CMaterialGraphNode* Node, int32 TextureIndex,
+                             const FTriplanarInputs& Inputs, FStringView SamplerName, bool bNormalMap);
+
         // Mesh distance field (Includes/DistanceField.slang). All three read the CURRENT primitive's own
         // baked SDF volume through its meshlet header, so they are surface-domain, pixel-stage nodes; the
         // helpers below emit the shared per-node preamble that resolves the instance and its volume.
