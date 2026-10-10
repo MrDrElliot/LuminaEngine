@@ -137,17 +137,7 @@ namespace Lumina
                 const uint32 NumInstances = (uint32)Foliage.Instances.size();
 
                 constexpr uint32 kParallelThreshold = 2048;
-                if (NumInstances < kParallelThreshold || GTaskSystem == nullptr)
-                {
-                    for (uint32 i = 0; i < NumInstances; ++i)
-                    {
-                        Reproject(i);
-                    }
-                }
-                else
-                {
-                    Task::ParallelFor(NumInstances, Reproject, 256);
-                }
+                Task::ParallelForOrSerial(NumInstances, kParallelThreshold, Reproject, 256);
 
                 Foliage.LastTerrainVersion = CombinedVersion;
                 if (bMovedAny.load(std::memory_order_relaxed))

@@ -93,10 +93,12 @@ namespace Lumina
 
         // Fans an already built view out over the workers, running it inline when it is too small to be worth splitting.
         template<typename TView, typename TFunc>
-        void ParallelForEachView(TView&& View, TFunc&& Function, uint32 MinRange = 64) const
+        void ParallelForEachView(TView&& View, TFunc&& Function, uint32 MinRange = 64, uint32 MinSlotsToSplit = 0) const
         {
             const uint32 Num = static_cast<uint32>(View.NumDenseSlots());
-            if (Num <= MinRange)
+
+            // ForEach keeps the single-pool direct scan, which a range walk gives up.
+            if (Num < Math::Max(MinRange + 1, MinSlotsToSplit))
             {
                 View.ForEach(Function);
                 return;

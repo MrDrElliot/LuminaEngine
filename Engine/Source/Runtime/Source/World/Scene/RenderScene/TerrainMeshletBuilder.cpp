@@ -175,17 +175,8 @@ namespace Lumina::TerrainMeshletBuilder
             }
 
             // A chunk is thousands of heightmap samples, so the dispatch pays for itself at a handful.
-            constexpr int32 kParallelThreshold = 4;
-            if (Count < kParallelThreshold || GTaskSystem == nullptr)
-            {
-                for (int32 i = 0; i < Count; ++i)
-                {
-                    RebuildChunk(State, CxMin + (i % Width), CyMin + (i / Width), Heightmap, L);
-                }
-                return;
-            }
-
-            Task::ParallelFor((uint32)Count, [&](uint32 Index)
+            constexpr uint32 kParallelThreshold = 4;
+            Task::ParallelForOrSerial((uint32)Count, kParallelThreshold, [&](uint32 Index)
             {
                 const int32 i = (int32)Index;
                 RebuildChunk(State, CxMin + (i % Width), CyMin + (i / Width), Heightmap, L);

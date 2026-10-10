@@ -163,17 +163,7 @@ namespace Lumina
             Entry.bWritten  = true;
         };
 
-        const uint32 Num = (uint32)View.NumDenseSlots();
-        if (Num < kSocketParallelGrain * 2 || GTaskSystem == nullptr)
-        {
-            View.ForEach(Attach);
-            return;
-        }
-
         // Each attachment writes only its own transform and cache slot, and SetLocalTransform is safe from any thread for disjoint entities.
-        Task::ParallelFor(Num, [&](const Task::FParallelRange& Range)
-        {
-            View.ForEachInRange(Range.Start, Range.End, Attach);
-        }, kSocketParallelGrain);
+        SystemContext.ParallelForEachView(View, Attach, kSocketParallelGrain, kSocketParallelGrain * 2);
     }
 }

@@ -209,6 +209,29 @@ namespace Lumina
             GTaskSystem->ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Priority);
         }
 
+        // Inline below MinNumToSplit, where the dispatch would cost more than the work it splits.
+        template<typename TFunc>
+        void ParallelForOrSerial(uint32 Num, uint32 MinNumToSplit, TFunc&& Func, uint32 MinRange = 0, ETaskPriority Priority = ETaskPriority::Medium)
+        {
+            if (Num >= MinNumToSplit)
+            {
+                GTaskSystem->ParallelFor(Num, std::forward<TFunc>(Func), MinRange, Priority);
+                return;
+            }
+
+            if constexpr (std::is_invocable_v<TFunc&, const FParallelRange&>)
+            {
+                Func(FParallelRange{ 0, Num, 0 });
+            }
+            else
+            {
+                for (uint32 Index = 0; Index < Num; ++Index)
+                {
+                    Func(Index);
+                }
+            }
+        }
+
         template<typename TIterator, typename TFunc>
         requires(std::is_same_v<typename std::iterator_traits<TIterator>::iterator_category, std::random_access_iterator_tag> ||
             std::is_same_v<typename std::iterator_traits<TIterator>::iterator_category, std::random_access_iterator_tag>)

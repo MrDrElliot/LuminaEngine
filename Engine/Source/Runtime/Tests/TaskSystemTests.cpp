@@ -110,6 +110,39 @@ TEST(TaskSystem, ParallelForEach_VisitsAndMutates)
     }
 }
 
+TEST(TaskSystem, ParallelForOrSerial_BelowThresholdRunsOneInlineRange)
+{
+    const std::thread::id Caller = std::this_thread::get_id();
+    uint32 Calls = 0;
+    bool bOffThread = false;
+    Task::ParallelForOrSerial(100, 1000, [&](const Task::FParallelRange& Range)
+    {
+        ++Calls;
+        bOffThread |= std::this_thread::get_id() != Caller;
+        EXPECT_EQ(Range.Start, 0u);
+        EXPECT_EQ(Range.End, 100u);
+    });
+    EXPECT_EQ(Calls, 1u);
+    EXPECT_FALSE(bOffThread);
+}
+
+TEST(TaskSystem, ParallelForOrSerial_VisitsEveryIndexOnBothSidesOfThreshold)
+{
+    for (uint32 Num : { 10u, 50000u })
+    {
+        std::vector<std::atomic<int>> Visits(Num);
+        Task::ParallelForOrSerial(Num, 1000, [&](uint32 Index)
+        {
+            Visits[Index].fetch_add(1, std::memory_order_relaxed);
+        }, 64);
+
+        for (uint32 i = 0; i < Num; ++i)
+        {
+            ASSERT_EQ(Visits[i].load(), 1) << "Num " << Num << " index " << i;
+        }
+    }
+}
+
 // AsyncTask
 
 TEST(TaskSystem, AsyncTask_CompletesAndRunsBody)
