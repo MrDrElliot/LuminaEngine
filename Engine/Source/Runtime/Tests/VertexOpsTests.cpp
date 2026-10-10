@@ -91,21 +91,6 @@ TEST(VertexOps, UnpackNormalsMatchesScalar)
     }
 }
 
-TEST(VertexOps, UnpackNormalsToSNorm16MatchesScalar)
-{
-    const std::vector<uint32> Packed = MakePackedPairs();
-    std::vector<VertexOps::FSNorm16Normal> Out(Packed.size());
-    VertexOps::UnpackNormalsToSNorm16(Packed.data(), Out.data(), Packed.size());
-
-    for (size_t i = 0; i < Packed.size(); ++i)
-    {
-        const FVector3 N = UnpackNormal(Packed[i]);
-        ASSERT_EQ(Out[i].X, Math::FloatToSNorm16(N.x)) << std::hex << Packed[i];
-        ASSERT_EQ(Out[i].Y, Math::FloatToSNorm16(N.y)) << std::hex << Packed[i];
-        ASSERT_EQ(Out[i].Z, Math::FloatToSNorm16(N.z)) << std::hex << Packed[i];
-    }
-}
-
 TEST(VertexOps, PackNormalsMatchesScalar)
 {
     const std::vector<float> Components = MakeVectorComponents(3);

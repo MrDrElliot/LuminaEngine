@@ -196,33 +196,32 @@ namespace Lumina
         }
     };
 
-    /** The GPU static-vertex format. Common.slang declares an FMeshletVertex that must match field for
-     *  field. Position is a 16-bit per-axis offset from the meshlet anchor; decode via MeshQuantization.h. */
-    struct FMeshletVertex
+    // A static vertex minus its position, which the mesh keeps in its own stream for position-only passes.
+    struct FMeshVertexAttributes
     {
-        uint16 PositionX;
-        uint16 PositionY;
-        uint16 PositionZ;
-        int16  NormalX;
-        int16  NormalY;
-        int16  NormalZ;
-        uint32 Tangent;
-        uint32 UV;   // packHalf2x16, TEXCOORD_0
-        uint32 UV1;  // packHalf2x16, TEXCOORD_1
-        uint32 Color;
-
-        [[nodiscard]] constexpr FVector3 GetNormal() const
-        {
-            return FVector3(Math::SNorm16ToFloat(NormalX),
-                            Math::SNorm16ToFloat(NormalY),
-                            Math::SNorm16ToFloat(NormalZ));
-        }
+        uint32 Normal;   // PackNormal
+        uint32 Tangent;  // PackTangent
+        uint32 UV;       // packHalf2x16, TEXCOORD_0
     };
 
-    struct FMeshletSkinnedVertex : FMeshletVertex
+    // A static vertex position on the mesh's grid, MESH_POSITION_BITS per axis with Y split across the two words.
+    struct FMeshVertexPosition
     {
-        uint32 JointIndices;
-        uint32 JointWeights;
+        uint32 XY;
+        uint32 YZ;
+    };
+
+    // Still copied per meshlet, because JointIndices are slots in that meshlet's own bone palette.
+    struct FMeshletSkinnedVertex
+    {
+        FMeshVertexPosition Position;
+        uint32              Normal;        // PackNormal
+        uint32              Tangent;       // PackTangent
+        uint32              UV;            // packHalf2x16, TEXCOORD_0
+        uint32              UV1;           // packHalf2x16, TEXCOORD_1
+        uint32              Color;
+        uint32              JointIndices;
+        uint32              JointWeights;
     };
 
     struct FSimpleElementVertex
@@ -237,16 +236,17 @@ namespace Lumina
         float       Size;
     };
 
-    // FMeshlet* are the GPU formats and Common.slang declares structs of the SAME NAME that must stay
-    // identical -- re-verify the Slang ArrayStride when a field moves. FSource* are CPU-only and free.
+    // The GPU formats have same-named mirrors in Common.slang, so re-verify the Slang stride when a field moves.
     static_assert(sizeof(FSourceVertex) == 32);
     static_assert(sizeof(FSourceSkinnedVertex) == 44);
-    static_assert(sizeof(FMeshletVertex) == 28);
+    static_assert(sizeof(FMeshVertexAttributes) == 12);
+    static_assert(sizeof(FMeshVertexPosition) == 8);
     static_assert(sizeof(FMeshletSkinnedVertex) == 36);
     static_assert(offsetof(FSourceVertex, Position) == 0);
     static_assert(TCanBulkSerialize<FSourceVertex>::value);
     static_assert(TCanBulkSerialize<FSourceSkinnedVertex>::value);
-    static_assert(TCanBulkSerialize<FMeshletVertex>::value);
+    static_assert(TCanBulkSerialize<FMeshVertexAttributes>::value);
+    static_assert(TCanBulkSerialize<FMeshVertexPosition>::value);
     static_assert(TCanBulkSerialize<FMeshletSkinnedVertex>::value);
     static_assert(TCanBulkSerialize<FBillboardVertex>::value);
     static_assert(TCanBulkSerialize<FSimpleElementVertex>::value);

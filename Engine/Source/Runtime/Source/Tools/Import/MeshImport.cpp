@@ -407,8 +407,6 @@ namespace Lumina::Import::Mesh
             TVector<FMeshlet>        OutMeshlets;
             TVector<FMeshletSphere>  Spheres;
             TVector<FMeshletCone>    Cones;
-            TVector<FVector3>       MeshletLo;
-            FVector3                MaxExtent = FVector3(0.0f);
             bool                     bHasData  = false;
 
             // Null when Vertices index the mesh's own streams, as LOD 0 does.
@@ -660,7 +658,6 @@ namespace Lumina::Import::Mesh
             Result.OutMeshlets.reserve(MeshletCount);
             Result.Spheres.reserve(MeshletCount);
             Result.Cones.reserve(MeshletCount);
-            Result.MeshletLo.reserve(MeshletCount);
             
             {
             LUMINA_PROFILE_SECTION("Meshlet Bounds");
@@ -672,18 +669,6 @@ namespace Lumina::Import::Mesh
                 Out.VertexCount    = M.vertex_count;
                 Out.TriangleCount  = M.triangle_count;
                 Result.OutMeshlets.push_back(Out);
-
-                // Hoisted above the bounds, since without cones this pass IS the bounds.
-                FVector3 Lo( FLT_MAX);
-                FVector3 Hi(-FLT_MAX);
-                FVector3 MeshletPositions[MESHLET_MAX_VERTICES];
-                for (uint32 i = 0; i < M.vertex_count; ++i)
-                {
-                    const FVector3 P = ReadPosition(Result.Vertices[M.vertex_offset + i]);
-                    MeshletPositions[i] = P;
-                    Lo = Math::Min(Lo, P);
-                    Hi = Math::Max(Hi, P);
-                }
 
                 FMeshletSphere Sphere{};
                 FMeshletCone   Cone = kDisabledMeshletCone;
@@ -706,6 +691,12 @@ namespace Lumina::Import::Mesh
                 }
                 else
                 {
+                    FVector3 MeshletPositions[MESHLET_MAX_VERTICES];
+                    for (uint32 i = 0; i < M.vertex_count; ++i)
+                    {
+                        MeshletPositions[i] = ReadPosition(Result.Vertices[M.vertex_offset + i]);
+                    }
+
                     // Same solver the cone path gets, so dropping cones no longer also loosens the sphere.
                     const meshopt_Bounds B = meshopt_computeSphereBounds(
                         &MeshletPositions[0].x, M.vertex_count, sizeof(FVector3),
@@ -716,9 +707,6 @@ namespace Lumina::Import::Mesh
                 }
                 Result.Spheres.push_back(Sphere);
                 Result.Cones.push_back(Cone);
-
-                Result.MeshletLo.push_back(Lo);
-                Result.MaxExtent = Math::Max(Result.MaxExtent, Hi - Lo);
             }
             }
 
@@ -753,8 +741,6 @@ namespace Lumina::Import::Mesh
             }
             Into.Spheres.insert(Into.Spheres.end(), From.Spheres.begin(), From.Spheres.end());
             Into.Cones.insert(Into.Cones.end(), From.Cones.begin(), From.Cones.end());
-            Into.MeshletLo.insert(Into.MeshletLo.end(), From.MeshletLo.begin(), From.MeshletLo.end());
-            Into.MaxExtent = Math::Max(Into.MaxExtent, From.MaxExtent);
             Into.bHasData  = true;
         }
 
@@ -827,6 +813,195 @@ namespace Lumina::Import::Mesh
             }
         }
     } // namespace
+
+    namespace
+    {
+        struct FLevelVertex
+        {
+            uint32 MeshVertex;
+            uint32 Normal;
+            uint32 Tangent;
+            uint32 UV;
+        };
+
+        // Each distinct vertex gets one slot, in order of first use, so a meshlet's refs stay close and usually fit 16 bits.
+        template<typename TLevelPosition, typename TResolveLevelVertex>
+        void PackStaticMeshlets(FMeshResource& MeshResource, const TVector<FSurfaceMeshletResult>& Results,
+                                const TVector<TFixedVector<uint32, MAX_MESH_LODS>>& AcceptedPerSurface,
+                                const TVector<TFixedVector<float, MAX_MESH_LODS>>& AcceptedErrorPerSurface,
+                                uint32 LODCount, uint32 NumSurfaces,
+                                TLevelPosition&& LevelPosition, TResolveLevelVertex&& ResolveLevelVertex)
+        {
+            LUMINA_PROFILE_SCOPE();
+
+            struct FPackSlot
+            {
+                const FSurfaceMeshletResult* Result;
+                uint32                       MeshletIdx;
+                uint32                       LOD;
+                uint32                       RefStart;
+                uint32                       TriangleStart;
+            };
+
+            struct FUniqueSource
+            {
+                const FSurfaceMeshletResult* Result;
+                uint32                       Ref;
+            };
+
+            TVector<FPackSlot> PackSlots;
+            uint32 RefCursor      = 0;
+            uint32 TriangleCursor = 0;
+
+            for (uint32 Slot = 0; Slot < LODCount; ++Slot)
+            {
+                for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
+                {
+                    const TFixedVector<uint32, MAX_MESH_LODS>& Accepted = AcceptedPerSurface[SurfaceIdx];
+                    if (Slot >= Accepted.size())
+                    {
+                        continue;
+                    }
+
+                    FGeometrySurface&            Section = MeshResource.GeometrySurfaces[SurfaceIdx];
+                    const FSurfaceMeshletResult& Result  = Results[Accepted[Slot] * NumSurfaces + SurfaceIdx];
+                    if (!Result.bHasData)
+                    {
+                        continue;
+                    }
+
+                    Section.LODMeshletOffset[Slot] = (uint32)PackSlots.size();
+                    Section.LODMeshletCount[Slot]  = (uint32)Result.OutMeshlets.size();
+                    Section.LODError[Slot]         = AcceptedErrorPerSurface[SurfaceIdx][Slot];
+                    Section.NumLODs                = Slot + 1u;
+
+                    for (size_t MeshletIdx = 0; MeshletIdx < Result.OutMeshlets.size(); ++MeshletIdx)
+                    {
+                        const FMeshlet& M = Result.OutMeshlets[MeshletIdx];
+                        PackSlots.push_back({ &Result, (uint32)MeshletIdx, Slot, RefCursor, TriangleCursor });
+                        RefCursor      += M.VertexCount;
+                        TriangleCursor += M.TriangleCount;
+                    }
+                }
+            }
+
+            // A level that kept the source vertices shares their slots, and a destructive level moved its vertices and gets its own.
+            TVector<uint32>        UniqueOf(RefCursor);
+            TVector<FUniqueSource> UniqueSources;
+            {
+                LUMINA_PROFILE_SECTION("Assign Shared Vertices");
+                TVector<uint32> MeshSlot(MeshResource.GetNumVertices(), ~0u);
+                THashMap<const FSurfaceMeshletResult*, TVector<uint32>> MovedSlots;
+
+                for (const FPackSlot& Pack : PackSlots)
+                {
+                    const FSurfaceMeshletResult& Result = *Pack.Result;
+                    const FMeshlet&              M      = Result.OutMeshlets[Pack.MeshletIdx];
+                    const bool                   bMoved = !Result.UpdatedPositions.empty();
+
+                    TVector<uint32>* LevelSlots = nullptr;
+                    if (bMoved)
+                    {
+                        LevelSlots = &MovedSlots[&Result];
+                        if (LevelSlots->empty())
+                        {
+                            LevelSlots->assign(Result.UpdatedPositions.size(), ~0u);
+                        }
+                    }
+
+                    for (uint32 i = 0; i < M.VertexCount; ++i)
+                    {
+                        const uint32 Ref  = Result.Vertices[M.VertexOffset + i];
+                        uint32&      Slot = bMoved ? (*LevelSlots)[Ref]
+                                                   : MeshSlot[Result.Source != nullptr ? Result.Source->SourceVertex[Ref] : Ref];
+                        if (Slot == ~0u)
+                        {
+                            Slot = (uint32)UniqueSources.size();
+                            UniqueSources.push_back({ &Result, Ref });
+                        }
+                        UniqueOf[Pack.RefStart + i] = Slot;
+                    }
+                }
+            }
+
+            const uint32  UniqueCount = (uint32)UniqueSources.size();
+            FMeshletData& Data        = MeshResource.MeshletData;
+
+            TVector<FVector3> Positions(UniqueCount);
+            TVector<uint32>   UV1s(UniqueCount);
+            TVector<uint32>   Colors(UniqueCount);
+            Data.VertexAttributes.resize(UniqueCount);
+            {
+                LUMINA_PROFILE_SECTION("Resolve Shared Vertices");
+                Task::ParallelFor(UniqueCount, [&](const Task::FParallelRange& Range)
+                {
+                    for (uint32 i = Range.Start; i < Range.End; ++i)
+                    {
+                        const FUniqueSource& Source = UniqueSources[i];
+                        const FLevelVertex   Level  = ResolveLevelVertex(*Source.Result, Source.Ref);
+                        Positions[i]             = LevelPosition(*Source.Result, Source.Ref);
+                        Data.VertexAttributes[i] = { Level.Normal, Level.Tangent, Level.UV };
+                        UV1s[i]                  = MeshResource.UVs1[Level.MeshVertex];
+                        Colors[i]                = MeshResource.Colors[Level.MeshVertex];
+                    }
+                }, 1024);
+            }
+
+            bool bHasUV1   = false;
+            bool bHasColor = false;
+            for (uint32 i = 0; i < UniqueCount; ++i)
+            {
+                bHasUV1   = bHasUV1   || UV1s[i] != Data.VertexAttributes[i].UV;
+                bHasColor = bHasColor || Colors[i] != 0xFFFFFFFFu;
+            }
+            Data.VertexUV1s   = bHasUV1   ? Move(UV1s)   : TVector<uint32>();
+            Data.VertexColors = bHasColor ? Move(Colors) : TVector<uint32>();
+
+            Data.PositionGrid = ComputeMeshPositionGrid(Positions.data(), Positions.size());
+            Data.VertexPositions.resize(UniqueCount);
+            Task::ParallelFor(UniqueCount, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    Data.VertexPositions[i] = EncodeMeshPosition(Data.PositionGrid, Positions[i]);
+                }
+            }, 4096);
+
+            Data.Meshlets.resize(PackSlots.size());
+            Data.MeshletSpheres.resize(PackSlots.size());
+            Data.MeshletCones.resize(PackSlots.size());
+            Data.MeshletTriangles.resize(TriangleCursor);
+            Data.MeshletVertexRefs.reserve(RefCursor);
+
+            {
+                LUMINA_PROFILE_SECTION("Pack Static Meshlets");
+                for (uint32 PackIdx = 0; PackIdx < (uint32)PackSlots.size(); ++PackIdx)
+                {
+                    const FPackSlot&             Pack   = PackSlots[PackIdx];
+                    const FSurfaceMeshletResult& Result = *Pack.Result;
+
+                    FMeshlet Out = Result.OutMeshlets[Pack.MeshletIdx];
+                    Out.LODIndex = Pack.LOD;
+
+                    const uint8* TriSrc = Result.Triangles.data() + Out.TriangleOffset;
+                    for (uint32 t = 0; t < Out.TriangleCount; ++t)
+                    {
+                        Data.MeshletTriangles[Pack.TriangleStart + t] =
+                              (uint32)TriSrc[t * 3 + 0]
+                            | ((uint32)TriSrc[t * 3 + 1] << 8)
+                            | ((uint32)TriSrc[t * 3 + 2] << 16);
+                    }
+
+                    AppendMeshletVertexRefs(Data, Out, &UniqueOf[Pack.RefStart], Out.VertexCount);
+                    Out.TriangleOffset = Pack.TriangleStart;
+
+                    Data.Meshlets[PackIdx]       = Out;
+                    Data.MeshletSpheres[PackIdx] = Result.Spheres[Pack.MeshletIdx];
+                    Data.MeshletCones[PackIdx]   = Result.Cones[Pack.MeshletIdx];
+                }
+            }
+        }
+    }
 
     void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress, float StepPerSurface)
     {
@@ -1092,8 +1267,6 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        // No quantization grid, so no per-LOD precision tradeoff and no boundary cracks.
-
         size_t TotalMeshlets  = 0;
         size_t TotalVertices  = 0;
         size_t TotalTriangles = 0;
@@ -1121,10 +1294,6 @@ namespace Lumina::Import::Mesh
             MeshResource.MeshletData.MeshletBonePalettes.reserve(TotalMeshlets);
             MeshResource.MeshletData.MeshletBoneIndices.reserve(TotalMeshlets * 16);
         }
-        else
-        {
-            MeshResource.MeshletData.MeshletVertices.reserve(TotalVertices);
-        }
 
         for (FGeometrySurface& Section : MeshResource.GeometrySurfaces)
         {
@@ -1137,18 +1306,6 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        // Meshlets share vertices across borders and LODs, so each normal converts once here instead of once per reference.
-        TVector<VertexOps::FSNorm16Normal> MeshletNormals(MeshResource.Normals.size());
-        {
-            LUMINA_PROFILE_SECTION("Convert Meshlet Normals");
-            const uint32*                InNormals  = MeshResource.Normals.data();
-            VertexOps::FSNorm16Normal*   OutNormals = MeshletNormals.data();
-            Task::ParallelFor((uint32)MeshletNormals.size(), [=](const Task::FParallelRange& Range)
-            {
-                VertexOps::UnpackNormalsToSNorm16(InNormals + Range.Start, OutNormals + Range.Start, Range.End - Range.Start);
-            }, 4096);
-        }
-
         auto LevelPosition = [&](const FSurfaceMeshletResult& Result, uint32 Ref) -> FVector3
         {
             if (!Result.UpdatedPositions.empty())
@@ -1158,14 +1315,14 @@ namespace Lumina::Import::Mesh
             return MeshResource.Positions[Result.Source != nullptr ? Result.Source->SourceVertex[Ref] : Ref];
         };
 
-        // Returns the mesh vertex Ref came from, which still owns every stream the simplifier left alone.
-        auto FillLevelAttributes = [&](const FSurfaceMeshletResult& Result, uint32 Ref, auto& Packed) -> uint32
+        // The mesh vertex Ref came from still owns every stream the simplifier left alone.
+        auto ResolveLevelVertex = [&](const FSurfaceMeshletResult& Result, uint32 Ref) -> FLevelVertex
         {
-            const uint32 MeshVertex = Result.Source != nullptr ? Result.Source->SourceVertex[Ref] : Ref;
-
-            VertexOps::FSNorm16Normal Normal  = MeshletNormals[MeshVertex];
-            uint32                    Tangent = MeshResource.Tangents[MeshVertex];
-            uint32                    UV      = MeshResource.UVs[MeshVertex];
+            FLevelVertex Out;
+            Out.MeshVertex = Result.Source != nullptr ? Result.Source->SourceVertex[Ref] : Ref;
+            Out.Normal     = MeshResource.Normals[Out.MeshVertex];
+            Out.Tangent    = MeshResource.Tangents[Out.MeshVertex];
+            Out.UV         = MeshResource.UVs[Out.MeshVertex];
 
             if (!Result.UpdatedAttributes.empty())
             {
@@ -1174,127 +1331,31 @@ namespace Lumina::Import::Mesh
                 if (Math::Dot(RawNormal, RawNormal) > 1e-12f)
                 {
                     const FVector3 UpdatedNormal = Math::Normalize(RawNormal);
-                    const uint32   PackedNormal  = PackNormal(UpdatedNormal);
-                    VertexOps::UnpackNormalsToSNorm16(&PackedNormal, &Normal, 1);
+                    Out.Normal = PackNormal(UpdatedNormal);
 
                     // Squared back up against the moved normal, since the tangent itself was not simplified.
-                    const FVector4 SourceTangent = UnpackTangent(Tangent);
+                    const FVector4 SourceTangent = UnpackTangent(Out.Tangent);
                     const FVector3 TangentXYZ    = FVector3(SourceTangent);
                     const FVector3 Orthogonal    = TangentXYZ - UpdatedNormal * Math::Dot(UpdatedNormal, TangentXYZ);
                     if (Math::Dot(Orthogonal, Orthogonal) > 1e-12f)
                     {
-                        Tangent = PackTangent(Math::Normalize(Orthogonal), SourceTangent.w);
+                        Out.Tangent = PackTangent(Math::Normalize(Orthogonal), SourceTangent.w);
                     }
                 }
-                UV = Math::PackHalf2x16(FVector2(Updated[3], Updated[4]));
+                Out.UV = Math::PackHalf2x16(FVector2(Updated[3], Updated[4]));
             }
-
-            Packed.NormalX = Normal.X;
-            Packed.NormalY = Normal.Y;
-            Packed.NormalZ = Normal.Z;
-            Packed.Tangent = Tangent;
-            Packed.UV      = UV;
-            Packed.UV1     = MeshResource.UVs1[MeshVertex];
-            Packed.Color   = MeshResource.Colors[MeshVertex];
-            return MeshVertex;
+            return Out;
         };
 
-        struct FPackSlot
-        {
-            const FSurfaceMeshletResult* Result;
-            uint32                       MeshletIdx;
-            uint32                       LOD;
-            uint32                       VertexStart;
-            uint32                       TriangleStart;
-        };
-
-        // Static meshes pack in parallel into prefix-summed ranges, matching the serial order exactly.
         if (!MeshResource.bSkinnedMesh)
         {
-            TVector<FPackSlot> PackSlots;
-            PackSlots.reserve(TotalMeshlets);
-            uint32 VertexCursor   = 0;
-            uint32 TriangleCursor = 0;
-
-            for (uint32 Slot = 0; Slot < LODCount; ++Slot)
-            {
-                for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
-                {
-                    const TFixedVector<uint32, MAX_MESH_LODS>& Accepted = AcceptedPerSurface[SurfaceIdx];
-                    if (Slot >= Accepted.size())
-                    {
-                        continue;
-                    }
-                    const uint32 SourceLOD = Accepted[Slot];
-
-                    FGeometrySurface&            Section = MeshResource.GeometrySurfaces[SurfaceIdx];
-                    const FSurfaceMeshletResult& Result  = Results[SourceLOD * NumSurfaces + SurfaceIdx];
-                    if (!Result.bHasData)
-                    {
-                        continue;
-                    }
-
-                    Section.LODMeshletOffset[Slot] = (uint32)PackSlots.size();
-                    Section.LODMeshletCount[Slot]  = (uint32)Result.OutMeshlets.size();
-                    Section.LODError[Slot]         = AcceptedErrorPerSurface[SurfaceIdx][Slot];
-                    Section.NumLODs                = Slot + 1u;
-
-                    for (size_t MeshletIdx = 0; MeshletIdx < Result.OutMeshlets.size(); ++MeshletIdx)
-                    {
-                        const FMeshlet& M = Result.OutMeshlets[MeshletIdx];
-                        PackSlots.push_back({ &Result, (uint32)MeshletIdx, Slot, VertexCursor, TriangleCursor });
-                        VertexCursor   += M.VertexCount;
-                        TriangleCursor += M.TriangleCount;
-                    }
-                }
-            }
-
-            FMeshletData& Data = MeshResource.MeshletData;
-            Data.Meshlets.resize(PackSlots.size());
-            Data.MeshletSpheres.resize(PackSlots.size());
-            Data.MeshletCones.resize(PackSlots.size());
-            Data.MeshletVertices.resize(VertexCursor);
-            Data.MeshletTriangles.resize(TriangleCursor);
-
-            LUMINA_PROFILE_SECTION("Parallel Pack Static Meshlets");
-            Task::ParallelFor((uint32)PackSlots.size(), [&](uint32 PackIdx)
-            {
-                const FPackSlot&             Pack   = PackSlots[PackIdx];
-                const FSurfaceMeshletResult& Result = *Pack.Result;
-
-                FMeshlet Out = Result.OutMeshlets[Pack.MeshletIdx];
-                Out.LODIndex = Pack.LOD;
-
-                FVector3 QuantScratch[MESHLET_MAX_VERTICES];
-                for (uint32 i = 0; i < Out.VertexCount; ++i)
-                {
-                    QuantScratch[i] = LevelPosition(Result, Result.Vertices[Out.VertexOffset + i]);
-                }
-                const FMeshletQuantization Quant = ComputeMeshletQuantization(QuantScratch, Out.VertexCount);
-                ApplyMeshletQuantization(Out, Quant);
-
-                for (uint32 i = 0; i < Out.VertexCount; ++i)
-                {
-                    FMeshletVertex& Packed = Data.MeshletVertices[Pack.VertexStart + i];
-                    EncodeMeshletPosition(Quant, QuantScratch[i], Packed);
-                    FillLevelAttributes(Result, Result.Vertices[Out.VertexOffset + i], Packed);
-                }
-
-                const uint8* TriSrc = Result.Triangles.data() + Out.TriangleOffset;
-                for (uint32 t = 0; t < Out.TriangleCount; ++t)
-                {
-                    Data.MeshletTriangles[Pack.TriangleStart + t] =
-                          (uint32)TriSrc[t * 3 + 0]
-                        | ((uint32)TriSrc[t * 3 + 1] << 8)
-                        | ((uint32)TriSrc[t * 3 + 2] << 16);
-                }
-
-                Out.VertexOffset          = Pack.VertexStart;
-                Out.TriangleOffset        = Pack.TriangleStart;
-                Data.Meshlets[PackIdx]       = Out;
-                Data.MeshletSpheres[PackIdx] = Result.Spheres[Pack.MeshletIdx];
-                Data.MeshletCones[PackIdx]   = Result.Cones[Pack.MeshletIdx];
-            }, 16);
+            PackStaticMeshlets(MeshResource, Results, AcceptedPerSurface, AcceptedErrorPerSurface, LODCount, NumSurfaces,
+                               LevelPosition, ResolveLevelVertex);
+        }
+        else
+        {
+            // Skinned levels never move a vertex, so the source positions bound every level.
+            MeshResource.MeshletData.PositionGrid = ComputeMeshPositionGrid(MeshResource.Positions.data(), MeshResource.Positions.size());
         }
 
         for (uint32 Slot = 0; MeshResource.bSkinnedMesh && Slot < LODCount; ++Slot)
@@ -1323,9 +1384,6 @@ namespace Lumina::Import::Mesh
                 Section.LODError[Slot]         = AcceptedErrorPerSurface[SurfaceIdx][Slot];
                 Section.NumLODs                = Slot + 1u;
 
-                TVector<FVector3> QuantScratch;
-                QuantScratch.reserve(MESHLET_MAX_VERTICES);
-
                 FMeshletPaletteScratch Palette;
 
                 for (size_t MeshletIdx = 0; MeshletIdx < Result.OutMeshlets.size(); ++MeshletIdx)
@@ -1334,26 +1392,23 @@ namespace Lumina::Import::Mesh
 
                     Out.LODIndex = Slot;
 
-                    // The quantization frame comes first, derived from the source positions this meshlet references.
-                    QuantScratch.clear();
-                    for (uint32 i = 0; i < Out.VertexCount; ++i)
-                    {
-                        QuantScratch.push_back(LevelPosition(Result, Result.Vertices[Out.VertexOffset + i]));
-                    }
-
-                    const FMeshletQuantization Quant =
-                        ComputeMeshletQuantization(QuantScratch.data(), (uint32)QuantScratch.size());
-                    ApplyMeshletQuantization(Out, Quant);
-
                     const uint32 PackedVertexStart = (uint32)MeshResource.MeshletData.MeshletSkinnedVertices.size();
 
                     Palette.clear();
 
                     for (uint32 i = 0; i < Out.VertexCount; ++i)
                     {
+                        const uint32       Ref       = Result.Vertices[Out.VertexOffset + i];
+                        const FLevelVertex Level     = ResolveLevelVertex(Result, Ref);
+                        const uint32       GlobalIdx = Level.MeshVertex;
+
                         FMeshletSkinnedVertex Packed;
-                        EncodeMeshletPosition(Quant, QuantScratch[i], Packed);
-                        const uint32 GlobalIdx = FillLevelAttributes(Result, Result.Vertices[Out.VertexOffset + i], Packed);
+                        Packed.Position = EncodeMeshPosition(MeshResource.MeshletData.PositionGrid, LevelPosition(Result, Ref));
+                        Packed.Normal  = Level.Normal;
+                        Packed.Tangent = Level.Tangent;
+                        Packed.UV      = Level.UV;
+                        Packed.UV1     = MeshResource.UVs1[GlobalIdx];
+                        Packed.Color   = MeshResource.Colors[GlobalIdx];
 
                         // The source index is 16-bit and the packed one 8-bit, so it can only be a palette slot.
                         const FU16Vector4& SourceJoints  = MeshResource.JointIndices[GlobalIdx];

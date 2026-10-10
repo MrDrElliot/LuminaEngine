@@ -96,8 +96,7 @@ namespace
 
                 for (uint32 i = 0; i < Meshlet.VertexCount; ++i)
                 {
-                    const FMeshletVertex& Vertex = Resource.MeshletData.MeshletVertices[Meshlet.VertexOffset + i];
-                    const FVector3 P = DecodeMeshletPosition(Meshlet, Vertex);
+                    const FVector3 P = GetMeshletVertexPosition(Resource.MeshletData, Meshlet, i, false);
 
                     const FVector3 Nearest(
                         Math::Round(P.x / kGridStep) * kGridStep,
@@ -183,6 +182,32 @@ TEST(MeshletBuild, LargeMeshExceedsTheMeshoptArenaAndStillBuilds)
         EXPECT_LE(Stats.MaxTriangles, (uint32)MESHLET_MAX_TRIANGLES);
         EXPECT_LT(Stats.WorstSnap, 0.01f);
     }
+}
+
+
+// Every grid vertex is stored once however many meshlets touch it, and every meshlet's refs fit 16 bits on a mesh this size.
+TEST(MeshletBuild, StaticVerticesAreSharedAcrossMeshlets)
+{
+    constexpr uint32 N = 128u;
+    FMeshResource Resource;
+    Resource.MaxLODs = 1;
+    BuildGrid(Resource, N, false);
+    Import::Mesh::GenerateMeshlets(Resource);
+
+    const FMeshletData& Data = Resource.MeshletData;
+    EXPECT_EQ(Data.VertexPositions.size(), (size_t)N * N);
+    EXPECT_EQ(Data.VertexAttributes.size(), (size_t)N * N);
+    EXPECT_TRUE(Data.VertexColors.empty());
+    EXPECT_TRUE(Data.MeshletSkinnedVertices.empty());
+
+    size_t Slots = 0;
+    for (const FMeshlet& M : Data.Meshlets)
+    {
+        EXPECT_TRUE(M.HasShortVertexRefs());
+        Slots += M.VertexCount;
+    }
+    EXPECT_GT(Slots, Data.VertexPositions.size());
+    EXPECT_TRUE(Resource.HasConsistentMeshlets());
 }
 
 #endif

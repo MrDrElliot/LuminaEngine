@@ -641,9 +641,9 @@ float3 SampleEmissionMesh(inout uint state)
         V = 1.0 - V;
     }
 
-    const float3 A = LoadStaticPosition(Header, M, Corners.x);
-    const float3 B = LoadStaticPosition(Header, M, Corners.y);
-    const float3 C = LoadStaticPosition(Header, M, Corners.z);
+    const float3 A = LoadBindPosePosition(Header, M, Corners.x);
+    const float3 B = LoadBindPosePosition(Header, M, Corners.y);
+    const float3 C = LoadBindPosePosition(Header, M, Corners.z);
     return A + (B - A) * U + (C - A) * V;
 }
 

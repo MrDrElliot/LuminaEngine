@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "Mesh.h"
 #include "MeshBuildBatch.h"
+#include "Core/Console/ConsoleVariable.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Core/Engine/Engine.h"
@@ -16,6 +17,37 @@
 
 namespace Lumina
 {
+    namespace MeshGeometryStats
+    {
+        namespace
+        {
+            std::atomic<int64> GBlockBytes{ 0 };
+            std::atomic<int64> GVertexBytes{ 0 };
+            std::atomic<int64> GMeshCount{ 0 };
+        }
+
+        void Add(int64 BlockBytes, int64 VertexBytes)
+        {
+            GBlockBytes.fetch_add(BlockBytes, std::memory_order_relaxed);
+            GVertexBytes.fetch_add(VertexBytes, std::memory_order_relaxed);
+            GMeshCount.fetch_add(BlockBytes >= 0 ? 1 : -1, std::memory_order_relaxed);
+        }
+
+        void Log(const char* Context)
+        {
+            constexpr double kMiBDivisor = 1024.0 * 1024.0;
+            LOG_DISPLAY("Mesh geometry ({}): {} meshes, {:.1f} MiB total, {:.1f} MiB vertex streams",
+                Context, GMeshCount.load(std::memory_order_relaxed),
+                (double)GBlockBytes.load(std::memory_order_relaxed) / kMiBDivisor,
+                (double)GVertexBytes.load(std::memory_order_relaxed) / kMiBDivisor);
+        }
+
+        FAutoConsoleCommand GGeometryStatsCommand(
+            "Mesh.GeometryStats",
+            "Log the GPU bytes held by mesh geometry and how much of it is vertex streams.",
+            [] { Log("console"); });
+    }
+
     void CMesh::Serialize(FArchive& Ar)
     {
         Super::Serialize(Ar);
@@ -184,30 +216,21 @@ namespace Lumina
 
             const FMeshletData& MD = Resource.MeshletData;
 
-            // A position is only meaningful against its meshlet anchor.
-            for (const FMeshlet& M : MD.Meshlets)
+            for (const FMeshVertexPosition& Packed : MD.VertexPositions)
             {
-                for (uint32 v = 0; v < M.VertexCount; ++v)
-                {
-                    const uint32 Index = M.VertexOffset + v;
-
-                    if (Index < MD.MeshletVertices.size())
-                    {
-                        const FVector3 P = DecodeMeshletPosition(M, MD.MeshletVertices[Index]);
-                        Bounds.Min = Math::Min(Bounds.Min, P);
-                        Bounds.Max = Math::Max(Bounds.Max, P);
-                    }
-
-                    if (Index < MD.MeshletSkinnedVertices.size())
-                    {
-                        const FVector3 P = DecodeMeshletPosition(M, MD.MeshletSkinnedVertices[Index]);
-                        Bounds.Min = Math::Min(Bounds.Min, P);
-                        Bounds.Max = Math::Max(Bounds.Max, P);
-                    }
-                }
+                const FVector3 P = DecodeMeshPosition(MD.PositionGrid, Packed);
+                Bounds.Min = Math::Min(Bounds.Min, P);
+                Bounds.Max = Math::Max(Bounds.Max, P);
             }
 
-            if (MD.MeshletVertices.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletSpheres.empty())
+            for (const FMeshletSkinnedVertex& Skinned : MD.MeshletSkinnedVertices)
+            {
+                const FVector3 P = DecodeMeshPosition(MD.PositionGrid, Skinned.Position);
+                Bounds.Min = Math::Min(Bounds.Min, P);
+                Bounds.Max = Math::Max(Bounds.Max, P);
+            }
+
+            if (MD.VertexPositions.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletSpheres.empty())
             {
                 // Conservative for culling but wildly loose for anything not roughly spherical.
                 for (const FMeshletSphere& S : MD.MeshletSpheres)
@@ -327,6 +350,15 @@ namespace Lumina
             Header.SpheresAddress           = MB.MeshletSphereBuffer;
             Header.VerticesAddress          = MB.MeshletVertexBuffer;
             Header.PositionsAddress         = MB.MeshletPositionBuffer;
+            Header.VertexRefsAddress        = MB.MeshletVertexRefBuffer;
+            Header.VertexUV1sAddress        = MB.VertexUV1Buffer;
+            Header.VertexColorsAddress      = MB.VertexColorBuffer;
+            Header.VertexStreamFlags        = (MB.VertexUV1Buffer   != 0 ? MESH_VERTEX_STREAM_UV1   : 0u)
+                                            | (MB.VertexColorBuffer != 0 ? MESH_VERTEX_STREAM_COLOR : 0u);
+            Header.PositionGridAnchorX      = Resource.MeshletData.PositionGrid.AnchorX;
+            Header.PositionGridAnchorY      = Resource.MeshletData.PositionGrid.AnchorY;
+            Header.PositionGridAnchorZ      = Resource.MeshletData.PositionGrid.AnchorZ;
+            Header.PositionGridExponent     = Resource.MeshletData.PositionGrid.Exponent;
             Header.TrianglesAddress         = MB.MeshletTriangleBuffer;
             Header.DistanceFieldIndex       = bHasField ? MB.DistanceFieldTexture.SampledSlot : DistanceField::kInvalidIndex;
             Header.DistanceFieldFlags       = Volume.bTwoSided ? (uint32)EDistanceFieldFlags::TwoSided : 0u;
@@ -409,27 +441,31 @@ namespace Lumina
             Resource.RequiredBoneCount = MaxJoint;
         }
 
-        const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.MeshletVertices.data();
-        const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
-        const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();
+        const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.VertexAttributes.data();
+        const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshVertexAttributes);
+        const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.VertexAttributes.size();
 
         const uint64 MeshletBytes  = sizeof(FMeshlet)       * MData.Meshlets.size();
         const uint64 SphereBytes   = sizeof(FMeshletSphere) * MData.MeshletSpheres.size();
         const uint64 ConeBytes     = sizeof(FMeshletCone)   * MData.MeshletCones.size();
         const uint64 VertexBytes   = VertCount              * VertStride;
-        const uint64 PositionBytes = VertCount              * sizeof(uint32) * 2;
+        const uint64 PositionBytes = sizeof(FMeshVertexPosition) * MData.VertexPositions.size();
+        const uint64 RefBytes      = sizeof(uint32)         * MData.MeshletVertexRefs.size();
+        const uint64 UV1Bytes      = sizeof(uint32)         * MData.VertexUV1s.size();
+        const uint64 ColorBytes    = sizeof(uint32)         * MData.VertexColors.size();
         const uint64 TriangleBytes = sizeof(uint32)         * MData.MeshletTriangles.size();
         const uint64 PaletteBytes  = sizeof(FMeshletBonePalette) * MData.MeshletBonePalettes.size();
         const uint64 BoneIdxBytes  = sizeof(uint32)         * MData.MeshletBoneIndices.size();
-        
-        if (MeshletBytes == 0 || SphereBytes == 0 || ConeBytes == 0 || VertexBytes == 0 || TriangleBytes == 0)
+
+        const bool bMissingStaticStream = !bSkinned && (PositionBytes == 0 || RefBytes == 0);
+        if (MeshletBytes == 0 || SphereBytes == 0 || ConeBytes == 0 || VertexBytes == 0 || TriangleBytes == 0 || bMissingStaticStream)
         {
             LOG_ERROR("Mesh rebuild failed: {} meshlets with an empty geometry stream "
-                      "(meshlets {}, spheres {}, cones {}, vertices {}, triangles {} bytes). Previous geometry kept.",
-                      MData.Meshlets.size(), MeshletBytes, SphereBytes, ConeBytes, VertexBytes, TriangleBytes);
+                      "(meshlets {}, spheres {}, cones {}, vertices {}, positions {}, refs {}, triangles {} bytes). Previous geometry kept.",
+                      MData.Meshlets.size(), MeshletBytes, SphereBytes, ConeBytes, VertexBytes, PositionBytes, RefBytes, TriangleBytes);
             return;
         }
-        
+
         uint64 Cursor = 0;
         auto Reserve = [&Cursor](uint64 Bytes)
         {
@@ -443,54 +479,62 @@ namespace Lumina
         const uint64 ConeOffset     = Reserve(ConeBytes);
         const uint64 VertexOffset   = Reserve(VertexBytes);
         const uint64 PositionOffset = Reserve(PositionBytes);
+        const uint64 RefOffset      = Reserve(RefBytes);
+        const uint64 UV1Offset      = Reserve(UV1Bytes);
+        const uint64 ColorOffset    = Reserve(ColorBytes);
         const uint64 TriangleOffset = Reserve(TriangleBytes);
         const uint64 PaletteOffset  = Reserve(PaletteBytes);
         const uint64 BoneIdxOffset  = Reserve(BoneIdxBytes);
-        
+
         const RHI::FGPUAllocation Block = RHI::Malloc(Cursor, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-        
+
         if (Block.Gpu == 0)
         {
             LOG_ERROR("Mesh rebuild failed: {} KiB GPU allocation for {} meshlets. Previous geometry kept.",
                       Cursor / 1024, MData.Meshlets.size());
             return;
         }
-        
+
         RHI::SetDebugName(Block.Gpu, bSkinned ? "Mesh.SkinnedGeometry" : "Mesh.Geometry");
 
         RHI::UploadBuffer(Block, MData.Meshlets.data(),         MeshletBytes,  MeshletOffset);
         RHI::UploadBuffer(Block, MData.MeshletSpheres.data(),   SphereBytes,   SphereOffset);
         RHI::UploadBuffer(Block, MData.MeshletCones.data(),     ConeBytes,     ConeOffset);
         RHI::UploadBuffer(Block, VertSrc,                       VertexBytes,   VertexOffset);
-
-        {
-            // X and Y share a word and Z has the other, matching DecodeMeshletPosition's uint2 overload.
-            TVector<uint32> Positions((SIZE_T)VertCount * 2);
-            for (uint64 i = 0; i < VertCount; ++i)
-            {
-                const FMeshletVertex& V = bSkinned ? MData.MeshletSkinnedVertices[i] : MData.MeshletVertices[i];
-                Positions[i * 2 + 0] = (uint32)V.PositionX | ((uint32)V.PositionY << 16);
-                Positions[i * 2 + 1] = (uint32)V.PositionZ;
-            }
-            RHI::UploadBuffer(Block, Positions.data(), PositionBytes, PositionOffset);
-        }
         RHI::UploadBuffer(Block, MData.MeshletTriangles.data(), TriangleBytes, TriangleOffset);
+
+        auto UploadIfPresent = [&Block](const void* Source, uint64 Bytes, uint64 Offset)
+        {
+            if (Bytes != 0)
+            {
+                RHI::UploadBuffer(Block, Source, Bytes, Offset);
+            }
+        };
+        UploadIfPresent(MData.VertexPositions.data(),   PositionBytes, PositionOffset);
+        UploadIfPresent(MData.MeshletVertexRefs.data(), RefBytes,      RefOffset);
+        UploadIfPresent(MData.VertexUV1s.data(),        UV1Bytes,      UV1Offset);
+        UploadIfPresent(MData.VertexColors.data(),      ColorBytes,    ColorOffset);
 
         if (PaletteBytes != 0 && BoneIdxBytes != 0)
         {
             RHI::UploadBuffer(Block, MData.MeshletBonePalettes.data(), PaletteBytes, PaletteOffset);
             RHI::UploadBuffer(Block, MData.MeshletBoneIndices.data(),  BoneIdxBytes, BoneIdxOffset);
         }
-        
+
         MB.ReleaseGeometryBuffers();
 
         MB.GeometryBlock         = Block;
+        MB.VertexStreamBytes     = VertexBytes + PositionBytes + RefBytes + UV1Bytes + ColorBytes;
+        MeshGeometryStats::Add((int64)Block.Size, (int64)MB.VertexStreamBytes);
         MB.MeshletBuffer         = Block.Gpu + MeshletOffset;
         MB.MeshletSphereBuffer   = Block.Gpu + SphereOffset;
         MB.MeshletConeBuffer     = Block.Gpu + ConeOffset;
         MB.MeshletVertexBuffer   = Block.Gpu + VertexOffset;
-        MB.MeshletPositionBuffer = Block.Gpu + PositionOffset;
-        MB.MeshletTriangleBuffer = Block.Gpu + TriangleOffset;
+        MB.MeshletPositionBuffer  = PositionBytes != 0 ? Block.Gpu + PositionOffset : 0;
+        MB.MeshletVertexRefBuffer = RefBytes      != 0 ? Block.Gpu + RefOffset      : 0;
+        MB.VertexUV1Buffer        = UV1Bytes      != 0 ? Block.Gpu + UV1Offset      : 0;
+        MB.VertexColorBuffer      = ColorBytes    != 0 ? Block.Gpu + ColorOffset    : 0;
+        MB.MeshletTriangleBuffer  = Block.Gpu + TriangleOffset;
 
         // Null for a static mesh; SkinVertex reads that as bind pose rather than misreading the indices.
         MB.MeshletBonePaletteBuffer = (PaletteBytes != 0 && BoneIdxBytes != 0) ? Block.Gpu + PaletteOffset : 0;

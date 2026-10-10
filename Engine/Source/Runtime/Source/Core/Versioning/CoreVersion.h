@@ -103,6 +103,9 @@ enum class ELuminaEngineVersion : uint32
 	// FGeometrySurface stores each LOD's measured error; older meshes load LOD 0 only until reimported.
 	MESH_LOD_ERROR,
 
+	// One position grid per mesh, static vertices stored once behind per-meshlet refs, and skinned vertices on the same grid.
+	MESHLET_SHARED_VERTICES,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

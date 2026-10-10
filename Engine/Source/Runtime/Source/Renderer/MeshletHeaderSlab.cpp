@@ -81,6 +81,9 @@ namespace Lumina::MeshletHeaderSlab
             Header.SpheresAddress      = GNullGeometry.Gpu;
             Header.VerticesAddress     = GNullGeometry.Gpu;
             Header.PositionsAddress    = GNullGeometry.Gpu;
+            Header.VertexRefsAddress   = GNullGeometry.Gpu;
+            Header.VertexUV1sAddress   = GNullGeometry.Gpu;
+            Header.VertexColorsAddress = GNullGeometry.Gpu;
             Header.TrianglesAddress    = GNullGeometry.Gpu;
             Header.ConesAddress        = GNullGeometry.Gpu;
             Header.BonePalettesAddress = GNullGeometry.Gpu;
@@ -369,7 +372,8 @@ namespace Lumina::MeshletHeaderSlab
         // is spelled by its count, so no consumer has to test a pointer before dereferencing it.
         FMeshletHeaderGPU Mapped = Header;
         for (uint64* Address : { &Mapped.MeshletsAddress, &Mapped.SpheresAddress, &Mapped.VerticesAddress,
-                                 &Mapped.PositionsAddress, &Mapped.TrianglesAddress, &Mapped.ConesAddress,
+                                 &Mapped.PositionsAddress, &Mapped.VertexRefsAddress, &Mapped.VertexUV1sAddress,
+                                 &Mapped.VertexColorsAddress, &Mapped.TrianglesAddress, &Mapped.ConesAddress,
                                  &Mapped.BonePalettesAddress, &Mapped.BoneIndicesAddress })
         {
             if (*Address == 0)

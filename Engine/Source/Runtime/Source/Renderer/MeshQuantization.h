@@ -10,102 +10,125 @@
 
 namespace Lumina
 {
-    constexpr int32 MeshletPositionBits = 16;
-    static_assert((1 << MeshletPositionBits) - 1 == MESHLET_POSITION_MAX,
-                  "MeshletPositionBits must describe the width of FMeshletVertex's position fields");
+    constexpr int32 MeshPositionBits = MESH_POSITION_BITS;
+    static_assert((1u << MeshPositionBits) - 1u == MESH_POSITION_MAX, "MESH_POSITION_MAX must match MESH_POSITION_BITS");
 
-    struct FMeshletQuantization
-    {
-        int32 AnchorX  = 0;
-        int32 AnchorY  = 0;
-        int32 AnchorZ  = 0;
-        int32 Exponent = 0;
-    };
-
-    FORCEINLINE constexpr float MeshletExponentScale(int32 Exponent)
+    // Built from the float exponent field rather than exp2, so C++ and the shader produce identical bits.
+    FORCEINLINE constexpr float PositionGridScale(int32 Exponent)
     {
         return std::bit_cast<float>((uint32)(Math::Clamp(Exponent, -126, 127) + 127) << 23);
     }
 
-    FORCEINLINE int32 UnpackMeshletAnchor(uint32 Packed)
+    inline FMeshPositionGrid ComputeMeshPositionGrid(const FVector3* Positions, size_t Count)
     {
-        // Sign-extend from 24 bits.
-        const uint32 Field = Packed & MESHLET_ANCHOR_MASK;
-        return (int32)(Field ^ MESHLET_ANCHOR_SIGN) - (int32)MESHLET_ANCHOR_SIGN;
-    }
-
-    FORCEINLINE int32 UnpackMeshletExponent(uint32 PackedAnchorX)
-    {
-        return (int32)(int8)(uint8)(PackedAnchorX >> MESHLET_EXPONENT_SHIFT);
-    }
-
-    FORCEINLINE FVector3 DecodeMeshletPosition(const FMeshlet& M, const FMeshletVertex& V)
-    {
-        const float Scale = MeshletExponentScale(UnpackMeshletExponent(M.PackedAnchorX));
-
-        const int32 Ox = (int32)V.PositionX;
-        const int32 Oy = (int32)V.PositionY;
-        const int32 Oz = (int32)V.PositionZ;
-
-        return FVector3(
-            (float)(UnpackMeshletAnchor(M.PackedAnchorX) + Ox) * Scale,
-            (float)(UnpackMeshletAnchor(M.PackedAnchorY) + Oy) * Scale,
-            (float)(UnpackMeshletAnchor(M.PackedAnchorZ) + Oz) * Scale);
-    }
-
-    inline FMeshletQuantization ComputeMeshletQuantization(const FVector3* Positions, uint32 Count)
-    {
-        FMeshletQuantization Q;
+        FMeshPositionGrid Grid;
         if (Positions == nullptr || Count == 0)
         {
-            return Q;
+            return Grid;
         }
 
         FVector3 Min = Positions[0];
         FVector3 Max = Positions[0];
-        for (uint32 i = 1; i < Count; ++i)
+        for (size_t i = 1; i < Count; ++i)
         {
-            Min.x = Math::Min(Min.x, Positions[i].x);
-            Min.y = Math::Min(Min.y, Positions[i].y);
-            Min.z = Math::Min(Min.z, Positions[i].z);
-            Max.x = Math::Max(Max.x, Positions[i].x);
-            Max.y = Math::Max(Max.y, Positions[i].y);
-            Max.z = Math::Max(Max.z, Positions[i].z);
+            Min = Math::Min(Min, Positions[i]);
+            Max = Math::Max(Max, Positions[i]);
         }
 
-        // Solves both constraints the packing has: the offset fits max_bits, the anchor fits a signed 24-bit grid.
-        const int32 Exponent = meshopt_computePositionExponent(&Min.x, &Max.x, -126, MeshletPositionBits);
+        Grid.Exponent = meshopt_computePositionExponent(&Min.x, &Max.x, -126, MeshPositionBits);
 
-        const float Scale = MeshletExponentScale(Exponent);
-        Q.Exponent = Exponent;
-        Q.AnchorX  = (int32)Math::Floor(Min.x / Scale);
-        Q.AnchorY  = (int32)Math::Floor(Min.y / Scale);
-        Q.AnchorZ  = (int32)Math::Floor(Min.z / Scale);
-        return Q;
+        const float Scale = PositionGridScale(Grid.Exponent);
+        Grid.AnchorX = (int32)Math::Floor(Min.x / Scale);
+        Grid.AnchorY = (int32)Math::Floor(Min.y / Scale);
+        Grid.AnchorZ = (int32)Math::Floor(Min.z / Scale);
+        return Grid;
     }
 
-    /** Writes the quantization frame into the meshlet its encoded vertices will be decoded against. */
-    FORCEINLINE void ApplyMeshletQuantization(FMeshlet& M, const FMeshletQuantization& Q)
+    FORCEINLINE FMeshVertexPosition EncodeMeshPosition(const FMeshPositionGrid& Grid, const FVector3& P)
     {
-        M.PackedAnchorX = ((uint32)Q.AnchorX & MESHLET_ANCHOR_MASK)
-                        | ((uint32)(uint8)(int8)Q.Exponent << MESHLET_EXPONENT_SHIFT);
-        M.PackedAnchorY = (uint32)Q.AnchorY & MESHLET_ANCHOR_MASK;
-        M.PackedAnchorZ = (uint32)Q.AnchorZ & MESHLET_ANCHOR_MASK;
-    }
-
-    /** Encodes one position into the vertex's two packed dwords; leaves its other members alone. */
-    FORCEINLINE void EncodeMeshletPosition(const FMeshletQuantization& Q, const FVector3& P, FMeshletVertex& Out)
-    {
-        const float Scale = MeshletExponentScale(Q.Exponent);
+        const float Scale = PositionGridScale(Grid.Exponent);
 
         auto Component = [&](float Value, int32 Anchor) -> uint32
         {
             const int64 Offset = (int64)Math::Floor(Value / Scale + 0.5f) - (int64)Anchor;
-            return (uint32)Math::Clamp<int64>(Offset, (int64)0, (int64)MESHLET_POSITION_MAX);
+            return (uint32)Math::Clamp<int64>(Offset, (int64)0, (int64)MESH_POSITION_MAX);
         };
 
-        Out.PositionX = (uint16)Component(P.x, Q.AnchorX);
-        Out.PositionY = (uint16)Component(P.y, Q.AnchorY);
-        Out.PositionZ = (uint16)Component(P.z, Q.AnchorZ);
+        const uint32 X = Component(P.x, Grid.AnchorX);
+        const uint32 Y = Component(P.y, Grid.AnchorY);
+        const uint32 Z = Component(P.z, Grid.AnchorZ);
+
+        FMeshVertexPosition Out;
+        Out.XY = X | (Y << MeshPositionBits);
+        Out.YZ = (Y >> (32 - MeshPositionBits)) | (Z << (2 * MeshPositionBits - 32));
+        return Out;
+    }
+
+    FORCEINLINE FVector3 DecodeMeshPosition(const FMeshPositionGrid& Grid, const FMeshVertexPosition& P)
+    {
+        const float  Scale = PositionGridScale(Grid.Exponent);
+        const uint32 X     = P.XY & MESH_POSITION_MAX;
+        const uint32 Y     = ((P.XY >> MeshPositionBits) | (P.YZ << (32 - MeshPositionBits))) & MESH_POSITION_MAX;
+        const uint32 Z     = (P.YZ >> (2 * MeshPositionBits - 32)) & MESH_POSITION_MAX;
+
+        return FVector3(
+            (float)(Grid.AnchorX + (int32)X) * Scale,
+            (float)(Grid.AnchorY + (int32)Y) * Scale,
+            (float)(Grid.AnchorZ + (int32)Z) * Scale);
+    }
+
+    // Appends a static meshlet's refs, as 16-bit offsets from its lowest vertex whenever the span allows.
+    inline void AppendMeshletVertexRefs(FMeshletData& Data, FMeshlet& M, const uint32* Vertices, uint32 Count)
+    {
+        uint32 Lo = Count > 0 ? Vertices[0] : 0u;
+        uint32 Hi = Lo;
+        for (uint32 i = 1; i < Count; ++i)
+        {
+            Lo = Math::Min(Lo, Vertices[i]);
+            Hi = Math::Max(Hi, Vertices[i]);
+        }
+
+        const bool bShort = (Hi - Lo) <= 0xFFFFu;
+        M.VertexOffset     = (uint32)Data.MeshletVertexRefs.size();
+        M.VertexCount      = Count;
+        M.BaseVertex       = Lo;
+        M.bShortVertexRefs = bShort ? 1u : 0u;
+
+        if (bShort)
+        {
+            for (uint32 i = 0; i < Count; i += 2)
+            {
+                const uint32 First  = Vertices[i] - Lo;
+                const uint32 Second = (i + 1 < Count) ? Vertices[i + 1] - Lo : 0u;
+                Data.MeshletVertexRefs.push_back(First | (Second << 16));
+            }
+        }
+        else
+        {
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                Data.MeshletVertexRefs.push_back(Vertices[i] - Lo);
+            }
+        }
+    }
+
+    // Where a static meshlet's Local-th vertex sits in the mesh's shared vertex streams.
+    FORCEINLINE uint32 GetStaticVertexIndex(const FMeshletData& Data, const FMeshlet& M, uint32 Local)
+    {
+        if (M.HasShortVertexRefs())
+        {
+            const uint32 Word = Data.MeshletVertexRefs[M.VertexOffset + Local / 2u];
+            return M.BaseVertex + ((Local & 1u) ? (Word >> 16) : (Word & 0xFFFFu));
+        }
+        return M.BaseVertex + Data.MeshletVertexRefs[M.VertexOffset + Local];
+    }
+
+    FORCEINLINE FVector3 GetMeshletVertexPosition(const FMeshletData& Data, const FMeshlet& M, uint32 Local, bool bSkinned)
+    {
+        if (bSkinned)
+        {
+            return DecodeMeshPosition(Data.PositionGrid, Data.MeshletSkinnedVertices[M.VertexOffset + Local].Position);
+        }
+        return DecodeMeshPosition(Data.PositionGrid, Data.VertexPositions[GetStaticVertexIndex(Data, M, Local)]);
     }
 }

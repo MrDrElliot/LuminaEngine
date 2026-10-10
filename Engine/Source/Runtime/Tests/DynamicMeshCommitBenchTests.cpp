@@ -122,11 +122,11 @@ TEST(DynamicMeshCommit, ChunkedBuildCoversEveryTriangle)
     EXPECT_EQ(Meshlets.MeshletCones.size(), Meshlets.Meshlets.size());
 
     size_t Triangles   = 0;
-    uint32 NextVertex  = 0;
+    uint32 NextRefWord = 0;
     uint32 NextTriangle = 0;
     for (const FMeshlet& M : Meshlets.Meshlets)
     {
-        EXPECT_EQ(M.VertexOffset, NextVertex);
+        EXPECT_EQ(M.VertexOffset, NextRefWord);
         EXPECT_EQ(M.TriangleOffset, NextTriangle);
         for (uint32 t = 0; t < M.TriangleCount; ++t)
         {
@@ -135,11 +135,11 @@ TEST(DynamicMeshCommit, ChunkedBuildCoversEveryTriangle)
             EXPECT_LT((Packed >> 8) & 0xFFu, M.VertexCount);
             EXPECT_LT((Packed >> 16) & 0xFFu, M.VertexCount);
         }
-        NextVertex   += M.VertexCount;
+        NextRefWord  += M.HasShortVertexRefs() ? (M.VertexCount + 1u) / 2u : M.VertexCount;
         NextTriangle += M.TriangleCount;
         Triangles    += M.TriangleCount;
     }
     EXPECT_EQ(Triangles, SourceTriangles);
-    EXPECT_EQ((size_t)NextVertex, Meshlets.MeshletVertices.size());
+    EXPECT_EQ((size_t)NextRefWord, Meshlets.MeshletVertexRefs.size());
     EXPECT_EQ((size_t)NextTriangle, Meshlets.MeshletTriangles.size());
 }

@@ -96,7 +96,7 @@ namespace
             const FMeshlet& Meshlet = Resource.MeshletData.Meshlets[Surface.LODMeshletOffset[LOD] + m];
             for (uint32 v = 0; v < Meshlet.VertexCount; ++v)
             {
-                Visit(DecodeMeshletPosition(Meshlet, Resource.MeshletData.MeshletVertices[Meshlet.VertexOffset + v]));
+                Visit(GetMeshletVertexPosition(Resource.MeshletData, Meshlet, v, false));
             }
         }
     }

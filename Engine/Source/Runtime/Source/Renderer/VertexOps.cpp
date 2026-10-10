@@ -93,13 +93,6 @@ namespace Lumina::VertexOps
                      _mm256_and_ps(_mm256_mul_ps(Z, InvLength), NonZero) };
         }
 
-        // Math::FloatToSNorm16 biases by half toward the sign of the unclamped value and truncates.
-        FORCEINLINE __m256i ToSNorm16(__m256 V)
-        {
-            const __m256 Bias = _mm256_blendv_ps(_mm256_set1_ps(-0.5f), _mm256_set1_ps(0.5f), _mm256_cmp_ps(V, _mm256_setzero_ps(), _CMP_GE_OQ));
-            return _mm256_cvttps_epi32(_mm256_add_ps(_mm256_mul_ps(Clamp(V, -1.0f, 1.0f), _mm256_set1_ps(32767.0f)), Bias));
-        }
-
         FORCEINLINE __m256i StrideIndices(int Stride)
         {
             return _mm256_mullo_epi32(_mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7), _mm256_set1_epi32(Stride));
@@ -125,29 +118,6 @@ namespace Lumina::VertexOps
         for (; i < Count; ++i)
         {
             Out[i] = UnpackNormal(Packed[i]);
-        }
-    }
-
-    void UnpackNormalsToSNorm16(const uint32* Packed, FSNorm16Normal* Out, size_t Count)
-    {
-        size_t i = 0;
-        for (; i + kWidth <= Count; i += kWidth)
-        {
-            const FUnitVectors N = DecodeNormals(Packed + i);
-            alignas(32) int32 X[kWidth], Y[kWidth], Z[kWidth];
-            _mm256_store_si256(reinterpret_cast<__m256i*>(X), ToSNorm16(N.X));
-            _mm256_store_si256(reinterpret_cast<__m256i*>(Y), ToSNorm16(N.Y));
-            _mm256_store_si256(reinterpret_cast<__m256i*>(Z), ToSNorm16(N.Z));
-            for (size_t Lane = 0; Lane < kWidth; ++Lane)
-            {
-                Out[i + Lane] = { (int16)X[Lane], (int16)Y[Lane], (int16)Z[Lane] };
-            }
-        }
-
-        for (; i < Count; ++i)
-        {
-            const FVector3 N = UnpackNormal(Packed[i]);
-            Out[i] = { Math::FloatToSNorm16(N.x), Math::FloatToSNorm16(N.y), Math::FloatToSNorm16(N.z) };
         }
     }
 

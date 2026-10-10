@@ -209,39 +209,74 @@ float3 SanitizeRadiance(float3 C)
 float3 FireflyTonemap(float3 C)   { return C / (1.0 + Luminance(C)); }
 float3 FireflyUntonemap(float3 C) { return C / max(1.0 - Luminance(C), 1e-4); }
 
+// Where a static meshlet's local vertex sits in the mesh's shared streams; mirrors Lumina::GetStaticVertexIndex.
+uint StaticVertexIndex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
+{
+    if (M.bShortVertexRefs)
+    {
+        const uint Word = Header.VertexRefs[M.VertexOffset + (VertexLocalIdx >> 1u)];
+        return M.BaseVertex + ((VertexLocalIdx & 1u) != 0u ? (Word >> 16u) : (Word & 0xFFFFu));
+    }
+    return M.BaseVertex + Header.VertexRefs[M.VertexOffset + VertexLocalIdx];
+}
+
+float3 LoadStaticPositionAt(FMeshletHeader* Header, uint VertexIndex)
+{
+    return DecodeMeshPosition(Header.PositionGrid, loadAligned<8>(Header.Positions + VertexIndex));
+}
+
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
-    return DecodeMeshletPosition(M, loadAligned<8>(Header.Positions + M.VertexOffset + VertexLocalIdx));
+    return LoadStaticPositionAt(Header, StaticVertexIndex(Header, M, VertexLocalIdx));
+}
+
+// An absent UV1 reads as UV0 and an absent color as white, which is what the importer would have written.
+void LoadOptionalStaticStreams(FMeshletHeader* Header, uint VertexIndex, inout FVertexData Data)
+{
+    const uint Flags = Header.VertexStreamFlags;
+    Data.UV1   = (Flags & MESH_VERTEX_STREAM_UV1) != 0u ? UnpackUV(Header.VertexUV1s[VertexIndex]) : Data.UV;
+    Data.Color = (Flags & MESH_VERTEX_STREAM_COLOR) != 0u ? UnpackColor(Header.VertexColors[VertexIndex]) : float4(1.0, 1.0, 1.0, 1.0);
 }
 
 // Field by field through the pointer, so whatever a pass leaves unused is never fetched at all.
 FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
-    FMeshletVertex* V = reinterpret<FMeshletVertex*>(Header.Vertices) + (M.VertexOffset + VertexLocalIdx);
+    const uint             VertexIndex = StaticVertexIndex(Header, M, VertexLocalIdx);
+    FMeshVertexAttributes* V           = reinterpret<FMeshVertexAttributes*>(Header.Vertices) + VertexIndex;
 
     FVertexData Data;
-    Data.Position = LoadStaticPosition(Header, M, VertexLocalIdx);
-    Data.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
+    Data.Position = LoadStaticPositionAt(Header, VertexIndex);
+    Data.Normal   = UnpackNormal(V.Normal);
     Data.Tangent  = UnpackTangent(V.Tangent);
     Data.UV       = UnpackUV(V.UV);
-    Data.UV1      = UnpackUV(V.UV1);
-    Data.Color    = UnpackColor(V.Color);
+    LoadOptionalStaticStreams(Header, VertexIndex, Data);
     return Data;
 }
 
-// One load of the whole vertex, for a pass that consumes every attribute and would otherwise issue many narrow ones.
+// One load of the attributes, for a pass that consumes every one and would otherwise issue many narrow loads.
 FVertexData LoadStaticVertexWhole(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
-    const FMeshletVertex V = reinterpret<FMeshletVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
+    const uint                  VertexIndex = StaticVertexIndex(Header, M, VertexLocalIdx);
+    const FMeshVertexAttributes V           = reinterpret<FMeshVertexAttributes*>(Header.Vertices)[VertexIndex];
 
     FVertexData Data;
-    Data.Position = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
-    Data.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
+    Data.Position = LoadStaticPositionAt(Header, VertexIndex);
+    Data.Normal   = UnpackNormal(V.Normal);
     Data.Tangent  = UnpackTangent(V.Tangent);
     Data.UV       = UnpackUV(V.UV);
-    Data.UV1      = UnpackUV(V.UV1);
-    Data.Color    = UnpackColor(V.Color);
+    LoadOptionalStaticStreams(Header, VertexIndex, Data);
     return Data;
+}
+
+// Bind-pose position for a mesh that may be skinned, whose vertices are copied per meshlet instead of shared.
+float3 LoadBindPosePosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
+{
+    if (Header.BonePaletteCount != 0u)
+    {
+        FMeshletSkinnedVertex* V = reinterpret<FMeshletSkinnedVertex*>(Header.Vertices) + (M.VertexOffset + VertexLocalIdx);
+        return DecodeMeshPosition(Header.PositionGrid, V.Position);
+    }
+    return LoadStaticPosition(Header, M, VertexLocalIdx);
 }
 
 FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
@@ -345,9 +380,8 @@ FSkinSource LoadSkinSource(FMeshletHeader* Header, FMeshlet M, uint VertexLocalI
 
     FSkinSource S;
 
-    // The source is quantized in its meshlet anchor box, the blended output is not.
-    S.Position = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
-    S.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
+    S.Position = DecodeMeshPosition(Header.PositionGrid, V.Position);
+    S.Normal   = UnpackNormal(V.Normal);
     S.Tangent  = UnpackTangent(V.Tangent);
     S.Slots    = UnpackUIntToUVec4(V.JointIndices);
     S.Weights  = unpack_u8u32(V.JointWeights) / float4(255.0);

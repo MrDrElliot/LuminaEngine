@@ -508,8 +508,7 @@ namespace Lumina
             const FMeshletData&  Md  = Res.MeshletData;
             if (Md.IsEmpty() || Res.bSkinnedMesh) return;
 
-            const TVector<FMeshletVertex>& MV = Md.MeshletVertices;
-            const TVector<uint32>&         MT = Md.MeshletTriangles;
+            const TVector<uint32>& MT = Md.MeshletTriangles;
 
             for (const FGeometrySurface& Surface : Res.GeometrySurfaces)
             {
@@ -528,10 +527,9 @@ namespace Lumina
                     const FMeshlet& Meshlet = Md.Meshlets[First + m];
 
                     FVector3 LocalVerts[MESHLET_MAX_VERTICES];
-                    const uint32 V0 = Meshlet.VertexOffset;
                     for (uint32 v = 0; v < Meshlet.VertexCount; ++v)
                     {
-                        const FVector3 Local = DecodeMeshletPosition(Meshlet, MV[V0 + v]);
+                        const FVector3 Local = GetMeshletVertexPosition(Md, Meshlet, v, false);
                         LocalVerts[v] = FVector3(W * FVector4(Local, 1.0f));
                     }
 
@@ -941,7 +939,7 @@ namespace Lumina
                 Child.Mesh = Mesh;
                 Child.bCoarsestLOD = true;
                 const FMeshletData& MeshletData = Mesh->GetMeshResource().MeshletData;
-                Template.ContentId = MakeContentId(Mesh, MeshletData.MeshletVertices.size(), MeshletData.MeshletTriangles.size());
+                Template.ContentId = MakeContentId(Mesh, MeshletData.VertexPositions.size(), MeshletData.MeshletTriangles.size());
                 Template.LocalMin = Mesh->GetAABB().Min;
                 Template.LocalMax = Mesh->GetAABB().Max;
             }
@@ -1201,7 +1199,7 @@ namespace Lumina
                 Entry.Prim.World = ColliderToWorld(MeshView.Get<STransformComponent>(E), MC.TranslationOffset, MC.RotationOffset);
                 Entry.Prim.Mesh = Mesh;
                 const FMeshletData& MeshletData = Mesh->GetMeshResource().MeshletData;
-                Entry.ContentId = MakeContentId(Mesh, MeshletData.MeshletVertices.size(), MeshletData.MeshletTriangles.size());
+                Entry.ContentId = MakeContentId(Mesh, MeshletData.VertexPositions.size(), MeshletData.MeshletTriangles.size());
                 const FAABB& Local = Mesh->GetAABB();
                 const FVector3 Corners[8] = {
                     {Local.Min.x, Local.Min.y, Local.Min.z}, {Local.Max.x, Local.Min.y, Local.Min.z},

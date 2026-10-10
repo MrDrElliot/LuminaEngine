@@ -103,7 +103,7 @@ namespace Lumina
                 const float meshletSizeKB    = (Resource.MeshletData.Meshlets.size() * sizeof(FMeshlet)
                                               + Resource.MeshletData.MeshletSpheres.size() * sizeof(FMeshletSphere)
                                               + Resource.MeshletData.MeshletCones.size() * sizeof(FMeshletCone)
-                                              + Resource.MeshletData.MeshletVertices.size() * sizeof(uint32)
+                                              + Resource.MeshletData.MeshletVertexRefs.size() * sizeof(uint32)
                                               + Resource.MeshletData.MeshletTriangles.size() * sizeof(uint32)) / 1024.0f;
                 const float totalSizeKB      = vertexSizeKB + meshletSizeKB;
 

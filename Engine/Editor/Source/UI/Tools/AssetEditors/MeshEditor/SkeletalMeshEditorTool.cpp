@@ -233,7 +233,7 @@ namespace Lumina
                 ++SelectedBoneTotalPoints;
                 if (SelectedBonePoints.size() < kMaxInfluencePoints)
                 {
-                    SelectedBonePoints.push_back(DecodeMeshletPosition(Meshlet, V));
+                    SelectedBonePoints.push_back(DecodeMeshPosition(MD.PositionGrid, V.Position));
                 }
                 return;
             }

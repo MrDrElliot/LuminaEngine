@@ -26,12 +26,22 @@
 // Y-fold axis, far below the 65535 Vulkan guarantees because the fold rounds group counts up to a multiple of it.
 #define MAX_DISPATCH_AXIS               1024
 
-// DXR2 COMPRESSED1 positions; Anchor + Offset stays below 2^24 so the decode is bit-identical, which early-Z relies on.
-#define MESHLET_POSITION_MAX            65535
-#define MESHLET_ANCHOR_MAX              8388607
-#define MESHLET_ANCHOR_MASK             0x00FFFFFFu
-#define MESHLET_ANCHOR_SIGN             0x00800000u
-#define MESHLET_EXPONENT_SHIFT          24u
+// One grid per mesh, 21 bits per axis in two words; anchor plus offset stays below 2^24 so the decode is exact, which early-Z relies on.
+#define MESH_POSITION_BITS              21
+#define MESH_POSITION_MAX               0x1FFFFFu
+
+// FMeshlet's last word, low bit first, is its vertex count, triangle count, LOD and whether its refs are 16-bit.
+#define MESHLET_COUNT_BITS              7
+#define MESHLET_COUNT_MASK              0x7Fu
+#define MESHLET_TRIANGLE_COUNT_SHIFT    7u
+#define MESHLET_LOD_BITS                3
+#define MESHLET_LOD_MASK                0x7u
+#define MESHLET_LOD_SHIFT               14u
+#define MESHLET_SHORT_REFS_SHIFT        17u
+
+// Which optional per-vertex streams a static mesh carries; an absent UV1 reads as UV0 and an absent color as white.
+#define MESH_VERTEX_STREAM_UV1          1u
+#define MESH_VERTEX_STREAM_COLOR        2u
 
 // meshoptimizer's 8-bit SNORM cone, axis in bytes 0..2 and cutoff in byte 3, each decoded as x / 127.
 #define MESHLET_CONE_SNORM_SCALE        127

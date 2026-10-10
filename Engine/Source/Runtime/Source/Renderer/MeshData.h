@@ -16,36 +16,46 @@
 
 namespace Lumina
 {
+    namespace MeshGeometryStats
+    {
+        RUNTIME_API void Add(int64 BlockBytes, int64 VertexBytes);
+        RUNTIME_API void Log(const char* Context);
+    }
+
     constexpr uint32 MAX_MESH_LODS         = MESHLET_MAX_LODS;
 
     struct FMeshlet
     {
+        // A static meshlet's first word in MeshletVertexRefs, or a skinned meshlet's first vertex copy.
         uint32 VertexOffset;
         uint32 TriangleOffset;
-        uint32 VertexCount;
-        uint32 TriangleCount;
-        uint32 LODIndex;
+        // Static meshlets add this to every vertex ref; skinned meshlets leave it 0.
+        uint32 BaseVertex;
 
-        uint32 PackedAnchorX;
-        uint32 PackedAnchorY;
-        uint32 PackedAnchorZ;
+        // Allocated low bit first, which is the order Common.slang unpacks with the MESHLET_* shifts.
+        uint32 VertexCount      : MESHLET_COUNT_BITS;
+        uint32 TriangleCount    : MESHLET_COUNT_BITS;
+        uint32 LODIndex         : MESHLET_LOD_BITS;
+        uint32 bShortVertexRefs : 1;
+        uint32 _Pad0            : 32 - 2 * MESHLET_COUNT_BITS - MESHLET_LOD_BITS - 1;
+
+        FORCEINLINE bool HasShortVertexRefs() const { return bShortVertexRefs != 0u; }
 
         friend FArchive& operator<<(FArchive& Ar, FMeshlet& Data)
         {
-            Ar << Data.VertexOffset;
-            Ar << Data.TriangleOffset;
-            Ar << Data.VertexCount;
-            Ar << Data.TriangleCount;
-            Ar << Data.LODIndex;
-            Ar << Data.PackedAnchorX;
-            Ar << Data.PackedAnchorY;
-            Ar << Data.PackedAnchorZ;
+            uint32 Words[4];
+            memcpy(Words, &Data, sizeof(Words));
+            for (uint32& Word : Words)
+            {
+                Ar << Word;
+            }
+            memcpy(&Data, Words, sizeof(Words));
             return Ar;
         }
     };
-    static_assert(sizeof(FMeshlet) == 32, "FMeshlet must stay 32B to match the GPU mirror (Common.slang)");
-    // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
-    static_assert(sizeof(FMeshlet) % 16 == 0, "FMeshlet stride must stay 16-byte aligned for loadAligned<16>");
+    static_assert(sizeof(FMeshlet) == 16, "FMeshlet must stay 16B to match the GPU mirror (Common.slang)");
+    static_assert(MESHLET_MAX_VERTICES <= MESHLET_COUNT_MASK && MESHLET_MAX_TRIANGLES <= MESHLET_COUNT_MASK, "Meshlet counts must fit MESHLET_COUNT_BITS");
+    static_assert(MESHLET_MAX_LODS - 1 <= MESHLET_LOD_MASK, "LOD indices must fit MESHLET_LOD_BITS");
 
 
     // The cull's per-meshlet read, and the only one it always makes. Kept apart from the cone because
@@ -167,10 +177,89 @@ namespace Lumina
     };
     static_assert(sizeof(FMeshletBonePalette) == 8, "FMeshletBonePalette must match the GPU mirror (Common.slang)");
 
+    // One power-of-two grid for every vertex of a static mesh, so a vertex shared by meshlets decodes to identical bits.
+    struct FMeshPositionGrid
+    {
+        int32 AnchorX  = 0;
+        int32 AnchorY  = 0;
+        int32 AnchorZ  = 0;
+        int32 Exponent = 0;
+
+        friend FArchive& operator<<(FArchive& Ar, FMeshPositionGrid& Data)
+        {
+            Ar << Data.AnchorX;
+            Ar << Data.AnchorY;
+            Ar << Data.AnchorZ;
+            Ar << Data.Exponent;
+            return Ar;
+        }
+    };
+
+    // The pre-MESHLET_SHARED_VERTICES meshlet, whose last three words held its quantization anchor.
+    struct FLegacyMeshlet
+    {
+        uint32 VertexOffset;
+        uint32 TriangleOffset;
+        uint32 VertexCount;
+        uint32 TriangleCount;
+        uint32 LODIndex;
+        uint32 PackedAnchorX;
+        uint32 PackedAnchorY;
+        uint32 PackedAnchorZ;
+    };
+    static_assert(sizeof(FLegacyMeshlet) == 32);
+    static_assert(TCanBulkSerialize<FLegacyMeshlet>::value);
+
+    // The pre-MESHLET_SHARED_VERTICES static vertex, copied into every meshlet that used it.
+    struct FLegacyMeshletVertex
+    {
+        uint16 PositionX;
+        uint16 PositionY;
+        uint16 PositionZ;
+        int16  NormalX;
+        int16  NormalY;
+        int16  NormalZ;
+        uint32 Tangent;
+        uint32 UV;
+        uint32 UV1;
+        uint32 Color;
+    };
+    static_assert(sizeof(FLegacyMeshletVertex) == 28);
+    static_assert(TCanBulkSerialize<FLegacyMeshletVertex>::value);
+
+    // The pre-MESHLET_SHARED_VERTICES skinned vertex, positioned against its meshlet's anchor.
+    struct FLegacyMeshletSkinnedVertex
+    {
+        FLegacyMeshletVertex Base;
+        uint32               JointIndices;
+        uint32               JointWeights;
+    };
+    static_assert(sizeof(FLegacyMeshletSkinnedVertex) == 36);
+    static_assert(TCanBulkSerialize<FLegacyMeshletSkinnedVertex>::value);
+
+    struct FMeshletData;
+
+    // Rebuilds old meshlets and their per-meshlet vertex copies in the current format, so an old package needs no reimport.
+    RUNTIME_API void ConvertLegacyMeshletData(FMeshletData& Data, const TVector<FLegacyMeshlet>& Meshlets,
+                                              const TVector<FLegacyMeshletVertex>& StaticVertices,
+                                              const TVector<FLegacyMeshletSkinnedVertex>& SkinnedVertices);
+
     struct FMeshletData
     {
         TVector<FMeshlet>              Meshlets;
-        TVector<FMeshletVertex>        MeshletVertices;
+
+        // Both kinds of mesh decode positions against this one grid.
+        FMeshPositionGrid              PositionGrid;
+
+        // Static meshes store each vertex once, and a meshlet reaches its vertices through MeshletVertexRefs.
+        TVector<FMeshVertexPosition>   VertexPositions;
+        TVector<FMeshVertexAttributes> VertexAttributes;
+        // Empty unless the source carried a second UV set distinct from the first.
+        TVector<uint32>                VertexUV1s;
+        // Empty unless the source carried a color other than white.
+        TVector<uint32>                VertexColors;
+        TVector<uint32>                MeshletVertexRefs;
+
         TVector<FMeshletSkinnedVertex> MeshletSkinnedVertices;
         TVector<uint32>                MeshletTriangles;
         TVector<FMeshletSphere>        MeshletSpheres;
@@ -185,7 +274,12 @@ namespace Lumina
         FORCEINLINE void Clear()
         {
             Meshlets.clear();
-            MeshletVertices.clear();
+            VertexPositions.clear();
+            VertexAttributes.clear();
+            VertexUV1s.clear();
+            VertexColors.clear();
+            MeshletVertexRefs.clear();
+            PositionGrid = {};
             MeshletSkinnedVertices.clear();
             MeshletTriangles.clear();
             MeshletSpheres.clear();
@@ -198,7 +292,12 @@ namespace Lumina
         {
             auto Drop = [](auto& V) { V.clear(); V.shrink_to_fit(); };
             Drop(Meshlets);
-            Drop(MeshletVertices);
+            Drop(VertexPositions);
+            Drop(VertexAttributes);
+            Drop(VertexUV1s);
+            Drop(VertexColors);
+            Drop(MeshletVertexRefs);
+            PositionGrid = {};
             Drop(MeshletSkinnedVertices);
             Drop(MeshletTriangles);
             Drop(MeshletSpheres);
@@ -209,9 +308,31 @@ namespace Lumina
 
         friend FArchive& operator<<(FArchive& Ar, FMeshletData& Data)
         {
-            Ar << Data.Meshlets;
-            Ar << Data.MeshletVertices;
-            Ar << Data.MeshletSkinnedVertices;
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESHLET_SHARED_VERTICES)
+            {
+                Ar << Data.Meshlets;
+                Ar << Data.VertexPositions;
+                Ar << Data.VertexAttributes;
+                Ar << Data.VertexUV1s;
+                Ar << Data.VertexColors;
+                Ar << Data.MeshletVertexRefs;
+                Ar << Data.PositionGrid;
+                Ar << Data.MeshletSkinnedVertices;
+            }
+            else
+            {
+                TVector<FLegacyMeshlet>              LegacyMeshlets;
+                TVector<FLegacyMeshletVertex>        LegacyStatic;
+                TVector<FLegacyMeshletSkinnedVertex> LegacySkinned;
+                Ar << LegacyMeshlets;
+                Ar << LegacyStatic;
+                Ar << LegacySkinned;
+                if (!Ar.HasError())
+                {
+                    ConvertLegacyMeshletData(Data, LegacyMeshlets, LegacyStatic, LegacySkinned);
+                }
+            }
+
             Ar << Data.MeshletTriangles;
             Ar << Data.MeshletSpheres;
 
@@ -313,15 +434,21 @@ namespace Lumina
         // how "carries no palette" is spelled now that the slab aims the bone pointers at the null page.
         uint32 BonePaletteCount;
 
-        uint32 _LocalBoundsPad1;
+        // MESH_VERTEX_STREAM_* bits for the optional static streams below.
+        uint32 VertexStreamFlags;
 
-        // Each vertex's quantized position alone, 8 bytes, so a position-only pass fetches a quarter of the bytes.
+        // A static mesh's FMeshVertexPosition per vertex, so a position-only pass fetches 8 bytes.
         uint64 PositionsAddress;                    // uint2*
+        uint64 VertexRefsAddress;                   // uint32*
+        uint64 VertexUV1sAddress;                   // uint32*
+        uint64 VertexColorsAddress;                 // uint32*
 
-        // Slang adds no tail padding of its own, so FMeshletHeader restates this.
-        uint64 _PositionsPad;
+        int32  PositionGridAnchorX;
+        int32  PositionGridAnchorY;
+        int32  PositionGridAnchorZ;
+        int32  PositionGridExponent;
     };
-    static_assert(sizeof(FMeshletHeaderGPU) == 144, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+    static_assert(sizeof(FMeshletHeaderGPU) == 176, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 
     namespace MeshletHeaderSlab
     {
@@ -379,13 +506,7 @@ namespace Lumina
     {
         struct FMeshBuffers
         {
-            /** The one allocation the five streams below live in, and the only one that is freed.
-             *
-             *  They are built together, retired together, and reached only by device address, so five
-             *  separate allocations bought nothing but five VkBuffers, five inserts into the RHI's
-             *  sorted allocation ledger (an O(n) memmove each, under a global lock) and five lots of
-             *  size rounding -- per mesh. A scene made of dynamic-mesh chunks pays that per chunk,
-             *  every rebuild. The five addresses are now offsets into this block. */
+            // Every stream below is an offset into this one allocation, which is the only thing freed.
             RHI::FGPUAllocation GeometryBlock = {};
 
             RHI::GPUPtr MeshletBuffer         = 0;
@@ -393,11 +514,15 @@ namespace Lumina
             RHI::GPUPtr MeshletConeBuffer     = 0;
             RHI::GPUPtr MeshletVertexBuffer   = 0;
             RHI::GPUPtr MeshletPositionBuffer = 0;
+            RHI::GPUPtr MeshletVertexRefBuffer = 0;
+            RHI::GPUPtr VertexUV1Buffer       = 0;
+            RHI::GPUPtr VertexColorBuffer     = 0;
             RHI::GPUPtr MeshletTriangleBuffer = 0;
             RHI::GPUPtr MeshletBonePaletteBuffer = 0;
             RHI::GPUPtr MeshletBoneIndexBuffer   = 0;
             uint32      MeshletHeaderSlot     = 0;
             uint32      MeshletCount          = 0;
+            uint64      VertexStreamBytes     = 0;
 
             RHI::FManagedTexture DistanceFieldTexture;
 
@@ -424,26 +549,28 @@ namespace Lumina
                 RHI::Textures::Release(DistanceFieldTexture);
             }
 
-            /** Retire the five geometry buffers, keeping the header SLOT: it is the mesh's identity for as
-             *  long as the mesh lives, and a rebuild republishes into the same slot. The slot is reset to
-             *  the null header first, so the window between retiring this geometry and publishing the
-             *  replacement describes no geometry rather than the buffers just retired. */
+            // Keeps the header slot, the mesh's identity, after pointing it at the null header so nothing records the retired geometry.
             void ReleaseGeometryBuffers()
             {
                 MeshletHeaderSlab::Reset(MeshletHeaderSlot);
 
-                // Only the block is owned; the five below are interior addresses into it. Retiring one
-                // of those would miss the allocation ledger's exact-address lookup and leak the block.
-
                 // Not Retire, whose fence cannot see a scene still about to record the old header.
+                if (GeometryBlock.Gpu != 0)
+                {
+                    MeshGeometryStats::Add(-(int64)GeometryBlock.Size, -(int64)VertexStreamBytes);
+                }
                 RHI::RetireAfterExtract(GeometryBlock);
 
                 GeometryBlock         = {};
+                VertexStreamBytes     = 0;
                 MeshletBuffer         = 0;
                 MeshletSphereBuffer   = 0;
                 MeshletConeBuffer     = 0;
                 MeshletVertexBuffer   = 0;
                 MeshletPositionBuffer = 0;
+                MeshletVertexRefBuffer = 0;
+                VertexUV1Buffer       = 0;
+                VertexColorBuffer     = 0;
                 MeshletTriangleBuffer = 0;
                 MeshletBonePaletteBuffer = 0;
                 MeshletBoneIndexBuffer   = 0;
@@ -471,11 +598,15 @@ namespace Lumina
                 MeshletConeBuffer     = Other.MeshletConeBuffer;
                 MeshletVertexBuffer   = Other.MeshletVertexBuffer;
                 MeshletPositionBuffer = Other.MeshletPositionBuffer;
+                MeshletVertexRefBuffer = Other.MeshletVertexRefBuffer;
+                VertexUV1Buffer       = Other.VertexUV1Buffer;
+                VertexColorBuffer     = Other.VertexColorBuffer;
                 MeshletTriangleBuffer = Other.MeshletTriangleBuffer;
                 MeshletBonePaletteBuffer = Other.MeshletBonePaletteBuffer;
                 MeshletBoneIndexBuffer   = Other.MeshletBoneIndexBuffer;
                 MeshletHeaderSlot     = Other.MeshletHeaderSlot;
                 MeshletCount          = Other.MeshletCount;
+                VertexStreamBytes     = Other.VertexStreamBytes;
                 DistanceFieldTexture  = Other.DistanceFieldTexture;
 
                 Other.GeometryBlock         = {};
@@ -484,11 +615,15 @@ namespace Lumina
                 Other.MeshletConeBuffer     = 0;
                 Other.MeshletVertexBuffer   = 0;
                 Other.MeshletPositionBuffer = 0;
+                Other.MeshletVertexRefBuffer = 0;
+                Other.VertexUV1Buffer       = 0;
+                Other.VertexColorBuffer     = 0;
                 Other.MeshletTriangleBuffer = 0;
                 Other.MeshletBonePaletteBuffer = 0;
                 Other.MeshletBoneIndexBuffer   = 0;
                 Other.MeshletHeaderSlot     = 0;
                 Other.MeshletCount          = 0;
+                Other.VertexStreamBytes     = 0;
                 Other.DistanceFieldTexture  = RHI::FManagedTexture{};
             }
         };
@@ -668,8 +803,18 @@ namespace Lumina
         {
             const FMeshletData& M = MeshletData;
             const uint64 NumMeshlets  = M.Meshlets.size();
-            const uint64 NumVertices  = bSkinnedMesh ? M.MeshletSkinnedVertices.size() : M.MeshletVertices.size();
+            const uint64 NumVertices  = bSkinnedMesh ? M.MeshletSkinnedVertices.size() : M.VertexPositions.size();
             const uint64 NumTriangles = M.MeshletTriangles.size();
+
+            if (!bSkinnedMesh)
+            {
+                const bool bUV1sFit    = M.VertexUV1s.empty()   || M.VertexUV1s.size()   == NumVertices;
+                const bool bColorsFit  = M.VertexColors.empty() || M.VertexColors.size() == NumVertices;
+                if (M.VertexAttributes.size() != NumVertices || !bUV1sFit || !bColorsFit)
+                {
+                    return false;
+                }
+            }
 
             for (const FGeometrySurface& Surface : GeometrySurfaces)
             {
@@ -688,10 +833,34 @@ namespace Lumina
 
             for (const FMeshlet& Meshlet : M.Meshlets)
             {
-                if ((uint64)Meshlet.VertexOffset + Meshlet.VertexCount > NumVertices
-                    || (uint64)Meshlet.TriangleOffset + Meshlet.TriangleCount > NumTriangles)
+                if ((uint64)Meshlet.TriangleOffset + Meshlet.TriangleCount > NumTriangles || Meshlet.VertexCount > MESHLET_MAX_VERTICES)
                 {
                     return false;
+                }
+                if (bSkinnedMesh)
+                {
+                    if ((uint64)Meshlet.VertexOffset + Meshlet.VertexCount > NumVertices)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    const bool   bShort    = Meshlet.HasShortVertexRefs();
+                    const uint64 RefWords  = bShort ? (Meshlet.VertexCount + 1u) / 2u : Meshlet.VertexCount;
+                    if ((uint64)Meshlet.VertexOffset + RefWords > M.MeshletVertexRefs.size())
+                    {
+                        return false;
+                    }
+                    for (uint32 Local = 0; Local < Meshlet.VertexCount; ++Local)
+                    {
+                        const uint32 Word   = M.MeshletVertexRefs[Meshlet.VertexOffset + (bShort ? Local / 2u : Local)];
+                        const uint32 Offset = bShort ? ((Local & 1u) ? (Word >> 16) : (Word & 0xFFFFu)) : Word;
+                        if ((uint64)Meshlet.BaseVertex + Offset >= NumVertices)
+                        {
+                            return false;
+                        }
+                    }
                 }
                 for (uint32 Triangle = 0; Triangle < Meshlet.TriangleCount; ++Triangle)
                 {

@@ -173,7 +173,11 @@ namespace Lumina
             Bytes += MR.GeometrySurfaces.capacity() * sizeof(FGeometrySurface);
 
             Bytes += MR.MeshletData.Meshlets.capacity()              * sizeof(FMeshlet);
-            Bytes += MR.MeshletData.MeshletVertices.capacity()       * sizeof(FMeshletVertex);
+            Bytes += MR.MeshletData.VertexPositions.capacity()       * sizeof(FMeshVertexPosition);
+            Bytes += MR.MeshletData.VertexAttributes.capacity()      * sizeof(FMeshVertexAttributes);
+            Bytes += MR.MeshletData.VertexUV1s.capacity()            * sizeof(uint32);
+            Bytes += MR.MeshletData.VertexColors.capacity()          * sizeof(uint32);
+            Bytes += MR.MeshletData.MeshletVertexRefs.capacity()     * sizeof(uint32);
             Bytes += MR.MeshletData.MeshletSkinnedVertices.capacity()* sizeof(FMeshletSkinnedVertex);
             Bytes += MR.MeshletData.MeshletTriangles.capacity()      * sizeof(uint32);
             Bytes += MR.MeshletData.MeshletSpheres.capacity()        * sizeof(FMeshletSphere);

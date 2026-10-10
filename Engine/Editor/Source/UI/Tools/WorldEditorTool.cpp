@@ -266,8 +266,7 @@ namespace Lumina
         {
             return;
         }
-        const TVector<FMeshletVertex>& Verts = MeshletData.MeshletVertices;
-        const TVector<FMeshlet>& Meshlets    = MeshletData.Meshlets;
+        const TVector<FMeshlet>& Meshlets = MeshletData.Meshlets;
 
         Mesh.ForEachSurface([&](const FGeometrySurface& Surface, uint32)
         {
@@ -282,7 +281,7 @@ namespace Lumina
                 const FMeshlet& M = Meshlets[Offset + i];
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    Visit(DecodeMeshletPosition(M, Verts[M.VertexOffset + v]));
+                    Visit(GetMeshletVertexPosition(MeshletData, M, v, false));
                 }
             }
         });

@@ -7,6 +7,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Math/Packing.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/MeshQuantization.h"
 #include "Renderer/Vertex.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -72,21 +73,16 @@ namespace Lumina
         const FMeshletData& MeshletData = Resource.MeshletData;
         const bool bSkinned = Resource.IsSkinnedMesh();
 
-        // Exactly one vertex stream is populated; both start with FMeshletVertex, so the UV read is common.
-        const FMeshletVertex* Vertices = bSkinned
-            ? static_cast<const FMeshletVertex*>(MeshletData.MeshletSkinnedVertices.data())
-            : MeshletData.MeshletVertices.data();
-        const size_t VertexStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
-        const size_t NumVertices = bSkinned ? MeshletData.MeshletSkinnedVertices.size() : MeshletData.MeshletVertices.size();
-
-        if (Vertices == nullptr || NumVertices == 0)
+        const size_t NumVertices = bSkinned ? MeshletData.MeshletSkinnedVertices.size() : MeshletData.VertexAttributes.size();
+        if (NumVertices == 0)
         {
             return;
         }
 
-        auto VertexAt = [Vertices, VertexStride](size_t Index) -> const FMeshletVertex&
+        auto UVAt = [&](const FMeshlet& Meshlet, uint32 Local) -> uint32
         {
-            return *reinterpret_cast<const FMeshletVertex*>(reinterpret_cast<const uint8*>(Vertices) + Index * VertexStride);
+            return bSkinned ? MeshletData.MeshletSkinnedVertices[Meshlet.VertexOffset + Local].UV
+                            : MeshletData.VertexAttributes[GetStaticVertexIndex(MeshletData, Meshlet, Local)].UV;
         };
 
         // Keying on the PACKED uv pair makes the match exact and collapses meshlet-split duplicates.
@@ -151,17 +147,14 @@ namespace Lumina
                         (Packed >> 16) & 0xFFu,
                     };
 
-                    const size_t V0 = Meshlet.VertexOffset + Local[0];
-                    const size_t V1 = Meshlet.VertexOffset + Local[1];
-                    const size_t V2 = Meshlet.VertexOffset + Local[2];
-                    if (V0 >= NumVertices || V1 >= NumVertices || V2 >= NumVertices)
+                    if (Local[0] >= Meshlet.VertexCount || Local[1] >= Meshlet.VertexCount || Local[2] >= Meshlet.VertexCount)
                     {
                         continue;
                     }
 
-                    const uint32 Packed0 = VertexAt(V0).UV;
-                    const uint32 Packed1 = VertexAt(V1).UV;
-                    const uint32 Packed2 = VertexAt(V2).UV;
+                    const uint32 Packed0 = UVAt(Meshlet, Local[0]);
+                    const uint32 Packed1 = UVAt(Meshlet, Local[1]);
+                    const uint32 Packed2 = UVAt(Meshlet, Local[2]);
 
                     const ImVec2 UV0 = UnpackUV(Packed0);
                     const ImVec2 UV1 = UnpackUV(Packed1);
@@ -400,7 +393,7 @@ namespace Lumina
         const uint32 MeshletCount = (uint32)Resource.MeshletData.Meshlets.size();
         const uint32 VertexCount  = (uint32)(bSkinned
             ? Resource.MeshletData.MeshletSkinnedVertices.size()
-            : Resource.MeshletData.MeshletVertices.size());
+            : Resource.MeshletData.VertexAttributes.size());
 
         if (MeshletCount == 0 || VertexCount == 0)
         {

@@ -346,17 +346,11 @@ namespace Lumina::DistanceField
             const FMeshletData& MD = Resource.MeshletData;
             const bool bSkinned    = Resource.bSkinnedMesh;
 
-            const size_t VertexCount = bSkinned ? MD.MeshletSkinnedVertices.size() : MD.MeshletVertices.size();
+            const size_t VertexCount = bSkinned ? MD.MeshletSkinnedVertices.size() : MD.VertexPositions.size();
             if (MD.Meshlets.empty() || VertexCount == 0)
             {
                 return;
             }
-
-            auto ReadPosition = [&](const FMeshlet& M, uint32 Index) -> FVector3
-            {
-                return bSkinned ? DecodeMeshletPosition(M, MD.MeshletSkinnedVertices[Index])
-                                : DecodeMeshletPosition(M, MD.MeshletVertices[Index]);
-            };
 
             for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
             {
@@ -386,18 +380,18 @@ namespace Lumina::DistanceField
                         }
 
                         const uint32 Packed = MD.MeshletTriangles[DwordIndex];
-                        const uint32 I0 = Meshlet.VertexOffset + (Packed & 0xFFu);
-                        const uint32 I1 = Meshlet.VertexOffset + ((Packed >> 8) & 0xFFu);
-                        const uint32 I2 = Meshlet.VertexOffset + ((Packed >> 16) & 0xFFu);
+                        const uint32 L0 = Packed & 0xFFu;
+                        const uint32 L1 = (Packed >> 8) & 0xFFu;
+                        const uint32 L2 = (Packed >> 16) & 0xFFu;
 
-                        if (I0 >= VertexCount || I1 >= VertexCount || I2 >= VertexCount)
+                        if (L0 >= Meshlet.VertexCount || L1 >= Meshlet.VertexCount || L2 >= Meshlet.VertexCount)
                         {
                             continue;
                         }
 
-                        Out.push_back(FTriangle{ ReadPosition(Meshlet, I0),
-                                                 ReadPosition(Meshlet, I1),
-                                                 ReadPosition(Meshlet, I2) });
+                        Out.push_back(FTriangle{ GetMeshletVertexPosition(MD, Meshlet, L0, bSkinned),
+                                                 GetMeshletVertexPosition(MD, Meshlet, L1, bSkinned),
+                                                 GetMeshletVertexPosition(MD, Meshlet, L2, bSkinned) });
                     }
                 }
             }

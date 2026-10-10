@@ -314,11 +314,10 @@ namespace Lumina
 
                     for (uint32 v = 0; v < M.VertexCount; ++v)
                     {
-                        const FMeshletVertex& Vertex = MD.MeshletVertices[M.VertexOffset + v];
-                        OutPositions.push_back(DecodeMeshletPosition(M, Vertex));
+                        OutPositions.push_back(GetMeshletVertexPosition(MD, M, v, false));
                         if (OutColors != nullptr)
                         {
-                            OutColors->push_back(Vertex.Color);
+                            OutColors->push_back(MD.VertexColors.empty() ? 0xFFFFFFFFu : MD.VertexColors[GetStaticVertexIndex(MD, M, v)]);
                         }
                     }
 

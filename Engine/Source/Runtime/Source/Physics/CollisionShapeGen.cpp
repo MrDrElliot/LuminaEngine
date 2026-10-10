@@ -27,7 +27,7 @@ namespace Lumina::Physics::CollisionGen
 
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    OutPositions.push_back(DecodeMeshletPosition(M, MD.MeshletVertices[M.VertexOffset + v]));
+                    OutPositions.push_back(GetMeshletVertexPosition(MD, M, v, false));
                 }
 
                 for (uint32 t = 0; t < M.TriangleCount; ++t)

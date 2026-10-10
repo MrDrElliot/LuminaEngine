@@ -69,51 +69,26 @@ enum EInstanceFlags
     HasDistanceField = BIT(14),
 }
 
-// Mirror of Lumina::FMeshletVertex. Decode positions only through DecodeMeshletPosition.
-struct FMeshletVertex
+// Mirror of Lumina::FMeshVertexAttributes, a static vertex minus its position.
+struct FMeshVertexAttributes
 {
-    uint16_t PositionX;
-    uint16_t PositionY;
-    uint16_t PositionZ;
-    int16_t  NormalX;
-    int16_t  NormalY;
-    int16_t  NormalZ;
-    uint     Tangent;
-    uint     UV;    // TEXCOORD_0
-    uint     UV1;   // TEXCOORD_1; mirrors UV for single-set sources
-    uint     Color;
+    uint Normal;    // PackNormal
+    uint Tangent;   // PackTangent
+    uint UV;        // TEXCOORD_0
 };
 
+// Mirror of Lumina::FMeshletSkinnedVertex.
 struct FMeshletSkinnedVertex
 {
-    uint16_t PositionX;
-    uint16_t PositionY;
-    uint16_t PositionZ;
-    int16_t  NormalX;
-    int16_t  NormalY;
-    int16_t  NormalZ;
-    uint     Tangent;
-    uint     UV;    // TEXCOORD_0
-    uint     UV1;   // TEXCOORD_1
-    uint     Color;
-    uint     JointIndices;
-    uint     JointWeights;
+    uint2 Position;   // on the mesh's PositionGrid
+    uint  Normal;     // PackNormal
+    uint  Tangent;    // PackTangent
+    uint  UV;         // TEXCOORD_0
+    uint  UV1;        // TEXCOORD_1
+    uint  Color;
+    uint  JointIndices;
+    uint  JointWeights;
 };
-
-float SNorm16ToFloat(int16_t V)
-{
-    return max((float)V * (1.0 / 32767.0), -1.0);
-}
-
-float3 UnpackNormalSNorm16(int16_t X, int16_t Y, int16_t Z)
-{
-    return float3(SNorm16ToFloat(X), SNorm16ToFloat(Y), SNorm16ToFloat(Z));
-}
-
-int16_t FloatToSNorm16(float V)
-{
-    return (int16_t)(clamp(V, -1.0, 1.0) * 32767.0 + (V >= 0.0 ? 0.5 : -0.5));
-}
 
 // Mirror of Lumina::FPreSkinnedVertex. Position stays fp32 because skinning breaks meshlet quantization.
 struct FPreSkinnedVertex
@@ -304,54 +279,29 @@ struct FMeshlet
 {
     uint VertexOffset;
     uint TriangleOffset;
-    uint VertexCount;
-    uint TriangleCount;
-    uint LODIndex;
+    uint BaseVertex;
+    uint PackedCounts;
 
-    // Bits 0..23 hold a signed 24-bit anchor, and PackedAnchorX's high byte is the signed shared exponent.
-    uint PackedAnchorX;
-    uint PackedAnchorY;
-    uint PackedAnchorZ;
+    property uint VertexCount      { get { return PackedCounts & MESHLET_COUNT_MASK; } }
+    property uint TriangleCount    { get { return (PackedCounts >> MESHLET_TRIANGLE_COUNT_SHIFT) & MESHLET_COUNT_MASK; } }
+    property uint LODIndex         { get { return (PackedCounts >> MESHLET_LOD_SHIFT) & MESHLET_LOD_MASK; } }
+    property bool bShortVertexRefs { get { return ((PackedCounts >> MESHLET_SHORT_REFS_SHIFT) & 1u) != 0u; } }
 };
 
-// Twin of the decode in MeshData.h, where a one-ULP disagreement breaks early-Z and barycentrics.
-
-int UnpackMeshletAnchor(uint Packed)
-{
-    uint Field = Packed & MESHLET_ANCHOR_MASK;
-    return int(Field ^ MESHLET_ANCHOR_SIGN) - int(MESHLET_ANCHOR_SIGN);
-}
-
-int UnpackMeshletExponent(uint PackedAnchorX)
-{
-    uint Byte = (PackedAnchorX >> MESHLET_EXPONENT_SHIFT) & 0xFFu;
-    return int(Byte ^ 0x80u) - int(0x80u);
-}
-
 // Built from the float exponent field rather than exp2 so C++ and the shader produce identical bits.
-float MeshletExponentScale(int Exponent)
+float PositionGridScale(int Exponent)
 {
     return asfloat(uint(clamp(Exponent, -126, 127) + 127) << 23);
 }
 
-float3 DecodeMeshletPosition(FMeshlet M, uint16_t PosX, uint16_t PosY, uint16_t PosZ)
+// Twin of the C++ DecodeMeshPosition, bit for bit, so CPU picking and collision agree with what rasterizes.
+float3 DecodeMeshPosition(int4 Grid, uint2 Packed)
 {
-    float Scale = MeshletExponentScale(UnpackMeshletExponent(M.PackedAnchorX));
-
-    int Ox = int(PosX);
-    int Oy = int(PosY);
-    int Oz = int(PosZ);
-
-    return float3(
-        float(UnpackMeshletAnchor(M.PackedAnchorX) + Ox) * Scale,
-        float(UnpackMeshletAnchor(M.PackedAnchorY) + Oy) * Scale,
-        float(UnpackMeshletAnchor(M.PackedAnchorZ) + Oz) * Scale);
-}
-
-// The dense position stream's 8-byte form of the same three offsets.
-float3 DecodeMeshletPosition(FMeshlet M, uint2 Packed)
-{
-    return DecodeMeshletPosition(M, (uint16_t)(Packed.x & 0xFFFFu), (uint16_t)(Packed.x >> 16), (uint16_t)(Packed.y & 0xFFFFu));
+    const float Scale = PositionGridScale(Grid.w);
+    const uint  X     = Packed.x & MESH_POSITION_MAX;
+    const uint  Y     = ((Packed.x >> MESH_POSITION_BITS) | (Packed.y << (32 - MESH_POSITION_BITS))) & MESH_POSITION_MAX;
+    const uint  Z     = (Packed.y >> (2 * MESH_POSITION_BITS - 32)) & MESH_POSITION_MAX;
+    return float3(float(Grid.x + int(X)) * Scale, float(Grid.y + int(Y)) * Scale, float(Grid.z + int(Z)) * Scale);
 }
 
 // Mirror of Lumina::FMeshletBounds.
@@ -457,13 +407,16 @@ struct FMeshletHeader
     // Zero on a static mesh.
     uint            BonePaletteCount;
 
-    uint            _LocalBoundsPad1;
+    // MESH_VERTEX_STREAM_* bits for the optional static streams below.
+    uint            VertexStreamFlags;
 
-    // Each vertex's quantized position alone, X and Y in .x and Z in .y. See DecodeMeshletPosition.
+    // A static mesh's grid position per shared vertex. See DecodeMeshPosition.
     uint2*          Positions;
+    uint*           VertexRefs;
+    uint*           VertexUV1s;
+    uint*           VertexColors;
 
-    // Pads the stride to 144 so the Slang and C++ layouts agree; FMeshletHeaderGPU is alignas(16).
-    uint64_t        _PositionsPad;
+    int4            PositionGrid;
 
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }

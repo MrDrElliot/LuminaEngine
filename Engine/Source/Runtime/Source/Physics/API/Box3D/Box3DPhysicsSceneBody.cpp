@@ -131,7 +131,7 @@ namespace Lumina::Physics
 
                     for (uint32 v = 0; v < M.VertexCount; ++v)
                     {
-                        const FVector3 Decoded = DecodeMeshletPosition(M, MD.MeshletVertices[M.VertexOffset + v]);
+                        const FVector3 Decoded = GetMeshletVertexPosition(MD, M, v, false);
                         OutPositions.push_back(Box3DUtils::ToB3Vec3(Decoded * Scale));
                     }
 

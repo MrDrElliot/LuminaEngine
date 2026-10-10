@@ -2,6 +2,7 @@
 #include "BenchmarkRun.h"
 
 #include "Containers/Algorithm.h"
+#include "Renderer/MeshData.h"
 #include "Containers/String.h"
 #include "Containers/StringFormat.h"
 #include "Containers/Vector.h"
@@ -267,6 +268,7 @@ namespace Lumina::Benchmark
             TSpan<const uint8>(reinterpret_cast<const uint8*>(Csv.data()), Csv.size()));
 
         RHI::LogGPUPoolStats("end of run");
+        MeshGeometryStats::Log("end of run");
 
         LOG_DISPLAY("Benchmark: {} frames, mean {:.3f} ms ({:.1f} fps), median {:.3f}, "
                     "p95 {:.3f}, p99 {:.3f}, min {:.3f}, max {:.3f}",

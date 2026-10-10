@@ -17,33 +17,40 @@ namespace
     {
         const bool bSkinned = Resource.bSkinnedMesh;
 
-        FMeshlet Meshlet;
-        Meshlet.VertexOffset   = (uint32)(bSkinned ? Resource.MeshletData.MeshletSkinnedVertices.size()
-                                                   : Resource.MeshletData.MeshletVertices.size());
+        FMeshlet Meshlet{};
         Meshlet.TriangleOffset = (uint32)Resource.MeshletData.MeshletTriangles.size();
         Meshlet.VertexCount    = (uint32)Positions.size();
         Meshlet.TriangleCount  = (uint32)Triangles.size();
         Meshlet.LODIndex       = 0;
 
-        // Positions are quantized against the meshlet, so the frame is derived first.
-        const FMeshletQuantization Quant = ComputeMeshletQuantization(Positions.data(), (uint32)Positions.size());
-        ApplyMeshletQuantization(Meshlet, Quant);
+        FMeshletData& Data = Resource.MeshletData;
+        if (Data.Meshlets.empty())
+        {
+            const FVector3 GridBounds[2] = { FVector3(-256.0f), FVector3(256.0f) };
+            Data.PositionGrid = ComputeMeshPositionGrid(GridBounds, 2);
+        }
 
         // Whichever stream the resource declares, so a skinned fixture is genuinely populated.
-        for (const FVector3& P : Positions)
+        if (bSkinned)
         {
-            if (bSkinned)
+            Meshlet.VertexOffset = (uint32)Data.MeshletSkinnedVertices.size();
+            for (const FVector3& P : Positions)
             {
                 FMeshletSkinnedVertex V{};
-                EncodeMeshletPosition(Quant, P, V);
-                Resource.MeshletData.MeshletSkinnedVertices.push_back(V);
+                V.Position = EncodeMeshPosition(Data.PositionGrid, P);
+                Data.MeshletSkinnedVertices.push_back(V);
             }
-            else
+        }
+        else
+        {
+            TVector<uint32> Indices;
+            for (const FVector3& P : Positions)
             {
-                FMeshletVertex V{};
-                EncodeMeshletPosition(Quant, P, V);
-                Resource.MeshletData.MeshletVertices.push_back(V);
+                Indices.push_back((uint32)Data.VertexPositions.size());
+                Data.VertexPositions.push_back(EncodeMeshPosition(Data.PositionGrid, P));
+                Data.VertexAttributes.push_back(FMeshVertexAttributes{});
             }
+            AppendMeshletVertexRefs(Data, Meshlet, Indices.data(), (uint32)Indices.size());
         }
 
         for (const FUIntVector3& T : Triangles)
@@ -323,7 +330,7 @@ TEST(DistanceField, SerializationRoundTrips)
 // Transcribed from FMeshletHeader in Common.slang, which is hand-written; if one moves, check it.
 TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 {
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 144u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 176u);
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletsAddress), 0u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, SpheresAddress), 8u);
@@ -354,12 +361,18 @@ TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletCount), 116u);
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, BonePaletteCount), 120u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _LocalBoundsPad1), 124u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, VertexStreamFlags), 124u);
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, PositionsAddress), 128u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _PositionsPad), 136u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, VertexRefsAddress), 136u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, VertexUV1sAddress), 144u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, VertexColorsAddress), 152u);
+
+    // Read on the GPU as one int4, so it has to start on a 16-byte boundary.
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, PositionGridAnchorX), 160u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, PositionGridExponent), 172u);
 
     // Every member is accounted for above, so a new one shows up here as a size mismatch.
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _PositionsPad) + sizeof(FMeshletHeaderGPU::_PositionsPad),
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, PositionGridExponent) + sizeof(FMeshletHeaderGPU::PositionGridExponent),
               sizeof(FMeshletHeaderGPU));
 }

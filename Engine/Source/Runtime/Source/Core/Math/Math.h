@@ -54,16 +54,10 @@ namespace Lumina::Math
         return Abs(Value) <= Epsilon;
     }
     
-    // Signed-normalized 16-bit <-> float. -32768 maps to -1 like -32767 does, which is what makes the
-    // encoding symmetric; the GPU's SNORM read does the same clamp.
+    // -32768 maps to -1 like -32767 does, matching the GPU's SNORM read.
     [[nodiscard]] constexpr float SNorm16ToFloat(int16 Value)
     {
         return Max((float)Value * (1.0f / 32767.0f), -1.0f);
-    }
-
-    [[nodiscard]] constexpr int16 FloatToSNorm16(float Value)
-    {
-        return (int16)(Clamp(Value, -1.0f, 1.0f) * 32767.0f + (Value >= 0.0f ? 0.5f : -0.5f));
     }
 
     [[nodiscard]] constexpr uint64 CountTrailingZeros64(uint64 Value)
