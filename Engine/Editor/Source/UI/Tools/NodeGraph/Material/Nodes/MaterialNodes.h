@@ -26,6 +26,7 @@
 #include "MaterialNode_TextureSample.h"
 #include "MaterialNode_TextureSampleArray.h"
 #include "MaterialNode_TextureHandle.h"
+#include "MaterialNode_Triplanar.h"
 #include "MaterialNode_CurveSample.h"
 #include "MaterialNode_Collection.h"
 #include "MaterialNode_Function.h"

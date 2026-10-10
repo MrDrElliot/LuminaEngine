@@ -2577,6 +2577,106 @@ namespace Lumina
 		AddRaw("}\n");
 	}
 
+	void FMaterialCompiler::TriplanarSample(const FString& ID, CMaterialGraphNode* Node, int32 TextureIndex,
+	                                        const FTriplanarInputs& Inputs, FStringView SamplerName, bool bNormalMap)
+	{
+		// Downstream nodes bind by name, so every rejection below must still leave ID declared.
+		const FString Neutral = bNormalMap ? FString("float4(0.5, 0.5, 1.0, 1.0)") : FString("float4(0.0, 0.0, 0.0, 1.0)");
+		auto Reject = [&](const FString& Description)
+		{
+			AddRaw("float4 " + ID + " = " + Neutral + ";\n");
+			RegisterDeriv(ID, EDerivState::Zero);
+			if (HasErrorForNode(Node))
+			{
+				return;
+			}
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Triplanar Sample";
+			Error.Description = Description;
+			AddError(Error);
+		};
+
+		const EMaterialType Domain = GetMaterialType();
+		if (Domain == EMaterialType::UI || Domain == EMaterialType::PostProcess)
+		{
+			Reject("TriplanarSample projects onto a surface; it is not available in UI or PostProcess materials.");
+			return;
+		}
+
+		FString TextureStr;
+		if (Inputs.TextureHandle != nullptr && Inputs.TextureHandle->HasConnection())
+		{
+			TextureStr = GetTypedInputValue(Inputs.TextureHandle, "0u").Value;
+		}
+		else if (TextureIndex >= 0)
+		{
+			TextureStr = "GetMaterialTexture(MaterialIndex, " + Format("{}", TextureIndex) + ")";
+		}
+		else
+		{
+			Reject("TriplanarSample needs a 2D texture assigned or a TextureHandle wired in, and a free material "
+			       "texture slot.");
+			return;
+		}
+
+		FInputValue PositionValue  = GetTypedInputValue(Inputs.Position, "WorldPosition");
+		FInputValue NormalValue    = GetTypedInputValue(Inputs.Normal, "WorldNormal");
+		FInputValue TilingValue    = GetTypedInputValue(Inputs.Tiling, 1.0f);
+		FInputValue SharpnessValue = GetTypedInputValue(Inputs.Sharpness, 4.0f);
+
+		auto AsFloat3 = [](const FString& Value, int32 ComponentCount)
+		{
+			return ComponentCount >= 3 ? Value + ".xyz" : "float3(" + Value + ")";
+		};
+
+		// The vertex lane has no screen footprint; zero gradients make SampleGrad read mip 0.
+		FString PDdx = "float3(0.0, 0.0, 0.0)";
+		FString PDdy = PDdx;
+		if (LaneSamplesWithGradients())
+		{
+			if (!Inputs.Position->HasConnection())
+			{
+				PDdx = "WorldPosition_DDX";
+				PDdy = "WorldPosition_DDY";
+			}
+			else if (PositionValue.Deriv == EDerivState::Valid)
+			{
+				PDdx = AsFloat3(PositionValue.DDX, PositionValue.ComponentCount);
+				PDdy = AsFloat3(PositionValue.DDY, PositionValue.ComponentCount);
+			}
+			else if (PositionValue.Deriv == EDerivState::Unknown)
+			{
+				// World position's footprint is right for any position at world scale, and only mip choice is at stake.
+				PDdx = "WorldPosition_DDX";
+				PDdy = "WorldPosition_DDY";
+
+				EdNodeGraph::FError Warning;
+				Warning.Node        = Node;
+				Warning.Name        = "Triplanar Gradient Fallback";
+				Warning.Description = "TriplanarSample's Position ('" + PositionValue.Value + "') has no analytic "
+				                      "derivative, so mips are chosen from World Position's footprint instead. That is "
+				                      "correct for a world-scale position and too fine or too coarse otherwise.";
+				AddWarning(Warning);
+			}
+		}
+
+		const FString SamplerStr(SamplerName.data(), SamplerName.size());
+		const FString Args = TextureStr + ", " + SamplerStr + ", "
+			+ AsFloat3(PositionValue.Value, PositionValue.ComponentCount) + ", " + PDdx + ", " + PDdy + ", "
+			+ AsFloat3(NormalValue.Value, NormalValue.ComponentCount);
+		const FString Tail = "(" + TilingValue.Value + "), (" + SharpnessValue.Value + "));\n";
+
+		if (bNormalMap)
+		{
+			AddRaw("float4 " + ID + " = TriplanarSampleNormal(" + Args + ", WorldTangent, " + Tail);
+		}
+		else
+		{
+			AddRaw("float4 " + ID + " = TriplanarSample(" + Args + ", " + Tail);
+		}
+	}
+
 	namespace
 	{
 		// The field is reached through the meshlet header, which only the surface pixel lane can resolve.

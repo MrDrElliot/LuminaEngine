@@ -2,6 +2,7 @@
 #include "SceneGlobals.slang"
 #include "AppendBuffer.slang"   // kAppendFull, the "no slot" sentinel MeshletSlotForWorkgroup returns
 #include "Wind.slang"   // material-graph WindAnimation node; every material vertex template needs it
+#include "Triplanar.slang"   // material-graph TriplanarSample node, both stages
 
 // Shared by every stage that touches a meshlet. What stays per-shader is the $MATERIAL_VERTEX_INPUTS
 // token and the pass-specific final position.
