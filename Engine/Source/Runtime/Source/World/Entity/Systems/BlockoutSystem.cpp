@@ -104,17 +104,6 @@ namespace Lumina
             Rebuild(Shape, Mesh, bKeepCPUData);
         };
 
-        const uint32 Count = (uint32)Dirty.size();
-        if (Count < kParallelThreshold || GTaskSystem == nullptr)
-        {
-            for (uint32 Index = 0; Index < Count; ++Index)
-            {
-                RebuildOne(Index);
-            }
-        }
-        else
-        {
-            Task::ParallelFor(Count, RebuildOne, 1);
-        }
+        Task::ParallelForOrSerial((uint32)Dirty.size(), kParallelThreshold, RebuildOne, 1);
     }
 }

@@ -93,17 +93,11 @@ namespace Lumina
 
         // Fans an already built view out over the workers, running it inline when it is too small to be worth splitting.
         template<typename TView, typename TFunc>
-        void ParallelForEachView(TView&& View, TFunc&& Function, uint32 MinRange = 64) const
+        void ParallelForEachView(TView&& View, TFunc&& Function, uint32 MinRange = 64, uint32 MinSlotsToSplit = 0) const
         {
-            const uint32 Num = static_cast<uint32>(View.NumDenseSlots());
-            if (Num <= MinRange)
-            {
-                View.ForEach(Function);
-                return;
-            }
-
             // Chunked, and the range walk reuses the driver's dense index rather than probing twice.
-            Task::ParallelFor(Num, [&](const Task::FParallelRange& Range)
+            Task::ParallelForOrSerial(static_cast<uint32>(View.NumDenseSlots()), Math::Max(MinRange + 1, MinSlotsToSplit),
+                [&](const Task::FParallelRange& Range)
             {
                 View.ForEachInRange(Range.Start, Range.End, Function);
             }, MinRange);

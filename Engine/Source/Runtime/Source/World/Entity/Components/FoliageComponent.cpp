@@ -125,17 +125,7 @@ namespace Lumina
         };
 
         constexpr uint32 kParallelThreshold = 2048;
-        if (NumInstances < kParallelThreshold || GTaskSystem == nullptr)
-        {
-            for (uint32 i = 0; i < NumInstances; ++i)
-            {
-                BakeOne(i);
-            }
-        }
-        else
-        {
-            Task::ParallelFor(NumInstances, BakeOne, 256);
-        }
+        Task::ParallelForOrSerial(NumInstances, kParallelThreshold, BakeOne, 256);
 
         // A rejected instance leaves a hole, and only the rejecting case pays for closing them.
         if (SkippedCount.load(std::memory_order_relaxed) != 0)

@@ -179,23 +179,10 @@ namespace Lumina
             Agents.OutNeighbors[(size_t)i] = Agent.LastNeighborCount;
         };
 
-        if (Count < Avoidance::kCrowdParallelThreshold || GTaskSystem == nullptr)
+        Task::ParallelForOrSerial((uint32)Count, (uint32)Avoidance::kCrowdParallelThreshold, [&](uint32 Index)
         {
-            for (int32 i = 0; i < Count; ++i)
-            {
-                Extract(i);
-            }
-        }
-        else
-        {
-            Task::ParallelFor((uint32)Count, [&](const Task::FParallelRange& Range)
-            {
-                for (uint32 i = Range.Start; i < Range.End; ++i)
-                {
-                    Extract((int32)i);
-                }
-            }, kExtractGrain);
-        }
+            Extract((int32)Index);
+        }, kExtractGrain);
 
         Avoidance::SolveCrowd(Agents, Count, InvTimeStep, true);
 
@@ -242,23 +229,10 @@ namespace Lumina
             };
 
             const int32 NumClamped = (int32)State.NavClampList.size();
-            if (NumClamped < Avoidance::kCrowdParallelThreshold || GTaskSystem == nullptr)
+            Task::ParallelForOrSerial((uint32)NumClamped, (uint32)Avoidance::kCrowdParallelThreshold, [&](uint32 Slot)
             {
-                for (int32 Slot = 0; Slot < NumClamped; ++Slot)
-                {
-                    Clamp(Slot);
-                }
-            }
-            else
-            {
-                Task::ParallelFor((uint32)NumClamped, [&](const Task::FParallelRange& Range)
-                {
-                    for (uint32 Slot = Range.Start; Slot < Range.End; ++Slot)
-                    {
-                        Clamp((int32)Slot);
-                    }
-                }, 32);
-            }
+                Clamp((int32)Slot);
+            }, 32);
 
             State.LastNavClamped = NumClamped;
         }

@@ -142,21 +142,9 @@ namespace Lumina
 
             const ECS::FEntity* Dense = Pool->GetDenseData();
             const uint32 Num = (uint32)Pool->GetDenseSize();
-            if (Num < kKinematicsParallelGrain || GTaskSystem == nullptr)
+            Task::ParallelForOrSerial(Num, kKinematicsParallelGrain, [&](uint32 Index)
             {
-                for (uint32 i = 0; i < Num; ++i)
-                {
-                    Difference(Dense[i]);
-                }
-                continue;
-            }
-
-            Task::ParallelFor(Num, [&](const Task::FParallelRange& Range)
-            {
-                for (uint32 i = Range.Start; i < Range.End; ++i)
-                {
-                    Difference(Dense[i]);
-                }
+                Difference(Dense[Index]);
             }, 256);
         }
 
@@ -190,18 +178,8 @@ namespace Lumina
             };
 
             // The world is not stepping before physics, so its body reads are safe from every worker at once.
-            auto BodyView = Context.CreateView<SRigidBodyComponent, STransformComponent>();
-            if (BodyView.NumDenseSlots() < kKinematicsParallelGrain || GTaskSystem == nullptr)
-            {
-                BodyView.ForEach(RefineBody);
-            }
-            else
-            {
-                Task::ParallelFor((uint32)BodyView.NumDenseSlots(), [&](const Task::FParallelRange& Range)
-                {
-                    BodyView.ForEachInRange(Range.Start, Range.End, RefineBody);
-                }, 256);
-            }
+            Context.ParallelForEachView(Context.CreateView<SRigidBodyComponent, STransformComponent>(), RefineBody,
+                256, kKinematicsParallelGrain);
         }
 
         // Last, because a character mover owns its velocity outright and SAnimationSystem preferred it.
