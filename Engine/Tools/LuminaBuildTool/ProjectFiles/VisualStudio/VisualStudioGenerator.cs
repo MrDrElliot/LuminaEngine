@@ -48,7 +48,8 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
                 Guid = MakeDeterministicGuid("Target:" + Target.TargetName),
                 SolutionFolder = ResolveTargetSolutionFolder(Directories, Target),
                 bBuildable = true,
-                bBuildByDefault = Target.PrimaryVariant.Rules.bBuildByDefault,
+                // MSBuild only resolves a solution target for a project the configuration builds, which IDE test runs ask for.
+                bBuildByDefault = Target.PrimaryVariant.Rules.bBuildByDefault || Target.bIsTestSuite,
                 bIsStartup = IsStartupTarget(Directories, Target),
             });
         }
@@ -191,6 +192,11 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
     /// <summary>Whether this is the target the IDE should start with.</summary>
     private static bool IsStartupTarget(BuildDirectories Directories, ProjectTargetInfo Target)
     {
+        if (Target.bIsTestSuite)
+        {
+            return false;
+        }
+
         if (Directories.ProjectRoot is null)
         {
             return Target.PrimaryVariant.Rules.bIsStartupTarget;
@@ -202,6 +208,14 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
     /// <summary>Solution folder for a target's own project.</summary>
     private static string ResolveTargetSolutionFolder(BuildDirectories Directories, ProjectTargetInfo Target)
     {
+        if (Target.bIsTestSuite)
+        {
+            // Placed by the suite's own sources, since its rules are synthesized and live nowhere in the tree.
+            BuildModule? SuiteModule = Target.PrimaryVariant.LaunchModule;
+            string? SuiteGameFolder = SuiteModule is null ? null : ResolveGameFolder(Directories, SuiteModule.Rules.ModuleDirectory);
+            return (SuiteGameFolder ?? "Engine") + "/Tests";
+        }
+
         string? GameFolder = ResolveGameFolder(Directories, Target.PrimaryVariant.Rules.RulesDirectory);
 
         return GameFolder is not null ? GameFolder + "/Source" : "Targets";
@@ -362,6 +376,18 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         if (Variant.Rules.DebuggerArguments.Length > 0)
         {
             Xml.AppendLine($"    <LocalDebuggerCommandArguments>{Escape(Variant.Rules.DebuggerArguments)}</LocalDebuggerCommandArguments>");
+        }
+
+        // A console app imports its module DLLs at load, and they sit in each owner's Binaries folder rather than beside it.
+        if (LaunchModule is not null && LaunchModule.BinaryType == ModuleBinaryType.ConsoleApplication)
+        {
+            IEnumerable<string> LibraryDirectories = Variant.Modules
+                .Where(M => M.BinaryType == ModuleBinaryType.SharedLibrary && M.OutputFile.Length > 0)
+                .Select(M => Path.GetDirectoryName(M.OutputFile)!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(D => D, StringComparer.OrdinalIgnoreCase);
+
+            Xml.AppendLine($"    <LocalDebuggerEnvironment>{Escape($"PATH={string.Join(';', LibraryDirectories)};$(PATH)")}</LocalDebuggerEnvironment>");
         }
 
         Xml.AppendLine("    <LocalDebuggerAttach>false</LocalDebuggerAttach>");
