@@ -20,6 +20,9 @@ public sealed class ProjectTargetInfo
 
     /// <summary>The variant used for source listing and IntelliSense.</summary>
     public required BuildTarget PrimaryVariant { get; init; }
+
+    /// <summary>A synthesized gtest target, which gets its own solution folder and is never the startup project.</summary>
+    public bool bIsTestSuite { get; init; }
 }
 
 /// <summary>Writes IDE project files from resolved build graphs.</summary>

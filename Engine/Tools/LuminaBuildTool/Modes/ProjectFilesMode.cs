@@ -42,8 +42,13 @@ public static class ProjectFilesMode
         List<ProjectTargetInfo> Targets = new();
         List<string> SkippedTargets = new();
 
-        foreach (string TargetName in Assembly.TargetNames.OrderBy(N => N, StringComparer.OrdinalIgnoreCase))
+        // Suites are synthesized rather than declared, so they join here to get a runnable project the IDE can discover.
+        IEnumerable<string> TargetAndSuiteNames = Assembly.TargetNames.Concat(Assembly.DiscoveredTestSuites.Keys);
+
+        foreach (string TargetName in TargetAndSuiteNames.OrderBy(N => N, StringComparer.OrdinalIgnoreCase))
         {
+            bool bIsTestSuite = Assembly.DiscoveredTestSuites.ContainsKey(TargetName);
+
             Dictionary<ProjectConfiguration, BuildTarget> Variants = new();
             BuildTarget? Primary = null;
 
@@ -78,7 +83,11 @@ public static class ProjectFilesMode
                 Log.Warning("Target '{0}' could not be resolved in any configuration; skipping. {1} failed: {2}",
                     TargetName, FirstFailureConfiguration ?? "No configuration", FirstFailure ?? "no reason reported.");
 
-                SkippedTargets.Add(TargetName);
+                // A broken suite costs only its own project, not the whole workspace.
+                if (!bIsTestSuite)
+                {
+                    SkippedTargets.Add(TargetName);
+                }
                 continue;
             }
 
@@ -87,6 +96,7 @@ public static class ProjectFilesMode
                 TargetName = TargetName,
                 Variants = Variants,
                 PrimaryVariant = Primary,
+                bIsTestSuite = bIsTestSuite,
             });
         }
 
