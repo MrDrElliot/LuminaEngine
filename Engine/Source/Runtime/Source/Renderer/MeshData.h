@@ -17,8 +17,6 @@
 namespace Lumina
 {
     constexpr uint32 MAX_MESH_LODS         = MESHLET_MAX_LODS;
-    constexpr uint32 MAX_SHADOW_LOD        = MESHLET_MAX_SHADOW_LOD;
-    constexpr uint32 MAX_COARSE_SHADOW_LOD = MESHLET_MAX_COARSE_SHADOW_LOD;
 
     struct FMeshlet
     {
@@ -343,8 +341,8 @@ namespace Lumina
         uint32 NumLODs                           = 1;
         uint32 LODMeshletOffset[MAX_MESH_LODS]   = {};
         uint32 LODMeshletCount[MAX_MESH_LODS]    = {};
-        // Distance/radius threshold at which LOD i becomes active (monotonic, [0] unused).
-        float  LODScreenThreshold[MAX_MESH_LODS] = {};
+        // Mesh-local distance LOD i strays from the source surface, non-decreasing, and 0 for LOD 0.
+        float  LODError[MAX_MESH_LODS]           = {};
 
         /**
          * Mesh-local world size of ONE full UV tile: sqrt(WorldArea / UVArea) over this surface's
@@ -536,6 +534,9 @@ namespace Lumina
         // Linear-scan meshlet build. Only valid with the index pre-pass GenerateMeshlets runs alongside it.
         bool                      bFastMeshletBuild = false;
 
+        // Simplified levels move vertices and rewrite normals and UVs to fit; skinned meshes never do.
+        bool                      bDestructiveLODs = true;
+
         FORCEINLINE size_t GetNumSurfaces() const { return GeometrySurfaces.size(); }
         FORCEINLINE size_t GetNumVertices() const { return Positions.size(); }
         FORCEINLINE size_t GetNumIndices()  const { return Indices.size(); }
@@ -620,6 +621,9 @@ namespace Lumina
             Ar << Data.GeometrySurfaces;
             Ar << Data.MeshletData;
 
+            const bool bHasLODErrors = Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESH_LOD_ERROR;
+            bool bDroppedLegacyLODs = false;
+
             for (FGeometrySurface& Surface : Data.GeometrySurfaces)
             {
                 Ar << Surface.NumLODs;
@@ -627,8 +631,23 @@ namespace Lumina
                 {
                     Ar << Surface.LODMeshletOffset[i];
                     Ar << Surface.LODMeshletCount[i];
-                    Ar << Surface.LODScreenThreshold[i];
+                    Ar << Surface.LODError[i];
                 }
+
+                if (Ar.IsReading() && !bHasLODErrors)
+                {
+                    bDroppedLegacyLODs = bDroppedLegacyLODs || Surface.NumLODs > 1;
+                    Surface.NumLODs = Math::Min(Surface.NumLODs, 1u);
+                    for (float& Error : Surface.LODError)
+                    {
+                        Error = 0.0f;
+                    }
+                }
+            }
+
+            if (bDroppedLegacyLODs)
+            {
+                LOG_WARN("FMeshResource '{}' predates error-based LODs and renders LOD 0 only until it is reimported", Data.Name);
             }
 
             Ar << Data.DistanceField;

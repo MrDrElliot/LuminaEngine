@@ -17,7 +17,7 @@ float DebugTextScreenPxRange(float2 UV)
 [shader("fragment")]
 float4 FragmentMain(FragmentInput Input) : SV_Target0
 {
-    const float4 MSDF = gTextures2D[Pass().AtlasIndex].Sample(gSamplers[SAMPLER_LINEAR_CLAMP], Input.UV);
+    const float4 MSDF = Pass().Atlas.Sample(Samplers::LinearClamp, Input.UV);
     const float  SD = max(TextMedian(MSDF.r, MSDF.g, MSDF.b), MSDF.a);
     const float  Opacity = saturate((SD - 0.5) * DebugTextScreenPxRange(Input.UV) + 0.5);
 

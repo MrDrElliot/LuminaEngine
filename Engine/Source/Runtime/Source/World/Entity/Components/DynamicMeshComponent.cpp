@@ -487,8 +487,7 @@ namespace Lumina
             {
                 R.LODMeshletOffset[LOD] = Geometry[i].LODMeshletOffset[LOD];
                 R.LODMeshletCount[LOD]  = Geometry[i].LODMeshletCount[LOD];
-                const float Threshold   = Geometry[i].LODScreenThreshold[LOD];
-                R.LODScreenThresholdSq[LOD] = Threshold * Threshold;
+                R.LODError[LOD]         = Geometry[i].LODError[LOD];
             }
         }
         

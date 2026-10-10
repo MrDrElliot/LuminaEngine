@@ -2,13 +2,13 @@
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
 
-// Weighted blended OIT composite. Blend is One / SrcAlpha, so HDR = Average * (1 - Revealage) + HDR * Revealage.
+// Weighted blended OIT composite, blended One / SrcAlpha so the scene keeps the Revealage share.
 struct FPushConstants
 {
-    uint AccumIndex;
-    uint RevealageIndex;
-    uint _Pad0;
-    uint _Pad1;
+    FTexture2D Accum;
+    FTexture2D Revealage;
+    uint       _Pad0;
+    uint       _Pad1;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -27,13 +27,13 @@ FSOutput FragmentMain(FSInput Input)
 {
     int2 Coords = int2(Input.Coord.xy);
 
-    float Revealage = gTextures2D[Pass().RevealageIndex].Load(int3(Coords, 0)).r;
+    float Revealage = Pass().Revealage.Load(int3(Coords, 0)).r;
 
     // View Mode > Translucency. Alpha 0 degenerates the composite blend to replace, so these overwrite the scene.
     uint DebugMode = Scene().CullData.DebugMode;
     if (DebugMode >= DEBUG_MODE_OIT_ACCUM_COLOR && DebugMode <= DEBUG_MODE_OIT_LAYER_COUNT)
     {
-        float4 RawAccum = gTextures2D[Pass().AccumIndex].Load(int3(Coords, 0));
+        float4 RawAccum = Pass().Accum.Load(int3(Coords, 0));
 
         float3 Debug;
         if (DebugMode == DEBUG_MODE_OIT_LAYER_COUNT)
@@ -75,7 +75,7 @@ FSOutput FragmentMain(FSInput Input)
         discard;
     }
 
-    float4 Accum   = gTextures2D[Pass().AccumIndex].Load(int3(Coords, 0));
+    float4 Accum   = Pass().Accum.Load(int3(Coords, 0));
     float3 Average = Accum.rgb / max(Accum.a, 1e-5);
 
     // Drop the translucency rather than stamping INF into HDR for the tonemapper to spread.

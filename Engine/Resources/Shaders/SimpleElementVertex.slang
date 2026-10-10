@@ -1,9 +1,7 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Debug line/triangle vertices are pulled from a transient ring slice by device address
-// instead of a bound vertex buffer -- no input layout, no persistent vertex buffer. Layout matches
-// FSimpleElementVertex in Vertex.h (float3 + packed uint, 16 B).
+// Pulled from a transient ring slice by device address. Matches FSimpleElementVertex in Vertex.h (16 B).
 struct FSimpleElementVertex
 {
     float3 Position;
@@ -25,16 +23,12 @@ struct VSOutput
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID)
 {
-    // SV_VulkanVertexID is the raw gl_VertexIndex (firstVertex + i), so a per-batch StartVertexLocation
-    // indexes straight into the whole transient vertex array.
-    FSimpleElementVertex V = SpanGet(&Pass().Vertices, VertexID);
+    // SV_VulkanVertexID includes firstVertex, so a batch's StartVertexLocation indexes the whole transient array.
+    FSimpleElementVertex V = Pass().Vertices.Get(VertexID);
 
     VSOutput Output;
 
-    // Padding vertex (FImmediateLineRenderer::MakePadVertex): a thread's tail reservation is filled
-    // with infinite positions rather than left holding whatever the buffer held three frames ago.
-    // x > w on every vertex of the line puts it wholly outside one clip plane, so the clipper rejects
-    // the primitive outright and it costs no fragments.
+    // Pad vertices (FImmediateLineRenderer::MakePadVertex) are infinite, and x > w puts the line wholly outside one clip plane.
     if (isinf(V.Position.x))
     {
         Output.Position = float4(2.0f, 2.0f, 2.0f, 1.0f);

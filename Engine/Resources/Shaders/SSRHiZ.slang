@@ -1,14 +1,14 @@
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
 // One level of the closest-depth pyramid the reflection trace skips empty space with.
 
 struct FSSRChainLevelArgs
 {
-    uint ChainIndex;  // the whole chain, read at SourceMip
-    uint SourceMip;
-    uint DestUAV;
-    uint DestMip;
+    FTexture2D   Chain;  // the whole chain, read at SourceMip
+    uint         SourceMip;
+    FRWTexture2D Dest;
+    uint         DestMip;
 
     uint SourceW;
     uint SourceH;
@@ -40,9 +40,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     {
         for (int x = Base.x; x <= End.x; ++x)
         {
-            Closest = max(Closest, gTextures2D[Pass().ChainIndex].Load(int3(x, y, int(Pass().SourceMip))).r);
+            Closest = max(Closest, Pass().Chain.Load(int3(x, y, int(Pass().SourceMip))).r);
         }
     }
 
-    gRWTextures2D[Pass().DestUAV][int2(DTid.xy)] = float4(Closest, 0.0, 0.0, 0.0);
+    Pass().Dest[int2(DTid.xy)] = float4(Closest, 0.0, 0.0, 0.0);
 }

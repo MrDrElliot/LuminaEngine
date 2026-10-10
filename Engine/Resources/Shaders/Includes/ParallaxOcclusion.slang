@@ -1,14 +1,12 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Parallax Occlusion Mapping (Tatarchuk 2006): per-pixel ray trace of a tangent-space height field,
-// producing a UV offset every other fetch uses. Silhouettes stay flat and depth is unmodified.
+// Tatarchuk 2006 parallax occlusion mapping. Silhouettes stay flat and depth is unmodified.
 
-// MUST stay byte-identical to what GetWorldNormal builds: POM offsets UVs along this basis and the
-// normal map decodes through it, so any drift shears parallax against lighting. Rows are (T, B, N).
+// Must match the basis GetWorldNormal builds, or parallax shears against lighting. Rows are (T, B, N).
 float3x3 BuildTangentFrame(float3 FragNormal, float4 FragTangent, out bool bDegenerate)
 {
-    // N is assumed unit-length: every caller passes the already-normalized interpolated normal.
+    // Every caller already passes a normalized N.
     float3 N = FragNormal;
 
     float3 T = FragTangent.xyz - N * dot(FragTangent.xyz, N);
@@ -35,34 +33,31 @@ float3x3 BuildTangentFrame(float3 FragNormal, float4 FragTangent)
     return BuildTangentFrame(FragNormal, FragTangent, bDegenerate);
 }
 
-// Mip level this pixel would sample the height field at, from the UV gradients and the texture size.
-// The standard isotropic formula the hardware uses: log2 of the longer texel-space gradient.
+// The isotropic hardware mip formula, from the longer texel-space gradient.
 float ParallaxMipLevel(uint HeightTextureIndex, float2 UVDdx, float2 UVDdy)
 {
     float2 TexSize;
-    gTextures2D[NonUniformResourceIndex(HeightTextureIndex)].GetDimensions(TexSize.x, TexSize.y);
+    FTexture2D(HeightTextureIndex).GetDimensions(TexSize.x, TexSize.y);
 
     float2 Dx = UVDdx * TexSize;
     float2 Dy = UVDdy * TexSize;
     return 0.5 * log2(max(max(dot(Dx, Dx), dot(Dy, Dy)), 1e-12));
 }
 
-// Fixed mip on purpose: the march takes up to MaxSamples fetches, and SampleGrad per iteration costs
-// rate and registers for a mip that barely changes over the offset. Red channel.
+// A fixed mip, since SampleGrad per march step costs rate and registers for a mip that barely changes.
 float SampleParallaxHeight(uint HeightTextureIndex, uint SamplerIndex, float2 UV, float Mip)
 {
-    return SampleTexture2DLevel(HeightTextureIndex, SamplerIndex, UV, Mip).r;
+    return FTexture2D(HeightTextureIndex).SampleLevel(FSampler(SamplerIndex), UV, Mip).r;
 }
 
 struct FParallaxResult
 {
-    float2 UV;       // displaced texture coordinate; feed this to every other sample
-    float  Height;   // height field value at the intersection, 0 (deep) .. 1 (surface)
-    float  Weight;   // 1 = full parallax, 0 = fully faded to flat normal mapping at distance
+    float2 UV;       // Displaced UV that every other sample should use
+    float  Height;   // Height at the intersection, 0 deep and 1 at the surface
+    float  Weight;   // 1 is full parallax, 0 fades to flat normal mapping at distance
 };
 
-// ViewWS is the normalized surface->camera vector. Uses lerp(Max, Min, N.V) -- most samples at
-// grazing, fewest head-on -- which is the opposite of the paper's expression as literally written.
+// ViewWS points from surface to camera. Most samples at grazing, the reverse of the paper's literal expression.
 FParallaxResult ParallaxOcclusion(
     uint   HeightTextureIndex,
     uint   SamplerIndex,
@@ -82,8 +77,7 @@ FParallaxResult ParallaxOcclusion(
     Result.Height = 1.0;
     Result.Weight = 0.0;
 
-    // Global quality scaling (r.POM.*), applied on top of the material's authored values so one CVar
-    // dials every POM material without recompiling any of them. SampleScale 0 disables the feature.
+    // Global r.POM.* scaling over the authored values, where SampleScale 0 disables POM.
     float SampleScale = Scene().ParallaxSettings.SampleScale;
     if (SampleScale <= 0.0)
     {
@@ -93,8 +87,7 @@ FParallaxResult ParallaxOcclusion(
     MaxSamples   = max(MaxSamples * SampleScale, MinSamples);
     LODThreshold = LODThreshold + Scene().ParallaxSettings.LODBias;
 
-    // Above the threshold mip the height field is smaller than the pixel footprint, so the march can only
-    // produce noise. Blends the OFFSET toward zero: a zero offset IS normal mapping, so endpoints match.
+    // Past the threshold mip the march only produces noise, so the offset fades to zero, which is plain normal mapping.
     float Mip    = ParallaxMipLevel(HeightTextureIndex, UVDdx, UVDdy);
     float Weight = saturate(LODThreshold - Mip);
     if (Weight <= 0.0)
@@ -107,33 +100,29 @@ FParallaxResult ParallaxOcclusion(
     float3x3 Frame  = BuildTangentFrame(NormalWS, TangentWS, bDegenerate);
     float3   ViewTS = mul(Frame, ViewWS);
 
-    // No tangent frame tied to the UV layout (untangented mesh), or a ray parallel to the surface (the
-    // offset diverges). Neither can produce a meaningful march; fall back to flat.
+    // An untangented mesh or a ray parallel to the surface cannot march, so fall back to flat.
     if (bDegenerate || abs(ViewTS.z) < 1e-4)
     {
         Result.Weight = 0.0;
         return Result;
     }
 
-    // Maximum UV displacement, reached when the ray descends the full field. Dividing the lateral
-    // component by z is the perspective term that makes the offset grow at grazing angles.
+    // Dividing by z makes the offset grow at grazing angles.
     float2 MaxOffset = (-ViewTS.xy / ViewTS.z) * HeightScale;
 
-    // Dynamic sampling rate, from the GEOMETRIC normal (not the mapped one -- the mapped normal is what
-    // we are on our way to computing).
+    // The geometric normal, since the mapped one is what this computes.
     float  NdotV    = saturate(dot(NormalWS, ViewWS));
     int    NumSteps = (int)max(lerp(MaxSamples, MinSamples, NdotV), 1.0);
     float  StepSize = 1.0 / (float)NumSteps;
     float2 StepUV   = MaxOffset * StepSize;
 
-    float  RayHeight      = 1.0;                 // ray marches down from the polygon plane
+    float  RayHeight      = 1.0;                 // Marches down from the polygon plane
     float2 CurrentOffset  = float2(0.0, 0.0);
     float2 PreviousOffset = float2(0.0, 0.0);
     float  CurrentHeight  = 1.0;
     float  PreviousHeight = 1.0;
 
-    // Linear search with dynamic early-out. Only regular (non-dependent) fetches along a straight UV
-    // line, so this stays texture-cache coherent -- the reason the paper drops the binary search.
+    // Linear search keeps fetches non-dependent and cache coherent, which is why the paper drops the binary search.
     int Step = 0;
     while (Step < NumSteps)
     {
@@ -141,8 +130,7 @@ FParallaxResult ParallaxOcclusion(
 
         if (CurrentHeight > RayHeight)
         {
-            // Solve the ray against the LINE SEGMENT joining the two height samples rather than accepting the
-            // sample point. This is the paper's high-precision intersection: no stair-stepping, no depth bias.
+            // Intersect the segment between the two height samples to avoid stair-stepping.
             float Delta1 = CurrentHeight - RayHeight;
             float Delta2 = (RayHeight + StepSize) - PreviousHeight;
             float Ratio  = Delta1 / max(Delta1 + Delta2, 1e-6);
@@ -164,8 +152,7 @@ FParallaxResult ParallaxOcclusion(
     return Result;
 }
 
-// Keeps sampling PAST the first blocker and weights each by distance, approximating the penumbra;
-// stopping at the first blocker gives hard aliased edges. One light only: the sun. Returns 1 = lit.
+// Samples past the first blocker, weighted by distance, to approximate the penumbra. Sun only, returns 1 when lit.
 float ParallaxSelfShadow(
     uint   HeightTextureIndex,
     uint   SamplerIndex,
@@ -179,8 +166,7 @@ float ParallaxSelfShadow(
     float  Softness,
     float  Mip)
 {
-    // Surfaces facing away from the light are already fully shadowed by N.L; tracing them is wasted
-    // work and would double-darken the terminator. The paper gates on exactly this test.
+    // Back-facing surfaces are already dark from N.L, and tracing them would double-darken the terminator.
     float NdotL = dot(NormalWS, LightWS);
     if (NdotL <= 0.0)
     {
@@ -202,7 +188,7 @@ float ParallaxSelfShadow(
 
     int Steps = (int)max(NumSamples * ShadowScale, 1.0);
 
-    // The light ray climbs from the intersection height back to the polygon plane; walk that span.
+    // The light ray climbs from the intersection height back to the polygon plane.
     float2 MaxOffset = (LightTS.xy / LightTS.z) * HeightScale * (1.0 - SurfaceHeight);
     float  StepSize  = 1.0 / (float)Steps;
 
@@ -213,12 +199,10 @@ float ParallaxSelfShadow(
         float2 Offset = MaxOffset * T;
         float  Height = SampleParallaxHeight(HeightTextureIndex, SamplerIndex, DisplacedUV + Offset, Mip);
 
-        // Height of the light ray at this step, and how far the height field pokes above it.
         float RayHeight = SurfaceHeight + (1.0 - SurfaceHeight) * T;
         float Blocked   = max(Height - RayHeight, 0.0);
 
-        // A near blocker contributes sharp strong occlusion, a far one a weak diffuse contribution. Max
-        // rather than sum keeps one tall blocker from being out-voted by a run of shallow ones.
+        // Max rather than sum keeps one tall blocker from being outvoted by many shallow ones.
         Occlusion = max(Occlusion, Blocked * (1.0 - T));
     }
 

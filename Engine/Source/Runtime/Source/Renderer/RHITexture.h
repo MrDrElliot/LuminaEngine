@@ -8,7 +8,7 @@ namespace Lumina::RHI
     struct FManagedTexture
     {
         FTextureH Texture;
-        uint32    SampledSlot = kInvalidHeapSlot;   // ResourceID for gTextures2D[]
+        uint32    SampledSlot = kInvalidHeapSlot;   // ResourceID for FTexture2D
 
         uint32 ResourceID() const { return SampledSlot; }
         bool   IsValid() const { return RHI::IsValid(Texture); }
@@ -121,7 +121,7 @@ namespace Lumina::RHI
         // Queue a full-texture clear to an RGBA float value. Same deferred semantics as Upload.
         RUNTIME_API void Clear(const FManagedTexture& Tex, const float Value[4]);
 
-        // Lazily create + register a per-mip storage (UAV) heap slot; index for gRWTextures*[].
+        // Lazily create + register a per-mip storage (UAV) heap slot; index for the FRWTexture handles.
         RUNTIME_API uint32 StorageSlot(const FManagedTexture& Tex, uint32 Mip);
 
         RUNTIME_API void Release(FManagedTexture& Tex);

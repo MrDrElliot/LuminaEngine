@@ -1,8 +1,7 @@
 #pragma once
 #include "SceneGlobals.slang"
 
-// Helpers shared by the GPU culling passes, centralized so the Hi-Z math stays in sync
-// with how the depth pyramid is generated (MIN-reduction sampler, reverse-Z).
+// Hi-Z math here must match the depth pyramid build (min-reduction sampler, reverse-Z).
 
 bool FrustumContainsSphere(FFrustum F, float3 Center, float Radius)
 {
@@ -19,7 +18,6 @@ bool FrustumContainsSphere(FFrustum F, float3 Center, float Radius)
     return true;
 }
 
-// Overload for FCullView-style flat plane arrays (float4 Planes[6]).
 bool FrustumContainsSphere(float4 Planes[6], float3 Center, float Radius)
 {
     [unroll]
@@ -34,8 +32,7 @@ bool FrustumContainsSphere(float4 Planes[6], float3 Center, float Radius)
     return true;
 }
 
-// 2D polyhedral bounds of a clipped perspective-projected sphere (Mara/McGuire 2013), left-handed
-// view space. Returns false if the sphere clips the near plane -- caller treats it as visible.
+// Mara/McGuire 2013 sphere bounds in left-handed view space. Returns false when it clips the near plane.
 bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out float4 ClipAABB)
 {
     ClipAABB = float4(-1.0, -1.0, 1.0, 1.0);
@@ -45,8 +42,7 @@ bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out
         return false;
     }
 
-    // Orthographic: rays are parallel, so the silhouette is a plain scale of the world radius. The
-    // tangent construction below divides by view Z and assumes rays converging on the eye.
+    // Ortho rays are parallel, so the silhouette is a plain scale of the radius.
     if (IsCameraOrthographic())
     {
         float2 Center = float2(C.x * P00, C.y * P11);
@@ -68,8 +64,7 @@ bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out
     float2 xPair = float2(minX.x / minX.y, maxX.x / maxX.y) * P00;
     float2 yPair = float2(minY.x / minY.y, maxY.x / maxY.y) * P11;
 
-    // P11 is negative (Vulkan +Y-down projection), which inverts the order of
-    // the y-axis pair. Sort so callers can always assume xy = min, zw = max.
+    // P11 is negative (Vulkan +Y-down), which flips the y pair, so sort into min and max.
     ClipAABB = float4(
         min(xPair.x, xPair.y),
         min(yPair.x, yPair.y),
@@ -80,11 +75,10 @@ bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out
     return true;
 }
 
-// Reverse-Z depth matching glm::perspective(fov, asp, Far, Near):
-// depth(z) = (N * F / z - N) / (F - N).
+// Reverse-Z depth matching glm::perspective(fov, asp, Far, Near).
 float SphereFrontDepth(float FrontZ, float ZNear, float ZFar)
 {
-    // Reverse-Z ortho is linear in view Z: depth(z) = (z - F) / (N - F).
+    // Reverse-Z ortho is linear in view Z.
     if (IsCameraOrthographic())
     {
         return (FrontZ - ZFar) / (ZNear - ZFar);
@@ -93,62 +87,52 @@ float SphereFrontDepth(float FrontZ, float ZNear, float ZFar)
     return (ZNear * ZFar / FrontZ - ZNear) / (ZFar - ZNear);
 }
 
-// Per-view LOD. The pick is made TWICE per (instance, view) -- CullInstances to reserve draw-list
-// space, BuildMeshletBlocks to walk -- so it lives here and is CALLED by both, never re-derived.
-uint SelectSurfaceLODForView(FSurfaceDesc Desc, float3 ViewOrigin, float4 SphereBounds)
+// Largest axis scale of a 3x4 transform, which is how far it stretches a mesh-local error.
+float TransformMaxScale(FTransform3x4 Transform)
 {
-    const float3 ToView  = SphereBounds.xyz - ViewOrigin;
-    const float  DistSq  = dot(ToView, ToView);
-    const uint   NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
-    const uint   Picked  = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w * Scene().CullData.LODDistanceScaleSq);
-
-    // NumLODs indexes MESHLET_MAX_LODS-long arrays, so clamp here: past the table the offsets are
-    // whatever follows the allocation, and both the dispatch domain and the reservation sum from them.
-    return min(Picked, NumLODs > 0u ? NumLODs - 1u : 0u);
+    const float3 AxisX = float3(Transform.Row0.x, Transform.Row1.x, Transform.Row2.x);
+    const float3 AxisY = float3(Transform.Row0.y, Transform.Row1.y, Transform.Row2.y);
+    const float3 AxisZ = float3(Transform.Row0.z, Transform.Row1.z, Transform.Row2.z);
+    return sqrt(max(dot(AxisX, AxisX), max(dot(AxisY, AxisY), dot(AxisZ, AxisZ))));
 }
 
-// The meshlet range that pick resolves to: xy = (mesh-global offset, count).
-uint2 SelectViewMeshletRange(FSurfaceDesc Desc, float3 ViewOrigin, float4 SphereBounds)
+// The coarsest LOD whose projected error the view tolerates, mirrored by SelectLODForView in SceneRenderer_Extract.cpp.
+uint SelectLODForView(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale)
 {
-    const uint LOD = SelectSurfaceLODForView(Desc, ViewOrigin, SphereBounds);
-    return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
+    const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
+    if (NumLODs <= 1u || View.LODErrorScale <= 0.0)
+    {
+        return 0u;
+    }
+
+    // Nearest point of the bounds, so a large mesh is never coarser than its closest part allows.
+    const float Reach = View.HasFlag(CULL_VIEW_FLAG_ORTHOGRAPHIC_LOD)
+                      ? 1.0
+                      : max(length(SphereBounds.xyz - View.ViewOrigin) - SphereBounds.w, 0.0);
+    const float ErrorScale = View.LODErrorScale * MaxScale;
+
+    uint Picked = 0u;
+    for (uint i = 1u; i < NumLODs; ++i)
+    {
+        if (Desc.LODError[i] * ErrorScale > Reach)
+        {
+            break;
+        }
+        Picked = i;
+    }
+    return Picked;
 }
 
-// One LOD step per cascade index: each cascade's world texel is correspondingly wider. Same
-// reserve/walk contract as SelectSurfaceLODForView, so it too is CALLED by both, never re-derived.
-uint SelectCascadeShadowLOD(FSurfaceDesc Desc, float3 CamPos, float4 SphereBounds, uint CascadeIndex,
-                            int ShadowLODBias, float ShadowCoarseLODDistSq)
+// The pick's meshlet range, x the mesh-global offset and y the count.
+uint2 SelectViewMeshletRange(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale)
 {
-    const uint   NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
-    const float3 ToCam   = SphereBounds.xyz - CamPos;
-    const float  DistSq  = dot(ToCam, ToCam);
-
-    // The camera-distance pick the shadow LOD has always been biased off. Same expression and operand
-    // order as SelectSurfaceLODForView so the two stay bit-identical on both sides.
-    const uint CameraLOD = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w * Scene().CullData.LODDistanceScaleSq);
-
-    // Sloppy LODs (4-5) can hole and light-leak; past ShadowCoarseLODDistance the cascade texel is wide
-    // enough that the holes stay sub-texel. Mirrors CullInstances' ShadowCap exactly.
-    const uint Cap = (ShadowCoarseLODDistSq > 0.0 && DistSq >= ShadowCoarseLODDistSq)
-                   ? (uint)MESHLET_MAX_COARSE_SHADOW_LOD : (uint)MESHLET_MAX_SHADOW_LOD;
-    const int  MaxLOD = (int)min(NumLODs > 0u ? NumLODs - 1u : 0u, Cap);
-
-    return (uint)clamp((int)CameraLOD + ShadowLODBias + (int)CascadeIndex, 0, MaxLOD);
-}
-
-// The meshlet range that cascade pick resolves to: xy = (mesh-global offset, count).
-uint2 SelectCascadeShadowMeshletRange(FSurfaceDesc Desc, float3 CamPos, float4 SphereBounds,
-                                      uint CascadeIndex, int ShadowLODBias, float ShadowCoarseLODDistSq)
-{
-    const uint LOD = SelectCascadeShadowLOD(Desc, CamPos, SphereBounds, CascadeIndex,
-                                            ShadowLODBias, ShadowCoarseLODDistSq);
+    const uint LOD = SelectLODForView(Desc, View, SphereBounds, MaxScale);
     return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
 }
 
 // Keeps the projected bounds conservative against the pyramid's own quantization.
 static const float kCullSphereDilation = 1.02;
 
-// One projection of a cull sphere, shared so the sub-pixel and Hi-Z tests stop repeating each other.
 struct FCullSphereProjection
 {
     float3 ViewCenter;
@@ -180,25 +164,39 @@ bool IsSubPixel(FCullSphereProjection P)
     return (MinI.x == MaxI.x) || (MinI.y == MaxI.y);
 }
 
-// Returns true if the sphere is fully occluded by the camera depth pyramid and can be skipped.
+// A box one texel wide always fits the 2x2 tap centered on it, but one two texels wide can touch three.
+float HiZOcclusionMip(float4 UvAABB, float2 PyramidSize)
+{
+    const float2 UvExtent = UvAABB.zw - UvAABB.xy;
+    const float2 Extent   = UvExtent * PyramidSize;
+
+    float Level = ceil(log2(max(max(Extent.x, Extent.y), 1.0)));
+
+    // One mip finer still fits the tap whenever the box's offset plus extent spans at most two texels per axis.
+    const float2 FinerSize = max(floor(PyramidSize * exp2(1.0 - Level)), 1.0);
+    const float2 FinerSpan = frac(UvAABB.xy * FinerSize) + UvExtent * FinerSize;
+    if (Level > 0.0 && all(FinerSpan <= 2.0))
+    {
+        Level -= 1.0;
+    }
+
+    return Level;
+}
+
 bool IsHiZOccluded(FCullSphereProjection P)
 {
     const float ZNear = Scene().CullData.CullNearPlane;
     const float ZFar  = Scene().CullData.CullFarPlane;
 
-    // Clip [-1,1] to Vulkan UV [0,1], direct because the projection already bakes +Y-down NDC.
+    // The projection already bakes +Y-down NDC, so clip maps to UV directly.
     const float4 UvAABB = saturate(P.ClipAABB * 0.5 + 0.5);
 
-    const float Width  = (UvAABB.z - UvAABB.x) * Scene().CullData.PyramidWidth;
-    const float Height = (UvAABB.w - UvAABB.y) * Scene().CullData.PyramidHeight;
-
-    // Mip where a single bilinear tap (2x2) covers the AABB.
-    const float Level = max(ceil(log2(max(Width, Height) * 0.5)), 0.0);
+    const float Level = HiZOcclusionMip(UvAABB, float2(Scene().CullData.PyramidWidth, Scene().CullData.PyramidHeight));
 
     const float2 SampleUV = (UvAABB.xy + UvAABB.zw) * 0.5;
 
     // The min-reduction sampler returns the 2x2 minimum, which under reverse-Z is the farthest occluder.
-    const float PyramidDepth = SampleTexture2DLevel(Scene().CullData.DepthPyramidIndex, SAMPLER_MIN_REDUCTION, SampleUV, Level).x;
+    const float PyramidDepth = Scene().CullData.DepthPyramid.SampleLevel(Samplers::MinReduction, SampleUV, Level).x;
 
     const float FrontZ      = P.ViewCenter.z - P.ViewRadius;
     const float DepthSphere = SphereFrontDepth(FrontZ, ZNear, ZFar);
@@ -207,8 +205,7 @@ bool IsHiZOccluded(FCullSphereProjection P)
     return DepthSphere < PyramidDepth;
 }
 
-// Tested against the PREVIOUS frame's cascade depth, which is STANDARD Z, so the footprint reduction
-// is a MAX not a min. bMid selects which pyramid -- and so which transforms; never choose separately.
+// The previous frame's cascade depth is standard Z, so the reduction is max. bMid picks the pyramid and its transforms together.
 bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bool bMid = false)
 {
     const uint bValid = bMid ? Scene().CullData.bCascadeHZBMidValid : Scene().CullData.bCascadeHZBValid;
@@ -222,7 +219,7 @@ bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bo
     const float3   NdcScale  = bMid ? Scene().CullData.CascadeHZBNdcScaleMid[CascadeIndex].xyz
                                     : Scene().CullData.CascadeHZBNdcScale[CascadeIndex].xyz;
 
-    // Ortho: w == 1, so clip space is already NDC.
+    // Ortho w is 1, so clip space is already NDC.
     const float3 Ndc       = mul(CascadeVP, float4(CenterWS, 1.0)).xyz;
     const float3 NdcRadius = RadiusWS * NdcScale;
 
@@ -230,15 +227,13 @@ bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bo
     const float2 MaxNdc = Ndc.xy + NdcRadius.xy;
     const float  NearZ  = Ndc.z - NdcRadius.z;
 
-    // Partly outside the cascade volume: the raster clips it, so the pyramid never described all of it.
-    // Treat as visible rather than guess.
+    // A sphere partly outside the cascade volume was clipped by the raster, so the pyramid cannot prove it hidden.
     if (any(MinNdc < -1.0) || any(MaxNdc > 1.0) || NearZ < 0.0)
     {
         return false;
     }
 
-    // NDC -> tile-local UV -> pyramid UV. The ortho projection already bakes Vulkan +Y-down, so this is a
-    // direct mapping, same as the camera path.
+    // The ortho projection already bakes Vulkan +Y-down, so NDC maps to the tile directly.
     const float4 Tile     = Scene().CullData.CascadeHZBTile[CascadeIndex];
     const float2 LocalMin = MinNdc * 0.5 + 0.5;
     const float2 LocalMax = MaxNdc * 0.5 + 0.5;
@@ -246,31 +241,32 @@ bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bo
     const float2 UvMin = Tile.xy + LocalMin * Tile.zw;
     const float2 UvMax = Tile.xy + LocalMax * Tile.zw;
 
-    const float Width  = (UvMax.x - UvMin.x) * Scene().CullData.CascadePyramidWidth;
-    const float Height = (UvMax.y - UvMin.y) * Scene().CullData.CascadePyramidHeight;
-
-    // Mip where one bilinear tap (2x2) covers the footprint, clamped to the chain we actually allocated.
+    const float Level    = HiZOcclusionMip(float4(UvMin, UvMax),
+                                           float2(Scene().CullData.CascadePyramidWidth, Scene().CullData.CascadePyramidHeight));
     const float MaxLevel = max((float)Scene().CullData.CascadePyramidMipCount - 1.0, 0.0);
-    const float Level    = clamp(ceil(log2(max(max(Width, Height) * 0.5, 1.0))), 0.0, MaxLevel);
+
+    // Past the allocated chain one tap no longer covers the footprint, so it cannot prove anything.
+    if (Level > MaxLevel)
+    {
+        return false;
+    }
 
     const float2 SampleUV = (UvMin + UvMax) * 0.5;
 
-    // MIN-reduction is what the camera's reverse-Z pyramid wants; standard Z wants the opposite.
-    const float PyramidDepth = SampleTexture2DLevel(Scene().CullData.CascadePyramidIndex, SAMPLER_MAX_REDUCTION, SampleUV, Level).x;
+    // Standard Z needs max reduction, the opposite of the camera's reverse-Z pyramid.
+    const float PyramidDepth = Scene().CullData.CascadePyramid.SampleLevel(Samplers::MaxReduction, SampleUV, Level).x;
 
-    // Standard Z: occluded iff the whole sphere sits behind the farthest thing already in its footprint,
-    // i.e. every fragment it would emit fails the Less test.
+    // Occluded when the whole sphere sits behind the farthest depth in its footprint.
     return NearZ > PyramidDepth;
 }
 
-// The per-(instance, view) reject in ONE place: CullInstances sizes each bucket from this and
-// BuildMeshletBlocks appends against that sizing, so a disagreement silently drops an instance.
+// CullInstances sizes buckets from this and BuildMeshletBlocks appends against it, so they must agree.
 bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster,
                              bool bShadowOnly, bool bFarCaster)
 {
     const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 
-    // Outside the NoCull gate: NoCull suppresses visibility culling, not whether the instance casts.
+    // NoCull suppresses visibility culling, not whether the instance casts.
     if (bShadowView && !bCaster)
     {
         return false;
@@ -298,8 +294,7 @@ bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool b
 
     if (View.HasFlag(CULL_VIEW_FLAG_CASCADE))
     {
-        // The cascade's own ortho box barely separates one cascade from the next (the fitted spheres
-        // nest); CascadeFrustum is the camera slice swept toward the sun, which does not.
+        // Cascade ortho boxes overlap, so test the camera slice swept toward the sun instead.
         if (!FrustumContainsSphere(Scene().CullData.CascadeFrustum[View.CascadeIndex], Center, Radius))
         {
             return false;
@@ -311,10 +306,6 @@ bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool b
         }
     }
 
-    // No camera Hi-Z test here. This pass runs before the frame's own pyramid exists, so it could only
-    // sample LAST frame's -- and a reject leaves the instance with no blocks at all, which neither cull
-    // phase can undo. That is the frame of lag the two-phase occlusion exists to remove. The camera
-    // occlusion test now lives in MeshletCull's late phase, against the pyramid built this frame.
-    // Cascades keep theirs above: shadow views are single-phase and have no second chance to gain from.
+    // No camera Hi-Z here since only last frame's pyramid exists and a reject is unrecoverable. MeshletCull's late phase tests it.
     return true;
 }

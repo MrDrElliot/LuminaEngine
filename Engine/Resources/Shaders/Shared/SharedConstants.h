@@ -1,33 +1,23 @@
 #pragma once
 
-// Parsed by BOTH MSVC and Slang: preprocessor directives and // comments ONLY. Everything here sizes a
-// buffer or is packed into a field both sides decode, so drift corrupts memory instead of misbehaving.
+// Parsed by both MSVC and Slang, so only preprocessor directives and line comments; drift here corrupts memory.
 
 #define MESHLET_MAX_VERTICES            64
 #define MESHLET_MAX_TRIANGLES           64
 
-// LOD 0 is full detail. Sloppy LODs (4-5) can hole, which reads as a shadow light-leak, so casters
-// cap lower -- except past ShadowCoarseLODDistance, where one cascade texel keeps the holes sub-texel.
 #define MESHLET_MAX_LODS                6
-#define MESHLET_MAX_SHADOW_LOD          3
-#define MESHLET_MAX_COARSE_SHADOW_LOD   5
 
-// FMeshletDraw packs a mesh-global meshlet index into this many bits and spends the rest on the frame
-// tag. Past the bound the index wraps and silently resolves the wrong meshlet.
+// FMeshletDraw packs a mesh-global meshlet index into this many bits; past the bound it silently resolves the wrong meshlet.
 #define MESHLET_DRAW_INDEX_BITS         20u
 
-// The remaining 12 bits of the packed word are spare, and for a cascade entry record which cascade
-// deferred it. The cull drops a defer past 1024 rather than wrapping into the cascade field.
+// The spare 12 bits record a cascade entry's deferring cascade, so the cull drops a defer past 1024 rather than wrap.
 #define MESHLET_DEFER_DRAWID_BITS       10u
 #define MESHLET_DEFER_MAX_DRAWID        1024u
 
-// Not a device preference: the block list is laid out CPU-side in units of this and the cull workgroup
-// is declared from it. RHI::kMeshletCullGroupSize mirrors it and MeshData.h static_asserts the pair.
+// Mirrored by RHI::kMeshletCullGroupSize, which MeshData.h static_asserts against.
 #define MESHLET_CULL_GROUP_SIZE         32
 
-// Which part of a bucket's draw region a geometry pass rasterizes. The two VisBuffer phases share one
-// cull view, so each phase's appends are tracked separately; every single-phase pass takes ALL, which
-// by then is final. Sized per slice: bases, counts, sub-draw counts and indirect args.
+// The two VisBuffer phases share one cull view, so each tracks its appends apart and single-phase passes take MESHLET_SLICE_ALL.
 #define MESHLET_SLICE_EARLY             0u
 #define MESHLET_SLICE_LATE              1u
 #define MESHLET_SLICE_ALL               2u
@@ -36,8 +26,7 @@
 // Y-fold axis, far below the 65535 Vulkan guarantees because the fold rounds group counts up to a multiple of it.
 #define MAX_DISPATCH_AXIS               1024
 
-// DXR2 COMPRESSED1: three 16-bit offsets from a signed 24-bit anchor on a shared power-of-two exponent.
-// Anchor + Offset < 2^24, so the decode is bit-identical everywhere -- load-bearing for early-Z.
+// DXR2 COMPRESSED1 positions; Anchor + Offset stays below 2^24 so the decode is bit-identical, which early-Z relies on.
 #define MESHLET_POSITION_MAX            65535
 #define MESHLET_ANCHOR_MAX              8388607
 #define MESHLET_ANCHOR_MASK             0x00FFFFFFu
@@ -92,7 +81,7 @@
 #define MAX_SHADOWS                     256
 #define NUM_CASCADES                    4
 
-// Hard cap on cull views: camera + NUM_CASCADES + 6/point + 1/spot.
+// Hard cap on cull views, covering the camera, NUM_CASCADES, six per point light and one per spot.
 #define MAX_CULL_VIEWS                  128
 
 // The cluster light list packs two 13-bit light indices per uint.

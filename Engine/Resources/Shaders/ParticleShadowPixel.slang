@@ -8,7 +8,7 @@ void PixelMain(FParticleVertexOutput In)
     float Coverage = In.Color.a;
     if (In.TextureIndex != 0u)
     {
-        Coverage *= SampleTexture2D(In.TextureIndex, SAMPLER_LINEAR_WRAP, In.UV).a;
+        Coverage *= FTexture2D(In.TextureIndex).Sample(Samplers::LinearWrap, In.UV).a;
     }
     else if (Pass().RenderMode == PARTICLE_RENDER_SPRITE)
     {

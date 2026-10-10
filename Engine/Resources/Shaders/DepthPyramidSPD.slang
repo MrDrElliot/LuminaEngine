@@ -1,15 +1,9 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
-// Single-pass downsampler for a conservative HZB (up to 12 mips per dispatch). Bindless source SRV +
-// per-mip UAVs, BDA atomic counter for the cross-WG hand-off; no pass-local binding set.
-//
-// Two reduction modes, because the engine has two depth conventions: the camera pyramid is reverse-Z and
-// wants MIN (the farthest surface), the cascade atlas is standard Z and wants MAX. Both are "the surface an
-// occludee must be behind to be hidden"; the sign is the only difference. ReduceMax is a push constant, so
-// the branch is wave-uniform.
+// Reverse-Z camera pyramids reduce with min and standard-Z cascade atlases with max; ReduceMax is a push constant so the branch is wave-uniform.
 
 #define TILE_THREAD_WIDTH 16
 #define TILE_THREAD_COUNT (TILE_THREAD_WIDTH * TILE_THREAD_WIDTH)
@@ -18,14 +12,14 @@
 
 struct FPushConstants
 {
-    uint2  PyramidSize;
-    uint   NumMips;
-    uint   NumWorkGroups;
-    float2 InvPyramidSize;
-    uint   SrcDepthIndex;
-    uint   ReduceMax;       // 0 = min (reverse-Z camera depth), 1 = max (standard-Z shadow depth)
+    uint2         PyramidSize;
+    uint          NumMips;
+    uint          NumWorkGroups;
+    float2        InvPyramidSize;
+    FTexture2D    SrcDepth;
+    uint          ReduceMax;       // 0 = min (reverse-Z camera depth), 1 = max (standard-Z shadow depth)
     GPUSpan<uint> AtomicCounter;
-    uint   MipUAV[SPD_MAX_MIPS];
+    uint          MipUAV[SPD_MAX_MIPS];
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -36,8 +30,7 @@ float ReduceIdentity()
     return Pass().ReduceMax != 0u ? 0.0f : 1.0f;
 }
 
-// Ping-pong LDS: alternating reduction passes write to disjoint halves so no
-// slot is read+written across a barrier.
+// Ping-pong halves so no slot is read and written across a barrier.
 groupshared float SpdLDS[2 * TILE_THREAD_COUNT];
 groupshared bool  SpdIsLastWorkgroup;
 
@@ -52,29 +45,27 @@ float Reduce4(float a, float b, float c, float d)
 
 void StoreMip(uint Mip, int2 Pos, float Value)
 {
-    // Mips 5 and 11 are read by other workgroups in phase 2; route through the
-    // coherent alias so the SPIR-V Coherent decoration lands on these stores.
+    // Other workgroups read mips 5 and 11 in phase 2, so these stores need the Coherent decoration.
     if (Mip == 5 || Mip == 11)
     {
-        gRWTextures2DCoherent[Pass().MipUAV[Mip]][Pos] = float4(Value, 0, 0, 0);
+        FRWTexture2DCoherent(Pass().MipUAV[Mip])[Pos] = float4(Value, 0, 0, 0);
     }
     else
     {
-        gRWTextures2D[Pass().MipUAV[Mip]][Pos] = float4(Value, 0, 0, 0);
+        FRWTexture2D(Pass().MipUAV[Mip])[Pos] = float4(Value, 0, 0, 0);
     }
 }
 
 float LoadMip5Coherent(int2 Pos, int2 MaxIdx)
 {
-    return gRWTextures2DCoherent[Pass().MipUAV[5]][clamp(Pos, int2(0, 0), MaxIdx)].x;
+    return FRWTexture2DCoherent(Pass().MipUAV[5])[clamp(Pos, int2(0, 0), MaxIdx)].x;
 }
 
-// Mip 0 is a 2x1-per-axis reduction of the source, so the reduction sampler has to match the mode: one tap
-// covers the 2x2 source block exactly. Sampling a subset here would under-report the extent and over-cull.
+// One reduction-sampler tap covers the 2x2 source block, so the sampler must match the mode or it over-culls.
 float SampleSrcDepth(float2 UV)
 {
     const uint Sampler = Pass().ReduceMax != 0u ? SAMPLER_MAX_REDUCTION : SAMPLER_MIN_REDUCTION;
-    return gTextures2D[Pass().SrcDepthIndex].SampleLevel(gSamplers[Sampler], UV, 0.0f).x;
+    return Pass().SrcDepth.SampleLevel(FSampler(Sampler), UV, 0.0f).x;
 }
 
 float4 DownsampleMipN0_BaseCase(uint2 Tile, uint2 TileThread)
@@ -93,7 +84,7 @@ float4 DownsampleMipN0_BaseCase(uint2 Tile, uint2 TileThread)
             const float2 UV = (float2(DstP) + 0.5f) * Pass().InvPyramidSize;
             const float  V  = SampleSrcDepth(UV);
 
-            gRWTextures2D[Pass().MipUAV[0]][DstP] = float4(V, 0, 0, 0);
+            FRWTexture2D(Pass().MipUAV[0])[DstP] = float4(V, 0, 0, 0);
             Quad[qi] = V;
         }
     }
@@ -124,7 +115,7 @@ float4 DownsampleMipN0_FromMip5(uint2 Tile, uint2 TileThread)
             const float D = LoadMip5Coherent(SrcP + int2(1, 1), SrcMaxIdx);
             const float V = Reduce4(A, B, C, D);
 
-            gRWTextures2D[Pass().MipUAV[6]][DstP] = float4(V, 0, 0, 0);
+            FRWTexture2D(Pass().MipUAV[6])[DstP] = float4(V, 0, 0, 0);
             Quad[qi] = V;
         }
     }
@@ -227,7 +218,7 @@ void ComputeMain(
     if (all(TT == uint2(0, 0)))
     {
         uint OldCount;
-        InterlockedAdd(SpanAt(&Pass().AtomicCounter, 0u)[0], 1u, OldCount);
+        InterlockedAdd(Pass().AtomicCounter.At(0u)[0], 1u, OldCount);
         SpdIsLastWorkgroup = ((OldCount + 1u) == Pass().NumWorkGroups);
     }
 
@@ -237,10 +228,10 @@ void ComputeMain(
 
     if (all(TT == uint2(0, 0)))
     {
-        SpanSet(&Pass().AtomicCounter, 0u, 0u);
+        Pass().AtomicCounter.Set(0u, 0u);
     }
 
-    // Walk mip-5 in 64x64 sub-tiles. Pyramids up to 2048-wide fit in one.
+    // Walk mip 5 in 64x64 sub-tiles.
     const uint2 Mip5Size      = max(Pass().PyramidSize >> 5u, uint2(1, 1));
     const uint2 Mip5TileCount = max(Mip5Size >> 6u, uint2(1, 1));
 

@@ -21,8 +21,8 @@ namespace Lumina
      * UVs and LODs, which a graph of TextureSample nodes cannot express without one node per tap.
      *
      * Because nothing is sampled here, the node does not care what VIEW the texture has -- a CTextureArray
-     * works exactly as well as a plain 2D texture, since the bindless heap aliases gTextures2D,
-     * gTextures2DArray and gTexturesCube at the same binding. Picking the matching sample helper is
+     * works exactly as well as a plain 2D texture, since the bindless heap aliases its 2D,
+     * 2D array and cube views at the same binding. Picking the matching sample helper is
      * yours to get right; a mismatch reads the null descriptor rather than failing to compile.
      *
      * The emitted value is the slot's RUNTIME contents, not a compile-time constant, so a texture

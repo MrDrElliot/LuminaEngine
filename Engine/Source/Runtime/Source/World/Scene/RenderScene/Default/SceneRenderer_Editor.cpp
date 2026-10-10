@@ -282,9 +282,25 @@ namespace Lumina
     }
 #endif
 
-    ECS::FEntity FDefaultSceneRenderer::GetEntityAtPixel(uint32 X, uint32 Y) const
+    FUIntVector2 FDefaultSceneRenderer::DisplayToPickerTexel(uint32 X, uint32 Y) const
+    {
+        if (SceneViews.empty())
+        {
+            return FUIntVector2(X, Y);
+        }
+        const FSceneView& Primary = SceneViews[0];
+        const uint64 PickerX = (uint64)X * Primary.Size.x / Math::Max(Primary.DisplaySize.x, 1u);
+        const uint64 PickerY = (uint64)Y * Primary.Size.y / Math::Max(Primary.DisplaySize.y, 1u);
+        return FUIntVector2((uint32)PickerX, (uint32)PickerY);
+    }
+
+    ECS::FEntity FDefaultSceneRenderer::GetEntityAtPixel(uint32 DisplayX, uint32 DisplayY) const
     {
     #if USING(WITH_EDITOR)
+        const FUIntVector2 Texel = DisplayToPickerTexel(DisplayX, DisplayY);
+        const uint32 X = Texel.x;
+        const uint32 Y = Texel.y;
+
         int32 BestSlotIdx = -1;
         uint64 BestFrame = 0;
         for (uint32 i = 0; i < PickerReadbackRingSize; ++i)
@@ -335,15 +351,18 @@ namespace Lumina
 
         return static_cast<ECS::FEntity>(PixelValue);
     #else
-        (void)X;
-        (void)Y;
+        (void)DisplayX;
+        (void)DisplayY;
         return ECS::NullEntity;
     #endif
     }
 
     #if USING(WITH_EDITOR)
-    void FDefaultSceneRenderer::SetPickerCursor(uint32 X, uint32 Y, bool bOverViewport)
+    void FDefaultSceneRenderer::SetPickerCursor(uint32 DisplayX, uint32 DisplayY, bool bOverViewport)
     {
+        const FUIntVector2 Texel = DisplayToPickerTexel(DisplayX, DisplayY);
+        const uint32 X = Texel.x;
+        const uint32 Y = Texel.y;
         const uint64 Packed = (bOverViewport ? 1ull : 0ull)
                             | ((uint64(X) & 0x1FFFFF) << 1)
                             | ((uint64(Y) & 0x1FFFFF) << 22);

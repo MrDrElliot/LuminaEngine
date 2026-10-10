@@ -9,12 +9,11 @@ struct FragmentInput
     nointerpolation uint EntityID       : ENTITY_ID;
 };
 
-// Drawn after tone mapping onto the display-referred target, so the RmlUi RT's sRGB colors
-// are written as-is and match the screen-space UI (no tone map, no gamma).
+// Drawn after tone mapping onto the display-referred target, so RmlUi's sRGB colors are written as-is.
 [shader("fragment")]
 float4 FragmentMain(FragmentInput Input) : SV_Target0
 {
-    float4 Texel = SampleTexture2D(Input.TextureIndex, SAMPLER_LINEAR_CLAMP, Input.UV) * Input.Tint;
+    float4 Texel = FTexture2D(Input.TextureIndex).Sample(Samplers::LinearClamp, Input.UV) * Input.Tint;
 
     if (Texel.a < 0.01)
     {

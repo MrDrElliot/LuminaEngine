@@ -58,7 +58,7 @@ float DecalAxisFade(FGPUDecal Decal, float LocalZ)
 [shader("fragment")]
 PSOutput FragmentMain(PSInput Input)
 {
-    FGPUDecal Decal = SpanGet(&Pass().Decals, Input.DecalIndex);
+    FGPUDecal Decal = Pass().Decals.Get(Input.DecalIndex);
 
     float2 ScreenSize = float2(Scene().ScreenSize.xy);
     float2 Pixel      = Input.Position.xy;

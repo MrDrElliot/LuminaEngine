@@ -1,14 +1,14 @@
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
 // Builds one level of the reflection blur chain from the level below, a 2x downsample followed by a separable 7-tap Gaussian.
 
 struct FSSRChainLevelArgs
 {
-    uint ChainIndex;  // the whole chain, read at SourceMip
-    uint SourceMip;
-    uint DestUAV;
-    uint DestMip;
+    FTexture2D   Chain;  // the whole chain, read at SourceMip
+    uint         SourceMip;
+    FRWTexture2D Dest;
+    uint         DestMip;
 
     uint SourceW;
     uint SourceH;
@@ -29,8 +29,8 @@ static const float kGaussian[7] =
 };
 
 // An 8x8 group writes 8x8 texels and needs three more on each side for the kernel.
-groupshared float4 gCache[16][16];
-groupshared float4 gHorizontal[8][16];
+groupshared float4 gsCache[16][16];
+groupshared float4 gsHorizontal[8][16];
 
 // A miss weighs little in a sharp level and nearly as much as a hit in a wide one, so rough reflections thin out gradually.
 float MissAwareWeight(float4 C)
@@ -41,7 +41,7 @@ float MissAwareWeight(float4 C)
 float4 SampleParent(int2 Texel)
 {
     const float2 UV = (float2(Texel) + 0.5) / float2(Pass().DestW, Pass().DestH);
-    return SampleTexture2DLevel(Pass().ChainIndex, SAMPLER_LINEAR_CLAMP, UV, float(Pass().SourceMip));
+    return Pass().Chain.SampleLevel(Samplers::LinearClamp, UV, float(Pass().SourceMip));
 }
 
 float4 WeightedAverage(float4 Sum, float Weight)
@@ -60,7 +60,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID
     for (int i = 0; i < 4; ++i)
     {
         const int2 Offset = int2(i & 1, i >> 1);
-        gCache[Local.x * 2 + Offset.x][Local.y * 2 + Offset.y] = SampleParent(Global + Local - 4 + Offset);
+        gsCache[Local.x * 2 + Offset.x][Local.y * 2 + Offset.y] = SampleParent(Global + Local - 4 + Offset);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -73,12 +73,12 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID
         [unroll]
         for (int k = 0; k < 7; ++k)
         {
-            const float4 C = gCache[Local.x + 1 + k][Y];
+            const float4 C = gsCache[Local.x + 1 + k][Y];
             const float  W = kGaussian[k] * MissAwareWeight(C);
             Sum    += C * W;
             Weight += W;
         }
-        gHorizontal[Local.x][Y] = WeightedAverage(Sum, Weight);
+        gsHorizontal[Local.x][Y] = WeightedAverage(Sum, Weight);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -92,10 +92,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID
     [unroll]
     for (int k = 0; k < 7; ++k)
     {
-        const float4 C = gHorizontal[Local.x][Local.y + 1 + k];
+        const float4 C = gsHorizontal[Local.x][Local.y + 1 + k];
         const float  W = kGaussian[k] * MissAwareWeight(C);
         Sum    += C * W;
         Weight += W;
     }
-    gRWTextures2D[Pass().DestUAV][Global] = WeightedAverage(Sum, Weight);
+    Pass().Dest[Global] = WeightedAverage(Sum, Weight);
 }

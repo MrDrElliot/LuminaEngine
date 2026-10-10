@@ -1,5 +1,3 @@
-// RmlUi pixel shader (fully-bindless, single-draw path). Per-draw data comes from the device-address
-// buffer by flat draw index; scissor is an axis-aligned clip test here. Colors are premultiplied.
 #pragma once
 #include "Includes/RmlUiCommon.slang"
 
@@ -13,24 +11,23 @@ struct PSInput
 
 float StopPosition(uint Index)
 {
-    if (!SpanContains(&Pass().Stops, Index))
+    if (!Pass().Stops.Contains(Index))
     {
         return 0.0;
     }
-    return SpanAt(&Pass().Stops, Index).Position.x;
+    return Pass().Stops.At(Index).Position.x;
 }
 
 float4 StopColor(uint Index)
 {
-    if (!SpanContains(&Pass().Stops, Index))
+    if (!Pass().Stops.Contains(Index))
     {
         return float4(0.0);
     }
-    return loadAligned<16>(&SpanAt(&Pass().Stops, Index).Color);
+    return loadAligned<16>(&Pass().Stops.At(Index).Color);
 }
 
-// Progressive lerp with a saturated segment weight: stops before the one containing T resolve to
-// weight 1, stops after to 0, so this is an exact piecewise-linear ramp, not an approximation.
+// Stops before the one containing T saturate to weight 1 and stops after it to 0, an exact piecewise-linear ramp.
 float4 SampleColorStops(FUiDraw Draw, float T)
 {
 
@@ -57,8 +54,7 @@ float4 SampleColorStops(FUiDraw Draw, float T)
     return Colour;
 }
 
-// RmlUi hands gradient geometry a UV equal to the vertex position minus the paint-area origin, and
-// expresses every shape parameter in that same element-local pixel space.
+// RmlUi gives gradient geometry element-local pixel UVs, the same space as every shape parameter.
 float GradientCoordinate(FUiDraw Draw, float2 P)
 {
     if (Draw.ShaderType == UI_SHADER_LINEAR)
@@ -73,8 +69,7 @@ float GradientCoordinate(FUiDraw Draw, float2 P)
         return length((P - Draw.ShaderParams.xy) / Radius);
     }
 
-    // Conic: ShaderParams.zw is the start direction (angle 0 points up), and screen-space clockwise
-    // rotation of (x, y) is (-y, x), so that vector's perpendicular gives the sweep axis.
+    // ShaderParams.zw is the start direction (angle 0 up), and its clockwise perpendicular (-y, x) gives the sweep axis.
     const float2 Up    = Draw.ShaderParams.zw;
     const float2 Right = float2(-Up.y, Up.x);
     const float2 D     = P - Draw.ShaderParams.xy;
@@ -82,7 +77,7 @@ float GradientCoordinate(FUiDraw Draw, float2 P)
     return Turns - floor(Turns);
 }
 
-// Signed distance to a rounded box centred on the origin; negative inside.
+// Signed distance to a rounded box centered on the origin, negative inside.
 float SdRoundedBox(float2 P, float2 HalfExtent, float4 Radii)
 {
     float2 Pair   = (P.x > 0.0) ? Radii.yz : Radii.xw;   // right pair (TR, BR) or left pair (TL, BL)
@@ -91,8 +86,7 @@ float SdRoundedBox(float2 P, float2 HalfExtent, float4 Radii)
     return min(max(Q.x, Q.y), 0.0) + length(max(Q, 0.0)) - Radius;
 }
 
-// Coverage rather than a hard discard, so the curve stays smooth at the corners. Nested clips
-// intersect, and multiplying coverage is what intersection means once it is antialiased.
+// Multiplied coverage instead of a discard keeps corners antialiased and intersects nested clips.
 float ClipMaskCoverage(FUiDraw Draw, float2 FragCoord)
 {
     const uint Count  = UI_CLIP_COUNT(Draw.ClipMaskRange);
@@ -101,7 +95,7 @@ float ClipMaskCoverage(FUiDraw Draw, float2 FragCoord)
     float Coverage = 1.0;
     for (uint i = 0u; i < Count; ++i)
     {
-        FUiClipMask Mask = SpanGet(&Pass().ClipMasks, Offset + i);
+        FUiClipMask Mask = Pass().ClipMasks.Get(Offset + i);
         float Distance   = SdRoundedBox(UiClipLocal(Mask, FragCoord) - Mask.Rect.xy, Mask.Rect.zw, Mask.Radii);
 
         // Distance is in mask space, so the screen-space derivative still converts it into target pixels.
@@ -115,12 +109,11 @@ float ClipMaskCoverage(FUiDraw Draw, float2 FragCoord)
 [shader("fragment")]
 float4 FragmentMain(PSInput Input) : SV_Target0
 {
-    FUiDraw Draw = SpanGet(&Pass().Draws, Input.DrawIndex);
+    FUiDraw Draw = Pass().Draws.Get(Input.DrawIndex);
 
     // Ahead of any discard, because killing a lane leaves the quad's derivatives undefined.
     float Coverage = ClipMaskCoverage(Draw, Input.Position.xy);
 
-    // Shader-side scissor (axis-aligned, framebuffer pixels).
     float2 P = Input.Position.xy;
     bool Scissored = P.x < Draw.ClipRect.x || P.y < Draw.ClipRect.y || P.x >= Draw.ClipRect.z || P.y >= Draw.ClipRect.w;
 
@@ -135,7 +128,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         return Input.Colour * SampleColorStops(Draw, GradientCoordinate(Draw, Input.UV)) * Coverage;
     }
 
-    float4 Texel = SampleTexture2D(Draw.TextureID, Draw.SamplerIndex, Input.UV);
+    float4 Texel = Draw.Texture.Sample(Draw.Sampler, Input.UV);
     if (Draw.ShaderType == kUIShaderTexturedStraightSRGB)
     {
         Texel.rgb = EncodeSRGB(Texel.rgb);

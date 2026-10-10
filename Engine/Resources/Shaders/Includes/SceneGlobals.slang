@@ -2,12 +2,28 @@
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
-// Must match FSceneRoot in SceneRenderTypes.h (368 B, scalar layout); the hottest pointers ride in FRHIRoot.
+// The mip count rides in the top byte, so a roughness LOD range needs no per-pixel GetDimensions.
+struct FMippedTextureCube
+{
+    uint Packed;
+
+    FTextureCube Texture() { return FTextureCube(Packed & 0x00FFFFFFu); }
+    uint MipCount()        { return Packed >> 24; }
+};
+
+struct FMippedTextureCubeArray
+{
+    uint Packed;
+
+    FTextureCubeArray Texture() { return FTextureCubeArray(Packed & 0x00FFFFFFu); }
+    uint MipCount()             { return Packed >> 24; }
+};
+
+// Must match FSceneRoot in SceneRenderTypes.h (368 B, scalar layout).
 struct FSceneRoot
 {
     GPUSpan<FBoneTransform>      Bones;
-    // Last frame's pose and transform, copied before this frame's incremental uploads overwrite them.
-    // These lag a frame and can be shorter than the live arrays, which is what their counts say.
+    // Last frame's copies, which can be shorter than the live arrays.
     GPUSpan<FBoneTransform>      PrevBones;
     GPUSpan<FTransform3x4>       PrevRetainedTransforms;
     GPUSpan<FCluster>            Clusters;
@@ -21,14 +37,12 @@ struct FSceneRoot
     GPUSpan<FPreSkinnedVertex>   PreSkinnedVertices;
     GPUSpan<FWidgetInstance>     Widgets;
     GPUSpan<FGPUReflectionProbe> ReflectionProbes;
-    GPUSpan<FGPUSpline>          Splines;        // one header per uploaded spline (bSendToGPU)
-    GPUSpan<FGPUSplinePoint>     SplinePoints;   // shared control-point array; headers carry the slice
-    GPUSpan<FGPUSplineSample>    SplineSamples;  // shared arc-length tables
-    // Process-wide meshlet header slab. Instances carry a SLOT into this, never an address, so this is
-    // the only meshlet-header address that exists anywhere -- and it is republished every frame, which
-    // is what lets the slab grow without invalidating a single cached copy. See MeshletHeaderSlab.h.
+    GPUSpan<FGPUSpline>          Splines;
+    GPUSpan<FGPUSplinePoint>     SplinePoints;   // each header carries its slice
+    GPUSpan<FGPUSplineSample>    SplineSamples;
+    // Instances hold a slot into this, never an address, so the slab can grow and be republished each frame.
     GPUSpan<FMeshletHeader>      MeshletHeaders;
-    // Texture-streaming feedback, one uint per MATERIAL slot. See RequestMaterialResolution.
+    // One uint per material slot, see RequestMaterialResolution.
     GPUSpan<uint>                StreamingFeedback;
     // Object-space meshlet spheres for this frame's poses, written by SkinnedMeshletBounds.slang.
     GPUSpan<FMeshletSphere>      SkinnedMeshletBounds;
@@ -39,66 +53,62 @@ struct FSceneRoot
     // Parallel to PreSkinnedVertices, and empty when no view wants motion vectors.
     GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions;
 
-    uint  BRDFLutIndex;          // bindless 2D SRV
-    uint  SkyIrradianceIndex;    // bindless cube SRV
-    // [31:24] = prefilter cube mip count (see SamplePrefilter), [23:0] = bindless cube SRV index.
-    // Packed so the per-pixel mip count rides along without a second field.
-    uint  SkyPrefilterIndex;
-    uint  ShadowCascadeIndex;    // bindless 2D SRV (cascade atlas)
-    uint  ShadowAtlasIndex;      // bindless 2D SRV (spot/point atlas)
-    uint  SkyCubeIndex;          // bindless cube SRV (full-res sky; sharp near-mirror reflections)
-    // [31:24] = probe prefilter mip count, [23:0] = bindless cube-array SRV over every probe's slices.
-    uint  ProbeCubeArrayIndex;
-    uint  _Pad0;
+    FTexture2D         BRDFLut;
+    FTextureCube       SkyIrradiance;
+    FMippedTextureCube SkyPrefilter;
+    FTexture2D         ShadowCascadeTexture;
+    FTexture2D         ShadowAtlasTexture;
+    // Full resolution, for sharp near-mirror reflections.
+    FTextureCube            SkyCube;
+    FMippedTextureCubeArray ProbeCubeArray;
+    uint                    _Pad0;
 };
 
-// gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.
-// Straight from the push constant, so this is free. Field access auto-derefs, which keeps FSceneRoot
-// from being loaded by value (PhysicalStorageBuffer pointer fields trip spirv-val).
-FSceneRoot* GetSceneRoot() { return (FSceneRoot*)gRHI.SceneRoot; }
+FSceneRoot* GetSceneRoot() { return GetSceneRootPointer<FSceneRoot>(); }
 
-// Per-pass args for scene passes; each pass declares its struct and wraps this in a file-local Pass().
+// Each pass declares its args struct and wraps this in a file-local Pass().
 Ptr<T> GetPassArgs<T>()
 {
-    return (T*)gRHI.Args;
+    return GetArgs<T>();
 }
 
-// Scene buffer accessors. The span ones return a POINTER to the span, never the span by value: a struct
-// holding a PhysicalStorageBuffer pointer must not be materialized as a local. Index them with SpanGet /
-// SpanAt, which carry the bound the CPU derived from the allocation.
-FSceneGlobalData*   Scene()                 { return (FSceneGlobalData*)gRHI.SceneData; }
-FLightData*         LightData()             { return (FLightData*)gRHI.Lights; }
-FGPUInstance*       Instances()             { return (FGPUInstance*)gRHI.Instances; }
+FSceneGlobalData*   Scene()                 { return GetSceneDataPointer<FSceneGlobalData>(); }
 
-GPUSpan<FBoneTransform>*      Bones()                 { return &GetSceneRoot().Bones; }
-GPUSpan<FBoneTransform>*      PrevBones()             { return &GetSceneRoot().PrevBones; }
-GPUSpan<FTransform3x4>*       PrevRetainedTransforms(){ return &GetSceneRoot().PrevRetainedTransforms; }
-GPUSpan<FCluster>*            Clusters()              { return &GetSceneRoot().Clusters; }
-GPUSpan<uint>*                ClusterLightMasks()     { return &GetSceneRoot().ClusterLightMasks; }
-GPUSpan<FMaterialUniforms>*   Materials()             { return &GetSceneRoot().Materials; }
-GPUSpan<FMaterialCollection>* Collections()           { return &GetSceneRoot().Collections; }
-GPUSpan<FBillboardInstance>*  Billboards()            { return &GetSceneRoot().Billboards; }
-GPUSpan<FCullView>*           CullViews()             { return &GetSceneRoot().CullViews; }
+// A post-process material samples at display resolution, so it opts out with MATERIAL_NO_MIP_BIAS.
+float GetMaterialMipBias()
+{
+#if defined(MATERIAL_NO_MIP_BIAS)
+    return 0.0;
+#else
+    return Scene().TextureMipBias;
+#endif
+}
+FLightData*         LightData()             { return GetLightsPointer<FLightData>(); }
+FGPUInstance*       Instances()             { return GetInstancesPointer<FGPUInstance>(); }
 
-// One word, where SpanGet would fetch all 128 bytes of the view to test a flag.
+GPUSpan<FBoneTransform>      Bones()                 { return GetSceneRoot().Bones; }
+GPUSpan<FBoneTransform>      PrevBones()             { return GetSceneRoot().PrevBones; }
+GPUSpan<FTransform3x4>       PrevRetainedTransforms(){ return GetSceneRoot().PrevRetainedTransforms; }
+GPUSpan<FCluster>            Clusters()              { return GetSceneRoot().Clusters; }
+GPUSpan<uint>                ClusterLightMasks()     { return GetSceneRoot().ClusterLightMasks; }
+GPUSpan<FMaterialUniforms>   Materials()             { return GetSceneRoot().Materials; }
+GPUSpan<FMaterialCollection> Collections()           { return GetSceneRoot().Collections; }
+GPUSpan<FBillboardInstance>  Billboards()            { return GetSceneRoot().Billboards; }
+GPUSpan<FCullView>           CullViews()             { return GetSceneRoot().CullViews; }
+
+// One word, where Get would fetch all 128 bytes of the view to test a flag.
 bool CullViewHasFlag(uint ViewIndex, uint Flag)
 {
-    return (asuint(SpanAt(CullViews(), ViewIndex).ViewOriginAndFlags.w) & Flag) == Flag;
+    return (asuint(CullViews().At(ViewIndex).ViewOriginAndFlags.w) & Flag) == Flag;
 }
-GPUSpan<FMeshletHeader>*      MeshletHeaders()        { return &GetSceneRoot().MeshletHeaders; }
+GPUSpan<FMeshletHeader>      MeshletHeaders()        { return GetSceneRoot().MeshletHeaders; }
 
-// Both instance structs carry a header SLOT, but every consumer wants the header. Extensions rather than
-// members on the structs themselves: FGPUInstance and FInstanceStatic live in Common.slang, which is
-// included BEFORE the scene root exists and so cannot reach it.
-//
-// Slot 0 is the null header -- no geometry pointers, MeshletCount 0 -- so this always returns something
-// readable, including for an instance the CPU never filled and one still naming a mesh that has died.
-// A slot past the slab lands on the null header for the same reason.
+// Slot 0 is the null header and the slot is clamped, so this always returns something readable.
 extension FGPUInstance
 {
     property FMeshletHeader* MeshletHeader
     {
-        get { return SpanAt(MeshletHeaders(), min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
+        get { return MeshletHeaders().At(min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
     }
 }
 
@@ -106,73 +116,44 @@ extension FInstanceStatic
 {
     property FMeshletHeader* MeshletHeader
     {
-        get { return SpanAt(MeshletHeaders(), min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
+        get { return MeshletHeaders().At(min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
     }
 }
-GPUSpan<FMeshletDraw>*        MeshletDrawList()       { return &GetSceneRoot().MeshletDrawList; }
-GPUSpan<FPreSkinnedVertex>*   PreSkinnedVertices()    { return &GetSceneRoot().PreSkinnedVertices; }
-GPUSpan<FPrevSkinnedPosition>* PreSkinnedPrevPositions() { return &GetSceneRoot().PreSkinnedPrevPositions; }
-GPUSpan<FMeshletSphere>*      SkinnedMeshletBounds()  { return &GetSceneRoot().SkinnedMeshletBounds; }
-GPUSpan<FSkinnedFrameData>*   SkinnedFrameData()      { return &GetSceneRoot().SkinnedFrameData; }
-GPUSpan<FMeshletCone>*        SkinnedMeshletCones()   { return &GetSceneRoot().SkinnedMeshletCones; }
-GPUSpan<FWidgetInstance>*     Widgets()               { return &GetSceneRoot().Widgets; }
-GPUSpan<FGPUSpline>*          Splines()               { return &GetSceneRoot().Splines; }
-GPUSpan<FGPUSplinePoint>*     SplinePoints()          { return &GetSceneRoot().SplinePoints; }
-GPUSpan<FGPUSplineSample>*    SplineSamples()         { return &GetSceneRoot().SplineSamples; }
-GPUSpan<FGPUReflectionProbe>* ReflectionProbes()      { return &GetSceneRoot().ReflectionProbes; }
+GPUSpan<FMeshletDraw>        MeshletDrawList()       { return GetSceneRoot().MeshletDrawList; }
+GPUSpan<FPreSkinnedVertex>   PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVertices; }
+GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions() { return GetSceneRoot().PreSkinnedPrevPositions; }
+GPUSpan<FMeshletSphere>      SkinnedMeshletBounds()  { return GetSceneRoot().SkinnedMeshletBounds; }
+GPUSpan<FSkinnedFrameData>   SkinnedFrameData()      { return GetSceneRoot().SkinnedFrameData; }
+GPUSpan<FMeshletCone>        SkinnedMeshletCones()   { return GetSceneRoot().SkinnedMeshletCones; }
+GPUSpan<FWidgetInstance>     Widgets()               { return GetSceneRoot().Widgets; }
+GPUSpan<FGPUSpline>          Splines()               { return GetSceneRoot().Splines; }
+GPUSpan<FGPUSplinePoint>     SplinePoints()          { return GetSceneRoot().SplinePoints; }
+GPUSpan<FGPUSplineSample>    SplineSamples()         { return GetSceneRoot().SplineSamples; }
+GPUSpan<FGPUReflectionProbe> ReflectionProbes()      { return GetSceneRoot().ReflectionProbes; }
 uint                NumSplines()            { return GetSceneRoot().Splines.Count; }
 
-// ---------------------------------------------------------------------------------------------------
-// Texture-streaming feedback
-//
-// The GPU already computes the exact LOD it samples; the CPU can only estimate it from bounds,
-// distance and texel density, and every one of those is a place to be wrong. So the material lanes
-// report what they actually sampled and residency follows THAT.
-//
-// Keyed by MATERIAL SLOT, one uint per slot, bit N = "some pixel needs this material's textures at
-// >= 2^N texels across". ABSOLUTE, not relative to what is resident: the UV derivative alone gives the
-// required texel count (one texel per pixel means the texture must be 1/rho texels across its UV range),
-// so the shader never needs a texture's size and never touches its descriptor to report.
-//
-// Per material rather than per texture, which is what makes it ONE atomic per pixel instead of one per
-// texture sample. It costs nothing in accuracy: the request is a required RESOLUTION, and the CPU turns
-// that into a mip per texture using each texture's own dimensions -- so a 4K albedo and a 512 normal on
-// one material correctly land on different mips from the same report.
-//
-// OR is the right operator -- atomic-friendly, order-independent, and the largest request is just the
-// highest set bit. Cleared each frame after readback.
-// ---------------------------------------------------------------------------------------------------
+// Streaming feedback bit N means some pixel needs this material's textures at 2^N or more texels across.
 
-// One-hot required resolution for one UV set, or 0 when that set carries no gradient at all.
-//
-// Zero gradients mean a CONSTANT uv attribute -- a mesh with no second uv set, whose UV1 locals are all
-// zero -- not an infinitely magnified surface. Reporting the clamped maximum for those would pin every
-// such material's textures at mip 0 forever, so they report nothing instead.
+// Zero gradients mean a constant UV attribute (no second UV set), so they report nothing rather than pin mip 0.
 uint StreamingResolutionBit(float2 Ddx, float2 Ddy)
 {
-    // Kept SQUARED and read straight out of the float exponent: a handful of integer ops rather than two
-    // sqrts and a log2. This runs in the deferred material shader, which is register- and SFU-bound.
+    // Kept squared and read from the float exponent, sparing two sqrts and a log2 in an SFU-bound shader.
     const float RhoSq = max(dot(Ddx, Ddx), dot(Ddy, Ddy));
     if (RhoSq <= 0.0f)
     {
         return 0u;
     }
 
-    // For a normal positive float the biased exponent is floor(log2(x)) exactly. We want
-    // ceil(log2(1/Rho)) = ceil(-0.5 * log2(RhoSq)); with log2(RhoSq) in [E, E+1) that is exactly
-    // -floor(E/2), and >> on a signed int floors. Not an approximation -- it agrees with the ceil(log2())
-    // form on every input, including the powers of two where the buckets change.
+    // With E the unbiased exponent of RhoSq, ceil(-0.5 * log2(RhoSq)) is exactly -floor(E/2).
     const int Exponent = (int)((asuint(RhoSq) >> 23) & 0xFFu) - 127;
     return 1u << (uint)clamp(-(Exponent >> 1), 0, 31);
 }
 
-// Called ONCE per pixel by each material lane, not once per sample.
+// Call once per pixel per material lane, not once per sample.
 void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, float2 UV1Ddx, float2 UV1Ddy)
 {
-    // Range, not just the ~0u sentinel: a stale or corrupt slot is simply out of range, and both index the
-    // same buffer, so both have to be rejected before the write. Getting this wrong is an MMU fault, which
-    // is how it was found.
-    if (!SpanContains(&GetSceneRoot().StreamingFeedback, MaterialSlot))
+    // A stale or corrupt slot faults the MMU, so range-check rather than test only the ~0u sentinel.
+    if (!GetSceneRoot().StreamingFeedback.Contains(MaterialSlot))
     {
         return;
     }
@@ -185,7 +166,9 @@ void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, 
     }
 #endif
 
-    const uint Mask = StreamingResolutionBit(UV0Ddx, UV0Ddy) | StreamingResolutionBit(UV1Ddx, UV1Ddy);
+    // Scaled like the samples, so streaming loads the sharper mips a negative bias reaches for.
+    const float GradScale = exp2(GetMaterialMipBias());
+    const uint Mask = StreamingResolutionBit(UV0Ddx * GradScale, UV0Ddy * GradScale) | StreamingResolutionBit(UV1Ddx * GradScale, UV1Ddy * GradScale);
 
     // One pass per distinct slot, with a wave-wide exit since a per-lane exit lets AMD's compiler merge every slot into one.
     bool bPending = true;
@@ -200,7 +183,7 @@ void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, 
                 const uint WaveMask = WaveActiveBitOr(Mask);
                 if (WaveIsFirstLane())
                 {
-                    InterlockedOr(SpanAt(&GetSceneRoot().StreamingFeedback, Candidate)[0], WaveMask);
+                    InterlockedOr(GetSceneRoot().StreamingFeedback.At(Candidate)[0], WaveMask);
                 }
                 bPending = false;
             }
@@ -208,8 +191,7 @@ void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, 
     }
 }
 
-// HDR panoramas carry +Inf/NaN texels that poison the IBL cubes and spread white through bloom.
-// Branchless deliberately: isfinite() short-circuits to two branches per call, and bloom calls it 15x.
+// Strips the +Inf/NaN texels of HDR panoramas, branchless since bloom calls it 15x.
 float SanitizeRadianceChannel(float X)
 {
     const bool bFinite = !isinf(X) & !isnan(X);
@@ -223,12 +205,9 @@ float3 SanitizeRadiance(float3 C)
                   SanitizeRadianceChannel(C.b));
 }
 
-// Karis tone-map-then-average firefly suppression for GGX importance sampling. Identity for a single
-// sample, so mirror reflections are untouched -- only rough multi-sample gathers get smoothed.
+// Karis firefly suppression, the identity for a single sample so mirror reflections are untouched.
 float3 FireflyTonemap(float3 C)   { return C / (1.0 + Luminance(C)); }
 float3 FireflyUntonemap(float3 C) { return C / max(1.0 - Luminance(C), 1e-4); }
-
-// Vertex loaders.
 
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
@@ -277,16 +256,15 @@ FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
     return Data;
 }
 
-// Skinned reads come entirely from the pre-skinned buffer (Skinning.slang did the blend this frame)
-// -- a single structured load like the static path, no per-pass skinning.
+// Reads the pre-skinned buffer that Skinning.slang wrote this frame.
 FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
 {
-    return DecodePreSkinnedVertex(SpanGetAligned(PreSkinnedVertices(), SkinnedVertexBase + M.VertexOffset + VertexLocalIdx));
+    return DecodePreSkinnedVertex(PreSkinnedVertices().GetAligned(SkinnedVertexBase + M.VertexOffset + VertexLocalIdx));
 }
 
 float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
 {
-    FPreSkinnedVertex S = SpanGetAligned(PreSkinnedVertices(), SkinnedVertexBase + M.VertexOffset + VertexLocalIdx);
+    FPreSkinnedVertex S = PreSkinnedVertices().GetAligned(SkinnedVertexBase + M.VertexOffset + VertexLocalIdx);
     return float3(S.Px, S.Py, S.Pz);
 }
 
@@ -298,7 +276,7 @@ struct FSkinRows
     float4 R2;
 };
 
-// Leaves a vertex in BIND POSE, which is the correct answer whenever no usable influence exists.
+// Leaves a vertex in bind pose, the correct answer whenever no usable influence exists.
 FSkinRows IdentitySkinRows()
 {
     FSkinRows Rows;
@@ -323,7 +301,7 @@ FSkinRows UnpackBoneRows(FBoneTransform B)
     return Rows;
 }
 
-// RENORMALIZES: an unnormalized set drags the vertex toward the MODEL ORIGIN by (1 - sum).
+// Renormalizes, since an unnormalized set drags the vertex toward the model origin by (1 - sum).
 FSkinRows BlendSkinRows(FBoneTransform B0, FBoneTransform B1, FBoneTransform B2, FBoneTransform B3,
                         float4 Weights)
 {
@@ -348,7 +326,7 @@ FSkinRows BlendSkinRows(FBoneTransform B0, FBoneTransform B1, FBoneTransform B2,
     return Rows;
 }
 
-// One source vertex, decoded. Slots address the OWNING MESHLET's bone palette, not the skeleton.
+// Slots address the owning meshlet's bone palette, not the skeleton.
 struct FSkinSource
 {
     float3 Position;
@@ -367,7 +345,7 @@ FSkinSource LoadSkinSource(FMeshletHeader* Header, FMeshlet M, uint VertexLocalI
 
     FSkinSource S;
 
-    // The SOURCE is quantized in its meshlet anchor box; the blended OUTPUT is not, hence full floats out.
+    // The source is quantized in its meshlet anchor box, the blended output is not.
     S.Position = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
     S.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
     S.Tangent  = UnpackTangent(V.Tangent);
@@ -393,7 +371,7 @@ FMeshletBonePalette GetBonePalette(FMeshletHeader* Header, uint MeshletIndex)
     return Palette;
 }
 
-// Both clamps matter: slot and bone index are unbounded imported data. Requires Palette.Count > 0.
+// Slot and bone index are unbounded imported data, so both clamp. Requires Palette.Count > 0.
 uint ResolvePaletteBone(FMeshletHeader* Header, FMeshletBonePalette Palette, uint Slot, uint BoneOffset)
 {
     const uint Local  = min(Slot, Palette.Count - 1u);
@@ -401,8 +379,7 @@ uint ResolvePaletteBone(FMeshletHeader* Header, FMeshletBonePalette Palette, uin
     return min(Global, Scene().CullData.BoneNum - 1u);
 }
 
-// True when the bone arena and this meshlet's palette can both actually be read. The arena the caller
-// will read from is irrelevant: PrevBones is gated by its own count, the shorter of the two.
+// The caller's arena does not matter here since PrevBones is gated by its own, shorter, count.
 bool CanSkinMeshlet(FMeshletBonePalette Palette, uint BoneOffset)
 {
     return (Scene().CullData.BoneNum != 0u) && (Palette.Count != 0u)
@@ -422,14 +399,14 @@ FPreSkinnedVertex SkinWithRows(FSkinSource S, FSkinRows Rows)
     Out.Pz      = SkinnedPos.z;
     Out.Normal  = PackNormal(SkinnedNormal);
     Out.Tangent = PackTangent(float4(SkinnedTangent, S.Tangent.w));
-    Out.UV      = S.UV;     // skin-invariant; carried so the draw VS never reads the source
+    Out.UV      = S.UV;     // carried so the draw VS never reads the source
     Out.UV1     = S.UV1;
     Out.Color   = S.Color;
     return Out;
 }
 
 // The per-pass overflow path, where there is no workgroup to share a staged palette across.
-FPreSkinnedVertex SkinVertexWith(GPUSpan<FBoneTransform>* BoneArray, FMeshletHeader* Header, FMeshlet M,
+FPreSkinnedVertex SkinVertexWith(GPUSpan<FBoneTransform> BoneArray, FMeshletHeader* Header, FMeshlet M,
                                  uint MeshletIndex, uint VertexLocalIdx, uint BoneOffset)
 {
     const FSkinSource S = LoadSkinSource(Header, M, VertexLocalIdx);
@@ -439,10 +416,10 @@ FPreSkinnedVertex SkinVertexWith(GPUSpan<FBoneTransform>* BoneArray, FMeshletHea
     if (CanSkinMeshlet(Palette, BoneOffset))
     {
         Rows = BlendSkinRows(
-            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)),
-            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)),
-            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)),
-            SpanGetAligned(BoneArray, ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)),
+            BoneArray.GetAligned(ResolvePaletteBone(Header, Palette, S.Slots.x, BoneOffset)),
+            BoneArray.GetAligned(ResolvePaletteBone(Header, Palette, S.Slots.y, BoneOffset)),
+            BoneArray.GetAligned(ResolvePaletteBone(Header, Palette, S.Slots.z, BoneOffset)),
+            BoneArray.GetAligned(ResolvePaletteBone(Header, Palette, S.Slots.w, BoneOffset)),
             S.Weights);
     }
 
@@ -458,77 +435,77 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletInd
 // FMaterialUniforms is 592 B, so these address one field rather than fetch the block to extract from it.
 float GetMaterialScalar(uint MatIndex, uint Index)
 {
-    if (!SpanContains(Materials(), MatIndex))
+    if (!Materials().Contains(MatIndex))
     {
         return 0.0;
     }
-    return SpanAt(Materials(), MatIndex).Scalars[Index];
+    return Materials().At(MatIndex).Scalars[Index];
 }
 
 float4 GetMaterialVec4(uint MatIndex, uint Index)
 {
-    if (!SpanContains(Materials(), MatIndex))
+    if (!Materials().Contains(MatIndex))
     {
         return float4(0.0);
     }
-    return loadAligned<16>(&SpanAt(Materials(), MatIndex).Vectors[Index]);
+    return loadAligned<16>(&Materials().At(MatIndex).Vectors[Index]);
 }
 
 uint GetMaterialTexture(uint MatIndex, uint Index)
 {
-    if (!SpanContains(Materials(), MatIndex))
+    if (!Materials().Contains(MatIndex))
     {
         return 0u;
     }
-    return SpanAt(Materials(), MatIndex).Textures[Index];
+    return Materials().At(MatIndex).Textures[Index];
 }
 
 uint GetMaterialFlags(uint MatIndex)
 {
-    if (!SpanContains(Materials(), MatIndex))
+    if (!Materials().Contains(MatIndex))
     {
         return 0u;
     }
-    return SpanAt(Materials(), MatIndex).Flags;
+    return Materials().At(MatIndex).Flags;
 }
 
 float GetMaterialOpacityClip(uint MatIndex)
 {
-    if (!SpanContains(Materials(), MatIndex))
+    if (!Materials().Contains(MatIndex))
     {
         return 0.0;
     }
-    return SpanAt(Materials(), MatIndex).OpacityClipValue;
+    return Materials().At(MatIndex).OpacityClipValue;
 }
 
 // Slot is which of the material's own bindings (0 or 1), not the collection's index in the table.
 uint GetMaterialCollectionIndex(uint MatIndex, uint Slot)
 {
-    if (!SpanContains(Materials(), MatIndex))
+    if (!Materials().Contains(MatIndex))
     {
         return 0u;
     }
-    return SpanAt(Materials(), MatIndex).CollectionIndices[Slot];
+    return Materials().At(MatIndex).CollectionIndices[Slot];
 }
 
 float GetCollectionScalar(uint MatIndex, uint Slot, uint Index)
 {
     const uint CollectionIndex = GetMaterialCollectionIndex(MatIndex, Slot);
-    if (!SpanContains(Collections(), CollectionIndex))
+    if (!Collections().Contains(CollectionIndex))
     {
         return 0.0;
     }
-    return SpanAt(Collections(), CollectionIndex).Scalars[Index];
+    return Collections().At(CollectionIndex).Scalars[Index];
 }
 
 float4 GetCollectionVec4(uint MatIndex, uint Slot, uint Index)
 {
     const uint CollectionIndex = GetMaterialCollectionIndex(MatIndex, Slot);
-    if (!SpanContains(Collections(), CollectionIndex))
+    if (!Collections().Contains(CollectionIndex))
     {
         return float4(0.0);
     }
-    return loadAligned<16>(&SpanAt(Collections(), CollectionIndex).Vectors[Index]);
+    return loadAligned<16>(&Collections().At(CollectionIndex).Vectors[Index]);
 }
 
 FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }
@@ -537,7 +514,7 @@ FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }
 uint GetInstanceMaterialIndex(uint InstanceID) { return Instances()[InstanceID].MaterialIndex; }
 uint GetInstanceEntityID(uint InstanceID)      { return Instances()[InstanceID].EntityID; }
 
-FLight GetLightAt(uint Index)       { return SpanGetAligned(&LightData().Lights, Index); }
+FLight GetLightAt(uint Index)       { return LightData().Lights.GetAligned(Index); }
 uint   GetNumLights()               { return LightData().Lights.Count;  }
 float3 GetSunDirection()            { return LightData().SunDirection;  }
 float3 GetSkySunDirection()         { return LightData().SkySunDirection; }
@@ -545,16 +522,16 @@ float3 GetAmbientLightColor()       { return LightData().AmbientLight.xyz; }
 float  GetAmbientLightIntensity()   { return LightData().AmbientLight.w;   }
 bool   HasIBL()                     { return LightData().bHasIBL != 0u;     }
 
-// Media ambient: AmbientLight.xyz is only a sun-height lerp, so prefer the baked skylight cube.
+// AmbientLight.xyz is only a sun-height lerp, so prefer the baked skylight cube.
 float3 GetVolumetricAmbientRadiance()
 {
     float3 Ambient = GetAmbientLightColor();
     if (HasIBL())
     {
         // The convolution is cosine-importance-sampled and mean-averaged, so this is already radiance.
-        uint   Index = GetSceneRoot().SkyIrradianceIndex;
-        float3 Up    = SampleTextureCubeLevel(Index, SAMPLER_LINEAR_CLAMP, float3(0.0,  1.0, 0.0), 0.0).rgb;
-        float3 Down  = SampleTextureCubeLevel(Index, SAMPLER_LINEAR_CLAMP, float3(0.0, -1.0, 0.0), 0.0).rgb;
+        FTextureCube Irradiance = GetSceneRoot().SkyIrradiance;
+        float3       Up    = Irradiance.SampleLevel(Samplers::LinearClamp, float3(0.0,  1.0, 0.0), 0.0).rgb;
+        float3       Down  = Irradiance.SampleLevel(Samplers::LinearClamp, float3(0.0, -1.0, 0.0), 0.0).rgb;
 
         // Averaging the two hemisphere means approximates the full-sphere mean a medium scatters.
         Ambient = (Up + Down) * 0.5;
@@ -562,39 +539,37 @@ float3 GetVolumetricAmbientRadiance()
     return Ambient * GetAmbientLightIntensity();
 }
 
-// A ShadowDataIndex of INDEX_NONE, or one left over from a frame with more shadows than this one, is
-// out of range rather than special: the span's count rejects both and the caller gets an identity tile.
+// An INDEX_NONE or stale ShadowDataIndex is rejected by the span's count rather than special-cased.
 float4x4 GetShadowViewProjection(int ShadowDataIndex, uint ViewIndex)
 {
-    if (!SpanContains(&LightData().Shadows, (uint)ShadowDataIndex))
+    if (!LightData().Shadows.Contains((uint)ShadowDataIndex))
     {
         return (float4x4)0.0;
     }
-    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).ViewProjection[min(ViewIndex, 5u)]);
+    return loadAligned<16>(&LightData().Shadows.At((uint)ShadowDataIndex).ViewProjection[min(ViewIndex, 5u)]);
 }
 
 FLightShadow GetShadowTile(int ShadowDataIndex, uint Face)
 {
-    if (!SpanContains(&LightData().Shadows, (uint)ShadowDataIndex))
+    if (!LightData().Shadows.Contains((uint)ShadowDataIndex))
     {
         FLightShadow Empty = {};
         return Empty;
     }
-    return loadAligned<16>(&SpanAt(&LightData().Shadows, (uint)ShadowDataIndex).Shadow[min(Face, 5u)]);
+    return loadAligned<16>(&LightData().Shadows.At((uint)ShadowDataIndex).Shadow[min(Face, 5u)]);
 }
 
 float    GetTime()                  { return Scene().Time;       }
 float    GetPrevTime()              { return Scene().PrevTime;   }
 
 // Negative means "use this frame's clock"; the motion-vector lane sets it to re-evaluate WPO at t-1.
-static float gMaterialVertexTime = -1.0;
-float MaterialTime() { return gMaterialVertexTime >= 0.0 ? gMaterialVertexTime : Scene().Time; }
+static float MaterialTimeOverride = -1.0;
+float MaterialTime() { return MaterialTimeOverride >= 0.0 ? MaterialTimeOverride : Scene().Time; }
 float    GetDeltaTime()             { return Scene().DeltaTime;  }
 float    GetNearPlane()             { return Scene().NearPlane;  }
 float    GetFarPlane()              { return Scene().FarPlane;   }
 
-// Raw reverse-Z NDC depth -> linear view distance. The single scene-depth linearization: the SceneDepth
-// node emits calls to it, so it must stay visible in every material template.
+// The one reverse-Z depth linearization, which the SceneDepth node emits so every material template needs it.
 float LinearizeSceneDepth(float RawDepth)
 {
     float ZNear = GetNearPlane();
@@ -602,6 +577,8 @@ float LinearizeSceneDepth(float RawDepth)
     return ZNear * ZFar / max(ZNear + RawDepth * (ZFar - ZNear), 1e-6);
 }
 uint2    GetScreenSize()            { return Scene().ScreenSize.xy; }
+// What the view is shown at, which is larger than GetScreenSize while an upscaler restores the difference.
+uint2    GetDisplaySize()           { return Scene().ScreenSize.zw; }
 
 float3   GetCameraPosition()        { return Scene().CameraView.CameraPosition.xyz; }
 float3   GetCameraUp()              { return Scene().CameraView.CameraUp.xyz;       }
@@ -619,8 +596,7 @@ float4x4 GetPrevViewProjection()    { return Scene().CameraView.PrevViewProjecti
 // A jittered pixel center minus this is the surface's unjittered UV, which is what the unjittered previous matrix pairs with.
 float2   GetTemporalJitterUV()      { return float2(Scene().TemporalJitterU, Scene().TemporalJitterV); }
 
-// [3][3] is 0 for a perspective projection and 1 for an orthographic one, so the mode needs no
-// extra plumbing in the scene struct. Diagonal, so it reads the same under either matrix convention.
+// [3][3] is 0 for perspective and 1 for orthographic, and being diagonal it reads the same in either convention.
 bool IsCameraOrthographic() { return Scene().CameraView.CameraProjection[3][3] != 0.0; }
 
 float3 WorldToView(float3 WorldPos)
@@ -672,8 +648,7 @@ float3 ReconstructViewPos(float2 UV, float Depth, float4x4 InvProj)
     return View.xyz / View.w;
 }
 
-// Froxel index for a fragment from view-space depth + screen position. Mirrors the tile math in
-// ClusterBuild/LightCull; clamps stop edge fragments below ZNear from indexing past Clusters().
+// Mirrors the tile math in ClusterBuild/LightCull, and the clamps keep fragments nearer than ZNear inside Clusters().
 uint ComputeClusterIndex(float ViewZ, float2 ScreenPos)
 {
     uint3  Grid       = Scene().GridSize.xyz;
@@ -700,11 +675,11 @@ uint GetClusterMaskWords()
 // The cluster's non-empty mask words as [first, end), so a walk never loads a word with no light in it.
 uint2 GetClusterWordRange(uint ClusterIndex)
 {
-    if (!SpanContains(Clusters(), ClusterIndex))
+    if (!Clusters().Contains(ClusterIndex))
     {
         return uint2(0u, 0u);
     }
-    FCluster* Cluster = SpanAt(Clusters(), ClusterIndex);
+    FCluster* Cluster = Clusters().At(ClusterIndex);
     return uint2(Cluster.FirstWord, min(Cluster.EndWord, GetClusterMaskWords()));
 }
 
@@ -712,10 +687,9 @@ uint2 GetClusterWordRange(uint ClusterIndex)
 uint GetClusterMaskWord(uint ClusterIndex, uint Word, uint MaskWords)
 {
     const uint Index = ClusterIndex * MaskWords + Word;
-    return SpanContains(ClusterLightMasks(), Index) ? SpanAt(ClusterLightMasks(), Index)[0] : 0u;
+    return ClusterLightMasks().Contains(Index) ? ClusterLightMasks().At(Index)[0] : 0u;
 }
 
-// For the debug views, which want a count rather than the lights.
 uint GetClusterLightCount(uint ClusterIndex)
 {
     const uint  MaskWords = GetClusterMaskWords();
@@ -728,8 +702,6 @@ uint GetClusterLightCount(uint ClusterIndex)
     return Count;
 }
 
-// Discrete heatmap for the "Light Complexity" view: how many lights a froxel
-// has to shade. Bands chosen so the transition between counts reads at a glance.
 float3 LightComplexityColor(uint Count)
 {
     if (Count == 0u)  return float3(0.0, 0.0, 0.0);
@@ -740,7 +712,7 @@ float3 LightComplexityColor(uint Count)
     return float3(1.0, 0.0, 0.0);
 }
 
-// Ramp for the quad-efficiency view. Green is one triangle per quad, red is one live lane in four.
+// Green is one triangle per quad, red is one live lane in four.
 float3 QuadEfficiencyColor(float Efficiency)
 {
     if (Efficiency >= 0.99) return float3(0.0, 0.55, 0.15);
@@ -750,7 +722,6 @@ float3 QuadEfficiencyColor(float Efficiency)
     return float3(1.0, 0.0, 0.0);
 }
 
-// Per-froxel hashed hue for the "Light Clusters" view, with empty froxels dimmed.
 float3 ClusterDebugColor(uint ClusterIndex, uint LightCount)
 {
     uint H = ClusterIndex * 2654435761u;
@@ -763,6 +734,7 @@ float3 ClusterDebugColor(uint ClusterIndex, uint LightCount)
         float((H >>  8) & 0xFFu) / 255.0,
         float((H >> 16) & 0xFFu) / 255.0);
 
-    // Dim empty froxels so populated ones pop against the grid.
     return Hue * ((LightCount == 0u) ? 0.25 : 1.0);
 }
+
+#include "MaterialSampling.slang"

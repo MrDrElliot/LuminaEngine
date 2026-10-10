@@ -2,20 +2,15 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/Tonemap.slang"
 
-// Fused post-process pass: linear HDR -> color grading -> tone map -> vignette -> gamma encode.
-// Inputs are bindless (HDR/bloom/adapted-luminance by index); the 160 B grading constants block (over
-// the 128 B push limit) rides the transient ring, reached through a device-address pointer.
-//
-// The tone-mapping operators and the display encode live in Includes/Tonemap.slang; the editor's HDR
-// texture preview runs the same ones so a texture reads the same in the browser as it does in-world.
+// The grading constants exceed the 128 B push limit, so they ride the transient ring by device address.
 
 struct FColorGradingConstants
 {
     // 16 B
-    float Exposure;        // linear multiplier built from EV stops on CPU side
-    float Contrast;        // 1.0 == identity, around mid-grey 0.18
-    float Saturation;      // 1.0 == identity (Rec.709 luma)
-    float Gamma;           // 1.0 == identity (display-space)
+    float Exposure;        // linear, built from EV stops on the CPU
+    float Contrast;        // 1 is identity, pivots on mid-gray 0.18
+    float Saturation;      // 1 is identity (Rec.709 luma)
+    float Gamma;           // 1 is identity (display space)
 
     // 16 B
     float WhiteTemp;       // -1..1, cool->warm
@@ -27,7 +22,7 @@ struct FColorGradingConstants
     float VignetteRoundness;
     uint  TonemapMode;
     float Time;
-    float BloomIntensity;  // 0 == bloom disabled (bloom not sampled).
+    float BloomIntensity;  // 0 disables bloom
 
     // 80 B
     float4 ColorFilter;    // .rgb tint, .a intensity (0..2)
@@ -40,7 +35,7 @@ struct FColorGradingConstants
     float4 BloomTint;          // .rgb tint, .a chromatic aberration intensity
 
     // 16 B
-    float AutoExposureKey;     // middle-grey key luminance; <= 0 disables auto-exposure
+    float AutoExposureKey;     // middle-gray key luminance; <= 0 disables auto-exposure
     float AutoExposureMinMul;  // clamp on the auto-exposure multiplier (2^MinEV)
     float AutoExposureMaxMul;  // clamp on the auto-exposure multiplier (2^MaxEV)
     uint  Features;            // GRADING_* bits, set CPU side for every stage not at identity
@@ -49,14 +44,13 @@ struct FColorGradingConstants
     float4 Letterbox;          // .x picture aspect or 0, .y output aspect
 };
 
-// Per-pass block: grading constants by device address + bindless indices for the three inputs.
 struct FComposePushConstants
 {
-    uint64_t Constants;   // FColorGradingConstants, read field by field in FragmentMain
-    uint HDRIndex;          // bindless SRV: pre-tone-map HDR
-    uint BloomIndex;        // bindless SRV: bloom chain mip 0
-    uint AdaptedLumIndex;   // bindless SRV: 1x1 adapted luminance
-    uint _Pad;
+    uint64_t   Constants;    // FColorGradingConstants, read field by field in FragmentMain
+    FTexture2D HDR;
+    FTexture2D Bloom;        // bloom chain mip 0
+    FTexture2D AdaptedLum;   // 1x1 adapted luminance
+    uint       _Pad;
 };
 FComposePushConstants* Pass() { return GetPassArgs<FComposePushConstants>(); }
 
@@ -103,7 +97,7 @@ float3 WhiteBalance(float3 X, float Temperature, float Tint)
     return mul(LMS_2_LIN, lms);
 }
 
-// Contrast pivots on 18% grey; saturation pivots on Rec.709 luma so neutrals don't drift.
+// Contrast pivots on 18% gray; saturation pivots on Rec.709 luma so neutrals don't drift.
 float3 ApplyContrast(float3 X, float Contrast)
 {
     static const float3 MidGrey = float3(0.18);
@@ -116,27 +110,25 @@ float3 ApplySaturation(float3 X, float Saturation)
     return lerp(float3(Luma), X, Saturation);
 }
 
-// Lift/Gamma/Gain (CDL-ish): Lift pulls shadows (weighted 1-X), Gamma the midtones, Gain the
-// highlights (weighted X). Each color knob is centered on 1.0 (identity).
+// Lift is weighted by 1-X and Gain by X; each color knob is identity at 1.0.
 float3 LiftGammaGain(float3 X, float3 Shadows, float3 Midtones, float3 Highlights)
 {
-    float3 Lift = Shadows  - 1.0;     // signed
-    float3 Gain = Highlights;         // identity at 1.0
+    float3 Lift = Shadows  - 1.0;
+    float3 Gain = Highlights;
     float3 Mid  = max(Midtones, 0.001);
 
     X = X * Gain + Lift * (1.0 - X);
     X = max(X, 0.0);
-    X = pow(X, 1.0 / Mid);            // higher Midtone color -> brighter mids
+    X = pow(X, 1.0 / Mid);
     return X;
 }
 
-// Vignette (display space). Roundness 0 = viewport aspect, 1 = circle; Smoothness = falloff width.
+// Display space; Roundness 0 is the viewport aspect and 1 a circle.
 float3 ApplyVignette(float3 X, float2 UV, float Intensity, float Roundness, float Smoothness, float3 Tint)
 {
     if (Intensity <= 0.0) return X;
 
     float2 Center = UV - 0.5;
-    // Aspect-correct unless Roundness==1.
     Center.x *= lerp(2.0, 1.0, Roundness);
     float Dist = length(Center);
 
@@ -148,8 +140,7 @@ float3 ApplyVignette(float3 X, float2 UV, float Intensity, float Roundness, floa
     return lerp(Tint, X, V);
 }
 
-// Film grain: time-decorrelated per-pixel hash. Size quantizes coords into cells (coarser stock),
-// Response biases toward shadows. Applied multiplicatively in display space, pre-sRGB.
+// Applied multiplicatively in display space, before the sRGB encode.
 float FilmGrainHash(float2 P, float Time)
 {
     P += Time * float2(47.0, 17.0);
@@ -163,7 +154,7 @@ float3 ApplyFilmGrain(float3 X, float2 PixelPos, float Time, float Intensity, fl
     if (Intensity <= 0.0) return X;
 
     float2 Cell  = floor(PixelPos / max(Size, 1.0));
-    float  Noise = FilmGrainHash(Cell, Time) - 0.5;        // signed [-0.5, 0.5]
+    float  Noise = FilmGrainHash(Cell, Time) - 0.5;
 
     // Brighter pixels get less grain when Response > 0 (film-stock shoulder behavior).
     float Luma   = Luminance(X);
@@ -194,8 +185,8 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
     FColorGradingConstants* Grading = (FColorGradingConstants*)Pass().Constants;
     const uint Features = Grading.Features;
 
-    SamplerState Smp    = gSamplers[SAMPLER_LINEAR_CLAMP];
-    Texture2D    HDRTex = gTextures2D[Pass().HDRIndex];
+    FSampler   Smp    = Samplers::LinearClamp;
+    FTexture2D HDRTex = Pass().HDR;
 
     float3 Color;
     if ((Features & GRADING_CHROMATIC_ABERRATION) != 0u)
@@ -213,14 +204,14 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
 
     if ((Features & GRADING_BLOOM) != 0u)
     {
-        float3 Bloom = gTextures2D[Pass().BloomIndex].SampleLevel(Smp, Input.UV, 0.0).rgb;
+        float3 Bloom = Pass().Bloom.SampleLevel(Smp, Input.UV, 0.0).rgb;
         Color += Bloom * Grading.BloomTint.rgb * Grading.BloomIntensity;
     }
 
     float AEScale = 1.0;
     if ((Features & GRADING_AUTO_EXPOSURE) != 0u)
     {
-        float AdaptedLum = gTextures2D[Pass().AdaptedLumIndex].SampleLevel(Smp, float2(0.5, 0.5), 0.0).r;
+        float AdaptedLum = Pass().AdaptedLum.SampleLevel(Smp, float2(0.5, 0.5), 0.0).r;
         AEScale = clamp(Grading.AutoExposureKey / max(AdaptedLum, 1e-4),
                         Grading.AutoExposureMinMul, Grading.AutoExposureMaxMul);
     }

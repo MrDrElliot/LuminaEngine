@@ -1,8 +1,7 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Depth-only point/spot shadow PS. Emits nothing so rasterizer NDC z stores
-// directly; SV_Depth would disable early-Z and force PS per covered fragment.
+// Writes no depth so early-Z holds, since SV_Depth would force the PS per covered fragment.
 
 struct FPushConstants
 {

@@ -4,10 +4,10 @@
 
 struct FDepthOfFieldPC
 {
-    uint  SceneColorIndex;
-    uint  SceneDepthIndex;
-    float FStop;
-    float FocusDistance;       // meters
+    FTexture2D SceneColor;
+    FTexture2D SceneDepth;
+    float      FStop;
+    float      FocusDistance;       // meters
 
     float SensorHeight;        // millimeters
     float MaxRadius;           // pixels
@@ -27,7 +27,7 @@ static const float SKY_DISTANCE = 100000.0;
 
 float SceneDistance(float2 UV)
 {
-    const float Raw = SampleTexture2DLevel(Pass().SceneDepthIndex, SAMPLER_POINT_CLAMP, UV, 0.0).r;
+    const float Raw = Pass().SceneDepth.SampleLevel(Samplers::PointClamp, UV, 0.0).r;
     if (Raw <= 0.0)
     {
         return SKY_DISTANCE;
@@ -55,13 +55,13 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     const float CenterDistance = SceneDistance(Input.UV);
     const float CenterRadius = BlurRadius(CenterDistance, Scale);
 
-    float3 Color = SampleTexture2DLevel(Pass().SceneColorIndex, SAMPLER_LINEAR_CLAMP, Input.UV, 0.0).rgb;
+    float3 Color = Pass().SceneColor.SampleLevel(Samplers::LinearClamp, Input.UV, 0.0).rgb;
     float Total = 1.0;
     float Radius = Pass().RadiusStep;
     for (float Angle = 0.0; Radius < Pass().MaxRadius; Angle += GOLDEN_ANGLE)
     {
         const float2 SampleUV = Input.UV + float2(cos(Angle), sin(Angle)) * Texel * Radius;
-        const float3 SampleColor = SampleTexture2DLevel(Pass().SceneColorIndex, SAMPLER_LINEAR_CLAMP, SampleUV, 0.0).rgb;
+        const float3 SampleColor = Pass().SceneColor.SampleLevel(Samplers::LinearClamp, SampleUV, 0.0).rgb;
         const float SampleDistance = SceneDistance(SampleUV);
         float SampleRadius = BlurRadius(SampleDistance, Scale);
         // Something behind a sharper subject may only bleed as far as the subject itself is blurred.

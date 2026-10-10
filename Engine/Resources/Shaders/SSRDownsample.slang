@@ -3,21 +3,18 @@
 
 #include "Includes/SurfaceShading.slang"
 #include "Includes/VisBufferSurface.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
 // Keeps the closest pixel of each Scale x Scale block and that same pixel's normal and roughness, so no trace texel blends two surfaces.
 
 struct FSSRDownsampleArgs
 {
-    uint GBufferAIndex;
-    uint GBufferBIndex;
-    uint GBufferCIndex;
-    uint GBufferDIndex;
+    FGBufferTargets GBuffer;
 
-    uint DepthIndex;
-    uint SlotImageIndex;  // slot + 1 per pixel from the classify count, 0 where nothing deferred shades it
-    uint OutDepthUAV;     // mip 0 of the closest-depth pyramid
-    uint OutSurfaceUAV;   // world normal in xyz, roughness in w, roughness 1 where nothing may reflect
+    FTexture2D   Depth;
+    FTexture2D   SlotImage;  // slot + 1 per pixel from the classify count, 0 where nothing deferred shades it
+    FRWTexture2D OutDepth;     // mip 0 of the closest-depth pyramid
+    FRWTexture2D OutSurface;   // world normal in xyz, roughness in w, roughness 1 where nothing may reflect
 
     uint ScreenW;
     uint ScreenH;
@@ -50,7 +47,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     for (int i = 0; i < Scale * Scale; ++i)
     {
         const int2  Pixel = min(Base + int2(i % Scale, i / Scale), MaxPixel);
-        const float Depth = LoadTexture2D(Pass().DepthIndex, Pixel).r;
+        const float Depth = Pass().Depth.Load(Pixel).r;
         if (Depth > BestDepth)
         {
             BestDepth = Depth;
@@ -59,21 +56,17 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     float4 Surface = float4(0.0, 0.0, 1.0, 1.0);
-    if (BestDepth > 0.0 && LoadTexture2D(Pass().SlotImageIndex, BestPixel).r >= 0.5)
+    if (BestDepth > 0.0 && Pass().SlotImage.Load(BestPixel).r >= 0.5)
     {
-        FGBufferTargets Targets;
-        Targets.A = Pass().GBufferAIndex;
-        Targets.B = Pass().GBufferBIndex;
-        Targets.C = Pass().GBufferCIndex;
-        Targets.D = Pass().GBufferDIndex;
+        const FGBufferTargets Targets = Pass().GBuffer;
 
         const FGBufferData G = LoadGBuffer(Targets, BestPixel);
         if (!IsUnlit(G))
         {
-            Surface = float4(G.WorldNormal, max(LoadTexture2D(Targets.C, BestPixel).r, 0.045));
+            Surface = float4(G.WorldNormal, max(Targets.C.Load(BestPixel).r, 0.045));
         }
     }
 
-    gRWTextures2D[Pass().OutDepthUAV][int2(DTid.xy)]   = float4(BestDepth, 0.0, 0.0, 0.0);
-    gRWTextures2D[Pass().OutSurfaceUAV][int2(DTid.xy)] = Surface;
+    Pass().OutDepth[int2(DTid.xy)]   = float4(BestDepth, 0.0, 0.0, 0.0);
+    Pass().OutSurface[int2(DTid.xy)] = Surface;
 }

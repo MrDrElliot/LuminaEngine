@@ -1,5 +1,5 @@
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/CloudCommon.slang"
 
 // Sun transmittance through the cloud layer, so surfaces and fog below are shaded by the weather overhead.
@@ -8,10 +8,10 @@ struct FPushConstants
 {
     FCloudMedium Medium;
 
-    uint   ShadowUAV;      // bindless 2D UAV, r = sun transmittance
-    uint   Resolution;
-    uint   MarchSteps;
-    float  HalfExtent;     // world half-size of the square the map covers
+    FRWTexture2D Shadow;       // r = sun transmittance
+    uint         Resolution;
+    uint         MarchSteps;
+    float        HalfExtent;   // world half-size of the square the map covers
 
     float2 Center;         // world XZ the map is centered on
     float  Absorption;     // extinction per unit of cloud density along the sun ray
@@ -42,7 +42,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     // A sun at or below the horizon casts no usable layer shadow, and the ray would never exit the slab.
     if (SunDir.y < 0.05)
     {
-        gRWTextures2D[Pass().ShadowUAV][int2(DispatchID.xy)] = float4(1.0, 0.0, 0.0, 0.0);
+        Pass().Shadow[int2(DispatchID.xy)] = float4(1.0, 0.0, 0.0, 0.0);
         return;
     }
 
@@ -62,5 +62,5 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     }
 
     float Transmittance = exp(-OpticalDepth * Pass().Absorption);
-    gRWTextures2D[Pass().ShadowUAV][int2(DispatchID.xy)] = float4(Transmittance, 0.0, 0.0, 0.0);
+    Pass().Shadow[int2(DispatchID.xy)] = float4(Transmittance, 0.0, 0.0, 0.0);
 }

@@ -4,13 +4,10 @@
 // Adapted from the reference implementation at https://github.com/iryoku/smaa
 // Copyright (C) 2013 Jorge Jimenez, Jose I. Echevarria, Belen Masia,
 // Fernando Navarro, Diego Gutierrez. MIT licensed.
-//
-// Usage: the including shader must define SMAA_RT_METRICS as a float4 before
-// including this file (x = 1/width, y = 1/height, z = width, w = height).
 
-// ---------------------------------------------------------------------------
-//  Preset: HIGH (95% quality). Tweak by redefining before include if needed.
-// ---------------------------------------------------------------------------
+// The includer defines SMAA_RT_METRICS as float4(1/width, 1/height, width, height) first.
+
+// The high preset (95% quality), each value overridable by defining it before the include.
 #ifndef SMAA_THRESHOLD
 #define SMAA_THRESHOLD 0.1
 #endif
@@ -27,9 +24,6 @@
 #define SMAA_LOCAL_CONTRAST_ADAPTATION_FACTOR 2.0
 #endif
 
-// ---------------------------------------------------------------------------
-//  Non-configurable constants.
-// ---------------------------------------------------------------------------
 #define SMAA_AREATEX_MAX_DISTANCE       16
 #define SMAA_AREATEX_MAX_DISTANCE_DIAG  20
 #define SMAA_AREATEX_PIXEL_SIZE         (1.0 / float2(160.0, 560.0))
@@ -38,9 +32,6 @@
 #define SMAA_SEARCHTEX_PACKED_SIZE      float2(64.0, 16.0)
 #define SMAA_CORNER_ROUNDING_NORM       (float(SMAA_CORNER_ROUNDING) / 100.0)
 
-// ---------------------------------------------------------------------------
-//  Helpers.
-// ---------------------------------------------------------------------------
 float SMAA_mad(float a, float b, float c) { return a * b + c; }
 float2 SMAA_mad(float2 a, float2 b, float2 c) { return a * b + c; }
 float3 SMAA_mad(float3 a, float3 b, float3 c) { return a * b + c; }
@@ -58,22 +49,16 @@ void SMAAMovc(bool4 cond, inout float4 variable, float4 value)
     SMAAMovc(cond.zw, variable.zw, value.zw);
 }
 
-// Bindless adapter. The engine's bindless table exposes textures and samplers as SEPARATE arrays
-// (gTextures2D[] / gSamplers[]), so the helpers below can't take a combined SMAATex.
-// This thin wrapper bundles the two and mirrors the SMAATex.Sample/SampleLevel interface, so the
-// helper bodies are unchanged -- only their parameter type swaps SMAATex -> SMAATex. The including
-// shader builds one per input from bindless indices in the push constant.
+// Pairs a texture with its sampler, the combined object the reference SMAA helpers are written against.
 struct SMAATex
 {
-    Texture2D    Tex;
-    SamplerState Smp;
+    FTexture2D Tex;
+    FSampler   Smp;
     float4 Sample(float2 uv)              { return Tex.Sample(Smp, uv); }
     float4 SampleLevel(float2 uv, float l) { return Tex.SampleLevel(Smp, uv, l); }
 };
 
-// ---------------------------------------------------------------------------
-//  Vertex-shader-side offset generators (called in pixel shader for simplicity).
-// ---------------------------------------------------------------------------
+// Vertex-shader offset generators, called from the pixel shader here.
 void SMAAEdgeDetectionOffsets(float2 texcoord, out float4 offset[3])
 {
     offset[0] = SMAA_mad(SMAA_RT_METRICS.xyxy, float4(-1.0, 0.0, 0.0, -1.0), texcoord.xyxy);
@@ -98,9 +83,6 @@ void SMAANeighborhoodBlendingOffsets(float2 texcoord, out float4 offset)
     offset = SMAA_mad(SMAA_RT_METRICS.xyxy, float4(1.0, 0.0, 0.0, 1.0), texcoord.xyxy);
 }
 
-// ---------------------------------------------------------------------------
-//  Pass 1: Luma Edge Detection.
-// ---------------------------------------------------------------------------
 float2 SMAALumaEdgeDetectionPS(float2 texcoord, float4 offset[3], SMAATex colorTex, float thresholdScalar)
 {
     float2 threshold = float2(thresholdScalar, thresholdScalar);
@@ -136,9 +118,6 @@ float2 SMAALumaEdgeDetectionPS(float2 texcoord, float4 offset[3], SMAATex colorT
     return edges;
 }
 
-// ---------------------------------------------------------------------------
-//  Diagonal search (pass 2 support).
-// ---------------------------------------------------------------------------
 float2 SMAADecodeDiagBilinearAccess(float2 e)
 {
     e.r = e.r * abs(5.0 * e.r - 5.0 * 0.75);
@@ -245,9 +224,6 @@ float2 SMAACalculateDiagWeights(SMAATex edgesTex, SMAATex areaTex, float2 texcoo
     return weights;
 }
 
-// ---------------------------------------------------------------------------
-//  Horizontal / Vertical search.
-// ---------------------------------------------------------------------------
 float SMAASearchLength(SMAATex searchTex, float2 e, float offset)
 {
     float2 scale = SMAA_SEARCHTEX_SIZE * float2(0.5, -1.0);
@@ -319,9 +295,6 @@ float2 SMAAArea(SMAATex areaTex, float2 dist, float e1, float e2, float offset)
     return areaTex.SampleLevel(texcoord, 0).rg;
 }
 
-// ---------------------------------------------------------------------------
-//  Corner detection.
-// ---------------------------------------------------------------------------
 void SMAADetectHorizontalCornerPattern(SMAATex edgesTex, inout float2 weights, float4 texcoord, float2 d)
 {
     float2 leftRight = step(d.xy, d.yx);
@@ -354,9 +327,6 @@ void SMAADetectVerticalCornerPattern(SMAATex edgesTex, inout float2 weights, flo
     weights *= saturate(factor);
 }
 
-// ---------------------------------------------------------------------------
-//  Pass 2: Blend Weight Calculation.
-// ---------------------------------------------------------------------------
 float4 SMAABlendingWeightCalculationPS(float2 texcoord, float2 pixcoord, float4 offset[3],
                                        SMAATex edgesTex, SMAATex areaTex, SMAATex searchTex,
                                        float4 subsampleIndices)
@@ -429,9 +399,6 @@ float4 SMAABlendingWeightCalculationPS(float2 texcoord, float2 pixcoord, float4 
     return weights;
 }
 
-// ---------------------------------------------------------------------------
-//  Pass 3: Neighborhood Blending.
-// ---------------------------------------------------------------------------
 float4 SMAANeighborhoodBlendingPS(float2 texcoord, float4 offset, SMAATex colorTex, SMAATex blendTex)
 {
     float4 a;

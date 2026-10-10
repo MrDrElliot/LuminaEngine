@@ -2,6 +2,7 @@
 #include "GameUserSettingsLibrary.h"
 
 #include "Core/Windows/Window.h"
+#include "World/Scene/RenderScene/SceneUpscaler.h"
 
 namespace Lumina
 {
@@ -103,6 +104,82 @@ namespace Lumina
     void CGameUserSettingsLibrary::SaveSettings()
     {
         CGameUserSettings::Get().Save();
+    }
+
+    bool CGameUserSettingsLibrary::GetOverrideUpscaling()
+    {
+        return CGameUserSettings::Get().bOverrideUpscaling;
+    }
+
+    void CGameUserSettingsLibrary::SetOverrideUpscaling(bool bOverride)
+    {
+        CGameUserSettings::Get().bOverrideUpscaling = bOverride;
+    }
+
+    FName CGameUserSettingsLibrary::GetUpscaler()
+    {
+        return CGameUserSettings::Get().Upscaler;
+    }
+
+    void CGameUserSettingsLibrary::SetUpscaler(FName Upscaler)
+    {
+        CGameUserSettings& Settings = CGameUserSettings::Get();
+        Settings.Upscaler = Upscaler;
+        Settings.bOverrideUpscaling = true;
+    }
+
+    EUpscalerMode CGameUserSettingsLibrary::GetUpscalerMode()
+    {
+        return CGameUserSettings::Get().UpscalerMode;
+    }
+
+    void CGameUserSettingsLibrary::SetUpscalerMode(EUpscalerMode Mode)
+    {
+        CGameUserSettings& Settings = CGameUserSettings::Get();
+        Settings.UpscalerMode = Mode;
+        Settings.bOverrideUpscaling = true;
+    }
+
+    float CGameUserSettingsLibrary::GetScreenPercentage()
+    {
+        return CGameUserSettings::Get().ScreenPercentage;
+    }
+
+    void CGameUserSettingsLibrary::SetScreenPercentage(float Percent)
+    {
+        CGameUserSettings& Settings = CGameUserSettings::Get();
+        Settings.ScreenPercentage = Math::Clamp(Percent, 25.0f, 100.0f);
+        Settings.bOverrideUpscaling = true;
+    }
+
+    namespace
+    {
+        TVector<FName> AvailableUpscalers()
+        {
+            TVector<IUpscaler*> Registered;
+            FUpscalerRegistry::GetRegistered(Registered);
+
+            TVector<FName> Names;
+            for (IUpscaler* Upscaler : Registered)
+            {
+                if (Upscaler != nullptr && Upscaler->IsSupported())
+                {
+                    Names.push_back(Upscaler->GetName());
+                }
+            }
+            return Names;
+        }
+    }
+
+    int32 CGameUserSettingsLibrary::GetAvailableUpscalerCount()
+    {
+        return (int32)AvailableUpscalers().size();
+    }
+
+    FName CGameUserSettingsLibrary::GetAvailableUpscaler(int32 Index)
+    {
+        const TVector<FName> Names = AvailableUpscalers();
+        return Index >= 0 && Index < (int32)Names.size() ? Names[Index] : FName();
     }
 
     void CGameUserSettingsLibrary::RevertSettings()

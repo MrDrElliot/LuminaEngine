@@ -19,8 +19,8 @@ FParticleSortArgs* Pass() { return GetPassArgs<FParticleSortArgs>(); }
 // Above every live key, so dead slots sink past LiveCount and the sort compacts as it orders.
 static const uint kDeadKey = ~0u;
 
-groupshared uint gKeys[PARTICLE_SORT_CAPACITY];
-groupshared uint gLiveCount;
+groupshared uint gsKeys[PARTICLE_SORT_CAPACITY];
+groupshared uint gsLiveCount;
 
 // Held one below kDeadKey, which a particle sitting on the camera would otherwise reach.
 uint ParticleDepthKey(FGPUParticle P, float3 CameraPos)
@@ -29,7 +29,7 @@ uint ParticleDepthKey(FGPUParticle P, float3 CameraPos)
     return min((uint)(saturate(ParticleSortValue(P, CameraPos, Pass().SortMode)) * (float)MaxKey), MaxKey - 1u);
 }
 
-// RULE. No lane may return early, or the barriers below go non-uniform and AMD hangs.
+// No lane may return early, or the barriers below go non-uniform and AMD hangs.
 [shader("compute")]
 [numthreads(PARTICLE_SORT_THREADS, 1, 1)]
 void ComputeMain(uint Lane : SV_GroupIndex)
@@ -40,7 +40,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
 
     if (Lane == 0u)
     {
-        gLiveCount = 0u;
+        gsLiveCount = 0u;
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -50,7 +50,7 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         uint Key = kDeadKey;
         if (i < ParticleCount)
         {
-            const FGPUParticle P = SpanGet(&Pass().Particles, i);
+            const FGPUParticle P = Pass().Particles.Get(i);
 
             // Must match the liveness test in ParticleVertex.slang, which draws what this counts.
             if (P.Lifetime > 0.0 && P.Age < P.Lifetime && P.Size > 0.0)
@@ -59,12 +59,12 @@ void ComputeMain(uint Lane : SV_GroupIndex)
                 ++LocalLive;
             }
         }
-        gKeys[i] = Key;
+        gsKeys[i] = Key;
     }
 
     if (LocalLive != 0u)
     {
-        InterlockedAdd(gLiveCount, LocalLive);
+        InterlockedAdd(gsLiveCount, LocalLive);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -78,13 +78,13 @@ void ComputeMain(uint Lane : SV_GroupIndex)
                 const uint Partner = i ^ j;
                 if (Partner > i)
                 {
-                    const uint A = gKeys[i];
-                    const uint B = gKeys[Partner];
+                    const uint A = gsKeys[i];
+                    const uint B = gsKeys[Partner];
                     const bool bAscending = ((i & k) == 0u);
                     if ((A > B) == bAscending)
                     {
-                        gKeys[i]       = B;
-                        gKeys[Partner] = A;
+                        gsKeys[i]       = B;
+                        gsKeys[Partner] = A;
                     }
                 }
             }
@@ -93,11 +93,11 @@ void ComputeMain(uint Lane : SV_GroupIndex)
     }
 
     // Every key carries its own index, so no two tie and a static emitter cannot reshuffle.
-    const uint LiveCount = gLiveCount;
+    const uint LiveCount = gsLiveCount;
 
     for (uint i = Lane; i < LiveCount; i += PARTICLE_SORT_THREADS)
     {
-        SpanSet(&Pass().OutIndices, i, gKeys[i] & PARTICLE_SORT_INDEX_MASK);
+        Pass().OutIndices.Set(i, gsKeys[i] & PARTICLE_SORT_INDEX_MASK);
     }
 
     if (Lane == 0u)
@@ -107,6 +107,6 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         Args.InstanceCount = 1u;
         Args.VertexOffset  = 0u;
         Args.FirstInstance = 0u;
-        SpanSet(&Pass().OutDrawArgs, 0u, Args);
+        Pass().OutDrawArgs.Set(0u, Args);
     }
 }

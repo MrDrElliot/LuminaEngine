@@ -9,7 +9,7 @@ namespace Lumina::RHI
     // authored separately and cannot disagree. Every out-of-bounds read this renderer has page-faulted on
     // came from a count that lived somewhere else than the address it was supposed to bound.
     //
-    // Mirrors GPUSpan<T> in Includes/GPUSpan.slang.
+    // Mirrors GPUSpan<T> in Includes/RHI.slang.
     template<typename T>
     struct TGPUSpan
     {
@@ -72,5 +72,5 @@ namespace Lumina::RHI
         explicit operator bool() const { return !IsEmpty(); }
     };
 
-    static_assert(sizeof(TGPUSpan<uint32>) == 16, "TGPUSpan must match GPUSpan<T> in GPUSpan.slang");
+    static_assert(sizeof(TGPUSpan<uint32>) == 16, "TGPUSpan must match GPUSpan<T> in RHI.slang");
 }

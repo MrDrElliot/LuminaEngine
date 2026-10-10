@@ -1,7 +1,7 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
 // Weighted mean of the histogram between two percentiles, then the eye-adaptation feedback.
 
@@ -9,9 +9,9 @@
 
 struct FPushConstants
 {
-    GPUSpan<uint> Histogram;   // the 256-uint bin array
-    uint   AdaptUAV;        // bindless UAV of the 1x1 adapted-luminance image
-    float  MinLogLum;
+    GPUSpan<uint> Histogram;
+    FRWTexture2D  Adapt;       // 1x1 adapted-luminance image
+    float         MinLogLum;
 
     float  LogLumRange;
     float  LowPercent;      // fraction of pixels rejected from the dark tail
@@ -23,7 +23,7 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-groupshared uint gBins[HISTOGRAM_BINS];
+groupshared uint gsBins[HISTOGRAM_BINS];
 
 float BinLogLuminance(uint Bin)
 {
@@ -34,7 +34,7 @@ float BinLogLuminance(uint Bin)
 [numthreads(HISTOGRAM_BINS, 1, 1)]
 void ComputeMain(uint GroupIndex : SV_GroupIndex)
 {
-    gBins[GroupIndex] = SpanGet(&Pass().Histogram, GroupIndex);
+    gsBins[GroupIndex] = Pass().Histogram.Get(GroupIndex);
     GroupMemoryBarrierWithGroupSync();
 
     // Serial in one lane; finding the percentile cuts in parallel would need a full prefix sum.
@@ -46,7 +46,7 @@ void ComputeMain(uint GroupIndex : SV_GroupIndex)
     float Total = 0.0;
     for (uint t = 0u; t < HISTOGRAM_BINS; ++t)
     {
-        Total += float(gBins[t]);
+        Total += float(gsBins[t]);
     }
 
     float MidLogLum = Pass().MinLogLum + Pass().LogLumRange * 0.5;
@@ -64,7 +64,7 @@ void ComputeMain(uint GroupIndex : SV_GroupIndex)
         for (uint i = 0u; i < HISTOGRAM_BINS; ++i)
         {
             float BinStart = Running;
-            float BinEnd   = Running + float(gBins[i]);
+            float BinEnd   = Running + float(gsBins[i]);
             Running = BinEnd;
 
             // Partial overlap, so a percentile cut landing mid-bin does not quantize the result.
@@ -84,7 +84,7 @@ void ComputeMain(uint GroupIndex : SV_GroupIndex)
         }
     }
 
-    float PrevLum = gRWTextures2D[Pass().AdaptUAV][int2(0, 0)].r;
+    float PrevLum = Pass().Adapt[int2(0, 0)].r;
     // The range test also catches NaN/Inf, since any NaN comparison is false.
     if (!(PrevLum > 1e-6 && PrevLum < 1e6))
     {
@@ -94,5 +94,5 @@ void ComputeMain(uint GroupIndex : SV_GroupIndex)
     float Blend      = 1.0 - exp(-Pass().DeltaTime * Pass().AdaptationSpeed);
     float AdaptedLum = PrevLum + (TargetLum - PrevLum) * Blend;
 
-    gRWTextures2D[Pass().AdaptUAV][int2(0, 0)] = float4(AdaptedLum, 0.0, 0.0, 0.0);
+    Pass().Adapt[int2(0, 0)] = float4(AdaptedLum, 0.0, 0.0, 0.0);
 }

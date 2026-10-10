@@ -30,16 +30,16 @@ static const uint STAGE_COMPACT     = 4u;
 static const uint kDeadKey      = ~0u;
 static const uint kLiveCounter  = 3u;
 
-groupshared uint gKeys[PARTICLE_SORT_CAPACITY];
+groupshared uint gsKeys[PARTICLE_SORT_CAPACITY];
 
 void CompareSwap(uint Local, uint Partner, bool bAscending)
 {
-    const uint A = gKeys[Local];
-    const uint B = gKeys[Partner];
+    const uint A = gsKeys[Local];
+    const uint B = gsKeys[Partner];
     if ((A > B) == bAscending)
     {
-        gKeys[Local]   = B;
-        gKeys[Partner] = A;
+        gsKeys[Local]   = B;
+        gsKeys[Partner] = A;
     }
 }
 
@@ -59,16 +59,16 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 DispatchID : SV_DispatchThrea
             uint Key = kDeadKey;
             if (Index < Pass().Particles.Count)
             {
-                const FGPUParticle P = SpanGet(&Pass().Particles, Index);
+                const FGPUParticle P = Pass().Particles.Get(Index);
                 if (P.Lifetime > 0.0 && P.Age < P.Lifetime && P.Size > 0.0)
                 {
                     const uint MaxKey = (1u << PARTICLE_GLOBAL_SORT_KEY_BITS) - 2u;
                     const uint Value  = (uint)(saturate(ParticleSortValue(P, GetCameraPosition(), Pass().SortMode)) * (float)MaxKey);
                     Key = (Value << PARTICLE_GLOBAL_SORT_INDEX_BITS) | Index;
-                    InterlockedAdd(SpanAt(&Pass().Counters, kLiveCounter)[0], 1u);
+                    InterlockedAdd(Pass().Counters.At(kLiveCounter)[0], 1u);
                 }
             }
-            SpanSet(&Pass().Keys, Index, Key);
+            Pass().Keys.Set(Index, Key);
         }
         return;
     }
@@ -78,13 +78,13 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 DispatchID : SV_DispatchThrea
         const uint Partner = Index ^ Pass().J;
         if (Index < SortCount && Partner > Index && Partner < SortCount)
         {
-            const uint A = SpanGet(&Pass().Keys, Index);
-            const uint B = SpanGet(&Pass().Keys, Partner);
+            const uint A = Pass().Keys.Get(Index);
+            const uint B = Pass().Keys.Get(Partner);
             const bool bAscending = (Index & Pass().K) == 0u;
             if ((A > B) == bAscending)
             {
-                SpanSet(&Pass().Keys, Index, B);
-                SpanSet(&Pass().Keys, Partner, A);
+                Pass().Keys.Set(Index, B);
+                Pass().Keys.Set(Partner, A);
             }
         }
         return;
@@ -92,10 +92,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 DispatchID : SV_DispatchThrea
 
     if (Stage == STAGE_COMPACT)
     {
-        const uint LiveCount = SpanGet(&Pass().Counters, kLiveCounter);
+        const uint LiveCount = Pass().Counters.Get(kLiveCounter);
         if (Index < LiveCount)
         {
-            SpanSet(&Pass().OutIndices, Index, SpanGet(&Pass().Keys, Index) & PARTICLE_GLOBAL_SORT_INDEX_MASK);
+            Pass().OutIndices.Set(Index, Pass().Keys.Get(Index) & PARTICLE_GLOBAL_SORT_INDEX_MASK);
         }
         if (Index == 0u)
         {
@@ -104,7 +104,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 DispatchID : SV_DispatchThrea
             Args.InstanceCount = 1u;
             Args.VertexOffset  = 0u;
             Args.FirstInstance = 0u;
-            SpanSet(&Pass().OutDrawArgs, 0u, Args);
+            Pass().OutDrawArgs.Set(0u, Args);
         }
         return;
     }
@@ -112,7 +112,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 DispatchID : SV_DispatchThrea
     const uint Base = GroupID.x * PARTICLE_SORT_CAPACITY;
     for (uint i = Lane; i < PARTICLE_SORT_CAPACITY; i += PARTICLE_SORT_THREADS)
     {
-        gKeys[i] = SpanGet(&Pass().Keys, Base + i);
+        gsKeys[i] = Pass().Keys.Get(Base + i);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -152,6 +152,6 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 DispatchID : SV_DispatchThrea
 
     for (uint i = Lane; i < PARTICLE_SORT_CAPACITY; i += PARTICLE_SORT_THREADS)
     {
-        SpanSet(&Pass().Keys, Base + i, gKeys[i]);
+        Pass().Keys.Set(Base + i, gsKeys[i]);
     }
 }

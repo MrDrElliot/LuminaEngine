@@ -1,8 +1,7 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Picker-only companion to WidgetPixel: runs pre-tone-map and writes the widget's entity id where opaque,
-// so world-space widgets stay click-selectable even though their color is drawn post-tone-map.
+// Writes the entity id pre-tone-map so widgets drawn post-tone-map stay click-selectable.
 
 struct FragmentInput
 {
@@ -15,7 +14,7 @@ struct FragmentInput
 [shader("fragment")]
 uint FragmentMain(FragmentInput Input) : SV_Target0
 {
-    const float Alpha = SampleTexture2D(Input.TextureIndex, SAMPLER_LINEAR_CLAMP, Input.UV).a;
+    const float Alpha = FTexture2D(Input.TextureIndex).Sample(Samplers::LinearClamp, Input.UV).a;
     if (Alpha < 0.01)
     {
         discard;

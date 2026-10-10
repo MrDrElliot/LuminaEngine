@@ -4,10 +4,10 @@
 // Shared so the lit clouds and the shadow they cast can never describe different weather.
 struct FCloudMedium
 {
-    uint   NoiseIndex;
-    float  ShapeScale;
-    float  DetailScale;
-    float  DetailStrength;
+    FTexture3D Noise;
+    float      ShapeScale;
+    float      DetailScale;
+    float      DetailStrength;
 
     float  Billow;
     float  Coverage;
@@ -72,7 +72,7 @@ FCloudWeather Cloud_SampleWeather(FCloudMedium M, float3 WorldPos)
 {
     float2 Drifted = WorldPos.xz + M.WindOffset * 0.5;
     float2 P = mul(kWeatherRotation, Drifted) / max(M.ShapeScale * kWeatherScaleRatio, 1.0);
-    float4 Layout = SampleTexture3DLevel(M.NoiseIndex, SAMPLER_LINEAR_WRAP, float3(P.x, 0.37, P.y), 0.0);
+    float4 Layout = M.Noise.SampleLevel(Samplers::LinearWrap, float3(P.x, 0.37, P.y), 0.0);
 
     float Regional = smoothstep(0.3, 0.8, Layout.g * 0.6 + Layout.b * 0.4);
 
@@ -95,7 +95,7 @@ float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bo
     float3 ShapeUVW = float3(ShapeXZ.x, WorldPos.y, ShapeXZ.y) / max(M.ShapeScale, 1.0);
 
     // Explicit level, since this runs in compute and the noise volume has a single mip.
-    float4 Shape = SampleTexture3DLevel(M.NoiseIndex, SAMPLER_LINEAR_WRAP, ShapeUVW, 0.0);
+    float4 Shape = M.Noise.SampleLevel(Samplers::LinearWrap, ShapeUVW, 0.0);
 
     // The Worley octaves ride on the base as a noise floor, which is what carves the billows.
     float LowFreq = Shape.g * 0.625 + Shape.b * 0.25 + Shape.a * 0.125;
@@ -114,7 +114,7 @@ float Cloud_SampleDensityM(FCloudMedium M, float3 WorldPos, float HeightFrac, bo
     float3 DetailUVW = (WorldPos + float3(M.DetailWindOffset.x, 0.0, M.DetailWindOffset.y))
                      / max(M.DetailScale, 1.0);
 
-    float4 Detail    = SampleTexture3DLevel(M.NoiseIndex, SAMPLER_LINEAR_WRAP, DetailUVW, 0.0);
+    float4 Detail    = M.Noise.SampleLevel(Samplers::LinearWrap, DetailUVW, 0.0);
     float  DetailFBM = Detail.g * 0.625 + Detail.b * 0.25 + Detail.a * 0.125;
 
     // Wispy at the base and billowed aloft, which is the direction real erosion runs.
@@ -131,9 +131,9 @@ float2 CloudShadow_UV(float3 WorldPos, float2 Center, float HalfExtent)
 }
 
 // Sun transmittance through the cloud layer above a point, 1 when no map was built this frame.
-float CloudShadow_Sample(uint MapIndex, float3 WorldPos, float2 Center, float HalfExtent)
+float CloudShadow_Sample(FTexture2D Map, float3 WorldPos, float2 Center, float HalfExtent)
 {
-    if (MapIndex == 0xFFFFFFFFu)
+    if (!Map.IsValid())
     {
         return 1.0;
     }
@@ -142,5 +142,5 @@ float CloudShadow_Sample(uint MapIndex, float3 WorldPos, float2 Center, float Ha
     {
         return 1.0;
     }
-    return SampleTexture2DLevel(MapIndex, SAMPLER_LINEAR_CLAMP, UV, 0.0).r;
+    return Map.SampleLevel(Samplers::LinearClamp, UV, 0.0).r;
 }

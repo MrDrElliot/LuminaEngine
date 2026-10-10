@@ -543,8 +543,110 @@ namespace Lumina
         }
 
         RetainedCullEntries[Slot].DrawIDAndFlags &= ~((uint32)EInstanceFlags::Active << 16);
+        ReleaseMeshletVisibility(Slot);
         MarkInstanceDirty(Slot);
         InstanceFreeSlots.push_back(Slot);
+    }
+
+    void FScenePrimitiveSet::ReleaseMeshletVisibility(uint32 Slot)
+    {
+        if (Slot < (uint32)SlotMeshletVisibility.size())
+        {
+            FUIntVector2& Range = SlotMeshletVisibility[Slot];
+            if (Range.y != 0u)
+            {
+                MeshletVisibilityFreeLists[Range.y].push_back(Range.x);
+            }
+            Range = FUIntVector2(kNoMeshletVisibility, 0u);
+        }
+
+        // A reused slot carries its payload's base forward, so a freed range must not survive in it.
+        if (Slot < (uint32)RetainedStatic.size())
+        {
+            RetainedStatic[Slot].MeshletVisibilityBase = kNoMeshletVisibility;
+        }
+    }
+
+    void FScenePrimitiveSet::UpdateMeshletVisibility(uint32 Slot)
+    {
+        const FInstanceCullEntry& Cull = RetainedCullEntries[Slot];
+        const bool bActive = ((Cull.DrawIDAndFlags >> 16) & (uint32)EInstanceFlags::Active) != 0u;
+
+        uint32 Words = 0u;
+        if (bActive && Cull.SurfaceDescIndex < (uint32)SurfaceDescs.size())
+        {
+            const FSurfaceDescGPU& Desc = SurfaceDescs[Cull.SurfaceDescIndex];
+            uint32 LargestLOD = 0u;
+            for (uint32 LOD = 0; LOD < Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS); ++LOD)
+            {
+                LargestLOD = Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
+            }
+            Words = (LargestLOD + MESHLET_CULL_GROUP_SIZE - 1u) / MESHLET_CULL_GROUP_SIZE;
+        }
+
+        FUIntVector2& Range = SlotMeshletVisibility[Slot];
+        if (Range.y != Words)
+        {
+            ReleaseMeshletVisibility(Slot);
+            if (Words != 0u)
+            {
+                auto It = MeshletVisibilityFreeLists.find(Words);
+                if (It != MeshletVisibilityFreeLists.end() && !It->second.empty())
+                {
+                    Range.x = It->second.back();
+                    It->second.pop_back();
+                }
+                else
+                {
+                    Range.x = MeshletVisibilityExtent;
+                    MeshletVisibilityExtent += Words;
+                }
+                Range.y = Words;
+            }
+        }
+
+        if (RetainedStatic[Slot].MeshletVisibilityBase != Range.x)
+        {
+            RetainedStatic[Slot].MeshletVisibilityBase = Range.x;
+            MarkStaticDirty(Slot);
+        }
+    }
+
+    void FScenePrimitiveSet::AssignMeshletVisibility()
+    {
+        const uint32 SlotCount = (uint32)RetainedCullEntries.size();
+        if (SlotMeshletVisibility.size() < SlotCount)
+        {
+            SlotMeshletVisibility.resize(SlotCount, FUIntVector2(kNoMeshletVisibility, 0u));
+        }
+
+        if (bFullInstanceUpload || bFullStaticUpload)
+        {
+            for (uint32 Slot = 0; Slot < SlotCount; ++Slot)
+            {
+                UpdateMeshletVisibility(Slot);
+            }
+            return;
+        }
+
+        // Copied first, since a base that moves marks its slot static-dirty and grows the list being walked.
+        MeshletVisibilityScratch.clear();
+        MeshletVisibilityScratch.insert(MeshletVisibilityScratch.end(), DirtyInstanceSlots.begin(), DirtyInstanceSlots.end());
+        MeshletVisibilityScratch.insert(MeshletVisibilityScratch.end(), DirtyStaticSlots.begin(), DirtyStaticSlots.end());
+        for (uint32 Slot : MeshletVisibilityScratch)
+        {
+            if (Slot < SlotCount)
+            {
+                UpdateMeshletVisibility(Slot);
+            }
+        }
+    }
+
+    void FScenePrimitiveSet::ResetMeshletVisibility()
+    {
+        SlotMeshletVisibility.clear();
+        MeshletVisibilityFreeLists.clear();
+        MeshletVisibilityExtent = 1u;
     }
 
     void FScenePrimitiveSet::SetBoneCount(uint32 Index, uint32 Count)
@@ -759,7 +861,7 @@ namespace Lumina
         return Base;
     }
 
-    FScenePrimitiveSet::FGrassSpeciesBinding FScenePrimitiveSet::AcquireGrassSpecies(CStaticMesh* Mesh, uint32 Capacity)
+    FScenePrimitiveSet::FGrassSpeciesBinding FScenePrimitiveSet::AcquireGrassSpecies(CStaticMesh* Mesh, uint32 ResolveHandle, uint32 Capacity)
     {
         if (Mesh == nullptr || Capacity == 0u)
         {
@@ -768,7 +870,7 @@ namespace Lumina
 
         // One surface only. A multi-material grass mesh would need a block per surface, and silently
         // drawing just the first would look like a broken mesh rather than an unsupported one.
-        const uint32 Handle = FMeshResolveCache::Get().Resolve(Mesh, {});
+        const uint32 Handle = ResolveHandle;
         if (!FMeshResolveCache::Get().IsValidHandle(Handle))
         {
             return {};
@@ -840,8 +942,8 @@ namespace Lumina
         {
             Desc.LODMeshletOffset[i]     = Surface.LODMeshletOffset[i];
             Desc.LODMeshletCount[i]      = Surface.LODMeshletCount[i];
-            Desc.LODScreenThresholdSq[i] = Surface.LODScreenThresholdSq[i];
-            
+            Desc.LODError[i]         = Surface.LODError[i];
+
             const uint32 RangeEnd = Desc.LODMeshletOffset[i] + Desc.LODMeshletCount[i];
             if (RangeEnd > MAX_MESHLETS_PER_SURFACE_LOD)
             {
@@ -861,7 +963,7 @@ namespace Lumina
         {
             Hash::HashCombine(Hash, Desc.LODMeshletOffset[i]);
             Hash::HashCombine(Hash, Desc.LODMeshletCount[i]);
-            Hash::HashCombine(Hash, Desc.LODScreenThresholdSq[i]);
+            Hash::HashCombine(Hash, Desc.LODError[i]);
         }
 
         TVector<uint32>& Bucket = SurfaceDescByHash[Hash];
@@ -956,6 +1058,8 @@ namespace Lumina
             NewStatic.CustomData        = Prim.CustomData;
             NewStatic.MaterialIndex     = Binding.MaterialIndex;
             NewStatic.EntityID          = Prim.EntityID;
+            // Owned by AssignMeshletVisibility, which a rebuilt payload must not undo.
+            NewStatic.MeshletVisibilityBase = RetainedStatic[Slot].MeshletVisibilityBase;
 
             // A resolve bump onto identical values must not dirty the slot, or every instance re-uploads.
             const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
@@ -1553,6 +1657,7 @@ namespace Lumina
             FTransform3x4      NewTransform;
             FInstanceStatic    NewStatic;
             BuildFoliageEntries(Binding, Type, Instance, EntityID, bHidden, NewCull, NewTransform, NewStatic);
+            NewStatic.MeshletVisibilityBase = RetainedStatic[Slot].MeshletVisibilityBase;
 
             // A rebake or resolve bump rewrites every blade; only the ones that actually moved upload.
             const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
@@ -1624,6 +1729,7 @@ namespace Lumina
                     FTransform3x4      NewTransform;
                     FInstanceStatic    NewStatic;
                     BuildFoliageEntries(Binding, Type, Baked[Index], EntityID, bHidden, NewCull, NewTransform, NewStatic);
+                    NewStatic.MeshletVisibilityBase = RetainedStatic[Slot].MeshletVisibilityBase;
 
                     const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
                     const bool bTransformChanged = StoreIfChanged(RetainedTransforms[Slot], NewTransform);
@@ -2094,6 +2200,7 @@ namespace Lumina
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();
+        ResetMeshletVisibility();
         InstanceFreeSlots.clear();
         DirtyInstanceSlots.clear();
         DirtyStaticSlots.clear();
@@ -2810,6 +2917,7 @@ namespace Lumina
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();
+        ResetMeshletVisibility();
         InstanceFreeSlots.clear();
         DirtyInstanceSlots.clear();
         DirtyStaticSlots.clear();

@@ -1,16 +1,11 @@
+#define MATERIAL_NO_MIP_BIAS 1
 #include "Includes/SceneGlobals.slang"
 
-// Post-process material template; fullscreen pass after tone mapping, ping-ponging LDR target and a
-// scratch image so each material reads the previous output via uSceneColor. Returns Material.Emissive.
-// No pass-local set: the three scene inputs are read through the bindless table via push-constant
-// indices. The codegen emits `uSceneColor.Sample(uv)` etc., so each input is a small wrapper that
-// mirrors the Sampler2D interface; FragmentMain builds them from the indices before the material-graph
-// token. (That token must NOT appear literally in any comment above it -- the compiler substitutes the
-// FIRST occurrence, so a comment match would inject the codegen at file scope and fail to compile.)
+// The compiler substitutes the first occurrence of the material-graph token, so never spell it in a comment above its use.
 struct FSceneTex
 {
-    Texture2D    Tex;
-    SamplerState Smp;
+    FTexture2D Tex;
+    FSampler   Smp;
     float4 Sample(float2 uv)               { return Tex.Sample(Smp, uv); }
     float4 SampleLevel(float2 uv, float l)  { return Tex.SampleLevel(Smp, uv, l); }
 };
@@ -23,10 +18,10 @@ struct PSInput
 
 struct FPostProcessPushConstants
 {
-    uint MaterialIndex;
-    uint SceneColorIndex;   // bindless 2D SRV: ping-pong source (linear-clamp)
-    uint SceneDepthIndex;   // bindless 2D SRV: opaque depth (point-clamp)
-    uint HDRIndex;          // bindless 2D SRV: pre-tone-map HDR (linear-clamp)
+    uint       MaterialIndex;
+    FTexture2D SceneColor;      // ping-pong source (linear-clamp)
+    FTexture2D SceneDepth;      // opaque depth (point-clamp)
+    FTexture2D HDR;             // pre-tone-map HDR (linear-clamp)
 };
 
 FPostProcessPushConstants* Pass() { return GetPassArgs<FPostProcessPushConstants>(); }
@@ -35,16 +30,15 @@ FPostProcessPushConstants* Pass() { return GetPassArgs<FPostProcessPushConstants
 float4 FragmentMain(PSInput Input) : SV_Target0
 {
     // Scene inputs as wrappers named to match the codegen's `uSceneColor.Sample(uv)` references.
-    FSceneTex uSceneColor;    uSceneColor.Tex    = gTextures2D[Pass().SceneColorIndex]; uSceneColor.Smp    = gSamplers[SAMPLER_LINEAR_CLAMP];
-    FSceneTex uSceneDepth;    uSceneDepth.Tex    = gTextures2D[Pass().SceneDepthIndex]; uSceneDepth.Smp    = gSamplers[SAMPLER_POINT_CLAMP];
-    FSceneTex uHDRSceneColor; uHDRSceneColor.Tex = gTextures2D[Pass().HDRIndex];        uHDRSceneColor.Smp = gSamplers[SAMPLER_LINEAR_CLAMP];
+    FSceneTex uSceneColor;    uSceneColor.Tex    = Pass().SceneColor; uSceneColor.Smp    = Samplers::LinearClamp;
+    FSceneTex uSceneDepth;    uSceneDepth.Tex    = Pass().SceneDepth; uSceneDepth.Smp    = Samplers::PointClamp;
+    FSceneTex uHDRSceneColor; uHDRSceneColor.Tex = Pass().HDR;        uHDRSceneColor.Smp = Samplers::LinearClamp;
 
     uint   MaterialIndex = Pass().MaterialIndex;
     float2 UV0           = Input.UV;
     float4 SceneColor    = uSceneColor.Sample(Input.UV);
 
-    // Surface-base-pass aliases. Zeroed because there is no rasterized
-    // geometry feeding this pass; node-emit code may still reference them.
+    // Zeroed because no rasterized geometry feeds this pass, but node code may still reference them.
     float3 WorldPosition = float3(0.0);
     // No vertex graph in this domain, so there is no offset to exclude.
     float3 WorldPositionExcludingOffsets = WorldPosition;
@@ -53,7 +47,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float4 VertexColor   = float4(1.0);
     uint   EntityID      = 0;
     float4 WorldTangent  = float4(1.0, 0.0, 0.0, 1.0);
-    // Fullscreen pass: one screen parameterization, so set 1 aliases it.
+    // One screen parameterization, so set 1 aliases it.
     float2 UV1           = UV0;
     float2 UV1_DDX       = ddx(UV1);
     float2 UV1_DDY       = ddy(UV1);

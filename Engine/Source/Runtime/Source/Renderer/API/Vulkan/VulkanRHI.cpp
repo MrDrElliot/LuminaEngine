@@ -1575,6 +1575,21 @@ namespace Lumina::RHI
             return GDevice->CommandLists[CommandList].CommandBuffer;
         }
 
+        FNativeTexture GetNativeTexture(FTextureH Texture)
+        {
+            FNativeTexture Out;
+            if (GDevice == nullptr || !IsValid(Texture))
+            {
+                return Out;
+            }
+            const FTexture& TextureData = GDevice->Textures[Texture];
+            Out.Image  = TextureData.Image;
+            Out.View   = TextureData.DefaultImageView;
+            Out.Format = (uint32)ConvertFormat(TextureData.Desc.Format);
+            Out.Layout = (uint32)VK_IMAGE_LAYOUT_GENERAL;
+            return Out;
+        }
+
         void RegisterDeviceCreationRequest(const FDeviceCreationRequest& Request)
         {
             GPendingDeviceRequests.push_back(Request);
@@ -7609,8 +7624,8 @@ namespace Lumina::RHI
 
     void CmdSetPipeline(FCmdListH CL, FPipelineH Pipeline)
     {
-        FPipeline PL = GDevice->Pipelines[Pipeline];
         FCommandList& List = GDevice->CommandLists[CL];
+        const FPipeline PL = Pipeline.Handle != 0 ? GDevice->Pipelines[Pipeline] : FPipeline{};
         if (PL.Pipeline == VK_NULL_HANDLE)
         {
             // The bind point of a pipeline that never built is unknown, so neither kind may run until a real bind.

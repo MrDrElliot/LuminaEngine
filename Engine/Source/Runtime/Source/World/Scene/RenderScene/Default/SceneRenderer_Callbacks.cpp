@@ -114,15 +114,18 @@ namespace Lumina
         const FSceneImage* Color = &HDR;
         if (Stage == ERenderStage::AfterPostProcess)
         {
-            Color = GetSMAAMode() != ESMAAMode::Off ? &View.Images[(int)ENamedImage::LDR] : &View.Output;
+            Color = GetViewSMAAMode(View) != ESMAAMode::Off ? &View.Images[(int)ENamedImage::LDR] : &View.Output;
         }
         else if (Stage == ERenderStage::Overlay)
         {
             Color = &View.Output;
         }
 
-        Context.SceneColor = ToRenderTexture(*Color);
-        Context.SceneDepth = ToRenderTexture(View.Images[(int)ENamedImage::DepthAttachment]);
+        // The stages after the upscale draw at display resolution, where the render resolution depth cannot attach.
+        Context.View.Extent = Color->GetExtent();
+        Context.SceneColor  = ToRenderTexture(*Color);
+        const FSceneImage& Depth = View.Images[(int)ENamedImage::DepthAttachment];
+        Context.SceneDepth  = Depth.GetExtent() == Color->GetExtent() ? ToRenderTexture(Depth) : FRenderTexture{};
         Context.Velocity   = ToRenderTexture(View.Images[(int)ENamedImage::Velocity]);
         return Context;
     }

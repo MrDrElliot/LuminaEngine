@@ -10,8 +10,8 @@
 struct FPushConstants
 {
     GPUSpan<uint> Histogram;   // the 256-uint bin array
-    uint   HDRIndex;        // bindless SRV of HDR scene color
-    uint   _Pad0;
+    FTexture2D    HDR;
+    uint          _Pad0;
 
     uint2  HDRSize;
     float  MinLogLum;       // log2 luminance mapped to bin 0
@@ -19,7 +19,7 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-groupshared uint gBins[HISTOGRAM_BINS];
+groupshared uint gsBins[HISTOGRAM_BINS];
 
 uint LuminanceToBin(float Luma, float MinLogLum, float InvLogLumRange)
 {
@@ -37,23 +37,23 @@ uint LuminanceToBin(float Luma, float MinLogLum, float InvLogLumRange)
 [numthreads(TILE_DIM, TILE_DIM, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint GroupIndex : SV_GroupIndex)
 {
-    gBins[GroupIndex] = 0u;
+    gsBins[GroupIndex] = 0u;
     GroupMemoryBarrierWithGroupSync();
 
     uint2 Size = Pass().HDRSize;
     if (DTid.x < Size.x && DTid.y < Size.y)
     {
-        float3 Color = SanitizeRadiance(LoadTexture2D(Pass().HDRIndex, int2(DTid.xy)).rgb);
+        float3 Color = SanitizeRadiance(Pass().HDR.Load(int2(DTid.xy)).rgb);
         float  Luma  = max(Luminance(Color), 0.0);
 
-        InterlockedAdd(gBins[LuminanceToBin(Luma, Pass().MinLogLum, Pass().InvLogLumRange)], 1u);
+        InterlockedAdd(gsBins[LuminanceToBin(Luma, Pass().MinLogLum, Pass().InvLogLumRange)], 1u);
     }
 
     GroupMemoryBarrierWithGroupSync();
 
     // TILE_DIM^2 == HISTOGRAM_BINS, so each thread owns exactly one bin.
-    if (gBins[GroupIndex] > 0u)
+    if (gsBins[GroupIndex] > 0u)
     {
-        InterlockedAdd(SpanAt(&Pass().Histogram, GroupIndex)[0], gBins[GroupIndex]);
+        InterlockedAdd(Pass().Histogram.At(GroupIndex)[0], gsBins[GroupIndex]);
     }
 }

@@ -18,7 +18,7 @@ struct FragmentOutput
 [shader("fragment")]
 FragmentOutput FragmentMain(FragmentInput Input)
 {
-    float4 Texture = SampleTexture2D(Input.TextureIndex, SAMPLER_LINEAR_WRAP, Input.UV);
+    float4 Texture = FTexture2D(Input.TextureIndex).Sample(Samplers::LinearWrap, Input.UV);
     
     if (Texture.a < 0.01)
     {

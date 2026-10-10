@@ -42,7 +42,8 @@ namespace Lumina
         uint32  NumLODs                             = 1;
         uint32  LODMeshletOffset[MAX_MESH_LODS]     = {};
         uint32  LODMeshletCount[MAX_MESH_LODS]      = {};
-        float   LODScreenThresholdSq[MAX_MESH_LODS] = {};
+        // Mesh-local error per LOD, already scaled by the mesh's own LOD distance scale.
+        float   LODError[MAX_MESH_LODS]             = {};
 
         // Mesh-local world size of one UV tile; 0 = unknown. Carried through to FSurfaceBinding for the
         // texture streamer. See FGeometrySurface::TexelFactor.

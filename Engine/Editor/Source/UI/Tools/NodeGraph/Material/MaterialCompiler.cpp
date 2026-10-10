@@ -3045,7 +3045,7 @@ namespace Lumina
 		                   ? FString("Inst.MeshletHeaderSlot")
 		                   : FString("GetInstance(Input.InstanceIndex).MeshletHeaderSlot");
 
-		GetActiveChunk().append("FMeshletHeader* " + HeaderVar + " = SpanAt(MeshletHeaders(), " + Slot + ");\n");
+		GetActiveChunk().append("FMeshletHeader* " + HeaderVar + " = MeshletHeaders().At(" + Slot + ");\n");
 		return HeaderVar;
 	}
 

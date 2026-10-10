@@ -1,34 +1,32 @@
-// Compute lane: no rasterizer, so nothing here may use ddx/ddy or an implicit-derivative sample.
+// The compute lane has no rasterizer, so nothing here may use ddx/ddy or an implicit-derivative sample.
 #define SHADING_COMPUTE 1
 
 #include "Includes/SurfaceShading.slang"
 #include "Includes/VisBufferSurface.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/Wind.slang"   // this template substitutes the material vertex token too (WPO reconstruction)
 
-// Per-material GBuffer generation over the tiles classification binned under this material, in compute so derivatives are analytic.
-
-// reads the decal indices out of this same block: offset 0 is read there as an (unused) MeshletBase.
+// Must match FDeferredMaterialPC in SceneRenderer_Lighting.cpp.
 struct FDeferredMaterialArgs
 {
-    uint  VisBufferIndex;   // 0
-    uint  FeedbackPhase;    // 4   which 1/STREAMING_FEEDBACK_WINDOW of the groups report streaming feedback this frame
-    uint  NumSlots;         // 8   where the sparse half of Counts and Offsets starts
-    uint  SlotImageIndex;   // 12  slot + 1 per pixel from classify
-    uint  DrawListCount;    // 16  MeshletDrawList slot bound
-    uint  SlotIndex;        // 20  this dispatch's dense material slot
-    uint  ScreenW;          // 24
-    uint  ScreenH;          // 28
-    uint  GBufferAUAV;      // 32  storage-heap slots, channel order per Includes/GBuffer.slang
-    uint  GBufferBUAV;      // 36
-    uint  GBufferCUAV;      // 40
-    uint  GBufferDUAV;      // 44
-    uint  VelocityUAV;      // 48  0xFFFFFFFF when temporal AA is off
-    uint  _PadVelocity;     // 52
-    GPUSpan<uint> PairList;   // 56  packed tile coordinates grouped by slot, each run starting at Offsets[slot]
-    GPUSpan<uint> Counts;     // 72  dense tiles per slot, then sparse pixels per slot
-    GPUSpan<uint> Offsets;    // 88  run starts in PairList, then in PixelList
-    GPUSpan<uint> PixelList;  // 104 packed pixel coordinates of the pairs too thin to shade as a tile
+    FTexture2DUInt VisBuffer;   // 0
+    uint           FeedbackPhase;    // 4   which 1/STREAMING_FEEDBACK_WINDOW of the groups report streaming feedback this frame
+    uint           NumSlots;         // 8   where the sparse half of Counts and Offsets starts
+    FTexture2D     SlotImage;   // 12  slot + 1 per pixel from classify
+    uint           DrawListCount;    // 16  MeshletDrawList slot bound
+    uint           SlotIndex;        // 20
+    uint           ScreenW;          // 24
+    uint           ScreenH;          // 28
+    FRWTexture2D   GBufferA;      // 32  storage-heap slots, channel order per Includes/GBuffer.slang
+    FRWTexture2D   GBufferB;      // 36
+    FRWTexture2D   GBufferC;      // 40
+    FRWTexture2D   GBufferD;      // 44
+    FRWTexture2D   Velocity;      // 48  0xFFFFFFFF when temporal AA is off
+    uint           _PadVelocity;     // 52
+    GPUSpan<uint>  PairList;   // 56  packed tile coordinates grouped by slot, each run starting at Offsets[slot]
+    GPUSpan<uint>  Counts;     // 72  dense tiles per slot, then sparse pixels per slot
+    GPUSpan<uint>  Offsets;    // 88  run starts in PairList, then in PixelList
+    GPUSpan<uint>  PixelList;  // 104 packed pixel coordinates of the pairs too thin to shade as a tile
 };
 FDeferredMaterialArgs* Pass() { return GetPassArgs<FDeferredMaterialArgs>(); }
 
@@ -49,9 +47,9 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
 
     // The skinning pass already blended last frame's pose once per vertex, so a pre-skinned instance only reads it.
     const uint PrevIndex = Ref.SkinnedVertexBase + Ref.M.VertexOffset + LocalVertIdx;
-    if (bSkinned && Ref.SkinnedVertexBase != kNoPreSkinBase && SpanContains(PreSkinnedPrevPositions(), PrevIndex))
+    if (bSkinned && Ref.SkinnedVertexBase != kNoPreSkinBase && PreSkinnedPrevPositions().Contains(PrevIndex))
     {
-        const FPrevSkinnedPosition Prev = SpanGet(PreSkinnedPrevPositions(), PrevIndex);
+        const FPrevSkinnedPosition Prev = PreSkinnedPrevPositions().Get(PrevIndex);
         return float3(Prev.X, Prev.Y, Prev.Z);
     }
 
@@ -68,11 +66,11 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
 float4x4 PrevModelMatrixOf(FGPUInstance* Inst, float4x4 Fallback)
 {
     const uint Slot = Inst.RetainedSlot;
-    if (!SpanContains(PrevRetainedTransforms(), Slot))
+    if (!PrevRetainedTransforms().Contains(Slot))
     {
         return Fallback;
     }
-    return SpanGet(PrevRetainedTransforms(), Slot).ToMatrix();
+    return PrevRetainedTransforms().Get(Slot).ToMatrix();
 }
 
 [shader("compute")]
@@ -83,22 +81,22 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
     // Folded across Y with the matching unfold in VisBufferMaterialArgs, the slot's dense tiles then its listed pixels 64 to a group.
     const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
-    const uint DenseTiles  = SpanGet(&Pass().Counts, Slot);
+    const uint DenseTiles  = Pass().Counts.Get(Slot);
 
     uint2 Texel;
     if (LinearGroup >= DenseTiles)
     {
         const uint SparseRun = Pass().NumSlots + Slot;
         const uint Entry     = (LinearGroup - DenseTiles) * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-        if (Entry >= SpanGet(&Pass().Counts, SparseRun))
+        if (Entry >= Pass().Counts.Get(SparseRun))
         {
             return;
         }
-        Texel = UnpackVisPixel(SpanGet(&Pass().PixelList, SpanGet(&Pass().Offsets, SparseRun) + Entry));
+        Texel = UnpackVisPixel(Pass().PixelList.Get(Pass().Offsets.Get(SparseRun) + Entry));
     }
     else
     {
-        const uint2 Tile = UnpackVisPixel(SpanGet(&Pass().PairList, SpanGet(&Pass().Offsets, Slot) + LinearGroup));
+        const uint2 Tile = UnpackVisPixel(Pass().PairList.Get(Pass().Offsets.Get(Slot) + LinearGroup));
         Texel = Tile * MATERIAL_CLASSIFY_TILE + uint2(Lane % MATERIAL_CLASSIFY_TILE, Lane / MATERIAL_CLASSIFY_TILE);
         if (Texel.x >= Pass().ScreenW || Texel.y >= Pass().ScreenH)
         {
@@ -106,27 +104,25 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         }
 
         // A tile is shared with other materials, so the slot classify stored keeps only this one's pixels.
-        if ((uint)(LoadTexture2D(Pass().SlotImageIndex, int2(Texel)).r + 0.5) != Slot + 1u)
+        if ((uint)(Pass().SlotImage.Load(int2(Texel)).r + 0.5) != Slot + 1u)
         {
             return;
         }
     }
 
-    const uint   Raw = LoadTexture2DUInt(Pass().VisBufferIndex, int2(Texel));
+    const uint   Raw = Pass().VisBuffer.Load(int2(Texel));
     FVisTriangle T   = ResolveVisTriangle(Raw, Pass().DrawListCount);
 
     FGBufferData G = DefaultGBufferData();
     if (T.bValid)
     {
-        // The three corners share the instance's ModelMatrix, so load it ONCE. Reaching it through Ref.Inst
-        // per corner is a fresh dependent PhysicalStorageBuffer fetch that SPIR-V LICM will not merge.
+        // Loaded once, since a per-corner Ref.Inst fetch is a dependent PhysicalStorageBuffer load SPIR-V LICM will not merge.
         const float4x4 ModelMatrix    = T.Ref.ModelMatrix;
         float3x3       NormalMatrixWS = CalculateNormalMatrix(ModelMatrix);
 
-        // Re-apply WorldPositionOffset per corner so the rebuilt triangle matches what the geometry pass
-        // rasterized. Load and transform are FUSED so only one corner's FVertexData (48 VGPRs) is live.
-        FGPUInstance* Inst = T.Ref.Inst;   // reached, not stored -- see FMeshletRef
-        const bool bWantVelocity = SPEC_DEFERRED_VELOCITY != 0u && Pass().VelocityUAV != 0xFFFFFFFFu;
+        // WPO is reapplied per corner, with load and transform fused so only one corner's FVertexData is live.
+        FGPUInstance* Inst = T.Ref.Inst;   // reached, not stored, see FMeshletRef
+        const bool bWantVelocity = SPEC_DEFERRED_VELOCITY != 0u && Pass().Velocity.IsValid();
         const float4x4 PrevModel = bWantVelocity ? PrevModelMatrixOf(T.Ref.Inst, ModelMatrix) : ModelMatrix;
 
         FMeshletWorldVertex W[3];
@@ -155,7 +151,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             // A constant offset folds away here, so only a graph with real WPO pays for this second pass.
             if (bWantVelocity)
             {
-                gMaterialVertexTime = GetPrevTime();
+                MaterialTimeOverride = GetPrevTime();
 
                 WorldPos      = float4(PrevWorldPos[k], 1.0);
                 NormalWS      = W[k].NormalWS;
@@ -166,7 +162,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
                 $MATERIAL_VERTEX_INPUTS
                 PrevWorldPos[k] += Material.WorldPositionOffset;
 
-                gMaterialVertexTime = -1.0;
+                MaterialTimeOverride = -1.0;
             }
         }
 
@@ -185,7 +181,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
                 Motion = PrevUV - ((float2(Texel) + 0.5) / ScreenSize - GetTemporalJitterUV());
             }
 
-            gRWTextures2D[Pass().VelocityUAV][int2(Texel)] = float4(Motion, 0.0, 0.0);
+            Pass().Velocity[int2(Texel)] = float4(Motion, 0.0, 0.0);
         }
 
         const float3 OrientedNormalWS = OrientVisNormal(T.Ref, S.NormalWS, S.WorldPosition);
@@ -207,11 +203,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         Input.MaterialIndex = T.Ref.Inst.MaterialIndex;
         Input.InstanceFlags = (uint)T.Ref.InstFlags;
         Input.MeshletIndex  = T.Ref.GlobalMeshletIdx;
-        // What the rasterizer would have handed a pixel shader here: pixel center, NDC z, 1/w. Material
-        // nodes read .xy for screen position/UV and .z for pixel depth.
+        // What a rasterized pixel shader would see here (pixel center, NDC z, 1/w).
         Input.Position      = float4(float2(Texel) + 0.5, ClipPos.z * InvW, InvW);
 
-        // Material pixel graph locals (the names the pixel graph codegen reads).
+        // Locals named as the pixel graph codegen reads them.
         uint   EntityID       = Input.EntityID;
         uint   MaterialIndex  = Input.MaterialIndex;
         bool   bReceiveShadow = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
@@ -225,13 +220,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         float3 ViewPosition   = ViewPos.xyz;
         float2 UV0_DDX        = S.UVDDX;
         float2 UV0_DDY        = S.UVDDY;
-        // Set 1 carries its own barycentric gradients for the same reason set 0 does: there is no 2x2
-        // quad in this lane, so an implicit derivative does not exist to fall back on.
+        // No 2x2 quad exists in this lane, so set 1 carries its own barycentric gradients too.
         float2 UV1_DDX        = S.UV1DDX;
         float2 UV1_DDY        = S.UV1DDY;
 
-        // Analytic derivatives of the other varyings a graph can build a UV from; without these they sample
-        // with UV0's gradient. WorldNormal deliberately has none -- it is normalized and two-sided-flipped.
+        // Analytic gradients for the other UV sources, but none for WorldNormal since it is normalized and two-sided-flipped.
         float3 WorldPosition_DDX = InterpWeights(S.Bary.DDX, FinalWorldPos[0], FinalWorldPos[1], FinalWorldPos[2]);
         float3 WorldPosition_DDY = InterpWeights(S.Bary.DDY, FinalWorldPos[0], FinalWorldPos[1], FinalWorldPos[2]);
         float3 WorldPositionExcludingOffsets_DDX = InterpWeights(S.Bary.DDX, W[0].WorldPos, W[1].WorldPos, W[2].WorldPos);
@@ -239,15 +232,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         float4 VertexColor_DDX   = InterpWeights4(S.Bary.DDX, W[0].Color, W[1].Color, W[2].Color);
         float4 VertexColor_DDY   = InterpWeights4(S.Bary.DDY, W[0].Color, W[1].Color, W[2].Color);
 
-        // Not named WorldNormal_DDX on purpose: this is the INTERPOLATED normal's gradient, kept out of
-        // the material graph's alias set, and used only as the specular-AA variance estimate below.
+        // Not named WorldNormal_DDX so it stays out of the graph's alias set, and used only for specular AA.
         const float3 GeoNormalDDX = InterpWeights(S.Bary.DDX, W[0].NormalWS, W[1].NormalWS, W[2].NormalWS);
         const float3 GeoNormalDDY = InterpWeights(S.Bary.DDY, W[0].NormalWS, W[1].NormalWS, W[2].NormalWS);
 
-        // One report per pixel, keyed by material slot -- see RequestMaterialResolution. This lane is where
-        // residency demand comes from, because it is where the camera's view of a material is shaded, and
-        // its gradients are the analytic barycentric ones (there is no quad here to take ddx/ddy from).
-        // Group-uniform, so the wave ops inside stay convergent; the readback accumulates a whole window first.
+        // Group-uniform so the wave ops in RequestMaterialResolution stay convergent.
         if ((LinearGroup + Pass().FeedbackPhase) % STREAMING_FEEDBACK_WINDOW == 0u)
         {
             RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
@@ -261,8 +250,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     }
 
     const FGBufferPacked P = PackGBuffer(G);
-    gRWTextures2D[Pass().GBufferAUAV][int2(Texel)] = P.A;
-    gRWTextures2D[Pass().GBufferBUAV][int2(Texel)] = P.B;
-    gRWTextures2D[Pass().GBufferCUAV][int2(Texel)] = P.C;
-    gRWTextures2D[Pass().GBufferDUAV][int2(Texel)] = P.D;
+    Pass().GBufferA[int2(Texel)] = P.A;
+    Pass().GBufferB[int2(Texel)] = P.B;
+    Pass().GBufferC[int2(Texel)] = P.C;
+    Pass().GBufferD[int2(Texel)] = P.D;
 }

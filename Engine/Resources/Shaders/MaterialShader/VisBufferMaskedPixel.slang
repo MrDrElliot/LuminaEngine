@@ -1,16 +1,8 @@
 #include "Includes/SurfaceShading.slang"
 
-// Masked VisBuffer pixel shader. Runs the material's pixel graph far enough to evaluate Material.Opacity and
-// `discard`s cut-out texels BEFORE they write VisID/depth, so masked geometry no longer stamps full-coverage
-// depth over whatever is behind its holes. The deferred material pass keeps its own ShadeSurface masked clip
-// for silhouette edges; this one fixes coverage/occlusion.
-//
-// Two entry points share one opacity evaluation:
-// The material-graph token appears exactly once (inside MaskedVisKeep): the compiler substitutes the FIRST
-// occurrence, so it must never appear in a comment above it -- that would inject the codegen at file scope.
+// The compiler substitutes the first material-inputs token, so never name it in a comment above its use.
 
-// Runs the pixel graph and returns true when the texel should be KEPT (opacity >= the material's cutoff).
-// `discard` is legal from a helper called by a pixel shader. Reuses the exact local contract of BasePixelPass.
+// Returns true when the texel should be kept, its opacity at or above the material's cutoff.
 bool MaskedVisKeep(FMaskedVertexOutput Input)
 {
     uint EntityID           = MaskedEntityID(Input);
@@ -37,13 +29,11 @@ bool MaskedVisKeep(FMaskedVertexOutput Input)
 
     $MATERIAL_INPUTS
 
-    // Anchored in world space, so the verdict for a surface point is the same every frame and the
-    // dithered edge holds still instead of crawling as the camera moves.
+    // Anchored in world space so the dithered edge holds still as the camera moves.
     const float  ClipCutoff = HashedAlphaThreshold(WorldPosition, length(ViewPosition),
                                                    GetMaterialOpacityClip(MaterialIndex));
     return Material.Opacity >= ClipCutoff;
 }
-
 
 [shader("fragment")]
 uint FragmentMain(FMaskedVertexOutput Input, uint VisID : SV_PrimitiveID) : SV_Target0
@@ -54,4 +44,3 @@ uint FragmentMain(FMaskedVertexOutput Input, uint VisID : SV_PrimitiveID) : SV_T
     }
     return VisID;
 }
-

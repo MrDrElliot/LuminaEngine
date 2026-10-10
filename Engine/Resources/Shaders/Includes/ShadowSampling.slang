@@ -9,31 +9,19 @@ int ActiveCascadeCount() { return clamp(int(LightData().ShadowParams2.z), 1, NUM
 bool HasFarCascade() { return LightData().ShadowParams2.w > 0.5; }
 int NearCascadeCount() { return max(ActiveCascadeCount() - (HasFarCascade() ? 1 : 0), 1); }
 
-// Cascade and atlas sampling shared by the lit passes, the volumetrics and the particles, so none of them drift.
-
+// A shadow map read through the comparison sampler, or point sampled for its raw depth.
 struct FShadowTex
 {
-    Texture2D              Tex;
-    SamplerComparisonState Cmp;
-    SamplerState           Pt;
+    FTexture2D Tex;
 
-    float  SampleCmp(float2 UV, float Ref)          { return Tex.SampleCmp(Cmp, UV, Ref); }
-    float  SampleCmpLevelZero(float2 UV, float Ref) { return Tex.SampleCmpLevelZero(Cmp, UV, Ref); }
-    float4 SampleLevel(float2 UV, float Lod)        { return Tex.SampleLevel(Pt, UV, Lod); }
+    float  SampleCmp(float2 UV, float Ref)          { return Tex.SampleCmp(Samplers::Shadow, UV, Ref); }
+    float  SampleCmpLevelZero(float2 UV, float Ref) { return Tex.SampleCmpLevelZero(Samplers::Shadow, UV, Ref); }
+    float4 SampleLevel(float2 UV, float Lod)        { return Tex.SampleLevel(Samplers::PointClamp, UV, Lod); }
     void   GetDimensions(out uint W, out uint H)    { Tex.GetDimensions(W, H); }
 };
 
-FShadowTex MakeShadowTex(uint Index)
-{
-    FShadowTex S;
-    S.Tex = gTextures2D[NonUniformResourceIndex(Index)];
-    S.Cmp = gCmpSamplers[SAMPLER_SHADOW];
-    S.Pt  = gSamplers[SAMPLER_POINT_CLAMP];
-    return S;
-}
-
-FShadowTex ShadowCascade() { return MakeShadowTex(GetSceneRoot().ShadowCascadeIndex); }
-FShadowTex ShadowAtlas()   { return MakeShadowTex(GetSceneRoot().ShadowAtlasIndex); }
+FShadowTex ShadowCascade() { return { GetSceneRoot().ShadowCascadeTexture }; }
+FShadowTex ShadowAtlas()   { return { GetSceneRoot().ShadowAtlasTexture }; }
 
 struct FCubemapCoord
 {
@@ -48,7 +36,7 @@ FCubemapCoord DirectionToCubemapCoord(float3 Dir)
 
     float3 AbsDir = abs(Dir);
 
-    // Exclusive picks, since summed step() masks counted a two-axis tie twice and drove the face negative.
+    // Exclusive picks, so a two-axis tie selects exactly one face.
     float IsXMax = (AbsDir.x >= AbsDir.y && AbsDir.x >= AbsDir.z) ? 1.0 : 0.0;
     float IsYMax = (IsXMax == 0.0 && AbsDir.y >= AbsDir.z) ? 1.0 : 0.0;
     float IsZMax = 1.0 - IsXMax - IsYMax;
@@ -79,7 +67,7 @@ FCubemapCoord DirectionToCubemapCoord(float3 Dir)
 // Only the shadowed directional light exists, and the cloud map is built along its direction.
 float SampleDirectionalCloudShadow(float3 FragmentPos)
 {
-    return CloudShadow_Sample(Scene().FogCloudShadowIndex, FragmentPos, Scene().FogCloudShadowCenter, Scene().FogCloudShadowExtent);
+    return CloudShadow_Sample(Scene().FogCloudShadow, FragmentPos, Scene().FogCloudShadowCenter, Scene().FogCloudShadowExtent);
 }
 
 // Cascades nest by distance, so FirstCascade carries a receding march's last hit and skips impossible ones.
@@ -117,13 +105,11 @@ float SampleSunCascadeByContainment(FLight Light, float3 WorldPos)
     return SampleSunCascadeFrom(Light, WorldPos, FirstCascade);
 }
 
-// Screen-space fill for occlusion below one shadow texel, which is what makes contact points float.
-
 // Traces in view space off the opaque depth buffer, so no derivatives and either lane can call it.
 float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, float Reach, uint Steps)
 {
-    const uint DepthIndex = Scene().SceneDepthIndex;
-    if (Reach <= 0.0 || Steps == 0u || DepthIndex == 0xFFFFFFFFu)
+    const FTexture2D SceneDepth = Scene().SceneDepth;
+    if (Reach <= 0.0 || Steps == 0u || !SceneDepth.IsValid())
     {
         return 1.0;
     }
@@ -154,7 +140,7 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
             break;   // left the depth buffer, and off-screen occluders are not knowable here
         }
 
-        const float Raw = SampleTexture2DLevel(DepthIndex, SAMPLER_POINT_CLAMP, UV, 0.0).r;
+        const float Raw = SceneDepth.SampleLevel(Samplers::PointClamp, UV, 0.0).r;
         if (Raw > 0.0)
         {
             // Rebuilt where the depth was measured, since the ray's own UV would lift a grazing receiver off its plane.
@@ -211,8 +197,7 @@ float SunOccluderDepthWS(FLight Light, float3 WorldPos)
     return 0.0;
 }
 
-// ToLight is the TO-LIGHT vector, matching FLight::Direction. Passing the travel direction instead
-// silently inverts NdotL to zero on every lit surface and pins the bias at maximum.
+// ToLight points toward the light like FLight::Direction, and the travel direction would zero NdotL.
 float ComputeShadowBias(uint LightFlags, float3 Normal, float3 ToLight, int CascadeIndex)
 {
     float NdotL       = saturate(dot(Normal, ToLight));
@@ -220,29 +205,26 @@ float ComputeShadowBias(uint LightFlags, float3 Normal, float3 ToLight, int Casc
 
     if (HasFlag(LightFlags, ELightFlags::Directional))
     {
-        // Constant safety bias only; NormalOffsetWS() handles slope acne. ShadowParams.y is the per-light constant bias.
+        // NormalOffsetWS handles slope acne, and ShadowParams.y is the per-light constant bias.
         return 0.00015 + 0.0003 * SlopeFactor + LightData().ShadowParams.y;
     }
 
-    // Point/spot: RefDepth is NDC z from the face VP, which clusters near 1.0
-    // and needs a much smaller bias than the old linear DistToLight/Radius.
+    // Point and spot RefDepth is NDC z from the face VP, which clusters near 1.0 and needs a tiny bias.
     return 0.00005 + 0.0003 * SlopeFactor;
 }
 
-// Normal-offset bias (Holbert, GDC 2011): push the receiver ~one shadow texel along its normal before
-// projecting, scaled by (1 - NdotL) so it only kicks in at grazing angles. Returns the world-space offset.
+// Normal-offset bias (Holbert, GDC 2011), about one texel along the normal and only at grazing angles.
 float3 NormalOffsetWS(float3 Normal, float3 ToLight, int CascadeIndex)
 {
     float NdotL       = saturate(dot(Normal, ToLight));
     float OffsetScale = saturate(1.0 - NdotL);
 
-    // World-space size of one shadow texel: ortho width 2*Radius / per-cascade resolution.
+    // One shadow texel in world space, an ortho width of 2*Radius over the cascade resolution.
     float Radius     = LightData().CascadeRadii[CascadeIndex];
     float Resolution = max(LightData().CascadeResolutions[CascadeIndex], 1.0);
     float TexelSize  = (2.0 * Radius) / Resolution;
 
-    // 1.4 ~= sqrt(2): one diagonal texel at max slope, the minimum that clears depth-quantization
-    // self-intersection without peter-panning. ShadowParams.x scales per-light (1.0 = default).
+    // About sqrt(2), one diagonal texel, the minimum that clears quantization acne without peter-panning.
     return Normal * (TexelSize * 1.4 * OffsetScale * LightData().ShadowParams.x);
 }
 
@@ -310,7 +292,7 @@ float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float
     const float  RadiusUV0    = FilterTexels / max(LightData().CascadeResolutions[0], 1.0);
     const float2 RadiusUV     = RadiusUV0 * (LightData().CascadeRadii[0] / max(LightData().CascadeRadii[CascadeIndex], 1e-4)) * Tile.AtlasUVScale;
 
-    // The center's bias alone left the outer taps of a wide kernel comparing too deep, which striped flat ground.
+    // Outer taps of a wide kernel need the plane's slope or they stripe flat ground.
     const float2 DepthSlope = ReceiverPlaneDepthSlope(CascadeVP, Normal, ToLight, Tile.AtlasUVScale);
 
     // Each tap's bilinear compare reads texel centers up to a texel away, so the plane's rise over one texel is owed too.
@@ -356,7 +338,7 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
         return 1.0;
     }
 
-    // TO-LIGHT, matching the SunL the BRDF uses; the travel direction would zero NdotL and max out the bias.
+    // Toward the light, matching the SunL the BRDF uses.
     const float3 ToLight = normalize(Light.Direction);
 
     bool InsideA;

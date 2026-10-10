@@ -3,7 +3,6 @@
 #include "ImGuiDrawUtils.h"
 #include "Core/Object/Cast.h"
 #include "Core/Math/Math.h"
-#include "Tools/Import/ImportHelpers.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
@@ -228,6 +227,7 @@ namespace Lumina
             uint32 LODAggMeshlets[MAX_MESH_LODS]  = { 0 };
             uint32 LODAggTriangles[MAX_MESH_LODS] = { 0 };
             uint32 LODAggSurfaces[MAX_MESH_LODS]  = { 0 };
+            float  LODAggError[MAX_MESH_LODS]     = { 0.0f };
             for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
             {
                 for (uint32 lod = 0; lod < Surface.NumLODs; ++lod)
@@ -235,20 +235,22 @@ namespace Lumina
                     const uint32 MCnt = Surface.LODMeshletCount[lod];
                     LODAggMeshlets[lod]  += MCnt;
                     LODAggSurfaces[lod]  += (MCnt > 0) ? 1u : 0u;
+                    LODAggError[lod]      = Math::Max(LODAggError[lod], Surface.LODError[lod]);
                     LODAggTriangles[lod] += SumTrianglesInRange(Resource.MeshletData.Meshlets, Surface.LODMeshletOffset[lod], MCnt);
                 }
             }
 
             const uint32 LOD0Tris = LODAggTriangles[0];
 
-            if (ImGui::BeginTable("##LODSummary", 5,
+            if (ImGui::BeginTable("##LODSummary", 6,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
             {
                 ImGui::TableSetupColumn("LOD",       ImGuiTableColumnFlags_WidthFixed, 50.0f);
                 ImGui::TableSetupColumn("Surfaces",  ImGuiTableColumnFlags_WidthFixed, 70.0f);
                 ImGui::TableSetupColumn("Meshlets",  ImGuiTableColumnFlags_WidthFixed, 80.0f);
                 ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-                ImGui::TableSetupColumn("vs LOD 0",  ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("vs LOD 0",  ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableSetupColumn("Max Error", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
 
                 for (uint32 lod = 0; lod < MAX_MESH_LODS; ++lod)
@@ -273,119 +275,13 @@ namespace Lumina
                     {
                         ImGui::TextDisabled("--");
                     }
+                    ImGui::TableSetColumnIndex(5); ImGui::Text("%.4g", LODAggError[lod]);
                 }
                 ImGui::EndTable();
             }
 
             ImGui::Spacing();
-            ImGui::TextDisabled("Distance thresholds (distance / radius). The renderer picks the highest LOD whose threshold the instance has exceeded.");
-            ImGui::Spacing();
-
-            // Shared threshold editor writes to every surface in lockstep; per-surface overrides still work below.
-            if (!Resource.GeometrySurfaces.empty())
-            {
-                // A surface with fewer LODs leaves FLT_MAX in its high slots, so read from one that has that LOD.
-                float SharedThresholds[MAX_MESH_LODS];
-                for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
-                {
-                    SharedThresholds[i] = (i == 0) ? 0.0f : FLT_MAX;
-
-                    const auto Surface = Algo::FindIf(Resource.GeometrySurfaces,
-                        [i](const FGeometrySurface& Candidate) { return i < Candidate.NumLODs; });
-
-                    if (Surface != Resource.GeometrySurfaces.end())
-                    {
-                        SharedThresholds[i] = Surface->LODScreenThreshold[i];
-                    }
-                }
-
-                bool bThresholdChanged = false;
-                const float ResetColW = ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2.0f;
-
-                if (ImGui::BeginTable("##LODThresholds", 3,
-                    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
-                {
-                    ImGui::TableSetupColumn("LOD",       ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                    ImGui::TableSetupColumn("Threshold", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("##Reset",   ImGuiTableColumnFlags_WidthFixed, ResetColW);
-                    ImGui::TableHeadersRow();
-
-                    for (uint32 lod = 0; lod < MAX_MESH_LODS; ++lod)
-                    {
-                        if (LODAggSurfaces[lod] == 0)
-                        {
-                            continue;
-                        }
-
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0); ImGui::Text("%u", lod);
-                        ImGui::TableSetColumnIndex(1);
-
-                        if (lod == 0)
-                        {
-                            ImGui::TextDisabled("0  (always active)");
-                            continue;
-                        }
-
-                        ImGui::PushID((int)lod);
-                        ImGui::SetNextItemWidth(-FLT_MIN);
-
-                        float Value = SharedThresholds[lod];
-                        // Clamp min to previous threshold + epsilon; monotonic ramp required for first-miss-wins picker.
-                        const float MinValue = SharedThresholds[lod - 1] + 0.01f;
-                        if (ImGui::DragFloat("##Threshold", &Value, 0.5f, MinValue, 1024.0f, "%.2f"))
-                        {
-                            SharedThresholds[lod] = Math::Max(Value, MinValue);
-                            bThresholdChanged = true;
-                        }
-
-                        // Clamped against the level below, since the picker stops at the first non-monotonic miss.
-                        ImGui::TableSetColumnIndex(2);
-                        const float DefaultValue = Import::Mesh::GetDefaultLODScreenThreshold(lod);
-                        ImGui::BeginDisabled(SharedThresholds[lod] == DefaultValue);
-                        if (ImGui::SmallButton(LE_ICON_REFRESH "##ResetLOD"))
-                        {
-                            SharedThresholds[lod] = Math::Max(DefaultValue, MinValue);
-                            bThresholdChanged = true;
-                        }
-                        ImGui::EndDisabled();
-                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
-                        {
-                            ImGui::SetTooltip("Reset to default (%.2f)", DefaultValue);
-                        }
-
-                        ImGui::PopID();
-                    }
-                    ImGui::EndTable();
-                }
-
-                if (ImGui::Button(LE_ICON_REFRESH " Reset All Thresholds"))
-                {
-                    // Ascending walk so each level clamps against the one already restored below it.
-                    for (uint32 lod = 1; lod < MAX_MESH_LODS; ++lod)
-                    {
-                        SharedThresholds[lod] = Math::Max(Import::Mesh::GetDefaultLODScreenThreshold(lod),
-                                                          SharedThresholds[lod - 1] + 0.01f);
-                    }
-                    bThresholdChanged = true;
-                }
-                ImGuiX::TextTooltip("{}", "Restore every level to the ramp the importer bakes, on every surface.");
-
-                if (bThresholdChanged)
-                {
-                    // Unused high slots keep their FLT_MAX sentinel, which is never read since the picker stops early.
-                    for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
-                    {
-                        for (uint32 i = 0; i < Surface.NumLODs; ++i)
-                        {
-                            Surface.LODScreenThreshold[i] = SharedThresholds[i];
-                        }
-                    }
-                    // The resolve cache holds the squared copy the picker reads, so without a bump this needs a save.
-                    NotifyAssetDataChanged();
-                }
-            }
-
+            ImGui::TextDisabled("Each LOD is drawn once its error shrinks below a pixel on screen. Level Of Detail in the details below biases it.");
             ImGui::Spacing();
             ImGui::Spacing();
 
@@ -456,7 +352,6 @@ namespace Lumina
                             ImGui::EndTable();
                         }
 
-                        // Per-surface threshold overrides (e.g. small bolt pops coarser earlier than large hull).
                         ImGui::Spacing();
                         if (ImGui::BeginTable("##SurfaceLODs", 5,
                             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
@@ -465,16 +360,15 @@ namespace Lumina
                             ImGui::TableSetupColumn("Meshlets",  ImGuiTableColumnFlags_WidthFixed, 80.0f);
                             ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthFixed, 90.0f);
                             ImGui::TableSetupColumn("Range",     ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableSetupColumn("Threshold", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+                            ImGui::TableSetupColumn("Error",     ImGuiTableColumnFlags_WidthFixed, 120.0f);
                             ImGui::TableHeadersRow();
 
-                            FGeometrySurface&        SurfaceRW = Resource.GeometrySurfaces[i];
                             const TVector<FMeshlet>& MeshletsRef = Resource.MeshletData.Meshlets;
 
-                            for (uint32 lod = 0; lod < SurfaceRW.NumLODs; ++lod)
+                            for (uint32 lod = 0; lod < Surface.NumLODs; ++lod)
                             {
-                                const uint32 MOff = SurfaceRW.LODMeshletOffset[lod];
-                                const uint32 MCnt = SurfaceRW.LODMeshletCount[lod];
+                                const uint32 MOff = Surface.LODMeshletOffset[lod];
+                                const uint32 MCnt = Surface.LODMeshletCount[lod];
                                 const uint32 Tris = SumTrianglesInRange(MeshletsRef, MOff, MCnt);
 
                                 ImGui::TableNextRow();
@@ -482,45 +376,7 @@ namespace Lumina
                                 ImGui::TableSetColumnIndex(1); ImGui::Text("%u", MCnt);
                                 ImGui::TableSetColumnIndex(2); ImGui::Text("%u", Tris);
                                 ImGui::TableSetColumnIndex(3); ImGui::Text("%u .. %u", MOff, MOff + MCnt);
-                                ImGui::TableSetColumnIndex(4);
-
-                                if (lod == 0)
-                                {
-                                    ImGui::TextDisabled("0");
-                                }
-                                else
-                                {
-                                    ImGui::PushID((int)lod);
-
-                                    // Leave room for the trailing reset; -FLT_MIN would eat the whole cell.
-                                    const float SurfResetW = ImGui::GetFrameHeight();
-                                    const float Spacing    = ImGui::GetStyle().ItemInnerSpacing.x;
-                                    ImGui::SetNextItemWidth(Math::Max(ImGui::GetContentRegionAvail().x - SurfResetW - Spacing, 1.0f));
-
-                                    float Value = SurfaceRW.LODScreenThreshold[lod];
-                                    const float MinValue = SurfaceRW.LODScreenThreshold[lod - 1] + 0.01f;
-                                    if (ImGui::DragFloat("##SurfaceThreshold", &Value, 0.5f, MinValue, 1024.0f, "%.2f"))
-                                    {
-                                        SurfaceRW.LODScreenThreshold[lod] = Math::Max(Value, MinValue);
-                                        NotifyAssetDataChanged();
-                                    }
-
-                                    ImGui::SameLine(0.0f, Spacing);
-                                    const float SurfDefault = Import::Mesh::GetDefaultLODScreenThreshold(lod);
-                                    ImGui::BeginDisabled(SurfaceRW.LODScreenThreshold[lod] == SurfDefault);
-                                    if (ImGui::SmallButton(LE_ICON_REFRESH "##ResetSurfaceLOD"))
-                                    {
-                                        SurfaceRW.LODScreenThreshold[lod] = Math::Max(SurfDefault, MinValue);
-                                        NotifyAssetDataChanged();
-                                    }
-                                    ImGui::EndDisabled();
-                                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
-                                    {
-                                        ImGui::SetTooltip("Reset this surface's LOD %u to default (%.2f)", lod, SurfDefault);
-                                    }
-
-                                    ImGui::PopID();
-                                }
+                                ImGui::TableSetColumnIndex(4); ImGui::Text("%.4g", Surface.LODError[lod]);
                             }
 
                             ImGui::EndTable();

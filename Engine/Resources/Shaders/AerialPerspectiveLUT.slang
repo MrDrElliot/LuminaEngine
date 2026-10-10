@@ -1,15 +1,15 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/Sky.slang"
 
 // The sky's own atmosphere integrated camera-outward per slice, so distance is tinted, not fogged.
 
 struct FPushConstants
 {
-    uint64_t Env;             // FEnvironmentParams, see LoadBlock
-    uint   InScatterUAV;      // bindless 3D UAV: rgb = in-scattered radiance
-    uint   TransmittanceUAV;  // bindless 3D UAV: rgb = per-channel transmittance
+    uint64_t     Env;             // FEnvironmentParams, see LoadBlock
+    FRWTexture3D InScatter;       // rgb = in-scattered radiance
+    FRWTexture3D Transmittance;   // rgb = per-channel transmittance
 
     float3 SunDirection;      // surface -> sun
     float  Range;             // world distance the LUT's W axis spans
@@ -22,8 +22,8 @@ FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 [numthreads(AP_TILE, AP_TILE, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
-    RWTexture3D<float4> uInScatter     = gRWTextures3D[Pass().InScatterUAV];
-    RWTexture3D<float4> uTransmittance = gRWTextures3D[Pass().TransmittanceUAV];
+    FRWTexture3D uInScatter     = Pass().InScatter;
+    FRWTexture3D uTransmittance = Pass().Transmittance;
 
     uint LutW, LutH, LutD;
     uInScatter.GetDimensions(LutW, LutH, LutD);

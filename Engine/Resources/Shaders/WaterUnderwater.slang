@@ -1,7 +1,5 @@
 #include "Includes/SceneGlobals.slang"
 
-// Underwater post-process.
-
 // Must stay byte-identical to FWaterUnderwaterParams (SceneRenderTypes.h).
 struct FWaterUnderwaterParams
 {
@@ -13,9 +11,9 @@ struct FWaterUnderwaterParams
 
 struct FUnderwaterPC
 {
-    uint64_t Params;      // FWaterUnderwaterParams, see LoadBlock
-    uint SceneColorIndex;   // bindless 2D SRV: composited HDR scene copy
-    uint SceneDepthIndex;   // bindless 2D SRV: opaque depth (raw reverse-Z NDC)
+    uint64_t   Params;       // FWaterUnderwaterParams, see LoadBlock
+    FTexture2D SceneColor;   // composited HDR scene copy
+    FTexture2D SceneDepth;   // opaque depth (raw reverse-Z NDC)
 };
 FUnderwaterPC* Pass() { return GetPassArgs<FUnderwaterPC>(); }
 
@@ -31,7 +29,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     FWaterUnderwaterParams P = LoadBlock<FWaterUnderwaterParams>(Pass().Params);
 
     float2 UV       = Input.UV;
-    float  RawDepth = gTextures2D[Pass().SceneDepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, 0.0).r;
+    float  RawDepth = Pass().SceneDepth.SampleLevel(Samplers::PointClamp, UV, 0.0).r;
 
     float3 CameraPos = GetCameraPosition();
     // Sky reconstructs at a tiny depth for a far point on its ray, while real geometry keeps its true distance.
@@ -58,7 +56,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float2 Warp    = float2(sin(UV.y * 40.0 + GetTime() * 1.5), cos(UV.x * 40.0 + GetTime() * 1.3)) * Distort;
     float2 SampleUV = saturate(UV + Warp);
 
-    float3 SceneColor = gTextures2D[Pass().SceneColorIndex].SampleLevel(gSamplers[SAMPLER_LINEAR_CLAMP], SampleUV, 0.0).rgb;
+    float3 SceneColor = Pass().SceneColor.SampleLevel(Samplers::LinearClamp, SampleUV, 0.0).rgb;
 
     // Beer-Lambert toward the fog color, with an overall tint on the transmitted scene.
     float  Trans  = exp(-UnderDist * P.FogColorDensity.w);

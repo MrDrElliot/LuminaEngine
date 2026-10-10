@@ -1,43 +1,22 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
 
-// Editor selection outline, composited into the final LDR target after tone mapping and SMAA.
-//
-// The mask is free: the Picker RT already holds a per-pixel entity id for CPU picking, and it is
-// written by the VisBuffer resolve AND the billboard, widget and world-text passes -- so outlining it
-// covers every one of those without a single extra draw. There is no selection geometry pass here.
-//
-// Membership is a bitset over the entity INDEX rather than a list to search: the Picker stores the whole
-// entity handle (index | version), so the shader masks off the version and tests one bit. O(1) per pixel,
-// and no cap on how much can be selected.
+// Masks the Picker RT, so every pass that writes entity ids gets outlined with no extra draw.
 
-// Field order here is LAYOUT-driven, not readability-driven, and must stay in step with FSelectionOutlinePC
-// in DefaultSceneRenderer.cpp.
-//
-// An args struct reached through a BDA pointer is a Block in the PhysicalStorageBuffer storage class, so it
-// follows relaxed storage-buffer layout -- under which a vector may not straddle a 16-byte boundary. Slang
-// gives a float4 only 4-byte alignment here, so with OutlineColor written last it landed at offset 24 and
-// spanned 24..40, across the boundary at 32. spirv-val rejects that outright
-// (VUID-VkShaderModuleCreateInfo-pCode-08737) and vkCreateShaderModule fails, so the pass gets no pipeline
-// at all -- a layout mistake shows up as a dead feature, not a wrong-looking one.
-//
-// First is the one position that needs no explicit padding and stays aligned no matter what is added around
-// it. It is a real 16-byte alignment rather than a formal one: pass args come from the transient allocator,
-// whose blocks are kDefaultAlign (16) aligned. Any future vector member wants the same treatment -- group
-// them at the top, ahead of the scalars.
+// Mirror of FSelectionOutlinePC, with vectors first since a float4 straddling 16 bytes fails spirv-val.
 struct FSelectionOutlineArgs
 {
-    float4 OutlineColor;           // rgb, a = opacity
-    GPUSpan<uint> SelectionBits;   // one bit per entity slot, indexed by entity INDEX
-    uint   PickerIndex;
-    uint   EntityIndexMask;        // FEntity::IndexMask, supplied by the CPU rather than hardcoded
-    float  Thickness;              // outline half-width in pixels
-    uint   _Pad0;
-    GPUSpan<uint> TileList;        // read by SelectionOutlineTileQuad.slang, which shares this block
-    uint   _Pad1;
-    uint   _Pad2;
-    uint   _Pad3;
-    uint   _Pad4;
+    float4         OutlineColor;           // rgb, a = opacity
+    GPUSpan<uint>  SelectionBits;   // one bit per entity index
+    FTexture2DUInt Picker;
+    uint           EntityIndexMask;        // FEntity::IndexMask, supplied by the CPU rather than hardcoded
+    float          Thickness;              // outline half-width in pixels
+    uint           _Pad0;
+    GPUSpan<uint>  TileList;        // read by SelectionOutlineTileQuad.slang, which shares this block
+    uint           _Pad1;
+    uint           _Pad2;
+    uint           _Pad3;
+    uint           _Pad4;
 };
 FSelectionOutlineArgs* Pass() { return GetPassArgs<FSelectionOutlineArgs>(); }
 
@@ -52,8 +31,8 @@ bool IsEntitySelected(uint PickerValue)
     const uint Index = PickerValue & Pass().EntityIndexMask;
     const uint Word  = Index >> 5u;
 
-    // Out of range reads zero, which is "not selected" -- the same answer the explicit bound gave.
-    return (SpanGet(&Pass().SelectionBits, Word) & (1u << (Index & 31u))) != 0u;
+    // Out-of-range reads return zero, meaning not selected.
+    return (Pass().SelectionBits.Get(Word) & (1u << (Index & 31u))) != 0u;
 }
 
 struct FragmentInput
@@ -62,24 +41,27 @@ struct FragmentInput
     float2 UV       : TEXCOORD0;
 };
 
+// The outline runs over display pixels while the picker holds one id per render pixel.
+int2 DisplayToPickerTexel(int2 DisplayTexel)
+{
+    const float2 Scale = float2(GetScreenSize()) / float2(max(GetDisplaySize(), uint2(1u, 1u)));
+    return clamp(int2((float2(DisplayTexel) + 0.5) * Scale), int2(0, 0), int2(GetScreenSize()) - int2(1, 1));
+}
+
 [shader("fragment")]
 float4 FragmentMain(FragmentInput In) : SV_Target0
 {
     const int2 Texel  = int2(In.Position.xy);
-    const int2 Extent = int2(Scene().ScreenSize.xy);
+    const int2 Extent = int2(GetDisplaySize());
 
-    // Outline sits OUTSIDE the object: only unselected pixels are candidates. Drawing it inside would
-    // eat the silhouette of small objects, and two adjacent selected objects would grow a seam between
-    // them -- neither is what "highlight the outline" means.
-    if (IsEntitySelected(LoadTexture2DUInt(Pass().PickerIndex, Texel)))
+    // Only unselected pixels are candidates, so small silhouettes and adjacent selections stay intact.
+    if (IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Texel))))
     {
         discard;
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    // Chebyshev ring rather than a Sobel: this is a binary mask, so there is no gradient to estimate --
-    // the question is only "is a selected pixel within Thickness of me", and the square ring answers it
-    // with a uniform width on diagonals as well as axes.
+    // Chebyshev ring, since a binary mask has no gradient for Sobel to estimate.
     const int Radius = int(ceil(Pass().Thickness));
 
     bool bNear = false;
@@ -88,7 +70,7 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
         for (int X = -Radius; X <= Radius; ++X)
         {
             const int2 Sample = clamp(Texel + int2(X, Y), int2(0, 0), Extent - int2(1, 1));
-            if (IsEntitySelected(LoadTexture2DUInt(Pass().PickerIndex, Sample)))
+            if (IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Sample))))
             {
                 bNear = true;
                 break;
@@ -102,6 +84,6 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    // Straight alpha; the pass blends over the tone-mapped image so the colour lands exactly as authored.
+    // Straight alpha, blended over the tone-mapped image.
     return float4(Pass().OutlineColor.rgb, Pass().OutlineColor.a);
 }

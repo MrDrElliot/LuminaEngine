@@ -3,26 +3,23 @@
 
 #include "Includes/SurfaceShading.slang"
 #include "Includes/VisBufferSurface.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
 // Brings the traced reflection up to full resolution and swaps it in for the prefiltered environment in each pixel's specular lobe.
 
 struct FSSRResolveArgs
 {
-    uint  GBufferAIndex;
-    uint  GBufferBIndex;
-    uint  GBufferCIndex;
-    uint  GBufferDIndex;
+    FGBufferTargets  GBuffer;
 
-    uint  DepthIndex;
-    uint  SlotImageIndex;   // slot + 1 per pixel from the classify count, 0 where nothing deferred shades it
-    uint  PyramidIndex;     // mip 0 is the depth each trace texel stood on
-    uint  SurfaceIndex;     // the normal and roughness that went with it
+    FTexture2D Depth;
+    FTexture2D SlotImage;   // slot + 1 per pixel from the classify count, 0 where nothing deferred shades it
+    FTexture2D Pyramid;     // mip 0 is the depth each trace texel stood on
+    FTexture2D Surface;     // the normal and roughness that went with it
 
-    uint  ChainIndex;       // the filtered reflection chain
-    uint  MipLevelIndex;    // which level of it each trace texel asked for
-    uint  HDRUAV;
-    uint  Scale;            // screen pixels per trace texel along each axis
+    FTexture2D   Chain;       // the filtered reflection chain
+    FTexture2D   MipLevel;    // which level of it each trace texel asked for
+    FRWTexture2D HDR;
+    uint         Scale;            // screen pixels per trace texel along each axis
 
     uint  ScreenW;
     uint  ScreenH;
@@ -50,12 +47,12 @@ static const float kRoughnessFadeStart = 0.75;
 float4 SampleTraceTexel(int2 Texel, float Depth, float3 Normal, float Roughness, out float Weight)
 {
     const int2   Clamped       = clamp(Texel, int2(0, 0), int2(Pass().TraceW, Pass().TraceH) - 1);
-    const float  SampleDepth   = gTextures2D[Pass().PyramidIndex].Load(int3(Clamped, 0)).r;
-    const float4 SampleSurface = gTextures2D[Pass().SurfaceIndex].Load(int3(Clamped, 0));
-    const float  MipLevel      = gTextures2D[Pass().MipLevelIndex].Load(int3(Clamped, 0)).r;
+    const float  SampleDepth   = Pass().Pyramid.Load(int3(Clamped, 0)).r;
+    const float4 SampleSurface = Pass().Surface.Load(int3(Clamped, 0));
+    const float  MipLevel      = Pass().MipLevel.Load(int3(Clamped, 0)).r;
 
     const float2 UV    = (float2(Clamped) + 0.5) / float2(Pass().TraceW, Pass().TraceH);
-    float4       Color = SampleTexture2DLevel(Pass().ChainIndex, SAMPLER_LINEAR_CLAMP, UV, MipLevel);
+    float4       Color = Pass().Chain.SampleLevel(Samplers::LinearClamp, UV, MipLevel);
 
     // Undoes the luminance compression the trace applied before filtering.
     Color.rgb /= max(1.0 - dot(Color.rgb, float3(0.2126, 0.7152, 0.0722)), 1e-4);
@@ -78,25 +75,21 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     // Only pixels with a GBuffer, since forward-shaded surfaces leave stale texels behind them.
-    if (LoadTexture2D(Pass().SlotImageIndex, Pixel).r < 0.5)
+    if (Pass().SlotImage.Load(Pixel).r < 0.5)
     {
         return;
     }
 
-    FGBufferTargets Targets;
-    Targets.A = Pass().GBufferAIndex;
-    Targets.B = Pass().GBufferBIndex;
-    Targets.C = Pass().GBufferCIndex;
-    Targets.D = Pass().GBufferDIndex;
+    const FGBufferTargets Targets = Pass().GBuffer;
 
-    const float Roughness = max(LoadTexture2D(Targets.C, Pixel).r, 0.045);
+    const float Roughness = max(Targets.C.Load(Pixel).r, 0.045);
     const float RoughFade = 1.0 - smoothstep(Pass().MaxRoughness * kRoughnessFadeStart, Pass().MaxRoughness, Roughness);
     if (RoughFade <= 0.0)
     {
         return;
     }
 
-    const float Depth = LoadTexture2D(Pass().DepthIndex, Pixel).r;
+    const float Depth = Pass().Depth.Load(Pixel).r;
     if (Depth <= 0.0)
     {
         return;
@@ -154,9 +147,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     // Same occlusion the base pass gave this lobe, or the reflection's coverage edge reads as a brightness step.
     float AmbientAO = G.AmbientOcclusion;
-    if (Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
+    if (Scene().GTAOSettings.AOTexture.IsValid())
     {
-        AmbientAO *= SampleTexture2DLevel(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, UV, 0.0).r;
+        AmbientAO *= Scene().GTAOSettings.AOTexture.SampleLevel(Samplers::LinearClamp, UV, 0.0).r;
     }
     const float SpecAO = ComputeSpecularOcclusion(NdotV, AmbientAO, Roughness);
 
@@ -164,6 +157,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float3 PreFilt = SampleSpecularRadiance(WorldPosition, R, Roughness);
     const float3 Delta   = FssEss * SpecAO * (Reflection.rgb - PreFilt * Reflection.a) * RoughFade * saturate(Pass().Intensity);
 
-    const float4 Current = gRWTextures2D[Pass().HDRUAV][Pixel];
-    gRWTextures2D[Pass().HDRUAV][Pixel] = float4(Current.rgb + Delta, Current.a);
+    const float4 Current = Pass().HDR[Pixel];
+    Pass().HDR[Pixel] = float4(Current.rgb + Delta, Current.a);
 }

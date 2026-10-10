@@ -12,15 +12,15 @@ struct VertexOutput
 [shader("vertex")]
 VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
-    FGPUGlyph Glyph = SpanGet(&Pass().Glyphs, InstanceIndex);
+    FGPUGlyph Glyph = Pass().Glyphs.Get(InstanceIndex);
 
     const float2 Corner = kTextQuadCorners[VertexIndex];
 
-    // Position: lerp the quad bounds in the text plane, then map into world via the plane basis.
+    // Lerp the quad bounds in the text plane, then map into world via the plane basis.
     const float2 Plane    = lerp(Glyph.PlaneMin, Glyph.PlaneMax, Corner);
     const float3 WorldPos = Glyph.Origin + Glyph.Right * Plane.x + Glyph.Up * Plane.y;
 
-    // Atlas UV: row 0 is the top, so the plane-top corner (Corner.y == 1) maps to UVRect.y.
+    // Atlas row 0 is the top, so the plane-top corner (Corner.y == 1) maps to UVRect.y.
     const float U = lerp(Glyph.UVRect.x, Glyph.UVRect.z, Corner.x);
     const float V = lerp(Glyph.UVRect.w, Glyph.UVRect.y, Corner.y);
 

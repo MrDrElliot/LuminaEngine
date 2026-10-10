@@ -19,19 +19,19 @@ FScatterUploadArgs* Pass() { return GetPassArgs<FScatterUploadArgs>(); }
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
     const uint Index = DTid.x;
-    if (Index >= Pass().Count || !SpanContains(&Pass().Slots, Index))
+    if (Index >= Pass().Count || !Pass().Slots.Contains(Index))
     {
         return;
     }
 
     const uint Words = Pass().ElementWords;
-    const uint Slot  = SpanGet(&Pass().Slots, Index);
+    const uint Slot  = Pass().Slots.Get(Index);
     for (uint Word = 0u; Word < Words; ++Word)
     {
         const uint DestIndex = Slot * Words + Word;
-        if (SpanContains(&Pass().Dest, DestIndex))
+        if (Pass().Dest.Contains(DestIndex))
         {
-            SpanSet(&Pass().Dest, DestIndex, SpanGet(&Pass().Source, Index * Words + Word));
+            Pass().Dest.Set(DestIndex, Pass().Source.Get(Index * Words + Word));
         }
     }
 }

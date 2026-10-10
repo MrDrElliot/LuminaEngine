@@ -1288,7 +1288,7 @@ namespace Lumina
                 FGrassGPUState& State = States[Index];
 
                 const FScenePrimitiveSet::FGrassSpeciesBinding Binding =
-                    ScenePrimitives.AcquireGrassSpecies(Species.Mesh, TerrainItem.GrassMaxInstances);
+                    ScenePrimitives.AcquireGrassSpecies(Species.Mesh, Species.ResolveHandle, TerrainItem.GrassMaxInstances);
                 if (!Binding.bValid)
                 {
                     continue;

@@ -1,17 +1,12 @@
 #pragma once
 #include "SceneGlobals.slang"
 
-// Hashed alpha testing (Wyman and McGuire, I3D 2017). A hard cutoff makes a leaf's coverage a step
-// function, so sub-pixel foliage pops in and out and its edges crawl. A per-pixel stochastic cutoff turns
-// that step into dithered coverage that is stable on the surface instead of on the screen.
-// The anchor is world position, which is stable under camera motion. It drifts under wind displacement,
-// but the distance fade has already handed those pixels back to the deterministic test by then.
+// Hashed alpha testing (Wyman and McGuire, I3D 2017), anchored in world space so it is stable under camera motion.
 
 // Grain of the noise. Larger = finer cells.
 static const float kHashScale = 1.0;
 
-// Fading in noise with distance (paper section 4). Near geometry has pixels to spare and the hard cutoff
-// reads fine, while the stochastic pattern would be the most visible thing on screen. Metres.
+// Meters. Near geometry reads fine with the hard cutoff, so the noise fades in with distance.
 static const float kHashFadeStart = 8.0;
 static const float kHashFadeEnd   = 25.0;
 
@@ -50,8 +45,7 @@ float HashedAlphaThreshold(float3 Anchor, float ViewDistance, float Cutoff)
     const float LerpFactor = frac(log2(PixScale));
     const float X          = lerp(Alpha.x, Alpha.y, LerpFactor);
 
-    // Blending two uniform variables gives a triangular distribution, which biases the threshold toward
-    // 0.5 and stops coverage matching alpha. This is the paper's inverse CDF putting it back to uniform.
+    // The paper's inverse CDF, returning the triangular blend of two uniforms to uniform so coverage matches alpha.
     const float  A     = max(min(LerpFactor, 1.0 - LerpFactor), 1e-6);
     const float3 Cases = float3(X * X / (2.0 * A * (1.0 - A)),
                                 (X - 0.5 * A) / (1.0 - A),

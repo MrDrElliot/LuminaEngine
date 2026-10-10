@@ -1,16 +1,16 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/Noise.slang"
 
-// Stands in for Nubis' baked volume: R = Perlin-Worley base, GBA = Worley erosion octaves.
+// Stands in for Nubis' baked volume, R holding the Perlin-Worley base and GBA the Worley erosion octaves.
 
 struct FPushConstants
 {
-    uint  NoiseUAV;   // bindless 3D UAV, RGBA8
-    uint  _Pad0;
-    uint  _Pad1;
-    uint  _Pad2;
+    FRWTexture3D Noise;   // RGBA8
+    uint         _Pad0;
+    uint         _Pad1;
+    uint         _Pad2;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -26,7 +26,7 @@ float3 CloudCellPoint(float3 Cell, float Freq)
     return CloudHash3(Wrapped);
 }
 
-// Inverted so cell centres are dense and the boundaries read as the gaps between puffs.
+// Inverted so cell centers are dense and the boundaries read as the gaps between puffs.
 float CloudWorley(float3 UVW, float Freq)
 {
     float3 P = UVW * Freq;
@@ -60,7 +60,7 @@ float CloudWorleyFBM(float3 UVW, float Freq)
          + CloudWorley(UVW, Freq * 4.0)  * 0.125;
 }
 
-// Tileable gradient noise: the corner hash wraps on Freq for the same reason Worley's does.
+// Tileable gradient noise, the corner hash wrapping on Freq like Worley's.
 float CloudGradient(float3 UVW, float Freq)
 {
     float3 P = UVW * Freq;
@@ -101,7 +101,7 @@ float CloudRemap(float V, float InMin, float InMax, float OutMin, float OutMax)
 [numthreads(4, 4, 4)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
-    RWTexture3D<float4> uNoise = gRWTextures3D[Pass().NoiseUAV];
+    FRWTexture3D uNoise = Pass().Noise;
 
     uint W, H, D;
     uNoise.GetDimensions(W, H, D);

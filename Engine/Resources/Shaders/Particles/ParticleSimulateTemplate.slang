@@ -29,7 +29,7 @@ uint ClaimSpawn(out FParticleEvent Source)
     Source = (FParticleEvent)0;
 
     uint Claim;
-    InterlockedAdd(SpanAt(SpawnCounter(), 0u)[0], 1u, Claim);
+    InterlockedAdd(SpawnCounter().At(0u)[0], 1u, Claim);
     if (Claim < SimParams().Counts.y)
     {
         return SPAWN_EMITTER;
@@ -38,10 +38,10 @@ uint ClaimSpawn(out FParticleEvent Source)
     const uint ScriptCount = SimArgs().ScriptEvents.Count;
     if (ScriptCount != 0u)
     {
-        InterlockedAdd(SpanAt(SpawnCounter(), 1u)[0], 1u, Claim);
+        InterlockedAdd(SpawnCounter().At(1u)[0], 1u, Claim);
         if (Claim < ScriptCount)
         {
-            Source = SpanGet(&SimArgs().ScriptEvents, Claim);
+            Source = SimArgs().ScriptEvents.Get(Claim);
             return SPAWN_SCRIPT;
         }
     }
@@ -50,11 +50,11 @@ uint ClaimSpawn(out FParticleEvent Source)
     if (List < PARTICLE_EVENT_LISTS && SimArgs().SourceEventCounts.Count > List)
     {
         const uint PerEvent = max(SimParams().EventInfo.w, 1u);
-        const uint Events   = min(SpanGet(&SimArgs().SourceEventCounts, List), PARTICLE_EVENT_CAPACITY);
-        InterlockedAdd(SpanAt(SpawnCounter(), 2u)[0], 1u, Claim);
+        const uint Events   = min(SimArgs().SourceEventCounts.Get(List), PARTICLE_EVENT_CAPACITY);
+        InterlockedAdd(SpawnCounter().At(2u)[0], 1u, Claim);
         if (Claim < Events * PerEvent)
         {
-            Source = SpanGet(&SimArgs().SourceEvents, List * PARTICLE_EVENT_CAPACITY + Claim / PerEvent);
+            Source = SimArgs().SourceEvents.Get(List * PARTICLE_EVENT_CAPACITY + Claim / PerEvent);
             return SPAWN_EVENT;
         }
     }
@@ -144,7 +144,7 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
     uint Index = DispatchThreadID.x;
     if (Index >= SimParams().Counts.x) return;
 
-    FGPUParticle P = SpanGet(Particles(), Index);
+    FGPUParticle P = Particles().Get(Index);
 
     bool bAlive = (P.Lifetime > 0.0) && (P.Age < P.Lifetime);
 
@@ -179,5 +179,5 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    SpanSet(Particles(), Index, P);
+    Particles().Set(Index, P);
 }

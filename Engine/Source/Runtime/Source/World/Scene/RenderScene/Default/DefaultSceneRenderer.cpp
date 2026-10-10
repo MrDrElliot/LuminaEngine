@@ -85,8 +85,11 @@ namespace Lumina
     {
         SceneViews.emplace_back();
         FSceneView& View = SceneViews.back();
-        View.bIsPrimary = bPrimary;
-        View.Size       = Math::Max(Size, FUIntVector2(1));
+        View.bIsPrimary  = bPrimary;
+        View.DisplaySize = Math::Max(Size, FUIntVector2(1));
+        // Captures and probe faces render at their own size with nothing to upscale them.
+        View.Upscaler    = bPrimary ? FUpscalerRegistry::GetActive() : nullptr;
+        View.Size        = bPrimary ? ComputeRenderSize(View.DisplaySize, View.Upscaler) : View.DisplaySize;
 
         // Per-view clustered-lighting grid (built from this view's projection).
         View.ClusterBuffer = CreateSceneBuffer(sizeof(FCluster) * MaxClusters, "View.ClusterGrid");
@@ -293,6 +296,7 @@ namespace Lumina
         SkinnedSlotListBuffer.Release();
         InstanceVisibilityBuffers[0].Release();
         InstanceVisibilityBuffers[1].Release();
+        MeshletVisibilityBuffer.Release();
 
         for (auto& [Entity, States] : GrassGPUStates)
         {
@@ -928,6 +932,13 @@ namespace Lumina
                     AutoExposurePass(CL);
                 }
 
+                // After exposure, which an upscaler such as DLSS reads, and before anything runs at display resolution.
+                if (IsUpscalingView(*CurrentView))
+                {
+                    SCENE_GPU_SCOPE(CL, "Upscale");
+                    UpscalePass(CL);
+                }
+
                 {
                     SCENE_GPU_SCOPE(CL, "Tone Mapping");
                     ToneMappingPass(CL);
@@ -940,7 +951,7 @@ namespace Lumina
 
                 RunRenderCallbacks(CL, ERenderStage::AfterPostProcess);
 
-                if (GetSMAAMode() != ESMAAMode::Off)
+                if (GetViewSMAAMode(*CurrentView) != ESMAAMode::Off)
                 {
                     SCENE_GPU_SCOPE(CL, "SMAA");
                     SMAAEdgeDetectionPass(CL);
@@ -1095,7 +1106,7 @@ namespace Lumina
         PostProcessMaterialPass(CL);
 
         // No T2x on a capture; it has no jitter sequence of its own and would resolve against another view.
-        if (GetSMAAMode() != ESMAAMode::Off)
+        if (GetViewSMAAMode(*CurrentView) != ESMAAMode::Off)
         {
             SMAAEdgeDetectionPass(CL);
             SMAABlendWeightPass(CL);
@@ -1143,7 +1154,7 @@ namespace Lumina
         // The panel blits the whole image, so any slack would resample the scene and the UI text with it.
         if (PrimarySizeStableFrames == kSettleFrames)
         {
-            if (Exact != SceneViews[0].Size)
+            if (Exact != SceneViews[0].DisplaySize)
             {
                 PendingPrimarySize     = Exact;
                 bHasPendingPrimarySize = true;
@@ -1158,7 +1169,7 @@ namespace Lumina
         };
 
         const FUIntVector2 Wanted(RoundUp(SizePixels.x), RoundUp(SizePixels.y));
-        const FUIntVector2 Current = SceneViews[0].Size;
+        const FUIntVector2 Current = SceneViews[0].DisplaySize;
 
         auto Pick = [](uint32 WantedAxis, uint32 CurrentAxis)
         {
@@ -1187,20 +1198,50 @@ namespace Lumina
         }
 
         bHasPendingPrimarySize = false;
-        if (PendingPrimarySize != SceneViews[0].Size)
+        if (PendingPrimarySize != SceneViews[0].DisplaySize)
         {
             ResizePrimaryView(PendingPrimarySize);
         }
     }
 
+    FUIntVector2 FDefaultSceneRenderer::ComputeRenderSize(const FUIntVector2& DisplaySize, const IUpscaler* Upscaler)
+    {
+        const Upscaling::FUpscaleRequest Request = Upscaling::GetRequest();
+        const float Scale = Upscaler != nullptr ? Upscaler->GetRenderScale(DisplaySize, Request.Mode, Request.Scale) : Request.Scale;
+        return Upscaling::ScaleExtent(DisplaySize, Scale);
+    }
+
+    void FDefaultSceneRenderer::RefreshPrimaryRenderSize()
+    {
+        if (SceneViews.empty())
+        {
+            return;
+        }
+
+        FSceneView& Primary = SceneViews[0];
+        IUpscaler* const Upscaler = FUpscalerRegistry::GetActive();
+        if (Upscaler != Primary.Upscaler)
+        {
+            Primary.Upscaler = Upscaler;
+            Primary.bTemporalHistoryValid = false;
+        }
+
+        if (ComputeRenderSize(Primary.DisplaySize, Primary.Upscaler) != Primary.Size)
+        {
+            ResizePrimaryView(Primary.DisplaySize);
+        }
+    }
+
     void FDefaultSceneRenderer::ResizePrimaryView(const FUIntVector2& NewSize)
     {
-        LOG_TRACE("Primary view resized {}x{} -> {}x{}; Output texture replaced.",
-                  SceneViews[0].Size.x, SceneViews[0].Size.y, NewSize.x, NewSize.y);
-
         // Only the primary view is resized here; capture views keep their own size.
         FSceneView& Primary = SceneViews[0];
-        Primary.Size = FUIntVector2(Math::Max(NewSize.x, 1u), Math::Max(NewSize.y, 1u));
+        Primary.DisplaySize = FUIntVector2(Math::Max(NewSize.x, 1u), Math::Max(NewSize.y, 1u));
+        Primary.Size        = ComputeRenderSize(Primary.DisplaySize, Primary.Upscaler);
+        Primary.bTemporalHistoryValid = false;
+
+        LOG_TRACE("Primary view resized to {}x{}, rendering at {}x{}; Output texture replaced.",
+                  Primary.DisplaySize.x, Primary.DisplaySize.y, Primary.Size.x, Primary.Size.y);
 
         InitFrameResources();
 
@@ -1278,6 +1319,13 @@ namespace Lumina
             return FVector2(0.0f);
         }
 
+        if (IsTemporalUpscalerFor(View))
+        {
+            const FVector2 Offset = Upscaling::HaltonJitter(FrameIndex, GetTemporalPhaseCount(View));
+            return FVector2((Offset.x * 2.0f) / (float)View.Size.x,
+                            (Offset.y * 2.0f) / (float)View.Size.y);
+        }
+
         // Main diagonal in screen space, which is the pair the AreaTex T2x slices were generated against.
         const FVector2 kSubsamples[2] = { FVector2(-0.25f, -0.25f), FVector2(0.25f, 0.25f) };
 
@@ -1287,6 +1335,15 @@ namespace Lumina
         const FVector2 Offset = kSubsamples[FrameIndex & 1u] * Scale;
         return FVector2((Offset.x * 2.0f) / (float)View.Size.x,
                         (Offset.y * 2.0f) / (float)View.Size.y);
+    }
+
+    uint32 FDefaultSceneRenderer::GetTemporalPhaseCount(const FSceneView& View)
+    {
+        if (IsTemporalUpscalerFor(View))
+        {
+            return Math::Max(View.Upscaler->GetJitterPhaseCount(View.Size, View.DisplaySize), 1u);
+        }
+        return 2u;
     }
 
     void FDefaultSceneRenderer::InitBuffers()
@@ -1420,6 +1477,7 @@ namespace Lumina
         case ENamedImage::Velocity:           return "Scene.Velocity";
         case ENamedImage::TemporalHistoryA:   return "Scene.TemporalHistoryA";
         case ENamedImage::TemporalHistoryB:   return "Scene.TemporalHistoryB";
+        case ENamedImage::UpscaledHDR:        return "Scene.UpscaledHDR";
 
         #if USING(WITH_EDITOR)
         case ENamedImage::PointLightIcon:       return "Scene.PointLightIcon";
@@ -1464,6 +1522,7 @@ namespace Lumina
         case ENamedImage::Velocity:
         case ENamedImage::TemporalHistoryA:
         case ENamedImage::TemporalHistoryB:
+        case ENamedImage::UpscaledHDR:
         case ENamedImage::GTAOWorkingDepth:
         case ENamedImage::GTAOEdges:
         case ENamedImage::GTAO:
@@ -1535,6 +1594,13 @@ namespace Lumina
         case ENamedImage::TemporalHistoryA:
         case ENamedImage::TemporalHistoryB:
             OutDesc.Format = EFormat::RGBA8_UNORM;
+            return true;
+
+        // Display resolution linear HDR, written by an upscaler from compute, a raster pass or a clear, as NGX issues.
+        case ENamedImage::UpscaledHDR:
+            OutDesc.Format = EFormat::RGBA16_FLOAT;
+            OutDesc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
+                             RHI::EImageUsageFlags::Storage | RHI::EImageUsageFlags::TransferDst | RHI::EImageUsageFlags::TransferSrc;
             return true;
 
         // Storage for the compute stages, which trace at the quality level's size while GTAOBlur stays full size.
@@ -1628,8 +1694,12 @@ namespace Lumina
 
             View.ImageLastUsedTick[(int)Image] = OptionalImageTick;
 
+            // The images after the upscale are display sized, everything before it render sized.
+            const bool bDisplaySized = Image == ENamedImage::TemporalHistoryA || Image == ENamedImage::TemporalHistoryB
+                                    || Image == ENamedImage::UpscaledHDR;
+
             RHI::FTextureDesc Desc;
-            if (!MakeOptionalImageDesc(Image, View.Size, Desc))
+            if (!MakeOptionalImageDesc(Image, bDisplaySized ? View.DisplaySize : View.Size, Desc))
             {
                 return;
             }
@@ -1664,9 +1734,10 @@ namespace Lumina
         const bool bTemporal = IsTemporalAAEnabledFor(View);
         const bool bHadTemporalTargets = View.Images[(int)ENamedImage::TemporalHistoryA].IsValid()
                                       && View.Images[(int)ENamedImage::TemporalHistoryB].IsValid();
-        Want(ENamedImage::Velocity,         bTemporal || (View.bIsPrimary && IsVelocityDebugActive()));
+        Want(ENamedImage::Velocity,         bTemporal || IsTemporalUpscalerFor(View) || (View.bIsPrimary && IsVelocityDebugActive()));
         Want(ENamedImage::TemporalHistoryA, bTemporal);
         Want(ENamedImage::TemporalHistoryB, bTemporal);
+        Want(ENamedImage::UpscaledHDR,      IsUpscalingView(View), /*bMipUAVs*/ true);
 
         const bool bGTAO = IsGTAOEnabled();
         Want(ENamedImage::GTAOWorkingDepth, bGTAO, /*bMipUAVs*/ true);
@@ -1733,7 +1804,8 @@ namespace Lumina
 
     void FDefaultSceneRenderer::InitViewImages(FSceneView& View)
     {
-        const FUIntVector2 Extent = View.Size;
+        const FUIntVector2 Extent        = View.Size;
+        const FUIntVector2 DisplayExtent = View.DisplaySize;
 
         View.Images = NamedImages;
 
@@ -1744,7 +1816,7 @@ namespace Lumina
 
         RHI::FTextureDesc Desc;
         Desc.Type      = RHI::ETextureType::Tex2D;
-        Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
+        Desc.Dimension = FUIntVector3(DisplayExtent.x, DisplayExtent.y, 1);
 
         Desc.Format = EFormat::RGBA8_UNORM;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
@@ -1752,10 +1824,14 @@ namespace Lumina
         View.Output = CreateSceneImage(Desc);
 
         // Storage as well, because the deferred lighting pass writes HDR from compute.
+        Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
         Desc.Format = EFormat::RGBA16_FLOAT;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
                       RHI::EImageUsageFlags::Storage | RHI::EImageUsageFlags::TransferSrc;
         View.Images[(int)ENamedImage::HDR] = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
+
+        // Everything after tonemapping runs at display resolution, the anti-aliasing included.
+        Desc.Dimension = FUIntVector3(DisplayExtent.x, DisplayExtent.y, 1);
 
         // LDR + post-process ping-pong scratch; both copy source/dest in the PP chain hand-off.
         Desc.Format = EFormat::RGBA8_UNORM;
@@ -1776,6 +1852,8 @@ namespace Lumina
         Desc.Format = EFormat::D16;
         Desc.Usage  = RHI::EImageUsageFlags::DepthAttachment;
         View.Images[(int)ENamedImage::SMAAEdgeMask] = CreateSceneImage(Desc, /*bSampled*/ false);
+
+        Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
 
         // Scene depth; transfer-dst for the no-occluder clear, transfer-src for the copy the water samples.
         Desc.Format = EFormat::D32;
@@ -2877,6 +2955,6 @@ namespace Lumina
 
     FUIntVector2 FDefaultSceneRenderer::GetRenderExtent() const
     {
-        return SceneViews.empty() ? FUIntVector2(0) : SceneViews[0].Size;
+        return SceneViews.empty() ? FUIntVector2(0) : SceneViews[0].DisplaySize;
     }
 }

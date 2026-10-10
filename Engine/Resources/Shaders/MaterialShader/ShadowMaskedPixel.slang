@@ -1,11 +1,6 @@
 #include "Includes/SurfaceShading.slang"
 
-// Depth-only shadow pixel shader for MASKED materials. Runs the material's pixel graph far enough to get
-// Opacity and discards the cut-out texels, so foliage stops casting the shadow of its whole quad.
-// Writes no target, exactly like the opaque shadow path, and takes the plain cutoff rather than the hashed
-// one: a shadow map is already filtered by PCF, and stochastic coverage there reads as noise in the shade.
-//
-// The material token appears exactly once below, inside the keep test. Never name it above its real site.
+// Plain cutoff rather than hashed since PCF already filters the shadow map; never name the material token above its one real site.
 
 bool ShadowMaskedKeep(FMaskedVertexOutput Input)
 {

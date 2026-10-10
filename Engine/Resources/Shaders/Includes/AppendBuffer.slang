@@ -1,27 +1,21 @@
 #pragma once
 
-// The GPU-side append protocol. Bare pointer parameters rather than a struct holding them: a struct
-// carrying a PhysicalStorageBuffer pointer must never be a local Slang has to materialize, because it
-// emits an OpVariable with neither Aliased nor Restrict -- invalid SPIR-V that every driver accepts and
-// then optimizes against aliasing rules nothing established.
+// Bare pointer parameters, since a local struct holding a PhysicalStorageBuffer pointer emits invalid SPIR-V without Aliased or Restrict.
 
 static const uint kAppendFull = ~0u;
 
-// All-or-nothing: a run that does not fit entirely is refused rather than truncated. The cursor keeps
-// advancing past Capacity on an overflow frame, which is what makes the value read back afterwards
-// DEMAND rather than what fit -- so an undersized buffer corrects itself.
+// All-or-nothing. The cursor keeps advancing past Capacity so readback reports demand and an undersized buffer self-corrects.
 uint AppendReserve(uint* Cursor, uint Capacity, uint Base, uint Count = 1u)
 {
     uint Old;
     InterlockedAdd(Cursor[0], Count, Old);
 
-    // A subtraction rather than `Old + Count <= Capacity` so it cannot wrap: Old is unbounded by design.
+    // Subtracting cannot wrap the way Old + Count can, since Old is unbounded by design.
     const bool bFits = (Old < Capacity) && ((Capacity - Old) >= Count);
     return bFits ? (Base + Old) : kAppendFull;
 }
 
-// Takes whatever is left instead of refusing the whole run. Granted is 0 when the region was already
-// full, in which case the returned slot must not be written.
+// Granted is 0 when the region was already full, and then the returned slot must not be written.
 uint AppendReserveClamped(uint* Cursor, uint Capacity, uint Base, uint Count, out uint Granted)
 {
     uint Old;
@@ -31,14 +25,13 @@ uint AppendReserveClamped(uint* Cursor, uint Capacity, uint Base, uint Count, ou
     return Base + Old;
 }
 
-// Span forms: the capacity is the TARGET's own count, so an append can no longer be bounded by a number
-// that came from somewhere other than the array it is appending into.
-uint AppendReserve<T>(GPUSpan<uint>* Cursor, GPUSpan<T>* Target, uint Base, uint Count = 1u)
+// Bounded by the target's own count rather than a number from elsewhere.
+uint AppendReserve<T>(GPUSpan<uint> Cursor, GPUSpan<T> Target, uint Base, uint Count = 1u)
 {
-    return AppendReserve(Cursor.Data, Target.Count, Base, Count);
+    return AppendReserve(Cursor.At(0), Target.Count, Base, Count);
 }
 
-uint AppendReserveClamped<T>(GPUSpan<uint>* Cursor, GPUSpan<T>* Target, uint Base, uint Count, out uint Granted)
+uint AppendReserveClamped<T>(GPUSpan<uint> Cursor, GPUSpan<T> Target, uint Base, uint Count, out uint Granted)
 {
-    return AppendReserveClamped(Cursor.Data, Target.Count, Base, Count, Granted);
+    return AppendReserveClamped(Cursor.At(0), Target.Count, Base, Count, Granted);
 }

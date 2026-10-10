@@ -15,7 +15,7 @@ struct FSunDFObject
     float         MaxDistance;
     float3        VolumeSize;
     float         MinScale;
-    uint          TextureIndex;
+    FTexture3D    Texture;
     uint          Flags;
     uint          _Pad0;
     uint          _Pad1;
@@ -40,8 +40,8 @@ struct FSunDFShadowGrid
 float SampleSunDFObject(FSunDFObject Object, float3 LocalPosition)
 {
     const float3 UVW = (LocalPosition - Object.VolumeMin) / max(Object.VolumeSize, float3(1e-6));
-    const float  Encoded = gTextures3D[NonUniformResourceIndex(Object.TextureIndex)]
-        .SampleLevel(gSamplers[SAMPLER_LINEAR_CLAMP], UVW, 0.0).r;
+    const float  Encoded = Object.Texture
+        .SampleLevel(Samplers::LinearClamp, UVW, 0.0).r;
     return (Object.Flags & kDistanceFieldTwoSided) != 0u
         ? Encoded * Object.MaxDistance
         : (Encoded * 2.0 - 1.0) * Object.MaxDistance;
@@ -105,14 +105,14 @@ float TraceSunDFShadows(FSunDFShadowGrid* Grid, float3 P, float3 ToSun, float Ta
     }
 
     const uint CellIndex = uint(Cell.y) * Grid.Dimension + uint(Cell.x);
-    const uint Count     = min(SpanGet(&Grid.CellCounts, CellIndex), Grid.CellCapacity);
+    const uint Count     = min(Grid.CellCounts.Get(CellIndex), Grid.CellCapacity);
 
     float Visibility = 1.0;
     [loop]
     for (uint i = 0; i < Count && Visibility > 0.0; ++i)
     {
-        const uint         ObjectIndex = SpanGet(&Grid.CellItems, CellIndex * Grid.CellCapacity + i);
-        const FSunDFObject Object      = SpanGet(&Grid.Objects, ObjectIndex);
+        const uint         ObjectIndex = Grid.CellItems.Get(CellIndex * Grid.CellCapacity + i);
+        const FSunDFObject Object      = Grid.Objects.Get(ObjectIndex);
 
         // Rejects casters the ray passes beside or that sit behind the receiver.
         const float3 ToCenter = Object.Sphere.xyz - P;

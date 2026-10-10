@@ -1,8 +1,6 @@
 #include "Includes/AppendBuffer.slang"
 #include "Includes/Culling.slang"
 
-// Instance-level cull, per-view LOD pick and compaction over the retained instance array. Also
-// accumulates the per-(view, draw) meshlet totals BuildDrawPrefix turns into the draw-list layout.
 // The reject set and the LOD pick must match BuildMeshletBlocks exactly.
 
 #define LOCAL_SIZE_X 64
@@ -12,12 +10,10 @@ struct FCullInstancesArgs
     uint  NumViews;
     uint  NumBatches;
     uint  bUseLODs;
-    // Monotonic per rendered frame. A skinned slot whose side data does not carry this was not gathered, so
-    // its ranges belong to some earlier frame and it must not be emitted.
+    // A skinned slot whose side data lacks this tag was not gathered this frame and must not be emitted.
     uint  SkinFrameTag;
 
-    // Split by ACCESS RATE: every lane streams CullEntries, the other two are read only by survivors.
-    // The retained slot count is this span's own Count; the arrays are parallel and equally long.
+    // Parallel arrays split by access rate; every lane streams CullEntries, only survivors read the other two.
     GPUSpan<FInstanceCullEntry> RetainedCullEntries;
     GPUSpan<FTransform3x4>      RetainedTransforms;
     GPUSpan<FInstanceStatic>    RetainedStatic;
@@ -25,37 +21,23 @@ struct FCullInstancesArgs
 
     GPUSpan<FGPUInstance>      OutInstances;
     GPUSpan<uint>              OutInstanceCount;
-    // (base, count) per (visible instance, view), indexed OutSlot * NumViews + v -- exactly the flat
-    // domain BuildMeshletBlocks dispatches over. The single source of the per-view meshlet range.
+    // Indexed OutSlot * NumViews + v, the flat domain BuildMeshletBlocks dispatches over.
     GPUSpan<uint2>             OutInstanceViewRanges;
-    // NumViews * NumBatches entries. This pass only accumulates the two capacities, which are the exact
-    // upper bound on what each pair can emit and the same work counted in cull blocks; BuildDrawPrefix
-    // turns them into the layout and owns every other field.
+    // Only the two capacities are accumulated here; BuildDrawPrefix owns every other field.
     GPUSpan<FRenderBucket>     OutBuckets;
     GPUSpan<uint>              OutOverflowFlag;
-    // Per-frame half of a SKINNED slot's payload: the LOD ranges the CPU resolved and the pre-skin slices it
-    // assigned against them. Indexed by RETAINED slot, so it is readable here, before compaction exists.
+    // Indexed by retained slot, so it is readable before compaction exists.
     GPUSpan<FSkinnedFrameData> SkinnedFrameData;
-    // The pre-skin arena this pass claims slices of. Only its Count is read here -- Skinning.slang owns the
-    // writes -- but it arrives as the span so the capacity comes from the allocation, not from a number.
+    // Only its Count is read here; Skinning.slang owns the writes.
     GPUSpan<FPreSkinnedVertex> PreSkinArena;
-    // Global pre-skin vertex cursor. Claimed here, beside the LOD pick that decides which vertices a block
-    // even has, so the two cannot disagree -- they used to be a CPU allocation and a GPU pick held in step
-    // only by a comment. Runs past capacity by design: what it ends at is DEMAND, which is what the CPU
-    // grows the buffer from.
+    // Runs past capacity by design, since the end value is the demand the CPU grows the buffer from.
     GPUSpan<uint>              OutPreSkinCursor;
     // One per workgroup of consecutive retained slots; empty disables the skip.
     GPUSpan<FInstanceBlockBounds> BlockBounds;
 };
 FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 
-// Claims one block's slice of the pre-skinned vertex buffer. The span is [first meshlet's VertexOffset,
-// last meshlet's end), read through the header -- exactly what the CPU's BlockExtent used to walk the
-// meshlet array for. Returns kNoPreSkinBase when the block has nothing to skin or the budget is spent, and
-// the draw path then blends that block's bones inline instead.
-// The claim and Skinning.slang's per-workgroup skip must reject the SAME blocks. A block that is claimed
-// but not written leaves the draw path reading pre-skin memory nobody filled -- the reverse of an overflow,
-// and silent.
+// Must reject the same blocks as Skinning.slang's per-workgroup skip, or the draw path reads unwritten pre-skin memory.
 uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletCount, uint MeshletTotal)
 {
     if (MeshletCount == 0u)
@@ -63,12 +45,7 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
         return kNoPreSkinBase;
     }
 
-    // Whole-block reject rather than a per-meshlet clamp: the skinning pass drops individual meshlets past
-    // the total, and a partially written slice is worse than one that falls back to inline skinning.
-    //
-    // Bounded by the HEADER's own count as well as the instance's: MeshletTotal comes from the surface's
-    // LOD table and the arrays being indexed come from the header, and only the header knows how long
-    // they are. A mesh whose header describes no geometry has MeshletCount 0 and rejects here.
+    // Whole-block reject bounded by the header's own count, since a partial slice is worse than inline skinning.
     if (MeshletOffset + MeshletCount > min(MeshletTotal, Header.MeshletCount))
     {
         return kNoPreSkinBase;
@@ -83,7 +60,7 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
         return kNoPreSkinBase;
     }
 
-    const uint Slot = AppendReserve(&Pass().OutPreSkinCursor, &Pass().PreSkinArena, /*Base*/ 0u,
+    const uint Slot = AppendReserve(Pass().OutPreSkinCursor, Pass().PreSkinArena, /*Base*/ 0u,
                                     EndVertex - FirstVertex);
     if (Slot == kAppendFull)
     {
@@ -103,7 +80,7 @@ struct FInstanceBlockBounds
     uint   bAlwaysScan;
 };
 
-// Conservative, so a block that passes still tests each of its instances exactly as before.
+// Conservative, so a passing block still tests each of its instances.
 bool IsBlockInReach(FInstanceBlockBounds Block, float3 CamPos)
 {
     if (Block.bAlwaysScan != 0u)
@@ -135,7 +112,7 @@ float ThinningHash(float3 Position)
 }
 
 // Every lane tests every view, so the group stages them once rather than each lane streaming 128 bytes per view.
-groupshared FCullView gViews[MAX_CULL_VIEWS];
+groupshared FCullView gsViews[MAX_CULL_VIEWS];
 
 [shader("compute")]
 [numthreads(LOCAL_SIZE_X, 1, 1)]
@@ -143,7 +120,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 {
     // The group's slots are one block, and the same answer for every lane keeps the barrier below uniform.
     const uint BlockIdx = GroupID.x + GroupID.y * MAX_DISPATCH_AXIS;
-    if (SpanContains(&Pass().BlockBounds, BlockIdx) && !IsBlockInReach(SpanGet(&Pass().BlockBounds, BlockIdx), GetCullCameraPosition()))
+    if (Pass().BlockBounds.Contains(BlockIdx) && !IsBlockInReach(Pass().BlockBounds.Get(BlockIdx), GetCullCameraPosition()))
     {
         return;
     }
@@ -152,43 +129,37 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const uint NumViews = min(Pass().NumViews, (uint)MAX_CULL_VIEWS);
     for (uint StageView = LocalID.x; StageView < NumViews; StageView += LOCAL_SIZE_X)
     {
-        gViews[StageView] = SpanGetAligned(CullViews(), StageView);
+        gsViews[StageView] = CullViews().GetAligned(StageView);
     }
     GroupMemoryBarrierWithGroupSync();
 
     // Undoes the Y fold the dispatch applies past MAX_DISPATCH_AXIS groups.
     const uint SlotIdx = GlobalID.x + GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X;
-    if (!SpanContains(&Pass().RetainedCullEntries, SlotIdx))
+    if (!Pass().RetainedCullEntries.Contains(SlotIdx))
     {
         return;
     }
 
-    // The only load on the reject path: 32 bytes, two slots per cache line.
-    FInstanceCullEntry Cull = SpanGet(&Pass().RetainedCullEntries, SlotIdx);
+    // The only load on the reject path, 32 bytes and two slots per cache line.
+    FInstanceCullEntry Cull = Pass().RetainedCullEntries.Get(SlotIdx);
 
     if (!Cull.HasFlag(EInstanceFlags::Active))
     {
-        return;   // freed slot; the payload beside it is stale by design
+        return;   // the payload beside a freed slot is stale by design
     }
 
-    // Skinned slots used to be rejected here and CPU-fed into the head of the visible buffer instead,
-    // because FInstanceStatic could not describe them: its bone offset and pre-skin bases were per-frame
-    // values. The bone offset is a stable arena base now, and the per-frame remainder arrives through
-    // SkinnedFrameData below -- so they compact through this pass like everything else, which is what earns
-    // them a RetainedSlot and therefore real two-phase occlusion.
     const bool bSkinned = Cull.HasFlag(EInstanceFlags::Skinned);
 
     FSkinnedFrameData Skin = (FSkinnedFrameData)0;
     if (bSkinned)
     {
-        if (!SpanContains(&Pass().SkinnedFrameData, SlotIdx))
+        if (!Pass().SkinnedFrameData.Contains(SlotIdx))
         {
             return;
         }
 
-        // The array is never cleared, so the tag is what distinguishes "gathered this frame" from a slot
-        // still holding a previous frame's ranges. An entity the CPU gather culled is simply not emitted.
-        Skin = SpanGet(&Pass().SkinnedFrameData, SlotIdx);
+        // The array is never cleared, so the tag separates this frame's gather from stale ranges.
+        Skin = Pass().SkinnedFrameData.Get(SlotIdx);
         if (!Skin.IsFromFrame(Pass().SkinFrameTag))
         {
             return;
@@ -227,7 +198,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
         // Widened across the ground only, so a blade covers more without standing taller.
         const float  Widen = rsqrt(Keep);
-        Transform = SpanGet(&Pass().RetainedTransforms, SlotIdx);
+        Transform = Pass().RetainedTransforms.Get(SlotIdx);
         bWidened  = true;
         const float3 Pivot = float3(Transform.Row0.w, Transform.Row1.w, Transform.Row2.w);
         Transform.Row0.xyz *= Widen;
@@ -236,60 +207,37 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         Radius *= Widen;
     }
 
-    // Past the table this reads whatever follows the allocation, and those counts become the block
-    // counts BuildMeshletBlocks appends against: an unbounded append, not a visual artifact.
-    if (!SpanContains(&Pass().SurfaceDescs, Cull.SurfaceDescIndex))
+    // Past the table this reads garbage counts that BuildMeshletBlocks would append against unbounded.
+    if (!Pass().SurfaceDescs.Contains(Cull.SurfaceDescIndex))
     {
         return;
     }
 
-    FSurfaceDesc Desc = SpanGet(&Pass().SurfaceDescs, Cull.SurfaceDescIndex);
+    FSurfaceDesc Desc = Pass().SurfaceDescs.Get(Cull.SurfaceDescIndex);
 
     // Bounds every LODMeshlet* index below, whatever else the table gets wrong.
     const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
 
-    // A forced LOD or LODs-off is a fixed pick, so the instance publishes kNoSurfaceDesc and no view
-    // re-selects.
-    // Never for skinned: the pre-skin slice was assigned against the CPU's pick, and a view that re-selected
-    // a different LOD would pre-skin one LOD's meshlets while the raster read another's vertices.
+    // Never per-view for skinned, since the pre-skin slice was assigned against the CPU's LOD pick.
     const bool bSelectPerView = !bSkinned && Cull.ForcedLODIndex < 0 && Pass().bUseLODs != 0u;
 
-    uint LODIndex = 0u;
-    if (Cull.ForcedLODIndex >= 0)
-    {
-        LODIndex = min((uint)Cull.ForcedLODIndex, NumLODs > 0u ? NumLODs - 1u : 0u);
-    }
-    else if (bSelectPerView)
-    {
-        LODIndex = SelectSurfaceLODForView(Desc, CamPos, Cull.SphereBounds);
-    }
+    // A per-view instance starts from LOD 0 here only to test it has geometry; its picks come after visibility.
+    const uint FixedLODIndex = Cull.ForcedLODIndex >= 0 ? min((uint)Cull.ForcedLODIndex, NumLODs > 0u ? NumLODs - 1u : 0u) : 0u;
 
-    // Must match the CPU's ResolveShadowLOD exactly: the two seed the same cull dispatch domain.
-    const uint ShadowCap = (Scene().CullData.ShadowCoarseLODDistSq > 0.0 && DistSq >= Scene().CullData.ShadowCoarseLODDistSq)
-                         ? (uint)MESHLET_MAX_COARSE_SHADOW_LOD : (uint)MESHLET_MAX_SHADOW_LOD;
-    const int  MaxShadowLOD  = (int)min(NumLODs > 0u ? NumLODs - 1u : 0u, ShadowCap);
-    const uint ShadowLODIndex = (uint)clamp((int)LODIndex + Scene().CullData.ShadowLODBias, 0, MaxShadowLOD);
-
-    // A flag rather than a null-pointer test: the pointer lives in the static payload, which a slot
-    // that rejects here never loads.
+    // A flag rather than a null-pointer test, since a slot that rejects here never loads the static payload.
     const bool bHasGeometry = Cull.HasFlag(EInstanceFlags::HasGeometry);
 
-    // Skinned takes the CPU's resolved ranges verbatim, for the reason on bSelectPerView above. Those counts
-    // already fold in the header-resident test, so bHasGeometry is not applied to them a second time.
-    const uint SurfaceMeshletOffset = bSkinned ? Skin.SurfaceMeshletOffset : Desc.LODMeshletOffset[LODIndex];
-    const uint SurfaceMeshletCount  = bSkinned ? Skin.SurfaceMeshletCount
-                                               : (bHasGeometry ? Desc.LODMeshletCount[LODIndex] : 0u);
-    const uint ShadowMeshletOffset  = bSkinned ? Skin.ShadowMeshletOffset : Desc.LODMeshletOffset[ShadowLODIndex];
-    const uint ShadowMeshletCount   = bSkinned ? Skin.ShadowMeshletCount
-                                               : (bHasGeometry ? Desc.LODMeshletCount[ShadowLODIndex] : 0u);
+    // Skinned ranges already fold in the header-resident test, so bHasGeometry is not applied again.
+    uint SurfaceMeshletOffset = bSkinned ? Skin.SurfaceMeshletOffset : Desc.LODMeshletOffset[FixedLODIndex];
+    uint SurfaceMeshletCount  = bSkinned ? Skin.SurfaceMeshletCount
+                                         : (bHasGeometry ? Desc.LODMeshletCount[FixedLODIndex] : 0u);
 
-    if (SurfaceMeshletCount == 0u && ShadowMeshletCount == 0u)
+    if (SurfaceMeshletCount == 0u)
     {
-        return;   // nothing to raster; keep it out of the prefix domain entirely
+        return;
     }
 
-    // Per-view visibility AND per-(view, draw) reservation in one pass. No early break: every view the
-    // instance is visible to has to reserve room, which is what buys an exactly sized draw list.
+    // No early break, since every view the instance is visible to has to reserve room.
     const bool bCaster     = Cull.HasFlag(EInstanceFlags::CastShadow);
     const bool bShadowOnly = Cull.HasFlag(EInstanceFlags::ShadowOnly);
     const bool bFarCaster  = Cull.HasFlag(EInstanceFlags::CastFarShadow);
@@ -297,21 +245,19 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
 
-    // A skinned block only needs a pre-skin slice for the view class that actually reads it.
-    bool bNeedsSurfaceSkin = false;
-    bool bNeedsShadowSkin  = false;
+    // A skinned instance needs a pre-skin slice only when some view emits it.
+    bool bNeedsSkin = false;
 
-    // End of the last LOD: the bound on every mesh-global meshlet index the cull emits.
+    // End of the last LOD, the bound on every mesh-global meshlet index the cull emits.
     const uint LODMeshletTotal = bSkinned ? Skin.MeshletTotalCount
                                : (bHasGeometry && NumLODs > 0u
                                    ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
                                    : 0u);
 
-    // Does ANY view see it? Breaks on the first hit, so a visible instance pays one or two iterations.
-    // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
+    // Needed before the compacted slot is claimed, because that slot indexes the range slab.
     for (uint v = 0; v < NumViews; ++v)
     {
-        if (IsInstanceVisibleToView(gViews[v], Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster))
+        if (IsInstanceVisibleToView(gsViews[v], Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster))
         {
             bAnyView = true;
             break;
@@ -323,53 +269,49 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         return;
     }
 
-    // Order is arbitrary: the draw list carries InstanceID explicitly.
-    const uint OutSlot = AppendReserve(&Pass().OutInstanceCount, &Pass().OutInstances, /*Base*/ 0u);
+    // Order is arbitrary since the draw list carries InstanceID explicitly.
+    const uint OutSlot = AppendReserve(Pass().OutInstanceCount, Pass().OutInstances, /*Base*/ 0u);
 
     if (OutSlot == kAppendFull)
     {
-        // The CPU grows the buffer from the count it reads back, so this costs one frame rather than
-        // a write past the allocation.
-        SpanSet(&Pass().OutOverflowFlag, 0u, 1u);
+        // The CPU grows the buffer from the read-back count, so this costs one frame rather than a write past the allocation.
+        Pass().OutOverflowFlag.Set(0u, 1u);
         return;
     }
 
-    // REACHED, not copied: a local copy puts a PhysicalStorageBuffer pointer in an OpVariable carrying neither Aliased nor Restrict, which is an invalid module every driver accepts.
-    FInstanceStatic* Static = SpanAt(&Pass().RetainedStatic, SlotIdx);
+    // Reached, not copied, since a local copy puts a PhysicalStorageBuffer pointer in an OpVariable without Aliased or Restrict (invalid SPIR-V).
+    FInstanceStatic* Static = Pass().RetainedStatic.At(SlotIdx);
 
-    // Bounded by the header's own count: a run no mesh can back becomes BuildMeshletBlocks' trip count, which hangs the GPU.
+    // Bounded by the header's own count, since a run no mesh can back becomes BuildMeshletBlocks' trip count and hangs the GPU.
     const uint MeshletTotal = min(LODMeshletTotal, Static.MeshletHeader.MeshletCount);
 
-    // THE per-(instance, view) decision, made once. BuildMeshletBlocks reads what this writes instead of
-    // re-deriving it, so the reservation and the append cannot disagree -- a mismatch used to hand one
-    // bucket room nobody uses, starve the next, and drop the newest mesh with no error anywhere.
+    if (!bWidened)
+    {
+        Transform = Pass().RetainedTransforms.Get(SlotIdx);
+    }
+    const float MaxScale = TransformMaxScale(Transform);
+
+    // The primary camera's pick, which the instance carries for anything that reads it outside a view.
+    if (bSelectPerView && bHasGeometry && NumViews > 0u)
+    {
+        const uint2 CameraRange = SelectViewMeshletRange(Desc, gsViews[0], Cull.SphereBounds, MaxScale);
+        SurfaceMeshletOffset = CameraRange.x;
+        SurfaceMeshletCount  = CameraRange.y;
+    }
+
+    // The single per-(instance, view) decision, read by BuildMeshletBlocks so the reservation and the append cannot disagree.
     for (uint v = 0; v < NumViews; ++v)
     {
-        FCullView View = gViews[v];
+        FCullView View = gsViews[v];
 
         uint2 Range   = uint2(0u, 0u);
         uint  Emitted = 0u;
 
         if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFarCaster))
         {
-            const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
-
-            if (bShadowView && bSelectPerView && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+            if (bSelectPerView)
             {
-                Range = bHasGeometry
-                      ? SelectCascadeShadowMeshletRange(Desc, CamPos, Cull.SphereBounds, View.CascadeIndex,
-                                                        Scene().CullData.ShadowLODBias,
-                                                        Scene().CullData.ShadowCoarseLODDistSq)
-                      : uint2(0u, 0u);
-            }
-            else if (bShadowView)
-            {
-                Range = uint2(ShadowMeshletOffset, ShadowMeshletCount);
-            }
-            else if (bSelectPerView)
-            {
-                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View.ViewOrigin, Cull.SphereBounds)
-                                     : uint2(0u, 0u);
+                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, Cull.SphereBounds, MaxScale) : uint2(0u, 0u);
             }
             else
             {
@@ -381,88 +323,61 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
                     ? 0u
                     : min(Range.y, MeshletTotal - Range.x);
 
-            bNeedsSurfaceSkin = bNeedsSurfaceSkin || (Emitted > 0u && !bShadowView);
-            bNeedsShadowSkin  = bNeedsShadowSkin  || (Emitted > 0u && bShadowView);
+            bNeedsSkin = bNeedsSkin || Emitted > 0u;
         }
 
         if (Emitted > 0u)
         {
-            FRenderBucket* Bucket = SpanAt(&Pass().OutBuckets, v * Pass().NumBatches + DrawID);
+            FRenderBucket* Bucket = Pass().OutBuckets.At(v * Pass().NumBatches + DrawID);
 
-            // One reservation per emitted meshlet, however many passes rasterize the batch. MeshletCull
-            // appends each bucket's region exactly once per phase and every pass draws that same list,
-            // so a second rasterization consumes no further slots -- which is what the old x2 translucent
-            // reservation existed to cover.
+            // One reservation per emitted meshlet, since every pass that rasterizes the batch draws the same list.
             InterlockedAdd(Bucket.DrawCapacity, Emitted);
 
-            // Rounded up PER INSTANCE: blocks never span instances, so a ceil of the sum would
-            // under-reserve one block for every instance with a partial tail.
+            // Rounded up per instance because blocks never span instances.
             const uint Blocks = (Emitted + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
             // Doubled for a two-phase view, whose early-drawn instances are built again at the back for the late re-test.
             InterlockedAdd(Bucket.BlockCapacity, View.HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ) ? Blocks * 2u : Blocks);
         }
 
-        // Written for EVERY view, zero included. The builder indexes this slab directly from its flat
-        // thread id, so a pair left unwritten would hand it last frame's range.
-        SpanSet(&Pass().OutInstanceViewRanges, OutSlot * Pass().NumViews + v, uint2(Range.x, Emitted));
+        // Written for every view, zero included, or the builder would read last frame's range.
+        Pass().OutInstanceViewRanges.Set(OutSlot * Pass().NumViews + v, uint2(Range.x, Emitted));
     }
 
-    // Pre-skin slices, claimed from the SAME resolved ranges the emit above used. A block's vertex span is
-    // the span of its meshlets, so it is read straight off the header rather than precomputed on the CPU.
-    // SkinnedVertexBase folds in the span start, so base + M.VertexOffset lands in the compacted slice.
-    uint SurfaceSkinBase = kNoPreSkinBase;
-    uint ShadowSkinBase  = kNoPreSkinBase;
+    uint SkinBase = kNoPreSkinBase;
 
-    // A header always exists -- slot 0 is the null header -- so this asks whether it describes geometry,
-    // which is the question that was actually being asked before slots replaced addresses.
+    // Slot 0 is the null header, so this asks whether the header describes geometry.
     if (bSkinned && Static.MeshletHeader.MeshletCount != 0u)
     {
-        // A shadow block that resolved to the surface block shares its slice; claiming twice would both
-        // waste the budget and skin the same vertices into two places.
-        const bool bShareShadowBlock = (ShadowMeshletOffset == SurfaceMeshletOffset);
-
-        if (bNeedsSurfaceSkin || (bNeedsShadowSkin && bShareShadowBlock))
+        // An unclaimed slice is not dropped, since the draw path blends its bones inline instead.
+        if (bNeedsSkin)
         {
-            SurfaceSkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount, MeshletTotal);
+            SkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount, MeshletTotal);
         }
 
-        // An unclaimed block is not dropped: the draw path blends its bones inline instead.
-        ShadowSkinBase = bShareShadowBlock
-                       ? SurfaceSkinBase
-                       : (bNeedsShadowSkin
-                            ? ClaimPreSkinSlice(Static.MeshletHeader, ShadowMeshletOffset, ShadowMeshletCount, MeshletTotal)
-                            : kNoPreSkinBase);
-
-        // Written back so the skinning passes, which are keyed by RETAINED slot, see the same bases the
-        // draw path will read off the compacted instance below.
-        SpanAt(&Pass().SkinnedFrameData, SlotIdx).SkinnedVertexBase       = SurfaceSkinBase;
-        SpanAt(&Pass().SkinnedFrameData, SlotIdx).ShadowSkinnedVertexBase = ShadowSkinBase;
+        // Written back so the skinning passes, keyed by retained slot, see the base the draw path reads off the compacted instance.
+        Pass().SkinnedFrameData.At(SlotIdx).SkinnedVertexBase = SkinBase;
     }
 
-    // Safe to assemble in a local and store once now that FGPUInstance holds a header slot, not an address.
+    // Safe to assemble in a local because FGPUInstance holds a header slot, not an address.
     FGPUInstance Inst            = (FGPUInstance)0;
-    Inst.Transform               = bWidened ? Transform : SpanGet(&Pass().RetainedTransforms, SlotIdx);
+    Inst.Transform               = Transform;
     Inst.SphereBounds            = float4(Center, Radius);
     Inst.MeshletHeaderSlot       = Static.MeshletHeaderSlot;
-    Inst._HeaderPad0             = 0u;
+    Inst.MeshletVisibilityBase   = Static.MeshletVisibilityBase;
     Inst.DrawID                  = DrawID;
     Inst.Flags                   = Cull.Flags;
     Inst.CustomData              = Static.CustomData;
     Inst.MaterialIndex           = Static.MaterialIndex;
     Inst.EntityID                = Static.EntityID;
-    // Per-FRAME for skinned: the compacted arena base cannot live in the retained payload.
+    // Per frame for skinned, since the compacted arena base cannot live in the retained payload.
     Inst.BoneOffset              = bSkinned ? Skin.BoneOffset : Static.BoneOffset;
-    // Claimed just above for skinned; kNoPreSkinBase routes the block to inline skinning in the draw path.
-    Inst.SkinnedVertexBase       = bSkinned ? SurfaceSkinBase : Static.SkinnedVertexBase;
-    Inst.ShadowSkinnedVertexBase = bSkinned ? ShadowSkinBase  : Static.ShadowSkinnedVertexBase;
+    Inst.SkinnedVertexBase       = bSkinned ? SkinBase : Static.SkinnedVertexBase;
     Inst.SurfaceMeshletOffset    = SurfaceMeshletOffset;
     Inst.SurfaceMeshletCount     = SurfaceMeshletCount;
-    Inst.ShadowMeshletOffset     = ShadowMeshletOffset;
-    Inst.ShadowMeshletCount      = ShadowMeshletCount;
     Inst.SurfaceDescIndex        = bSelectPerView ? Cull.SurfaceDescIndex : kNoSurfaceDesc;
     Inst.MeshletTotalCount       = MeshletTotal;
-    // Survives compaction, which OutSlot does not: it is the key into the two-phase visibility flags.
+    // Survives compaction, unlike OutSlot, and keys the two-phase visibility flags.
     Inst.RetainedSlot            = SlotIdx;
 
-    SpanSet(&Pass().OutInstances, OutSlot, Inst);
+    Pass().OutInstances.Set(OutSlot, Inst);
 }

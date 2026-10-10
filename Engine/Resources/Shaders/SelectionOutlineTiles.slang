@@ -4,18 +4,18 @@
 // Lists every 8x8 tile within outline reach of a selected pixel, once each, as the instances SelectionOutlineTileQuad.slang draws.
 struct FSelectionTileArgs
 {
-    GPUSpan<uint> SelectionBits;
-    GPUSpan<uint> TileStamps;
-    GPUSpan<uint> TileList;
-    GPUSpan<uint> DrawArgs;
-    uint PickerIndex;
-    uint EntityIndexMask;
-    uint TileStamp;
-    uint TilesX;
-    uint TilesY;
-    uint TileReach;
-    uint _Pad0;
-    uint _Pad1;
+    GPUSpan<uint>  SelectionBits;
+    GPUSpan<uint>  TileStamps;
+    GPUSpan<uint>  TileList;
+    GPUSpan<uint>  DrawArgs;
+    FTexture2DUInt Picker;
+    uint           EntityIndexMask;
+    uint           TileStamp;
+    uint           TilesX;
+    uint           TilesY;
+    uint           TileReach;
+    uint           _Pad0;
+    uint           _Pad1;
 };
 FSelectionTileArgs* Pass() { return GetPassArgs<FSelectionTileArgs>(); }
 
@@ -28,10 +28,17 @@ bool IsEntitySelected(uint PickerValue)
     }
 
     const uint Index = PickerValue & Pass().EntityIndexMask;
-    return (SpanGet(&Pass().SelectionBits, Index >> 5u) & (1u << (Index & 31u))) != 0u;
+    return (Pass().SelectionBits.Get(Index >> 5u) & (1u << (Index & 31u))) != 0u;
 }
 
 groupshared uint GTileHasSelection;
+
+// The outline runs over display pixels while the picker holds one id per render pixel.
+int2 DisplayToPickerTexel(int2 DisplayTexel)
+{
+    const float2 Scale = float2(GetScreenSize()) / float2(max(GetDisplaySize(), uint2(1u, 1u)));
+    return clamp(int2((float2(DisplayTexel) + 0.5) * Scale), int2(0, 0), int2(GetScreenSize()) - int2(1, 1));
+}
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -43,14 +50,14 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID, u
         if (all(GroupID.xy == uint2(0u, 0u)))
         {
             // Six vertices make one tile quad, and the instance count is what the appends below add up.
-            SpanSet(&Pass().DrawArgs, 0u, 6u);
+            Pass().DrawArgs.Set(0u, 6u);
         }
     }
     GroupMemoryBarrierWithGroupSync();
 
-    const int2 Extent = int2(Scene().ScreenSize.xy);
+    const int2 Extent = int2(GetDisplaySize());
     const int2 Texel  = int2(GroupID.xy * 8u + LocalID.xy);
-    if (all(Texel < Extent) && IsEntitySelected(LoadTexture2DUInt(Pass().PickerIndex, Texel)))
+    if (all(Texel < Extent) && IsEntitySelected(Pass().Picker.Load(DisplayToPickerTexel(Texel))))
     {
         InterlockedOr(GTileHasSelection, 1u);
     }
@@ -70,7 +77,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID, u
     }
 
     // The stamp swap lets exactly one of the selected neighbors list a shared tile.
-    uint* Stamp = SpanAt(&Pass().TileStamps, uint(Tile.y) * Pass().TilesX + uint(Tile.x));
+    uint* Stamp = Pass().TileStamps.At(uint(Tile.y) * Pass().TilesX + uint(Tile.x));
     uint Previous = 0u;
     InterlockedExchange(Stamp[0], Pass().TileStamp, Previous);
     if (Previous == Pass().TileStamp)
@@ -78,8 +85,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID, u
         return;
     }
 
-    uint* InstanceCount = SpanAt(&Pass().DrawArgs, 1u);
+    uint* InstanceCount = Pass().DrawArgs.At(1u);
     uint Slot = 0u;
     InterlockedAdd(InstanceCount[0], 1u, Slot);
-    SpanSet(&Pass().TileList, Slot, uint(Tile.x) | (uint(Tile.y) << 16u));
+    Pass().TileList.Set(Slot, uint(Tile.x) | (uint(Tile.y) << 16u));
 }

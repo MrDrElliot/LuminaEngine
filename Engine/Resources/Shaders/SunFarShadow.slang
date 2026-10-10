@@ -1,6 +1,6 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/SunDFShadowCommon.slang"
 
 // Sun occlusion the cascades cannot hold, marched per pixel from the depth buffer and read back by the lighting.
@@ -10,32 +10,32 @@ static const uint kMaxTerrainShadowRecords = 8u;
 // Mirror of Lumina::FTerrainShadowRecord.
 struct FTerrainShadowRecord
 {
-    float2 OriginXZ;
-    float  Stride;
-    float  OriginY;
-    float  MaxHeight;
-    float  Resolution;
-    uint   HeightmapIndex;
-    float  _Pad;
+    float2     OriginXZ;
+    float      Stride;
+    float      OriginY;
+    float      MaxHeight;
+    float      Resolution;
+    FTexture2D Heightmap;
+    float      _Pad;
 };
 
 // Mirror of Lumina::FSunFarShadowArgs.
 struct FPushConstants
 {
-    uint2  ScreenSize;
-    uint   DepthIndex;
-    uint   OutputUAV;
-    float3 ToSun;
-    float  TanHalfAngle;
-    float  TerrainMaxDistance;
-    uint   TerrainSteps;
-    uint   NumTerrains;
-    float  _Pad;
-    FSunDFShadowGrid DFGrid;
-    float  DFNear;
-    float  DFFar;
-    float  DFMaxTrace;
-    uint   bDistanceField;
+    uint2                ScreenSize;
+    FTexture2D           Depth;
+    FRWTexture2D         Output;
+    float3               ToSun;
+    float                TanHalfAngle;
+    float                TerrainMaxDistance;
+    uint                 TerrainSteps;
+    uint                 NumTerrains;
+    float                _Pad;
+    FSunDFShadowGrid     DFGrid;
+    float                DFNear;
+    float                DFFar;
+    float                DFMaxTrace;
+    uint                 bDistanceField;
     FTerrainShadowRecord Terrains[kMaxTerrainShadowRecords];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -43,7 +43,7 @@ FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 float TerrainHeightAt(FTerrainShadowRecord T, float2 XZ)
 {
     const float2 UV = ((XZ - T.OriginXZ) / T.Stride + 0.5) / T.Resolution;
-    return T.OriginY + SampleTexture2DLevel(T.HeightmapIndex, SAMPLER_LINEAR_CLAMP, UV, 0.0).r * T.MaxHeight;
+    return T.OriginY + T.Heightmap.SampleLevel(Samplers::LinearClamp, UV, 0.0).r * T.MaxHeight;
 }
 
 // Entry and exit distances of a ray through the terrain's square footprint, empty when it misses.
@@ -111,7 +111,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     // Reversed Z clears to zero, so the sky stays lit.
-    const float Raw = gTextures2D[Pass().DepthIndex].Load(int3(Pixel, 0)).r;
+    const float Raw = Pass().Depth.Load(int3(Pixel, 0)).r;
     float Visibility = 1.0;
     if (Raw > 0.0 && Pass().ToSun.y > 0.0)
     {
@@ -134,5 +134,5 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         }
     }
 
-    gRWTextures2D[Pass().OutputUAV][Pixel] = float4(Visibility, 0.0, 0.0, 0.0);
+    Pass().Output[Pixel] = float4(Visibility, 0.0, 0.0, 0.0);
 }

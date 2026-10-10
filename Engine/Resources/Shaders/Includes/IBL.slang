@@ -1,10 +1,8 @@
 #pragma once
 #include "Common.slang"
 
-// IBL helpers shared by the BRDF LUT bake and runtime IBL sampling.
-// Karis 2013 "Real Shading in  Engine 4" split-sum approximation.
+// Karis 2013 "Real Shading in Unreal Engine 4" split-sum helpers.
 
-// Hammersley low-discrepancy (u, v) seed for GGX importance sampling.
 float RadicalInverse_VdC(uint Bits)
 {
     Bits = (Bits << 16u) | (Bits >> 16u);
@@ -20,8 +18,7 @@ float2 Hammersley(uint i, uint N)
     return float2(float(i) / float(N), RadicalInverse_VdC(i));
 }
 
-// Importance-sample the GGX NDF in tangent space, producing a half-vector
-// distributed proportional to D(H). Caller transforms to world space.
+// Half vector distributed proportional to D(H), already oriented around N.
 float3 ImportanceSampleGGX(float2 Xi, float3 N, float Roughness)
 {
     float A = Roughness * Roughness;
@@ -30,14 +27,11 @@ float3 ImportanceSampleGGX(float2 Xi, float3 N, float Roughness)
     float CosTheta = sqrt((1.0 - Xi.y) / (1.0 + (A * A - 1.0) * Xi.y));
     float SinTheta = sqrt(1.0 - CosTheta * CosTheta);
 
-    // Tangent-space half vector.
     float3 H;
     H.x = SinTheta * cos(Phi);
     H.y = SinTheta * sin(Phi);
     H.z = CosTheta;
 
-    // Build a tangent frame around N. Pick an Up axis that isn't degenerate
-    // when N is itself near +Z.
     float3 Up        = abs(N.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
     float3 Tangent   = normalize(cross(Up, N));
     float3 Bitangent = cross(N, Tangent);
@@ -45,8 +39,7 @@ float3 ImportanceSampleGGX(float2 Xi, float3 N, float Roughness)
     return normalize(Tangent * H.x + Bitangent * H.y + N * H.z);
 }
 
-// Smith geometry for IBL: k = a^2 / 2 (direct lighting uses k = (a + 1)^2 / 8).
-// Mixing the two remaps produces dim or over-bright reflections.
+// IBL uses k = a^2 / 2, never the direct-lighting (a + 1)^2 / 8 remap.
 float GeometrySchlickGGX_IBL(float NdotV, float Roughness)
 {
     float A = Roughness;
@@ -61,8 +54,7 @@ float GeometrySmith_IBL(float3 N, float3 V, float3 L, float Roughness)
     return GeometrySchlickGGX_IBL(NdotV, Roughness) * GeometrySchlickGGX_IBL(NdotL, Roughness);
 }
 
-// Roughness-aware Fresnel for IBL ambient: clamp the (1 - cos)^5 envelope against max(1 - R, F0)
-// to keep metals' colored grazing response without unrealistic rim brightness on rough surfaces.
+// Clamps the Fresnel envelope to max(1 - R, F0) so rough surfaces lose the rim but metals keep their tint.
 float3 FresnelSchlickRoughness(float CosTheta, float3 F0, float Roughness)
 {
     float3 OneMinusR = max(float3(1.0 - Roughness), F0);
@@ -71,12 +63,10 @@ float3 FresnelSchlickRoughness(float CosTheta, float3 F0, float Roughness)
     return F0 + (OneMinusR - F0) * (X2 * X2 * X);
 }
 
-// Karis 2013 split-sum BRDF integrand -> (scale, bias) stored in the LUT per (NdotV, Roughness).
-// Runtime IBL specular reduces to Prefiltered * (F0 * scale + bias).
+// Stores (scale, bias) so runtime specular is Prefiltered * (F0 * scale + bias).
 float2 IntegrateBRDF(float NdotV, float Roughness)
 {
-    // V is reconstructed in tangent space with N = +Z. Only NdotV matters
-    // for the integral, so any V with the right z-component works.
+    // Only NdotV matters, so any V with the right z works.
     float3 V;
     V.x = sqrt(1.0 - NdotV * NdotV);
     V.y = 0.0;
@@ -88,7 +78,6 @@ float2 IntegrateBRDF(float NdotV, float Roughness)
     const float3 N = float3(0.0, 0.0, 1.0);
     const uint   NumSamples = 1024u;
 
-    // Smith's view term depends only on NdotV (constant across all samples); hoist it out of the loop.
     float Gv = GeometrySchlickGGX_IBL(NdotV, Roughness);
 
     for (uint i = 0u; i < NumSamples; ++i)
@@ -106,7 +95,6 @@ float2 IntegrateBRDF(float NdotV, float Roughness)
             // The GGX sample PDF cancels D(H), leaving G * VdotH / (NdotH * NdotV) per sample.
             float G     = Gv * GeometrySchlickGGX_IBL(NdotL, Roughness);
             float G_Vis = (G * VdotH) / (NdotH * NdotV);
-            // (1 - VdotH)^5 via the multiply chain (cheaper than pow; VdotH already saturated).
             float X     = 1.0 - VdotH;
             float X2    = X * X;
             float Fc    = X2 * X2 * X;

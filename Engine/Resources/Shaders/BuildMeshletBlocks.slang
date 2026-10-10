@@ -2,9 +2,7 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/Culling.slang"
 
-// One thread per (visible instance, view), appending that pair's blocks into the region CullInstances
-// reserved for it. It reserved against a range it WROTE, and this reads that range back, so the two
-// cannot disagree -- there is no LOD pick or reject set here to keep in step.
+// Reads back the range CullInstances reserved against, so the two cannot disagree on LOD or rejects.
 
 struct FBuildMeshletBlocksArgs
 {
@@ -12,7 +10,7 @@ struct FBuildMeshletBlocksArgs
     uint            NumBatches;
 
     GPUSpan<uint>          InstanceCount;
-    // Clamped exactly as BuildDrawPrefix clamps it: the append cursor counts past capacity on overflow.
+    // Clamped like BuildDrawPrefix, since the append cursor counts past capacity on overflow.
     GPUSpan<FGPUInstance>  VisibleInstances;
     // (base, count) per (visible instance, view), written by CullInstances at reservation time.
     GPUSpan<uint2>         InstanceViewRanges;
@@ -23,7 +21,7 @@ struct FBuildMeshletBlocksArgs
 
     // MESHLET_BUILD_* below, which says which phase this build serves and whether two-phase buckets split at all.
     uint                   BuildMode;
-    // This frame's stamp. A slot is visible from last frame iff it holds VisibilityTag - 1.
+    // This frame's stamp, so a slot visible last frame holds one less than it.
     uint                   VisibilityTag;
     GPUSpan<uint>          PrevVisibility;
 };
@@ -91,11 +89,11 @@ bool TryReserveRun(FRenderBucket* Bucket, uint Count, out uint Slot)
 uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current)
 {
     const uint DescIndex = Inst.SurfaceDescIndex;
-    if (DescIndex == kNoSurfaceDesc || !SpanContains(&Pass().SurfaceDescs, DescIndex))
+    if (DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
     {
         return uint2(0u, 0u);
     }
-    const FSurfaceDesc Desc = SpanGet(&Pass().SurfaceDescs, DescIndex);
+    const FSurfaceDesc Desc = Pass().SurfaceDescs.Get(DescIndex);
     const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
     if (NumLODs == 0u)
     {
@@ -129,7 +127,7 @@ uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current)
 void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 {
     const uint NumViews         = max(Pass().NumViews, 1u);
-    const uint VisibleInstances = min(SpanGet(&Pass().InstanceCount, 0u), Pass().VisibleInstances.Count);
+    const uint VisibleInstances = min(Pass().InstanceCount.Get(0u), Pass().VisibleInstances.Count);
 
     // Undoes the Y fold the dispatch applies past MAX_DISPATCH_AXIS groups.
     const uint Flat       = ThreadID.x + ThreadID.y * MAX_DISPATCH_AXIS * 64u;
@@ -141,11 +139,8 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         return;
     }
 
-    // The range CullInstances reserved this pair's region from, read rather than re-derived. That is the
-    // whole point: the two used to compute it independently in matching branch order, and a drift
-    // between them handed one bucket room nobody used and silently dropped another's newest mesh.
-    // Already clamped to the mesh's meshlet total, and zero when the pair is invisible or out of range.
-    uint2 Range = SpanGet(&Pass().InstanceViewRanges, Flat);
+    // Read rather than re-derived, already clamped, and zero when the pair is invisible or out of range.
+    uint2 Range = Pass().InstanceViewRanges.Get(Flat);
     if (Range.y == 0u)
     {
         return;
@@ -160,15 +155,15 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         return;
     }
 
-    FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ViewIndex * Pass().NumBatches + DrawID);
+    FRenderBucket* Bucket = Pass().Buckets.At(ViewIndex * Pass().NumBatches + DrawID);
 
     // A split bucket builds last frame's visible set now and its late blocks after the pyramid, so a hidden instance gets none.
     const bool bSplit = Pass().BuildMode != MESHLET_BUILD_EARLY_NOSPLIT
                      && CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_MESHLET_HIZ)
                      && BucketFitsDemand(Bucket.DrawDemand, Bucket.DrawCapacity, Bucket.BlockDemand, Bucket.BlockCapacity);
     const uint RetainedSlot = Inst.RetainedSlot;
-    const bool bWasVisible  = bSplit && SpanContains(&Pass().PrevVisibility, RetainedSlot)
-                           && SpanGet(&Pass().PrevVisibility, RetainedSlot) == (Pass().VisibilityTag - 1u);
+    const bool bWasVisible  = bSplit && Pass().PrevVisibility.Contains(RetainedSlot)
+                           && Pass().PrevVisibility.Get(RetainedSlot) == (Pass().VisibilityTag - 1u);
 
     if (Pass().BuildMode == MESHLET_BUILD_LATE)
     {
@@ -210,7 +205,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
             FMeshletBlock Block;
             Block.InstanceID         = InstanceID;
             Block.PackedBaseAndCount = FMeshletBlock::Pack(Range.x + First, min(MESHLET_CULL_GROUP_SIZE, Range.y - First));
-            SpanSet(&Pass().OutBlockList, BackSlot + b, Block);
+            Pass().OutBlockList.Set(BackSlot + b, Block);
         }
         return;
     }
@@ -251,6 +246,6 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         Block.InstanceID         = InstanceID;
         Block.PackedBaseAndCount = FMeshletBlock::Pack(Range.x + First,
                                                        min(MESHLET_CULL_GROUP_SIZE, Count - First));
-        SpanSet(&Pass().OutBlockList, Slot + b, Block);
+        Pass().OutBlockList.Set(Slot + b, Block);
     }
 }

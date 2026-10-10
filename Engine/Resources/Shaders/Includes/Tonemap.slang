@@ -1,11 +1,7 @@
 #pragma once
 #include "Common.slang"
 
-// Display transform: linear HDR radiance -> display-referred [0, 1] -> encoded for the swapchain.
-//
-// Shared by the scene's post-process pass (ColorGrading.slang) and the editor's HDR texture preview
-// (ImGuiPixel.slang). Both write to the same _UNORM swapchain, so both owe the same encode; keeping
-// one copy is what makes a texture preview and the same texture in-world read alike.
+// Shared by ColorGrading.slang and ImGuiPixel.slang so a texture preview and the same texture in-world read alike.
 
 #define TONEMAPPER_NONE       0u
 #define TONEMAPPER_ACES       1u
@@ -24,8 +20,7 @@ float3 Tonemap_ACES(float3 X)
     return saturate((X * (A * X + B)) / (X * (C * X + D) + E));
 }
 
-// AGX -- bwrensch's polynomial fit of Troy Sobotka's AGX (linear -> display-referred [0, 1]).
-// https://github.com/sobotka/AgX  https://iolite-engine.com/blog_posts/minimal_agx_implementation
+// bwrensch's polynomial fit of Troy Sobotka's AgX, see https://iolite-engine.com/blog_posts/minimal_agx_implementation
 float3 AGX_Polynomial(float3 X)
 {
     float3 X2 = X  * X;
@@ -134,9 +129,7 @@ float3 ApplyTonemap(float3 X, uint Mode)
     }
 }
 
-// OETF for the swapchain. Every color target the compositor presents is _UNORM, never _UNORM_SRGB,
-// so nothing encodes for us -- a pass that skips this ships raw linear values to the display and
-// reads far too dark in the shadows, which is exactly where HDR content lives.
+// Swapchain targets are _UNORM, never _UNORM_SRGB, so nothing else encodes for us.
 float3 EncodeDisplayGamma(float3 X)
 {
     static const float INV_GAMMA = 1.0 / 2.2;

@@ -1,19 +1,19 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
 
 // Edge-aware blur driven by the packed edges the main pass wrote, two horizontal pixels per thread.
 
 struct FPushConstants
 {
-    uint2 ViewportSize;
-    uint  AOTermIndex;
-    uint  EdgesIndex;
-    uint  OutputUAV;
-    uint  FinalApply;
-    float DenoiseBlurBeta;
-    float Intensity;
+    uint2        ViewportSize;
+    FTexture2D   AOTerm;
+    FTexture2D   Edges;
+    FRWTexture2D Output;
+    uint         FinalApply;
+    float        DenoiseBlurBeta;
+    float        Intensity;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -31,7 +31,7 @@ void StoreOutput(uint2 PixCoord, float Value, bool bFinalApply)
         Result = saturate(Result * XE_GTAO_OCCLUSION_TERM_SCALE);
         Result = saturate(1.0 - (1.0 - Result) * Pass().Intensity);
     }
-    gRWTextures2D[Pass().OutputUAV][PixCoord] = float4(Result, 0.0, 0.0, 0.0);
+    Pass().Output[PixCoord] = float4(Result, 0.0, 0.0, 0.0);
 }
 
 [shader("compute")]
@@ -53,9 +53,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float2 PixelSize    = 1.0 / float2(ViewportSize);
     const float2 GatherCenter = float2(PixCoordBase) * PixelSize;
 
-    Texture2D    Edges  = gTextures2D[Pass().EdgesIndex];
-    Texture2D    AOTerm = gTextures2D[Pass().AOTermIndex];
-    SamplerState Smp    = gSamplers[SAMPLER_POINT_CLAMP];
+    FTexture2D Edges  = Pass().Edges;
+    FTexture2D AOTerm = Pass().AOTerm;
+    FSampler   Smp    = Samplers::PointClamp;
 
     const float4 EdgesQ0 = Edges.GatherRed(Smp, GatherCenter, int2(0, 0));
     const float4 EdgesQ1 = Edges.GatherRed(Smp, GatherCenter, int2(2, 0));

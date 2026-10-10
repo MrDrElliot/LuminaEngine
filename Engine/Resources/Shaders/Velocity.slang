@@ -11,7 +11,7 @@ struct FragmentInput
 
 struct FData
 {
-    uint DepthIndex;
+    FTexture2D Depth;
 };
 
 // Any depth on the ray reconstructs the same direction, so this one is picked for float range, not distance.
@@ -33,7 +33,7 @@ float2 FragmentMain(FragmentInput Input) : SV_Target0
 {
     FData* Data = GetPassArgs<FData>();
 
-    const float Raw = gTextures2D[Data.DepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], Input.UV, 0.0).r;
+    const float Raw = Data.Depth.SampleLevel(Samplers::PointClamp, Input.UV, 0.0).r;
 
     // Reverse-Z puts the far plane at exactly 0, where a position unprojects past float precision.
     if (Raw <= 0.0)

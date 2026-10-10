@@ -100,6 +100,9 @@ enum class ELuminaEngineVersion : uint32
 	// An entity stores its parent and sibling index, replacing the removed FRelationshipComponent's raw links.
 	REGISTRY_PARENT_LINKS,
 
+	// FGeometrySurface stores each LOD's measured error; older meshes load LOD 0 only until reimported.
+	MESH_LOD_ERROR,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

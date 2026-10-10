@@ -25,6 +25,17 @@ namespace Lumina::RHI::Native
 
     // The opaque command buffer behind an RHI handle. Vulkan: VkCommandBuffer. Null if no device.
     RUNTIME_API void* GetNativeCommandBuffer(FCmdListH CommandList);
+
+    struct FNativeTexture
+    {
+        void*  Image  = nullptr;   // VkImage on Vulkan
+        void*  View   = nullptr;   // VkImageView over every mip and layer
+        uint32 Format = 0;         // VkFormat
+        uint32 Layout = 0;         // VkImageLayout the image stays in between passes
+    };
+
+    // For an SDK that records its own work against an engine texture, such as an upscaler. All null if the handle is dead.
+    RUNTIME_API FNativeTexture GetNativeTexture(FTextureH Texture);
     
     struct FDeviceCreationRequest
     {

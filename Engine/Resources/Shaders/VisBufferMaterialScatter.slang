@@ -46,14 +46,14 @@ void AppendPair(uint Slot, uint Tile)
         uint Base = 0u;
         if (Rank == 0u)
         {
-            InterlockedAdd(SpanAt(&Pass().Cursors, Slot)[0], Count, Base);
+            InterlockedAdd(Pass().Cursors.At(Slot)[0], Count, Base);
         }
         Base = WaveReadLaneFirst(Base);
 
-        const uint Entry = SpanGet(&Pass().Offsets, Slot) + Base + Rank;
+        const uint Entry = Pass().Offsets.Get(Slot) + Base + Rank;
         if (Entry < Pass().PairList.Count)
         {
-            SpanSet(&Pass().PairList, Entry, PackVisPixel(TileOrigin(Tile)));
+            Pass().PairList.Set(Entry, PackVisPixel(TileOrigin(Tile)));
         }
         bPending = false;
     }
@@ -83,12 +83,12 @@ void AppendPixels(uint Slot, uint Tile, uint Lo, uint Hi)
         uint Base = 0u;
         if (WaveIsFirstLane())
         {
-            InterlockedAdd(SpanAt(&Pass().Cursors, Run)[0], Total, Base);
+            InterlockedAdd(Pass().Cursors.At(Run)[0], Total, Base);
         }
         Base = WaveReadLaneFirst(Base);
 
         const uint2 Origin = TileOrigin(Tile) * MATERIAL_CLASSIFY_TILE;
-        uint Entry = SpanGet(&Pass().Offsets, Run) + Base + Before;
+        uint Entry = Pass().Offsets.Get(Run) + Base + Before;
         for (uint Half = 0u; Half < 2u; ++Half)
         {
             uint Bits = Half == 0u ? Lo : Hi;
@@ -99,7 +99,7 @@ void AppendPixels(uint Slot, uint Tile, uint Lo, uint Hi)
                 Bits &= Bits - 1u;
                 if (Entry < Pass().PixelList.Count)
                 {
-                    SpanSet(&Pass().PixelList, Entry, PackVisPixel(Origin + uint2(Local % MATERIAL_CLASSIFY_TILE, Local / MATERIAL_CLASSIFY_TILE)));
+                    Pass().PixelList.Set(Entry, PackVisPixel(Origin + uint2(Local % MATERIAL_CLASSIFY_TILE, Local / MATERIAL_CLASSIFY_TILE)));
                 }
                 ++Entry;
             }
@@ -121,7 +121,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
         [unroll]
         for (uint i = 0u; i < MATERIAL_TILE_SLOTS; ++i)
         {
-            const uint Word   = SpanGet(&Pass().TileSlots, First + i * 3u);
+            const uint Word   = Pass().TileSlots.Get(First + i * 3u);
             const uint Stored = Word & ~MATERIAL_TILE_SPARSE_FLAG;
             if (Stored == 0u || Stored > NumSlots)
             {
@@ -130,7 +130,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
 
             if ((Word & MATERIAL_TILE_SPARSE_FLAG) != 0u)
             {
-                AppendPixels(Stored - 1u, Index, SpanGet(&Pass().TileSlots, First + i * 3u + 1u), SpanGet(&Pass().TileSlots, First + i * 3u + 2u));
+                AppendPixels(Stored - 1u, Index, Pass().TileSlots.Get(First + i * 3u + 1u), Pass().TileSlots.Get(First + i * 3u + 2u));
             }
             else
             {
@@ -141,9 +141,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
     }
 
     const uint OverflowIndex = Index - Pass().NumTiles;
-    if (OverflowIndex < min(SpanGet(&Pass().OverflowCount, 0u), Pass().Overflow.Count))
+    if (OverflowIndex < min(Pass().OverflowCount.Get(0u), Pass().Overflow.Count))
     {
-        const uint Packed = SpanGet(&Pass().Overflow, OverflowIndex);
+        const uint Packed = Pass().Overflow.Get(OverflowIndex);
         const uint Slot   = Packed & MATERIAL_PAIR_SLOT_MASK;
         if (Slot < NumSlots)
         {

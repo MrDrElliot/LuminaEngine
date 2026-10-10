@@ -1,7 +1,6 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Quad geometry (two triangles), local XY plane in [-0.5, 0.5].
 static const float2 Positions[6] =
 {
     float2(-0.5, -0.5),
@@ -36,7 +35,7 @@ struct VertexOutput
 [shader("vertex")]
 VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
-    FWidgetInstance Widget = SpanGet(Widgets(), InstanceIndex);
+    FWidgetInstance Widget = Widgets().Get(InstanceIndex);
 
     const float2 QuadPos = Positions[VertexIndex];
     const float2 Scaled  = QuadPos * Widget.WorldSize;
@@ -44,7 +43,6 @@ VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex
     float3 WorldPos;
     if ((Widget.Flags & WIDGET_FLAG_BILLBOARD) != 0u)
     {
-        // Camera-facing: place at the entity's translation, expand along view axes.
         const float3 Origin = mul(Widget.Transform, float4(0.0, 0.0, 0.0, 1.0)).xyz;
 
         const float4x4 View = GetCameraView();
@@ -55,8 +53,7 @@ VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex
     }
     else
     {
-        // Oriented: quad lies in the entity's local XY plane (normal = local +Z). Negate Y so
-        // the UI's top-left origin maps upright, matching the billboard path's -View[1] up.
+        // Y is negated so the UI's top-left origin maps upright, matching the billboard's -View[1] up.
         WorldPos = mul(Widget.Transform, float4(Scaled.x, -Scaled.y, 0.0, 1.0)).xyz;
     }
 

@@ -57,17 +57,15 @@ struct FTerrainVisibleMeshlet
     uint MeshletIndex;
 };
 
-// Shared by the terrain VS and PS (one push range, identical layout in both stages). Cull buffers are
-// reached by device pointer (VS walks them); textures by bindless index. The PS only reads Params and
-// LayerWeightsIndex -- it never dereferences the cull pointers.
+// One push range shared by the terrain VS and PS, and the PS never dereferences the cull pointers.
 struct FTerrainPushConstants
 {
-    uint64_t Params;      // FTerrainRenderParams, see LoadBlock
+    uint64_t                        Params;      // FTerrainRenderParams, see LoadBlock
     GPUSpan<FTerrainChunkInfo>      Chunks;
     GPUSpan<FTerrainMeshletInfo>    Meshlets;
     GPUSpan<FTerrainVisibleMeshlet> Visible;
-    uint HeightmapIndex;       // bindless 2D
-    uint NormalIndex;          // bindless 2D
-    uint LayerWeightsIndex;    // bindless 2D-array
-    uint _Pad0;
+    FTexture2D                      Heightmap;
+    FTexture2D                      Normal;
+    FTexture2DArray                 LayerWeights;
+    uint                            _Pad0;
 };

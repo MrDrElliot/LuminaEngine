@@ -1,14 +1,7 @@
 #include "Includes/TerrainData.slang"
 #include "Includes/SurfaceShading.slang"
 
-// Terrain base-pass pixel shader. Terrain keeps its own heightfield geometry (the meshlet-driven VS + its
-// FTerrainPushConstants), but its SHADING is the shared ShadeSurface (SurfaceShading.slang) -- the exact
-// path meshes use -- so lighting, shadows, IBL, clustering and the debug views can never drift from the
-// mesh path. This file only: builds the material-graph locals, runs the pixel material graph (which reaches
-// terrain layer blending via TerrainData.slang), adapts the terrain interpolants to the shared
-// FBaseVertexOutput, and packs output. All terrain layer access lives in TerrainData.slang.
-//
-// The terrain pipeline is specialized with SPEC_ENABLE_GTAO = 0, so ShadeSurface's AO block is dead-stripped.
+// The terrain pipeline specializes SPEC_ENABLE_GTAO = 0, so ShadeSurface's AO block is stripped.
 
 struct PSInput
 {
@@ -35,17 +28,14 @@ struct PSOutput
     uint   Picker   : SV_Target1;
 };
 
-// Masked materials run their alpha-test discard (inside ShadeSurface) which MUST execute before the depth
-// write, so the masked variant omits forced early-Z. Non-masked keeps it over the heavy PBR shader; its
-// discard branch is never taken so the early write stays correct. Mirrors BasePixelPass.slang.
+// The masked variant drops forced early-Z because its discard must run before the depth write. Mirrors BasePixelPass.slang.
 #ifndef MASKED
 [earlydepthstencil]
 #endif
 [shader("fragment")]
 PSOutput FragmentMain(PSInput Input)
 {
-    // Locals the material pixel graph codegen reads (terrain aliases UV0 -> world XZ, plus HeightUV for the
-    // layer-weight lookups in TerrainData.slang).
+    // Material graph locals, with UV0 aliased to world XZ.
     uint   EntityID      = Input.EntityID;
     uint   MaterialIndex = Input.MaterialIndex;
     float3 WorldNormal   = normalize(Input.NormalWS.xyz);
@@ -56,8 +46,7 @@ PSOutput FragmentMain(PSInput Input)
     float2 HeightUV      = Input.HeightUV;
     float4 VertexColor   = Input.FragColor;
     float4 WorldTangent  = Input.TangentWS;
-    // Terrain parameterizes from world XZ and has no authored second set; aliasing keeps a material that
-    // samples set 1 working instead of collapsing it to zero.
+    // Terrain has no authored second UV set, so set 1 aliases set 0 rather than reading zero.
     float2 UV1           = UV0;
     float2 UV1_DDX       = ddx(UV1);
     float2 UV1_DDY       = ddy(UV1);
@@ -70,14 +59,11 @@ PSOutput FragmentMain(PSInput Input)
     float4 VertexColor_DDX   = ddx(VertexColor);
     float4 VertexColor_DDY   = ddy(VertexColor);
 
-    // One report per pixel, keyed by material slot -- see RequestMaterialResolution. A real pixel shader,
-    // so these are the quad's implicit derivatives rather than analytic ones.
+    // A real pixel shader, so these are the quad's implicit derivatives.
     RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
     $MATERIAL_INPUTS
 
-    // Adapt the terrain interpolants to the shared shading input. Terrain has no per-instance data, so the
-    // instance fields carry constants: ReceiveShadow stays on (terrain has always received sun shadows),
-    // MeshletIndex feeds the meshlet debug view.
+    // Terrain has no per-instance data, so the instance fields carry constants.
     FBaseVertexOutput Surface;
     Surface.FragColor     = Input.FragColor;
     Surface.NormalVS      = Input.NormalVS;

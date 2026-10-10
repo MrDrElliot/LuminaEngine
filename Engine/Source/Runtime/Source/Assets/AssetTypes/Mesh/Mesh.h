@@ -101,7 +101,7 @@ namespace Lumina
         PROPERTY(Category = "AABB")
         FAABB BoundingBox;
 
-        // Scales every LOD switch distance, so a heavy mesh such as card foliage can coarsen sooner than the scene-wide setting.
+        // Multiplies this mesh's LOD errors, so 2 switches twice as far away and 0.5 lets card foliage coarsen sooner.
         PROPERTY(Editable, Category = "Level Of Detail", ClampMin = 0.05f, ClampMax = 4.0f)
         float LODDistanceScale = 1.0f;
 

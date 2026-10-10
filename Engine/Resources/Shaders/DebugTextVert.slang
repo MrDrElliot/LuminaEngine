@@ -1,8 +1,7 @@
 #pragma once
 #include "Includes/TextCommon.slang"
 
-// Screen-space debug text (World::DrawDebugText). Reuses FGPUGlyph, but PlaneMin/Max hold pixel coords
-// (min = top-left, max = bottom-right); converts pixels -> NDC using the viewport size in the push const.
+// PlaneMin and PlaneMax hold pixel coords here, top-left to bottom-right.
 
 struct VertexOutput
 {
@@ -14,16 +13,15 @@ struct VertexOutput
 [shader("vertex")]
 VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
-    FGPUGlyph Glyph = SpanGet(&Pass().Glyphs, InstanceIndex);
+    FGPUGlyph Glyph = Pass().Glyphs.Get(InstanceIndex);
 
     const float2 Corner = kTextQuadCorners[VertexIndex];          // (0,0)=top-left .. (1,1)=bottom-right
-    // Vulkan NDC is Y-down with a positive-height viewport (the Y-flip lives in the camera projection, which
-    // screen-space text bypasses), so top-left pixel (0,0) maps to NDC (-1, -1).
+    // Screen-space text bypasses the camera Y-flip, so pixel (0,0) maps to NDC (-1, -1).
     const float2 Px     = lerp(Glyph.PlaneMin, Glyph.PlaneMax, Corner);
     const float2 NDC    = float2(Px.x / float(Pass().ScreenWidth)  * 2.0 - 1.0,
                                  Px.y / float(Pass().ScreenHeight) * 2.0 - 1.0);
 
-    // Atlas row 0 = glyph top, and Corner.y=0 is the top here, so V maps straight (no flip).
+    // Atlas row 0 is the glyph top, as is Corner.y 0, so V maps without a flip.
     const float U = lerp(Glyph.UVRect.x, Glyph.UVRect.z, Corner.x);
     const float V = lerp(Glyph.UVRect.y, Glyph.UVRect.w, Corner.y);
 

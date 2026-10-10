@@ -2,14 +2,9 @@
 #include "GlobalRHI.slang"
 #include "Tonemap.slang"
 
-// Bindless ImGui pass: vertices pulled by device address, textures sampled from the
-// global heap by ResourceID. Args re-point per draw (TextureID changes).
+// Args re-point per draw as TextureID changes.
 
-// How the sampled texel is turned into a display value.
-//   DIRECT passes through, correct for UI atlases and UNORM textures holding display-encoded bytes.
-//   HDR:    the texel is LINEAR radiance (RGBA16F environment maps, scene captures). Exposure ->
-//           tone map -> display encode, matching what ColorGrading.slang does to the scene. Without
-//           it the linear values reach an _UNORM swapchain unencoded and read far too dark.
+// HDR texels are linear radiance and get the scene's exposure, tone map and encode, or they read far too dark.
 #define IMGUI_DISPLAY_DIRECT 0u
 #define IMGUI_DISPLAY_HDR    1u
 #define IMGUI_DISPLAY_LINEAR 2u   // sRGB encode, for a texture whose sampler hands back linear values
@@ -26,14 +21,12 @@ float3 ImGuiEncodeSRGB(float3 Linear)
 struct FImGuiArgs
 {
     float2   Scale;        // 2 / DisplaySize
-    float2   Translate;    // -1 - DisplayPos * Scale
-    uint     TextureID;    // heap ResourceID (gTextures2D[], or gTextures2DArray[] when bIsArray)
-    uint     SamplerIndex; // SAMPLER_* heap slot
+    float2   Translate;    // -(1 + DisplayPos * Scale)
+    uint     TextureID;    // heap ResourceID, read as FTexture2DArray when bIsArray
+    FSampler Sampler;
     uint     DisplayMode;  // IMGUI_DISPLAY_*
     float    Exposure;     // linear multiplier, HDR mode only
-    // Array previews. The heap arrays are aliased views of one descriptor array, so TextureID is the
-    // same ResourceID either way -- but the DESCRIPTOR TYPE has to match how the image was created, so
-    // a Tex2DArray must be read through gTextures2DArray[] or it resolves to the null slot.
+    // The descriptor type must match the image, so a Tex2DArray read as FTexture2D resolves to the null slot.
     uint     ArraySlice;   // layer to sample, bIsArray only
     uint     bIsArray;     // 0 = Texture2D, 1 = Texture2DArray
     uint64_t VertexAddr;   // device address of the transient ImDrawVert array

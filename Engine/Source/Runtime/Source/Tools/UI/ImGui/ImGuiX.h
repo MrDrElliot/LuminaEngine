@@ -245,7 +245,7 @@ namespace Lumina::ImGuiX
      * Draws the following images as one slice of a Texture2DArray.
      *
      * Required, not cosmetic: an array texture's heap slot holds a VIEW_TYPE_2D_ARRAY view, and the
-     * ImGui pixel shader's default path reads gTextures2D[]. Sampling a 2D_ARRAY view through a
+     * ImGui pixel shader's default path reads it as an FTexture2D. Sampling a 2D_ARRAY view through a
      * Texture2D descriptor is a type mismatch, so an array drawn without this resolves to the null
      * slot (the purple placeholder) rather than merely looking wrong.
      *

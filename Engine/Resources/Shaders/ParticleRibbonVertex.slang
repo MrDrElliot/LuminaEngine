@@ -19,7 +19,7 @@ float3 RibbonPoint(uint Slot, float3 Head, uint Point)
 
     const uint Segments = Pass().RibbonSegments;
     const uint Sample   = (Pass().RibbonHead + Segments - ((Point - 1u) % Segments)) % Segments;
-    return SpanGet(&Pass().RibbonHistory, Slot * Segments + Sample).xyz;
+    return Pass().RibbonHistory.Get(Slot * Segments + Sample).xyz;
 }
 
 [shader("vertex")]
@@ -27,7 +27,7 @@ FParticleVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID)
 {
     const uint Segments = Pass().RibbonSegments;
     const uint Slot     = ParticleSlotForVertex(VertexIndex);
-    FGPUParticle P      = SpanGet(&Pass().Particles, Slot);
+    FGPUParticle P      = Pass().Particles.Get(Slot);
     if (Segments == 0u || !IsParticleAlive(P))
     {
         return CulledParticleVertex();

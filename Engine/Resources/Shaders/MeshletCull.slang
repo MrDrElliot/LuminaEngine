@@ -2,36 +2,15 @@
 #include "Includes/MeshletCullCore.slang"
 #include "Includes/MeshletGeometry.slang"
 
-// Per-meshlet culling, and the sole authority on what rasterizes. One workgroup is one FMeshletBlock:
-// up to MESHLET_CULL_GROUP_SIZE meshlets of ONE instance, so every per-instance load is workgroup-uniform
-// and only the meshlet bounds are scattered. Survivors are appended to MeshletDrawList, which every
-// geometry pass then draws straight out of.
-//
-// Classic two-phase occlusion. PrevVisibility[RetainedSlot] holds "this instance was visible to the
-// camera at the end of last frame":
-//
-//   EARLY  replays that set with NO Hi-Z test, producing the depth the pyramid is built from.
-//   LATE   tests EVERY instance against that fresh pyramid, emits only the ones early did not draw,
-//          and accumulates next frame's set into OutVisibility.
-//
-// The two draw sets partition the frustum-visible set, so whatever the flag holds -- stale, raced, or
-// wrong -- each instance rasterizes exactly once. The flag only decides which phase, i.e. how good the
-// occluder set is. Both dispatches must read the SAME flags, hence the separate write target below.
-//
-// Only views flagged CULL_VIEW_FLAG_MESHLET_HIZ are two-phase. Every other view (shadow cascades) is
-// culled in full by the early dispatch and skipped entirely by the late one, which is what stops it
-// emitting its meshlets twice.
-//
-// No lane may return early or the wave vote below sees a partial group, so every reject sets bKeep false.
+// The early phase replays last frame's visible meshlets and the late phase tests the rest against this frame's pyramid.
 
 struct FMeshletCullArgs
 {
     uint            NumViews;
     // A bucket index is ViewIndex * NumDraws + DrawID, which is how a workgroup recovers its cull view.
     uint            NumDraws;
-    // MESHLET_SLICE_EARLY or MESHLET_SLICE_LATE.
     uint            Slice;
-    // This frame's stamp. A slot is visible from last frame iff it holds VisibilityTag - 1.
+    // This frame's stamp. A slot was visible last frame iff it holds the previous tag.
     uint            VisibilityTag;
     // Matches the block build, so the late phase reads the back region only when the build put blocks there.
     uint            bSplitPhases;
@@ -39,11 +18,12 @@ struct FMeshletCullArgs
 
     GPUSpan<FRenderBucket> Buckets;
     GPUSpan<FMeshletBlock> BlockList;
-    // Read by BOTH dispatches and written by neither: the partition needs them to see one set of flags.
-    // Its own count bounds RetainedSlot, and is 0 when the buffer is missing, so the reads short-circuit.
+    // Read by both dispatches and written by neither, so the partition sees one set of flags. A missing buffer has count 0.
     GPUSpan<uint>          PrevVisibility;
     // Stamped with VisibilityTag by every visible block; identical stores need no atomic and no clear.
     GPUSpan<uint>          OutVisibility;
+    // One word per block of an instance's camera LOD. Both phases read it, and only the late phase replaces it.
+    GPUSpan<uint>          MeshletVisibility;
 };
 FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
@@ -51,9 +31,7 @@ FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 #error "MESHLET_CULL_GROUP_SIZE must fit one wave, or WaveActiveAnyTrue below covers only part of the group."
 #endif
 
-// Flat workgroup -> owning bucket. Blocks are dense inside a bucket but sparse across the arena, so the
-// bucket cannot be read from the block; BuildMeshletCullArgs writes a dense prefix and this inverts it.
-// Workgroup-uniform, and ~9 steps for the hundreds of buckets a frame has.
+// Inverts the dense prefix BuildMeshletCullArgs writes, since blocks are sparse across the arena.
 uint FindBucketForWork(uint WorkIndex, uint NumBuckets)
 {
     uint Lo = 0u;
@@ -61,7 +39,7 @@ uint FindBucketForWork(uint WorkIndex, uint NumBuckets)
     while (Lo + 1u < Hi)
     {
         const uint Mid = (Lo + Hi) >> 1u;
-        if (SpanAt(&Pass().Buckets, Mid).CullWorkBase <= WorkIndex)
+        if (Pass().Buckets.At(Mid).CullWorkBase <= WorkIndex)
         {
             Lo = Mid;
         }
@@ -84,8 +62,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // Undoes the Y fold BuildMeshletCullArgs applies past MAX_DISPATCH_AXIS groups.
     const uint WorkIndex = GroupID.x + GroupID.y * (uint)MAX_DISPATCH_AXIS;
 
-    // The grid is folded up to a rectangle, so the tail workgroups have no block. They still have to
-    // reach the barrier below, so this gates the work rather than returning.
+    // Tail workgroups of the folded grid have no block, so this gates the work rather than returning.
     uint ArgIdx        = 0u;
     uint BlockIdx      = 0u;
     bool bBlockInRange = false;
@@ -94,14 +71,14 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     {
         ArgIdx = FindBucketForWork(WorkIndex, NumBuckets);
 
-        const FRenderBucket Bucket = SpanGetAligned(&Pass().Buckets, ArgIdx);
+        const FRenderBucket Bucket = Pass().Buckets.GetAligned(ArgIdx);
         const uint BlockSlot = WorkIndex - Bucket.CullWorkBase;
 
         // The late phase of a split bucket culls only the blocks the late build appended at the region's end.
         const bool bBackRegion = bLate && Pass().bSplitPhases != 0u && CullViewHasFlag(ArgIdx / NumDraws, CULL_VIEW_FLAG_MESHLET_HIZ)
                               && BucketFitsDemand(Bucket.DrawDemand, Bucket.DrawCapacity, Bucket.BlockDemand, Bucket.BlockCapacity);
 
-        // Bounded by what was APPENDED, not what CullInstances reserved, since unwritten blocks hold last frame's ring.
+        // Bounded by what was appended, not what CullInstances reserved, since unwritten blocks hold last frame's ring.
         const uint Front         = min(Bucket.BlockCursor, Bucket.BlockCapacity);
         const uint BlocksWritten = bBackRegion ? min(Bucket.BlockBackCount, Bucket.BlockCapacity - Front) : Front;
         bBlockInRange = BlockSlot < BlocksWritten;
@@ -109,22 +86,18 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
                                     : (Bucket.BlockBase + BlockSlot);
     }
 
-    // Workgroup-uniform: ArgIdx is, and the view is a pure function of it.
-    const FCullView View  = SpanGetAligned(CullViews(), (ArgIdx / NumDraws));
+    // Workgroup-uniform since the view is a pure function of ArgIdx.
+    const FCullView View  = CullViews().GetAligned((ArgIdx / NumDraws));
     const bool bTwoPhase  = View.HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ);
 
-    // A single-phase view belongs entirely to the early dispatch. Skipping it in the late one is what
-    // keeps a cascade's meshlets out of the draw list twice -- both dispatches share the bucket.
+    // Single-phase views belong to the early dispatch, and both dispatches share the bucket, so the late one skips them.
     const bool bHasWork = bBlockInRange && (!bLate || bTwoPhase);
 
-    // Workgroup-uniform, so this is a uniform branch: blocks the builder never filled are never read.
-    const FMeshletBlock Block = bHasWork ? SpanGet(&Pass().BlockList, BlockIdx) : (FMeshletBlock)0;
+    // Workgroup-uniform branch, so blocks the builder never filled are never read.
+    const FMeshletBlock Block = bHasWork ? Pass().BlockList.Get(BlockIdx) : (FMeshletBlock)0;
     const uint InstanceID = Block.InstanceID;
     const uint MeshletIdx = Block.MeshletBase + ThreadID;
 
-    // Guarded rather than folded into an && chain: this is the deepest dependent hop any lane makes
-    // before the cull proper, and unconditional it was paid by workgroups with nothing to do.
-    //
     // TestMeshletAgainstView bounds every read by the header's own count.
     FGPUInstance* Inst = Instances() + InstanceID;
 
@@ -134,8 +107,27 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     if (bHasWork && bTwoPhase)
     {
         RetainedSlot = Inst.RetainedSlot;
-        bWasVisible  = SpanGet(&Pass().PrevVisibility, RetainedSlot) == (Pass().VisibilityTag - 1u);
+        bWasVisible  = Pass().PrevVisibility.Get(RetainedSlot) == (Pass().VisibilityTag - 1u);
     }
+
+    // A block from the coarser-LOD overflow fallback is not one of the camera range's blocks, so it has no word.
+    uint MeshletVisibilityWord = 0u;
+    bool bHasMeshletVisibility = false;
+    uint MeshletVisibilityBits = ~0u;
+    if (bHasWork && bTwoPhase && Inst.MeshletVisibilityBase != kNoMeshletVisibility && Block.MeshletBase >= Inst.SurfaceMeshletOffset)
+    {
+        const uint RangeOffset = Block.MeshletBase - Inst.SurfaceMeshletOffset;
+        if (RangeOffset < Inst.SurfaceMeshletCount && (RangeOffset % MESHLET_CULL_GROUP_SIZE) == 0u)
+        {
+            MeshletVisibilityWord = Inst.MeshletVisibilityBase + RangeOffset / MESHLET_CULL_GROUP_SIZE;
+            bHasMeshletVisibility = Pass().MeshletVisibility.Contains(MeshletVisibilityWord);
+            if (bHasMeshletVisibility)
+            {
+                MeshletVisibilityBits = Pass().MeshletVisibility.Get(MeshletVisibilityWord);
+            }
+        }
+    }
+    const bool bWasMeshletVisible = bWasVisible && ((MeshletVisibilityBits >> ThreadID) & 1u) != 0u;
 
     // Late only, because the early phase is a replay and an instance dropped there is dropped for good.
     bool bInstanceOccluded = false;
@@ -150,13 +142,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         bInstanceOccluded = Proj.bValid && IsHiZOccluded(Proj);
     }
 
-    // EARLY emits exactly last frame's visible set; LATE emits exactly its complement. Disjoint, so no
-    // instance rasterizes twice and none is missed by both. A single-phase view emits from EARLY always.
-    const bool bEmitPhase = !bTwoPhase || (bLate != bWasVisible);
+    // Early emits last frame's visible meshlets and late their complement, so each rasterizes once whatever the bits hold.
+    const bool bEmitPhase = !bTwoPhase || (bLate != bWasMeshletVisible);
 
-    // LATE tests everything, including instances EARLY already drew and it will not emit: that test is
-    // what rewrites the flag for next frame. EARLY only tests what it can emit -- an instance it is not
-    // going to draw costs it nothing.
+    // Late also tests what early drew, since that test is what writes next frame's flag and bits.
     const bool bTest = bHasWork && !bInstanceOccluded && (ThreadID < Block.Count) && (bLate || bEmitPhase);
     bool       bKeep = bTest && bEmitPhase;
     bool       bLaneVisible = false;
@@ -166,9 +155,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         const FMeshletCullContext Ctx = MakeMeshletCullContext(Inst);
         FMeshletBoundsCache Cache     = MakeMeshletBoundsCache();
 
-        // The early phase is a replay and must not Hi-Z cull: a meshlet dropped there is dropped for
-        // good, because the late phase does not emit for instances the early phase drew.
-        const bool bVisible = TestMeshletAgainstView(Ctx, View, MeshletIdx, Cache, /*bApplyHiZ*/ bLate);
+        // No Hi-Z in the early replay, since the late phase never re-emits what the early phase drew.
+        const bool bVisible = TestMeshletAgainstView(Ctx, View, MeshletIdx, Cache, bLate);
 
         bKeep = bKeep && bVisible;
         bLaneVisible = bVisible;
@@ -178,7 +166,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     const uint WaveKept = WaveActiveCountBits(bKeep);
     if (WaveKept > 0u)
     {
-        FRenderBucket* Bucket = SpanAt(&Pass().Buckets, ArgIdx);
+        FRenderBucket* Bucket = Pass().Buckets.At(ArgIdx);
         uint WaveOld = 0u;
         if (WaveIsFirstLane())
         {
@@ -194,16 +182,23 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
             FMeshletDraw Draw;
             Draw.InstanceID        = InstanceID;
             Draw.PackedIndexAndTag = FMeshletDraw::Pack(MeshletIdx, Scene().CullData.MeshletDrawTag);
-            SpanSet(MeshletDrawList(), Bucket.DrawBase + Local, Draw);
+            MeshletDrawList().Set(Bucket.DrawBase + Local, Draw);
         }
     }
 
-    // Reached by every lane, so the vote covers the whole group. Replaces gsAnyVisible and both barriers.
+    // Reached by every lane, so the vote covers the whole group.
     const bool bBlockVisible = WaveActiveAnyTrue(bLaneVisible);
+    const uint VisibleMeshlets = WaveActiveBitOr(bLaneVisible ? (1u << ThreadID) : 0u);
+
+    // This block owns its whole word, so a plain store replaces it.
+    if (bLate && bHasMeshletVisibility && !bInstanceOccluded && ThreadID == 0u)
+    {
+        Pass().MeshletVisibility.Set(MeshletVisibilityWord, VisibleMeshlets);
+    }
 
     // Every visible block stores the same stamp, so an occluded block of the same instance cannot undo it.
-    if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && SpanContains(&Pass().OutVisibility, RetainedSlot))
+    if (bLate && bTwoPhase && ThreadID == 0u && bBlockVisible && Pass().OutVisibility.Contains(RetainedSlot))
     {
-        SpanAt(&Pass().OutVisibility, RetainedSlot)[0] = Pass().VisibilityTag;
+        Pass().OutVisibility.At(RetainedSlot)[0] = Pass().VisibilityTag;
     }
 }

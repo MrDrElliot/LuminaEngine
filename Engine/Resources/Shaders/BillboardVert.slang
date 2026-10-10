@@ -3,11 +3,11 @@
 
 static const float2 Positions[6] =
 {
-    float2(-1.0, -1.0),  // Triangle 1
+    float2(-1.0, -1.0),
     float2( 1.0, -1.0),
     float2( 1.0,  1.0),
 
-    float2(-1.0, -1.0),  // Triangle 2
+    float2(-1.0, -1.0),
     float2( 1.0,  1.0),
     float2(-1.0,  1.0)
 };
@@ -37,7 +37,7 @@ VertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex
 {
     float2 QuadPos = Positions[VertexIndex];
 
-    FBillboardInstance Billboard = SpanGet(Billboards(), InstanceIndex);
+    FBillboardInstance Billboard = Billboards().Get(InstanceIndex);
 
     float4x4 ViewMatrix = GetCameraView();
 

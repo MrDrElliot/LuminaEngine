@@ -1,11 +1,7 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 
-// Grid params are read from the per-frame scene snapshot (Scene()), NOT live render-thread
-// state. LightCull (which fills these clusters) and the base pass (which looks up the tiles) both
-// index off the same snapshot frustum/screen size; sourcing the AABBs from live projection/screen
-// size instead would bin lights into a different frustum than the lookup -> whole tiles light with
-// the wrong lights whenever live and snapshot diverge (camera motion between extract and render).
+// Reads the per-frame scene snapshot, never live state, so LightCull and the base-pass lookup bin the same frustum.
 float3 ScreenToView(float2 ScreenCoord)
 {
     float2 UV       = ScreenCoord / float2(Scene().ScreenSize.xy);
@@ -53,8 +49,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     float3 MinTile = ScreenToView(MinTileSS);
     float3 MaxTile = ScreenToView(MaxTileSS);
 
-    // Slice depths are positive view Z (LookAt is left-handed, +Z forward) and must match the log
-    // distribution ComputeClusterIndex inverts, or fragments index a froxel they were not binned into.
+    // Positive view Z, and must match the log distribution ComputeClusterIndex inverts.
     float SliceNear = ZNear * pow(ZFar / ZNear, float(Tile.z)     / float(GridSize.z));
     float SliceFar  = ZNear * pow(ZFar / ZNear, float(Tile.z + 1) / float(GridSize.z));
 
@@ -63,16 +58,13 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
 
     if (IsCameraOrthographic())
     {
-        // Parallel rays: the tile's view-space XY extent is the same at every depth, so the froxel is
-        // just that rectangle extruded across the slice. The perspective path below cannot be reused --
-        // it scales the tile corners along rays through the eye, which do not exist here.
+        // Parallel rays, so the froxel is the tile rectangle extruded across the slice.
         MinBounds = float3(min(MinTile.xy, MaxTile.xy), SliceNear);
         MaxBounds = float3(max(MinTile.xy, MaxTile.xy), SliceFar);
     }
     else
     {
-        // Negated to match LineIntersectionWithZPlane's -Z plane normal; the two cancel and the
-        // intersections land back at positive view Z.
+        // Negated to cancel LineIntersectionWithZPlane's -Z plane normal.
         float PlaneNear = -SliceNear;
         float PlaneFar  = -SliceFar;
 
@@ -85,6 +77,6 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         MaxBounds = max(max(MinPointNear, MinPointFar), max(MaxPointNear, MaxPointFar));
     }
 
-    SpanAt(Clusters(), TileIndex).MinPoint = float4(MinBounds, 0.0);
-    SpanAt(Clusters(), TileIndex).MaxPoint = float4(MaxBounds, 0.0);
+    Clusters().At(TileIndex).MinPoint = float4(MinBounds, 0.0);
+    Clusters().At(TileIndex).MaxPoint = float4(MaxBounds, 0.0);
 }

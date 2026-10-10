@@ -15,7 +15,7 @@ namespace Lumina
     // An lvalue, and in bounds because the buffer holds PARTICLE_ATTR_FLOATS per slot of MaxParticles.
     static FString AttributeSlotExpr(int32 Slot)
     {
-        return FString("SpanAt(PAttr(), Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", Slot).c_str() + "u)[0]";
+        return FString("PAttr().At(Index * PARTICLE_ATTR_FLOATS + ") + Format("{}", Slot).c_str() + "u)[0]";
     }
 
     // A single pass, so inserted text is not rescanned.

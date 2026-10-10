@@ -1,13 +1,11 @@
 #pragma once
 
-#include "GPUSpan.slang"
+import RHI;
 #include "GlobalRHI.slang"
 
-// Shared layout for the fully-bindless RmlUi pass: per-draw data lives in a device-address buffer
-// indexed per-vertex, so the whole UI draws in one DrawIndexed. Scissor is done in the FS (ClipRect).
+// One device-address draw array indexed per vertex lets the whole UI draw in one DrawIndexed, with scissor done in the FS.
 
-// Draw kinds. TEXTURED is the ordinary path; the gradients are RmlUi's shader decorators, where UV
-// carries the element-local pixel position rather than a texture coordinate.
+// For the gradient kinds UV carries the element-local pixel position rather than a texture coordinate.
 #define kUIShaderTextured 0u
 #define UI_SHADER_LINEAR   1u
 #define UI_SHADER_RADIAL   2u
@@ -26,17 +24,17 @@ float3 EncodeSRGB(float3 Linear)
 
 struct FUiDraw
 {
-    float4x4 MVP;          // @0
-    float4   ClipRect;     // @64  minX, minY, maxX, maxY in framebuffer pixels
-    uint     TextureID;    // @80  global-heap sampled index (gTextures2D)
-    uint     SamplerIndex; // @84  stock sampler heap slot
-    uint     ShaderType;   // @88  UI_SHADER_*
-    uint     StopOffset;   // @92  first colour stop in Stops[]
-    float4   ShaderParams; // @96  linear: p0.xy p1.xy | radial: centre.xy radius.xy | conic: centre.xy dir.xy
-    uint     StopCount;    // @112
-    uint     bRepeating;   // @116
-    float    ShaderScale;  // @120 linear only: 1 / dot(p1-p0, p1-p0)
-    uint     ClipMaskRange;// @124 count in the low 8 bits, first ClipMasks[] index above them
+    float4x4   MVP;          // @0
+    float4     ClipRect;     // @64  minX, minY, maxX, maxY in framebuffer pixels
+    FTexture2D Texture;    // @80
+    FSampler   Sampler;    // @84
+    uint       ShaderType;   // @88  UI_SHADER_*
+    uint       StopOffset;   // @92  first color stop in Stops[]
+    float4     ShaderParams; // @96  p0.xy p1.xy (linear), center.xy radius.xy (radial), center.xy dir.xy (conic)
+    uint       StopCount;    // @112
+    uint       bRepeating;   // @116
+    float      ShaderScale;  // @120 1 / dot(p1-p0, p1-p0), linear only
+    uint       ClipMaskRange;// @124 count in the low 8 bits, first ClipMasks[] index above them
 };
 
 #define UI_CLIP_COUNT(Range)  ((Range) & 0xFFu)
@@ -61,28 +59,24 @@ float2 UiClipLocal(FUiClipMask Mask, float2 FragCoord)
 struct FUiColorStop
 {
     float4 Color;      // premultiplied
-    float4 Position;   // .x = normalised position along the gradient line
+    float4 Position;   // .x is the normalized position along the gradient line
 };
 
-// Mirrors FUiVertex in RmlUiRenderer.h (stride 24); pulled by device address (no input layout).
-// Order matters: the two float2s are kept adjacent (offsets 0 and 8) so neither vector straddles a
-// 16-byte boundary under PhysicalStorageBuffer layout rules. Colour between them would put UV at
-// offset 12, which spirv-val rejects (VUID-VkShaderModuleCreateInfo-pCode-08737).
+// Mirrors FUiVertex in RmlUiRenderer.h (stride 24), and UV must stay at 8 since offset 12 fails spirv-val (VUID-08737).
 struct FUiVertex
 {
     float2 Position;   // @0
     float2 UV;         // @8
     uint   Colour;     // @16  premultiplied RGBA8
-    uint   DrawIndex;  // @20  index into Draws[]
+    uint   DrawIndex;  // @20
 };
 
-// Args block reached through the single 8-byte push constant (gRHI.Args).
 struct FRmlUiArgs
 {
-    GPUSpan<FUiDraw>      Draws;      // the per-draw array (transient)
-    GPUSpan<FUiVertex>    Vertices;   // the resident batch vertex buffer (vertex pulling)
-    GPUSpan<FUiColorStop> Stops;      // the gradient colour stops (transient; empty when unused)
-    GPUSpan<FUiClipMask>  ClipMasks;  // the rounded-rect clip masks (transient; empty when unused)
+    GPUSpan<FUiDraw>      Draws;      // transient
+    GPUSpan<FUiVertex>    Vertices;   // resident batch, pulled by the vertex shader
+    GPUSpan<FUiColorStop> Stops;      // transient, empty when unused
+    GPUSpan<FUiClipMask>  ClipMasks;  // transient, empty when unused
 };
 
 FRmlUiArgs* Pass() { return GetArgs<FRmlUiArgs>(); }

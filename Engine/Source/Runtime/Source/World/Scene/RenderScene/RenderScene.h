@@ -42,7 +42,7 @@ namespace Lumina
          */
         virtual void SetPrimaryViewSize(const FUIntVector2& SizePixels) {}
 
-        // Pixel extent of the scene's render target. Use this for sizing.
+        // Pixel extent of the displayed image, which input, picking and deprojection are measured in.
         virtual FUIntVector2 GetRenderExtent() const = 0;
 
         //~ Frame hooks ---------------------------------------------------------------------

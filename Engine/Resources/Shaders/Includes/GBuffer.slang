@@ -2,43 +2,39 @@
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
-// The deferred GBuffer contract -- nothing else may define this layout; a drifted channel silently
-// reinterprets every surface. FULL at 16 B/pixel, so clearcoat BORROWS SelfShadow and Specular.
+// The single definition of the GBuffer layout, and at 16 B/pixel clearcoat borrows SelfShadow and Specular.
 
-// Flags byte (GBufferC.a): bit 0 = receive shadow, bits 1-3 = shading model, bits 4-7 = foliage thickness.
+// GBufferC.a flags, bit 0 receive shadow, bits 1-3 shading model, bits 4-7 foliage thickness.
 #define GBUFFER_FLAG_RECEIVE_SHADOW 1u
 #define GBUFFER_SHADING_MODEL_SHIFT 1u
 #define GBUFFER_SHADING_MODEL_MASK  7u
 #define GBUFFER_THICKNESS_SHIFT     4u
 #define GBUFFER_THICKNESS_MASK      15u
 
-// Three bits, so seven more models fit. Mirrored by EMaterialShadingModel (MaterialInterface.h) --
-// keep the values in lockstep.
+// Mirrored by EMaterialShadingModel (MaterialInterface.h), so keep the values in lockstep.
 static const uint ShadingModel_Default   = 0u;
 static const uint ShadingModel_Unlit     = 1u;
 static const uint ShadingModel_Clearcoat = 2u;
-// Two-sided thin translucency for leaves and grass. BORROWS the emissive channels, so foliage is not emissive.
+// Two-sided thin translucency for leaves and grass that borrows the emissive channels, so foliage is not emissive.
 static const uint ShadingModel_Foliage   = 3u;
 
 // r11g11b10 carries no alpha, so thickness rides the spare flag bits
 uint PackThickness01(float Thickness) { return (uint)(saturate(Thickness) * 15.0 + 0.5); }
 
-// Bindless indices of the four targets. The material pass fills these with STORAGE slots and the readers
-// with SAMPLED slots; the field order is the channel order above in both directions.
+// The material pass fills these with storage slots and the readers with sampled slots.
 struct FGBufferTargets
 {
-    uint A;
-    uint B;
-    uint C;
-    uint D;
+    FTexture2D A;
+    FTexture2D B;
+    FTexture2D C;
+    FTexture2D D;
 };
 
 struct FGBufferData
 {
     float3 BaseColor;
     float  AmbientOcclusion;
-    // Post normal-map, post-decal. The geometric normal does not survive into the GBuffer; the debug
-    // views that want it re-reconstruct it from the VisBuffer.
+    // Post normal-map and post-decal, so debug views wanting the geometric normal rebuild it from the VisBuffer.
     float3 WorldNormal;
     float  SelfShadow;
     float  Roughness;
@@ -49,12 +45,12 @@ struct FGBufferData
     bool   bContactShadows;
     uint   ShadingModel;
 
-    // Clearcoat model only; unread by every other model. See the channel-borrowing note above.
+    // Clearcoat model only, borrowed from SelfShadow and Specular.
     float  Clearcoat;
     float  ClearcoatRoughness;
 
     // Foliage model only, borrowed from the emissive channels.
-    float3 Transmission;        // colour the leaf passes through, already the lit tint the artist wants
+    float3 Transmission;        // color the leaf passes through, already the lit tint the artist wants
     float  Thickness;           // 0 = opaque leaf, 1 = fully thin; scales the whole transmitted lobe, quantized to 4 bits
 };
 
@@ -127,8 +123,7 @@ FGBufferData UnpackGBuffer(float4 A, float4 B, float4 C, float4 D)
     G.bContactShadows  = B.a < 0.5;
     G.ShadingModel     = (Flags >> GBUFFER_SHADING_MODEL_SHIFT) & GBUFFER_SHADING_MODEL_MASK;
 
-    // Undo the per-model borrow. The channels a model did NOT write get the value the lighting pass
-    // would have used anyway, so nothing downstream has to know which model it is looking at.
+    // Unborrowed channels get the value lighting would use anyway, so readers need not know the model.
     const bool bClearcoat = (G.ShadingModel == ShadingModel_Clearcoat);
     const bool bFoliage   = (G.ShadingModel == ShadingModel_Foliage);
 
@@ -144,8 +139,8 @@ FGBufferData UnpackGBuffer(float4 A, float4 B, float4 C, float4 D)
 
 FGBufferData LoadGBuffer(FGBufferTargets T, int2 Texel)
 {
-    return UnpackGBuffer(LoadTexture2D(T.A, Texel),
-                         LoadTexture2D(T.B, Texel),
-                         LoadTexture2D(T.C, Texel),
-                         LoadTexture2D(T.D, Texel));
+    return UnpackGBuffer(T.A.Load(Texel),
+                         T.B.Load(Texel),
+                         T.C.Load(Texel),
+                         T.D.Load(Texel));
 }

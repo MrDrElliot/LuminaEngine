@@ -19,6 +19,7 @@
 #include "World/Scene/RenderScene/EnvironmentRenderTypes.h"
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
 #include "World/Scene/RenderScene/RenderScene.h"
+#include "World/Scene/RenderScene/SceneUpscaler.h"
 #include "World/Scene/RenderScene/SceneCullContext.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
@@ -32,6 +33,7 @@
 namespace Lumina
 {
     class CMesh;
+    enum class ESMAAMode : uint8;
     struct FLineBatcherComponent;
     struct FTriangleBatcherComponent;
     struct SDirectionalLightComponent;
@@ -152,6 +154,8 @@ namespace Lumina
             struct FGrassSpeciesExtract
             {
                 CStaticMesh* Mesh      = nullptr;
+                // Resolved during extraction, since worlds render in parallel and the cache is not safe to mutate there.
+                uint32  ResolveHandle  = INVALID_MESH_RESOLVE_HANDLE;
                 FName   TypeName;
                 uint32  LayerIndex     = 0;
                 float   CellSize       = 1.0f;   // world units between candidates, from density
@@ -316,12 +320,16 @@ namespace Lumina
                     uint32                      SurfaceDescCount = 0;
 
                     uint32                      MaxSurfaceDescMeshlets = 0;
+
+                    uint32                      MeshletVisibilityWords = 0;
                 } RetainedUpload;
             } Geometry;
 
             struct FViews
             {
                 TVector<FCullView>               CullViews;
+                // The primary camera's LOD inputs, ready before the skinned gather that reads them on workers.
+                FCullView                        CameraLODView       = {};
                 uint32                           NumDrawsPerView     = 0;
                 uint32                           CascadeViewBase     = Constants::kIndexNoneU32;
                 uint32                           NumCascadeViews     = 0;
@@ -535,6 +543,7 @@ namespace Lumina
             Velocity,
             TemporalHistoryA,
             TemporalHistoryB,
+            UpscaledHDR,
 
             #if USING(WITH_EDITOR)
             PointLightIcon,
@@ -555,7 +564,12 @@ namespace Lumina
         struct FSceneView
         {
             FSceneImage                                     Output;
+            // The render resolution, which every scene pass and ScreenSize use.
             FUIntVector2                                    Size = FUIntVector2(0);
+            // What Output and every pass after the upscale draw at.
+            FUIntVector2                                    DisplaySize = FUIntVector2(0);
+            // Resolved each extract, since a plugin can register or drop one between frames.
+            IUpscaler*                                      Upscaler = nullptr;
             bool                                            bIsPrimary = false;
             FViewVolume                                     PendingViewVolume;
             bool                                            bEnabled = false;
@@ -613,6 +627,7 @@ namespace Lumina
         // Read by both meshlet-cull dispatches and written by neither: that is what makes them partition.
         RHI::FGPUAllocation GetInstanceVisibilityPrev()  const { return InstanceVisibilityBuffers[InstanceVisibilityWriteIndex ^ 1u]; }
         RHI::FGPUAllocation GetInstanceVisibilityWrite() const { return InstanceVisibilityBuffers[InstanceVisibilityWriteIndex]; }
+        RHI::FGPUAllocation GetMeshletVisibility() const       { return MeshletVisibilityBuffer; }
         RHI::FGPUAllocation GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
         RHI::FGPUAllocation GetSkinDispatchArgs()  const { return SkinDispatchArgsRing[CurrentFrameSlot]; }
         /** One workgroup per written meshlet block, sized by BuildMeshletCullArgs. */
@@ -667,6 +682,15 @@ namespace Lumina
 
         // Applies a deferred SetPrimaryViewSize. Called from Extract, which only runs for a ticking world.
         void ApplyPendingPrimarySize();
+
+        // The primary view's render size for its display size, from the screen percentage and the upscaler.
+        static FUIntVector2 ComputeRenderSize(const FUIntVector2& DisplaySize, const IUpscaler* Upscaler);
+
+        // Resolves the primary view's upscaler and reallocates when the screen percentage or upscaler changed it.
+        void RefreshPrimaryRenderSize();
+
+        // Editor clicks arrive in display pixels and the picker is drawn at render resolution.
+        FUIntVector2 DisplayToPickerTexel(uint32 X, uint32 Y) const;
 
         /** Cleared the first time something sizes the primary view explicitly (an editor tool panel). */
         bool bPrimaryTracksSwapchain = true;
@@ -866,6 +890,8 @@ namespace Lumina
         void DepthOfFieldPass(RHI::FCmdListH CL);
         void BloomPass(RHI::FCmdListH CL);
         void AutoExposurePass(RHI::FCmdListH CL);
+        void UpscalePass(RHI::FCmdListH CL);
+        void SpatialUpscalePass(RHI::FCmdListH CL);
         void ToneMappingPass(RHI::FCmdListH CL);
         void PostProcessMaterialPass(RHI::FCmdListH CL);
         void SMAAEdgeDetectionPass(RHI::FCmdListH CL);
@@ -878,8 +904,13 @@ namespace Lumina
         #endif
         //~ End Render Passes
 
-        static bool IsTemporalAARequested();
+        // SMAA steps aside for a temporal upscaler, and T2x drops to 1x under a spatial one, whose jitter it was not built for.
+        static ESMAAMode GetViewSMAAMode(const FSceneView& View);
         static bool IsTemporalAAEnabledFor(const FSceneView& View);
+        static bool IsTemporalUpscalerFor(const FSceneView& View);
+        static bool IsUpscalingView(const FSceneView& View);
+        // What tonemapping and post-process materials read, the upscaled image when the view has one.
+        const FSceneImage& GetPostInputImage() const;
         bool IsTemporalAAEnabled() const;
         bool IsTemporalResolveReady() const;
         bool IsVelocityDebugActive() const;
@@ -888,6 +919,8 @@ namespace Lumina
         ENamedImage GetTemporalCurrentImage() const;
         ENamedImage GetTemporalHistoryImage() const;
         static FVector2 GetTemporalJitterNDC(const FSceneView& View, uint32 FrameIndex);
+        // How many jitter positions one cycle visits, two for T2x and the upscaler's count for a temporal upscaler.
+        static uint32 GetTemporalPhaseCount(const FSceneView& View);
         // AreaTex slice the blend-weight pass resolves against, matched to the jitter this frame rendered.
         FVector4 GetSMAASubsampleIndices() const;
 
@@ -1237,6 +1270,9 @@ namespace Lumina
         // Sharing one buffer would clear the flags the late dispatch still needs to read.
         TArray<FSceneBuffer, 2> InstanceVisibilityBuffers = MakeSceneRing<2>("Retained.InstanceVisibility", 1.5f, EBufferInit::Zeroed);
         uint32                                             InstanceVisibilityCapacity = 0;
+        // One word per block of each instance's camera LOD, read and written in place since the late phase reads a word before replacing it.
+        FSceneBuffer                                       MeshletVisibilityBuffer { "Retained.MeshletVisibility", 1.5f, EBufferInit::Zeroed };
+        uint32                                             MeshletVisibilityCapacity = 0;
         uint8                                              InstanceVisibilityWriteIndex = 0;
         // Stamped by the late cull; starts past zero so a never-written slot can never read as visible.
         uint32                                             InstanceVisibilityTag = 1;

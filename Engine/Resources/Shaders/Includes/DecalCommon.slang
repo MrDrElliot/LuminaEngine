@@ -1,23 +1,18 @@
 #pragma once
 #include "SceneGlobals.slang"
-// Decals get a real tangent frame (the decal box's own X axis is its UV direction), so the material
-// graph's ParallaxOcclusionMapping node is legal in this domain and needs its helpers declared here.
+// Decals have a real tangent frame, so the graph's ParallaxOcclusionMapping node is legal here.
 #include "ParallaxOcclusion.slang"
-#include "Triplanar.slang"   // material-graph TriplanarSample node
+#include "Triplanar.slang"
 
-// Shared bindings/data for the DecalPass (vertex + pixel). Decals are drawn as unit cubes; the pixel
-// shader reconstructs world position from scene depth, projects into decal-local space, and writes the
-// material attributes into the DBuffer. Set 0 (scene) gives camera + material uniforms + bindless
-// textures. The pass binds NO private descriptor set: the per-decal array arrives by device address and
-// the scene depth by bindless index, both carried in the push constant below.
+// Unit-cube decals that project scene depth into decal-local space and write the DBuffer.
 
 struct FGPUDecal
 {
-    float4x4 WorldToDecal;   // world -> decal-local; inside the box iff all(abs(local) <= 0.5)
-    float4x4 DecalToWorld;   // decal-local cube -> world (entity transform, scale = box extents)
-    float    FadeAngleCos;   // cos(max angle) between surface normal and decal forward; below => fade
+    float4x4 WorldToDecal;   // inside the box iff all(abs(local) <= 0.5)
+    float4x4 DecalToWorld;   // entity transform, scale is the box extents
+    float    FadeAngleCos;   // cos of the max angle between surface normal and decal forward, fading below it
     float    Opacity;        // master coverage multiplier
-    uint     MaterialIndex;  // index into Materials()
+    uint     MaterialIndex;
     float    EmissionEnergy;
     float4   UVTransform;    // xy scale and zw offset of the atlas cell shown
     float4   Modulate;       // rgb tint, a albedo mix
@@ -36,24 +31,21 @@ float DecalDistanceFade(FGPUDecal Decal, float3 CameraPosition)
     return saturate((Decal.Fades.x + Decal.Fades.y - Distance) / max(Decal.Fades.y, 1e-4));
 }
 
-// Per-pass constants, identical in VS and PS so they share one push range. The decal *index* still
-// arrives via SV_VulkanInstanceID (the draw's FirstInstance) -- only the array base + depth slot live
-// here. Pointer first so the uint64 device address stays 8-byte aligned.
+// The decal index arrives via SV_VulkanInstanceID (FirstInstance), and the pointer leads to stay 8-byte aligned.
 struct FDecalPushConstants
 {
-    GPUSpan<FGPUDecal> Decals;   // the per-frame decal array, indexed by decal index
-    uint       DepthIndex;   // bindless resource ID of opaque scene depth (raw reverse-Z NDC [0,1])
-    uint       _Pad;
+    GPUSpan<FGPUDecal> Decals;
+    FTexture2D         Depth;    // opaque scene depth (raw reverse-Z NDC [0,1])
+    uint               _Pad;
 };
 FDecalPushConstants* Pass() { return GetPassArgs<FDecalPushConstants>(); }
 
-// Opaque scene depth (raw reverse-Z NDC [0,1]) sampled point-clamped from the bindless table.
 float SampleDecalSceneDepth(float2 UV)
 {
-    return gTextures2D[Pass().DepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, 0.0).r;
+    return Pass().Depth.SampleLevel(Samplers::PointClamp, UV, 0.0).r;
 }
 
-// Unit cube corner table (12 triangles / 36 verts), local space [-0.5, 0.5]. Indexed by SV_VertexID.
+// 12 triangles in local space [-0.5, 0.5], indexed by SV_VertexID.
 static const float3 kDecalCubeVerts[36] = {
     // -X
     float3(-0.5,-0.5,-0.5), float3(-0.5,-0.5, 0.5), float3(-0.5, 0.5, 0.5),

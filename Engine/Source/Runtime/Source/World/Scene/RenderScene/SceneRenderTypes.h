@@ -807,7 +807,7 @@ namespace Lumina
     {
         uint32  LODMeshletOffset[MAX_MESH_LODS];
         uint32  LODMeshletCount[MAX_MESH_LODS];
-        float   LODScreenThresholdSq[MAX_MESH_LODS];
+        float   LODError[MAX_MESH_LODS];
         uint32  NumLODs;
         uint32  _Pad;
     };
@@ -949,11 +949,12 @@ namespace Lumina
         uint32      EntityID;
         uint32      BoneOffset;
         uint32      SkinnedVertexBase;
-        uint32      ShadowSkinnedVertexBase;
-        // Explicit, not tail padding: alignas(16) would supply it here but Slang's scalar layout would
-        // size the mirror at 28 and stride the array wrong.
+        // Assigned by FScenePrimitiveSet::AssignMeshletVisibility; kNoMeshletVisibility for none.
+        uint32      MeshletVisibilityBase;
         uint32      _Pad0;
     };
+    // Word 0 is never handed out, so a zeroed payload reads as an instance with no meshlet visibility.
+    constexpr uint32 kNoMeshletVisibility = 0u;
     static_assert(sizeof(FInstanceStatic) == 32, "FInstanceStatic layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceStatic);
 
@@ -964,23 +965,21 @@ namespace Lumina
         FTransform3x4   Transform;              // offset   0
         FVector4        SphereBounds;           //         48
         uint32          MeshletHeaderSlot;      //         64  into the slab; 0 = the null header
-        uint32          _Pad0;                  //         68  was the upper half of the header pointer
+        uint32          MeshletVisibilityBase;  //         68
 
         uint32          DrawIDAndFlags;         //         72
         uint32          SurfaceMeshletOffset;   //         76
         uint32          SurfaceMeshletCount;    //         80
-        uint32          ShadowMeshletOffset;    //         84
-        uint32          ShadowMeshletCount;     //         88
-        uint32          CustomData;             //         92
+        uint32          CustomData;             //         84
 
-        uint32          BoneOffset;             //         96
-        uint32          MaterialIndex;          //        100
-        uint32          EntityID;               //        104
-        uint32          SkinnedVertexBase;      //        108
-        uint32          ShadowSkinnedVertexBase;//        112
-        uint32          SurfaceDescIndex;       //        116
-        uint32          MeshletTotalCount;      //        120
-        uint32          RetainedSlot;           //        124 (was tail padding)
+        uint32          BoneOffset;             //         88
+        uint32          MaterialIndex;          //         92
+        uint32          EntityID;               //         96
+        uint32          SkinnedVertexBase;      //        100
+        uint32          SurfaceDescIndex;       //        104
+        uint32          MeshletTotalCount;      //        108
+        uint32          RetainedSlot;           //        112
+        uint32          _Pad0[3];               //        116
     };
 
     static_assert(sizeof(FGPUInstance) == 128, "FGPUInstance layout must match shader");
@@ -1031,18 +1030,14 @@ namespace Lumina
         uint32      FrameTag;
         uint32      SurfaceMeshletOffset;
         uint32      SurfaceMeshletCount;
-        uint32      ShadowMeshletOffset;
-        uint32      ShadowMeshletCount;
         uint32      MeshletTotalCount;
         uint32      SkinnedVertexBase;          // kNoPreSkinBase = over budget, skin inline instead
-        uint32      ShadowSkinnedVertexBase;
         // Slice in the COMPACTED per-frame bone arena; kNoBoneSlice when the gather assigned none.
         uint32      BoneOffset;
         // Folds in the range start, so it indexes the bounds arena by a mesh-global meshlet index.
         uint32      SkinnedBoundsBase;
     };
-    // Unpadded on purpose; 48 straddles a 64-byte line as often as 40, on a retained-slot-sized array.
-    static_assert(sizeof(FSkinnedFrameData) == 40, "FSkinnedFrameData must match shader");
+    static_assert(sizeof(FSkinnedFrameData) == 28, "FSkinnedFrameData must match shader");
 
     // The forced LOD plus one in the low byte (0 is automatic) and the foliage thinning start distance as a half float in the high half.
     inline uint32 PackLODAndThinning(int32 ForcedLODIndex, float ThinningStartDistance)
@@ -1122,14 +1117,13 @@ namespace Lumina
         uint32 CascadePyramidMipCount;
         uint32 BoneNum;
 
-        int32  ShadowLODBias;
-        float  ShadowCoarseLODDistSq;
-
         // The cull camera clip range, so the sphere projection and the Hi-Z tap agree with CullCameraProjection.
         float  CullNearPlane;
         float  CullFarPlane;
-
-        float  LODDistanceScaleSq;
+        // Holds the struct at a 16-byte multiple, which the members after it in FSceneGlobalData rely on.
+        uint32 _CullPad0 = 0;
+        uint32 _CullPad1 = 0;
+        uint32 _CullPad2 = 0;
     };
 
     VERIFY_SSBO_ALIGNMENT(FCullData);
@@ -1150,6 +1144,7 @@ namespace Lumina
             MeshletHiZ      = BIT(6),
             Cascade         = BIT(7),
             FarCascade      = BIT(8),
+            OrthographicLOD = BIT(9),
         };
     }
 
@@ -1171,8 +1166,8 @@ namespace Lumina
         FVector4   ViewOriginAndFlags;         // 16 B: xyz=origin, w=asfloat(flags)
         uint32      CascadeIndex;               // Cascade this view rasterizes; only read when Flags has Cascade
         float       MinBoundsDiameter;          // Reject bounds thinner than this (world units); 0 = off
-        uint32      IndirectArgsOffset;         // v * NumDraws
-        uint32      NumDraws;                   // Number of indirect slots owned by this view
+        float       LODErrorScale;              // MakeLODErrorScale; 0 keeps every instance at LOD 0
+        uint32      _Pad0;
     };
 
     FORCEINLINE uint32 GetCullViewFlags(const FCullView& View)
@@ -1343,8 +1338,8 @@ namespace Lumina
         // This frame's projection jitter in UV units, so motion vectors measure from where a surface really is.
         float           TemporalJitterU = 0.0f;
         float           TemporalJitterV = 0.0f;
-        // Rounds the scalar run back to a 16-byte boundary, which the buffer layout rules require.
-        float           _TimePad0 = 0.0f;
+        // Added to every material texture's mip level, below zero while the view renders under the display resolution.
+        float           TextureMipBias = 0.0f;
 
         FGTAOSettings   GTAOSettings;
         FCullData       CullData;
@@ -1434,8 +1429,6 @@ namespace Lumina
         // Debug: keep culling against the inputs captured when this went on, so the selected set holds
         // still while the camera flies free. See FDefaultSceneRenderer::ApplyCullFreeze.
         uint8 bFreezeCulling:1          = false;
-        int8  ShadowLODBias             = 1;
-        float ShadowCoarseLODDistance   = 150.0f;
     };
     
 }

@@ -1,37 +1,37 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
 
 // Horizon search over the prefiltered depth pyramid; writes the noisy visibility term plus packed edges.
 
 struct FPushConstants
 {
-    uint2 ViewportSize;
-    uint  WorkingDepthIndex;
-    uint  AOTermUAV;
-    uint  EdgesUAV;
-    uint  SliceCount;
-    uint  StepsPerSlice;
-    uint  NoiseIndex;
-    float EffectRadius;
-    float EffectFalloffRange;
-    float SampleDistributionPower;
-    float ThinOccluderCompensation;
-    float FinalValuePower;
-    float DepthMIPSamplingOffset;
+    uint2        ViewportSize;
+    FTexture2D   WorkingDepth;
+    FRWTexture2D AOTerm;
+    FRWTexture2D Edges;
+    uint         SliceCount;
+    uint         StepsPerSlice;
+    uint         NoiseIndex;
+    float        EffectRadius;
+    float        EffectFalloffRange;
+    float        SampleDistributionPower;
+    float        ThinOccluderCompensation;
+    float        FinalValuePower;
+    float        DepthMIPSamplingOffset;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
 float SampleWorkingDepth(float2 UV, float MipLevel)
 {
-    return gTextures2D[Pass().WorkingDepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, MipLevel).x;
+    return Pass().WorkingDepth.SampleLevel(Samplers::PointClamp, UV, MipLevel).x;
 }
 
 void StoreVisibility(uint2 PixCoord, float Visibility)
 {
     const float Packed = saturate(Visibility / XE_GTAO_OCCLUSION_TERM_SCALE);
-    gRWTextures2D[Pass().AOTermUAV][PixCoord] = float4(Packed, 0.0, 0.0, 0.0);
+    Pass().AOTerm[PixCoord] = float4(Packed, 0.0, 0.0, 0.0);
 }
 
 [shader("compute")]
@@ -49,8 +49,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     // Mip 0 of the working pyramid is the unfiltered linearized depth, so the cross reads it directly.
     const float2 GatherUV = float2(PixCoord) * V.ViewportPixelSize;
-    const float4 ValuesUL = gTextures2D[Pass().WorkingDepthIndex].GatherRed(gSamplers[SAMPLER_POINT_CLAMP], GatherUV);
-    const float4 ValuesBR = gTextures2D[Pass().WorkingDepthIndex].GatherRed(gSamplers[SAMPLER_POINT_CLAMP], GatherUV, int2(1, 1));
+    const float4 ValuesUL = Pass().WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV);
+    const float4 ValuesBR = Pass().WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV, int2(1, 1));
 
     float       ViewspaceZ = ValuesUL.y;
     const float PixLZ      = ValuesUL.x;
@@ -59,7 +59,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float PixBZ      = ValuesBR.x;
 
     const float4 EdgesLRTB = XeGTAO_CalculateEdges(ViewspaceZ, PixLZ, PixRZ, PixTZ, PixBZ);
-    gRWTextures2D[Pass().EdgesUAV][PixCoord] = float4(XeGTAO_PackEdges(EdgesLRTB), 0.0, 0.0, 0.0);
+    Pass().Edges[PixCoord] = float4(XeGTAO_PackEdges(EdgesLRTB), 0.0, 0.0, 0.0);
 
     const float3 CenterPos = XeGTAO_ComputeViewspacePosition(V, ScreenUV, ViewspaceZ);
     const float3 LeftPos   = XeGTAO_ComputeViewspacePosition(V, ScreenUV + float2(-1.0,  0.0) * V.ViewportPixelSize, PixLZ);

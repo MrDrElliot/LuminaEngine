@@ -7,14 +7,12 @@ float4 FragmentMain(FImGuiInterpolants Input) : SV_Target0
 
     // Uniform across the draw (it comes from the per-draw args block), so this is not divergent.
     float4 Texel = (Args.bIsArray != 0u)
-                 ? SampleTexture2DArray(Args.TextureID, Args.SamplerIndex, Input.UV, Args.ArraySlice)
-                 : SampleTexture2D(Args.TextureID, Args.SamplerIndex, Input.UV);
+                 ? FTexture2DArray(Args.TextureID).Sample(Args.Sampler, float3(Input.UV, (float)Args.ArraySlice))
+                 : FTexture2D(Args.TextureID).Sample(Args.Sampler, Input.UV);
 
     if (Args.DisplayMode == IMGUI_DISPLAY_HDR)
     {
-        // ACES specifically, not the scene's configured operator: the preview's job is to show the
-        // texture, and a per-world grading choice would make the same asset look different depending
-        // on which level happened to be open.
+        // ACES rather than the scene's operator, so an asset previews the same whichever level is open.
         float3 Color = ApplyTonemap(Texel.rgb * max(Args.Exposure, 0.0), TONEMAPPER_ACES);
         Texel.rgb = EncodeDisplayGamma(Color);
     }
@@ -23,7 +21,6 @@ float4 FragmentMain(FImGuiInterpolants Input) : SV_Target0
         Texel.rgb = ImGuiEncodeSRGB(Texel.rgb * max(Args.Exposure, 0.0));
     }
 
-    // Vertex color stays a straight multiply: ImGui tints are already display-encoded, so applying
-    // them after the transform is what keeps a tinted HDR image matching an untinted one.
+    // ImGui tints are already display-encoded, so multiplying after the transform keeps a tinted HDR image matching an untinted one.
     return Input.Color * Texel;
 }

@@ -2,8 +2,7 @@
 #include "Common.slang"
 #include "Noise.slang"
 
-// Pure sky evaluator shared by the fullscreen sky and the IBL cubemap capture; no global bindings.
-// Ray is world-space, +Y up; SunDir points from surface to sun, so SunDir.y is elevation in [-1, 1].
+// Pure evaluator with no global bindings, and SunDir points toward the sun so SunDir.y is elevation.
 
 #define SKY_MODE_SOLID    0u
 #define SKY_MODE_GRADIENT 1u
@@ -14,14 +13,14 @@
 
 struct FEnvironmentParams
 {
-    float4 SolidSkyColor;     // rgb=color
-    float4 ZenithColor;       // rgb=color, w=horizonExponent
-    float4 HorizonColor;      // rgb=color
-    float4 GroundColor;       // rgb=color
-    float4 SunTint;           // rgb=tint, w=sunIntensity
+    float4 SolidSkyColor;
+    float4 ZenithColor;       // w=horizonExponent
+    float4 HorizonColor;
+    float4 GroundColor;
+    float4 SunTint;           // w=sunIntensity
     float4 Misc;              // x=skyMode, y=sunDiscScale, z=skyExposure, w=mieG
 
-    float4 NightSkyColor;     // rgb=tint, w=nightBrightness
+    float4 NightSkyColor;     // w=nightBrightness
     float4 StarParams;        // x=density, y=brightness, z=twinkleSpeed, w=size
     float4 MoonParams;        // x=size, y=glowSize, z=brightness, w=autoOpposeFlag
     float4 MoonDirection;     // xyz=manual dir, w unused
@@ -32,7 +31,7 @@ struct FEnvironmentParams
 static const float kSunBaseAngle  = radians(0.53);
 static const float kMoonBaseAngle = radians(0.50);
 
-// Earth-like atmospheric coefficients (m^-1). Rayleigh + Mie + ozone, no LUT-based atmosphere.
+// Earth-like coefficients in m^-1.
 static const float3 kRayleighCoeff = float3(5.8e-6, 13.5e-6, 33.1e-6);
 static const float  kMieCoeff      = 2.1e-5;
 static const float3 kOzoneCoeff    = float3(0.65e-6, 1.881e-6, 0.085e-6);
@@ -43,18 +42,13 @@ static const float  kMieH          = 1.2e3;
 static const float  kOzoneCenter   = 25e3;
 static const float  kOzoneWidth    = 15e3;
 
-// Wide enough that the sky cube's finite resolution cannot land the whole transition inside one texel,
-// which is what turned it into a visible edge; narrow enough to still read as a horizon.
+// Wide enough that the sky cube cannot land the whole transition inside one texel.
 static const float  kHorizonGroundFade = 0.35;
 
-// Incident solar spectrum the scattering integral is driven by. Deliberately NOT SunIntensity: that is
-// the disc's brightness, and routing it through here made the whole sky track a cosmetic knob 1:1.
+// Not SunIntensity, which is only the disc brightness and must not drive the whole sky.
 static const float  kSolarIrradiance = 20.0;
 
-// Multiple-scattering share and how much of it keeps its wavelength dependence. Against a Rayleigh
-// phase of ~0.09 at zenith, kMsStrength/PI is the ratio to single scattering; at 0.9 it was 3.2x that
-// and, at 15% tint, almost entirely grey, which is what buried the blue. Shared with the aerial LUT,
-// which ran its own copy of these and would otherwise haze a different colour than the sky it matches.
+// Shared with the aerial LUT so its haze matches the sky color.
 static const float  kMsStrength = 0.15;
 static const float  kMsTint     = 0.8;
 
@@ -88,24 +82,20 @@ float Sky_OzoneDensity(float Height)
 // Amplitude starts at 0.5 and is left unnormalized, which is what the sky's tuning was authored against.
 float Sky_FBM(float3 P) { return 0.5 * FBM3D(P, 5, 0.5, 2.02); }
 
-// Quadratic step spacing: Mie's 1.2km scale height is nearly invisible to a march uniform over ~60km.
+// Quadratic spacing, since Mie's 1.2km scale height is nearly invisible to a uniform march over ~60km.
 float Sky_StepFraction(int Index, int Count)
 {
     float T = float(Index) / float(Count);
     return T * T;
 }
 
-// Atmospheric scattering (Bruneton-style single-scatter + ozone).
 float3 Sky_OpticalDepth(float3 RayOrigin, float3 RayDir, float RayLength)
 {
-    // 4 inner steps: the light-march integral converges fast as the sun ray climbs out
-    // monotonically. The cube bake's per-fragment cost is dominated by these samples.
     const int Steps    = 4;
     float3 OpticalDepth = float3(0.0, 0.0, 0.0);
     float  PrevT        = 0.0;
 
-    // [[loop]]: unrolling holds every step's heavy temporaries live at once (register spike on the SkyCube
-    // capture pass); rolling keeps one step. The serial exp() chain is latency-bound regardless.
+    // Kept rolled because unrolling spikes registers on the SkyCube capture pass.
     [[loop]]
     for (int i = 0; i < Steps; i++)
     {
@@ -133,16 +123,12 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     float Start = max(Atmo.x, 0.0);
     float End   = Atmo.y;
 
-    // Trim against the planet so rays through the atmosphere don't pick up
-    // light from the far side when looking at the ground.
     float2 Ground = Sky_RaySphereIntersect(RayOrigin, RayDir, kPlanetR);
     if (Ground.x > 0.0) End = min(End, Ground.x);
 
     float Length = End - Start;
     if (Length <= 0.0) return float3(0.0, 0.0, 0.0);
 
-    // 8 outer steps x 4-step inner march = 32 nested evals (was 128). The sky is
-    // low-frequency so the visual difference is imperceptible.
     const int Steps = 8;
 
     float3 SumR = float3(0.0, 0.0, 0.0);
@@ -168,8 +154,7 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
 
         PrimaryOD += float3(DensR, DensM, DensO) * StepSize;
 
-        // Planet-shadow test: skip columns where the planet occludes the sun. Without it
-        // the night sky stays bright (the light optical-depth integral truncates at the ground).
+        // Without the planet shadow the night sky stays bright, since the light integral truncates at the ground.
         float2 SunGroundHit = Sky_RaySphereIntersect(P, SunDir, kPlanetR);
         if (SunGroundHit.x > 0.0) continue;
 
@@ -232,8 +217,7 @@ float3 Sky_RenderSun(float3 RayDir, float3 SunDir, float3 SunColor, float SunDis
     return SunColor * Sky_SunTransmittance(SunDir) * (SunDisc * 0.8 + SunGlow * 0.3) * Occlusion;
 }
 
-// One star per cell, sampling only the ray's cell (sub-pixel boundary gaps). Density is a
-// hash threshold, so changing it doesn't reshuffle existing stars.
+// Density is a hash threshold, so changing it does not reshuffle existing stars.
 float3 Sky_Stars(float3 RayDir, FEnvironmentParams Env, float Time, float NightFactor)
 {
     if (NightFactor <= 0.0) return float3(0.0);
@@ -244,8 +228,7 @@ float3 Sky_Stars(float3 RayDir, FEnvironmentParams Env, float Time, float NightF
     float Twinkle    = Env.StarParams.z;
     float SizeT      = saturate(Env.StarParams.w);
 
-    // Quantize direction to a high-frequency grid. The scale chosen so a
-    // moderate density (~0.5) fills the sky with several thousand stars.
+    // Scale chosen so a density near 0.5 fills the sky with several thousand stars.
     float3 P    = RayDir * 380.0;
     float3 Cell = floor(P);
     float3 F    = P - Cell;
@@ -263,21 +246,15 @@ float3 Sky_Stars(float3 RayDir, FEnvironmentParams Env, float Time, float NightF
     float Radius = lerp(0.05, 0.45, SizeT);
     float Core   = smoothstep(Radius, 0.0, D);
 
-    // Magnitude curve: most stars dim, rare ones bright.
     float Magnitude = pow(Seed, 6.0);
 
-    // Twinkle: per-star phase + speed.
     float Tw = 0.6 + 0.4 * sin(Time * Twinkle + Seed * 12.566);
 
-    // Color: cool / warm interpolation by seed.
     float3 Tint = lerp(float3(0.7, 0.85, 1.0), float3(1.0, 0.92, 0.78), Seed);
 
-    // Fade stars within the sun's glare cone so the sun area stays clean
-    // even when only barely below the horizon.
     return Tint * Core * Magnitude * Tw * Brightness * NightFactor;
 }
 
-// Procedural Milky-Way band: FBM noise restricted to a tilted galactic plane (tilt in radians).
 float3 Sky_Galaxy(float3 RayDir, FEnvironmentParams Env, float NightFactor)
 {
     float Intensity = Env.GalaxyParams.x;
@@ -287,8 +264,7 @@ float3 Sky_Galaxy(float3 RayDir, FEnvironmentParams Env, float NightFactor)
     float CosT = cos(Tilt);
     float SinT = sin(Tilt);
 
-    // Rotate ray into a frame whose Y axis is the galactic pole, then the
-    // |y| of the rotated vector is the angular distance from the band.
+    // Rotated so Y is the galactic pole, making |y| the angular distance from the band.
     float3 R = float3(RayDir.x * CosT + RayDir.y * SinT,
                      -RayDir.x * SinT + RayDir.y * CosT,
                       RayDir.z);
@@ -297,13 +273,10 @@ float3 Sky_Galaxy(float3 RayDir, FEnvironmentParams Env, float NightFactor)
     float BandShape    = smoothstep(0.45, 0.0, DistFromBand);
     BandShape = BandShape * BandShape;
 
-    // Two-octave noise gives clumps of brightness along the band.
     float N1 = Sky_FBM(RayDir * 7.0);
     float N2 = Sky_FBM(RayDir * 18.0 + 50.0);
     float Noise = saturate(N1 * 0.7 + N2 * 0.5 - 0.25);
 
-    // A faint cool/warm tint based on a third noise field gives variation
-    // between blue-white and dust-warm regions of the band.
     float Hue = ValueNoise3D(RayDir * 4.0 + 11.0);
     float3 BandTint = lerp(float3(0.55, 0.7, 1.0), float3(1.0, 0.85, 0.65), Hue);
 
@@ -327,8 +300,7 @@ float3 Sky_RenderMoon(float3 RayDir, float3 SunDir, FEnvironmentParams Env, floa
 
     if (MoonDot < CosGlow) return float3(0.0);
 
-    // Reconstruct the disc surface normal so phase shading reads as a sphere: build a local
-    // frame on MoonDir, map RayDir into it, recover the third axis from the unit-sphere constraint.
+    // Recovers the disc's sphere normal so phase shading reads as a sphere.
     float3 Up      = abs(MoonDir.y) < 0.95 ? float3(0,1,0) : float3(1,0,0);
     float3 AxisU   = normalize(cross(MoonDir, Up));
     float3 AxisV   = cross(AxisU, MoonDir);
@@ -340,13 +312,10 @@ float3 Sky_RenderMoon(float3 RayDir, float3 SunDir, FEnvironmentParams Env, floa
 
     float3 N = normalize(MoonDir * W + AxisU * U + AxisV * V);
 
-    // Lit by the sun. Lambert with a soft floor so a "new moon" still hints
-    // at outline rather than vanishing.
+    // Soft floor so a new moon still hints at its outline.
     float Lambert = saturate(dot(N, SunDir));
     float Phase   = lerp(0.04, 1.0, pow(Lambert, 0.85));
 
-    // Subtle surface variation: a coarse FBM gives the impression of mare
-    // patches without trying to match the real moon.
     float Surface = 0.85 + 0.3 * Sky_FBM(N * 4.0);
     Phase *= Surface;
 
@@ -390,34 +359,28 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     float SunHeight = SunDir.y;
     float MieG      = clamp(Env.Misc.w, -0.99, 0.99);
 
-    // Constant incident spectrum: twilight reddening is the scattering integral's job, not a ramp.
+    // Twilight reddening is the scattering integral's job, so the incident spectrum stays constant.
     float3 SunColor = Env.SunTint.rgb * kSolarIrradiance;
 
-    // Atmosphere math is in planet-relative coords. Origin at 50m altitude
-    // so the camera never falls inside the planet sphere.
+    // Origin at 50m altitude so the camera never falls inside the planet sphere.
     float3 AtmoCamera = float3(0.0, kPlanetR + 50.0, 0.0);
 
-    // HORIZON-CLAMPED: a ray a hair below the horizon truncates to black while one a hair above returns
-    // full brightness -- a step with no angular width. Clamping gives the ground blend something continuous.
+    // Clamped to the horizon, since a ray just below it truncates to black and leaves a hard step.
     float3 SkyDir = float3(RayDir.x, max(RayDir.y, 0.0), RayDir.z);
     float  SkyLen = length(SkyDir);
-    // Straight down: xz is zero and the clamp leaves nothing to normalize. Any finite direction does,
-    // since Below is saturated there and the result is pure ground tint regardless.
+    // Straight down leaves nothing to normalize, and Below is saturated there anyway.
     SkyDir = (SkyLen > 1e-4) ? (SkyDir / SkyLen) : float3(0.0, 1.0, 0.0);
 
     float3 Atmo = Sky_Atmosphere(AtmoCamera, SkyDir, SunDir, SunColor, MieG);
 
-    // Night blend: 1 (deep night) at SunHeight ~ -0.15 to 0 (full day) at ~ 0, via sun elevation.
     float NightFactor = smoothstep(0.05, -0.15, SunHeight);
 
-    // Unbranched and smoothstep-driven so the value AND its first derivative are continuous across y = 0.
-    // A branch exactly at the horizon puts a crease on the one line the eye is already drawn to.
+    // Unbranched so the value and its derivative stay continuous across the horizon.
     float Below = smoothstep(0.0, -kHorizonGroundFade, RayDir.y);
     float3 GroundTint = Env.GroundColor.rgb * 0.5;
     Atmo = lerp(Atmo, GroundTint, Below);
 
-    // Galaxy lives in the cube (low-frequency, fine at 256). Stars/sun/moon are pixel-scale and
-    // alias at cube resolution, so Environment.slang re-evaluates them per-fragment instead.
+    // Stars, sun and moon alias at cube resolution, so Environment.slang evaluates them per fragment.
     float UpMask = smoothstep(-0.05, 0.1, RayDir.y);
     float3 Galaxy = float3(0.0);
     if (UpMask > 0.0 && NightFactor > 0.0)
@@ -425,13 +388,11 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
         Galaxy = Sky_Galaxy(RayDir, Env, NightFactor) * UpMask;
     }
 
-    // Background night color sits underneath stars/galaxy and shows through
-    // the dim atmosphere when the sun is below the horizon.
     float3 NightBG = Env.NightSkyColor.rgb * Env.NightSkyColor.w * NightFactor * UpMask;
 
     float3 Color = Atmo + NightBG + Galaxy;
 
-    // Scene-linear radiance: tonemapping here would also cap the sky cube that feeds IBL.
+    // Scene-linear, since tonemapping here would also cap the sky cube that feeds IBL.
     return Color * max(Env.Misc.z, 1e-3);
 }
 
@@ -444,8 +405,7 @@ float3 EvaluateSky(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     return Sky_Dynamic(Env, SunDir, RayDir, Time);
 }
 
-// The -z keeps u increasing with camera right-rotation; asin keeps the poles non-singular. Lives here
-// because the visible sky and the IBL bake must address the panorama identically or reflections slide.
+// The visible sky and the IBL bake must share this mapping or reflections slide.
 float2 Sky_EquirectUV(float3 RayDir, float CosYaw, float SinYaw)
 {
     float3 R = float3(RayDir.x * CosYaw - RayDir.z * SinYaw,
@@ -457,8 +417,7 @@ float2 Sky_EquirectUV(float3 RayDir, float CosYaw, float SinYaw)
     return float2(u, v);
 }
 
-// Cubemap face -> world-space ray direction.
-//   Face 0 = +X, 1 = -X, 2 = +Y, 3 = -Y, 4 = +Z, 5 = -Z
+// Face order is +X, -X, +Y, -Y, +Z, -Z.
 float3 CubeFaceDirection(uint Face, float2 UV)
 {
     float u = UV.x * 2.0 - 1.0;

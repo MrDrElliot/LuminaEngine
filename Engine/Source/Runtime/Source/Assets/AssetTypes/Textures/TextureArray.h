@@ -14,7 +14,7 @@ namespace Lumina
      * (FMaterialCompiler::BindTexture, CMaterial::Textures, GetMaterialTexture) is typed on CTexture
      * and is entirely format-agnostic below that, so inheriting makes an array bind and parameterize
      * through the exact same code a plain texture does. The only thing that differs is the view type
-     * chosen at PostLoad, which is what lets a shader read the ResourceID as gTextures2DArray[].
+     * chosen at PostLoad, which is what lets a shader read the ResourceID as an FTexture2DArray.
      *
      * Every layer MUST share extent, mip count and format -- one VkImage cannot do otherwise. The
      * importer enforces this by cooking layer 0 first and rejecting any later source that disagrees,

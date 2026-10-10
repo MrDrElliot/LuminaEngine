@@ -1,8 +1,7 @@
 #pragma once
 #include "Culling.slang"
 
-// RULE: NO EARLY RETURNS, NO continue -- every reject sets a flag and falls through. A task stage ends
-// in a group barrier and uniform DispatchMesh; a lane that left early makes it non-uniform and AMD hangs.
+// Rejects set a flag and fall through, since an early exit makes the task stage's DispatchMesh non-uniform and hangs AMD.
 
 // Built once per (instance, walk index) and reused across every view the caller tests.
 struct FMeshletCullContext
@@ -11,7 +10,6 @@ struct FMeshletCullContext
     // Carried so the header is reached without a second whole-instance load.
     uint     HeaderSlot;
 
-    // Unpacked once rather than re-tested per view.
     bool     bSkinned;
     // True when the meshlet spheres describe this frame's pose, which every size reject below needs.
     bool     bPosedBounds;
@@ -31,8 +29,7 @@ struct FMeshletCullContext
     float    MaxShadowDist;
 };
 
-// Read once into a local because each property or method call through the pointer loads all 128 bytes.
-// FGPUInstance holds no pointer of its own, so the by-value local cannot trip the rule in SceneGlobals.slang.
+// Read once by value, since each call through the pointer loads all 128 bytes.
 FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
 {
     const FGPUInstance I = loadAligned<16>(Inst);
@@ -56,10 +53,10 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.MaxScale = sqrt(max(SqScaleX, max(SqScaleY, SqScaleZ)));
 
     Ctx.SkinnedBoundsBase = kNoSkinnedBounds;
-    if (Ctx.bSkinned && SpanContains(SkinnedFrameData(), I.RetainedSlot))
+    if (Ctx.bSkinned && SkinnedFrameData().Contains(I.RetainedSlot))
     {
         // CullInstances already rejected any skinned slot whose frame tag was stale, so this is current.
-        Ctx.SkinnedBoundsBase = SpanAt(SkinnedFrameData(), I.RetainedSlot).SkinnedBoundsBase;
+        Ctx.SkinnedBoundsBase = SkinnedFrameData().At(I.RetainedSlot).SkinnedBoundsBase;
     }
 
     Ctx.bPosedBounds = !Ctx.bSkinned || (Ctx.SkinnedBoundsBase != kNoSkinnedBounds);
@@ -72,8 +69,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     return Ctx;
 }
 
-// Cannot be hoisted out of a view loop: two views at different LODs address different meshlets at the
-// same walk index. Cached on the RESOLVED index, so cascades sharing a shadow LOD still load once.
+// Not hoistable out of a view loop since LODs differ per view; keyed on the resolved index so cascades sharing a LOD load once.
 struct FMeshletBoundsCache
 {
     uint           MeshletIdx;
@@ -98,14 +94,13 @@ FMeshletBoundsCache MakeMeshletBoundsCache()
     return C;
 }
 
-// The posed sphere when this frame wrote one, and the bind-pose sphere otherwise. The base is folded
-// from a slice the bounds pass may have skipped, so it is the arena's count that says whether it landed.
+// Posed sphere when this frame wrote one; the arena count says whether the folded base landed.
 FMeshletSphere LoadMeshletSphere(FMeshletHeader* Header, uint SkinnedBoundsBase, uint MeshletIdx)
 {
     if (SkinnedBoundsBase != kNoSkinnedBounds
-        && SpanContains(SkinnedMeshletBounds(), SkinnedBoundsBase + MeshletIdx))
+        && SkinnedMeshletBounds().Contains(SkinnedBoundsBase + MeshletIdx))
     {
-        return SpanGetAligned(SkinnedMeshletBounds(), (SkinnedBoundsBase + MeshletIdx));
+        return SkinnedMeshletBounds().GetAligned((SkinnedBoundsBase + MeshletIdx));
     }
 
     return loadAligned<16>(Header.Spheres + MeshletIdx);
@@ -135,8 +130,7 @@ void ApplyMeshletCone(FMeshletCullContext Ctx, FMeshletCone Packed, inout FMeshl
     C.bHasCone   = Cone.w < 1.0;
 }
 
-// Split from the sphere because every meshlet of every view pays that load, while this one needs a
-// non-skinned, non-two-sided, cone-bearing meshlet in a cone-enabled view.
+// Split from the sphere load, which every meshlet of every view pays.
 void EnsureMeshletCone(FMeshletHeader* Header, FMeshletCullContext Ctx, inout FMeshletBoundsCache C)
 {
     if (C.bConeReady)
@@ -149,24 +143,21 @@ void EnsureMeshletCone(FMeshletHeader* Header, FMeshletCullContext Ctx, inout FM
 
     // Same arena and same bound as the posed sphere, since one base addresses both.
     if (Ctx.SkinnedBoundsBase != kNoSkinnedBounds
-        && SpanContains(SkinnedMeshletCones(), Ctx.SkinnedBoundsBase + C.MeshletIdx))
+        && SkinnedMeshletCones().Contains(Ctx.SkinnedBoundsBase + C.MeshletIdx))
     {
         // Rewritten per frame against this pose, and packed exactly like the baked one.
-        ApplyMeshletCone(Ctx, SpanGet(SkinnedMeshletCones(), Ctx.SkinnedBoundsBase + C.MeshletIdx), C);
+        ApplyMeshletCone(Ctx, SkinnedMeshletCones().Get(Ctx.SkinnedBoundsBase + C.MeshletIdx), C);
         return;
     }
 
     ApplyMeshletCone(Ctx, Header.Cones[C.MeshletIdx], C);
 }
 
-// A pure function of (meshlet, view) apart from bApplyHiZ, which is the caller's phase decision: the
-// early phase replays last frame's visible set and must NOT Hi-Z cull it (a meshlet dropped there is
-// dropped for good, because the late phase skips instances the early phase drew), while the late phase
-// tests against the pyramid just rebuilt from the early phase's depth.
+// The early phase must not Hi-Z cull, since a meshlet dropped there is never redrawn by the late phase.
 bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
                             uint MeshletIdx, inout FMeshletBoundsCache Cache, bool bApplyHiZ)
 {
-    FMeshletHeader* Header = SpanAt(MeshletHeaders(), Ctx.HeaderSlot);
+    FMeshletHeader* Header = MeshletHeaders().At(Ctx.HeaderSlot);
 
     // Must agree with IsInstanceVisibleToView, which sized the bucket these appends fill.
     const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
@@ -178,10 +169,7 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
 
     if (bKeep)
     {
-        // Bounded by the HEADER's own count, not the instance's: MeshletTotalCount comes from the surface's
-        // LOD table while Spheres/Cones come from the header, and only the header knows how long they are.
-        // A mesh that has died leaves the instance naming the null header, whose count is 0, so this is
-        // also what stops a stale instance from indexing geometry that is no longer there.
+        // Bounded by the header's count, which is 0 for a dead mesh's null header, so stale instances cannot index freed geometry.
         bKeep = MeshletIdx < Header.MeshletCount;
 
         if (bKeep)
@@ -252,7 +240,6 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
 
             if (bKeep && (bSubPixelTest || bHiZTest))
             {
-                // One view transform and one tangent construction for both tests below.
                 const FCullSphereProjection Proj = ProjectCullSphere(Cache.WorldCenter, Cache.WorldRadius);
 
                 if (Proj.bValid)

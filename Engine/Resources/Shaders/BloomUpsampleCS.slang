@@ -1,25 +1,24 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
-// Bloom upsample: 3x3 tent filter (Jimenez 2014) from the smaller mip, additively accumulated into
-// the larger one. One dispatch per step. Bindless source (SrcIndex@SrcMip) + read-modify-write DstUAV.
+// 3x3 tent upsample (Jimenez 2014) additively accumulated into the larger mip, one dispatch per step.
 
 #define TILE_WIDTH  8
 #define TILE_HEIGHT 8
 
 struct FPushConstants
 {
-    float2 SrcTexelSize;
-    float  Radius;
-    uint   SrcIndex;        // bindless SRV: source image (all mips)
+    float2     SrcTexelSize;
+    float      Radius;
+    FTexture2D Src;
 
-    uint2  DstSize;
-    uint   DstUAV;          // bindless RW: destination mip
-    float  SrcMip;          // mip level to sample on the source SRV
+    uint2        DstSize;
+    FRWTexture2D Dst;
+    float        SrcMip;
 
-    float  Scatter;         // weight on the accumulated coarser mips; <1 = geometric halo falloff
+    float  Scatter;
     uint   _Pad0;
     uint   _Pad1;
     uint   _Pad2;
@@ -37,15 +36,11 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         return;
     }
 
-    // Destination mip UV: each dest pixel center maps to the same UV on the
-    // smaller source thanks to the 1:2 ratio.
     const float2 UV = (float2(DstP) + 0.5) / float2(Pass().DstSize);
     const float2 T  = Pass().SrcTexelSize * Pass().Radius;
 
-    // 3x3 tent. Bilinear samples make this 9 taps without manual corner
-    // fetches; the source filter mode is linear-clamp.
-    SamplerState Smp = gSamplers[SAMPLER_LINEAR_CLAMP];
-    Texture2D    Src = gTextures2D[Pass().SrcIndex];
+    FSampler   Smp = Samplers::LinearClamp;
+    FTexture2D Src = Pass().Src;
 
     float3 a = Src.SampleLevel(Smp, UV + T * float2(-1.0, -1.0), Pass().SrcMip).rgb;
     float3 b = Src.SampleLevel(Smp, UV + T * float2( 0.0, -1.0), Pass().SrcMip).rgb;
@@ -64,9 +59,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     Tent       += (a + c + g + i);
     Tent       *= (1.0 / 16.0);
 
-    // Progressive accumulation: dest holds its own downsample plus everything already gathered
-    // from deeper mips; Scatter < 1 makes each coarser octave contribute geometrically less, which
-    // controls how far the wide halo reaches without re-tuning intensity.
-    float3 Prev = gRWTextures2D[Pass().DstUAV][DstP].rgb;
-    gRWTextures2D[Pass().DstUAV][DstP] = float4(Prev + Tent * Pass().Scatter, 0);
+    // Scatter below 1 makes each coarser octave contribute geometrically less, which sets the halo's reach.
+    float3 Prev = Pass().Dst[DstP].rgb;
+    Pass().Dst[DstP] = float4(Prev + Tent * Pass().Scatter, 0);
 }

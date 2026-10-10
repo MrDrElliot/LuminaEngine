@@ -18,11 +18,11 @@ bool SphereAABBIntersection(float3 Center, float Radius, float3 AABBMin, float3 
 }
 
 // The batch's lights that touch this block, which each cluster then tests on its own.
-groupshared float4 gLightViewPosRadius[LOCAL_SIZE];
-groupshared uint   gLightIndex[LOCAL_SIZE];
-groupshared uint   gWaveKept[MAX_WAVES_PER_GROUP];
-groupshared float3 gWaveMin[MAX_WAVES_PER_GROUP];
-groupshared float3 gWaveMax[MAX_WAVES_PER_GROUP];
+groupshared float4 gsLightViewPosRadius[LOCAL_SIZE];
+groupshared uint   gsLightIndex[LOCAL_SIZE];
+groupshared uint   gsWaveKept[MAX_WAVES_PER_GROUP];
+groupshared float3 gsWaveMin[MAX_WAVES_PER_GROUP];
+groupshared float3 gsWaveMax[MAX_WAVES_PER_GROUP];
 
 // One thread per cluster writes its light bitmask, so no list, pool or atomic is needed.
 [shader("compute")]
@@ -49,10 +49,10 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
 
     // Threads past the grid edge still join every barrier, they just never test or write.
     const uint Index         = Coord.x + Coord.y * Grid.x + Coord.z * Grid.x * Grid.y;
-    const bool bValidCluster = all(Coord < Grid) && SpanContains(Clusters(), Index);
+    const bool bValidCluster = all(Coord < Grid) && Clusters().Contains(Index);
 
-    float3 ClusterMin = bValidCluster ? loadAligned<16>(&SpanAt(Clusters(), Index).MinPoint).xyz : float3(3.0e38);
-    float3 ClusterMax = bValidCluster ? loadAligned<16>(&SpanAt(Clusters(), Index).MaxPoint).xyz : float3(-3.0e38);
+    float3 ClusterMin = bValidCluster ? loadAligned<16>(&Clusters().At(Index).MinPoint).xyz : float3(3.0e38);
+    float3 ClusterMax = bValidCluster ? loadAligned<16>(&Clusters().At(Index).MaxPoint).xyz : float3(-3.0e38);
 
     // The block's bounds, reduced per wave and then across the waves.
     const uint WaveSize  = WaveGetLaneCount();
@@ -62,23 +62,23 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
     const float3 WaveMaxBounds = WaveActiveMax(ClusterMax);
     if (WaveIsFirstLane())
     {
-        gWaveMin[WaveIndex] = WaveMinBounds;
-        gWaveMax[WaveIndex] = WaveMaxBounds;
+        gsWaveMin[WaveIndex] = WaveMinBounds;
+        gsWaveMax[WaveIndex] = WaveMaxBounds;
     }
     GroupMemoryBarrierWithGroupSync();
 
-    float3 BlockMin = gWaveMin[0];
-    float3 BlockMax = gWaveMax[0];
+    float3 BlockMin = gsWaveMin[0];
+    float3 BlockMax = gsWaveMax[0];
     for (uint w = 1; w < NumWaves; ++w)
     {
-        BlockMin = min(BlockMin, gWaveMin[w]);
-        BlockMax = max(BlockMax, gWaveMax[w]);
+        BlockMin = min(BlockMin, gsWaveMin[w]);
+        BlockMax = max(BlockMax, gsWaveMax[w]);
     }
 
     const uint LightCount = GetNumLights();
     const uint MaskWords  = GetClusterMaskWords();
 
-    // Directional light is always at index 0; skip since it applies globally.
+    // The directional light is always at index 0 and applies globally.
     const uint StartIndex = (LightCount > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional)) ? 1u : 0u;
 
     const float4x4 View = GetCameraView();
@@ -103,7 +103,7 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
         const uint WaveOffset = WavePrefixCountBits(bKeep);
         if (WaveIsFirstLane())
         {
-            gWaveKept[WaveIndex] = WaveKept;
+            gsWaveKept[WaveIndex] = WaveKept;
         }
         GroupMemoryBarrierWithGroupSync();
 
@@ -111,13 +111,13 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
         uint Kept   = 0;
         for (uint w = 0; w < NumWaves; ++w)
         {
-            Offset += (w < WaveIndex) ? gWaveKept[w] : 0u;
-            Kept   += gWaveKept[w];
+            Offset += (w < WaveIndex) ? gsWaveKept[w] : 0u;
+            Kept   += gsWaveKept[w];
         }
         if (bKeep)
         {
-            gLightViewPosRadius[Offset + WaveOffset] = ViewPosRadius;
-            gLightIndex[Offset + WaveOffset]         = LoadIndex;
+            gsLightViewPosRadius[Offset + WaveOffset] = ViewPosRadius;
+            gsLightIndex[Offset + WaveOffset]         = LoadIndex;
         }
         GroupMemoryBarrierWithGroupSync();
 
@@ -126,10 +126,10 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
             uint4 Words = uint4(0u, 0u, 0u, 0u);
             for (uint j = 0; j < Kept; ++j)
             {
-                const float4 LightVP = gLightViewPosRadius[j];
+                const float4 LightVP = gsLightViewPosRadius[j];
                 if (SphereAABBIntersection(LightVP.xyz, LightVP.w, ClusterMin, ClusterMax))
                 {
-                    const uint InBatch = gLightIndex[j] - Base;
+                    const uint InBatch = gsLightIndex[j] - Base;
                     const uint Bit     = 1u << (InBatch & 31u);
                     const uint Slot    = InBatch >> 5u;
                     Words |= uint4(Slot == 0u ? Bit : 0u, Slot == 1u ? Bit : 0u, Slot == 2u ? Bit : 0u, Slot == 3u ? Bit : 0u);
@@ -143,7 +143,7 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
                 const uint Word = Base / 32u + k;
                 if (Word < MaskWords)
                 {
-                    SpanAt(ClusterLightMasks(), Index * MaskWords + Word)[0] = Words[k];
+                    ClusterLightMasks().At(Index * MaskWords + Word)[0] = Words[k];
                     if (Words[k] != 0u)
                     {
                         FirstWord = min(FirstWord, Word);
@@ -158,7 +158,7 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
 
     if (bValidCluster)
     {
-        SpanAt(Clusters(), Index).FirstWord = (FirstWord == 0xFFFFFFFFu) ? 0u : FirstWord;
-        SpanAt(Clusters(), Index).EndWord   = EndWord;
+        Clusters().At(Index).FirstWord = (FirstWord == 0xFFFFFFFFu) ? 0u : FirstWord;
+        Clusters().At(Index).EndWord   = EndWord;
     }
 }

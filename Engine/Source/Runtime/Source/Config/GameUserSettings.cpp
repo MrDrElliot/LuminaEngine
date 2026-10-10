@@ -29,6 +29,24 @@ namespace Lumina
             const EPresentMode Project = GetDefault<CRendererSettings>()->PresentMode;
             return Project != EPresentMode::FIFO ? Project : EPresentMode::Immediate;
         }
+
+        const char* UpscalerModeName(EUpscalerMode Mode)
+        {
+            switch (Mode)
+            {
+            case EUpscalerMode::NativeAA:         return "NativeAA";
+            case EUpscalerMode::Quality:          return "Quality";
+            case EUpscalerMode::Balanced:         return "Balanced";
+            case EUpscalerMode::Performance:      return "Performance";
+            case EUpscalerMode::UltraPerformance: return "UltraPerformance";
+            case EUpscalerMode::Custom:           break;
+            }
+            return "Custom";
+        }
+
+        constexpr const char* kUpscalerKey          = "RendererSettings.Upscaler";
+        constexpr const char* kUpscalerModeKey      = "RendererSettings.UpscalerMode";
+        constexpr const char* kScreenPercentageKey  = "RendererSettings.ScreenPercentage";
     }
 
     CGameUserSettings& CGameUserSettings::Get()
@@ -108,6 +126,23 @@ namespace Lumina
             const EScalabilityGroup Group = static_cast<EScalabilityGroup>(Index);
             Scalability::ApplyGroup(Group, GetQuality(Group));
         }
+        ApplyUpscaling();
+    }
+
+    void CGameUserSettings::ApplyUpscaling()
+    {
+        if (!bOverrideUpscaling)
+        {
+            Scalability::RestoreSetting(kUpscalerKey);
+            Scalability::RestoreSetting(kUpscalerModeKey);
+            Scalability::RestoreSetting(kScreenPercentageKey);
+            return;
+        }
+
+        const FString UpscalerName = Upscaler.IsNone() ? FString() : Upscaler.ToString();
+        Scalability::OverrideSetting(kUpscalerKey, Lumina::Format("\"{}\"", UpscalerName));
+        Scalability::OverrideSetting(kUpscalerModeKey, Lumina::Format("\"{}\"", UpscalerModeName(UpscalerMode)));
+        Scalability::OverrideSetting(kScreenPercentageKey, Lumina::Format("{}", Math::Clamp(ScreenPercentage, 25.0f, 100.0f)));
     }
 
     void CGameUserSettings::ApplyDisplay()
@@ -162,6 +197,10 @@ namespace Lumina
         bVSync = GetDefault<CRendererSettings>()->PresentMode == EPresentMode::FIFO;
         FrameRateLimit = GetDefault<CRendererSettings>()->MaxFPS;
         SetOverallQuality(EQualityLevel::Default);
+        bOverrideUpscaling = false;
+        Upscaler = FName();
+        UpscalerMode = EUpscalerMode::Custom;
+        ScreenPercentage = 100.0f;
     }
 
     EQualityLevel& CGameUserSettings::QualitySlot(EScalabilityGroup Group)

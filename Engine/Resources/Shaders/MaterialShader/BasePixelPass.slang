@@ -1,9 +1,7 @@
 #include "Includes/SurfaceShading.slang"
 #include "Includes/Fog.slang"
 
-// Forward base-pass pixel shader. The fragment input is the shared FBaseVertexOutput
-// (MeshletGeometry.slang), produced identically by the VS-emulation and mesh-shader geometry paths. All
-// lighting lives in ShadeSurface, shared with the deferred VisBuffer material pass so the two can't drift.
+// All lighting lives in ShadeSurface, shared with the deferred VisBuffer material pass so the two can't drift.
 
 // Translucent materials accumulate into weighted blended OIT targets, which OITResolve composites over the scene.
 struct PSOutput
@@ -22,17 +20,14 @@ struct PSOutput
     #endif
 };
 
-// Masked materials `discard` inside ShadeSurface, which must run before the depth write -- [earlydepthstencil]
-// would have already committed depth for a cutout texel, corrupting holes for fog, the HZB and decals.
-// Opaque keeps forced early-Z over the heavy PBR shader.
+// Masked materials discard inside ShadeSurface, so [earlydepthstencil] would commit depth for cutout texels.
 #ifndef MASKED
 [earlydepthstencil]
 #endif
 [shader("fragment")]
 PSOutput FragmentMain(FBaseVertexOutput Input)
 {
-    // Per-instance constants arrive flat from the VS -- no per-pixel 128B FGPUInstance load. These locals
-    // are the names the material pixel graph codegen reads.
+    // These locals are the names the material pixel graph codegen reads.
     uint EntityID           = Input.EntityID;
     uint MaterialIndex      = Input.MaterialIndex;
     bool bReceiveShadow     = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
@@ -44,10 +39,7 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     float2 UV1              = Input.UV1;
     float4 VertexColor      = Input.FragColor;
 
-    // Tangent frame + UV gradients: part of the graph local contract, for nodes that ray-march in tangent
-    // space or pick their own mip. Raster passes have a real 2x2 quad; the deferred lane substitutes
-    // analytic derivatives.
-    // (Do NOT write the material token in a comment: the compiler substitutes the FIRST occurrence.)
+    // Never write the material token in a comment, since the compiler substitutes its first occurrence.
     float4 WorldTangent     = Input.TangentWS;
     float2 UV0_DDX          = ddx(UV0);
     float2 UV0_DDY          = ddy(UV0);
@@ -60,8 +52,7 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     float4 VertexColor_DDX   = ddx(VertexColor);
     float4 VertexColor_DDY   = ddy(VertexColor);
 
-    // One report per pixel, keyed by material slot -- see RequestMaterialResolution. A real pixel shader,
-    // so these are the quad's implicit derivatives rather than analytic ones.
+    // A real pixel shader, so these are the quad's implicit derivatives rather than analytic ones.
     RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
     $MATERIAL_INPUTS
 
@@ -74,9 +65,7 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     // Opacity plus the Fresnel energy the surface reflects away, since what glass mirrors never reaches the background either.
     float Coverage = saturate(Shaded.Alpha + (1.0 - Shaded.Alpha) * Shaded.ReflectionCoverage);
 
-    // Transmission is premultiplied by alpha; Reflection stays full strength (glass attenuates what is
-    // behind it, not its own specular). Sanitize before the additive accumulation, where one bad fragment
-    // takes the whole pixel. The clamp bounds 63 layers under fp16 max by construction.
+    // Reflection stays full strength since glass attenuates what is behind it, not its own specular.
 #ifdef ALPHA_COMPOSITE
     // The graph already emitted premultiplied color, so weighting it again would darken it twice.
     float3 Premultiplied = SanitizeRadiance(Shaded.Color.rgb + Shaded.Reflection);

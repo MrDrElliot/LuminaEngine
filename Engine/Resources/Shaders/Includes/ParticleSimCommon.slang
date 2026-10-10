@@ -2,13 +2,9 @@
 #include "SceneGlobals.slang"
 #include "Noise.slang"
 
-// Shared data layout + RNG/noise/emitter helpers for the two particle simulation shaders
-// (ParticleSimulate.slang, the data-driven default, and Particles/ParticleSimulateTemplate.slang,
-// the FParticleCompiler module-stack skeleton). Both consume the SAME CPU-side blocks, so the
-// structs here must stay byte-identical to CParticleSystem / FParticleSimArgs in
-// DefaultSceneRenderer.cpp -- keeping them in one place is what prevents the two sims drifting.
+// Structs must stay byte-identical to CParticleSystem and FParticleSimArgs in DefaultSceneRenderer.cpp.
 
-// Emitter shape enums (must match EParticleEmitterShape)
+// Must match EParticleEmitterShape.
 static const uint EMITTER_SHAPE_POINT  = 0u;
 static const uint EMITTER_SHAPE_SPHERE = 1u;
 static const uint EMITTER_SHAPE_BOX    = 2u;
@@ -18,16 +14,16 @@ static const uint EMITTER_SHAPE_DISK   = 5u;
 static const uint EMITTER_SHAPE_HEMISPHERE = 6u;
 static const uint EMITTER_SHAPE_MESH       = 7u;
 
-// Velocity mode enums (must match EParticleVelocityMode)
+// Must match EParticleVelocityMode.
 static const uint VELOCITY_MODE_EXPLICIT = 0u;
 static const uint VELOCITY_MODE_RADIAL   = 1u;
 
-// Sim flags (bitmask in Counts.w)
+// Bitmask in Counts.w.
 static const uint SIM_FLAG_LOOP          = (1u << 0);
 static const uint SIM_FLAG_BURST_PENDING = (1u << 1);
 static const uint SIM_FLAG_LOCAL_SPACE   = (1u << 2);
 
-// Event lists, must match EParticleEventType.
+// Must match EParticleEventType.
 static const uint PARTICLE_EVENT_DEATH      = 0u;
 static const uint PARTICLE_EVENT_COLLISION  = 1u;
 static const uint PARTICLE_EVENT_CONTINUOUS = 2u;
@@ -63,10 +59,10 @@ struct FGPUParticle
     float   Seed;
 };
 
-// 256-byte uniform block. Kept vec4-aligned for safe std140 layout.
+// 256-byte uniform block, kept vec4-aligned for std140.
 struct FParticleSimParams
 {
-    float4  EmitterPosition;     // xyz = world position
+    float4  EmitterPosition;
     float4  EmitterForward;      // xyz = forward (normalized), w = EmitterVelocity.x
     float4  EmitterRight;        // xyz = right   (normalized), w = EmitterVelocity.y
     float4  EmitterUp;           // xyz = up      (normalized), w = EmitterVelocity.z
@@ -76,8 +72,8 @@ struct FParticleSimParams
 
     float4  ShapeSize;           // xyz dims; w=cone half-angle (radians)
 
-    float4  VelocityMin;         // xyz
-    float4  VelocityMax;         // xyz
+    float4  VelocityMin;
+    float4  VelocityMax;
 
     float4  SpeedAndLifetime;    // x=speedMin, y=speedMax, z=lifeMin, w=lifeMax
     float4  Gravity;             // xyz=gravity, w=drag
@@ -125,18 +121,15 @@ struct FParticleTerrain
     uint4   Textures;            // x heightmap, y normal map
 };
 
-// Everything by device address; matches FParticleSimArgs in DefaultSceneRenderer.cpp.
+// Matches FParticleSimArgs in DefaultSceneRenderer.cpp.
 struct FParticleSimArgs
 {
     FParticleSimParams*  Params;
     GPUSpan<FGPUParticle> Particles;
     GPUSpan<uint>         SpawnCounter;   // scratch counter, one element
-    // Module-stack value inputs, one float4 slot per parameter, in the order FParticleCompiler assigned
-    // them. Empty when the stack declared no parameters, in which case nothing reads MP().
+    // One float4 per module parameter, in FParticleCompiler slot order.
     GPUSpan<float4>       ModuleParams;
-    // Declared per-particle attributes: PARTICLE_ATTR_FLOATS floats per particle, parallel to the core
-    // particle buffer and indexed by the same particle index. A plain float span rather than a generated
-    // struct because this header is parsed before any generated code and cannot name a generated type.
+    // PARTICLE_ATTR_FLOATS per particle, a plain float span since this header cannot name generated types.
     GPUSpan<float>        Attributes;
     // Lists this emitter raises for its sub-emitters, PARTICLE_EVENT_CAPACITY per list, and their counts.
     GPUSpan<FParticleEvent> OwnEvents;
@@ -155,9 +148,9 @@ struct FParticleSimArgs
 
 FParticleSimArgs*      SimArgs()      { return GetPassArgs<FParticleSimArgs>(); }
 FParticleSimParams*    SimParams()    { return SimArgs().Params; }
-GPUSpan<FGPUParticle>* Particles()    { return &SimArgs().Particles; }
-GPUSpan<uint>*         SpawnCounter() { return &SimArgs().SpawnCounter; }
-GPUSpan<float>*        PAttr()        { return &SimArgs().Attributes; }
+GPUSpan<FGPUParticle> Particles()    { return SimArgs().Particles; }
+GPUSpan<uint>         SpawnCounter() { return SimArgs().SpawnCounter; }
+GPUSpan<float>        PAttr()        { return SimArgs().Attributes; }
 
 // Uniform scale of the emitter's transform, so a scaled effect keeps its shape at a different size.
 float EmitterScale() { return SimParams().Timing.w; }
@@ -192,14 +185,14 @@ void RaiseParticleEvent(uint List, FGPUParticle P)
     }
 
     uint Slot;
-    InterlockedAdd(SpanAt(&SimArgs().OwnEventCounts, List)[0], 1u, Slot);
+    InterlockedAdd(SimArgs().OwnEventCounts.At(List)[0], 1u, Slot);
     if (Slot < PARTICLE_EVENT_CAPACITY)
     {
         FParticleEvent Event;
         Event.PositionSize  = float4(P.Position, P.Size);
         Event.VelocityFlags = float4(P.Velocity, 0.0);
         Event.Extra         = P.Color;
-        SpanSet(&SimArgs().OwnEvents, List * PARTICLE_EVENT_CAPACITY + Slot, Event);
+        SimArgs().OwnEvents.Set(List * PARTICLE_EVENT_CAPACITY + Slot, Event);
     }
 }
 
@@ -212,14 +205,14 @@ void RaiseParticleCollision(FGPUParticle P, float3 Normal, float ImpactSpeed)
     }
 
     uint Slot;
-    InterlockedAdd(SpanAt(&SimArgs().OwnEventCounts, PARTICLE_EVENT_COLLISION)[0], 1u, Slot);
+    InterlockedAdd(SimArgs().OwnEventCounts.At(PARTICLE_EVENT_COLLISION)[0], 1u, Slot);
     if (Slot < PARTICLE_EVENT_CAPACITY)
     {
         FParticleEvent Event;
         Event.PositionSize  = float4(P.Position, P.Size);
         Event.VelocityFlags = float4(P.Velocity, 0.0);
         Event.Extra         = float4(Normal, ImpactSpeed);
-        SpanSet(&SimArgs().OwnEvents, PARTICLE_EVENT_COLLISION * PARTICLE_EVENT_CAPACITY + Slot, Event);
+        SimArgs().OwnEvents.Set(PARTICLE_EVENT_COLLISION * PARTICLE_EVENT_CAPACITY + Slot, Event);
     }
 }
 
@@ -239,8 +232,8 @@ void ApplyLocalSpace(uint Index, inout FGPUParticle P)
     for (uint Sample = 0u; Sample < Segments; ++Sample)
     {
         const uint Slot = Index * Segments + Sample;
-        const float4 Old = SpanGet(&SimArgs().RibbonHistory, Slot);
-        SpanSet(&SimArgs().RibbonHistory, Slot, float4(mul(Delta, float4(Old.xyz, 1.0)).xyz, Old.w));
+        const float4 Old = SimArgs().RibbonHistory.Get(Slot);
+        SimArgs().RibbonHistory.Set(Slot, float4(mul(Delta, float4(Old.xyz, 1.0)).xyz, Old.w));
     }
 }
 
@@ -249,7 +242,7 @@ void InitializeRibbon(uint Index, float3 Position)
     const uint Segments = SimParams().RibbonInfo.x;
     for (uint Sample = 0u; Sample < Segments; ++Sample)
     {
-        SpanSet(&SimArgs().RibbonHistory, Index * Segments + Sample, float4(Position, 0.0));
+        SimArgs().RibbonHistory.Set(Index * Segments + Sample, float4(Position, 0.0));
     }
 }
 
@@ -258,7 +251,7 @@ void RecordRibbon(uint Index, float3 Position)
     const uint Segments = SimParams().RibbonInfo.x;
     if (Segments != 0u && SimParams().RibbonInfo.z != 0u)
     {
-        SpanSet(&SimArgs().RibbonHistory, Index * Segments + SimParams().RibbonInfo.y, float4(Position, 0.0));
+        SimArgs().RibbonHistory.Set(Index * Segments + SimParams().RibbonInfo.y, float4(Position, 0.0));
     }
 }
 
@@ -273,13 +266,12 @@ float3 ShapeToWorldDir(FParticleShape Shape, float3 LocalDir)
     return Shape.AxisX.xyz * LocalDir.x + Shape.AxisY.xyz * LocalDir.y + Shape.AxisZ.xyz * LocalDir.z;
 }
 
-// Sums every attractor's pull on a particle at Position into Velocity.
 void ApplyAttractors(float3 Position, inout float3 Velocity, float DeltaTime, float StrengthScale)
 {
     const uint Count = SimArgs().Attractors.Count;
     for (uint Index = 0u; Index < Count; ++Index)
     {
-        const FParticleShape Shape = SpanGet(&SimArgs().Attractors, Index);
+        const FParticleShape Shape = SimArgs().Attractors.Get(Index);
         const float3 Local = ShapeToLocal(Shape, Position);
 
         // Zero at the edge and one at the center, whichever shape the volume is.
@@ -324,7 +316,7 @@ bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Resti
     const uint ColliderCount = SimArgs().Colliders.Count;
     for (uint Index = 0u; Index < ColliderCount; ++Index)
     {
-        const FParticleShape Shape = SpanGet(&SimArgs().Colliders, Index);
+        const FParticleShape Shape = SimArgs().Colliders.Get(Index);
         float3 Local = ShapeToLocal(Shape, Position);
         float3 LocalNormal;
 
@@ -377,20 +369,20 @@ bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Resti
     const uint TerrainCount = bTerrain ? SimArgs().Terrains.Count : 0u;
     for (uint Index = 0u; Index < TerrainCount; ++Index)
     {
-        const FParticleTerrain Terrain = SpanGet(&SimArgs().Terrains, Index);
+        const FParticleTerrain Terrain = SimArgs().Terrains.Get(Index);
         const float2 UV = (Position.xz - Terrain.OriginSize.xy) / Terrain.OriginSize.z + 0.5;
         if (any(saturate(UV) != UV))
         {
             continue;
         }
 
-        const float Ground = Terrain.OriginSize.w + SampleTexture2DLevel(Terrain.Textures.x, SAMPLER_LINEAR_CLAMP, UV, 0.0).r * Terrain.HeightParams.x;
+        const float Ground = Terrain.OriginSize.w + FTexture2D(Terrain.Textures.x).SampleLevel(Samplers::LinearClamp, UV, 0.0).r * Terrain.HeightParams.x;
         if (Position.y >= Ground + Radius)
         {
             continue;
         }
 
-        const float3 Normal = normalize(SampleTexture2DLevel(Terrain.Textures.y, SAMPLER_LINEAR_CLAMP, UV, 0.0).xyz * 2.0 - 1.0);
+        const float3 Normal = normalize(FTexture2D(Terrain.Textures.y).SampleLevel(Samplers::LinearClamp, UV, 0.0).xyz * 2.0 - 1.0);
         Position.y = Ground + Radius;
         ReflectOffSurface(Velocity, Normal, Restitution, Friction);
         HitNormal = Normal;
@@ -406,15 +398,12 @@ bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Resti
     return CollideWithShapes(Position, Velocity, Restitution, Friction, Radius, bTerrain, HitNormal);
 }
 
-// Module parameter slot accessor. Generated module code indexes this instead of embedding literals, so
-// the compiled shader is invariant to the values and only a structural stack edit needs a rebuild.
-float4 MP(uint Slot) { return SpanGet(&SimArgs().ModuleParams, Slot); }
+// Generated module code reads values here so only a structural stack edit needs a rebuild.
+float4 MP(uint Slot) { return SimArgs().ModuleParams.Get(Slot); }
 
-// Baked curve/gradient tables. MUST match kParticleLUTSamples in ParticleCompiler.h -- the compiler lays
-// the tables out with this stride, so a mismatch reads into the next parameter.
+// Must match kParticleLUTSamples in ParticleCompiler.h, the stride the compiler lays tables out with.
 static const uint PARTICLE_LUT_SAMPLES = 16u;
 
-// Normalized index pair + blend factor shared by both samplers.
 void LUTIndices(float T, out uint I0, out uint I1, out float Frac)
 {
     const float U = saturate(T) * (float)(PARTICLE_LUT_SAMPLES - 1u);
@@ -423,7 +412,7 @@ void LUTIndices(float T, out uint I0, out uint I1, out float Frac)
     Frac = U - (float)I0;
 }
 
-// Scalar curve: samples packed 4-per-slot from BaseSlot.
+// Samples packed four per slot from BaseSlot.
 float SampleCurveLUT(uint BaseSlot, float T)
 {
     uint I0, I1; float Frac;
@@ -433,7 +422,7 @@ float SampleCurveLUT(uint BaseSlot, float T)
     return lerp(A, B, Frac);
 }
 
-// Colour gradient: one RGBA sample per slot from BaseSlot.
+// One RGBA sample per slot from BaseSlot.
 float4 SampleGradientLUT(uint BaseSlot, float T)
 {
     uint I0, I1; float Frac;
@@ -464,7 +453,6 @@ float RandUnit(inout uint state)
     return float(state) / 4294967295.0;
 }
 
-// [-1, 1]
 float RandSigned(inout uint state)
 {
     return RandUnit(state) * 2.0 - 1.0;
@@ -472,14 +460,13 @@ float RandSigned(inout uint state)
 
 float3 RandInUnitSphere(inout uint state)
 {
-    // Reject until inside sphere.
     [unroll]
     for (int i = 0; i < 4; ++i)
     {
         float3 p = float3(RandSigned(state), RandSigned(state), RandSigned(state));
         if (dot(p, p) <= 1.0) return p;
     }
-    // Fallback normalized point on sphere surface.
+    // Falls back to a surface point after four rejections.
     float u = RandUnit(state);
     float v = RandUnit(state);
     float theta = u * 6.2831853;
@@ -519,8 +506,8 @@ float3 RandDirectionInCone(inout uint state, float3 forward, float3 right, float
 bool CollideWithSceneDepth(inout float3 Position, inout float3 Velocity, float DeltaTime, float Restitution, float Friction, float Thickness, out float3 HitNormal)
 {
     HitNormal = float3(0.0, 1.0, 0.0);
-    const uint DepthIndex = Scene().SceneDepthIndex;
-    if (DepthIndex == 0xFFFFFFFFu)
+    const FTexture2D SceneDepth = Scene().SceneDepth;
+    if (!SceneDepth.IsValid())
     {
         return false;
     }
@@ -538,7 +525,7 @@ bool CollideWithSceneDepth(inout float3 Position, inout float3 Velocity, float D
         return false;
     }
 
-    const float Raw = SampleTexture2DLevel(DepthIndex, SAMPLER_POINT_CLAMP, UV, 0.0).r;
+    const float Raw = SceneDepth.SampleLevel(Samplers::PointClamp, UV, 0.0).r;
     if (Raw <= 0.0)
     {
         return false;
@@ -556,8 +543,8 @@ bool CollideWithSceneDepth(inout float3 Position, inout float3 Velocity, float D
     const float2 Texel = 2.0 / float2(GetScreenSize());
     const float2 UVx   = UV + float2(Texel.x, 0.0);
     const float2 UVy   = UV + float2(0.0, Texel.y);
-    const float3 Px    = ReconstructViewPos(UVx, SampleTexture2DLevel(DepthIndex, SAMPLER_POINT_CLAMP, UVx, 0.0).r, InvProj);
-    const float3 Py    = ReconstructViewPos(UVy, SampleTexture2DLevel(DepthIndex, SAMPLER_POINT_CLAMP, UVy, 0.0).r, InvProj);
+    const float3 Px    = ReconstructViewPos(UVx, SceneDepth.SampleLevel(Samplers::PointClamp, UVx, 0.0).r, InvProj);
+    const float3 Py    = ReconstructViewPos(UVy, SceneDepth.SampleLevel(Samplers::PointClamp, UVy, 0.0).r, InvProj);
     float3 ViewN = normalize(cross(Py - SurfaceP, Px - SurfaceP));
     if (dot(ViewN, SurfaceP) > 0.0)
     {
@@ -595,7 +582,7 @@ float ValueNoise(float3 x)
     return ValueNoise3D(x) * 2.0 - 1.0;
 }
 
-// Pseudo-curl: sample noise at three offsets to build a divergence-free-ish field.
+// Pseudo-curl from three offset samples, only roughly divergence free.
 float3 CurlishNoise(float3 p, float time, float scale, float speed)
 {
     float3 q = p * scale + float3(0.0, time * speed, 0.0);
@@ -619,7 +606,7 @@ float3 SampleEmissionMesh(inout uint state)
         return float3(0.0, 0.0, 0.0);
     }
 
-    FMeshletHeader* Header = SpanAt(MeshletHeaders(), Slot);
+    FMeshletHeader* Header = MeshletHeaders().At(Slot);
     const uint MeshletCount = Header.MeshletCount;
     if (MeshletCount == 0u)
     {
@@ -703,7 +690,7 @@ float3 SampleEmitterShape(inout uint state, uint shape, float3 shapeSize, float 
         float r = lerp(inner, outer, RandUnit(state));
         return (right * cos(t) + forward * sin(t)) * r;
     }
-    else /* DISK */
+    else // EMITTER_SHAPE_DISK
     {
         float t = RandUnit(state) * 6.2831853;
         float outer = shapeSize.x;

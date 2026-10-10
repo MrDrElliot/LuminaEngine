@@ -383,9 +383,9 @@ namespace Lumina::SkeletalMeshMerge
 
                 for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
                 {
-                    Out.LODMeshletOffset[LOD]   = 0;
-                    Out.LODMeshletCount[LOD]    = 0;
-                    Out.LODScreenThreshold[LOD] = Source.LODScreenThreshold[LOD];
+                    Out.LODMeshletOffset[LOD] = 0;
+                    Out.LODMeshletCount[LOD]  = 0;
+                    Out.LODError[LOD]         = Source.LODError[LOD];
                 }
 
                 SurfaceKeys.push_back(FSurfaceKey{ m, s });

@@ -5,7 +5,7 @@
 
 struct FData
 {
-    uint VelocityIndex;
+    FTexture2D Velocity;
 };
 
 // Motion at this many pixels per frame saturates a channel.
@@ -22,8 +22,8 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 {
     FData* Data = GetPassArgs<FData>();
 
-    const float2 Motion = gTextures2D[Data.VelocityIndex]
-        .SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], Input.UV, 0.0).rg;
+    const float2 Motion = Data.Velocity
+        .SampleLevel(Samplers::PointClamp, Input.UV, 0.0).rg;
 
     const float2 Pixels = Motion * float2(Scene().ScreenSize.xy);
     const float2 Scaled = clamp(Pixels / kRefPixels, -1.0, 1.0);

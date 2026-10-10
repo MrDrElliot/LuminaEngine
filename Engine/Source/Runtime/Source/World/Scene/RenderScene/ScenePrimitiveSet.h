@@ -310,7 +310,7 @@ namespace Lumina
          *
          * Idempotent per (mesh, capacity); a second call for the same species returns the same block.
          */
-        FGrassSpeciesBinding AcquireGrassSpecies(CStaticMesh* Mesh, uint32 Capacity);
+        FGrassSpeciesBinding AcquireGrassSpecies(CStaticMesh* Mesh, uint32 ResolveHandle, uint32 Capacity);
 
         // Retained slot ranges (base, count) the grass scatter fills on the GPU, which the CPU arrays only hold as zeros.
         void GetGPUWrittenSlotRanges(TVector<FUIntVector2>& Out) const
@@ -349,6 +349,10 @@ namespace Lumina
         static constexpr bool       ShouldResendAllInstances(SIZE_T DirtySlots, SIZE_T SlotCount) { return DirtySlots * 8 >= SlotCount * 7; }
         bool                        NeedsFullStaticUpload() const   { return bFullStaticUpload; }
         void                        ClearFullInstanceUpload()       { bFullInstanceUpload = false; bFullStaticUpload = false; }
+
+        // Sizes every changed slot's meshlet visibility from its surface's largest LOD. Serial, before the dirty lists are consumed.
+        void                        AssignMeshletVisibility();
+        uint32                      GetMeshletVisibilityExtent() const { return MeshletVisibilityExtent; }
 
         void                                NotifyResolveTableChanged() { bResolveTableChanged = true; }
 
@@ -623,6 +627,16 @@ namespace Lumina
         uint32                              MaxSurfaceDescMeshlets = 0;
 
         void                                ReleaseBoneSlice(FScenePrimitive& Prim);
+
+        void                                UpdateMeshletVisibility(uint32 Slot);
+        void                                ReleaseMeshletVisibility(uint32 Slot);
+        void                                ResetMeshletVisibility();
+
+        // Per retained slot, x the first word and y the word count.
+        TVector<FUIntVector2>               SlotMeshletVisibility;
+        THashMap<uint32, TVector<uint32>>   MeshletVisibilityFreeLists;
+        uint32                              MeshletVisibilityExtent = 1;
+        TVector<uint32>                     MeshletVisibilityScratch;
 
         TVector<uint32>                     SkeletalIndices;
         // Adds and removes only; StructureGeneration also moves on a transform, which would thrash this.

@@ -259,6 +259,24 @@ namespace Lumina
         Ultra,
     };
 
+    // The standard upscaler quality modes, which each upscaler maps onto its own, plus a free percentage.
+    REFLECT()
+    enum class EUpscalerMode : uint8
+    {
+        // Renders at ScreenPercentage.
+        Custom,
+        // Full resolution, using the upscaler only as anti-aliasing, which DLSS calls DLAA.
+        NativeAA,
+        // About 67 percent per axis.
+        Quality,
+        // About 58 percent per axis.
+        Balanced,
+        // Half per axis.
+        Performance,
+        // A third per axis, meant for very high display resolutions.
+        UltraPerformance,
+    };
+
     // S2x and 4x are absent because both add 2x MSAA, which a visibility-buffer deferred path does not run.
     REFLECT()
     enum class ESMAAMode : uint8
@@ -329,9 +347,13 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows")
         EShadowQuality ShadowQuality = EShadowQuality::High;
 
-        // Multiplies every mesh's imported LOD switch distances, so a close third-person camera can push them out.
+        // At 1 a mesh switches LOD once its simplification error shrinks to one display pixel, and 2 waits for half a pixel.
         PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.25f, ClampMax = 16.0f, Delta = 0.25f)
         float LODDistanceScale = 1.0f;
+
+        // The same for shadow casters, measured in shadow map texels of the view that draws them.
+        PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.25f, ClampMax = 16.0f, Delta = 0.25f)
+        float ShadowLODScale = 1.0f;
 
         // Sharpens textures seen at a glancing angle, such as floors and roads, for a little bandwidth. 1 turns it off.
         PROPERTY(Editable, Category = "Textures", ClampMin = 1, ClampMax = 16)
@@ -372,6 +394,22 @@ namespace Lumina
             asks for it. Takes effect on the next frame. */
         PROPERTY(Editable, Category = "Skinning", ClampMin = 0, ClampMax = 4096, Units = "MiB")
         int32 PreSkinnedVertexBudgetMiB = 0;
+
+        // How far below the display the scene renders, which the upscaler restores before tonemapping.
+        PROPERTY(Editable, Category = "Resolution")
+        EUpscalerMode UpscalerMode = EUpscalerMode::Custom;
+
+        // Percentage of the display each axis renders at while UpscalerMode is Custom.
+        PROPERTY(Editable, Category = "Resolution", ClampMin = 25.0f, ClampMax = 100.0f)
+        float ScreenPercentage = 100.0f;
+
+        // A registered upscaler such as DLSS, or None for the built-in spatial one, which falls back the same way on unsupported hardware.
+        PROPERTY(Editable, Category = "Resolution")
+        FName Upscaler;
+
+        // Sharpening on the built-in spatial upscale, which softens the image it enlarges.
+        PROPERTY(Editable, Category = "Resolution", ClampMin = 0.0f, ClampMax = 1.0f)
+        float UpscaleSharpness = 0.25f;
 
         // SMAA1x is morphological only; SMAAT2x adds a second jittered subsample resolved against a reprojected history.
         PROPERTY(Editable, Category = "Anti-Aliasing")

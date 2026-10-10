@@ -44,18 +44,18 @@ FTransform3x4 InverseAffine(FTransform3x4 M)
 void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
 {
     const uint Group   = GroupID.x + GroupID.y * MAX_DISPATCH_AXIS;
-    const uint Block   = SpanIsEmpty(&Pass().Blocks) ? Group : (SpanContains(&Pass().Blocks, Group) ? SpanGet(&Pass().Blocks, Group) : 0xFFFFFFFFu);
+    const uint Block   = Pass().Blocks.IsEmpty() ? Group : (Pass().Blocks.Contains(Group) ? Pass().Blocks.Get(Group) : 0xFFFFFFFFu);
     if (Block == 0xFFFFFFFFu)
     {
         return;
     }
     const uint SlotIdx = Block * LOCAL_SIZE_X + LocalID.x;
-    if (!SpanContains(&Pass().RetainedCullEntries, SlotIdx))
+    if (!Pass().RetainedCullEntries.Contains(SlotIdx))
     {
         return;
     }
 
-    const FInstanceCullEntry Cull = SpanGet(&Pass().RetainedCullEntries, SlotIdx);
+    const FInstanceCullEntry Cull = Pass().RetainedCullEntries.Get(SlotIdx);
     if (!Cull.HasFlag(EInstanceFlags::Active) || !Cull.HasFlag(EInstanceFlags::HasGeometry) ||
         !Cull.HasFlag(EInstanceFlags::CastShadow) || !Cull.HasFlag(EInstanceFlags::HasDistanceField) ||
         Cull.HasFlag(EInstanceFlags::Skinned))
@@ -81,14 +81,14 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         return;
     }
 
-    FInstanceStatic* Static = SpanAt(&Pass().RetainedStatic, SlotIdx);
+    FInstanceStatic* Static = Pass().RetainedStatic.At(SlotIdx);
     const FDistanceFieldVolume Volume = GetDistanceFieldVolume(Static.MeshletHeader);
     if (!Volume.IsValid() || Volume.MaxDistance <= 0.0 || any(Volume.VolumeSize <= 0.0))
     {
         return;
     }
 
-    const FTransform3x4 LocalToWorld = SpanGet(&Pass().RetainedTransforms, SlotIdx);
+    const FTransform3x4 LocalToWorld = Pass().RetainedTransforms.Get(SlotIdx);
     const float3 Scale = float3(length(float3(LocalToWorld.Row0.x, LocalToWorld.Row1.x, LocalToWorld.Row2.x)),
                                 length(float3(LocalToWorld.Row0.y, LocalToWorld.Row1.y, LocalToWorld.Row2.y)),
                                 length(float3(LocalToWorld.Row0.z, LocalToWorld.Row1.z, LocalToWorld.Row2.z)));
@@ -99,7 +99,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
     }
 
     uint ObjectIndex;
-    InterlockedAdd(SpanAt(&Grid.Counters, kSunDFObjectCounter)[0], 1u, ObjectIndex);
+    InterlockedAdd(Grid.Counters.At(kSunDFObjectCounter)[0], 1u, ObjectIndex);
     if (ObjectIndex >= Grid.Objects.Count)
     {
         return;
@@ -112,11 +112,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
     Object.MaxDistance  = Volume.MaxDistance;
     Object.VolumeSize   = Volume.VolumeSize;
     Object.MinScale     = MinScale;
-    Object.TextureIndex = Volume.TextureIndex;
+    Object.Texture = Volume.Texture;
     Object.Flags        = Volume.bTwoSided ? kDistanceFieldTwoSided : 0u;
     Object._Pad0        = 0u;
     Object._Pad1        = 0u;
-    SpanSet(&Grid.Objects, ObjectIndex, Object);
+    Grid.Objects.Set(ObjectIndex, Object);
 
     // Clamped after the conversion as well, so no float the conversion mishandles can widen the loop past the grid.
     const int  LastCell = int(Grid.Dimension) - 1;
@@ -128,10 +128,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         {
             const uint Cell = uint(Y) * Grid.Dimension + uint(X);
             uint Index;
-            InterlockedAdd(SpanAt(&Grid.CellCounts, Cell)[0], 1u, Index);
+            InterlockedAdd(Grid.CellCounts.At(Cell)[0], 1u, Index);
             if (Index < Grid.CellCapacity)
             {
-                SpanSet(&Grid.CellItems, Cell * Grid.CellCapacity + Index, ObjectIndex);
+                Grid.CellItems.Set(Cell * Grid.CellCapacity + Index, ObjectIndex);
             }
         }
     }

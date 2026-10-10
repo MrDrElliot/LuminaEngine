@@ -1,16 +1,13 @@
-// Two-tier frustum-only terrain cull: reject whole chunks, then refine per-meshlet for silhouettes.
-// No Hi-Z here (the inter-phase pyramid lacks full BasePass depth and caused chunk-granularity pop-out).
-// Dispatch: one workgroup per chunk, one thread per meshlet; thread 0 runs the chunk test (groupshared).
+// No Hi-Z here, since the inter-phase pyramid lacks full BasePass depth and pops whole chunks out.
 
 #include "Includes/AppendBuffer.slang"
 #include "Includes/Culling.slang"
 #include "Includes/TerrainCommon.slang"
 
-// Sized so the default ChunkResolution (64) -> 81 meshlets/chunk fits one wave; larger chunks stride.
+// Covers the 81 meshlets of a default 64-resolution chunk in one pass; larger chunks stride.
 #define LOCAL_SIZE_X 128
 
-// The four cull buffers are addressed by device pointer (chunks/meshlets read,
-// visible-list/indirect-args written). Pointers first so each 8-byte address stays 8-aligned.
+// Pointers first so each 8-byte address stays 8-aligned.
 struct FTerrainCullPushConstants
 {
     GPUSpan<FTerrainChunkInfo>      Chunks;
@@ -19,17 +16,14 @@ struct FTerrainCullPushConstants
     GPUSpan<FDrawIndirectArguments> TerrainIndirect;
 };
 
-groupshared bool gChunkVisible;
+groupshared bool gsChunkVisible;
 
-// Smallest sphere enclosing the AABB. Conservative for plane-vs-sphere tests.
 void AABBToSphere(float3 BoundsMin, float3 BoundsMax, out float3 Center, out float Radius)
 {
     Center = (BoundsMin + BoundsMax) * 0.5;
     Radius = length(BoundsMax - Center);
 }
 
-// Frustum-vs-sphere on the AABB's enclosing sphere: conservative (errs toward "keep"). Reuses the
-// meshlet cull's helper so frustum-convention quirks (plane orientation, normalization) are shared.
 bool ChunkVisible(FFrustum F, float3 BoundsMin, float3 BoundsMax)
 {
     float3 Center;
@@ -47,49 +41,35 @@ void ComputeMain(
     uint    LocalIdx   : SV_GroupIndex)
 {
     const uint ChunkIndex = GroupID.x;
-    if (!SpanContains(&Pass().Chunks, ChunkIndex))
+    if (!Pass().Chunks.Contains(ChunkIndex))
         return;
 
-    // Thread 0 owns the chunk-level test. Broadcast through groupshared so
-    // every meshlet thread can short-circuit on a coarse rejection.
     if (LocalIdx == 0)
     {
-        FTerrainChunkInfo Chunk = SpanGet(&Pass().Chunks, ChunkIndex);
-        gChunkVisible = ChunkVisible(Scene().CullData.Frustum, Chunk.BoundsMin, Chunk.BoundsMax);
+        FTerrainChunkInfo Chunk = Pass().Chunks.Get(ChunkIndex);
+        gsChunkVisible = ChunkVisible(Scene().CullData.Frustum, Chunk.BoundsMin, Chunk.BoundsMax);
     }
     GroupMemoryBarrierWithGroupSync();
 
-    if (!gChunkVisible)
+    if (!gsChunkVisible)
         return;
 
-    FTerrainChunkInfo Chunk = SpanGet(&Pass().Chunks, ChunkIndex);
+    FTerrainChunkInfo Chunk = Pass().Chunks.Get(ChunkIndex);
 
-    // Stride the meshlet test by LOCAL_SIZE_X so chunks larger than the workgroup still cover
-    // every meshlet with one thread per pass.
     for (uint Local = LocalIdx; Local < Chunk.MeshletCount; Local += LOCAL_SIZE_X)
     {
         const uint MeshletIndex = Chunk.MeshletOffset + Local;
-        if (!SpanContains(&Pass().Meshlets, MeshletIndex))
+        if (!Pass().Meshlets.Contains(MeshletIndex))
             break;
 
-        FTerrainMeshletInfo Meshlet = SpanGet(&Pass().Meshlets, MeshletIndex);
+        FTerrainMeshletInfo Meshlet = Pass().Meshlets.Get(MeshletIndex);
 
         // Per-meshlet frustum refinement; tighter bounds catch silhouettes the chunk sphere misses.
         if (!ChunkVisible(Scene().CullData.Frustum, Meshlet.BoundsMin, Meshlet.BoundsMax))
             continue;
 
-        // Append: survivors race for a unique slot in the shared indirect-arg via atomic add. The cursor
-        // IS the draw's InstanceCount, which is why it lives in the args rather than in a private counter.
-        //
-        // Base 0 rather than the args' FirstInstance, which the CPU rewrites to 0 every frame beside
-        // InstanceCount: loading it back would read a known constant out of the same 16 bytes every other
-        // lane is atomically incrementing. Same reason BuildMaterialTileList computes its base
-        // arithmetically instead of reading Args[Slot].FirstInstance.
-        //
-        // One append per (chunk, meshlet) pair cannot exceed what sized VisibleMeshlets, so this is
-        // exact by construction and bounded by that span anyway.
-        // continue, not return: this is a grid-stride loop, so the thread still owns further meshlets.
-        const uint Slot = AppendReserve(&SpanAt(&Pass().TerrainIndirect, 0u).InstanceCount,
+        // Base 0 because the CPU rewrites FirstInstance to 0, and reading it would contend with the lanes incrementing InstanceCount.
+        const uint Slot = AppendReserve(&Pass().TerrainIndirect.At(0u).InstanceCount,
                                         Pass().VisibleMeshlets.Count, /*Base*/ 0u);
         if (Slot == kAppendFull)
         {
@@ -99,6 +79,6 @@ void ComputeMain(
         FTerrainVisibleMeshlet Out;
         Out.ChunkIndex   = ChunkIndex;
         Out.MeshletIndex = MeshletIndex;
-        SpanSet(&Pass().VisibleMeshlets, Slot, Out);
+        Pass().VisibleMeshlets.Set(Slot, Out);
     }
 }

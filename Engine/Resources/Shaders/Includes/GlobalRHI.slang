@@ -1,186 +1,79 @@
 #pragma once
+import RHI;
 
-//  Shader conventions for the RHI
-
-
-struct FRHIRoot
-{
-    uint64_t Args;
-    // Written at offset 8 by CmdSetSceneRoot, so reaching the scene costs no load at all.
-    uint64_t SceneRoot;
-    uint64_t SceneData;
-    uint64_t Instances;
-    uint64_t Lights;
-};
-[[vk::push_constant]] FRHIRoot gRHI;
-
-// Returns the pointer; field access auto-derefs, so pointer-bearing blocks are safe (no by-value load
-// of PhysicalStorageBuffer pointers, which trips spirv-val).
-Ptr<T> GetArgs<T>()
-{
-    return (T*)gRHI.Args;
-}
-
-// Store nested addresses as uint64_t and go through this, never as a typed pointer field: GPU-AV
-// instruments a typed load with a null of pointer type, which SPIR-V forbids, and disables itself.
-T LoadBlock<T>(uint64_t Address)
-{
-    return ((T*)Address)[0];
-}
-
-// Global texture heap.
-
-[[vk::binding(0, 0)]] SamplerState                              gSamplers[];
-// Comparison alias of the same sampler array (VkSampler carries compareEnable;
-// only SAMPLER_SHADOW is created as a comparison sampler).
-[[vk::binding(0, 0)]] SamplerComparisonState                    gCmpSamplers[];
-
-[[vk::binding(1, 0)]] Texture2D                                 gTextures2D[];
-[[vk::binding(1, 0)]] TextureCube                               gTexturesCube[];
-[[vk::binding(1, 0)]] Texture3D                                 gTextures3D[];
-[[vk::binding(1, 0)]] Texture2DArray                            gTextures2DArray[];
-// Reflection-probe radiance: every probe's 6 faces live in one array, sampled by slice index.
-[[vk::binding(1, 0)]] TextureCubeArray                          gTexturesCubeArray[];
-// Integer alias of the same heap, for R32_UINT targets (e.g. the VisBuffer triangle-ID buffer).
-[[vk::binding(1, 0)]] Texture2D<uint>                           gTextures2DUInt[];
-
-// The storage-image half (binding 2) lives in GlobalRHIStorage.slang, included only by shaders that
-// write to the heap: its aliases disagree about view type and cost a validation error otherwise.
-
-// Stock sampler heap slots. Keep in lockstep with the registration order in
-// RHICore.cpp (RHI::Core::Initialize).
-static const uint SAMPLER_LINEAR_WRAP   = 0;
-static const uint SAMPLER_LINEAR_CLAMP  = 1;
-static const uint SAMPLER_LINEAR_MIRROR = 2;
-static const uint SAMPLER_POINT_WRAP    = 3;
-static const uint SAMPLER_POINT_CLAMP   = 4;
-static const uint SAMPLER_ANISO_WRAP    = 5;
-static const uint SAMPLER_ANISO_CLAMP   = 6;
-static const uint SAMPLER_SHADOW        = 7;
-static const uint SAMPLER_MIN_REDUCTION = 8;
-static const uint SAMPLER_MAX_REDUCTION = 9;
-static const uint SAMPLER_POINT_MIRROR  = 10;
-static const uint SAMPLER_ANISO_MIRROR  = 11;
-
-// Heap access helpers.
-
-SamplerState GetSampler(uint SamplerIndex) { return gSamplers[NonUniformResourceIndex(SamplerIndex)]; }
+// The index and slot form of the heap, kept for the code the material graph emits and for Custom nodes.
 
 float4 SampleTexture2D(uint TextureIndex, uint SamplerIndex, float2 UV)
 {
-    return gTextures2D[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], UV);
+    return FTexture2D(TextureIndex).Sample(FSampler(SamplerIndex), UV);
 }
 
-// Explicit-gradient sample. The deferred VisBuffer lane has no rasterizer quad, so implicit ddx/ddy
-// are garbage -- DeferredMaterial.slang feeds analytic perspective-correct gradients here instead.
 float4 SampleTexture2DGrad(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
 {
-    return gTextures2D[NonUniformResourceIndex(TextureIndex)].SampleGrad(gSamplers[NonUniformResourceIndex(SamplerIndex)], UV, Ddx, Ddy);
+    return FTexture2D(TextureIndex).SampleGrad(FSampler(SamplerIndex), UV, Ddx, Ddy);
 }
-
-// Which sampling mode is right depends on the LANE, not the material: forward quads cover one
-// triangle, the deferred lane has no quad at all. One call shape lets the same emitted chunk serve
-// every template, and the LANE resolves it HERE.
-//
-// It used to be resolved by a #define in each material template, which is how the deferred lane lost
-// its gradients the moment those macro blocks were edited for an unrelated reason: an implicit Sample()
-// in a compute entry point is Slang error 31210 ("compute derivative group quad requires thread
-// dispatch count of X and Y to each be a multiple of 2"), pointing at this file rather than at the
-// template that actually made the choice. Keyed off SHADING_COMPUTE, the same switch SurfaceShading
-// and ShadowSampling use, a new template cannot forget it.
-#if defined(SHADING_COMPUTE) || defined(SHADING_EXPLICIT_GRADIENTS)
-float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
-{
-    return SampleTexture2DGrad(TextureIndex, SamplerIndex, UV, Ddx, Ddy);
-}
-#else
-float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
-{
-    return SampleTexture2D(TextureIndex, SamplerIndex, UV);
-}
-#endif
 
 float4 SampleTexture2DLevel(uint TextureIndex, uint SamplerIndex, float2 UV, float Lod)
 {
-    return gTextures2D[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], UV, Lod);
+    return FTexture2D(TextureIndex).SampleLevel(FSampler(SamplerIndex), UV, Lod);
 }
 
-// Slice is NOT filtered between layers -- the hardware treats the array index as discrete, which is
-// the point. TextureIndex is the same ResourceID a Texture2D uses, but must name a Tex2DArray.
 float4 SampleTexture2DArray(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice)
 {
-    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], float3(UV, (float)Slice));
+    return FTexture2DArray(TextureIndex).Sample(FSampler(SamplerIndex), float3(UV, (float)Slice));
 }
 
 float4 SampleTexture2DArrayLevel(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float Lod)
 {
-    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], float3(UV, (float)Slice), Lod);
+    return FTexture2DArray(TextureIndex).SampleLevel(FSampler(SamplerIndex), float3(UV, (float)Slice), Lod);
 }
 
-// Explicit-gradient variant, for the deferred VisBuffer lane (see SampleTexture2DGrad above). The
-// gradients are 2D: a layer index has no derivative, so only UV drives mip selection.
 float4 SampleTexture2DArrayGrad(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
 {
-    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].SampleGrad(gSamplers[NonUniformResourceIndex(SamplerIndex)], float3(UV, (float)Slice), Ddx, Ddy);
+    return FTexture2DArray(TextureIndex).SampleGrad(FSampler(SamplerIndex), float3(UV, (float)Slice), Ddx, Ddy);
 }
-
-// Array counterpart of SampleTexture2DAuto, split on the same switch and for the same reason. Without
-// it an array sample reaches the deferred lane as implicit-derivative Sample(), which does not compile
-// in a compute entry point.
-#if defined(SHADING_COMPUTE) || defined(SHADING_EXPLICIT_GRADIENTS)
-float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
-{
-    return SampleTexture2DArrayGrad(TextureIndex, SamplerIndex, UV, Slice, Ddx, Ddy);
-}
-#else
-float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
-{
-    return SampleTexture2DArray(TextureIndex, SamplerIndex, UV, Slice);
-}
-#endif
 
 float4 LoadTexture2DArray(uint TextureIndex, int2 Texel, uint Slice, int Mip = 0)
 {
-    return gTextures2DArray[NonUniformResourceIndex(TextureIndex)].Load(int4(Texel, (int)Slice, Mip));
+    return FTexture2DArray(TextureIndex).Load(int4(Texel, (int)Slice, Mip));
 }
 
 float4 SampleTextureCube(uint TextureIndex, uint SamplerIndex, float3 Dir)
 {
-    return gTexturesCube[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], Dir);
+    return FTextureCube(TextureIndex).Sample(FSampler(SamplerIndex), Dir);
 }
 
 float4 SampleTextureCubeLevel(uint TextureIndex, uint SamplerIndex, float3 Dir, float Lod)
 {
-    return gTexturesCube[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], Dir, Lod);
+    return FTextureCube(TextureIndex).SampleLevel(FSampler(SamplerIndex), Dir, Lod);
 }
 
 float4 SampleTextureCubeArrayLevel(uint TextureIndex, uint SamplerIndex, float3 Dir, uint Slice, float Lod)
 {
-    return gTexturesCubeArray[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], float4(Dir, (float)Slice), Lod);
+    return FTextureCubeArray(TextureIndex).SampleLevel(FSampler(SamplerIndex), Dir, Slice, Lod);
 }
 
 float4 SampleTexture3D(uint TextureIndex, uint SamplerIndex, float3 UVW)
 {
-    return gTextures3D[NonUniformResourceIndex(TextureIndex)].Sample(gSamplers[NonUniformResourceIndex(SamplerIndex)], UVW);
+    return FTexture3D(TextureIndex).Sample(FSampler(SamplerIndex), UVW);
 }
 
 float4 SampleTexture3DLevel(uint TextureIndex, uint SamplerIndex, float3 UVW, float Lod)
 {
-    return gTextures3D[NonUniformResourceIndex(TextureIndex)].SampleLevel(gSamplers[NonUniformResourceIndex(SamplerIndex)], UVW, Lod);
+    return FTexture3D(TextureIndex).SampleLevel(FSampler(SamplerIndex), UVW, Lod);
 }
 
 float4 LoadTexture2D(uint TextureIndex, int2 Texel, int Mip = 0)
 {
-    return gTextures2D[NonUniformResourceIndex(TextureIndex)].Load(int3(Texel, Mip));
+    return FTexture2D(TextureIndex).Load(Texel, Mip);
 }
 
 uint LoadTexture2DUInt(uint TextureIndex, int2 Texel, int Mip = 0)
 {
-    return gTextures2DUInt[NonUniformResourceIndex(TextureIndex)].Load(int3(Texel, Mip));
+    return FTexture2DUInt(TextureIndex).Load(Texel, Mip);
 }
 
-// Fullscreen-triangle vertex helper: call from a VS with SV_VertexID, no vertex buffers. UV is
-// top-left origin; depth lands on the far plane to match the FullscreenQuad convention.
+// UV has a top-left origin and depth lands on the far plane, matching the fullscreen quad convention.
 float4 FullscreenTriangle(uint VertexID, out float2 UV)
 {
     UV = float2((VertexID << 1) & 2, VertexID & 2);

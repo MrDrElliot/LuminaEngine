@@ -434,11 +434,11 @@ namespace Lumina
             return;
         }
 
-        const bool bSMAAEnabled = GetSMAAMode() != ESMAAMode::Off;
+        const bool bSMAAEnabled = GetViewSMAAMode(*CurrentView) != ESMAAMode::Off;
         const bool bPPMaterials = !ActivePostProcessMaterials.empty();
         const FSceneImage& Output = (bSMAAEnabled || bPPMaterials) ? GetNamedImage(ENamedImage::LDR) : CurrentView->Output;
 
-        const FSceneImage& HDRTex     = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& HDRTex     = GetPostInputImage();
         const FSceneImage& BloomTex   = CurrentView->BloomChainImage;
         const FSceneImage& AdaptedTex = GetNamedImage(ENamedImage::AdaptedLuminance);
 
@@ -595,9 +595,9 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Post Process Material Pass", tracy::Color::Magenta);
 
         const FSceneImage& DepthTex = GetNamedImage(ENamedImage::DepthAttachment);
-        const FSceneImage& HDRTex   = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& HDRTex   = GetPostInputImage();
 
-        const bool bSMAAEnabled = GetSMAAMode() != ESMAAMode::Off;
+        const bool bSMAAEnabled = GetViewSMAAMode(*CurrentView) != ESMAAMode::Off;
 
         const FSceneImage* Source = &GetNamedImage(ENamedImage::LDR);
         const FSceneImage* Dest   = &GetNamedImage(ENamedImage::PostProcessScratch);
@@ -1003,15 +1003,153 @@ namespace Lumina
         bPrevMotionStateValid = bTransforms;
     }
 
-    bool FDefaultSceneRenderer::IsTemporalAARequested()
+    ESMAAMode FDefaultSceneRenderer::GetViewSMAAMode(const FSceneView& View)
     {
-        return GetSMAAMode() == ESMAAMode::SMAAT2x;
+        if (IsTemporalUpscalerFor(View))
+        {
+            return ESMAAMode::Off;
+        }
+        const ESMAAMode Mode = GetSMAAMode();
+        return (Mode == ESMAAMode::SMAAT2x && View.Size != View.DisplaySize) ? ESMAAMode::SMAA1x : Mode;
     }
 
     bool FDefaultSceneRenderer::IsTemporalAAEnabledFor(const FSceneView& View)
     {
         // Captures and probe bakes carry no jitter sequence, so they would resolve against another view's frame.
-        return IsTemporalAARequested() && View.bIsPrimary;
+        return GetViewSMAAMode(View) == ESMAAMode::SMAAT2x && View.bIsPrimary;
+    }
+
+    bool FDefaultSceneRenderer::IsTemporalUpscalerFor(const FSceneView& View)
+    {
+        return View.bIsPrimary && View.Upscaler != nullptr && View.Upscaler->IsTemporal();
+    }
+
+    bool FDefaultSceneRenderer::IsUpscalingView(const FSceneView& View)
+    {
+        return View.Size != View.DisplaySize || (View.bIsPrimary && View.Upscaler != nullptr);
+    }
+
+    const FSceneImage& FDefaultSceneRenderer::GetPostInputImage() const
+    {
+        const FSceneImage& Upscaled = GetNamedImage(ENamedImage::UpscaledHDR);
+        const bool bUpscaled = CurrentView != nullptr && IsUpscalingView(*CurrentView) && Upscaled.IsValid();
+        return bUpscaled ? Upscaled : GetNamedImage(ENamedImage::HDR);
+    }
+
+    void FDefaultSceneRenderer::UpscalePass(RHI::FCmdListH CL)
+    {
+        const FSceneImage& Output = GetNamedImage(ENamedImage::UpscaledHDR);
+        if (!Output)
+        {
+            return;
+        }
+
+        IUpscaler* const Upscaler = CurrentView->bIsPrimary ? CurrentView->Upscaler : nullptr;
+        if (Upscaler == nullptr)
+        {
+            SpatialUpscalePass(CL);
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Upscale", tracy::Color::Orange2);
+
+        auto ToInput = [](const FSceneImage& Image)
+        {
+            FRenderTexture Out;
+            if (Image.IsValid())
+            {
+                Out.Texture = Image.Texture;
+                Out.Index   = Image.GetResourceID() < 0 ? Constants::kIndexNoneU32 : (uint32)Image.GetResourceID();
+                Out.Format  = Image.Desc.Format;
+                Out.Extent  = Image.GetExtent();
+            }
+            return Out;
+        };
+
+        const FSceneGlobalData& Global = RenderFrame->SceneGlobalData;
+        const FMatrix4& Projection     = Global.CameraData.Projection;
+
+        FUpscaleInputs Inputs;
+        Inputs.Color              = ToInput(GetNamedImage(ENamedImage::HDR));
+        Inputs.Depth              = ToInput(GetNamedImage(ENamedImage::DepthAttachment));
+        Inputs.Velocity           = ToInput(GetNamedImage(ENamedImage::Velocity));
+        Inputs.AdaptedLuminance   = ToInput(GetNamedImage(ENamedImage::AdaptedLuminance));
+        Inputs.Output             = ToInput(Output);
+        Inputs.RenderSize         = CurrentView->Size;
+        Inputs.DisplaySize        = CurrentView->DisplaySize;
+        Inputs.Mode               = Upscaling::GetRequest().Mode;
+        Inputs.JitterPixels       = FVector2(Global.TemporalJitterU * (float)CurrentView->Size.x,
+                                             Global.TemporalJitterV * (float)CurrentView->Size.y);
+        Inputs.NearPlane          = Global.NearPlane;
+        Inputs.FarPlane           = Global.FarPlane;
+        Inputs.VerticalFovRadians = Projection[1][1] != 0.0f ? 2.0f * Math::Atan(1.0f / Math::Abs(Projection[1][1])) : 0.0f;
+        Inputs.DeltaSeconds       = Global.DeltaTime;
+        Inputs.bReset             = !CurrentView->bTemporalHistoryValid;
+
+        // The SDK records its own barriers and bindings, so everything before and after it is fenced completely.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::AllCommands);
+        Upscaler->Evaluate(CL, Inputs);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::AllCommands);
+
+        RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
+        RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CW);
+        RHI::CmdSetSceneRoot(CL, SceneBindings);
+
+        CurrentView->bTemporalHistoryValid = true;
+    }
+
+    void FDefaultSceneRenderer::SpatialUpscalePass(RHI::FCmdListH CL)
+    {
+        LUMINA_PROFILE_SECTION_COLORED("Spatial Upscale", tracy::Color::Orange2);
+
+        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH PixelShader  = FShaderLibrary::Get("SpatialUpscale.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        const FSceneImage& Source = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& Output = GetNamedImage(ENamedImage::UpscaledHDR);
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = Output.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Undefined;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = Output.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, Output.GetExtent());
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VertexShader;
+        Key.PS = PixelShader;
+        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FData
+        {
+            uint32 SourceIndex;
+            uint32 SourceWidth;
+            uint32 SourceHeight;
+            float  Sharpness;
+        } PC;
+        static_assert(sizeof(FData) == 16, "FData must match SpatialUpscale.slang FData.");
+
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        PC.SourceIndex  = (uint32)Source.GetResourceID();
+        PC.SourceWidth  = Source.GetSizeX();
+        PC.SourceHeight = Source.GetSizeY();
+        PC.Sharpness    = Settings != nullptr ? Math::Clamp(Settings->UpscaleSharpness, 0.0f, 1.0f) : 0.0f;
+
+        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
     }
 
     bool FDefaultSceneRenderer::IsTemporalAAEnabled() const
@@ -1041,7 +1179,8 @@ namespace Lumina
     // The debug view is the only way to see whether motion vectors are sane, so it must not need T2x on.
     bool FDefaultSceneRenderer::IsVelocityWanted() const
     {
-        return IsTemporalAAEnabled() || (CurrentView != nullptr && CurrentView->bIsPrimary && IsVelocityDebugActive());
+        return IsTemporalAAEnabled() || (CurrentView != nullptr && IsTemporalUpscalerFor(*CurrentView))
+            || (CurrentView != nullptr && CurrentView->bIsPrimary && IsVelocityDebugActive());
     }
 
     FVector4 FDefaultSceneRenderer::GetSMAASubsampleIndices() const

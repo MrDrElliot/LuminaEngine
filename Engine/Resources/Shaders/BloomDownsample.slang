@@ -1,29 +1,26 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
-// 13-tap partial-overlap downsample (Jimenez, "Next Generation Post Processing in Call of Duty:
-// Advanced Warfare"), dispatched once per bloom mip. The first pass (HDR -> mip 0) adds Karis-average
-// firefly suppression, a soft-knee threshold, and a non-finite sanitize; later passes run the plain
-// filter. Filtering every level (instead of a 2x2 box chain) is what keeps bloom stable under motion.
+// 13-tap partial-overlap downsample (Jimenez, Call of Duty Advanced Warfare); filtering every level keeps bloom stable under motion.
 
 struct FPushConstants
 {
-    float2 SrcTexelSize;
-    uint   SrcIndex;        // bindless SRV: source image (all mips)
-    float  SrcMip;          // mip level to sample on the source SRV
+    float2     SrcTexelSize;
+    FTexture2D Src;
+    float      SrcMip;         // mip level to sample on the source SRV
 
-    uint2  DstSize;
-    uint   DstUAV;          // bindless RW: destination mip
-    uint   bFirstPass;      // 1 = prefilter from HDR (Karis + threshold + sanitize)
+    uint2        DstSize;
+    FRWTexture2D Dst;
+    uint         bFirstPass;   // 1 prefilters from HDR with Karis, threshold and sanitize
 
-    float  Threshold;       // post-exposure knee, divided by the exposure scale before use
-    float  SoftKnee;        // knee width as a fraction of the threshold
-    uint   AdaptedLumIndex; // bindless SRV: 1x1 adapted luminance, mirrors ColorGrading
-    float  Exposure;        // manual exposure multiplier (2^EV)
+    float      Threshold;    // post-exposure knee, divided by the exposure scale before use
+    float      SoftKnee;     // knee width as a fraction of the threshold
+    FTexture2D AdaptedLum;   // 1x1 adapted luminance, mirrors ColorGrading
+    float      Exposure;     // manual exposure multiplier (2^EV)
 
-    float  AutoExposureKey;    // middle-grey key; <= 0 disables auto-exposure
+    float  AutoExposureKey;    // middle-gray key; <= 0 disables auto-exposure
     float  AutoExposureMinMul; // 2^MinEV clamp on the adapted multiplier
     float  AutoExposureMaxMul; // 2^MaxEV clamp on the adapted multiplier
     float  _Pad;
@@ -36,8 +33,8 @@ float BloomExposureScale()
     float AEScale = 1.0;
     if (Pass().AutoExposureKey > 0.0)
     {
-        float AdaptedLum = gTextures2D[Pass().AdaptedLumIndex].SampleLevel(
-            gSamplers[SAMPLER_LINEAR_CLAMP], float2(0.5, 0.5), 0.0).r;
+        float AdaptedLum = Pass().AdaptedLum.SampleLevel(
+            Samplers::LinearClamp, float2(0.5, 0.5), 0.0).r;
 
         // Frame 0 reads the 1x1 image before the average pass seeds it; a NaN here reaches the chain.
         if (!(AdaptedLum > 1e-6 && AdaptedLum < 1e6))
@@ -53,8 +50,8 @@ float BloomExposureScale()
 
 float3 SampleSrc(float2 UV, float2 Off)
 {
-    return gTextures2D[Pass().SrcIndex].SampleLevel(
-        gSamplers[SAMPLER_LINEAR_CLAMP], UV + Off * Pass().SrcTexelSize, Pass().SrcMip).rgb;
+    return Pass().Src.SampleLevel(
+        Samplers::LinearClamp, UV + Off * Pass().SrcTexelSize, Pass().SrcMip).rgb;
 }
 
 float3 QuadraticThreshold(float3 Color, float Threshold, float3 Curve)
@@ -66,8 +63,7 @@ float3 QuadraticThreshold(float3 Color, float Threshold, float3 Curve)
     return Color * Mul;
 }
 
-// Karis "tone map then average" weight: a lone very bright texel would otherwise alias into a
-// flickering firefly as the chain reduces.
+// Karis weight, since a lone very bright texel would otherwise alias into a flickering firefly.
 float KarisWeight(float3 Color)
 {
     float Luma = Luminance(Color) * 0.25;
@@ -112,8 +108,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     float3 Result;
     if (Pass().bFirstPass != 0)
     {
-        // An Inf/NaN texel (overflowed emissive, bad sky sample) would zero its Karis weight and
-        // turn the weighted sum into NaN, which then spreads up the whole chain.
+        // A non-finite texel would zero its Karis weight and turn the sum into NaN, which spreads up the chain.
         Q0 = SanitizeRadiance(Q0);
         Q1 = SanitizeRadiance(Q1);
         Q2 = SanitizeRadiance(Q2);
@@ -140,5 +135,5 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         Result = Q0 * 0.5 + (Q1 + Q2 + Q3 + Q4) * 0.125;
     }
 
-    gRWTextures2D[Pass().DstUAV][DstP] = float4(Result, 0);
+    Pass().Dst[DstP] = float4(Result, 0);
 }

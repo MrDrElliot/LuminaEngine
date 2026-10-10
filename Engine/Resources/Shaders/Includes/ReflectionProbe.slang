@@ -1,11 +1,9 @@
 #pragma once
 #include "SceneGlobals.slang"
 
-// Every probe's volume is the unit box or sphere in ITS probe space -- extraction bakes the world
-// half-extents into WorldToProbe, so the inside test, blend and parallax need no per-probe extents.
+// Each probe volume is the unit box or sphere in its own probe space, with world half-extents baked into WorldToProbe.
 
-// Probes are sorted by descending priority on extraction, so a plain front-to-back walk lets a small
-// high-priority interior probe consume weight before the large one enclosing it ever sees the pixel.
+// Probes arrive sorted by descending priority, so a front-to-back walk lets a small interior probe claim weight first.
 static const uint kMaxProbesPerPixel = 8;
 
 struct FProbeSample
@@ -30,8 +28,7 @@ float Probe_InfluenceWeight(FGPUReflectionProbe Probe, float3 LocalPos)
     return 1.0 - smoothstep(0.0, max(Probe.BlendDistance, 1e-3), Outside);
 }
 
-// Without this every probe behaves like an infinitely distant cubemap: reflections slide across
-// surfaces as the camera moves instead of staying pinned to the geometry that produced them.
+// Parallax correction, so reflections stay pinned to the geometry that produced them.
 float3 Probe_ParallaxDirection(FGPUReflectionProbe Probe, float3 LocalPos, float3 WorldR)
 {
     float3 LocalDir = mul((float3x3)Probe.WorldToProbe, WorldR);
@@ -48,8 +45,7 @@ float3 Probe_ParallaxDirection(FGPUReflectionProbe Probe, float3 LocalPos, float
     }
     else
     {
-        // Slab test against [-1,1]^3. A zero LocalDir component is deliberately NOT guarded: it yields +-inf,
-        // which max/min discard. The 0*inf NaN needs LocalPos exactly on the boundary, unreachable here.
+        // A zero LocalDir component yields +-inf, which max and min discard, so it is left unguarded.
         float3 InvDir = 1.0 / LocalDir;
         float3 T1 = (-1.0 - LocalPos) * InvDir;
         float3 T2 = ( 1.0 - LocalPos) * InvDir;
@@ -60,22 +56,19 @@ float3 Probe_ParallaxDirection(FGPUReflectionProbe Probe, float3 LocalPos, float
     float3 HitLocal = LocalPos + LocalDir * max(T, 0.0);
     float3 HitWorld = mul(Probe.ProbeToWorld, float4(HitLocal, 1.0)).xyz;
 
-    // The cube was captured from CapturePosition in world orientation, so the lookup direction is
-    // from the capture origin toward where the ray actually lands on the proxy.
+    // The cube was captured from CapturePosition, so look up from there toward the proxy hit.
     return HitWorld - Probe.CapturePosition.xyz;
 }
 
-// Walks the probe list front-to-back, consuming influence until it runs out. Returns the accumulated
-// radiance and how much of the pixel it covered; the caller blends the sky in for the remainder.
+// Returns radiance and covered weight; the caller blends the sky in for the remainder.
 FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughness)
 {
     FProbeSample Result;
     Result.Radiance = float3(0.0);
     Result.Weight   = 0.0;
 
-    uint Packed    = GetSceneRoot().ProbeCubeArrayIndex;
-    uint ArraySRV  = Packed & 0x00FFFFFFu;
-    uint NumMips   = Packed >> 24;
+    const FMippedTextureCubeArray Probes = GetSceneRoot().ProbeCubeArray;
+    uint NumMips   = Probes.MipCount();
     uint NumProbes = ReflectionProbes().Count;
 
     if (NumProbes == 0 || NumMips == 0)
@@ -91,7 +84,7 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
 
     for (uint i = 0; i < NumProbes && Considered < kMaxProbesPerPixel; ++i)
     {
-        FGPUReflectionProbe Probe = SpanGetAligned(ReflectionProbes(), i);
+        FGPUReflectionProbe Probe = ReflectionProbes().GetAligned(i);
         if (!Probe.IsBaked)
         {
             continue;
@@ -106,12 +99,12 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
         }
         Considered++;
 
-        // Front-to-back: each probe can only claim what higher-priority ones left behind.
+        // Each probe can only claim what higher-priority ones left behind.
         float Weight = min(Influence, Remaining);
 
         // A pixel in the fade band lies outside the proxy, so it traces from the nearest point on it.
         float3 Dir = Probe_ParallaxDirection(Probe, Probe_ClampToVolume(Probe, LocalPos), WorldR);
-        float3 Radiance = SampleTextureCubeArrayLevel(ArraySRV, SAMPLER_LINEAR_CLAMP, Dir, Probe.Slice, Lod).rgb;
+        float3 Radiance = Probes.Texture().SampleLevel(Samplers::LinearClamp, Dir, Probe.Slice, Lod).rgb;
 
         Result.Radiance += Weight * Radiance * Probe.Brightness;
         Remaining       -= Weight;
@@ -126,8 +119,7 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
     return Result;
 }
 
-// Mirrors SampleReflectionProbes' skip rules exactly, so the debug view cannot claim coverage shading
-// did not get. Hues are offset and PASTEL so they can never be read as the saturated status codes.
+// Hues are offset and pastel so they never read as the saturated status codes.
 float3 ProbeDebugColor(uint Slice)
 {
     float  Hue = frac(0.37 + float(Slice) * 0.61803398875);
@@ -135,12 +127,10 @@ float3 ProbeDebugColor(uint Slice)
     float3 P   = abs(frac(Hue + K) * 6.0 - 3.0);
     float3 RGB = saturate(P - 1.0);
 
-    // S ~= 0.7: pastel enough to never read as one of the saturated status colors.
     return lerp(float3(1.0), RGB, 0.7);
 }
 
-// Why a pixel got no probe influence. All of these look identical in a lit view (the surface just
-// reflects sky) but have different causes, so they get distinct colors rather than one black.
+// Distinct colors for causes that all look like plain sky reflection in a lit view.
 static const int kProbeStatusCovered    = 0;  // a probe reached this pixel
 static const int kProbeStatusNoProbes   = 1;  // scene root carries no probes at all
 static const int kProbeStatusNoArray    = 2;  // probe cube array unallocated / mip count zero
@@ -150,11 +140,12 @@ static const int kProbeStatusOutsideAll = 4;  // baked probes exist, none of the
 struct FProbeDebugInfo
 {
     int   DominantSlice;   // slice of the heaviest contributor, -1 when no probe reaches this pixel
-    float TotalWeight;     // influence the probes consumed; 1 - this is the sky's share
+    float TotalWeight;     // influence the probes consumed, the sky takes the rest
     int   NumAffecting;    // how many contributed, for spotting unintended overlap
     int   Status;          // kProbeStatus*
 };
 
+// Mirrors SampleReflectionProbes' skip rules so the debug view cannot claim coverage shading did not get.
 FProbeDebugInfo DebugReflectionProbes(float3 WorldPos)
 {
     FProbeDebugInfo Info;
@@ -164,7 +155,7 @@ FProbeDebugInfo DebugReflectionProbes(float3 WorldPos)
     Info.Status        = kProbeStatusCovered;
 
     uint NumProbes = ReflectionProbes().Count;
-    uint NumMips   = GetSceneRoot().ProbeCubeArrayIndex >> 24;
+    uint NumMips   = GetSceneRoot().ProbeCubeArray.MipCount();
     if (NumProbes == 0)
     {
         Info.Status = kProbeStatusNoProbes;
@@ -183,7 +174,7 @@ FProbeDebugInfo DebugReflectionProbes(float3 WorldPos)
 
     for (uint i = 0; i < NumProbes && Considered < kMaxProbesPerPixel; ++i)
     {
-        FGPUReflectionProbe Probe = SpanGetAligned(ReflectionProbes(), i);
+        FGPUReflectionProbe Probe = ReflectionProbes().GetAligned(i);
         if (!Probe.IsBaked)
         {
             continue;

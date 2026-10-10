@@ -29,7 +29,7 @@ PSOutput PixelMain(FParticleVertexOutput In)
     float4 texel;
     if (In.TextureIndex != 0u)
     {
-        texel = SampleTexture2D(In.TextureIndex, SAMPLER_LINEAR_WRAP, In.UV);
+        texel = FTexture2D(In.TextureIndex).Sample(Samplers::LinearWrap, In.UV);
     }
     else
     {

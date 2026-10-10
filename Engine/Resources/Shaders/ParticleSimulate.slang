@@ -1,8 +1,6 @@
 #include "Includes/ParticleSimCommon.slang"
 
-// Data-driven particle simulation: one shader for all effects, driven by FParticleSimParams.
-// Data layout + RNG/noise/emitter-shape helpers live in Includes/ParticleSimCommon.slang, shared
-// with the module-stack template (Particles/ParticleSimulateTemplate.slang).
+// One data-driven simulation for all effects, sharing ParticleSimCommon.slang with Particles/ParticleSimulateTemplate.slang.
 
 float3 ComputeInitialVelocity(inout uint state, uint mode, uint shape, float3 spawnOffset,
                               float4 velMin, float4 velMax, float2 speedRange,
@@ -18,7 +16,7 @@ float3 ComputeInitialVelocity(inout uint state, uint mode, uint shape, float3 sp
         }
         else
         {
-            // Degenerate (point shape): sample a random direction, biased by cone if applicable.
+            // A point shape has no offset direction, so pick a random one (inside the cone for cone emitters).
             if (shape == EMITTER_SHAPE_CONE)
             {
                 dir = RandDirectionInCone(state, forward, right, up, coneAngle);
@@ -32,7 +30,6 @@ float3 ComputeInitialVelocity(inout uint state, uint mode, uint shape, float3 sp
         return dir * speed;
     }
 
-    // Explicit: independent per-axis lerp.
     float3 r = float3(RandUnit(state), RandUnit(state), RandUnit(state));
     return EmitterToWorld(lerp(velMin.xyz, velMax.xyz, r));
 }
@@ -66,8 +63,7 @@ void SpawnParticle(uint Index, inout FGPUParticle P)
     float rotSpeed = lerp(SimParams().RotationRange.z,    SimParams().RotationRange.w,    RandUnit(seed));
     float particleSeed = RandUnit(seed);
 
-    // Emitter velocity inheritance: EmitterVelocity is packed in the .w components
-    // of the emitter basis vectors; NoiseParams.y is the 0-1 inheritance factor.
+    // Emitter velocity rides the basis vectors' .w, and NoiseParams.y is the inheritance factor.
     float3 EmitterVelocity = float3(SimParams().EmitterForward.w,
                                     SimParams().EmitterRight.w,
                                     SimParams().EmitterUp.w);
@@ -98,7 +94,7 @@ void SimulateParticle(inout FGPUParticle P, float DeltaTime, float TotalTime)
         P.Velocity += turbulence * noiseStrength * EmitterScale() * DeltaTime;
     }
 
-    // Exponential drag (1st order). Keeps behavior framerate-independent.
+    // First-order exponential drag, which stays framerate-independent.
     float drag = SimParams().Gravity.w;
     if (drag > 0.0)
     {
@@ -108,17 +104,15 @@ void SimulateParticle(inout FGPUParticle P, float DeltaTime, float TotalTime)
     P.Position += P.Velocity * DeltaTime;
     P.Rotation += P.RotationSpeed * DeltaTime;
 
-    // Color over life
     float lifeT = saturate(P.Age / P.Lifetime);
     P.Color = lerp(SimParams().StartColor, SimParams().EndColor, lifeT);
 
-    // Size over life (random end per-particle but deterministic via Seed)
+    // Per-particle end size, deterministic via Seed.
     float endSize = lerp(SimParams().SizeRange.z, SimParams().SizeRange.w, P.Seed);
     float startSize = lerp(SimParams().SizeRange.x, SimParams().SizeRange.y, P.Seed);
     P.Size = lerp(startSize, endSize, lifeT) * EmitterScale();
 }
 
-// 64 threads per group matches wavefront widths on AMD/NVIDIA.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
@@ -130,22 +124,21 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
         return;
     }
 
-    FGPUParticle P = SpanGet(Particles(), Index);
+    FGPUParticle P = Particles().Get(Index);
 
     bool bAlive = (P.Lifetime > 0.0) && (P.Age < P.Lifetime);
 
     if (!bAlive)
     {
-        // Race for a spawn slot: first SpawnCount dead particles (in thread order) spawn this frame.
+        // The first SpawnCount dead particles to win the counter spawn this frame.
         uint myAlloc;
-        InterlockedAdd(SpanAt(SpawnCounter(), 0u)[0], 1u, myAlloc);
+        InterlockedAdd(SpawnCounter().At(0u)[0], 1u, myAlloc);
         if (myAlloc < SimParams().Counts.y)
         {
             SpawnParticle(Index, P);
         }
         else
         {
-            // Keep particle flagged dead
             P.Lifetime = 0.0;
             P.Age      = 0.0;
             P.Color    = float4(0, 0, 0, 0);
@@ -169,5 +162,5 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
         }
     }
 
-    SpanSet(Particles(), Index, P);
+    Particles().Set(Index, P);
 }

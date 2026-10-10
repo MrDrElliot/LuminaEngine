@@ -9,8 +9,7 @@
 #define UI_FILTER_DROP_SHADOW  4u
 #define UI_FILTER_MASK_IMAGE   5u
 
-// Must match RmlUiCommon.slang::FUiClipMask. Duplicated rather than included, because that header
-// declares its own Pass() and the two would collide.
+// Must match RmlUiCommon.slang::FUiClipMask, duplicated because that header declares its own Pass().
 struct FUiClipMask
 {
     float4 Rect;
@@ -27,22 +26,22 @@ float2 UiClipLocal(FUiClipMask Mask, float2 FragCoord)
 // Matches FUiFilterArgs in RmlUiRenderer.cpp.
 struct FUiFilterArgs
 {
-    float4x4 ColorMatrix;   // @0
-    float4   Color;         // @64  drop-shadow tint, premultiplied
-    float4   TexelStep;     // @80  .xy = blur step in UV, .zw = drop-shadow UV offset
-    float4   SourceRect;    // @96  source UV scale.xy and bias.zw, so a pass can read a sub-rect
-    uint     Kind;          // @112
-    uint     SourceID;      // @116
-    uint     MaskID;        // @120
-    uint     SamplerIndex;  // @124
-    float    Opacity;       // @128
-    uint     TapCount;      // @132 blur taps on each side of center
-    float    Sigma;         // @136
-    uint     ClipMaskRange; // @140 count in the low 8 bits, first ClipMasks[] index above them
-    uint64_t ClipMaskAddress; // @144
-    float2   _Pad0;         // @152
-    float2   _Pad1;         // @160
-    float2   _Pad2;         // @168
+    float4x4   ColorMatrix;   // @0
+    float4     Color;         // @64  drop-shadow tint, premultiplied
+    float4     TexelStep;     // @80  .xy = blur step in UV, .zw = drop-shadow UV offset
+    float4     SourceRect;    // @96  source UV scale.xy and bias.zw, so a pass can read a sub-rect
+    uint       Kind;          // @112
+    FTexture2D SourceID;      // @116
+    FTexture2D MaskID;        // @120
+    FSampler   Sampler;       // @124
+    float      Opacity;       // @128
+    uint       TapCount;      // @132 blur taps on each side of center
+    float      Sigma;         // @136
+    uint       ClipMaskRange; // @140 count in the low 8 bits, first ClipMasks[] index above them
+    uint64_t   ClipMaskAddress; // @144
+    float2     _Pad0;         // @152
+    float2     _Pad1;         // @160
+    float2     _Pad2;         // @168
 
     // Reached, never stored; a typed pointer field lands in an undecorated Function variable.
     property FUiClipMask* ClipMasks { get { return (FUiClipMask*)ClipMaskAddress; } }
@@ -84,7 +83,7 @@ float ClipCoverage(FUiFilterArgs Args, float2 FragCoord)
 
 float4 SampleSource(FUiFilterArgs Args, float2 UV)
 {
-    return SampleTexture2D(Args.SourceID, Args.SamplerIndex, UV * Args.SourceRect.xy + Args.SourceRect.zw);
+    return Args.SourceID.Sample(Args.Sampler, UV * Args.SourceRect.xy + Args.SourceRect.zw);
 }
 
 // Separable Gaussian; the caller runs it twice, swinging TexelStep from horizontal to vertical.
@@ -136,7 +135,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     if (Args.Kind == UI_FILTER_MASK_IMAGE)
     {
         const float2 MaskUV = Input.UV * Args.SourceRect.xy + Args.SourceRect.zw;
-        return Source * SampleTexture2D(Args.MaskID, Args.SamplerIndex, MaskUV).a * Clip;
+        return Source * Args.MaskID.Sample(Args.Sampler, MaskUV).a * Clip;
     }
 
     if (Args.Kind == UI_FILTER_COLOR_MATRIX)

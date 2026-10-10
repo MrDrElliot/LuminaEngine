@@ -1,18 +1,18 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
 
 // Bilateral upsample of the half-resolution AO, weighting the four nearest texels by how well their depth matches this pixel's.
 
 struct FPushConstants
 {
-    uint2 FullSize;
-    uint2 HalfSize;
-    uint  AOIndex;
-    uint  HalfDepthIndex;
-    uint  FullDepthIndex;
-    uint  OutputUAV;
+    uint2        FullSize;
+    uint2        HalfSize;
+    FTexture2D   AO;
+    FTexture2D   HalfDepth;
+    FTexture2D   FullDepth;
+    FRWTexture2D Output;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -30,11 +30,11 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     const FGTAOView V   = MakeGTAOView(Pass().FullSize);
-    const float     Raw = gTextures2D[Pass().FullDepthIndex].Load(int3(Pixel, 0)).r;
+    const float     Raw = Pass().FullDepth.Load(int3(Pixel, 0)).r;
     const float     Z   = XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, Raw));
 
-    Texture2D AO        = gTextures2D[Pass().AOIndex];
-    Texture2D HalfDepth = gTextures2D[Pass().HalfDepthIndex];
+    FTexture2D AO        = Pass().AO;
+    FTexture2D HalfDepth = Pass().HalfDepth;
 
     const float2 HalfPos = (float2(Pixel) + 0.5) * (float2(Pass().HalfSize) / float2(Pass().FullSize)) - 0.5;
     const int2   Base    = int2(floor(HalfPos));
@@ -69,5 +69,5 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     // A pixel no neighbor resembles, a thin sliver the reduced depth skipped, takes its closest match outright.
     const float Result = (NearestDz * InvSigmaZ > 4.0) ? Nearest : Sum / max(SumWeight, 1e-6);
-    gRWTextures2D[Pass().OutputUAV][Pixel] = float4(Result, 0.0, 0.0, 0.0);
+    Pass().Output[Pixel] = float4(Result, 0.0, 0.0, 0.0);
 }

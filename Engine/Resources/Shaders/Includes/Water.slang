@@ -1,40 +1,36 @@
 #pragma once
 #include "SceneGlobals.slang"
 
-// Shared water data + Gerstner wave evaluation for WaterVert/WaterPixel. The water pass binds no private
-// set: the per-body array arrives by device address and the scene color/depth by bindless index, all in
-// the push constant. FGPUWater must stay byte-identical to FGPUWater (SceneRenderTypes.h).
-
+// Must stay byte-identical to FGPUWater in SceneRenderTypes.h.
 struct FGPUWater
 {
-    float4x4 WaterToWorld;     // local plane [-0.5,0.5] (XZ) -> world (Extent baked into XZ scale)
-    float4x4 WorldToWater;     // inverse
-    float4   ShallowColor;     // rgb shallow tint
-    float4   DeepColor;        // rgb deep tint
-    float4   FoamColor;        // rgb foam tint
-    float4   WindAndWave;      // xy = wind dir, z = wind speed, w = wave amplitude
-    float4   WaveParams;       // x = choppiness, y = wave scale, z = wave count, w = detail strength
-    float4   RefractReflect;   // x = refraction, y = reflection, z = roughness, w = fresnel power
-    float4   FoamAbsorb;       // x = shoreline foam width, y = crest foam amount, z = depth fade, w = absorption
-    float4   SSRSpecOpacity;   // x = ssr max dist, y = ssr step count, z = specular intensity, w = opacity
-    float4   DetailParams;     // x = detail tile size in meters, y = detail scroll speed, z = foam tiling, w = foam intensity
-    uint     DetailNormalIndex;
-    uint     FoamTextureIndex;
-    uint     GridResolution;
-    float    HorizonScale;     // outer ring's distance as a multiple of the body's, 1 when it has no horizon skirt
+    float4x4   WaterToWorld;     // local [-0.5,0.5] XZ plane to world, extent baked into the XZ scale
+    float4x4   WorldToWater;
+    float4     ShallowColor;
+    float4     DeepColor;
+    float4     FoamColor;
+    float4     WindAndWave;      // xy = wind dir, z = wind speed, w = wave amplitude
+    float4     WaveParams;       // x = choppiness, y = wave scale, z = wave count, w = detail strength
+    float4     RefractReflect;   // x = refraction, y = reflection, z = roughness, w = fresnel power
+    float4     FoamAbsorb;       // x = shoreline foam width, y = crest foam amount, z = depth fade, w = absorption
+    float4     SSRSpecOpacity;   // x = ssr max dist, y = ssr step count, z = specular intensity, w = opacity
+    float4     DetailParams;     // x = detail tile size in meters, y = detail scroll speed, z = foam tiling, w = foam intensity
+    FTexture2D DetailNormal;
+    FTexture2D FoamTexture;
+    uint       GridResolution;
+    float      HorizonScale;     // outer ring's distance as a multiple of the body's, 1 when it has no horizon skirt
 };
 
-// Per-pass push (identical VS+PS so they share one range). The water-body index arrives via
-// SV_VulkanInstanceID (the draw's FirstInstance), never the push constant.
+// Shared by VS and PS, and the water-body index comes from SV_VulkanInstanceID (FirstInstance) rather than this.
 struct FWaterPushConstants
 {
-    GPUSpan<FGPUWater> Waters;        // the per-frame water array
-    uint       SceneColorIndex; // bindless 2D SRV: HDR scene copy (refraction + SSR color)
-    uint       SceneDepthIndex; // bindless 2D SRV: opaque scene depth (raw reverse-Z NDC [0,1])
+    GPUSpan<FGPUWater> Waters;
+    FTexture2D         SceneColor;        // HDR scene copy (refraction + SSR color)
+    FTexture2D         SceneDepth;   // raw reverse-Z
 
-    // The aerial perspective LUT, with the in-scatter index at WATER_INVALID_TEX when the view has none.
-    uint       AerialInScatterIndex;
-    uint       AerialTransmittanceIndex;
+    // The in-scatter volume is invalid when the view has no aerial perspective.
+    FTexture3D AerialInScatter;
+    FTexture3D AerialTransmittance;
     float      AerialRange;
     float      AerialIntensity;
 };

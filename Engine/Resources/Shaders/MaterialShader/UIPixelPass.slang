@@ -1,7 +1,6 @@
 #include "Includes/UIMaterialGlobals.slang"
 
-// UI material template; fullscreen pass into an offscreen brush texture RmlUi samples. Output is
-// premultiplied (Emissive * Opacity) to match RmlUi's premultiplied-alpha blend (One, OneMinusSrcAlpha).
+// Output is premultiplied to match RmlUi's (One, OneMinusSrcAlpha) blend.
 
 struct PSInput
 {
@@ -15,10 +14,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     uint   MaterialIndex = UIArgs().MaterialIndex;
     float2 UV0           = Input.UV;
 
-    // Surface aliases. Zeroed because there is no rasterized geometry feeding
-    // this pass; node-emit code may still reference them.
+    // Zeroed since no geometry feeds this pass, but node-emit code may still reference them.
     float3 WorldPosition = float3(0.0);
-    // No vertex graph in this domain, so there is no offset to exclude.
     float3 WorldPositionExcludingOffsets = WorldPosition;
     float3 WorldNormal   = float3(0.0, 0.0, 1.0);
     float3 ViewPosition  = float3(0.0);

@@ -19,7 +19,7 @@ struct FragmentOutput
 [shader("fragment")]
 FragmentOutput FragmentMain(FragmentInput Input)
 {
-    const float4 Texel = gTextures2D[Pass().TextureIndex].Sample(gSamplers[SAMPLER_LINEAR_CLAMP], Input.UV);
+    const float4 Texel = Pass().Texture.Sample(Samplers::LinearClamp, Input.UV);
     const float4 Shaded = Texel * Input.Color;
 
     if ((Input.Flags & SPRITE_FLAG_ALPHA_CUT) != 0u)

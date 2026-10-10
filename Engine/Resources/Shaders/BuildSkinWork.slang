@@ -1,19 +1,6 @@
 #include "Includes/SceneGlobals.slang"
 
-// Lays out the pre-skinning dispatch: one workgroup per (skinned slot, block, meshlet). Replaces a CPU array
-// that held one descriptor PER MESHLET and was rebuilt and re-uploaded every frame -- the enumeration is
-// derivable from what the slot already publishes, so nothing has to be shipped.
-//
-// Keyed on RETAINED slots, not on visible-buffer indices: skinned instances compact through CullInstances
-// like everything else now, so there is no CPU-fed head to walk. The slot list is exactly the set the CPU
-// gathered this frame, so a slot in it always has this frame's data and needs no staleness test.
-//
-// Serial one-workgroup scan, same shape as BuildDrawPrefix: the gathered skeletal set is tens to hundreds of
-// slots, so a hierarchical scan would cost more in launch overhead than it saves.
-//
-// TWO blocks per slot, because a skeletal mesh can be pre-skinned at two different LODs in one frame: the
-// surface LOD it rasterizes at, and a coarser shadow LOD. Each block owns its own compacted slice, so each
-// needs its own base. The pair is (SlotListIndex * 2 + bShadow).
+// One workgroup per (skinned slot, meshlet), keyed on retained slots that all hold this frame's data.
 
 struct FDispatchIndirectArguments
 {
@@ -25,33 +12,17 @@ struct FDispatchIndirectArguments
 struct FBuildSkinWorkArgs
 {
     GPUSpan<uint>              SlotList;
-    GPUSpan<FSkinnedFrameData> SkinnedData;   // indexed by RETAINED slot, not by SlotList position
+    GPUSpan<FSkinnedFrameData> SkinnedData;   // indexed by retained slot, not by SlotList position
 
-    // One running base per (slot, block) pair, which is what turns a flat workgroup id back into a meshlet.
-    // Written for EVERY pair, including empty ones, so the search in Skinning.slang never reads a stale slot.
+    // One running base per slot, written for empty slots too, so Skinning.slang's search never reads a stale one.
     GPUSpan<uint> OutWorkBase;
     GPUSpan<FDispatchIndirectArguments> OutDispatchArgs;
 };
 FBuildSkinWorkArgs* Pass() { return GetPassArgs<FBuildSkinWorkArgs>(); }
 
-// Meshlets this pair pre-skins. The three rejects mirror what the CPU slice assignment decided:
-//   - no slice granted (over the pre-skin budget, or the block's meshlet range was malformed)
-//   - an empty range
-//   - a shadow block that RESOLVED TO THE SURFACE BLOCK, which the surface pass already covers. Compared on
-//     the meshlet OFFSET, not on the base: two distinct blocks can land on the same base when the shadow
-//     LOD's vertices directly follow the surface LOD's, and skipping one of those would drop its vertices.
-uint SkinBlockMeshletCount(FSkinnedFrameData Data, bool bShadow)
+// A slot granted no slice skins inline in the draw path, so it pre-skins nothing.
+uint SkinMeshletCount(FSkinnedFrameData Data)
 {
-    if (bShadow)
-    {
-        if (Data.ShadowSkinnedVertexBase == kNoPreSkinBase
-            || Data.ShadowMeshletOffset == Data.SurfaceMeshletOffset)
-        {
-            return 0u;
-        }
-        return Data.ShadowMeshletCount;
-    }
-
     if (Data.SkinnedVertexBase == kNoPreSkinBase)
     {
         return 0u;
@@ -64,12 +35,12 @@ uint SkinBlockMeshletCount(FSkinnedFrameData Data, bool bShadow)
 groupshared uint gsScan[SKIN_WORK_GROUP];
 groupshared uint gsRunning;
 
-// RULE: no lane may return early, or the barriers below go non-uniform and AMD hangs.
+// No lane may return early, or the barriers below go non-uniform and AMD hangs.
 [shader("compute")]
 [numthreads(SKIN_WORK_GROUP, 1, 1)]
 void ComputeMain(uint Lane : SV_GroupIndex)
 {
-    const uint NumPairs = Pass().SlotList.Count * 2u;
+    const uint NumSlots = Pass().SlotList.Count;
 
     if (Lane == 0u)
     {
@@ -77,16 +48,15 @@ void ComputeMain(uint Lane : SV_GroupIndex)
     }
     GroupMemoryBarrierWithGroupSync();
 
-    // Tiled: the running base is sequential across tiles, but the 256 loads inside one are not.
-    for (uint TileBase = 0u; TileBase < NumPairs; TileBase += SKIN_WORK_GROUP)
+    // The running base is sequential across tiles, but the 256 loads inside one are not.
+    for (uint TileBase = 0u; TileBase < NumSlots; TileBase += SKIN_WORK_GROUP)
     {
-        const uint Pair = TileBase + Lane;
+        const uint Entry = TileBase + Lane;
 
         uint Count = 0u;
-        if (Pair < NumPairs)
+        if (Entry < NumSlots)
         {
-            const FSkinnedFrameData Data = SpanGet(&Pass().SkinnedData, SpanGet(&Pass().SlotList, Pair >> 1u));
-            Count = SkinBlockMeshletCount(Data, (Pair & 1u) != 0u);
+            Count = SkinMeshletCount(Pass().SkinnedData.Get(Pass().SlotList.Get(Entry)));
         }
 
         gsScan[Lane] = Count;
@@ -102,10 +72,9 @@ void ComputeMain(uint Lane : SV_GroupIndex)
 
         const uint Inclusive = gsScan[Lane];
 
-        // Written for EVERY pair, empty ones included, so Skinning.slang's search never reads a stale slot.
-        if (Pair < NumPairs)
+        if (Entry < NumSlots)
         {
-            SpanSet(&Pass().OutWorkBase, Pair, gsRunning + (Inclusive - Count));
+            Pass().OutWorkBase.Set(Entry, gsRunning + (Inclusive - Count));
         }
 
         const uint TileTotal = gsScan[SKIN_WORK_GROUP - 1u];
@@ -124,6 +93,6 @@ void ComputeMain(uint Lane : SV_GroupIndex)
         Args.GroupX = min(gsRunning, (uint)MAX_DISPATCH_AXIS);
         Args.GroupY = (gsRunning + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
         Args.GroupZ = 1u;
-        SpanSet(&Pass().OutDispatchArgs, 0u, Args);
+        Pass().OutDispatchArgs.Set(0u, Args);
     }
 }

@@ -1,27 +1,15 @@
 #include "Includes/SurfaceShading.slang"
 #include "Includes/VisBufferSurface.slang"
 
-// Editor view modes for the deferred lane, as a full-screen overlay run only when a debug mode is active.
-//
-// It lives in its own pass, and its own PIXEL shader, for two reasons. The production lighting shader stays
-// free of the whole switch -- no branch, no register pressure from paths a shipping build never takes. And
-// the penumbra readout differentiates shadow-space depth with ddx/ddy, which the compute lighting pass
-// cannot do at all.
-//
-// Only pixels the deferred lane owns are touched. Terrain and translucency shade forward through
-// ShadeSurface and apply the identical switch inline, so their pixels are already correct and are
-// discarded here.
+// Its own pixel pass so lighting stays free of the switch and the penumbra readout can use ddx/ddy.
 
 struct FSceneDebugViewArgs
 {
-    uint GBufferAIndex;
-    uint GBufferBIndex;
-    uint GBufferCIndex;
-    uint GBufferDIndex;
-    uint VisBufferIndex;
-    uint DepthIndex;
-    uint DrawListCount;
-    uint _Pad0;
+    FGBufferTargets GBuffer;
+    FTexture2DUInt  VisBuffer;
+    FTexture2D      Depth;
+    uint            DrawListCount;
+    uint            _Pad0;
 };
 FSceneDebugViewArgs* Pass() { return GetPassArgs<FSceneDebugViewArgs>(); }
 
@@ -36,22 +24,18 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
 {
     const int2 Texel = int2(In.Position.xy);
 
-    const uint Raw = LoadTexture2DUInt(Pass().VisBufferIndex, Texel);
+    const uint Raw = Pass().VisBuffer.Load(Texel);
     if (Raw == 0u)
     {
         discard;
         return float4(0.0, 0.0, 0.0, 1.0);
     }
 
-    FGBufferTargets Targets;
-    Targets.A = Pass().GBufferAIndex;
-    Targets.B = Pass().GBufferBIndex;
-    Targets.C = Pass().GBufferCIndex;
-    Targets.D = Pass().GBufferDIndex;
+    const FGBufferTargets Targets = Pass().GBuffer;
 
     const FGBufferData G = LoadGBuffer(Targets, Texel);
 
-    const float  RawDepth      = LoadTexture2D(Pass().DepthIndex, Texel).r;
+    const float  RawDepth      = Pass().Depth.Load(Texel).r;
     const float3 ViewPosition  = ReconstructViewPos(In.UV, RawDepth, GetInverseCameraProjection());
     const float3 WorldPosition = mul(GetInverseCameraView(), float4(ViewPosition, 1.0)).xyz;
 
@@ -67,7 +51,7 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
     // Reads its 2x2 neighbors, so it belongs here with the VisBuffer rather than in ApplyDebugView.
     if (DebugMode == DEBUG_MODE_QUAD_EFFICIENCY)
     {
-        return float4(QuadEfficiencyColor(QuadLaneEfficiency(Pass().VisBufferIndex, Texel)), 1.0);
+        return float4(QuadEfficiencyColor(QuadLaneEfficiency(Pass().VisBuffer, Texel)), 1.0);
     }
 
     FDebugSurfaceInfo Info;
@@ -85,15 +69,11 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
         Info.UV                = S.UV;
         Info.GeometricNormalWS = S.NormalWS;
         Info.MaterialIndex     = T.Ref.Inst.MaterialIndex;
-        // Free here: the reconstruction already produced the barycentrics and their derivatives.
+        // Free here since the reconstruction already produced the barycentrics and their derivatives.
         Info.EdgeDistancePixels = TriangleEdgeDistancePixels(S.Bary);
     }
 
-    // The lit color is the BASE the switch starts from, not an optimization for the one view that tints
-    // it. ApplyDebugView leaves Color untouched for any mode it does not own -- the OIT views, which
-    // OITResolve draws over translucent pixels later -- and those modes must leave opaque geometry lit,
-    // not black. Re-shading rather than reading HDR back keeps this pass a plain overwrite of its own
-    // render target; the cost is irrelevant in a mode that only exists in the editor.
+    // Shaded as the base because modes ApplyDebugView does not own, like the OIT views, must leave opaque geometry lit.
     const float3 Base = ShadeGBuffer(G, WorldPosition, ViewPosition, In.Position.xy).Color;
 
     return float4(ApplyDebugView(DebugMode, Base, G, Info, WorldPosition, ViewPosition, In.Position.xy), 1.0);

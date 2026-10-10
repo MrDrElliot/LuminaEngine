@@ -14,8 +14,7 @@ struct FragmentOutput
     uint   Picker : SV_Target1;   // entity id stamped into the Picker buffer where the glyph is opaque
 };
 
-// Screen-space distance range at this fragment: scales the per-texel MSDF range into screen pixels so the
-// anti-aliased edge stays ~1px wide at any scale or viewing angle (Chlumsky's standard resolve).
+// Scales the per-texel MSDF range into screen pixels so the edge stays about 1px wide (Chlumsky's standard resolve).
 float TextScreenPxRange(float2 UV)
 {
     const float2 UnitRange     = float2(Pass().DistanceRange) / float2(Pass().AtlasWidth, Pass().AtlasHeight);
@@ -26,10 +25,8 @@ float TextScreenPxRange(float2 UV)
 [shader("fragment")]
 FragmentOutput FragmentMain(FragmentInput Input)
 {
-    // MTSDF: rgb = multi-channel SDF (crisp corners, but the median-of-3 dips slightly under magnification at
-    // concave junctions), a = true single-channel SDF (no median dip, sign-corrected at bake). Taking the
-    // inside-most of the two fills those residual magnification dips while keeping convex corners crisp.
-    const float4 MSDF = gTextures2D[Pass().AtlasIndex].Sample(gSamplers[SAMPLER_LINEAR_CLAMP], Input.UV);
+    // Alpha is a true SDF, so taking the inside-most of it and the median fills the median's dips at concave junctions.
+    const float4 MSDF = Pass().Atlas.Sample(Samplers::LinearClamp, Input.UV);
     const float  SD = max(TextMedian(MSDF.r, MSDF.g, MSDF.b), MSDF.a);
     const float  Opacity = saturate((SD - 0.5) * TextScreenPxRange(Input.UV) + 0.5);
 

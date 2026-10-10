@@ -2,33 +2,28 @@
 #include "Includes/Common.slang"
 #include "Includes/GlobalRHI.slang"
 
-// Per-mesh signed distance field, baked once per MESH in LOCAL space so scaled instances reuse it.
-// A narrow band: outside +/-MaxDistance it saturates, and every consumer treats that as no information.
-
-static const uint kInvalidDistanceField = 0xFFFFFFFFu;
+// Baked once per mesh in local space, and values saturate past +/-MaxDistance, meaning no information.
 
 // Mirror of Lumina::EDistanceFieldFlags.
 static const uint kDistanceFieldTwoSided = 1u;
 
 struct FDistanceFieldVolume
 {
-    uint   TextureIndex;
-    bool   bTwoSided;
-    float3 VolumeMin;
-    float3 VolumeSize;
-    float  MaxDistance;
+    FTexture3D Texture;
+    bool       bTwoSided;
+    float3     VolumeMin;
+    float3     VolumeSize;
+    float      MaxDistance;
 
-    bool IsValid() { return TextureIndex != kInvalidDistanceField; }
+    bool IsValid() { return Texture.IsValid(); }
 
-    // Local position -> [0,1] volume coordinate. Hardware linear filtering samples at texel centres,
-    // which is exactly where the voxel centres were evaluated, so this needs no half-texel correction.
+    // Linear filtering samples at texel centers, where voxels were evaluated, so no half-texel correction.
     float3 LocalToUVW(float3 LocalPosition)
     {
         return (LocalPosition - VolumeMin) / max(VolumeSize, float3(1e-6));
     }
 
-    // True when the local point lies inside the baked volume. Outside it the texture clamps, which
-    // extrudes the boundary voxels outward -- readable, but not a distance.
+    // Outside the volume the texture clamps, which extrudes boundary voxels and is not a distance.
     bool ContainsLocal(float3 LocalPosition)
     {
         float3 UVW = LocalToUVW(LocalPosition);
@@ -39,7 +34,7 @@ struct FDistanceFieldVolume
 FDistanceFieldVolume GetDistanceFieldVolume(FMeshletHeader* Header)
 {
     FDistanceFieldVolume V;
-    V.TextureIndex = Header->DistanceFieldIndex;
+    V.Texture      = Header->DistanceField;
     V.bTwoSided    = (Header->DistanceFieldFlags & kDistanceFieldTwoSided) != 0u;
     V.VolumeMin    = Header->DistanceFieldMin;
     V.VolumeSize   = Header->DistanceFieldSize;
@@ -52,8 +47,7 @@ FDistanceFieldVolume GetInstanceDistanceFieldVolume(FGPUInstance Instance)
     return GetDistanceFieldVolume(Instance.MeshletHeader);
 }
 
-// Signed distance at a LOCAL-space point, in local units. Points outside the volume clamp to the
-// boundary value; callers that care use ContainsLocal to tell the two apart.
+// Local units, and points outside the volume clamp to the boundary value.
 float SampleDistanceFieldLocal(FDistanceFieldVolume Volume, float3 LocalPosition)
 {
     if (!Volume.IsValid())
@@ -61,8 +55,8 @@ float SampleDistanceFieldLocal(FDistanceFieldVolume Volume, float3 LocalPosition
         return Volume.MaxDistance;
     }
 
-    float Encoded = gTextures3D[NonUniformResourceIndex(Volume.TextureIndex)]
-        .SampleLevel(gSamplers[SAMPLER_LINEAR_CLAMP], Volume.LocalToUVW(LocalPosition), 0.0).r;
+    float Encoded = Volume.Texture
+        .SampleLevel(Samplers::LinearClamp, Volume.LocalToUVW(LocalPosition), 0.0).r;
 
     // Two-sided fields spend the whole byte on [0, Max]; signed ones split it around 0.5.
     return Volume.bTwoSided
@@ -70,8 +64,7 @@ float SampleDistanceFieldLocal(FDistanceFieldVolume Volume, float3 LocalPosition
         : (Encoded * 2.0 - 1.0) * Volume.MaxDistance;
 }
 
-// Central difference over one voxel step, normalized -- the outward surface normal. Returns 0 on a
-// saturated plateau, where the difference degenerates; callers must check for that.
+// Returns zero on a saturated plateau where the difference degenerates.
 float3 SampleDistanceFieldGradientLocal(FDistanceFieldVolume Volume, float3 LocalPosition)
 {
     if (!Volume.IsValid())
@@ -79,8 +72,7 @@ float3 SampleDistanceFieldGradientLocal(FDistanceFieldVolume Volume, float3 Loca
         return float3(0.0, 0.0, 0.0);
     }
 
-    // One step per axis in local units. Tied to the volume extent rather than a constant so a
-    // centimetre-scale prop and a hundred-metre one both differentiate over a comparable voxel count.
+    // Tied to the volume extent so meshes of any scale differentiate over a comparable voxel count.
     float3 Step = Volume.VolumeSize * (1.0 / 64.0);
 
     float3 G;
@@ -95,8 +87,7 @@ float3 SampleDistanceFieldGradientLocal(FDistanceFieldVolume Volume, float3 Loca
     return Len > 1e-8 ? G / Len : float3(0.0, 0.0, 0.0);
 }
 
-// The MINIMUM axis scale, not the average: only the minimum is guaranteed not to overstate free
-// space under non-uniform scale, and overstating it is what makes a sphere trace tunnel.
+// Minimum axis scale, the only one that never overstates free space under non-uniform scale.
 float LocalDistanceToWorld(float LocalDistance, float3 InstanceScale)
 {
     return LocalDistance * min(InstanceScale.x, min(InstanceScale.y, InstanceScale.z));
@@ -104,13 +95,12 @@ float LocalDistanceToWorld(float LocalDistance, float3 InstanceScale)
 
 struct FDistanceFieldQuery
 {
-    float  Distance;    // world units, signed (negative = inside). MaxDistance when invalid.
+    float  Distance;    // world units, negative inside
     float3 Gradient;    // world-space outward normal of the field, 0 when undefined
-    bool   bValid;      // a field exists AND the point is inside its volume
+    bool   bValid;      // a field exists and the point is inside its volume
 };
 
-// WorldToLocal is passed in because a material graph already has the instance loaded and the inverse
-// is worth computing once per pixel rather than once per sample.
+// Takes WorldToLocal so the inverse is computed once per pixel rather than per sample.
 FDistanceFieldQuery QueryDistanceField(FDistanceFieldVolume Volume, float4x4 WorldToLocal,
                                        float3 InstanceScale, float3 WorldPosition)
 {
@@ -121,8 +111,7 @@ FDistanceFieldQuery QueryDistanceField(FDistanceFieldVolume Volume, float4x4 Wor
 
     if (!Volume.IsValid())
     {
-        // A large positive value, not zero: "no field" must read as "nothing nearby", and zero would
-        // read as "exactly on a surface" to every consumer downstream.
+        // Large rather than zero, since zero would read as exactly on a surface.
         Q.Distance = 1e6;
         return Q;
     }
@@ -132,8 +121,7 @@ FDistanceFieldQuery QueryDistanceField(FDistanceFieldVolume Volume, float4x4 Wor
     Q.bValid   = Volume.ContainsLocal(LocalPosition);
     Q.Distance = LocalDistanceToWorld(SampleDistanceFieldLocal(Volume, LocalPosition), InstanceScale);
 
-    // The gradient is a surface normal, so it transforms by the inverse-transpose of object->world --
-    // which, since WorldToLocal already IS the inverse, is just its transpose (M[i] is a row).
+    // Normals transform by the inverse-transpose, and WorldToLocal is already the inverse.
     float3 LocalGradient = SampleDistanceFieldGradientLocal(Volume, LocalPosition);
     if (any(LocalGradient != 0.0))
     {
@@ -149,8 +137,7 @@ FDistanceFieldQuery QueryDistanceField(FDistanceFieldVolume Volume, float4x4 Wor
     return Q;
 }
 
-// SDF cone-trace occlusion (Quilez): one march covers a whole cone, far cheaper than a hemisphere.
-// Self-occlusion only -- contact darkening in a mesh's own creases, and it follows deformation.
+// SDF cone-trace occlusion (Quilez), self-occlusion only so it follows deformation.
 float DistanceFieldConeOcclusion(FDistanceFieldVolume Volume, float3 LocalPosition, float3 LocalDirection,
                                  float MaxLocalDistance, float ConeAngle, int StepCount)
 {
@@ -161,8 +148,7 @@ float DistanceFieldConeOcclusion(FDistanceFieldVolume Volume, float3 LocalPositi
 
     float Visibility = 1.0;
 
-    // Start off the surface. The field is zero AT the surface, so a march that begins there reports
-    // full occlusion on the first sample and never recovers.
+    // Start off the surface, or the first sample reports full occlusion and never recovers.
     float MinStep = MaxLocalDistance / (float)max(StepCount, 1);
     float T       = MinStep;
 
@@ -171,15 +157,13 @@ float DistanceFieldConeOcclusion(FDistanceFieldVolume Volume, float3 LocalPositi
         float3 P = LocalPosition + LocalDirection * T;
         if (!Volume.ContainsLocal(P))
         {
-            // Left the volume: no more of this mesh to occlude with, so the rest of the cone is open. Breaking
-            // rather than clamping keeps a small prop from shadowing itself with the plateau outside its bounds.
+            // The rest of the cone is open, so a small prop does not shadow itself with the plateau outside.
             break;
         }
 
         float D = SampleDistanceFieldLocal(Volume, P);
 
-        // Only reachable when the start point sits under geometry. Treat as fully occluded rather than
-        // letting the negative value invert the ratio below.
+        // Only reachable when the start point sits under geometry, and a negative D would invert the ratio.
         if (D < 0.0)
         {
             return 0.0;
@@ -197,8 +181,7 @@ float DistanceFieldConeOcclusion(FDistanceFieldVolume Volume, float3 LocalPositi
     return saturate(Visibility);
 }
 
-// Thickness below a surface point, by marching INTO the mesh and measuring how far the walk stays
-// inside. Feeds subsurface: thin geometry transmits. Returns 0 for a two-sided field.
+// Marches into the mesh to measure thickness for subsurface, and returns 0 for a two-sided field.
 float DistanceFieldThickness(FDistanceFieldVolume Volume, float3 LocalPosition, float3 LocalNormal,
                              float MaxLocalDistance, float3 InstanceScale, int StepCount)
 {
@@ -210,8 +193,7 @@ float DistanceFieldThickness(FDistanceFieldVolume Volume, float3 LocalPosition, 
     float StepSize  = MaxLocalDistance / (float)max(StepCount, 1);
     float Thickness = 0.0;
 
-    // Fixed-step, not sphere-traced: the walk is INSIDE, where a sphere trace would step by the distance
-    // to the nearest wall and skip straight past the thin section being measured.
+    // Fixed-step because a sphere trace inside would skip past the thin section being measured.
     for (int i = 1; i <= StepCount; ++i)
     {
         float  T = (float)i * StepSize;
@@ -224,7 +206,7 @@ float DistanceFieldThickness(FDistanceFieldVolume Volume, float3 LocalPosition, 
 
         if (SampleDistanceFieldLocal(Volume, P) >= 0.0)
         {
-            // Exited out the far side; T is the crossing, one step of quantisation.
+            // Exited the far side, within one step of quantization.
             Thickness = T;
             break;
         }
@@ -235,8 +217,7 @@ float DistanceFieldThickness(FDistanceFieldVolume Volume, float3 LocalPosition, 
     return LocalDistanceToWorld(Thickness, InstanceScale);
 }
 
-// Sphere trace against the field. Returns the world distance to the hit, or -1 on a miss. Local-space
-// march (the field's native space), converted on the way out.
+// Returns the world distance to the hit, or -1 on a miss.
 float DistanceFieldTrace(FDistanceFieldVolume Volume, float3 LocalOrigin, float3 LocalDirection,
                          float MaxLocalDistance, float3 InstanceScale, int StepCount)
 {
@@ -245,8 +226,7 @@ float DistanceFieldTrace(FDistanceFieldVolume Volume, float3 LocalOrigin, float3
         return -1.0;
     }
 
-    // Hit threshold as a fraction of the band rather than an absolute: an absolute epsilon that works
-    // on a metre-scale prop makes a kilometre-scale one march forever.
+    // Relative to the band, since an absolute epsilon makes a kilometer-scale mesh march forever.
     float HitEpsilon = Volume.MaxDistance * 0.01;
     float T          = 0.0;
 

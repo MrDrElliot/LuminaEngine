@@ -20,16 +20,15 @@ struct VSOutput
     precise float4 Position         : SV_Position;
 };
 
-// Meshlet-driven terrain VS, drawn indirectly with InstanceCount = surviving meshlets, so InstanceID
-// indexes uTerrainVisible. Each meshlet draws MeshletQuadSide^2 quads (six verts each).
+// InstanceID indexes uTerrainVisible since InstanceCount is the surviving meshlet count.
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_VulkanInstanceID)
 {
     FTerrainRenderParams TerrainParams = LoadBlock<FTerrainRenderParams>(TerrainArgs().Params);
 
-    FTerrainVisibleMeshlet Vis     = SpanGet(&TerrainArgs().Visible, InstanceID);
-    FTerrainMeshletInfo    Meshlet = SpanGet(&TerrainArgs().Meshlets, Vis.MeshletIndex);
-    FTerrainChunkInfo      Chunk   = SpanGet(&TerrainArgs().Chunks, Meshlet.ChunkIndex);
+    FTerrainVisibleMeshlet Vis     = TerrainArgs().Visible.Get(InstanceID);
+    FTerrainMeshletInfo    Meshlet = TerrainArgs().Meshlets.Get(Vis.MeshletIndex);
+    FTerrainChunkInfo      Chunk   = TerrainArgs().Chunks.Get(Meshlet.ChunkIndex);
 
     const int MeshletQuads = TerrainParams.MeshletQuadSide;
 
@@ -45,8 +44,7 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_Vulk
     uint MqX = QuadIndex % (uint)MeshletQuads;
     uint MqY = QuadIndex / (uint)MeshletQuads;
 
-    // Edge meshlets cover fewer than MeshletQuadSide quads; clamp so degenerate quads collapse to
-    // zero-area triangles instead of sampling outside the chunk's heightmap region.
+    // Edge meshlets cover fewer quads, so the clamp collapses the extras instead of sampling outside the chunk's heightmap region.
     uint ClampedX = min(MqX, (uint)max(Meshlet.QuadExtent.x - 1, 0));
     uint ClampedY = min(MqY, (uint)max(Meshlet.QuadExtent.y - 1, 0));
 
@@ -59,7 +57,7 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_Vulk
     SampleY = clamp(SampleY, 0, TerrainParams.Resolution - 1);
 
     float2 HeightUV = (float2(SampleX, SampleY) + 0.5) / float(TerrainParams.Resolution);
-    float  Height   = SampleTexture2DLevel(TerrainArgs().HeightmapIndex, SAMPLER_LINEAR_CLAMP, HeightUV, 0).r * TerrainParams.MaxHeight;
+    float  Height   = TerrainArgs().Heightmap.SampleLevel(Samplers::LinearClamp, HeightUV, 0).r * TerrainParams.MaxHeight;
 
     float  Stride = TerrainParams.TileWorldSize / float(TerrainParams.Resolution - 1);
     float3 WorldPos;
@@ -68,14 +66,12 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_Vulk
     WorldPos.y = TerrainParams.WorldOriginY.x + Height;
 
     // Compute pass packs Normal.xz; recover Y from unit length (hardcoding Y=1 tilts toward +Y, flattening slopes).
-    float4 NormalSample = SampleTexture2DLevel(TerrainArgs().NormalIndex, SAMPLER_LINEAR_CLAMP, HeightUV, 0);
+    float4 NormalSample = TerrainArgs().Normal.SampleLevel(Samplers::LinearClamp, HeightUV, 0);
     float  Nx = NormalSample.r * 2.0 - 1.0;
     float  Nz = NormalSample.g * 2.0 - 1.0;
     float  Ny = sqrt(saturate(1.0 - Nx * Nx - Nz * Nz));
     float3 NormalWS = float3(Nx, Ny, Nz);
 
-    // Material vertex graph emission (WPO). Terrain typically leaves this at
-    // zero; the substitution still runs for symmetry with the base pass.
     const float3 WorldPosNoWPO = WorldPos;
 
     FMaterialVertexInputs Material;
@@ -86,8 +82,7 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_Vulk
     float4   ViewPos = mul(View, float4(WorldPos, 1.0));
     float3   NormalVS = normalize(mul((float3x3)View, NormalWS));
 
-    // Analytic surface tangent: UV = WorldPos.xz so dP/du = (1, dHdx, 0), with dHdx = -N.x / N.y from
-    // the packed normal. A smooth per-vertex tangent avoids the faceting of a per-triangle ddx/ddy TBN.
+    // A smooth analytic tangent (UV is WorldPos.xz) avoids the faceting of a per-triangle ddx/ddy TBN.
     float  InvNy     = 1.0 / max(NormalWS.y, 1e-4);
     float  DhDx      = -NormalWS.x * InvNy;
     float3 TangentWS = normalize(float3(1.0, DhDx, 0.0));

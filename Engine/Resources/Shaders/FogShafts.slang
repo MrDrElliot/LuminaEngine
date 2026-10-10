@@ -5,26 +5,26 @@
 #include "Includes/Fog.slang"
 #include "Includes/ShadowSampling.slang"
 #include "Includes/CloudCommon.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
 // The sun-shadowed far-field fog segment past the froxel volume, marched at half resolution for AtmosphereComposite.
 
 struct FPushConstants
 {
-    uint  DepthIndex;
-    uint  ShaftUAV;          // rgb in-scatter, a transmittance of the marched segment
-    uint  ShaftDepthUAV;     // raw depth each texel marched against, 0 where it saw sky
-    uint  ScreenW;
+    FTexture2D   Depth;
+    FRWTexture2D Shaft;          // rgb in-scatter, a transmittance of the marched segment
+    FRWTexture2D ShaftDepth;     // raw depth each texel marched against, 0 where it saw sky
+    uint         ScreenW;
 
     uint  ScreenH;
     uint  TraceW;
     uint  TraceH;
     uint  Steps;
 
-    float FogRange;
-    float ShaftDistance;
-    uint  bVolumetric;
-    uint  CloudShadowIndex;  // 0xFFFFFFFF when no cloud shadow was built
+    float      FogRange;
+    float      ShaftDistance;
+    uint       bVolumetric;
+    FTexture2D CloudShadow;  // Invalid when no cloud shadow was built.
 
     float CloudShadowExtent;
     float CloudShadowCenterX;
@@ -95,7 +95,7 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
         }
 
         float Shadow = SampleSunCascadeFrom(Sun, P, CascadeCursor)
-                     * CloudShadow_Sample(Pass().CloudShadowIndex, P, ShadowCenter, Pass().CloudShadowExtent);
+                     * CloudShadow_Sample(Pass().CloudShadow, P, ShadowCenter, Pass().CloudShadowExtent);
 
         float3 Light  = Ambient + SunRadiance * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, Shadow);
         float3 Albedo = Fog_Albedo(uFog, CosSun, T);
@@ -122,14 +122,14 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const int2 Full    = P * 2;
 
     // The nearest of the four covered pixels, as the cloud march does, so a near edge never marches past its surface.
-    const float D0 = gTextures2D[Pass().DepthIndex].Load(int3(min(Full,               MaxFull), 0)).r;
-    const float D1 = gTextures2D[Pass().DepthIndex].Load(int3(min(Full + int2(1, 0), MaxFull), 0)).r;
-    const float D2 = gTextures2D[Pass().DepthIndex].Load(int3(min(Full + int2(0, 1), MaxFull), 0)).r;
-    const float D3 = gTextures2D[Pass().DepthIndex].Load(int3(min(Full + int2(1, 1), MaxFull), 0)).r;
+    const float D0 = Pass().Depth.Load(int3(min(Full,               MaxFull), 0)).r;
+    const float D1 = Pass().Depth.Load(int3(min(Full + int2(1, 0), MaxFull), 0)).r;
+    const float D2 = Pass().Depth.Load(int3(min(Full + int2(0, 1), MaxFull), 0)).r;
+    const float D3 = Pass().Depth.Load(int3(min(Full + int2(1, 1), MaxFull), 0)).r;
     const float Depth = max(max(D0, D1), max(D2, D3));
 
     const float2 UV = (float2(Full) + 1.0) / float2(Pass().ScreenW, Pass().ScreenH);
 
-    gRWTextures2D[Pass().ShaftDepthUAV][P] = float4(Depth, 0.0, 0.0, 0.0);
-    gRWTextures2D[Pass().ShaftUAV][P]      = MarchShafts(UV, float2(P) + 0.5, Depth);
+    Pass().ShaftDepth[P] = float4(Depth, 0.0, 0.0, 0.0);
+    Pass().Shaft[P]      = MarchShafts(UV, float2(P) + 0.5, Depth);
 }

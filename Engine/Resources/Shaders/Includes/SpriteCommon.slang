@@ -23,8 +23,8 @@ static const uint SPRITE_FLAG_ALPHA_CUT = 1u << 0;
 struct FSpritePushConstants
 {
     GPUSpan<FGPUSprite> Instances;   // per-frame sprite array, indexed by instance
-    uint  TextureIndex;      // bindless ResourceID of the sprite texture
-    uint  _p0;
+    FTexture2D          Texture;
+    uint                _p0;
 };
 FSpritePushConstants* Pass() { return GetPassArgs<FSpritePushConstants>(); }
 

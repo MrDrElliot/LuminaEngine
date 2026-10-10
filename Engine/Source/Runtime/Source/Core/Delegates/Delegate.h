@@ -4,9 +4,13 @@
 #include "Containers/Function.h"
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Atomic.h"
+#include "ModuleAPI.h"
 
 namespace Lumina
 {
+    // One counter per process, since a static inside the template would give each module its own and their handles would collide.
+    RUNTIME_API uint64 NewDelegateHandleID();
+
     // Handle for tracking delegates
     struct FDelegateHandle
     {
@@ -270,9 +274,8 @@ namespace Lumina
 
         static FDelegateHandle GenerateHandle()
         {
-            static TAtomic<uint64> NextID{1};
             FDelegateHandle Handle;
-            Handle.ID = NextID.fetch_add(1, Atomic::MemoryOrderRelaxed);
+            Handle.ID = NewDelegateHandleID();
             return Handle;
         }
 

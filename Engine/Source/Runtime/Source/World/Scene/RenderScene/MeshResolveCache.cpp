@@ -432,11 +432,9 @@ namespace Lumina
 
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {
-                R.LODMeshletOffset[LOD]  = Surface.LODMeshletOffset[LOD];
-                R.LODMeshletCount[LOD]   = Surface.LODMeshletCount[LOD];
-                // Thresholds are non-negative, so squaring preserves their ordering.
-                const float Threshold = Surface.LODScreenThreshold[LOD] * Mesh->LODDistanceScale;
-                R.LODScreenThresholdSq[LOD] = Threshold * Threshold;
+                R.LODMeshletOffset[LOD] = Surface.LODMeshletOffset[LOD];
+                R.LODMeshletCount[LOD]  = Surface.LODMeshletCount[LOD];
+                R.LODError[LOD]         = Surface.LODError[LOD] * Mesh->LODDistanceScale;
             }
 
             // -1 means unassigned; widening keeps it out of range so it falls through to the default.

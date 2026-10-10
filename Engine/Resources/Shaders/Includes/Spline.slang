@@ -2,19 +2,7 @@
 #include "Common.slang"
 #include "SceneGlobals.slang"
 
-// Sampling for splines uploaded by SSplineComponent (bSendToGPU).
-//
-// Two ways to read a spline, and they answer different questions:
-//
-//   * SampleSplineAtDistance -- constant speed. Distance is world-space arc length in [0, TotalLength].
-//     Backed by the baked table, so it is one divide plus one lerp. This is what you almost always want
-//     for placing things along a curve, marching a ray, or driving movement.
-//
-//   * EvaluateSplineAtKey -- the exact curve. Key is in [0, NumSegments]; the integer part picks the
-//     segment and the fraction is position within it. Exact but NOT constant speed: equal key steps cover
-//     unequal distances. Use when you need the analytic curve or its derivative.
-//
-// Everything is world space; the entity transform was baked in at extract.
+// World space with the entity transform baked at extract. Distance sampling is constant speed, key evaluation is exact but not.
 
 bool IsValidSpline(uint SplineIndex)
 {
@@ -23,23 +11,22 @@ bool IsValidSpline(uint SplineIndex)
 
 FGPUSpline* GetSpline(uint SplineIndex)
 {
-    return SpanAt(Splines(), SplineIndex);
+    return Splines().At(SplineIndex);
 }
 
 FGPUSplinePoint LoadSplinePoint(FGPUSpline* Spline, uint LocalPointIndex)
 {
     const uint Clamped = min(LocalPointIndex, max(Spline.PointCount, 1u) - 1u);
-    return SpanGet(SplinePoints(), Spline.PointOffset + Clamped);
+    return SplinePoints().Get(Spline.PointOffset + Clamped);
 }
 
 FGPUSplineSample LoadSplineSample(FGPUSpline* Spline, uint LocalSampleIndex)
 {
     const uint Clamped = min(LocalSampleIndex, max(Spline.SampleCount, 1u) - 1u);
-    return SpanGet(SplineSamples(), Spline.SampleOffset + Clamped);
+    return SplineSamples().Get(Spline.SampleOffset + Clamped);
 }
 
-// Lerp two samples. Tangent/Up are renormalised: lerping two unit vectors shortens them, and a
-// consumer building a frame from these needs them unit-length.
+// Renormalized because lerping two unit vectors shortens them.
 FGPUSplineSample LerpSplineSamples(FGPUSplineSample A, FGPUSplineSample B, float Alpha)
 {
     FGPUSplineSample R;
@@ -54,10 +41,7 @@ FGPUSplineSample LerpSplineSamples(FGPUSplineSample A, FGPUSplineSample B, float
     return R;
 }
 
-/**
- * Constant-speed sample at a world-space distance along the curve. Distance is clamped to
- * [0, TotalLength] -- past either end you get the end sample, not a wrap.
- */
+// Clamped to [0, TotalLength], so past either end returns the end sample rather than wrapping.
 FGPUSplineSample SampleSplineAtDistance(uint SplineIndex, float Distance)
 {
     FGPUSplineSample Fallback;
@@ -85,7 +69,7 @@ FGPUSplineSample SampleSplineAtDistance(uint SplineIndex, float Distance)
         return LoadSplineSample(Spline, 0u);
     }
 
-    // The table is uniform in distance, so the index is just a divide -- no search, no dependent loads.
+    // The table is uniform in distance, so the index is a divide with no search.
     const float Step  = Spline.TotalLength / float(Spline.SampleCount - 1u);
     const float Slot  = clamp(Distance, 0.0, Spline.TotalLength) / Step;
     const uint  Index = min((uint)floor(Slot), Spline.SampleCount - 2u);
@@ -96,7 +80,6 @@ FGPUSplineSample SampleSplineAtDistance(uint SplineIndex, float Distance)
                              Alpha);
 }
 
-/** Same, but with a normalised position in [0,1] along the curve. */
 FGPUSplineSample SampleSplineNormalized(uint SplineIndex, float Alpha)
 {
     if (!IsValidSpline(SplineIndex))
@@ -112,8 +95,7 @@ float GetSplineLength(uint SplineIndex)
     return IsValidSpline(SplineIndex) ? GetSpline(SplineIndex).TotalLength : 0.0;
 }
 
-// Cubic Hermite. T0 is the segment's LEAVE tangent, T1 its ARRIVE tangent -- separate so a point can
-// carry a corner.
+// T0 is the segment's leave tangent and T1 its arrive tangent, separate so a point can carry a corner.
 float3 HermitePosition(float3 P0, float3 T0, float3 P1, float3 T1, float t)
 {
     const float t2 = t * t;
@@ -135,10 +117,7 @@ float3 HermiteDerivative(float3 P0, float3 T0, float3 P1, float3 T1, float t)
          + T1 * (3.0 * t2 - 2.0 * t);
 }
 
-/**
- * Exact curve position at a key in [0, NumSegments]. NOT constant speed -- see the header comment.
- * Reads the control points directly, so it does not depend on the baked table's density.
- */
+// Not constant speed. Reads the control points directly, independent of the baked table's density.
 float3 EvaluateSplineAtKey(uint SplineIndex, float Key)
 {
     if (!IsValidSpline(SplineIndex))
@@ -164,7 +143,7 @@ float3 EvaluateSplineAtKey(uint SplineIndex, float Key)
     return HermitePosition(A.Location, A.LeaveTangent, B.Location, B.ArriveTangent, t);
 }
 
-/** Exact (unnormalised) derivative at a key. Normalize it yourself if you want a direction. */
+// Unnormalized, so normalize it for a direction.
 float3 EvaluateSplineTangentAtKey(uint SplineIndex, float Key)
 {
     if (!IsValidSpline(SplineIndex))
@@ -189,28 +168,19 @@ float3 EvaluateSplineTangentAtKey(uint SplineIndex, float Key)
     return HermiteDerivative(A.Location, A.LeaveTangent, B.Location, B.ArriveTangent, t);
 }
 
-/**
- * Orthonormal frame at a sample: right/up/forward, with forward along the curve.
- * Roll is already baked into the sample's Up by the extract, so this is a plain Gram-Schmidt.
- */
+// Roll is already baked into the sample's Up, so this is a plain Gram-Schmidt.
 float3x3 SplineSampleFrame(FGPUSplineSample S)
 {
     const float3 Forward = S.Tangent;
     const float3 Up      = S.Up;
     const float3 Right   = normalize(cross(Up, Forward));
-    // Re-derive Up from the orthogonalised Right so the frame is exactly orthonormal even if the lerped
-    // Up drifted slightly off perpendicular between two table entries.
+    // Re-derived so the frame stays orthonormal when the lerped Up drifts.
     const float3 TrueUp  = cross(Forward, Right);
 
     return float3x3(Right, TrueUp, Forward);
 }
 
-/**
- * Nearest point on a spline to a world position, by scanning the baked table.
- * Returns the distance-along of the closest sample refined against its neighbours; OutDistanceSq is the
- * squared world distance to the curve. O(SampleCount) -- fine for one query per thread against a
- * moderate table, but do not call it in a loop over a dense table.
- */
+// O(SampleCount) scan of the baked table, so avoid calling it in a loop over a dense table.
 float FindNearestDistanceOnSpline(uint SplineIndex, float3 WorldPos, out float OutDistanceSq)
 {
     OutDistanceSq = 1e30;
@@ -232,12 +202,12 @@ float FindNearestDistanceOnSpline(uint SplineIndex, float3 WorldPos, out float O
     for (uint i = 0u; i < Spline.SampleCount; ++i)
     {
         const uint SampleIndex = Spline.SampleOffset + i;
-        if (!SpanContains(SplineSamples(), SampleIndex))
+        if (!SplineSamples().Contains(SampleIndex))
         {
             continue;
         }
 
-        const float3 Delta = SpanAt(SplineSamples(), SampleIndex).Position - WorldPos;
+        const float3 Delta = SplineSamples().At(SampleIndex).Position - WorldPos;
         const float  DSq   = dot(Delta, Delta);
         if (DSq < BestDistSq)
         {
@@ -246,8 +216,7 @@ float FindNearestDistanceOnSpline(uint SplineIndex, float3 WorldPos, out float O
         }
     }
 
-    // Refine within the two adjacent segments by projecting onto them -- a coarse table otherwise
-    // quantises the result to the sample spacing.
+    // Project onto the two adjacent segments, or a coarse table quantizes the result to the sample spacing.
     const FGPUSplineSample Best = LoadSplineSample(Spline, BestIndex);
     float BestDistance = Best.DistanceAlong;
     OutDistanceSq = BestDistSq;

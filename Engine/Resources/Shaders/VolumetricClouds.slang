@@ -1,6 +1,6 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/Sky.slang"
 #include "Includes/CloudCommon.slang"
 
@@ -8,10 +8,10 @@
 
 struct FPushConstants
 {
-    uint   ScatterUAV;      // bindless 2D UAV: half-res rgb = scattered radiance, a = transmittance
-    uint   DepthIndex;      // bindless 2D SRV: scene depth, clamps the march
-    uint   NoiseIndex;      // bindless 3D SRV: the baked shape/erosion volume
-    uint   ScreenW;
+    FRWTexture2D Scatter;      // half-res rgb = scattered radiance, a = transmittance
+    FTexture2D   Depth;        // scene depth, clamps the march
+    FTexture3D   Noise;        // the baked shape and erosion volume
+    uint         ScreenW;
 
     uint   ScreenH;
     uint   MarchSteps;
@@ -40,14 +40,14 @@ struct FPushConstants
     float2 WindOffset;      // baked from direction * speed * time
     float2 DetailWindOffset;
 
-    uint   CloudDepthUAV;   // bindless 2D UAV of the raw depth the march was clamped to, 0 where it saw sky
-    uint   _Pad0;
-    uint   _Pad1;
-    uint   _Pad2;
+    FRWTexture2D CloudDepth;   // raw depth the march was clamped to, 0 where it saw sky
+    uint         _Pad0;
+    uint         _Pad1;
+    uint         _Pad2;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-// Two lobes: a forward one alone leaves cloud away from the sun unnaturally flat.
+// A forward lobe alone leaves cloud away from the sun unnaturally flat.
 float Cloud_Phase(float CosTheta, float G1, float G2)
 {
     return lerp(Sky_MiePhase(CosTheta, G1), Sky_MiePhase(CosTheta, G2), 0.35);
@@ -56,7 +56,7 @@ float Cloud_Phase(float CosTheta, float G1, float G2)
 FCloudMedium Cloud_Medium()
 {
     FCloudMedium M;
-    M.NoiseIndex       = Pass().NoiseIndex;
+    M.Noise            = Pass().Noise;
     M.ShapeScale       = Pass().ShapeScale;
     M.DetailScale      = Pass().DetailScale;
     M.DetailStrength   = Pass().DetailStrength;
@@ -85,7 +85,7 @@ static const float kEmptyStepScale = 3.0;
 static const float kMaxEmptyStride = 300.0;
 static const uint  kEntryFineSteps = 3u;
 
-// Interleaved gradient noise: offsetting the first sample hides the march's step banding.
+// Offsetting the first sample hides the march's step banding.
 float Cloud_IGN(float2 PixelPos)
 {
     return InterleavedGradientNoise(PixelPos);
@@ -104,18 +104,18 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     int2   P  = int2(DTid.xy);
     float2 UV = (float2(DTid.xy) + 0.5) / float2(Size);
 
-    gRWTextures2D[Pass().ScatterUAV][P] = float4(0.0, 0.0, 0.0, 1.0);
+    Pass().Scatter[P] = float4(0.0, 0.0, 0.0, 1.0);
 
     // Sampled by UV, not Load, since P indexes the half-res target while depth is full-res.
     float2 Off = 0.5 / float2(Size);
-    float  D0  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2(-Off.x, -Off.y), 0.0).r;
-    float  D1  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2( Off.x, -Off.y), 0.0).r;
-    float  D2  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2(-Off.x,  Off.y), 0.0).r;
-    float  D3  = SampleTexture2DLevel(Pass().DepthIndex, SAMPLER_POINT_CLAMP, UV + float2( Off.x,  Off.y), 0.0).r;
+    float  D0  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2(-Off.x, -Off.y), 0.0).r;
+    float  D1  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2( Off.x, -Off.y), 0.0).r;
+    float  D2  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2(-Off.x,  Off.y), 0.0).r;
+    float  D3  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2( Off.x,  Off.y), 0.0).r;
 
     // Reverse-Z, so max is the closest surface in the footprint, and the composite rejects this texel for pixels behind it.
     float RawDepth = max(max(D0, D1), max(D2, D3));
-    gRWTextures2D[Pass().CloudDepthUAV][P] = float4(RawDepth, 0.0, 0.0, 0.0);
+    Pass().CloudDepth[P] = float4(RawDepth, 0.0, 0.0, 0.0);
 
     float2 NDC     = UV * 2.0 - 1.0;
     float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
@@ -225,7 +225,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
         T += BaseStep;
 
-        // Widening light step: the far samples cover the cloud's bulk without paying full price.
+        // Widening light steps let the far samples cover the cloud's bulk cheaply.
         uint  LSteps   = max(Pass().LightSteps, 1u);
         float LStepLen = LayerThickness * 0.5 / float(LSteps);
         float SunDepth = 0.0;
@@ -254,7 +254,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
         float SunTransmittance = exp(-SunDepth);
 
-        // Powder: thin sunward edges scatter out before they scatter back, so they read dark.
+        // Powder, since thin sunward edges scatter out before they scatter back and read dark.
         float Powder = 1.0 - exp(-Density * BaseStep * 2.0);
         float Lit    = lerp(1.0, Powder, Pass().PowderStrength);
 
@@ -275,5 +275,5 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     Scattered     *= DistanceFade;
     Transmittance  = lerp(1.0, Transmittance, DistanceFade);
 
-    gRWTextures2D[Pass().ScatterUAV][P] = float4(SanitizeRadiance(Scattered), Transmittance);
+    Pass().Scatter[P] = float4(SanitizeRadiance(Scattered), Transmittance);
 }

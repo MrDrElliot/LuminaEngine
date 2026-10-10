@@ -11,6 +11,9 @@ namespace Lumina
         "Scales the meshlet draw and block lists below demand, to exercise the coarse-LOD overflow fallback.");
     #endif
 
+    static TConsoleVar<int32> CVarCullMeshletVisibility("r.Cull.MeshletVisibility", 1,
+        "0 decides the occlusion phase per instance instead of per meshlet, for an A/B against the meshlet bits.");
+
     static bool IsDebugCapacityScaled()
     {
         #if !defined(LE_SHIPPING)
@@ -346,11 +349,7 @@ namespace Lumina
                 continue;
             }
 
-            const FSkinnedFrameData& D = Data[Slot];
-            const uint32 Begin = Math::Min(D.SurfaceMeshletOffset, D.ShadowMeshletOffset);
-            const uint32 End   = Math::Max(D.SurfaceMeshletOffset + D.SurfaceMeshletCount,
-                                           D.ShadowMeshletOffset + D.ShadowMeshletCount);
-            const uint32 Len   = (End > Begin) ? (End - Begin) : 0u;
+            const uint32 Len = Data[Slot].SurfaceMeshletCount;
 
             SkinnedBoundsMaxRange = Math::Max(SkinnedBoundsMaxRange, Len);
             BoundsTotal += Len;
@@ -388,10 +387,8 @@ namespace Lumina
             FSkinnedFrameData& D = Data[Slot];
             D.FrameTag = CurrentSkinnedFrameTag;
 
-            const uint32 Begin = Math::Min(D.SurfaceMeshletOffset, D.ShadowMeshletOffset);
-            const uint32 End   = Math::Max(D.SurfaceMeshletOffset + D.SurfaceMeshletCount,
-                                           D.ShadowMeshletOffset + D.ShadowMeshletCount);
-            const uint32 Len   = (End > Begin) ? (End - Begin) : 0u;
+            const uint32 Begin = D.SurfaceMeshletOffset;
+            const uint32 Len   = D.SurfaceMeshletCount;
 
             // All or nothing, because a partly written slice leaves the cull rejecting against stale data.
             if (Len == 0u || !bDispatchable || (uint64)BoundsCursor + Len > SkinnedMeshletBoundsCapacity)
@@ -902,17 +899,16 @@ namespace Lumina
             return;
         }
 
-        const uint8  Slot     = CurrentFrameSlot;
-        const uint32 NumPairs = NumSkinned * 2u;
+        const uint8 Slot = CurrentFrameSlot;
 
-        ReserveBuffer(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32));
+        ReserveBuffer(CL, SkinWorkBaseRing[Slot], (uint64)NumSkinned * sizeof(uint32));
         if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs() || !GetPreSkinnedVerticesBuffer()
             || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
         {
             return;
         }
 
-        //~ Lay out the dispatch as one workgroup per instance, block and meshlet, enumerated on the GPU.
+        //~ Lay out the dispatch as one workgroup per instance and meshlet, enumerated on the GPU.
         {
             struct FBuildSkinWorkPC
             {
@@ -925,7 +921,7 @@ namespace Lumina
 
             WPC.SlotList        = { SkinnedSlotListBuffer, NumSkinned };
             WPC.SkinnedData     = { SkinnedFrameDataBuffer };
-            WPC.OutWorkBase     = { SkinWorkBaseRing[Slot], NumPairs };
+            WPC.OutWorkBase     = { SkinWorkBaseRing[Slot], NumSkinned };
             WPC.OutDispatchArgs = { GetSkinDispatchArgs() };
 
             DispatchCompute(CL, WorkShader, WPC, 1u, 1u, 1u);
@@ -945,7 +941,7 @@ namespace Lumina
         } PC = {};
         static_assert(sizeof(FSkinningPushConstants) == 96, "FSkinningPushConstants must match Skinning.slang.");
 
-        PC.WorkBase       = { SkinWorkBaseRing[Slot], NumPairs };
+        PC.WorkBase       = { SkinWorkBaseRing[Slot], NumSkinned };
         PC.SlotList       = { SkinnedSlotListBuffer, NumSkinned };
         PC.SkinnedData    = { SkinnedFrameDataBuffer };
         PC.RetainedStatic = { RetainedStaticBuffer };
@@ -1185,6 +1181,11 @@ namespace Lumina
             }
 
             InstanceVisibilityCapacity = VisCapacity;
+
+            // History is kept across a grow, since the zeroed tail is the only part with none.
+            ReserveBuffer(CL, MeshletVisibilityBuffer, Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)Upload.MeshletVisibilityWords * sizeof(uint32)),
+                          /*bAllowShrink*/ false, /*bPreserveContents*/ true);
+            MeshletVisibilityCapacity = MeshletVisibilityBuffer ? MeshletVisibilityBuffer.CapacityOf<uint32>() : 0u;
 
             // A grow that failed leaves a buffer shorter than the slot range, and the writes below are unchecked.
             const bool bRetainedFits = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>() >= RetainedSlots
@@ -1572,8 +1573,9 @@ namespace Lumina
             RHI::TGPUSpan<FUIntVector2>     BlockList;
             RHI::TGPUSpan<uint32>           PrevVisibility;
             RHI::TGPUSpan<uint32>           OutVisibility;
+            RHI::TGPUSpan<uint32>           MeshletVisibility;
         } CPC = {};
-        static_assert(sizeof(FMeshletCullPC) == 88, "FMeshletCullPC must match MeshletCull.slang.");
+        static_assert(sizeof(FMeshletCullPC) == 104, "FMeshletCullPC must match MeshletCull.slang.");
 
         CPC.NumViews       = NumViews;
         CPC.NumDraws       = NumDraws;
@@ -1584,6 +1586,7 @@ namespace Lumina
         CPC.BlockList      = { GetMeshletBlocks() };
         CPC.PrevVisibility = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
         CPC.OutVisibility  = { GetInstanceVisibilityWrite(), InstanceVisibilityCapacity };
+        CPC.MeshletVisibility = { GetMeshletVisibility(), CVarCullMeshletVisibility.GetValue() != 0 ? MeshletVisibilityCapacity : 0u };
 
         DispatchComputeIndirect(CL, CullShader, CPC, GetMeshletCullDispatchArgs());
         RHI::CmdBarrier(CL,

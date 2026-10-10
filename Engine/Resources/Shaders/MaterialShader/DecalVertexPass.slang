@@ -13,7 +13,7 @@ struct VSOutput
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint DecalIndex : SV_VulkanInstanceID)
 {
-    FGPUDecal Decal = SpanGet(&Pass().Decals, DecalIndex);
+    FGPUDecal Decal = Pass().Decals.Get(DecalIndex);
 
     VSOutput Output;
     Output.DecalIndex   = DecalIndex;

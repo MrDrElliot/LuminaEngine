@@ -20,15 +20,15 @@ void main(uint3 Tid : SV_DispatchThreadID)
     FGrassRetirePushConstants* P = Pass();
 
     const uint Slot = Tid.x;
-    const uint Live = SpanGet(&P->Cursor, 0u);
-    const uint Prev = SpanGet(&P->PrevCursor, 0u);
+    const uint Live = (P->Cursor).Get(0u);
+    const uint Prev = (P->PrevCursor).Get(0u);
 
-    if (Slot < Live || Slot >= Prev || !SpanContains(&P->CullEntries, Slot))
+    if (Slot < Live || Slot >= Prev || !(P->CullEntries).Contains(Slot))
     {
         return;
     }
 
-    FInstanceCullEntry Cull = SpanGet(&P->CullEntries, Slot);
+    FInstanceCullEntry Cull = (P->CullEntries).Get(Slot);
     Cull.DrawIDAndFlags &= ~((uint)EInstanceFlags::Active << 16);
-    SpanSet(&P->CullEntries, Slot, Cull);
+    (P->CullEntries).Set(Slot, Cull);
 }

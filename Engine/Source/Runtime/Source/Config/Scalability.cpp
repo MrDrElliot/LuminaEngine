@@ -211,6 +211,47 @@ namespace Lumina::Scalability
         }
     }
 
+    void OverrideSetting(FStringView Key, FStringView JsonValue)
+    {
+        Json Values = Json::object();
+        try
+        {
+            Values[std::string(Key.data(), Key.size())] = Json::parse(std::string(JsonValue.data(), JsonValue.size()));
+        }
+        catch (const std::exception& Ex)
+        {
+            LOG_WARN("Scalability: '{}' is not a JSON value for {} ({}).", JsonValue, Key, Ex.what());
+            return;
+        }
+
+        for (auto& [Section, SectionValues] : BySection(Values))
+        {
+            Write(Section, SectionValues);
+        }
+    }
+
+    void RestoreSetting(FStringView Key)
+    {
+        const std::string Full(Key.data(), Key.size());
+        const size_t Dot = Full.find('.');
+        if (Dot == std::string::npos)
+        {
+            return;
+        }
+
+        CClass* Class = FindSettingsClass(FStringView(Full.data(), Dot));
+        const auto Saved = Class != nullptr ? ProjectValues.find(Class) : ProjectValues.end();
+        const std::string Property = Full.substr(Dot + 1);
+        if (Saved == ProjectValues.end() || !Saved->second.contains(Property))
+        {
+            return;
+        }
+
+        Json Values = Json::object();
+        Values[Property] = Saved->second[Property];
+        Write(FString(Full.substr(0, Dot).c_str()), Values);
+    }
+
     void RestoreProjectValues()
     {
         for (auto& [Class, Values] : ProjectValues)

@@ -3,20 +3,19 @@
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
 
-// SMAA pass 3 (neighborhood blend). No pass-local binding set: LDR color + blend weights are read
-// through the bindless table via indices in the push constant (matches FSMAAPushConstants).
+// Matches FSMAAPushConstants.
 struct FPushConstants
 {
-    float4 RTMetrics;
-    float  EdgeThreshold;
-    float  DebugMode;
-    uint   TexIndex0;   // LDR color
-    uint   TexIndex1;   // blend weights
-    uint   TexIndex2;
-    uint   _Pad0;
-    uint   _Pad1;
-    uint   _Pad2;
-    float4 SubsampleIndices;
+    float4     RTMetrics;
+    float      EdgeThreshold;
+    float      DebugMode;
+    FTexture2D Color;
+    FTexture2D BlendWeights;
+    uint       _Unused0;
+    uint       _Pad0;
+    uint       _Pad1;
+    uint       _Pad2;
+    float4     SubsampleIndices;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -33,10 +32,10 @@ struct VSOutput
 [shader("fragment")]
 float4 FragmentMain(VSOutput Input) : SV_Target0
 {
-    SamplerState LinearClamp = gSamplers[SAMPLER_LINEAR_CLAMP];
+    FSampler LinearClamp = Samplers::LinearClamp;
 
-    SMAATex colorTex; colorTex.Tex = gTextures2D[Pass().TexIndex0]; colorTex.Smp = LinearClamp;
-    SMAATex blendTex; blendTex.Tex = gTextures2D[Pass().TexIndex1]; blendTex.Smp = LinearClamp;
+    SMAATex colorTex; colorTex.Tex = Pass().Color; colorTex.Smp = LinearClamp;
+    SMAATex blendTex; blendTex.Tex = Pass().BlendWeights; blendTex.Smp = LinearClamp;
 
     if (Pass().DebugMode > 0.5)
     {

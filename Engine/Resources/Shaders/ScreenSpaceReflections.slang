@@ -1,29 +1,29 @@
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 
 // Traces each half-resolution texel through the closest-depth pyramid and stores what it hit, weighted by how much the hit can be trusted.
 
 struct FSSRTraceArgs
 {
-    uint  PyramidIndex;     // closest-depth pyramid, mip 0 is the half-resolution depth
-    uint  SurfaceIndex;     // world normal and roughness of the pixel each pyramid texel kept
-    uint  SceneColorIndex;  // HDR, read while nothing in this pass writes it
-    uint  OutColorUAV;      // tonemapped radiance times validity, validity in w
+    FTexture2D   Pyramid;     // closest-depth pyramid, mip 0 is the half-resolution depth
+    FTexture2D   Surface;     // world normal and roughness of the pixel each pyramid texel kept
+    FTexture2D   SceneColor;  // HDR, read while nothing in this pass writes it
+    FRWTexture2D OutColor;      // tonemapped radiance times validity, validity in w
 
-    uint  OutMipUAV;        // which level of the filtered chain the resolve should read
-    uint  TraceW;
-    uint  TraceH;
-    uint  MipCount;
+    FRWTexture2D OutMip;        // which level of the filtered chain the resolve should read
+    uint         TraceW;
+    uint         TraceH;
+    uint         MipCount;
 
     uint  MaxIterations;
     float DepthTolerance;   // view-space distance behind a surface a ray may pass and still count as hitting it
     float FadeIn;           // exponent on the screen distance a ray covers, so contact reflections ease in
     float FadeOut;          // exponent on the remaining distance, so rays nearing a screen's width ease out
 
-    float MaxRoughness;     // rougher surfaces are left to the prefiltered environment
-    uint  DepthIndex;       // full-resolution depth, to find the pixel each pyramid texel kept
-    uint  ScreenW;
-    uint  ScreenH;
+    float      MaxRoughness;     // rougher surfaces are left to the prefiltered environment
+    FTexture2D Depth;       // full-resolution depth, to find the pixel each pyramid texel kept
+    uint       ScreenW;
+    uint       ScreenH;
 
     uint  Scale;            // screen pixels per trace texel along each axis
     uint  _Pad0;
@@ -41,7 +41,7 @@ static const float kCellEpsilon = 0.000001;
 
 float SSR_PyramidDepth(int2 Cell, int Level)
 {
-    return gTextures2D[Pass().PyramidIndex].Load(int3(Cell, Level)).r;
+    return Pass().Pyramid.Load(int3(Cell, Level)).r;
 }
 
 float3 SSR_ViewPos(float3 ScreenPos)
@@ -58,7 +58,7 @@ float3 SSR_ScreenPos(float3 ViewPos)
 
 float3 SSR_ViewNormal(int2 Texel)
 {
-    const float3 WorldNormal = gTextures2D[Pass().SurfaceIndex].Load(int3(Texel, 0)).xyz;
+    const float3 WorldNormal = Pass().Surface.Load(int3(Texel, 0)).xyz;
     return normalize(mul((float3x3)GetCameraView(), WorldNormal));
 }
 
@@ -109,7 +109,7 @@ int2 SSR_KeptPixel(int2 Texel)
     for (int i = 0; i < Scale * Scale; ++i)
     {
         const int2  Pixel = min(Base + int2(i % Scale, i / Scale), MaxPixel);
-        const float Depth = LoadTexture2D(Pass().DepthIndex, Pixel).r;
+        const float Depth = Pass().Depth.Load(Pixel).r;
         if (Depth > BestDepth)
         {
             BestDepth = Depth;
@@ -139,7 +139,7 @@ FSSRResult TraceTexel(int2 Texel)
         return Result;
     }
 
-    const float Roughness = gTextures2D[Pass().SurfaceIndex].Load(int3(Texel, 0)).w;
+    const float Roughness = Pass().Surface.Load(int3(Texel, 0)).w;
     if (Roughness >= Pass().MaxRoughness)
     {
         return Result;
@@ -271,7 +271,7 @@ FSSRResult TraceTexel(int2 Texel)
 
     if (Validity > 0.0)
     {
-        float3 Radiance = SanitizeRadiance(LoadTexture2D(Pass().SceneColorIndex, SSR_KeptPixel(HitTexel)).rgb);
+        float3 Radiance = SanitizeRadiance(Pass().SceneColor.Load(SSR_KeptPixel(HitTexel)).rgb);
 
         // Compressed so the roughness blur averages bright and dark hits evenly, and the resolve undoes it.
         Radiance /= 1.0 + dot(Radiance, float3(0.2126, 0.7152, 0.0722));
@@ -308,6 +308,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     const FSSRResult Result = TraceTexel(int2(DTid.xy));
-    gRWTextures2D[Pass().OutColorUAV][int2(DTid.xy)] = Result.Color;
-    gRWTextures2D[Pass().OutMipUAV][int2(DTid.xy)]   = float4(Result.MipLevel, 0.0, 0.0, 0.0);
+    Pass().OutColor[int2(DTid.xy)] = Result.Color;
+    Pass().OutMip[int2(DTid.xy)]   = float4(Result.MipLevel, 0.0, 0.0, 0.0);
 }

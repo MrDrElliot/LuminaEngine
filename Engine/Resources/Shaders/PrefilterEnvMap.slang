@@ -1,26 +1,20 @@
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/Sky.slang"
 #include "Includes/IBL.slang"
 
-// GGX pre-filtered environment map (Karis 2013 split-sum "first sum"); each mip = a fixed roughness,
-// sampled at runtime as mip = Roughness * (NumMips - 1). Dispatched once per mip with a Roughness push constant.
-// No pass-local set: source cube via bindless cube SRV, output mip via bindless 2D-array UAV.
-//
-// Serves both the sky prefilter (destination is a 6-layer cube, DstLayerOffset 0) and reflection probes
-// (destination is a cube ARRAY holding every probe, DstLayerOffset = ProbeSlice * 6). The dispatch is
-// always Z=6 -- one probe's worth of faces -- and the offset picks which slice of the array it lands in.
+// Each mip is a fixed roughness; probes write into the cube array at DstLayerOffset = ProbeSlice * 6.
 
 struct FPushConstants
 {
-    uint  SrcCubeSRV;
-    uint  OutMipUAV;
-    float Roughness;
-    uint  NumSamples;
-    uint  DstLayerOffset;
-    uint  _Pad0;
-    uint  _Pad1;
-    uint  _Pad2;
+    FTextureCube      SrcCube;
+    FRWTexture2DArray OutMip;
+    float             Roughness;
+    uint              NumSamples;
+    uint              DstLayerOffset;
+    uint              _Pad0;
+    uint              _Pad1;
+    uint              _Pad2;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -30,12 +24,12 @@ FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 [numthreads(PREFILTER_TILE, PREFILTER_TILE, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
-    RWTexture2DArray<float4> uOutMip = gRWTextures2DArray[Pass().OutMipUAV];
+    FRWTexture2DArray uOutMip = Pass().OutMip;
 
     uint Width, Height, Layers;
     uOutMip.GetDimensions(Width, Height, Layers);
 
-    // DTid.z is the cube face (0-5); DstLayer is where that face lands in the destination array.
+    // DTid.z is the cube face, offset into the destination array.
     const uint DstLayer = DTid.z + Pass().DstLayerOffset;
 
     if (DTid.x >= Width || DTid.y >= Height || DTid.z >= 6u || DstLayer >= Layers)
@@ -45,7 +39,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     float2 UV = (float2(DTid.xy) + 0.5) / float2(Width, Height);
 
-    // Karis split-sum: V = N = R. Drops off-axis lobe anisotropy for a mip chain indexable by R.
+    // Karis split-sum assumes V = N = R, trading lobe anisotropy for a mip chain indexable by R.
     float3 N = CubeFaceDirection(DTid.z, UV);
     float3 R = N;
     float3 V = N;
@@ -63,11 +57,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
         if (NdotL > 0.0)
         {
-            // NdotL weighting (UE4 / learnopengl): samples toward N count more, grazing less.
-            // Sanitize per-sample so one Inf texel can't turn the whole accumulator into Inf/NaN.
-            float3 Radiance = SanitizeRadiance(SampleTextureCubeLevel(Pass().SrcCubeSRV, SAMPLER_LINEAR_CLAMP, L, 0.0).rgb);
-            // Accumulate in tonemapped space so a tiny bright source (city light, sun) hit by only a few
-            // samples can't produce a blocky/sparkly firefly in the prefiltered mip.
+            // Sanitized per sample so one Inf texel cannot poison the accumulator.
+            float3 Radiance = SanitizeRadiance(Pass().SrcCube.SampleLevel(Samplers::LinearClamp, L, 0.0).rgb);
+            // Tonemapped accumulation keeps a tiny bright source hit by few samples from becoming a firefly.
             Sum    += FireflyTonemap(Radiance) * NdotL;
             Weight += NdotL;
         }

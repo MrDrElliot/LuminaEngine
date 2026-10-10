@@ -1,7 +1,5 @@
 #include "Includes/SceneGlobals.slang"
 
-// Per-frame object-space meshlet spheres for skinned meshes, so the cull can reject them per meshlet.
-
 // Derived from bones rather than skinned vertices because this runs before SkinningPass.
 
 // Skinning is a convex combination of per-bone transformed points, so enclosing those encloses the mesh.
@@ -30,30 +28,27 @@ FSkinnedBoundsArgs* Pass() { return GetPassArgs<FSkinnedBoundsArgs>(); }
 void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 {
     const uint SlotListIdx = GlobalID.y;
-    if (!SpanContains(&Pass().SlotList, SlotListIdx))
+    if (!Pass().SlotList.Contains(SlotListIdx))
     {
         return;
     }
 
-    const uint SlotIdx = SpanGet(&Pass().SlotList, SlotListIdx);
-    if (!SpanContains(&Pass().RetainedStatic, SlotIdx))
+    const uint SlotIdx = Pass().SlotList.Get(SlotListIdx);
+    if (!Pass().RetainedStatic.Contains(SlotIdx))
     {
         return;
     }
 
-    FSkinnedFrameData Skin = SpanGet(&Pass().SkinnedFrameData, SlotIdx);
+    FSkinnedFrameData Skin = Pass().SkinnedFrameData.Get(SlotIdx);
 
     if (Skin.SkinnedBoundsBase == kNoSkinnedBounds)
     {
         return;
     }
 
-    const uint SurfaceEnd = Skin.SurfaceMeshletOffset + Skin.SurfaceMeshletCount;
-    const uint ShadowEnd  = Skin.ShadowMeshletOffset + Skin.ShadowMeshletCount;
-
-    // Skinned never re-selects a LOD per view, so the union of these two is every reachable meshlet.
-    const uint RangeBegin = min(Skin.SurfaceMeshletOffset, Skin.ShadowMeshletOffset);
-    const uint RangeEnd   = max(SurfaceEnd, ShadowEnd);
+    // Skinned never re-selects a LOD per view, so the surface range is every reachable meshlet.
+    const uint RangeBegin = Skin.SurfaceMeshletOffset;
+    const uint RangeEnd   = Skin.SurfaceMeshletOffset + Skin.SurfaceMeshletCount;
 
     const uint MeshletIdx = RangeBegin + GlobalID.x;
     if (MeshletIdx >= RangeEnd)
@@ -62,7 +57,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
     }
 
     // Reached, not copied, since a local copy would put a raw pointer in an undecorated OpVariable.
-    FInstanceStatic* Static = SpanAt(&Pass().RetainedStatic, SlotIdx);
+    FInstanceStatic* Static = Pass().RetainedStatic.At(SlotIdx);
 
     // Slot 0 is the null header, so this is readable for any slot value the slab can name.
     FMeshletHeader* Header = Static.MeshletHeader;
@@ -82,10 +77,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
     // When this gate fails the vertices stay in bind pose, so the bind sphere is exact rather than a guess.
     if (!CanSkinMeshlet(Palette, Skin.BoneOffset))
     {
-        SpanSet(&Pass().OutBounds, OutIdx, Bind);
+        Pass().OutBounds.Set(OutIdx, Bind);
 
         // Bind pose is exact here, so the authored cone carries over verbatim with no widening.
-        SpanSet(&Pass().OutCones, OutIdx, Header.Cones[MeshletIdx]);
+        Pass().OutCones.Set(OutIdx, Header.Cones[MeshletIdx]);
         return;
     }
 
@@ -102,7 +97,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
     for (uint i = 0; i < Palette.Count; ++i)
     {
-        const FSkinRows Rows = UnpackBoneRows(SpanGetAligned(Bones(), ResolvePaletteBone(Header, Palette, i, Skin.BoneOffset)));
+        const FSkinRows Rows = UnpackBoneRows(Bones().GetAligned(ResolvePaletteBone(Header, Palette, i, Skin.BoneOffset)));
 
         const float3 Posed = float3(dot(Rows.R0, BindCenter), dot(Rows.R1, BindCenter), dot(Rows.R2, BindCenter));
 
@@ -129,12 +124,12 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
     // Half the diagonal covers every transformed center, and the scaled bind radius covers the vertices.
     Out.Radius = length(Hi - Center) + MaxScaledRadius;
 
-    SpanSet(&Pass().OutBounds, OutIdx, Out);
+    Pass().OutBounds.Set(OutIdx, Out);
 
     // An authored cutoff of 1.0 already means no cone, so nothing here can make it reject.
     if (BindCone.w >= 1.0 || dot(AxisSum, AxisSum) <= 1e-12)
     {
-        SpanSet(&Pass().OutCones, OutIdx, DisabledMeshletCone());
+        Pass().OutCones.Set(OutIdx, DisabledMeshletCone());
         return;
     }
 
@@ -145,7 +140,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
 
     for (uint j = 0; j < Palette.Count; ++j)
     {
-        const FSkinRows Rows = UnpackBoneRows(SpanGetAligned(Bones(), ResolvePaletteBone(Header, Palette, j, Skin.BoneOffset)));
+        const FSkinRows Rows = UnpackBoneRows(Bones().GetAligned(ResolvePaletteBone(Header, Palette, j, Skin.BoneOffset)));
 
         const float3 Axis = normalize(float3(dot(Rows.R0.xyz, BindAxis),
                                              dot(Rows.R1.xyz, BindAxis),
@@ -157,6 +152,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID)
     const float Widened = WidenCutoff(BindCone.w, CosSpread);
 
     // Past this the reject cone has been widened away to nothing, so the test is pure cost.
-    SpanSet(&Pass().OutCones, OutIdx, (Widened < 0.9999) ? EncodeMeshletCone(MeanAxis, Widened)
+    Pass().OutCones.Set(OutIdx, (Widened < 0.9999) ? EncodeMeshletCone(MeanAxis, Widened)
                                                          : DisabledMeshletCone());
 }

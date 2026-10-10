@@ -69,8 +69,7 @@ float Fog_OpticalDepthToInfinity(FExponentialHeightFogParams Fog, float3 StartPo
     return Fog_OpticalDepth(Fog, StartPos, RayDir, 100000.0);
 }
 
-// Cornette-Shanks: a smoother, energy-normalized HG. Same `G` control, but the
-// lobe isn't as much of a needle.
+// Cornette-Shanks, an energy-normalized HG with a less needle-like lobe.
 float Fog_PhaseCornetteShanks(float CosTheta, float G)
 {
     float G2  = G * G;
@@ -79,16 +78,14 @@ float Fog_PhaseCornetteShanks(float CosTheta, float G)
     return Num / Den;
 }
 
-// Two-lobe phase: forward Cornette-Shanks lobe blended with an isotropic floor so side-on shafts
-// stay visible (a single high-G lobe goes near-black off-axis) while the sun-facing glow remains.
+// Blends Cornette-Shanks with an isotropic floor so side-on shafts stay visible off-axis.
 float Fog_Phase(float CosTheta, float G)
 {
     const float Isotropic = 1.0 / (4.0 * PI);
     return lerp(Isotropic, Fog_PhaseCornetteShanks(CosTheta, G), 0.5);
 }
 
-// Multiple-scattering octave approximation (Hillaire 2015): evaluate single-scatter N times with
-// geometrically decaying energy, phase and shadow. Additive and deliberately not renormalized.
+// Hillaire 2015 multiple-scattering octaves, additive and deliberately not renormalized.
 float Fog_MultiScatterPhaseShadow(FExponentialHeightFogParams Fog, float CosTheta, float G, float Shadow)
 {
     int Octaves = min(int(Fog.MultiScatterParams.x + 0.5), FOG_MAX_MULTISCATTER_OCTAVES);
@@ -117,8 +114,7 @@ float Fog_MultiScatterPhaseShadow(FExponentialHeightFogParams Fog, float CosThet
     return Sum;
 }
 
-// Density ramp for FogStartDistance: fog fades in over the half-start-distance after the start,
-// instead of a hard front. Dist is distance from the camera along the ray.
+// Fades fog in over half the start distance past FogStartDistance instead of a hard front.
 float Fog_StartRamp(FExponentialHeightFogParams Fog, float Dist)
 {
     float Start = Fog.HeightParams.z;
@@ -192,7 +188,7 @@ float Fog_VolumeCoverage(FFogVolume V, float3 WorldPos)
     return 1.0 - smoothstep(1.0 - Softness, 1.0, D);
 }
 
-// Split so the caller owns the volume pointer and the loop bound; only the froxel inject binds them.
+// Split so the caller owns the volume pointer and the loop bound, which only the froxel inject binds.
 FFogMedium Fog_BeginMedium(FExponentialHeightFogParams Fog, float3 WorldPos, float Time, float CamDist)
 {
     FFogMedium M;
@@ -239,18 +235,18 @@ float4 Fog_EvaluateAtPoint(float3 CamPos, float3 RayDir, float ViewDist, float Z
     float  Trans     = 1.0;
 
     // Reuse the already-integrated froxel volume for the near range rather than re-marching it.
-    uint VolumeIndex = Scene().FogIntegratedIndex;
-    if (VolumeIndex != 0xFFFFFFFFu)
+    const FTexture3D FogVolume = Scene().FogIntegrated;
+    if (FogVolume.IsValid())
     {
         float W = Froxel_DistanceToW(ViewDist, Scene().FogNearPlane, Scene().FogRange);
         W = saturate(W + (InterleavedGradientNoise(PixelPos) - 0.5) / float(max(Scene().FogGridZ, 1u)));
 
-        float4 Froxel = gTextures3D[VolumeIndex].SampleLevel(gSamplers[SAMPLER_LINEAR_CLAMP], float3(ScreenUV, W), 0.0);
+        float4 Froxel = FogVolume.SampleLevel(Samplers::LinearClamp, float3(ScreenUV, W), 0.0);
         InScatter = Froxel.rgb;
         Trans     = saturate(Froxel.a);
     }
 
-    float VolEndZ = VolumeIndex != 0xFFFFFFFFu ? Scene().FogRange : 0.0;
+    float VolEndZ = FogVolume.IsValid() ? Scene().FogRange : 0.0;
     float T0      = max(VolEndZ / ZPerT, uFog.HeightParams.z);
     float T1      = ViewDist / ZPerT;
 

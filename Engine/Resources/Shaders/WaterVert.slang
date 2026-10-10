@@ -28,7 +28,7 @@ float WarpGridSlope(float U, float Linear)
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint WaterIndex : SV_VulkanInstanceID)
 {
-    FGPUWater W = SpanGet(&Pass().Waters, WaterIndex);
+    FGPUWater W = Pass().Waters.Get(WaterIndex);
 
     uint Res   = max(W.GridResolution, 2u);
     uint Cells = Res - 1u;
@@ -38,7 +38,6 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint WaterIndex : SV_Vulk
     uint cx = Cell % Cells;
     uint cy = Cell / Cells;
 
-    // Two triangles per cell: (0,0),(1,0),(1,1) and (0,0),(1,1),(0,1).
     const uint2 kCorners[6] = { uint2(0, 0), uint2(1, 0), uint2(1, 1), uint2(0, 0), uint2(1, 1), uint2(0, 1) };
     uint2 Off = kCorners[Corner];
     uint  gx  = min(cx + Off.x, Cells);

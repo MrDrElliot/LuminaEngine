@@ -3,20 +3,19 @@
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
 
-// SMAA pass 2 (blend weight). No pass-local binding set: edges / area-LUT / search-LUT are read
-// through the bindless table via indices in the push constant (matches FSMAAPushConstants).
+// Edges and both LUTs come through the bindless table by push-constant index (matches FSMAAPushConstants).
 struct FPushConstants
 {
-    float4 RTMetrics;
-    float  EdgeThreshold;
-    float  DebugMode;
-    uint   TexIndex0;   // edges
-    uint   TexIndex1;   // area LUT
-    uint   TexIndex2;   // search LUT
-    float  MaxSearchSteps;     // driven by ESMAAQuality, not a compile-time preset
-    float  MaxSearchStepsDiag;
-    uint   _Pad2;
-    float4 SubsampleIndices;
+    float4     RTMetrics;
+    float      EdgeThreshold;
+    float      DebugMode;
+    FTexture2D Edges;
+    FTexture2D AreaLUT;
+    FTexture2D SearchLUT;
+    float      MaxSearchSteps;     // driven by ESMAAQuality, not a compile-time preset
+    float      MaxSearchStepsDiag;
+    uint       _Pad2;
+    float4     SubsampleIndices;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -38,13 +37,12 @@ struct VSOutput
 [shader("fragment")]
 float4 FragmentMain(VSOutput Input) : SV_Target0
 {
-    // Edges/area/search all want bilinear filtering (the search LUT is integer-coded but the
-    // technique relies on the filter); single linear-clamp sampler for all three.
-    SamplerState LinearClamp = gSamplers[SAMPLER_LINEAR_CLAMP];
+    // The search LUT is integer-coded but the technique relies on bilinear filtering, so one linear-clamp sampler serves all three.
+    FSampler LinearClamp = Samplers::LinearClamp;
 
-    SMAATex edgesTex;  edgesTex.Tex  = gTextures2D[Pass().TexIndex0]; edgesTex.Smp  = LinearClamp;
-    SMAATex areaTex;   areaTex.Tex   = gTextures2D[Pass().TexIndex1]; areaTex.Smp   = LinearClamp;
-    SMAATex searchTex; searchTex.Tex = gTextures2D[Pass().TexIndex2]; searchTex.Smp = LinearClamp;
+    SMAATex edgesTex;  edgesTex.Tex  = Pass().Edges; edgesTex.Smp  = LinearClamp;
+    SMAATex areaTex;   areaTex.Tex   = Pass().AreaLUT; areaTex.Smp   = LinearClamp;
+    SMAATex searchTex; searchTex.Tex = Pass().SearchLUT; searchTex.Smp = LinearClamp;
 
     float2 pixcoord;
     float4 offset[3];

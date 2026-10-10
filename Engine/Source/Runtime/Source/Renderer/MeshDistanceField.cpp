@@ -431,7 +431,7 @@ namespace Lumina::DistanceField
         }
 
         FBVH BVH;
-        GatherTriangles(Resource, Math::Min(Settings.SourceLOD, MAX_SHADOW_LOD), BVH.Triangles);
+        GatherTriangles(Resource, Settings.SourceLOD, BVH.Triangles);
         if (BVH.Triangles.empty())
         {
             LOG_WARN("Distance field skipped for mesh '{}': no triangles at LOD {}.",

@@ -200,15 +200,18 @@ namespace Lumina
                 return;
             }
 
-            // First occurrence only, matching the material compiler. DeferredMaterial.slang carries both.
-            if (const size_t Pos = Source.find(kVertexToken); Pos != FString::npos)
+            // Every occurrence, matching the material compiler, since a template can carry a token in more than one entry point.
+            auto ReplaceAll = [&Source](const char* Token, const char* Stub)
             {
-                Source.replace(Pos, strlen(kVertexToken), kVertexStub);
-            }
-            if (const size_t Pos = Source.find(kPixelToken); Pos != FString::npos)
-            {
-                Source.replace(Pos, strlen(kPixelToken), kPixelStub);
-            }
+                const size_t TokenLength = strlen(Token);
+                const size_t StubLength  = strlen(Stub);
+                for (size_t Pos = Source.find(Token); Pos != FString::npos; Pos = Source.find(Token, Pos + StubLength))
+                {
+                    Source.replace(Pos, TokenLength, Stub);
+                }
+            };
+            ReplaceAll(kVertexToken, kVertexStub);
+            ReplaceAll(kPixelToken, kPixelStub);
 
             FShaderCompileOptions Options;
             Options.bGenerateReflectionData = false;
@@ -578,9 +581,22 @@ namespace Lumina
         slang::ISession* Session = Module->getSession();
 
         Slang::ComPtr<slang::IBlob> Diagnostics;
-        Slang::ComPtr<slang::IComponentType> LinkedProgram;
+        Slang::ComPtr<slang::IComponentType> ComposedProgram;
         if (SLANG_FAILED(Session->createCompositeComponentType(Components, 2,
-                LinkedProgram.writeRef(), Diagnostics.writeRef())))
+                ComposedProgram.writeRef(), Diagnostics.writeRef())))
+        {
+            if (Diagnostics)
+            {
+                LOG_ERROR("Slang link error in '{}': {}", DebugName, (const char*)Diagnostics->getBufferPointer());
+            }
+            LOG_ERROR("Slang: failed to link '{}'", DebugName);
+            return false;
+        }
+
+        // Pulls in the definitions of imported modules, which code generation alone leaves as unresolved externals.
+        Diagnostics = nullptr;
+        Slang::ComPtr<slang::IComponentType> LinkedProgram;
+        if (SLANG_FAILED(ComposedProgram->link(LinkedProgram.writeRef(), Diagnostics.writeRef())))
         {
             if (Diagnostics)
             {

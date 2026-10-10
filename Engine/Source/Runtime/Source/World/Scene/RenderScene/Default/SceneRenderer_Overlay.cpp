@@ -553,9 +553,8 @@ namespace Lumina
         };
         static_assert(sizeof(FTextPushConstants) == 40, "FTextPushConstants must match TextCommon.slang.");
 
-        const FUIntVector4 PanelSize = Frame.SceneGlobalData.ScreenSize;
-        const uint32   ScreenW   = PanelSize.x > 1u ? PanelSize.x : Output.GetSizeX();
-        const uint32   ScreenH   = PanelSize.y > 1u ? PanelSize.y : Output.GetSizeY();
+        const uint32   ScreenW   = Output.GetSizeX();
+        const uint32   ScreenH   = Output.GetSizeY();
 
         FTextPushConstants PC = {};
         PC.Glyphs        = RHI::CopyTransientArray(Glyphs.data(), Glyphs.size());

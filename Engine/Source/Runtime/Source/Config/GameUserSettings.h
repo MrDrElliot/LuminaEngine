@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Config/EngineSettings.h"
 #include "Config/Scalability.h"
 #include "Containers/String.h"
 #include "Core/Object/Object.h"
@@ -56,6 +57,21 @@ namespace Lumina
         PROPERTY()
         EQualityLevel AntiAliasingQuality = EQualityLevel::Default;
 
+        // Off leaves upscaling to the project's renderer settings, which is where a new player starts.
+        PROPERTY()
+        bool bOverrideUpscaling = false;
+
+        // A registered upscaler such as DLSS, or None for the built-in one.
+        PROPERTY()
+        FName Upscaler;
+
+        PROPERTY()
+        EUpscalerMode UpscalerMode = EUpscalerMode::Custom;
+
+        // Read while UpscalerMode is Custom, from 25 to 100.
+        PROPERTY()
+        float ScreenPercentage = 100.0f;
+
         // Loaded on first use, so every caller sees what is on disk without asking.
         static CGameUserSettings& Get();
 
@@ -82,6 +98,7 @@ namespace Lumina
     private:
 
         void ApplyDisplay();
+        void ApplyUpscaling();
         void CaptureCurrentDisplay();
 
         EQualityLevel& QualitySlot(EScalabilityGroup Group);

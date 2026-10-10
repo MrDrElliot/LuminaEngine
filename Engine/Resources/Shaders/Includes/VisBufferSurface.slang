@@ -2,11 +2,9 @@
 #include "SceneGlobals.slang"
 #include "MeshletGeometry.slang"
 
-// Five shaders decode the same VisID and MUST agree bit-for-bit, or a pixel is counted into one
-// material's run and shaded by another's -- so the decode lives here and is called, never re-derived.
+// Every VisID decode lives here, since the five shaders that read it must agree bit for bit.
 
-// VisID packing, as written by MeshletVisBuffer / MeshletVisBufferVS: ((MeshletSlot << 7) | TriIndex) + 1.
-// The +1 is what makes a cleared 0 mean "no geometry" rather than slot 0 triangle 0.
+// MeshletVisBuffer writes ((MeshletSlot << 7) | TriIndex) + 1, so a cleared 0 means no geometry.
 #define VISBUFFER_TRI_BITS 7u
 #define VISBUFFER_TRI_MASK 0x7Fu
 
@@ -18,20 +16,16 @@ struct FVisTriangle
     bool        bValid;
 };
 
-// Fraction of a 2x2 quad's shading lanes that produced a visible pixel, from the visibility IDs alone.
-
-// One triangle over the quad scores 1.0; four triangles, or one clipping a corner, scores 0.25.
-
-// Counts only what survived depth, so this is micro-triangle and silhouette waste, not occluded overdraw.
-float QuadLaneEfficiency(uint VisBufferIndex, int2 Texel)
+// One triangle per quad scores 1.0, and only depth survivors count, so occluded overdraw is not measured.
+float QuadLaneEfficiency(FTexture2DUInt VisBuffer, int2 Texel)
 {
     const int2 Base = Texel & ~1;
 
     uint Raw[4];
-    Raw[0] = LoadTexture2DUInt(VisBufferIndex, Base + int2(0, 0));
-    Raw[1] = LoadTexture2DUInt(VisBufferIndex, Base + int2(1, 0));
-    Raw[2] = LoadTexture2DUInt(VisBufferIndex, Base + int2(0, 1));
-    Raw[3] = LoadTexture2DUInt(VisBufferIndex, Base + int2(1, 1));
+    Raw[0] = VisBuffer.Load(Base + int2(0, 0));
+    Raw[1] = VisBuffer.Load(Base + int2(1, 0));
+    Raw[2] = VisBuffer.Load(Base + int2(0, 1));
+    Raw[3] = VisBuffer.Load(Base + int2(1, 1));
 
     uint Covered  = 0u;
     uint Distinct = 0u;
@@ -65,8 +59,7 @@ float QuadLaneEfficiency(uint VisBufferIndex, int2 Texel)
     return float(Covered) / (4.0 * float(Distinct));
 }
 
-// Resolves the draw-list slot without touching the meshlet header, for the passes that only need to know
-// which material owns the pixel. Returns ~0u for background and for any entry this frame did not write.
+// Returns ~0u for background and for any entry this frame did not write.
 uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
 {
     if (VisRaw == 0u || DrawListCount == 0u)
@@ -80,9 +73,8 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
         return ~0u;
     }
 
-    const FMeshletDraw Draw = SpanGet(MeshletDrawList(), MeshletSlot);
-    // The tag turns "slot inside the allocation but never written this frame" from a silently resolved
-    // stale instance into a background pixel.
+    const FMeshletDraw Draw = MeshletDrawList().Get(MeshletSlot);
+    // The tag turns a slot never written this frame into background instead of a stale instance.
     if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) || Draw.InstanceID >= Scene().CullData.InstanceNum)
     {
         return ~0u;
@@ -91,7 +83,7 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
 }
 
 // Dense deferred slot for the pixel, or ~0u for background, terrain's 0 stamp and unbinned materials.
-uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint>* SlotByMaterial)
+uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint> SlotByMaterial)
 {
     const uint InstanceID = ResolveVisInstance(VisRaw, DrawListCount);
     if (InstanceID == ~0u)
@@ -100,19 +92,16 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint>* Slot
     }
 
     const uint MaterialIndex = GetInstanceMaterialIndex(InstanceID);
-    if (!SpanContains(SlotByMaterial, MaterialIndex))
+    if (!SlotByMaterial.Contains(MaterialIndex))
     {
         return ~0u;
     }
 
-    // Every material instance of a master maps to the master's slot, so instances sharing a shader share
-    // one dispatch; the shader still reads each pixel's own MaterialIndex for its uniforms.
-    // Unbinned materials read ~0u here, and callers bound the result against their own live slot count.
-    return SpanGet(SlotByMaterial, MaterialIndex);
+    // Material instances share their master's slot and dispatch, and callers bound the ~0u of unbinned materials.
+    return SlotByMaterial.Get(MaterialIndex);
 }
 
-// Every index is clamped rather than trusted: these feed buffer-device-address loads, and a
-// speculated load off a stale draw-list gap faults the device instead of producing a wrong pixel.
+// Every index is clamped because a speculated BDA load off a stale draw-list gap faults the device.
 FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
 {
     FVisTriangle Out;
@@ -128,15 +117,13 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     bool bValid         = (VisRaw != 0u) && (DrawListCount != 0u) && (MeshletSlot < DrawListCount);
     const uint SafeSlot = bValid ? MeshletSlot : 0u;
 
-    const FMeshletDraw Draw = SpanGet(MeshletDrawList(), SafeSlot);
+    const FMeshletDraw Draw = MeshletDrawList().Get(SafeSlot);
     bValid = bValid && Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) && (Draw.InstanceID < InstCount);
 
     FMeshletRef Ref;
     Ref.InstanceID        = (Draw.InstanceID < InstCount) ? Draw.InstanceID : 0u;
     Ref.SkinnedVertexBase = Ref.Inst.SkinnedVertexBase;   // camera-side only; shadows never reach here
-    // The header's own count bounds the array being indexed; the instance's bounds the LOD range. Taking
-    // both means a stale instance -- one naming a mesh that has died, and so resolving to the null header
-    // -- clamps to slot 0 of a header that describes no geometry instead of walking a live mesh's array.
+    // Clamping by both counts sends a stale instance on the null header to slot 0 rather than into a live mesh's array.
     const uint MeshletCount = max(min(Ref.Inst.MeshletTotalCount, Ref.Header.MeshletCount), 1u);
     Ref.GlobalMeshletIdx  = min(Draw.MeshletIndex, MeshletCount - 1u);
     Ref.M                 = loadAligned<16>(Ref.Header.Meshlets + Ref.GlobalMeshletIdx);
@@ -148,8 +135,7 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     return Out;
 }
 
-// Perspective-correct barycentrics plus screen derivatives (Schied/Stachowiak). DDX/DDY are
-// d(lambda)/d(pixel), which is what makes analytic differentiation legal in a compute shader.
+// Perspective-correct barycentrics (Schied/Stachowiak), with DDX/DDY as d(lambda)/d(pixel).
 struct FBaryDeriv
 {
     float3 Lambda;
@@ -157,13 +143,7 @@ struct FBaryDeriv
     float3 DDY;
 };
 
-// Screen-space distance in PIXELS from this fragment to the nearest edge of its triangle, for the
-// wireframe overlay. Lambda goes to zero on an edge and DDX/DDY are its exact per-pixel rates of
-// change, so dividing gives a true pixel distance and a wire of constant width at any depth.
-//
-// Analytic rather than fwidth(Lambda): this runs in a FULL-SCREEN pass where neighbouring lanes in a
-// quad can belong to different triangles, so a hardware derivative of a reconstructed barycentric
-// would blow up along every silhouette. These derivatives came from the triangle itself.
+// Analytic because neighboring quad lanes in this full-screen pass can belong to different triangles.
 float TriangleEdgeDistancePixels(FBaryDeriv Bary)
 {
     const float3 Rate = float3(length(float2(Bary.DDX.x, Bary.DDY.x)),
@@ -215,8 +195,7 @@ FBaryDeriv CalcFullBary(float4 Pt0, float4 Pt1, float4 Pt2, float2 PixelNdc, flo
     return Ret;
 }
 
-// Passing Lambda gives the attribute; passing DDX/DDY gives its exact screen derivative, because
-// d(sum Lambda_i * V_i)/dx is the same sum taken with dLambda_i/dx.
+// Passing DDX/DDY as the weights yields the attribute's exact screen derivative.
 float3 InterpWeights(float3 Weights, float3 V0, float3 V1, float3 V2)
 {
     return V0 * Weights.x + V1 * Weights.y + V2 * Weights.z;
@@ -237,8 +216,7 @@ float4 InterpBary4(FBaryDeriv D, float4 V0, float4 V1, float4 V2)
     return InterpWeights4(D.Lambda, V0, V1, V2);
 }
 
-// FinalWorldPos is post-WorldPositionOffset, so the caller must have run the material's vertex graph
-// on all three corners first -- that is what makes this the triangle the geometry pass rasterized.
+// FinalWorldPos is post-WPO, so the caller must have run the material vertex graph on all three corners.
 struct FVisSurface
 {
     FBaryDeriv Bary;
@@ -278,8 +256,7 @@ FVisSurface InterpolateVisSurface(FMeshletWorldVertex W[3], float3 FinalWorldPos
     S.UVDDX = float2(dot(UVx, S.Bary.DDX),    dot(UVy, S.Bary.DDX));
     S.UVDDY = float2(dot(UVx, S.Bary.DDY),    dot(UVy, S.Bary.DDY));
 
-    // Set 1 needs its own derivatives, not set 0's: the two are independent parameterizations, so a
-    // shared gradient would pick the wrong mip wherever their texel densities differ.
+    // Set 1 needs its own derivatives since its texel density is independent of set 0's.
     const float3 UV1x = float3(W[0].UV1.x, W[1].UV1.x, W[2].UV1.x);
     const float3 UV1y = float3(W[0].UV1.y, W[1].UV1.y, W[2].UV1.y);
     S.UV1    = float2(dot(UV1x, S.Bary.Lambda), dot(UV1y, S.Bary.Lambda));
@@ -288,15 +265,13 @@ FVisSurface InterpolateVisSurface(FMeshletWorldVertex W[3], float3 FinalWorldPos
     return S;
 }
 
-// Screen pixel -> the NDC location CalcFullBary expects. Pixel centers, matching where the rasterizer
-// sampled coverage when it wrote this texel.
+// Pixel centers, matching where the rasterizer sampled coverage.
 float2 VisPixelNdc(uint2 Texel, float2 ScreenSize)
 {
     return ((float2(Texel) + 0.5) / ScreenSize) * 2.0 - 1.0;
 }
 
-// Reconstruction WITHOUT the material's vertex graph, for consumers with no material shader to run.
-// A material driving WPO displaces a triangle this does not, so barycentrics differ slightly.
+// Ignores the material's vertex graph, so a WPO-driven triangle reconstructs slightly off.
 FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 ScreenSize)
 {
     const float4x4 ModelMatrix    = T.Ref.ModelMatrix;
@@ -314,8 +289,7 @@ FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 Scree
     return InterpolateVisSurface(W, WorldPos, VisPixelNdc(Texel, ScreenSize), ScreenSize);
 }
 
-// Two-sided materials rasterize back faces too, and there is no SV_IsFrontFace outside the
-// rasterizer, so flip the shading normal toward the camera. The tangent basis re-orthogonalizes.
+// There is no SV_IsFrontFace outside the rasterizer, so two-sided back faces flip toward the camera here.
 float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition)
 {
     if (!Ref.InstHasFlag(EInstanceFlags::TwoSided))
@@ -327,7 +301,6 @@ float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition)
     return (dot(NormalWS, ViewDir) < 0.0) ? -NormalWS : NormalWS;
 }
 
-// The pixel list packs a screen position into one dword. 16 bits per axis, which the classify pass bounds
-// against; a render target wider than 65535 would alias two pixels onto one entry.
+// 16 bits per axis, so a target wider than 65535 would alias two pixels onto one entry.
 uint PackVisPixel(uint2 Texel)   { return (Texel.y << 16) | (Texel.x & 0xFFFFu); }
 uint2 UnpackVisPixel(uint Packed) { return uint2(Packed & 0xFFFFu, Packed >> 16); }

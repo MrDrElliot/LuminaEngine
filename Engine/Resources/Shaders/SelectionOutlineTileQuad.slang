@@ -28,11 +28,11 @@ struct VSOutput
 [shader("vertex")]
 VSOutput VertexMain(uint VertexIndex : SV_VertexID, uint InstanceIndex : SV_InstanceID)
 {
-    const uint   Packed = SpanGet(&Pass().TileList, InstanceIndex);
+    const uint   Packed = Pass().TileList.Get(InstanceIndex);
     const float2 Origin = float2(float(Packed & 0xFFFFu), float(Packed >> 16u)) * 8.0;
 
     const uint2  Corners[6] = { uint2(0u, 0u), uint2(1u, 0u), uint2(0u, 1u), uint2(1u, 0u), uint2(1u, 1u), uint2(0u, 1u) };
-    const float2 Screen     = float2(Scene().ScreenSize.xy);
+    const float2 Screen     = float2(GetDisplaySize());
     const float2 Pixel      = min(Origin + float2(Corners[VertexIndex % 6u]) * 8.0, Screen);
 
     VSOutput Output;

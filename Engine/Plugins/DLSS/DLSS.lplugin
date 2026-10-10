@@ -1,0 +1,21 @@
+{
+    "FormatVersion": 1,
+    "Name": "DLSS",
+    "Version": 1,
+    "VersionName": "0.1.0",
+    "Author": "Lumina Team",
+    "Description": "NVIDIA DLSS Super Resolution as a scene upscaler. Enable it in your .lproject, then pick DLSS as the Upscaler in Renderer Settings or a player's settings; Native AA is DLAA and Quality through Ultra Performance map onto the DLSS modes of the same names. Needs an RTX GPU and falls back to the built-in upscale anywhere else.",
+    "Category": "Rendering",
+    "EnabledByDefault": false,
+    "EditorOnly": false,
+    "ContainsContent": false,
+    "SupportedPlatforms": [ "Windows" ],
+    "Dependencies": [],
+    "Modules": [
+        {
+            "Name": "DLSSRuntime",
+            "Type": "Runtime",
+            "LoadingPhase": "Core"
+        }
+    ]
+}

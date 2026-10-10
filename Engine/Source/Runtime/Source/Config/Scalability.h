@@ -42,5 +42,11 @@ namespace Lumina
         RUNTIME_API void RestoreProjectValues();
 
         RUNTIME_API FString GetGroupName(EScalabilityGroup Group);
+
+        // Sets one "Section.Property" from its JSON text, keeping the project's value for RestoreSetting and play stop.
+        RUNTIME_API void OverrideSetting(FStringView Key, FStringView JsonValue);
+
+        // Puts one "Section.Property" back to the project's value, a no-op when nothing overrode it.
+        RUNTIME_API void RestoreSetting(FStringView Key);
     }
 }

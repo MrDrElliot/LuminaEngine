@@ -72,6 +72,40 @@ namespace Lumina
         FUNCTION()
         static void SetOverallQuality(EQualityLevel Level);
 
+        // Off hands upscaling back to the project's renderer settings; every upscaling setter below turns it on.
+        FUNCTION()
+        static bool GetOverrideUpscaling();
+
+        FUNCTION()
+        static void SetOverrideUpscaling(bool bOverride);
+
+        // None is the built-in upscale.
+        FUNCTION()
+        static FName GetUpscaler();
+
+        FUNCTION()
+        static void SetUpscaler(FName Upscaler);
+
+        FUNCTION()
+        static EUpscalerMode GetUpscalerMode();
+
+        FUNCTION()
+        static void SetUpscalerMode(EUpscalerMode Mode);
+
+        // Read while the mode is Custom, from 25 to 100.
+        FUNCTION()
+        static float GetScreenPercentage();
+
+        FUNCTION()
+        static void SetScreenPercentage(float Percent);
+
+        // The registered upscalers this machine can run, for a menu to offer beside the built-in one.
+        FUNCTION()
+        static int32 GetAvailableUpscalerCount();
+
+        FUNCTION()
+        static FName GetAvailableUpscaler(int32 Index);
+
         FUNCTION()
         static void ApplySettings();
 

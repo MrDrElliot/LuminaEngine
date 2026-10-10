@@ -11,14 +11,14 @@ struct FragmentInput
 
 struct FData
 {
-    uint  CurrentIndex;
-    uint  HistoryIndex;
-    uint  VelocityIndex;
-    float HistoryWeight;
-    float ClampGamma;
-    float MaxReprojection;
-    uint  bNeighborhoodClamp;
-    uint  _Pad0;
+    FTexture2D Current;
+    FTexture2D History;
+    FTexture2D Velocity;
+    float      HistoryWeight;
+    float      ClampGamma;
+    float      MaxReprojection;
+    uint       bNeighborhoodClamp;
+    uint       _Pad0;
 };
 
 // Below this much motion a pixel's history is the other subsample of the same surface, not something stale.
@@ -26,13 +26,13 @@ static const float kStillMotionPixels = 0.05;
 // Motion over which the clamp ramps to full strength, so disocclusions behind a moving edge still get rejected.
 static const float kFullClampMotionPixels = 0.5;
 
-float3 SampleOffset(uint Index, float2 UV, float2 Offset)
+float3 SampleOffset(FTexture2D Color, float2 UV, float2 Offset)
 {
-    return gTextures2D[Index].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV + Offset, 0.0).rgb;
+    return Color.SampleLevel(Samplers::PointClamp, UV + Offset, 0.0).rgb;
 }
 
 // Variance clipping; a history the motion vectors aimed wrong falls outside the local range and dies here.
-void NeighborhoodBounds(uint Index, float2 UV, float2 TexelSize, float Gamma,
+void NeighborhoodBounds(FTexture2D Color, float2 UV, float2 TexelSize, float Gamma,
                         out float3 OutMin, out float3 OutMax)
 {
     float3 Sum   = float3(0.0, 0.0, 0.0);
@@ -44,7 +44,7 @@ void NeighborhoodBounds(uint Index, float2 UV, float2 TexelSize, float Gamma,
         [unroll]
         for (int x = -1; x <= 1; ++x)
         {
-            const float3 C = SampleOffset(Index, UV, float2(x, y) * TexelSize);
+            const float3 C = SampleOffset(Color, UV, float2(x, y) * TexelSize);
             Sum   += C;
             SumSq += C * C;
         }
@@ -62,16 +62,16 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 {
     FData* Data = GetPassArgs<FData>();
 
-    const float4 Current = gTextures2D[Data.CurrentIndex]
-        .SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], Input.UV, 0.0);
+    const float4 Current = Data.Current
+        .SampleLevel(Samplers::PointClamp, Input.UV, 0.0);
 
     if (Data.HistoryWeight <= 0.0)
     {
         return Current;
     }
 
-    const float2 Velocity = gTextures2D[Data.VelocityIndex]
-        .SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], Input.UV, 0.0).rg;
+    const float2 Velocity = Data.Velocity
+        .SampleLevel(Samplers::PointClamp, Input.UV, 0.0).rg;
 
     // A slot recycled onto a new instance reprojects nonsense, so refuse implausible motion outright.
     if (any(abs(Velocity) > Data.MaxReprojection))
@@ -87,16 +87,16 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
         return Current;
     }
 
-    float3 History = gTextures2D[Data.HistoryIndex]
-        .SampleLevel(gSamplers[SAMPLER_LINEAR_CLAMP], HistoryUV, 0.0).rgb;
+    float3 History = Data.History
+        .SampleLevel(Samplers::LinearClamp, HistoryUV, 0.0).rgb;
 
     if (Data.bNeighborhoodClamp != 0u)
     {
-        const float2 TexelSize = 1.0 / float2(Scene().ScreenSize.xy);
+        const float2 TexelSize = 1.0 / float2(GetDisplaySize());
 
         float3 BoundsMin;
         float3 BoundsMax;
-        NeighborhoodBounds(Data.CurrentIndex, Input.UV, TexelSize, Data.ClampGamma, BoundsMin, BoundsMax);
+        NeighborhoodBounds(Data.Current, Input.UV, TexelSize, Data.ClampGamma, BoundsMin, BoundsMax);
 
         // Each parity clamps against its own jittered neighborhood, so clamping a still pixel makes the frames disagree.
         const float MotionPixels = length(Velocity / TexelSize);

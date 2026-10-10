@@ -1,51 +1,41 @@
 #pragma once
 #include "SceneGlobals.slang"
-#include "AppendBuffer.slang"   // kAppendFull, the "no slot" sentinel MeshletSlotForWorkgroup returns
-#include "Wind.slang"   // material-graph WindAnimation node; every material vertex template needs it
-#include "Triplanar.slang"   // material-graph TriplanarSample node, both stages
-
-// Shared by every stage that touches a meshlet. What stays per-shader is the $MATERIAL_VERTEX_INPUTS
-// token and the pass-specific final position.
+#include "AppendBuffer.slang"
+#include "Wind.slang"   // For the material graph's WindAnimation node
+#include "Triplanar.slang"   // For the material graph's TriplanarSample node
 
 struct FMeshletRef
 {
     FMeshlet        M;
     uint            InstanceID;
     uint            GlobalMeshletIdx;
-    // Surface and shadow LODs get separate compacted slices, so the base is picked alongside the
-    // meshlet range rather than at load time.
     uint            SkinnedVertexBase;
 
-    // Reached rather than stored, since this struct is returned by value and the instance is 128 bytes.
-    // Field reads through the pointer compile to an access chain, property and method reads do not.
+    // Reached through a pointer since this struct is returned by value and the instance is 128 bytes.
     property FGPUInstance* Inst { get { return Instances() + InstanceID; } }
 
-    // FGPUInstance::MeshletHeader returns the same pointer but loads the whole instance to reach the slot.
-    property FMeshletHeader* Header { get { return SpanAt(MeshletHeaders(), Inst.MeshletHeaderSlot); } }
+    // FGPUInstance::MeshletHeader would load the whole instance to reach the slot.
+    property FMeshletHeader* Header { get { return MeshletHeaders().At(Inst.MeshletHeaderSlot); } }
 
-    // Transform is a field at offset 0 of a 16-aligned 128-byte stride, so 48 aligned bytes cover it.
+    // Transform sits at offset 0 of a 16-aligned 128-byte stride, so 48 aligned bytes cover it.
     property float4x4 ModelMatrix { get { return loadAligned<16>(&Inst.Transform).ToMatrix(); } }
 
-    // Pointer forms again, reading the one packed word instead of the whole instance.
     property EInstanceFlags InstFlags { get { return FGPUInstance::GetFlags(Inst); } }
     bool InstHasFlag(EInstanceFlags Flag) { return FGPUInstance::HasFlag(Inst, Flag); }
 };
 
-// bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
-FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
+FMeshletRef ResolveMeshlet(uint MeshletSlot)
 {
 
     // Issued before the draw fetch so the two independent chains overlap instead of serializing.
     const uint ExpectedTag = Scene().CullData.MeshletDrawTag;
 
-    FMeshletDraw Draw = SpanGet(MeshletDrawList(), MeshletSlot);
+    FMeshletDraw Draw = MeshletDrawList().Get(MeshletSlot);
 
-    // InstanceID first: every Ref.Inst read below goes through it.
     FMeshletRef Ref;
     Ref.InstanceID = Draw.InstanceID;
 
-    // A slot this frame never wrote resolves to a plausible instance from an earlier one. Unreachable
-    // now, kept so that if that changes the result is missing geometry rather than wrong geometry.
+    // A slot this frame never wrote drops to missing geometry rather than an earlier frame's instance.
     if (!Draw.IsFromFrame(ExpectedTag))
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
@@ -54,16 +44,10 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
         return Ref;
     }
 
-    // bShadow selects only the pre-skin block: the draw entry already names the meshlet outright,
-    // because the cull picks the LOD per view and the raster cannot know which one that was.
-    Ref.SkinnedVertexBase    = bShadow ? Ref.Inst.ShadowSkinnedVertexBase : Ref.Inst.SkinnedVertexBase;
+    // The draw entry names the meshlet outright, since the cull picks the LOD per view and the raster cannot know which.
+    Ref.SkinnedVertexBase    = Ref.Inst.SkinnedVertexBase;
 
-    // The tag says the slot was written this frame, not that the index inside it is in range. Unbounded,
-    // these counts reach SetMeshOutputCounts and the output writes -- an out-of-bounds WRITE.
-    //
-    // Against the HEADER's count as well as the instance's: the arrays indexed below belong to the header
-    // and only it knows their length. An instance naming a mesh that has died gets the null header, whose
-    // count is 0, and takes this exit -- which is what replaced the null check above.
+    // Also bounded by the header count (0 for a dead mesh's null header), since these counts reach SetMeshOutputCounts.
     if (Draw.MeshletIndex >= min(Ref.Inst.MeshletTotalCount, Ref.Header.MeshletCount))
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
@@ -75,8 +59,7 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     Ref.GlobalMeshletIdx     = Draw.MeshletIndex;
     Ref.M                    = loadAligned<16>(Ref.Header.Meshlets + Ref.GlobalMeshletIdx);
 
-    // Where garbage stops propagating, not a clamp on legitimate data: past here the counts must be
-    // within the DECLARED array sizes. Dropping the meshlet makes an overrun a hole, not a fault.
+    // Counts past the declared array sizes are garbage, so drop the meshlet rather than overrun.
     if (Ref.M.VertexCount > MESHLET_MAX_VERTICES || Ref.M.TriangleCount > MESHLET_MAX_TRIANGLES)
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
@@ -88,9 +71,6 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     return Ref;
 }
 
-FMeshletRef ResolveSurfaceMeshlet(uint MeshletSlot) { return ResolveMeshlet(MeshletSlot, false); }
-FMeshletRef ResolveShadowMeshlet(uint MeshletSlot)  { return ResolveMeshlet(MeshletSlot, true);  }
-
 // One view of a multi-view shadow draw, mirrored by FShadowRasterViewGPU.
 struct FShadowRasterView
 {
@@ -99,20 +79,18 @@ struct FShadowRasterView
     float2 TileSize;
 };
 
-// Declared here because BOTH stages must agree byte for byte and nothing checks it: a payload is not
-// a linked interface, and task+mesh share one push range. Drift produces wrong geometry, not an error.
+// Task and mesh share this push range unchecked, so both stages must agree byte for byte.
 struct FMeshletPassArgs
 {
-    GPUSpan<FRenderBucket>  Buckets;           // per-(view, draw) bases, bounds and slices
+    GPUSpan<FRenderBucket>  Buckets;
 
     uint                    ArgBase;           // CullViewIndex*NumDrawsPerView + IndirectDrawOffset
     uint                    Slice;             // MESHLET_SLICE_* of the bucket this pass rasterizes
     uint                    MaxMeshGroups;     // sub-draw d covers meshlets [d*MaxMeshGroups, (d+1)*...)
     uint                    CullViewIndex;
-    int                     ShadowDataIndex;   // raster, shadow variants only
-    int                     ViewIndex;         // raster, shadow variants only (cascade / face / spot)
-    // For a shadow pass this is the atlas TILE, not the atlas. Two scalars so the struct needs no
-    // interior padding under either block layout; the C++ push mirror matches.
+    int                     ShadowDataIndex;   // Shadow raster variants only
+    int                     ViewIndex;         // Shadow raster variants only (cascade, face or spot)
+    // The atlas tile size for a shadow pass, as two scalars so neither block layout pads.
     float                   ViewportW;
     float                   ViewportH;
 
@@ -129,16 +107,11 @@ bool IsMultiViewShadowDraw()
     return MeshletPass().ShadowViews.Count > 0u;
 }
 
-uint MeshletCullViewForDraw(uint DrawIndex)
-{
-    return MeshletPass().CullViewIndex + (IsMultiViewShadowDraw() ? DrawIndex : 0u);
-}
-
 FShadowRasterView ShadowRasterViewForDraw(uint DrawIndex)
 {
     if (IsMultiViewShadowDraw())
     {
-        return SpanGet(&MeshletPass().ShadowViews, DrawIndex);
+        return MeshletPass().ShadowViews.Get(DrawIndex);
     }
 
     FShadowRasterView View;
@@ -148,8 +121,7 @@ FShadowRasterView ShadowRasterViewForDraw(uint DrawIndex)
     return View;
 }
 
-// The draw-list slot this mesh workgroup rasterizes, or kAppendFull past the slice. MeshletCull.slang
-// already compacted the survivors, so a workgroup maps to one directly -- no payload, no second cull.
+// Returns kAppendFull past the slice. MeshletCull already compacted survivors, so there is no payload or second cull.
 uint MeshletSlotForWorkgroup(uint DrawIndex, uint GroupIndex)
 {
     // A multi-view draw only runs when every slice fits one sub-draw, so its draw index walks views instead.
@@ -157,7 +129,7 @@ uint MeshletSlotForWorkgroup(uint DrawIndex, uint GroupIndex)
     const uint ArgBase    = MeshletPass().ArgBase + (bMultiView ? DrawIndex * MeshletPass().ArgViewStride : 0u);
     const uint SubDraw    = bMultiView ? 0u : DrawIndex;
 
-    const FRenderBucket Bucket = SpanGetAligned(&MeshletPass().Buckets, ArgBase);
+    const FRenderBucket Bucket = MeshletPass().Buckets.GetAligned(ArgBase);
     const uint Slice  = MeshletPass().Slice;
     const uint Local  = SubDraw * MeshletPass().MaxMeshGroups + GroupIndex;
 
@@ -169,9 +141,7 @@ uint MeshletSlotForWorkgroup(uint DrawIndex, uint GroupIndex)
     return Bucket.DrawBase + Bucket.SliceBase[Slice] + Local;
 }
 
-// The meshlet this workgroup rasterizes, plus the slot the VisBuffer packs into VisID. Zeroed
-// (VertexCount == 0) past the slice or on an unresolvable entry, which every caller already treats as
-// "emit nothing". Shadow-vs-surface comes from the CULL VIEW, exactly as the cull resolved it.
+// Zeroed (VertexCount == 0) past the slice or on an unresolvable entry, which callers treat as emit nothing.
 FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint OutSlot)
 {
     OutSlot = MeshletSlotForWorkgroup(DrawIndex, GroupIndex);
@@ -185,12 +155,11 @@ FMeshletRef ResolveMeshletForWorkgroup(uint DrawIndex, uint GroupIndex, out uint
         return Empty;
     }
 
-    return ResolveMeshlet(OutSlot, CullViewHasFlag(MeshletCullViewForDraw(DrawIndex), CULL_VIEW_FLAG_CAST_SHADOW_ONLY));
+    return ResolveMeshlet(OutSlot);
 }
 
 
-// SPEC_SKINNED dead-strips the unused vertex-load path for homogeneous batches: 0=static-only, 1=skinned-only,
-// 2=dynamic (per-instance runtime branch, used by mixed batches and by passes that don't specialize, e.g. deferred).
+// 0 static-only, 1 skinned-only, 2 per-instance branch for mixed batches and unspecialized passes.
 [vk::constant_id(5)] const uint SPEC_SKINNED = 2;
 
 // bWholeVertex is a constant at every call site, so the unused static loader compiles out.
@@ -203,7 +172,7 @@ FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx, bool bWhol
 
     if (bSkinned)
     {
-        // Overflow path: entities the pre-skin budget could not cover blend per pass instead of once.
+        // Entities past the pre-skin budget blend per pass instead of once.
         if (Ref.SkinnedVertexBase == kNoPreSkinBase)
         {
             return DecodePreSkinnedVertex(SkinVertex(Ref.Header, Ref.M, Ref.GlobalMeshletIdx, LocalVertIdx, Ref.Inst.BoneOffset));
@@ -214,16 +183,14 @@ FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx, bool bWhol
                         : LoadStaticVertex(Ref.Header, Ref.M, LocalVertIdx);
 }
 
-// One packed dword = three 8-bit local vertex indices. unpack_u8u32, not shift+mask: the hand-rolled
-// form measured 9.97% of shader-profiler samples in the VisBuffer pass. This is one instruction.
+// unpack_u8u32 is one instruction, where hand-rolled shift and mask measured 10% of VisBuffer samples.
 uint3 UnpackMeshletTriangle(FMeshletRef Ref, uint TriIdx)
 {
     uint Packed = Ref.Header.Triangles[Ref.M.TriangleOffset + TriIdx];
     return unpack_u8u32(Packed).xyz;
 }
 
-// Every emitted index must address a vertex the workgroup DECLARED and WROTE, and a local index is
-// unbounded imported data. Collapsing to (0,0,0) is the in-bounds way to skip a primitive.
+// Collapsing to (0,0,0) skips a primitive whose unbounded local index the workgroup may never have written.
 uint3 UnpackMeshletTriangleSafe(FMeshletRef Ref, uint TriIdx)
 {
     const uint3 Tri = UnpackMeshletTriangle(Ref, TriIdx);
@@ -235,32 +202,24 @@ uint3 UnpackMeshletTriangleSafe(FMeshletRef Ref, uint TriIdx)
     return Tri;
 }
 
-// VS-emulation single-corner decode: corner in [0,3) of triangle TriIdx -> local vertex index.
 uint MeshletCornerVertexIndex(FMeshletRef Ref, uint TriIdx, uint Corner)
 {
     uint Packed = Ref.Header.Triangles[Ref.M.TriangleOffset + TriIdx];
     return (Packed >> (Corner * 8u)) & 0xFFu;
 }
 
-// A spec constant, not a uniform: both answers are per-PIPELINE. BACKFACE must mirror the hardware
-// cull mode -- CmdSetCullMode is DYNAMIC state the shader cannot observe. SMALLPRIM is off under MSAA.
+// Must mirror the pipeline cull mode, which is dynamic state the shader cannot observe. Small-primitive culling is off under MSAA.
 [vk::constant_id(7)] const uint SPEC_TRI_CULL = 0;
 
 static const uint TRI_CULL_BACKFACE  = 1u;
 static const uint TRI_CULL_SMALLPRIM = 2u;
 
-// Narrower than the meshlet on purpose: at 32 threads over a 64/64 meshlet each lane owns two
-// vertices and two triangles, and the independent chains overlap instead of stalling one load.
+// 32 threads over a 64/64 meshlet gives each lane two independent load chains that overlap.
 #define MESHLET_MESH_GROUP_SIZE 32
 #define MESHLET_VERT_ITERS ((MESHLET_MAX_VERTICES  + MESHLET_MESH_GROUP_SIZE - 1) / MESHLET_MESH_GROUP_SIZE)
 #define MESHLET_TRI_ITERS  ((MESHLET_MAX_TRIANGLES + MESHLET_MESH_GROUP_SIZE - 1) / MESHLET_MESH_GROUP_SIZE)
 
-// Out of the OWNING LANE'S REGISTERS. Correct only because the workgroup is exactly one subgroup --
-// WaveReadLaneAt cannot cross waves. Every lane must be active, so both loops in the mesh shaders run
-// their LOAD/TEST on a clamped index. Their EXPORT index is the unclamped ThreadID + iter*GroupSize
-// instead, guarded by a bounds test: an export index the compiler cannot prove equals the lane forces
-// the whole export through LDS. Clip[] is therefore written by every lane, clamped ones included -- it
-// is read by LANE, and for any V < VertexCount the owning lane holds the unclamped value.
+// Needs the workgroup to be exactly one subgroup with every lane active, so callers fill Clip[] on clamped lanes too.
 float4 ShuffleMeshletClip(float4 Clip[MESHLET_VERT_ITERS], uint V)
 {
     const uint Lane = V % MESHLET_MESH_GROUP_SIZE;
@@ -276,12 +235,10 @@ float4 ShuffleMeshletClip(float4 Clip[MESHLET_VERT_ITERS], uint V)
     return Result;
 }
 
-// Operates in CLIP space so a vertex behind the eye is handled explicitly rather than divided by a
-// negative w, which reads as a winding flip and would cull front faces straddling the near plane.
+// Clip space so a vertex behind the eye is not divided by a negative w and misread as a winding flip.
 bool IsMeshletTriangleCulled(float4 C0, float4 C1, float4 C2, float2 ViewportSize)
 {
-    // Three vertices outside the SAME plane means no intersection; three DIFFERENT planes proves nothing.
-    // Non-short-circuiting on purpose: all() over a bool3 is arithmetic, not ~15 branches.
+    // All three outside one plane culls. The bitwise | keeps it branch-free.
     const bool bOutside = all(bool3(C0.x >  C0.w, C1.x >  C1.w, C2.x >  C2.w))
                         | all(bool3(C0.x < -C0.w, C1.x < -C1.w, C2.x < -C2.w))
                         | all(bool3(C0.y >  C0.w, C1.y >  C1.w, C2.y >  C2.w))
@@ -292,15 +249,13 @@ bool IsMeshletTriangleCulled(float4 C0, float4 C1, float4 C2, float2 ViewportSiz
         return true;
     }
 
-    // The perspective divide is meaningless here and every test below lives in NDC. The hardware clipper
-    // splits such a triangle correctly, so keep it.
+    // The hardware clipper splits a triangle crossing w = 0, so keep it.
     if (any(bool3(C0.w <= 0.0, C1.w <= 0.0, C2.w <= 0.0)))
     {
         return false;
     }
 
-    // Twice the signed area as the homogeneous 3x3 determinant: it equals Area * w0*w1*w2 and every w is
-    // positive here, so the SIGN matches NDC without a divide. Front faces are counter-clockwise.
+    // The homogeneous determinant is area times w0*w1*w2, so its sign matches NDC. Front faces are counter-clockwise.
     const float Det = C0.x * (C1.y * C2.w - C1.w * C2.y)
                     - C0.y * (C1.x * C2.w - C1.w * C2.x)
                     + C0.w * (C1.x * C2.y - C1.y * C2.x);
@@ -321,8 +276,7 @@ bool IsMeshletTriangleCulled(float4 C0, float4 C1, float4 C2, float2 ViewportSiz
 
     if ((SPEC_TRI_CULL & TRI_CULL_SMALLPRIM) != 0u && all(ViewportSize > 0.0))
     {
-        // The rasterizer samples at pixel CENTERS, so the triangle contributes nothing unless some integer i
-        // satisfies Lo <= i + 0.5 <= Hi on both axes. Testing the bounding box keeps it conservative.
+        // The rasterizer samples pixel centers, so the box must straddle some i + 0.5 on both axes.
         const float2 P0 = C0.xy / C0.w;
         const float2 P1 = C1.xy / C1.w;
         const float2 P2 = C2.xy / C2.w;
@@ -344,8 +298,7 @@ bool IsMeshletTriangleCulled(float4 C0, float4 C1, float4 C2, float2 ViewportSiz
     return false;
 }
 
-// Zero area whatever the transform does, so it never needs its vertices resolved. Also catches the
-// (0,0,0) UnpackMeshletTriangleSafe collapses an out-of-range triple to.
+// Also catches the (0,0,0) collapse from UnpackMeshletTriangleSafe.
 bool IsDegenerateTriangleIndices(uint3 Idx)
 {
     return Idx.x == Idx.y || Idx.y == Idx.z || Idx.z == Idx.x;
@@ -353,22 +306,21 @@ bool IsDegenerateTriangleIndices(uint3 Idx)
 
 struct FMeshletWorldVertex
 {
-    float3 WorldPos;     // pre-WorldPositionOffset
+    float3 WorldPos;     // Before WorldPositionOffset
     float3 NormalWS;
-    float4 TangentWS;    // xyz: world tangent, w: MikkTSpace handedness
+    float4 TangentWS;    // w is the MikkTSpace handedness
     float2 UV;
     float2 UV1;
     float4 Color;
 };
 
-// BY VALUE so the caller can hoist the loads: reaching ModelMatrix through Ref.Inst is a dependent
-// chain the compiler cannot overlap, since a PhysicalStorageBuffer pointer may alias anything.
+// By value so callers can hoist the loads, since a PhysicalStorageBuffer pointer may alias anything.
 FMeshletWorldVertex TransformMeshletVertex(FVertexData V, float4x4 ModelMatrix, float3x3 NormalMatrixWS)
 {
     FMeshletWorldVertex W;
     W.WorldPos  = mul(ModelMatrix, float4(V.Position, 1.0)).xyz;
     W.NormalWS  = mul(NormalMatrixWS, V.Normal);
-    // Tangents take the forward 3x3 (they lie in the surface); re-orthogonalized per-pixel.
+    // Tangents lie in the surface, so they take the forward 3x3 and are re-orthogonalized per pixel.
     W.TangentWS = float4(mul((float3x3)ModelMatrix, V.Tangent.xyz), V.Tangent.w);
     W.UV        = V.UV;
     W.UV1       = V.UV1;
@@ -387,16 +339,14 @@ FMeshletWorldVertex TransformMeshletVertex(FMeshletRef Ref, FVertexData V)
     return TransformMeshletVertex(V, ModelMatrix, CalculateNormalMatrix(ModelMatrix));
 }
 
-// Base pass and depth pre-pass MUST derive SV_Position from this exact pair, in this order, or the
-// [earlydepthstencil] equal-depth test breaks. Do not fuse them into a view-projection product.
+// Base pass and depth prepass must build SV_Position from this exact pair or the equal-depth test breaks.
 float4 CameraViewPosition(float3 WorldPos, float4x4 CameraView) { return mul(CameraView, float4(WorldPos, 1.0)); }
 float4 CameraClipPosition(float4 ViewPos, float4x4 CameraProj)  { return mul(CameraProj, ViewPos); }
 
 float4 CameraViewPosition(float3 WorldPos) { return CameraViewPosition(WorldPos, GetCameraView()); }
 float4 CameraClipPosition(float4 ViewPos)  { return CameraClipPosition(ViewPos, GetCameraProjection()); }
 
-// Produced by the VS emulation AND the mesh shader, consumed by BasePixelPass. Per-instance constants
-// are forwarded flat so the PS never re-reads the 128B FGPUInstance per pixel.
+// Per-instance constants are forwarded flat so the PS never rereads the 128B FGPUInstance.
 struct FBaseVertexOutput
 {
     float4 FragColor                   : COLOR;
@@ -404,11 +354,9 @@ struct FBaseVertexOutput
     float4 NormalWS                    : NORMAL_WS;
     float4 TangentWS                   : TANGENT_WS;
     float4 FragPos                     : FRAG_POS;
-    // Pre-WPO position for the graph's ExcludingOffsets reads, at 12B per vertex like UV1's 8B below.
+    // Pre-WPO position for the graph's ExcludingOffsets reads.
     float3 WorldPosNoWPO                : WORLD_POS_NO_WPO;
     float2 UV                          : TEXCOORD0;
-    // Costs 8B of mesh-shader output storage per vertex on every base-pass draw, whether or not the
-    // material samples it (see the occupancy note on FDepthOnlyVertexOutput below).
     float2 UV1                         : TEXCOORD1;
     uint   InstanceIndex               : INSTANCE;
     nointerpolation uint EntityID      : ENTITY_ID;
@@ -418,14 +366,13 @@ struct FBaseVertexOutput
     precise float4 Position            : SV_Position;
 };
 
-// Output storage is allocated from the DECLARED type at pipeline creation, and caps mesh-workgroup
-// residency: FBaseVertexOutput for a depth-only pass reserved 124B to carry 16B, at 4.2% occupancy.
+// Mesh output storage is sized from the declared type and caps workgroup residency, so depth-only carries only Position.
 struct FDepthOnlyVertexOutput
 {
     precise float4 Position : SV_Position;
 };
 
-// The masked lanes carry only what the material's pixel graph names, since their output storage caps how many mesh workgroups fit.
+// Masked lanes carry only what the pixel graph names, since output storage caps mesh workgroup residency.
 #ifdef MASKED_IO_FULL
 typedef FBaseVertexOutput FMaskedVertexOutput;
 #else
@@ -460,7 +407,7 @@ struct FMaskedVertexOutput
 };
 #endif
 
-// FinalWorldPos is post-WPO: the shader adds Material.WorldPositionOffset before calling this.
+// FinalWorldPos already includes Material.WorldPositionOffset.
 FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos,
                                        float4x4 CameraView, float4x4 CameraProj)
 {

@@ -1,61 +1,55 @@
 #include "Includes/SceneGlobals.slang"
-#include "Includes/GlobalRHIStorage.slang"
+#include "Includes/GlobalRHI.slang"
 #include "Includes/ShadowSampling.slang"
 #include "Includes/Fog.slang"
 #include "Includes/Froxel.slang"
 #include "Includes/CloudCommon.slang"
-
-// Froxel volumetric fog inject pass: per froxel, write exp-height-fog extinction plus shadowed
-// in-scatter from the sun + opted-in local lights into uFroxelScatter; the integrate pass accumulates.
 
 struct FPushConstants
 {
     uint3  GridSize;
     float  NearPlane;
 
-    float  FogRange;
-    uint   bSunVolumetric;
-    float  Time;
-    uint   ScatterUAV;          // bindless 3D UAV index of the froxel scatter volume
+    float        FogRange;
+    uint         bSunVolumetric;
+    float        Time;
+    FRWTexture3D Scatter;
 
-    uint   LocalLightSamples;   // 0 skips local lights, 1 is the froxel center, 4 supersamples
-    uint   _PadNumFogVolumes;
-    uint   CloudShadowIndex;    // bindless 2D SRV, 0xFFFFFFFF when no cloud shadow was built
-    float  CloudShadowExtent;
+    uint       LocalLightSamples;   // 0 skips local lights, 1 is the froxel center, 4 supersamples
+    uint       _PadNumFogVolumes;
+    FTexture2D CloudShadow;    // invalid when no cloud shadow was built
+    float      CloudShadowExtent;
 
     float2 CloudShadowCenter;
     float2 _Pad0;
 
     // Pointer last so its 8-byte alignment lands on a multiple of 8.
-    GPUSpan<FFogVolume> FogVolumes;   // the per-frame local volume array
+    GPUSpan<FFogVolume> FogVolumes;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-// Froxel center -> world position. Slices are view-Z planes (exponential), matching
-// the clustered light grid; jitter breaks the slice banding before the integrate.
-// View space is +Z forward (LH LookAt + [2][3]=+1 projection), so visible rays have ViewRay.z > 0.
+// View space is +Z forward, so visible rays have ViewRay.z > 0; slices match the clustered light grid.
 float3 FroxelToWorld(uint3 Coord, float3 Jitter)
 {
     float2 UV  = (float2(Coord.xy) + Jitter.xy) / float2(Pass().GridSize.xy);
     float2 NDC = UV * 2.0 - 1.0;
 
     float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
-    float3 ViewRay = ViewH.xyz / ViewH.w;            // point on the pixel ray in view space
+    float3 ViewRay = ViewH.xyz / ViewH.w;
     float  Dist    = Froxel_SliceDistance(float(Coord.z) + Jitter.z, float(Pass().GridSize.z), Pass().NearPlane, Pass().FogRange);
-    float3 ViewPos = ViewRay * (Dist / max(ViewRay.z, 1e-4));   // view Z = +Dist
+    float3 ViewPos = ViewRay * (Dist / max(ViewRay.z, 1e-4));
     return mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz;
 }
 
 // Shadow is the only high-frequency term across a froxel, so only it is supersampled.
 float SampleCloudShadow(float3 WorldPos)
 {
-    return CloudShadow_Sample(Pass().CloudShadowIndex, WorldPos, Pass().CloudShadowCenter, Pass().CloudShadowExtent);
+    return CloudShadow_Sample(Pass().CloudShadow, WorldPos, Pass().CloudShadowCenter, Pass().CloudShadowExtent);
 }
 
 float SampleSunShadowAA(FLight Sun, uint3 Coord)
 {
-    // 4 taps stratified across XY AND the slab's depth (Z) -- averaging the shadow over depth smooths
-    // the exponential-Z slab stepping in shadow shafts deterministically (no grain), same 4-tap cost.
+    // Taps stratified across the slab's depth too, which smooths exponential-Z stepping in shafts without grain.
     const float3 Offs[4] = { float3(0.25, 0.25, 0.2), float3(0.75, 0.25, 0.4),
                              float3(0.25, 0.75, 0.6), float3(0.75, 0.75, 0.8) };
     float S = 0.0;
@@ -108,7 +102,7 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
 
     const uint  MaskWords = GetClusterMaskWords();
     const uint2 Words     = GetClusterWordRange(ClusterIndex);
-    uint NumLights  = GetNumLights();   // loop-invariant; hoisted out of the per-light test
+    uint NumLights  = GetNumLights();
     for (uint Word = Words.x; Word < Words.y; ++Word)
     {
         uint Pending = GetClusterMaskWord(ClusterIndex, Word, MaskWords);
@@ -132,7 +126,7 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
             const float  R0    = L.Radius * L.VolumetricScatteringRadius;
             const float3 LC    = UnpackColor(L.Color).rgb * (L.Intensity * L.VolumetricIntensity);
             const bool   bSpot = HasFlag(L.Flags, ELightFlags::Spot);
-            const float3 SF    = bSpot ? normalize(L.Direction) : float3(0.0);   // to-light (surface->spot)
+            const float3 SF    = bSpot ? normalize(L.Direction) : float3(0.0);
 
             for (uint s = 0; s < NumSamples; ++s)
             {
@@ -188,29 +182,24 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         return;
     }
 
-    // Froxels fully behind opaque geometry are never sampled by the apply pass (it reads at scene
-    // depth, +-half a slice of dither plus one slice of linear filter), so skip their shadow taps.
-    // Hi-Z min-reduction = farthest depth in the tile under reverse-Z; the level covers ~2x the
-    // froxel footprint for conservatism, and the 2-slice margin covers the apply-side filtering.
+    // Froxels behind opaque geometry (with a 2-slice margin for the apply pass's dither and filter) are never sampled.
     {
         float2 TileUV  = (float2(DispatchID.xy) + 0.5) / float2(Pass().GridSize.xy);
         float  TexelsX = Scene().CullData.PyramidWidth / float(Pass().GridSize.x);
         float  TexelsY = Scene().CullData.PyramidHeight / float(Pass().GridSize.y);
         float  Level   = max(ceil(log2(max(TexelsX, TexelsY))), 0.0);
-        float  TileDepth = SampleTexture2DLevel(Scene().CullData.DepthPyramidIndex, SAMPLER_MIN_REDUCTION, TileUV, Level).x;
-        if (TileDepth > 0.0)   // 0 = sky somewhere in the tile -> nothing to skip
+        float  TileDepth = Scene().CullData.DepthPyramid.SampleLevel(Samplers::MinReduction, TileUV, Level).x;
+        if (TileDepth > 0.0)   // 0 means sky somewhere in the tile, so nothing to skip
         {
             float MaxTileDist = ReconstructViewPos(TileUV, TileDepth, GetInverseCameraProjection()).z;
             if (Froxel_SliceDistance(float(DispatchID.z) - 2.0, float(Pass().GridSize.z), Pass().NearPlane, Pass().FogRange) > MaxTileDist)
             {
-                gRWTextures3D[Pass().ScatterUAV][DispatchID] = float4(0.0);
+                Pass().Scatter[DispatchID] = float4(0.0);
                 return;
             }
         }
     }
 
-    // Sample the slice center. Sun-shadow shafts are debanded by Z-stratified taps in
-    // SampleSunShadowAA (averaging, not dither) so the smooth fog stays grain-free.
     FExponentialHeightFogParams uFog = Scene().FogParams;
 
     float3 WorldPos = FroxelToWorld(DispatchID, float3(0.5, 0.5, 0.5));
@@ -218,11 +207,9 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     float  CamDist  = length(ToCamVec);
     float3 ToCam    = ToCamVec / max(CamDist, 1e-4);
 
-    // Sun-facing albedo tint applies whenever a directional light exists, independent of whether
-    // it casts volumetric shafts; both this pass and the analytic far fog use the same albedo.
+    // The tint applies whenever a directional light exists, matching the analytic far fog's albedo.
     bool bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
-    // Light.Direction points from the surface toward the sun; the phase/tint want the photon
-    // travel direction, so negate to get CosSun = +1 when looking straight at the sun.
+    // Negated so CosSun is +1 when looking straight at the sun.
     float CosSun = bHasSun ? dot(-normalize(GetLightAt(0).Direction), ToCam) : -1.0;
 
     // Global height profile times its noise, plus any local volumes, ramped past FogStartDistance.
@@ -231,7 +218,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     uint NumVolumes = min(Pass().FogVolumes.Count, (uint)FOG_MAX_VOLUMES);
     for (uint vi = 0; vi < NumVolumes; ++vi)
     {
-        Fog_AddVolume(Medium, SpanGet(&Pass().FogVolumes, vi), WorldPos);
+        Fog_AddVolume(Medium, Pass().FogVolumes.Get(vi), WorldPos);
     }
     Fog_FinalizeMedium(Medium);
 
@@ -243,14 +230,9 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     // Volume albedo replaces the fog's own base albedo, then the sun-facing tint rides on top of both.
     float3 SigmaS = Fog_AlbedoFrom(uFog, Medium.ScatterAlbedo, CosSun, CamDist) * SigmaT;
 
-    // Ambient (skylight) in-scatter, unshadowed, so shadowed fog reads as dim haze not a black void.
-    // This is the skylight's OWN first bounce (already isotropic, already unshadowed), which is why it
-    // is not run through the octave loop -- the octaves model further bounces of the DIRECTIONAL light
-    // below, and folding the ambient in as well would double-count it. Raise AmbientIntensity for a
-    // brighter floor; raise the octave count for shadow fill that follows the sun.
+    // The skylight's own first bounce, kept out of the octave loop since the octaves model the directional light and would double-count it.
     float3 InScatter = GetVolumetricAmbientRadiance();
 
-    // Sun.
     if (Pass().bSunVolumetric != 0)
     {
         FLight Sun      = GetLightAt(0);
@@ -259,10 +241,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
         InScatter += SunColor * Sun.Intensity * Fog_MultiScatterPhaseShadow(uFog, CosSun, G, Shadow) * Sun.VolumetricIntensity;
     }
 
-    // Opted-in local point/spot lights. A single center sample aliases the bright near-light core
-    // and cone edge into froxel-sized blocks, so (when enabled) supersample at 4 sub-froxel XY
-    // positions and average -- the froxel stores the volume average, not a spike.
-    // Zero when no light in the frame scatters, which skips the cluster walk every froxel would otherwise pay.
+    // Supersampled because one center sample aliases the near-light core and cone edge into froxel-sized blocks.
     const uint NumSamples = min(Pass().LocalLightSamples, kMaxLocalSamples);
     if (NumSamples > 0)
     {
@@ -281,5 +260,5 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
 
     // Emissive volumes glow on their own, so it rides outside the extinction-weighted scattering term.
     float3 Scatter = SigmaS * InScatter * Intensity + Medium.Emissive * Ramp;
-    gRWTextures3D[Pass().ScatterUAV][DispatchID] = float4(Scatter, SigmaT);
+    Pass().Scatter[DispatchID] = float4(Scatter, SigmaT);
 }

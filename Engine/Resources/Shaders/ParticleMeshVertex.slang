@@ -27,7 +27,7 @@ float3 AlignUpTo(float3 V, float3 Dir)
 [shader("vertex")]
 FParticleVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID)
 {
-    FGPUParticle P = SpanGet(&Pass().Particles, ParticleSlotForVertex(VertexIndex));
+    FGPUParticle P = Pass().Particles.Get(ParticleSlotForVertex(VertexIndex));
     const uint HeaderSlot = Pass().MeshletHeaderSlot;
     if (!IsParticleAlive(P) || HeaderSlot == 0u || HeaderSlot >= MeshletHeaders().Count)
     {
@@ -35,7 +35,7 @@ FParticleVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID)
     }
     P.Position = ParticleDrawPosition(P);
 
-    FMeshletHeader* Header = SpanAt(MeshletHeaders(), HeaderSlot);
+    FMeshletHeader* Header = MeshletHeaders().At(HeaderSlot);
     const uint VertsPerMeshlet = MESHLET_MAX_TRIANGLES * 3u;
     const uint Local           = VertexIndex % max(Pass().VertsPerParticle, 1u);
     const uint MeshletIndex    = Local / VertsPerMeshlet;
