@@ -92,8 +92,8 @@ namespace Lumina
         View.Size        = bPrimary ? ComputeRenderSize(View.DisplaySize, View.Upscaler) : View.DisplaySize;
 
         // Per-view clustered-lighting grid (built from this view's projection).
-        View.ClusterBuffer = CreateSceneBuffer(sizeof(FCluster) * MaxClusters, "View.ClusterGrid");
-        View.ClusterLightMaskBuffer = CreateSceneBuffer(sizeof(uint32) * MAX_CLUSTER_MASK_WORDS, "View.ClusterLightMasks");
+        View.ClusterBuffer      = CreateSceneBuffer(sizeof(FCluster) * MaxClusters, "View.ClusterGrid");
+        View.ClusterRangeBuffer = CreateSceneBuffer(sizeof(uint32) * MaxClusters, "View.ClusterWordRanges");
         View.bClusterGridDirty = true;   // fresh buffer has undefined contents.
 
         InitViewImages(View);
@@ -249,6 +249,11 @@ namespace Lumina
             {
                 RHI::Retire(View.ClusterBuffer);
                 View.ClusterBuffer = {};
+            }
+            if (View.ClusterRangeBuffer)
+            {
+                RHI::Retire(View.ClusterRangeBuffer);
+                View.ClusterRangeBuffer = {};
             }
             if (View.ClusterLightMaskBuffer)
             {
@@ -2266,14 +2271,34 @@ namespace Lumina
         Streaming->SubmitMaterialFeedback(Masks, StreamingFeedbackSlots);
     }
 
+    // Each cluster holds one bit per live light, so the pool follows the light count instead of reserving for the worst case.
+    void FDefaultSceneRenderer::EnsureClusterLightMaskCapacity(FSceneView& View)
+    {
+        const uint64 WordsPerCluster = std::bit_ceil(Math::Max<uint64>(((uint64)NumLiveLights + 31u) / 32u, 1u));
+        const uint64 NeededBytes     = sizeof(uint32) * WordsPerCluster * (uint64)MaxClusters;
+        if (View.ClusterLightMaskBuffer && View.ClusterLightMaskBuffer.Size >= NeededBytes)
+        {
+            return;
+        }
+
+        if (View.ClusterLightMaskBuffer)
+        {
+            RHI::Retire(View.ClusterLightMaskBuffer);
+        }
+        View.ClusterLightMaskBuffer = CreateSceneBuffer(NeededBytes, "View.ClusterLightMasks");
+    }
+
     uint64 FDefaultSceneRenderer::BuildViewSceneRoot(FSceneView& View)
     {
         RHI::FTransientAlloc Alloc = RHI::AllocTransient(sizeof(FSceneRoot));
         FSceneRoot* Root = static_cast<FSceneRoot*>(Alloc.Cpu);
 
+        EnsureClusterLightMaskCapacity(View);
+
         *Root = SceneRootShared;
         Root->Clusters           = { View.ClusterBuffer };
         Root->ClusterLightMasks  = { View.ClusterLightMaskBuffer };
+        Root->ClusterWordRanges  = { View.ClusterRangeBuffer };
         Root->BRDFLutIndex       = (uint32)View.Images[(int)ENamedImage::BRDFLut].GetResourceID();
         Root->SkyIrradianceIndex = (uint32)View.Images[(int)ENamedImage::SkyIrradiance].GetResourceID();
         {

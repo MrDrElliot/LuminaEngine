@@ -19,7 +19,7 @@ struct FMippedTextureCubeArray
     uint MipCount()             { return Packed >> 24; }
 };
 
-// Must match FSceneRoot in SceneRenderTypes.h (368 B, scalar layout).
+// Must match FSceneRoot in SceneRenderTypes.h (416 B, scalar layout).
 struct FSceneRoot
 {
     GPUSpan<FBoneTransform>      Bones;
@@ -29,7 +29,9 @@ struct FSceneRoot
     GPUSpan<FCluster>            Clusters;
     // Per-view light bitmasks, GetClusterMaskWords() words per cluster.
     GPUSpan<uint>                ClusterLightMasks;
-    GPUSpan<FMaterialUniforms>   Materials;
+    // Per cluster, its first non-empty mask word in the low 16 bits and one past its last in the high 16.
+    GPUSpan<uint>                ClusterWordRanges;
+    FMaterialTable               Materials;
     GPUSpan<FMaterialCollection> Collections;
     GPUSpan<FBillboardInstance>  Billboards;
     GPUSpan<FCullView>           CullViews;
@@ -91,7 +93,8 @@ GPUSpan<FBoneTransform>      PrevBones()             { return GetSceneRoot().Pre
 GPUSpan<FTransform3x4>       PrevRetainedTransforms(){ return GetSceneRoot().PrevRetainedTransforms; }
 GPUSpan<FCluster>            Clusters()              { return GetSceneRoot().Clusters; }
 GPUSpan<uint>                ClusterLightMasks()     { return GetSceneRoot().ClusterLightMasks; }
-GPUSpan<FMaterialUniforms>   Materials()             { return GetSceneRoot().Materials; }
+GPUSpan<uint>                ClusterWordRanges()     { return GetSceneRoot().ClusterWordRanges; }
+FMaterialTable               Materials()             { return GetSceneRoot().Materials; }
 GPUSpan<FMaterialCollection> Collections()           { return GetSceneRoot().Collections; }
 GPUSpan<FBillboardInstance>  Billboards()            { return GetSceneRoot().Billboards; }
 GPUSpan<FCullView>           CullViews()             { return GetSceneRoot().CullViews; }
@@ -466,61 +469,14 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint MeshletInd
     return SkinVertexWith(Bones(), Header, M, MeshletIndex, VertexLocalIdx, BoneOffset);
 }
 
-// FMaterialUniforms is 592 B, so these address one field rather than fetch the block to extract from it.
-float GetMaterialScalar(uint MatIndex, uint Index)
-{
-    if (!Materials().Contains(MatIndex))
-    {
-        return 0.0;
-    }
-    return Materials().At(MatIndex).Scalars[Index];
-}
-
-float4 GetMaterialVec4(uint MatIndex, uint Index)
-{
-    if (!Materials().Contains(MatIndex))
-    {
-        return float4(0.0);
-    }
-    return loadAligned<16>(&Materials().At(MatIndex).Vectors[Index]);
-}
-
-uint GetMaterialTexture(uint MatIndex, uint Index)
-{
-    if (!Materials().Contains(MatIndex))
-    {
-        return 0u;
-    }
-    return Materials().At(MatIndex).Textures[Index];
-}
-
-uint GetMaterialFlags(uint MatIndex)
-{
-    if (!Materials().Contains(MatIndex))
-    {
-        return 0u;
-    }
-    return Materials().At(MatIndex).Flags;
-}
-
-float GetMaterialOpacityClip(uint MatIndex)
-{
-    if (!Materials().Contains(MatIndex))
-    {
-        return 0.0;
-    }
-    return Materials().At(MatIndex).OpacityClipValue;
-}
+float  GetMaterialScalar(uint MatIndex, uint Index)  { return Materials().Scalar(MatIndex, Index); }
+float4 GetMaterialVec4(uint MatIndex, uint Index)    { return Materials().Vec4(MatIndex, Index); }
+uint   GetMaterialTexture(uint MatIndex, uint Index) { return Materials().Texture(MatIndex, Index); }
+uint   GetMaterialFlags(uint MatIndex)               { return Materials().GetHeader(MatIndex).Flags; }
+float  GetMaterialOpacityClip(uint MatIndex)         { return Materials().GetHeader(MatIndex).OpacityClipValue; }
 
 // Slot is which of the material's own bindings (0 or 1), not the collection's index in the table.
-uint GetMaterialCollectionIndex(uint MatIndex, uint Slot)
-{
-    if (!Materials().Contains(MatIndex))
-    {
-        return 0u;
-    }
-    return Materials().At(MatIndex).CollectionIndices[Slot];
-}
+uint GetMaterialCollectionIndex(uint MatIndex, uint Slot) { return Materials().GetHeader(MatIndex).CollectionIndex(Slot); }
 
 float GetCollectionScalar(uint MatIndex, uint Slot, uint Index)
 {
@@ -709,12 +665,12 @@ uint GetClusterMaskWords()
 // The cluster's non-empty mask words as [first, end), so a walk never loads a word with no light in it.
 uint2 GetClusterWordRange(uint ClusterIndex)
 {
-    if (!Clusters().Contains(ClusterIndex))
+    if (!ClusterWordRanges().Contains(ClusterIndex))
     {
         return uint2(0u, 0u);
     }
-    FCluster* Cluster = Clusters().At(ClusterIndex);
-    return uint2(Cluster.FirstWord, min(Cluster.EndWord, GetClusterMaskWords()));
+    const uint Packed = ClusterWordRanges().At(ClusterIndex)[0];
+    return uint2(Packed & 0xFFFFu, min(Packed >> 16u, GetClusterMaskWords()));
 }
 
 // Bit b of word w is light 32 * w + b.

@@ -3,6 +3,7 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
 #include "Shared/SharedConstants.h"
+#include "Renderer/GPUSpan.h"
 #include "MaterialTypes.generated.h"
 
 namespace Lumina
@@ -41,6 +42,26 @@ namespace Lumina
 
         /** Collection table slot per binding, resolved in PostLoad; 0 is the reserved zero collection. */
         uint32      CollectionIndices[MAX_MATERIAL_COLLECTIONS];
+    };
+
+    // The GPU form of a slot, whose parameters sit packed at DataWord in the material data pool.
+    struct FMaterialHeaderGPU
+    {
+        uint32      Flags;
+        float       OpacityClipValue;
+        uint32      DataWord;
+        uint32      Layout;
+    };
+
+    static_assert(sizeof(FMaterialHeaderGPU) == 16, "FMaterialHeaderGPU must match FMaterialHeader in Common.slang");
+    static_assert(MAX_VECTORS <= MATERIAL_COUNT_MASK && MAX_SCALARS <= MATERIAL_COUNT_MASK && MAX_TEXTURES <= MATERIAL_COUNT_MASK);
+    static_assert(MAX_PARAMETER_COLLECTIONS <= MATERIAL_COLLECTION_MASK + 1u);
+
+    // Mirrors FMaterialTable in Common.slang.
+    struct FMaterialTableGPU
+    {
+        RHI::TGPUSpan<FMaterialHeaderGPU>   Headers;
+        RHI::TGPUSpan<uint32>               Data;
     };
 
     /** One collection's GPU block, shared by every material that binds it. */

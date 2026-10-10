@@ -840,7 +840,7 @@ namespace Lumina
                                                                 Frame.ReflectionProbes.Probes.size());
             }
 
-            SceneRootShared.Materials            = Render().GetMaterialManager().GetMaterialSpan();
+            SceneRootShared.Materials            = Render().GetMaterialManager().GetMaterialTable();
             SceneRootShared.Collections          = Render().GetCollectionManager().GetSpan();
             SceneRootShared.MeshletDrawList      = { GetMeshletDrawList(), DrawListCapacity };
             SceneRootShared.PreSkinnedVertices   = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };

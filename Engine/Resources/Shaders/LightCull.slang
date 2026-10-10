@@ -49,7 +49,7 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
 
     // Threads past the grid edge still join every barrier, they just never test or write.
     const uint Index         = Coord.x + Coord.y * Grid.x + Coord.z * Grid.x * Grid.y;
-    const bool bValidCluster = all(Coord < Grid) && Clusters().Contains(Index);
+    const bool bValidCluster = all(Coord < Grid) && Clusters().Contains(Index) && ClusterWordRanges().Contains(Index);
 
     float3 ClusterMin = bValidCluster ? loadAligned<16>(&Clusters().At(Index).MinPoint).xyz : float3(3.0e38);
     float3 ClusterMax = bValidCluster ? loadAligned<16>(&Clusters().At(Index).MaxPoint).xyz : float3(-3.0e38);
@@ -94,9 +94,9 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
         bool bKeep = false;
         if (LoadIndex < LightCount && LoadIndex >= StartIndex)
         {
-            const FLight Loaded = GetLightAt(LoadIndex);
-            ViewPosRadius = float4(mul(View, float4(Loaded.Position, 1.0)).xyz, Loaded.Radius);
-            bKeep = SphereAABBIntersection(ViewPosRadius.xyz, Loaded.Radius, BlockMin, BlockMax);
+            const float4 PositionRadius = loadAligned<16>(reinterpret<float4*>(LightData().Lights.At(LoadIndex)));
+            ViewPosRadius = float4(mul(View, float4(PositionRadius.xyz, 1.0)).xyz, PositionRadius.w);
+            bKeep = SphereAABBIntersection(ViewPosRadius.xyz, PositionRadius.w, BlockMin, BlockMax);
         }
 
         const uint WaveKept   = WaveActiveCountBits(bKeep);
@@ -158,7 +158,7 @@ void ComputeMain(uint3 WorkGroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadI
 
     if (bValidCluster)
     {
-        Clusters().At(Index).FirstWord = (FirstWord == 0xFFFFFFFFu) ? 0u : FirstWord;
-        Clusters().At(Index).EndWord   = EndWord;
+        const uint First = (FirstWord == 0xFFFFFFFFu) ? 0u : FirstWord;
+        ClusterWordRanges().At(Index)[0] = First | (EndWord << 16u);
     }
 }

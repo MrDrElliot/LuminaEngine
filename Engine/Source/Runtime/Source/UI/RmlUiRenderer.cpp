@@ -30,18 +30,18 @@ namespace Lumina
     // RmlUi's own decorators cap out at 16; anything past that is dropped rather than overrunning.
     static constexpr uint32 GMaxColorStops = 16;
 
-    // ScreenSize must stay at offset 16, since relaxed block layout forbids a straddling vector.
+    // Relaxed block layout forbids a straddling vector, so ScreenSize sits on a 16-byte boundary.
     struct FUIMaterialBrushArgs
     {
-        RHI::TGPUSpan<FMaterialUniforms> Materials;
+        FMaterialTableGPU Materials;
         uint32      MaterialIndex;
         float       Time;
         uint32      _Pad0[2];
         uint32      ScreenSize[4];   // .xy = brush resolution
     };
 
-    static_assert(sizeof(FUIMaterialBrushArgs) == 48, "FUIMaterialArgs layout must match UIMaterialGlobals.slang");
-    static_assert(offsetof(FUIMaterialBrushArgs, ScreenSize) == 32, "ScreenSize must not straddle a 16-byte boundary");
+    static_assert(sizeof(FUIMaterialBrushArgs) == 64, "FUIMaterialArgs layout must match UIMaterialGlobals.slang");
+    static_assert(offsetof(FUIMaterialBrushArgs, ScreenSize) == 48, "ScreenSize must not straddle a 16-byte boundary");
 
     // Mirrors UIFilter.slang::FUiFilterArgs.
     struct FUiFilterArgs
@@ -2618,7 +2618,7 @@ namespace Lumina
             }
 
             FUIMaterialBrushArgs Args = {};
-            Args.Materials     = RenderManager->GetMaterialManager().GetMaterialSpan();
+            Args.Materials     = RenderManager->GetMaterialManager().GetMaterialTable();
             Args.ScreenSize[0] = Tex.BrushSize.x;
             Args.ScreenSize[1] = Tex.BrushSize.y;
             Args.Time          = Time;

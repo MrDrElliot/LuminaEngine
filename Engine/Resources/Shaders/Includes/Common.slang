@@ -232,15 +232,52 @@ uint GetMaterialShadingModel(uint MatFlags)
     return (MatFlags >> MATERIAL_SHADING_MODEL_SHIFT) & MATERIAL_SHADING_MODEL_MASK;
 }
 
-struct FMaterialUniforms
+// Mirror of Lumina::FMaterialHeaderGPU, one per material slot, naming its packed block in the data pool.
+struct FMaterialHeader
 {
-    float4  Vectors[MAX_VECTORS];
-    float   Scalars[MAX_SCALARS];
-    uint    Textures[MAX_TEXTURES];
     uint    Flags;
     float   OpacityClipValue;
+    uint    DataWord;
+    uint    Layout;
+
+    property uint NumVectors  { get { return Layout & MATERIAL_COUNT_MASK; } }
+    property uint NumScalars  { get { return (Layout >> MATERIAL_SCALAR_COUNT_SHIFT) & MATERIAL_COUNT_MASK; } }
+    property uint NumTextures { get { return (Layout >> MATERIAL_TEXTURE_COUNT_SHIFT) & MATERIAL_COUNT_MASK; } }
+    property uint ScalarWord  { get { return DataWord + NumVectors * 4u; } }
+    property uint TextureWord { get { return ScalarWord + NumScalars; } }
+
     // Slot 0 is the reserved zero collection, so an unbound entry reads zeros without a sentinel test.
-    uint    CollectionIndices[MAX_MATERIAL_COLLECTIONS];
+    uint CollectionIndex(uint Slot)
+    {
+        return (Layout >> (MATERIAL_COLLECTION_SHIFT + Slot * MATERIAL_COLLECTION_BITS)) & MATERIAL_COLLECTION_MASK;
+    }
+};
+
+// Mirror of Lumina::FMaterialTableGPU. A block stops at each kind's last nonzero entry, so reads past it are zero.
+struct FMaterialTable
+{
+    GPUSpan<FMaterialHeader> Headers;
+    GPUSpan<uint>            Data;
+
+    FMaterialHeader GetHeader(uint MatIndex) { return Headers.GetAligned(MatIndex); }
+
+    float Scalar(uint MatIndex, uint Index)
+    {
+        const FMaterialHeader Header = GetHeader(MatIndex);
+        return Index < Header.NumScalars ? asfloat(Data.At(Header.ScalarWord + Index)[0]) : 0.0;
+    }
+
+    float4 Vec4(uint MatIndex, uint Index)
+    {
+        const FMaterialHeader Header = GetHeader(MatIndex);
+        return Index < Header.NumVectors ? loadAligned<16>(reinterpret<float4*>(Data.At(Header.DataWord + Index * 4u))) : float4(0.0);
+    }
+
+    uint Texture(uint MatIndex, uint Index)
+    {
+        const FMaterialHeader Header = GetHeader(MatIndex);
+        return Index < Header.NumTextures ? Data.At(Header.TextureWord + Index)[0] : 0u;
+    }
 };
 
 // Mirror of Lumina::FMaterialCollectionUniforms; one block per parameter collection, shared by materials.
@@ -807,10 +844,6 @@ struct FCluster
 {
     float4 MinPoint;
     float4 MaxPoint;
-    // The cluster's non-empty light-mask words, [FirstWord, EndWord), so a walk skips the empty ones.
-    uint   FirstWord;
-    uint   EndWord;
-    uint   _Pad[2];
 };
 
 struct FFrustum

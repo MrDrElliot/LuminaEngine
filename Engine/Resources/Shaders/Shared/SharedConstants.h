@@ -72,12 +72,12 @@
 // A pair covering fewer pixels than this shades a lane per pixel, since a whole tile group would leave most lanes idle.
 #define MATERIAL_SPARSE_PIXELS          16u
 
-// FMaterialUniforms layout. Changing one side reinterprets every field after it.
+// Per-kind parameter caps. FMaterialUniforms holds every entry, and the GPU block keeps only each kind's used prefix.
 #define MAX_SCALARS                     24
 #define MAX_VECTORS                     24
 #define MAX_TEXTURES                    24
 
-// Collections one material may bind. Their indices sit in words FMaterialUniforms already reserved.
+// Collections one material may bind, each index packed into FMaterialHeader's Layout word.
 #define MAX_MATERIAL_COLLECTIONS        2
 
 // FMaterialCollectionUniforms layout, mirrored by FMaterialCollection in Common.slang.
@@ -87,6 +87,14 @@
 // Slot 0 is a reserved all-zero collection, so a material binding none reads zeros without a sentinel.
 #define MAX_PARAMETER_COLLECTIONS       64
 
+// FMaterialHeader's Layout word, each kind's count up to its last nonzero entry, then the two collection indices.
+#define MATERIAL_COUNT_MASK             31u
+#define MATERIAL_SCALAR_COUNT_SHIFT     5u
+#define MATERIAL_TEXTURE_COUNT_SHIFT    10u
+#define MATERIAL_COLLECTION_SHIFT       16u
+#define MATERIAL_COLLECTION_BITS        8u
+#define MATERIAL_COLLECTION_MASK        255u
+
 #define MAX_LIGHTS                      8192
 #define MAX_SHADOWS                     256
 #define NUM_CASCADES                    4
@@ -94,11 +102,6 @@
 // Hard cap on cull views, covering the camera, NUM_CASCADES, six per point light and one per spot.
 #define MAX_CULL_VIEWS                  128
 
-// The cluster light list packs two 13-bit light indices per uint.
-#define LIGHT_INDEX_MASK                0x1FFFu
-#define LIGHTS_PER_UINT                 2
-// Light-mask words one view's clusters share, each cluster holding one bit per light rounded up to whole words.
-#define MAX_CLUSTER_MASK_WORDS          (1 << 21)
 // LightCull gives each workgroup this block of clusters, so one bounding box pre-culls the lights for all of them.
 #define CLUSTER_CULL_BLOCK_X            8
 #define CLUSTER_CULL_BLOCK_Y            4

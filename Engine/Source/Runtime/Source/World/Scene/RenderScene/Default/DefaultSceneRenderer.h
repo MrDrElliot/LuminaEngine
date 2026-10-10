@@ -584,6 +584,7 @@ namespace Lumina
             RHI::EQueueType                                 CloudNoiseQueue  = RHI::EQueueType::Graphics;
             RHI::FGPUAllocation                                    ClusterBuffer;
             RHI::FGPUAllocation                                    ClusterLightMaskBuffer;
+            RHI::FGPUAllocation                                    ClusterRangeBuffer;
             FMatrix4                                        LastClusterInvProjection = FMatrix4(0.0f);
             FVector2                                        LastClusterNearFar       = FVector2(0.0f);
             FUIntVector2                                    LastClusterScreenSize    = FUIntVector2(0);
@@ -1402,6 +1403,7 @@ namespace Lumina
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View);
+        void   EnsureClusterLightMaskCapacity(FSceneView& View);
 
         /** Texture-streaming feedback (see RequestTextureResolution in SceneGlobals.slang). One uint per
          *  bindless slot, OR-accumulated by the material lanes over STREAMING_FEEDBACK_WINDOW frames, then

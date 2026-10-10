@@ -782,18 +782,15 @@ namespace Lumina
     static_assert(sizeof(FGPUSpline) == 160, "FGPUSpline layout must match Includes/Spline.slang");
     VERIFY_SSBO_ALIGNMENT(FGPUSpline);
 
+    // Only LightCull reads the bounds, so shading's per-pixel word range lives in its own dense array.
     struct alignas(16) FCluster
     {
         FVector4 MinPoint;
         FVector4 MaxPoint;
-        uint32 FirstWord;
-        uint32 EndWord;
-        // Explicit because alignas(16) adds them anyway and the Slang mirror has to spell them out to match.
-        uint32 _Pad[2];
     };
-    
+
     VERIFY_SSBO_ALIGNMENT(FCluster);
-    static_assert(sizeof(FCluster) == 48, "FCluster layout must match FCluster in Common.slang");
+    static_assert(sizeof(FCluster) == 32, "FCluster layout must match FCluster in Common.slang");
     
     struct FLightClusterPC
     {
@@ -1272,7 +1269,9 @@ namespace Lumina
         RHI::TGPUSpan<FCluster>          Clusters;              // per-view, GPU-written
         // Per-view light bitmasks, ClusterMaskWords words per cluster.
         RHI::TGPUSpan<uint32>            ClusterLightMasks;
-        RHI::TGPUSpan<FMaterialUniforms> Materials;             // non-dynamic
+        // Per cluster, its first non-empty mask word in the low 16 bits and one past its last in the high 16.
+        RHI::TGPUSpan<uint32>            ClusterWordRanges;
+        FMaterialTableGPU                Materials;
         RHI::TGPUSpan<FMaterialCollectionUniforms> Collections;         // slot 0 is the reserved zero one
         RHI::TGPUSpan<FBillboardInstance> Billboards;
         RHI::TGPUSpan<FCullView>         CullViews;
@@ -1314,7 +1313,7 @@ namespace Lumina
         uint32 ProbeCubeArrayIndex   = 0;
         uint32 _Pad0                 = 0;
     };
-    static_assert(sizeof(FSceneRoot) == 384, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 416, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {
