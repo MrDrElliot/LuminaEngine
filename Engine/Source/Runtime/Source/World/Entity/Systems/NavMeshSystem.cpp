@@ -86,6 +86,8 @@ namespace Lumina
 
         void DrawNavDebug(const FSystemContext& Context, SNavMeshComponent& Comp)
         {
+            LUMINA_PROFILE_SCOPE();
+
             const FNavMesh& Mesh = *Comp.Runtime.Mesh;
             const FVector3 Lift(0.0f, CVarNavDebugLift.GetValue(), 0.0f);
             const bool bColorByArea = CVarNavDebugColorArea.GetValue();
@@ -1062,7 +1064,7 @@ namespace Lumina
         // A null cache leaves foliage out, for the change scan that diffs it per entity instead.
         void CollectNavSources(const FSystemContext& Context, const FVector3& BakeMin, const FVector3& BakeMax, bool bTessellateTerrain, float CellSize, TVector<FNavSourceEntry>& Out, FNavFoliageCache* FoliageCache)
         {
-
+            LUMINA_PROFILE_SCOPE(); 
             // A simulated body is loose debris rather than level geometry, and baking it would rebuild tiles every time it settles.
             auto RigidBodies = Context.GetRegistry().GetStorage<SRigidBodyComponent>();
             auto IsSimulated = [&RigidBodies](ECS::FEntity Entity)
@@ -1515,8 +1517,10 @@ namespace Lumina
             }
         }
 
-        void TickComponent(const FSystemContext& Context, ECS::FEntity Entity, SNavMeshComponent& Comp)
+        void SyncTransform(const FSystemContext& Context, ECS::FEntity Entity, SNavMeshComponent& Comp)
         {
+            LUMINA_PROFILE_SCOPE();
+
             // Scale always mirrors, location only in the editor, since runtime keeps the serialized Center.
             if (const STransformComponent* X = Context.GetRegistry().TryGet<STransformComponent>(Entity))
             {
@@ -1528,6 +1532,11 @@ namespace Lumina
                     Comp.Center = WT.GetLocation();
                 }
             }
+        }
+
+        void UpdateAutoBake(const FSystemContext& Context, SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // A play world hydrates the editor bake; its geometry streams in after load, so a bake there is empty.
             const bool bAutoBakeHere = Context.GetWorldType() == EWorldType::Editor || !Comp.HasBakedData();
@@ -1578,12 +1587,11 @@ namespace Lumina
                     }
                 }
             }
+        }
 
-            if (Comp.bBakeRequested)
-            {
-                Comp.bBakeRequested = false;
-                SNavMeshSystem::RequestBake(Context, Comp);
-            }
+        void ConsumeFinishedBake(const FSystemContext& Context, SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // Drain finished bake; FNavMesh construction is offloaded via PendingInit.
             if (Comp.Runtime.ActiveBake && Comp.Runtime.ActiveBake->bDone.load(std::memory_order_acquire))
@@ -1625,6 +1633,11 @@ namespace Lumina
                     SeedChangeTracking(Context, Comp);
                 }
             }
+        }
+
+        void ConsumeFinishedHydration(SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // Drain finished async hydration.
             if (Comp.Runtime.PendingInit && Comp.Runtime.PendingInit->bDone.load(std::memory_order_acquire))
@@ -1650,6 +1663,11 @@ namespace Lumina
                     }
                 }
             }
+        }
+
+        void KickHydration(SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // The bRuntimeDirty branch is essential, or a re-bake leaves the old Mesh stuck Building.
             // A failed hydration nulls Mesh, so without the state test it re-kicks forever.
@@ -1722,54 +1740,51 @@ namespace Lumina
                 Comp.Runtime.DirtyTiles.clear();
                 Comp.Runtime.SettlingTiles.clear();
             }
+        }
 
-            if (!Comp.Runtime.Mesh || !Comp.Runtime.Mesh->IsReady() || Comp.Runtime.State != ENavBakeState::Ready)
-            {
-                return;
-            }
+        void StreamTiles(const FSystemContext& Context, SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // Page tiles around the view before anything reads the mesh this tick.
+            const CNavigationSettings& Settings = NavSettings();
+            FNavTileStreamer::FSettings Stream;
+            Stream.MaxResidentTiles = Math::Max(1, Settings.ResidentTileBudget);
+            Stream.LoadRadius       = Settings.StreamLoadRadius;
+            Stream.KeepRadiusScale  = Settings.KeepRadiusScale;
+            Stream.MaxOpsPerTick    = Math::Max(1, Settings.MaxTileOpsPerTick);
+
+            TVector<FVector3> Focus;
+            if (Stream.LoadRadius > 0.0f)
             {
-                const CNavigationSettings& Settings = NavSettings();
-                FNavTileStreamer::FSettings Stream;
-                Stream.MaxResidentTiles = Math::Max(1, Settings.ResidentTileBudget);
-                Stream.LoadRadius       = Settings.StreamLoadRadius;
-                Stream.KeepRadiusScale  = Settings.KeepRadiusScale;
-                Stream.MaxOpsPerTick    = Math::Max(1, Settings.MaxTileOpsPerTick);
-
-                TVector<FVector3> Focus;
-                if (Stream.LoadRadius > 0.0f)
+                if (const FSignificanceState* Significance = Significance::GetState(Context))
                 {
-                    if (const FSignificanceState* Significance = Significance::GetState(Context))
+                    if (Significance->bHasView)
                     {
-                        if (Significance->bHasView)
-                        {
-                            Focus.push_back(Significance->ViewOrigin);
-                        }
-                    }
-                }
-
-                // A mesh seeded with every tile is already resident, so the streamer would only retry adds.
-                const bool bRunStreamer = Comp.Runtime.Streamer.IsConfigured()
-                                       && (Comp.Runtime.bStreamedInit || Stream.LoadRadius > 0.0f);
-                if (bRunStreamer)
-                {
-                    const FNavTileStreamer::FStats Stats =
-                        Comp.Runtime.Streamer.Update(*Comp.Runtime.Mesh, Comp.Tiles, Focus, Stream);
-
-                    if (CVarNavDebugLog.GetValue() && (Stats.Added > 0 || Stats.Removed > 0 || Stats.Adopted > 0))
-                    {
-                        LOG_INFO("NavMesh streaming: +{} -{} ~{}, {} resident of {} wanted.",
-                            Stats.Added, Stats.Removed, Stats.Adopted, Stats.Resident, Stats.Wanted);
+                        Focus.push_back(Significance->ViewOrigin);
                     }
                 }
             }
 
-            // Debug draw runs first so it emits even when later steps early-return.
-            if (CVarNavDrawDebug.GetValue())
+            // A mesh seeded with every tile is already resident, so the streamer would only retry adds.
+            const bool bRunStreamer = Comp.Runtime.Streamer.IsConfigured()
+                                   && (Comp.Runtime.bStreamedInit || Stream.LoadRadius > 0.0f);
+            if (bRunStreamer)
             {
-                DrawNavDebug(Context, Comp);
+                const FNavTileStreamer::FStats Stats =
+                    Comp.Runtime.Streamer.Update(*Comp.Runtime.Mesh, Comp.Tiles, Focus, Stream);
+
+                if (CVarNavDebugLog.GetValue() && (Stats.Added > 0 || Stats.Removed > 0 || Stats.Adopted > 0))
+                {
+                    LOG_INFO("NavMesh streaming: +{} -{} ~{}, {} resident of {} wanted.",
+                        Stats.Added, Stats.Removed, Stats.Adopted, Stats.Resident, Stats.Wanted);
+                }
             }
+        }
+
+        void ConsumeFinishedRebakes(SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // Hot-swap completed per-tile rebakes.
             for (auto& Job : Comp.Runtime.PendingRebakes)
@@ -1816,6 +1831,11 @@ namespace Lumina
                 Algo::RemoveIf(Comp.Runtime.PendingRebakes,
                     [](const TSharedPtr<FNavTileRebake>& J) { return !J || J->bConsumed.load(std::memory_order_acquire); }),
                 Comp.Runtime.PendingRebakes.end());
+        }
+
+        void ScanForChangedSources(const FSystemContext& Context, SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // Held between scans so a long interval still measures real elapsed time.
             Comp.Runtime.DynamicScanTimer = Comp.bDynamicRebuild
@@ -2048,6 +2068,11 @@ namespace Lumina
                 }
                 Comp.Runtime.SettlingTiles.clear();
             }
+        }
+
+        void KickTileRebakes(const FSystemContext& Context, SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
 
             // Cap concurrent rebake jobs; remaining dirty tiles wait for next tick.
             const uint32 MaxConcurrent = (uint32)Math::Max(1, NavSettings().MaxConcurrentTileRebakes);
@@ -2192,8 +2217,41 @@ namespace Lumina
                     Jobs[i]->bDone.store(true, std::memory_order_release);
                 }
             }, ETaskPriority::Background);
+        }
 
-            (void)Entity;
+        void TickComponent(const FSystemContext& Context, ECS::FEntity Entity, SNavMeshComponent& Comp)
+        {
+            LUMINA_PROFILE_SCOPE();
+
+            SyncTransform(Context, Entity, Comp);
+            UpdateAutoBake(Context, Comp);
+
+            if (Comp.bBakeRequested)
+            {
+                Comp.bBakeRequested = false;
+                SNavMeshSystem::RequestBake(Context, Comp);
+            }
+
+            ConsumeFinishedBake(Context, Comp);
+            ConsumeFinishedHydration(Comp);
+            KickHydration(Comp);
+
+            if (!Comp.Runtime.Mesh || !Comp.Runtime.Mesh->IsReady() || Comp.Runtime.State != ENavBakeState::Ready)
+            {
+                return;
+            }
+
+            StreamTiles(Context, Comp);
+
+            // Debug draw runs first so it emits even when later steps early-return.
+            if (CVarNavDrawDebug.GetValue())
+            {
+                DrawNavDebug(Context, Comp);
+            }
+
+            ConsumeFinishedRebakes(Comp);
+            ScanForChangedSources(Context, Comp);
+            KickTileRebakes(Context, Comp);
         }
 
         template<typename TView>
