@@ -37,6 +37,7 @@ namespace Lumina::Physics
         FMatrix4                    EntityToWorld;                  // Entity world matrix (component space -> world).
         SCollisionProfile           FallbackProfile;               // Applied when Asset is null.
         uint32                      CollisionGroupID = 0;           // Unique per ragdoll for parent/child self-collision filtering.
+        FVector3                    InitialLinearVelocity = FVector3(0.0f); // World-space velocity every body starts with, so a moving body keeps its momentum.
     };
 
     // Runtime motor drive mode for a powered Hinge/Slider constraint.

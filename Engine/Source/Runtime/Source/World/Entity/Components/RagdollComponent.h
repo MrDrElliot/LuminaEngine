@@ -44,6 +44,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Ragdoll")
         bool bDriveEntityFromRoot = true;
 
+        /** World-space velocity the bodies start with when the ragdoll is created, so a moving character keeps its momentum. */
+        FVector3 InitialLinearVelocity = FVector3(0.0f);
+
         /** Live ragdoll, created on demand by the ragdoll system. */
         TSharedPtr<FPhysicsRagdollHandle> Ragdoll;
 

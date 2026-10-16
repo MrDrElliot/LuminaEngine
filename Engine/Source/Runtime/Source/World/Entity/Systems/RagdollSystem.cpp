@@ -103,6 +103,7 @@ namespace Lumina
                         Desc.ComponentBoneGlobals = &Globals;
                         Desc.EntityToWorld = EntityToWorld;
                         Desc.CollisionGroupID = Scene->AllocateRagdollGroupID();
+                        Desc.InitialLinearVelocity = Live->InitialLinearVelocity;
 
                         Live->Ragdoll = Scene->CreateRagdoll(Desc);
                         Live->RealizedState = Live->Ragdoll ? ERagdollState::Simulated : ERagdollState::Inactive;

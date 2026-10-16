@@ -267,6 +267,7 @@ namespace Lumina::Physics
             BodyDef.type = b3_dynamicBody;
             BodyDef.position = Box3DUtils::ToB3Vec3(Def.WorldPos);
             BodyDef.rotation = Box3DUtils::ToB3Quat(Math::Normalize(Def.WorldRot));
+            BodyDef.linearVelocity = Box3DUtils::ToB3Vec3(Desc.InitialLinearVelocity);
 
             const b3BodyId BodyId = b3CreateBody(WorldId, &BodyDef);
             if (!b3Body_IsValid(BodyId))
