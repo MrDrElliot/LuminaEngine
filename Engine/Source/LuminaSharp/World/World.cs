@@ -10,7 +10,7 @@ namespace Lumina;
 public unsafe partial class CWorld
 {
     internal ulong WorldHandle => (ulong)Handle.ToInt64();
-    public GameplayMessageBus Messages => new(this);
+    public GameplayMessageBus MessageBus => new(this);
 
     // The world's event queues, for systems that drain them and scripts that send into them.
     public WorldEvents Events => new(this);
