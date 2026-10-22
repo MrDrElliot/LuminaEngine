@@ -552,8 +552,6 @@ namespace Lumina::Physics
         FPendingStaticGroup Request;
         Request.GroupID = NextStaticBodyGroupID++;
         Request.Owner = Owner;
-        SCollisionProfile Profile;
-        Profile.Layer = ECollisionProfiles::Static;
         for (const FStaticInstanceDesc& Instance : Instances)
         {
             FRigidBodyBuildResult Build;
@@ -563,8 +561,8 @@ namespace Lumina::Physics
             Build.BodyDef.rotation = Box3DUtils::ToB3Quat(Instance.Rotation);
             Build.ShapeDef = b3DefaultShapeDef();
             Build.ShapeDef.updateBodyMass = false;
-            Build.ShapeDef.filter = Box3DUtils::MakeShapeFilter(Profile);
-            Build.ShapeDef.userData = Box3DUtils::PackProfileUserData(Profile);
+            Build.ShapeDef.filter = Box3DUtils::MakeShapeFilter(Instance.Profile);
+            Build.ShapeDef.userData = Box3DUtils::PackProfileUserData(Instance.Profile);
             Build.ShapeDef.enableCustomFiltering = Box3DUtils::UsesPermissiveCollisionFilter();
             Build.ShapeDef.invokeContactCreation = false;
             if (Instance.Material)
