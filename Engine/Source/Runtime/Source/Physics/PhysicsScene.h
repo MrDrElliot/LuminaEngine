@@ -122,6 +122,7 @@ namespace Lumina::Physics
         const CPhysicsMaterial* Material = nullptr;
         SCollisionProfile       Profile = { .Layer = ECollisionProfiles::Static };
         bool                    bConvex = true;
+        int32                   SourceIndex = -1;       // Echoed back as SRayResult::InstanceIndex on a hit.
     };
 
     enum class EPhysicsBodyStatus : uint8 { Missing, Pending, Ready, Failed };

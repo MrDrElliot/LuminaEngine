@@ -562,7 +562,7 @@ namespace Lumina::Physics
             Build.ShapeDef = b3DefaultShapeDef();
             Build.ShapeDef.updateBodyMass = false;
             Build.ShapeDef.filter = Box3DUtils::MakeShapeFilter(Instance.Profile);
-            Build.ShapeDef.userData = Box3DUtils::PackProfileUserData(Instance.Profile);
+            Build.ShapeDef.userData = Box3DUtils::PackInstanceIndex(Box3DUtils::PackProfileUserData(Instance.Profile), Instance.SourceIndex);
             Build.ShapeDef.enableCustomFiltering = Box3DUtils::UsesPermissiveCollisionFilter();
             Build.ShapeDef.invokeContactCreation = false;
             if (Instance.Material)

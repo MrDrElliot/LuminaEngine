@@ -38,8 +38,9 @@ namespace Lumina
             Descs.reserve(Foliage.Instances.size());
             bool bSourcesReady = true;
 
-            for (const SFoliageInstance& Inst : Foliage.Instances)
+            for (int32 InstanceIndex = 0; InstanceIndex < (int32)Foliage.Instances.size(); ++InstanceIndex)
             {
+                const SFoliageInstance& Inst = Foliage.Instances[InstanceIndex];
                 if (!Foliage.IsValidType(Inst.TypeIndex))
                 {
                     continue;
@@ -67,6 +68,7 @@ namespace Lumina
                 Desc.Material = Type.PhysicsMaterial.Get();
                 Desc.bConvex  = Type.bConvexCollision;
                 Desc.Profile  = Type.CollisionProfile;
+                Desc.SourceIndex = InstanceIndex;
             }
 
             // A source mesh is still loading; retry next frame without stamping the version.
