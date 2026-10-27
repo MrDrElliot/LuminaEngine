@@ -13,6 +13,8 @@ namespace Lumina
     class CParticleEmitter;
     class CParticleEmitterStack;
     class CParticleModule;
+    class CEdNodeGraph;
+    class CParticleModule_SimulationStage;
     class CParticleSystem;
 
     class FParticleSystemEditorTool : public FAssetEditorTool
@@ -68,7 +70,23 @@ namespace Lumina
         void DrawEmitterAssetMenu(int32 EmitterIndex, CParticleEmitter* Emitter);
         void DrawEmitterSection(int32 EmitterIndex);
         void DrawStackSection(int32 EmitterIndex, EParticleModuleStage Stage, const char* Label);
+        void DrawEmitterMenu(int32 EmitterIndex, CParticleEmitter* Emitter);
+
+        enum class EModuleRowAction : uint8
+        {
+            None,
+            Toggle,
+            MoveUp,
+            MoveDown,
+            Remove,
+        };
+
+        // One module's row, with the stage header look when StageHeader is set and the guide line when it sits in a stage.
+        EModuleRowAction DrawModuleRow(int32 EmitterIndex, CParticleModule* Module, const CParticleModule_SimulationStage* StageHeader,
+                                       bool bInStage, bool bCanMoveUp, bool bCanMoveDown);
         void DrawAddModulePopup(int32 EmitterIndex, EParticleModuleStage Stage);
+        void DrawGridTargetPreview(int32 EmitterIndex);
+        void DrawModuleGraph();
         void DrawSystemProperties();
 
         /** Points the Details panel at an object: the system, an emitter, or a module. */
@@ -108,6 +126,12 @@ namespace Lumina
         CObject*                SelectedObject = nullptr;
         // Non-null only when SelectedObject is a module; the module-specific paths key off this.
         CParticleModule*        SelectedModule = nullptr;
+
+        // The graph module the Module Graph panel shows, kept apart from the selection so picking one of its nodes leaves it open.
+        CParticleModule*        GraphModule = nullptr;
+        int32                   GraphModuleEmitter = 0;
+        CEdNodeGraph*           WiredGraph = nullptr;
+        uint64                  GraphContentVersion = 0;
         // Emitter whose column owns the selection, and the target of the add-module popup.
         int32                   SelectedEmitter = 0;
         FCompilationResultInfo  CompilationResult;
@@ -123,6 +147,11 @@ namespace Lumina
         bool                    bLoopPreview = true;
         bool                    bShowGizmos = true;
         float                   PreviewAge = 0.0f;
+
+        // Paused holds the particles where they are, and a step lets one frame through at PreviewSpeed.
+        bool                    bPreviewPaused = false;
+        bool                    bStepPending = false;
+        float                   PreviewSpeed = 1.0f;
 
         // Emitter the delete button asked to remove; applied after the column loop. Removing mid-loop
         // would shift every later column's index out from under the emitter it is drawing.

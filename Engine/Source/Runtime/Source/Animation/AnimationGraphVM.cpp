@@ -772,7 +772,7 @@ namespace Lumina
             if (Inert.bActive && Inert.Duration > 1e-5f)
             {
                 const float U = Math::Clamp(Inert.Elapsed / Inert.Duration, 0.0f, 1.0f);
-                const float Decay = 1.0f - U * U * U * (U * (U * 6.0f - 15.0f) + 10.0f);
+                const float Decay = InertializationDecay(U);
                 for (SIZE_T i = 0; i < NumCurves; ++i)
                 {
                     D[i] += Inert.CurveOffsets[i] * Decay;

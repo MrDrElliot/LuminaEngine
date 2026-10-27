@@ -15,6 +15,7 @@
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 
 namespace Lumina
 {
@@ -98,6 +99,16 @@ namespace Lumina
 
         // Resolves the machine's live From/Current pair onto a transition and its blend weight.
         void UpdateDebugTransition(class CAnimStateMachineGraph* SMGraph, const struct FAnimGraphVMState& VMState);
+
+        // Copies this frame's live values into the view node previews read, and extends every value's history.
+        void UpdateDebugView(const FAnimGraphVMState* VMState);
+        void UpdateMachineStatuses(CEdNodeGraph* Graph, const FAnimGraphVMState& VMState);
+
+        // A state's blend tree supplies the result only while that state, and every state above it, is current.
+        float ResolveDisplayedRootWeight() const;
+
+        // How the offset at a transition's switch eases out, with the live progress when it is the one blending.
+        void DrawTransitionBlend(CAnimStateTransition* Transition);
 
         // Dropdown choosing the debug overlay's source: the editor preview, or any live
         // entity (across worlds) whose anim component uses this graph asset.
@@ -198,8 +209,13 @@ namespace Lumina
 
         // Captured per compile: maps editor pins to VM registers and State nodes to runtime
         // slots. Refreshed every frame by auto-compile, so pin pointers stay valid.
-        THashMap<const CEdNodeGraphPin*, uint16> DebugPinRegisters;
+        FAnimGraphDebugView                      DebugView;
         TVector<FAnimGraphDebugStateNode>        DebugStateNodes;
+        THashMap<FName, FAnimValueHistory>       CurveHistories;
+
+        // The transition blending right now and how far along it is, for the transition panel's plot.
+        CAnimStateTransition*                    DebugTransition = nullptr;
+        float                                    DebugTransitionWeight = 0.0f;
 
         // Per-frame overlay payload handed to the displayed graph; kept alive as
         // members so the pointers in FGraphDebugContext stay valid during draw.

@@ -22,7 +22,14 @@ namespace Lumina
     {
         Spawn,
         Update,
+        // The current simulation stage, run once per grid cell with Cell, Coord, UV and WorldPos in scope.
+        Grid,
+        // The render target pass, run once per texel with the sampled Cell and the Color it writes in scope.
+        Target,
     };
+
+    // Floats one grid cell can hold, kept small since every stage carries a whole cell in registers.
+    inline constexpr int32 kParticleGridMaxChannels = 16;
 
     /** Resolved input pin value; Value is an HLSL expression (literal default or upstream variable name). */
     struct FParticleInputValue
@@ -43,6 +50,9 @@ namespace Lumina
         FParticleCompiler() = default;
 
         FString BuildShader() const;
+
+        // Splices the generated stacks into Source, which BuildShader reads from ParticleSimulateTemplate.slang.
+        FString ExpandTemplate(FString Source) const;
 
         //~ Module parameter block ------------------------------------------------------------------
         //
@@ -142,17 +152,26 @@ namespace Lumina
         void EmitUpdate(const FString& Line) { UpdateChunks += "\t" + Line + "\n"; }
 
         /** Emits into the given context regardless of the current context. */
-        void Emit(EParticleContext Context, const FString& Line)
-        {
-            if (Context == EParticleContext::Spawn)
-            {
-                SpawnChunks += "\t" + Line + "\n";
-            }
-            else
-            {
-                UpdateChunks += "\t" + Line + "\n";
-            }
-        }
+        void Emit(EParticleContext Context, const FString& Line);
+
+        // Declares a grid channel by name, shared with every module naming the same one, and returns its index constant.
+        FString GridChannel(const FName& Name);
+
+        // Zero when nothing declared a channel, which means the emitter has no grid.
+        uint32 GetGridChannelCount() const { return (uint32)GridChannels.size(); }
+        const TVector<FString>& GetGridChannelNames() const { return GridChannels; }
+
+        // Declares an array a script fills with SParticleSystemComponent::SetArray, and returns its index constant.
+        FString ArrayInput(const FName& Name);
+        const TVector<FString>& GetArrayNames() const { return Arrays; }
+
+        // Asks the renderer to bucket particles by cell after every step, for GatherNeighbors and NeighborAt.
+        void UseNeighborGrid() { bNeighborGrid = true; }
+        bool UsesNeighborGrid() const { return bNeighborGrid; }
+
+        // Starts a simulation stage, which the renderer dispatches Iterations times per step.
+        void BeginGridStage(int32 Iterations);
+        const TVector<int32>& GetGridStageIterations() const { return GridStageIterations; }
 
         /** Emits into the currently active context. */
         void EmitCurrent(const FString& Line) { Emit(CurrentContext, Line); }
@@ -168,6 +187,8 @@ namespace Lumina
         /** Scalar / float3 / float4 coercion helpers. Used by nodes that need a specific type. */
         static FString Coerce(const FParticleInputValue& Value, EParticlePinType Target);
         static FString TypeName(EParticlePinType Type);
+        static int32 Width(EParticlePinType Type);
+        static EParticlePinType TypeOfWidth(int32 Width);
 
         /** Ensures a node is emitted in the given context, running GenerateDefinition on first call. Idempotent. */
         void EnsureEmitted(CParticleGraphNode* Node, EParticleContext Context);
@@ -186,6 +207,12 @@ namespace Lumina
 
         FString SpawnChunks;
         FString UpdateChunks;
+        TVector<FString> GridStageChunks;
+        TVector<int32>   GridStageIterations;
+        FString          TargetChunks;
+        TVector<FString> GridChannels;
+        TVector<FString> Arrays;
+        bool             bNeighborGrid = false;
 
         struct FAttributeDecl
         {

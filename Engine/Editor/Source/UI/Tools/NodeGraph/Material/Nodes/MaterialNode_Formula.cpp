@@ -65,6 +65,82 @@ namespace Lumina
 // A shape's signed distance $_D, negative inside, made a mask with an edge Softness wide.
 #define LUMINA_SHAPE_EDGE "\nfloat $ = saturate(0.5 - $_D / max({Softness}, 1e-5));"
 
+    FString FormulaVectorType(int32 Width)
+    {
+        switch (Width)
+        {
+        case 2:  return "float2";
+        case 3:  return "float3";
+        case 4:  return "float4";
+        default: return "float";
+        }
+    }
+
+    FString ReadFormulaInput(const FString& Expr, int32 Width, int32 Target)
+    {
+        if (Width == Target)
+        {
+            return "(" + Expr + ")";
+        }
+        if (Width == 1)
+        {
+            return FormulaVectorType(Target) + "(" + Expr + ")";
+        }
+        if (Width > Target)
+        {
+            return "(" + Expr + ")." + FString("xyzw").substr(0, Target);
+        }
+
+        FString Padded = FormulaVectorType(Target) + "(" + Expr;
+        for (int32 Component = Width; Component < Target; ++Component)
+        {
+            Padded += ", 0.0";
+        }
+        return Padded + ")";
+    }
+
+    FString ExpandFormula(const FMaterialFormula& Formula, const FString& Prefix, TSpan<const TPair<FString, int32>> Inputs, int32 SharedWidth)
+    {
+        // A placeholder is {Name} with nothing else inside the braces, so a block's braces pass through untouched.
+        const std::string_view Code = Formula.Code;
+        FString Expanded;
+        for (size_t Cursor = 0; Cursor < Code.size(); ++Cursor)
+        {
+            if (Code[Cursor] == '$')
+            {
+                Expanded += Prefix;
+                continue;
+            }
+
+            const size_t Close = Code[Cursor] == '{' ? Code.find('}', Cursor) : std::string_view::npos;
+            const std::string_view Name = Close != std::string_view::npos ? Code.substr(Cursor + 1, Close - Cursor - 1) : std::string_view();
+            if (Name == "T")
+            {
+                Expanded += FormulaVectorType(SharedWidth);
+                Cursor = Close;
+                continue;
+            }
+
+            bool bReplaced = false;
+            for (size_t Index = 0; Index < Inputs.size() && Index < Formula.Inputs.size() && !Name.empty(); ++Index)
+            {
+                if (Name == Formula.Inputs[Index].Name)
+                {
+                    const int32 Target = Formula.Inputs[Index].Width == 0 ? SharedWidth : Formula.Inputs[Index].Width;
+                    Expanded += ReadFormulaInput(Inputs[Index].first, Inputs[Index].second, Target);
+                    Cursor    = Close;
+                    bReplaced = true;
+                    break;
+                }
+            }
+            if (!bReplaced)
+            {
+                Expanded += Code[Cursor];
+            }
+        }
+        return Expanded;
+    }
+
     const FMaterialFormula& CMaterialExpression_Formula::GetFormula() const
     {
         static constexpr FMaterialFormula Empty = { "Formula", "Math", "", TSpan<const FMaterialFormulaPin>(), 1, "float $ = 0.0;" };

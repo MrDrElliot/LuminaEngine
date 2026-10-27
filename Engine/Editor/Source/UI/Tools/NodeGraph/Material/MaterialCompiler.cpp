@@ -270,14 +270,7 @@ namespace Lumina
 
 	static FString GetVectorType(int32 ComponentCount)
 	{
-		switch (ComponentCount)
-		{
-			case 1: return "float";
-			case 2: return "float2";
-			case 3: return "float3";
-			case 4: return "float4";
-			default: return "float";
-		}
+		return FormulaVectorType(ComponentCount);
 	}
 
 	static EComponentMask GetMaskFromComponentCount(int32 Count)
@@ -3994,29 +3987,6 @@ namespace Lumina
 		return Text.find_first_of(".en") == FString::npos ? Text + ".0" : Text;
 	}
 
-	static FString ReadAtWidth(const FString& Expr, int32 Width, int32 Target)
-	{
-		if (Width == Target)
-		{
-			return "(" + Expr + ")";
-		}
-		if (Width == 1)
-		{
-			return GetVectorType(Target) + "(" + Expr + ")";
-		}
-		if (Width > Target)
-		{
-			return "(" + Expr + ")." + FString("xyzw").substr(0, Target);
-		}
-
-		FString Padded = GetVectorType(Target) + "(" + Expr;
-		for (int32 Component = Width; Component < Target; ++Component)
-		{
-			Padded += ", 0.0";
-		}
-		return Padded + ")";
-	}
-
 	void FMaterialCompiler::EmitFormula(CMaterialGraphNode* Node, const FMaterialFormula& Formula, const TVector<float>& Values)
 	{
 		const FString Prefix = GetCurrentInlinePrefix() + Node->GetNodeFullName();
@@ -4045,43 +4015,7 @@ namespace Lumina
 			Reads.emplace_back(Expr, Width);
 		}
 
-		// A placeholder is {Name} with nothing else inside the braces, so a block's braces pass through untouched.
-		const std::string_view Code = Formula.Code;
-		FString Expanded;
-		for (size_t Cursor = 0; Cursor < Code.size(); ++Cursor)
-		{
-			if (Code[Cursor] == '$')
-			{
-				Expanded += Prefix;
-				continue;
-			}
-
-			const size_t Close = Code[Cursor] == '{' ? Code.find('}', Cursor) : std::string_view::npos;
-			const std::string_view Name = Close != std::string_view::npos ? Code.substr(Cursor + 1, Close - Cursor - 1) : std::string_view();
-			if (Name == "T")
-			{
-				Expanded += GetVectorType(SharedWidth);
-				Cursor = Close;
-				continue;
-			}
-
-			bool bReplaced = false;
-			for (size_t Index = 0; Index < Reads.size() && !Name.empty(); ++Index)
-			{
-				if (Name == Formula.Inputs[Index].Name)
-				{
-					const int32 Target = Formula.Inputs[Index].Width == 0 ? SharedWidth : Formula.Inputs[Index].Width;
-					Expanded += ReadAtWidth(Reads[Index].first, Reads[Index].second, Target);
-					Cursor    = Close;
-					bReplaced = true;
-					break;
-				}
-			}
-			if (!bReplaced)
-			{
-				Expanded += Code[Cursor];
-			}
-		}
+		const FString Expanded = ExpandFormula(Formula, Prefix, TSpan<const TPair<FString, int32>>(Reads.data(), Reads.size()), SharedWidth);
 
 		const bool bRejected = (Formula.Limit == EMaterialFormulaLimit::PixelOnly && !RequirePixelStage(Node, FString(Formula.Name.data())))
 		                    || (Formula.Limit == EMaterialFormulaLimit::NoUI && RejectInUI(Node, Formula.Name.data()));

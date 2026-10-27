@@ -21,6 +21,8 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        bool HasPreview() const override { return BlendSpace.IsValid(); }
+        void DrawPreview(const FAnimGraphDebugView* View) override;
 
         /** Blend space sampled by this node. */
         PROPERTY(Editable, Category = "Animation")

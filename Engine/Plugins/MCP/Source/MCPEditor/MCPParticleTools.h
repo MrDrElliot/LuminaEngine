@@ -3,6 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "MCPMaterialTools.h"
 
 #include "MCPParticleTools.generated.h"
 
@@ -23,7 +24,7 @@ namespace Lumina
         PROPERTY()
         FString Category;
 
-        // Spawn modules run once per particle at birth, Update modules every frame after.
+        // Spawn runs once per particle at birth and Update every frame after, Grid on every grid cell and Target on every render target texel.
         PROPERTY()
         FString Stage;
 
@@ -109,6 +110,13 @@ namespace Lumina
 
         PROPERTY()
         TVector<SParticleModuleInfo> UpdateModules;
+
+        // Simulation Stage modules among these start a new pass over the grid.
+        PROPERTY()
+        TVector<SParticleModuleInfo> GridModules;
+
+        PROPERTY()
+        TVector<SParticleModuleInfo> TargetModules;
     };
 
     REFLECT()
@@ -320,7 +328,7 @@ namespace Lumina
         PROPERTY()
         int32 Emitter = 0;
 
-        // Spawn or Update.
+        // Spawn, Update, Grid or Target.
         PROPERTY()
         FString Stage;
 
@@ -372,6 +380,187 @@ namespace Lumina
 
         PROPERTY(RawJson)
         FString Value;
+    };
+
+    // Addresses a Graph Module by the Stage and Index the stack tools use.
+    REFLECT()
+    struct MCPEDITOR_API SParticleGraphParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString System;
+
+        PROPERTY()
+        int32 Emitter = 0;
+
+        PROPERTY()
+        FString Stage;
+
+        PROPERTY()
+        int32 Index = 0;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SParticleGraphResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        TVector<SMaterialNodeInfo> Nodes;
+
+        // Node types particle.graph_add_node takes, including one per material formula.
+        PROPERTY()
+        TVector<FString> NodeTypes;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAddParticleGraphNodeParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString System;
+
+        PROPERTY()
+        int32 Emitter = 0;
+
+        PROPERTY()
+        FString Stage;
+
+        PROPERTY()
+        int32 Index = 0;
+
+        // A node name from particle.graph_describe's NodeTypes, such as Particle, Set Particle or a formula such as Inverse Lerp.
+        PROPERTY()
+        FString NodeType;
+
+        PROPERTY()
+        float X = 0.0f;
+
+        PROPERTY()
+        float Y = 0.0f;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAddParticleGraphNodeResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int64 Id = 0;
+
+        PROPERTY()
+        TVector<SGraphPinInfo> Pins;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SConnectParticleGraphParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString System;
+
+        PROPERTY()
+        int32 Emitter = 0;
+
+        PROPERTY()
+        FString Stage;
+
+        PROPERTY()
+        int32 Index = 0;
+
+        PROPERTY()
+        int64 FromNode = 0;
+
+        PROPERTY()
+        FString FromPin;
+
+        PROPERTY()
+        int64 ToNode = 0;
+
+        PROPERTY()
+        FString ToPin;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSetParticleGraphNodePropertyParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString System;
+
+        PROPERTY()
+        int32 Emitter = 0;
+
+        PROPERTY()
+        FString Stage;
+
+        PROPERTY()
+        int32 Index = 0;
+
+        PROPERTY()
+        int64 Node = 0;
+
+        // Field path on the node, such as Channel or Value.Constant.
+        PROPERTY()
+        FString Path;
+
+        PROPERTY(RawJson)
+        FString Value;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSetParticleArrayParams
+    {
+        GENERATED_BODY()
+
+        // An entity with a particle system component, in the scene editor.target_scene points at.
+        PROPERTY()
+        FString Entity;
+
+        // The array name modules declare, such as a Spawn From Array module's Positions.
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        TVector<FVector4> Values;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSampleParticleGridParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Entity;
+
+        PROPERTY()
+        int32 Emitter = 0;
+
+        PROPERTY()
+        FString Channel;
+
+        PROPERTY()
+        FVector3 Position = FVector3(0.0f);
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SSampleParticleGridResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        float Value = 0.0f;
+
+        // False until a copy of the grid has come back, which needs Read Back Grid on the emitter and a few frames.
+        PROPERTY()
+        bool bHasSnapshot = false;
+
+        PROPERTY()
+        TVector<FString> Channels;
     };
 
     REFLECT()

@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
 #include "World/Scene/RenderScene/SunShadowMath.h"
+#include "Assets/AssetTypes/Textures/TextureRenderTarget.h"
 
 #include <bit>
 
@@ -1636,6 +1637,29 @@ namespace Lumina
 
             CParticleSystem* PS = Component.ParticleSystem.Get();
 
+            // A grid copy replaces only that emitter's last one, since a frame with no new copy keeps the old.
+            if (auto Grids = ParticleGridResults.find(Entity); Grids != ParticleGridResults.end())
+            {
+                for (FParticleGridSnapshot& Snapshot : Grids->second)
+                {
+                    if (PS != nullptr && Snapshot.EmitterIndex < (int32)PS->Emitters.size() && PS->Emitters[Snapshot.EmitterIndex] != nullptr)
+                    {
+                        Snapshot.ChannelNames = PS->Emitters[Snapshot.EmitterIndex]->GridChannelNames;
+                    }
+
+                    auto Existing = Algo::FindIf(Component.GridSnapshots, [&](const FParticleGridSnapshot& Old) { return Old.EmitterIndex == Snapshot.EmitterIndex; });
+                    if (Existing != Component.GridSnapshots.end())
+                    {
+                        *Existing = Move(Snapshot);
+                    }
+                    else
+                    {
+                        Component.GridSnapshots.push_back(Move(Snapshot));
+                    }
+                }
+                ParticleGridResults.erase(Grids);
+            }
+
             const bool bForceBurst = Component.bForceBurst;
             const bool bForceReset = Component.bForceReset;
             Component.bForceBurst = false;
@@ -1702,6 +1726,14 @@ namespace Lumina
                 Item.AttributeFloatCount = 1u;
                 Item.Resolved            = FResolvedParticleParams{};
                 Item.ModuleParamValues.clear();
+                Item.GridChannels        = 0u;
+                Item.GridStageIterations.clear();
+                Item.GridTargetSlot      = RHI::kInvalidHeapSlot;
+                Item.GridTargetExtent    = FUIntVector2(0u);
+                Item.bReadBackGrid       = false;
+                Item.ArrayData.clear();
+                Item.ArrayRanges.clear();
+                Item.NeighborResolution  = 0u;
 
                 Item.Entity              = Entity;
                 Item.EmitterIndex        = EmitterIdx;
@@ -1750,6 +1782,44 @@ namespace Lumina
                         {
                             Item.RenderAttrSlots[A] = Emitter->GetRenderAttributeSlot((ParticleRenderAttribute::Type)A);
                         }
+
+                        for (const FName& ArrayName : Emitter->ArrayNames)
+                        {
+                            const auto Input = Algo::FindIf(Component.ArrayInputs, [&](const FParticleArrayInput& Candidate) { return Candidate.Name == ArrayName; });
+                            const uint32 Count = Input != Component.ArrayInputs.end() ? (uint32)Input->Values.size() : 0u;
+                            Item.ArrayRanges.push_back(FUIntVector2((uint32)Item.ArrayData.size(), Count));
+                            if (Count > 0u)
+                            {
+                                Item.ArrayData.insert(Item.ArrayData.end(), Input->Values.begin(), Input->Values.end());
+                            }
+                        }
+
+                        if (Emitter->bUsesNeighborGrid)
+                        {
+                            Item.NeighborResolution = (uint32)Math::Clamp(Emitter->NeighborGridResolution, 1, 64);
+                            Item.NeighborsPerCell   = (uint32)Math::Clamp(Emitter->NeighborsPerCell, 1, 32);
+                            Item.NeighborCellSize   = Math::Max(Emitter->NeighborCellSize, 0.01f);
+                        }
+
+                        Item.GridChannels = Emitter->GridChannelCount;
+                        if (Item.GridChannels > 0u)
+                        {
+                            Item.GridResolution      = FUIntVector2((uint32)Math::Clamp(Emitter->GridWidth, 1, ParticleGridMaxResolution),
+                                                                    (uint32)Math::Clamp(Emitter->GridHeight, 1, ParticleGridMaxResolution));
+                            Item.GridWorldSize       = Emitter->GridWorldSize;
+                            Item.bGridWraps          = Emitter->bGridWraps;
+                            Item.GridStageIterations = Emitter->GridStageIterations;
+                            Item.bReadBackGrid       = Emitter->bReadBackGrid;
+
+                            // Sized from the image itself, since an edited Width or Height waits for a rebuild to reach it.
+                            const CTextureRenderTarget* Target = Emitter->GridRenderTarget.Get();
+                            if (Target != nullptr && Target->GetTextureResource().NewTexture.IsValid())
+                            {
+                                const RHI::FManagedTexture& Image = Target->GetTextureResource().NewTexture;
+                                Item.GridTargetSlot   = RHI::Textures::StorageSlot(Image, 0);
+                                Item.GridTargetExtent = FUIntVector2(RHI::GetTextureDesc(Image.Texture).Dimension);
+                            }
+                        }
                     }
                     if (CTexture* Tex = Emitter->Texture.Get())
                     {
@@ -1787,6 +1857,7 @@ namespace Lumina
 
         // Whatever no component claimed belongs to one that is gone.
         ParticleCollisionResults.clear();
+        ParticleGridResults.clear();
     }
 
     const SEnvironmentComponent* FDefaultSceneRenderer::ExtractEnvironment(ECS::FRegistry& Registry, FFrameData& Frame)

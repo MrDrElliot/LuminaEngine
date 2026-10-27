@@ -33,6 +33,7 @@
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateTransition.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_State.h"
+#include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_StateMachine.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_StateRouting.h"
 #include "World/WorldManager.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
@@ -272,6 +273,10 @@ namespace Lumina
         // Covers the top graph plus any nested state machine or blend-tree canvas that was opened.
         for (CEdNodeGraph* Graph : InitializedGraphs)
         {
+            if (CAnimationGraphNodeGraph* BlendTree = Cast<CAnimationGraphNodeGraph>(Graph))
+            {
+                BlendTree->SetDebugView(nullptr);
+            }
             if (Graph != nullptr)
             {
                 Graph->Shutdown();
@@ -565,6 +570,11 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
+        if (World.IsValid() && World->GetRenderer() != nullptr)
+        {
+            World->GetRenderSettings().bDrawBillboards = false;
+        }
+
         // The skeleton is often assigned after the tool is open, so pick it up here too.
         SyncPreviewMesh();
 
@@ -764,6 +774,11 @@ namespace Lumina
             DrawOutgoingTransitionsForState(StateNode);
         }
 
+        if (SelectedTransition != nullptr)
+        {
+            DrawTransitionBlend(SelectedTransition);
+        }
+
         if (!CompilationLog.empty())
         {
             ImGui::Separator();
@@ -908,30 +923,18 @@ namespace Lumina
             return;
         }
 
-        const FAnimGraphVMState* VMState = nullptr;
-        CWorld* TargetWorld = nullptr;
-        ECS::FEntity TargetEntity = ECS::NullEntity;
-        if (ResolveDebugTarget(TargetWorld, TargetEntity))
+        for (const FName& Name : Graph->CurveNames)
         {
-            if (SAnimationGraphComponent* Comp = TargetWorld->TryGetComponent<SAnimationGraphComponent>(TargetEntity))
+            auto It = CurveHistories.find(Name);
+            if (It == CurveHistories.end() || It->second.empty())
             {
-                VMState = &Comp->VMState;
+                ImGui::TextDisabled("%s", Name.c_str());
+                continue;
             }
-        }
 
-        for (int32 i = 0; i < (int32)Graph->CurveNames.size(); ++i)
-        {
-            const bool bHasValue = VMState != nullptr && i < (int32)VMState->CurveValues.size();
-            if (bHasValue)
-            {
-                ImGui::Text("%s", Graph->CurveNames[i].c_str());
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.6f);
-                ImGui::Text("%.3f", VMState->CurveValues[i]);
-            }
-            else
-            {
-                ImGui::TextDisabled("%s", Graph->CurveNames[i].c_str());
-            }
+            ImGui::TextUnformatted(Name.c_str());
+            AnimDebugDraw::Plot(It->second, ImVec2(ImGui::GetContentRegionAvail().x, 46.0f), EditorColors::U32(EditorColors::Accent()));
+            ImGui::Spacing();
         }
     }
 
@@ -1023,8 +1026,9 @@ namespace Lumina
         }
 
         // Lets the debug overlay read live VM values back onto the graph, re-run every frame.
-        DebugPinRegisters = Compiler.GetPinRegisters();
-        DebugStateNodes   = Compiler.GetDebugStateNodes();
+        DebugView.PinRegisters = Compiler.GetPinRegisters();
+        DebugView.Playheads    = Compiler.GetDebugPlayheads();
+        DebugStateNodes        = Compiler.GetDebugStateNodes();
 
         if (bMarkPackageDirty)
         {
@@ -1038,6 +1042,7 @@ namespace Lumina
     {
         DebugPinValues.clear();
         DebugActiveNodes.clear();
+        DebugTransition = nullptr;
 
         CEdNodeGraph* Graph = GraphStack.empty() ? nullptr : GraphStack.back().Graph;
         if (Graph == nullptr)
@@ -1049,12 +1054,6 @@ namespace Lumina
         if (SMGraph != nullptr)
         {
             SMGraph->SetDebugTransition(nullptr, 0.0f);
-        }
-
-        if (!bDebugEnabled)
-        {
-            Graph->ClearDebugContext();
-            return;
         }
 
         CWorld* TargetWorld = nullptr;
@@ -1071,19 +1070,6 @@ namespace Lumina
 
         if (VMState != nullptr)
         {
-            // Live scalar values onto value pins.
-            const TVector<float>& Scalars = VMState->ScalarRegisters;
-            for (const auto& [Pin, Reg] : DebugPinRegisters)
-            {
-                CAnimGraphPin* AnimPin = Cast<CAnimGraphPin>(const_cast<CEdNodeGraphPin*>(Pin));
-                if (AnimPin == nullptr || AnimPin->GetPinType() != EAnimPinType::Value || Reg >= Scalars.size())
-                {
-                    continue;
-                }
-
-                DebugPinValues[const_cast<CEdNodeGraphPin*>(Pin)] = Format("{:.2f}", Scalars[Reg]);
-            }
-
             // Highlight whichever State node the VM is currently in.
             const TVector<float>& Slots = VMState->StateSlots;
             for (const FAnimGraphDebugStateNode& Entry : DebugStateNodes)
@@ -1101,12 +1087,166 @@ namespace Lumina
             }
         }
 
+        // Node previews and the transition plot read live values whether or not the overlay is on.
+        UpdateDebugView(VMState);
+        CAnimationGraphNodeGraph* BlendTree = Cast<CAnimationGraphNodeGraph>(Graph);
+        if (BlendTree != nullptr)
+        {
+            BlendTree->SetDebugView(&DebugView);
+        }
+
+        if (!bDebugEnabled)
+        {
+            Graph->ClearDebugContext();
+            return;
+        }
+
+        if (VMState != nullptr)
+        {
+            // An input shows its value in its own editor, so only outputs get one beside the pin.
+            for (const auto& [Pin, Reg] : DebugView.PinRegisters)
+            {
+                const CAnimGraphPin* AnimPin = Cast<CAnimGraphPin>(Pin);
+                if (AnimPin != nullptr && !AnimPin->bInputPin && AnimPin->GetPinType() == EAnimPinType::Value && Reg < DebugView.Scalars.size())
+                {
+                    DebugPinValues[const_cast<CEdNodeGraphPin*>(Pin)] = Format("{:.2f}", DebugView.Scalars[Reg]);
+                }
+            }
+
+            if (SMGraph != nullptr && DebugTransition != nullptr)
+            {
+                SMGraph->SetDebugTransition(DebugTransition, DebugTransitionWeight);
+            }
+
+            if (BlendTree != nullptr)
+            {
+                BlendTree->ComputePoseWeights(DebugView, ResolveDisplayedRootWeight());
+            }
+        }
+
         CEdNodeGraph::FGraphDebugContext Context;
         Context.bEnabled    = true;
-        Context.bFlowLinks  = true;
         Context.PinValues   = &DebugPinValues;
         Context.ActiveNodes = &DebugActiveNodes;
         Graph->SetDebugContext(Context);
+    }
+
+    void FAnimationGraphEditorTool::UpdateDebugView(const FAnimGraphVMState* VMState)
+    {
+        DebugView.bLive = VMState != nullptr;
+        DebugView.bShowWeights = bDebugEnabled && VMState != nullptr;
+        DebugView.NodeWeights.clear();
+        DebugView.Machines.clear();
+        if (VMState == nullptr)
+        {
+            return;
+        }
+
+        DebugView.Scalars = VMState->ScalarRegisters;
+
+        erase_if(DebugView.Histories, [this](const auto& Pair) { return !DebugView.PinRegisters.contains(Pair.first); });
+        for (const auto& [Pin, Reg] : DebugView.PinRegisters)
+        {
+            const CAnimGraphPin* AnimPin = Cast<CAnimGraphPin>(Pin);
+            if (AnimPin == nullptr || AnimPin->bInputPin || AnimPin->GetPinType() != EAnimPinType::Value || Reg >= DebugView.Scalars.size())
+            {
+                continue;
+            }
+
+            FAnimValueHistory& History = DebugView.Histories[Pin];
+            History.set_capacity(kAnimValueHistoryLength);
+            History.push_back(DebugView.Scalars[Reg]);
+        }
+
+        if (const CAnimationGraph* AssetGraph = Cast<CAnimationGraph>(Asset.Get()))
+        {
+            for (size_t Index = 0; Index < AssetGraph->CurveNames.size() && Index < VMState->CurveValues.size(); ++Index)
+            {
+                FAnimValueHistory& History = CurveHistories[AssetGraph->CurveNames[Index]];
+                History.set_capacity(kAnimValueHistoryLength);
+                History.push_back(VMState->CurveValues[Index]);
+            }
+        }
+
+        if (!GraphStack.empty())
+        {
+            UpdateMachineStatuses(GraphStack.back().Graph, *VMState);
+        }
+    }
+
+    void FAnimationGraphEditorTool::UpdateMachineStatuses(CEdNodeGraph* Graph, const FAnimGraphVMState& VMState)
+    {
+        const TVector<float>& Slots = VMState.StateSlots;
+        for (const TStrongObjectPtr<CEdGraphNode>& NodeRef : Graph->Nodes)
+        {
+            CAnimGraphNode_StateMachine* Machine = Cast<CAnimGraphNode_StateMachine>(NodeRef.Get());
+            if (Machine == nullptr)
+            {
+                continue;
+            }
+
+            const CEdNodeGraph* MachineGraph = Machine->GetEnterableSubGraph();
+            FAnimMachineStatus Status;
+            bool bFound = false;
+            for (const FAnimGraphDebugStateNode& Entry : DebugStateNodes)
+            {
+                const CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(Entry.Node);
+                if (State == nullptr || Entry.Node->GetOwningGraph() != MachineGraph || Entry.CurrentStateSlot >= Slots.size() || Entry.FromStateSlot >= Slots.size())
+                {
+                    continue;
+                }
+
+                if ((int32)(Slots[Entry.CurrentStateSlot] + 0.5f) == Entry.StateIndex)
+                {
+                    Status.Current = State->GetStateLabel();
+                    bFound = true;
+                }
+
+                // Negative means settled on one state, so nothing is blending.
+                if (Slots[Entry.FromStateSlot] >= 0.0f && (int32)(Slots[Entry.FromStateSlot] + 0.5f) == Entry.StateIndex)
+                {
+                    Status.From = State->GetStateLabel();
+                }
+
+                if (Entry.MachineIndex < VMState.Inertializers.size())
+                {
+                    const FAnimInertializer& Inert = VMState.Inertializers[Entry.MachineIndex];
+                    Status.Blend = Inert.bActive && Inert.Duration > 1e-5f ? Math::Clamp(Inert.Elapsed / Inert.Duration, 0.0f, 1.0f) : 1.0f;
+                }
+            }
+
+            if (bFound)
+            {
+                DebugView.Machines[Machine] = Status;
+            }
+        }
+    }
+
+    float FAnimationGraphEditorTool::ResolveDisplayedRootWeight() const
+    {
+        for (size_t Level = 1; Level < GraphStack.size(); ++Level)
+        {
+            for (const TStrongObjectPtr<CEdGraphNode>& NodeRef : GraphStack[Level - 1].Graph->Nodes)
+            {
+                const CAnimGraphNode_State* State = Cast<CAnimGraphNode_State>(NodeRef.Get());
+                if (State != nullptr && State->BlendTree.Get() == GraphStack[Level].Graph && !DebugActiveNodes.contains(State))
+                {
+                    return 0.0f;
+                }
+            }
+        }
+        return 1.0f;
+    }
+
+    void FAnimationGraphEditorTool::DrawTransitionBlend(CAnimStateTransition* Transition)
+    {
+        ImGui::Spacing();
+        ImGui::SeparatorText("Blend");
+        const TOptional<float> Elapsed = DebugTransition == Transition ? TOptional<float>(DebugTransitionWeight * Transition->BlendDuration) : TOptional<float>();
+        AnimDebugDraw::SeamDecay(Transition->BlendDuration, Elapsed, ImGui::GetContentRegionAvail().x);
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+        ImGui::TextWrapped("The new state plays at full weight from the switch. What eases out is the offset between the two poses, over Blend Duration.");
+        ImGui::PopStyleColor();
     }
 
     void FAnimationGraphEditorTool::UpdateDebugTransition(CAnimStateMachineGraph* SMGraph, const FAnimGraphVMState& VMState)
@@ -1167,7 +1307,8 @@ namespace Lumina
         const FAnimInertializer& Inert = VMState.Inertializers[MachineIndex];
         const float Weight = Inert.Duration > 1e-5f ? Inert.Elapsed / Inert.Duration : 1.0f;
 
-        SMGraph->SetDebugTransition(Active, Weight);
+        DebugTransition       = Active;
+        DebugTransitionWeight = Weight;
     }
 
     void FAnimationGraphEditorTool::DrawDebugTargetCombo()

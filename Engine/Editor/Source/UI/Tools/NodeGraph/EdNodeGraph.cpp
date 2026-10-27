@@ -1263,6 +1263,32 @@ namespace Lumina
         }
     }
 
+    void CEdNodeGraph::DrawNodePreview(CEdGraphNode* Node, FGraphNodeBuilder& Builder)
+    {
+        if (!HasNodePreview(Node))
+        {
+            return;
+        }
+
+        Builder.Footer();
+        if (Node->bShowPreview)
+        {
+            // A full-width row of its own, since the node's vertical layout re-aligns a narrower item by moving vertices it drew.
+            ImGui::BeginHorizontal("Preview");
+            ImGui::Spring(1.0f, 0.0f);
+            DrawNodePreviewContent(Node);
+            ImGui::Spring(1.0f, 0.0f);
+            ImGui::EndHorizontal();
+        }
+
+        if (Builder.ExpandToggle(Node->bShowPreview))
+        {
+            SetPendingEditLabel(Node->bShowPreview ? FName("Hide Node Preview") : FName("Show Node Preview"));
+            Node->bShowPreview = !Node->bShowPreview;
+            NotifyCosmeticChange();
+        }
+    }
+
     void CEdNodeGraph::CollectLinks(TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& OutLinks) const
     {
         OutLinks.clear();
@@ -1365,7 +1391,7 @@ namespace Lumina
             }
 
             // This node reaches no output, so the compiler never emits it, and it costs nothing when connected.
-            const bool bDeadNode = !ContributingNodes.empty() && !ContributingNodes.contains(Node);
+            const bool bDeadNode = (!ContributingNodes.empty() && !ContributingNodes.contains(Node)) || IsNodeIdle(Node);
             if (bDeadNode)
             {
                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.4f);
@@ -2462,9 +2488,13 @@ namespace Lumina
         }
     }
 
-    CEdGraphNode* CEdNodeGraph::CreateNode(CClass* NodeClass)
+    CEdGraphNode* CEdNodeGraph::CreateNode(CClass* NodeClass, FName Variant)
     {
         CEdGraphNode* NewNode = NewObject<CEdGraphNode>(NodeClass, GetNodeOuter());
+        if (!Variant.IsNone())
+        {
+            NewNode->ApplyVariant(Variant);
+        }
         AddNode(NewNode);
         return NewNode;
     }
@@ -3057,14 +3087,14 @@ namespace Lumina
         CommitEdit(FName());
     }
 
-    CEdGraphNode* CEdNodeGraph::SpawnNode(CClass* NodeClass, float X, float Y)
+    CEdGraphNode* CEdNodeGraph::SpawnNode(CClass* NodeClass, float X, float Y, FName Variant)
     {
         if (NodeClass == nullptr)
         {
             return nullptr;
         }
 
-        CEdGraphNode* Node = CreateNode(NodeClass);
+        CEdGraphNode* Node = CreateNode(NodeClass, Variant);
         if (Node != nullptr)
         {
             Node->SetGridPos(X, Y);

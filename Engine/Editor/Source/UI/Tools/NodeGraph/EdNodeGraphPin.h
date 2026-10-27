@@ -53,7 +53,7 @@ namespace Lumina
         void AddConnection(CEdNodeGraphPin* Pin) { Connections.push_back(Pin); }
         void RemoveConnection(CEdNodeGraphPin* Pin);
         FORCEINLINE TVector<CEdNodeGraphPin*> GetConnections() const { return Connections; }
-        FORCEINLINE CEdNodeGraphPin* GetConnection(size_t Index) { return Connections[Index]; }
+        FORCEINLINE CEdNodeGraphPin* GetConnection(size_t Index) const { return Connections[Index]; }
         void DisconnectFrom(CEdNodeGraphPin* OtherPin);
         void ClearConnections();
 

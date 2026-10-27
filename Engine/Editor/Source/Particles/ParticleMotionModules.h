@@ -237,4 +237,167 @@ namespace Lumina
         PROPERTY(Editable, Category = "Collision")
         bool bKillOnHit = false;
     };
+
+    // Pushes particles that crowd each other apart, the cheap way to stop a swarm collapsing into one point.
+    REFLECT()
+    class CParticleModule_ParticleSeparation : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
+        FString GetDisplayName() const override { return "Particle Separation"; }
+        FString GetCategory() const override { return "Neighbors"; }
+        FString GetTooltip() const override { return "Push particles away from others within Radius. Radius past the emitter's Neighbor Cell Size is cut to it."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 120, 190, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        PROPERTY(Editable, Category = "Neighbors", ClampMin = 0.0f)
+        SParticleParam Radius { 0.3f };
+
+        // Meters per second squared between two particles touching.
+        PROPERTY(Editable, Category = "Neighbors")
+        SParticleParam Strength { 10.0f };
+    };
+
+    // Separation, alignment and cohesion, the three rules that make particles flock.
+    REFLECT()
+    class CParticleModule_Boids : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
+        FString GetDisplayName() const override { return "Boids"; }
+        FString GetCategory() const override { return "Neighbors"; }
+        FString GetTooltip() const override { return "Flock with neighbors within Radius, steering apart, alongside and together, capped at Max Speed."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 120, 190, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        // How far a particle sees, cut to the emitter's Neighbor Cell Size.
+        PROPERTY(Editable, Category = "Neighbors", ClampMin = 0.0f)
+        SParticleParam Radius { 0.5f };
+
+        PROPERTY(Editable, Category = "Neighbors")
+        SParticleParam Separation { 6.0f };
+
+        // How quickly a particle matches its neighbors' heading.
+        PROPERTY(Editable, Category = "Neighbors")
+        SParticleParam Alignment { 2.0f };
+
+        // How strongly a particle steers toward its neighbors' center.
+        PROPERTY(Editable, Category = "Neighbors")
+        SParticleParam Cohesion { 1.0f };
+
+        PROPERTY(Editable, Category = "Neighbors", ClampMin = 0.0f)
+        SParticleParam MaxSpeed { 3.0f };
+    };
+
+    REFLECT()
+    class CParticleModule_PointForce : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
+        FString GetDisplayName() const override { return "Point Force"; }
+        FString GetCategory() const override { return "Forces"; }
+        FString GetTooltip() const override { return "Pull particles toward a point near the emitter, or push them away with a negative strength. Needs no component in the world."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 120, 190, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        // Offset from the emitter in its frame, scaled with it.
+        PROPERTY(Editable, Category = "Forces")
+        SParticleParam Offset { FVector3(0.0f) };
+
+        // Meters per second squared at full strength, negative to repel.
+        PROPERTY(Editable, Category = "Forces")
+        SParticleParam Strength { 5.0f };
+
+        // Meters past which the force is gone, and 0 reaches everywhere.
+        PROPERTY(Editable, Category = "Forces", ClampMin = 0.0f)
+        SParticleParam Radius { 0.0f };
+
+        // How sharply the force fades toward Radius, 1 being linear.
+        PROPERTY(Editable, Category = "Forces", ClampMin = 0.0f)
+        SParticleParam Falloff { 1.0f };
+
+        // Ends particles that come this close to the point, for a drain or a black hole. 0 turns it off.
+        PROPERTY(Editable, Category = "Forces", ClampMin = 0.0f)
+        SParticleParam KillRadius { 0.0f };
+
+        PROPERTY(Editable, Category = "Forces")
+        bool bScaleByMass = false;
+    };
+
+    REFLECT()
+    class CParticleModule_WindForce : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
+        FString GetDisplayName() const override { return "Wind Force"; }
+        FString GetCategory() const override { return "Forces"; }
+        FString GetTooltip() const override { return "Carry particles along a wind with gusts that sweep across them. The air also drags them toward the wind speed."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 120, 190, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        // World direction the wind blows toward.
+        PROPERTY(Editable, Category = "Wind")
+        SParticleParam Direction { FVector3(1.0f, 0.0f, 0.0f) };
+
+        // Meters per second.
+        PROPERTY(Editable, Category = "Wind", ClampMin = 0.0f)
+        SParticleParam Speed { 4.0f };
+
+        // How quickly particles take on the wind velocity, per second.
+        PROPERTY(Editable, Category = "Wind", ClampMin = 0.0f)
+        SParticleParam Resistance { 1.0f };
+
+        // Fraction of Speed the gusts add or take away.
+        PROPERTY(Editable, Category = "Gusts", ClampMin = 0.0f)
+        SParticleParam Gustiness { 0.5f };
+
+        // Gusts per second passing a fixed point.
+        PROPERTY(Editable, Category = "Gusts", ClampMin = 0.0f)
+        SParticleParam GustFrequency { 0.5f };
+
+        // Gusts per meter, so neighboring particles feel different gusts.
+        PROPERTY(Editable, Category = "Gusts", ClampMin = 0.0f)
+        SParticleParam GustScale { 0.15f };
+
+        PROPERTY(Editable, Category = "Wind")
+        bool bScaleByMass = false;
+    };
+
+    REFLECT()
+    class CParticleModule_PlaneCollision : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
+        FString GetDisplayName() const override { return "Collide With Plane"; }
+        FString GetCategory() const override { return "Forces"; }
+        FString GetTooltip() const override { return "Bounce off an infinite plane near the emitter, such as a floor, wherever the camera looks. Place it before Solve Forces and Velocity."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 120, 190, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        // World direction the plane faces.
+        PROPERTY(Editable, Category = "Collision")
+        SParticleParam Normal { FVector3(0.0f, 1.0f, 0.0f) };
+
+        // Meters from the emitter along Normal, scaled with it.
+        PROPERTY(Editable, Category = "Collision")
+        SParticleParam Height { 0.0f };
+
+        PROPERTY(Editable, Category = "Collision", ClampMin = 0.0f, ClampMax = 1.0f)
+        SParticleParam Restitution { 0.35f };
+
+        PROPERTY(Editable, Category = "Collision", ClampMin = 0.0f, ClampMax = 1.0f)
+        SParticleParam Friction { 0.3f };
+
+        // Meters the particle keeps from the plane, scaled with the emitter.
+        PROPERTY(Editable, Category = "Collision", ClampMin = 0.0f)
+        SParticleParam Radius { 0.02f };
+
+        PROPERTY(Editable, Category = "Collision")
+        bool bKillOnHit = false;
+    };
 }

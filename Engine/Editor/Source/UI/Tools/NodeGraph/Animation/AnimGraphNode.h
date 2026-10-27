@@ -8,6 +8,7 @@
 namespace Lumina
 {
     class FAnimationGraphCompiler;
+    struct FAnimGraphDebugView;
 
     // Persisted per-pin default. Pins are rebuilt by BuildNode() and not serialized, so a value pin's
     // editable inline default lives here, keyed by pin name.
@@ -28,7 +29,7 @@ namespace Lumina
     // NotPlaceable: family base, not a node. The specifier does not inherit, so every concrete
     // anim node below stays discoverable.
     REFLECT(NotPlaceable)
-    class CAnimGraphNode : public CEdGraphNode
+    class EDITOR_API CAnimGraphNode : public CEdGraphNode
     {
         GENERATED_BODY()
     public:
@@ -47,11 +48,23 @@ namespace Lumina
         float GetValuePinDefault(const CAnimGraphPin* Pin) const;
         void  SetValuePinDefault(const CAnimGraphPin* Pin, float Value);
 
+        // A value input's live value when something runs the graph, else the default it compiles to.
+        float ReadValueInput(const CAnimGraphPin* Pin, const FAnimGraphDebugView* View) const;
+
+        // Share of this node's own weight a pose input passes on, read from live alphas. All of it by default.
+        virtual float GetPoseInputShare(const CEdNodeGraphPin* PoseInput, const FAnimGraphDebugView& View) const { return 1.0f; }
+
+        // A picture under the pins, opened from the node's chevron. View is null when nothing runs the graph.
+        virtual bool HasPreview() const;
+        virtual void DrawPreview(const FAnimGraphDebugView* View);
+
         /** Persisted inline defaults for value pins, keyed by pin name. */
         PROPERTY(Hidden)
         TVector<SAnimGraphPinDefault> PinDefaults;
 
     protected:
+
+        const CAnimGraphPin* FindFirstValueOutput() const;
 
         // Creates a typed animation pin, sets its name / color / default, and
         // returns it already cast to CAnimGraphPin.

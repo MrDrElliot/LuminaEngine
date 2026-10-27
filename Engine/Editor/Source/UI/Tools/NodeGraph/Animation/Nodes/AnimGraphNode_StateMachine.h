@@ -29,6 +29,8 @@ namespace Lumina
         PROPERTY(Editable, Category = "State Machine")
         bool bResetOnEntry = false;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        bool HasPreview() const override { return true; }
+        void DrawPreview(const FAnimGraphDebugView* View) override;
 
         FString GetNodeTitleText() const override;
         bool GetRenameText(FString& OutText) const override;

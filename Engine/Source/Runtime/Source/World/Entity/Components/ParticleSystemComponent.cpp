@@ -163,6 +163,27 @@ namespace Lumina
         return (Param && Param->Type == EParticleParameterType::Color) ? Param->Vector : FVector4(0.0f);
     }
 
+    float SParticleSystemComponent::SampleGrid(int32 EmitterIndex, FName Channel, FVector3 WorldPosition) const
+    {
+        const auto Found = Algo::FindIf(GridSnapshots, [&](const FParticleGridSnapshot& Snapshot) { return Snapshot.EmitterIndex == EmitterIndex; });
+        return Found != GridSnapshots.end() ? Found->Sample(Channel, WorldPosition) : 0.0f;
+    }
+
+    void SParticleSystemComponent::SetArray(FName Name, const TVector<FVector4>& Values)
+    {
+        auto Found = Algo::FindIf(ArrayInputs, [&](const FParticleArrayInput& Input) { return Input.Name == Name; });
+        if (Found == ArrayInputs.end())
+        {
+            Found = ArrayInputs.emplace(ArrayInputs.end(), FParticleArrayInput{ Name, {} });
+        }
+        Found->Values = Values;
+    }
+
+    void SParticleSystemComponent::ClearArray(FName Name)
+    {
+        ArrayInputs.erase(Algo::RemoveIf(ArrayInputs, [&](const FParticleArrayInput& Input) { return Input.Name == Name; }), ArrayInputs.end());
+    }
+
     void SParticleSystemComponent::EmitParticle(int32 EmitterIndex, FVector3 Position, FVector3 Velocity, FVector4 Color, float Size, int32 Flags)
     {
         constexpr SIZE_T MaxPendingEmits = 4096;

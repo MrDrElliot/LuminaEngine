@@ -18,6 +18,11 @@
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Particles/ParticleOps.h"
+#include "Particles/ParticleGraphModules.h"
+#include "Agent/AgentEntityToken.h"
+#include "Session/SessionOps.h"
+#include "World/ECS/Registry.h"
+#include "World/Entity/Components/ParticleSystemComponent.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
 
 namespace Lumina::MCP
@@ -40,16 +45,16 @@ namespace Lumina::MCP
                 return false;
             }
 
+            // A loaded asset nothing else holds is freed the moment any short-lived ref to it drops, such as a compile job's, so the session keeps it as an open tab would.
+            if (MCP::FServer* Server = FMCPEditorModule::GetServer())
+            {
+                Server->KeepLoaded(Asset);
+            }
+
             // An emitter asset is edited through a transient system holding only it, as the particle editor does.
             CParticleEmitter* EmitterAsset = Cast<CParticleEmitter>(Asset);
-            // Only the wrapper is held, since releasing a ref to a loaded system nothing else holds would free it.
             if (EmitterAsset != nullptr)
             {
-                // The wrapper's ref is the emitter's only one, so the session keeps it or the edit dies with the wrapper.
-                if (MCP::FServer* Server = FMCPEditorModule::GetServer())
-                {
-                    Server->KeepLoaded(EmitterAsset);
-                }
                 Held = ParticleOps::WrapEmitter(EmitterAsset);
             }
             Out = Held ? Held.Get() : Cast<CParticleSystem>(Asset);
@@ -95,7 +100,7 @@ namespace Lumina::MCP
 
             if (!ParticleOps::ParseStage(FStringView(StageName), OutStage))
             {
-                OutError = Lumina::Format("'{}' is not a stage. Use Spawn or Update.", StageName);
+                OutError = Lumina::Format("'{}' is not a stage. Use Spawn, Update, Grid or Target.", StageName);
                 return false;
             }
 
@@ -158,7 +163,7 @@ namespace Lumina::MCP
 
         void ClearStacks(CParticleSystem* System, int32 Emitter)
         {
-            for (EParticleModuleStage Stage : { EParticleModuleStage::Spawn, EParticleModuleStage::Update })
+            for (EParticleModuleStage Stage : ParticleOps::GetStages())
             {
                 if (TVector<TStrongObjectPtr<CParticleModule>>* Modules = ParticleOps::GetModules(System, Emitter, Stage))
                 {
@@ -256,7 +261,7 @@ namespace Lumina::MCP
         {
             Agent::FToolRegistry::Get().Register<SListParticleModuleTypesParams, SListParticleModuleTypesResult>(
                 Owner, "particle.list_module_types",
-                "List every module type that can go in an emitter's Spawn or Update stack.",
+                "List every module type that can go in an emitter's Spawn, Update, Grid or Target stack.",
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SListParticleModuleTypesParams& In, SListParticleModuleTypesResult& Out)
                 {
@@ -298,7 +303,7 @@ namespace Lumina::MCP
         {
             Agent::FToolRegistry::Get().Register<SParticleSystemParams, SDescribeParticleSystemResult>(
                 Owner, "particle.describe",
-                "Report a particle system's emitters, their settings and both module stacks with every module's values.",
+                "Report a particle system's emitters, their settings and every module stack with each module's values.",
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SParticleSystemParams& In, SDescribeParticleSystemResult& Out)
                 {
@@ -336,6 +341,8 @@ namespace Lumina::MCP
                         Info.Settings  = EditableValues(Emitter->GetClass(), Emitter);
                         CollectModules(System, Index, EParticleModuleStage::Spawn, Info.SpawnModules);
                         CollectModules(System, Index, EParticleModuleStage::Update, Info.UpdateModules);
+                        CollectModules(System, Index, EParticleModuleStage::Grid, Info.GridModules);
+                        CollectModules(System, Index, EParticleModuleStage::Target, Info.TargetModules);
                         Out.Emitters.push_back(Move(Info));
                     }
 
@@ -616,7 +623,7 @@ namespace Lumina::MCP
         {
             Agent::FToolRegistry::Get().Register<SAddParticleModuleParams, SAddParticleModuleResult>(
                 Owner, "particle.add_module",
-                "Add a module to an emitter. The module type decides whether it joins the Spawn or the Update stack.",
+                "Add a module to an emitter. The module type decides whether it joins the Spawn, Update, Grid or Target stack.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SAddParticleModuleParams& In, SAddParticleModuleResult& Out)
                 {
@@ -713,6 +720,44 @@ namespace Lumina::MCP
                 });
         }
 
+        // Writes the JSON Value at Path on Object, reporting the value before and after.
+        bool SetObjectProperty(CObject* Object, const FString& Path, const FString& ValueText, SParticlePropertyResult& Out, FString& OutError)
+        {
+            Agent::FResolvedProperty Property;
+            if (!Agent::ResolvePropertyPath(Object->GetClass(), Object, FStringView(Path), Property, OutError))
+            {
+                return false;
+            }
+
+            const nlohmann::json Value = nlohmann::json::parse(ValueText.c_str(), ValueText.c_str() + ValueText.size(), nullptr, false);
+            if (Value.is_discarded())
+            {
+                OutError = "Value is not JSON. Strings need quotes, so a quoted name rather than a bare word.";
+                return false;
+            }
+
+            if (const Agent::FMarshalResult Check = Agent::ValidatePropertyValue(Value, Property.Property, FStringView(Path)); !Check.IsValid())
+            {
+                OutError = Check.Error;
+                return false;
+            }
+
+            nlohmann::json Before;
+            Agent::WriteProperty(Property.Property, Property.ValuePtr, Before);
+            Out.Previous = FString(Before.dump().c_str());
+
+            if (const Agent::FMarshalResult Applied = Agent::ReadProperty(Value, Property.Property, Property.ValuePtr, FStringView(Path)); !Applied.IsValid())
+            {
+                OutError = Applied.Error;
+                return false;
+            }
+
+            nlohmann::json After;
+            Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
+            Out.Current = FString(After.dump().c_str());
+            return true;
+        }
+
         void RegisterSetModuleProperty(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SSetParticleModulePropertyParams, SParticlePropertyResult>(
@@ -732,41 +777,285 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    Agent::FResolvedProperty Property;
-                    if (!Agent::ResolvePropertyPath(Module->GetClass(), Module, FStringView(In.Path), Property, Error))
+                    if (!SetObjectProperty(Module, In.Path, In.Value, Out, Error))
                     {
                         return Agent::FToolResult::Error(Error);
                     }
-
-                    const nlohmann::json Value = nlohmann::json::parse(In.Value.c_str(), In.Value.c_str() + In.Value.size(), nullptr, false);
-                    if (Value.is_discarded())
-                    {
-                        return Agent::FToolResult::Error("Value is not JSON. Strings need quotes, so a quoted name rather than a bare word.");
-                    }
-
-                    if (const Agent::FMarshalResult Check = Agent::ValidatePropertyValue(Value, Property.Property, FStringView(In.Path)); !Check.IsValid())
-                    {
-                        return Agent::FToolResult::Error(Check.Error);
-                    }
-
-                    nlohmann::json Before;
-                    Agent::WriteProperty(Property.Property, Property.ValuePtr, Before);
-                    Out.Previous = FString(Before.dump().c_str());
-
-                    if (const Agent::FMarshalResult Applied = Agent::ReadProperty(Value, Property.Property, Property.ValuePtr, FStringView(In.Path)); !Applied.IsValid())
-                    {
-                        return Agent::FToolResult::Error(Applied.Error);
-                    }
-
-                    nlohmann::json After;
-                    Agent::WriteProperty(Property.Property, Property.ValuePtr, After);
-                    Out.Current = FString(After.dump().c_str());
 
                     // An enum picks a code branch rather than a slot value, which only a recompile can change.
                     Out.bNeedsCompile = !ParticleOps::RefreshModuleParams(System, In.Emitter);
                     MarkDirty(System, In.Emitter);
                     return Agent::FToolResult::Ok(Lumina::Format("{} module {} {} is now {}{}", In.Stage, In.Index, In.Path, Out.Current,
                         Out.bNeedsCompile ? ". Compile before it takes effect." : ", live."));
+                });
+        }
+
+        bool ResolveGraph(const FString& SystemId, int32 Emitter, const FString& StageName, int32 Index, EParticleAccess Access,
+                          TStrongObjectPtr<CParticleSystem>& Held, CParticleSystem*& System, CParticleNodeGraph*& Graph, FString& OutError)
+        {
+            EParticleModuleStage Stage;
+            CParticleModule* Module = nullptr;
+            if (!ResolveSystem(SystemId, Access, Held, System, OutError) || !ResolveModule(System, Emitter, StageName, Index, Stage, Module, OutError))
+            {
+                return false;
+            }
+
+            CParticleModule_Graph* GraphModule = Cast<CParticleModule_Graph>(Module);
+            if (GraphModule == nullptr)
+            {
+                OutError = Lumina::Format("{} module {} is a {}, not a Graph Module.", StageName, Index, Module->GetDisplayName());
+                return false;
+            }
+
+            Graph = GraphModule->GetGraph();
+            return true;
+        }
+
+        // A plain node type by class or display name, or one of a node type's variants, such as a formula by its name.
+        bool ResolveGraphNodeType(FStringView Name, CClass*& OutClass, FName& OutVariant)
+        {
+            OutVariant = FName();
+            for (CClass* Class : NodeGraphOps::GetPlaceableNodeTypes(CParticleNodeGraph::StaticClass()))
+            {
+                CEdGraphNode* CDO = Class->GetDefaultObject<CEdGraphNode>();
+                TVector<FGraphNodeVariant> Variants;
+                CDO->GetVariants(Variants);
+                if (Variants.empty() && (EqualsIgnoreCase(FStringView(Class->GetName().ToString().c_str()), Name) || EqualsIgnoreCase(CDO->GetNodeDisplayName(), Name)))
+                {
+                    OutClass = Class;
+                    return true;
+                }
+
+                for (const FGraphNodeVariant& Variant : Variants)
+                {
+                    if (EqualsIgnoreCase(FStringView(Variant.DisplayName), Name) || EqualsIgnoreCase(FStringView(Variant.Name.ToString().c_str()), Name))
+                    {
+                        OutClass   = Class;
+                        OutVariant = Variant.Name;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        void RegisterGraphTools(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SParticleGraphParams, SParticleGraphResult>(
+                Owner, "particle.graph_describe",
+                "Report a Graph Module's nodes, pins and links, and every node type it can take.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+                [](const SParticleGraphParams& In, SParticleGraphResult& Out)
+                {
+                    TStrongObjectPtr<CParticleSystem> Held;
+                    CParticleSystem* System = nullptr;
+                    CParticleNodeGraph* Graph = nullptr;
+                    FString Error;
+                    if (!ResolveGraph(In.System, In.Emitter, In.Stage, In.Index, EParticleAccess::Read, Held, System, Graph, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+                    {
+                        SMaterialNodeInfo& Info = Out.Nodes.emplace_back();
+                        Info.Id          = Node->GetNodeID();
+                        Info.Type        = FString(Node->GetClass()->GetName().ToString().c_str());
+                        Info.DisplayName = FString(Node->GetNodeDisplayName());
+                        Info.X           = Node->GetNodeX();
+                        Info.Y           = Node->GetNodeY();
+                        Info.Values      = EditableValues(Node->GetClass(), Node.Get());
+                        CollectPins(Node.Get(), Info.Pins);
+                    }
+
+                    for (CClass* Class : NodeGraphOps::GetPlaceableNodeTypes(CParticleNodeGraph::StaticClass()))
+                    {
+                        TVector<FGraphNodeVariant> Variants;
+                        CEdGraphNode* CDO = Class->GetDefaultObject<CEdGraphNode>();
+                        CDO->GetVariants(Variants);
+                        if (Variants.empty())
+                        {
+                            Out.NodeTypes.push_back(FString(CDO->GetNodeDisplayName()));
+                        }
+                        for (const FGraphNodeVariant& Variant : Variants)
+                        {
+                            Out.NodeTypes.push_back(Variant.DisplayName);
+                        }
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format("{} node(s), {} node type(s).", Out.Nodes.size(), Out.NodeTypes.size()));
+                });
+
+            Agent::FToolRegistry::Get().Register<SAddParticleGraphNodeParams, SAddParticleGraphNodeResult>(
+                Owner, "particle.graph_add_node",
+                "Add a node to a Graph Module and report its pins. Sinks such as Set Particle write once every sink has read its inputs, top to bottom.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SAddParticleGraphNodeParams& In, SAddParticleGraphNodeResult& Out)
+                {
+                    TStrongObjectPtr<CParticleSystem> Held;
+                    CParticleSystem* System = nullptr;
+                    CParticleNodeGraph* Graph = nullptr;
+                    FString Error;
+                    if (!ResolveGraph(In.System, In.Emitter, In.Stage, In.Index, EParticleAccess::Write, Held, System, Graph, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    CClass* NodeClass = nullptr;
+                    FName Variant;
+                    if (!ResolveGraphNodeType(FStringView(In.NodeType), NodeClass, Variant))
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("'{}' is not a particle graph node. particle.graph_describe lists them.", In.NodeType));
+                    }
+
+                    CEdGraphNode* Node = NodeGraphOps::AddNode(Graph, NodeClass, In.X, In.Y, Variant);
+                    if (Node == nullptr)
+                    {
+                        return Agent::FToolResult::Error("The node could not be created.");
+                    }
+
+                    Out.Id = Node->GetNodeID();
+                    CollectPins(Node, Out.Pins);
+                    MarkDirty(System, In.Emitter);
+                    return Agent::FToolResult::Ok(Lumina::Format("Added {} as node {}. Compile to run it.", Node->GetNodeDisplayName(), Out.Id));
+                });
+
+            Agent::FToolRegistry::Get().Register<SConnectParticleGraphParams, SParticleEditResult>(
+                Owner, "particle.graph_connect",
+                "Wire one node's output pin into another node's input pin in a Graph Module.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SConnectParticleGraphParams& In, SParticleEditResult& Out)
+                {
+                    TStrongObjectPtr<CParticleSystem> Held;
+                    CParticleSystem* System = nullptr;
+                    CParticleNodeGraph* Graph = nullptr;
+                    FString Error;
+                    if (!ResolveGraph(In.System, In.Emitter, In.Stage, In.Index, EParticleAccess::Write, Held, System, Graph, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    CEdGraphNode* From = NodeGraphOps::FindNode(Graph, In.FromNode);
+                    CEdGraphNode* To   = NodeGraphOps::FindNode(Graph, In.ToNode);
+                    if (From == nullptr || To == nullptr)
+                    {
+                        return Agent::FToolResult::Error("Both nodes have to be in this graph.");
+                    }
+
+                    CEdNodeGraphPin* Output = NodeGraphOps::FindPin(From, FStringView(In.FromPin), ENodePinDirection::Output);
+                    CEdNodeGraphPin* Input  = NodeGraphOps::FindPin(To, FStringView(In.ToPin), ENodePinDirection::Input);
+                    if (Output == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("No output '{}'. It has {}.", In.FromPin, NodeGraphOps::DescribePinNames(From, ENodePinDirection::Output)));
+                    }
+                    if (Input == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("No input '{}'. It has {}.", In.ToPin, NodeGraphOps::DescribePinNames(To, ENodePinDirection::Input)));
+                    }
+                    if (!NodeGraphOps::ConnectPins(Graph, Output, Input, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    MarkDirty(System, In.Emitter);
+                    return Agent::FToolResult::Ok("Connected. Compile to run it.");
+                });
+
+            Agent::FToolRegistry::Get().Register<SSetParticleGraphNodePropertyParams, SParticlePropertyResult>(
+                Owner, "particle.graph_set_node_property",
+                "Set one field on a Graph Module's node, such as a Parameter's Value.Constant or a grid node's Channel.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSetParticleGraphNodePropertyParams& In, SParticlePropertyResult& Out)
+                {
+                    TStrongObjectPtr<CParticleSystem> Held;
+                    CParticleSystem* System = nullptr;
+                    CParticleNodeGraph* Graph = nullptr;
+                    FString Error;
+                    if (!ResolveGraph(In.System, In.Emitter, In.Stage, In.Index, EParticleAccess::Write, Held, System, Graph, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    CEdGraphNode* Node = NodeGraphOps::FindNode(Graph, In.Node);
+                    if (Node == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("No node {} is in this graph.", In.Node));
+                    }
+
+                    if (!SetObjectProperty(Node, In.Path, In.Value, Out, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    Out.bNeedsCompile = !ParticleOps::RefreshModuleParams(System, In.Emitter);
+                    MarkDirty(System, In.Emitter);
+                    return Agent::FToolResult::Ok(Lumina::Format("Node {} {} is now {}{}", In.Node, In.Path, Out.Current,
+                        Out.bNeedsCompile ? ". Compile before it takes effect." : ", live."));
+                });
+        }
+
+        bool ResolveParticleComponent(const FString& Token, SParticleSystemComponent*& OutComponent, FString& OutError)
+        {
+            ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(OutError);
+            ECS::FEntity Entity = ECS::NullEntity;
+            if (Registry == nullptr || !Agent::FEntityTokens::Resolve(*Registry, FStringView(Token), Entity, OutError))
+            {
+                return false;
+            }
+
+            OutComponent = Registry->TryGet<SParticleSystemComponent>(Entity);
+            if (OutComponent == nullptr)
+            {
+                OutError = "That entity has no particle system component.";
+                return false;
+            }
+            return true;
+        }
+
+        void RegisterDataTools(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SSetParticleArrayParams, SParticleEditResult>(
+                Owner, "particle.set_array",
+                "Hand an entity's particle system an array of float4 values under a name, as a script's SetArray does, from the next frame on.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SSetParticleArrayParams& In, SParticleEditResult& Out)
+                {
+                    SParticleSystemComponent* Component = nullptr;
+                    FString Error;
+                    if (!ResolveParticleComponent(In.Entity, Component, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    Component->SetArray(FName(In.Name.c_str()), In.Values);
+                    return Agent::FToolResult::Ok(Lumina::Format("{} now holds {} value(s).", In.Name, In.Values.size()));
+                });
+
+            Agent::FToolRegistry::Get().Register<SSampleParticleGridParams, SSampleParticleGridResult>(
+                Owner, "particle.sample_grid",
+                "Read a grid channel at a world position from the copy an emitter with Read Back Grid sends to the CPU, as a script's SampleGrid does.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
+                [](const SSampleParticleGridParams& In, SSampleParticleGridResult& Out)
+                {
+                    SParticleSystemComponent* Component = nullptr;
+                    FString Error;
+                    if (!ResolveParticleComponent(In.Entity, Component, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    const auto Snapshot = Algo::FindIf(Component->GridSnapshots, [&](const FParticleGridSnapshot& Candidate) { return Candidate.EmitterIndex == In.Emitter; });
+                    Out.bHasSnapshot = Snapshot != Component->GridSnapshots.end();
+                    if (Out.bHasSnapshot)
+                    {
+                        for (const FName& Channel : Snapshot->ChannelNames)
+                        {
+                            Out.Channels.push_back(FString(Channel.ToString().c_str()));
+                        }
+                    }
+                    Out.Value = Component->SampleGrid(In.Emitter, FName(In.Channel.c_str()), In.Position);
+                    return Agent::FToolResult::Ok(Out.bHasSnapshot ? Lumina::Format("{} is {}.", In.Channel, Out.Value)
+                                                                   : FString("No grid copy has come back for that emitter yet."));
                 });
         }
 
@@ -922,5 +1211,7 @@ namespace Lumina::MCP
         ParticleTools::RegisterSetUserParameter(Owner);
         ParticleTools::RegisterRemoveUserParameter(Owner);
         ParticleTools::RegisterCompile(Owner);
+        ParticleTools::RegisterGraphTools(Owner);
+        ParticleTools::RegisterDataTools(Owner);
     }
 }

@@ -16,6 +16,8 @@ namespace Lumina
     struct FGraphAction
     {
         CClass*             NodeClass = nullptr;
+        // Which of the class's variants this entry places, or none for the class itself.
+        FName               Variant;
         FString             DisplayName;
         FString             Category;
         FString             Tooltip;

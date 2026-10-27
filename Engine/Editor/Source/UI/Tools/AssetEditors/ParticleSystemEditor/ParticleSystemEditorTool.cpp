@@ -8,6 +8,9 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Reflection/PropertyChangedEvent.h"
 #include "Particles/ParticleEmitterStack.h"
+#include "Particles/ParticleGridModules.h"
+#include "Particles/ParticleGraphModules.h"
+#include "Assets/AssetTypes/Textures/TextureRenderTarget.h"
 #include "Particles/ParticleOps.h"
 #include "Particles/ParticleStockModules.h"
 #include "UI/Tools/NodeGraph/Particle/ParticleCompiler.h"
@@ -26,11 +29,13 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "Containers/StringFormat.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 
 namespace Lumina
 {
     static const char* EmitterWindowName    = "Emitter";
     static const char* SelectionWindowName  = "Details";
+    static const char* ModuleGraphWindowName = "Module Graph";
 
     // A module or stack lives in its emitter's package, and a shared emitter asset in its own rather than the system's.
     static void MarkEdited(const CObject* Object)
@@ -87,6 +92,11 @@ namespace Lumina
             DrawStack();
         });
 
+        CreateToolWindow(ModuleGraphWindowName, [&](bool bFocused)
+        {
+            DrawModuleGraph();
+        });
+
         CreateToolWindow(SelectionWindowName, [&](bool bFocused)
         {
             // A property handle carries no owner, so the system is announced around the draw instead.
@@ -119,7 +129,7 @@ namespace Lumina
             // Commit first, since the after-image has to be captured before any recompile.
             GetTransactionManager().CommitTransaction();
 
-            if (SelectedModule == nullptr)
+            if (SelectedModule == nullptr && Cast<CEdGraphNode>(SelectedObject) == nullptr)
             {
                 return;   // system-wide settings feed the sim uniforms directly
             }
@@ -139,7 +149,17 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
-        PreviewAge += (float)UpdateContext.GetDeltaTime();
+        const bool bAdvancing = !bPreviewPaused || bStepPending;
+        bStepPending = false;
+        if (World.IsValid() && World->IsValidEntity(ParticleEntity))
+        {
+            if (SParticleSystemComponent* Component = World->TryGetComponent<SParticleSystemComponent>(ParticleEntity))
+            {
+                Component->TimeScale = bAdvancing ? PreviewSpeed : 0.0f;
+            }
+        }
+
+        PreviewAge += bAdvancing ? (float)UpdateContext.GetDeltaTime() * PreviewSpeed : 0.0f;
         if (bShowGizmos)
         {
             DrawEmitterGizmos();
@@ -242,6 +262,33 @@ namespace Lumina
             ReplayPreview();
         }
 
+        if (ImGui::MenuItem(bPreviewPaused ? LE_ICON_PLAY " Resume" : LE_ICON_PAUSE " Pause"))
+        {
+            bPreviewPaused = !bPreviewPaused;
+        }
+
+        if (ImGui::MenuItem(LE_ICON_STEP_FORWARD " Step", nullptr, false, bPreviewPaused))
+        {
+            bStepPending = true;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip("Advance the paused preview by one frame.");
+        }
+
+        constexpr float Speeds[] = { 0.1f, 0.25f, 0.5f, 1.0f, 2.0f };
+        if (ImGui::BeginMenu(Format(LE_ICON_PLAY_PAUSE " Speed {}x", PreviewSpeed).c_str()))
+        {
+            for (float Speed : Speeds)
+            {
+                if (ImGui::MenuItem(Format("{}x", Speed).c_str(), nullptr, PreviewSpeed == Speed))
+                {
+                    PreviewSpeed = Speed;
+                }
+            }
+            ImGui::EndMenu();
+        }
+
         ImGui::MenuItem(LE_ICON_REPEAT" Loop Preview", nullptr, &bLoopPreview);
         ImGui::MenuItem(LE_ICON_SHAPE_OUTLINE" Gizmos", nullptr, &bShowGizmos);
         if (ImGui::IsItemHovered())
@@ -333,6 +380,11 @@ namespace Lumina
         SelectedObject = Object;
         // Only a module drives the recompile-on-edit path; an emitter or the system feeds uniforms.
         SelectedModule = Cast<CParticleModule>(Object);
+        if (Cast<CParticleModule_Graph>(Object) != nullptr)
+        {
+            GraphModule        = SelectedModule;
+            GraphModuleEmitter = SelectedEmitter;
+        }
 
         CObject* Target = (Object != nullptr) ? Object : Asset.Get();
         GetPropertyTable()->SetObject(Target, Target->GetClass());
@@ -357,20 +409,25 @@ namespace Lumina
 
         if (CompilationResult.bIsError)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(235, 90, 90, 255));
-            ImGui::TextWrapped("%s", CompilationResult.CompilationLog.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
+            ImGui::TextWrapped(LE_ICON_ALERT_CIRCLE_OUTLINE " %s", CompilationResult.CompilationLog.c_str());
             ImGui::PopStyleColor();
-            ImGui::Separator();
+            ImGui::Spacing();
         }
 
         // System header selects the asset so its user parameters show in Details.
         if (!IsEmitterAsset())
         {
-            if (ImGui::Selectable(LE_ICON_COG" System Settings", SelectedObject == nullptr))
+            const bool bSystemSelected = SelectedObject == nullptr;
+            ImGui::PushStyleColor(ImGuiCol_Header, EditorColors::RowBgActive());
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorColors::RowBgHovered());
+            ImGui::PushStyleColor(ImGuiCol_Text, bSystemSelected ? EditorColors::TextPrimary() : EditorColors::TextDim());
+            if (ImGui::Selectable(LE_ICON_COG " System Settings", bSystemSelected))
             {
                 SelectObject(nullptr);
             }
-            ImGui::Spacing();
+            ImGui::PopStyleColor(3);
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
         }
 
         // This panel docks tall and narrow, so fixed-width columns truncated every module name.
@@ -381,7 +438,7 @@ namespace Lumina
             ImGui::PushID(i);
             DrawEmitterSection(i);
             ImGui::PopID();
-            ImGui::Spacing();
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
         }
 
         if (!IsEmitterAsset())
@@ -521,6 +578,62 @@ namespace Lumina
         }
     }
 
+    // An icon with no frame of its own, lit only under the cursor, so actions read as part of the row they sit on.
+    static bool StackIcon(const char* Icon, const char* Id, const ImVec4& Color, const ImVec4& HoverColor, const char* Tooltip = nullptr, bool bEnabled = true)
+    {
+        const float  Size = ImGui::GetFrameHeight();
+        const ImVec2 Min  = ImGui::GetCursorScreenPos();
+        ImGui::BeginDisabled(!bEnabled);
+        const bool bPressed = ImGui::InvisibleButton(Id, ImVec2(Size, Size));
+        const bool bHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+        ImGui::EndDisabled();
+
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        if (bHovered && bEnabled)
+        {
+            DrawList->AddRectFilled(Min, ImVec2(Min.x + Size, Min.y + Size), EditorColors::U32(EditorColors::Lighten(EditorColors::RowBgHovered(), 0.05f)), 4.0f);
+        }
+        const ImVec2 Glyph = ImGui::CalcTextSize(Icon);
+        const ImVec4 Tint  = !bEnabled ? EditorColors::WithAlpha(Color, 0.3f) : bHovered ? HoverColor : Color;
+        DrawList->AddText(ImVec2(Min.x + (Size - Glyph.x) * 0.5f, Min.y + (Size - Glyph.y) * 0.5f), EditorColors::U32(Tint), Icon);
+        if (bHovered && Tooltip != nullptr)
+        {
+            ImGui::SetTooltip("%s", Tooltip);
+        }
+        return bPressed;
+    }
+
+    // A dot, filled while on, which says less than a checkbox in a list where nearly everything stays on.
+    static bool EnableDot(const char* Id, bool& bValue, const char* Tooltip)
+    {
+        const float  Size = ImGui::GetFrameHeight();
+        const ImVec2 Min  = ImGui::GetCursorScreenPos();
+        const bool bPressed = ImGui::InvisibleButton(Id, ImVec2(Size * 0.75f, Size));
+        const bool bHovered = ImGui::IsItemHovered();
+        if (bPressed)
+        {
+            bValue = !bValue;
+        }
+
+        const ImVec2 Center(Min.x + Size * 0.375f, Min.y + Size * 0.5f);
+        const float  Radius = Size * 0.16f;
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        if (bHovered)
+        {
+            DrawList->AddCircleFilled(Center, Radius + 4.0f, EditorColors::U32(EditorColors::WithAlpha(EditorColors::Accent(), 0.18f)));
+            ImGui::SetTooltip("%s", Tooltip);
+        }
+        if (bValue)
+        {
+            DrawList->AddCircleFilled(Center, Radius, EditorColors::U32(EditorColors::Accent()));
+        }
+        else
+        {
+            DrawList->AddCircle(Center, Radius, EditorColors::U32(EditorColors::TextMuted()), 0, 1.5f);
+        }
+        return bPressed;
+    }
+
     void FParticleSystemEditorTool::DrawEmitterSection(int32 EmitterIndex)
     {
         CParticleSystem* PS = GetSystem();
@@ -531,103 +644,132 @@ namespace Lumina
             return;
         }
 
-        const bool bSelected = (SelectedObject == (CObject*)Emitter);
+        const bool  bSelected    = (SelectedObject == (CObject*)Emitter);
+        const bool  bShared      = !IsEmitterAsset() && Emitter->GetPackage() != PS->GetPackage();
+        const float CardWidth    = ImGui::GetContentRegionAvail().x;
+        const float HeaderHeight = ImGui::GetFrameHeight() + 8.0f;
+        const ImVec2 CardMin     = ImGui::GetCursorScreenPos();
+        bool& bOpen = *ImGui::GetStateStorage()->GetBoolRef(ImGui::GetID("##open"), true);
 
-        // OpenOnArrow splits the jobs, or selecting an emitter also collapses the stack being read.
-        ImGuiTreeNodeFlags Flags = ImGuiTreeNodeFlags_CollapsingHeader
-                                 | ImGuiTreeNodeFlags_DefaultOpen
-                                 | ImGuiTreeNodeFlags_AllowOverlap
-                                 | ImGuiTreeNodeFlags_OpenOnArrow
-                                 | ImGuiTreeNodeFlags_OpenOnDoubleClick;
-        if (bSelected)
-        {
-            Flags |= ImGuiTreeNodeFlags_Selected;
-        }
+        // The card's background has to sit under content whose height is only known once it has drawn.
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        DrawList->ChannelsSplit(2);
+        DrawList->ChannelsSetCurrent(1);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 6));
-        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float Pad = ImGui::GetStyle().FramePadding.x;
-        const float BtnW = ImGui::CalcTextSize(LE_ICON_DELETE).x + Pad * 2.0f;
-        const float CheckW = ImGui::GetFrameHeight();
-        const float Cluster = CheckW + BtnW * 3.0f + Spacing * 4.0f;
-        const ImVec2 HeaderPos = ImGui::GetCursorScreenPos();
-        const float HeaderRight = HeaderPos.x + ImGui::GetContentRegionAvail().x;
-
-        ImGui::PushStyleColor(ImGuiCol_Text, Emitter->bEnabled ? IM_COL32(235, 220, 160, 255)
-                                                               : IM_COL32(125, 125, 130, 255));
-        const bool bShared = !IsEmitterAsset() && Emitter->GetPackage() != PS->GetPackage();
-        const bool bOpen = ImGui::TreeNodeEx("##emhdr", Flags, bShared ? LE_ICON_LINK" %s" : "%s", Emitter->EmitterName.c_str());
-        ImGui::PopStyleColor();
-        if (bShared && ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Shared emitter asset %s. Edits here change every system that uses it.", Emitter->GetPackage()->GetPackagePath().c_str());
-        }
-        if (!IsEmitterAsset() && ImGui::BeginPopupContextItem("##emasset"))
-        {
-            DrawEmitterAssetMenu(EmitterIndex, Emitter);
-            ImGui::EndPopup();
-        }
-
-        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        ImGui::SetNextItemAllowOverlap();
+        if (ImGui::InvisibleButton("##header", ImVec2(CardWidth, HeaderHeight)))
         {
             SelectedEmitter = EmitterIndex;
             SelectObject(Emitter);
         }
+        const bool bHeaderHovered = ImGui::IsItemHovered();
+        if (bHeaderHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        {
+            bOpen = !bOpen;
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+        {
+            ImGui::OpenPopup("##EmitterMenu");
+        }
+        const ImVec2 AfterHeader = ImGui::GetCursorScreenPos();
 
-        ImGui::SetCursorScreenPos(ImVec2(HeaderRight - Cluster, HeaderPos.y));
+        const float RowY = CardMin.y + (HeaderHeight - ImGui::GetFrameHeight()) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(CardMin.x + 8.0f, RowY));
+        if (StackIcon(bOpen ? LE_ICON_CHEVRON_DOWN : LE_ICON_CHEVRON_RIGHT, "##fold", EditorColors::TextDim(), EditorColors::TextPrimary()))
+        {
+            bOpen = !bOpen;
+        }
 
+        ImGui::SameLine(0.0f, 2.0f);
         bool bEnabled = Emitter->bEnabled;
-        if (ImGui::Checkbox("##emen", &bEnabled))
+        if (EnableDot("##enabled", bEnabled, "Mute this emitter. Disabled emitters do not simulate or draw."))
         {
             Emitter->bEnabled = bEnabled;
             MarkEdited(Emitter);
         }
-        if (ImGui::IsItemHovered())
+
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::AlignTextToFramePadding();
+        if (bShared)
         {
-            ImGui::SetTooltip("Mute this emitter. Disabled emitters do not simulate or draw.");
+            ImGui::TextColored(EditorColors::AccentAlt(), LE_ICON_LINK);
+            ImGuiX::TextTooltip("Shared emitter asset {}. Edits here change every system that uses it.", Emitter->GetPackage()->GetPackagePath().c_str());
+            ImGui::SameLine(0.0f, 4.0f);
         }
+        ImGui::TextColored(bEnabled ? EditorColors::TextPrimary() : EditorColors::TextMuted(), "%s", Emitter->EmitterName.c_str());
 
         ImGui::SameLine();
-        ImGui::BeginDisabled(EmitterIndex == 0);
-        if (ImGui::Button(LE_ICON_ARROW_UP"##emup", ImVec2(BtnW, 0)))
+        ImGui::SetCursorScreenPos(ImVec2(CardMin.x + CardWidth - ImGui::GetFrameHeight() - 6.0f, RowY));
+        if (StackIcon(LE_ICON_DOTS_VERTICAL, "##options", EditorColors::TextDim(), EditorColors::TextPrimary(), "Move, save or remove this emitter."))
+        {
+            ImGui::OpenPopup("##EmitterMenu");
+        }
+        DrawEmitterMenu(EmitterIndex, Emitter);
+
+        ImGui::SetCursorScreenPos(AfterHeader);
+        if (bOpen)
+        {
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+            ImGui::Indent(8.0f);
+            DrawStackSection(EmitterIndex, EParticleModuleStage::Spawn,  "Particle Spawn");
+            DrawStackSection(EmitterIndex, EParticleModuleStage::Update, "Particle Update");
+            DrawStackSection(EmitterIndex, EParticleModuleStage::Grid,   "Simulation Stages");
+            DrawStackSection(EmitterIndex, EParticleModuleStage::Target, "Render Target");
+            ImGui::Unindent(8.0f);
+            ImGui::Dummy(ImVec2(0.0f, 2.0f));
+        }
+
+        const ImVec2 CardMax(CardMin.x + CardWidth, ImGui::GetCursorScreenPos().y);
+        const ImVec2 HeaderMax(CardMax.x, CardMin.y + HeaderHeight);
+        const ImVec4 HeaderColor = bSelected ? EditorColors::Lighten(EditorColors::ComponentHeader(), 0.04f)
+                                 : bHeaderHovered ? EditorColors::Lighten(EditorColors::ComponentHeader(), 0.02f)
+                                 : EditorColors::ComponentHeader();
+
+        DrawList->ChannelsSetCurrent(0);
+        DrawList->AddRectFilled(CardMin, CardMax, EditorColors::U32(EditorColors::PanelBg()), 6.0f);
+        DrawList->AddRectFilled(CardMin, HeaderMax, EditorColors::U32(HeaderColor), 6.0f, bOpen ? ImDrawFlags_RoundCornersTop : ImDrawFlags_RoundCornersAll);
+        DrawList->AddRectFilled(ImVec2(CardMin.x, CardMin.y + 6.0f), ImVec2(CardMin.x + 3.0f, HeaderMax.y - (bOpen ? 0.0f : 6.0f)),
+            EditorColors::U32(bEnabled ? EditorColors::Accent() : EditorColors::TextMuted()));
+        DrawList->AddRect(CardMin, CardMax, EditorColors::U32(bSelected ? EditorColors::WithAlpha(EditorColors::Accent(), 0.6f) : EditorColors::Border()), 6.0f);
+        DrawList->ChannelsMerge();
+    }
+
+    void FParticleSystemEditorTool::DrawEmitterMenu(int32 EmitterIndex, CParticleEmitter* Emitter)
+    {
+        if (!ImGui::BeginPopup("##EmitterMenu"))
+        {
+            return;
+        }
+
+        CParticleSystem* PS = GetSystem();
+        if (ImGui::MenuItem(LE_ICON_ARROW_UP " Move Up", nullptr, false, EmitterIndex > 0))
         {
             PS->MoveEmitter(Emitter, -1);
             SyncEmitterStacks();
             MarkEdited(PS);
         }
-        ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        ImGui::BeginDisabled(EmitterIndex == (int32)PS->Emitters.size() - 1);
-        if (ImGui::Button(LE_ICON_ARROW_DOWN"##emdn", ImVec2(BtnW, 0)))
+        if (ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move Down", nullptr, false, EmitterIndex < (int32)PS->Emitters.size() - 1))
         {
             PS->MoveEmitter(Emitter, 1);
             SyncEmitterStacks();
             MarkEdited(PS);
         }
-        ImGui::EndDisabled();
 
-        ImGui::SameLine();
+        if (!IsEmitterAsset())
+        {
+            ImGui::Separator();
+            DrawEmitterAssetMenu(EmitterIndex, Emitter);
+        }
+
+        ImGui::Separator();
         // A system with no emitters renders nothing and every consumer would need a special case.
-        ImGui::BeginDisabled(PS->Emitters.size() <= 1);
-        if (ImGui::Button(LE_ICON_DELETE"##emdel", ImVec2(BtnW, 0)))
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
+        if (ImGui::MenuItem(LE_ICON_DELETE " Remove Emitter", nullptr, false, PS->Emitters.size() > 1))
         {
             PendingRemoveEmitter = Emitter;
         }
-        ImGui::EndDisabled();
-        ImGui::PopStyleVar();
-
-        if (bOpen)
-        {
-            // Indented under the header, with air above and below so adjacent emitters do not run together.
-            ImGui::Spacing();
-            ImGui::Indent(12.0f);
-            DrawStackSection(EmitterIndex, EParticleModuleStage::Spawn,  "Particle Spawn");
-            ImGui::Spacing();
-            DrawStackSection(EmitterIndex, EParticleModuleStage::Update, "Particle Update");
-            ImGui::Unindent(12.0f);
-            ImGui::Spacing();
-        }
+        ImGui::PopStyleColor();
+        ImGui::EndPopup();
     }
 
     void FParticleSystemEditorTool::DrawStackSection(int32 EmitterIndex, EParticleModuleStage Stage, const char* Label)
@@ -639,32 +781,41 @@ namespace Lumina
         }
 
         ImGui::PushID(Label);
-
         TVector<TStrongObjectPtr<CParticleModule>>& Stack = EmitterStack->GetStack(Stage);
 
-        // A frame-height square clips wider glyphs such as the trash icon, so size for icon plus padding.
-        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float Pad     = ImGui::GetStyle().FramePadding.x;
-        const float BtnW    = ImGui::CalcTextSize(LE_ICON_DELETE).x + Pad * 2.0f;
-        const float ActionsWidth = BtnW * 3.0f + Spacing * 2.0f;
+        const char* Icon = Stage == EParticleModuleStage::Spawn  ? LE_ICON_STAR_FOUR_POINTS
+                         : Stage == EParticleModuleStage::Update ? LE_ICON_REFRESH
+                         : Stage == EParticleModuleStage::Grid   ? LE_ICON_GRID
+                         :                                         LE_ICON_IMAGE_OUTLINE;
 
-        const ImVec2 SectionPos = ImGui::GetCursorScreenPos();
-        const float SectionRight = SectionPos.x + ImGui::GetContentRegionAvail().x;
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 200, 130, 255));
+        const ImVec2 HeaderMin = ImGui::GetCursorScreenPos();
+        const float  Width     = ImGui::GetContentRegionAvail().x;
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(Label);
-        ImGui::PopStyleColor();
-        ImGui::SetCursorScreenPos(ImVec2(SectionRight - BtnW, SectionPos.y));
-        if (ImGui::Button(LE_ICON_PLUS"##add", ImVec2(BtnW, 0)))
+        ImGui::TextColored(EditorColors::SectionHeader(), "%s  %s", Icon, Label);
+        if (!Stack.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(EditorColors::TextMuted(), "%d", (int32)Stack.size());
+        }
+        ImGui::SameLine();
+        ImGui::SetCursorScreenPos(ImVec2(HeaderMin.x + Width - ImGui::GetFrameHeight() - 4.0f, ImGui::GetCursorScreenPos().y));
+        if (StackIcon(LE_ICON_PLUS, "##add", EditorColors::TextDim(), EditorColors::Accent(), "Add a module to this section."))
         {
             PendingAddStage   = Stage;
             PendingAddEmitter = EmitterIndex;
             RefreshModulePalette();
             ImGui::OpenPopup("##AddModule");
         }
-        ImGui::Separator();
 
+        const float LineY = ImGui::GetCursorScreenPos().y;
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(HeaderMin.x, LineY), ImVec2(HeaderMin.x + Width - 4.0f, LineY), EditorColors::U32(EditorColors::Border()));
+        ImGui::Dummy(ImVec2(0.0f, 2.0f));
+
+        // Rows sit close enough that a stage's guide line runs unbroken through the modules under it.
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 2.0f));
         CParticleModule* PendingRemove = nullptr;
+        bool bUnderStage = false;
         for (int32 i = 0; i < (int32)Stack.size(); ++i)
         {
             CParticleModule* Module = Stack[i].Get();
@@ -673,52 +824,35 @@ namespace Lumina
                 continue;
             }
 
-            ImGui::PushID(i);
+            const CParticleModule_SimulationStage* StageHeader = Cast<CParticleModule_SimulationStage>(Module);
+            bUnderStage = StageHeader != nullptr || bUnderStage;
 
-            const ImVec2 RowPos = ImGui::GetCursorScreenPos();
-            const float RowRight = RowPos.x + ImGui::GetContentRegionAvail().x;
-            const float RowHeight = ImGui::GetFrameHeight();
-            bool bEnabled = Module->bEnabled;
-            if (ImGui::Checkbox("##en", &bEnabled))
+            ImGui::PushID(i);
+            const EModuleRowAction Action = DrawModuleRow(EmitterIndex, Module, StageHeader, bUnderStage && StageHeader == nullptr, i > 0, i < (int32)Stack.size() - 1);
+            ImGui::PopID();
+
+            if (Action == EModuleRowAction::MoveUp || Action == EModuleRowAction::MoveDown)
             {
-                Module->bEnabled = bEnabled;
-                MarkEdited(Module);
+                EmitterStack->MoveModule(Module, Action == EModuleRowAction::MoveUp ? -1 : 1);
+                MarkEdited(EmitterStack);
                 DirtyEmitter = EmitterIndex;
             }
-            ImGui::SameLine();
-
-            const uint32 Accent = Module->GetAccentColor();
-            ImGui::PushStyleColor(ImGuiCol_Text, bEnabled ? Accent : IM_COL32(120, 120, 125, 255));
-            const bool bSelected = (SelectedModule == Module);
-            const float RowWidth = Math::Max(40.0f, RowRight - ActionsWidth - Spacing - ImGui::GetCursorScreenPos().x);
-            if (ImGui::Selectable(Module->GetDisplayName().c_str(), bSelected, 0, ImVec2(RowWidth, RowHeight)))
-            {
-                SelectedEmitter = EmitterIndex;
-                SelectModule(Module);
-            }
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered() && !Module->GetTooltip().empty())
-            {
-                ImGui::SetTooltip("%s", Module->GetTooltip().c_str());
-            }
-
-            ImGui::SetCursorScreenPos(ImVec2(RowRight - ActionsWidth, RowPos.y));
-            ImGui::BeginDisabled(i == 0);
-            if (ImGui::Button(LE_ICON_ARROW_UP"##up", ImVec2(BtnW, 0))) { EmitterStack->MoveModule(Module, -1); MarkEdited(EmitterStack); DirtyEmitter = EmitterIndex; }
-            ImGui::EndDisabled();
-
-            ImGui::SameLine();
-            ImGui::BeginDisabled(i == (int32)Stack.size() - 1);
-            if (ImGui::Button(LE_ICON_ARROW_DOWN"##down", ImVec2(BtnW, 0))) { EmitterStack->MoveModule(Module, 1); MarkEdited(EmitterStack); DirtyEmitter = EmitterIndex; }
-            ImGui::EndDisabled();
-
-            ImGui::SameLine();
-            if (ImGui::Button(LE_ICON_DELETE"##del", ImVec2(BtnW, 0)))
+            else if (Action == EModuleRowAction::Remove)
             {
                 PendingRemove = Module;
             }
+            else if (Action == EModuleRowAction::Toggle)
+            {
+                MarkEdited(Module);
+                DirtyEmitter = EmitterIndex;
+            }
+        }
 
-            ImGui::PopID();
+        ImGui::PopStyleVar();
+
+        if (Stage == EParticleModuleStage::Target)
+        {
+            DrawGridTargetPreview(EmitterIndex);
         }
 
         if (PendingRemove != nullptr)
@@ -733,8 +867,181 @@ namespace Lumina
         }
 
         DrawAddModulePopup(EmitterIndex, Stage);
-
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
         ImGui::PopID();
+    }
+
+    FParticleSystemEditorTool::EModuleRowAction FParticleSystemEditorTool::DrawModuleRow(int32 EmitterIndex, CParticleModule* Module,
+        const CParticleModule_SimulationStage* StageHeader, bool bInStage, bool bCanMoveUp, bool bCanMoveDown)
+    {
+        EModuleRowAction Action = EModuleRowAction::None;
+        const bool   bSelected = (SelectedModule == Module);
+        const float  Height    = ImGui::GetFrameHeight() + 2.0f;
+        const ImVec2 Min       = ImGui::GetCursorScreenPos();
+        const float  Width     = ImGui::GetContentRegionAvail().x - 4.0f;
+        const ImVec2 Max(Min.x + Width, Min.y + Height);
+
+        ImGui::SetNextItemAllowOverlap();
+        if (ImGui::InvisibleButton("##row", ImVec2(Width, Height)))
+        {
+            SelectedEmitter = EmitterIndex;
+            SelectModule(Module);
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !Module->GetTooltip().empty())
+        {
+            ImGui::SetTooltip("%s", Module->GetTooltip().c_str());
+        }
+        const ImVec2 AfterRow = ImGui::GetCursorScreenPos();
+        const bool bHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseHoveringRect(Min, Max);
+
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        if (bSelected || bHovered)
+        {
+            DrawList->AddRectFilled(Min, Max, EditorColors::U32(bSelected ? EditorColors::RowBgActive() : EditorColors::RowBgHovered()), 4.0f);
+        }
+        if (bSelected)
+        {
+            DrawList->AddRectFilled(ImVec2(Min.x, Min.y + 3.0f), ImVec2(Min.x + 2.0f, Max.y - 3.0f), EditorColors::U32(EditorColors::Accent()));
+        }
+
+        // Modules under a simulation stage hang off a guide line from its header.
+        const float Inset = bInStage ? 16.0f : 0.0f;
+        if (bInStage)
+        {
+            DrawList->AddLine(ImVec2(Min.x + 11.0f, Min.y - 2.0f), ImVec2(Min.x + 11.0f, Max.y), EditorColors::U32(EditorColors::Border()), 1.0f);
+        }
+
+        // A thin bar in the module's category color, which is all the color a row needs to be told apart.
+        const ImVec4 Category = ImGui::ColorConvertU32ToFloat4(Module->GetAccentColor());
+        DrawList->AddRectFilled(ImVec2(Min.x + Inset + 6.0f, Min.y + 6.0f), ImVec2(Min.x + Inset + 9.0f, Max.y - 6.0f),
+            EditorColors::U32(EditorColors::WithAlpha(Category, Module->bEnabled ? 0.9f : 0.3f)), 1.5f);
+
+        const float CenterY = Min.y + (Height - ImGui::GetFrameHeight()) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(Min.x + Inset + 12.0f, CenterY));
+        bool bEnabled = Module->bEnabled;
+        if (EnableDot("##enabled", bEnabled, "Turn this module off without removing it."))
+        {
+            Module->bEnabled = bEnabled;
+            Action = EModuleRowAction::Toggle;
+        }
+
+        ImGui::SameLine(0.0f, 2.0f);
+        ImGui::AlignTextToFramePadding();
+        const ImVec4 TextColor = bEnabled ? EditorColors::TextPrimary() : EditorColors::TextMuted();
+        if (StageHeader != nullptr)
+        {
+            ImGui::TextColored(bEnabled ? EditorColors::AccentAlt() : EditorColors::TextMuted(), LE_ICON_LAYERS_OUTLINE);
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::TextColored(TextColor, "%s", StageHeader->StageName.c_str());
+            ImGui::SameLine();
+
+            const FString Pill = Format("x{}", StageHeader->Iterations).c_str();
+            const ImVec2 PillPos = ImGui::GetCursorScreenPos();
+            const ImVec2 PillSize = ImGui::CalcTextSize(Pill.c_str());
+            const float  PillY = PillPos.y + (ImGui::GetFrameHeight() - PillSize.y) * 0.5f;
+            DrawList->AddRectFilled(ImVec2(PillPos.x - 1.0f, PillY - 1.0f), ImVec2(PillPos.x + PillSize.x + 9.0f, PillY + PillSize.y + 1.0f),
+                EditorColors::U32(EditorColors::FrameBg()), 8.0f);
+            DrawList->AddText(ImVec2(PillPos.x + 4.0f, PillY), EditorColors::U32(EditorColors::TextDim()), Pill.c_str());
+        }
+        else
+        {
+            ImGui::TextColored(TextColor, "%s", Module->GetDisplayName().c_str());
+        }
+
+        // Actions stay out of sight until the row is pointed at, so a long stack reads as a list rather than a wall of buttons.
+        if (bHovered || bSelected)
+        {
+            const float Icon = ImGui::GetFrameHeight();
+            ImGui::SetCursorScreenPos(ImVec2(Max.x - Icon * 3.0f - 2.0f, CenterY));
+            if (StackIcon(LE_ICON_ARROW_UP, "##up", EditorColors::TextDim(), EditorColors::TextPrimary(), "Move up.", bCanMoveUp))
+            {
+                Action = EModuleRowAction::MoveUp;
+            }
+            ImGui::SameLine(0.0f, 0.0f);
+            if (StackIcon(LE_ICON_ARROW_DOWN, "##down", EditorColors::TextDim(), EditorColors::TextPrimary(), "Move down.", bCanMoveDown))
+            {
+                Action = EModuleRowAction::MoveDown;
+            }
+            ImGui::SameLine(0.0f, 0.0f);
+            if (StackIcon(LE_ICON_DELETE, "##remove", EditorColors::TextDim(), EditorColors::Danger(), "Remove this module."))
+            {
+                Action = EModuleRowAction::Remove;
+            }
+        }
+
+        ImGui::SetCursorScreenPos(AfterRow);
+        return Action;
+    }
+
+    void FParticleSystemEditorTool::DrawModuleGraph()
+    {
+        // Undo or a delete can take the module away, so it has to still be in its emitter's stack.
+        bool bStillThere = false;
+        if (CParticleEmitterStack* Stack = GraphModule != nullptr ? GetStackFor(GraphModuleEmitter) : nullptr)
+        {
+            for (EParticleModuleStage Stage : ParticleOps::GetStages())
+            {
+                for (const TStrongObjectPtr<CParticleModule>& Module : Stack->GetStack(Stage))
+                {
+                    bStillThere |= Module.Get() == GraphModule;
+                }
+            }
+        }
+
+        CParticleModule_Graph* Module = bStillThere ? Cast<CParticleModule_Graph>(GraphModule) : nullptr;
+        if (Module == nullptr)
+        {
+            GraphModule = nullptr;
+            WiredGraph  = nullptr;
+            ImGui::TextDisabled("Select a Graph Module in the stack to edit its nodes here.");
+            return;
+        }
+
+        CParticleNodeGraph* Graph = Module->GetGraph();
+        if (Graph != WiredGraph)
+        {
+            WiredGraph = Graph;
+            Graph->SetTransactionManager(&GetTransactionManager());
+            Graph->SetNodeSelectedCallback([this](CEdGraphNode* Node)
+            {
+                SelectedEmitter = GraphModuleEmitter;
+                SelectObject(Node);
+            });
+            GraphContentVersion = Graph->GetContentVersion();
+        }
+
+        Graph->DrawGraph();
+
+        // Any edit to the nodes changes the generated code, so the emitter recompiles once the stack has drawn.
+        if (Graph->GetContentVersion() != GraphContentVersion)
+        {
+            GraphContentVersion = Graph->GetContentVersion();
+            MarkEdited(Module);
+            DirtyEmitter = GraphModuleEmitter;
+        }
+    }
+
+    void FParticleSystemEditorTool::DrawGridTargetPreview(int32 EmitterIndex)
+    {
+        CParticleSystem* PS = GetSystem();
+        const CParticleEmitter* Emitter = (PS != nullptr && EmitterIndex < (int32)PS->Emitters.size()) ? PS->Emitters[EmitterIndex].Get() : nullptr;
+        if (Emitter == nullptr || Emitter->GridChannelCount == 0)
+        {
+            return;
+        }
+
+        const CTextureRenderTarget* Target = Emitter->GridRenderTarget.Get();
+        if (Target == nullptr || !Target->GetTextureResource().NewTexture.IsValid())
+        {
+            ImGui::TextDisabled("Set the emitter's Grid Render Target to see the output here.");
+            return;
+        }
+
+        const FUIntVector3 Extent = RHI::GetTextureDesc(Target->GetTextureResource().NewTexture.Texture).Dimension;
+        const float Width  = Math::Min(ImGui::GetContentRegionAvail().x, 256.0f);
+        const float Height = Width * (float)Extent.y / (float)Math::Max(Extent.x, 1u);
+        ImGui::Image(ImGuiX::ToImTextureRef(Target->GetTextureResource().NewTexture), ImVec2(Width, Height));
+        ImGui::TextDisabled("%u x %u target, %d x %d grid, %u channels", Extent.x, Extent.y, Emitter->GridWidth, Emitter->GridHeight, Emitter->GridChannelCount);
     }
 
     void FParticleSystemEditorTool::DrawAddModulePopup(int32 EmitterIndex, EParticleModuleStage Stage)
@@ -911,8 +1218,12 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Left, 0.28f, &LeftDockID, &RightDockID);
         ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Down, 0.32f, &RightBottomDockID, &RightDockID);
 
+        ImGuiID GraphDockID = 0;
+        ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Down, 0.5f, &GraphDockID, &RightDockID);
+
         ImGui::DockBuilderDockWindow(GetToolWindowName(EmitterWindowName).c_str(),    LeftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),   RightDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(ModuleGraphWindowName).c_str(), GraphDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(SelectionWindowName).c_str(),  RightBottomDockID);
     }
 

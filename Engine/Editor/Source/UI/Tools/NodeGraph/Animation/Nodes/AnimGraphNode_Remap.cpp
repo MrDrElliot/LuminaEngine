@@ -1,4 +1,5 @@
 #include "AnimGraphNode_Remap.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 
 namespace Lumina
@@ -43,5 +44,11 @@ namespace Lumina
         const uint16 ResultReg   = Compiler.EmitScalarOp(EAnimScalarOp::Add, ScaledReg, OutMinReg);
 
         Compiler.SetPinRegister(ResultPin, ResultReg);
+    }
+
+    void CAnimGraphNode_Remap::DrawPreview(const FAnimGraphDebugView* View)
+    {
+        AnimDebugDraw::Transfer(ReadValueInput(InMinPin, View), ReadValueInput(InMaxPin, View), ReadValueInput(OutMinPin, View),
+            ReadValueInput(OutMaxPin, View), bClampToRange, View != nullptr ? View->ReadPin(ValuePin) : TOptional<float>(), kAnimNodePreviewWidth);
     }
 }

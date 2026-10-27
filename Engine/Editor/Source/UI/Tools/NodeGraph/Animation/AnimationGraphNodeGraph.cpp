@@ -2,6 +2,7 @@
 #include "AnimGraphSchema.h"
 #include "AnimationGraphCompiler.h"
 #include "AnimGraphNode.h"
+#include "AnimGraphDebugView.h"
 #include "Nodes/AnimGraphNode_Output.h"
 #include "Nodes/AnimGraphNode_BlendSpace.h"
 #include "Nodes/AnimGraphNode_ClipPlayer.h"
@@ -23,7 +24,9 @@
 #include "AnimationGraphCompiler.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
+#include "Containers/Algorithm.h"
 #include "UI/Tools/NodeGraph/GraphAlgorithms.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 
 namespace Lumina
 {
@@ -384,5 +387,138 @@ namespace Lumina
                 Error.Node->SetError(Error);
             }
         }
+    }
+
+    namespace
+    {
+        constexpr float kIdleWeight = 0.005f;
+
+        bool IsPosePin(const CEdNodeGraphPin* Pin)
+        {
+            const CAnimGraphPin* AnimPin = Cast<CAnimGraphPin>(Pin);
+            return AnimPin != nullptr && AnimPin->GetPinType() == EAnimPinType::Pose;
+        }
+
+        float ResolvePoseWeight(const CEdGraphNode* Node, float RootWeight, FAnimGraphDebugView& View, THashSet<const CEdGraphNode*>& Visiting)
+        {
+            if (auto It = View.NodeWeights.find(Node); It != View.NodeWeights.end())
+            {
+                return It->second;
+            }
+            if (Cast<CAnimGraphNode_Output>(Node) != nullptr)
+            {
+                return RootWeight;
+            }
+            if (!Visiting.insert(Node).second)
+            {
+                return 0.0f;
+            }
+
+            // A reroute carries whatever its wire does, so only an anim node's value outputs are left out.
+            float Weight = 0.0f;
+            for (const auto& OutputRef : Node->GetOutputPins())
+            {
+                const CEdNodeGraphPin* Output = OutputRef.Get();
+                if (Cast<CAnimGraphPin>(Output) != nullptr && !IsPosePin(Output))
+                {
+                    continue;
+                }
+                for (CEdNodeGraphPin* Input : Output->GetConnections())
+                {
+                    const CEdGraphNode* Consumer = Input->GetOwningNode();
+                    const CAnimGraphNode* AnimConsumer = Cast<CAnimGraphNode>(Consumer);
+                    Weight += ResolvePoseWeight(Consumer, RootWeight, View, Visiting) * (AnimConsumer != nullptr ? AnimConsumer->GetPoseInputShare(Input, View) : 1.0f);
+                }
+            }
+
+            Weight = Math::Clamp(Weight, 0.0f, 1.0f);
+            View.NodeWeights[Node] = Weight;
+            return Weight;
+        }
+    }
+
+    void CAnimationGraphNodeGraph::ComputePoseWeights(FAnimGraphDebugView& View, float RootWeight) const
+    {
+        View.NodeWeights.clear();
+        THashSet<const CEdGraphNode*> Visiting;
+        for (const TStrongObjectPtr<CEdGraphNode>& NodeRef : Nodes)
+        {
+            if (Algo::AnyOf(NodeRef->GetOutputPins(), [](const auto& Pin) { return IsPosePin(Pin.Get()); }))
+            {
+                ResolvePoseWeight(NodeRef.Get(), RootWeight, View, Visiting);
+            }
+        }
+    }
+
+    TOptional<float> CAnimationGraphNodeGraph::GetPoseLinkWeight(const CEdNodeGraphPin* InputPin, const CEdNodeGraphPin* OutputPin) const
+    {
+        if (DebugView == nullptr || !DebugView->bShowWeights || !IsPosePin(OutputPin))
+        {
+            return {};
+        }
+
+        const CEdGraphNode* Consumer = InputPin->GetOwningNode();
+        const CAnimGraphNode* AnimConsumer = Cast<CAnimGraphNode>(Consumer);
+        const float Share = AnimConsumer != nullptr ? AnimConsumer->GetPoseInputShare(InputPin, *DebugView) : 1.0f;
+        const float ConsumerWeight = Cast<CAnimGraphNode_Output>(Consumer) != nullptr
+            ? DebugView->GetNodeWeight(OutputPin->GetOwningNode())
+            : DebugView->GetNodeWeight(Consumer);
+        return Math::Clamp(ConsumerWeight * Share, 0.0f, 1.0f);
+    }
+
+    bool CAnimationGraphNodeGraph::HasNodePreview(const CEdGraphNode* Node)
+    {
+        const CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node);
+        return AnimNode != nullptr && AnimNode->HasPreview();
+    }
+
+    void CAnimationGraphNodeGraph::DrawNodePreviewContent(CEdGraphNode* Node)
+    {
+        static_cast<CAnimGraphNode*>(Node)->DrawPreview(DebugView != nullptr && DebugView->bLive ? DebugView : nullptr);
+    }
+
+    bool CAnimationGraphNodeGraph::IsNodeIdle(const CEdGraphNode* Node) const
+    {
+        return DebugView != nullptr && DebugView->bShowWeights && DebugView->NodeWeights.contains(Node) && DebugView->GetNodeWeight(Node) < kIdleWeight;
+    }
+
+    void CAnimationGraphNodeGraph::GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImU32& OutColor, float& OutThickness) const
+    {
+        CEdNodeGraph::GetLinkStyle(InputPin, OutputPin, OutColor, OutThickness);
+        if (const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin); Weight.has_value())
+        {
+            OutThickness = Math::Lerp(1.0f, OutThickness * 2.0f, Weight.value());
+            OutColor = EditorColors::ScaleAlpha(OutColor, 0.25f + 0.75f * Weight.value());
+        }
+    }
+
+    bool CAnimationGraphNodeGraph::GetLinkBadge(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, FString& OutText, ImU32& OutColor)
+    {
+        const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin);
+        if (!Weight.has_value() || Weight.value() < kIdleWeight || Weight.value() > 1.0f - kIdleWeight)
+        {
+            return false;
+        }
+
+        OutText = Format("{:.0f}%", Weight.value() * 100.0f);
+        OutColor = EditorColors::U32(EditorColors::Accent());
+        return true;
+    }
+
+    bool CAnimationGraphNodeGraph::WantsLinkFlow(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin)
+    {
+        if (DebugView == nullptr || !DebugView->bShowWeights)
+        {
+            return false;
+        }
+
+        if (const TOptional<float> Weight = GetPoseLinkWeight(InputPin, OutputPin); Weight.has_value())
+        {
+            return Weight.value() >= kIdleWeight;
+        }
+
+        // A value wire runs only while what it carries is changing.
+        const FAnimValueHistory* History = DebugView->FindHistory(OutputPin);
+        return History != nullptr && History->size() >= 2 && Math::Abs((*History)[History->size() - 1] - (*History)[History->size() - 2]) > 1e-5f;
     }
 }

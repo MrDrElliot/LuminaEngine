@@ -43,6 +43,7 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        float GetPoseInputShare(const CEdNodeGraphPin* PoseInput, const FAnimGraphDebugView& View) const override;
 
         CAnimGraphPin* BasePin = nullptr;
         CAnimGraphPin* DeltaPin = nullptr;

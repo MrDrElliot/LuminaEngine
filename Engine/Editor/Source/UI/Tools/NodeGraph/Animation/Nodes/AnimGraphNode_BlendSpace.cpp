@@ -1,4 +1,5 @@
 #include "AnimGraphNode_BlendSpace.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
 
@@ -63,5 +64,12 @@ namespace Lumina
         const uint16 PoseReg = Compiler.EmitSampleBlendSpace(BlendSpaceIndex, XReg, YReg, SpeedReg, PhaseSlot, StartPosReg, bDynamicBlendSpace);
 
         Compiler.SetPinRegister(PosePin, PoseReg);
+    }
+
+    void CAnimGraphNode_BlendSpace::DrawPreview(const FAnimGraphDebugView* View)
+    {
+        const TOptional<float> X = View != nullptr ? View->ReadPin(XPin) : TOptional<float>();
+        const TOptional<float> Y = View != nullptr ? View->ReadPin(YPin) : TOptional<float>();
+        AnimDebugDraw::BlendSpace(BlendSpace.Get(), X, Y, kAnimNodePreviewWidth);
     }
 }

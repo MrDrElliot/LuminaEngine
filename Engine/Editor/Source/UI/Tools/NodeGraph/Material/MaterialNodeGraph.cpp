@@ -840,48 +840,30 @@ namespace Lumina
         }
     }
 
-    void CMaterialNodeGraph::DrawNodePreview(CEdGraphNode* Node, FGraphNodeBuilder& Builder)
+    bool CMaterialNodeGraph::HasNodePreview(const CEdGraphNode* Node)
+    {
+        return Cast<CMaterialGraphNode>(Node) != nullptr && !Node->GetOutputPins().empty() && NodePreviewSource;
+    }
+
+    void CMaterialNodeGraph::DrawNodePreviewContent(CEdGraphNode* Node)
     {
         constexpr float PreviewSize = 96.0f;
 
-        CMaterialGraphNode* MaterialNode = Cast<CMaterialGraphNode>(Node);
-        if (MaterialNode == nullptr || Node->GetOutputPins().empty() || !NodePreviewSource)
+        ImTextureRef Texture;
+        const char*  Status = "Compiling";
+        if (NodePreviewSource(Node->GetNodeID(), Texture, Status))
         {
-            return;
+            ImGui::Image(Texture, ImVec2(PreviewSize, PreviewSize));
         }
-
-        Builder.Footer();
-        if (MaterialNode->bShowPreview)
+        else
         {
-            ImGui::BeginHorizontal("Preview");
-            ImGui::Spring(1.0f, 0.0f);
-
-            ImTextureRef Texture;
-            const char*  Status = "Compiling";
-            if (NodePreviewSource(Node->GetNodeID(), Texture, Status))
-            {
-                ImGui::Image(Texture, ImVec2(PreviewSize, PreviewSize));
-            }
-            else
-            {
-                // Held open at full size until the first capture lands, so the node does not jump when it does.
-                const ImVec2 Min = ImGui::GetCursorScreenPos();
-                ImGui::Dummy(ImVec2(PreviewSize, PreviewSize));
-                ImDrawList* DrawList = ImGui::GetWindowDrawList();
-                DrawList->AddRectFilled(Min, Min + ImVec2(PreviewSize, PreviewSize), IM_COL32(20, 21, 24, 255), 4.0f);
-                const ImVec2 TextSize = ImGui::CalcTextSize(Status);
-                DrawList->AddText(Min + (ImVec2(PreviewSize, PreviewSize) - TextSize) * 0.5f, IM_COL32(150, 155, 165, 255), Status);
-            }
-
-            ImGui::Spring(1.0f, 0.0f);
-            ImGui::EndHorizontal();
-        }
-
-        if (Builder.ExpandToggle(MaterialNode->bShowPreview))
-        {
-            SetPendingEditLabel(MaterialNode->bShowPreview ? FName("Hide Node Preview") : FName("Show Node Preview"));
-            MaterialNode->bShowPreview = !MaterialNode->bShowPreview;
-            NotifyCosmeticChange();
+            // Held open at full size until the first capture lands, so the node does not jump when it does.
+            const ImVec2 Min = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(PreviewSize, PreviewSize));
+            ImDrawList* DrawList = ImGui::GetWindowDrawList();
+            DrawList->AddRectFilled(Min, Min + ImVec2(PreviewSize, PreviewSize), IM_COL32(20, 21, 24, 255), 4.0f);
+            const ImVec2 TextSize = ImGui::CalcTextSize(Status);
+            DrawList->AddText(Min + (ImVec2(PreviewSize, PreviewSize) - TextSize) * 0.5f, IM_COL32(150, 155, 165, 255), Status);
         }
     }
 

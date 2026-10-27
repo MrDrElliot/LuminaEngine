@@ -1245,7 +1245,7 @@ namespace Lumina
     // Above the EParticleBlendMode byte of the sprite pass RenderFlags, must match ParticleSpriteCommon.slang.
     static constexpr uint32 PARTICLE_RENDER_FLAG_LIT = 1u << 8;
 
-    // 288 byte layout, must match FParticleSimParams in ParticleSimulate.slang / ParticleSimulateTemplate.slang.
+    // Must match FParticleSimParams in ParticleSimulate.slang / ParticleSimulateTemplate.slang.
     struct alignas(16) FParticleSimParamsGPU
     {
         FVector4  EmitterPosition;
@@ -1270,8 +1270,20 @@ namespace Lumina
         FVector4  EventParams;         // x=continuous events per second raised, y=parent velocity inherited
         FUIntVector4 EventInfo;        // x=event lists raised, y=list consumed, z=emission mesh slot, w=particles per event
         FUIntVector4 RibbonInfo;       // x=segments, y=head sample, z=head advanced this step
+        FUIntVector4 GridInfo;         // x=width, y=height, z=PARTICLE_STAGE, w=PARTICLE_GRID_FLAG bits
+        FVector4  GridParams;          // xy=world size, z=iteration within the stage
+        FUIntVector4 GridTarget;       // x=render target storage slot, y=width, z=height
+        FVector4  NeighborParams;      // x=cell size, y=cells per axis, z=indices per cell
     };
-    static_assert(sizeof(FParticleSimParamsGPU) == 400, "FParticleSimParamsGPU layout must match shader");
+    static_assert(sizeof(FParticleSimParamsGPU) == 464, "FParticleSimParamsGPU layout must match shader");
+
+    // Which part of a generated simulation a dispatch runs, in GridInfo.z, must match ParticleSimulateTemplate.slang.
+    static constexpr uint32 PARTICLE_STAGE_PARTICLES = 0u;
+    static constexpr uint32 PARTICLE_STAGE_TARGET    = Constants::kIndexNoneU32;
+    static constexpr uint32 PARTICLE_STAGE_NEIGHBORS = Constants::kIndexNoneU32 - 1u;
+
+    static constexpr uint32 PARTICLE_GRID_FLAG_ABSORB = 1u << 0;
+    static constexpr uint32 PARTICLE_GRID_FLAG_WRAP   = 1u << 1;
 
     // Mirrors FParticleEvent in ParticleSimCommon.slang, and doubles as an EmitParticle call from script.
     struct alignas(16) FParticleEventGPU

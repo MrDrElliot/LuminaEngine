@@ -63,54 +63,6 @@ namespace Lumina
         CParticleOutput* Output = nullptr;
     };
 
-    REFLECT()
-    class CParticleExpression_Time : public CParticleGraphNode
-    {
-        GENERATED_BODY()
-    public:
-
-        FStringView GetNodeDisplayName() const override { return "Time"; }
-        FStringView GetNodeTooltip() const override { return "Outputs the total simulation time in seconds."; }
-        FFixedString GetNodeCategory() const override { return "Inputs"; }
-
-        void BuildNode() override;
-        void GenerateDefinition(FParticleCompiler& Compiler) override;
-
-        CParticleOutput* Output = nullptr;
-    };
-
-    REFLECT()
-    class CParticleExpression_ParticleAge : public CParticleGraphNode
-    {
-        GENERATED_BODY()
-    public:
-
-        FStringView GetNodeDisplayName() const override { return "ParticleAge"; }
-        FStringView GetNodeTooltip() const override { return "Current age of the particle in seconds."; }
-        FFixedString GetNodeCategory() const override { return "Inputs"; }
-
-        void BuildNode() override;
-        void GenerateDefinition(FParticleCompiler& Compiler) override;
-
-        CParticleOutput* Output = nullptr;
-    };
-
-    REFLECT()
-    class CParticleExpression_LifeRatio : public CParticleGraphNode
-    {
-        GENERATED_BODY()
-    public:
-
-        FStringView GetNodeDisplayName() const override { return "LifeRatio"; }
-        FStringView GetNodeTooltip() const override { return "Normalized particle age from 0 (born) to 1 (about to die)."; }
-        FFixedString GetNodeCategory() const override { return "Inputs"; }
-
-        void BuildNode() override;
-        void GenerateDefinition(FParticleCompiler& Compiler) override;
-
-        CParticleOutput* Output = nullptr;
-    };
-
     /** Shared base for binary math operators. Both inputs get promoted to a common type. */
     // Shared base for the binary math nodes; not a node in its own right.
     REFLECT(NotPlaceable)

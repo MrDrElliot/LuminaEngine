@@ -109,7 +109,7 @@ namespace Lumina
 
         virtual void ValidateGraph()  { }
 
-        virtual CEdGraphNode* CreateNode(CClass* NodeClass);
+        virtual CEdGraphNode* CreateNode(CClass* NodeClass, FName Variant = FName());
 
         // The node carrying this id, or null.
         CEdGraphNode* FindNode(int64 InNodeID) const;
@@ -277,8 +277,14 @@ namespace Lumina
         // Graph-specific entries in a node's context menu, under the node's own.
         virtual void DrawNodeMenuItems(CEdGraphNode* Node) {}
 
-        // Drawn inside a standard node, under its pins.
-        virtual void DrawNodePreview(CEdGraphNode* Node, FGraphNodeBuilder& Builder) {}
+        // The chevron under a standard node's pins, and the preview it opens.
+        void DrawNodePreview(CEdGraphNode* Node, FGraphNodeBuilder& Builder);
+
+        virtual bool HasNodePreview(const CEdGraphNode* Node) { return false; }
+        virtual void DrawNodePreviewContent(CEdGraphNode* Node) {}
+
+        // Contributes nothing to this frame's result, such as a branch blended fully out, and draws faded like a dead node.
+        virtual bool IsNodeIdle(const CEdGraphNode* Node) const { return false; }
 
         // Marked with an eye at its corner, for a graph that shows one node's value somewhere else.
         virtual bool IsNodePreviewed(const CEdGraphNode* Node) { return false; }
@@ -319,7 +325,7 @@ namespace Lumina
         void SetPendingEditLabel(FName Label) { PendingEditLabel = Label; }
 
         // Positions the node on the canvas even when called outside DrawGraph.
-        CEdGraphNode* SpawnNode(CClass* NodeClass, float X, float Y);
+        CEdGraphNode* SpawnNode(CClass* NodeClass, float X, float Y, FName Variant = FName());
 
         // Refuses the whole set when any node is one the graph keeps for itself.
         bool RemoveNodes(const TVector<CEdGraphNode*>& InNodes, FString* OutError = nullptr);

@@ -18,6 +18,8 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        bool HasPreview() const override { return true; }
+        void DrawPreview(const FAnimGraphDebugView* View) override;
 
         /** When true, the normalized input is clamped to [0, 1] before scaling. */
         PROPERTY(Editable, Category = "Remap")

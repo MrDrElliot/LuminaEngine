@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "Renderer/ShaderHandle.h"
+#include "Containers/StaticArray.h"
+#include "Containers/Span.h"
 
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -14,6 +16,7 @@ namespace Lumina
     class CTexture;
     class CMaterialInterface;
     class CStaticMesh;
+    class CTextureRenderTarget;
 
     REFLECT()
     enum class EParticleEmitterShape : uint8
@@ -73,6 +76,8 @@ namespace Lumina
         Mesh,
         // A strip through each particle's recent positions, for rocket and tracer trails.
         Ribbon,
+        // Draws nothing, for an emitter that only runs its grid or feeds other emitters.
+        None,
     };
 
     REFLECT()
@@ -130,6 +135,29 @@ namespace Lumina
 
         PROPERTY(Hidden)
         int32 EmitterIndex = 0;
+    };
+
+    // An emitter's grid copied back from the GPU, a few frames old, for scripts to sample.
+    struct RUNTIME_API FParticleGridSnapshot
+    {
+        int32           EmitterIndex = 0;
+        FUIntVector2    Size = FUIntVector2(0u);
+        uint32          Channels = 0;
+        bool            bWraps = false;
+
+        // The plane the grid lay on when it was copied, the same one the simulation used.
+        FVector3        Origin = FVector3(0.0f);
+        FVector3        Right = FVector3(1.0f, 0.0f, 0.0f);
+        FVector3        Forward = FVector3(0.0f, 0.0f, 1.0f);
+        FVector2        WorldSize = FVector2(1.0f);
+
+        TVector<FName>  ChannelNames;
+
+        // Cell after cell along rows, each holding Channels floats.
+        TVector<float>  Values;
+
+        // Bilinear between cell centers like the shader's SampleGrid, or zero for a channel the grid does not have.
+        float Sample(FName Channel, const FVector3& WorldPosition) const;
     };
 
     // Which fields of an EmitParticle call replace what the spawn stack computed.
@@ -346,6 +374,31 @@ namespace Lumina
      *  block moved here and the system became a list of these.
      *
      *  Emitters simulate independently, with no shared buffers. */
+    // A spawn at a set time in the emitter's cycle, optionally repeating.
+    REFLECT()
+    struct RUNTIME_API SParticleBurst
+    {
+        GENERATED_BODY()
+
+        // Seconds into the cycle.
+        PROPERTY(Editable, Category = "Burst", ClampMin = 0.0f)
+        float Time = 0.0f;
+
+        PROPERTY(Editable, Category = "Burst", ClampMin = 0)
+        int32 Count = 10;
+
+        // Times it fires again after the first.
+        PROPERTY(Editable, Category = "Burst", ClampMin = 0)
+        int32 Repeats = 0;
+
+        // Seconds between repeats.
+        PROPERTY(Editable, Category = "Burst", ClampMin = 0.0f, EditCondition = "Repeats != 0", EditConditionHides)
+        float Interval = 0.5f;
+    };
+
+    // Particles the bursts release while the cycle clock moves from PrevAge to Age, half open so no burst fires twice. Age below PrevAge means the cycle wrapped, and CycleLength 0 means it never does.
+    RUNTIME_API uint32 CountBurstSpawns(TSpan<const SParticleBurst> Bursts, float PrevAge, float Age, float CycleLength);
+
     REFLECT()
     class RUNTIME_API CParticleEmitter : public CObject
     {
@@ -463,6 +516,14 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Simulation", ClampMin = 0)
         int32 BurstCount = 0;
+
+        // Bursts at set times in each cycle, on top of Spawn Rate. Only the first eight are used.
+        PROPERTY(Editable, Category = "Simulation")
+        TVector<SParticleBurst> Bursts;
+
+        // Particles per meter the emitter travels, for a trail of puffs behind something moving.
+        PROPERTY(Editable, Category = "Simulation", ClampMin = 0.0f)
+        float SpawnPerMeter = 0.0f;
 
         /** 0 means infinite (used with bLooping). */
         PROPERTY(Editable, Category = "Simulation", ClampMin = 0.0f)
@@ -691,6 +752,62 @@ namespace Lumina
         PROPERTY(Editable, Category = "Render")
         bool bRandomStartFrame = false;
 
+        // Cells across the grid, along the emitter's right axis. The grid exists once a module declares a channel.
+        PROPERTY(Editable, Category = "Grid", ClampMin = 1, ClampMax = 1024)
+        int32 GridWidth = 128;
+
+        // Cells along the emitter's forward axis.
+        PROPERTY(Editable, Category = "Grid", ClampMin = 1, ClampMax = 1024)
+        int32 GridHeight = 128;
+
+        // Meters the grid spans along the emitter's right and forward axes, centered on the emitter.
+        PROPERTY(Editable, Category = "Grid", Units = "m")
+        FVector2 GridWorldSize = FVector2(10.0f, 10.0f);
+
+        // Joins opposite edges, so stencils and deposits wrap around and a pattern tiles.
+        PROPERTY(Editable, Category = "Grid")
+        bool bGridWraps = false;
+
+        // Receives the grid every frame through the Render Target Output modules, for materials to sample.
+        PROPERTY(Editable, Category = "Grid")
+        TStrongObjectPtr<CTextureRenderTarget> GridRenderTarget;
+
+        // Copies the grid to the CPU every frame, a few frames late, for SParticleSystemComponent::SampleGrid.
+        PROPERTY(Editable, Category = "Grid")
+        bool bReadBackGrid = false;
+
+        // Channel names in cell order, so a script can sample one by name.
+        PROPERTY(Hidden)
+        TVector<FName> GridChannelNames;
+
+        // Arrays the stack reads, in the order the shader indexes them, filled from SParticleSystemComponent::SetArray.
+        PROPERTY(Hidden)
+        TVector<FName> ArrayNames;
+
+        // Meters across one neighbor cell, which bounds how far a module like Boids can see.
+        PROPERTY(Editable, Category = "Neighbors", ClampMin = 0.01f, Units = "m")
+        float NeighborCellSize = 0.5f;
+
+        // Cells along each axis of the cube around the emitter that particles find each other in.
+        PROPERTY(Editable, Category = "Neighbors", ClampMin = 1, ClampMax = 64)
+        int32 NeighborGridResolution = 32;
+
+        // Particles one cell remembers, past which a crowded cell drops the rest.
+        PROPERTY(Editable, Category = "Neighbors", ClampMin = 1, ClampMax = 32)
+        int32 NeighborsPerCell = 8;
+
+        // Set by the compile when a module looks particles up by their neighbors.
+        PROPERTY(Hidden)
+        bool bUsesNeighborGrid = false;
+
+        // Floats per grid cell the compiled stack declared, zero when it has no grid.
+        PROPERTY(Hidden)
+        uint32 GridChannelCount = 0;
+
+        // Dispatches per frame of each simulation stage, in stack order.
+        PROPERTY(Hidden)
+        TVector<int32> GridStageIterations;
+
     private:
 
         uint64 MakeArtifactKey() const;
@@ -790,6 +907,7 @@ namespace Lumina
         // Cleared each frame; false means the sim was skipped and the draw args describe a past frame.
         bool            bSimulatedThisFrame = false;
         float           SpawnAccumulator    = 0.0f;
+        float           DistanceAccumulator = 0.0f;
         float           TotalTime           = 0.0f;
         float           SystemAge           = 0.0f;
         uint32          FrameSeed           = 0u;
@@ -824,10 +942,31 @@ namespace Lumina
         float           ParentAliveTime     = 0.0f;
         // The capacity last refused for exceeding the byte budget, so the error logs once.
         uint32          RejectedMax         = 0;
+
+        // Two grids that simulation stages read one of and write the other, plus fixed point deposits from particles.
+        RHI::FGPUAllocation GridBuffers[2] = {};
+        RHI::FGPUAllocation GridDepositBuffer = {};
+        uint64          GridBufferSize      = 0;
+        uint32          AllocatedGridCells  = 0;
+        uint32          AllocatedGridChannels = 0;
+        // Which of GridBuffers holds the newest grid.
+        uint32          GridCurrent         = 0;
+
+        // Particles bucketed by cell after every step, a count per cell and NeighborsPerCell slots of indices.
+        RHI::FGPUAllocation NeighborCounts = {};
+        RHI::FGPUAllocation NeighborIndices = {};
+        uint32          AllocatedNeighborCells = 0;
+        uint32          AllocatedNeighborSlots = 0;
     };
 
     // Matches the ClampMax on CParticleEmitter::MaxParticles.
     inline constexpr int32 ParticleEmitterMaxCapacity = 1 << 20;
+
+    // Matches the ClampMax on CParticleEmitter::GridWidth and GridHeight.
+    inline constexpr int32 ParticleGridMaxResolution = 1024;
+
+    // Matches the ClampMax on CParticleModule_SimulationStage::Iterations.
+    inline constexpr int32 ParticleStageMaxIterations = 256;
 
     /** Per-frame, per-emitter snapshot of simulation properties after binding resolution. */
     struct RUNTIME_API FResolvedParticleParams
@@ -835,6 +974,11 @@ namespace Lumina
         int32                   MaxParticles            = 1024;
         float                   SpawnRate               = 0.0f;
         int32                   BurstCount              = 0;
+        // Copied rather than pointed at, since the render thread must not read the asset.
+        static constexpr int32  MaxBursts               = 8;
+        TArray<SParticleBurst, MaxBursts> Bursts        = {};
+        int32                   NumBursts               = 0;
+        float                   SpawnPerMeter           = 0.0f;
         float                   Duration                = 0.0f;
         bool                    bLooping                = true;
 

@@ -55,7 +55,8 @@ namespace Lumina
 
         void DrawPinContextMenu(CEdNodeGraphPin* Pin) override;
         void DrawNodeMenuItems(CEdGraphNode* Node) override;
-        void DrawNodePreview(CEdGraphNode* Node, FGraphNodeBuilder& Builder) override;
+        bool HasNodePreview(const CEdGraphNode* Node) override;
+        void DrawNodePreviewContent(CEdGraphNode* Node) override;
         bool IsNodePreviewed(const CEdGraphNode* Node) override;
 
         // Moves the selection into a new material function beside this material, wired in through one call node.

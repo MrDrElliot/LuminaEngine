@@ -83,6 +83,12 @@ namespace Lumina
         int32 Stride = 0;
     };
 
+    // Share of a seam's offset left at U, the fraction of the blend elapsed, for an offset that starts at rest.
+    inline float InertializationDecay(float U)
+    {
+        return 1.0f - U * U * U * (U * (U * 6.0f - 15.0f) + 10.0f);
+    }
+
     // One smoothing record, held per state machine and per Inertialization node. Control fields
     // (bActive/Elapsed/Duration) are advanced by the graph update pass; channel capture/apply and the
     // 2-frame pose history run execute-side in the Inertialize task, since they need evaluated poses.

@@ -2,6 +2,7 @@
 
 #include <imgui.h>
 #include "Containers/String.h"
+#include "Containers/Vector.h"
 #include "Core/Object/Object.h"
 #include "Core/Math/Math.h"
 #include "ParticleModule.generated.h"
@@ -15,6 +16,10 @@ namespace Lumina
     {
         Spawn,      // Runs once when a particle is born; writes initial attributes.
         Update,     // Runs every frame on live particles; applies forces / over-life curves.
+        // Runs on every cell of the emitter's grid, in simulation stages that Simulation Stage modules divide it into.
+        Grid,
+        // Runs on every texel of the grid's render target, choosing the color it receives.
+        Target,
     };
 
     // Exported: a plugin or game editor module defines its own modules by deriving from this, which needs
@@ -53,9 +58,15 @@ namespace Lumina
          *  add to a stack. Such a base overrides this to false; concrete modules never need to. */
         virtual bool IsPaletteVisible() const { return true; }
 
+        // Objects in the package that belong to this module alone, which copying the emitter has to copy too.
+        virtual void GetOwnedObjects(TVector<CObject*>& OutObjects) const { }
+
         /** When false the module is skipped at compile time (kept in the stack for quick toggling). */
         PROPERTY(Editable, Category = "Module")
         bool bEnabled = true;
+
+        // Names become Slang identifiers and macro names, so anything else would inject arbitrary code.
+        static bool IsIdentifier(const FString& Name);
 
     protected:
 

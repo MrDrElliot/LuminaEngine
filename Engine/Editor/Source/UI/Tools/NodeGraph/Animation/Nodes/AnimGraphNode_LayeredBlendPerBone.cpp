@@ -1,4 +1,5 @@
 #include "AnimGraphNode_LayeredBlendPerBone.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 
 namespace Lumina
@@ -61,5 +62,11 @@ namespace Lumina
 
         const uint16 Result = Compiler.EmitBlendMasked(Base, Overlay, Alpha, MaskIdx);
         Compiler.SetPinRegister(ResultPin, Result);
+    }
+
+    // The overlay replaces only the masked bones, so this is its share where the mask is full.
+    float CAnimGraphNode_LayeredBlendPerBone::GetPoseInputShare(const CEdNodeGraphPin* PoseInput, const FAnimGraphDebugView& View) const
+    {
+        return PoseInput == OverlayPin ? Math::Clamp(ReadValueInput(AlphaPin, &View), 0.0f, 1.0f) : 1.0f;
     }
 }

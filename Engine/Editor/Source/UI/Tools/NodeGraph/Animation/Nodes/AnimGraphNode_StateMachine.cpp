@@ -1,5 +1,6 @@
 ﻿#include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_State.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 #include "AnimGraphNode_StateRouting.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
@@ -498,5 +499,18 @@ namespace Lumina
         }
 
         Compiler.SetPinRegister(ResultPin, ResultReg);
+    }
+
+    void CAnimGraphNode_StateMachine::DrawPreview(const FAnimGraphDebugView* View)
+    {
+        FAnimMachineStatus Status{ "Not running" };
+        if (View != nullptr)
+        {
+            if (auto It = View->Machines.find(this); It != View->Machines.end())
+            {
+                Status = It->second;
+            }
+        }
+        AnimDebugDraw::MachineStatus(Status, kAnimNodePreviewWidth);
     }
 }

@@ -16,6 +16,9 @@ namespace Lumina
     static constexpr uint64 ParticleEmitterByteBudget = 512ull << 20;
     static constexpr uint64 ParticleBlockAlign      = 64;
     static constexpr uint32 ParticleSetupsPerFrame  = 2048;
+    static constexpr uint32 ParticleMaxDispatchGroups = 65535;
+    // Bytes of grid copied back to the CPU in one frame, past which the remaining emitters wait for a later frame.
+    static constexpr uint64 ParticleGridReadbackBudget = 32ull << 20;
 
     // Saturates instead of casting, since an out-of-range float to integer cast is undefined.
     static uint32 ToClampedCount(float Value, uint32 Max)
@@ -44,8 +47,15 @@ namespace Lumina
         RHI::TGPUSpan<FParticleShapeGPU> Attractors;
         RHI::TGPUSpan<FParticleShapeGPU> Colliders;
         RHI::TGPUSpan<FParticleTerrainGPU> Terrains;
+        RHI::TGPUSpan<float>             GridRead;
+        RHI::TGPUSpan<float>             GridWrite;
+        RHI::TGPUSpan<int32>             GridDeposit;
+        RHI::TGPUSpan<FVector4>          ArrayData;
+        RHI::TGPUSpan<FUIntVector2>      ArrayRanges;
+        RHI::TGPUSpan<uint32>            NeighborCounts;
+        RHI::TGPUSpan<uint32>            NeighborIndices;
     };
-    static_assert(sizeof(FParticleSimArgs) == 216, "FParticleSimArgs must match ParticleSimCommon.slang.");
+    static_assert(sizeof(FParticleSimArgs) == 328, "FParticleSimArgs must match ParticleSimCommon.slang.");
 
     // Mirrors FParticleSimBatch in ParticleSimCommon.slang.
     struct FParticleSimBatch
@@ -156,7 +166,8 @@ namespace Lumina
 
     static bool IsParticleDrawable(const FParticleExtract& Item)
     {
-        return Item.bOnDrawnLayer && (Item.Resolved.RenderMode != EParticleRenderMode::Mesh || Item.MeshletHeaderSlot != 0u);
+        return Item.bOnDrawnLayer && Item.Resolved.RenderMode != EParticleRenderMode::None
+            && (Item.Resolved.RenderMode != EParticleRenderMode::Mesh || Item.MeshletHeaderSlot != 0u);
     }
 
     RHI::FGPUAllocation FDefaultSceneRenderer::AcquireParticleBuffer(uint64 Size, const char* DebugName)
@@ -206,6 +217,17 @@ namespace Lumina
         State.SortKeyBuffer       = {};
         State.EventBuffer         = {};
         State.RibbonHistoryBuffer = {};
+        State.GridBuffers[0]      = {};
+        State.GridBuffers[1]      = {};
+        State.GridDepositBuffer   = {};
+        State.GridBufferSize      = 0;
+        State.AllocatedGridCells  = 0;
+        State.AllocatedGridChannels = 0;
+        State.GridCurrent         = 0;
+        State.NeighborCounts      = {};
+        State.NeighborIndices     = {};
+        State.AllocatedNeighborCells = 0;
+        State.AllocatedNeighborSlots = 0;
         State.AllocatedMax = 0;
         State.SortCount    = 0;
     }
@@ -217,13 +239,21 @@ namespace Lumina
         const uint32 RibbonSegments  = Resolved.RenderMode == EParticleRenderMode::Ribbon ? (uint32)Resolved.RibbonSegments : 0u;
         const bool   bWantsEvents    = Item.RaisedEventMask != 0u;
         const bool   bWantsSort      = Resolved.SortMode != EParticleSortMode::None && MaxParticles <= PARTICLE_GLOBAL_SORT_CAPACITY;
+        const uint32 GridCells       = Item.GridChannels > 0u ? Item.GridResolution.x * Item.GridResolution.y : 0u;
+        const uint32 GridChannels    = GridCells > 0u ? Item.GridChannels : 0u;
+        const uint32 NeighborCells   = Item.NeighborResolution * Item.NeighborResolution * Item.NeighborResolution;
+        const uint32 NeighborSlots   = NeighborCells > 0u ? Item.NeighborsPerCell : 0u;
 
         const bool bNeedsAlloc = (State.ParticleBuffer.Gpu == 0)
                               || (State.AllocatedMax != MaxParticles)
                               || (State.AllocatedAttributeFloats != Item.AttributeFloatCount)
                               || (State.AllocatedRibbonSegments != RibbonSegments)
                               || ((State.EventBuffer.Gpu != 0) != bWantsEvents)
-                              || ((State.SortCount > 0) != bWantsSort);
+                              || ((State.SortCount > 0) != bWantsSort)
+                              || (State.AllocatedGridCells != GridCells)
+                              || (State.AllocatedGridChannels != GridChannels)
+                              || (State.AllocatedNeighborCells != NeighborCells)
+                              || (State.AllocatedNeighborSlots != NeighborSlots);
         if (!bNeedsAlloc)
         {
             return true;
@@ -240,15 +270,19 @@ namespace Lumina
 
         const uint64 PerParticleBytes = sizeof(FGPUParticle) + (uint64)Item.AttributeFloatCount * sizeof(float)
                                       + (uint64)RibbonSegments * sizeof(FVector4) + (bWantsSort ? 2ull * sizeof(uint32) : 0ull);
-        if ((uint64)MaxParticles * PerParticleBytes > ParticleEmitterByteBudget)
+        const uint64 GridBytes    = (uint64)GridCells * GridChannels * sizeof(float);
+        const uint64 NeighborCountBytes = (uint64)NeighborCells * sizeof(uint32);
+        const uint64 NeighborIndexBytes = (uint64)NeighborCells * NeighborSlots * sizeof(uint32);
+        const uint64 EmitterBytes = (uint64)MaxParticles * PerParticleBytes + 3ull * GridBytes + NeighborCountBytes + NeighborIndexBytes;
+        if (EmitterBytes > ParticleEmitterByteBudget)
         {
             if (State.RejectedMax == MaxParticles)
             {
                 return false;
             }
             State.RejectedMax = MaxParticles;
-            LOG_ERROR("Particle emitter {} of entity {} needs {} MB for {} particles, over the {} MB budget, and is skipped",
-                Item.EmitterIndex, (uint32)Item.Entity, ((uint64)MaxParticles * PerParticleBytes) >> 20, MaxParticles, ParticleEmitterByteBudget >> 20);
+            LOG_ERROR("Particle emitter {} of entity {} needs {} MB for {} particles and its grid, over the {} MB budget, and is skipped",
+                Item.EmitterIndex, (uint32)Item.Entity, EmitterBytes >> 20, MaxParticles, ParticleEmitterByteBudget >> 20);
             return false;
         }
 
@@ -276,6 +310,11 @@ namespace Lumina
         const uint64 ParticleOffset  = Carve(State.ParticleBufferSize);
         const uint64 AttributeOffset = Carve(State.AttributeBufferSize);
         const uint64 CounterOffset   = Carve(ParticleCounterBytes);
+        // Stages start from an empty grid, and the first one folds in deposits that must start at zero.
+        const uint64 GridOffsets[2]  = { Carve(GridBytes), Carve(GridBytes) };
+        const uint64 DepositOffset   = Carve(GridBytes);
+        const uint64 NeighborCountOffset = Carve(NeighborCountBytes);
+        const uint64 NeighborIndexOffset = Carve(NeighborIndexBytes);
         // A sort that never runs must draw nothing rather than an uninitialized count.
         const uint64 SortArgsOffset  = bWantsSort ? Carve(sizeof(RHI::FDrawIndirectArguments)) : 0;
         // Only the event counts need clearing, so the event lists close the zeroed range.
@@ -305,12 +344,23 @@ namespace Lumina
         State.SortIndexBuffer     = Region(SortIndexOffset, State.SortIndexBufferSize);
         State.SortKeyBuffer       = Region(SortKeyOffset, State.SortKeyBufferSize);
         State.RibbonHistoryBuffer = Region(RibbonOffset, State.RibbonHistorySize);
+        State.GridBuffers[0]      = Region(GridOffsets[0], GridBytes);
+        State.GridBuffers[1]      = Region(GridOffsets[1], GridBytes);
+        State.GridDepositBuffer   = Region(DepositOffset, GridBytes);
+        State.GridBufferSize      = GridBytes;
+        State.NeighborCounts      = Region(NeighborCountOffset, NeighborCountBytes);
+        State.NeighborIndices     = Region(NeighborIndexOffset, NeighborIndexBytes);
 
         RHI::CmdMemset(CL, { State.Block.Gpu, ZeroedBytes }, 0u);
 
         State.AllocatedMax             = MaxParticles;
         State.AllocatedAttributeFloats = Item.AttributeFloatCount;
         State.AllocatedRibbonSegments  = RibbonSegments;
+        State.AllocatedGridCells       = GridCells;
+        State.AllocatedGridChannels    = GridChannels;
+        State.AllocatedNeighborCells   = NeighborCells;
+        State.AllocatedNeighborSlots   = NeighborSlots;
+        State.GridCurrent              = 0u;
         State.SpawnAccumulator         = 0.0f;
         State.SystemAge                = 0.0f;
         State.CycleTime                = -1.0f;
@@ -357,6 +407,7 @@ namespace Lumina
         ParticleSetupsThisFrame = 0;
 
         ReadParticleCollisions();
+        ReadParticleGrids();
 
         if (!ParticleGPUStates.empty())
         {
@@ -433,6 +484,7 @@ namespace Lumina
         ParticleCounterSlotsUsed = 0;
 
         bool bAnySimulated = false;
+        bool bAnyGridTargetWritten = false;
 
         // A system's emitters sit next to each other and most share a shader, so both lookups usually repeat the previous one.
         ECS::FEntity                LastEntity = ECS::FEntity{};
@@ -487,6 +539,12 @@ namespace Lumina
             if (Item.bForceReset)
             {
                 RHI::CmdMemset(CL, { State.ParticleBuffer.Gpu, State.ParticleBufferSize }, 0u);
+                if (State.GridBufferSize > 0)
+                {
+                    // Both grids and the deposits are carved back to back.
+                    RHI::CmdMemset(CL, { State.GridBuffers[0].Gpu, State.GridDepositBuffer.Gpu + State.GridBufferSize - State.GridBuffers[0].Gpu }, 0u);
+                    State.GridCurrent = 0u;
+                }
                 State.AliveTimeRemaining = 0.0f;
                 State.SpawnAccumulator   = 0.0f;
                 State.SystemAge          = 0.0f;
@@ -585,12 +643,73 @@ namespace Lumina
             const float MaxLifetime   = Math::Max(Resolved.LifetimeRange.y, 0.0f);
             const uint32 TotalSteps   = PrewarmSteps + (uint32)StepDeltas.size();
 
+            const bool   bHasGrid  = State.AllocatedGridCells > 0u;
+            const bool   bHasNeighbors = State.AllocatedNeighborCells > 0u;
+            const uint32 GridFlags = Item.bGridWraps ? PARTICLE_GRID_FLAG_WRAP : 0u;
+
             // A later step reads what the previous one wrote, and a sub-emitter reads its parent's events, so both need barriers.
-            const bool bBatched = TotalSteps == 1u && Item.SourceEmitterIndex < 0 && ParticleCounterArena;
+            const bool bBatched = TotalSteps == 1u && Item.SourceEmitterIndex < 0 && !bHasGrid && !bHasNeighbors && ParticleCounterArena;
             TVector<FParticleSimStep>& PlannedSteps = bBatched ? ParticleBatchedSteps : ParticleSerialSteps;
             State.FrameSpawnCounter = bBatched
                 ? ParticleCounterArena.Gpu + (uint64)ParticleCounterSlotsUsed++ * ParticleCounterBytes
                 : State.SpawnCounterBuffer.Gpu;
+
+            // Work past the group limit of one dispatch splits into several over the same arguments.
+            auto PlanStep = [&](const FParticleSimParamsGPU& Params, FParticleSimArgs Args, uint32 Threads, RHI::GPUPtr SpawnCounter, RHI::GPUPtr EventCounts, bool bBarrierAfter,
+                                RHI::FGPUAllocation Clear = {})
+            {
+                Args.ParamsAddr = RHI::CopyTransient(Params);
+                const uint32 ArgsOffset = (uint32)ParticleSimArgsScratch.size();
+                ParticleSimArgsScratch.resize(ArgsOffset + sizeof(FParticleSimArgs));
+                Memory::Memcpy(ParticleSimArgsScratch.data() + ArgsOffset, &Args, sizeof(FParticleSimArgs));
+
+                const uint32 Groups = RenderUtils::GetGroupCount(Threads, PARTICLE_SIM_GROUP_SIZE);
+                for (uint32 FirstGroup = 0u; FirstGroup < Groups; FirstGroup += ParticleMaxDispatchGroups)
+                {
+                    const bool bFirstChunk = FirstGroup == 0u;
+                    PlannedSteps.push_back(FParticleSimStep
+                    {
+                        .Pipeline      = SimPipeline,
+                        .ArgsOffset    = ArgsOffset,
+                        .SpawnCounter  = bFirstChunk ? SpawnCounter : 0,
+                        .EventCounts   = bFirstChunk ? EventCounts : 0,
+                        .Groups        = Math::Min(Groups - FirstGroup, ParticleMaxDispatchGroups),
+                        .FirstGroup    = FirstGroup,
+                        .ClearAddress  = bFirstChunk ? Clear.Gpu : 0,
+                        .ClearBytes    = bFirstChunk ? Clear.Size : 0,
+                        .bBarrierAfter = bBarrierAfter && FirstGroup + ParticleMaxDispatchGroups >= Groups,
+                    });
+                }
+            };
+
+            // Each dispatch reads the newest grid and writes the other, so a stage of N iterations ping-pongs N times.
+            auto PlanGridDispatch = [&](FParticleSimParamsGPU Params, FParticleSimArgs Args, uint32 Stage, uint32 Iteration, uint32 Flags)
+            {
+                Params.Counts.x     = State.AllocatedGridCells;
+                Params.GridInfo.z   = Stage;
+                Params.GridInfo.w   = GridFlags | Flags;
+                Params.GridParams.z = (float)Iteration;
+                Args.GridRead       = { State.GridBuffers[State.GridCurrent] };
+                Args.GridWrite      = { State.GridBuffers[State.GridCurrent ^ 1u] };
+                PlanStep(Params, Args, State.AllocatedGridCells, 0, 0, true);
+                State.GridCurrent ^= 1u;
+            };
+
+            // Shared by every step this frame, so the arrays cross to the GPU once.
+            RHI::TGPUSpan<FVector4>     ArrayDataSpan;
+            RHI::TGPUSpan<FUIntVector2> ArrayRangeSpan;
+            if (!Item.ArrayRanges.empty())
+            {
+                ArrayRangeSpan = RHI::CopyTransientArray(Item.ArrayRanges.data(), Item.ArrayRanges.size());
+                if (!Item.ArrayData.empty())
+                {
+                    ArrayDataSpan = RHI::CopyTransientArray(Item.ArrayData.data(), Item.ArrayData.size());
+                }
+            }
+
+            FParticleSimParamsGPU LastGridParams{};
+            FParticleSimArgs      LastGridArgs{};
+            bool                  bGridStepped = false;
 
             for (uint32 StepIndex = 0; StepIndex < TotalSteps; ++StepIndex)
             {
@@ -599,6 +718,7 @@ namespace Lumina
                 const bool  bFirstStep = StepIndex == 0;
                 const bool  bLastStep  = StepIndex + 1 == TotalSteps;
 
+                const float PrevSystemAge = State.SystemAge;
                 State.TotalTime += StepDelta;
                 State.SystemAge += StepDelta;
 
@@ -634,6 +754,20 @@ namespace Lumina
                     State.SpawnAccumulator = 0.0f;
                 }
 
+                if (bEmitActive && Resolved.NumBursts > 0)
+                {
+                    const float CycleClock = (Resolved.Duration > 0.0f) ? Resolved.Duration : 0.0f;
+                    SpawnCount += CountBurstSpawns(TSpan<const SParticleBurst>(Resolved.Bursts.data(), (size_t)Resolved.NumBursts), PrevSystemAge, State.SystemAge, CycleClock);
+                }
+
+                if (bEmitActive && Resolved.SpawnPerMeter > 0.0f)
+                {
+                    State.DistanceAccumulator += Math::Length(EmitterVelocity) * StepDelta * Resolved.SpawnPerMeter;
+                    const uint32 ByDistance = ToClampedCount(State.DistanceAccumulator, MaxParticles);
+                    State.DistanceAccumulator = Math::Clamp(State.DistanceAccumulator - (float)ByDistance, 0.0f, 1.0f);
+                    SpawnCount += ByDistance;
+                }
+
                 const bool bDoBurst = bEmitActive && Item.bBurstOnSpawn && State.bBurstPending && Resolved.BurstCount > 0;
                 if (bDoBurst)
                 {
@@ -657,7 +791,9 @@ namespace Lumina
                 State.AliveTimeRemaining = Math::Max(State.AliveTimeRemaining - StepDelta, 0.0f);
                 State.ParentAliveTime    = Math::Max(State.ParentAliveTime - StepDelta, 0.0f);
 
-                if (SpawnCount == 0 && State.AliveTimeRemaining <= 0.0f && State.ParentAliveTime <= 0.0f && !bConsumesScript)
+                // A grid keeps simulating with no particles alive, which is how an emitter without particles runs at all.
+                const bool bParticlesIdle = SpawnCount == 0 && State.AliveTimeRemaining <= 0.0f && State.ParentAliveTime <= 0.0f && !bConsumesScript;
+                if (bParticlesIdle && !bHasGrid)
                 {
                     continue;
                 }
@@ -717,9 +853,12 @@ namespace Lumina
                                                            Item.EmissionMeshSlot,
                                                            (uint32)Resolved.ParticlesPerEvent);
                 SimParams.RibbonInfo        = FUIntVector4(State.AllocatedRibbonSegments, State.RibbonHead, bRibbonAdvance ? 1u : 0u, 0u);
+                SimParams.GridInfo          = FUIntVector4(Item.GridResolution.x, Item.GridResolution.y, PARTICLE_STAGE_PARTICLES, GridFlags);
+                SimParams.GridParams        = FVector4(Item.GridWorldSize.x, Item.GridWorldSize.y, 0.0f, 0.0f);
+                SimParams.GridTarget        = FUIntVector4(Item.GridTargetSlot, Item.GridTargetExtent.x, Item.GridTargetExtent.y, 0u);
+                SimParams.NeighborParams    = FVector4(Item.NeighborCellSize, (float)Item.NeighborResolution, (float)Item.NeighborsPerCell, 0.0f);
 
                 FParticleSimArgs SimArgs = {};
-                SimArgs.ParamsAddr   = RHI::CopyTransient(SimParams);
                 SimArgs.Particles    = { State.ParticleBuffer, MaxParticles };
                 SimArgs.SpawnCounter = RHI::TGPUSpan<uint32>::FromAddress(State.FrameSpawnCounter, ParticleCounterBytes / sizeof(uint32));
                 if (!Item.ModuleParamValues.empty())
@@ -745,22 +884,82 @@ namespace Lumina
                 SimArgs.Attractors    = AttractorSpan;
                 SimArgs.Colliders     = ColliderSpan;
                 SimArgs.Terrains      = TerrainSpan;
-
-                // The next step, a sub-emitter reading these events, or next frame's event clear all touch what this wrote.
-                const uint32 ArgsOffset = (uint32)ParticleSimArgsScratch.size();
-                ParticleSimArgsScratch.resize(ArgsOffset + sizeof(FParticleSimArgs));
-                Memory::Memcpy(ParticleSimArgsScratch.data() + ArgsOffset, &SimArgs, sizeof(FParticleSimArgs));
-                PlannedSteps.push_back(FParticleSimStep
+                SimArgs.ArrayData     = ArrayDataSpan;
+                SimArgs.ArrayRanges   = ArrayRangeSpan;
+                SimArgs.NeighborCounts  = { State.NeighborCounts };
+                SimArgs.NeighborIndices = { State.NeighborIndices };
+                if (bHasGrid)
                 {
-                    .Pipeline      = SimPipeline,
-                    .ArgsOffset    = ArgsOffset,
-                    .SpawnCounter  = bBatched ? 0 : State.FrameSpawnCounter,
-                    .EventCounts   = bFirstStep ? State.EventBuffer.Gpu : 0,
-                    .Groups        = RenderUtils::GetGroupCount(MaxParticles, PARTICLE_SIM_GROUP_SIZE),
-                    .bBarrierAfter = !bLastStep || Item.RaisedEventMask != 0u || Item.SourceEmitterIndex >= 0,
-                });
+                    SimArgs.GridRead    = { State.GridBuffers[State.GridCurrent] };
+                    SimArgs.GridDeposit = { State.GridDepositBuffer };
+                }
+
+                if (!bParticlesIdle)
+                {
+                    // The next step, a grid stage folding deposits, a sub-emitter reading these events, or next frame's event clear all touch what this wrote.
+                    PlanStep(SimParams, SimArgs, MaxParticles, bBatched ? 0 : State.FrameSpawnCounter, bFirstStep ? State.EventBuffer.Gpu : 0,
+                             !bLastStep || bHasGrid || bHasNeighbors || Item.RaisedEventMask != 0u || Item.SourceEmitterIndex >= 0);
+                    State.bSimulatedThisFrame = true;
+
+                    // Buckets the particles where this step left them, for the next step's neighbor lookups.
+                    if (bHasNeighbors)
+                    {
+                        FParticleSimParamsGPU BucketParams = SimParams;
+                        BucketParams.GridInfo.z = PARTICLE_STAGE_NEIGHBORS;
+                        PlanStep(BucketParams, SimArgs, MaxParticles, 0, 0, true, State.NeighborCounts);
+                    }
+                }
+
+                if (bHasGrid)
+                {
+                    // With no stage dispatched, one that matches no stage still folds the deposits in, so they never pile up.
+                    uint32 Flags = PARTICLE_GRID_FLAG_ABSORB;
+                    const uint32 StageCount = (uint32)Item.GridStageIterations.size();
+                    for (uint32 Stage = 0u; Stage < StageCount; ++Stage)
+                    {
+                        const uint32 Iterations = (uint32)Math::Clamp(Item.GridStageIterations[Stage], 0, ParticleStageMaxIterations);
+                        for (uint32 Iteration = 0u; Iteration < Iterations; ++Iteration)
+                        {
+                            PlanGridDispatch(SimParams, SimArgs, Stage + 1u, Iteration, Flags);
+                            Flags = 0u;
+                        }
+                    }
+                    if (Flags != 0u)
+                    {
+                        PlanGridDispatch(SimParams, SimArgs, StageCount + 1u, 0u, Flags);
+                    }
+
+                    LastGridParams = SimParams;
+                    LastGridArgs   = SimArgs;
+                    bGridStepped   = true;
+                }
                 bAnySimulated = true;
-                State.bSimulatedThisFrame = true;
+            }
+
+            if (bGridStepped && Item.bReadBackGrid)
+            {
+                FParticleGridReadback& Readback = ParticleGridReadback[CurrentFrameSlot];
+                FParticleGridSnapshot& Layout = Readback.Layouts.emplace_back();
+                Layout.EmitterIndex = Item.EmitterIndex;
+                Layout.Size         = Item.GridResolution;
+                Layout.Channels     = State.AllocatedGridChannels;
+                Layout.bWraps       = Item.bGridWraps;
+                Layout.Origin       = EmitterWorld;
+                Layout.Right        = EmitterRight;
+                Layout.Forward      = EmitterForward;
+                Layout.WorldSize    = Item.GridWorldSize;
+                Readback.Grids.push_back(State.GridBuffers[State.GridCurrent].Gpu);
+                Readback.Owners.push_back(Item.Entity);
+            }
+
+            if (bGridStepped && Item.GridTargetSlot != RHI::kInvalidHeapSlot)
+            {
+                const uint32 Texels = Item.GridTargetExtent.x * Item.GridTargetExtent.y;
+                LastGridParams.Counts.x   = Texels;
+                LastGridParams.GridInfo.z = PARTICLE_STAGE_TARGET;
+                LastGridArgs.GridRead     = { State.GridBuffers[State.GridCurrent] };
+                PlanStep(LastGridParams, LastGridArgs, Texels, 0, 0, false);
+                bAnyGridTargetWritten = true;
             }
 
             TVector<FParticleCollisionSource>& CollisionSources = ParticleCollisionReadback[CurrentFrameSlot].Sources;
@@ -773,6 +972,16 @@ namespace Lumina
         RecordParticleSimSteps(CL);
 
         CopyParticleCollisions(CL);
+        CopyParticleGrids(CL);
+
+        if (bAnyGridTargetWritten)
+        {
+            // Materials in every stage sample a grid's render target, from the next frame on.
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::PixelShader | RHI::EStageFlags::VertexShader | RHI::EStageFlags::MeshShader | RHI::EStageFlags::Compute,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        }
 
         if (bAnySimulated)
         {
@@ -796,6 +1005,11 @@ namespace Lumina
             {
                 RHI::CmdMemset(CL, { Step.EventCounts, ParticleEventCountBytes }, 0u);
             }
+            if (Step.ClearAddress != 0)
+            {
+                RHI::CmdMemset(CL, { Step.ClearAddress, Step.ClearBytes }, 0u);
+            }
+            return Step.SpawnCounter != 0 || Step.EventCounts != 0 || Step.ClearAddress != 0;
         };
 
         auto ClearsToCompute = [&]()
@@ -816,7 +1030,6 @@ namespace Lumina
         // A run of steps on one pipeline becomes as few dispatches as the group limit allows.
         auto DispatchBatch = [&](const FParticleSimStep* Steps, uint32 Count)
         {
-            constexpr uint32 kMaxGroups = 65535u;
             uint32 First = 0u;
             while (First < Count)
             {
@@ -824,7 +1037,7 @@ namespace Lumina
                 ParticleSimBatchGroups.clear();
 
                 uint32 End = First;
-                while (End < Count && (ParticleSimBatchGroups.empty() || ParticleSimBatchGroups.size() + Steps[End].Groups <= kMaxGroups))
+                while (End < Count && (ParticleSimBatchGroups.empty() || ParticleSimBatchGroups.size() + Steps[End].Groups <= ParticleMaxDispatchGroups))
                 {
                     const uint32 EmitterIndex = (uint32)(ParticleSimBatchEmitters.size() / sizeof(FParticleSimArgs));
                     const size_t At = ParticleSimBatchEmitters.size();
@@ -832,7 +1045,7 @@ namespace Lumina
                     Memory::Memcpy(ParticleSimBatchEmitters.data() + At, ParticleSimArgsScratch.data() + Steps[End].ArgsOffset, sizeof(FParticleSimArgs));
                     for (uint32 Group = 0u; Group < Steps[End].Groups; ++Group)
                     {
-                        ParticleSimBatchGroups.push_back(FUIntVector2(EmitterIndex, Group));
+                        ParticleSimBatchGroups.push_back(FUIntVector2(EmitterIndex, Steps[End].FirstGroup + Group));
                     }
                     ++End;
                 }
@@ -846,7 +1059,7 @@ namespace Lumina
                         .Emitters = RHI::TGPUSpan<FParticleSimArgs>(RHI::CopyTransientArray(reinterpret_cast<const FParticleSimArgs*>(ParticleSimBatchEmitters.data()), NumEmitters)),
                         .Groups   = RHI::TGPUSpan<FUIntVector2>(RHI::CopyTransientArray(ParticleSimBatchGroups.data(), NumGroups)),
                     };
-                    RHI::CmdDispatch(CL, MakeArgs(Batch), Math::Min(NumGroups, kMaxGroups), 1u, 1u);
+                    RHI::CmdDispatch(CL, MakeArgs(Batch), Math::Min(NumGroups, ParticleMaxDispatchGroups), 1u, 1u);
                 }
                 First = End;
             }
@@ -894,8 +1107,10 @@ namespace Lumina
 
         for (const FParticleSimStep& Step : ParticleSerialSteps)
         {
-            ClearCounters(Step);
-            ClearsToCompute();
+            if (ClearCounters(Step))
+            {
+                ClearsToCompute();
+            }
             RHI::CmdSetPipeline(CL, Step.Pipeline);
             DispatchBatch(&Step, 1u);
             if (Step.bBarrierAfter)
@@ -937,6 +1152,94 @@ namespace Lumina
             }
         }
         Readback.Sources.clear();
+    }
+
+    void FDefaultSceneRenderer::ReadParticleGrids()
+    {
+        // As with collisions, the frame ring already waited on this slot, so its copies have landed.
+        FParticleGridReadback& Readback = ParticleGridReadback[CurrentFrameSlot];
+        const float* Base = reinterpret_cast<const float*>(Readback.Buffer.Cpu);
+        size_t Cursor = 0;
+        for (size_t Index = 0; Base != nullptr && Index < Readback.Layouts.size(); ++Index)
+        {
+            FParticleGridSnapshot& Snapshot = Readback.Layouts[Index];
+            const size_t Floats = (size_t)Snapshot.Size.x * Snapshot.Size.y * Snapshot.Channels;
+            Snapshot.Values.assign(Base + Cursor, Base + Cursor + Floats);
+            Cursor += Floats;
+            ParticleGridResults[Readback.Owners[Index]].push_back(Move(Snapshot));
+        }
+        Readback.Layouts.clear();
+        Readback.Grids.clear();
+        Readback.Owners.clear();
+    }
+
+    void FDefaultSceneRenderer::CopyParticleGrids(RHI::FCmdListH CL)
+    {
+        FParticleGridReadback& Readback = ParticleGridReadback[CurrentFrameSlot];
+        if (Readback.Layouts.empty())
+        {
+            return;
+        }
+
+        // Grids past the budget drop out, and those emitters keep their previous copy.
+        uint64 Bytes = 0;
+        size_t Kept = 0;
+        for (; Kept < Readback.Layouts.size(); ++Kept)
+        {
+            const FParticleGridSnapshot& Layout = Readback.Layouts[Kept];
+            const uint64 GridBytes = (uint64)Layout.Size.x * Layout.Size.y * Layout.Channels * sizeof(float);
+            if (Bytes + GridBytes > ParticleGridReadbackBudget)
+            {
+                break;
+            }
+            Bytes += GridBytes;
+        }
+        Readback.Layouts.resize(Kept);
+        Readback.Grids.resize(Kept);
+        Readback.Owners.resize(Kept);
+        if (Bytes == 0)
+        {
+            return;
+        }
+
+        if (Readback.Buffer.Size < Bytes)
+        {
+            if (Readback.Buffer)
+            {
+                DeferFree(Readback.Buffer);
+            }
+            // Rounded up to a whole megabyte, so a grid that grows a little does not reallocate every frame.
+            Readback.Buffer = RHI::Malloc(Math::AlignUp(Bytes, 1ull << 20), RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+            if (!Readback.Buffer)
+            {
+                Readback.Layouts.clear();
+                Readback.Grids.clear();
+                Readback.Owners.clear();
+                return;
+            }
+            RHI::SetDebugName(Readback.Buffer.Gpu, "Readback.ParticleGrids");
+        }
+
+        TVector<RHI::FBufferCopy> Copies;
+        uint64 Offset = 0;
+        for (size_t Index = 0; Index < Readback.Layouts.size(); ++Index)
+        {
+            const FParticleGridSnapshot& Layout = Readback.Layouts[Index];
+            const uint64 GridBytes = (uint64)Layout.Size.x * Layout.Size.y * Layout.Channels * sizeof(float);
+            Copies.push_back(RHI::FBufferCopy(Readback.Buffer.Sub(Offset, GridBytes), RHI::FGPURange{ Readback.Grids[Index], GridBytes }));
+            Offset += GridBytes;
+        }
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
+        RHI::CmdMemcpyBatch(CL, TSpan<const RHI::FBufferCopy>(Copies.data(), Copies.size()));
+
+        // The next frame's stages write these grids, and the CPU reads the copy once this slot comes round.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::Host,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::HostRead);
     }
 
     void FDefaultSceneRenderer::CopyParticleCollisions(RHI::FCmdListH CL)

@@ -20,6 +20,8 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        bool HasPreview() const override { return true; }
+        void DrawPreview(const FAnimGraphDebugView* View) override;
 
         /** Clip sampled by this node. A wired Animation pin overrides it at runtime. */
         PROPERTY(Editable, Category = "Animation")

@@ -1,4 +1,5 @@
 #include "AnimGraphNode_Blend.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 
 namespace Lumina
@@ -21,5 +22,11 @@ namespace Lumina
         const uint16 Result  = Compiler.EmitBlend(PoseA, PoseB, Alpha);
 
         Compiler.SetPinRegister(ResultPin, Result);
+    }
+
+    float CAnimGraphNode_Blend::GetPoseInputShare(const CEdNodeGraphPin* PoseInput, const FAnimGraphDebugView& View) const
+    {
+        const float Alpha = Math::Clamp(ReadValueInput(AlphaPin, &View), 0.0f, 1.0f);
+        return PoseInput == PoseBPin ? Alpha : 1.0f - Alpha;
     }
 }

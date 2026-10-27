@@ -18,6 +18,7 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        bool HasPreview() const override { return false; }
 
         /** Constant value emitted on the Value output. */
         PROPERTY(Editable, Category = "Value")

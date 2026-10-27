@@ -283,6 +283,25 @@ namespace Lumina
                 bool                    bReportCollisions   = false;
                 float                   RaisedEventRate     = 0.0f;
                 TVector<FParticleEventGPU> ScriptEmits;
+
+                // Zero channels when the emitter has no grid, in which case the fields after it are unset.
+                uint32                  GridChannels        = 0u;
+                FUIntVector2            GridResolution      = FUIntVector2(0u);
+                FVector2                GridWorldSize       = FVector2(0.0f);
+                bool                    bGridWraps          = false;
+                TVector<int32>          GridStageIterations;
+                uint32                  GridTargetSlot      = RHI::kInvalidHeapSlot;
+                FUIntVector2            GridTargetExtent    = FUIntVector2(0u);
+                bool                    bReadBackGrid       = false;
+
+                // Every array the emitter declares packed back to back, with an offset and count per array.
+                TVector<FVector4>       ArrayData;
+                TVector<FUIntVector2>   ArrayRanges;
+
+                // Zero cells when no module looks particles up by their neighbors.
+                uint32                  NeighborResolution  = 0u;
+                uint32                  NeighborsPerCell    = 0u;
+                float                   NeighborCellSize    = 0.0f;
             };
 
             struct FCaptureViewData
@@ -1783,6 +1802,19 @@ namespace Lumina
         THashMap<ECS::FEntity, TVector<SParticleCollision>> ParticleCollisionResults;
         void ReadParticleCollisions();
         void CopyParticleCollisions(RHI::FCmdListH CL);
+
+        // One frame slot's copies of the grids of emitters that read theirs back, laid out one after another in Buffer.
+        struct FParticleGridReadback
+        {
+            RHI::FGPUAllocation             Buffer = {};
+            TVector<FParticleGridSnapshot>  Layouts;
+            TVector<RHI::GPUPtr>            Grids;
+            TVector<ECS::FEntity>           Owners;
+        };
+        TArray<FParticleGridReadback, RHI::kFramesInFlight> ParticleGridReadback = {};
+        THashMap<ECS::FEntity, TVector<FParticleGridSnapshot>> ParticleGridResults;
+        void ReadParticleGrids();
+        void CopyParticleGrids(RHI::FCmdListH CL);
         THashMap<uint64, TVector<RHI::FGPUAllocation>>    ParticleBufferPool;
         uint64                                            ParticlePoolBytes = 0;
         // Set once a pooled buffer is handed out this frame, since its previous frame's reads need a barrier before the clear.
@@ -1800,6 +1832,11 @@ namespace Lumina
             RHI::GPUPtr     SpawnCounter = 0;
             RHI::GPUPtr     EventCounts = 0;
             uint32          Groups = 0;
+            // Where Groups starts within the emitter, for work split across dispatches by the group limit.
+            uint32          FirstGroup = 0;
+            // Zeroed before the dispatch, the way the neighbor counts are before particles are bucketed again.
+            RHI::GPUPtr     ClearAddress = 0;
+            uint64          ClearBytes = 0;
             bool            bBarrierAfter = false;
         };
         // Spawn counters for every batched emitter, so one fill clears them all.

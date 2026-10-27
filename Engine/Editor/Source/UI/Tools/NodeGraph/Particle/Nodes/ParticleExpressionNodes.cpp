@@ -8,10 +8,7 @@ namespace Lumina
 {
     static EParticlePinType PromoteType(EParticlePinType A, EParticlePinType B)
     {
-        if (A == B)                                 return A;
-        if (A == EParticlePinType::Float4 || B == EParticlePinType::Float4) return EParticlePinType::Float4;
-        if (A == EParticlePinType::Float3 || B == EParticlePinType::Float3) return EParticlePinType::Float3;
-        return EParticlePinType::Float;
+        return FParticleCompiler::TypeOfWidth(Math::Max(FParticleCompiler::Width(A), FParticleCompiler::Width(B)));
     }
 
     void CParticleExpression_ConstantFloat::BuildNode()
@@ -47,54 +44,6 @@ namespace Lumina
     {
         FString Val = "float4(" + FString(Format("{}", Value.x)) + ", " + FString(Format("{}", Value.y)) + ", " + FString(Format("{}", Value.z)) + ", " + FString(Format("{}", Value.w)) + ")";
         Compiler.EmitCurrent("float4 " + GetNodeFullName() + " = " + Val + ";");
-    }
-
-    void CParticleExpression_Time::BuildNode()
-    {
-        Output = Cast<CParticleOutput>(CreatePin(CParticleOutput::StaticClass(), "Time", ENodePinDirection::Output));
-        Output->SetPinType(EParticlePinType::Float);
-    }
-
-    void CParticleExpression_Time::GenerateDefinition(FParticleCompiler& Compiler)
-    {
-        Compiler.EmitCurrent("float " + GetNodeFullName() + " = TotalTime;");
-    }
-
-    void CParticleExpression_ParticleAge::BuildNode()
-    {
-        Output = Cast<CParticleOutput>(CreatePin(CParticleOutput::StaticClass(), "Age", ENodePinDirection::Output));
-        Output->SetPinType(EParticlePinType::Float);
-    }
-
-    void CParticleExpression_ParticleAge::GenerateDefinition(FParticleCompiler& Compiler)
-    {
-        // Spawn has no age yet; emit 0 so partial graphs still compile sensibly.
-        if (Compiler.GetContext() == EParticleContext::Spawn)
-        {
-            Compiler.EmitSpawn("float " + GetNodeFullName() + " = 0.0;");
-        }
-        else
-        {
-            Compiler.EmitUpdate("float " + GetNodeFullName() + " = P.Age;");
-        }
-    }
-
-    void CParticleExpression_LifeRatio::BuildNode()
-    {
-        Output = Cast<CParticleOutput>(CreatePin(CParticleOutput::StaticClass(), "LifeRatio", ENodePinDirection::Output));
-        Output->SetPinType(EParticlePinType::Float);
-    }
-
-    void CParticleExpression_LifeRatio::GenerateDefinition(FParticleCompiler& Compiler)
-    {
-        if (Compiler.GetContext() == EParticleContext::Spawn)
-        {
-            Compiler.EmitSpawn("float " + GetNodeFullName() + " = 0.0;");
-        }
-        else
-        {
-            Compiler.EmitUpdate("float " + GetNodeFullName() + " = saturate(P.Age / max(P.Lifetime, 0.0001));");
-        }
     }
 
     void CParticleExpression_BinaryOp::BuildNode()

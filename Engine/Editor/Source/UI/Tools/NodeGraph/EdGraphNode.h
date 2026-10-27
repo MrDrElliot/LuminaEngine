@@ -34,6 +34,15 @@ namespace Lumina
         };
     }
 
+    // One palette entry of a node class that offers several, such as a formula node per formula.
+    struct FGraphNodeVariant
+    {
+        FName   Name;
+        FString DisplayName;
+        FString Category;
+        FString Tooltip;
+    };
+
     REFLECT()
     class EDITOR_API CEdGraphNode : public CObject
     {
@@ -74,6 +83,12 @@ namespace Lumina
         virtual bool IsSupportedInGraph(CClass* GraphClass) const;
 
         virtual FFixedString GetNodeCategory() const { return "General"; }
+
+        // A class that lists variants is offered once per variant rather than once as itself.
+        virtual void GetVariants(TVector<FGraphNodeVariant>& OutVariants) const {}
+
+        // Picks the variant before the node builds its pins, and must be saved by the node to survive a reload.
+        virtual void ApplyVariant(FName Variant) {}
         
         FString GetNodeFullName() { return FullName; }
 
@@ -196,6 +211,10 @@ namespace Lumina
         /** Unique identifier for this node within the graph. */
         PROPERTY(Hidden, DuplicateTransient)
         int64 NodeID = 0;
+
+        // Whether the preview under the node's pins is open, for a graph whose nodes have one.
+        PROPERTY(Hidden)
+        bool bShowPreview = false;
         
         
     protected:

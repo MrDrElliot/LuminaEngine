@@ -1,5 +1,8 @@
 #include "ParticleCompiler.h"
 #include "ParticleGraphNode.h"
+#include "Containers/Algorithm.h"
+#include "Particles/ParticleModule.h"
+#include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Formula.h"
 #include "Core/Object/Cast.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
@@ -11,6 +14,12 @@ namespace Lumina
     static constexpr const char* UpdateToken        = "$PARTICLE_UPDATE_FUNC";
     static constexpr const char* AttrCountToken     = "$PARTICLE_ATTR_COUNT";
     static constexpr const char* AttrDefaultsToken  = "$PARTICLE_ATTR_DEFAULTS";
+    static constexpr const char* GridChannelsToken  = "$PARTICLE_GRID_CHANNELS";
+    static constexpr const char* GridConstantsToken = "$PARTICLE_GRID_CONSTANTS";
+    static constexpr const char* GridStagesToken    = "$PARTICLE_GRID_STAGE_FUNCS";
+    static constexpr const char* GridCasesToken     = "$PARTICLE_GRID_STAGE_CASES";
+    static constexpr const char* GridTargetToken    = "$PARTICLE_GRID_OUTPUT_FUNC";
+    static constexpr const char* ArrayConstantsToken = "$PARTICLE_ARRAY_CONSTANTS";
 
     // An lvalue, and in bounds because the buffer holds PARTICLE_ATTR_FLOATS per slot of MaxParticles.
     static FString AttributeSlotExpr(int32 Slot)
@@ -38,7 +47,11 @@ namespace Lumina
         {
             return Source;
         }
+        return ExpandTemplate(Move(Source));
+    }
 
+    FString FParticleCompiler::ExpandTemplate(FString Source) const
+    {
         // Attribute defaults splice ahead of the spawn stack, so a read-only module still sees a value.
         FString AttrDefaults;
         for (int32 i = 0; i < (int32)Attributes.size(); ++i)
@@ -46,12 +59,106 @@ namespace Lumina
             AttrDefaults += "\t" + AttributeSlotExpr(i) + " = " + Attributes[i].DefaultExpr + ";\n";
         }
 
-        ReplaceAll(Source, AttrCountToken,    Format("{}", GetAttributeFloatCount()).c_str());
-        ReplaceAll(Source, AttrDefaultsToken, AttrDefaults);
-        ReplaceAll(Source, SpawnToken,        SpawnChunks);
-        ReplaceAll(Source, UpdateToken,       UpdateChunks);
+        FString GridConstants;
+        for (int32 Channel = 0; Channel < (int32)GridChannels.size(); ++Channel)
+        {
+            GridConstants += Format("static const uint GRID_{} = {}u;\n", GridChannels[Channel], Channel).c_str();
+        }
+
+        FString ArrayConstants;
+        for (int32 Array = 0; Array < (int32)Arrays.size(); ++Array)
+        {
+            ArrayConstants += Format("static const uint ARRAY_{} = {}u;\n", Arrays[Array], Array).c_str();
+        }
+
+        FString GridStages;
+        FString GridCases;
+        for (int32 Stage = 0; Stage < (int32)GridStageChunks.size(); ++Stage)
+        {
+            GridStages += Format("void GridStage{}(inout float Cell[PARTICLE_GRID_CHANNELS], int2 Coord, float2 UV, float3 WorldPos, float DeltaTime, float TotalTime, uint Iteration)\n{{\n", Stage).c_str();
+            GridStages += GridStageChunks[Stage] + "}\n\n";
+            GridCases  += Format("    case {}u: GridStage{}(Cell, Coord, UV, WorldPos, DeltaTime, TotalTime, Iteration); break;\n", Stage, Stage).c_str();
+        }
+
+        ReplaceAll(Source, AttrCountToken,     Format("{}", GetAttributeFloatCount()).c_str());
+        ReplaceAll(Source, AttrDefaultsToken,  AttrDefaults);
+        ReplaceAll(Source, GridChannelsToken,  Format("{}u", Math::Max((uint32)GridChannels.size(), 1u)).c_str());
+        ReplaceAll(Source, GridConstantsToken, GridConstants);
+        ReplaceAll(Source, ArrayConstantsToken, ArrayConstants);
+        ReplaceAll(Source, GridStagesToken,    GridStages);
+        ReplaceAll(Source, GridCasesToken,     GridCases);
+        ReplaceAll(Source, GridTargetToken,    TargetChunks);
+        ReplaceAll(Source, SpawnToken,         SpawnChunks);
+        ReplaceAll(Source, UpdateToken,        UpdateChunks);
 
         return Source;
+    }
+
+    void FParticleCompiler::Emit(EParticleContext Context, const FString& Line)
+    {
+        switch (Context)
+        {
+        case EParticleContext::Spawn:
+            SpawnChunks += "\t" + Line + "\n";
+            break;
+        case EParticleContext::Update:
+            UpdateChunks += "\t" + Line + "\n";
+            break;
+        case EParticleContext::Grid:
+            // Grid modules ahead of any Simulation Stage form a stage of their own.
+            if (GridStageChunks.empty())
+            {
+                BeginGridStage(1);
+            }
+            GridStageChunks.back() += "\t" + Line + "\n";
+            break;
+        case EParticleContext::Target:
+            TargetChunks += "\t" + Line + "\n";
+            break;
+        }
+    }
+
+    void FParticleCompiler::BeginGridStage(int32 Iterations)
+    {
+        GridStageChunks.emplace_back();
+        GridStageIterations.push_back(Math::Clamp(Iterations, 0, ParticleStageMaxIterations));
+    }
+
+    FString FParticleCompiler::ArrayInput(const FName& Name)
+    {
+        const FString ArrayName(Name.ToString().c_str());
+        if (!CParticleModule::IsIdentifier(ArrayName))
+        {
+            AddError({ "Array", "Array '" + ArrayName + "' is not a valid identifier." });
+            return "0u";
+        }
+
+        if (!Algo::Contains(Arrays, ArrayName))
+        {
+            Arrays.push_back(ArrayName);
+        }
+        return "ARRAY_" + ArrayName;
+    }
+
+    FString FParticleCompiler::GridChannel(const FName& Name)
+    {
+        const FString ChannelName(Name.ToString().c_str());
+        if (!CParticleModule::IsIdentifier(ChannelName))
+        {
+            AddError({ "Grid", "Grid channel '" + ChannelName + "' is not a valid identifier." });
+            return "0u";
+        }
+
+        if (!Algo::Contains(GridChannels, ChannelName))
+        {
+            if ((int32)GridChannels.size() >= kParticleGridMaxChannels)
+            {
+                AddError({ "Grid", Format("Grid channel '{}' is past the limit of {} channels per cell.", ChannelName, kParticleGridMaxChannels).c_str() });
+                return "0u";
+            }
+            GridChannels.push_back(ChannelName);
+        }
+        return "GRID_" + ChannelName;
     }
 
     FString FParticleCompiler::AddParamSlot(const char* DebugName, const FVector4& Value, uint32 Components)
@@ -121,6 +228,21 @@ namespace Lumina
         uint64 Hash = 0;
         Hash::HashCombine(Hash, FStringView(SpawnChunks.data(), SpawnChunks.size()));
         Hash::HashCombine(Hash, FStringView(UpdateChunks.data(), UpdateChunks.size()));
+        for (const FString& Stage : GridStageChunks)
+        {
+            Hash::HashCombine(Hash, FStringView(Stage.data(), Stage.size()));
+        }
+        Hash::HashCombine(Hash, GridStageChunks.size());
+        Hash::HashCombine(Hash, FStringView(TargetChunks.data(), TargetChunks.size()));
+        for (const FString& Channel : GridChannels)
+        {
+            Hash::HashCombine(Hash, FStringView(Channel.data(), Channel.size()));
+        }
+        for (const FString& Array : Arrays)
+        {
+            Hash::HashCombine(Hash, FStringView(Array.data(), Array.size()));
+        }
+        Hash::HashCombine(Hash, bNeighborGrid);
         // The attribute block is spliced into the source too, so it keys the artifact cache alongside the stacks.
         for (const FAttributeDecl& Attribute : Attributes)
         {
@@ -239,6 +361,7 @@ namespace Lumina
             return;
         }
 
+        // Only spawn and update graphs share a compile, so every other context can share the update set.
         THashSet<CParticleGraphNode*>& EmittedSet = (Context == EParticleContext::Spawn) ? EmittedSpawn : EmittedUpdate;
         if (EmittedSet.find(Node) != EmittedSet.end())
         {
@@ -265,7 +388,7 @@ namespace Lumina
                 if (SourceNode)
                 {
                     EnsureEmitted(SourceNode, CurrentContext);
-                    Result.Value = SourceNode->GetNodeFullName();
+                    Result.Value = Out->ResolvedVar.empty() ? FString(SourceNode->GetNodeFullName()) : Out->ResolvedVar;
                     Result.Type  = Out->GetPinType();
                     return Result;
                 }
@@ -274,29 +397,14 @@ namespace Lumina
 
         if (Pin != nullptr)
         {
-            switch (Pin->GetPinType())
+            const FVector4& V = Pin->GetDefault();
+            Result.Type = Pin->GetPinType();
+            switch (Result.Type)
             {
-            case EParticlePinType::Float:
-            {
-                const float V = Pin->GetDefaultFloat();
-                Result.Value = FString(Format("{}", V));
-                Result.Type  = EParticlePinType::Float;
-                break;
-            }
-            case EParticlePinType::Float3:
-            {
-                const FVector3& V = Pin->GetDefaultFloat3();
-                Result.Value = "float3(" + FString(Format("{}", V.x)) + ", " + FString(Format("{}", V.y)) + ", " + FString(Format("{}", V.z)) + ")";
-                Result.Type  = EParticlePinType::Float3;
-                break;
-            }
-            case EParticlePinType::Float4:
-            {
-                const FVector4& V = Pin->GetDefaultFloat4();
-                Result.Value = "float4(" + FString(Format("{}", V.x)) + ", " + FString(Format("{}", V.y)) + ", " + FString(Format("{}", V.z)) + ", " + FString(Format("{}", V.w)) + ")";
-                Result.Type  = EParticlePinType::Float4;
-                break;
-            }
+            case EParticlePinType::Float:  Result.Value = Format("{}", V.x).c_str(); break;
+            case EParticlePinType::Float2: Result.Value = Format("float2({}, {})", V.x, V.y).c_str(); break;
+            case EParticlePinType::Float3: Result.Value = Format("float3({}, {}, {})", V.x, V.y, V.z).c_str(); break;
+            case EParticlePinType::Float4: Result.Value = Format("float4({}, {}, {}, {})", V.x, V.y, V.z, V.w).c_str(); break;
             }
         }
 
@@ -343,44 +451,26 @@ namespace Lumina
             return Value.Value;
         }
 
-        switch (Target)
+        // A float3 widened to float4 is a color or position, so its fourth component is one rather than zero.
+        if (Value.Type == EParticlePinType::Float3 && Target == EParticlePinType::Float4)
         {
-        case EParticlePinType::Float:
-            return "(" + Value.Value + ").x";
-
-        case EParticlePinType::Float3:
-            if (Value.Type == EParticlePinType::Float)
-            {
-                return "float3(" + Value.Value + ", " + Value.Value + ", " + Value.Value + ")";
-            }
-            if (Value.Type == EParticlePinType::Float4)
-            {
-                return "(" + Value.Value + ").xyz";
-            }
-            break;
-
-        case EParticlePinType::Float4:
-            if (Value.Type == EParticlePinType::Float)
-            {
-                return "float4(" + Value.Value + ", " + Value.Value + ", " + Value.Value + ", " + Value.Value + ")";
-            }
-            if (Value.Type == EParticlePinType::Float3)
-            {
-                return "float4(" + Value.Value + ", 1.0)";
-            }
-            break;
+            return "float4(" + Value.Value + ", 1.0)";
         }
-        return Value.Value;
+        return ReadFormulaInput(Value.Value, Width(Value.Type), Width(Target));
     }
 
     FString FParticleCompiler::TypeName(EParticlePinType Type)
     {
-        switch (Type)
-        {
-        case EParticlePinType::Float:  return "float";
-        case EParticlePinType::Float3: return "float3";
-        case EParticlePinType::Float4: return "float4";
-        }
-        return "float";
+        return FormulaVectorType(Width(Type));
+    }
+
+    int32 FParticleCompiler::Width(EParticlePinType Type)
+    {
+        return (int32)Type + 1;
+    }
+
+    EParticlePinType FParticleCompiler::TypeOfWidth(int32 Width)
+    {
+        return (EParticlePinType)(Math::Clamp(Width, 1, 4) - 1);
     }
 }

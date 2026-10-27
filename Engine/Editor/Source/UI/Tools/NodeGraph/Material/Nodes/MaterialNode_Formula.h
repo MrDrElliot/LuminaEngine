@@ -1,5 +1,6 @@
 #pragma once
 #include "MaterialNodeExpression.h"
+#include "Containers/Pair.h"
 #include "Containers/Span.h"
 #include "MaterialNode_Formula.generated.h"
 
@@ -40,6 +41,14 @@ namespace Lumina
         TSpan<const FMaterialFormulaPin> Outputs = {};
         EMaterialFormulaLimit            Limit   = EMaterialFormulaLimit::None;
     };
+
+    EDITOR_API FString FormulaVectorType(int32 Width);
+
+    // Expr of Width components read as Target components, splatting a scalar, swizzling down or padding with zeros.
+    EDITOR_API FString ReadFormulaInput(const FString& Expr, int32 Width, int32 Target);
+
+    // The formula's code with $ as Prefix, {T} as the shared type and each {Pin} read from Inputs, which pairs an expression with its width.
+    EDITOR_API FString ExpandFormula(const FMaterialFormula& Formula, const FString& Prefix, TSpan<const TPair<FString, int32>> Inputs, int32 SharedWidth);
 
     // A node defined entirely by its formula, so adding one needs no compiler code.
     REFLECT(NotPlaceable)

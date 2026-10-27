@@ -1,4 +1,5 @@
 #include "AnimGraphNode_Additive.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 
 namespace Lumina
@@ -40,5 +41,10 @@ namespace Lumina
         const uint16 Alpha  = ResolveAlphaInput(AlphaPin, Compiler, AlphaEasing);
         const uint16 Result = Compiler.EmitApplyAdditive(Base, Delta, Alpha);
         Compiler.SetPinRegister(ResultPin, Result);
+    }
+
+    float CAnimGraphNode_ApplyAdditive::GetPoseInputShare(const CEdNodeGraphPin* PoseInput, const FAnimGraphDebugView& View) const
+    {
+        return PoseInput == DeltaPin ? Math::Clamp(ReadValueInput(AlphaPin, &View), 0.0f, 1.0f) : 1.0f;
     }
 }

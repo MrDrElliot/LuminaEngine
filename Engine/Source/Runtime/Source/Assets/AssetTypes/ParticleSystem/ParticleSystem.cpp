@@ -514,6 +514,60 @@ namespace Lumina
         return bVectorLike ? Param->Vector : FVector4(0.0f);
     }
 
+    float FParticleGridSnapshot::Sample(FName Channel, const FVector3& WorldPosition) const
+    {
+        const auto Found = Algo::Find(ChannelNames, Channel);
+        if (Found == ChannelNames.end() || Size.x == 0u || Size.y == 0u || Values.size() < (size_t)Size.x * Size.y * Channels)
+        {
+            return 0.0f;
+        }
+
+        const uint32   ChannelIndex = (uint32)(Found - ChannelNames.begin());
+        const FVector3 Offset = WorldPosition - Origin;
+        const FVector2 UV     = FVector2(Math::Dot(Offset, Right), Math::Dot(Offset, Forward)) / Math::Max(WorldSize, FVector2(1e-4f)) + FVector2(0.5f);
+        const FVector2 Cells  = UV * FVector2(Size) - FVector2(0.5f);
+        const int32    BaseX  = (int32)Math::Floor(Cells.x);
+        const int32    BaseY  = (int32)Math::Floor(Cells.y);
+        const FVector2 Blend  = Cells - FVector2((float)BaseX, (float)BaseY);
+
+        auto At = [&](int32 X, int32 Y)
+        {
+            const int32 Width = (int32)Size.x;
+            const int32 Height = (int32)Size.y;
+            X = bWraps ? ((X % Width) + Width) % Width : Math::Clamp(X, 0, Width - 1);
+            Y = bWraps ? ((Y % Height) + Height) % Height : Math::Clamp(Y, 0, Height - 1);
+            return Values[((size_t)Y * Size.x + (size_t)X) * Channels + ChannelIndex];
+        };
+
+        const float Low  = Math::Lerp(At(BaseX, BaseY), At(BaseX + 1, BaseY), Blend.x);
+        const float High = Math::Lerp(At(BaseX, BaseY + 1), At(BaseX + 1, BaseY + 1), Blend.x);
+        return Math::Lerp(Low, High, Blend.y);
+    }
+
+    uint32 CountBurstSpawns(TSpan<const SParticleBurst> Bursts, float PrevAge, float Age, float CycleLength)
+    {
+        const bool bWrapped = Age < PrevAge;
+        uint32 Total = 0;
+        for (const SParticleBurst& Burst : Bursts)
+        {
+            for (int32 Fire = 0; Fire <= Burst.Repeats; ++Fire)
+            {
+                const float At = Burst.Time + Burst.Interval * (float)Fire;
+                if (CycleLength > 0.0f && At >= CycleLength)
+                {
+                    break;
+                }
+
+                const bool bCrossed = bWrapped ? (At >= PrevAge || At < Age) : (At >= PrevAge && At < Age);
+                if (bCrossed)
+                {
+                    Total += (uint32)Math::Max(Burst.Count, 0);
+                }
+            }
+        }
+        return Total;
+    }
+
     FResolvedParticleParams ResolveParticleParams(const CParticleSystem& Asset, const CParticleEmitter& Emitter, const SParticleSystemComponent& Component)
     {
         static const FBindablePropertyNames Names;
@@ -522,6 +576,12 @@ namespace Lumina
         R.MaxParticles            = Math::Clamp(Emitter.MaxParticles, 0, ParticleEmitterMaxCapacity);
         R.SpawnRate               = ResolveBoundFloat(Asset, Component, Names.SpawnRate,             Emitter.SpawnRate);
         R.BurstCount              = ResolveBoundInt  (Asset, Component, Names.BurstCount,            Emitter.BurstCount);
+        R.NumBursts               = Math::Min((int32)Emitter.Bursts.size(), FResolvedParticleParams::MaxBursts);
+        for (int32 Index = 0; Index < R.NumBursts; ++Index)
+        {
+            R.Bursts[Index] = Emitter.Bursts[Index];
+        }
+        R.SpawnPerMeter           = Math::Max(Emitter.SpawnPerMeter, 0.0f);
         R.Duration                = ResolveBoundFloat(Asset, Component, Names.Duration,              Emitter.Duration);
         R.bLooping                = ResolveBoundBool (Asset, Component, Names.bLooping,              Emitter.bLooping);
 

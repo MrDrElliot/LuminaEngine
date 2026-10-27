@@ -13,13 +13,13 @@ namespace Lumina
     // One emitter's authoring data: ordered Spawn/Update module stacks (editor-time only; runtime consumes only the compiled shader).
     // CompileStacks walks enabled modules in order, emitting HLSL spliced into ParticleSimulateTemplate.slang.
     REFLECT()
-    class CParticleEmitterStack : public CObject
+    class EDITOR_API CParticleEmitterStack : public CObject
     {
         GENERATED_BODY()
 
     public:
 
-        /** Runs every enabled module (Spawn then Update) in stack order into the compiler. */
+        // Runs every enabled module, Spawn, Update, Grid, then Target, in stack order into the compiler.
         void CompileStacks(FParticleCompiler& Compiler);
 
         /** Appends a module of the given class to the stack section matching its stage. Returns it. */
@@ -34,10 +34,7 @@ namespace Lumina
         /** Seeds a sensible starter stack (point burst with gravity + fade) when both stacks are empty. */
         void EnsureDefaultStack();
 
-        TVector<TStrongObjectPtr<CParticleModule>>& GetStack(EParticleModuleStage Stage)
-        {
-            return Stage == EParticleModuleStage::Spawn ? SpawnModules : UpdateModules;
-        }
+        TVector<TStrongObjectPtr<CParticleModule>>& GetStack(EParticleModuleStage Stage);
 
         /** Modules run once when a particle is born. */
         PROPERTY(Hidden)
@@ -46,5 +43,13 @@ namespace Lumina
         /** Modules run every frame on live particles. */
         PROPERTY(Hidden)
         TVector<TStrongObjectPtr<CParticleModule>> UpdateModules;
+
+        // Modules run on every grid cell, split into simulation stages by the Simulation Stage modules among them.
+        PROPERTY(Hidden)
+        TVector<TStrongObjectPtr<CParticleModule>> GridModules;
+
+        // Modules run on every texel of the grid's render target.
+        PROPERTY(Hidden)
+        TVector<TStrongObjectPtr<CParticleModule>> TargetModules;
     };
 }

@@ -1,94 +1,58 @@
 ﻿#include "ParticleNodeGraph.h"
 #include "ParticleCompiler.h"
+#include "ParticleGraphNode.h"
 #include "Core/Object/Cast.h"
-#include "Nodes/ParticleOutputNode.h"
-#include "Nodes/ParticleExpressionNodes.h"
 #include "UI/Tools/NodeGraph/GraphAlgorithms.h"
 
 namespace Lumina
 {
-    void CParticleNodeGraph::Initialize()
+    void CParticleNodeGraph::CompileModule(FParticleCompiler& Compiler, EParticleContext Context)
     {
-        Super::Initialize();
-
-        const bool bHasOutputNode = Algo::AnyOf(Nodes, [](const TStrongObjectPtr<CEdGraphNode>& Node)
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
-            return Node.IsValid() && Node->IsA<CParticleOutputNode>();
-        });
-
-        if (!bHasOutputNode)
-        {
-            CreateNode(CParticleOutputNode::StaticClass());
-        }
-
-        ValidateGraph();
-    }
-
-    void CParticleNodeGraph::Shutdown()
-    {
-        CEdNodeGraph::Shutdown();
-    }
-
-    void CParticleNodeGraph::CompileGraph(FParticleCompiler& Compiler)
-    {
-        if (Nodes.empty())
-        {
-            return;
-        }
-
-        for (const auto& NodeRef : Nodes)
-        {
-            CEdGraphNode* Node = NodeRef.Get();
             Node->ClearError();
         }
 
-        // Cycle detection only, since emission is demand-driven from the output node.
-        TVector<CEdGraphNode*> SortedNodes;
-        CEdGraphNode* CyclicNode = GraphAlgorithms::TopologicalSortFromRoot(Nodes, SortedNodes, [](CEdGraphNode* Node)
+        auto IsSink = [](CEdGraphNode* Node)
         {
-            return Cast<CParticleOutputNode>(Node) != nullptr;
-        });
+            const CParticleGraphNode* ParticleNode = Cast<CParticleGraphNode>(Node);
+            return ParticleNode != nullptr && ParticleNode->IsSink();
+        };
 
-        if (CyclicNode != nullptr)
+        TVector<CEdGraphNode*> SortedNodes;
+        if (CEdGraphNode* CyclicNode = GraphAlgorithms::TopologicalSortFromRoots(Nodes, SortedNodes, IsSink))
         {
-            EdNodeGraph::FError Error;
-            Error.Name          = "Cyclic";
-            Error.Description   = "Cycle detected in particle node graph!";
-            Error.Node          = CyclicNode;
-            Compiler.AddError(Error);
+            Compiler.AddError({ "Cyclic", "The module graph loops back on itself.", CyclicNode });
             return;
         }
 
-        for (size_t i = 0; i < SortedNodes.size(); ++i)
-        {
-            SortedNodes[i]->SetDebugExecutionOrder((uint32)i);
-        }
-
-        CParticleOutputNode* OutputNode = nullptr;
+        TVector<CParticleGraphNode*> Sinks;
         for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
         {
-            if (CParticleOutputNode* Out = Cast<CParticleOutputNode>(Node.Get()))
+            if (IsSink(Node.Get()))
             {
-                OutputNode = Out;
-                break;
+                Sinks.push_back(Cast<CParticleGraphNode>(Node.Get()));
             }
         }
-
-        if (OutputNode == nullptr)
+        Algo::Sort(Sinks, [](const CParticleGraphNode* A, const CParticleGraphNode* B)
         {
-            EdNodeGraph::FError Error;
-            Error.Name          = "NoOutput";
-            Error.Description   = "Particle graph is missing an Output node.";
-            Compiler.AddError(Error);
-            return;
+            return A->GetNodeY() != B->GetNodeY() ? A->GetNodeY() < B->GetNodeY() : A->GetNodeX() < B->GetNodeX();
+        });
+
+        // Scoped, so two graph modules in one stage can reuse node names.
+        const EParticleContext Saved = Compiler.GetContext();
+        Compiler.SetContext(Context);
+        Compiler.Emit(Context, "{");
+        for (CParticleGraphNode* Sink : Sinks)
+        {
+            Compiler.EnsureEmitted(Sink, Context);
         }
-
-
-        Compiler.SetContext(EParticleContext::Spawn);
-        OutputNode->GenerateDefinition(Compiler);
-
-        Compiler.SetContext(EParticleContext::Update);
-        OutputNode->GenerateDefinition(Compiler);
+        for (CParticleGraphNode* Sink : Sinks)
+        {
+            Sink->EmitWrites(Compiler);
+        }
+        Compiler.Emit(Context, "}");
+        Compiler.SetContext(Saved);
     }
 
     void CParticleNodeGraph::ValidateGraph()

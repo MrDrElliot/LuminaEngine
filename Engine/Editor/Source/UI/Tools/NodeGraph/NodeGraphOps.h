@@ -37,7 +37,7 @@ namespace Lumina::NodeGraphOps
 
     NODISCARD EDITOR_API bool DisconnectPin(CEdNodeGraph* Graph, CEdNodeGraphPin* Pin, FString& OutError);
 
-    NODISCARD EDITOR_API CEdGraphNode* AddNode(CEdNodeGraph* Graph, CClass* NodeClass, float X, float Y);
+    NODISCARD EDITOR_API CEdGraphNode* AddNode(CEdNodeGraph* Graph, CClass* NodeClass, float X, float Y, FName Variant = FName());
 
     // Refuses a node the graph keeps for itself, such as the output node a graph compiles from.
     NODISCARD EDITOR_API bool RemoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, FString& OutError);

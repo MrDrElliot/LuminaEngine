@@ -1,5 +1,6 @@
 #include "ParticleEmitterStack.h"
 #include "ParticleStockModules.h"
+#include "ParticleGridModules.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "UI/Tools/NodeGraph/Particle/ParticleCompiler.h"
@@ -26,6 +27,45 @@ namespace Lumina
                 Module->Generate(Compiler, ModuleIndex);
             }
             ++ModuleIndex;
+        }
+
+        // Turning a stage off turns off every module under it, up to the next stage.
+        bool bStageEnabled = true;
+        for (const TStrongObjectPtr<CParticleModule>& Module : GridModules)
+        {
+            if (const CParticleModule_SimulationStage* Stage = Cast<CParticleModule_SimulationStage>(Module.Get()))
+            {
+                bStageEnabled = Stage->bEnabled;
+                if (bStageEnabled)
+                {
+                    Compiler.BeginGridStage(Stage->Iterations);
+                }
+            }
+            else if (Module.IsValid() && Module->bEnabled && bStageEnabled)
+            {
+                Module->Generate(Compiler, ModuleIndex);
+            }
+            ++ModuleIndex;
+        }
+
+        for (const TStrongObjectPtr<CParticleModule>& Module : TargetModules)
+        {
+            if (Module.IsValid() && Module->bEnabled)
+            {
+                Module->Generate(Compiler, ModuleIndex);
+            }
+            ++ModuleIndex;
+        }
+    }
+
+    TVector<TStrongObjectPtr<CParticleModule>>& CParticleEmitterStack::GetStack(EParticleModuleStage Stage)
+    {
+        switch (Stage)
+        {
+        case EParticleModuleStage::Spawn: return SpawnModules;
+        case EParticleModuleStage::Grid:  return GridModules;
+        case EParticleModuleStage::Target: return TargetModules;
+        default:                          return UpdateModules;
         }
     }
 

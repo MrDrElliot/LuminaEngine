@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ParticleModule.h"
+#include "Containers/Span.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -87,5 +88,8 @@ namespace Lumina
         EDITOR_API FString StageName(EParticleModuleStage Stage);
 
         EDITOR_API bool ParseStage(FStringView Name, EParticleModuleStage& OutStage);
+
+        // Every stage in stack order, so a caller listing modules covers the grid and render target ones too.
+        EDITOR_API TSpan<const EParticleModuleStage> GetStages();
     }
 }

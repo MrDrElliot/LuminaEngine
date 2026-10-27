@@ -163,11 +163,12 @@ namespace Lumina::ParticleOps
         if (Stack != nullptr)
         {
             Sources.push_back(Stack);
-            for (const TVector<TStrongObjectPtr<CParticleModule>>* Modules : { &Stack->SpawnModules, &Stack->UpdateModules })
+            for (EParticleModuleStage Stage : GetStages())
             {
-                for (const TStrongObjectPtr<CParticleModule>& Module : *Modules)
+                for (const TStrongObjectPtr<CParticleModule>& Module : Stack->GetStack(Stage))
                 {
                     Sources.push_back(Module.Get());
+                    Module->GetOwnedObjects(Sources);
                 }
             }
         }
@@ -410,6 +411,30 @@ namespace Lumina::ParticleOps
         Emitter->CompiledCodeHash    = Compiler.GetGeneratedCodeHash();
         // Structural, so it only moves with a rebuild, which is when the renderer resizes its buffer.
         Emitter->AttributeFloatCount = Compiler.GetAttributeFloatCount();
+        Emitter->GridChannelCount    = Compiler.GetGridChannelCount();
+        Emitter->GridStageIterations = Compiler.GetGridStageIterations();
+        Emitter->GridChannelNames.clear();
+        for (const FString& Channel : Compiler.GetGridChannelNames())
+        {
+            Emitter->GridChannelNames.push_back(FName(Channel.c_str()));
+        }
+        Emitter->bUsesNeighborGrid = Compiler.UsesNeighborGrid();
+        Emitter->ArrayNames.clear();
+        for (const FString& Array : Compiler.GetArrayNames())
+        {
+            Emitter->ArrayNames.push_back(FName(Array.c_str()));
+        }
+
+        if (Emitter->GridChannelCount > 0)
+        {
+            FString Channels;
+            for (const FString& Channel : Compiler.GetGridChannelNames())
+            {
+                Channels += (Channels.empty() ? "" : ", ") + Channel;
+            }
+            Out.Notes.push_back(Format("Grid of {} by {} cells with {} stages and channels {}.", Emitter->GridWidth, Emitter->GridHeight,
+                Emitter->GridStageIterations.size(), Channels).c_str());
+        }
 
         // The shared vertex shader cannot know the generated layout, so it receives these as uniforms.
         Emitter->RenderAttributeSlots.resize((size_t)ParticleRenderAttribute::Count);
@@ -461,31 +486,42 @@ namespace Lumina::ParticleOps
         }
 
         // Binding an input leaves the code identical, so this is the only path that ever writes them.
-        Emitter->ModuleParamValues = Compiler.GetParamValues();
-        Emitter->ParamBindings     = Compiler.GetParamBindings();
+        Emitter->ModuleParamValues   = Compiler.GetParamValues();
+        Emitter->ParamBindings       = Compiler.GetParamBindings();
+        // Iterations only change how often the renderer dispatches a stage, never the code.
+        Emitter->GridStageIterations = Compiler.GetGridStageIterations();
         SyncLifetimeRange(System, Emitter, Stack);
         return true;
     }
 
+    static constexpr EParticleModuleStage AllStages[] = { EParticleModuleStage::Spawn, EParticleModuleStage::Update, EParticleModuleStage::Grid, EParticleModuleStage::Target };
+
     FString StageName(EParticleModuleStage Stage)
     {
-        return Stage == EParticleModuleStage::Spawn ? "Spawn" : "Update";
+        switch (Stage)
+        {
+        case EParticleModuleStage::Spawn:  return "Spawn";
+        case EParticleModuleStage::Grid:   return "Grid";
+        case EParticleModuleStage::Target: return "Target";
+        default:                           return "Update";
+        }
     }
 
     bool ParseStage(FStringView Name, EParticleModuleStage& OutStage)
     {
-        if (EqualsIgnoreCase(Name, "Spawn"))
+        for (EParticleModuleStage Stage : AllStages)
         {
-            OutStage = EParticleModuleStage::Spawn;
-            return true;
+            if (EqualsIgnoreCase(Name, StageName(Stage)))
+            {
+                OutStage = Stage;
+                return true;
+            }
         }
-
-        if (EqualsIgnoreCase(Name, "Update"))
-        {
-            OutStage = EParticleModuleStage::Update;
-            return true;
-        }
-
         return false;
+    }
+
+    TSpan<const EParticleModuleStage> GetStages()
+    {
+        return TSpan<const EParticleModuleStage>(AllStages);
     }
 }

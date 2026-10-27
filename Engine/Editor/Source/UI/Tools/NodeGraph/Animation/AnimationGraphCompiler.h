@@ -198,6 +198,10 @@ namespace Lumina
         }
         const TVector<FAnimGraphDebugStateNode>& GetDebugStateNodes() const { return DebugStateNodes; }
 
+        // The register holding the time a clip node samples at, which the debug view draws as its playhead.
+        void SetDebugPlayhead(const CEdGraphNode* Node, uint16 TimeRegister) { DebugPlayheads[Node] = TimeRegister; }
+        const THashMap<const CEdGraphNode*, uint16>& GetDebugPlayheads() const { return DebugPlayheads; }
+
         // Machines emitted so far. One less than this is the index of the machine just emitted.
         uint16 GetStateMachineCount() const { return (uint16)StateMachines.size(); }
 
@@ -339,6 +343,7 @@ namespace Lumina
         TVector<EdNodeGraph::FError>            Warnings;
         THashMap<const CEdNodeGraphPin*, uint16> PinRegisters;
         TVector<FAnimGraphDebugStateNode>       DebugStateNodes;
+        THashMap<const CEdGraphNode*, uint16>   DebugPlayheads;
         const FSkeletonResource*                Skeleton = nullptr;
         CStruct*                                DataStruct = nullptr;
 

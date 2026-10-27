@@ -11,7 +11,7 @@ namespace Lumina
 
     // Plays a clip on a persistent VM-slot playback clock (time survives across frames);
     // the Speed input scales how fast the clock advances.
-    REFLECT()
+    REFLECT(MinimalAPI)
     class CAnimGraphNode_ClipPlayer : public CAnimGraphNode
     {
         GENERATED_BODY()
@@ -22,6 +22,8 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        bool HasPreview() const override { return true; }
+        void DrawPreview(const FAnimGraphDebugView* View) override;
 
         /** Animation clip sampled by this node. */
         PROPERTY(Editable, Category = "Animation")

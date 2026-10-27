@@ -243,7 +243,23 @@ namespace Lumina
             Action.Category    = CDO->GetNodeCategory().c_str();
             Action.Tooltip     = FString(CDO->GetNodeTooltip());
             Action.bAcceptsSource = !bHasSourceFilter || Accepting.contains(NodeClass);
-            Actions.push_back(Move(Action));
+
+            TVector<FGraphNodeVariant> Variants;
+            CDO->GetVariants(Variants);
+            if (Variants.empty())
+            {
+                Actions.push_back(Move(Action));
+                continue;
+            }
+
+            for (const FGraphNodeVariant& Variant : Variants)
+            {
+                FGraphAction& Entry = Actions.emplace_back(Action);
+                Entry.Variant     = Variant.Name;
+                Entry.DisplayName = Variant.DisplayName;
+                Entry.Category    = Variant.Category;
+                Entry.Tooltip     = Variant.Tooltip;
+            }
         }
 
         bActionsDirty = false;
@@ -555,7 +571,7 @@ namespace Lumina
         if (bCommitted && CommittedActionIndex >= 0)
         {
             const FGraphAction& Action = Actions[CommittedActionIndex];
-            CEdGraphNode* NewNode = Graph->CreateNode(Action.NodeClass);
+            CEdGraphNode* NewNode = Graph->CreateNode(Action.NodeClass, Action.Variant);
             if (NewNode != nullptr)
             {
                 Graph->PlaceNodeAtScreen(NewNode, ImGui::GetMousePosOnOpeningCurrentPopup());

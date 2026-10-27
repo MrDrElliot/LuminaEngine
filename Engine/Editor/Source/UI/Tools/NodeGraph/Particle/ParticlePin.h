@@ -8,6 +8,7 @@ namespace Lumina
     enum class EParticlePinType : uint8
     {
         Float,
+        Float2,
         Float3,
         Float4,
     };
@@ -23,20 +24,18 @@ namespace Lumina
         void SetPinType(EParticlePinType InType) { PinType = InType; }
         EParticlePinType GetPinType() const { return PinType; }
 
-        void SetDefaultFloat(float V) { DefaultFloat = V; }
-        void SetDefaultFloat3(FVector3 V) { DefaultFloat3 = V; }
-        void SetDefaultFloat4(FVector4 V) { DefaultFloat4 = V; }
+        // The value an unwired pin starts at, until the node has saved one of its own.
+        void SetDefaultFloat(float V)              { InitialDefault = FVector4(V, 0.0f, 0.0f, 0.0f); }
+        void SetDefaultFloat3(const FVector3& V)   { InitialDefault = FVector4(V, 0.0f); }
+        void SetDefaultFloat4(const FVector4& V)   { InitialDefault = V; }
 
-        float GetDefaultFloat() const { return DefaultFloat; }
-        const FVector3& GetDefaultFloat3() const { return DefaultFloat3; }
-        const FVector4& GetDefaultFloat4() const { return DefaultFloat4; }
+        // What the pin reads while unwired, kept on the owning node since pins are rebuilt on load.
+        FVector4& GetDefault();
 
     private:
 
-        EParticlePinType    PinType = EParticlePinType::Float;
-        float               DefaultFloat = 0.0f;
-        FVector3           DefaultFloat3 = FVector3(0.0f);
-        FVector4           DefaultFloat4 = FVector4(1.0f);
+        EParticlePinType PinType = EParticlePinType::Float;
+        FVector4         InitialDefault = FVector4(0.0f);
     };
 
     REFLECT()
@@ -49,6 +48,9 @@ namespace Lumina
 
         void SetPinType(EParticlePinType InType) { PinType = InType; }
         EParticlePinType GetPinType() const { return PinType; }
+
+        // The variable a compile bound this output to, for a node with more than one, or empty to read the node's own name.
+        FString ResolvedVar;
 
     private:
 

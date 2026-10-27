@@ -146,7 +146,7 @@ namespace Lumina::NodeGraphOps
         return true;
     }
 
-    CEdGraphNode* AddNode(CEdNodeGraph* Graph, CClass* NodeClass, float X, float Y)
+    CEdGraphNode* AddNode(CEdNodeGraph* Graph, CClass* NodeClass, float X, float Y, FName Variant)
     {
         if (Graph == nullptr)
         {
@@ -154,7 +154,7 @@ namespace Lumina::NodeGraphOps
         }
 
         FNodeGraphEditScope Edit(Graph, "Add Node");
-        return Graph->SpawnNode(NodeClass, X, Y);
+        return Graph->SpawnNode(NodeClass, X, Y, Variant);
     }
 
     bool RemoveNode(CEdNodeGraph* Graph, CEdGraphNode* Node, FString& OutError)

@@ -20,6 +20,13 @@ namespace Lumina
         FVector4 Color = FVector4(1.0f);
     };
 
+    // Values a script handed the emitters under one name, read in shaders through ArrayAt.
+    struct FParticleArrayInput
+    {
+        FName             Name;
+        TVector<FVector4> Values;
+    };
+
     REFLECT(Component, Category = "Effects")
     struct RUNTIME_API SParticleSystemComponent
     {
@@ -149,6 +156,22 @@ namespace Lumina
 
         // Hits the renderer read back for emitters that report collisions, replaced at every extract.
         TVector<SParticleCollision> Collisions;
+
+        // A grid channel at WorldPosition from the emitter's last copy off the GPU, a few frames old, and zero until one arrives.
+        FUNCTION()
+        float SampleGrid(int32 EmitterIndex, FName Channel, FVector3 WorldPosition) const;
+
+        // The newest grid of each emitter with Read Back Grid, kept until a newer copy replaces it.
+        TVector<FParticleGridSnapshot> GridSnapshots;
+
+        // Hands every emitter that declares an array of this name these values, from the next frame on, until it is set again.
+        FUNCTION()
+        void SetArray(FName Name, const TVector<FVector4>& Values);
+
+        FUNCTION()
+        void ClearArray(FName Name);
+
+        TVector<FParticleArrayInput> ArrayInputs;
 
         //~ Begin User Parameters
         /** True if this component or its asset declares a parameter with the given name. */

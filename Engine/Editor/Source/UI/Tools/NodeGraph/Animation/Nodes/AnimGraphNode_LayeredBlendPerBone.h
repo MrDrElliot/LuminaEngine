@@ -19,6 +19,7 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        float GetPoseInputShare(const CEdNodeGraphPin* PoseInput, const FAnimGraphDebugView& View) const override;
 
         /** Bone whose subtree the overlay affects (this bone + descendants), no authored mask needed.
          *  Takes priority over Mask Name; leave None to use a named mask instead. */

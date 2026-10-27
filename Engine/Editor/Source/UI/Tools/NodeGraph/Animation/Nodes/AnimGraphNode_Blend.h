@@ -7,7 +7,7 @@ namespace Lumina
 {
     // Linearly blends two poses. Alpha 0 yields pose A, alpha 1 yields pose B;
     // rotations are blended with slerp so the result stays valid.
-    REFLECT()
+    REFLECT(MinimalAPI)
     class CAnimGraphNode_Blend : public CAnimGraphNode
     {
         GENERATED_BODY()
@@ -18,6 +18,7 @@ namespace Lumina
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
+        float GetPoseInputShare(const CEdNodeGraphPin* PoseInput, const FAnimGraphDebugView& View) const override;
 
         CAnimGraphPin* PoseAPin = nullptr;
         CAnimGraphPin* PoseBPin = nullptr;

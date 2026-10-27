@@ -145,4 +145,90 @@ namespace Lumina
         Compiler.EmitUpdate("\t}");
         Compiler.EmitUpdate("}");
     }
+
+    void CParticleModule_ParticleSeparation::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
+    {
+        Compiler.UseNeighborGrid();
+        const FString Sums = LocalVar(ModuleIndex, "sums");
+        Compiler.EmitUpdate("const FNeighborSums " + Sums + " = GatherNeighbors(Index, P.Position, " + Compiler.Param("Radius", Radius) + ");");
+        Compiler.EmitUpdate("P.Velocity += " + Sums + ".Away * " + Compiler.Param("Strength", Strength) + " * DeltaTime;");
+    }
+
+    void CParticleModule_Boids::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
+    {
+        Compiler.UseNeighborGrid();
+        const FString Sums  = LocalVar(ModuleIndex, "sums");
+        const FString Speed = LocalVar(ModuleIndex, "speed");
+        const FString Limit = LocalVar(ModuleIndex, "limit");
+        Compiler.EmitUpdate("const FNeighborSums " + Sums + " = GatherNeighbors(Index, P.Position, " + Compiler.Param("Radius", Radius) + ");");
+        Compiler.EmitUpdate("P.Velocity += " + Sums + ".Away * " + Compiler.Param("Separation", Separation) + " * DeltaTime;");
+        Compiler.EmitUpdate("if (" + Sums + ".Count > 0.0)");
+        Compiler.EmitUpdate("{");
+        Compiler.EmitUpdate("\tP.Velocity += (" + Sums + ".Velocity / " + Sums + ".Count - P.Velocity) * saturate(" + Compiler.Param("Alignment", Alignment) + " * DeltaTime);");
+        Compiler.EmitUpdate("\tP.Velocity += (" + Sums + ".Position / " + Sums + ".Count - P.Position) * " + Compiler.Param("Cohesion", Cohesion) + " * DeltaTime;");
+        Compiler.EmitUpdate("}");
+        Compiler.EmitUpdate("const float " + Speed + " = length(P.Velocity);");
+        Compiler.EmitUpdate("const float " + Limit + " = " + Compiler.Param("MaxSpeed", MaxSpeed) + ";");
+        Compiler.EmitUpdate("if (" + Speed + " > " + Limit + ") { P.Velocity *= " + Limit + " / " + Speed + "; }");
+    }
+
+    void CParticleModule_PointForce::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
+    {
+        const FString ToPoint = LocalVar(ModuleIndex, "topoint");
+        const FString Dist = LocalVar(ModuleIndex, "dist");
+        const FString Reach = LocalVar(ModuleIndex, "reach");
+        const FString Fade = LocalVar(ModuleIndex, "fade");
+        const FString Mass = bScaleByMass ? " / max(" + Compiler.Attribute("Mass", "1.0") + ", 1e-4)" : FString();
+
+        Compiler.EmitUpdate("const float3 " + ToPoint + " = SimParams().EmitterPosition.xyz + EmitterToWorld(" + Compiler.Param("Offset", Offset)
+            + ") * EmitterScale() - P.Position;");
+        Compiler.EmitUpdate("const float " + Dist + " = length(" + ToPoint + ");");
+        Compiler.EmitUpdate("const float " + Reach + " = " + Compiler.Param("Radius", Radius) + " * EmitterScale();");
+        Compiler.EmitUpdate("const float " + Fade + " = " + Reach + " > 0.0 ? pow(saturate(1.0 - " + Dist + " / " + Reach + "), "
+            + Compiler.Param("Falloff", Falloff) + ") : 1.0;");
+        Compiler.EmitUpdate("P.Velocity += " + ToPoint + " / max(" + Dist + ", 1e-4) * " + Compiler.Param("Strength", Strength) + " * EmitterScale() * "
+            + Fade + Mass + " * DeltaTime;");
+        Compiler.EmitUpdate("if (" + Dist + " < " + Compiler.Param("KillRadius", KillRadius) + " * EmitterScale()) { P.Age = P.Lifetime; }");
+    }
+
+    void CParticleModule_WindForce::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
+    {
+        const FString Dir = LocalVar(ModuleIndex, "winddir");
+        const FString Gust = LocalVar(ModuleIndex, "gust");
+        const FString Pull = LocalVar(ModuleIndex, "pull");
+        const FString Mass = bScaleByMass ? " / max(" + Compiler.Attribute("Mass", "1.0") + ", 1e-4)" : FString();
+        const FString Direction3 = Compiler.Param("Direction", Direction);
+
+        Compiler.EmitUpdate("const float3 " + Dir + " = " + Direction3 + " / max(length(" + Direction3 + "), 1e-4);");
+
+        // The field drifts downwind, so a gust is seen to travel through the effect rather than flicker in place.
+        Compiler.EmitUpdate("const float " + Gust + " = 1.0 + " + Compiler.Param("Gustiness", Gustiness) + " * ValueNoise(P.Position * "
+            + Compiler.Param("GustScale", GustScale) + " - " + Dir + " * TotalTime * " + Compiler.Param("GustFrequency", GustFrequency) + ");");
+        Compiler.EmitUpdate("const float " + Pull + " = 1.0 - exp(-" + Compiler.Param("Resistance", Resistance) + Mass + " * DeltaTime);");
+        Compiler.EmitUpdate("P.Velocity += (" + Dir + " * " + Compiler.Param("Speed", Speed) + " * EmitterScale() * " + Gust + " - P.Velocity) * " + Pull + ";");
+    }
+
+    void CParticleModule_PlaneCollision::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
+    {
+        const FString NormalParam = Compiler.Param("Normal", Normal);
+        Compiler.EmitUpdate("{");
+        Compiler.EmitUpdate("\tconst float3 PlaneNormal = " + NormalParam + " / max(length(" + NormalParam + "), 1e-4);");
+        Compiler.EmitUpdate("\tconst float3 PlaneOrigin = SimParams().EmitterPosition.xyz + PlaneNormal * " + Compiler.Param("Height", Height) + " * EmitterScale();");
+        Compiler.EmitUpdate("\tconst float Gap = dot(P.Position - PlaneOrigin, PlaneNormal) - " + Compiler.Param("Radius", Radius) + " * EmitterScale();");
+        Compiler.EmitUpdate("\tif (Gap < 0.0)");
+        Compiler.EmitUpdate("\t{");
+        Compiler.EmitUpdate("\t\tP.Position -= PlaneNormal * Gap;");
+        Compiler.EmitUpdate("\t\tconst float IntoPlane = -dot(P.Velocity, PlaneNormal);");
+        Compiler.EmitUpdate("\t\tif (IntoPlane > 0.0)");
+        Compiler.EmitUpdate("\t\t{");
+        Compiler.EmitUpdate("\t\t\tReflectOffSurface(P.Velocity, PlaneNormal, " + Compiler.Param("Restitution", Restitution) + ", " + Compiler.Param("Friction", Friction) + ");");
+        Compiler.EmitUpdate("\t\t\tRaiseParticleCollision(P, PlaneNormal, IntoPlane);");
+        if (bKillOnHit)
+        {
+            Compiler.EmitUpdate("\t\t\tP.Age = P.Lifetime;");
+        }
+        Compiler.EmitUpdate("\t\t}");
+        Compiler.EmitUpdate("\t}");
+        Compiler.EmitUpdate("}");
+    }
 }

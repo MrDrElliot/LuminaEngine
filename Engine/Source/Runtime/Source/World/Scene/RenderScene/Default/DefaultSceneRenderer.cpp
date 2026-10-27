@@ -406,6 +406,16 @@ namespace Lumina
         }
         ParticleCollisionResults.clear();
 
+        for (FParticleGridReadback& Readback : ParticleGridReadback)
+        {
+            if (Readback.Buffer)
+            {
+                RHI::Retire(Readback.Buffer);
+            }
+            Readback = {};
+        }
+        ParticleGridResults.clear();
+
         #if USING(WITH_EDITOR)
         for (FPickerReadbackSlot& Slot : PickerReadbackRing)
         {
