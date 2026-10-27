@@ -128,6 +128,10 @@ namespace Lumina
         PROPERTY(Hidden)
         int32 BoneIndex = Constants::kIndexNone;
 
+        /** Index of the hit static instance (foliage) within its owner Entity; Constants::kIndexNone otherwise. */
+        PROPERTY(Hidden)
+        int32 InstanceIndex = Constants::kIndexNone;
+
         // A miss keeps the requested Start and End but has no hit data.
         PROPERTY(Hidden)
         bool bHit = false;

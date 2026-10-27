@@ -75,6 +75,7 @@ namespace Lumina::Physics
             Result.Fraction = Fraction;
             Result.Distance = Fraction * Length;
             Result.BoneIndex = Scene.ResolveHitBoneIndex(Entity, BodyId);
+            Result.InstanceIndex = Box3DUtils::UnpackInstanceIndex(b3Shape_GetUserData(ShapeId));
             Result.bHit = true;
         }
 

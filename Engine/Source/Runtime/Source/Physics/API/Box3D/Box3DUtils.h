@@ -13,6 +13,20 @@ namespace Lumina::Box3DUtils
     RUNTIME_API void* PackProfileUserData(const SCollisionProfile& Profile, bool bCharacterProxy = false);
     RUNTIME_API bool IsCharacterProxyUserData(void* UserData);
 
+    // Bits above the profile and proxy flag carry a static instance's source index, stored +1 so zero means none.
+    inline constexpr uint32 InstanceIndexShift = 33;
+
+    FORCEINLINE void* PackInstanceIndex(void* UserData, int32 InstanceIndex)
+    {
+        const uint64 Packed = (uint64)reinterpret_cast<uintptr_t>(UserData) | ((uint64)(InstanceIndex + 1) << InstanceIndexShift);
+        return reinterpret_cast<void*>((uintptr_t)Packed);
+    }
+
+    FORCEINLINE int32 UnpackInstanceIndex(void* UserData)
+    {
+        return (int32)((uint64)reinterpret_cast<uintptr_t>(UserData) >> InstanceIndexShift) - 1;
+    }
+
     // True when the engine's historical rule applies, where either side accepting is enough.
     RUNTIME_API bool UsesPermissiveCollisionFilter();
     RUNTIME_API b3QueryFilter MakeQueryFilter(const SCollisionProfile& Profile);
