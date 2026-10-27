@@ -358,7 +358,7 @@ namespace Lumina
         // False for a value that only has member rows, which then nest under the entry instead of filling its value cell.
         static bool MapValueDrawsInline(FProperty* ValueProperty);
 
-        FMapPropertyRow*                      MapRow = nullptr;
+        FMapPropertyRow*                        MapRow = nullptr;
         FMapProperty*                           Map = nullptr;          // == MapRow->MapProperty, cached for dtor-safe key destruct
         void*                                   MapContainer = nullptr; // map instance, stable for its lifetime
         void*                                   PreviousKey = nullptr;  // owned scratch: last unique key value
