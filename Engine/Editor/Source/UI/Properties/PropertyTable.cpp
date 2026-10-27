@@ -1818,7 +1818,26 @@ namespace Lumina
         Map->ConstructKey(MapContainer, PreviousKey);
         CaptureKeySnapshot();
 
-        ValueRow = CreatePropertyRow(PropertyHandle, this, Callbacks);
+        // A value with member rows (a struct, array or map) has nothing to draw inline, so it nests below the key.
+        TUniquePtr<FPropertyRow> Row = CreatePropertyRow(PropertyHandle, this, Callbacks);
+        if (MapValueDrawsInline(Map->GetValueProperty()))
+        {
+            ValueRow = Move(Row);
+        }
+        else
+        {
+            Children.push_back(Move(Row));
+        }
+    }
+
+    bool FMapEntryRow::MapValueDrawsInline(FProperty* ValueProperty)
+    {
+        if (ValueProperty->GetType() == EPropertyTypeFlags::Struct)
+        {
+            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+            return Registry->GetPropertyCustomizationForType(static_cast<FStructProperty*>(ValueProperty)->GetStruct()->GetName()) != nullptr;
+        }
+        return MakeLeafPropertyCustomization(ValueProperty) != nullptr;
     }
 
     FMapEntryRow::~FMapEntryRow()
