@@ -8,6 +8,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Physics/PhysicsTypes.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "Lumina.h"
 #include "FoliageComponent.generated.h"
@@ -120,6 +121,10 @@ namespace Lumina
         /** Physics material for this type's bodies; null uses the engine defaults. */
         PROPERTY(Editable, Category = "Collision")
         TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+
+        /** Layer this type's bodies sit on, and the layers they collide with. */
+        PROPERTY(Editable, Category = "Collision")
+        SCollisionProfile CollisionProfile = { .Layer = ECollisionProfiles::Static };
 
         // The mesh's own collision when it has any, else null so the render mesh is used.
         const SMeshCollision* GetCollision() const;

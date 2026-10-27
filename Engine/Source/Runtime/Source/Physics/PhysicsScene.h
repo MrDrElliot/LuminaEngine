@@ -120,6 +120,7 @@ namespace Lumina::Physics
         const CMesh*            Mesh = nullptr;
         const SMeshCollision*   Collision = nullptr;
         const CPhysicsMaterial* Material = nullptr;
+        SCollisionProfile       Profile = { .Layer = ECollisionProfiles::Static };
         bool                    bConvex = true;
     };
 

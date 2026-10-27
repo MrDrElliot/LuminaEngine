@@ -66,6 +66,7 @@ namespace Lumina
                 Desc.Mesh      = Collision == nullptr ? Mesh : nullptr;
                 Desc.Material = Type.PhysicsMaterial.Get();
                 Desc.bConvex  = Type.bConvexCollision;
+                Desc.Profile  = Type.CollisionProfile;
             }
 
             // A source mesh is still loading; retry next frame without stamping the version.
