@@ -53,8 +53,7 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        // Paused as well as FrameStart, so editor worlds -- which tick only Paused -- get a view too.
-        // Highest on both: this has to land before anything that might draw reads it.
+        // Paused as well as FrameStart, so editor worlds get a view too, and its readers all run after the systems in either stage.
         void Configure() override;
 
     public:

@@ -124,34 +124,26 @@ namespace Lumina
 
         ImGui::PushID(this);
 
-        if (ImGui::Button(Preview, ImVec2(140.0f, 0.0f)))
+        // Listed by the graph, since a popup window cannot open from inside the zoomed canvas.
+        if (ImGui::Button(Preview, ImVec2(140.0f, 0.0f)) && Graph != nullptr)
         {
-            ImGui::OpenPopup("##RerouteTargetPicker");
-        }
-
-        if (ImGui::BeginPopup("##RerouteTargetPicker"))
-        {
-            if (Graph != nullptr)
+            TVector<FString> Declared;
+            int32 Current = 0;
+            for (const auto& NodeRef : Graph->Nodes)
             {
-                for (const auto& NodeRef : Graph->Nodes)
+                const CMaterialNamedRerouteDeclaration* Declaration = Cast<CMaterialNamedRerouteDeclaration>(NodeRef.Get());
+                if (Declaration != nullptr && !Declaration->Name.empty())
                 {
-                    CEdGraphNode* Node = NodeRef.Get();
-                    CMaterialNamedRerouteDeclaration* Declaration = Cast<CMaterialNamedRerouteDeclaration>(Node);
-                    if (Declaration == nullptr || Declaration->Name.empty())
-                    {
-                        continue;
-                    }
-
-                    const bool bSelected = Declaration->Name == Name;
-                    if (ImGui::Selectable(Declaration->Name.c_str(), bSelected))
-                    {
-                        Name = Declaration->Name;
-                        NotifyValueEdited();
-                    }
+                    Current = Declaration->Name == Name ? (int32)Declared.size() : Current;
+                    Declared.push_back(Declaration->Name);
                 }
             }
 
-            ImGui::EndPopup();
+            Graph->OpenChoicePopup(this, Declared, Current, [this, Declared](int32 Chosen)
+            {
+                Name = Declared[Chosen];
+                NotifyValueEdited();
+            });
         }
 
         ImGui::PopID();

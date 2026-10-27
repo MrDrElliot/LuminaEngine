@@ -288,6 +288,9 @@ namespace Lumina
         // One confirmation for the whole set, protected entries filtered out rather than aborting the batch.
         void DeleteSelectedItems(const TVector<FTileViewItem*>& Items);
 
+        // Protected entries are left out, the same way the delete leaves them.
+        void BulkRenameItems(const TVector<FTileViewItem*>& Items);
+
         // Duplicate entry. Disabled for packages holding sub-objects a property copy would alias.
         void DrawDuplicateAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected);
 

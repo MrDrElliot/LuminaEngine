@@ -35,7 +35,7 @@ namespace Lumina
     // Instantiate runs at the sync point, since it creates entities and fires construct hooks, so only the timers are declared.
     void SPrefabSpawnerSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::FrameStart);
         Writes<SPrefabSpawnerComponent>();
         Reads<STransformComponent>();
     }

@@ -546,7 +546,7 @@ namespace Lumina::SessionOps
             return false;
         }
 
-        Graph->QueueTidyGraph();
+        Graph->TidyGraph();
         return true;
     }
 

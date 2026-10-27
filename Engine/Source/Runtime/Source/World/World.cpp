@@ -555,7 +555,7 @@ namespace Lumina
         EntitySystems::DestroyAll(SystemContext, Systems);
         for (int32 i = 0; i < (int32)EUpdateStage::Max; ++i)
         {
-            SystemUpdateList[i].clear();
+            StageSchedules[i] = {};
             SystemBatches[i].clear();
             SystemsWithWork[i].clear();
         }
@@ -1547,53 +1547,166 @@ namespace Lumina
         return Script != nullptr && EntityScripts::Remove(EntityRegistry, Entity, Script);
     }
 
-    void SystemSchedule::SortStage(TVector<CWorld::FStageSlot>& Stage)
+    namespace
     {
-        Algo::StableSort(Stage, [](const CWorld::FStageSlot& A, const CWorld::FStageSlot& B)
+        // A system answers to its own class and every class it derives from, so ordering against a base covers its subclasses.
+        bool IsSystemNamed(const CEntitySystem* System, FName Name)
         {
-            if (A.StagePriority != B.StagePriority)
+            for (const CClass* Class = System->GetClass(); Class != nullptr && Class != CEntitySystem::StaticClass(); Class = Class->GetSuperClass())
             {
-                return A.StagePriority < B.StagePriority;
+                if (Class->GetName() == Name)
+                {
+                    return true;
+                }
             }
-            const bool bExclusiveA = A.System->GetAccess().bExclusive;
-            const bool bExclusiveB = B.System->GetAccess().bExclusive;
+            return false;
+        }
+    }
+
+    bool SystemSchedule::DeclaresOrder(const CEntitySystem* First, const CEntitySystem* Second)
+    {
+        return Algo::AnyOf(Second->GetRunsAfter(), [First](FName Name) { return IsSystemNamed(First, Name); })
+            || Algo::AnyOf(First->GetRunsBefore(), [Second](FName Name) { return IsSystemNamed(Second, Name); });
+    }
+
+    CWorld::FStageSchedule SystemSchedule::OrderStage(const TVector<CEntitySystem*>& Systems, EUpdateStage Stage)
+    {
+        const size_t Count = Systems.size();
+
+        TVector<TVector<uint16>> Predecessors(Count);
+        TVector<TVector<uint16>> Successors(Count);
+        TVector<uint16>          Waiting(Count, 0);
+        for (uint16 First = 0; First < (uint16)Count; ++First)
+        {
+            for (uint16 Second = 0; Second < (uint16)Count; ++Second)
+            {
+                if (First != Second && DeclaresOrder(Systems[First], Systems[Second]))
+                {
+                    Successors[First].push_back(Second);
+                    Predecessors[Second].push_back(First);
+                    ++Waiting[Second];
+                }
+            }
+        }
+
+        // Shared systems ahead of exclusive ones, so the exclusive systems nothing orders gather at the end instead of splitting the stage.
+        auto Sooner = [&Systems](uint16 A, uint16 B)
+        {
+            const bool bExclusiveA = Systems[A]->GetAccess().bExclusive;
+            const bool bExclusiveB = Systems[B]->GetAccess().bExclusive;
             if (bExclusiveA != bExclusiveB)
             {
                 return bExclusiveB;
             }
-            return A.System->GetClass()->GetName().ToString() < B.System->GetClass()->GetName().ToString();
-        });
+            return Systems[A]->GetClass()->GetName().ToString() < Systems[B]->GetClass()->GetName().ToString();
+        };
+
+        TVector<uint16> Order;
+        TVector<uint8>  Placed(Count, 0);
+        bool            bReportedCycle = false;
+        while (Order.size() < Count)
+        {
+            int32 Next = Constants::kIndexNone;
+            for (uint16 Index = 0; Index < (uint16)Count; ++Index)
+            {
+                if (!Placed[Index] && Waiting[Index] == 0 && (Next == Constants::kIndexNone || Sooner(Index, (uint16)Next)))
+                {
+                    Next = Index;
+                }
+            }
+
+            // Only a cycle leaves nothing ready, so it is broken at the system that would have run soonest.
+            if (Next == Constants::kIndexNone)
+            {
+                FString Cycle;
+                for (uint16 Index = 0; Index < (uint16)Count; ++Index)
+                {
+                    if (!Placed[Index])
+                    {
+                        Cycle += Cycle.empty() ? "" : ", ";
+                        Cycle += Systems[Index]->GetClass()->GetName().ToString();
+                        if (Next == Constants::kIndexNone || Sooner(Index, (uint16)Next))
+                        {
+                            Next = Index;
+                        }
+                    }
+                }
+                if (!bReportedCycle)
+                {
+                    LOG_ERROR("Entity systems {} declare a dependency cycle in stage {}, so part of their order there is ignored.",
+                        Cycle, GUpdateStageNames[(uint8)Stage]);
+                    bReportedCycle = true;
+                }
+            }
+
+            Placed[Next] = 1;
+            Order.push_back((uint16)Next);
+            for (uint16 Successor : Successors[Next])
+            {
+                Waiting[Successor] = Waiting[Successor] > 0 ? (uint16)(Waiting[Successor] - 1) : 0;
+            }
+        }
+
+        CWorld::FStageSchedule Out;
+        Out.Systems.reserve(Count);
+        TVector<uint16> Position(Count, 0);
+        for (uint16 Index = 0; Index < (uint16)Count; ++Index)
+        {
+            Position[Order[Index]] = Index;
+            Out.Systems.push_back(Systems[Order[Index]]);
+        }
+
+        // Closed over the order, so a system with no work this frame still keeps the two around it in sequence.
+        Out.Precedes.resize(Count * Count, 0);
+        for (uint16 Index = 0; Index < (uint16)Count; ++Index)
+        {
+            for (uint16 Predecessor : Predecessors[Order[Index]])
+            {
+                const uint16 From = Position[Predecessor];
+                if (From >= Index)
+                {
+                    continue;
+                }
+                Out.Precedes[(size_t)From * Count + Index] = 1;
+                for (uint16 Earlier = 0; Earlier < From; ++Earlier)
+                {
+                    if (Out.MustPrecede(Earlier, From))
+                    {
+                        Out.Precedes[(size_t)Earlier * Count + Index] = 1;
+                    }
+                }
+            }
+        }
+        return Out;
     }
 
-    TVector<CWorld::FSystemBatch> SystemSchedule::BuildBatches(const TVector<CWorld::FStageSlot>& Systems, const TVector<uint8>& WithWork)
+    TVector<CWorld::FSystemBatch> SystemSchedule::BuildBatches(const CWorld::FStageSchedule& Stage, const TVector<uint8>& WithWork)
     {
         TVector<CWorld::FSystemBatch> Batches;
-        for (uint16 s = 0; s < (uint16)Systems.size(); ++s)
+        TVector<uint16> BatchOf(Stage.Systems.size(), 0);
+        for (uint16 Index = 0; Index < (uint16)Stage.Systems.size(); ++Index)
         {
-            if (!WithWork[s])
+            if (!WithWork[Index])
             {
                 continue;
             }
 
-            const FSystemAccess& Access = Systems[s].System->GetAccess();
+            const FSystemAccess& Access = Stage.Systems[Index]->GetAccess();
 
             size_t Earliest = 0;
-            for (size_t b = Batches.size(); b-- > 0 && Earliest == 0;)
+            for (uint16 Earlier = 0; Earlier < Index; ++Earlier)
             {
-                for (uint16 Member : Batches[b].Members)
+                if (WithWork[Earlier] && (Stage.MustPrecede(Earlier, Index) || FSystemAccess::Conflicts(Access, Stage.Systems[Earlier]->GetAccess())))
                 {
-                    if (FSystemAccess::Conflicts(Access, Systems[Member].System->GetAccess()))
-                    {
-                        Earliest = b + 1;
-                        break;
-                    }
+                    Earliest = Math::Max(Earliest, (size_t)BatchOf[Earlier] + 1);
                 }
             }
             if (Earliest == Batches.size())
             {
                 Batches.emplace_back();
             }
-            Batches[Earliest].Members.push_back(s);
+            Batches[Earliest].Members.push_back(Index);
+            BatchOf[Index] = (uint16)Earliest;
         }
         return Batches;
     }
@@ -1610,11 +1723,7 @@ namespace Lumina
 
     void CWorld::RebuildSystemSchedule()
     {
-        for (int32 i = 0; i < (int32)EUpdateStage::Max; ++i)
-        {
-            SystemUpdateList[i].clear();
-        }
-
+        TVector<CEntitySystem*> InStage[(int32)EUpdateStage::Max];
         for (const TStrongObjectPtr<CEntitySystem>& System : Systems)
         {
             if (System == nullptr)
@@ -1628,19 +1737,18 @@ namespace Lumina
                 EventQueues.AddInterest((ECS::FComponentTypeID)TypeID);
             }
 
-            const FUpdatePriorityList& Priorities = System->GetPriorities();
             for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
             {
-                if (Priorities.IsStageEnabled((EUpdateStage)i))
+                if (System->RunsInStage((EUpdateStage)i))
                 {
-                    SystemUpdateList[i].push_back(FStageSlot{ System.Get(), Priorities.GetPriorityForStage((EUpdateStage)i) });
+                    InStage[i].push_back(System.Get());
                 }
             }
         }
 
         for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
         {
-            SystemSchedule::SortStage(SystemUpdateList[i]);
+            StageSchedules[i] = SystemSchedule::OrderStage(InStage[i], (EUpdateStage)i);
 
             // Built on the next tick, once each system has said whether it has work.
             SystemBatches[i].clear();
@@ -1662,19 +1770,25 @@ namespace Lumina
         Out.clear();
         for (uint8 s = 0; s < (uint8)EUpdateStage::Max; ++s)
         {
-            const TVector<FStageSlot>& Stage = SystemUpdateList[s];
+            const FStageSchedule& Stage = StageSchedules[s];
             const TVector<FSystemBatch>& Batches = SystemBatches[s];
             for (uint8 b = 0; b < (uint8)Batches.size(); ++b)
             {
                 for (uint16 Index : Batches[b].Members)
                 {
-                    const CEntitySystem* System = Stage[Index].System;
+                    const CEntitySystem* System = Stage.Systems[Index];
                     const FSystemAccess& Access = System->GetAccess();
 
                     FSystemScheduleEntry& Entry = Out.emplace_back();
                     Entry.Name       = System->GetClass()->GetName();
                     Entry.Stage      = (uint8)s;
-                    Entry.Priority   = Stage[Index].StagePriority;
+                    for (const CEntitySystem* Other : Stage.Systems)
+                    {
+                        if (Other != System && SystemSchedule::DeclaresOrder(Other, System))
+                        {
+                            Entry.RunsAfter.push_back(Other->GetClass()->GetName());
+                        }
+                    }
                     Entry.Batch      = b;
                     Entry.BatchSize  = (uint8)Batches[b].Members.size();
                     Entry.bExclusive = Access.bExclusive;
@@ -1738,15 +1852,15 @@ namespace Lumina
             Info.Name     = Class->GetName();
             Info.bEnabled = PendingDisabledSystems.count(Info.Name) == 0;
 
-            const FUpdatePriorityList& Priorities = Described->GetPriorities();
             for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
             {
-                if (Priorities.IsStageEnabled((EUpdateStage)i))
+                if (Described->RunsInStage((EUpdateStage)i))
                 {
                     Info.Stages.push_back((EUpdateStage)i);
-                    Info.Priorities.push_back(Priorities.GetPriorityForStage((EUpdateStage)i));
                 }
             }
+            Info.RunsAfter  = Described->GetRunsAfter();
+            Info.RunsBefore = Described->GetRunsBefore();
         });
     }
 
@@ -1907,17 +2021,17 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        TVector<FStageSlot>& Stage = SystemUpdateList[(uint32)Context.GetUpdateStage()];
-        
-        auto RunOne = [&](FStageSlot& S)
+        const FStageSchedule& Stage = StageSchedules[(uint32)Context.GetUpdateStage()];
+
+        auto RunOne = [&](CEntitySystem* System)
         {
             // Named per system, so one that has no zones of its own still shows up in a capture.
-            LUMINA_PROFILE_SECTION_NAMED(S.System->GetClass()->GetName().c_str());
+            LUMINA_PROFILE_SECTION_NAMED(System->GetClass()->GetName().c_str());
 
             // A system that declared its access shares the frame, so its structural changes wait for the batch to end.
-            const ECS::FCommandBus::FDeferScope Defer(!S.System->GetAccess().bExclusive);
-            SetExecutingSystemAccess(&S.System->GetAccess());
-            S.System->OnUpdate(Context);
+            const ECS::FCommandBus::FDeferScope Defer(!System->GetAccess().bExclusive);
+            SetExecutingSystemAccess(&System->GetAccess());
+            System->OnUpdate(Context);
             SetExecutingSystemAccess(nullptr);
         };
 
@@ -1926,11 +2040,11 @@ namespace Lumina
         // After the flush, so work its commands created counts this frame.
         const EUpdateStage StageId = Context.GetUpdateStage();
         TVector<uint8>& WithWork = SystemsWithWork[(uint32)StageId];
-        bool bWorkChanged = WithWork.size() != Stage.size();
-        WithWork.resize(Stage.size(), 0);
-        for (size_t Index = 0; Index < Stage.size(); ++Index)
+        bool bWorkChanged = WithWork.size() != Stage.Systems.size();
+        WithWork.resize(Stage.Systems.size(), 0);
+        for (size_t Index = 0; Index < Stage.Systems.size(); ++Index)
         {
-            const uint8 bHasWork = Stage[Index].System->HasWork(Context) ? 1 : 0;
+            const uint8 bHasWork = Stage.Systems[Index]->HasWork(Context) ? 1 : 0;
             bWorkChanged |= WithWork[Index] != bHasWork;
             WithWork[Index] = bHasWork;
         }
@@ -1945,14 +2059,14 @@ namespace Lumina
             const TVector<uint16>& Members = Batch.Members;
             if (Members.size() == 1)
             {
-                RunOne(Stage[Members[0]]);
+                RunOne(Stage.Systems[Members[0]]);
             }
             else
             {
                 // Create every declared pool before going wide, since view() writes the shared pool map.
                 for (uint16 Index : Members)
                 {
-                    for (const ECS::FComponentTypeID TypeID : Stage[Index].System->GetAccess().Pools)
+                    for (const ECS::FComponentTypeID TypeID : Stage.Systems[Index]->GetAccess().Pools)
                     {
                         (void)EntityRegistry.AssureStorage(TypeID);
                     }
@@ -1960,8 +2074,8 @@ namespace Lumina
 
                 Task::ParallelFor(static_cast<uint32>(Members.size()), [&](uint32 Index)
                 {
-                    DEBUG_ASSERT(!Stage[Members[Index]].System->GetAccess().bExclusive); // batched implies not exclusive
-                    RunOne(Stage[Members[Index]]);
+                    DEBUG_ASSERT(!Stage.Systems[Members[Index]]->GetAccess().bExclusive); // batched implies not exclusive
+                    RunOne(Stage.Systems[Members[Index]]);
                 }, 1);
             }
 

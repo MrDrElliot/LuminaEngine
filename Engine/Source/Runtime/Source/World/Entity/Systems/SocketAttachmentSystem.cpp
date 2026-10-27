@@ -1,6 +1,8 @@
 #include "RuntimePCH.h"
 #include "World/ECS/Registry.h"
 #include "SocketAttachmentSystem.h"
+#include "AnimationSystem.h"
+#include "EntityScriptSystem.h"
 
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
@@ -54,8 +56,9 @@ namespace Lumina
 
     void SSocketAttachmentSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Low);
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::PrePhysics);
+        RequireUpdate(EUpdateStage::Paused);
+        RunsAfter<SAnimationSystem, SEntityScriptSystem>();
         Writes<STransformComponent>();
         Reads<SSocketAttachmentComponent, SSkeletalMeshComponent, SStaticMeshComponent, SystemResource::Hierarchy>();
     }

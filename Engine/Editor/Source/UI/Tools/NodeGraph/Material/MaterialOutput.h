@@ -14,6 +14,10 @@ namespace Lumina
         
         float DrawPin() override;
         FString GetPinTypeName() const override;
+
+        // A color set on the pin wins, otherwise the type picks one, so wires read by what they carry.
+        uint32 GetPinColor() const override;
+        EGraphPinShape GetPinShape() const override;
         EComponentMask GetComponentMask() const { return Mask; }
         void SetComponentMask(EComponentMask InMask) { Mask = InMask; }
         

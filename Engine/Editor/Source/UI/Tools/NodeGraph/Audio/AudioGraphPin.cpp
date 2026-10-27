@@ -6,6 +6,7 @@
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
+#include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include <imgui.h>
 
 namespace Lumina
@@ -120,20 +121,26 @@ namespace Lumina
                 {
                     const int64 Current = Inner->GetSignedIntPropertyValue(Value);
 
-                    ImGui::SetNextItemWidth(110.0f);
-                    if (ImGui::BeginCombo("##E", Enum->GetNameAtValue((uint64)Current).c_str()))
+                    // Listed by the graph, since a popup window cannot open from inside the zoomed canvas.
+                    CEdNodeGraph* Graph = OwningNode->GetOwningGraph();
+                    if (ImGui::Button(Enum->GetNameAtValue((uint64)Current).c_str(), ImVec2(110.0f, 0.0f)) && Graph != nullptr)
                     {
+                        TVector<FString> Choices;
+                        int32 CurrentIndex = 0;
                         for (int64 Index = 0; Index < (int64)Enum->Names.size(); ++Index)
                         {
-                            const int64 EntryValue = (int64)Enum->GetValueAtIndex(Index);
-
-                            if (ImGui::Selectable(Enum->GetNameAtIndex(Index).c_str(), EntryValue == Current))
+                            Choices.emplace_back(Enum->GetNameAtIndex(Index).c_str());
+                            if ((int64)Enum->GetValueAtIndex(Index) == Current)
                             {
-                                Inner->SetIntPropertyValue(Value, EntryValue);
-                                OwningNode->NotifyValueEdited();
+                                CurrentIndex = (int32)Index;
                             }
                         }
-                        ImGui::EndCombo();
+
+                        Graph->OpenChoicePopup(OwningNode, Move(Choices), CurrentIndex, [this, Enum, Inner, Value](int32 Chosen)
+                        {
+                            Inner->SetIntPropertyValue(Value, (int64)Enum->GetValueAtIndex(Chosen));
+                            OwningNode->NotifyValueEdited();
+                        });
                     }
                     return 110.0f;
                 }

@@ -453,43 +453,15 @@ namespace Lumina
         }
     }
 
-    void CAnimStateMachineGraph::PushGraphStyle() const
+    void CAnimStateMachineGraph::GetLinkStyle(CEdNodeGraphPin*, CEdNodeGraphPin*, ImU32& OutColor, float& OutThickness) const
     {
-        using namespace ax;
-
-        // The editor's own link stays invisible and only serves as the hit and delete target.
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_LinkStrength, 0.0f);
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_NodeRounding, 9.0f);
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_NodePadding, ImVec4(13.0f, 10.0f, 13.0f, 10.0f));
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_NodeBorderWidth, 1.5f);
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_HoveredNodeBorderWidth, 2.5f);
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_SelectedNodeBorderWidth, 3.0f);
-
-        const ImVec4 Invisible(0.0f, 0.0f, 0.0f, 0.0f);
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_SelLinkBorder, Invisible);
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_HovLinkBorder, Invisible);
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_HighlightLinkBorder, Invisible);
-    }
-
-    void CAnimStateMachineGraph::PopGraphStyle() const
-    {
-        using namespace ax;
-
-        NodeEditor::PopStyleColor(3);
-        NodeEditor::PopStyleVar(6);
-    }
-
-    void CAnimStateMachineGraph::GetLinkStyle(CEdNodeGraphPin*, CEdNodeGraphPin*, ImVec4& OutColor, float& OutThickness) const
-    {
-        // Every wire is drawn by the overlay, so the editor's link stays submitted but invisible.
-        OutColor = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-        OutThickness = 6.0f;
+        // Every wire is drawn by the overlay, which reports the one under the cursor itself.
+        OutColor = 0;
+        OutThickness = 0.0f;
     }
 
     bool CAnimStateMachineGraph::DrawCustomNode(CEdGraphNode* Node)
     {
-        using namespace ax;
-
         CAnimGraphNode_State*        State    = Cast<CAnimGraphNode_State>(Node);
         CAnimGraphNode_StateEntry*   Entry    = Cast<CAnimGraphNode_StateEntry>(Node);
         CAnimGraphNode_StateAny*     AnyState = Cast<CAnimGraphNode_StateAny>(Node);
@@ -519,21 +491,17 @@ namespace Lumina
             ? EditorColors::WithAlpha(Accent, 0.28f)
             : EditorColors::WithAlpha(EditorColors::PanelBg(), 0.96f);
 
-        // Zero on the very first frame, corrected on the next one.
-        const ImVec2 NodePos  = NodeEditor::GetNodePosition(Node->GetNodeID());
-        const ImVec2 NodeSize = NodeEditor::GetNodeSize(Node->GetNodeID());
-        const ImVec2 NodeMin  = NodePos;
-        const ImVec2 NodeMax  = NodePos + ImVec2(Math::Max(NodeSize.x, 24.0f), Math::Max(NodeSize.y, 24.0f));
-        const ImVec2 NodeCenter = (NodeMin + NodeMax) * 0.5f;
+        FGraphNodeStyle Style;
+        Style.Padding             = ImVec4(13.0f, 10.0f, 13.0f, 10.0f);
+        Style.Rounding            = 9.0f;
+        Style.BorderWidth         = 1.5f;
+        Style.HoveredBorderWidth  = 2.5f;
+        Style.SelectedBorderWidth = 3.0f;
+        Style.Background          = EditorColors::U32(Background);
+        Style.Border              = EditorColors::U32(EditorColors::WithAlpha(Accent, bActive ? 1.0f : 0.85f));
 
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_NodeBg, Background);
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_NodeBorder, EditorColors::WithAlpha(Accent, bActive ? 1.0f : 0.85f));
-
-        NodeEditor::BeginNode(Node->GetNodeID());
+        BeginCanvasNode(Node, Style);
         {
-            // BeginNode does not scope ImGui IDs, so a second state would trip the stack-layout assert.
-            ImGui::PushID((int32)Node->GetNodeID());
-
             ImGui::BeginVertical("state");
 
             if (State != nullptr)
@@ -601,16 +569,19 @@ namespace Lumina
 
             ImGui::EndVertical();
 
+            // Last frame's size, zero on the very first frame and corrected on the next one.
+            const ImRect Bounds     = GetNodeBounds(Node);
+            const ImVec2 NodeMin    = Bounds.Min;
+            const ImVec2 NodeMax    = Bounds.Min + ImMax(Bounds.GetSize(), ImVec2(24.0f, 24.0f));
+            const ImVec2 NodeCenter = (NodeMin + NodeMax) * 0.5f;
+
             // The middle drags the node while an edge band starts a transition, both pivoting at the center.
             const float EdgeW = Math::Clamp((NodeMax.x - NodeMin.x) * 0.27f, 12.0f, 46.0f);
 
             CAnimGraphPin* InPin = State != nullptr ? State->InPin : (Conduit != nullptr ? Conduit->InPin : nullptr);
             if (InPin != nullptr)
             {
-                NodeEditor::BeginPin(InPin->GetPinGUID(), NodeEditor::PinKind::Input);
-                NodeEditor::PinRect(NodeMin, ImVec2(NodeMin.x + EdgeW, NodeMax.y));
-                NodeEditor::PinPivotRect(NodeCenter, NodeCenter);
-                NodeEditor::EndPin();
+                GetEditor().Pin(InPin->GetPinGUID(), EGraphPinKind::Input, InPin->GetPinColor(), ImRect(NodeMin, ImVec2(NodeMin.x + EdgeW, NodeMax.y)), NodeCenter);
             }
 
             CAnimGraphPin* OutPin = State != nullptr ? State->OutPin
@@ -619,24 +590,15 @@ namespace Lumina
                 : (Conduit != nullptr ? Conduit->OutPin : AnyState->OutPin)));
             if (OutPin != nullptr)
             {
-                NodeEditor::BeginPin(OutPin->GetPinGUID(), NodeEditor::PinKind::Output);
-                NodeEditor::PinRect(ImVec2(NodeMax.x - EdgeW, NodeMin.y), NodeMax);
-                NodeEditor::PinPivotRect(NodeCenter, NodeCenter);
-                NodeEditor::EndPin();
+                GetEditor().Pin(OutPin->GetPinGUID(), EGraphPinKind::Output, OutPin->GetPinColor(), ImRect(ImVec2(NodeMax.x - EdgeW, NodeMin.y), NodeMax), NodeCenter);
             }
-
-            ImGui::PopID();
         }
-        NodeEditor::EndNode();
-
-        NodeEditor::PopStyleColor(2);
+        GetEditor().EndNode();
         return true;
     }
 
     void CAnimStateMachineGraph::DrawGraphOverlay(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links)
     {
-        using namespace ax;
-
         if (Links.empty())
         {
             return;
@@ -647,11 +609,9 @@ namespace Lumina
         ImFont* Font = ImGui::GetFont();
         const float FontSize = ImGui::GetFontSize();
 
+        FGraphEditor& Editor = GetEditor();
         const ImVec2 MousePos = ImGui::GetMousePos();
-        const bool bCanPick = !NodeEditor::GetHoveredNode() && !NodeEditor::GetHoveredPin();
-
-        int32 HoveredLink = Constants::kIndexNone;
-        uint64 ClickLinkID = 0;
+        const bool bCanPick = Editor.GetHoveredNode() == 0 && Editor.GetHoveredPin() == 0;
 
         for (int32 Index = 0; Index < (int32)Links.size(); ++Index)
         {
@@ -675,10 +635,12 @@ namespace Lumina
                 ? nullptr
                 : FindTransition(FromNode->GetNodeID(), ToNode->GetNodeID());
 
-            const ImVec2 FromMin = NodeEditor::GetNodePosition(FromNode->GetNodeID());
-            const ImVec2 FromMax = FromMin + NodeEditor::GetNodeSize(FromNode->GetNodeID());
-            const ImVec2 ToMin   = NodeEditor::GetNodePosition(ToNode->GetNodeID());
-            const ImVec2 ToMax   = ToMin + NodeEditor::GetNodeSize(ToNode->GetNodeID());
+            const ImRect FromBounds = GetNodeBounds(FromNode);
+            const ImRect ToBounds   = GetNodeBounds(ToNode);
+            const ImVec2 FromMin    = FromBounds.Min;
+            const ImVec2 FromMax    = FromBounds.Max;
+            const ImVec2 ToMin      = ToBounds.Min;
+            const ImVec2 ToMax      = ToBounds.Max;
 
             const ImVec2 FromCenter = (FromMin + FromMax) * 0.5f;
             const ImVec2 ToCenter   = (ToMin + ToMax) * 0.5f;
@@ -698,7 +660,7 @@ namespace Lumina
             const ImVec2 End   = SM::ProjectToBorder(ToCenter, FromCenter, ToMin, ToMax, 2.0f) + Perp;
             const ImVec2 Mid   = (Start + End) * 0.5f;
 
-            const bool bSelected = NodeEditor::IsLinkSelected(LinkID);
+            const bool bSelected = Editor.IsLinkSelected(LinkID);
 
             // Badge geometry first, since it doubles as the primary click target for the transition.
             FString BadgeText;
@@ -727,11 +689,7 @@ namespace Lumina
 
             if (bHovered)
             {
-                HoveredLink = Index;
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                {
-                    ClickLinkID = LinkID;
-                }
+                Editor.SetHoveredLink(LinkID);
             }
 
             const bool bBlending = Transition != nullptr && Transition == DebugTransition;
@@ -810,53 +768,46 @@ namespace Lumina
                 }
             }
         }
+    }
 
-        if (ClickLinkID != 0)
+    void CAnimStateMachineGraph::DrawLinkTooltip(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin)
+    {
+        CEdGraphNode* ToNode   = InputPin->GetOwningNode();
+        CEdGraphNode* FromNode = OutputPin->GetOwningNode();
+        if (ToNode == nullptr || FromNode == nullptr)
         {
-            NodeEditor::ClearSelection();
-            NodeEditor::SelectLink(ClickLinkID);
+            return;
         }
 
-        if (HoveredLink != Constants::kIndexNone)
+        ImGui::BeginTooltip();
+        ImGui::TextColored(EditorColors::TextPrimary(), "%s  " LE_ICON_ARROW_RIGHT_BOLD "  %s",
+                           GetEndpointLabel(FromNode->GetNodeID()).c_str(),
+                           GetEndpointLabel(ToNode->GetNodeID()).c_str());
+
+        if (CAnimStateTransition* Transition = FindTransition(FromNode->GetNodeID(), ToNode->GetNodeID()))
         {
-            CEdNodeGraphPin* InputPin  = Links[HoveredLink].first;
-            CEdNodeGraphPin* OutputPin = Links[HoveredLink].second;
-            CEdGraphNode* ToNode   = InputPin->GetOwningNode();
-            CEdGraphNode* FromNode = OutputPin->GetOwningNode();
-
-            // A tooltip is its own ImGui window, so the canvas has to be left first.
-            NodeEditor::Suspend();
-            ImGui::BeginTooltip();
-            ImGui::TextColored(EditorColors::TextPrimary(), "%s  " LE_ICON_ARROW_RIGHT_BOLD "  %s",
-                               GetEndpointLabel(FromNode->GetNodeID()).c_str(),
-                               GetEndpointLabel(ToNode->GetNodeID()).c_str());
-
-            if (CAnimStateTransition* Transition = FindTransition(FromNode->GetNodeID(), ToNode->GetNodeID()))
+            ImGui::Separator();
+            ImGui::Text("Condition   %s", Transition->GetConditionText().c_str());
+            ImGui::Text("Blend       %.2fs", Transition->BlendDuration);
+            ImGui::Text("Priority    %d", Transition->Priority);
+            ImGui::Text("Interrupt   %s", Transition->bCanInterrupt ? "can pre-empt an in-flight blend" : "runs to completion");
+            if (FromNode->IsA<CAnimGraphNode_StateAny>())
             {
-                ImGui::Separator();
-                ImGui::Text("Condition   %s", Transition->GetConditionText().c_str());
-                ImGui::Text("Blend       %.2fs", Transition->BlendDuration);
-                ImGui::Text("Priority    %d", Transition->Priority);
-                ImGui::Text("Interrupt   %s", Transition->bCanInterrupt ? "can pre-empt an in-flight blend" : "runs to completion");
-                if (FromNode->IsA<CAnimGraphNode_StateAny>())
-                {
-                    ImGui::TextColored(EditorColors::Warning(), "Checked from every state.");
-                }
-                if (Transition == DebugTransition)
-                {
-                    ImGui::TextColored(EditorColors::Warning(), "Blending now, %.0f%% into the target.",
-                                       DebugTransitionWeight * 100.0f);
-                }
-                ImGui::Separator();
-                ImGui::TextColored(EditorColors::TextMuted(), "Click to edit. Select and press Delete to remove.");
+                ImGui::TextColored(EditorColors::Warning(), "Checked from every state.");
             }
-            else
+            if (Transition == DebugTransition)
             {
-                ImGui::Separator();
-                ImGui::TextColored(EditorColors::TextMuted(), "The state the machine starts in.");
+                ImGui::TextColored(EditorColors::Warning(), "Blending now, %.0f%% into the target.",
+                                   DebugTransitionWeight * 100.0f);
             }
-            ImGui::EndTooltip();
-            NodeEditor::Resume();
+            ImGui::Separator();
+            ImGui::TextColored(EditorColors::TextMuted(), "Click to edit. Select and press Delete to remove.");
         }
+        else
+        {
+            ImGui::Separator();
+            ImGui::TextColored(EditorColors::TextMuted(), "The state the machine starts in.");
+        }
+        ImGui::EndTooltip();
     }
 }

@@ -123,7 +123,7 @@ public static partial class TidyMode
     }
 
     // Vendored and generated code is neither checked nor reported, matching ExcludeHeaderFilterRegex in .clang-tidy.
-    private static readonly string[] ExternalDirectories = { "ThirdParty", "External", "Intermediates", "imgui-node-editor" };
+    private static readonly string[] ExternalDirectories = { "ThirdParty", "External", "Intermediates" };
 
     private static bool IsExternal(string FilePath, BuildDirectories Directories)
     {

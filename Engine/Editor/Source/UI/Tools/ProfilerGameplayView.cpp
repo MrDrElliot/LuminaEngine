@@ -118,6 +118,17 @@ namespace Lumina
             }
 
             // Decorated for display only; the profiler stat is keyed on the undecorated class name.
+            FString RunsAfterList(const FSystemScheduleEntry& Entry)
+            {
+                FString List;
+                for (FName Name : Entry.RunsAfter)
+                {
+                    List += List.empty() ? "" : ", ";
+                    List += Name.ToString();
+                }
+                return List.empty() ? FString("nothing it declares") : List;
+            }
+
             FString SystemLabel(const FSystemScheduleEntry& Entry)
             {
                 const FString Name = Entry.Name.ToString();
@@ -691,7 +702,7 @@ namespace Lumina
                 ImGui::Text("Stage       %s", InsightsDetail::StageName(Entry.Stage));
                 ImGui::Text("Batch       %d   (%d system%s)", (int32)Entry.Batch, (int32)Entry.BatchSize,
                             Entry.BatchSize == 1 ? "" : "s");
-                ImGui::Text("Priority    %d", (int32)Entry.Priority);
+                ImGui::Text("Runs after  %s", InsightsDetail::RunsAfterList(Entry).c_str());
                 ImGui::Separator();
                 if (Entry.bExclusive)
                 {
@@ -891,8 +902,11 @@ namespace Lumina
         InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "batch %d", (int32)Entry.Batch);
         InsightsDetail::StripSeparator();
-        ImGui::TextColored(EditorColors::TextDim(), "priority %d", (int32)Entry.Priority);
-        InsightsDetail::StripSeparator();
+        if (!Entry.RunsAfter.empty())
+        {
+            ImGui::TextColored(EditorColors::TextDim(), "after %s", InsightsDetail::RunsAfterList(Entry).c_str());
+            InsightsDetail::StripSeparator();
+        }
         if (Entry.bExclusive)
         {
             ImGui::TextColored(EditorColors::Warning(), LE_ICON_LOCK " runs alone");

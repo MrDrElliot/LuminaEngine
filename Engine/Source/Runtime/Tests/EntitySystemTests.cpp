@@ -85,12 +85,10 @@ TEST(EntitySystem, ConfigureDeclaresStagesAndAccess)
     EXPECT_EQ(Created->GetWorld(), SentinelWorld) << "the owning world is set before Configure runs";
     EXPECT_EQ(Created->ConfigureCount, 1);
 
-    const FUpdatePriorityList& Priorities = Created->GetPriorities();
-    EXPECT_TRUE(Priorities.IsStageEnabled(EUpdateStage::PrePhysics));
-    EXPECT_TRUE(Priorities.IsStageEnabled(EUpdateStage::FrameEnd));
-    EXPECT_FALSE(Priorities.IsStageEnabled(EUpdateStage::PostPhysics));
-    EXPECT_EQ(Priorities.GetPriorityForStage(EUpdateStage::PrePhysics), (uint8)EUpdatePriority::High);
-    EXPECT_EQ(Priorities.GetPriorityForStage(EUpdateStage::FrameEnd), (uint8)EUpdatePriority::Default);
+    EXPECT_TRUE(Created->RunsInStage(EUpdateStage::PrePhysics));
+    EXPECT_TRUE(Created->RunsInStage(EUpdateStage::FrameEnd));
+    EXPECT_FALSE(Created->RunsInStage(EUpdateStage::PostPhysics));
+    EXPECT_TRUE(Created->GetRunsAfter().empty() && Created->GetRunsBefore().empty()) << "nothing orders a system that declares no dependency";
 
     // The typed declaration and the name keyed one a script uses must reach the same set.
     const FSystemAccess& Access = Created->GetAccess();

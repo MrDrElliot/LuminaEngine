@@ -1,5 +1,7 @@
 #include "RuntimePCH.h"
 #include "NavMeshSystem.h"
+#include "BlockoutSystem.h"
+#include "FoliageTerrainSystem.h"
 
 #include <algorithm>
 
@@ -42,6 +44,8 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
+        // Rebuilt tiles read the terrain, foliage and blockout meshes those systems settle.
+        RunsAfter<SFoliageTerrainSystem, SBlockoutSystem>();
         Writes<SNavMeshComponent>();
         Reads<SRigidBodyComponent, SBoxColliderComponent, SSphereColliderComponent, SMeshColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent, SCharacterPhysicsComponent, STerrainColliderComponent, STerrainComponent, STransformComponent, SStaticMeshComponent, SDynamicMeshColliderComponent, SDynamicMeshComponent, SCompoundColliderComponent, SNavModifierComponent, SNavLinkComponent, SFoliageComponent>();
     }

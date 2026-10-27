@@ -5,9 +5,7 @@
 
 namespace Lumina
 {
-    // Advances every SSequencePlayerComponent and writes its tracks into the world. Runs on PrePhysics at
-    // high priority: a sequence poses entities, and animation, physics and the camera all read those poses
-    // later in the same frame.
+    // Advances every SSequencePlayerComponent and writes its tracks into the world, ahead of the animation and scripts that read those poses.
     REFLECT()
     class SSequencerSystem : public CEntitySystem
     {

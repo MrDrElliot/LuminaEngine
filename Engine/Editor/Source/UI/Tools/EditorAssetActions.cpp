@@ -15,7 +15,6 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
-#include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
@@ -125,6 +124,25 @@ namespace Lumina
         return Remap.find(PrimaryAsset)->second;
     }
 
+    CObject* DuplicateAsset(FStringView SourcePath, FFixedString& OutPath)
+    {
+        const FAssetData* Data   = FAssetRegistry::Get().GetAssetByPath(SourcePath);
+        CObject*          Source = Data != nullptr ? LoadObject<CObject>(Data->AssetGUID) : nullptr;
+        if (Source == nullptr)
+        {
+            return nullptr;
+        }
+
+        // A material keeps its node graph as a second export, so the whole package is copied and rewritten.
+        OutPath = MakeSiblingAssetPath(SourcePath, "_Copy");
+        CObject* Copy = DuplicateAssetPackage(Source, FStringView(OutPath.c_str(), OutPath.size()));
+        if (Copy != nullptr)
+        {
+            FAssetRegistry::Get().AssetCreated(Copy);
+        }
+        return Copy;
+    }
+
     THashMap<CObject*, CObject*> CopyObjectsInto(TSpan<CObject* const> Sources, CPackage* Dest, const TFunction<FName(CObject*)>& NameFor)
     {
         // Pass 1 constructs every copy first, so pass 2 can resolve a reference to any sibling.
@@ -158,22 +176,6 @@ namespace Lumina
                 FMemoryReader Reader(Bytes);
                 FObjectRemapArchiver Proxy(Reader, Remap);
                 Copy->Serialize(Proxy);
-            }
-
-            // Serialize has no concept of DuplicateTransient, so those fields are put back to their defaults.
-            if (CClass* Class = Source->GetClass())
-            {
-                const CObject* Defaults = Class->GetDefaultObject<CObject>();
-                if (Defaults != nullptr)
-                {
-                    for (FProperty* Current : Class->GetProperties())
-                    {
-                        if (Current->IsDuplicateTransient())
-                        {
-                            Current->CopyCompleteValue_InContainer(Copy, Defaults);
-                        }
-                    }
-                }
             }
         }
 

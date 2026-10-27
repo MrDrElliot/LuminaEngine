@@ -2,6 +2,7 @@
 #include "Core/CoreEditorDelegates.h"
 
 #include "Asset/AssetOps.h"
+#include "BulkRename.h"
 #include "EditorAssetActions.h"
 #include "EditorToolContext.h"
 #include "ReplaceReferencesModal.h"
@@ -1458,6 +1459,12 @@ namespace Lumina
         {
             if (Key == ImGuiKey_F2)
             {
+                if (const TVector<FTileViewItem*>& Selections = ContentBrowserTileView.GetSelections(); Selections.size() > 1)
+                {
+                    BulkRenameItems(Selections);
+                    return true;
+                }
+
                 FContentBrowserTileViewItem* ContentItem = static_cast<FContentBrowserTileViewItem*>(&Item);
                 if (ContentItem->IsProtected())
                 {
@@ -1898,7 +1905,7 @@ namespace Lumina
         DrawHelpTextRow("Filter",
             "Filter menu hides asset classes you don't want to see. View Options changes tile size.");
         DrawHelpTextRow("Rename / Delete",
-            "F2 renames the tile in place; Delete removes. References follow a rename by asset GUID, "
+            "F2 renames the tile in place, or opens Bulk Rename when several are selected; Delete removes. References follow a rename by asset GUID, "
             "so inbound references stay intact without redirectors.");
     }
 
@@ -3273,25 +3280,13 @@ namespace Lumina
 
         if (ImGui::MenuItem(LE_ICON_CONTENT_DUPLICATE " Duplicate", nullptr, false, !bIsProtected))
         {
-            CObject* Source = LoadObject<CObject>(Data->AssetGUID);
-            if (Source == nullptr)
-            {
-                ImGuiX::Notifications::NotifyError("Could not load '{0}' to duplicate it.", SourcePath);
-                return;
-            }
-
-            const FFixedString NewPath = MakeSiblingAssetPath(
-                FStringView(SourcePath.c_str(), SourcePath.size()), "_Copy");
-
-            // A material keeps its node graph as a second export, so the whole package is copied and rewritten.
-            CObject* Copy = DuplicateAssetPackage(Source, FStringView(NewPath.c_str(), NewPath.size()));
-            if (Copy == nullptr)
+            FFixedString NewPath;
+            if (DuplicateAsset(FStringView(SourcePath.c_str(), SourcePath.size()), NewPath) == nullptr)
             {
                 ImGuiX::Notifications::NotifyError("Failed to duplicate '{0}'.", SourcePath);
                 return;
             }
 
-            FAssetRegistry::Get().AssetCreated(Copy);
             ImGuiX::Notifications::NotifySuccess("Duplicated to '{0}'.", NewPath);
 
             // A duplicate lands as Name_Copy, which is even less likely to be wanted than a factory default.
@@ -3647,20 +3642,55 @@ namespace Lumina
         }
 
         // Decided from the registry's class names, so drawing the menu never loads an asset.
+        TVector<FGuid> Assets;
         TVector<FGuid> Exportable;
         for (FTileViewItem* Item : Items)
         {
             const auto* ContentItem = static_cast<const FContentBrowserTileViewItem*>(Item);
+            const FFixedString ItemPath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
             if (!ContentItem->IsAsset())
             {
                 continue;
             }
-            const FFixedString AssetPath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath);
-            if (Data != nullptr && AssetExport::CanExport(FindObject<CClass>(Data->AssetClass)))
+            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(ItemPath);
+            if (Data == nullptr || Data->IsClassMissing())
+            {
+                continue;
+            }
+            Assets.push_back(Data->AssetGUID);
+            if (AssetExport::CanExport(FindObject<CClass>(Data->AssetClass)))
             {
                 Exportable.push_back(Data->AssetGUID);
             }
+        }
+
+        const bool bWorldActive = IsAnyWorldPlayingOrSimulating();
+
+        DrawMenuSection("BULK");
+
+        if (ImGui::MenuItem(LE_ICON_TABLE_EDIT " Edit in Property Matrix", nullptr, false, !Assets.empty()))
+        {
+            ToolContext->OpenPropertyMatrix(Assets);
+        }
+        ImGuiX::TextTooltip("Compare and edit the selected assets' properties side by side. Folders and other files are skipped.");
+
+        if (ImGui::MenuItem(LE_ICON_RENAME " Bulk Rename...", "F2", false, ProtectedCount < (int32)Items.size() && !bWorldActive))
+        {
+            BulkRenameItems(Items);
+        }
+        ImGuiX::TextTooltip("Find and replace, prefix, suffix and numbering across the selection, previewed before anything moves.");
+
+        if (ImGui::MenuItem(LE_ICON_CONTENT_SAVE " Save Selected", nullptr, false, !Assets.empty()))
+        {
+            TVector<CPackage*> Packages;
+            for (const FGuid& Asset : Assets)
+            {
+                if (CObject* Resident = FindObject<CObject>(Asset))
+                {
+                    Packages.push_back(Resident->GetPackage());
+                }
+            }
+            ToolContext->SavePackages(Move(Packages));
         }
 
         DrawMenuSection("EXPORT");
@@ -3675,7 +3705,6 @@ namespace Lumina
         ImGui::Spacing();
         ImGui::Separator();
 
-        const bool bWorldActive  = IsAnyWorldPlayingOrSimulating();
         const bool bAllProtected = ProtectedCount == (int32)Items.size();
 
         ImGui::PushStyleColor(ImGuiCol_Text,          kMenuDanger);
@@ -3714,6 +3743,24 @@ namespace Lumina
         if (bDeleteClicked)
         {
             DeleteSelectedItems(Items);
+        }
+    }
+
+    void FContentBrowserEditorTool::BulkRenameItems(const TVector<FTileViewItem*>& Items)
+    {
+        TVector<FFixedString> Paths;
+        for (FTileViewItem* Item : Items)
+        {
+            const auto* ContentItem = static_cast<const FContentBrowserTileViewItem*>(Item);
+            if (!ContentItem->IsProtected())
+            {
+                Paths.emplace_back(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+            }
+        }
+
+        if (!Paths.empty())
+        {
+            OpenBulkRenameModal(ToolContext, Move(Paths), [this] { RefreshContentBrowser(); });
         }
     }
 

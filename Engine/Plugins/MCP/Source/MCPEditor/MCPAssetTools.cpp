@@ -16,6 +16,7 @@
 #include "Paths/Paths.h"
 #include "Tools/Import/Importer.h"
 #include "Tools/Import/TextureImporter.h"
+#include "UI/Tools/EditorAssetActions.h"
 #include <filesystem>
 
 namespace Lumina::MCP
@@ -249,6 +250,31 @@ namespace Lumina::MCP
                     const FStringView Final(Destination.c_str(), Destination.size());
 
                     return ReportPathOp(AssetOps::MovePath(FStringView(In.Path), Final), Out, Final, "Renamed");
+                });
+        }
+
+        void RegisterDuplicateAsset(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SDuplicateAssetParams, SPathOpResult>(
+                Owner, "assets.duplicate",
+                "Copy an asset beside itself as Name_Copy, as the Content Browser's Duplicate does, and save the copy.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SDuplicateAssetParams& In, SPathOpResult& Out)
+                {
+                    FString Error;
+                    if (!IsWellFormedPath(In.Path, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    FFixedString NewPath;
+                    if (DuplicateAsset(FStringView(In.Path), NewPath) == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("Could not duplicate {}.", In.Path));
+                    }
+
+                    Out.Path = NewPath.c_str();
+                    return Agent::FToolResult::Ok(Lumina::Format("Duplicated to {}.", Out.Path));
                 });
         }
 
@@ -553,6 +579,7 @@ namespace Lumina::MCP
         RegisterListFolders(Owner);
         RegisterCreateFolder(Owner);
         RegisterRenameAsset(Owner);
+        RegisterDuplicateAsset(Owner);
         RegisterMoveAsset(Owner);
 
         Agent::FToolRegistry::Get().Register<SSearchAssetsParams, SSearchAssetsResult>(

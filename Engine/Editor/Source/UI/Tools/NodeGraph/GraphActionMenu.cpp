@@ -6,7 +6,6 @@
 #include "imgui_internal.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
-#include "imgui-node-editor/imgui_node_editor.h"
 
 namespace Lumina
 {
@@ -223,6 +222,13 @@ namespace Lumina
         const THashSet<CClass*>& SupportedNodes = Graph->GetSupportedNodes();
         Actions.reserve(SupportedNodes.size());
 
+        THashSet<CClass*> Accepting;
+        bHasSourceFilter = Graph->PendingSourcePin != nullptr;
+        if (bHasSourceFilter)
+        {
+            Graph->CollectClassesAccepting(Graph->PendingSourcePin, Accepting);
+        }
+
         for (CClass* NodeClass : SupportedNodes)
         {
             CEdGraphNode* CDO = Cast<CEdGraphNode>(NodeClass->GetDefaultObject());
@@ -236,6 +242,7 @@ namespace Lumina
             Action.DisplayName = FString(CDO->GetNodeDisplayName());
             Action.Category    = CDO->GetNodeCategory().c_str();
             Action.Tooltip     = FString(CDO->GetNodeTooltip());
+            Action.bAcceptsSource = !bHasSourceFilter || Accepting.contains(NodeClass);
             Actions.push_back(Move(Action));
         }
 
@@ -252,6 +259,10 @@ namespace Lumina
         for (int32 i = 0; i < static_cast<int32>(Actions.size()); ++i)
         {
             FGraphAction& Action = Actions[i];
+            if (bHasSourceFilter && bOnlyAcceptingNodes && !Action.bAcceptsSource)
+            {
+                continue;
+            }
 
             if (!bHasQuery)
             {
@@ -522,6 +533,16 @@ namespace Lumina
 
         ImGui::PopStyleVar(4);
 
+        if (bHasSourceFilter)
+        {
+            ImGui::SetCursorPosX(10.0f);
+            if (ImGui::Checkbox("Only nodes that take this wire", &bOnlyAcceptingNodes))
+            {
+                Rescore();
+                SelectedIndex = 0;
+            }
+        }
+
         if (bEnterCommitted && SelectedIndex >= 0 && SelectedIndex < static_cast<int32>(VisibleIndices.size()))
         {
             CommittedActionIndex = VisibleIndices[SelectedIndex];
@@ -537,8 +558,7 @@ namespace Lumina
             CEdGraphNode* NewNode = Graph->CreateNode(Action.NodeClass);
             if (NewNode != nullptr)
             {
-                ax::NodeEditor::SetNodePosition(NewNode->GetNodeID(),
-                    ax::NodeEditor::ScreenToCanvas(ImGui::GetMousePosOnOpeningCurrentPopup()));
+                Graph->PlaceNodeAtScreen(NewNode, ImGui::GetMousePosOnOpeningCurrentPopup());
 
                 if (Graph->PendingSourcePin != nullptr)
                 {
@@ -548,8 +568,7 @@ namespace Lumina
                     }
                 }
 
-                ax::NodeEditor::ClearSelection();
-                ax::NodeEditor::SelectNode(NewNode->GetNodeID(), false);
+                Graph->GetEditor().SelectNode(NewNode->GetNodeID(), false);
 
                 if (Graph->NodeSelectedCallback)
                 {

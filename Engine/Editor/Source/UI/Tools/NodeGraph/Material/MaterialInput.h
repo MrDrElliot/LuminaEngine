@@ -18,6 +18,13 @@ namespace Lumina
         float DrawPin() override;
         FString GetPinTypeName() const override;
 
+        // Scalar inputs only, since every node lays its scalar defaults out as floats indexed by pin.
+        bool HasInlineEditor() const override;
+        EGraphPinShape GetPinShape() const override;
+
+        // Width decides the shape, so float through float4 read apart without color, and a set mask decides the width.
+        static EGraphPinShape ShapeFor(EMaterialInputType Type, EComponentMask Mask);
+
         void SetInputType(EMaterialInputType InType) { InputType = InType; }
         EMaterialInputType GetInputType() const { return InputType; }
 

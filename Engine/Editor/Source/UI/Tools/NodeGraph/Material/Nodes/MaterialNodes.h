@@ -31,4 +31,5 @@
 #include "MaterialNode_Collection.h"
 #include "MaterialNode_Function.h"
 #include "MaterialNode_CustomSlang.h"
+#include "MaterialNode_Formula.h"
 #include "MaterialOutputNode.h"

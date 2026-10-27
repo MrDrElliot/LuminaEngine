@@ -16,7 +16,7 @@ namespace Lumina
     // SetEntityWorldTransform reads the parent links, and CastSphere reads the physics scene.
     void SCameraRigSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Medium);
+        RequireUpdate(EUpdateStage::FrameEnd);
         Writes<STransformComponent, SCameraFollowComponent, SSpringArmComponent>();
         Reads<SystemResource::PhysicsQuery, SystemResource::Hierarchy>();
     }

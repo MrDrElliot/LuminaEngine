@@ -1,7 +1,6 @@
 ﻿#include <string>
 #include <string_view>
 #include "MaterialEditorTool.h"
-#include "imgui-node-editor/imgui_node_editor.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Engine/Engine.h"
@@ -85,6 +84,10 @@ namespace Lumina
 
         NodeGraph = MaterialOps::FindOrCreateGraph(Cast<CMaterial>(Asset.Get()));
         NodeGraph->SetMaterial(Cast<CMaterial>(Asset.Get()));
+        NodeGraph->NodePreviewSource = [this](int64 NodeID, ImTextureRef& OutTexture, const char*& OutStatus)
+        {
+            return NodePreviews.GetTexture(NodeID, OutTexture, OutStatus);
+        };
         NodeGraph->Initialize();
         NodeGraph->SetTransactionManager(&GetTransactionManager());
         NodeGraph->SetNodeSelectedCallback( [this] (CEdGraphNode* Node)
@@ -269,7 +272,7 @@ namespace Lumina
         }
         else
         {
-            StaticMeshComponent.MaterialOverrides.push_back(MaterialInterface);
+            StaticMeshComponent.MaterialOverrides.push_back(bShowingPinPreview ? ViewportPreview.GetMaterial() : MaterialInterface);
         }
     }
 
@@ -341,6 +344,7 @@ namespace Lumina
         const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
         const ImVec2 CursorScreenPos = ImGui::GetCursorScreenPos();
         const ImVec2 WindowBottomRight = { CursorScreenPos.x + ViewportSize.x, CursorScreenPos.y + ViewportSize.y };
+        UpdatePixelProbe(CursorScreenPos, ViewportSize);
 
         if (World != nullptr && World->GetRenderer() != nullptr)
         {
@@ -431,6 +435,22 @@ namespace Lumina
 
         ImGui::SameLine();
         DrawCameraModeSelector();
+
+        const CEdNodeGraphPin* PreviewPin = NodeGraph->PreviewPinID != 0 ? NodeGraph->FindPinByGUID(NodeGraph->PreviewPinID) : nullptr;
+        if (PreviewPin != nullptr)
+        {
+            const FString PinName = PreviewPin->GetPinName().empty() ? FString() : FString(".") + PreviewPin->GetPinName();
+            const FString Label   = Lumina::Format(LE_ICON_EYE " {}{}{}  " LE_ICON_CLOSE, PreviewPin->GetOwningNode()->GetNodeTitleText(), PinName,
+                ViewportPreview.IsCompiling() ? " (compiling)" : "");
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::WithAlpha(EditorColors::Accent(), 0.35f));
+            if (ImGui::Button(Label.c_str()))
+            {
+                NodeGraph->PreviewPinID = 0;
+            }
+            ImGui::PopStyleColor();
+            ImGuiX::TextTooltip("{}", "The preview mesh shows this pin as unlit color. Click to go back to the whole material.");
+        }
     }
 
     void FMaterialEditorTool::OnAssetLoadFinished()
@@ -461,12 +481,79 @@ namespace Lumina
             ImGui::PopStyleColor();
             ImGuiX::TextTooltip("{}", "This material has changes that are not in its compiled shader yet.");
         }
+
+        if (ImGui::MenuItem(LE_ICON_FIRE " Cost", nullptr, NodeGraph->bShowCostHeat))
+        {
+            NodeGraph->bShowCostHeat = !NodeGraph->bShowCostHeat;
+        }
+        ImGuiX::TextTooltip("{}", "Marks each node with the shader work it added in the last compile, red for the most expensive.");
     }
 
     void FMaterialEditorTool::DrawMaterialGraph()
     {
         DrawCompileErrorBanner();
+        UpdatePreviews();
         NodeGraph->DrawGraph();
+    }
+
+    void FMaterialEditorTool::UpdatePixelProbe(ImVec2 ImageMin, ImVec2 ImageSize)
+    {
+        const ImVec2 Mouse = ImGui::GetMousePos();
+        const ImVec2 UV((Mouse.x - ImageMin.x) / ImageSize.x, (Mouse.y - ImageMin.y) / ImageSize.y);
+        const bool   bWanted = bShowingPinPreview && bViewportHovered && UV.x >= 0.0f && UV.y >= 0.0f && UV.x < 1.0f && UV.y < 1.0f;
+        PixelProbe.Tick(World != nullptr ? World->GetRenderer() : nullptr, bWanted, UV);
+
+        ImVec4 Value;
+        if (!bWanted || !PixelProbe.GetValue(Value))
+        {
+            return;
+        }
+
+        const float Swatch = ImGui::GetFontSize();
+        ImGui::BeginTooltip();
+        ImGui::ColorButton("##ProbeSwatch", ImVec4(Math::Saturate(Value.x), Math::Saturate(Value.y), Math::Saturate(Value.z), 1.0f),
+            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(Swatch, Swatch));
+        ImGui::SameLine();
+        ImGui::Text("%.3f  %.3f  %.3f", Value.x, Value.y, Value.z);
+        ImGui::EndTooltip();
+    }
+
+    void FMaterialEditorTool::UpdatePreviews()
+    {
+        const CMaterial* Material = Cast<CMaterial>(Asset.Get());
+        if (NodeGraph->PreviewPinID != 0 && Material != nullptr && Material->GetMaterialType() != EMaterialType::PBR)
+        {
+            ImGuiX::Notifications::NotifyInfo("Pin previews draw on the preview mesh, which only surface materials use.");
+            NodeGraph->PreviewPinID = 0;
+        }
+
+        bool bReapply = false;
+        if (ViewportPreview.Poll())
+        {
+            bReapply = true;
+            if (!ViewportPreview.IsReady())
+            {
+                ImGuiX::Notifications::NotifyWarning("Could not preview that pin. {}", ViewportPreview.GetError());
+                NodeGraph->PreviewPinID = 0;
+            }
+        }
+
+        const uint32 Wanted = NodeGraph->PreviewPinID;
+        const bool   bStale = ViewportPreview.GetPinID() != Wanted || ViewportPreview.GetVersion() != NodeGraph->GetContentVersion();
+        if (Wanted != 0 && bStale && !ViewportPreview.IsCompiling() && !ViewportPreview.Launch(NodeGraph.Get(), Wanted))
+        {
+            ImGuiX::Notifications::NotifyWarning("Could not preview that pin. {}", ViewportPreview.GetError());
+            NodeGraph->PreviewPinID = 0;
+        }
+
+        const bool bShowPin = NodeGraph->PreviewPinID != 0 && ViewportPreview.IsReady();
+        if (bReapply || bShowPin != bShowingPinPreview)
+        {
+            bShowingPinPreview = bShowPin;
+            ApplyMaterialToPreview();
+        }
+
+        NodePreviews.Tick(NodeGraph.Get());
     }
 
     void FMaterialEditorTool::DrawCompileErrorBanner()
@@ -1268,7 +1355,7 @@ namespace Lumina
             return;
         }
 
-        NodeGraph->QueueFocusNode(Node);
+        NodeGraph->FocusNode(Node);
 
         // The jump is invisible when the graph is tabbed behind the code editor.
         ImGui::SetWindowFocus(GetToolWindowName(MaterialGraphName).c_str());

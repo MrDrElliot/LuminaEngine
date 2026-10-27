@@ -7,6 +7,7 @@
 #include "Containers/Vector.h"
 #include "Containers/String.h"
 #include "Input/Key.h"
+#include "Physics/PhysicsTypes.h"
 #include "Renderer/PresentMode.h"
 #include "World/World.h"
 #include "EngineSettings.generated.h"
@@ -237,6 +238,18 @@ namespace Lumina
         // Entry N names layer N, read through SRenderLayerMask::GetLayerName. The last layer is always Foreground.
         PROPERTY(Editable, Category = "Layers")
         TVector<FName> LayerNames = { FName("Default") };
+    };
+
+    // Names for the custom collision channels, shown wherever a collision layer or mask is picked.
+    REFLECT(MinimalAPI, ConfigFile = "/Config/GameSettings.json", DisplayName = "Collision", Category = "Engine")
+    class CCollisionSettings : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        // Entry N names Channel N, read through SCollisionProfile::GetLayerName. An unnamed channel stays out of the pickers.
+        PROPERTY(Editable, NoResize, NoReorder, Category = "Layers")
+        TVector<FName> ChannelNames = TVector<FName>(CollisionLayers::kCount - CollisionLayers::kFirstChannel);
     };
 
     REFLECT()

@@ -436,6 +436,26 @@ namespace Lumina
         FPropertyEditSession EditSession;
     };
 
+    // Collision layer masks, listing Static, Dynamic and the channels named in the project's collision settings.
+    class FCollisionLayersPropertyCustomization : public IPropertyTypeCustomization
+    {
+    public:
+
+        static TSharedPtr<FCollisionLayersPropertyCustomization> MakeInstance()
+        {
+            return MakeShared<FCollisionLayersPropertyCustomization>();
+        }
+
+        EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) override;
+        void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) override;
+        void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property) override;
+
+    private:
+
+        uint32 CachedBits = 0;
+        FPropertyEditSession EditSession;
+    };
+
     class FNamePropertyCustomization : public IPropertyTypeCustomization
     {
     public:

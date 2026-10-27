@@ -21,8 +21,8 @@ namespace Lumina
 
     void SKinematicsSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Highest);
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::PrePhysics);
+        RequireUpdate(EUpdateStage::Paused);
         Writes<SVelocityComponent, SystemResource::Kinematics>();
         Reads<STransformComponent, SCharacterMovementComponent, SRigidBodyComponent, SystemResource::PhysicsQuery>();
         Reads<SSkeletalMeshComponent, SAudioSourceComponent, SAudioListenerComponent, SCameraComponent>();

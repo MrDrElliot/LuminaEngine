@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "RagdollSystem.h"
+#include "AnimationSystem.h"
 #include "World/ECS/Registry.h"
 #include "Physics/PhysicsScene.h"
 #include "Core/Math/Math.h"
@@ -28,8 +29,9 @@ namespace Lumina
 
     void SRagdollSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::PostPhysics);
+        RunsAfter<SAnimationSystem>();
 
         // Ragdoll bodies are built and torn down at the sync point, so only the pose side is declared.
         Writes<SRagdollComponent, SSkeletalMeshComponent, STransformComponent>();

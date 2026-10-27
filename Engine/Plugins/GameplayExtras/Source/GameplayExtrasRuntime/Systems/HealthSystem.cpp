@@ -10,7 +10,7 @@ namespace Lumina
     // Heal broadcasts into script, so it runs at the sync point and the countdown is all this system touches.
     void SHealthSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::PrePhysics);
         Writes<SHealthComponent>();
     }
 

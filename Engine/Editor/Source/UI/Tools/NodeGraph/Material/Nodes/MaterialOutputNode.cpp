@@ -122,20 +122,18 @@ namespace Lumina
         // When connected, the vertex shader adds the graph emission to WorldPos before view and projection.
         WorldPositionOffsetPin = CreatePin(CMaterialInput::StaticClass(), "World Position Offset (WPO)", ENodePinDirection::Input);
         WorldPositionOffsetPin->SetPinName("World Position Offset (XYZ)");
+
+        // Declared so tooltips, pin shapes and conversion badges know what each attribute takes.
+        for (CEdNodeGraphPin* VectorPin : { BaseColorPin, EmissivePin, NormalPin, TransmissionPin, WorldPositionOffsetPin })
+        {
+            static_cast<CMaterialInput*>(VectorPin)->SetInputType(EMaterialInputType::Float3);
+        }
     }
 
-    // Handles component widening/narrowing; shared by pixel-stage assignments and vertex-stage WPO.
-    static FString EmitMaterialAssignment(const FString& MemberName, CEdNodeGraphPin* Pin, const FString& DefaultValue, int32 RequiredComponents)
+    // Handles component widening/narrowing; shared by pixel-stage assignments, vertex-stage WPO and pin previews.
+    static FString EmitAssignmentFrom(const FString& MemberName, CMaterialOutput* ConnectedPin, const FString& DefaultValue, int32 RequiredComponents)
     {
         FString Out = "\tMaterial." + MemberName + " = ";
-
-        if (!Pin || !Pin->HasConnection())
-        {
-            return Out + DefaultValue + ";\n";
-        }
-
-        // A reroute emits no variable, so binding to its node name would reference an undeclared identifier.
-        CMaterialOutput* ConnectedPin = FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0));
         if (ConnectedPin == nullptr)
         {
             return Out + DefaultValue + ";\n";
@@ -174,6 +172,27 @@ namespace Lumina
             Out += Value + ";\n";
         }
         return Out;
+    }
+
+    static FString EmitMaterialAssignment(const FString& MemberName, CEdNodeGraphPin* Pin, const FString& DefaultValue, int32 RequiredComponents)
+    {
+        // A reroute emits no variable, so binding to its node name would reference an undeclared identifier.
+        CMaterialOutput* ConnectedPin = Pin != nullptr && Pin->HasConnection()
+            ? FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0))
+            : nullptr;
+        return EmitAssignmentFrom(MemberName, ConnectedPin, DefaultValue, RequiredComponents);
+    }
+
+    void CMaterialOutputNode::GeneratePreviewDefinition(FMaterialCompiler& Compiler, CMaterialOutput* Pin)
+    {
+        FString PixelOut = "\n\n\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
+        PixelOut += "\tMaterial.Diffuse = float3(0.0, 0.0, 0.0);\n";
+        PixelOut += "\tMaterial.Metallic = 0.0;\n";
+        PixelOut += "\tMaterial.Specular = 0.0;\n";
+        PixelOut += "\tMaterial.Roughness = 1.0;\n";
+        PixelOut += EmitAssignmentFrom("Emissive", Pin, "float3(0.0, 0.0, 0.0)", 3);
+        Compiler.AddPixelOutput(PixelOut);
+        Compiler.AddVertexOutput("\n\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n");
     }
 
     void CMaterialOutputNode::GetPixelStagePins(TVector<CEdNodeGraphPin*>& OutPins) const

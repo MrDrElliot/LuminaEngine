@@ -11,13 +11,17 @@
 #include "Components/RepTransformComponent.h"
 #include "Components/NetworkComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/AudioSystem.h"
+#include "World/Entity/Systems/EntityScriptSystem.h"
 
 namespace Lumina
 {
     // Dirty-tagging happens in the serial tail, covered by the transform write domain.
     void SNetMovementInterpSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PostPhysics, EUpdatePriority::High);
+        RequireUpdate(EUpdateStage::PostPhysics);
+        // Remote entities are placed before anything reads where they are this frame.
+        RunsBefore<SAudioSystem, SEntityScriptSystem>();
         Writes<STransformComponent>();
         Writes<FRepTransform>();
         Reads<SNetworkComponent>();

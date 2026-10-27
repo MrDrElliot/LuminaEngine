@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "MaterialNodePreviews.h"
 #include "World/ECS/Registry.h"
 
 
@@ -87,6 +88,12 @@ namespace Lumina
         void NotifyCompileResult();
         void ApplyMaterialToPreview();
 
+        // Lands finished pin and node previews and starts the ones the graph now wants.
+        void UpdatePreviews();
+
+        // While a pin is previewed, shows its value under the cursor in the viewport.
+        void UpdatePixelProbe(ImVec2 ImageMin, ImVec2 ImageSize);
+
         // The transient spray the Particle domain previews through, pointed at PreviewMaterial.
         CParticleSystem* GetOrCreatePreviewParticleSystem(CMaterialInterface* PreviewMaterial);
         void FocusGraphNode(CEdGraphNode* Node);
@@ -164,6 +171,12 @@ namespace Lumina
         TUniquePtr<FPropertyTable>      DirectionalEditor;
         
         TStrongObjectPtr<CMaterialNodeGraph> NodeGraph;
+
+        // The pin the viewport shows in place of the material, while the graph's PreviewPinID names one.
+        FPinPreviewMaterial             ViewportPreview;
+        bool                            bShowingPinPreview = false;
+        FMaterialNodePreviews           NodePreviews;
+        FViewportPixelProbe             PixelProbe;
         bool                            bGLSLPreviewDirty = false;
         
         EDebugMesh                      DebugMesh;

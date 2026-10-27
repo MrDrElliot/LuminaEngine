@@ -23,8 +23,8 @@ namespace Lumina
 
     void SSignificanceSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::FrameStart);
+        RequireUpdate(EUpdateStage::Paused);
         Writes<SystemResource::Significance>();
         Reads<STransformComponent, SStaticMeshComponent, SSkeletalMeshComponent, SDynamicMeshComponent>();
         Reads<SAudioSourceComponent, SPathFollowComponent, SPerceptionComponent, SRVOAgentComponent>();

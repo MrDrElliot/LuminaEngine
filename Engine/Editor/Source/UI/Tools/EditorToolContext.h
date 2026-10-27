@@ -10,6 +10,7 @@ namespace Lumina
 {
     class CObject;
     class CClass;
+    class CPackage;
     class FAssetRegistry;
     struct FAssetData;
 }
@@ -46,6 +47,12 @@ namespace Lumina
 
         /** Writes every dirty package through its open tool, which is what a standalone launch reads from disk. */
         virtual void SaveAllDirtyPackages() = 0;
+
+        // Saves the dirty ones among Packages the way SaveAllDirtyPackages saves everything.
+        virtual void SavePackages(TVector<CPackage*> Packages) = 0;
+
+        // Opens a property matrix over the assets, for viewing and editing their shared properties side by side.
+        virtual void OpenPropertyMatrix(TVector<FGuid> Assets) = 0;
 
         // Asks before touching files that are read-only on disk and runs Then once they are writable. True when none were, so the caller goes ahead now.
         virtual bool ConfirmWritable(TVector<FString> VirtualPaths, TMoveOnlyFunction<void()> Then, bool bThenSaves = true) = 0;

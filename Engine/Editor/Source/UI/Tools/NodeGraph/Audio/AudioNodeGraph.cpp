@@ -59,7 +59,7 @@ namespace Lumina
 
     void CAudioNodeGraph::DrawCanvasDropTarget()
     {
-        // The node editor consumes the canvas and leaves no item, so the target covers the host rect.
+        // The canvas is a child window, so the target covers the host rect around it.
         ImGuiWindow* Window = ImGui::GetCurrentWindow();
         if (Window == nullptr)
         {
@@ -77,7 +77,7 @@ namespace Lumina
                 {
                     Node->Wave = Dropped;
                     Node->NotifyValueEdited();
-                    QueueNodePlacement(Node, ImGui::GetMousePos());
+                    PlaceNodeAtScreen(Node, ImGui::GetMousePos());
                 }
             }
             ImGui::EndDragDropTarget();

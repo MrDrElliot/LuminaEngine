@@ -16,12 +16,27 @@ namespace Lumina
     // LuminaSharp's SSystemContext partial reads the world at offset zero.
     static_assert(offsetof(SSystemContext, World) == 0);
 
-    void CEntitySystem::RequireUpdate(EUpdateStage Stage, int32 Priority)
+    void CEntitySystem::RequireUpdate(EUpdateStage Stage)
     {
         if (Stage < EUpdateStage::Max)
         {
-            const int32 Clamped = Priority < 0 ? 0 : (Priority > 255 ? 255 : Priority);
-            Priorities.SetStagePriority(Stage, (EUpdatePriority)Clamped);
+            StageMask |= (uint8)(1u << (uint32)Stage);
+        }
+    }
+
+    void CEntitySystem::RunsAfterSystem(FName System)
+    {
+        if (!Algo::Contains(After, System))
+        {
+            After.push_back(System);
+        }
+    }
+
+    void CEntitySystem::RunsBeforeSystem(FName System)
+    {
+        if (!Algo::Contains(Before, System))
+        {
+            Before.push_back(System);
         }
     }
 
@@ -63,7 +78,9 @@ namespace Lumina
 
     void CEntitySystem::ConfigureSystem()
     {
-        Priorities.Reset();
+        StageMask = 0;
+        After.clear();
+        Before.clear();
         Access = FSystemAccess();
 
         Configure();

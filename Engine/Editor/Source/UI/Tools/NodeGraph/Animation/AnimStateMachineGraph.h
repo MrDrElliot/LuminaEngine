@@ -57,14 +57,10 @@ namespace Lumina
 
         const TVector<TStrongObjectPtr<CAnimStateTransition>>& GetTransitions() const { return Transitions; }
 
-        void PushGraphStyle() const override;
-        void PopGraphStyle() const override;
         bool DrawCustomNode(CEdGraphNode* Node) override;
-        void GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImVec4& OutColor, float& OutThickness) const override;
+        void GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImU32& OutColor, float& OutThickness) const override;
         void DrawGraphOverlay(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links) override;
-
-        // The overlay marks the live transition with a progress dot, which flow markers would swamp.
-        bool WantsDebugLinkFlow() const override { return false; }
+        void DrawLinkTooltip(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin) override;
 
         /** Transition data behind each State -> State wire. Reconciled in ValidateGraph. */
         PROPERTY(Hidden)

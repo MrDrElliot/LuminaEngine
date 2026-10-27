@@ -77,8 +77,9 @@ namespace Lumina
         FName           Name;
         TVector<uint32> Writes;
         TVector<uint32> Reads;
+        // The systems in this stage that its declarations make it wait for.
+        TVector<FName>  RunsAfter;
         uint8           Stage      = 0;     // EUpdateStage
-        uint8           Priority   = 255;
         uint8           Batch      = 0;     // Parallel batch index within the stage
         uint8           BatchSize  = 1;     // Systems running together in that batch
         bool            bExclusive = false;
@@ -102,14 +103,18 @@ namespace Lumina
 
         //~ Nested types.
 
-        // One system as scheduled in one stage. Systems owns the instance and this only orders it.
-        struct FStageSlot
+        // One stage's systems in the order their declared dependencies give. Systems owns the instances and this only orders them.
+        struct FStageSchedule
         {
-            CEntitySystem* System = nullptr;
-            uint8          StagePriority = 255;
+            TVector<CEntitySystem*> Systems;
+
+            // Row First, column Second, set when First has to finish before Second starts, directly or through other systems.
+            TVector<uint8>          Precedes;
+
+            bool MustPrecede(size_t First, size_t Second) const { return Precedes[First * Systems.size() + Second] != 0; }
         };
 
-        // Slots that may run together, as indices into SystemUpdateList.
+        // Systems that may run together, as indices into an FStageSchedule.
         struct FSystemBatch
         {
             TVector<uint16> Members;
@@ -122,8 +127,9 @@ namespace Lumina
             FName                 Name;
             bool                  bEnabled = true;
             TVector<EUpdateStage> Stages;
-            // The priority asked for in each of Stages, which a disabled system still reports.
-            TVector<uint8>        Priorities;
+            // As declared, which a disabled system still reports.
+            TVector<FName>        RunsAfter;
+            TVector<FName>        RunsBefore;
         };
 
         //~ Construction and the CObject contract.
@@ -771,8 +777,8 @@ namespace Lumina
 
         //~ System schedule.
 
-        // Per stage, the priority-sorted slots TickSystems runs.
-        TVector<FStageSlot>     SystemUpdateList[(int32)EUpdateStage::Max];
+        // Per stage, the dependency-ordered systems TickSystems runs.
+        FStageSchedule          StageSchedules[(int32)EUpdateStage::Max];
 
         // Which slots with work may run together, rebuilt only when that set changes between frames.
         TVector<FSystemBatch>   SystemBatches[(int32)EUpdateStage::Max];
@@ -832,11 +838,14 @@ namespace Lumina
     // The scheduling CWorld::TickSystems runs, as free functions so it can be tested without a world.
     namespace SystemSchedule
     {
-        // Priority first, then exclusive systems last, then the class name, so equal priorities order the same every run.
-        RUNTIME_API void SortStage(TVector<CWorld::FStageSlot>& Stage);
+        // True when First's or Second's own declarations put First ahead of Second.
+        RUNTIME_API bool DeclaresOrder(const CEntitySystem* First, const CEntitySystem* Second);
 
-        // A slot lands in the first batch after the last one holding anything it conflicts with, and slots without work are left out.
-        RUNTIME_API TVector<CWorld::FSystemBatch> BuildBatches(const TVector<CWorld::FStageSlot>& Stage, const TVector<uint8>& WithWork);
+        // Declared dependencies first, then shared systems ahead of exclusive ones, then the class name, so the order never depends on discovery.
+        RUNTIME_API CWorld::FStageSchedule OrderStage(const TVector<CEntitySystem*>& Systems, EUpdateStage Stage);
+
+        // A system lands in the first batch after every earlier one it must follow or conflicts with, and systems without work are left out.
+        RUNTIME_API TVector<CWorld::FSystemBatch> BuildBatches(const CWorld::FStageSchedule& Stage, const TVector<uint8>& WithWork);
     }
 }
 

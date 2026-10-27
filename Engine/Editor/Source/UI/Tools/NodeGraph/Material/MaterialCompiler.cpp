@@ -2162,15 +2162,17 @@ namespace Lumina
 		Stats.BoundTextures       = static_cast<uint32>(BoundImages.size());
 		Stats.bUsesVertexStage    = UsesVertexStage();
 
-		// Vertex-stage work is amortized across vertices, so it counts less than per-pixel work.
-		Stats.EstimatedCost =
-			Stats.TextureSamples       * 8 +
-			Stats.NoiseOps             * 16 +
-			Stats.MathOps              * 1 +
-			Stats.PixelInstructions    * 1 +
-			Stats.VertexInstructions   / 2;
-
+		Stats.EstimatedCost = EstimateCost(PixelAll, VertexAll);
 		return Stats;
+	}
+
+	uint32 FMaterialCompiler::EstimateCost(const FString& PixelCode, const FString& VertexCode)
+	{
+		// Vertex-stage work is amortized across vertices, so it counts less than per-pixel work.
+		return (CountSubstring(PixelCode, ".Sample(") + CountSubstring(VertexCode, ".Sample(")) * 8
+			 + (CountNoiseOps(PixelCode) + CountNoiseOps(VertexCode)) * 16
+			 + CountMathOps(PixelCode) + CountMathOps(VertexCode)
+			 + CountLines(PixelCode) + CountLines(VertexCode) / 2;
 	}
 
 	void FMaterialCompiler::GetParameters(TVector<SMaterialParameter>& OutParams, FMaterialUniforms& OutUniforms) const
@@ -3983,6 +3985,134 @@ namespace Lumina
 		FInputValue BV = GetTypedInputValue(B, 0.0f);
 		GetActiveChunk().append("float " + N + " = ((" + AV.Value + ") " + Op + " (" + BV.Value + ")) ? 1.0 : 0.0;\n");
 		SetOwningOutputType(A, EMaterialInputType::Float);
+	}
+
+	// A bare 1 is an int in Slang, which would make 1 / 4 integer division.
+	static FString FloatLiteral(float Value)
+	{
+		FString Text = Format("{}", Value);
+		return Text.find_first_of(".en") == FString::npos ? Text + ".0" : Text;
+	}
+
+	static FString ReadAtWidth(const FString& Expr, int32 Width, int32 Target)
+	{
+		if (Width == Target)
+		{
+			return "(" + Expr + ")";
+		}
+		if (Width == 1)
+		{
+			return GetVectorType(Target) + "(" + Expr + ")";
+		}
+		if (Width > Target)
+		{
+			return "(" + Expr + ")." + FString("xyzw").substr(0, Target);
+		}
+
+		FString Padded = GetVectorType(Target) + "(" + Expr;
+		for (int32 Component = Width; Component < Target; ++Component)
+		{
+			Padded += ", 0.0";
+		}
+		return Padded + ")";
+	}
+
+	void FMaterialCompiler::EmitFormula(CMaterialGraphNode* Node, const FMaterialFormula& Formula, const TVector<float>& Values)
+	{
+		const FString Prefix = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const auto&   Pins   = Node->GetInputPins();
+
+		TVector<TPair<FString, int32>> Reads;
+		int32 SharedWidth = 1;
+		for (size_t Index = 0; Index < Formula.Inputs.size() && Index < Pins.size(); ++Index)
+		{
+			const FMaterialFormulaPin& Pin = Formula.Inputs[Index];
+			const FString Unwired = Pin.Fallback != nullptr ? FString(Pin.Fallback) : FloatLiteral(Index < Values.size() ? Values[Index] : Pin.Default);
+			const FInputValue Value = GetTypedInputValue(static_cast<CMaterialInput*>(Pins[Index].Get()), Unwired);
+
+			int32 Width = Pin.Fallback != nullptr ? Math::Max(Pin.Width, 1) : 1;
+			FString Expr = Unwired;
+			if (Value.Value != Unwired)
+			{
+				const FString Swizzle = GetSwizzleForMask(Value.Mask);
+				Expr  = Value.Value + Swizzle;
+				Width = Math::Clamp(Swizzle.empty() ? Value.ComponentCount : GetComponentCount(Value.Mask), 1, 4);
+			}
+			if (Pin.Width == 0)
+			{
+				SharedWidth = Math::Max(SharedWidth, Width);
+			}
+			Reads.emplace_back(Expr, Width);
+		}
+
+		// A placeholder is {Name} with nothing else inside the braces, so a block's braces pass through untouched.
+		const std::string_view Code = Formula.Code;
+		FString Expanded;
+		for (size_t Cursor = 0; Cursor < Code.size(); ++Cursor)
+		{
+			if (Code[Cursor] == '$')
+			{
+				Expanded += Prefix;
+				continue;
+			}
+
+			const size_t Close = Code[Cursor] == '{' ? Code.find('}', Cursor) : std::string_view::npos;
+			const std::string_view Name = Close != std::string_view::npos ? Code.substr(Cursor + 1, Close - Cursor - 1) : std::string_view();
+			if (Name == "T")
+			{
+				Expanded += GetVectorType(SharedWidth);
+				Cursor = Close;
+				continue;
+			}
+
+			bool bReplaced = false;
+			for (size_t Index = 0; Index < Reads.size() && !Name.empty(); ++Index)
+			{
+				if (Name == Formula.Inputs[Index].Name)
+				{
+					const int32 Target = Formula.Inputs[Index].Width == 0 ? SharedWidth : Formula.Inputs[Index].Width;
+					Expanded += ReadAtWidth(Reads[Index].first, Reads[Index].second, Target);
+					Cursor    = Close;
+					bReplaced = true;
+					break;
+				}
+			}
+			if (!bReplaced)
+			{
+				Expanded += Code[Cursor];
+			}
+		}
+
+		const bool bRejected = (Formula.Limit == EMaterialFormulaLimit::PixelOnly && !RequirePixelStage(Node, FString(Formula.Name.data())))
+		                    || (Formula.Limit == EMaterialFormulaLimit::NoUI && RejectInUI(Node, Formula.Name.data()));
+
+		auto Bind = [&](CEdNodeGraphPin* Pin, const FString& Var, int32 Width)
+		{
+			CMaterialOutput* Output = static_cast<CMaterialOutput*>(Pin);
+			Output->ResolvedVar = Var;
+			Output->SetInputType(GetTypeFromComponentCount(Width));
+			Output->SetComponentMask(GetMaskFromComponentCount(Width));
+			if (bRejected)
+			{
+				GetActiveChunk().append(GetVectorType(Width) + " " + Var + " = " + GetVectorType(Width) + "(0.0);\n");
+			}
+		};
+
+		const auto& Outputs = Node->GetOutputPins();
+		if (Formula.Outputs.empty() && !Outputs.empty())
+		{
+			Bind(Outputs[0].Get(), Prefix, Formula.Width == 0 ? SharedWidth : Formula.Width);
+		}
+		for (size_t Index = 0; Index < Formula.Outputs.size() && Index < Outputs.size(); ++Index)
+		{
+			const FMaterialFormulaPin& Pin = Formula.Outputs[Index];
+			Bind(Outputs[Index].Get(), Prefix + "_" + Pin.Name, Pin.Width == 0 ? SharedWidth : Pin.Width);
+		}
+
+		if (!bRejected)
+		{
+			GetActiveChunk().append(Expanded + "\n");
+		}
 	}
 
 	// Advanced shading helpers

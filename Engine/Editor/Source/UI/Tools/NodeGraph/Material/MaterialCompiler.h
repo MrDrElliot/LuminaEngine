@@ -19,6 +19,7 @@ namespace Lumina
     class CMaterialGraphNode;
     class CMaterialInput;
     class CMaterialOutput;
+    struct FMaterialFormula;
     struct FMaterialUniforms;
     struct SMaterialParameter;
     struct SKeyedCurve;
@@ -465,6 +466,9 @@ namespace Lumina
         void If(CMaterialInput* X, CMaterialInput* Y, CMaterialInput* GreaterThan, CMaterialInput* EqualTo, CMaterialInput* LessThan, float Threshold);
         void Compare(const FString& Op, CMaterialInput* A, CMaterialInput* B);
 
+        // Values holds each input's unwired value by pin index.
+        void EmitFormula(CMaterialGraphNode* Node, const FMaterialFormula& Formula, const TVector<float>& Values);
+
         // Advanced shading helpers
         void Fresnel(CMaterialInput* Exponent, CMaterialInput* BaseReflect, CMaterialInput* Normal);
         void DepthFade(CMaterialInput* FadeDistance);
@@ -506,6 +510,13 @@ namespace Lumina
         // Computes shader complexity / cost metrics from the current chunk state. Call after
         // CompileGraph so the chunks are populated. Cheap (single linear scan per chunk).
         FShaderStats GetStats() const;
+
+        // Compiles only what feeds Pin, shown as unlit emissive, in place of the material itself.
+        void SetPreviewOutput(CMaterialOutput* Pin) { PreviewOutput = Pin; }
+        CMaterialOutput* GetPreviewOutput() const { return PreviewOutput; }
+
+        // The same weighting GetStats uses, for any slice of generated code such as one node's share.
+        static uint32 EstimateCost(const FString& PixelCode, const FString& VertexCode);
 
         FORCEINLINE bool HasErrors() const { return !Errors.empty(); }
         FORCEINLINE void AddError(const EdNodeGraph::FError& Error) { Errors.push_back(Error); }
@@ -653,6 +664,7 @@ namespace Lumina
         FString VertexOutputChunks;
 
         EMaterialCompileStage CurrentStage = EMaterialCompileStage::Pixel;
+        CMaterialOutput* PreviewOutput = nullptr;
         bool bMasked = false;
 
         TVector<TStrongObjectPtr<CTexture>> BoundImages;

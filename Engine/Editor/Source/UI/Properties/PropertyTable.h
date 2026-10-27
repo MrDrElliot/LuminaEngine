@@ -58,6 +58,9 @@ namespace Lumina
         // Multi-edit: when set and it returns true for a top-level property, that row renders as a
         // non-editable "(Multiple Values)" because the selected objects disagree on the value. Null = off.
         TFunction<bool(FProperty*)> IsMultiValueFn;
+
+        // Keeps such rows editable and dimmed instead, for a caller whose edit then sets every object.
+        bool                        bEditMultipleValues = false;
     };
     
     // Parsed PROPERTY(EditCondition = "Prop", "!Prop", "Prop == V" or "Prop != V", joined by && or ||).
@@ -355,9 +358,6 @@ namespace Lumina
         // True if this entry's key now equals another entry's key (which would silently collapse on reload).
         bool KeyDuplicatesAnotherEntry() const;
 
-        // False for a value that only has member rows, which then nest under the entry instead of filling its value cell.
-        static bool MapValueDrawsInline(FProperty* ValueProperty);
-
         FMapPropertyRow*                        MapRow = nullptr;
         FMapProperty*                           Map = nullptr;          // == MapRow->MapProperty, cached for dtor-safe key destruct
         void*                                   MapContainer = nullptr; // map instance, stable for its lifetime
@@ -569,6 +569,9 @@ namespace Lumina
         const FPropertyEditContext*                         Context = nullptr;
         
     };
+
+    // The editor for a property that fits one value cell, a leaf or a struct with its own customization, and null for one that needs member rows.
+    TSharedPtr<IPropertyTypeCustomization> MakeInlinePropertyCustomization(FProperty* Prop);
 
     // Type picker plus the instance's properties inline, for an FInstancedStruct edited outside a property row.
     bool DrawInstancedStructEditor(const char* StrId, FInstancedStruct& Value, CStruct* BaseStruct, FPropertyTable& Table);

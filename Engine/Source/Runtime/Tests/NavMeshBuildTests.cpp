@@ -35,6 +35,19 @@ namespace
         In.Indices.push_back(Base + 0); In.Indices.push_back(Base + 2); In.Indices.push_back(Base + 3);
     }
 
+    // A quad rising along X from HeightAtMinX to HeightAtMaxX, wound like AddGroundQuad so its normal points up.
+    void AddRampQuad(FNavBuildInput& In, float MinX, float MinZ, float MaxX, float MaxZ, float HeightAtMinX, float HeightAtMaxX)
+    {
+        const uint32 Base = (uint32)In.Vertices.size();
+        In.Vertices.push_back(FVector3(MinX, HeightAtMinX, MinZ));
+        In.Vertices.push_back(FVector3(MinX, HeightAtMinX, MaxZ));
+        In.Vertices.push_back(FVector3(MaxX, HeightAtMaxX, MaxZ));
+        In.Vertices.push_back(FVector3(MaxX, HeightAtMaxX, MinZ));
+
+        In.Indices.push_back(Base + 0); In.Indices.push_back(Base + 1); In.Indices.push_back(Base + 2);
+        In.Indices.push_back(Base + 0); In.Indices.push_back(Base + 2); In.Indices.push_back(Base + 3);
+    }
+
     void GrowBounds(FNavBuildInput& In, float Pad)
     {
         In.BoundsMin = FVector3( FLT_MAX);
@@ -188,6 +201,74 @@ TEST(NavMeshBuild, GroundPlaneBakesAndPathsAcross)
     EXPECT_FALSE(Path.bPartial);
     EXPECT_FALSE(Path.bTruncated);
     EXPECT_GE(Path.Corners.size(), 2u);
+}
+
+namespace
+{
+    // A lower and an upper floor joined by a ramp of SlopeDeg, baked with the engine's default settings.
+    FNavBuildInput MakeRampBetweenFloors(float SlopeDeg)
+    {
+        FNavBuildInput In;
+        const float Rise = 4.0f * std::tan(SlopeDeg * 3.14159265f / 180.0f);
+        AddGroundQuad(In, -12.0f, -4.0f, -2.0f, 4.0f, 0.0f);
+        AddRampQuad(In, -2.0f, -4.0f, 2.0f, 4.0f, 0.0f, Rise);
+        AddGroundQuad(In, 2.0f, -4.0f, 12.0f, 4.0f, Rise);
+        GrowBounds(In, 3.0f);
+        return In;
+    }
+
+    // Two floors meeting at a vertical step of StepHeight, baked with the engine's default settings.
+    FNavBuildInput MakeStep(float StepHeight)
+    {
+        FNavBuildInput In;
+        AddGroundQuad(In, -12.0f, -4.0f, 0.0f, 4.0f, 0.0f);
+        AddGroundQuad(In, 0.0f, -4.0f, 12.0f, 4.0f, StepHeight);
+        // Off the voxel grid, so neither floor lands on a cell boundary where rounding could hide a lost cell.
+        GrowBounds(In, 3.05f);
+        return In;
+    }
+
+    bool PathsEndToEnd(FNavBuildInput In, float UpperHeight)
+    {
+        TUniquePtr<FNavMesh> Mesh = BakeAndHydrate(std::move(In));
+        if (Mesh == nullptr || !Mesh->IsReady())
+        {
+            return false;
+        }
+        FNavPath Path;
+        FNavQueryFilter Filter;
+        return Mesh->FindPath(FVector3(-9.0f, 0.0f, 0.0f), FVector3(9.0f, UpperHeight, 0.0f), Filter, Path) && !Path.bPartial;
+    }
+}
+
+// The default slope has to be reachable at the default cell size and climb, which once cut it off near 18 degrees.
+TEST(NavMeshBuild, DefaultSettingsWalkASlopeUnderTheirMaxSlope)
+{
+    const SNavBuildSettings Defaults;
+    const float Slope = Defaults.AgentMaxSlopeDeg - 5.0f;
+    EXPECT_TRUE(PathsEndToEnd(MakeRampBetweenFloors(Slope), 4.0f * std::tan(Slope * 3.14159265f / 180.0f)));
+}
+
+TEST(NavMeshBuild, DefaultSettingsRefuseASlopePastTheirMaxSlope)
+{
+    const SNavBuildSettings Defaults;
+    const float Slope = Defaults.AgentMaxSlopeDeg + 15.0f;
+    EXPECT_FALSE(PathsEndToEnd(MakeRampBetweenFloors(Slope), 4.0f * std::tan(Slope * 3.14159265f / 180.0f)));
+}
+
+// The whole configured climb is walkable, which a one cell shave once halved at the default cell height.
+TEST(NavMeshBuild, DefaultSettingsClimbAStepUnderTheirMaxClimb)
+{
+    const SNavBuildSettings Defaults;
+    const float Step = Defaults.AgentMaxClimb - 0.01f;
+    EXPECT_TRUE(PathsEndToEnd(MakeStep(Step), Step));
+}
+
+TEST(NavMeshBuild, DefaultSettingsRefuseAStepPastTheirMaxClimb)
+{
+    const SNavBuildSettings Defaults;
+    const float Step = Defaults.AgentMaxClimb + 0.2f;
+    EXPECT_FALSE(PathsEndToEnd(MakeStep(Step), Step));
 }
 
 // Every partition has to give a walkable, connected plane, since the cheaper ones are offered as drop-in replacements.

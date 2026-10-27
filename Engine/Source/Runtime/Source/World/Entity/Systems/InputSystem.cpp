@@ -12,7 +12,7 @@ namespace Lumina
     // Exclusive like STimerSystem, since dispatch runs user script code and calls into managed.
     void SInputSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::FrameStart);
     }
 
     void SInputSystem::OnUpdate(const SSystemContext& Context)

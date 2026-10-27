@@ -9,11 +9,11 @@ public partial class CEntitySystem
     public CWorld World => GetWorld();
 
 
-    // Schedules this system in Stage at the default priority.
-    protected void RequireUpdate(EUpdateStage Stage) => RequireUpdate(Stage, (int)EUpdatePriority.Default);
+    // Runs after system T and anything deriving from it, in every stage both tick in.
+    protected void RunsAfter<T>() where T : CEntitySystem => RunsAfterSystem(NativeTypeName.Of<T>());
 
-    // Schedules this system in Stage. Lower priority runs first, so Highest is 0 and Low is 192.
-    protected void RequireUpdate(EUpdateStage Stage, EUpdatePriority Priority) => RequireUpdate(Stage, (int)Priority);
+    // Runs before system T and anything deriving from it, in every stage both tick in.
+    protected void RunsBefore<T>() where T : CEntitySystem => RunsBeforeSystem(NativeTypeName.Of<T>());
 
     // Declares that this system writes component T, so it serializes against anything else reading or writing T.
     protected void Writes<T>() => DeclareWrite(typeof(T).Name);

@@ -8,10 +8,10 @@ namespace Lumina
 {
     void STweenSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::FrameStart);
 
         // While the world is paused only the tweens that ignore time scale move, which keeps pause menus animated.
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::Paused);
     }
 
     bool STweenSystem::HasWork(const SSystemContext& Context)

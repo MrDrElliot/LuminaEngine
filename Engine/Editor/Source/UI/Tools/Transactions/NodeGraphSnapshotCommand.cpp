@@ -72,10 +72,9 @@ namespace Lumina
             Previous.push_back(Node.Get());
         }
 
-        // The compile state and the canvas layout string describe now, not the moment of the capture.
-        const uint64  ContentVersion         = Graph->ContentVersion;
-        const uint64  CompiledContentVersion = Graph->CompiledContentVersion;
-        const FString GraphSaveData          = Graph->GraphSaveData;
+        // The compile state describes now, not the moment of the capture.
+        const uint64 ContentVersion         = Graph->ContentVersion;
+        const uint64 CompiledContentVersion = Graph->CompiledContentVersion;
 
         FMemoryReader Reader(Bytes);
         FObjectProxyArchiver Ar(Reader, true);
@@ -92,7 +91,6 @@ namespace Lumina
 
         Graph->ContentVersion         = ContentVersion;
         Graph->CompiledContentVersion = CompiledContentVersion;
-        Graph->GraphSaveData          = GraphSaveData;
 
         Graph->FixupAfterRestore(Previous);
 

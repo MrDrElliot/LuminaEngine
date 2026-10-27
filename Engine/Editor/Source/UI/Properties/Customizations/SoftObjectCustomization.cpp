@@ -15,7 +15,9 @@
 #include <Core/Object/Package/Package.h>
 #include <imgui_internal.h>
 #include "Thumbnails/ThumbnailManager.h"
+#include "UI/EditorUI.h"
 #include "UI/Properties/Customizations/AssetPickerFilter.h"
+#include <LuminaEditor.h>
 
 namespace Lumina
 {
@@ -81,6 +83,15 @@ namespace Lumina
                     }
                 }
                 ImGui::EndDragDropTarget();
+            }
+
+            // Opening loads the asset, which nothing else on this row does.
+            if (bHasPath && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            {
+                if (const FAssetData* Asset = FAssetRegistry::Get().GetAssetByPath(PathView))
+                {
+                    static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI())->OpenAssetEditor(Asset->AssetGUID);
+                }
             }
 
             ImGui::SameLine();

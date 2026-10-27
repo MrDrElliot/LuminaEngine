@@ -445,6 +445,35 @@ namespace Lumina
         /** EUpdateStage values the system ticks in, empty for one that only starts and tears down. */
         PROPERTY()
         TVector<int32> Stages;
+
+        // As the system declares them, by class name.
+        PROPERTY()
+        TVector<FString> RunsAfter;
+
+        PROPERTY()
+        TVector<FString> RunsBefore;
+    };
+
+    // One system as the running schedule placed it this frame, which is only filled for stages that have ticked.
+    REFLECT()
+    struct MCPEDITOR_API SScheduledSystem
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        int32 Stage = 0;
+
+        PROPERTY()
+        int32 Batch = 0;
+
+        PROPERTY()
+        int32 BatchSize = 1;
+
+        PROPERTY()
+        bool bExclusive = false;
     };
 
     REFLECT()
@@ -464,6 +493,9 @@ namespace Lumina
 
         PROPERTY()
         TVector<SSystemListing> Systems;
+
+        PROPERTY()
+        TVector<SScheduledSystem> Schedule;
     };
 
     namespace MCP

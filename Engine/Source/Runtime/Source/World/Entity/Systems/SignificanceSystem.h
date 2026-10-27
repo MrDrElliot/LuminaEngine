@@ -70,7 +70,7 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        // Paused as well as FrameStart, since editor worlds tick only Paused. Highest so it lands first.
+        // Paused as well as FrameStart, since editor worlds tick only Paused.
         void Configure() override;
 
         void OnStartup(const SSystemContext& Context) override;

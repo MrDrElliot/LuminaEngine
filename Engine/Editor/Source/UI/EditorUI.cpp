@@ -44,6 +44,7 @@
 #include <World/Entity/Systems/CameraSystem.h>
 #include "Config/EngineSettings.h"
 #include "Input/Key.h"
+#include "Physics/PhysicsTypes.h"
 #include "Renderer/RenderLayers.h"
 #include "implot.h"
 #include "LuminaEditor.h"
@@ -111,6 +112,7 @@
 #include "Thumbnails/ThumbnailManager.h"
 #include "Tools/ConsoleLogEditorTool.h"
 #include "Tools/ContentBrowserEditorTool.h"
+#include "Tools/PropertyMatrixTool.h"
 #include "Tools/EditorAssetActions.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
@@ -621,6 +623,11 @@ namespace Lumina
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SRenderLayerMask::StaticStruct()->GetName(), []
         {
            return FRenderLayerMaskPropertyCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(StaticEnum<ECollisionProfiles>()->GetName(), []
+        {
+           return FCollisionLayersPropertyCustomization::MakeInstance();
         });
 
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SInputActionHandle::StaticStruct()->GetName(), []
@@ -3450,33 +3457,42 @@ namespace Lumina
         return Result;
     }
 
+    void FEditorUI::OpenPropertyMatrix(TVector<FGuid> Assets)
+    {
+        CreateTool<FPropertyMatrixTool>(this, Move(Assets));
+    }
+
     void FEditorUI::SaveAllDirtyPackages()
     {
         TVector<CPackage*> DirtyPackages;
         for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
         {
-            CPackage* Package = *Itr;
-            // Marked for destroy = a deleted asset awaiting the deferred drain; nothing to write.
-            if (Package->HasAnyFlag(OF_MarkedDestroy) || !Package->IsDirty())
-            {
-                continue;
-            }
-            DirtyPackages.push_back(Package);
+            DirtyPackages.push_back(*Itr);
         }
+        SavePackages(Move(DirtyPackages));
+    }
 
-        if (DirtyPackages.empty())
+    void FEditorUI::SavePackages(TVector<CPackage*> Packages)
+    {
+        // Marked for destroy = a deleted asset awaiting the deferred drain; nothing to write.
+        Packages.erase(Algo::RemoveIf(Packages, [](CPackage* Package)
+        {
+            return Package == nullptr || Package->HasAnyFlag(OF_MarkedDestroy) || !Package->IsDirty();
+        }), Packages.end());
+
+        if (Packages.empty())
         {
             ImGuiX::Notifications::NotifySuccess("Nothing to save; everything is up to date.");
             return;
         }
 
         TVector<FString> Paths;
-        Paths.reserve(DirtyPackages.size());
-        for (CPackage* Package : DirtyPackages)
+        Paths.reserve(Packages.size());
+        for (CPackage* Package : Packages)
         {
             Paths.emplace_back(Package->GetPackagePath().c_str());
         }
-        if (!ConfirmWritable(Move(Paths), [this] { SaveAllDirtyPackages(); }))
+        if (!ConfirmWritable(Move(Paths), [this, Packages] { SavePackages(Packages); }))
         {
             return;
         }
@@ -3491,7 +3507,7 @@ namespace Lumina
             }
 
             CPackage* Package = Asset->GetPackage();
-            if (Package != nullptr && Package->IsDirty() && !Package->HasAnyFlag(OF_MarkedDestroy))
+            if (Package != nullptr && Package->IsDirty() && Algo::Contains(Packages, Package))
             {
                 Tool->OnSave();
                 HandledByTool.insert(Package);
@@ -3500,7 +3516,7 @@ namespace Lumina
 
         uint32 Saved  = 0;
         uint32 Failed = 0;
-        for (CPackage* Package : DirtyPackages)
+        for (CPackage* Package : Packages)
         {
             if (HandledByTool.find(Package) != HandledByTool.end())
             {
@@ -3519,11 +3535,11 @@ namespace Lumina
 
         if (Failed > 0)
         {
-            ImGuiX::Notifications::NotifyError("Save All: {0} package(s) saved, {1} failed.", Saved, Failed);
+            ImGuiX::Notifications::NotifyError("Saved {0} package(s), {1} failed.", Saved, Failed);
         }
         else if (Saved > 0)
         {
-            ImGuiX::Notifications::NotifySuccess("Save All: {0} package(s) saved.", Saved);
+            ImGuiX::Notifications::NotifySuccess("Saved {0} package(s).", Saved);
         }
         // Zero saved with no failures means every dirty package belonged to a tool that reported itself.
     }

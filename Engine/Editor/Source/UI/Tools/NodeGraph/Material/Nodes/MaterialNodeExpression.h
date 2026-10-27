@@ -18,6 +18,9 @@ namespace Lumina
         void BuildNode() override;
         void DrawNodeTitleBar() override;
 
+        // A named parameter is titled by its name, as the title bar shows it.
+        FString GetNodeTitleText() const override;
+
         // The FName this expression exposes as a material parameter, or null when the node has no
         // parameter to name. Mirrors the GetNodeDefaultValue() pointer idiom; non-const because the
         // title bar's inline rename writes through it.

@@ -404,9 +404,9 @@ namespace Lumina
         {
             ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%d problem%s",
                                (int32)Problems.size(), Problems.size() == 1 ? "" : "s");
-            if (ImGui::IsItemHovered() && !Problems.empty())
+            if (ImGui::IsItemHovered() && !Problems.empty() && GetOwningGraph() != nullptr)
             {
-                ImGui::SetTooltip("%s", Problems[0].c_str());
+                GetOwningGraph()->GetEditor().SetTooltip(Problems[0]);
             }
         }
     }

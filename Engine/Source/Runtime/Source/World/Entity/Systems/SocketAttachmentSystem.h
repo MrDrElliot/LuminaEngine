@@ -23,9 +23,7 @@ namespace Lumina
         bool          bWritten   = false;
     };
 
-    // Drives entities with an SSocketAttachmentComponent from their parent's animated skeletal pose.
-    // Runs after the animation systems (PrePhysics/Low) so the frame's pose is final, and while paused
-    // so editor preview and paused gameplay keep attachments glued.
+    // Drives entities with an SSocketAttachmentComponent from their parent's final pose this frame, paused worlds included.
     REFLECT()
     class RUNTIME_API SSocketAttachmentSystem : public CEntitySystem
     {

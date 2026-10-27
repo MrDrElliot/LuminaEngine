@@ -20,8 +20,8 @@ namespace Lumina
     void SDebugDrawSystem::Configure()
     {
         #if !defined(LE_SHIPPING)
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::FrameStart);
+        RequireUpdate(EUpdateStage::Paused);
         Reads<SCameraComponent>();
         #endif
     }

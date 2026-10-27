@@ -2,6 +2,8 @@
 #include "RuntimePCH.h"
 #include "World/ECS/Registry.h"
 #include "PerceptionSystem.h"
+#include "EntityScriptSystem.h"
+#include "PathFollowSystem.h"
 
 #include <algorithm>
 
@@ -22,7 +24,8 @@ namespace Lumina
 {
     void SPerceptionSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::High);
+        RequireUpdate(EUpdateStage::PrePhysics);
+        RunsBefore<SPathFollowSystem, SEntityScriptSystem>();
 
         // Perception events fire at the batch's sync point, so the senses only touch these.
         Writes<SPerceptionComponent>();

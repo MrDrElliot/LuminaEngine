@@ -7,7 +7,7 @@ namespace Lumina
 {
     void STimerSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::FrameStart);
 
         // Callbacks fire at the batch's sync point, so the tick only counts down the manager's own timers.
         Writes<SystemResource::Timers>();

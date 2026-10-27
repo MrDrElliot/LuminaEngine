@@ -1,5 +1,9 @@
 #include "RuntimePCH.h"
 #include "CameraSystem.h"
+#include "CameraRigSystem.h"
+#include "CoroutineSystem.h"
+#include "SocketAttachmentSystem.h"
+#include "TweenSystem.h"
 #include "Core/Math/Easing.h"
 #include "World/ECS/Registry.h"
 #include "SystemSingletons.h"
@@ -12,8 +16,10 @@ namespace Lumina
 {
     void SCameraSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Low);
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::FrameEnd);
+        RequireUpdate(EUpdateStage::Paused);
+        // Everything that moves a camera in the same stage goes first, so the resolved view is this frame's.
+        RunsAfter<SCameraRigSystem, SSocketAttachmentSystem, STweenSystem, SCoroutineSystem>();
         Writes<FResolvedSceneView, FCameraGlobalState, SCameraComponent>();
         Reads<STransformComponent, SPostProcessComponent>();
     }

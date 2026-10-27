@@ -21,7 +21,7 @@ namespace Lumina
      * filter in the driver.
      */
     REFLECT()
-    class SEntityScriptSystem : public CEntitySystem
+    class RUNTIME_API SEntityScriptSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

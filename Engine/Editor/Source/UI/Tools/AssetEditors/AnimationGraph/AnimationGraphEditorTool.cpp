@@ -1344,15 +1344,14 @@ namespace Lumina
 
         GetNode->ParameterName = MatchedParameter;
         Canvas->ConnectPins(GetNode->ValuePin, AxisPin);
-        Canvas->QueueNodePlacement(GetNode, ScreenPos);
+        Canvas->PlaceNodeAtScreen(GetNode, ScreenPos);
     }
 
     void FAnimationGraphEditorTool::FinishSpawnedNode(CEdGraphNode* Node, ImVec2 ScreenPos)
     {
         CEdNodeGraph* Canvas = GraphStack.back().Graph;
 
-        // Screen->canvas needs the node-editor context, which is only current inside DrawGraph.
-        Canvas->QueueNodePlacement(Node, ScreenPos);
+        Canvas->PlaceNodeAtScreen(Node, ScreenPos);
         Canvas->ValidateGraph();
 
         if (Asset.IsValid() && Asset->GetPackage() != nullptr)

@@ -6,7 +6,7 @@
 namespace Lumina
 {
     REFLECT()
-    class SAudioSystem : public CEntitySystem
+    class RUNTIME_API SAudioSystem : public CEntitySystem
     {
         GENERATED_BODY()
     public:

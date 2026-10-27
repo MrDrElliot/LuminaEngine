@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Containers/Name.h"
 #include "Core/Object/ObjectMacros.h"
 #include "PhysicsTypes.generated.h"
 
@@ -31,9 +32,15 @@ namespace Lumina
     };
     
     ENUM_CLASS_FLAGS(ECollisionProfiles);
-    
+
+    namespace CollisionLayers
+    {
+        constexpr uint32 kCount        = 16;
+        constexpr uint32 kFirstChannel = 2;
+    }
+
     REFLECT()
-    struct SCollisionProfile
+    struct RUNTIME_API SCollisionProfile
     {
         GENERATED_BODY()
         
@@ -50,6 +57,14 @@ namespace Lumina
         {
             return (Mask & Other.Layer) != (ECollisionProfiles)0 || (Other.Mask & Layer) != (ECollisionProfiles)0;
         }
+
+        // Static, Dynamic, or the name the project gave a channel in CCollisionSettings, None for one nobody named.
+        FUNCTION()
+        static FName GetLayerName(int32 Layer);
+
+        // The layer bit carrying Name, ready to combine into a mask, or no bits when no layer does.
+        FUNCTION()
+        static ECollisionProfiles FindLayer(FName Name);
     };
     
     REFLECT()

@@ -53,9 +53,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Voxel", ClampMin = 0.05f)
         float CellSize = 0.30f;
 
-        /** Vertical voxel size. Drives stair / climb resolution. */
+        // Vertical voxel size, and how far a step can round past AgentMaxClimb and still read as climbable.
         PROPERTY(Editable, Category = "Voxel", ClampMin = 0.05f)
-        float CellHeight = 0.20f;
+        float CellHeight = 0.10f;
 
         /** Agent radius used to erode the walkable surface. */
         PROPERTY(Editable, Category = "Agent", ClampMin = 0.0f)

@@ -27,4 +27,7 @@ namespace Lumina::MaterialOps
 
     // The graph the material function editor would open, created if the function has none yet.
     NODISCARD EDITOR_API CMaterialNodeGraph* FindOrCreateFunctionGraph(CMaterialFunction* Function);
+
+    // Mirrors the graph's FunctionInput and FunctionOutput nodes into the function's signature, which call nodes build their pins from.
+    EDITOR_API void SyncFunctionSignature(CMaterialFunction* Function, CMaterialNodeGraph* Graph);
 }

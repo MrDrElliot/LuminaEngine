@@ -34,9 +34,7 @@ namespace Lumina
         float    BlendOutTime      = 0.2f;
     };
 
-    // Resolves the active view: bakes the camera matrix + blends post-process volumes into the
-    // FResolvedSceneView singleton that CWorld::Extract forwards. Runs last (Low) so it sees every change.
-    // Also owns active-camera selection + the cinematic blend, stored in the FCameraGlobalState singleton.
+    // Bakes the active camera and its post process blend into the FResolvedSceneView singleton CWorld::Extract forwards, after the systems that move cameras.
     REFLECT()
     class SCameraSystem : public CEntitySystem
     {

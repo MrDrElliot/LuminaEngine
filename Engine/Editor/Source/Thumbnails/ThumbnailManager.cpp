@@ -360,6 +360,43 @@ namespace Lumina
         });
     }
 
+    bool CThumbnailManager::StageThumbnail(FThumbnailScene& Scene, CObject* Asset)
+    {
+        FThumbnailRendererFn* Renderer = Asset != nullptr ? FindRenderer(Asset->GetClass()) : nullptr;
+        if (Renderer == nullptr)
+        {
+            return false;
+        }
+
+        Scene.ResetContents();
+        (*Renderer)(Scene, Asset);
+        return true;
+    }
+
+    RHI::FManagedTexture CThumbnailManager::CreateThumbnailTexture(const FPackageThumbnail& Thumbnail, const FString& DebugName)
+    {
+        const uint32 Width  = Thumbnail.ImageWidth;
+        const uint32 Height = Thumbnail.ImageHeight;
+        RHI::FManagedTexture Image = RHI::Textures::Create(RHI::FTexture2DDesc
+        {
+            .Width  = Width,
+            .Height = Height,
+            .Format = EFormat::RGBA8_UNORM,
+            .DebugName = DebugName.c_str(),
+        });
+
+        // Stored bottom-up; flip back to top-down for display (matches ThumbnailUtils::StoreDownsampledRGBA).
+        const uint32 RowBytes = Width * 4u;
+        TVector<uint8> Flipped(Thumbnail.ImageData.size());
+        for (uint32 y = 0; y < Height; ++y)
+        {
+            const uint32 FlippedY = Height - 1 - y;
+            Memory::Memcpy(Flipped.data() + FlippedY * RowBytes, Thumbnail.ImageData.data() + y * RowBytes, RowBytes);
+        }
+        RHI::Textures::Upload(Image, 0, Flipped.data(), Flipped.size(), Width);
+        return Image;
+    }
+
     void CThumbnailManager::UploadAndStore(const FName& Package, const FPackageThumbnail& Source)
     {
         LUMINA_MEMORY_SCOPE("Thumbnails");
@@ -371,25 +408,7 @@ namespace Lumina
             return;
         }
 
-        const FString DebugName = FString("Thumbnail.") + Package.ToString();
-
-        RHI::FManagedTexture Image = RHI::Textures::Create(RHI::FTexture2DDesc
-        {
-            .Width  = Width,
-            .Height = Height,
-            .Format = EFormat::RGBA8_UNORM,
-            .DebugName = DebugName.c_str(),
-        });
-
-        // Stored bottom-up; flip back to top-down for display (matches ThumbnailUtils::StoreDownsampledRGBA).
-        const uint32 RowBytes = Width * 4u;
-        TVector<uint8> Flipped(Source.ImageData.size());
-        for (uint32 y = 0; y < Height; ++y)
-        {
-            const uint32 FlippedY = Height - 1 - y;
-            Memory::Memcpy(Flipped.data() + FlippedY * RowBytes, Source.ImageData.data() + y * RowBytes, RowBytes);
-        }
-        RHI::Textures::Upload(Image, 0, Flipped.data(), Flipped.size(), Width);
+        RHI::FManagedTexture Image = CreateThumbnailTexture(Source, FString("Thumbnail.") + Package.ToString());
 
         FWriteScopeLock Lock(ThumbnailLock);
         auto It = Thumbnails.find(Package);

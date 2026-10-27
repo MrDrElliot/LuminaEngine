@@ -6,7 +6,6 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectAllocator.h"
 #include "Material/MaterialGraphTypes.h"
-#include "imgui-node-editor/imgui_node_editor.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Containers/StringFormat.h"
 
@@ -36,32 +35,6 @@ namespace Lumina
     {
         const FString Title = GetNodeTitleText();
         return ImVec2(ImGui::CalcTextSize(Title.c_str(), Title.c_str() + Title.size()).x, 28);
-    }
-
-    void CEdGraphNode::PushNodeStyle()
-    {
-        using namespace ax;
-
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_NodeBg,        ImColor(128, 128, 128, 200));
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_NodeBorder,    ImColor( 32,  32,  32, 200));
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_PinRect,       ImColor( 60, 180, 255, 150));
-        NodeEditor::PushStyleColor(NodeEditor::StyleColor_PinRectBorder, ImColor( 60, 180, 255, 150));
-
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_NodePadding,  ImVec4(0, 0, 0, 0));
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_NodeRounding, 10);
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_SourceDirection, ImVec2(0.0f,  1.0f));
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_TargetDirection, ImVec2(0.0f, -1.0f));
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_LinkStrength, 0.0f);
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_PinBorderWidth, 1.0f);
-        NodeEditor::PushStyleVar(NodeEditor::StyleVar_PinRadius, 5.0f);
-    }
-
-    void CEdGraphNode::PopNodeStyle()
-    {
-        using namespace ax;
-
-        NodeEditor::PopStyleColor(4);
-        NodeEditor::PopStyleVar(7);
     }
 
     void CEdGraphNode::NotifyValueEdited()

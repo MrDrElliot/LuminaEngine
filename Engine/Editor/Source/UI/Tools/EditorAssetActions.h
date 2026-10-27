@@ -62,6 +62,9 @@ namespace Lumina
     
     EDITOR_API CObject* DuplicateAssetPackage(CObject* PrimaryAsset, FStringView DestPath);
 
-    // Copies Sources into Dest under the names NameFor picks, with every reference between them repointed to the copies.
+    // Saves a copy of the asset at SourcePath as a free Name_Copy beside it and registers it, null when that fails.
+    EDITOR_API CObject* DuplicateAsset(FStringView SourcePath, FFixedString& OutPath);
+
+    // A whole copy that keeps DuplicateTransient ids such as graph node ids, which only need be unique within the set, repointing references between Sources to the copies.
     EDITOR_API THashMap<CObject*, CObject*> CopyObjectsInto(TSpan<CObject* const> Sources, CPackage* Dest, const TFunction<FName(CObject*)>& NameFor);
 }

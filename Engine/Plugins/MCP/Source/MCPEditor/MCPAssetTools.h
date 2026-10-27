@@ -126,6 +126,16 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SDuplicateAssetParams
+    {
+        GENERATED_BODY()
+
+        /** Path of the asset to copy, from assets.search. */
+        PROPERTY()
+        FString Path;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SRenameAssetParams
     {
         GENERATED_BODY()

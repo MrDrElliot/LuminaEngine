@@ -1055,7 +1055,7 @@ namespace Lumina::MCP
         {
             Agent::FToolRegistry::Get().Register<SListSystemsParams, SListSystemsResult>(
                 Owner, "world.list_systems",
-                "List the entity systems the world editor's Systems panel shows, C++ and C# alike, with the stages each ticks in.",
+                "List the entity systems the world editor's Systems panel shows, C++ and C# alike, with their stages and declared order, plus the batches the running schedule placed them in.",
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SListSystemsParams& In, SListSystemsResult& Out)
                 {
@@ -1082,6 +1082,31 @@ namespace Lumina::MCP
                         {
                             Listing.Stages.push_back((int32)Stage);
                         }
+                        for (FName System : Info.RunsAfter)
+                        {
+                            Listing.RunsAfter.push_back(FString(System.ToString().c_str()));
+                        }
+                        for (FName System : Info.RunsBefore)
+                        {
+                            Listing.RunsBefore.push_back(FString(System.ToString().c_str()));
+                        }
+                    }
+
+                    TVector<FSystemScheduleEntry> Schedule;
+                    World->GetSystemSchedule(Schedule);
+                    for (const FSystemScheduleEntry& Entry : Schedule)
+                    {
+                        const FString Name(Entry.Name.ToString().c_str());
+                        if (!ContainsTextFold(FStringView(Name), In.Contains))
+                        {
+                            continue;
+                        }
+                        SScheduledSystem& Scheduled = Out.Schedule.emplace_back();
+                        Scheduled.Name       = Name;
+                        Scheduled.Stage      = Entry.Stage;
+                        Scheduled.Batch      = Entry.Batch;
+                        Scheduled.BatchSize  = Entry.BatchSize;
+                        Scheduled.bExclusive = Entry.bExclusive;
                     }
                     return Agent::FToolResult::Ok(Lumina::Format("{} system(s).", Out.Systems.size()));
                 });

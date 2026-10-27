@@ -185,56 +185,7 @@ namespace Lumina
             return;
         }
 
-        TVector<CMaterialExpression_FunctionInput*> InputNodes;
-        TVector<CMaterialFunctionOutput*>           OutputNodes;
-        for (const TStrongObjectPtr<CEdGraphNode>& N : NodeGraph->Nodes)
-        {
-            if (!N.IsValid())
-            {
-                continue;
-            }
-            if (CMaterialExpression_FunctionInput* In = Cast<CMaterialExpression_FunctionInput>(N.Get()))
-            {
-                InputNodes.push_back(In);
-            }
-            else if (CMaterialFunctionOutput* Out = Cast<CMaterialFunctionOutput>(N.Get()))
-            {
-                OutputNodes.push_back(Out);
-            }
-        }
-
-        // A stable sort keeps a predictable pin order while leaving equal-priority nodes in graph order.
-        Algo::StableSort(InputNodes, [](CMaterialExpression_FunctionInput* A, CMaterialExpression_FunctionInput* B)
-        {
-            return A->SortPriority < B->SortPriority;
-        });
-        Algo::StableSort(OutputNodes, [](CMaterialFunctionOutput* A, CMaterialFunctionOutput* B)
-        {
-            return A->SortPriority < B->SortPriority;
-        });
-
-        Fn->Inputs.clear();
-        Fn->Inputs.reserve(InputNodes.size());
-        for (CMaterialExpression_FunctionInput* In : InputNodes)
-        {
-            SMaterialFunctionInput Decl;
-            Decl.Name         = In->InputName;
-            Decl.Type         = In->InputType;
-            Decl.DefaultValue = In->DefaultValue;
-            Decl.Description  = In->Description;
-            Fn->Inputs.push_back(Move(Decl));
-        }
-
-        Fn->Outputs.clear();
-        Fn->Outputs.reserve(OutputNodes.size());
-        for (CMaterialFunctionOutput* Out : OutputNodes)
-        {
-            SMaterialFunctionOutput Decl;
-            Decl.Name        = Out->OutputName;
-            Decl.Type        = Out->OutputType;
-            Decl.Description  = Out->Description;
-            Fn->Outputs.push_back(Move(Decl));
-        }
+        MaterialOps::SyncFunctionSignature(Fn, NodeGraph.Get());
 
         // Runs every node into a throwaway compiler to surface type errors.
         FMaterialCompiler Compiler;

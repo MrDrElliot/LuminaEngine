@@ -142,9 +142,6 @@ namespace Lumina
         void SetDebugExecutionOrder(uint32 Order) { DebugExecutionOrder = Order; }
         uint32 GetDebugExecutionOrder() const { return DebugExecutionOrder; }
 
-        virtual void PushNodeStyle();
-        virtual void PopNodeStyle();
-
         virtual void DrawContextMenu() { }
         virtual void DrawNodeTitleBar();
 

@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "AnimationSystem.h"
+#include "KinematicsSystem.h"
 #include "World/ECS/Registry.h"
 
 #include "Core/Console/ConsoleVariable.h"
@@ -130,6 +131,7 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
+        RunsAfter<SKinematicsSystem>();
         Writes<SSkeletalMeshComponent, STransformComponent, SSimpleAnimationComponent, SAnimationGraphComponent, SFollowerPoseComponent>();
         Reads<SCharacterMovementComponent, SystemResource::Hierarchy, SystemResource::PhysicsQuery, SystemResource::Kinematics>();
         SendsEvent<SAnimMontageStartedEvent, SAnimMontageBlendingOutEvent, SAnimMontageEndedEvent>();

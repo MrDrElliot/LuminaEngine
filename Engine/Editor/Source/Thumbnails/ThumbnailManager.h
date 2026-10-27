@@ -56,6 +56,12 @@ namespace Lumina
 
         void OnPackageDestroyed(FName Package);
 
+        // Stages Asset in Scene the way its class's renderer frames it, for a caller running its own captures.
+        bool StageThumbnail(FThumbnailScene& Scene, CObject* Asset);
+
+        // A display texture for a capture, flipped upright, which the caller releases.
+        static RHI::FManagedTexture CreateThumbnailTexture(const FPackageThumbnail& Thumbnail, const FString& DebugName);
+
         // Register a setup callback for an asset class; matched by walking up the class hierarchy, so subclasses inherit the renderer.
         void RegisterThumbnailRenderer(CClass* AssetClass, FThumbnailRendererFn Renderer);
 

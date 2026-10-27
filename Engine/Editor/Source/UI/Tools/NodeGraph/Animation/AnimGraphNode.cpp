@@ -113,7 +113,7 @@ namespace Lumina
             return;
         }
 
-        // The list is drawn by the graph, since imgui-node-editor does not host popup windows reliably inside a node.
+        // The list is drawn by the graph, since a popup window cannot open from inside the zoomed canvas.
         Pin->InlineEditor = [this, Items, Get, Set]()
         {
             const int Count = (int)Items.size();

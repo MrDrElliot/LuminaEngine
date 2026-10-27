@@ -4502,18 +4502,6 @@ namespace Lumina
             return Name;
         }
 
-        FString SystemPriorityLabel(uint8 Priority)
-        {
-            switch ((EUpdatePriority)Priority)
-            {
-            case EUpdatePriority::Highest: return "Highest priority";
-            case EUpdatePriority::High:    return "High priority";
-            case EUpdatePriority::Medium:  return "Medium priority";
-            case EUpdatePriority::Low:     return "Low priority";
-            default:                       return Format("Priority {}", Priority);
-            }
-        }
-
         // A small rounded label, laid out inline and wrapped onto the next line when the row is full.
         void DrawSystemChip(const FString& Text, const ImVec4& TextColor, const ImVec4& Fill)
         {
@@ -4799,10 +4787,6 @@ namespace Lumina
             }
 
             FString Line = kSystemStages[(uint8)Stage].Label;
-            if (StageIndex < Info.Priorities.size())
-            {
-                Line += Format(", {}", SystemPriorityLabel(Info.Priorities[StageIndex]));
-            }
             if (Entry != nullptr)
             {
                 Line += Entry->BatchSize > 1
@@ -4813,6 +4797,23 @@ namespace Lumina
             ImGui::TextWrapped("%s", Line.c_str());
         }
         ImGui::PopTextWrapPos();
+
+        auto DrawOrder = [](const char* Label, const TVector<FName>& Systems)
+        {
+            if (Systems.empty())
+            {
+                return;
+            }
+            ImGui::Spacing();
+            ImGui::TextColored(EditorColors::TextMuted(), "%s", Label);
+            for (FName System : Systems)
+            {
+                DrawSystemChip(FriendlySystemName(System.ToString()), EditorColors::TextPrimary(), EditorColors::WithAlpha(EditorColors::TextMuted(), 0.25f));
+            }
+            ImGui::NewLine();
+        };
+        DrawOrder("Runs after", Info.RunsAfter);
+        DrawOrder("Runs before", Info.RunsBefore);
 
         const FSystemScheduleEntry* Any = nullptr;
         for (const FSystemScheduleEntry& Candidate : Schedule)

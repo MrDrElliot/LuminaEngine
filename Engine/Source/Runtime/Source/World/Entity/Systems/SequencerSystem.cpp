@@ -1,6 +1,8 @@
 #include "RuntimePCH.h"
 #include "World/ECS/Registry.h"
 #include "SequencerSystem.h"
+#include "AnimationSystem.h"
+#include "EntityScriptSystem.h"
 
 #include "World/World.h"
 #include "World/Entity/Components/SequencePlayerComponent.h"
@@ -9,7 +11,8 @@ namespace Lumina
 {
     void SSequencerSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::High);
+        RequireUpdate(EUpdateStage::PrePhysics);
+        RunsBefore<SAnimationSystem, SEntityScriptSystem>();
     }
 
     bool SSequencerSystem::HasWork(const SSystemContext& Context)

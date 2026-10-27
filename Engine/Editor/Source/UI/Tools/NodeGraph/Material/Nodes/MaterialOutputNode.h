@@ -5,6 +5,8 @@
 
 namespace Lumina
 {
+    class CMaterialOutput;
+
     // The graph creates exactly one of these itself (EnsureRootNodes), so it must never be offered
     // in the palette -- a second one would give the compiler two roots.
     REFLECT(NotPlaceable)
@@ -39,6 +41,9 @@ namespace Lumina
          * WorldPositionOffsetPin is deliberately absent; it is the vertex stage's only root.
          */
         void GetPixelStagePins(TVector<CEdNodeGraphPin*>& OutPins) const;
+
+        // Shows Pin's value as emissive on an otherwise black, unlit surface.
+        static void GeneratePreviewDefinition(FMaterialCompiler& Compiler, CMaterialOutput* Pin);
 
         bool IsDeletable() const override { return false; }
 

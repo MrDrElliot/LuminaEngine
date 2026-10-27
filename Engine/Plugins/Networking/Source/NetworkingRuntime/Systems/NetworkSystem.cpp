@@ -40,6 +40,7 @@
 #include "Scripting/EntityScript.h"
 #include "Scripting/DotNet/NetScriptBridge.h"
 #include "Core/Object/ScriptClass.h"
+#include "World/Entity/Systems/LifetimeSystem.h"
 
 namespace Lumina
 {
@@ -1806,8 +1807,10 @@ namespace Lumina
 
     void SNetworkSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
-        RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::FrameStart);
+        RequireUpdate(EUpdateStage::FrameEnd);
+        // The frame end snapshot leaves out what expired this frame.
+        RunsAfter<SLifetimeSystem>();
     }
 
     bool SNetworkSystem::HasWork(const SSystemContext& Context)

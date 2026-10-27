@@ -8,8 +8,8 @@ namespace Lumina
     // Exclusive, since a resumed coroutine is arbitrary code.
     void SCoroutineSystem::Configure()
     {
-        RequireUpdate(EUpdateStage::FrameStart, EUpdatePriority::Highest);
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Highest);
+        RequireUpdate(EUpdateStage::FrameStart);
+        RequireUpdate(EUpdateStage::Paused);
     }
 
     void SCoroutineSystem::OnUpdate(const SSystemContext& Context)

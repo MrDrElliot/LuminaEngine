@@ -216,7 +216,7 @@ namespace Lumina
         void Configure() override
         {
             ++ConfigureCount;
-            RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::High);
+            RequireUpdate(EUpdateStage::PrePhysics);
             RequireUpdate(EUpdateStage::FrameEnd);
             Writes<STransformComponent>();
             DeclareRead("SStaticMeshComponent");
@@ -255,7 +255,60 @@ namespace Lumina
 
         void Configure() override
         {
-            RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::High);
+            RequireUpdate(EUpdateStage::PrePhysics);
+            DeclareRead("SStaticMeshComponent");
+        }
+    };
+
+    // Shares only reads with CEntitySystemReaderTest, so nothing but its declared order keeps it after that system.
+    REFLECT()
+    class RUNTIME_API CEntitySystemAfterTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override
+        {
+            RequireUpdate(EUpdateStage::PrePhysics);
+            RunsAfter<CEntitySystemReaderTest>();
+            // By name, the way a script or a module that cannot see the class declares it.
+            RunsBeforeSystem("CEntitySystemLastTest");
+            DeclareRead("SStaticMeshComponent");
+        }
+    };
+
+    // Ordered after CEntitySystemAfterTest from the other side, with a RunsBefore on its predecessor.
+    REFLECT()
+    class RUNTIME_API CEntitySystemLastTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override
+        {
+            RequireUpdate(EUpdateStage::PrePhysics);
+            DeclareRead("SStaticMeshComponent");
+        }
+    };
+
+    // Closes a loop through the other ordered test systems, so a test can prove a cycle still schedules every system.
+    REFLECT()
+    class RUNTIME_API CEntitySystemCycleTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override
+        {
+            RequireUpdate(EUpdateStage::PrePhysics);
+            RunsAfter<CEntitySystemLastTest>();
+            RunsBefore<CEntitySystemReaderTest>();
             DeclareRead("SStaticMeshComponent");
         }
     };

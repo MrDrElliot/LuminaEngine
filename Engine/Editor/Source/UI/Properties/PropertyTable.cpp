@@ -785,6 +785,7 @@ namespace Lumina
         const bool bTopLevel = IsTopLevel();
         const bool bMultipleValues = bTopLevel && PropertyHandle && PropertyHandle->Property
             && Callbacks.IsMultiValueFn && Callbacks.IsMultiValueFn(PropertyHandle->Property);
+        const bool bValuesLocked = bMultipleValues && !Callbacks.bEditMultipleValues;
 
         // Capture row top before drawing for later modified-marker rendering.
         ImGuiTable* CurrentTable = ImGui::GetCurrentTable();
@@ -796,7 +797,7 @@ namespace Lumina
             CurrentTable->RowPosY2 = ImMax(CurrentTable->RowPosY2, CurrentTable->RowPosY1 + LastDrawnHeight);
             ImGui::PopID();
 
-            if (bExpanded && !Children.empty() && !bMultipleValues)
+            if (bExpanded && !Children.empty() && !bValuesLocked)
             {
                 ImGui::BeginDisabled(IsReadOnly());
                 DrawChildren(Offset + ChildIndentStep, Args);
@@ -821,7 +822,7 @@ namespace Lumina
                 CopyPropertyValue();
             }
             else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-                && !bReadOnly && !IsReadOnly() && !bMultipleValues)
+                && !bReadOnly && !IsReadOnly() && !bValuesLocked)
             {
                 PastePropertyValue();
             }
@@ -836,7 +837,7 @@ namespace Lumina
             {
                 if (bHasProperty)
                 {
-                    ImGui::BeginDisabled(!bDiffers || bReadOnly || IsReadOnly() || bMultipleValues);
+                    ImGui::BeginDisabled(!bDiffers || bReadOnly || IsReadOnly() || bValuesLocked);
                     if (ImGui::MenuItem(LE_ICON_REFRESH " Reset to Default"))
                     {
                         PerformResetToDefault();
@@ -888,13 +889,25 @@ namespace Lumina
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::AlignTextToFramePadding();
-                if (bMultipleValues)
+                if (bValuesLocked)
                 {
                     ImGui::TextDisabled("(Multiple Values)");
                 }
                 else
                 {
+                    const ImVec2 CellMin = ImGui::GetCursorScreenPos();
+                    const float CellWidth = ImGui::GetContentRegionAvail().x;
                     DrawEditor(Args);
+                    if (bMultipleValues)
+                    {
+                        // Shaded over rather than drawn with lowered alpha, which a combo's popup would inherit.
+                        ImGui::GetWindowDrawList()->AddRectFilled(CellMin, ImVec2(CellMin.x + CellWidth, ImGui::GetItemRectMax().y),
+                            ImGui::GetColorU32(ImGuiCol_WindowBg, 0.55f));
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                        {
+                            ImGuiX::TextTooltip_Internal("The selected objects differ here. Editing sets them all.");
+                        }
+                    }
                 }
 
                 if (bHasExtras)
@@ -910,7 +923,7 @@ namespace Lumina
                 }
 
                 ImGui::TableNextColumn();
-                if (bDiffers && !bReadOnly && !IsReadOnly() && !bMultipleValues)
+                if (bDiffers && !bReadOnly && !IsReadOnly() && !bValuesLocked)
                 {
                     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
                     if (ImGuiX::FlatButton(LE_ICON_REFRESH "##Reset", ImVec2(ResetColumnWidth - 2, 22), ModifiedMarkerColor()))
@@ -946,7 +959,7 @@ namespace Lumina
         ImGui::PopID();
 
         // The aggregate stands in for the subtree, which would otherwise show the focus object's values.
-        if (bExpanded && !Children.empty() && !bMultipleValues)
+        if (bExpanded && !Children.empty() && !bValuesLocked)
         {
             ImGui::BeginDisabled(IsReadOnly());
             DrawChildren(Offset + ChildIndentStep, Args);
@@ -1134,7 +1147,13 @@ namespace Lumina
         case EPropertyTypeFlags::SubStruct: return FSubStructPropertyCustomization::MakeInstance();
         case EPropertyTypeFlags::Name:   return FNamePropertyCustomization::MakeInstance();
         case EPropertyTypeFlags::String: return FStringPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::Enum:   return FEnumPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Enum:
+        {
+            // An enum can register its own drawing by name, the way a struct does.
+            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+            TSharedPtr<IPropertyTypeCustomization> Registered = Registry->GetPropertyCustomizationForType(static_cast<FEnumProperty*>(Prop)->GetEnum()->GetName());
+            return Registered ? Registered : FEnumPropertyCustomization::MakeInstance();
+        }
         case EPropertyTypeFlags::Delegate: return FDelegatePropertyCustomization::MakeInstance();
         case EPropertyTypeFlags::ComponentRef: return FComponentRefPropertyCustomization::MakeInstance();
         default: return nullptr;
@@ -1820,7 +1839,7 @@ namespace Lumina
 
         // A value with member rows (a struct, array or map) has nothing to draw inline, so it nests below the key.
         TUniquePtr<FPropertyRow> Row = CreatePropertyRow(PropertyHandle, this, Callbacks);
-        if (MapValueDrawsInline(Map->GetValueProperty()))
+        if (MakeInlinePropertyCustomization(Map->GetValueProperty()) != nullptr)
         {
             ValueRow = Move(Row);
         }
@@ -1830,14 +1849,14 @@ namespace Lumina
         }
     }
 
-    bool FMapEntryRow::MapValueDrawsInline(FProperty* ValueProperty)
+    TSharedPtr<IPropertyTypeCustomization> MakeInlinePropertyCustomization(FProperty* Prop)
     {
-        if (ValueProperty->GetType() == EPropertyTypeFlags::Struct)
+        if (Prop->GetType() == EPropertyTypeFlags::Struct)
         {
             FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
-            return Registry->GetPropertyCustomizationForType(static_cast<FStructProperty*>(ValueProperty)->GetStruct()->GetName()) != nullptr;
+            return Registry->GetPropertyCustomizationForType(static_cast<FStructProperty*>(Prop)->GetStruct()->GetName());
         }
-        return MakeLeafPropertyCustomization(ValueProperty) != nullptr;
+        return MakeLeafPropertyCustomization(Prop);
     }
 
     FMapEntryRow::~FMapEntryRow()

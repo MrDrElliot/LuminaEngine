@@ -263,6 +263,13 @@ namespace Lumina::NavMeshBuilder
         #endif
 
         // Rasterize, filter, compact and erode, everything a cached tile gets to skip.
+        // The ledge filter's steep slope test spans the cells on both sides of a span, so it needs the rise of the steepest walkable slope across them.
+        int LedgeFilterClimb(const rcConfig& Cfg)
+        {
+            const float SlopeRise = 2.0f * Cfg.cs * std::tan(Math::Radians(Cfg.walkableSlopeAngle));
+            return Math::Max(Cfg.walkableClimb, (int)std::ceil(SlopeRise / Cfg.ch));
+        }
+
         bool VoxelizeTile(rcContext& Ctx, const rcConfig& Cfg, const FNavBuildInput& In, const int32* TileTriIndices, int32 NumTileTris, rcCompactHeightfield*& OutCompact)
         {
             OutCompact = nullptr;
@@ -316,7 +323,7 @@ namespace Lumina::NavMeshBuilder
             }
 
             rcFilterLowHangingWalkableObstacles(&Ctx, Cfg.walkableClimb, *Solid);
-            rcFilterLedgeSpans(&Ctx, Cfg.walkableHeight, Cfg.walkableClimb, *Solid);
+            rcFilterLedgeSpans(&Ctx, Cfg.walkableHeight, LedgeFilterClimb(Cfg), *Solid);
             rcFilterWalkableLowHeightSpans(&Ctx, Cfg.walkableHeight, *Solid);
 
             rcCompactHeightfield* Compact = rcAllocCompactHeightfield();
@@ -390,8 +397,7 @@ namespace Lumina::NavMeshBuilder
             Cfg.ch = S.CellHeight;
             Cfg.walkableSlopeAngle = S.AgentMaxSlopeDeg;
             Cfg.walkableHeight     = (int)std::ceil(S.AgentHeight / S.CellHeight);
-            // One cell less, since rasterizing both surfaces lets a ledge up to a cell taller than this pass as climbable.
-            Cfg.walkableClimb      = Math::Max((int)std::floor(S.AgentMaxClimb / S.CellHeight) - 1, 0);
+            Cfg.walkableClimb      = (int)std::floor(S.AgentMaxClimb / S.CellHeight);
             Cfg.walkableRadius     = (int)std::ceil(S.AgentRadius / S.CellSize);
             Cfg.maxEdgeLen         = (int)(S.EdgeMaxLength / S.CellSize);
             Cfg.maxSimplificationError = S.EdgeMaxError;
@@ -621,6 +627,16 @@ namespace Lumina::NavMeshBuilder
             Handle.TilesScheduled = 0;
             Handle.bDone.store(true, std::memory_order_release);
             return;
+        }
+
+        // Neighboring cells on a slope connect only while the slope rises no more than the climb across one cell.
+        const SNavBuildSettings& Settings = Input.Settings;
+        const float ConnectableSlope = Math::Degrees(std::atan(Settings.AgentMaxClimb / Math::Max(Settings.CellSize, 0.001f)));
+        if (Settings.AgentMaxSlopeDeg > ConnectableSlope)
+        {
+            LOG_WARN("NavMesh bake: AgentMaxSlopeDeg {:.0f} is steeper than the {:.0f} degrees a {:.2f} climb can connect at CellSize {:.2f}, "
+                     "so slopes past that split the mesh. Lower CellSize or raise AgentMaxClimb.",
+                     Settings.AgentMaxSlopeDeg, ConnectableSlope, Settings.AgentMaxClimb, Settings.CellSize);
         }
 
         if (TileCount > 2048)

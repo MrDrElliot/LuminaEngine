@@ -30,6 +30,9 @@ public class Editor : LuminaModuleRules
 
         PublicDependencyModuleNames.Add("Runtime");
 
+        // The graph canvas tests run ImGui frames of their own.
+        TestDependencyModuleNames.Add("ImGui");
+
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "ImGui",

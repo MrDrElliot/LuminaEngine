@@ -9,8 +9,8 @@ namespace Lumina
     void SSaveGameSystem::Configure()
     {
         // Paused too, since a pause menu is where a player usually saves and loads.
-        RequireUpdate(EUpdateStage::FrameEnd, EUpdatePriority::Low);
-        RequireUpdate(EUpdateStage::Paused, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::FrameEnd);
+        RequireUpdate(EUpdateStage::Paused);
         Requests = ReadsEvent<SSaveGameRequestEvent>();
         SendsEvent<SSaveGameCompletedEvent>();
     }

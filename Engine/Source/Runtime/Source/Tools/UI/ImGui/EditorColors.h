@@ -41,4 +41,11 @@ namespace Lumina::EditorColors
     inline ImVec4 WithAlpha(const ImVec4& C, float A) { return ImVec4(C.x, C.y, C.z, A); }
     inline ImVec4 Lighten(const ImVec4& C, float D)   { return ImVec4(Clamp01(C.x + D), Clamp01(C.y + D), Clamp01(C.z + D), C.w); }
     inline ImU32  U32(const ImVec4& C)                { return ImGui::ColorConvertFloat4ToU32(C); }
+
+    inline ImU32 ScaleAlpha(ImU32 Color, float Scale)
+    {
+        const float  Alpha   = (float)((Color >> IM_COL32_A_SHIFT) & 0xFF) * Scale;
+        const uint32 Clamped = (uint32)(Alpha < 0.0f ? 0.0f : (Alpha > 255.0f ? 255.0f : Alpha));
+        return (Color & ~IM_COL32_A_MASK) | (Clamped << IM_COL32_A_SHIFT);
+    }
 }

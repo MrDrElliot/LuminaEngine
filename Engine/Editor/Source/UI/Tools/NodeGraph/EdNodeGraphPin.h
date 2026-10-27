@@ -5,6 +5,7 @@
 #include "Containers/String.h"
 #include "Core/Math/Color.h"
 #include "Core/Object/Object.h"
+#include "GraphEditor.h"
 #include "EdNodeGraphPin.generated.h"
 
 namespace Lumina
@@ -43,6 +44,7 @@ namespace Lumina
         void SetHideDuringConnection(bool bHide) { bHidePinDuringConnection = bHide; }
         
         virtual uint32 GetPinColor() const { return PinColor; }
+        virtual EGraphPinShape GetPinShape() const { return EGraphPinShape::Circle; }
 
         // Shader type this pin carries ("float2", ...); empty for graphs whose pins are untyped.
         virtual FString GetPinTypeName() const { return FString(); }

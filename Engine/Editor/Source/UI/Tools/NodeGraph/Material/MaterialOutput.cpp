@@ -1,11 +1,11 @@
-﻿#include "MaterialOutput.h"
+﻿#include "MaterialInput.h"
+#include "MaterialOutput.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectArray.h"
-#include "imgui-node-editor/imgui_node_editor_internal.h"
 #include "MaterialCompiler.h"
 #include "Nodes/MaterialGraphNode.h"
 #include "Renderer/RenderManager.h"
@@ -17,6 +17,30 @@ namespace Lumina
     FString CMaterialOutput::GetPinTypeName() const
     {
         return FMaterialCompiler::GetHLSLTypeName(InputType);
+    }
+
+    EGraphPinShape CMaterialOutput::GetPinShape() const
+    {
+        return CMaterialInput::ShapeFor(InputType, Mask);
+    }
+
+    uint32 CMaterialOutput::GetPinColor() const
+    {
+        if (PinColor != IM_COL32_WHITE)
+        {
+            return PinColor;
+        }
+
+        switch (InputType)
+        {
+            case EMaterialInputType::Float:         return IM_COL32(150, 215, 140, 255);
+            case EMaterialInputType::Float2:        return IM_COL32(110, 195, 235, 255);
+            case EMaterialInputType::Float3:        return IM_COL32(240, 205, 105, 255);
+            case EMaterialInputType::Float4:        return IM_COL32(225, 135, 205, 255);
+            case EMaterialInputType::Texture:       return IM_COL32(185, 135, 250, 255);
+            case EMaterialInputType::TextureHandle: return IM_COL32(235, 185, 70, 255);
+        }
+        return PinColor;
     }
 
     float CMaterialOutput::DrawPin()

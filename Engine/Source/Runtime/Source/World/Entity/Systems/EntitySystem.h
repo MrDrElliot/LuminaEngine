@@ -64,11 +64,22 @@ namespace Lumina
 
         //~ Begin Configure declarations.
 
-        // Schedules this system in Stage. Lower priority runs first, so Highest is 0 and Low is 192.
+        // Schedules this system in Stage, where only the systems it declares to run after or before order it.
         FUNCTION()
-        void RequireUpdate(EUpdateStage Stage, int32 Priority = (int32)EUpdatePriority::Default);
+        void RequireUpdate(EUpdateStage Stage);
 
-        void RequireUpdate(EUpdateStage Stage, EUpdatePriority Priority) { RequireUpdate(Stage, (int32)Priority); }
+        // Runs after the named system and any system deriving from it, in every stage both tick in. A name reaches a system in a module this one does not link.
+        FUNCTION()
+        void RunsAfterSystem(FName System);
+
+        FUNCTION()
+        void RunsBeforeSystem(FName System);
+
+        template<typename... Ts>
+        void RunsAfter() { (RunsAfterSystem(Ts::StaticClass()->GetName()), ...); }
+
+        template<typename... Ts>
+        void RunsBefore() { (RunsBeforeSystem(Ts::StaticClass()->GetName()), ...); }
 
         // Named rather than typed, so a script can declare access to a component it only knows by name.
         FUNCTION()
@@ -97,7 +108,9 @@ namespace Lumina
 
         //~ End Configure declarations.
 
-        const FUpdatePriorityList& GetPriorities() const { return Priorities; }
+        bool RunsInStage(EUpdateStage Stage) const { return (StageMask & (1u << (uint32)Stage)) != 0; }
+        const TVector<FName>& GetRunsAfter() const { return After; }
+        const TVector<FName>& GetRunsBefore() const { return Before; }
         const FSystemAccess& GetAccess() const { return Access; }
 
         // Set by the driver before Configure runs.
@@ -112,8 +125,10 @@ namespace Lumina
     private:
 
         CWorld*             OwningWorld = nullptr;
-        FUpdatePriorityList Priorities;
+        TVector<FName>      After;
+        TVector<FName>      Before;
         FSystemAccess       Access;
+        uint8               StageMask = 0;
         bool                bStarted = false;
     };
 

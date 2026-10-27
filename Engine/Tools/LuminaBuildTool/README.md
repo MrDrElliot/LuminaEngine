@@ -128,8 +128,8 @@ The file is generated, machine specific and gitignored.
 `Tidy` runs clang-tidy over every first-party entry in it, in parallel, with the checks in the
 workspace `.clang-tidy`, the same file Rider and clangd read as you type. A header's finding comes
 back from every source that includes it, so each one is reported once, in the MSVC
-`file(line,col): warning` form an IDE's error list picks up. Vendored code (`ThirdParty`,
-`External`, `imgui-node-editor`) and generated code are skipped. A path fragment narrows the run,
+`file(line,col): warning` form an IDE's error list picks up. Vendored code (`ThirdParty` and
+`External`) and generated code are skipped. A path fragment narrows the run,
 `-Checks=` overrides the check list, `-Jobs=` the parallelism, and `-WarningsAsErrors` makes any
 finding fail the run. clang-tidy is found through `-ClangTidy=<path>`, `LUMINA_CLANG_TIDY`, `PATH`,
 or Visual Studio's optional Clang tools, in that order.

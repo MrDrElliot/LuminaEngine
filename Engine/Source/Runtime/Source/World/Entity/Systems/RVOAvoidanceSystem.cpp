@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "RVOAvoidanceSystem.h"
+#include "PathFollowSystem.h"
 #include "World/ECS/Registry.h"
 
 #include "AI/Avoidance/ORCA.h"
@@ -33,8 +34,9 @@ namespace Lumina
 
     void SRVOAvoidanceSystem::Configure()
     {
-        // Low sorts after SPathFollowSystem's Default, so the preferred velocity is already written.
-        RequireUpdate(EUpdateStage::PrePhysics, EUpdatePriority::Low);
+        RequireUpdate(EUpdateStage::PrePhysics);
+        // The preferred velocity it avoids around is what SPathFollowSystem writes.
+        RunsAfter<SPathFollowSystem>();
         Writes<SRVOAgentComponent, SCharacterControllerComponent>();
         Reads<STransformComponent, SCharacterPhysicsComponent, SCharacterMovementComponent,
               SNavMeshComponent, SystemResource::Significance>();
