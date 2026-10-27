@@ -28,6 +28,8 @@ namespace Lumina
     struct SCharacterPhysicsComponent;
     struct SCompoundColliderComponent;
     struct SDefaultWorldSettings;
+    struct SRagdollComponent;
+    struct SRagdollLocomotionComponent;
     struct STransformComponent;
     struct SMeshCollision;
     class CMesh;
@@ -163,6 +165,14 @@ namespace Lumina::Physics
         void ApplyDirtyTransforms(float FixedDt, uint32 RemainingSteps, bool bFirstStep);
         void UpdateCharacters(float FixedDt);
         void UpdateVehicles(float FixedDt);
+        void UpdatePoweredRagdolls(float FixedDt);
+        void DrivePoweredRagdoll(ECS::FEntity Owner, FPhysicsRagdollHandle& Ragdoll, const SRagdollComponent& Component,
+                                 SRagdollLocomotionComponent* Locomotion, float Dt);
+        void BalanceRagdoll(ECS::FEntity Owner, FPhysicsRagdollHandle& Ragdoll, SRagdollLocomotionComponent& Locomotion, float Dt);
+        void FollowRagdollRoot(ECS::FEntity Owner, FPhysicsRagdollHandle& Ragdoll, const SRagdollComponent& Component);
+        void StepRagdoll(FPhysicsRagdollHandle& Ragdoll, const SRagdollLocomotionComponent& Locomotion, const FQuat& Character,
+                         const FVector3& CenterOfMass, const FVector3& Velocity, const FVector3& FeetCenter,
+                         const FVector3& WorldUp, float Gravity, float Dt);
         void PoseVehicleWheels();
         void StepCharacter(const FCharacterWork& Work, float FixedDt, uint32 ThreadSlot);
         void LatchCharacterInput();

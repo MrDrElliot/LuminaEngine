@@ -98,13 +98,17 @@ namespace Lumina
         PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 180.0f, Category = "Constraint|Limits")
         float Swing2LimitDegrees = 45.0f;
 
-        /** Motor frequency (Hz) used when the ragdoll is driven to a pose by motors. 0 = no motor (Phase 2+). */
-        PROPERTY(Editable, ClampMin = 0.0f, Category = "Constraint|Motor")
+        // Muscle stiffness for this joint while powered, zero keeping the ragdoll component's.
+        PROPERTY(Editable, ClampMin = 0.0f, Units = "Hz", Category = "Constraint|Motor")
         float MotorFrequency = 0.0f;
 
-        /** Motor damping ratio used with MotorFrequency. */
+        // Muscle damping ratio for this joint while powered, zero keeping the ragdoll component's.
         PROPERTY(Editable, ClampMin = 0.0f, Category = "Constraint|Motor")
-        float MotorDamping = 1.0f;
+        float MotorDamping = 0.0f;
+
+        // Scales this joint's share of the ragdoll's muscle torque, such as a weak neck or strong hips.
+        PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 10.0f, Category = "Constraint|Motor")
+        float MotorStrength = 1.0f;
     };
 
     /** Authored ragdoll definition for a skeleton: which bones get simulated bodies and how the joints

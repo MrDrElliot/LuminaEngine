@@ -866,6 +866,7 @@ namespace Lumina::Physics
 
                 // After the fixed script tick, so input a script sets this step drives this step.
                 UpdateVehicles(FixedTimestep);
+                UpdatePoweredRagdolls(FixedTimestep);
 
                 b3World_Step(WorldId, FixedTimestep, SubStepCount);
 
