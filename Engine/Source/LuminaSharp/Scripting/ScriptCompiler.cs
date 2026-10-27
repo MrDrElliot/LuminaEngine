@@ -89,48 +89,78 @@ internal static class ScriptCompiler
     // The generated IDE project adds the same imports as Using items, so IntelliSense agrees with this compile.
     public const string ScriptGlobalUsings = "global using static LuminaSharp.ObjectCore;\nglobal using static LuminaSharp.ESpecifier;";
 
+    internal static CSharpParseOptions ParseOptions { get; } = new(LanguageVersion.Latest);
+
+    // The trees every unit compiles beside its own sources.
+    internal static IEnumerable<SyntaxTree> SupportTrees(string AssemblyName, IReadOnlyList<(string Path, string Text)> Sources)
+    {
+        // Routed value mirrors carry bool fields, and only with runtime marshalling off is their managed layout the sequential one C++ shares.
+        if (!Sources.Any(Source => Source.Text.Contains("DisableRuntimeMarshalling", StringComparison.Ordinal)))
+        {
+            yield return CSharpSyntaxTree.ParseText(
+                SourceText.From("[assembly: System.Runtime.CompilerServices.DisableRuntimeMarshalling]", Encoding.UTF8),
+                ParseOptions, path: AssemblyName + ".Marshalling.g.cs");
+        }
+
+        // LoadObject<T>(Path) and [Property(Editable)] read as they do in C++, with no qualifier, in every script.
+        yield return CSharpSyntaxTree.ParseText(
+            SourceText.From(ScriptGlobalUsings, Encoding.UTF8), ParseOptions, path: AssemblyName + ".GlobalUsings.g.cs");
+    }
+
+    internal static CSharpCompilationOptions CompilationOptions(bool bOptimizeOutput)
+    {
+        return new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                optimizationLevel: bOptimizeOutput ? OptimizationLevel.Release : OptimizationLevel.Debug,
+                allowUnsafe: true,
+                nullableContextOptions: NullableContextOptions.Enable)
+            // The NativeCall generator gives every script assembly its own copy of the attribute on purpose.
+            .WithSpecificDiagnosticOptions(new Dictionary<string, ReportDiagnostic> { ["CS0436"] = ReportDiagnostic.Suppress });
+    }
+
+    // The framework and engine references plus ExtraReferences. With documentation, the engine reference carries LuminaSharp.xml for hovers.
+    internal static MetadataReference[] ReferencesWith(IReadOnlyList<MetadataReference>? ExtraReferences, bool bWithDocumentation)
+    {
+        IEnumerable<MetadataReference> Base = References;
+        string SelfPath = typeof(Host).Assembly.Location;
+        string DocumentationPath = Path.ChangeExtension(SelfPath, ".xml");
+        if (bWithDocumentation && File.Exists(SelfPath) && File.Exists(DocumentationPath))
+        {
+            Base = Base
+                .Where(Reference => Reference is not PortableExecutableReference Pe || !string.Equals(Pe.FilePath, SelfPath, StringComparison.OrdinalIgnoreCase))
+                .Append(MetadataReference.CreateFromFile(SelfPath, documentation: new FileDocumentationProvider(DocumentationPath)));
+        }
+        if (ExtraReferences == null || ExtraReferences.Count == 0)
+        {
+            return Base.ToArray();
+        }
+
+        // A package shipping its own copy of a framework assembly has to win, or Roslyn sees two of one identity.
+        var Shadowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (MetadataReference Reference in ExtraReferences)
+        {
+            if (SimpleName(Reference) is { } Name)
+            {
+                Shadowed.Add(Name);
+            }
+        }
+        return Base
+            .Where(Reference => SimpleName(Reference) is not { } Name || !Shadowed.Contains(Name))
+            .Concat(ExtraReferences)
+            .ToArray();
+    }
+
     /// Compiles all sources into a PE plus its PDB, or null on error (diagnostics logged). ExtraReferences are the dependency units' emitted images.
     public static FScriptImage? Compile(string AssemblyName, IReadOnlyList<(string Path, string Text)> Sources,
         IReadOnlyList<MetadataReference>? ExtraReferences = null)
     {
-        var ParseOptions = new CSharpParseOptions(LanguageVersion.Latest);
         // Roslyn refuses to emit debug info for source text with no encoding, because it cannot checksum it (CS8055).
         SyntaxTree[] Trees = Sources
             .Select(Source => CSharpSyntaxTree.ParseText(SourceText.From(Source.Text, Encoding.UTF8), ParseOptions, path: Source.Path))
+            .Concat(SupportTrees(AssemblyName, Sources))
             .ToArray();
 
-        // Routed value mirrors carry bool fields, and only with runtime marshalling off is their managed layout the sequential one C++ shares.
-        if (!Sources.Any(Source => Source.Text.Contains("DisableRuntimeMarshalling", StringComparison.Ordinal)))
-        {
-            SyntaxTree Marshalling = CSharpSyntaxTree.ParseText(
-                SourceText.From("[assembly: System.Runtime.CompilerServices.DisableRuntimeMarshalling]", Encoding.UTF8),
-                ParseOptions, path: AssemblyName + ".Marshalling.g.cs");
-            Trees = Trees.Append(Marshalling).ToArray();
-        }
-
-        // LoadObject<T>(Path) and [Property(Editable)] read as they do in C++, with no qualifier, in every script.
-        SyntaxTree GlobalUsings = CSharpSyntaxTree.ParseText(
-            SourceText.From(ScriptGlobalUsings, Encoding.UTF8), ParseOptions, path: AssemblyName + ".GlobalUsings.g.cs");
-        Trees = Trees.Append(GlobalUsings).ToArray();
-
-        MetadataReference[] AllReferences = References;
-        if (ExtraReferences != null && ExtraReferences.Count > 0)
-        {
-            // A package shipping its own copy of a framework assembly has to win, or Roslyn sees two of one identity.
-            var Shadowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (MetadataReference Reference in ExtraReferences)
-            {
-                if (SimpleName(Reference) is { } Name)
-                {
-                    Shadowed.Add(Name);
-                }
-            }
-
-            AllReferences = References
-                .Where(Reference => SimpleName(Reference) is not { } Name || !Shadowed.Contains(Name))
-                .Concat(ExtraReferences)
-                .ToArray();
-        }
+        MetadataReference[] AllReferences = ReferencesWith(ExtraReferences, false);
 
         // Each stored field becomes its native-backed property here, the only compilation ever loaded, the probe compilation just giving the rewriter a semantic model.
         var RewriteErrors = new List<string>();
@@ -147,17 +177,7 @@ internal static class ScriptCompiler
             return null;
         }
 
-        var Compilation = CSharpCompilation.Create(
-            AssemblyName,
-            Trees,
-            AllReferences,
-            new CSharpCompilationOptions(
-                OutputKind.DynamicallyLinkedLibrary,
-                optimizationLevel: bOptimize ? OptimizationLevel.Release : OptimizationLevel.Debug,
-                allowUnsafe: true,
-                nullableContextOptions: NullableContextOptions.Enable)
-                // The NativeCall generator gives every script assembly its own copy of the attribute on purpose.
-                .WithSpecificDiagnosticOptions(new Dictionary<string, ReportDiagnostic> { ["CS0436"] = ReportDiagnostic.Suppress }));
+        var Compilation = CSharpCompilation.Create(AssemblyName, Trees, AllReferences, CompilationOptions(bOptimize));
 
         Compilation Compiled = Compilation;
         bool bHadError = false;
@@ -204,7 +224,7 @@ internal static class ScriptCompiler
     }
 
     // An [Element] field is filled when its UI document loads, so a never-assigned warning is wrong about it.
-    private static bool IsAssignedByEngine(Diagnostic Diagnostic)
+    internal static bool IsAssignedByEngine(Diagnostic Diagnostic)
     {
         if (Diagnostic.Id != "CS0649" || Diagnostic.Location.SourceTree is not { } Tree)
         {
@@ -245,7 +265,7 @@ internal static class ScriptCompiler
         "ComponentStorageGenerator",        // rejects a component held or created as a C# value, since it only exists in storage
     };
 
-    private static ImmutableArray<ISourceGenerator> SourceGenerators => CachedGenerators ??= LoadGenerators();
+    internal static ImmutableArray<ISourceGenerator> SourceGenerators => CachedGenerators ??= LoadGenerators();
 
     internal static string GeneratorPath =>
         Path.Combine(Path.GetDirectoryName(typeof(Host).Assembly.Location) ?? string.Empty, "LuminaSharp.Generators.dll");

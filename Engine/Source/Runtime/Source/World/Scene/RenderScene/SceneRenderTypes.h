@@ -743,13 +743,14 @@ namespace Lumina
         FVector4 FoamAbsorb;        // x = shoreline foam width, y = crest foam amount, z = depth fade, w = absorption
         FVector4 SSRSpecOpacity;    // x = ssr max dist, y = ssr step count, z = specular intensity, w = opacity
         FVector4 DetailParams;      // x = detail tiling, y = detail scroll speed, z = foam tiling, w = unused
+        FVector4 InteractionParams; // x = interaction ripple scale, y = interaction foam scale, z = rain ripple scale, w = unused
         uint32   DetailNormalIndex; // bindless 2D SRV, ~0u if none
         uint32   FoamTextureIndex;  // bindless 2D SRV, ~0u if none
         uint32   GridResolution;    // verts per side of the procedural grid
         float    HorizonScale;      // outer ring's distance as a multiple of the body's, 1 when it has no horizon skirt
     };
 
-    static_assert(sizeof(FGPUWater) == 288, "FGPUWater layout must match Includes/Water.slang");
+    static_assert(sizeof(FGPUWater) == 304, "FGPUWater layout must match Includes/Water.slang");
     VERIFY_SSBO_ALIGNMENT(FGPUWater);
 
     struct alignas(16) FWaterUnderwaterParams
@@ -1390,7 +1391,46 @@ namespace Lumina
         float _Pad0             = 0.0f;
     };
 
-    // Mirrors FWeatherData in Common.slang. Absent unless a weather component is rendering this frame.
+    // A water body the interaction field ripples. Mirrors FWeatherWaterBody in WeatherFieldSim.slang.
+    struct FWeatherWaterBodyGPU
+    {
+        // Rows of the world to body transform that give local x and z, inside the body while both stay within half a unit.
+        FVector4 WorldToWaterX;
+        FVector4 WorldToWaterZ;
+        // x = surface height, y = interaction ripple scale, z = interaction foam scale, w = rain ripple scale.
+        FVector4 Params;
+    };
+    static_assert(sizeof(FWeatherWaterBodyGPU) == 48, "FWeatherWaterBodyGPU must match FWeatherWaterBody in WeatherFieldSim.slang.");
+
+    // A contact sphere the interaction field reads. Mirrors FWeatherContact in WeatherFieldSim.slang.
+    struct FWeatherContactGPU
+    {
+        FVector3 Position;
+        float    Radius;
+        FVector3 PrevPosition;
+        float    SurfaceY;
+        float    PrevSurfaceY;
+        float    RippleStrength;
+        float    FoamStrength;
+        float    TrailStrength;
+        uint32   Surface;
+        uint32   _Pad[3];
+    };
+    static_assert(sizeof(FWeatherContactGPU) == 64, "FWeatherContactGPU must match FWeatherContact in WeatherFieldSim.slang.");
+
+    // A contact striking water hard enough to splash. Mirrors FWeatherImpact in WeatherImpactSpawn.slang.
+    struct FWeatherImpactGPU
+    {
+        FVector3 Position;
+        float    Scale;
+        FVector3 Normal;
+        uint32   Surface;
+        uint32   Seed;
+        uint32   _Pad[3];
+    };
+    static_assert(sizeof(FWeatherImpactGPU) == 48, "FWeatherImpactGPU must match FWeatherImpact in WeatherImpactSpawn.slang.");
+
+    // Mirrors FWeatherData in Common.slang. Absent unless a weather component plays or something disturbs the world's water.
     struct FWeatherGPU
     {
         FMatrix4 RainViewProjection;
@@ -1417,9 +1457,29 @@ namespace Lumina
         float    OcclusionTexelWorld = 0.1f;
         uint32   NumDrops = 0;
         uint32   DebugMode = 0;
-        uint32   _Pad[3] = {};
+        // The ripple, foam and trail field around the camera, kIndexNoneU32 while nothing disturbs the world.
+        uint32   InteractionField = Constants::kIndexNoneU32;
+        // Slots in InteractorTable minus one, a power of two less one, so a probe wraps with a mask.
+        uint32   InteractorTableMask = 0;
+        uint32   _Pad0 = 0;
+        // xy = world XZ of the field's first texel corner, z = one over the field width in meters, w = texel size in meters.
+        FVector4 FieldParams = FVector4(0.0f);
+        // x = ripple normal gain, y = foam gain, z = trail gain, w = unused.
+        FVector4 FieldShading = FVector4(0.0f);
+        // x = intensity, y = flakes per cubic meter, z = flake size in mm, w = size variation.
+        FVector4 Snow = FVector4(0.0f);
+        // x = fall speed, y = flutter in meters, z = wind influence, w = wrapped vertical fall offset.
+        FVector4 SnowMotion = FVector4(0.0f);
+        // x = brightness, y = opacity, z = flake radius around the camera, w = flake field tile size.
+        FVector4 SnowLook = FVector4(0.0f);
+        // x = cover, y = drift pattern size in meters, z = print depth, w = unused.
+        FVector4 SnowSurface = FVector4(0.0f);
+        // Entity id and record index pairs, open addressed by entity id, empty slots holding kIndexNoneU32.
+        RHI::TGPUSpan<FUIntVector2>         InteractorTable;
+        // x = root height, y = rain soak, z = water line above the root, w = wetness under the water line.
+        RHI::TGPUSpan<FVector4>             Interactors;
     };
-    static_assert(sizeof(FWeatherGPU) == 288, "FWeatherGPU must match FWeatherData in Common.slang.");
+    static_assert(sizeof(FWeatherGPU) == 416, "FWeatherGPU must match FWeatherData in Common.slang.");
 
     struct FSceneGlobalData
     {

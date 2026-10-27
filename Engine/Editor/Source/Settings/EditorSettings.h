@@ -122,6 +122,7 @@ namespace Lumina
         VisualStudio2026,
         VSCode,
         Rider,
+        BuiltIn,
     };
 
     // Scripting preferences.
@@ -133,11 +134,15 @@ namespace Lumina
 
         /** Application used to open script source files. System Default uses the OS file association. */
         PROPERTY(Editable, Category = "Scripts")
-        EScriptEditor ScriptEditor = EScriptEditor::SystemDefault;
+        EScriptEditor ScriptEditor = EScriptEditor::BuiltIn;
 
         /** Full path to an editor executable; overrides the choice above. Invoked as: "<exe>" "<file>". */
         PROPERTY(Editable, Category = "Scripts")
         FString CustomEditorPath;
+
+        // Text size in the built-in script editor, which Ctrl+wheel also changes while it is open.
+        PROPERTY(Editable, Category = "Built In Editor", ClampMin = 0.75f, ClampMax = 3.0f)
+        float FontScale = 1.15f;
     };
 
     // Which tool tabs this project had open. Per-project (lives in the project's own /Config), and

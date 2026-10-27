@@ -611,76 +611,7 @@ namespace Lumina
     
     namespace
     {
-        // Copied from the HLSL definition, since its file-static helpers cannot be reached from here.
-        const TextEditor::Language& GetSlangLanguageBase()
-        {
-            static bool bInitialized = false;
-            static TextEditor::Language Language;
-
-            if (bInitialized)
-            {
-                return Language;
-            }
-
-            Language = *TextEditor::Language::Hlsl();
-            Language.name = "Slang";
-
-            // Slang-only syntax the HLSL set has no reason to know about.
-            static const char* const SlangKeywords[] =
-            {
-                "__generic", "__init", "__subscript", "__exported", "associatedtype", "extension",
-                "interface", "property", "typealias", "func", "let", "var", "enum", "is", "as",
-                "where", "This", "no_diff", "nodiff", "differentiable", "bwd_diff", "fwd_diff",
-                "module", "import", "implementing", "public", "internal", "private", "override",
-                "dynamic_uniform", "groupshared", "ConstantBuffer", "ParameterBlock", "StructuredBuffer",
-                "Ptr", "Optional", "none", "each", "expand", "reinterpret", "spirv_asm",
-                "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
-                "float16_t", "float32_t", "float64_t", "matrix", "vector",
-            };
-            for (const char* Keyword : SlangKeywords)
-            {
-                Language.keywords.insert(Keyword);
-            }
-
-            // The HLSL definition ships keywords only, so intrinsics rendered as plain text before this.
-            static const char* const Intrinsics[] =
-            {
-                "abs", "acos", "all", "any", "asin", "atan", "atan2", "ceil", "clamp", "cos", "cosh",
-                "cross", "ddx", "ddy", "degrees", "determinant", "distance", "dot", "exp", "exp2",
-                "faceforward", "floor", "fmod", "frac", "frexp", "fwidth", "isfinite", "isinf", "isnan",
-                "ldexp", "length", "lerp", "log", "log2", "log10", "mad", "max", "min", "modf", "mul",
-                "normalize", "pow", "radians", "rcp", "reflect", "refract", "round", "rsqrt", "saturate",
-                "sign", "sin", "sincos", "sinh", "smoothstep", "sqrt", "step", "tan", "tanh", "transpose",
-                "trunc", "clip", "countbits", "firstbithigh", "firstbitlow", "reversebits", "asfloat",
-                "asint", "asuint", "f16tof32", "f32tof16", "select", "InterlockedAdd", "InterlockedOr",
-                "GroupMemoryBarrierWithGroupSync", "AllMemoryBarrierWithGroupSync",
-                "WaveActiveSum", "WaveActiveMax", "WaveActiveMin", "WaveActiveCountBits",
-                "WavePrefixCountBits", "WaveReadLaneFirst", "WaveIsFirstLane", "WaveGetLaneIndex",
-            };
-            for (const char* Intrinsic : Intrinsics)
-            {
-                Language.identifiers.insert(Intrinsic);
-            }
-
-            // The compiler substitutes these around the node, so they are in scope whether declared or not.
-            static const char* const EngineIdentifiers[] =
-            {
-                "MaterialIndex", "EntityID", "UV0", "UV0_DDX", "UV0_DDY", "WorldPosition", "WorldNormal",
-                "WorldTangent", "ViewPosition", "VertexColor", "Material", "Inst", "ModelMatrix",
-                "SampleTexture2D", "SampleTexture2DGrad", "SampleTexture2DLevel", "SampleTexture2DArray",
-                "SampleTextureCube", "GetMaterialTexture", "GetMaterialScalar", "GetMaterialVector",
-                "GetCameraPosition", "GetCameraForward", "GetTime", "Scene",
-            };
-            for (const char* Identifier : EngineIdentifiers)
-            {
-                Language.identifiers.insert(Identifier);
-            }
-
-            bInitialized = true;
-            return Language;
-        }
-
-        // Covers pin NAMES only, since the node's own hash folds in types that cannot change a color.
+        // Covers pin names only, since the node's own hash folds in types that cannot change a color.
         uint64 HashPinNames(const CMaterialExpression_CustomSlang* Node)
         {
             uint64 Hash = 1469598103934665603ull;   // FNV-1a
@@ -704,39 +635,29 @@ namespace Lumina
 
     void FMaterialEditorTool::ConfigureCodeEditor()
     {
-        // SetTabSize is honored only while the document is empty, so it has to run before the first SetText.
-        CodeEditor.SetTabSize(4);
-        CodeEditor.SetInsertSpacesOnTabs(true);
-        CodeEditor.SetAutoIndentEnabled(true);
-        CodeEditor.SetShowLineNumbersEnabled(true);
-        CodeEditor.SetShowMatchingBrackets(true);
-        CodeEditor.SetCompletePairedGlyphs(true);
-        CodeEditor.SetShowScrollbarMiniMapEnabled(true);
-        CodeEditor.SetPalette(TextEditor::GetDarkPalette());
-
-        CodeEditorLanguage = GetSlangLanguageBase();
+        FCodeEditorSettings& Settings = CodeEditor.GetSettings();
+        Settings.TabSize = 4;
+        Settings.bInsertSpaces = true;
         CodeEditor.SetLanguage(&CodeEditorLanguage);
     }
 
     void FMaterialEditorTool::RebuildCodeEditorLanguage(const CMaterialExpression_CustomSlang* Node)
     {
-        CodeEditorLanguage = GetSlangLanguageBase();
-
         // A misspelled output is otherwise a silent no-op that only surfaces as nothing changing.
+        TVector<FCLikeLanguage::FContextSymbol> Symbols;
         if (Node != nullptr)
         {
             for (const SCustomSlangPin& Pin : Node->Inputs)
             {
-                CodeEditorLanguage.identifiers.insert(Pin.Name.c_str());
+                Symbols.push_back({ FString(Pin.Name.c_str()), "input pin" });
             }
             for (const SCustomSlangPin& Pin : Node->Outputs)
             {
-                CodeEditorLanguage.identifiers.insert(Pin.Name.c_str());
+                Symbols.push_back({ FString(Pin.Name.c_str()), "output pin, assign it" });
             }
         }
-
-        // SetLanguage raises the dirty flag that re-runs the colorizer, which picks up the new identifiers.
-        CodeEditor.SetLanguage(&CodeEditorLanguage);
+        CodeEditorLanguage.SetContextSymbols(Move(Symbols));
+        CodeEditor.InvalidateHighlight();
     }
 
     void FMaterialEditorTool::DrawCustomCodeEditor()
@@ -769,8 +690,8 @@ namespace Lumina
         {
             CodeEditorBoundNode = Node;
             RebuildCodeEditorLanguage(Node);
-            CodeEditor.SetText(std::string_view(Node->Code.c_str(), Node->Code.size()));
-            LastCodeEditorUndoIndex = CodeEditor.GetUndoIndex();
+            CodeEditor.SetText(Node->Code.View());
+            LastCodeEditorVersion = CodeEditor.GetVersion();
             CodeEditorPinSignature = HashPinNames(Node);
         }
         else if (const uint64 Signature = HashPinNames(Node); Signature != CodeEditorPinSignature)
@@ -823,35 +744,30 @@ namespace Lumina
         // Find and replace has no discoverable entry point, so it gets a button as well as its shortcut.
         if (ImGui::SmallButton(LE_ICON_MAGNIFY " Find"))
         {
-            CodeEditor.OpenFindReplaceWindow();
+            CodeEditor.OpenFind(false);
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Find / replace (Ctrl+F)");
+            ImGui::SetTooltip("Find (Ctrl+F), or find and replace (Ctrl+H)");
         }
 
         ImGui::SameLine();
-        bool bShowWhitespace = CodeEditor.IsShowWhitespacesEnabled();
-        if (ImGui::Checkbox("Whitespace", &bShowWhitespace))
-        {
-            CodeEditor.SetShowWhitespacesEnabled(bShowWhitespace);
-        }
+        ImGui::Checkbox("Whitespace", &CodeEditor.GetSettings().bShowWhitespace);
 
         ImGui::SameLine();
         if (ImGui::SmallButton("Tabs " LE_ICON_ARROW_RIGHT " Spaces"))
         {
-            CodeEditor.TabsToSpaces();
+            CodeEditor.ConvertIndentation(true);
         }
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("Converts leading tabs to spaces at the editor's tab size.");
         }
 
-        // The language name is worth showing, since the highlight includes THIS node's pin names.
-        const TextEditor::CursorPosition Cursor = CodeEditor.GetCursorPosition(0);
+        const FCodePosition Cursor = CodeEditor.GetCursor();
         FFixedString Status;
         FormatTo(Status, "{}  |  Ln {}, Col {}  |  {} lines",
-            CodeEditor.GetLanguageName().c_str(), Cursor.line + 1, Cursor.column + 1, CodeEditor.GetLineCount());
+            FString(CodeEditorLanguage.GetName()).c_str(), Cursor.Line + 1, Cursor.Column + 1, CodeEditor.GetLineCount());
 
         const float StatusWidth = ImGui::CalcTextSize(Status.c_str()).x;
         const float StatusX     = ToolbarWidth - StatusWidth;
@@ -862,18 +778,15 @@ namespace Lumina
             ImGui::TextColored(EditorColors::TextDim(), "%s", Status.c_str());
         }
 
-        // Column alignment is the point of a code view, and the proportional UI font makes it unreadable.
-        ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Mono);
-        CodeEditor.Render("##CustomSlangCode", ImGui::GetContentRegionAvail(), false);
-        ImGuiX::Font::PopFont();
+        CodeEditor.Render("##CustomSlangCode", ImGui::GetContentRegionAvail());
 
-        // The text is compared before writing, since the undo cursor also moves on undo and redo.
-        if (CodeEditor.GetUndoIndex() != LastCodeEditorUndoIndex)
+        // The text is compared before writing, since undo and redo also move the version.
+        if (CodeEditor.GetVersion() != LastCodeEditorVersion)
         {
-            LastCodeEditorUndoIndex = CodeEditor.GetUndoIndex();
+            LastCodeEditorVersion = CodeEditor.GetVersion();
 
-            const std::string Text = CodeEditor.GetText();
-            if (Node->Code.size() != Text.size() || memcmp(Node->Code.data(), Text.data(), Text.size()) != 0)
+            const FString Text = CodeEditor.GetText();
+            if (Node->Code.View() != Text.View())
             {
                 // The editor keeps its own per-keystroke undo, so the graph takes one step per typing session.
                 if (!bCodeEditOpen && NodeGraph != nullptr)
@@ -882,7 +795,7 @@ namespace Lumina
                     bCodeEditOpen = true;
                 }
 
-                Node->Code.assign(Text.c_str(), Text.size());
+                Node->Code = Text;
                 Node->NotifyValueEdited();
 
                 if (CPackage* Package = Node->GetPackage())

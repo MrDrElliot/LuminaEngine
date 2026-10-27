@@ -5,7 +5,8 @@
 
 
 #include "Core/Object/ObjectHandleTyped.h"
-#include "UI/ColorTextEdit/TextEditor.h"
+#include "UI/CodeEditor/CodeEditor.h"
+#include "UI/CodeEditor/Languages/SlangLanguage.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
@@ -105,13 +106,9 @@ namespace Lumina
         // selection; edits write straight back to the node (auto-compile picks them up).
         void DrawCustomCodeEditor();
 
-        // One-time editor options (tab size, line numbers, brackets, palette). Called from OnInitialize
-        // because SetTabSize only takes effect while the document is still empty.
         void ConfigureCodeEditor();
 
-        // Rebuilds the Slang language used by the code editor so THIS node's declared pin names color as
-        // known identifiers. The static base is shared; only the per-node names differ, which is why the
-        // tool owns a copy rather than pointing at the shared definition.
+        // Puts this node's pin names in scope, so they color and complete like the pixel pass's own locals.
         void RebuildCodeEditorLanguage(const CMaterialExpression_CustomSlang* Node);
         void OnSave() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
@@ -147,18 +144,14 @@ namespace Lumina
         size_t                          ReplacementEnd = 0;
         CEdGraphNode*                   SelectedNode = nullptr;
 
-        // Custom Slang code editor state. CodeEditorBoundNode tracks which node the buffer currently
-        // holds, so switching selection reloads instead of writing one node's text into another.
-        TextEditor                      CodeEditor;
-        // Tool-owned copy of the Slang language: the keyword/intrinsic sets are shared and static, but the
-        // declared pin names are per-node, so the definition the editor points at cannot be the shared one.
-        TextEditor::Language            CodeEditorLanguage;
+        FSlangLanguage                  CodeEditorLanguage;
+        FCodeEditor                     CodeEditor;
+        // The node whose code the buffer holds, so changing selection reloads rather than writing one node's text into another.
         CEdGraphNode*                   CodeEditorBoundNode = nullptr;
         // Pin signature the highlight was last built from; pins are edited elsewhere while this tab stays bound.
         uint64                          CodeEditorPinSignature = 0;
-        // Undo cursor at the last write-back; a change means the user actually edited the buffer,
-        // so we don't rewrite (and dirty) the package every frame.
-        size_t                          LastCodeEditorUndoIndex = 0;
+        // Buffer version at the last write-back, so only a real edit dirties the package.
+        uint64                          LastCodeEditorVersion = 0;
 
         // Open while a typing session in the code panel has unrecorded changes.
         bool                            bCodeEditOpen = false;

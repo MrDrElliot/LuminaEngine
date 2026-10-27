@@ -493,7 +493,36 @@ namespace Lumina
                 FVector3                         FallDirection            = FVector3(0.0f, -1.0f, 0.0f);
                 uint32                           NumDrops                 = 0;
                 uint32                           NumSplashes              = 0;
+                uint32                           NumFlakes                = 0;
             } Weather;
+
+            // What Weather Interactors did to the world, cleared rather than reassigned so its arrays keep their capacity.
+            struct FWeatherInteraction
+            {
+                // The field simulates while contacts disturb it and for a while after, so ripples settle rather than freeze.
+                bool                             bField                   = false;
+                // The field was idle, so its images hold stale ripples and are cleared before this frame's step.
+                bool                             bReset                   = false;
+                // The first of this frame's passes also advances the waves, rather than only taking this frame's contacts.
+                bool                             bFirstPassSteps          = false;
+                // Snow lies on the ground, so prints fade over minutes rather than seconds.
+                bool                             bSnow                    = false;
+                uint32                           Passes                   = 0;
+                // Images the first pass reads and the last one writes.
+                uint32                           InputImage               = 0;
+                uint32                           OutputImage              = 0;
+                uint32                           Resolution               = 0;
+                float                            TexelWorld               = 0.0f;
+                FIntVector2                      OriginTexel              = FIntVector2(0);
+                // Texels the window moved since the last frame, which the first pass reads its input through.
+                FIntVector2                      Shift                    = FIntVector2(0);
+                uint32                           Serial                   = 0;
+                TVector<FWeatherContactGPU>      Contacts;
+                TVector<FWeatherImpactGPU>       Impacts;
+                TVector<FUIntVector2>            InteractorTable;
+                TVector<FVector4>                InteractorRecords;
+                TVector<FWeatherWaterBodyGPU>    WaterBodies;
+            } WeatherInteraction;
 
             // Splines uploaded this frame. Headers index into the two shared arrays; everything is world
             // space (SSplineComponent authors in entity-local space and the extract bakes the transform in).
@@ -1037,6 +1066,7 @@ namespace Lumina
         void ExtractSkyLight(ECS::FRegistry& Registry, FFrameData& Frame, const SEnvironmentComponent* ActiveEnv);
         void ExtractFog(ECS::FRegistry& Registry, FFrameData& Frame);
         void ExtractWeather(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractWeatherInteraction(ECS::FRegistry& Registry, FFrameData& Frame);
         void ApplyWeatherToClouds(FFrameData& Frame);
 
         // Render-phase half: buffer resize + upload commands; reads extract-phase state.
@@ -1670,10 +1700,31 @@ namespace Lumina
         FSceneBuffer                                        RainSplashBuffer   { "Weather.Splashes", 1.0f, EBufferInit::Zeroed };
         uint32                                              RainSplashCursor   = 0;
         uint32                                              WeatherIdleFrames  = 0;
+        FSceneBuffer                                        SnowVisibleBuffer  { "Weather.SnowVisible", 1.25f };
+        FSceneBuffer                                        SnowArgsBuffer     { "Weather.SnowArgs", 1.0f };
+
+        // Ping-pong ripple, foam and trail field the interaction pass steps around the camera.
+        FSceneImage                                         WeatherFieldImages[2];
+        FSceneBuffer                                        WeatherSplashBuffer { "Weather.InteractionSplashes", 1.0f, EBufferInit::Zeroed };
+        uint32                                              WeatherSplashCursor        = 0;
+        // Frames since the last splash spawned, so the draw stops once every splash has run its course.
+        uint32                                              WeatherSplashQuietFrames   = ~0u;
+        uint32                                              WeatherFieldSimulatedSerial = 0;
+
+        // Kept by the extract, which decides each frame's passes, images and window ahead of the render.
+        uint32                                              WeatherFieldParity         = 0;
+        uint32                                              WeatherFieldQuietFrames    = ~0u;
+        uint32                                              WeatherFieldSerial         = 0;
+        float                                               WeatherFieldAccumulator    = 0.0f;
+        FIntVector2                                         WeatherFieldOriginTexel    = FIntVector2(0);
+        uint32                                              WeatherFieldResolution     = 0;
+        float                                               WeatherFieldTexelWorld     = 0.0f;
 
         void PublishWeatherGlobals(FSceneGlobalData& Globals);
         void WeatherOcclusionPass(RHI::FCmdListH CL);
-        void RainPass(RHI::FCmdListH CL);
+        void WeatherInteractionPass(RHI::FCmdListH CL);
+        // Rain streaks and splashes, snow flakes and interaction splashes, all in one pass over the HDR target.
+        void WeatherDrawPass(RHI::FCmdListH CL);
         void ReleaseIdleWeatherResources();
 
         FMatrix4                                            CascadeHZBViewProjection[NumCascades] = {};

@@ -8,6 +8,7 @@
 
 namespace Lumina
 {
+    class FEditorTool;
     class CObject;
     class CClass;
     class CPackage;
@@ -33,6 +34,8 @@ namespace Lumina
         virtual void OpenFileEditor(FStringView VirtualPath) = 0;
 
         virtual void OpenScriptEditor(FStringView ScriptPath) = 0;
+        // The open file editor for VirtualPath, or null.
+        virtual FEditorTool* FindFileEditor(FStringView VirtualPath) const = 0;
 
         /** Reveals a VFS path in the Content Browser: shows the panel, navigates to the containing
          *  folder, then selects and scrolls to the item. */

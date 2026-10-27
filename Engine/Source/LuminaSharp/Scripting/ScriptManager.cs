@@ -65,6 +65,9 @@ internal sealed class ScriptManager
     /// <summary>Total managed types in the current generation's assembly (for editor diagnostics).</summary>
     public int LoadedTypeCount { get; private set; }
 
+    // Answers the editor's code completion, hover and diagnostics for scripts, from the units the last load was given.
+    public ScriptLanguageService Language { get; } = new();
+
     // Roslyn's cached references and the on-disk compile keys are shared, so two builds must never overlap.
     private static readonly object BuildLock = new();
 

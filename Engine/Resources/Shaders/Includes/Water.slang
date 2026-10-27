@@ -15,6 +15,7 @@ struct FGPUWater
     float4     FoamAbsorb;       // x = shoreline foam width, y = crest foam amount, z = depth fade, w = absorption
     float4     SSRSpecOpacity;   // x = ssr max dist, y = ssr step count, z = specular intensity, w = opacity
     float4     DetailParams;     // x = detail tile size in meters, y = detail scroll speed, z = foam tiling, w = foam intensity
+    float4     InteractionParams; // x = interaction ripple scale, y = interaction foam scale, z = rain ripple scale, w = unused
     FTexture2D DetailNormal;
     FTexture2D FoamTexture;
     uint       GridResolution;

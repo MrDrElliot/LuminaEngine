@@ -24,55 +24,6 @@ namespace Lumina
         (void)Context.CreateView<SWaterComponent, STransformComponent>();
     }
 
-    static float WaterGerstnerHeight(const SWaterComponent& W, float WorldX, float WorldZ, float Time)
-    {
-        float WindLen = Math::Sqrt(W.WindDirection.x * W.WindDirection.x + W.WindDirection.y * W.WindDirection.y);
-        FVector2 Wind = (WindLen > 1e-4f)
-            ? FVector2(W.WindDirection.x / WindLen, W.WindDirection.y / WindLen)
-            : FVector2(1.0f, 0.0f);
-
-        // The geometry waves of GetWaterWave in Includes/Water.slang, or floating bodies drift off the drawn surface.
-        constexpr float MaxSteepness = 0.42f;
-        constexpr float LengthRatio    = 0.86f;
-        constexpr float AmplitudePower = 1.25f;
-        const int       Count          = Math::Clamp(W.WaveCount, 1, 8) * 3;
-        const float     WindFactor   = 0.5f + 0.5f * Math::Clamp(W.WindSpeed * 0.1f, 0.0f, 1.0f);
-
-        float Y = 0.0f;
-        for (int i = 0; i < Count; ++i)
-        {
-            const float Ratio  = Math::Pow(LengthRatio, (float)i);
-            const float Spread = 1.0f + 1.6f * Math::Clamp((float)i / 15.0f, 0.0f, 1.0f);
-            const float Hashed = (float)i * 0.6180339887f + 0.13f;
-            const float Angle  = (Hashed - Math::Floor(Hashed) - 0.5f) * Spread;
-            const float ca = Math::Cos(Angle);
-            const float sa = Math::Sin(Angle);
-            const float Dx = Wind.x * ca - Wind.y * sa;
-            const float Dz = Wind.x * sa + Wind.y * ca;
-
-            const float k       = Math::TwoPi<float>() / (Math::Max(W.WaveLength, 0.5f) * Ratio);
-            const float Omega   = Math::Sqrt(9.81f * k) * WindFactor;
-            const float PhaseH  = (float)i * 0.7548776662f + 0.31f;
-            const float Phase   = (PhaseH - Math::Floor(PhaseH)) * Math::TwoPi<float>();
-            const float Phi     = k * (Dx * WorldX + Dz * WorldZ) - Omega * Time + Phase;
-            Y += Math::Min(W.WaveAmplitude * Math::Pow(Ratio, AmplitudePower), MaxSteepness / k) * Math::Sin(Phi);
-        }
-        return Y;
-    }
-
-    // Outward water-surface normal from the Gerstner gradient, so a body tilts with the slope.
-    static FVector3 WaterGerstnerNormal(const SWaterComponent& W, float WorldX, float WorldZ, float Time)
-    {
-        constexpr float Eps = 0.5f;
-        const float HxL = WaterGerstnerHeight(W, WorldX - Eps, WorldZ, Time);
-        const float HxR = WaterGerstnerHeight(W, WorldX + Eps, WorldZ, Time);
-        const float HzL = WaterGerstnerHeight(W, WorldX, WorldZ - Eps, Time);
-        const float HzR = WaterGerstnerHeight(W, WorldX, WorldZ + Eps, Time);
-        const float dHdx = (HxR - HxL) / (2.0f * Eps);
-        const float dHdz = (HzR - HzL) / (2.0f * Eps);
-        return Math::Normalize(FVector3(-dHdx, 1.0f, -dHdz));
-    }
-
     void SBuoyancySystem::OnUpdate(const SSystemContext& Context)
     {
 
@@ -134,9 +85,9 @@ namespace Lumina
                 }
 
                 // Submerged volume comes from the body bounds against the fluid plane.
-                const float SurfaceY = Plane->SurfaceY + WaterGerstnerHeight(*Plane->W, BodyPos.x, BodyPos.z, Time);
+                const float SurfaceY = Plane->SurfaceY + WaterWaveHeight(*Plane->W, BodyPos.x, BodyPos.z, Time);
                 const FVector3 SurfacePos(BodyPos.x, SurfaceY, BodyPos.z);
-                const FVector3 SurfaceNormal = WaterGerstnerNormal(*Plane->W, BodyPos.x, BodyPos.z, Time);
+                const FVector3 SurfaceNormal = WaterWaveNormal(*Plane->W, BodyPos.x, BodyPos.z, Time);
 
                 Context.ApplyBuoyancyImpulse(Entity, SurfacePos, SurfaceNormal,
                     B.Buoyancy, B.LinearDrag, B.AngularDrag, FVector3(0.0f), Dt);

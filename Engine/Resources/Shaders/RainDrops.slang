@@ -9,8 +9,8 @@ struct FPushConstants
     GPUSpan<uint>  Args;
     uint           NumDrops;
     float          Exposure;
+    uint           bSnow;
     uint           _Pad0;
-    uint           _Pad1;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -39,9 +39,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     const FWeatherData W      = GetWeather();
     const float3       Camera = GetCameraPosition();
-    const FRainDrop    Drop   = EvaluateRainDrop(W, Index, Camera);
+    const bool         bSnow  = Pass().bSnow != 0u;
+    const FRainDrop    Drop   = bSnow ? EvaluateSnowFlake(W, Index, Camera) : EvaluateRainDrop(W, Index, Camera);
 
-    const float Radius = W.RainTint.w;
+    const float Radius = bSnow ? W.SnowLook.z : W.RainTint.w;
     const float Dist   = length(Drop.Position - Camera);
     if (Dist > Radius || Dist < kRainNearClip)
     {

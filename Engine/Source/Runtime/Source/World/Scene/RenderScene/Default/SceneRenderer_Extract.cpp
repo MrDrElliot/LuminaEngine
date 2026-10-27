@@ -1381,6 +1381,7 @@ namespace Lumina
 
         // Takes a shadow slot for the rain occlusion view, so it runs before the counter is read back.
         ExtractWeather(Registry, Frame);
+        ExtractWeatherInteraction(Registry, Frame);
 
         // Same overshoot as LightCount, and this is the last writer of the shadow counter.
         NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),

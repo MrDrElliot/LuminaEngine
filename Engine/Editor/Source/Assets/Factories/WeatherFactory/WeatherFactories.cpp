@@ -13,6 +13,11 @@ namespace Lumina
         return NewObject<CRainWeatherLayer>(Package, Name);
     }
 
+    CObject* CSnowWeatherLayerFactory::CreateNew(const FName& Name, CPackage* Package)
+    {
+        return NewObject<CSnowWeatherLayer>(Package, Name);
+    }
+
     CObject* CCloudWeatherLayerFactory::CreateNew(const FName& Name, CPackage* Package)
     {
         return NewObject<CCloudWeatherLayer>(Package, Name);

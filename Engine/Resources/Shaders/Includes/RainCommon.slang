@@ -65,6 +65,8 @@ FRainDrawArgs* RainArgs() { return GetPassArgs<FRainDrawArgs>(); }
 
 static const uint kRainKindStreak = 0u;
 static const uint kRainKindRing   = 1u;
+static const uint kRainKindCrown  = 2u;
+static const uint kRainKindFlake  = 3u;
 
 struct FRainVertexOutput
 {

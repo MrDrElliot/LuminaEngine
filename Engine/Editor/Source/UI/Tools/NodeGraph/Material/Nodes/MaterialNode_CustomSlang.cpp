@@ -441,7 +441,7 @@ namespace Lumina
 
         if (Outputs.empty())
         {
-            OutProblems.push_back("No outputs declared -- add at least one output for this node to produce a value.");
+            OutProblems.push_back("No outputs declared, add at least one output for this node to produce a value.");
         }
 
         FString Directive;

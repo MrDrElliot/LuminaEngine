@@ -32,6 +32,27 @@ namespace Lumina
         static FRainParams Lerp(const FRainParams& A, const FRainParams& B, float T);
     };
 
+    struct FSnowParams
+    {
+        float Intensity        = 0.0f;
+        float FlakeDensity     = 5.0f;
+        float FlakeSize        = 16.0f;
+        float SizeVariation    = 0.6f;
+        float FallSpeed        = 1.2f;
+        float Flutter          = 0.5f;
+        float WindInfluence    = 1.2f;
+        float Brightness       = 1.5f;
+        float Opacity          = 0.9f;
+        float Radius           = 20.0f;
+        float AccumulationRate = 0.015f;
+        float MeltRate         = 0.004f;
+        float MaxCover         = 1.0f;
+        float CoverScale       = 3.0f;
+        float PrintDepth       = 1.0f;
+
+        static FSnowParams Lerp(const FSnowParams& A, const FSnowParams& B, float T);
+    };
+
     struct FCloudWeatherParams
     {
         // How much these replace the cloud component's own values, so a preset without clouds leaves them alone.
@@ -60,6 +81,7 @@ namespace Lumina
     struct FWeatherParams
     {
         FRainParams         Rain;
+        FSnowParams         Snow;
         FCloudWeatherParams Clouds;
         FWindParams         Wind;
 

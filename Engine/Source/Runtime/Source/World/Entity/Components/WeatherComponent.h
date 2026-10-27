@@ -29,5 +29,11 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Weather|Surfaces", ClampMin = 0.0f, ClampMax = 1.0f, EditCondition = "bOverrideWetness")
         float Wetness = 1.0f;
+
+        PROPERTY(Editable, Category = "Weather|Surfaces", ToolTip = "Holds the snow cover at a fixed value instead of building and melting over time.")
+        bool bOverrideSnowCover = false;
+
+        PROPERTY(Editable, Category = "Weather|Surfaces", ClampMin = 0.0f, ClampMax = 1.0f, EditCondition = "bOverrideSnowCover")
+        float SnowCover = 1.0f;
     };
 }

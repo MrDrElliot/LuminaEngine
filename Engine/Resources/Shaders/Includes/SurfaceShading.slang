@@ -605,7 +605,7 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
         ApplyDBuffer(G.BaseColor, G.WorldNormal, G.Roughness, G.Metallic, G.AmbientOcclusion, G.Emissive, DBufferUV);
     }
 
-    ApplyRainWetness(G, mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz, normalize(Input.NormalWS.xyz));
+    ApplyWeatherSurface(G, mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz, normalize(Input.NormalWS.xyz), Input.EntityID);
 #endif
 
 #ifndef SHADING_COMPUTE

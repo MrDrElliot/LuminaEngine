@@ -18,10 +18,12 @@ namespace Lumina
 
         float          Wetness = 0.0f;
         float          PuddleLevel = 0.0f;
+        float          SnowCover = 0.0f;
 
         // Kept in double and wrapped by the renderer, so the drop field neither loses precision nor jumps.
         double         Time = 0.0;
         double         FallDistance = 0.0;
+        double         SnowFallDistance = 0.0;
         double         RainWindX = 0.0;
         double         RainWindZ = 0.0;
     };

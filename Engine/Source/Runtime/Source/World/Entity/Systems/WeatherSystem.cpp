@@ -11,6 +11,7 @@ namespace Lumina
     namespace
     {
         constexpr float kMaxStepSeconds = 0.25f;
+        constexpr float kSnowingThreshold = 0.01f;
 
         // Smooth, aperiodic swing in [-1, 1] from three detuned sines.
         float GustNoise(double T)
@@ -117,6 +118,21 @@ namespace Lumina
         State->FallDistance += (double)State->Params.Rain.FallSpeed * DeltaTime;
         State->RainWindX    += (double)State->Wind.x * DeltaTime;
         State->RainWindZ    += (double)State->Wind.y * DeltaTime;
+        State->SnowFallDistance += (double)State->Params.Snow.FallSpeed * DeltaTime;
+
+        const FSnowParams& Snow = State->Params.Snow;
+        if (Weather->bOverrideSnowCover)
+        {
+            State->SnowCover = Weather->SnowCover;
+        }
+        else if (Snow.Intensity > kSnowingThreshold)
+        {
+            State->SnowCover = MoveToward(State->SnowCover, Snow.MaxCover, Snow.AccumulationRate * Snow.Intensity * DeltaTime);
+        }
+        else
+        {
+            State->SnowCover = MoveToward(State->SnowCover, 0.0f, Snow.MeltRate * DeltaTime);
+        }
 
         const FRainParams& Rain = State->Params.Rain;
         if (Weather->bOverrideWetness)

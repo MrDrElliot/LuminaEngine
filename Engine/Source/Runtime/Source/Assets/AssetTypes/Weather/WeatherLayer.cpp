@@ -36,6 +36,27 @@ namespace Lumina
         return R;
     }
 
+    FSnowParams FSnowParams::Lerp(const FSnowParams& A, const FSnowParams& B, float T)
+    {
+        FSnowParams R;
+        R.Intensity        = LerpF(A.Intensity, B.Intensity, T);
+        R.FlakeDensity     = LerpF(A.FlakeDensity, B.FlakeDensity, T);
+        R.FlakeSize        = LerpF(A.FlakeSize, B.FlakeSize, T);
+        R.SizeVariation    = LerpF(A.SizeVariation, B.SizeVariation, T);
+        R.FallSpeed        = LerpF(A.FallSpeed, B.FallSpeed, T);
+        R.Flutter          = LerpF(A.Flutter, B.Flutter, T);
+        R.WindInfluence    = LerpF(A.WindInfluence, B.WindInfluence, T);
+        R.Brightness       = LerpF(A.Brightness, B.Brightness, T);
+        R.Opacity          = LerpF(A.Opacity, B.Opacity, T);
+        R.Radius           = LerpF(A.Radius, B.Radius, T);
+        R.AccumulationRate = LerpF(A.AccumulationRate, B.AccumulationRate, T);
+        R.MeltRate         = LerpF(A.MeltRate, B.MeltRate, T);
+        R.MaxCover         = LerpF(A.MaxCover, B.MaxCover, T);
+        R.CoverScale       = LerpF(A.CoverScale, B.CoverScale, T);
+        R.PrintDepth       = LerpF(A.PrintDepth, B.PrintDepth, T);
+        return R;
+    }
+
     FCloudWeatherParams FCloudWeatherParams::Lerp(const FCloudWeatherParams& A, const FCloudWeatherParams& B, float T)
     {
         FCloudWeatherParams R;
@@ -66,6 +87,7 @@ namespace Lumina
     {
         FWeatherParams R;
         R.Rain   = FRainParams::Lerp(A.Rain, B.Rain, T);
+        R.Snow   = FSnowParams::Lerp(A.Snow, B.Snow, T);
         R.Clouds = FCloudWeatherParams::Lerp(A.Clouds, B.Clouds, T);
         R.Wind   = FWindParams::Lerp(A.Wind, B.Wind, T);
         return R;
@@ -119,5 +141,25 @@ namespace Lumina
         W.Gustiness       = Gustiness;
         W.GustFrequency   = GustFrequency;
         W.CloudSpeedScale = CloudSpeedScale;
+    }
+
+    void CSnowWeatherLayer::ApplyTo(FWeatherParams& Params) const
+    {
+        FSnowParams& S = Params.Snow;
+        S.Intensity        = Intensity;
+        S.FlakeDensity     = FlakeDensity;
+        S.FlakeSize        = FlakeSize;
+        S.SizeVariation    = SizeVariation;
+        S.FallSpeed        = FallSpeed;
+        S.Flutter          = Flutter;
+        S.WindInfluence    = WindInfluence;
+        S.Brightness       = Brightness;
+        S.Opacity          = Opacity;
+        S.Radius           = Radius;
+        S.AccumulationRate = AccumulationRate;
+        S.MeltRate         = MeltRate;
+        S.MaxCover         = MaxCover;
+        S.CoverScale       = CoverScale;
+        S.PrintDepth       = PrintDepth;
     }
 }

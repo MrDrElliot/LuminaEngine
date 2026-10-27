@@ -1048,9 +1048,25 @@ struct FWeatherData
     float      OcclusionTexelWorld;
     uint       NumDrops;
     uint       DebugMode;
+    // The ripple, foam and trail field around the camera, invalid while nothing disturbs the world.
+    FTexture2D InteractionField;
+    uint       InteractorTableMask;
     uint       _Pad0;
-    uint       _Pad1;
-    uint       _Pad2;
+    // xy = world XZ of the field's first texel corner, z = one over the field width in meters, w = texel size in meters.
+    float4     FieldParams;
+    // x = ripple normal gain, y = foam gain, z = trail gain, w = unused.
+    float4     FieldShading;
+    // x = intensity, y = flakes per cubic meter, z = flake size in mm, w = size variation.
+    float4     Snow;
+    // x = fall speed, y = flutter in meters, z = wind influence, w = wrapped vertical fall offset.
+    float4     SnowMotion;
+    // x = brightness, y = opacity, z = flake radius around the camera, w = flake field tile size.
+    float4     SnowLook;
+    // x = cover, y = drift pattern size in meters, z = print depth, w = unused.
+    float4     SnowSurface;
+    GPUSpan<uint2>  InteractorTable;
+    // x = root height, y = rain soak, z = water line above the root, w = wetness under the water line.
+    GPUSpan<float4> Interactors;
 };
 
 struct FSceneGlobalData

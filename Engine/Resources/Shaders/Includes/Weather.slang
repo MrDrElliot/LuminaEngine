@@ -3,23 +3,7 @@
 #include "ShadowSampling.slang"
 #include "LocalIrradiance.slang"
 #include "GBuffer.slang"
-
-bool HasWeather() { return !Scene().Weather.IsEmpty(); }
-
-FWeatherData GetWeather() { return Scene().Weather.GetAligned(0u); }
-
-uint WeatherHash(uint V)
-{
-    uint State = V * 747796405u + 2891336453u;
-    uint Word  = ((State >> ((State >> 28u) + 4u)) ^ State) * 277803737u;
-    return (Word >> 22u) ^ Word;
-}
-
-float WeatherRandom(inout uint Seed)
-{
-    Seed = WeatherHash(Seed);
-    return float(Seed >> 8u) * (1.0 / 16777216.0);
-}
+#include "WeatherInteraction.slang"
 
 // Integer hashed so neighboring cells agree exactly on their shared corners, which the sine hash cannot promise.
 float WeatherCellValue(int2 Cell)
@@ -191,6 +175,40 @@ FRainDrop EvaluateRainDrop(FWeatherData W, uint Index, float3 Camera)
     return Drop;
 }
 
+// One flake of the snow field, which drifts on the wind and spirals as it tumbles instead of falling straight.
+FRainDrop EvaluateSnowFlake(FWeatherData W, uint Index, float3 Camera)
+{
+    uint Seed = Index * 4u + 0x85EBCA6Bu;
+    const float3 U        = float3(WeatherRandom(Seed), WeatherRandom(Seed), WeatherRandom(Seed));
+    const float  SizeRand = WeatherRandom(Seed);
+    const float  WindRand = WeatherRandom(Seed);
+    const float  Phase    = WeatherRandom(Seed) * 6.2831853;
+    const float  Rate     = 0.6 + 0.9 * WeatherRandom(Seed);
+
+    const float Tile      = W.SnowLook.w;
+    const float SizeScale = max(1.0 + (SizeRand * 2.0 - 1.0) * W.Snow.w * 0.6, 0.3);
+    // Bigger flakes catch more air, so they fall only a little faster than small ones.
+    const float SpeedRatio = 0.75 + 0.25 * SizeScale;
+    const float Response   = (0.8 + 0.4 * WindRand) * W.SnowMotion.z;
+    const float Time       = W.Surface2.z;
+
+    const float  Angle     = Time * Rate + Phase;
+    const float  Swirl     = W.SnowMotion.y * (0.4 + 0.6 * WindRand);
+    const float2 Spiral    = Swirl * float2(cos(Angle), sin(Angle * 0.83 + Phase));
+    const float2 SpiralVel = Swirl * Rate * float2(-sin(Angle), 0.83 * cos(Angle * 0.83 + Phase));
+
+    const float3 Offset = float3(W.RainWind.x * Response + Spiral.x,
+                                 -W.SnowMotion.w * SpeedRatio,
+                                 W.RainWind.y * Response + Spiral.y);
+    const float3 Base   = U * Tile + Offset;
+
+    FRainDrop Flake;
+    Flake.Position  = Base + Tile * round((Camera - Base) / Tile);
+    Flake.Velocity  = float3(W.Motion.x * Response + SpiralVel.x, -W.SnowMotion.x * SpeedRatio, W.Motion.y * Response + SpiralVel.y);
+    Flake.SizeScale = SizeScale;
+    return Flake;
+}
+
 // Keeps a drop beside a light finite once packed to half floats.
 static const float kRainMaxLight = 30000.0;
 
@@ -245,8 +263,41 @@ float2 RainRipples(float2 Position, float Time, float Rain)
     return Slope * 0.3;
 }
 
-// Darkens, glosses and floods the surface by how wet the weather has made it and how exposed it is.
-void ApplyRainWetness(inout FGBufferData G, float3 WorldPos, float3 GeoNormal)
+// Standing water an open patch holds, from the puddle pattern, how far the ground dips there and how flooded the weather has left it.
+float PuddleAmountAt(FWeatherData W, float3 WorldPos, float Flat, float Depression, float Exposure)
+{
+    if (Flat <= 0.0 || W.Surface.y <= 0.0 || W.Surface.z <= 0.0)
+    {
+        return 0.0;
+    }
+
+    // Water finds the low spots first, so a few centimeters of dip counts like a much higher patch of noise.
+    constexpr float kPoolingPerMeter = 12.0;
+    const float2 Pattern   = WorldPos.xz / max(W.Surface.w, 0.25);
+    const float  Height    = PuddleHeight(Pattern) + clamp(Depression * kPoolingPerMeter, -0.3, 0.3);
+    const float  Threshold = 1.0 - W.Surface.z * W.Surface.y;
+    return smoothstep(Threshold, Threshold + 0.06, Height) * Flat * Exposure;
+}
+
+// Snow lying on what faces the sky, thinner on slopes and broken into drifts while the cover is still building.
+float SnowCoverAt(FWeatherData W, float3 WorldPos, float Up, float Exposure)
+{
+    const float Cover = W.SnowSurface.x;
+    if (Cover <= 0.0 || Exposure <= 0.0)
+    {
+        return 0.0;
+    }
+
+    const float Facing = saturate((Up - 0.3) / 0.4);
+    const float Drift  = PuddleHeight(WorldPos.xz / max(W.SnowSurface.y, 0.25));
+    return saturate((Cover * 1.3 - (1.0 - Drift) * 0.6) * 2.5) * Facing * Exposure;
+}
+
+// How deep a fully pressed print reads, in meters of the snow it packed down.
+static const float kSnowPrintDepth = 0.05;
+
+// Darkens, glosses and floods the surface by how wet the weather and whatever waded through it have made it.
+void ApplyWeatherSurface(inout FGBufferData G, float3 WorldPos, float3 GeoNormal, uint EntityID)
 {
     if (!HasWeather() || IsUnlit(G))
     {
@@ -256,16 +307,21 @@ void ApplyRainWetness(inout FGBufferData G, float3 WorldPos, float3 GeoNormal)
     const FWeatherData W = GetWeather();
     const float Wetness     = W.Surface.x;
     const float PuddleLevel = W.Surface.y;
-    if (Wetness <= 0.001 && PuddleLevel <= 0.001)
+    const FInteractorWetness Entity = InteractorWetness(W, EntityID, WorldPos.y);
+    const bool bWeatherWet = Wetness > 0.001 || PuddleLevel > 0.001 || W.SnowSurface.x > 0.001;
+    if (!bWeatherWet && Entity.Wetness <= 0.0 && W.DebugMode == 0u)
     {
         return;
     }
 
-    const float Exposure = RainExposure(W, WorldPos, true);
-    if (Exposure <= 0.0 && W.DebugMode == 0u)
+    const float Exposure = bWeatherWet ? RainExposure(W, WorldPos, true) : 0.0;
+    if (Exposure <= 0.0 && Entity.Wetness <= 0.0 && W.DebugMode == 0u)
     {
         return;
     }
+
+    // Dry ground shows nothing of the field, so it is only read where the weather left water to ripple.
+    const FWeatherFieldSample Field = bWeatherWet || W.DebugMode != 0u ? SampleWeatherField(W, WorldPos.xz) : EmptyWeatherField();
 
     const float Up   = GeoNormal.y;
     const float Rain = W.RainDrops.x;
@@ -285,6 +341,13 @@ void ApplyRainWetness(inout FGBufferData G, float3 WorldPos, float3 GeoNormal)
         Wet = max(Wet, Wetness * Exposure * Steep * Rivulet * W.Surface2.y);
     }
 
+    // Soaked in the rain or waded through water, which stays with the entity under cover too.
+    Wet = max(Wet, Entity.Wetness);
+
+    // Feet press wet ground into darker prints that fade as the field forgets them.
+    const float Print = Field.Trail * W.FieldShading.z * Wetness * Exposure;
+    Wet = max(Wet, saturate(Print) * 0.8);
+
     // Porous rough dielectrics drink water and darken into richer color, smooth metals only gain a film.
     const float  Porosity = saturate((G.Roughness - 0.2) * 1.6) * (1.0 - G.Metallic);
     const float3 Soaked   = G.BaseColor * lerp(0.85, 0.4, Porosity);
@@ -298,7 +361,9 @@ void ApplyRainWetness(inout FGBufferData G, float3 WorldPos, float3 GeoNormal)
     float  Flat       = saturate((Up - 0.9) / 0.08);
     float3 WaterUp    = float3(0.0, 1.0, 0.0);
     float  Depression = 0.0;
-    if (Up > 0.6 && PuddleLevel > 0.0 && W.Surface.z > 0.0)
+    // Characters and props carrying an interactor never hold standing water on themselves.
+    const bool bCanPool = !Entity.bFound && Up > 0.6 && PuddleLevel > 0.0 && W.Surface.z > 0.0;
+    if (bCanPool)
     {
         // Bumpy meshes tilt every triangle, so where the map knows the ground, its smoothed slope decides instead.
         const FRainGroundShape Ground = RainGroundShape(W, WorldPos);
@@ -308,26 +373,43 @@ void ApplyRainWetness(inout FGBufferData G, float3 WorldPos, float3 GeoNormal)
             WaterUp    = Ground.Normal;
             Depression = Ground.Depression;
         }
+        Puddle = PuddleAmountAt(W, WorldPos, Flat, Depression, Exposure);
     }
 
-    if (Flat > 0.0 && PuddleLevel > 0.0 && W.Surface.z > 0.0)
+    if (Puddle > 0.0)
     {
-        // Water finds the low spots first, so a few centimeters of dip counts like a much higher patch of noise.
-        constexpr float kPoolingPerMeter = 12.0;
-        const float2 Pattern   = WorldPos.xz / max(W.Surface.w, 0.25);
-        const float  Height    = PuddleHeight(Pattern) + clamp(Depression * kPoolingPerMeter, -0.3, 0.3);
-        const float  Threshold = 1.0 - W.Surface.z * PuddleLevel;
-        Puddle = smoothstep(Threshold, Threshold + 0.06, Height) * Flat * Exposure;
-
         G.Roughness    = lerp(G.Roughness, 0.03, Puddle);
         G.Metallic     = lerp(G.Metallic, 0.0, Puddle);
         G.Specular     = lerp(G.Specular, 0.25, Puddle);
         G.WorldNormal  = normalize(lerp(G.WorldNormal, WaterUp, Puddle));
     }
 
+    const float Snow = Entity.bFound ? 0.0 : SnowCoverAt(W, WorldPos, Up, Exposure);
+    if (Snow > 0.0)
+    {
+        // Feet pack the snow into firmer, grayer prints and press a dent into it.
+        const float  Pressed = saturate(Field.Trail * W.SnowSurface.z);
+        const float  Grain   = 0.94 + 0.06 * WeatherValueNoise(WorldPos.xz * 0.9);
+        const float3 Albedo  = lerp(float3(0.9, 0.92, 0.95), float3(0.6, 0.64, 0.7), Pressed) * Grain;
+        G.BaseColor = lerp(G.BaseColor, Albedo, Snow);
+        G.Roughness = lerp(G.Roughness, lerp(0.75, 0.45, Pressed), Snow);
+        G.Metallic  = lerp(G.Metallic, 0.0, Snow);
+        G.Specular  = lerp(G.Specular, 0.5, Snow);
+
+        // Deep cover buries the shape beneath, thin cover only softens it, and the snow's own surface is gently lumpy.
+        const float  Bury  = lerp(0.6, 0.95, W.SnowSurface.x);
+        const float2 Lumps = float2(WeatherValueNoise(WorldPos.xz * 2.7), WeatherValueNoise(WorldPos.xz * 2.7 + 19.1)) - 0.5;
+        float3 SnowNormal = normalize(lerp(G.WorldNormal, float3(0.0, 1.0, 0.0), Bury));
+        SnowNormal = normalize(SnowNormal + float3(Lumps.x, 0.0, Lumps.y) * 0.12
+                             + float3(Field.TrailSlope.x, 0.0, Field.TrailSlope.y) * (kSnowPrintDepth * W.SnowSurface.z));
+        G.WorldNormal = normalize(lerp(G.WorldNormal, SnowNormal, Snow));
+    }
+
     if (W.DebugMode != 0u)
     {
-        const float Term = W.DebugMode == 1u ? Exposure : W.DebugMode == 2u ? Flat : W.DebugMode == 3u ? Puddle : Wet;
+        const float RippleTerm = saturate(length(Field.Slope) * 4.0);
+        const float Term = W.DebugMode == 1u ? Exposure : W.DebugMode == 2u ? Flat : W.DebugMode == 3u ? Puddle
+                         : W.DebugMode == 4u ? Wet : W.DebugMode == 5u ? RippleTerm : W.DebugMode == 6u ? saturate(max(Field.Foam, Field.Trail)) : Snow;
         G.BaseColor   = float3(Term, Term, Term);
         G.Roughness   = 1.0;
         G.Metallic    = 0.0;
@@ -336,10 +418,22 @@ void ApplyRainWetness(inout FGBufferData G, float3 WorldPos, float3 GeoNormal)
         return;
     }
 
-    const float RippleWeight = Rain * W.Surface2.x * Flat * Exposure * max(Puddle, Wet * 0.35);
+    if (Entity.bFound)
+    {
+        return;
+    }
+
+    const float RippleWeight = Rain * W.Surface2.x * Flat * Exposure * max(Puddle, Wet * 0.35) * (1.0 - Snow);
     if (RippleWeight > 0.01)
     {
         const float2 Slope = RainRipples(WorldPos.xz, Time, Rain);
         G.WorldNormal = normalize(G.WorldNormal + float3(Slope.x, 0.0, Slope.y) * RippleWeight);
+    }
+
+    // Wakes from whatever walked through, seen only where there is standing water or a film to carry them.
+    const float FieldWeight = W.FieldShading.x * Flat * max(Puddle, Wet * 0.3) * (1.0 - Snow);
+    if (FieldWeight > 0.001 && Field.Weight > 0.0)
+    {
+        G.WorldNormal = normalize(G.WorldNormal + float3(-Field.Slope.x, 0.0, -Field.Slope.y) * FieldWeight);
     }
 }

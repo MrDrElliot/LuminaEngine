@@ -164,5 +164,27 @@ namespace Lumina
         /** When enabled, entities with a Buoyancy component float on this water surface (matching the waves). */
         PROPERTY(Editable, Category = "Water|Buoyancy")
         bool bBuoyancy = false;
+
+
+        // Lets anything carrying a Weather Interactor ripple, wake, splash and foam this water as it moves through it.
+        PROPERTY(Editable, Category = "Water|Interaction")
+        bool bInteractive = true;
+
+        PROPERTY(Editable, Category = "Water|Interaction", ClampMin = 0.0f, ClampMax = 4.0f, EditCondition = "bInteractive", ToolTip = "Scales the ripples and wakes things moving through this water raise.")
+        float InteractionRippleScale = 1.0f;
+
+        PROPERTY(Editable, Category = "Water|Interaction", ClampMin = 0.0f, ClampMax = 4.0f, EditCondition = "bInteractive", ToolTip = "Scales the foam churned up behind wakes and splashes.")
+        float InteractionFoamScale = 1.0f;
+
+        PROPERTY(Editable, Category = "Water|Interaction", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Scales the rings falling rain stamps on this surface while a weather preset rains.")
+        float RainRippleScale = 1.0f;
     };
+
+    // The body's plane spans half a unit either side of its origin, so its extent is folded into the entity's XZ scale.
+    RUNTIME_API FMatrix4 WaterToWorld(const SWaterComponent& Water, const FMatrix4& EntityWorld);
+
+    // Height above the plane of the swell the water mesh carries at a world point, matching WaterDisplacement in Includes/Water.slang.
+    RUNTIME_API float WaterWaveHeight(const SWaterComponent& Water, float WorldX, float WorldZ, float Time);
+
+    RUNTIME_API FVector3 WaterWaveNormal(const SWaterComponent& Water, float WorldX, float WorldZ, float Time);
 }

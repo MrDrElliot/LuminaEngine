@@ -4,6 +4,7 @@
 #include "Includes/ShadowSampling.slang"
 #include "Includes/Fog.slang"
 #include "Includes/AerialPerspective.slang"
+#include "Includes/Weather.slang"
 
 struct PSInput
 {
@@ -86,6 +87,37 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         N = normalize(N + (T * dn.x + B * dn.y));
     }
 
+    float InteractionFoam = 0.0;
+    float RainRoughness   = 0.0;
+    if (HasWeather())
+    {
+        const FWeatherData Weather = GetWeather();
+
+        // Wakes and rings from whatever moves through this water.
+        const FWeatherFieldSample Field = SampleWeatherField(Weather, Input.BaseXZ);
+        const float FieldGain = Weather.FieldShading.x * W.InteractionParams.x;
+        if (Field.Weight > 0.0 && FieldGain > 0.0)
+        {
+            N = normalize(N + float3(-Field.Slope.x, 0.0, -Field.Slope.y) * FieldGain);
+        }
+        InteractionFoam = Field.Foam * Weather.FieldShading.y * W.InteractionParams.y;
+
+        // Rain rings fade once a ring shrinks to a few pixels, so distant water roughens instead of shimmering.
+        const float Rain = Weather.RainDrops.x;
+        if (Rain > 0.0 && W.InteractionParams.z > 0.0)
+        {
+            const float Exposure = RainExposure(Weather, Input.WorldPos, true);
+            const float Resolved = smoothstep(0.08, 0.02, Footprint);
+            const float Weight   = Rain * Weather.Surface2.x * W.InteractionParams.z * Exposure;
+            if (Weight * Resolved > 0.01)
+            {
+                const float2 Slope = RainRipples(Input.BaseXZ, Weather.Surface2.z, Rain);
+                N = normalize(N + float3(Slope.x, 0.0, Slope.y) * (Weight * Resolved));
+            }
+            RainRoughness = 0.08 * Weight;
+        }
+    }
+
     // Sub-pixel wave slope folded into roughness, which keeps the sun's glitter path coherent at distance.
     float3 dNdx = ddx(N);
     float3 dNdy = ddy(N);
@@ -94,7 +126,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
 
     float  Roughness  = W.RefractReflect.z;
     float  BaseAlpha  = max(Roughness * Roughness, 1e-4) + KernelRoughness;
-    float  SpecAlpha  = saturate(sqrt(BaseAlpha * BaseAlpha + 2.0 * Surface.FilteredVariance));
+    float  SpecAlpha  = saturate(sqrt(BaseAlpha * BaseAlpha + 2.0 * Surface.FilteredVariance) + RainRoughness);
     float  EffRough   = sqrt(SpecAlpha);
 
     float3 CameraPos = GetCameraPosition();
@@ -288,7 +320,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         float Crest       = saturate((FoamBias - Surface.Jacobian) * kFoamGain * 2.0);
         Foam += (f3 + f4 * 0.5) * Crest;
 
-        Foam = saturate(Foam * W.DetailParams.w);
+        // Wake foam is broken up by the same pattern, so it reads as churned water rather than a painted trail.
+        Foam = saturate(Foam * W.DetailParams.w + InteractionFoam * (0.4 + f3 + 0.5 * f4));
     }
     Color = lerp(Color, W.FoamColor.rgb * BodyLight, Foam);
 

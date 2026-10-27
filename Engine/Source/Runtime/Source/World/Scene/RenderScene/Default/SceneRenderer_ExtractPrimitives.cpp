@@ -740,12 +740,8 @@ namespace Lumina
 
         WaterView.ForEach([&](ECS::FEntity Entity, const SWaterComponent& Water)
         {
-            const FMatrix4 WorldMatrix = TransformStorage.Get(Entity).GetWorldMatrix();
-            const float ExtentX = Math::Max(Water.Extent.x, 0.01f);
-            const float ExtentZ = Math::Max(Water.Extent.y, 0.01f);
-
             FGPUWater Item    = {};
-            Item.WaterToWorld = Math::Scale(WorldMatrix, FVector3(ExtentX, 1.0f, ExtentZ));
+            Item.WaterToWorld = WaterToWorld(Water, TransformStorage.Get(Entity).GetWorldMatrix());
             Item.WorldToWater = Math::Inverse(Item.WaterToWorld);
 
             Item.ShallowColor = FVector4(Water.ShallowColor, 1.0f);
@@ -778,6 +774,9 @@ namespace Lumina
                                            Math::Max(Water.FoamTiling, 0.01f),
                                            Math::Max(Water.FoamIntensity, 0.0f));
 
+            Item.InteractionParams = FVector4(Water.bInteractive ? Math::Max(Water.InteractionRippleScale, 0.0f) : 0.0f,
+                                              Water.bInteractive ? Math::Max(Water.InteractionFoamScale, 0.0f) : 0.0f,
+                                              Math::Max(Water.RainRippleScale, 0.0f), 0.0f);
             Item.DetailNormalIndex = ResolveTexture(Water.DetailNormalMap);
             Item.FoamTextureIndex  = ResolveTexture(Water.FoamTexture);
             Item.GridResolution    = (uint32)Math::Clamp(Water.GridResolution, 2, 512);

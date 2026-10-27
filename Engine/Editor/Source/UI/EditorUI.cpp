@@ -167,6 +167,7 @@
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleSystemEditorTool.h"
 #include "Tools/AssetEditors/PrefabEditor/PrefabEditorTool.h"
 #include "Tools/AssetEditors/RmlUiEditor/RmlUiEditorTool.h"
+#include "Tools/AssetEditors/ScriptEditor/ScriptEditorTool.h"
 #include "Tools/AssetEditors/TextureEditor/TextureEditorTool.h"
 #include "Tools/AssetEditors/FontEditor/FontEditorTool.h"
 #include "Tools/AssetEditors/SpriteSheetEditor/SpriteSheetEditorTool.h"
@@ -1428,6 +1429,7 @@ namespace Lumina
             case EScriptEditor::VSCode:           { static FString Found = FindVSCode(); Exe = Found; break; }
             case EScriptEditor::Rider:            { static FString Found = FindRider(); Exe = Found; break; }
             case EScriptEditor::SystemDefault:    break;
+            case EScriptEditor::BuiltIn:          break;
             }
         }
 
@@ -1460,7 +1462,23 @@ namespace Lumina
 
     void FEditorUI::OpenScriptEditor(FStringView ScriptPath)
     {
+        const CScriptEditorSettings* Settings = GetDefault<CScriptEditorSettings>();
+        if (Settings->ScriptEditor == EScriptEditor::BuiltIn && Settings->CustomEditorPath.empty())
+        {
+            const FFixedString VirtualPath = VFS::ResolveToVirtualPath(ScriptPath);
+            if (!VirtualPath.empty())
+            {
+                OpenFileEditor(FStringView(VirtualPath.c_str(), VirtualPath.size()));
+                return;
+            }
+        }
         OpenScriptInExternalEditor(ScriptPath);
+    }
+
+    FEditorTool* FEditorUI::FindFileEditor(FStringView VirtualPath) const
+    {
+        const auto Found = ActiveFileTools.find(FString(VirtualPath));
+        return Found != ActiveFileTools.end() ? Found->second : nullptr;
     }
 
     namespace
@@ -1674,6 +1692,7 @@ namespace Lumina
 
         // File editors, keyed by extension (CObject-less, raw content).
         Registry.RegisterFileEditor<FRmlUiEditorTool>({ ".rml", ".rcss" }, Owner);
+        Registry.RegisterFileEditor<FScriptEditorTool>({ ".cs" }, Owner);
     }
 
     FEditorTool* FEditorUI::FindAssetEditor(CObject* Asset) const

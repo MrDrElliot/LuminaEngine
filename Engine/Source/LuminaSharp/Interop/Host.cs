@@ -375,7 +375,9 @@ public static unsafe partial class Host
 
             // A blocking load supersedes a background one, whose units may already be stale.
             DiscardPendingCompile();
-            return Scripts.LoadOrReload(ReadUnits(Units, Count)) ? 0 : 4;
+            List<ScriptAssemblyUnit> Read = ReadUnits(Units, Count);
+            Scripts.Language.SetUnits(Read);
+            return Scripts.LoadOrReload(Read) ? 0 : 4;
         }
         catch (Exception Exception)
         {
@@ -398,6 +400,7 @@ public static unsafe partial class Host
 
             DiscardPendingCompile();
             List<ScriptAssemblyUnit> Read = ReadUnits(Units, Count);
+            Scripts.Language.SetUnits(Read);
             bool bUseLastBuildOnError = Scripts.bUseLastBuildOnError;
             PendingCompile = System.Threading.Tasks.Task.Run<FCompiledGeneration?>(() =>
             {
@@ -487,6 +490,41 @@ public static unsafe partial class Host
         System.Threading.Tasks.Task<FCompiledGeneration?>? Pending = PendingCompile;
         PendingCompile = null;
         Pending?.Result?.Abandon();
+    }
+
+    // One code editor question about an open script, written to Sink as records. Returns 2 while the script's unit is still warming.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int QueryScriptLanguage(int Kind, byte* Path, int PathLength, byte* Text, int TextLength, int Position, IntPtr Sink, IntPtr Context)
+    {
+        try
+        {
+            if (Scripts == null || Sink == IntPtr.Zero)
+            {
+                return 1;
+            }
+
+            // The editor counts UTF-8 bytes and Roslyn counts UTF-16 characters.
+            int CharPosition = Text == null ? 0 : System.Text.Encoding.UTF8.GetCharCount(Text, Math.Clamp(Position, 0, TextLength));
+            string? Answer = Scripts.Language.Query((EScriptQuery)Kind, Interop.GetString(Path, PathLength), Interop.GetString(Text, TextLength), CharPosition);
+            if (Answer == null)
+            {
+                return 2;
+            }
+
+            byte[] Bytes = System.Text.Encoding.UTF8.GetBytes(Answer);
+            var Emit = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, void>)Sink;
+            fixed (byte* Data = Bytes)
+            {
+                Emit(Context, Data, Bytes.Length);
+            }
+            return 0;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            return 3;
+        }
     }
 
     [ManagedExport]

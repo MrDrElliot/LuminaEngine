@@ -18,7 +18,7 @@ namespace Lumina
         // Later layers override earlier ones of the same kind.
         FWeatherParams Resolve() const;
 
-        PROPERTY(Editable, Category = "Weather", ToolTip = "Rain, cloud and wind layers that make up this weather.")
+        PROPERTY(Editable, Category = "Weather", ToolTip = "Rain, snow, cloud and wind layers that make up this weather.")
         TVector<TStrongObjectPtr<CWeatherLayer>> Layers;
     };
 }

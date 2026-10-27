@@ -11,6 +11,8 @@
 #include "Core/Reflection/PropertyText.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Containers/StringFormat.h"
+#include "FileSystem/FileSystem.h"
 #include <imgui.h>
 
 namespace Lumina
@@ -256,17 +258,16 @@ namespace Lumina
 
     void FRmlUiEditorTool::ApplyBindingMarkers()
     {
-        CodeEditor.ClearMarkers();
+        TVector<FCodeDiagnostic> Diagnostics;
+        Diagnostics.reserve(BindingProblems.size());
         for (const RmlBinding::FProblem& Problem : BindingProblems)
         {
-            // The number carries the color and the line only a faint tint, so the marked text stays readable.
-            ImVec4 Tint = Problem.bError ? kDesignErrorColor : kDesignInfoColor;
-            const ImU32 NumberColor = ImGui::ColorConvertFloat4ToU32(Tint);
-            Tint.w = 0.14f;
-            const ImU32 LineColor = ImGui::ColorConvertFloat4ToU32(Tint);
-            const std::string_view Message(Problem.Message.c_str(), Problem.Message.size());
-            CodeEditor.AddMarker(Problem.Line - 1, NumberColor, LineColor, Message, Message);
+            FCodeDiagnostic& Diagnostic = Diagnostics.emplace_back();
+            Diagnostic.Range = { { Problem.Line - 1, 0 }, { Problem.Line, 0 } };
+            Diagnostic.Message = Problem.Message;
+            Diagnostic.Severity = Problem.bError ? ECodeSeverity::Error : ECodeSeverity::Warning;
         }
+        CodeEditor.SetExternalDiagnostics(Move(Diagnostics));
     }
 
     void FRmlUiEditorTool::PollDesignActivity()
@@ -296,106 +297,67 @@ namespace Lumina
 
     void FRmlUiEditorTool::JumpToLine(int32 Line)
     {
-        const int Target = std::max(0, std::min(CodeEditor.GetLineCount() - 1, Line - 1));
-        CodeEditor.SetCursor(Target, 0);
-        CodeEditor.ScrollToLine(Target, TextEditor::Scroll::alignMiddle);
-        CodeEditor.SetFocus();
+        CodeEditor.SetCursor({ Math::Clamp(Line, 1, CodeEditor.GetLineCount()) - 1, 0 });
+        CodeEditor.Focus();
     }
 
     void FRmlUiEditorTool::ConfigureAutoComplete()
     {
-        auto ContextOf = [this](const TextEditor::AutoCompleteState& State)
+        Language.SetStylesheetResolver([this](FStringView Href, FString& OutText)
         {
-            const std::string Line = CodeEditor.GetLineText((int)State.line);
-            const size_t End = std::min(Line.size(), State.searchTermStartIndex);
-            return RmlBinding::ClassifyCompletion(std::string_view(Line.data(), End));
-        };
+            const FString Path = Href.starts_with("/") ? FString(Href) : ParentDir + "/" + FString(Href);
+            return VFS::ReadFile(OutText, Path.View());
+        });
+        if (bIsStylesheet)
+        {
+            return;
+        }
 
-        AutoCompleteConfig.triggerOnTyping = true;
-        AutoCompleteConfig.triggerInStrings = false;
-        AutoCompleteConfig.stringTriggerFilter = [ContextOf](const TextEditor::AutoCompleteState& State)
+        // The language completes data-* attribute names itself, so the model only answers inside binding expressions.
+        FCodeCompletionSource Source;
+        Source.IsTrigger = [](char Typed, const FCodeCompletionRequest& Request)
         {
-            return ContextOf(State).Kind != RmlBinding::ECompletion::None;
+            const FStringView Prefix = Request.LinePrefix.substr(0, Request.WordStart.Column);
+            const RmlBinding::ECompletion Kind = RmlBinding::ClassifyCompletion(std::string_view(Prefix.data(), Prefix.size())).Kind;
+            return Kind != RmlBinding::ECompletion::None && Kind != RmlBinding::ECompletion::Attribute;
         };
-        AutoCompleteConfig.triggerFilter = [ContextOf](const TextEditor::AutoCompleteState& State)
+        Source.Gather = [this](const FCodeCompletionRequest& Request, TVector<FCodeCompletionItem>& Out)
         {
-            const RmlBinding::ECompletion Kind = ContextOf(State).Kind;
-            if (Kind == RmlBinding::ECompletion::Attribute)
-            {
-                // Only once the word looks like a data attribute, so typing class or id stays quiet.
-                return State.searchTerm.rfind("d", 0) == 0;
-            }
-            return Kind != RmlBinding::ECompletion::None;
+            GatherBindingCompletions(Request, Out);
         };
-        AutoCompleteConfig.callback = [this](TextEditor::AutoCompleteState& State)
-        {
-            OnAutoComplete(State);
-        };
-        CodeEditor.SetAutoCompleteConfig(bIsStylesheet ? nullptr : &AutoCompleteConfig);
+        CodeEditor.SetCompletionSource(Move(Source));
     }
 
-    void FRmlUiEditorTool::OnAutoComplete(TextEditor::AutoCompleteState& State)
+    void FRmlUiEditorTool::GatherBindingCompletions(const FCodeCompletionRequest& Request, TVector<FCodeCompletionItem>& Out)
     {
-        State.suggestions.clear();
-        State.suggestionKinds.clear();
-        State.suggestionDetails.clear();
-        State.suggestionInsertText.clear();
+        const FStringView Prefix = Request.LinePrefix.substr(0, Request.WordStart.Column);
+        const RmlBinding::FCompletionContext Context = RmlBinding::ClassifyCompletion(std::string_view(Prefix.data(), Prefix.size()));
 
-        const std::string Line = CodeEditor.GetLineText((int)State.line);
-        const size_t End = std::min(Line.size(), State.searchTermStartIndex);
-        const RmlBinding::FCompletionContext Context = RmlBinding::ClassifyCompletion(std::string_view(Line.data(), End));
-        const std::string& Term = State.searchTerm;
-
-        auto Matches = [&Term](const std::string& Candidate)
+        auto Add = [&Out](const FString& Name, ECodeCompletionKind Kind, FString Detail, FString Insert, int32 Boost)
         {
-            if (Term.empty())
-            {
-                return true;
-            }
-            return std::search(Candidate.begin(), Candidate.end(), Term.begin(), Term.end(),
-                [](char A, char B) { return std::tolower((unsigned char)A) == std::tolower((unsigned char)B); }) != Candidate.end();
-        };
-        auto Add = [&](const std::string& Name, char Kind, const std::string& Detail, const std::string& Insert)
-        {
-            if (!Matches(Name))
-            {
-                return;
-            }
-            State.suggestions.push_back(Name);
-            State.suggestionKinds.push_back(Kind);
-            State.suggestionDetails.push_back(Detail);
-            State.suggestionInsertText.push_back(Insert);
+            FCodeCompletionItem& Item = Out.emplace_back();
+            Item.Label = Name;
+            Item.Kind = Kind;
+            Item.Detail = Move(Detail);
+            Item.InsertText = Move(Insert);
+            Item.SortBoost = Boost;
         };
 
         switch (Context.Kind)
         {
-            case RmlBinding::ECompletion::Attribute:
-            {
-                // The word under the caret may already be past "data-", which the editor does not count as part of it.
-                const bool bAfterDash = End >= 5 && std::string_view(Line.data() + End - 5, 5) == "data-";
-                for (const auto& [Name, Description] : RmlBinding::KnownAttributes())
-                {
-                    const std::string Full(Name);
-                    const std::string Shown = bAfterDash ? Full.substr(5) : Full;
-                    const bool bOpenEnded = Full.back() == '-';
-                    Add(Shown, 'a', Description, bOpenEnded ? Shown : Shown + "=\"\v\"");
-                }
-                break;
-            }
             case RmlBinding::ECompletion::Model:
             {
                 for (const FUIModelInfo& Info : AvailableModels)
                 {
-                    Add(std::string(Info.Name.c_str()), 'm', std::string(Info.bScript ? "UIScript " : "ViewModel ") + Info.TypeName.c_str(), "");
+                    Add(Info.Name, ECodeCompletionKind::Module, Format("{} {}", Info.bScript ? "UIScript" : "ViewModel", Info.TypeName.c_str()), {}, 20);
                 }
                 break;
             }
             case RmlBinding::ECompletion::AliasMember:
             {
-                const FString Alias = Context.Alias;
                 for (const RmlBinding::FForScope& Scope : Bindings.ForScopes)
                 {
-                    if (Scope.Alias != Alias)
+                    if (Scope.Alias != Context.Alias)
                     {
                         continue;
                     }
@@ -409,7 +371,7 @@ namespace Lumina
                             }
                             for (const FString& Member : List.Members)
                             {
-                                Add(std::string(Member.c_str()), 'v', std::string("item of ") + List.Name.c_str(), "");
+                                Add(Member, ECodeCompletionKind::Field, Format("item of {}", List.Name.c_str()), {}, 20);
                             }
                         }
                     }
@@ -427,18 +389,18 @@ namespace Lumina
                     {
                         for (const FUIDesignCommand& Command : Model.Commands)
                         {
-                            std::string Params;
+                            FString Params;
                             for (size_t Index = 0; Index < Command.Params.size(); ++Index)
                             {
-                                Params += (Index > 0 ? ", " : "") + std::string(Command.Params[Index].c_str());
+                                Params += Index > 0 ? ", " : "";
+                                Params += Command.Params[Index];
                             }
-                            const std::string Name(Command.Name.c_str());
-                            Add(Name, 'f', "(" + Params + ")", Command.Params.empty() ? Name + "()" : Name + "(\v)");
+                            Add(Command.Name, ECodeCompletionKind::Function, "(" + Params + ")", Command.Params.empty() ? Command.Name + "()" : Command.Name + "($0)", 20);
                         }
                     }
                     for (const FUIDesignList& List : Model.Lists)
                     {
-                        Add(std::string(List.Name.c_str()), 'l', "collection of " + std::to_string(List.Members.size()) + " members", "");
+                        Add(List.Name, ECodeCompletionKind::Field, Format("list of {} members", List.Members.size()), {}, 10);
                     }
                     if (Context.Kind == RmlBinding::ECompletion::ListSource)
                     {
@@ -446,12 +408,12 @@ namespace Lumina
                     }
                     for (const FUIDesignScalar& Scalar : Model.Scalars)
                     {
-                        Add(std::string(Scalar.Name.c_str()), 'v', std::string(DesignTypeLabel(Scalar.Type)) + " = " + Scalar.Value.c_str(), "");
+                        Add(Scalar.Name, ECodeCompletionKind::Variable, Format("{} = {}", DesignTypeLabel(Scalar.Type), Scalar.Value.c_str()), {}, 15);
                     }
                 }
                 for (const RmlBinding::FForScope& Scope : Bindings.ForScopes)
                 {
-                    Add(std::string(Scope.Alias.c_str()), 't', std::string("each item of ") + Scope.List.c_str(), "");
+                    Add(Scope.Alias, ECodeCompletionKind::Variable, Format("each item of {}", Scope.List.c_str()), {}, 15);
                 }
                 break;
             }

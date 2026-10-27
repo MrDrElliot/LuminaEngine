@@ -790,6 +790,7 @@ namespace Lumina
                 }
 
                 WeatherOcclusionPass(CL);
+                WeatherInteractionPass(CL);
 
                 {
                     SCENE_GPU_SCOPE(CL, "Light Functions");
@@ -1004,7 +1005,7 @@ namespace Lumina
                     ParticleRenderPass(CL);
                 }
 
-                RainPass(CL);
+                WeatherDrawPass(CL);
                 ReleaseIdleWeatherResources();
 
                 {

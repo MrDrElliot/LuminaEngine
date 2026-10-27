@@ -95,6 +95,61 @@ namespace Lumina
         float DripIntensity = 1.0f;
     };
 
+    REFLECT(ToolTip = "Falling snow, the cover it lays on every open surface, and the prints feet leave in it.")
+    class RUNTIME_API CSnowWeatherLayer : public CWeatherLayer
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void ApplyTo(FWeatherParams& Params) const override;
+
+        PROPERTY(Editable, Category = "Snow", ClampMin = 0.0f, ClampMax = 1.0f, ToolTip = "How hard it snows. Scales the flakes and how fast the cover builds.")
+        float Intensity = 0.7f;
+
+        PROPERTY(Editable, Category = "Snow|Flakes", ClampMin = 0.0f, ClampMax = 20.0f, Delta = 0.05f, ToolTip = "Visible flakes per cubic meter at full intensity.")
+        float FlakeDensity = 5.0f;
+
+        PROPERTY(Editable, Category = "Snow|Flakes", ClampMin = 1.0f, ClampMax = 40.0f, Units = "mm", ToolTip = "Average flake width.")
+        float FlakeSize = 16.0f;
+
+        PROPERTY(Editable, Category = "Snow|Flakes", ClampMin = 0.0f, ClampMax = 1.0f)
+        float SizeVariation = 0.6f;
+
+        PROPERTY(Editable, Category = "Snow|Flakes", ClampMin = 0.2f, ClampMax = 5.0f, ToolTip = "Fall speed in meters per second of an average flake.")
+        float FallSpeed = 1.2f;
+
+        PROPERTY(Editable, Category = "Snow|Flakes", ClampMin = 0.0f, ClampMax = 3.0f, Units = "m", ToolTip = "How far flakes swirl from their path as they tumble.")
+        float Flutter = 0.5f;
+
+        PROPERTY(Editable, Category = "Snow|Flakes", ClampMin = 0.0f, ClampMax = 3.0f, ToolTip = "How strongly the weather's wind carries the flakes, more than rain since they fall slowly.")
+        float WindInfluence = 1.2f;
+
+        PROPERTY(Editable, Category = "Snow|Flakes", ClampMin = 5.0f, ClampMax = 60.0f, Units = "m", ToolTip = "Radius around the camera where individual flakes are drawn.")
+        float Radius = 20.0f;
+
+        PROPERTY(Editable, Category = "Snow|Look", ClampMin = 0.0f, ClampMax = 8.0f)
+        float Brightness = 1.5f;
+
+        PROPERTY(Editable, Category = "Snow|Look", ClampMin = 0.0f, ClampMax = 1.0f)
+        float Opacity = 0.9f;
+
+        PROPERTY(Editable, Category = "Snow|Cover", ClampMin = 0.0f, ClampMax = 1.0f, ToolTip = "Cover the ground reaches after snowing long enough.")
+        float MaxCover = 1.0f;
+
+        PROPERTY(Editable, Category = "Snow|Cover", ClampMin = 0.0f, ClampMax = 1.0f, ToolTip = "Cover gained per second at full intensity.")
+        float AccumulationRate = 0.015f;
+
+        PROPERTY(Editable, Category = "Snow|Cover", ClampMin = 0.0f, ClampMax = 1.0f, ToolTip = "Cover lost per second once the snow stops.")
+        float MeltRate = 0.004f;
+
+        PROPERTY(Editable, Category = "Snow|Cover", ClampMin = 0.25f, ClampMax = 50.0f, Units = "m", ToolTip = "World size of the drifts that break thin cover into patches.")
+        float CoverScale = 3.0f;
+
+        PROPERTY(Editable, Category = "Snow|Cover", ClampMin = 0.0f, ClampMax = 2.0f, ToolTip = "How deep footprints and trails read in the cover.")
+        float PrintDepth = 1.0f;
+    };
+
     REFLECT(ToolTip = "Drives the scene's cloud layer: coverage, thickness and how much a storm dims the light.")
     class RUNTIME_API CCloudWeatherLayer : public CWeatherLayer
     {
