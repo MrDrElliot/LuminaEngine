@@ -45,6 +45,13 @@ namespace Lumina::MCP
                 return false;
             }
 
+            CParticleEmitter* EmitterAsset = Cast<CParticleEmitter>(Asset);
+            if (EmitterAsset == nullptr && Cast<CParticleSystem>(Asset) == nullptr)
+            {
+                OutError = Lumina::Format("'{}' is a {}, not a particle system or emitter.", Guid, Asset->GetClass()->GetName());
+                return false;
+            }
+
             // A loaded asset nothing else holds is freed the moment any short-lived ref to it drops, such as a compile job's, so the session keeps it as an open tab would.
             if (MCP::FServer* Server = FMCPEditorModule::GetServer())
             {
@@ -52,17 +59,11 @@ namespace Lumina::MCP
             }
 
             // An emitter asset is edited through a transient system holding only it, as the particle editor does.
-            CParticleEmitter* EmitterAsset = Cast<CParticleEmitter>(Asset);
             if (EmitterAsset != nullptr)
             {
                 Held = ParticleOps::WrapEmitter(EmitterAsset);
             }
             Out = Held ? Held.Get() : Cast<CParticleSystem>(Asset);
-            if (Out == nullptr)
-            {
-                OutError = Lumina::Format("'{}' is a {}, not a particle system or emitter.", Guid, Asset->GetClass()->GetName());
-                return false;
-            }
 
             // The open editor keeps its own list of stacks, which an edit made here would silently diverge from.
             if (Access == EParticleAccess::Write)
