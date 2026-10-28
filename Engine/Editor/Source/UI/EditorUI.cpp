@@ -167,7 +167,7 @@
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleSystemEditorTool.h"
 #include "Tools/AssetEditors/PrefabEditor/PrefabEditorTool.h"
 #include "Tools/AssetEditors/RmlUiEditor/RmlUiEditorTool.h"
-#include "Tools/AssetEditors/ScriptEditor/ScriptEditorTool.h"
+#include "Tools/CodeWorkspace/CodeWorkspaceTool.h"
 #include "Tools/AssetEditors/TextureEditor/TextureEditorTool.h"
 #include "Tools/AssetEditors/FontEditor/FontEditorTool.h"
 #include "Tools/AssetEditors/SpriteSheetEditor/SpriteSheetEditorTool.h"
@@ -1068,7 +1068,9 @@ namespace Lumina
         }
 
         // Gated on no active text input so it cannot fire out of a rename field or a search box.
-        if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && !ImGui::GetIO().WantTextInput
+        // The code workspace takes Ctrl+P for its own quick open while it has focus.
+        const bool bCodeFocused = LastActiveTool != nullptr && LastActiveTool->GetUniqueTypeID() == FCodeWorkspaceTool::s_toolTypeID;
+        if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && !ImGui::GetIO().WantTextInput && !bCodeFocused
             && ImGui::IsKeyPressed(ImGuiKey_P, false))
         {
             OpenAssetSearchModal();
@@ -1485,6 +1487,7 @@ namespace Lumina
     {
         constexpr const char* GSessionAssetPrefix = "asset:";
         constexpr const char* GSessionFilePrefix  = "file:";
+        constexpr const char* GSessionCodeWorkspace = "tool:code";
 
         bool SessionKeyHasPrefix(const FString& Key, const char* Prefix)
         {
@@ -1605,12 +1608,25 @@ namespace Lumina
                 RestoredSessionTabs.insert(Tab);
                 OpenAssetEditor(*Guid);
             }
+            else if (Tab == GSessionCodeWorkspace)
+            {
+                Survivors.push_back(Tab);
+                RestoredSessionTabs.insert(Tab);
+                OpenCodeWorkspace();
+            }
             else if (SessionKeyHasPrefix(Tab, GSessionFilePrefix))
             {
                 const FString Path = Tab.substr(strlen(GSessionFilePrefix));
                 if (!VFS::Exists(FStringView(Path.c_str(), Path.size())))
                 {
                     continue;   // the file is genuinely gone, so drop it
+                }
+
+                // The workspace keeps its own list of files, so this tab becomes one of them.
+                if (FCodeWorkspaceTool::Handles(FStringView(Path.c_str(), Path.size())))
+                {
+                    OpenFileEditor(FStringView(Path.c_str(), Path.size()));
+                    continue;
                 }
 
                 Survivors.push_back(Tab);
@@ -1692,7 +1708,6 @@ namespace Lumina
 
         // File editors, keyed by extension (CObject-less, raw content).
         Registry.RegisterFileEditor<FRmlUiEditorTool>({ ".rml", ".rcss" }, Owner);
-        Registry.RegisterFileEditor<FScriptEditorTool>({ ".cs" }, Owner);
     }
 
     FEditorTool* FEditorUI::FindAssetEditor(CObject* Asset) const
@@ -1999,6 +2014,12 @@ namespace Lumina
             return;
         }
 
+        if (FCodeWorkspaceTool::Handles(VirtualPath))
+        {
+            OpenCodeWorkspace()->OpenDocument(VirtualPath);
+            return;
+        }
+
         FString Key(VirtualPath.data(), VirtualPath.size());
 
         auto Itr = ActiveFileTools.find(Key);
@@ -2021,6 +2042,18 @@ namespace Lumina
 
         RecordSessionTab(NewTool, FString(GSessionFilePrefix) + Key);
         ActiveFileTools.insert_or_assign(Move(Key), NewTool);
+    }
+
+    FCodeWorkspaceTool* FEditorUI::OpenCodeWorkspace()
+    {
+        if (FCodeWorkspaceTool* Existing = FindTool<FCodeWorkspaceTool>())
+        {
+            ImGui::SetWindowFocus(Existing->GetToolName().c_str());
+            return Existing;
+        }
+        FCodeWorkspaceTool* Workspace = CreateTool<FCodeWorkspaceTool>(this);
+        RecordSessionTab(Workspace, GSessionCodeWorkspace);
+        return Workspace;
     }
 
     void FEditorUI::BrowseToAsset(FStringView VirtualPath)
@@ -4086,6 +4119,17 @@ namespace Lumina
         ImGui::Separator();
 
         DrawToolMenuItem<FTerminalEditorTool>(LE_ICON_CONSOLE_LINE " Terminal", this);
+        if (ImGui::MenuItem(LE_ICON_CODE_BRACES " Code", nullptr, IsToolActive<FCodeWorkspaceTool>()))
+        {
+            if (FCodeWorkspaceTool* Workspace = FindTool<FCodeWorkspaceTool>())
+            {
+                RequestCloseTool(Workspace);
+            }
+            else
+            {
+                OpenCodeWorkspace();
+            }
+        }
 
         ImGui::Spacing();
 

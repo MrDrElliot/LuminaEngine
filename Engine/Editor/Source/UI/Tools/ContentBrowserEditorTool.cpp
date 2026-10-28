@@ -74,6 +74,7 @@
 #include "Settings/EditorSettings.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "Containers/StringFormat.h"
+#include "UI/CodeEditor/Languages/CSharpScriptLanguage.h"
 
 namespace Lumina
 {
@@ -3933,36 +3934,7 @@ namespace Lumina
             FFixedString NewScriptPath = SelectedPath + "/" + "NewScript.cs";
             NewScriptPath = VFS::MakeUniqueFilePath(NewScriptPath);
             
-            FStringView Stem = VFS::FileName(FStringView(NewScriptPath.c_str(), NewScriptPath.size()), true);
-            FFixedString ClassName;
-            for (char C : Stem)
-            {
-                const bool bValid = (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9') || C == '_';
-                ClassName.push_back(bValid ? C : '_');
-            }
-            if (ClassName.empty() || (ClassName[0] >= '0' && ClassName[0] <= '9'))
-            {
-                ClassName.insert(ClassName.begin(), '_');
-            }
-
-            FString Contents;
-            Contents += "using LuminaSharp;\n";
-            Contents += "using Lumina;\n\n";
-            // Not "Game", which would shadow LuminaSharp.Game and break Game.OpenLevel in every script.
-            Contents += "namespace GameScripts;\n\n";
-            Contents += "[Reflect]\n";
-            Contents += "public sealed class ";
-            Contents += ClassName.c_str();
-            Contents += " : CEntityScript\n";
-            Contents += "{\n";
-            Contents += "    public override void OnReady()\n";
-            Contents += "    {\n";
-            Contents += "    }\n\n";
-            Contents += "    public override void OnUpdate(float deltaTime)\n";
-            Contents += "    {\n";
-            Contents += "    }\n";
-            Contents += "}\n";
-
+            const FString Contents = CSharpScript::NewScriptSource(VFS::FileName(FStringView(NewScriptPath.c_str(), NewScriptPath.size()), true));
             VFS::WriteFile(NewScriptPath, Contents);
             RefreshContentBrowser();
         }

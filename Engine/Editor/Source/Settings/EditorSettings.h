@@ -166,6 +166,13 @@ namespace Lumina
         /** Open tabs, oldest first. Maintained by the editor; not meant to be hand-edited. */
         PROPERTY(Hidden)
         TVector<FString> OpenTabs;
+
+        // Files open in the Code workspace, in tab order, and the one in front.
+        PROPERTY(Hidden)
+        TVector<FString> CodeFiles;
+
+        PROPERTY(Hidden)
+        FString ActiveCodeFile;
     };
 
     // What the level editor adds to content placed into a world, decided per project.

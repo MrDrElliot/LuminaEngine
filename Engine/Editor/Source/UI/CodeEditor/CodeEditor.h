@@ -3,6 +3,7 @@
 #include "CodeDocument.h"
 #include "CodeLanguage.h"
 #include "Containers/Function.h"
+#include "Containers/Span.h"
 #include <imgui.h>
 
 namespace Lumina
@@ -146,6 +147,27 @@ namespace Lumina
 
         void TriggerCompletion();
         void TriggerSignatureHelp();
+
+        // Applies replacements to this document as one undo step. An edit naming another file is the host's to apply.
+        void ApplyEdits(TSpan<const FCodeTextEdit> Edits);
+        // Re-indents every line from the braces around it, moving continuation lines with the statement they belong to.
+        void FormatDocument();
+        // Asks the language for fixes at the caret and lists them beside it.
+        void ShowCodeActions();
+
+        void ToggleFold(int32 Line);
+        void FoldAll();
+        void UnfoldAll();
+        bool IsLineHidden(int32 Line) const;
+        const TVector<FCodeFold>& GetFolds() const { return Folds; }
+
+        // Commands the editor offers but the host carries out, since they reach across files.
+        enum class ECommand : uint8
+        {
+            FindReferences,
+            Rename,
+        };
+        void SetCommandHandler(TFunction<void(ECommand, FCodePosition)> Handler) { CommandHandler = Move(Handler); }
 
         enum class EMove : uint8
         {
@@ -352,7 +374,20 @@ namespace Lumina
         void DrawHoverPopup();
         void DrawColorPicker();
         void DrawContextMenu();
+        void DrawCodeActionsPopup();
         void UpdateMaxLineColumns();
+
+        void UpdateFolds();
+        void RebuildRows();
+        int32 RowOf(int32 Line) const;
+        int32 LineAtRow(int32 Row) const;
+        int32 VisibleRows() const { return Math::Max(1, (int32)LineOfRow.size()); }
+        const FCodeFold* FoldStartingAt(int32 Line) const;
+        bool IsCollapsed(int32 Line) const;
+        // Opens every fold hiding Line, so a caret or a jump never lands out of sight.
+        void RevealLine(int32 Line);
+        void ShiftFoldsForInsert(FCodePosition At, FCodePosition End);
+        void ShiftFoldsForErase(const FCodeRange& Range);
         void DrawSquiggle(ImDrawList* DrawList, float X0, float X1, float Y, ImU32 Color) const;
         ImU32 SeverityColor(ECodeSeverity Severity) const;
         bool PickColorAt(FCodePosition Position);
@@ -418,5 +453,19 @@ namespace Lumina
         FCodePosition                LastClickPosition;
         int32                        ClickCount = 0;
         FCodePosition                ContextMenuPosition;
+
+        TVector<FCodeFold>           Folds;
+        uint64                       FoldsVersion = ~0ull;
+        // Start lines of the folds the reader collapsed, kept sorted.
+        TVector<int32>               Collapsed;
+        uint32                       CollapseSerial = 0;
+        TVector<int32>               RowOfLine;
+        TVector<int32>               LineOfRow;
+        uint64                       RowsVersion = ~0ull;
+        uint32                       RowsCollapseSerial = ~0u;
+
+        TVector<FCodeAction>         CodeActions;
+        bool                         bOpenCodeActions = false;
+        TFunction<void(ECommand, FCodePosition)> CommandHandler;
     };
 }

@@ -79,6 +79,58 @@ namespace Lumina
         return CodeText::LeadingWhitespace(LineThroughCaret) == (int32)LineThroughCaret.size() - 1;
     }
 
+    void FCodeLanguage::GetFoldingRanges(const FCodeDocument& Document, TVector<FCodeFold>& Out) const
+    {
+        TVector<int32> Braces;
+        TVector<int32> Regions;
+        for (int32 Line = 0; Line < Document.GetLineCount(); ++Line)
+        {
+            const FStringView Text = Document.GetLineView(Line);
+            const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
+            const FStringView Trimmed = Text.substr((size_t)CodeText::LeadingWhitespace(Text));
+            if (CodeText::StartsWithIgnoreCase(Trimmed, "#region"))
+            {
+                Regions.push_back(Line);
+            }
+            else if (CodeText::StartsWithIgnoreCase(Trimmed, "#endregion") && !Regions.empty())
+            {
+                Out.push_back({ Regions.back(), Line });
+                Regions.pop_back();
+            }
+            if (Tokens.size() != Text.size())
+            {
+                continue;
+            }
+            for (int32 Column = 0; Column < (int32)Text.size(); ++Column)
+            {
+                if (Tokens[Column] != ECodeToken::Punctuation)
+                {
+                    continue;
+                }
+                if (Text[Column] == '{')
+                {
+                    Braces.push_back(Line);
+                }
+                else if (Text[Column] == '}' && !Braces.empty())
+                {
+                    // A brace alone on the next line folds from the line that names the block, as editors usually show it.
+                    int32 Start = Braces.back();
+                    Braces.pop_back();
+                    if (Start > 0 && CodeText::IsBlank(Document.GetLineView(Start).substr(0, Document.GetLineView(Start).find('{'))))
+                    {
+                        --Start;
+                    }
+                    if (Line - Start >= 2)
+                    {
+                        Out.push_back({ Start, Line });
+                    }
+                }
+            }
+        }
+        Algo::Sort(Out, [](const FCodeFold& A, const FCodeFold& B) { return A.StartLine < B.StartLine || (A.StartLine == B.StartLine && A.EndLine > B.EndLine); });
+        Out.erase(Algo::Unique(Out.begin(), Out.end(), [](const FCodeFold& A, const FCodeFold& B) { return A.StartLine == B.StartLine; }), Out.end());
+    }
+
     bool FCodeLanguage::GetSignature(const FCodeDocument& Document, FCodePosition Caret, FCodeSignature& Out) const
     {
         constexpr int32 MaxLinesBack = 24;
@@ -663,6 +715,84 @@ namespace Lumina
         if (!Stack.empty())
         {
             Report(Stack.back().Position, Format("'{}' is never closed", Stack.back().Bracket));
+        }
+        return true;
+    }
+
+    // A light outline for the C family without a compiler behind it, the types and functions a line opens at the top two levels.
+    bool FCLikeLanguage::GetDocumentSymbols(const FCodeDocument& Document, TVector<FCodeSymbolInfo>& Out) const
+    {
+        constexpr FStringView TypeKeywords[] = { "struct", "class", "interface", "enum", "namespace", "cbuffer" };
+        int32 Depth = 0;
+        TVector<int32> Open;
+        for (int32 Line = 0; Line < Document.GetLineCount(); ++Line)
+        {
+            const FStringView Text = Document.GetLineView(Line);
+            const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
+            const bool bTokens = Tokens.size() == Text.size();
+            const int32 Indent = CodeText::LeadingWhitespace(Text);
+            if (Depth <= 1 && bTokens && Indent < (int32)Text.size() && Tokens[Indent] != ECodeToken::Comment && Tokens[Indent] != ECodeToken::Preprocessor)
+            {
+                int32 Column = Indent;
+                auto ReadWord = [&](int32& At) -> FStringView
+                {
+                    while (At < (int32)Text.size() && CodeText::IsSpace(Text[At])) { ++At; }
+                    const int32 Start = At;
+                    while (At < (int32)Text.size() && IsWordChar(Text[At])) { ++At; }
+                    return Text.substr(Start, At - Start);
+                };
+                const FStringView First = ReadWord(Column);
+                const bool bType = Algo::Contains(TypeKeywords, First);
+                if (bType)
+                {
+                    const int32 NameStart = Column + 1;
+                    const FStringView Name = ReadWord(Column);
+                    if (!Name.empty())
+                    {
+                        FCodeSymbolInfo& Symbol = Out.emplace_back();
+                        Symbol.Name = Name;
+                        Symbol.Detail = First;
+                        Symbol.Kind = First == "namespace" ? ECodeCompletionKind::Module : ECodeCompletionKind::Type;
+                        Symbol.Position = { Line, Math::Min(NameStart, (int32)Text.size()) };
+                        Symbol.EndLine = Line;
+                        Symbol.Depth = Depth;
+                    }
+                }
+                else if (!First.empty() && !Keywords.contains(First))
+                {
+                    // A return type, a name and an open parenthesis, with no semicolon closing it as a call or a declaration.
+                    const size_t Paren = Text.find('(');
+                    if (Paren != FStringView::npos && Text.find(';') == FStringView::npos && Text.find('=') == FStringView::npos)
+                    {
+                        int32 NameEnd = (int32)Paren;
+                        while (NameEnd > 0 && CodeText::IsSpace(Text[NameEnd - 1])) { --NameEnd; }
+                        int32 NameStart = NameEnd;
+                        while (NameStart > 0 && IsWordChar(Text[NameStart - 1])) { --NameStart; }
+                        const FStringView Name = Text.substr(NameStart, NameEnd - NameStart);
+                        if (!Name.empty() && NameStart > Indent && !Keywords.contains(Name))
+                        {
+                            FCodeSymbolInfo& Symbol = Out.emplace_back();
+                            Symbol.Name = Name;
+                            Symbol.Detail = FString(Text.substr(Indent));
+                            Symbol.Kind = ECodeCompletionKind::Function;
+                            Symbol.Position = { Line, NameStart };
+                            Symbol.EndLine = Line;
+                            Symbol.Depth = Depth;
+                        }
+                    }
+                }
+            }
+            for (int32 Column = 0; bTokens && Column < (int32)Text.size(); ++Column)
+            {
+                if (Tokens[Column] == ECodeToken::Punctuation && Text[Column] == '{')
+                {
+                    ++Depth;
+                }
+                else if (Tokens[Column] == ECodeToken::Punctuation && Text[Column] == '}')
+                {
+                    Depth = Math::Max(0, Depth - 1);
+                }
+            }
         }
         return true;
     }

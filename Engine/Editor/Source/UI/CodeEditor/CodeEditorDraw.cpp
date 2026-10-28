@@ -173,20 +173,24 @@ namespace Lumina
         const float ScrollbarSize = ImGui::GetStyle().ScrollbarSize;
         const float ViewHeight = RenderSize.y - ScrollbarSize;
         const float TextViewWidth = RenderSize.x - Layout.TextOffset - Layout.MiniMapWidth - ScrollbarSize;
-        Layout.ContentHeight = Document.GetLineCount() * LineHeight + Math::Max(0.0f, ViewHeight - LineHeight * 3.0f);
+        UpdateFolds();
+        RebuildRows();
+        Layout.ContentHeight = VisibleRows() * LineHeight + Math::Max(0.0f, ViewHeight - LineHeight * 3.0f);
 
         ImVec2 Scroll(-1.0f, -1.0f);
         const FCodePosition Caret = Cursors[MainCursor].Head;
         const float CaretX = CodeText::VisualColumn(Document.GetLineView(Caret.Line), Caret.Column, Math::Max(1, Settings.TabSize)) * Layout.CharWidth;
         if (CenterLineRequest >= 0)
         {
-            Scroll.y = Math::Max(0.0f, CenterLineRequest * LineHeight - ViewHeight * 0.5f + LineHeight * 0.5f);
+            RevealLine(CenterLineRequest);
+            RebuildRows();
+            Scroll.y = Math::Max(0.0f, RowOf(CenterLineRequest) * LineHeight - ViewHeight * 0.5f + LineHeight * 0.5f);
             CenterLineRequest = -1;
             bEnsureCursorVisible = true;
         }
         if (bEnsureCursorVisible)
         {
-            const float CaretTop = Caret.Line * LineHeight;
+            const float CaretTop = RowOf(Caret.Line) * LineHeight;
             const float ScrollY = Scroll.y >= 0.0f ? Scroll.y : Layout.ScrollY;
             if (CaretTop < ScrollY)
             {
@@ -240,9 +244,10 @@ namespace Lumina
             HandleKeyboard();
             HandleMouse();
 
-            // Input above can add or remove lines, so the visible range is taken from the document as it now stands.
-            Layout.FirstLine = Math::Max(0, (int32)(Layout.ScrollY / LineHeight));
-            Layout.LastLine = Math::Min(Document.GetLineCount() - 1, (int32)((Layout.ScrollY + (Layout.ViewMax.y - Layout.ViewMin.y)) / LineHeight));
+            // Input above can add or remove lines and folds, so the visible range is taken from the document as it now stands.
+            RebuildRows();
+            Layout.FirstLine = LineAtRow(Math::Max(0, (int32)(Layout.ScrollY / LineHeight)));
+            Layout.LastLine = Math::Min(Document.GetLineCount() - 1, LineAtRow((int32)((Layout.ScrollY + (Layout.ViewMax.y - Layout.ViewMin.y)) / LineHeight)));
             UpdateFindMatches();
             RefreshCompletion();
             UpdateDiagnostics();
@@ -261,6 +266,7 @@ namespace Lumina
             DrawGutter(DrawList);
             DrawMiniMap(DrawList);
             DrawContextMenu();
+            DrawCodeActionsPopup();
             DrawColorPicker();
 
             if (bFocused)
@@ -309,7 +315,8 @@ namespace Lumina
             ++Digits;
         }
         Digits = Math::Max(3, Digits);
-        Layout.GutterWidth = Settings.bShowLineNumbers ? (Digits + 2.5f) * Layout.CharWidth : Layout.CharWidth * 1.5f;
+        // The last column and a half hold the fold markers.
+        Layout.GutterWidth = (Settings.bShowLineNumbers ? (Digits + 2.5f) * Layout.CharWidth : Layout.CharWidth * 1.5f) + Layout.CharWidth * 1.5f;
         Layout.TextOffset = Layout.GutterWidth + Layout.CharWidth * 0.75f;
         Layout.MiniMapWidth = Settings.bShowMiniMap ? Math::Clamp(Size.x * 0.1f, 48.0f, 96.0f) : 0.0f;
     }
@@ -333,7 +340,7 @@ namespace Lumina
 
     float FCodeEditor::LineTop(int32 Line) const
     {
-        return Layout.WindowPos.y - Layout.ScrollY + Line * Layout.LineHeight;
+        return Layout.WindowPos.y - Layout.ScrollY + RowOf(Line) * Layout.LineHeight;
     }
 
     ImVec2 FCodeEditor::ScreenAtPosition(FCodePosition Position) const
@@ -345,7 +352,7 @@ namespace Lumina
 
     FCodePosition FCodeEditor::PositionAtScreen(const ImVec2& Screen, bool bRoundToNearest) const
     {
-        const int32 Line = Math::Clamp((int32)std::floor((Screen.y - LineTop(0)) / Layout.LineHeight), 0, Document.GetLineCount() - 1);
+        const int32 Line = LineAtRow((int32)std::floor((Screen.y - (Layout.WindowPos.y - Layout.ScrollY)) / Layout.LineHeight));
         const float Cells = (Screen.x - (Layout.WindowPos.x + Layout.TextOffset - Layout.ScrollX)) / Layout.CharWidth;
         const int32 Visual = Math::Max(0, (int32)std::floor(bRoundToNearest ? Cells + 0.5f : Cells));
         return { Line, CodeText::ColumnAtVisual(Document.GetLineView(Line), Visual, Math::Max(1, Settings.TabSize), bRoundToNearest) };
@@ -499,6 +506,12 @@ namespace Lumina
         else if (Pressed(Ctrl | Shift | ImGuiKey_Space))      { TriggerSignatureHelp(); }
         else if (Pressed(Ctrl | Shift | ImGuiKey_Backslash))  { JumpToMatchingBracket(); }
         else if (Pressed(ImGuiKey_F12))                       { GoToDefinition(Cursors[MainCursor].Head); }
+        else if (Pressed(Shift | ImGuiKey_F12) && CommandHandler) { CommandHandler(ECommand::FindReferences, Cursors[MainCursor].Head); }
+        else if (Pressed(ImGuiKey_F2) && CommandHandler)       { CommandHandler(ECommand::Rename, Cursors[MainCursor].Head); }
+        else if (Pressed(Ctrl | ImGuiKey_Period))              { ShowCodeActions(); }
+        else if (Pressed(Shift | Alt | ImGuiKey_F))            { FormatDocument(); }
+        else if (Pressed(Ctrl | Shift | ImGuiKey_LeftBracket))  { ToggleFold(Cursors[MainCursor].Head.Line); }
+        else if (Pressed(Ctrl | Shift | ImGuiKey_RightBracket)) { RevealLine(Cursors[MainCursor].Head.Line + 1); }
         else if (Pressed(ImGuiKey_Escape))
         {
             if (bSignatureOpen)
@@ -599,7 +612,7 @@ namespace Lumina
         auto ScrollMiniMapTo = [this](float MouseY)
         {
             const int32 Line = Layout.MiniMapFirstLine + (int32)((MouseY - Layout.ViewMin.y) / Layout.MiniMapRowHeight);
-            ImGui::SetScrollY(Math::Max(0.0f, Line * Layout.LineHeight - (Layout.ViewMax.y - Layout.ViewMin.y) * 0.5f));
+            ImGui::SetScrollY(Math::Max(0.0f, RowOf(Line) * Layout.LineHeight - (Layout.ViewMax.y - Layout.ViewMin.y) * 0.5f));
         };
 
         if (bHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -611,6 +624,10 @@ namespace Lumina
             {
                 bDraggingMiniMap = true;
                 ScrollMiniMapTo(Mouse.y);
+            }
+            else if (bOverGutter && Mouse.x >= Layout.ViewMin.x + Layout.GutterWidth - Layout.CharWidth * 1.5f && FoldStartingAt(Position.Line) != nullptr)
+            {
+                ToggleFold(Position.Line);
             }
             else if (bOverGutter)
             {
@@ -837,6 +854,10 @@ namespace Lumina
             };
             for (int32 Line = Layout.FirstLine; Line <= Layout.LastLine; ++Line)
             {
+                if (IsLineHidden(Line))
+                {
+                    continue;
+                }
                 int32 Indent = IndentOf(Line);
                 if (Indent < 0)
                 {
@@ -867,6 +888,10 @@ namespace Lumina
             const int32 Last = Math::Min(Range.End.Line, Layout.LastLine);
             for (int32 Line = First; Line <= Last; ++Line)
             {
+                if (IsLineHidden(Line))
+                {
+                    continue;
+                }
                 const int32 StartColumn = Line == Range.Start.Line ? Range.Start.Column : 0;
                 const int32 EndColumn = Line == Range.End.Line ? Range.End.Column : (int32)Document.GetLine(Line).size();
                 const float Top = LineTop(Line);
@@ -926,6 +951,10 @@ namespace Lumina
                 auto IsWord = [this](char C) { return Language != nullptr ? Language->IsWordChar(C) : (CodeText::IsAlpha(C) || CodeText::IsDigit(C) || C == '_'); };
                 for (int32 Line = Layout.FirstLine; Line <= Layout.LastLine; ++Line)
                 {
+                    if (IsLineHidden(Line))
+                    {
+                        continue;
+                    }
                     const FStringView Text = Document.GetLineView(Line);
                     for (size_t Found = Text.find(Needle.View()); Found != FStringView::npos; Found = Text.find(Needle.View(), Found + 1))
                     {
@@ -992,12 +1021,35 @@ namespace Lumina
 
         for (int32 Line = Layout.FirstLine; Line <= Layout.LastLine; ++Line)
         {
+            if (IsLineHidden(Line))
+            {
+                continue;
+            }
             const FStringView Text = Document.GetLineView(Line);
             const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
             const bool bHasTokens = Language != nullptr && Tokens.size() == Text.size();
             const float Top = LineTop(Line);
             const float Y = Top + TextOffsetY;
             const int32 Size = (int32)Text.size();
+
+            // A collapsed block shows as its first line, an ellipsis and its closing line when that is only a brace.
+            if (IsCollapsed(Line))
+            {
+                if (const FCodeFold* Fold = FoldStartingAt(Line))
+                {
+                    const float EndX = BaseX + (CodeText::VisualColumn(Text, Size, TabSize) + 1) * Layout.CharWidth;
+                    const ImVec2 Min(EndX, Top + 2.0f);
+                    const ImVec2 Max(EndX + Layout.CharWidth * 3.0f, Top + Layout.LineHeight - 2.0f);
+                    DrawList->AddRectFilled(Min, Max, EditorColors::ScaleAlpha(Palette.WordHighlight, 1.4f), 3.0f);
+                    DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(Min.x + Layout.CharWidth * 0.5f, Y), Palette[ECodeToken::Comment], "...");
+                    const FStringView Closing = Document.GetLineView(Math::Min(Fold->EndLine, Document.GetLineCount() - 1));
+                    const FStringView Trimmed = Closing.substr((size_t)CodeText::LeadingWhitespace(Closing));
+                    if (!Trimmed.empty() && Trimmed.size() <= 3 && Trimmed.front() == '}')
+                    {
+                        DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(Max.x + Layout.CharWidth, Y), Palette[ECodeToken::Punctuation], Trimmed.data(), Trimmed.data() + Trimmed.size());
+                    }
+                }
+            }
 
             int32 Visual = 0;
             int32 i = 0;
@@ -1107,6 +1159,10 @@ namespace Lumina
                 const int32 Last = Math::Min(Math::Max(Range.Start.Line, Range.End.Line - (Range.End.Column == 0 ? 1 : 0)), Layout.LastLine);
                 for (int32 Line = First; Line <= Last; ++Line)
                 {
+                    if (IsLineHidden(Line))
+                    {
+                        continue;
+                    }
                     const FStringView Text = Document.GetLineView(Line);
                     int32 StartColumn = Line == Range.Start.Line ? Range.Start.Column : CodeText::LeadingWhitespace(Text);
                     int32 EndColumn = Line == Range.End.Line ? Range.End.Column : (int32)Text.size();
@@ -1134,7 +1190,7 @@ namespace Lumina
         const float Width = Math::Max(2.0f, std::floor(Layout.FontSize * 0.11f));
         for (const FCursor& Cursor : Cursors)
         {
-            if (Cursor.Head.Line < Layout.FirstLine || Cursor.Head.Line > Layout.LastLine)
+            if (Cursor.Head.Line < Layout.FirstLine || Cursor.Head.Line > Layout.LastLine || IsLineHidden(Cursor.Head.Line))
             {
                 continue;
             }
@@ -1170,15 +1226,35 @@ namespace Lumina
         Mark(ExternalDiagnostics);
 
         const float TextOffsetY = (Layout.LineHeight - Layout.FontSize) * 0.5f;
+        const float FoldColumn = Max.x - Layout.CharWidth * 1.5f;
+        const bool bGutterHovered = ImGui::IsWindowHovered() && ImGui::GetIO().MousePos.x < Max.x;
         for (int32 Line = Layout.FirstLine; Line <= Layout.LastLine; ++Line)
         {
+            if (IsLineHidden(Line))
+            {
+                continue;
+            }
             const float Top = LineTop(Line);
             const bool bActive = Algo::AnyOf(Cursors.begin(), Cursors.end(), [Line](const FCursor& Cursor) { return Cursor.Head.Line == Line; });
+            if (FoldStartingAt(Line) != nullptr && (bGutterHovered || IsCollapsed(Line)))
+            {
+                const ImVec2 Center(FoldColumn + Layout.CharWidth * 0.7f, Top + Layout.LineHeight * 0.5f);
+                const float Size = Math::Max(3.0f, Layout.FontSize * 0.22f);
+                const ImU32 Color = IsCollapsed(Line) ? Palette.LineNumberActive : Palette.LineNumber;
+                if (IsCollapsed(Line))
+                {
+                    DrawList->AddTriangleFilled(ImVec2(Center.x - Size * 0.6f, Center.y - Size), ImVec2(Center.x - Size * 0.6f, Center.y + Size), ImVec2(Center.x + Size * 0.8f, Center.y), Color);
+                }
+                else
+                {
+                    DrawList->AddTriangleFilled(ImVec2(Center.x - Size, Center.y - Size * 0.6f), ImVec2(Center.x + Size, Center.y - Size * 0.6f), ImVec2(Center.x, Center.y + Size * 0.8f), Color);
+                }
+            }
             if (Settings.bShowLineNumbers)
             {
                 char Number[16];
                 const int32 Length = std::snprintf(Number, sizeof(Number), "%d", Line + 1);
-                const float X = Max.x - Layout.CharWidth * 1.25f - Length * Layout.CharWidth;
+                const float X = FoldColumn - Layout.CharWidth * 0.25f - Length * Layout.CharWidth;
                 DrawList->AddText(Layout.Font, Layout.FontSize, ImVec2(X, Top + TextOffsetY), bActive ? Palette.LineNumberActive : Palette.LineNumber, Number, Number + Length);
             }
             const int8 Rank = Severity[Line - Layout.FirstLine];
@@ -1186,6 +1262,19 @@ namespace Lumina
             {
                 const ImU32 Color = SeverityColor((ECodeSeverity)(2 - Rank));
                 DrawList->AddRectFilled(ImVec2(Min.x + 2.0f, Top + 3.0f), ImVec2(Min.x + 5.0f, Top + Layout.LineHeight - 3.0f), Color, 1.5f);
+                // A problem on the caret's line may have a fix, so the line shows a bulb that Ctrl+. or a click opens.
+                if (bActive && Rank >= 1 && Language != nullptr && !Settings.bReadOnly)
+                {
+                    const ImVec2 Bulb(Min.x + Layout.CharWidth * 1.1f, Top + Layout.LineHeight * 0.42f);
+                    const float Radius = Math::Max(3.0f, Layout.FontSize * 0.24f);
+                    DrawList->AddCircleFilled(Bulb, Radius, Palette.Warning);
+                    DrawList->AddRectFilled(ImVec2(Bulb.x - Radius * 0.45f, Bulb.y + Radius * 0.7f), ImVec2(Bulb.x + Radius * 0.45f, Bulb.y + Radius * 1.5f), Palette.LineNumber);
+                    const ImVec2 Mouse = ImGui::GetIO().MousePos;
+                    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && Math::Abs(Mouse.x - Bulb.x) <= Radius * 1.6f && Math::Abs(Mouse.y - Bulb.y) <= Radius * 1.8f)
+                    {
+                        ShowCodeActions();
+                    }
+                }
             }
         }
         DrawList->PopClipRect();
@@ -1606,6 +1695,49 @@ namespace Lumina
         if (ImGui::MenuItem(LE_ICON_FORMAT_LETTER_CASE " Lower Case", nullptr, false, bEditable && bSelection)) { ChangeCase(false); }
         if (ImGui::MenuItem(LE_ICON_CODE_BRACES " Suggest", "Ctrl+Space", false, bEditable)) { TriggerCompletion(); }
         if (ImGui::MenuItem(LE_ICON_ARROW_RIGHT " Go to Definition", "F12")) { GoToDefinition(ContextMenuPosition); }
+        if (CommandHandler)
+        {
+            if (ImGui::MenuItem(LE_ICON_FILE_FIND " Find All References", "Shift+F12")) { CommandHandler(ECommand::FindReferences, ContextMenuPosition); }
+            if (ImGui::MenuItem(LE_ICON_RENAME " Rename Symbol", "F2", false, bEditable)) { CommandHandler(ECommand::Rename, ContextMenuPosition); }
+        }
+        if (ImGui::MenuItem(LE_ICON_LIGHTBULB_OUTLINE " Quick Fix", "Ctrl+.", false, bEditable && Language != nullptr)) { ShowCodeActions(); }
+        ImGui::Separator();
+        if (ImGui::MenuItem(LE_ICON_FORMAT_ALIGN_LEFT " Format Document", "Shift+Alt+F", false, bEditable && Language != nullptr)) { FormatDocument(); }
+        if (ImGui::MenuItem(LE_ICON_UNFOLD_LESS_HORIZONTAL " Fold All", nullptr, false, !Folds.empty())) { FoldAll(); }
+        if (ImGui::MenuItem(LE_ICON_UNFOLD_MORE_HORIZONTAL " Unfold All", nullptr, false, !Collapsed.empty())) { UnfoldAll(); }
+        ImGuiX::Font::PopFont();
+        ImGui::EndPopup();
+    }
+
+    void FCodeEditor::DrawCodeActionsPopup()
+    {
+        if (bOpenCodeActions)
+        {
+            bOpenCodeActions = false;
+            const ImVec2 At = ScreenAtPosition(Cursors[MainCursor].Head);
+            ImGui::SetNextWindowPos(ImVec2(At.x, At.y + Layout.LineHeight));
+            ImGui::OpenPopup("##CodeActions");
+        }
+        if (!ImGui::BeginPopup("##CodeActions"))
+        {
+            return;
+        }
+        PushUIFont();
+        if (CodeActions.empty())
+        {
+            ImGui::TextDisabled("No quick fixes here");
+        }
+        for (int32 Index = 0; Index < (int32)CodeActions.size(); ++Index)
+        {
+            ImGui::PushID(Index);
+            if (ImGui::MenuItem((FString(LE_ICON_LIGHTBULB_OUTLINE " ") + CodeActions[Index].Title).c_str()))
+            {
+                const FCodeAction Chosen = CodeActions[Index];
+                ApplyEdits(Chosen.Edits);
+                Focus();
+            }
+            ImGui::PopID();
+        }
         ImGuiX::Font::PopFont();
         ImGui::EndPopup();
     }

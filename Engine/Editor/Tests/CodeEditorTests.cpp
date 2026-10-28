@@ -12,6 +12,7 @@
 #include "UI/CodeEditor/CodeEditor.h"
 #include "UI/CodeEditor/Languages/CSharpLanguage.h"
 #include "UI/CodeEditor/Languages/CSharpScriptLanguage.h"
+#include "UI/CodeEditor/Languages/PlainTextLanguage.h"
 #include "UI/CodeEditor/Languages/RmlLanguage.h"
 #include "UI/CodeEditor/Languages/SlangLanguage.h"
 
@@ -490,4 +491,161 @@ TEST_F(FScriptLanguageTest, AnswersFromTheScriptCompiler)
     EXPECT_TRUE(Signature.Label.contains("Max("));
     EXPECT_EQ(Signature.ActiveParameter, 1);
     EXPECT_EQ(Signature.Parameters.size(), 2u);
+}
+
+TEST(CodeLanguage, FoldsBraceBlocksAndRegions)
+{
+    FCSharpLanguage Language;
+    FCodeDocument Document;
+    Document.SetText("void F()\n{\n    if (X)\n    {\n        Y();\n    }\n}\n#region Things\nint A;\n#endregion\n");
+    Document.Highlight(Language, Document.GetLineCount() - 1);
+
+    TVector<FCodeFold> Folds;
+    Language.GetFoldingRanges(Document, Folds);
+    EXPECT_TRUE(Algo::Contains(Folds, FCodeFold{ 0, 6 }));
+    EXPECT_TRUE(Algo::Contains(Folds, FCodeFold{ 2, 5 }));
+    EXPECT_TRUE(Algo::Contains(Folds, FCodeFold{ 7, 9 }));
+}
+
+TEST(CodeEditor, CollapsedFoldHidesItsBody)
+{
+    FSlangLanguage Language;
+    FCodeEditorHarness Harness;
+    Harness.Editor.SetLanguage(&Language);
+    Harness.Editor.SetText("void F()\n{\n    float A;\n    float B;\n}\nfloat C;");
+
+    // Folds settle a moment after the last edit so typing does not rescan the file on every key.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Harness.Frame();
+    ASSERT_FALSE(Harness.Editor.GetFolds().empty());
+
+    Harness.Editor.ToggleFold(0);
+    Harness.Frame();
+    EXPECT_FALSE(Harness.Editor.IsLineHidden(0));
+    EXPECT_TRUE(Harness.Editor.IsLineHidden(2));
+    EXPECT_TRUE(Harness.Editor.IsLineHidden(4));
+    EXPECT_FALSE(Harness.Editor.IsLineHidden(5));
+
+    Harness.Editor.UnfoldAll();
+    Harness.Frame();
+    EXPECT_FALSE(Harness.Editor.IsLineHidden(2));
+}
+
+TEST(CodeEditor, EditsApplyTogetherAsOneUndoStep)
+{
+    FCodeEditor Editor;
+    Editor.SetText("alpha beta gamma\nsecond");
+    const FCodeTextEdit Edits[] =
+    {
+        { FString(), { { 0, 6 }, { 0, 10 } }, "BETA" },
+        { FString(), { { 1, 0 }, { 1, 0 } }, "> " },
+        { FString(), { { 0, 0 }, { 0, 5 } }, "A" },
+        { "H:/Elsewhere/Other.cs", { { 0, 0 }, { 0, 1 } }, "ignored" },
+    };
+    Editor.ApplyEdits(Edits);
+    EXPECT_TRUE(Editor.GetText() == "A BETA gamma\n> second");
+
+    Editor.Undo();
+    EXPECT_TRUE(Editor.GetText() == "alpha beta gamma\nsecond");
+}
+
+TEST(CodeEditor, FormatReindentsBraceBlocks)
+{
+    FCSharpLanguage Language;
+    FCodeEditor Editor;
+    Editor.SetLanguage(&Language);
+    Editor.SetText("class A\n{\nvoid F()\n{\nif (X)\n{\nY(\"{\");\n}\n   \n}\n}");
+    Editor.FormatDocument();
+    EXPECT_TRUE(Editor.GetText() == "class A\n{\n    void F()\n    {\n        if (X)\n        {\n            Y(\"{\");\n        }\n\n    }\n}");
+
+    Editor.Undo();
+    EXPECT_TRUE(Editor.GetText() == "class A\n{\nvoid F()\n{\nif (X)\n{\nY(\"{\");\n}\n   \n}\n}");
+}
+
+TEST(PlainTextLanguage, ColorsStringsNumbersAndComments)
+{
+    FPlainTextLanguage Language("Text", "#");
+    FCodeDocument Document;
+    Document.SetText("Key: \"value\", 42 # note");
+    Document.Highlight(Language, 0);
+
+    EXPECT_EQ(Document.GetTokenAt({ 0, 0 }), ECodeToken::Default);
+    EXPECT_EQ(Document.GetTokenAt({ 0, 3 }), ECodeToken::Punctuation);
+    EXPECT_EQ(Document.GetTokenAt({ 0, 6 }), ECodeToken::String);
+    EXPECT_EQ(Document.GetTokenAt({ 0, 14 }), ECodeToken::Number);
+    EXPECT_EQ(Document.GetTokenAt({ 0, 19 }), ECodeToken::Comment);
+}
+
+TEST(CSharpScript, NewScriptNamesItsClassAfterTheFile)
+{
+    EXPECT_TRUE(CSharpScript::NewScriptSource("Enemy Spawner").contains("public sealed class Enemy_Spawner : CEntityScript"));
+    EXPECT_TRUE(CSharpScript::NewScriptSource("2DCamera").contains("public sealed class _2DCamera : CEntityScript"));
+}
+
+TEST_F(FScriptLanguageTest, FindsReferencesSymbolsAndFixes)
+{
+    if (!DotNet::IsInitialized())
+    {
+        GTEST_SKIP() << "The .NET host did not start in this test process.";
+    }
+
+    using EReply = FCSharpScriptLanguage::EReply;
+    auto Wait = [](auto&& Query)
+    {
+        EReply Reply = EReply::Busy;
+        for (int32 Attempt = 0; Attempt < 600 && Reply == EReply::Busy; ++Attempt)
+        {
+            Reply = Query();
+            if (Reply == EReply::Busy)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        }
+        return Reply;
+    };
+
+    FCSharpScriptLanguage Language;
+    Language.SetFilePath("H:/CodeEditorScratch/Refs.cs");
+    FCodeDocument Document;
+    Document.SetText("class Refs\n{\n    int Count;\n    void Run()\n    {\n        Count = 1;\n        Count += 2;\n        var Watch = new Stopwatch();\n    }\n}\n");
+
+    TVector<FCSharpScriptLanguage::FReference> References;
+    ASSERT_EQ(Wait([&] { References.clear(); return Language.FindReferences(Document, { 5, 9 }, References); }), EReply::Answered);
+    ASSERT_EQ(References.size(), 3u);
+    const auto Declaration = Algo::FindIf(References, [](const FCSharpScriptLanguage::FReference& Reference) { return Reference.bDeclaration; });
+    ASSERT_NE(Declaration, References.end());
+    EXPECT_EQ(Declaration->Range.Start, (FCodePosition{ 2, 8 }));
+    EXPECT_TRUE(Declaration->Preview == "int Count;");
+
+    TVector<FCodeSymbolInfo> Symbols;
+    ASSERT_TRUE(Language.GetDocumentSymbols(Document, Symbols));
+    const auto Run = Algo::FindIf(Symbols, [](const FCodeSymbolInfo& Symbol) { return Symbol.Name == "Run"; });
+    ASSERT_NE(Run, Symbols.end());
+    EXPECT_EQ(Run->Kind, ECodeCompletionKind::Function);
+    EXPECT_EQ(Run->Depth, 1);
+    EXPECT_TRUE(Run->Container == "Refs");
+    EXPECT_EQ(Run->EndLine, 8);
+
+    TVector<FCodeSymbolInfo> Found;
+    ASSERT_EQ(Wait([&] { Found.clear(); return Language.FindWorkspaceSymbols("Refs", Found); }), EReply::Answered);
+    EXPECT_TRUE(Algo::AnyOf(Found.begin(), Found.end(), [](const FCodeSymbolInfo& Symbol) { return Symbol.Name == "Refs" && Symbol.Kind == ECodeCompletionKind::Type; }));
+
+    TVector<FCodeAction> Actions;
+    for (int32 Attempt = 0; Attempt < 200 && Actions.empty(); ++Attempt)
+    {
+        Language.GetCodeActions(Document, { 7, 26 }, Actions);
+        if (Actions.empty())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    const auto Using = Algo::FindIf(Actions, [](const FCodeAction& Action) { return Action.Title == "using System.Diagnostics;"; });
+    ASSERT_NE(Using, Actions.end());
+    ASSERT_EQ(Using->Edits.size(), 1u);
+    EXPECT_TRUE(Using->Edits[0].Path.empty());
+    EXPECT_EQ(Using->Edits[0].Range.Start, (FCodePosition{ 0, 0 }));
+
+    TVector<FCSharpScriptLanguage::FProjectDiagnostic> Problems;
+    ASSERT_EQ(Wait([&] { Problems.clear(); return Language.GetProjectDiagnostics(Problems); }), EReply::Answered);
+    EXPECT_TRUE(Algo::AnyOf(Problems.begin(), Problems.end(), [](const FCSharpScriptLanguage::FProjectDiagnostic& Problem) { return Problem.Diagnostic.Message.contains("CS0246") && Problem.Diagnostic.Range.Start.Line == 7; }));
 }

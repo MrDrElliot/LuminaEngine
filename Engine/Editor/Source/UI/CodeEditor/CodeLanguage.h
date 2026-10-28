@@ -105,6 +105,42 @@ namespace Lumina
         FCodePosition Position;
     };
 
+    // A replacement in the document asked about when Path is empty, otherwise in the file on disk at Path.
+    struct FCodeTextEdit
+    {
+        FString    Path;
+        FCodeRange Range;
+        FString    Text;
+    };
+
+    struct FCodeAction
+    {
+        FString                Title;
+        TVector<FCodeTextEdit> Edits;
+    };
+
+    struct FCodeSymbolInfo
+    {
+        FString             Name;
+        FString             Detail;
+        FString             Container;
+        // A disk path for a workspace search, empty for the document asked about.
+        FString             Path;
+        ECodeCompletionKind Kind = ECodeCompletionKind::Text;
+        FCodePosition       Position;
+        int32               EndLine = 0;
+        int32               Depth = 0;
+    };
+
+    // Lines StartLine + 1 through EndLine hide when the block folds, leaving its first line as the summary.
+    struct FCodeFold
+    {
+        int32 StartLine = 0;
+        int32 EndLine = 0;
+
+        bool operator==(const FCodeFold&) const = default;
+    };
+
     struct FCodeCommentSyntax
     {
         FStringView Line;
@@ -142,6 +178,13 @@ namespace Lumina
         virtual void GetColorSpans(FStringView Line, const ECodeToken* Tokens, TVector<FCodeColorSpan>& Out) const {}
         virtual bool FindDefinition(const FCodeDocument& Document, FCodePosition Position, FCodeLocation& Out) const { return false; }
 
+        // The declarations an outline lists. False when the answer is not ready yet.
+        virtual bool GetDocumentSymbols(const FCodeDocument& Document, TVector<FCodeSymbolInfo>& Out) const { return true; }
+        virtual void GetCodeActions(const FCodeDocument& Document, FCodePosition Position, TVector<FCodeAction>& Out) const {}
+
+        // Blocks a reader can collapse, from braces and region markers. The document must be highlighted to its last line.
+        virtual void GetFoldingRanges(const FCodeDocument& Document, TVector<FCodeFold>& Out) const;
+
         // Finds the call around Caret and the argument the caret sits in.
         virtual bool GetSignature(const FCodeDocument& Document, FCodePosition Caret, FCodeSignature& Out) const;
 
@@ -177,6 +220,7 @@ namespace Lumina
         void GetCompletions(const FCodeCompletionRequest& Request, TVector<FCodeCompletionItem>& Out) const override;
         bool GetHover(const FCodeDocument& Document, FCodePosition Position, FCodeHover& Out) const override;
         bool GetDiagnostics(const FCodeDocument& Document, TVector<FCodeDiagnostic>& Out) const override;
+        bool GetDocumentSymbols(const FCodeDocument& Document, TVector<FCodeSymbolInfo>& Out) const override;
 
         // Names the host puts in scope, such as a material node's pins, colored and completed like built-ins.
         struct FContextSymbol

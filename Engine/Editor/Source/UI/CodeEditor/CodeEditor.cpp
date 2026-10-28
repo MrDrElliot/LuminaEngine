@@ -266,6 +266,7 @@ namespace Lumina
             AdjustForInsert(Stop.Range.End, At, End, false);
         }
         AdjustForInsert(Completion.WordStart, At, End, true);
+        ShiftFoldsForInsert(At, End);
         LastEditTime = Now();
         return End;
     }
@@ -301,6 +302,7 @@ namespace Lumina
             AdjustForErase(Stop.Range.End, Range);
         }
         AdjustForErase(Completion.WordStart, Range);
+        ShiftFoldsForErase(Range);
         LastEditTime = Now();
     }
 
@@ -492,6 +494,10 @@ namespace Lumina
     void FCodeEditor::OnCursorsMoved()
     {
         CursorBlinkStart = Now();
+        for (const FCursor& Cursor : Cursors)
+        {
+            RevealLine(Cursor.Head.Line);
+        }
         if (bSignatureOpen)
         {
             RefreshSignature();
@@ -621,15 +627,17 @@ namespace Lumina
         {
             PreferredVisual = CodeText::VisualColumn(Document.GetLineView(Position.Line), Position.Column, TabSize);
         }
-        const int32 Target = Position.Line + Delta;
-        if (Target < 0)
+        // Moves by visible rows, so a folded block is stepped over as the one line it shows as.
+        const int32 TargetRow = RowOf(Position.Line) + Delta;
+        if (TargetRow < 0)
         {
             return {};
         }
-        if (Target >= Document.GetLineCount())
+        if (TargetRow >= (int32)LineOfRow.size() && !LineOfRow.empty())
         {
             return Document.GetEnd();
         }
+        const int32 Target = LineOfRow.empty() ? Math::Clamp(Position.Line + Delta, 0, Document.GetLineCount() - 1) : LineAtRow(TargetRow);
         return { Target, CodeText::ColumnAtVisual(Document.GetLineView(Target), PreferredVisual, TabSize, false) };
     }
 
@@ -2227,5 +2235,378 @@ namespace Lumina
         {
             LanguageDiagnostics.resize(MaxDiagnostics);
         }
+    }
+
+    void FCodeEditor::ApplyEdits(TSpan<const FCodeTextEdit> Edits)
+    {
+        if (Settings.bReadOnly)
+        {
+            return;
+        }
+        TVector<const FCodeTextEdit*> Local;
+        for (const FCodeTextEdit& Edit : Edits)
+        {
+            if (Edit.Path.empty())
+            {
+                Local.push_back(&Edit);
+            }
+        }
+        if (Local.empty())
+        {
+            return;
+        }
+        // Last first, so an edit never moves the ranges of the ones still to come.
+        Algo::Sort(Local, [](const FCodeTextEdit* A, const FCodeTextEdit* B) { return B->Range.Start < A->Range.Start; });
+        BeginEdit(EEditKind::Other);
+        for (const FCodeTextEdit* Edit : Local)
+        {
+            ReplaceRange(Edit->Range, Edit->Text.View());
+        }
+        EndEdit();
+    }
+
+    void FCodeEditor::FormatDocument()
+    {
+        if (Settings.bReadOnly || Language == nullptr)
+        {
+            return;
+        }
+        const int32 TabSize = Math::Max(1, Settings.TabSize);
+        Document.Highlight(*Language, Document.GetLineCount() - 1);
+        auto EndsStatement = [](FStringView Text)
+        {
+            const FStringView Trimmed = Text.substr(0, Text.find_last_not_of(" \t") + 1);
+            if (Trimmed.empty())
+            {
+                return true;
+            }
+            const char Last = Trimmed.back();
+            return Last == ';' || Last == '{' || Last == '}' || Last == ']' || Last == ':' || Last == ',' || Trimmed.front() == '#'
+                || Trimmed.starts_with("//") || Trimmed.ends_with("*/");
+        };
+
+        struct FLineEdit
+        {
+            int32   Line = 0;
+            int32   OldIndent = 0;
+            FString NewIndent;
+        };
+        TVector<FLineEdit> Changes;
+        int32 Depth = 0;
+        // One flag per open brace, true when that block is a switch body whose case labels push their statements in one more step.
+        TVector<bool> SwitchBlocks;
+        bool bInCase = false;
+        int32 StatementShift = 0;
+        bool bPreviousEnded = true;
+        bool bNextIsSwitch = false;
+        for (int32 Line = 0; Line < Document.GetLineCount(); ++Line)
+        {
+            const FStringView Text = Document.GetLineView(Line);
+            const TVector<ECodeToken>& Tokens = Document.GetTokens(Line);
+            const int32 Indent = CodeText::LeadingWhitespace(Text);
+            const FStringView Trimmed = Text.substr(Indent);
+            const bool bContinuesBlock = Document.GetStartState(*Language, Line) != Language->GetInitialState();
+            const bool bTokens = Tokens.size() == Text.size();
+
+            int32 Opens = 0;
+            int32 Closes = 0;
+            int32 LeadingCloses = 0;
+            bool bLeading = true;
+            for (int32 Column = Indent; bTokens && Column < (int32)Text.size(); ++Column)
+            {
+                const bool bBrace = Tokens[Column] == ECodeToken::Punctuation && (Text[Column] == '{' || Text[Column] == '}');
+                if (bBrace && Text[Column] == '{')
+                {
+                    ++Opens;
+                    bLeading = false;
+                }
+                else if (bBrace)
+                {
+                    ++Closes;
+                    LeadingCloses += bLeading ? 1 : 0;
+                }
+                else if (!CodeText::IsSpace(Text[Column]))
+                {
+                    bLeading = false;
+                }
+            }
+
+            const bool bCaseLabel = Trimmed.starts_with("case ") || Trimmed.starts_with("default:") || Trimmed.starts_with("default :");
+            const int32 BlockDepth = Math::Max(0, Depth - LeadingCloses);
+            const bool bSwitchBody = !SwitchBlocks.empty() && SwitchBlocks.back() && LeadingCloses == 0;
+            const int32 Target = BlockDepth + (bSwitchBody && bInCase && !bCaseLabel ? 1 : 0);
+            if (!CodeText::IsBlank(Text) && !bContinuesBlock && Trimmed.front() != '#')
+            {
+                const int32 Current = CodeText::VisualColumn(Text, Indent, TabSize);
+                int32 Wanted = Target * TabSize;
+                if (!bPreviousEnded)
+                {
+                    // A continuation keeps its offset from the statement it continues, shifted as that statement was.
+                    Wanted = Math::Max(0, Current + StatementShift);
+                }
+                else
+                {
+                    StatementShift = Wanted - Current;
+                }
+                FString NewIndent;
+                if (Settings.bInsertSpaces)
+                {
+                    NewIndent.append((size_t)Wanted, ' ');
+                }
+                else
+                {
+                    NewIndent.append((size_t)(Wanted / TabSize), '\t');
+                    NewIndent.append((size_t)(Wanted % TabSize), ' ');
+                }
+                if (FStringView(NewIndent) != Text.substr(0, Indent))
+                {
+                    Changes.push_back({ Line, Indent, Move(NewIndent) });
+                }
+                bPreviousEnded = EndsStatement(Text);
+            }
+            else if (CodeText::IsBlank(Text) && Indent > 0)
+            {
+                Changes.push_back({ Line, Indent, FString() });
+            }
+
+            if (bSwitchBody && bCaseLabel)
+            {
+                bInCase = true;
+            }
+            for (int32 Close = 0; Close < Closes && Depth > 0; ++Close)
+            {
+                --Depth;
+                if (!SwitchBlocks.empty())
+                {
+                    SwitchBlocks.pop_back();
+                }
+                bInCase = false;
+            }
+            bNextIsSwitch = bNextIsSwitch || Trimmed.starts_with("switch");
+            for (int32 Open = 0; Open < Opens; ++Open)
+            {
+                ++Depth;
+                SwitchBlocks.push_back(bNextIsSwitch);
+                bNextIsSwitch = false;
+                bInCase = false;
+            }
+        }
+        if (Changes.empty())
+        {
+            return;
+        }
+        BeginEdit(EEditKind::Other);
+        for (const FLineEdit& Change : Changes)
+        {
+            ReplaceRange({ { Change.Line, 0 }, { Change.Line, Change.OldIndent } }, Change.NewIndent.View());
+        }
+        EndEdit();
+    }
+
+    void FCodeEditor::ShowCodeActions()
+    {
+        CodeActions.clear();
+        if (Language == nullptr || Settings.bReadOnly)
+        {
+            return;
+        }
+        Language->GetCodeActions(Document, Cursors[MainCursor].Head, CodeActions);
+        bOpenCodeActions = true;
+    }
+
+    void FCodeEditor::UpdateFolds()
+    {
+        constexpr double FoldSettleSeconds = 0.25;
+        if (Language == nullptr || FoldsVersion == Document.GetVersion() || Now() - LastEditTime < FoldSettleSeconds)
+        {
+            return;
+        }
+        FoldsVersion = Document.GetVersion();
+        Document.Highlight(*Language, Document.GetLineCount() - 1);
+        TVector<FCodeFold> Found;
+        Language->GetFoldingRanges(Document, Found);
+        Folds = Move(Found);
+        const size_t Before = Collapsed.size();
+        Collapsed.erase(Algo::RemoveIf(Collapsed.begin(), Collapsed.end(), [this](int32 Line) { return FoldStartingAt(Line) == nullptr; }), Collapsed.end());
+        if (Collapsed.size() != Before)
+        {
+            ++CollapseSerial;
+        }
+    }
+
+    const FCodeFold* FCodeEditor::FoldStartingAt(int32 Line) const
+    {
+        const auto Found = std::lower_bound(Folds.begin(), Folds.end(), Line, [](const FCodeFold& Fold, int32 Start) { return Fold.StartLine < Start; });
+        return Found != Folds.end() && Found->StartLine == Line ? &*Found : nullptr;
+    }
+
+    bool FCodeEditor::IsCollapsed(int32 Line) const
+    {
+        return std::binary_search(Collapsed.begin(), Collapsed.end(), Line);
+    }
+
+    void FCodeEditor::RebuildRows()
+    {
+        const int32 LineCount = Document.GetLineCount();
+        if (RowsVersion == Document.GetVersion() && RowsCollapseSerial == CollapseSerial && (int32)RowOfLine.size() == LineCount)
+        {
+            return;
+        }
+        RowsVersion = Document.GetVersion();
+        RowsCollapseSerial = CollapseSerial;
+        RowOfLine.resize(LineCount);
+        LineOfRow.clear();
+        int32 HiddenThrough = -1;
+        for (int32 Line = 0; Line < LineCount; ++Line)
+        {
+            if (Line <= HiddenThrough)
+            {
+                RowOfLine[Line] = (int32)LineOfRow.size() - 1;
+                continue;
+            }
+            RowOfLine[Line] = (int32)LineOfRow.size();
+            LineOfRow.push_back(Line);
+            if (IsCollapsed(Line))
+            {
+                if (const FCodeFold* Fold = FoldStartingAt(Line))
+                {
+                    HiddenThrough = Math::Max(HiddenThrough, Math::Min(Fold->EndLine, LineCount - 1));
+                }
+            }
+        }
+    }
+
+    int32 FCodeEditor::RowOf(int32 Line) const
+    {
+        if (RowOfLine.empty())
+        {
+            return Line;
+        }
+        return RowOfLine[Math::Clamp(Line, 0, (int32)RowOfLine.size() - 1)];
+    }
+
+    int32 FCodeEditor::LineAtRow(int32 Row) const
+    {
+        if (LineOfRow.empty())
+        {
+            return Math::Clamp(Row, 0, Document.GetLineCount() - 1);
+        }
+        return LineOfRow[Math::Clamp(Row, 0, (int32)LineOfRow.size() - 1)];
+    }
+
+    bool FCodeEditor::IsLineHidden(int32 Line) const
+    {
+        if (Line < 0 || Line >= (int32)RowOfLine.size())
+        {
+            return false;
+        }
+        const int32 Row = RowOfLine[Line];
+        return Row >= 0 && Row < (int32)LineOfRow.size() && LineOfRow[Row] != Line;
+    }
+
+    void FCodeEditor::RevealLine(int32 Line)
+    {
+        bool bOpened = false;
+        for (size_t Index = 0; Index < Collapsed.size();)
+        {
+            const FCodeFold* Fold = FoldStartingAt(Collapsed[Index]);
+            if (Fold != nullptr && Fold->StartLine < Line && Line <= Fold->EndLine)
+            {
+                Collapsed.erase(Collapsed.begin() + Index);
+                bOpened = true;
+                continue;
+            }
+            ++Index;
+        }
+        if (bOpened)
+        {
+            ++CollapseSerial;
+        }
+    }
+
+    void FCodeEditor::ToggleFold(int32 Line)
+    {
+        const FCodeFold* Fold = FoldStartingAt(Line);
+        if (Fold == nullptr)
+        {
+            return;
+        }
+        const auto Found = std::lower_bound(Collapsed.begin(), Collapsed.end(), Line);
+        if (Found != Collapsed.end() && *Found == Line)
+        {
+            Collapsed.erase(Found);
+        }
+        else
+        {
+            Collapsed.insert(Found, Line);
+            // A caret inside the block moves to its first line rather than holding the fold open.
+            for (FCursor& Cursor : Cursors)
+            {
+                if (Cursor.Head.Line > Line && Cursor.Head.Line <= Fold->EndLine)
+                {
+                    Cursor.Head = Cursor.Anchor = { Line, (int32)Document.GetLine(Line).size() };
+                }
+            }
+        }
+        ++CollapseSerial;
+    }
+
+    void FCodeEditor::FoldAll()
+    {
+        Collapsed.clear();
+        for (const FCodeFold& Fold : Folds)
+        {
+            Collapsed.push_back(Fold.StartLine);
+        }
+        ClearExtraCursors();
+        Cursors[0].Head = Cursors[0].Anchor = {};
+        ++CollapseSerial;
+    }
+
+    void FCodeEditor::UnfoldAll()
+    {
+        Collapsed.clear();
+        ++CollapseSerial;
+    }
+
+    void FCodeEditor::ShiftFoldsForInsert(FCodePosition At, FCodePosition End)
+    {
+        const int32 Added = End.Line - At.Line;
+        if (Added == 0)
+        {
+            return;
+        }
+        for (FCodeFold& Fold : Folds)
+        {
+            Fold.StartLine += Fold.StartLine > At.Line ? Added : 0;
+            Fold.EndLine += Fold.EndLine > At.Line || (Fold.EndLine == At.Line && At.Column == 0) ? Added : 0;
+        }
+        for (int32& Line : Collapsed)
+        {
+            Line += Line > At.Line ? Added : 0;
+        }
+        ++CollapseSerial;
+    }
+
+    void FCodeEditor::ShiftFoldsForErase(const FCodeRange& Range)
+    {
+        const int32 Removed = Range.End.Line - Range.Start.Line;
+        if (Removed == 0)
+        {
+            return;
+        }
+        auto Shift = [&](int32 Line) { return Line > Range.End.Line ? Line - Removed : Line > Range.Start.Line ? Range.Start.Line : Line; };
+        Folds.erase(Algo::RemoveIf(Folds.begin(), Folds.end(), [&](const FCodeFold& Fold) { return Fold.StartLine > Range.Start.Line && Fold.StartLine <= Range.End.Line; }), Folds.end());
+        for (FCodeFold& Fold : Folds)
+        {
+            Fold.StartLine = Shift(Fold.StartLine);
+            Fold.EndLine = Shift(Fold.EndLine);
+        }
+        Collapsed.erase(Algo::RemoveIf(Collapsed.begin(), Collapsed.end(), [&](int32 Line) { return Line > Range.Start.Line && Line <= Range.End.Line; }), Collapsed.end());
+        for (int32& Line : Collapsed)
+        {
+            Line = Shift(Line);
+        }
+        ++CollapseSerial;
     }
 }

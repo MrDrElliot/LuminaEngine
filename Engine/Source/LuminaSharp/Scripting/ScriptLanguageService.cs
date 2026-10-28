@@ -24,6 +24,12 @@ internal enum EScriptQuery
     Diagnostics = 3,
     Warm = 4,
     Definition = 5,
+    References = 6,
+    DocumentSymbols = 7,
+    WorkspaceSymbols = 8,
+    ProjectDiagnostics = 9,
+    CodeActions = 10,
+    Sync = 11,
 }
 
 // Answers the code editor's questions about an open script from a Roslyn compilation of its unit, kept warm between queries.
@@ -33,7 +39,13 @@ internal sealed class ScriptLanguageService
     private const char RecordSeparator = '\u001E';
     private const int MaxCompletions = 1500;
     private const int MaxDiagnostics = 200;
+    private const int MaxProjectDiagnostics = 1000;
+    private const int MaxReferences = 2000;
+    private const int MaxWorkspaceSymbols = 400;
+    private const int MaxPreviewLength = 160;
     private const int InteractiveWaitMs = 30;
+    // Searches the user asked for by name wait longer, since a dropped one has to be asked for again.
+    private const int ExplicitWaitMs = 250;
 
     // Mirrors ECodeCompletionKind on the native side.
     private enum ECompletionKind
@@ -103,14 +115,19 @@ internal sealed class ScriptLanguageService
     public string? Query(EScriptQuery Kind, string FilePath, string Text, int Position)
     {
         bool bInteractive = Kind is EScriptQuery.Completion or EScriptQuery.Hover or EScriptQuery.Signature;
-        if (!Monitor.TryEnter(Lock, bInteractive ? InteractiveWaitMs : 0))
+        bool bExplicit = Kind is EScriptQuery.References or EScriptQuery.WorkspaceSymbols or EScriptQuery.CodeActions or EScriptQuery.ProjectDiagnostics;
+        if (!Monitor.TryEnter(Lock, bExplicit ? ExplicitWaitMs : bInteractive ? InteractiveWaitMs : 0))
         {
             return null;
         }
         try
         {
-            LastPath = FilePath;
-            LastText = Text;
+            // A workspace search carries its query in Text rather than the script, which must not become the script to rewarm.
+            if (Kind is not (EScriptQuery.WorkspaceSymbols or EScriptQuery.ProjectDiagnostics))
+            {
+                LastPath = FilePath;
+                LastText = Text;
+            }
 
             // Building a unit's compilation takes seconds, so it happens off the game thread while the editor asks again.
             if (Kind == EScriptQuery.Warm || !HasWorkspace(FilePath))
@@ -170,9 +187,28 @@ internal sealed class ScriptLanguageService
     [MethodImpl(MethodImplOptions.NoInlining)]
     private string Answer(EScriptQuery Kind, string FilePath, string Text, int Position)
     {
-        (CSharpCompilation Compilation, SyntaxTree Tree) = Prepare(FilePath, Text, Kind == EScriptQuery.Diagnostics);
-        SemanticModel Model = Compilation.GetSemanticModel(Tree);
         var Out = new StringBuilder();
+        if (Kind is EScriptQuery.WorkspaceSymbols or EScriptQuery.ProjectDiagnostics)
+        {
+            FWorkspace Whole = GetWorkspace(Normalize(FilePath));
+            if (Kind == EScriptQuery.WorkspaceSymbols)
+            {
+                WriteWorkspaceSymbols(Whole, Text, Out);
+            }
+            else
+            {
+                WriteProjectDiagnostics(WithGenerators(Whole), Whole, Out);
+            }
+            return Out.ToString();
+        }
+
+        bool bGenerators = Kind is EScriptQuery.Diagnostics or EScriptQuery.References or EScriptQuery.CodeActions;
+        (CSharpCompilation Compilation, SyntaxTree Tree) = Prepare(FilePath, Text, bGenerators);
+        if (Kind == EScriptQuery.Sync)
+        {
+            return string.Empty;
+        }
+        SemanticModel Model = Compilation.GetSemanticModel(Tree);
         switch (Kind)
         {
             case EScriptQuery.Completion:
@@ -190,8 +226,27 @@ internal sealed class ScriptLanguageService
             case EScriptQuery.Definition:
                 WriteDefinition(Model, Tree, Position, Out);
                 break;
+            case EScriptQuery.References:
+                WriteReferences(Compilation, GetWorkspace(Normalize(FilePath)), Model, Tree, Position, Out);
+                break;
+            case EScriptQuery.DocumentSymbols:
+                WriteSymbols(Tree, ((CompilationUnitSyntax)Tree.GetRoot()).Members, 0, string.Empty, null, Out);
+                break;
+            case EScriptQuery.CodeActions:
+                WriteCodeActions(Compilation, Model, Tree, Position, Out);
+                break;
         }
         return Out.ToString();
+    }
+
+    private Compilation WithGenerators(FWorkspace Workspace)
+    {
+        if (Workspace.Driver == null)
+        {
+            return Workspace.Compilation;
+        }
+        Workspace.Driver = Workspace.Driver.RunGeneratorsAndUpdateCompilation(Workspace.Compilation, out Compilation Generated, out _);
+        return Generated;
     }
 
     private (CSharpCompilation, SyntaxTree) Prepare(string FilePath, string Text, bool bRunGenerators)
@@ -491,6 +546,240 @@ internal sealed class ScriptLanguageService
         }
         (int Line, int Column, int _, int _) = Utf8Span(DeclaringTree, Declared.SourceSpan);
         AppendRecord(Out, DeclaringTree.FilePath, Line.ToString(), Column.ToString());
+    }
+
+    // Every use of the symbol under the caret across the unit's own sources, declarations included, for find references and rename.
+    private static void WriteReferences(Compilation Compilation, FWorkspace Workspace, SemanticModel Model, SyntaxTree Tree, int Position, StringBuilder Out)
+    {
+        ISymbol? Target = SymbolAt(Model, TokenAt(Tree.GetRoot(), Position));
+        if (Target == null || Target.Name.Length == 0)
+        {
+            return;
+        }
+        Target = Target is IMethodSymbol { MethodKind: MethodKind.Constructor } Constructor ? Constructor.ContainingType : Target;
+        Target = Target.OriginalDefinition;
+
+        int Written = 0;
+        foreach (SyntaxTree Source in Workspace.Trees.Values)
+        {
+            SemanticModel SourceModel = Compilation.GetSemanticModel(Source);
+            SourceText Text = Source.GetText();
+            foreach (SyntaxToken Token in Source.GetRoot().DescendantTokens())
+            {
+                if (!Token.IsKind(SyntaxKind.IdentifierToken) || Token.ValueText != Target.Name)
+                {
+                    continue;
+                }
+                ISymbol? Found = SymbolAt(SourceModel, Token);
+                if (Found == null || !RefersTo(Found, Target))
+                {
+                    continue;
+                }
+                (int StartLine, int StartColumn, int EndLine, int EndColumn) = Utf8Span(Source, Token.Span);
+                bool bDeclaration = Found.Locations.Any(Location => Location.SourceTree == Source && Location.SourceSpan == Token.Span);
+                string Preview = Text.Lines[Text.Lines.GetLinePosition(Token.SpanStart).Line].ToString().Trim();
+                AppendRecord(Out, Source.FilePath, StartLine.ToString(), StartColumn.ToString(), EndLine.ToString(), EndColumn.ToString(),
+                    Preview.Length > MaxPreviewLength ? Preview.Substring(0, MaxPreviewLength) : Preview, bDeclaration ? "1" : "0");
+                if (++Written >= MaxReferences)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    // A type's constructors carry its name, and an override is the same member to a reader, so both count as the target.
+    private static bool RefersTo(ISymbol Found, ISymbol Target)
+    {
+        ISymbol Original = Found is IMethodSymbol { MethodKind: MethodKind.Constructor } Constructor ? Constructor.ContainingType : Found;
+        Original = Original is IMethodSymbol { ReducedFrom: { } Reduced } ? Reduced : Original;
+        for (ISymbol? Candidate = Original.OriginalDefinition; Candidate != null; Candidate = OverriddenOf(Candidate))
+        {
+            if (SymbolEqualityComparer.Default.Equals(Candidate, Target))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static ISymbol? OverriddenOf(ISymbol Symbol)
+    {
+        return Symbol switch
+        {
+            IMethodSymbol Method => Method.OverriddenMethod?.OriginalDefinition,
+            IPropertySymbol Property => Property.OverriddenProperty?.OriginalDefinition,
+            IEventSymbol Event => Event.OverriddenEvent?.OriginalDefinition,
+            _ => null,
+        };
+    }
+
+    // Declarations in source order with their nesting depth, the outline of one script and the index a workspace search filters.
+    private static void WriteSymbols(SyntaxTree Tree, SyntaxList<MemberDeclarationSyntax> Members, int Depth, string Container, Func<string, bool>? Filter, StringBuilder Out)
+    {
+        foreach (MemberDeclarationSyntax Member in Members)
+        {
+            switch (Member)
+            {
+                case BaseNamespaceDeclarationSyntax Namespace:
+                    WriteSymbol(Tree, Namespace.Name.ToString(), ECompletionKind.Module, "namespace", Container, Namespace.Name.Span, Member, Depth, Filter, Out);
+                    WriteSymbols(Tree, Namespace.Members, Depth + 1, Namespace.Name.ToString(), Filter, Out);
+                    break;
+                case BaseTypeDeclarationSyntax Type:
+                    string Keyword = Type switch
+                    {
+                        RecordDeclarationSyntax Record => Record.ClassOrStructKeyword.IsKind(SyntaxKind.StructKeyword) ? "record struct" : "record",
+                        TypeDeclarationSyntax Declared => Declared.Keyword.ValueText,
+                        EnumDeclarationSyntax => "enum",
+                        _ => "type",
+                    };
+                    WriteSymbol(Tree, Type.Identifier.ValueText, ECompletionKind.Type, Keyword, Container, Type.Identifier.Span, Member, Depth, Filter, Out);
+                    string Nested = Container.Length > 0 ? Container + "." + Type.Identifier.ValueText : Type.Identifier.ValueText;
+                    if (Type is TypeDeclarationSyntax WithMembers)
+                    {
+                        WriteSymbols(Tree, WithMembers.Members, Depth + 1, Nested, Filter, Out);
+                    }
+                    else if (Type is EnumDeclarationSyntax Enum)
+                    {
+                        foreach (EnumMemberDeclarationSyntax Value in Enum.Members)
+                        {
+                            WriteSymbol(Tree, Value.Identifier.ValueText, ECompletionKind.Value, Type.Identifier.ValueText, Nested, Value.Identifier.Span, Value, Depth + 1, Filter, Out);
+                        }
+                    }
+                    break;
+                case DelegateDeclarationSyntax Delegate:
+                    WriteSymbol(Tree, Delegate.Identifier.ValueText, ECompletionKind.Type, "delegate " + Delegate.ReturnType, Container, Delegate.Identifier.Span, Member, Depth, Filter, Out);
+                    break;
+                case MethodDeclarationSyntax Method:
+                    WriteSymbol(Tree, Method.Identifier.ValueText, ECompletionKind.Function, Method.ReturnType + " " + Method.Identifier.ValueText + Method.ParameterList,
+                        Container, Method.Identifier.Span, Member, Depth, Filter, Out);
+                    break;
+                case ConstructorDeclarationSyntax Constructor:
+                    WriteSymbol(Tree, Constructor.Identifier.ValueText, ECompletionKind.Function, Constructor.Identifier.ValueText + Constructor.ParameterList,
+                        Container, Constructor.Identifier.Span, Member, Depth, Filter, Out);
+                    break;
+                case PropertyDeclarationSyntax Property:
+                    WriteSymbol(Tree, Property.Identifier.ValueText, ECompletionKind.Property, Property.Type.ToString(), Container, Property.Identifier.Span, Member, Depth, Filter, Out);
+                    break;
+                case IndexerDeclarationSyntax Indexer:
+                    WriteSymbol(Tree, "this" + Indexer.ParameterList, ECompletionKind.Property, Indexer.Type.ToString(), Container, Indexer.ThisKeyword.Span, Member, Depth, Filter, Out);
+                    break;
+                case OperatorDeclarationSyntax Operator:
+                    WriteSymbol(Tree, "operator " + Operator.OperatorToken.ValueText, ECompletionKind.Function, Operator.ReturnType + " operator" + Operator.OperatorToken.ValueText + Operator.ParameterList,
+                        Container, Operator.OperatorToken.Span, Member, Depth, Filter, Out);
+                    break;
+                case EventDeclarationSyntax Event:
+                    WriteSymbol(Tree, Event.Identifier.ValueText, ECompletionKind.Event, Event.Type.ToString(), Container, Event.Identifier.Span, Member, Depth, Filter, Out);
+                    break;
+                case BaseFieldDeclarationSyntax Field:
+                    bool bEvent = Field is EventFieldDeclarationSyntax;
+                    foreach (VariableDeclaratorSyntax Variable in Field.Declaration.Variables)
+                    {
+                        WriteSymbol(Tree, Variable.Identifier.ValueText, bEvent ? ECompletionKind.Event : ECompletionKind.Field, Field.Declaration.Type.ToString(),
+                            Container, Variable.Identifier.Span, Member, Depth, Filter, Out);
+                    }
+                    break;
+            }
+        }
+    }
+
+    private static void WriteSymbol(SyntaxTree Tree, string Name, ECompletionKind Kind, string Detail, string Container, TextSpan NameSpan, SyntaxNode Declaration,
+        int Depth, Func<string, bool>? Filter, StringBuilder Out)
+    {
+        if (Filter != null && !Filter(Name))
+        {
+            return;
+        }
+        (int Line, int Column, int _, int _) = Utf8Span(Tree, NameSpan);
+        (int _, int _, int EndLine, int _) = Utf8Span(Tree, Declaration.Span);
+        AppendRecord(Out, Name, ((int)Kind).ToString(), Detail, Container, Tree.FilePath, Line.ToString(), Column.ToString(), EndLine.ToString(), Depth.ToString());
+    }
+
+    // Every declaration in the unit whose name the query fuzzily matches, types first so a class beats a field of the same name.
+    private static void WriteWorkspaceSymbols(FWorkspace Workspace, string Query, StringBuilder Out)
+    {
+        var Matches = new StringBuilder();
+        string Trimmed = Query.Trim();
+        foreach (SyntaxTree Source in Workspace.Trees.Values)
+        {
+            // Double underscore names are generated plumbing, such as the field offsets in the bindings.
+            WriteSymbols(Source, ((CompilationUnitSyntax)Source.GetRoot()).Members, 0, string.Empty,
+                Name => !Name.StartsWith("__", StringComparison.Ordinal) && (Trimmed.Length == 0 || Fuzzy(Trimmed, Name)), Matches);
+        }
+        if (Matches.Length == 0)
+        {
+            return;
+        }
+        var Records = Matches.ToString().Split(RecordSeparator)
+            .Select(Record => (Record, Fields: Record.Split(FieldSeparator)))
+            .OrderBy(Entry => Entry.Fields[0].StartsWith(Trimmed, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(Entry => Entry.Fields[1] == ((int)ECompletionKind.Type).ToString() ? 0 : 1)
+            .ThenBy(Entry => Entry.Fields[0].Length)
+            .Take(MaxWorkspaceSymbols);
+        Out.Append(string.Join(RecordSeparator, Records.Select(Entry => Entry.Record)));
+    }
+
+    // Errors and warnings across every script in the unit, so the problems list covers files that are not open.
+    private static void WriteProjectDiagnostics(Compilation Compilation, FWorkspace Workspace, StringBuilder Out)
+    {
+        var Sources = new HashSet<SyntaxTree>(Workspace.Trees.Values);
+        int Written = 0;
+        foreach (Diagnostic Diagnostic in Compilation.GetDiagnostics())
+        {
+            if (Diagnostic.Severity is not (DiagnosticSeverity.Error or DiagnosticSeverity.Warning) || Diagnostic.Location.SourceTree is not { } Source
+                || !Sources.Contains(Source) || ScriptCompiler.IsAssignedByEngine(Diagnostic))
+            {
+                continue;
+            }
+            (int StartLine, int StartColumn, int EndLine, int EndColumn) = Utf8Span(Source, Diagnostic.Location.SourceSpan);
+            AppendRecord(Out, Source.FilePath, StartLine.ToString(), StartColumn.ToString(), EndLine.ToString(), EndColumn.ToString(),
+                Diagnostic.Severity == DiagnosticSeverity.Error ? "0" : "1", Diagnostic.Id + " " + Diagnostic.GetMessage());
+            if (++Written >= MaxProjectDiagnostics)
+            {
+                return;
+            }
+        }
+    }
+
+    // A using for each namespace holding a type of the unresolved name under the caret, inserted after the file's other usings.
+    private static void WriteCodeActions(Compilation Compilation, SemanticModel Model, SyntaxTree Tree, int Position, StringBuilder Out)
+    {
+        CompilationUnitSyntax Root = (CompilationUnitSyntax)Tree.GetRoot();
+        SyntaxToken Token = TokenAt(Root, Position);
+        if (!Token.IsKind(SyntaxKind.IdentifierToken) || Token.Parent is not { } Node || Model.GetSymbolInfo(Node).Symbol != null)
+        {
+            return;
+        }
+
+        var Namespaces = new SortedSet<string>(StringComparer.Ordinal);
+        CollectNamespacesOf(Compilation.GlobalNamespace, Token.ValueText, Compilation.Assembly, Namespaces);
+        if (Namespaces.Count == 0)
+        {
+            return;
+        }
+        var Imported = new HashSet<string>(Root.Usings.Select(Using => Using.Name?.ToString() ?? string.Empty), StringComparer.Ordinal);
+        int InsertLine = Root.Usings.Count > 0 ? Tree.GetText().Lines.GetLinePosition(Root.Usings.Last().Span.End).Line + 1 : 0;
+        foreach (string Namespace in Namespaces.Where(Namespace => !Imported.Contains(Namespace)))
+        {
+            AppendRecord(Out, "using " + Namespace + ";", Tree.FilePath, InsertLine.ToString(), "0", InsertLine.ToString(), "0", "using " + Namespace + ";\n");
+        }
+    }
+
+    private static void CollectNamespacesOf(INamespaceSymbol Namespace, string TypeName, IAssemblySymbol Within, SortedSet<string> Out)
+    {
+        foreach (INamedTypeSymbol Type in Namespace.GetTypeMembers(TypeName).Concat(Namespace.GetTypeMembers(TypeName + "Attribute")))
+        {
+            bool bVisible = Type.DeclaredAccessibility == Accessibility.Public
+                || (Type.DeclaredAccessibility == Accessibility.Internal && SymbolEqualityComparer.Default.Equals(Type.ContainingAssembly, Within));
+            if (bVisible && !Namespace.IsGlobalNamespace)
+            {
+                Out.Add(Namespace.ToDisplayString());
+            }
+        }
+        foreach (INamespaceSymbol Child in Namespace.GetNamespaceMembers())
+        {
+            CollectNamespacesOf(Child, TypeName, Within, Out);
+        }
     }
 
     private static SyntaxToken TokenAt(SyntaxNode Root, int Position)
