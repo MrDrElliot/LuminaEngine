@@ -5,8 +5,7 @@
 #include "Assets/AssetTypes/Font/Font.h"
 #include "Assets/AssetTypes/Font/FontAtlasBaker.h"
 #include "Core/Object/Package/Package.h"
-#include "Paths/Paths.h"
-#include "Platform/Filesystem/FileHelper.h"
+#include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -24,10 +23,11 @@ namespace Lumina
 
         DefaultFont = NewObject<CFont>(TransientPackage, "EngineDefaultFont", FGuid::NewDeterministic("Engine.Font.Default"));
         
-        const FString Path = Paths::GetEngineFontDirectory() + "/Lexend/Lexend-Regular.ttf";
+        // A virtual path, so a packaged game reads it out of its pak.
+        const FString Path = "/Engine/Resources/Fonts/Lexend/Lexend-Regular.ttf";
 
         TVector<uint8> Bytes;
-        if (!FileHelper::LoadFileToArray(Bytes, Path) || Bytes.empty())
+        if (!VFS::ReadFile(Bytes, Path) || Bytes.empty())
         {
             LOG_ERROR("FontManager: failed to load default font '{0}'", Path);
             return;

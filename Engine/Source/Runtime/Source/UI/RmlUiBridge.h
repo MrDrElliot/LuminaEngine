@@ -46,6 +46,9 @@ namespace Lumina::RmlUi
     // Registers a font asset or .ttf under Family, for documents to select by name. Call after Initialize.
     RUNTIME_API bool            LoadFontFace(FStringView Path, FStringView Family, bool bBold = false, bool bItalic = false);
 
+    // Registers the faces listed in the project's UI settings, skipping any already registered.
+    RUNTIME_API void            RegisterProjectFonts();
+
     // Per-world context lifecycle. CWorld owns the returned wrapper; CreateWorldUI
     // builds the Rml::Context, DestroyWorldUI removes it. No external bookkeeping.
     RUNTIME_API TUniquePtr<FWorldUIContext> CreateWorldUI(CWorld* World);

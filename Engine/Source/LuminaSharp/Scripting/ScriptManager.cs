@@ -65,8 +65,35 @@ internal sealed class ScriptManager
     /// <summary>Total managed types in the current generation's assembly (for editor diagnostics).</summary>
     public int LoadedTypeCount { get; private set; }
 
-    // Answers the editor's code completion, hover and diagnostics for scripts, from the units the last load was given.
-    public ScriptLanguageService Language { get; } = new();
+    // The editor's completion and diagnostics, made on its first query since it is built on Roslyn, which a packaged game does not ship.
+    public ScriptLanguageService Language => LanguageService ??= CreateLanguageService();
+
+    private ScriptLanguageService? LanguageService;
+    private IReadOnlyList<ScriptAssemblyUnit> LastUnits = Array.Empty<ScriptAssemblyUnit>();
+
+    // Kept apart from the load path, so loading prebuilt scripts never touches the language service type.
+    public void RememberUnits(IReadOnlyList<ScriptAssemblyUnit> Units)
+    {
+        LastUnits = Units;
+        if (LanguageService != null)
+        {
+            ForwardUnitsToLanguageService();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ForwardUnitsToLanguageService()
+    {
+        LanguageService!.SetUnits(LastUnits);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ScriptLanguageService CreateLanguageService()
+    {
+        var Service = new ScriptLanguageService();
+        Service.SetUnits(LastUnits);
+        return Service;
+    }
 
     // Roslyn's cached references and the on-disk compile keys are shared, so two builds must never overlap.
     private static readonly object BuildLock = new();
@@ -155,7 +182,10 @@ internal sealed class ScriptManager
         }
 
         var Built = new FCompiledGeneration { Pending = Pending };
-        Built.ScriptSourcePaths = GatherScriptSourcePaths(Pending);
+        // A packaged game loads prebuilt units with no sources and ships no Roslyn, so the parse must not even be compiled there.
+        Built.ScriptSourcePaths = Pending.Any(Entry => Entry.Unit.Sources.Count > 0)
+            ? GatherScriptSourcePaths(Pending)
+            : new Dictionary<string, string>(StringComparer.Ordinal);
         if (Pending.Count > 0)
         {
             LoadIntoNewContext(Built);
@@ -495,6 +525,7 @@ internal sealed class ScriptManager
         }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static Dictionary<string, string> GatherScriptSourcePaths(
         List<(ScriptAssemblyUnit Unit, FScriptImage Image)> Pending)
     {

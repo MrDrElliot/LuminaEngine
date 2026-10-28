@@ -39,6 +39,7 @@
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "World/World.h"
+#include "World/Subsystems/SpawnSubsystem.h"
 #include "World/Subsystems/TweenManager.h"
 
 using namespace Lumina;
@@ -1842,6 +1843,19 @@ TEST_F(FFrameMarshalTest, ScriptSpawnsALoadedPrefab)
     ASSERT_TRUE(Registry.IsValid(Root));
     EXPECT_EQ(Registry.GetHierarchy().GetParent(Root), Holder);
     EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Root).GetLocalLocation().y, 4.0f);
+}
+
+// The generic lookup hands a C++ subsystem back as its own type, not as the base wrapper the binding returns.
+TEST_F(FFrameMarshalTest, ScriptFindsANativeSubsystemTyped)
+{
+    using FFindFn = int32(*)(void*);
+    auto* Find = (FFindFn)DotNet::ResolveManagedExport("Test_GetSubsystemTyped");
+    ASSERT_NE(Find, nullptr);
+
+    RegisterPendingTypes();
+    TStrongObjectPtr<CWorld> World(NewObject<CWorld>(nullptr, FName("ScriptSubsystemWorld"), FGuid::New(), OF_Transient));
+    ASSERT_NE(World->EnsureSubsystem<CSpawnSubsystem>(), nullptr);
+    EXPECT_EQ(Find(World.Get()), 1);
 }
 
 // A script builds a tween with the fluent API, and native ticking it drives every kind of step and event.

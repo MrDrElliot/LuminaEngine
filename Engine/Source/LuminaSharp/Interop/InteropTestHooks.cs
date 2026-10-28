@@ -1201,6 +1201,14 @@ internal static unsafe class InteropTestHooks
         return Visited;
     }
 
+    // Finds a C++ subsystem through the generic lookup, which must hand it back as its own type.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_GetSubsystemTyped(IntPtr World)
+    {
+        return new Lumina.CWorld(World).GetSubsystem<Lumina.CSpawnSubsystem>() != null ? 1 : 0;
+    }
+
     // Spawns a loaded prefab through the World overload, placed under a parent.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

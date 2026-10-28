@@ -4,6 +4,7 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/StringFormat.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectIterator.h"
 #include "GUID/GUID.h"
 
 namespace Lumina::Agent
@@ -49,6 +50,28 @@ namespace Lumina::Agent
         }
 
         CClass* Class = FindObject<CClass>(FName(Name));
+
+        // Script classes are named Namespace.Class, so a bare class name finds the one script class that ends with it.
+        if (Class == nullptr)
+        {
+            const FString Suffix = FString(".") + FString(Name.data(), Name.size());
+            int32 Matches = 0;
+            for (TObjectIterator<CClass> It; It; ++It)
+            {
+                const FString Candidate = (*It)->GetName().ToString();
+                if (Candidate.size() > Suffix.size() && Candidate.compare(Candidate.size() - Suffix.size(), Suffix.size(), Suffix) == 0)
+                {
+                    Class = *It;
+                    ++Matches;
+                }
+            }
+            if (Matches > 1)
+            {
+                OutError = Lumina::Format("More than one script class is called {}, so give its namespace too.", Name);
+                return nullptr;
+            }
+        }
+
         if (Class == nullptr)
         {
             OutError = Lumina::Format("No class is called {}.", Name);

@@ -10,6 +10,8 @@
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
+#include "Core/Object/SoftObjectPtr.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Containers/StringFormat.h"
 
 namespace Lumina::Reflection
@@ -68,6 +70,23 @@ namespace Lumina::Reflection
             return false;
         }
 
+        // A struct reads as text when every member does, which covers the math types and plain data structs.
+        bool IsStructTextConvertible(const CStruct* Struct)
+        {
+            if (Struct == nullptr || Struct->GetProperties().empty())
+            {
+                return false;
+            }
+            for (const FProperty* Member : Struct->GetProperties())
+            {
+                if (!IsTextConvertible(Member))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         bool IsScalarTextConvertible(const FProperty* Property)
         {
             switch (Property->GetType())
@@ -88,7 +107,10 @@ namespace Lumina::Reflection
             case EPropertyTypeFlags::String:
             case EPropertyTypeFlags::Enum:
             case EPropertyTypeFlags::Object:
+            case EPropertyTypeFlags::SoftObject:
                 return true;
+            case EPropertyTypeFlags::Struct:
+                return IsStructTextConvertible(static_cast<const FStructProperty*>(Property)->GetStruct());
             default:
                 return false;
             }
@@ -230,39 +252,79 @@ namespace Lumina::Reflection
     static FString ValueToText(const FProperty* Property, const void* ConstValue);
     static bool ValueFromText(const FProperty* Property, void* Value, FStringView Text);
 
+    namespace
+    {
+        bool IsIdentifierChar(char C)
+        {
+            return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9') || C == '_';
+        }
+
+        // Splits "Name=Value" when Name is one of the members, ignoring case so X reaches the vector's x.
+
+        FProperty* FindNamedMember(TSpan<FProperty* const> Members, FStringView& InOutEntry)
+        {
+            const size_t Equals = InOutEntry.find('=');
+            if (Equals == FStringView::npos)
+            {
+                return nullptr;
+            }
+
+            const FStringView Name = Trim(InOutEntry.substr(0, Equals));
+            for (char C : Name)
+            {
+                if (!IsIdentifierChar(C))
+                {
+                    return nullptr;
+                }
+            }
+
+            for (FProperty* Member : Members)
+            {
+                const FString MemberName = Member->GetPropertyName().ToString();
+                if (EqualsIgnoreCase(FStringView(MemberName.c_str(), MemberName.size()), Name))
+                {
+                    InOutEntry = Trim(InOutEntry.substr(Equals + 1));
+                    return Member;
+                }
+            }
+            return nullptr;
+        }
+
+        // Entries fill members in declaration order unless they name one, so (1,0,0) and (X=1) both read.
+        bool ParseStructText(const CStruct* Struct, void* Value, FStringView Text)
+        {
+            TVector<FString> Entries;
+            if (!SplitArrayText(Text, Entries))
+            {
+                return false;
+            }
+
+            const TSpan<FProperty* const> Members = Struct->GetProperties();
+            if (Entries.size() > Members.size())
+            {
+                return false;
+            }
+
+            for (SIZE_T i = 0; i < Entries.size(); ++i)
+            {
+                FStringView Entry(Entries[i].c_str(), Entries[i].size());
+                FProperty* Member = FindNamedMember(Members, Entry);
+                if (!FromText(Member != nullptr ? Member : Members[i], Value, Entry))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     bool IsTextConvertible(const FProperty* Property)
     {
         if (Property == nullptr)
         {
             return false;
         }
-        if (ArrayElementProperty(Property) != nullptr)
-        {
-            return true;
-        }
-
-        switch (Property->GetType())
-        {
-        case EPropertyTypeFlags::Int8:
-        case EPropertyTypeFlags::Int16:
-        case EPropertyTypeFlags::Int32:
-        case EPropertyTypeFlags::Int64:
-        case EPropertyTypeFlags::UInt8:
-        case EPropertyTypeFlags::UInt16:
-        case EPropertyTypeFlags::UInt32:
-        case EPropertyTypeFlags::Entity:
-        case EPropertyTypeFlags::UInt64:
-        case EPropertyTypeFlags::Float:
-        case EPropertyTypeFlags::Double:
-        case EPropertyTypeFlags::Bool:
-        case EPropertyTypeFlags::Name:
-        case EPropertyTypeFlags::String:
-        case EPropertyTypeFlags::Enum:
-        case EPropertyTypeFlags::Object:
-            return true;
-        default:
-            return false;
-        }
+        return ArrayElementProperty(Property) != nullptr || IsScalarTextConvertible(Property);
     }
 
     FString ToText(const FProperty* Property, const void* Container)
@@ -401,6 +463,31 @@ namespace Lumina::Reflection
                 return Object->GetPackage()->GetName().ToString();
             }
 
+        case EPropertyTypeFlags::SoftObject:
+            {
+                const FStringView Path = static_cast<const FSoftObjectPath*>(Value)->GetPath();
+                return FString(Path.data(), Path.size());
+            }
+
+        // Members are written by name, so the text still reads back after the struct reorders or gains fields.
+        case EPropertyTypeFlags::Struct:
+            {
+                const CStruct* Struct = static_cast<FStructProperty*>(Prop)->GetStruct();
+                FString Out = "(";
+                bool bFirst = true;
+                for (FProperty* Member : Struct->GetProperties())
+                {
+                    if (!bFirst)
+                    {
+                        Out += ',';
+                    }
+                    bFirst = false;
+                    AppendArrayElement(Out, Member->GetPropertyName().ToString() + "=" + ToText(Member, Value));
+                }
+                Out += ')';
+                return Out;
+            }
+
         default:
             return FString();
         }
@@ -492,6 +579,39 @@ namespace Lumina::Reflection
 
                 *Ptr = Loaded;
                 return true;
+            }
+
+        case EPropertyTypeFlags::SoftObject:
+            {
+                auto* Path = static_cast<FSoftObjectPath*>(Value);
+                if (Text.empty())
+                {
+                    Path->Reset();
+                    return true;
+                }
+
+                // Resolving finds the asset without loading it, so a mistyped path fails at import rather than in game.
+                FSoftObjectPath Candidate(Text);
+                if (!Candidate.TryResolve())
+                {
+                    return false;
+                }
+                *Path = Move(Candidate);
+                return true;
+            }
+
+        case EPropertyTypeFlags::Struct:
+            {
+                const CStruct* Struct = static_cast<FStructProperty*>(Prop)->GetStruct();
+
+                // Restored from its own text on failure, so a bad member leaves the whole value as it was.
+                const FString Previous = ValueToText(Prop, Value);
+                if (ParseStructText(Struct, Value, Text))
+                {
+                    return true;
+                }
+                ParseStructText(Struct, Value, FStringView(Previous.c_str(), Previous.size()));
+                return false;
             }
 
         default:

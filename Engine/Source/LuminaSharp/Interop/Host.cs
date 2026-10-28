@@ -376,7 +376,7 @@ public static unsafe partial class Host
             // A blocking load supersedes a background one, whose units may already be stale.
             DiscardPendingCompile();
             List<ScriptAssemblyUnit> Read = ReadUnits(Units, Count);
-            Scripts.Language.SetUnits(Read);
+            Scripts.RememberUnits(Read);
             return Scripts.LoadOrReload(Read) ? 0 : 4;
         }
         catch (Exception Exception)
@@ -400,7 +400,7 @@ public static unsafe partial class Host
 
             DiscardPendingCompile();
             List<ScriptAssemblyUnit> Read = ReadUnits(Units, Count);
-            Scripts.Language.SetUnits(Read);
+            Scripts.RememberUnits(Read);
             bool bUseLastBuildOnError = Scripts.bUseLastBuildOnError;
             PendingCompile = System.Threading.Tasks.Task.Run<FCompiledGeneration?>(() =>
             {

@@ -12,6 +12,8 @@
 #include <imgui.h>
 
 #include "implot.h"
+#include "FileSystem/FileSystem.h"
+#include "Memory/Memcpy.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Tools/UI/ImGui/ImGuiAllocator.h"
@@ -256,11 +258,12 @@ namespace Lumina
         Context = ImGui::CreateContext();
     	PlotContext = ImPlot::CreateContext();
 		
-		FString FontFile_Regular = Paths::GetEngineFontDirectory() + "/Lexend/Lexend-Regular.ttf";
-		FString FontFile_Bold = Paths::GetEngineFontDirectory() + "/Lexend/Lexend-Bold.ttf";
-		FString FontFile_Mono = Paths::GetEngineFontDirectory() + "/JetbrainsMono/JetBrainsMono-Regular.ttf";
-		FString FontFile_MonoBold = Paths::GetEngineFontDirectory() + "/JetbrainsMono/JetBrainsMono-Bold.ttf";
-		FString IconFontFile = Paths::GetEngineFontDirectory() + "/materialdesignicons-webfont.ttf";
+		// Virtual paths, so a packaged game with a developer overlay reads the fonts out of its pak.
+		constexpr FStringView FontFile_Regular = "/Engine/Resources/Fonts/Lexend/Lexend-Regular.ttf";
+		constexpr FStringView FontFile_Bold = "/Engine/Resources/Fonts/Lexend/Lexend-Bold.ttf";
+		constexpr FStringView FontFile_Mono = "/Engine/Resources/Fonts/JetbrainsMono/JetBrainsMono-Regular.ttf";
+		constexpr FStringView FontFile_MonoBold = "/Engine/Resources/Fonts/JetbrainsMono/JetBrainsMono-Bold.ttf";
+		constexpr FStringView IconFontFile = "/Engine/Resources/Fonts/materialdesignicons-webfont.ttf";
 		constexpr ImWchar IconRanges[] = { LE_ICONRANGE_MIN, LE_ICONRANGE_MAX, 0 };
 
     	ImFontConfig FontConfig;
@@ -274,20 +277,36 @@ namespace Lumina
     	IconFontConfig.RasterizerMultiply = 1.5f;
 
 		ImGuiIO& io = ImGui::GetIO();
+
+    	// The atlas takes a copy it owns, made with ImGui's allocator so ImGui can free it.
+    	auto AddFontFromVirtualPath = [&io] (FStringView Path, float Size, const ImFontConfig& Config, const ImWchar* Ranges = nullptr) -> ImFont*
+    	{
+    		TVector<uint8> Bytes;
+    		if (!VFS::ReadFile(Bytes, Path) || Bytes.empty())
+    		{
+    			return nullptr;
+    		}
+    		void* Data = IM_ALLOC(Bytes.size());
+    		Memory::Memcpy(Data, Bytes.data(), Bytes.size());
+    		ImFontConfig Owned = Config;
+    		Owned.FontDataOwnedByAtlas = true;
+    		return io.Fonts->AddFontFromMemoryTTF(Data, (int)Bytes.size(), Size, &Owned, Ranges);
+    	};
+
     	auto CreateFontFromFile = [&] (FStringView Path, float FontSize, float IconFontSize, ImGuiX::Font::EFont FontID, const ImVec2& GlyphOffset)
     	{
-    		ImFont* pFont = io.Fonts->AddFontFromFileTTF(Path.data(), FontSize, &FontConfig);
+    		ImFont* pFont = AddFontFromVirtualPath(Path, FontSize, FontConfig);
     		if (pFont == nullptr)
     		{
-    			PANIC("Failed to load font '{}'. The engine's resources were not found beside this executable.", Path.data());
+    			PANIC("Failed to load font '{}'. The engine's resources are missing from this build.", Path);
     		}
 		    ImGuiX::Font::GFonts[static_cast<uint8>(FontID)] = pFont;
 
     		IconFontConfig.GlyphOffset = GlyphOffset;
     		IconFontConfig.GlyphMinAdvanceX = IconFontSize;
-    		if (io.Fonts->AddFontFromFileTTF(IconFontFile.c_str(), IconFontSize, &IconFontConfig, IconRanges) == nullptr)
+    		if (AddFontFromVirtualPath(IconFontFile, IconFontSize, IconFontConfig, IconRanges) == nullptr)
     		{
-    			LOG_ERROR("Failed to load icon font '{}'; editor icons will be missing. Check the engine's resources.", IconFontFile.c_str());
+    			LOG_ERROR("Failed to load icon font '{}'; editor icons will be missing. Check the engine's resources.", IconFontFile);
     		}
     	};
 		

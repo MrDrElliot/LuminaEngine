@@ -53,7 +53,10 @@ namespace Lumina::Paths
         const FString LuminaDir = Parent(Parent(Parent(ExePath, true), true), true);
 
         bInstalledBuild = !LuminaDir.empty() && Filesystem::Exists(LuminaDir + "/" + InstalledBuildMarker);
-        if (LuminaDir.empty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources"))
+        // A packaged game has no engine tree beside it, since its engine resources come from the pak.
+        const FString& DataDir = GetGameDataDirectory();
+        const bool bPackaged = DataDir.size() > 5 && DataDir.compare(DataDir.size() - 5, 5, "_Data") == 0;
+        if (!bPackaged && (LuminaDir.empty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources")))
         {
             LOG_ERROR("Could not resolve the engine root from '{}'. Resources (fonts, shaders) will fail to load.", ExePath.c_str());
         }

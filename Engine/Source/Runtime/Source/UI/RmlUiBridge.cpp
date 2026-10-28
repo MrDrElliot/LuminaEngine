@@ -1,5 +1,6 @@
 ﻿#include "Platform/Time/PlatformTime.h"
 #include "RuntimePCH.h"
+#include "Config/UISettings.h"
 #include "Core/Engine/Engine.h"
 #include "World/ECS/Registry.h"
 #include "RmlUiBridge.h"
@@ -470,6 +471,9 @@ namespace Lumina::RmlUi
             Rml::Context*                       DebuggerHost = nullptr;
             bool                                bDebuggerVisible = false;
             bool                                bInitialized = false;
+
+            // Family, path and style of every project face handed to RmlUi, which has no way to unregister one.
+            TVector<FString>                    RegisteredProjectFonts;
 
             uint32                              WidgetRenderCursor = 0;
 
@@ -1002,6 +1006,9 @@ namespace Lumina::RmlUi
             UI.Context = Ctx;
             ApplyDefaultFontFamily(Ctx);
 
+            // A font file added since startup, or one that failed to load then, registers before this world's documents need it.
+            RegisterProjectFonts();
+
             // Newest world becomes the active UI target.
             State.ActiveWorld = World;
             SyncDebuggerToActiveContext();
@@ -1112,6 +1119,8 @@ namespace Lumina::RmlUi
 
         State.bInitialized = true;
 
+        RegisterProjectFonts();
+
         // A packaged game loads its startup map inside LoadProject, before this runs.
         for (CWorld* World : State.Worlds)
         {
@@ -1125,6 +1134,41 @@ namespace Lumina::RmlUi
 
         LOG_INFO("[RmlUi] Initialized.");
         return true;
+    }
+
+    void RegisterProjectFonts()
+    {
+        FState& State = S();
+        FRecursiveScopeLock Lock(State.StateMutex);
+        const CUISettings* Settings = GetDefault<CUISettings>();
+        if (!State.bInitialized || Settings == nullptr)
+        {
+            return;
+        }
+
+        for (const SUIFontFace& Face : Settings->FontFaces)
+        {
+            if (Face.Family.empty() || Face.Path.empty())
+            {
+                continue;
+            }
+
+            FString Key = Face.Family + "|" + Face.Path + (Face.bBold ? "|bold" : "") + (Face.bItalic ? "|italic" : "");
+            if (Algo::Contains(State.RegisteredProjectFonts, Key))
+            {
+                continue;
+            }
+
+            if (LoadFontFace(Face.Path, Face.Family, Face.bBold, Face.bItalic))
+            {
+                LOG_INFO("[RmlUi] Registered '{}' as font family '{}'.", Face.Path, Face.Family);
+                State.RegisteredProjectFonts.push_back(Move(Key));
+            }
+            else
+            {
+                LOG_WARN("[RmlUi] Font '{}' for family '{}' failed to load; documents using it fall back to the default.", Face.Path, Face.Family);
+            }
+        }
     }
 
     bool LoadFontFace(FStringView Path, FStringView Family, bool bBold, bool bItalic)

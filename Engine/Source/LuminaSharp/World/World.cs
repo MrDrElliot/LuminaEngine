@@ -14,9 +14,9 @@ public unsafe partial class CWorld
     // The world's event queues, for systems that drain them and scripts that send into them.
     public WorldEvents Events => new(this);
 
-    // The subsystem of type T in this world, or null when none was created. Finds a C++ one just the same.
+    // The subsystem of type T in this world, or null when none was created. A C++ one arrives as its base wrapper, so it is rewrapped as T.
     public T? GetSubsystem<T>() where T : NativeObject
-        => GetSubsystem(NativeClass<T>.Of.AsBase<CWorldSubsystem>()) as T;
+        => GetSubsystem(NativeClass<T>.Of.AsBase<CWorldSubsystem>()) is { } Found ? Found as T ?? Wrapper<T>.ForObject(Found.Handle) : null;
 
     public float DeltaTime => (float)GetWorldDeltaTime();
     public double ElapsedTime => GetTimeSinceWorldCreation();

@@ -32,7 +32,12 @@ namespace Lumina
             const FAssetData* Data = Registry.GetAssetByGUID(CachedGUID);
             if (Data == nullptr)
             {
-                // Transient objects and deleted assets have no registry entry; leave Path as authored.
+                // An asset deleted and made again at the same path has a new GUID, so the authored path finds it.
+                if (const FAssetData* Recreated = Path.empty() ? nullptr : Registry.GetAssetByPath(FStringView(Path.c_str(), Path.size())))
+                {
+                    FScopeLock Lock(ResolveMutex());
+                    CachedGUID = Recreated->AssetGUID;
+                }
                 return true;
             }
 
@@ -94,7 +99,7 @@ namespace Lumina
         // Resolved first on write, so the saver folds a current GUID in as a Soft edge for the cook graph.
         if (Ar.IsWriting())
         {
-            if (!Self.Path.empty() && !Self.CachedGUID.IsValid())
+            if (!Self.Path.empty())
             {
                 (void)Self.TryResolve();
             }

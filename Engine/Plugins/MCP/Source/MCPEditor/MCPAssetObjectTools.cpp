@@ -7,6 +7,7 @@
 #include "Asset/AssetOps.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/Factories/Factory.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
 #include "FileSystem/FileSystem.h"
 #include "Session/SessionOps.h"
@@ -49,6 +50,20 @@ namespace Lumina::MCP
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SListAssetClassesParams& In, SListAssetClassesResult& Out)
                 {
+                    auto List = [&In, &Out](CClass* Class, CFactory* Factory)
+                    {
+                        SAssetClassInfo Info;
+                        Info.Name                 = FString(Class->GetName().ToString().c_str());
+                        Info.Category             = Factory->GetCategory();
+                        Info.bHasCreationDialogue = Factory->HasCreationDialogue();
+
+                        if (ContainsTextFold(FStringView(Info.Name), In.Contains)
+                            || ContainsTextFold(FStringView(Info.Category), In.Contains))
+                        {
+                            Out.Classes.push_back(Move(Info));
+                        }
+                    };
+
                     for (CFactory* Factory : CFactoryRegistry::Get().GetFactories())
                     {
                         CClass* Class = Factory != nullptr ? Factory->GetAssetClass() : nullptr;
@@ -56,19 +71,16 @@ namespace Lumina::MCP
                         {
                             continue;
                         }
+                        List(Class, Factory);
 
-                        SAssetClassInfo Info;
-                        Info.Name                 = FString(Class->GetName().ToString().c_str());
-                        Info.Category             = Factory->GetCategory();
-                        Info.bHasCreationDialogue = Factory->HasCreationDialogue();
-
-                        if (!ContainsTextFold(FStringView(Info.Name), In.Contains)
-                            && !ContainsTextFold(FStringView(Info.Category), In.Contains))
+                        // A factory for a base such as CDataAsset also makes every subclass, script ones included.
+                        for (TObjectIterator<CClass> It; It; ++It)
                         {
-                            continue;
+                            if (*It != Class && (*It)->IsChildOf(Class) && CFactoryRegistry::Get().FindFactory(*It) == Factory)
+                            {
+                                List(*It, Factory);
+                            }
                         }
-
-                        Out.Classes.push_back(Move(Info));
                     }
 
                     return Agent::FToolResult::Ok(Lumina::Format("{} creatable asset class(es).", Out.Classes.size()));

@@ -57,6 +57,32 @@ TEST(SoftObjectPath, ResolveFollowsRenameByGUID)
     Registry.AssetDeleted(Table->GetGUID());
 }
 
+TEST(SoftObjectPath, ResolveAdoptsAnAssetRecreatedAtTheSamePath)
+{
+    FAssetRegistry& Registry = FAssetRegistry::Get();
+
+    CDataTable* First = NewObject<CDataTable>(CPackage::CreatePackage("/SoftPathTest/Recreated"), "Recreated");
+    ASSERT_NE(First, nullptr);
+    Registry.AssetCreated(First);
+    const FFixedString Path = Registry.GetAssetByGUID(First->GetGUID())->Path;
+
+    FSoftObjectPath Soft{ FStringView(Path.c_str(), Path.size()) };
+    ASSERT_TRUE(Soft.TryResolve());
+    ASSERT_TRUE(Soft.GetCachedGUID() == First->GetGUID());
+    Registry.AssetDeleted(First->GetGUID());
+
+    CDataTable* Second = NewObject<CDataTable>(CPackage::CreatePackage("/SoftPathTest/StandIn"), "StandIn");
+    ASSERT_NE(Second, nullptr);
+    Registry.AssetCreated(Second);
+    const FFixedString StandInPath = Registry.GetAssetByGUID(Second->GetGUID())->Path;
+    Registry.AssetRenamed(FStringView(StandInPath.c_str(), StandInPath.size()), FStringView(Path.c_str(), Path.size()));
+
+    EXPECT_TRUE(Soft.TryResolve());
+    EXPECT_TRUE(Soft.GetCachedGUID() == Second->GetGUID());
+
+    Registry.AssetDeleted(Second->GetGUID());
+}
+
 TEST(SoftObjectPath, ResolveKeepsPathWhenGUIDHasNoRegistryEntry)
 {
     FSoftObjectPath Soft{ FStringView("/SoftPathTest/Absent"), FGuid::New() };

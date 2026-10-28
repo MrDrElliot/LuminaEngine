@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
 #include "Assets/AssetTypes/SpriteSheet/SpriteSheet.h"
+#include "Config/EngineSettings.h"
 #include "Core/Object/Class.h"
 #include "Core/Reflection/PropertyText.h"
 #include "Input/InputAction.h"
+#include "World/Entity/Components/LightComponent.h"
 
 using namespace Lumina;
 
@@ -77,4 +79,64 @@ TEST(PropertyTextArray, UnclosedQuoteFails)
     EXPECT_FALSE(Reflection::FromText(Actions, &Context, "(\"open,b)"));
     EXPECT_FALSE(Reflection::FromText(Actions, &Context, "(\"a\"x,b)"));
     EXPECT_TRUE(Context.Actions.empty());
+}
+
+namespace
+{
+    FProperty* LightColorProperty()
+    {
+        return SPointLightComponent::StaticStruct()->GetProperty(FName("LightColor"));
+    }
+}
+
+TEST(PropertyTextStruct, MembersReadInOrderOrByName)
+{
+    FProperty* Color = LightColorProperty();
+    ASSERT_NE(Color, nullptr);
+    ASSERT_TRUE(Reflection::IsTextConvertible(Color));
+
+    SPointLightComponent Light;
+    ASSERT_TRUE(Reflection::FromText(Color, &Light, "(0.25, 0.5, 1)"));
+    EXPECT_EQ(Light.LightColor, FVector3(0.25f, 0.5f, 1.0f));
+
+    ASSERT_TRUE(Reflection::FromText(Color, &Light, "(Z=0.75)"));
+    EXPECT_EQ(Light.LightColor, FVector3(0.25f, 0.5f, 0.75f));
+
+    SPointLightComponent Copy;
+    ASSERT_TRUE(Reflection::FromText(Color, &Copy, Reflection::ToText(Color, &Light)));
+    EXPECT_EQ(Copy.LightColor, Light.LightColor);
+}
+
+TEST(PropertyTextStruct, BadMemberLeavesValueUntouched)
+{
+    FProperty* Color = LightColorProperty();
+    ASSERT_NE(Color, nullptr);
+
+    SPointLightComponent Light;
+    Light.LightColor = FVector3(1.0f, 2.0f, 3.0f);
+    EXPECT_FALSE(Reflection::FromText(Color, &Light, "(4,five,6)"));
+    EXPECT_FALSE(Reflection::FromText(Color, &Light, "(1,2,3,4)"));
+    EXPECT_FALSE(Reflection::FromText(Color, &Light, "1,2,3"));
+    EXPECT_EQ(Light.LightColor, FVector3(1.0f, 2.0f, 3.0f));
+}
+
+TEST(PropertyTextSoftObject, EmptyClearsAndAMissingAssetFails)
+{
+    CProjectSettings* Settings = GetMutableDefault<CProjectSettings>();
+    FProperty* Map = Settings->GetClass()->GetProperty(FName("GameStartupMap"));
+    ASSERT_NE(Map, nullptr);
+    ASSERT_TRUE(Reflection::IsTextConvertible(Map));
+
+    const TSoftObjectPtr<CWorld> Saved = Settings->GameStartupMap;
+
+    Settings->GameStartupMap = TSoftObjectPtr<CWorld>(FSoftObjectPath("/Game/Maps/Somewhere"));
+    EXPECT_EQ(Reflection::ToText(Map, Settings), "/Game/Maps/Somewhere");
+
+    EXPECT_FALSE(Reflection::FromText(Map, Settings, "/Game/Maps/NoSuchMapAnywhere"));
+    EXPECT_EQ(Reflection::ToText(Map, Settings), "/Game/Maps/Somewhere");
+
+    ASSERT_TRUE(Reflection::FromText(Map, Settings, ""));
+    EXPECT_EQ(Reflection::ToText(Map, Settings), "");
+
+    Settings->GameStartupMap = Saved;
 }
