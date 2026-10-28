@@ -47,6 +47,8 @@ B3_API int b3GetMaxWorldCount( void );
 B3_API bool b3World_IsValid( b3WorldId id );
 
 /// Simulate a world for one time step. This performs collision detection, integration, and constraint solution.
+/// A time step of zero runs the broad-phase and collision, but skips the solver. So you can still get contact
+/// and sensor events.
 /// @param worldId The world to simulate
 /// @param timeStep The amount of time to simulate, this should be a fixed number. Usually 1/60.
 /// @param subStepCount The number of sub-steps, increasing the sub-step count can increase accuracy. Usually 4.
@@ -211,6 +213,13 @@ B3_API void b3World_SetMaximumLinearSpeed( b3WorldId worldId, float maximumLinea
 
 /// Get the maximum linear speed. Usually in m/s.
 B3_API float b3World_GetMaximumLinearSpeed( b3WorldId worldId );
+
+/// Set the tolerance for gyroscopic torque. [0, 1]
+/// @note modifying this only affects new bodies or bodies that get their mass updated.
+B3_API void b3World_SetIsotropicInertiaTolerance( b3WorldId worldId, float tolerance );
+
+/// Get the tolerance for gyroscopic torque. [0, 1]
+B3_API float b3World_GetIsotropicInertiaTolerance( b3WorldId worldId );
 
 /// Enable/disable constraint warm starting. Advanced feature for testing. Disabling
 /// warm starting greatly reduces stability and provides no performance gain.

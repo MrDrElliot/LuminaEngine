@@ -254,6 +254,7 @@ b3BodyId b3CreateBody( b3WorldId worldId, const b3BodyDef* def )
 	bodySim->force = b3Vec3_zero;
 	bodySim->torque = b3Vec3_zero;
 	bodySim->invMass = 0.0f;
+	bodySim->inertia = b3Mat3_zero;
 	bodySim->invInertiaLocal = b3Mat3_zero;
 	bodySim->minExtent = B3_HUGE;
 	bodySim->maxExtent = b3Vec3_zero;
@@ -266,7 +267,7 @@ b3BodyId b3CreateBody( b3WorldId worldId, const b3BodyDef* def )
 	bodySim->flags |= def->allowFastRotation ? b3_allowFastRotation : 0;
 	bodySim->flags |= def->type == b3_dynamicBody ? b3_dynamicFlag : 0;
 	bodySim->flags |= def->enableSleep ? b3_enableSleep : 0;
-	bodySim->flags |= def->enableContactRecycling ? b3_bodyEnableContactRecycling : 0;
+	bodySim->flags |= def->enableContactRecycling ? b3_enableContactRecycling : 0;
 
 	if ( setId == b3_awakeSet )
 	{
@@ -309,7 +310,6 @@ b3BodyId b3CreateBody( b3WorldId worldId, const b3BodyDef* def )
 	body->sleepVelocity = 0.0f;
 	body->safetyFactor = def->safetyFactor;
 	body->mass = 0.0f;
-	body->inertia = b3Mat3_zero;
 	body->nameId = b3AddName( &world->names, def->name );
 	body->type = def->type;
 	body->flags = bodySim->flags;
@@ -892,18 +892,49 @@ b3BodyTOIResult b3Body_TimeOfImpactMover( b3BodyId bodyId, b3Pos origin, const b
 	return result;
 }
 
+// This computes the deviation of the principal inertia values without computing eigenvalues.
+// It computes:
+// ((I1 - I2)^2 + (I1 - I3)^2 + (I2 - I3)^2) / (I1^2 + I2^2 + I3^2)
+// https://en.wikipedia.org/wiki/Cauchy_stress_tensor#Stress_deviator_tensor
+static void b3UpdateIsotropicInertia( b3World* world, b3Body* body, b3BodySim* bodySim )
+{
+	b3Matrix3 inertia = bodySim->inertia;
+	float mean = ( inertia.cx.x + inertia.cy.y + inertia.cz.z ) / 3.0f;
+	float dx = inertia.cx.x - mean;
+	float dy = inertia.cy.y - mean;
+	float dz = inertia.cz.z - mean;
+	float offDiagonal = inertia.cy.x * inertia.cy.x + inertia.cz.x * inertia.cz.x + inertia.cz.y * inertia.cz.y;
+
+	// This is the square of the Frobenius matrix norm.
+	// https://en.wikipedia.org/wiki/Matrix_norm
+	float deviation = dx * dx + dy * dy + dz * dz + 2.0f * offDiagonal;
+
+	float tolerance = world->isotropicInertiaTolerance;
+
+	if ( 2.0f * deviation > 3.0f * tolerance * tolerance * mean * mean )
+	{
+		body->flags |= b3_enableGyroscopicTorque;
+	}
+	else
+	{
+		body->flags &= ~b3_enableGyroscopicTorque;
+	}
+
+	b3SyncBodyFlags( world, body );
+}
+
 void b3UpdateBodyMassData( b3World* world, b3Body* body )
 {
 	b3BodySim* bodySim = b3GetBodySim( world, body );
 
 	// Mass is no longer dirty
 	body->flags &= ~b3_dirtyMass;
+	body->flags &= ~b3_enableGyroscopicTorque;
 	b3SyncBodyFlags( world, body );
 
 	// Compute mass data from shapes. Each shape has its own density.
 	body->mass = 0.0f;
-	body->inertia = b3Mat3_zero;
-
+	bodySim->inertia = b3Mat3_zero;
 	bodySim->invMass = 0.0f;
 	bodySim->invInertiaLocal = b3Mat3_zero;
 	bodySim->invInertiaWorld = b3Mat3_zero;
@@ -987,19 +1018,19 @@ void b3UpdateBodyMassData( b3World* world, b3Body* body )
 		// Shift to center of mass. This is safe because it can only increase.
 		b3Vec3 offset = b3Sub( localCenter, massData.center );
 		b3Matrix3 inertia = b3AddMM( massData.inertia, b3Steiner( massData.mass, offset ) );
-		body->inertia = b3AddMM( body->inertia, inertia );
+		bodySim->inertia = b3AddMM( bodySim->inertia, inertia );
 	}
 
 	b3StackFree( &world->stack, masses );
 	masses = NULL;
 
-	float det = b3Det( body->inertia );
+	float det = b3Det( bodySim->inertia );
 	B3_ASSERT( det >= 0.0f );
 
 	if ( det > 0.0f )
 	{
 		// This call is faster than b3Invert
-		bodySim->invInertiaLocal = b3InvertT( body->inertia );
+		bodySim->invInertiaLocal = b3InvertT( bodySim->inertia );
 
 		b3Matrix3 rotationMatrix = b3MakeMatrixFromQuat( bodySim->transform.q );
 		bodySim->invInertiaWorld = b3MulMM( b3MulMM( rotationMatrix, bodySim->invInertiaLocal ), b3Transpose( rotationMatrix ) );
@@ -1048,10 +1079,12 @@ void b3UpdateBodyMassData( b3World* world, b3Body* body )
 	// Apply fixed rotation
 	if ( ( bodySim->flags & b3_fixedRotation ) == b3_fixedRotation )
 	{
-		body->inertia = b3Mat3_zero;
+		bodySim->inertia = b3Mat3_zero;
 		bodySim->invInertiaLocal = b3Mat3_zero;
 		bodySim->invInertiaWorld = b3Mat3_zero;
 	}
+
+	b3UpdateIsotropicInertia( world, body, bodySim );
 }
 
 b3Pos b3Body_GetPosition( b3BodyId bodyId )
@@ -1818,7 +1851,8 @@ b3Matrix3 b3Body_GetLocalRotationalInertia( b3BodyId bodyId )
 {
 	b3World* world = b3GetWorld( bodyId.world0 );
 	b3Body* body = b3GetBodyFullId( world, bodyId );
-	return body->inertia;
+	b3BodySim* bodySim = b3GetBodySim( world, body );
+	return bodySim->inertia;
 }
 
 float b3Body_GetInverseMass( b3BodyId bodyId )
@@ -1875,7 +1909,6 @@ void b3Body_SetMassData( b3BodyId bodyId, b3MassData massData )
 	b3SyncBodyFlags( world, body );
 
 	body->mass = massData.mass;
-	body->inertia = massData.inertia;
 	bodySim->localCenter = massData.center;
 
 	b3Pos oldCenter = bodySim->center;
@@ -1883,6 +1916,7 @@ void b3Body_SetMassData( b3BodyId bodyId, b3MassData massData )
 	bodySim->center = center;
 	bodySim->center0 = center;
 	bodySim->invMass = body->mass > 0.0f ? 1.0f / body->mass : 0.0f;
+	bodySim->inertia = massData.inertia;
 
 	// Update center of mass velocity
 	b3BodyState* state = b3GetBodyState( world, body );
@@ -1892,13 +1926,13 @@ void b3Body_SetMassData( b3BodyId bodyId, b3MassData massData )
 		state->linearVelocity = b3Add( state->linearVelocity, deltaLinear );
 	}
 
-	float det = b3Det( body->inertia );
+	float det = b3Det( bodySim->inertia );
 	B3_ASSERT( det >= 0.0f );
 
 	if ( det > 0.0f )
 	{
 		// This call is faster than b3Invert
-		bodySim->invInertiaLocal = b3InvertT( body->inertia );
+		bodySim->invInertiaLocal = b3InvertT( bodySim->inertia );
 
 		b3Matrix3 rotationMatrix = b3MakeMatrixFromQuat( bodySim->transform.q );
 		bodySim->invInertiaWorld = b3MulMM( b3MulMM( rotationMatrix, bodySim->invInertiaLocal ), b3Transpose( rotationMatrix ) );
@@ -1912,10 +1946,12 @@ void b3Body_SetMassData( b3BodyId bodyId, b3MassData massData )
 	// Apply fixed rotation
 	if ( ( bodySim->flags & b3_fixedRotation ) == b3_fixedRotation )
 	{
-		body->inertia = b3Mat3_zero;
+		bodySim->inertia = b3Mat3_zero;
 		bodySim->invInertiaLocal = b3Mat3_zero;
 		bodySim->invInertiaWorld = b3Mat3_zero;
 	}
+
+	b3UpdateIsotropicInertia( world, body, bodySim );
 
 	// Update extents using supplied mass center.
 	bodySim->minExtent = B3_HUGE;
@@ -1949,7 +1985,7 @@ b3MassData b3Body_GetMassData( b3BodyId bodyId )
 	b3World* world = b3GetWorld( bodyId.world0 );
 	b3Body* body = b3GetBodyFullId( world, bodyId );
 	b3BodySim* bodySim = b3GetBodySim( world, body );
-	b3MassData massData = { body->mass, bodySim->localCenter, body->inertia };
+	b3MassData massData = { body->mass, bodySim->localCenter, bodySim->inertia };
 	return massData;
 }
 
@@ -2500,15 +2536,15 @@ void b3Body_EnableContactRecycling( b3BodyId bodyId, bool flag )
 
 	B3_REC( world, BodyEnableContactRecycling, bodyId, flag );
 
-	uint32_t newFlag = flag ? b3_bodyEnableContactRecycling : 0;
+	uint32_t newFlag = flag ? b3_enableContactRecycling : 0;
 
 	b3Body* body = b3GetBodyFullId( world, bodyId );
-	if ( ( body->flags & b3_bodyEnableContactRecycling ) == newFlag )
+	if ( ( body->flags & b3_enableContactRecycling ) == newFlag )
 	{
 		return;
 	}
 
-	body->flags &= ~b3_bodyEnableContactRecycling;
+	body->flags &= ~b3_enableContactRecycling;
 	body->flags |= newFlag;
 
 	b3SyncBodyFlags( world, body );
@@ -2518,7 +2554,7 @@ bool b3Body_IsContactRecyclingEnabled( b3BodyId bodyId )
 {
 	b3World* world = b3GetWorld( bodyId.world0 );
 	b3Body* body = b3GetBodyFullId( world, bodyId );
-	return ( body->flags & b3_bodyEnableContactRecycling ) != 0;
+	return ( body->flags & b3_enableContactRecycling ) != 0;
 }
 
 void b3Body_EnableHitEvents( b3BodyId bodyId, bool flag )

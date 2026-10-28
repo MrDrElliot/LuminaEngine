@@ -173,6 +173,10 @@ typedef struct b3WorldDef
 	/// Maximum linear speed. Usually meters per second.
 	float maximumLinearSpeed;
 
+	/// Use this to disable gyroscopic torque on sphere-like objects automatically.
+	/// Range is [0, 1]. A sphere is 0 and a 1x1x2 box is 0.5.
+	float isotropicInertiaTolerance;
+
 	/// Optional mixing callback for friction. The default uses sqrt(frictionA * frictionB).
 	b3FrictionCallback* frictionCallback;
 

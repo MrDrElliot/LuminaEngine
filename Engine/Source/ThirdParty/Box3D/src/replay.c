@@ -806,6 +806,12 @@ static void b3RecDispatch_WorldEnableRestitutionPropagation( const b3RecArgs_Wor
 	b3World_EnableRestitutionPropagation( rdr->replayWorldId, a->flag );
 }
 
+static void b3RecDispatch_WorldSetIsotropicInertiaTolerance( const b3RecArgs_WorldSetIsotropicInertiaTolerance* a,
+															 b3RecReader* rdr )
+{
+	b3World_SetIsotropicInertiaTolerance( rdr->replayWorldId, a->tolerance );
+}
+
 static void b3RecDispatch_CreateBody( const b3RecArgs_CreateBody* a, b3RecReader* rdr )
 {
 	b3BodyId recId = b3RecR_BODYID( rdr );
@@ -1862,7 +1868,7 @@ static void b3RecComputeQueryBounds( b3RecDrawQuery* q )
 	// Sweep each point across the translation. A non-cast query has zero translation, so both ends
 	// coincide and the duplicates fold away.
 	b3Pos end = b3OffsetPos( q->origin, q->translation );
-	b3Vec3 world[2 * B3_MAX_SHAPE_CAST_POINTS];
+	b3Vec3 world[2 * B3_MAX_SHAPE_CAST_POINTS] = { 0 };
 	int n = 0;
 	for ( int i = 0; i < count; ++i )
 	{
