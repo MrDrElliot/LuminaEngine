@@ -1749,10 +1749,10 @@ namespace Lumina::RmlUi
 
         Rml::Element* Hovered = Context->GetHoverElement();
 
-        // The context reports the document itself when the cursor is over nothing the page drew.
+        // Over nothing the page drew, the context reports the document, or its own root once every document lets the pointer through.
         while (Hovered != nullptr)
         {
-            if (Hovered->GetOwnerDocument() == Hovered)
+            if (Hovered->GetOwnerDocument() == Hovered || Hovered->GetParentNode() == nullptr)
             {
                 return false;
             }
