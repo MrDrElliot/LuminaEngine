@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/StaticArray.h"
 #include "Events/KeyCodes.h"
 #include "Events/MouseCodes.h"
 #include "Input/Key.h"
@@ -14,7 +15,7 @@
 namespace Lumina::ImGuiX
 {
     // Engine EKey for an ImGuiKey, or EKey::Num when there's no equivalent.
-    inline EKey ImGuiKeyToEKey(ImGuiKey Key)
+    constexpr EKey ImGuiKeyToEKey(ImGuiKey Key)
     {
         if (Key >= ImGuiKey_A && Key <= ImGuiKey_Z) return static_cast<EKey>(int(EKey::A) + (Key - ImGuiKey_A));
         if (Key >= ImGuiKey_0 && Key <= ImGuiKey_9) return static_cast<EKey>(int(EKey::D0) + (Key - ImGuiKey_0));
@@ -72,6 +73,53 @@ namespace Lumina::ImGuiX
         case ImGuiKey_KeypadEqual:   return EKey::KPEqual;
         default:                     return EKey::Num;
         }
+    }
+
+    inline constexpr TArray<ImGuiKey, (size_t)EKey::Num> EKeyToImGuiKeyTable = []
+    {
+        TArray<ImGuiKey, (size_t)EKey::Num> Table{};
+        for (int K = ImGuiKey_NamedKey_BEGIN; K < ImGuiKey_NamedKey_END; ++K)
+        {
+            const EKey Mapped = ImGuiKeyToEKey(static_cast<ImGuiKey>(K));
+            if (Mapped != EKey::Num && Table[(size_t)Mapped] == ImGuiKey_None)
+            {
+                Table[(size_t)Mapped] = static_cast<ImGuiKey>(K);
+            }
+        }
+        return Table;
+    }();
+
+    // ImGuiKey for an engine EKey, or ImGuiKey_None when ImGui has no equivalent.
+    constexpr ImGuiKey EKeyToImGuiKey(EKey Key)
+    {
+        return (size_t)Key < EKeyToImGuiKeyTable.size() ? EKeyToImGuiKeyTable[(size_t)Key] : ImGuiKey_None;
+    }
+
+    // The ImGui chord for a keyboard SKey with its modifiers, or ImGuiKey_None for any other device.
+    inline ImGuiKeyChord ToKeyChord(const SKey& Key)
+    {
+        const ImGuiKey ImKey = Key.IsKeyboard() ? EKeyToImGuiKey(Key.Key) : ImGuiKey_None;
+        if (ImKey == ImGuiKey_None)
+        {
+            return ImGuiKey_None;
+        }
+        return ImKey | (Key.bCtrl ? ImGuiMod_Ctrl : 0) | (Key.bShift ? ImGuiMod_Shift : 0) | (Key.bAlt ? ImGuiMod_Alt : 0);
+    }
+
+    // A keyboard SKey pressed through ImGui's shortcut routing, with ExtraMods held on top of its own modifiers.
+    inline bool IsShortcutPressed(const SKey& Key, ImGuiKeyChord ExtraMods = 0, ImGuiInputFlags Flags = ImGuiInputFlags_Repeat)
+    {
+        const ImGuiKeyChord Chord = ToKeyChord(Key);
+        if (Chord == ImGuiKey_None)
+        {
+            return false;
+        }
+        // Keypad Enter does what Enter does, as it does in every text field.
+        if ((Chord & ~ImGuiMod_Mask_) == ImGuiKey_Enter && ImGui::Shortcut(ImGuiKey_KeypadEnter | (Chord & ImGuiMod_Mask_) | ExtraMods, Flags))
+        {
+            return true;
+        }
+        return ImGui::Shortcut(Chord | ExtraMods, Flags);
     }
 
     // First named key pressed this frame, or EKey::Num if none.

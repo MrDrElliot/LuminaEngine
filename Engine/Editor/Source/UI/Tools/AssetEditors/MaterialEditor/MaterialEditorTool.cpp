@@ -11,6 +11,7 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "UI/CodeEditor/CodeEditorPreferences.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_CustomSlang.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Function.h"
 #include "Material/MaterialOps.h"
@@ -635,9 +636,6 @@ namespace Lumina
 
     void FMaterialEditorTool::ConfigureCodeEditor()
     {
-        FCodeEditorSettings& Settings = CodeEditor.GetSettings();
-        Settings.TabSize = 4;
-        Settings.bInsertSpaces = true;
         CodeEditor.SetLanguage(&CodeEditorLanguage);
     }
 
@@ -746,13 +744,20 @@ namespace Lumina
         {
             CodeEditor.OpenFind(false);
         }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Find (Ctrl+F), or find and replace (Ctrl+H)");
-        }
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
+        ImGui::SetItemTooltip("Find (%s), or find and replace (%s)", Keys.Find.GetLabel().c_str(), Keys.Replace.GetLabel().c_str());
 
         ImGui::SameLine();
-        ImGui::Checkbox("Whitespace", &CodeEditor.GetSettings().bShowWhitespace);
+        if (ImGui::SmallButton(LE_ICON_CODE_BRACES " View"))
+        {
+            ImGui::OpenPopup("##CustomSlangView");
+        }
+        ImGui::SetItemTooltip("Theme and display options for every code editor, and the keyboard shortcuts.");
+        if (ImGui::BeginPopup("##CustomSlangView"))
+        {
+            CodeEditorPreferences::DrawQuickSettings(ToolContext);
+            ImGui::EndPopup();
+        }
 
         ImGui::SameLine();
         if (ImGui::SmallButton("Tabs " LE_ICON_ARROW_RIGHT " Spaces"))

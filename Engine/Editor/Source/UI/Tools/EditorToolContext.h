@@ -57,6 +57,9 @@ namespace Lumina
         // Opens a property matrix over the assets, for viewing and editing their shared properties side by side.
         virtual void OpenPropertyMatrix(TVector<FGuid> Assets) = 0;
 
+        // Opens the Settings panel on one settings class, such as CCodeEditorShortcuts.
+        virtual void OpenSettings(CClass* Page) = 0;
+
         // Asks before touching files that are read-only on disk and runs Then once they are writable. True when none were, so the caller goes ahead now.
         virtual bool ConfirmWritable(TVector<FString> VirtualPaths, TMoveOnlyFunction<void()> Then, bool bThenSaves = true) = 0;
         

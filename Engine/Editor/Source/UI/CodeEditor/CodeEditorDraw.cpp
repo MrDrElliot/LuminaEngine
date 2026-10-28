@@ -1,6 +1,7 @@
 #include "CodeEditor.h"
 
 #include <cmath>
+#include "Settings/EditorSettings.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
@@ -108,51 +109,9 @@ namespace Lumina
         return P;
     }
 
-    FCodeEditorPalette FCodeEditorPalette::Light()
-    {
-        FCodeEditorPalette P;
-        P[ECodeToken::Default]         = IM_COL32(36, 38, 44, 255);
-        P[ECodeToken::Keyword]         = IM_COL32(150, 40, 170, 255);
-        P[ECodeToken::Type]            = IM_COL32(20, 128, 140, 255);
-        P[ECodeToken::Function]        = IM_COL32(130, 100, 20, 255);
-        P[ECodeToken::KnownIdentifier] = IM_COL32(16, 90, 170, 255);
-        P[ECodeToken::Number]          = IM_COL32(40, 130, 80, 255);
-        P[ECodeToken::String]          = IM_COL32(170, 60, 30, 255);
-        P[ECodeToken::Comment]         = IM_COL32(90, 130, 90, 255);
-        P[ECodeToken::Punctuation]     = IM_COL32(90, 94, 104, 255);
-        P[ECodeToken::Preprocessor]    = IM_COL32(90, 90, 180, 255);
-        P[ECodeToken::Tag]             = IM_COL32(30, 90, 190, 255);
-        P[ECodeToken::Attribute]       = IM_COL32(200, 80, 40, 255);
-        P[ECodeToken::Property]        = IM_COL32(20, 100, 200, 255);
-        P[ECodeToken::Selector]        = IM_COL32(140, 80, 20, 255);
-        P[ECodeToken::Value]           = IM_COL32(170, 60, 30, 255);
-        P[ECodeToken::Binding]         = IM_COL32(180, 110, 0, 255);
-        P.Background       = IM_COL32(250, 250, 252, 255);
-        P.Gutter           = IM_COL32(250, 250, 252, 255);
-        P.LineNumber       = IM_COL32(160, 164, 176, 255);
-        P.LineNumberActive = IM_COL32(40, 44, 54, 255);
-        P.CurrentLine      = IM_COL32(0, 0, 0, 10);
-        P.Selection        = IM_COL32(66, 150, 250, 70);
-        P.Cursor           = IM_COL32(30, 90, 220, 255);
-        P.Whitespace       = IM_COL32(0, 0, 0, 50);
-        P.IndentGuide      = IM_COL32(0, 0, 0, 22);
-        P.BracketMatch     = IM_COL32(66, 150, 250, 110);
-        P.WordHighlight    = IM_COL32(0, 0, 0, 20);
-        P.FindMatch        = IM_COL32(242, 170, 40, 90);
-        P.Error            = IM_COL32(220, 50, 50, 255);
-        P.Warning          = IM_COL32(200, 140, 20, 255);
-        P.Info             = IM_COL32(40, 120, 220, 255);
-        P.PopupBackground  = IM_COL32(246, 246, 249, 252);
-        P.PopupBorder      = IM_COL32(200, 202, 210, 255);
-        P.PopupSelected    = IM_COL32(66, 150, 250, 50);
-        P.PopupMatch       = IM_COL32(20, 100, 220, 255);
-        P.PopupDetail      = IM_COL32(110, 114, 126, 255);
-        P.MiniMapViewport  = IM_COL32(0, 0, 0, 18);
-        return P;
-    }
-
     void FCodeEditor::Render(const char* Id, const ImVec2& Size, bool bBorder)
     {
+        ReloadEditedTheme();
         ImGui::PushID(Id);
         const ImVec2 Avail = ImGui::GetContentRegionAvail();
         ImVec2 RenderSize = ImGui::CalcItemSize(Size, Avail.x, Avail.y);
@@ -365,33 +324,33 @@ namespace Lumina
             return;
         }
         const int32 Count = (int32)Completion.Visible.size();
-        auto Pressed = [](ImGuiKeyChord Chord) { return ImGui::Shortcut(Chord, ImGuiInputFlags_Repeat); };
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
         bConsumed = true;
-        if (Pressed(ImGuiKey_UpArrow))
+        if (Keys.MoveUp.IsPressed())
         {
             Completion.Selected = (Completion.Selected + Count - 1) % Count;
             Completion.bScrollToSelected = true;
         }
-        else if (Pressed(ImGuiKey_DownArrow))
+        else if (Keys.MoveDown.IsPressed())
         {
             Completion.Selected = (Completion.Selected + 1) % Count;
             Completion.bScrollToSelected = true;
         }
-        else if (Pressed(ImGuiKey_PageUp))
+        else if (Keys.MovePageUp.IsPressed())
         {
             Completion.Selected = Math::Max(0, Completion.Selected - MaxCompletionRows);
             Completion.bScrollToSelected = true;
         }
-        else if (Pressed(ImGuiKey_PageDown))
+        else if (Keys.MovePageDown.IsPressed())
         {
             Completion.Selected = Math::Min(Count - 1, Completion.Selected + MaxCompletionRows);
             Completion.bScrollToSelected = true;
         }
-        else if (Pressed(ImGuiKey_Enter) || Pressed(ImGuiKey_KeypadEnter) || Pressed(ImGuiKey_Tab))
+        else if (Keys.AcceptSuggestion.IsPressed())
         {
             AcceptCompletion();
         }
-        else if (Pressed(ImGuiKey_Escape))
+        else if (Keys.Dismiss.IsPressed())
         {
             CloseCompletion();
         }
@@ -418,101 +377,98 @@ namespace Lumina
             return;
         }
 
-        auto Pressed = [](ImGuiKeyChord Chord) { return ImGui::Shortcut(Chord, ImGuiInputFlags_Repeat); };
-        const ImGuiKeyChord Ctrl = ImGuiMod_Ctrl;
-        const ImGuiKeyChord Shift = ImGuiMod_Shift;
-        const ImGuiKeyChord Alt = ImGuiMod_Alt;
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
+        const FCodePosition Caret = Cursors[MainCursor].Head;
 
         struct FMoveBinding
         {
-            ImGuiKey Key;
-            EMove    Plain;
-            EMove    WithCtrl;
+            const SShortcut& Shortcut;
+            EMove            Move;
         };
-        constexpr FMoveBinding Moves[] =
+        const FMoveBinding Moves[] =
         {
-            { ImGuiKey_LeftArrow,  EMove::Left,      EMove::WordLeft },
-            { ImGuiKey_RightArrow, EMove::Right,     EMove::WordRight },
-            { ImGuiKey_UpArrow,    EMove::Up,        EMove::Up },
-            { ImGuiKey_DownArrow,  EMove::Down,      EMove::Down },
-            { ImGuiKey_Home,       EMove::LineStart, EMove::DocumentStart },
-            { ImGuiKey_End,        EMove::LineEnd,   EMove::DocumentEnd },
-            { ImGuiKey_PageUp,     EMove::PageUp,    EMove::PageUp },
-            { ImGuiKey_PageDown,   EMove::PageDown,  EMove::PageDown },
+            { Keys.MoveLeft,            EMove::Left },
+            { Keys.MoveRight,           EMove::Right },
+            { Keys.MoveUp,              EMove::Up },
+            { Keys.MoveDown,            EMove::Down },
+            { Keys.MoveWordLeft,        EMove::WordLeft },
+            { Keys.MoveWordRight,       EMove::WordRight },
+            { Keys.MoveToLineStart,     EMove::LineStart },
+            { Keys.MoveToLineEnd,       EMove::LineEnd },
+            { Keys.MoveToDocumentStart, EMove::DocumentStart },
+            { Keys.MoveToDocumentEnd,   EMove::DocumentEnd },
+            { Keys.MovePageUp,          EMove::PageUp },
+            { Keys.MovePageDown,        EMove::PageDown },
         };
 
-        bool bMoved = false;
         for (const FMoveBinding& Binding : Moves)
         {
-            const bool bVertical = Binding.Key == ImGuiKey_UpArrow || Binding.Key == ImGuiKey_DownArrow;
-            if (Pressed(Binding.Key))                         { MoveCursors(Binding.Plain, false); bMoved = true; }
-            else if (Pressed(Shift | Binding.Key))            { MoveCursors(Binding.Plain, true); bMoved = true; }
-            else if (!bVertical && Pressed(Ctrl | Binding.Key))         { MoveCursors(Binding.WithCtrl, false); bMoved = true; }
-            else if (!bVertical && Pressed(Ctrl | Shift | Binding.Key)) { MoveCursors(Binding.WithCtrl, true); bMoved = true; }
-        }
-        if (bMoved)
-        {
-            Io.InputQueueCharacters.resize(0);
-            return;
+            const bool bPlain = Binding.Shortcut.IsPressed();
+            if (bPlain || Binding.Shortcut.IsPressed(ImGuiMod_Shift))
+            {
+                MoveCursors(Binding.Move, !bPlain);
+                Io.InputQueueCharacters.resize(0);
+                return;
+            }
         }
 
-        if (Pressed(Ctrl | ImGuiKey_UpArrow))                 { ImGui::SetScrollY(Layout.ScrollY - Layout.LineHeight); }
-        else if (Pressed(Ctrl | ImGuiKey_DownArrow))          { ImGui::SetScrollY(Layout.ScrollY + Layout.LineHeight); }
-        else if (Pressed(Alt | ImGuiKey_UpArrow))             { MoveLines(-1); }
-        else if (Pressed(Alt | ImGuiKey_DownArrow))           { MoveLines(1); }
-        else if (Pressed(Shift | Alt | ImGuiKey_UpArrow))     { DuplicateLines(-1); }
-        else if (Pressed(Shift | Alt | ImGuiKey_DownArrow))   { DuplicateLines(1); }
-        else if (Pressed(Ctrl | Alt | ImGuiKey_UpArrow))      { AddCursorVertical(-1); }
-        else if (Pressed(Ctrl | Alt | ImGuiKey_DownArrow))    { AddCursorVertical(1); }
-        else if (Pressed(Ctrl | ImGuiKey_A))                  { SelectAll(); }
-        else if (Pressed(Ctrl | ImGuiKey_C) || Pressed(Ctrl | ImGuiKey_Insert)) { Copy(); }
-        else if (Pressed(Ctrl | ImGuiKey_X) || Pressed(Shift | ImGuiKey_Delete)) { Cut(); }
-        else if (Pressed(Ctrl | ImGuiKey_V) || Pressed(Shift | ImGuiKey_Insert)) { Paste(); }
-        else if (Pressed(Ctrl | ImGuiKey_Z))                  { Undo(); }
-        else if (Pressed(Ctrl | ImGuiKey_Y) || Pressed(Ctrl | Shift | ImGuiKey_Z)) { Redo(); }
-        else if (Pressed(ImGuiKey_Backspace) || Pressed(Shift | ImGuiKey_Backspace)) { Backspace(false); }
-        else if (Pressed(Ctrl | ImGuiKey_Backspace))          { Backspace(true); }
-        else if (Pressed(ImGuiKey_Delete))                    { Delete(false); }
-        else if (Pressed(Ctrl | ImGuiKey_Delete))             { Delete(true); }
-        else if (Pressed(ImGuiKey_Enter) || Pressed(ImGuiKey_KeypadEnter) || Pressed(Shift | ImGuiKey_Enter)) { NewLine(); }
-        else if (Pressed(Ctrl | ImGuiKey_Enter))              { InsertLine(false); }
-        else if (Pressed(Ctrl | Shift | ImGuiKey_Enter))      { InsertLine(true); }
-        else if (Pressed(ImGuiKey_Tab))
+        if (Keys.ScrollLineUp.IsPressed())                 { ImGui::SetScrollY(Layout.ScrollY - Layout.LineHeight); }
+        else if (Keys.ScrollLineDown.IsPressed())          { ImGui::SetScrollY(Layout.ScrollY + Layout.LineHeight); }
+        else if (Keys.MoveLinesUp.IsPressed())             { MoveLines(-1); }
+        else if (Keys.MoveLinesDown.IsPressed())           { MoveLines(1); }
+        else if (Keys.DuplicateLinesUp.IsPressed())        { DuplicateLines(-1); }
+        else if (Keys.DuplicateLinesDown.IsPressed())      { DuplicateLines(1); }
+        else if (Keys.AddCursorAbove.IsPressed())          { AddCursorVertical(-1); }
+        else if (Keys.AddCursorBelow.IsPressed())          { AddCursorVertical(1); }
+        else if (Keys.SelectAll.IsPressed())               { SelectAll(); }
+        else if (Keys.Copy.IsPressed())                    { Copy(); }
+        else if (Keys.Cut.IsPressed())                     { Cut(); }
+        else if (Keys.Paste.IsPressed())                   { Paste(); }
+        else if (Keys.Undo.IsPressed())                    { Undo(); }
+        else if (Keys.Redo.IsPressed())                    { Redo(); }
+        else if (Keys.DeleteLeft.IsPressed())              { Backspace(false); }
+        else if (Keys.DeleteWordLeft.IsPressed())          { Backspace(true); }
+        else if (Keys.DeleteRight.IsPressed())             { Delete(false); }
+        else if (Keys.DeleteWordRight.IsPressed())         { Delete(true); }
+        else if (Keys.NewLine.IsPressed())                 { NewLine(); }
+        else if (Keys.InsertLineBelow.IsPressed())         { InsertLine(false); }
+        else if (Keys.InsertLineAbove.IsPressed())         { InsertLine(true); }
+        else if (Keys.InsertTab.IsPressed())
         {
             if (!AdvanceSnippet(1))
             {
                 InsertTab();
             }
         }
-        else if (Pressed(Shift | ImGuiKey_Tab))
+        else if (Keys.TabBack.IsPressed())
         {
             if (!AdvanceSnippet(-1))
             {
                 Outdent();
             }
         }
-        else if (Pressed(Ctrl | ImGuiKey_RightBracket))       { Indent(); }
-        else if (Pressed(Ctrl | ImGuiKey_LeftBracket))        { Outdent(); }
-        else if (Pressed(Ctrl | ImGuiKey_Slash))              { ToggleLineComment(); }
-        else if (Pressed(Shift | Alt | ImGuiKey_A))           { ToggleBlockComment(); }
-        else if (Pressed(Ctrl | Shift | ImGuiKey_K))          { DeleteLines(); }
-        else if (Pressed(Ctrl | ImGuiKey_D))                  { AddNextOccurrence(); }
-        else if (Pressed(Ctrl | Shift | ImGuiKey_L))          { SelectAllOccurrences(); }
-        else if (Pressed(Ctrl | ImGuiKey_F))                  { OpenFind(false); }
-        else if (Pressed(Ctrl | ImGuiKey_H))                  { OpenFind(true); }
-        else if (Pressed(ImGuiKey_F3))                        { FindNext(false); }
-        else if (Pressed(Shift | ImGuiKey_F3))                { FindNext(true); }
-        else if (Pressed(Ctrl | ImGuiKey_Space))              { TriggerCompletion(); }
-        else if (Pressed(Ctrl | Shift | ImGuiKey_Space))      { TriggerSignatureHelp(); }
-        else if (Pressed(Ctrl | Shift | ImGuiKey_Backslash))  { JumpToMatchingBracket(); }
-        else if (Pressed(ImGuiKey_F12))                       { GoToDefinition(Cursors[MainCursor].Head); }
-        else if (Pressed(Shift | ImGuiKey_F12) && CommandHandler) { CommandHandler(ECommand::FindReferences, Cursors[MainCursor].Head); }
-        else if (Pressed(ImGuiKey_F2) && CommandHandler)       { CommandHandler(ECommand::Rename, Cursors[MainCursor].Head); }
-        else if (Pressed(Ctrl | ImGuiKey_Period))              { ShowCodeActions(); }
-        else if (Pressed(Shift | Alt | ImGuiKey_F))            { FormatDocument(); }
-        else if (Pressed(Ctrl | Shift | ImGuiKey_LeftBracket))  { ToggleFold(Cursors[MainCursor].Head.Line); }
-        else if (Pressed(Ctrl | Shift | ImGuiKey_RightBracket)) { RevealLine(Cursors[MainCursor].Head.Line + 1); }
-        else if (Pressed(ImGuiKey_Escape))
+        else if (Keys.Indent.IsPressed())                  { Indent(); }
+        else if (Keys.Outdent.IsPressed())                 { Outdent(); }
+        else if (Keys.ToggleLineComment.IsPressed())       { ToggleLineComment(); }
+        else if (Keys.ToggleBlockComment.IsPressed())      { ToggleBlockComment(); }
+        else if (Keys.DeleteLines.IsPressed())             { DeleteLines(); }
+        else if (Keys.AddNextOccurrence.IsPressed())       { AddNextOccurrence(); }
+        else if (Keys.SelectAllOccurrences.IsPressed())    { SelectAllOccurrences(); }
+        else if (Keys.Find.IsPressed())                    { OpenFind(false); }
+        else if (Keys.Replace.IsPressed())                 { OpenFind(true); }
+        else if (Keys.FindNext.IsPressed())                { FindNext(false); }
+        else if (Keys.FindPrevious.IsPressed())            { FindNext(true); }
+        else if (Keys.TriggerSuggestions.IsPressed())      { TriggerCompletion(); }
+        else if (Keys.ParameterHints.IsPressed())          { TriggerSignatureHelp(); }
+        else if (Keys.JumpToMatchingBracket.IsPressed())   { JumpToMatchingBracket(); }
+        else if (Keys.GoToDefinition.IsPressed())          { GoToDefinition(Caret); }
+        else if (Keys.FindReferences.IsPressed() && CommandHandler) { CommandHandler(ECommand::FindReferences, Caret); }
+        else if (Keys.RenameSymbol.IsPressed() && CommandHandler)   { CommandHandler(ECommand::Rename, Caret); }
+        else if (Keys.QuickFix.IsPressed())                { ShowCodeActions(); }
+        else if (Keys.FormatDocument.IsPressed())          { FormatDocument(); }
+        else if (Keys.ToggleFold.IsPressed())              { ToggleFold(Caret.Line); }
+        else if (Keys.Unfold.IsPressed())                  { RevealLine(Caret.Line + 1); }
+        else if (Keys.Dismiss.IsPressed())
         {
             if (bSignatureOpen)
             {
@@ -1678,31 +1634,36 @@ namespace Lumina
         PushUIFont();
         const bool bEditable = !Settings.bReadOnly;
         const bool bSelection = HasSelection();
-        if (ImGui::MenuItem(LE_ICON_UNDO " Undo", "Ctrl+Z", false, CanUndo())) { Undo(); }
-        if (ImGui::MenuItem(LE_ICON_REDO " Redo", "Ctrl+Y", false, CanRedo())) { Redo(); }
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
+        auto Item = [](const char* Label, const SShortcut& Shortcut, bool bEnabled = true)
+        {
+            return ImGui::MenuItem(Label, Shortcut.GetLabel().c_str(), false, bEnabled);
+        };
+        if (Item(LE_ICON_UNDO " Undo", Keys.Undo, CanUndo())) { Undo(); }
+        if (Item(LE_ICON_REDO " Redo", Keys.Redo, CanRedo())) { Redo(); }
         ImGui::Separator();
-        if (ImGui::MenuItem(LE_ICON_CONTENT_CUT " Cut", "Ctrl+X", false, bEditable)) { Cut(); }
-        if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy", "Ctrl+C")) { Copy(); }
-        if (ImGui::MenuItem(LE_ICON_CONTENT_PASTE " Paste", "Ctrl+V", false, bEditable)) { Paste(); }
-        if (ImGui::MenuItem(LE_ICON_SELECT_ALL " Select All", "Ctrl+A")) { SelectAll(); }
+        if (Item(LE_ICON_CONTENT_CUT " Cut", Keys.Cut, bEditable)) { Cut(); }
+        if (Item(LE_ICON_CONTENT_COPY " Copy", Keys.Copy)) { Copy(); }
+        if (Item(LE_ICON_CONTENT_PASTE " Paste", Keys.Paste, bEditable)) { Paste(); }
+        if (Item(LE_ICON_SELECT_ALL " Select All", Keys.SelectAll)) { SelectAll(); }
         ImGui::Separator();
-        if (ImGui::MenuItem(LE_ICON_MAGNIFY " Find", "Ctrl+F")) { OpenFind(false); }
-        if (ImGui::MenuItem(LE_ICON_FIND_REPLACE " Replace", "Ctrl+H", false, bEditable)) { OpenFind(true); }
-        if (ImGui::MenuItem(LE_ICON_CHECK_ALL " Select All Occurrences", "Ctrl+Shift+L")) { SelectAllOccurrences(); }
+        if (Item(LE_ICON_MAGNIFY " Find", Keys.Find)) { OpenFind(false); }
+        if (Item(LE_ICON_FIND_REPLACE " Replace", Keys.Replace, bEditable)) { OpenFind(true); }
+        if (Item(LE_ICON_CHECK_ALL " Select All Occurrences", Keys.SelectAllOccurrences)) { SelectAllOccurrences(); }
         ImGui::Separator();
-        if (ImGui::MenuItem(LE_ICON_COMMENT_OUTLINE " Toggle Comment", "Ctrl+/", false, bEditable && Language != nullptr)) { ToggleLineComment(); }
+        if (Item(LE_ICON_COMMENT_OUTLINE " Toggle Comment", Keys.ToggleLineComment, bEditable && Language != nullptr)) { ToggleLineComment(); }
         if (ImGui::MenuItem(LE_ICON_FORMAT_LETTER_CASE " Upper Case", nullptr, false, bEditable && bSelection)) { ChangeCase(true); }
         if (ImGui::MenuItem(LE_ICON_FORMAT_LETTER_CASE " Lower Case", nullptr, false, bEditable && bSelection)) { ChangeCase(false); }
-        if (ImGui::MenuItem(LE_ICON_CODE_BRACES " Suggest", "Ctrl+Space", false, bEditable)) { TriggerCompletion(); }
-        if (ImGui::MenuItem(LE_ICON_ARROW_RIGHT " Go to Definition", "F12")) { GoToDefinition(ContextMenuPosition); }
+        if (Item(LE_ICON_CODE_BRACES " Suggest", Keys.TriggerSuggestions, bEditable)) { TriggerCompletion(); }
+        if (Item(LE_ICON_ARROW_RIGHT " Go to Definition", Keys.GoToDefinition)) { GoToDefinition(ContextMenuPosition); }
         if (CommandHandler)
         {
-            if (ImGui::MenuItem(LE_ICON_FILE_FIND " Find All References", "Shift+F12")) { CommandHandler(ECommand::FindReferences, ContextMenuPosition); }
-            if (ImGui::MenuItem(LE_ICON_RENAME " Rename Symbol", "F2", false, bEditable)) { CommandHandler(ECommand::Rename, ContextMenuPosition); }
+            if (Item(LE_ICON_FILE_FIND " Find All References", Keys.FindReferences)) { CommandHandler(ECommand::FindReferences, ContextMenuPosition); }
+            if (Item(LE_ICON_RENAME " Rename Symbol", Keys.RenameSymbol, bEditable)) { CommandHandler(ECommand::Rename, ContextMenuPosition); }
         }
-        if (ImGui::MenuItem(LE_ICON_LIGHTBULB_OUTLINE " Quick Fix", "Ctrl+.", false, bEditable && Language != nullptr)) { ShowCodeActions(); }
+        if (Item(LE_ICON_LIGHTBULB_OUTLINE " Quick Fix", Keys.QuickFix, bEditable && Language != nullptr)) { ShowCodeActions(); }
         ImGui::Separator();
-        if (ImGui::MenuItem(LE_ICON_FORMAT_ALIGN_LEFT " Format Document", "Shift+Alt+F", false, bEditable && Language != nullptr)) { FormatDocument(); }
+        if (Item(LE_ICON_FORMAT_ALIGN_LEFT " Format Document", Keys.FormatDocument, bEditable && Language != nullptr)) { FormatDocument(); }
         if (ImGui::MenuItem(LE_ICON_UNFOLD_LESS_HORIZONTAL " Fold All", nullptr, false, !Folds.empty())) { FoldAll(); }
         if (ImGui::MenuItem(LE_ICON_UNFOLD_MORE_HORIZONTAL " Unfold All", nullptr, false, !Collapsed.empty())) { UnfoldAll(); }
         ImGuiX::Font::PopFont();
@@ -1857,7 +1818,7 @@ namespace Lumina
                 ImGui::EndDisabled();
             }
 
-            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape))
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && GetDefault<CCodeEditorShortcuts>()->Dismiss.IsPressed(0, ImGuiInputFlags_RouteAlways))
             {
                 Find.bOpen = false;
                 Focus();

@@ -1,6 +1,12 @@
 #include "CodeEditor.h"
 
 #include <chrono>
+#include "CodeEditorThemes.h"
+#include "Config/Config.h"
+#include "Core/Delegates/CoreDelegates.h"
+#include "FileSystem/FileSystem.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
+#include "Settings/EditorSettings.h"
 #include "UI/Tools/NodeGraph/GraphActionMenu.h"
 
 namespace Lumina
@@ -11,6 +17,7 @@ namespace Lumina
         constexpr int32  MaxUndoRecords = 1000;
         constexpr int32  MaxFindMatches = 10000;
         constexpr double DiagnosticsDelay = 0.3;
+        constexpr double ThemeCheckSeconds = 1.0;
 
         void AdjustForInsert(FCodePosition& Position, FCodePosition At, FCodePosition End, bool bStickLeft)
         {
@@ -135,7 +142,61 @@ namespace Lumina
     FCodeEditor::FCodeEditor()
     {
         Cursors.emplace_back();
+        ApplyPreferences();
+        PreferencesSavedHandle = FCoreDelegates::OnSettingsSaved.AddLambda([this](CClass* Class)
+        {
+            if (Class == CCodeEditorSettings::StaticClass())
+            {
+                ApplyPreferences();
+            }
+        });
+    }
+
+    FCodeEditor::~FCodeEditor()
+    {
+        FCoreDelegates::OnSettingsSaved.Remove(PreferencesSavedHandle);
+    }
+
+    void FCodeEditor::ApplyPreferences()
+    {
+        const CCodeEditorSettings* Preferences = GetDefault<CCodeEditorSettings>();
+        Settings.FontScale             = Preferences->FontScale;
+        Settings.LineSpacing           = Preferences->LineSpacing;
+        Settings.TabSize               = Math::Clamp(Preferences->TabSize, 1, 8);
+        Settings.bInsertSpaces         = Preferences->bInsertSpaces;
+        Settings.bShowLineNumbers      = Preferences->bShowLineNumbers;
+        Settings.bShowWhitespace       = Preferences->bShowWhitespace;
+        Settings.bShowMiniMap          = Preferences->bShowMiniMap;
+        Settings.bShowIndentGuides     = Preferences->bShowIndentGuides;
+        Settings.bAutoIndent           = Preferences->bAutoIndent;
+        Settings.bMatchBrackets        = Preferences->bMatchBrackets;
+        Settings.bAutoClosePairs       = Preferences->bAutoClosePairs;
+        Settings.bSuggestWhileTyping   = Preferences->bSuggestWhileTyping;
+        Settings.bHighlightOccurrences = Preferences->bHighlightOccurrences;
+        ThemeName = Preferences->Theme.Name;
+        ApplyTheme();
+    }
+
+    void FCodeEditor::ApplyTheme()
+    {
         Palette = FCodeEditorPalette::Dark();
+        const FString VirtualPath = CodeEditorThemes::PathOf(ThemeName.View());
+        ThemeFile = CodeEditorThemes::Load(ThemeName.View(), Palette) ? FString(VFS::ResolvePath(VirtualPath.View()).c_str()) : FString();
+        ThemeWriteTime = ThemeFile.empty() ? 0 : Filesystem::LastWriteTime(ThemeFile.View());
+    }
+
+    void FCodeEditor::ReloadEditedTheme()
+    {
+        const double Time = Now();
+        if (ThemeFile.empty() || Time < NextThemeCheck)
+        {
+            return;
+        }
+        NextThemeCheck = Time + ThemeCheckSeconds;
+        if (Filesystem::LastWriteTime(ThemeFile.View()) != ThemeWriteTime)
+        {
+            ApplyTheme();
+        }
     }
 
     void FCodeEditor::SetText(FStringView Text)

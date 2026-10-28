@@ -164,6 +164,7 @@ namespace Lumina
         void SaveAllDirtyPackages() override;
         void SavePackages(TVector<CPackage*> Packages) override;
         void OpenPropertyMatrix(TVector<FGuid> Assets) override;
+        void OpenSettings(CClass* Page) override;
         bool ConfirmWritable(TVector<FString> VirtualPaths, TMoveOnlyFunction<void()> Then, bool bThenSaves = true) override;
 
         struct FSaveAllResult

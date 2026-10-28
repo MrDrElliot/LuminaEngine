@@ -1097,9 +1097,10 @@ struct FSceneGlobalData
     FTexture2D DBufferA;
     FTexture2D DBufferB;
     FTexture2D DBufferC;
-    uint       _PadFogParams0;
-    uint       _PadFogParams1;
-    uint       _PadFogParams2;
+    // Geometric specular antialiasing, off while the variance scale is zero.
+    float      SpecularAAVariance;
+    float      SpecularAAThreshold;
+    uint       _PadFogParams;
 
     // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
     FExponentialHeightFogParams FogParams;

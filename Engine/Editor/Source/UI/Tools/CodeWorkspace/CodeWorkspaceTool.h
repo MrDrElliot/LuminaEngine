@@ -32,6 +32,10 @@ namespace Lumina
         void OnSave() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
+    protected:
+
+        void DrawHelpMenu() override;
+
     private:
 
         struct FDocument

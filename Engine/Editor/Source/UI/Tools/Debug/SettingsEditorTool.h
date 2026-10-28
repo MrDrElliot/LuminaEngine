@@ -25,6 +25,8 @@ namespace Lumina
 
         void OnInitialize() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
+
+        void Select(CClass* SettingsClass) { SelectedClass = SettingsClass; }
         
     protected:
          

@@ -77,14 +77,16 @@ float3 GetWorldNormal(float3 FragNormal, float4 FragTangent, float3 TangentSpace
     return normalize(mul(TangentSpaceNormal, TBN));
 }
 
-// Geometric specular antialiasing (Kaplanyan 2016).
+// Geometric specular antialiasing (Kaplanyan 2016), which the project's Rendering settings turn on.
 float ApplyGeometricSpecularAA(float Roughness, float3 dNdx, float3 dNdy)
 {
-    const float ScreenVariance = 0.25;
-    const float Threshold      = 0.18;
+    if (Scene().SpecularAAVariance <= 0.0)
+    {
+        return Roughness;
+    }
 
-    const float Variance = ScreenVariance * (dot(dNdx, dNdx) + dot(dNdy, dNdy));
-    const float Kernel   = min(2.0 * Variance, Threshold);
+    const float Variance = Scene().SpecularAAVariance * (dot(dNdx, dNdx) + dot(dNdy, dNdy));
+    const float Kernel   = min(2.0 * Variance, Scene().SpecularAAThreshold);
 
     // Roughness squared is the GGX alpha the variance adds into; the widening is not linear in roughness.
     const float Alpha = Roughness * Roughness;

@@ -11,6 +11,7 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "UI/CodeEditor/CodeEditorPreferences.h"
 #include "UI/CodeEditor/Languages/PlainTextLanguage.h"
 #include "UI/CodeEditor/Languages/RmlLanguage.h"
 #include "UI/CodeEditor/Languages/SlangLanguage.h"
@@ -422,10 +423,6 @@ namespace Lumina
             Document.Language = MakeUnique<FPlainTextLanguage>("Text");
         }
 
-        FCodeEditorSettings& Settings = Document.Editor.GetSettings();
-        Settings.FontScale = GetDefault<CScriptEditorSettings>()->FontScale;
-        Settings.TabSize = 4;
-        Settings.bInsertSpaces = true;
         Document.Editor.SetLanguage(Document.Language.get());
         FDocument* Raw = &Document;
         Document.Editor.SetDefinitionHandler([this](const FCodeLocation& Location)
@@ -507,6 +504,10 @@ namespace Lumina
 
     bool FCodeWorkspaceTool::SaveDocument(FDocument& Document)
     {
+        if (GetDefault<CCodeEditorSettings>()->bTrimTrailingWhitespaceOnSave)
+        {
+            Document.Editor.TrimTrailingWhitespace();
+        }
         const FString Text = Document.Editor.GetText();
         if (!VFS::WriteFile(Document.VirtualPath.View(), Text.View()))
         {
@@ -1237,24 +1238,26 @@ namespace Lumina
 
     void FCodeWorkspaceTool::HandleShortcuts()
     {
-        auto Pressed = [](ImGuiKeyChord Chord) { return ImGui::IsKeyChordPressed(Chord); };
-        if (Pressed(ImGuiMod_Ctrl | ImGuiKey_P))
+        // Polled rather than routed, so they work from every panel of the workspace.
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
+        auto Pressed = [](const SShortcut& Shortcut) { return Shortcut.IsPressed(0, ImGuiInputFlags_RouteAlways); };
+        if (Pressed(Keys.GoToFile))
         {
             OpenPicker(EPicker::Files);
         }
-        else if (Pressed(ImGuiMod_Ctrl | ImGuiKey_G))
+        else if (Pressed(Keys.GoToLine))
         {
             OpenPicker(EPicker::Line);
         }
-        else if (Pressed(ImGuiMod_Ctrl | ImGuiKey_T))
+        else if (Pressed(Keys.GoToSymbol))
         {
             OpenPicker(EPicker::WorkspaceSymbols);
         }
-        else if (Pressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_O))
+        else if (Pressed(Keys.GoToSymbolInFile))
         {
             OpenPicker(EPicker::DocumentSymbols);
         }
-        else if (Pressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_F))
+        else if (Pressed(Keys.FindInFiles))
         {
             if (FDocument* Active = ActiveDocument(); Active != nullptr && Active->Editor.HasSelection())
             {
@@ -1267,31 +1270,43 @@ namespace Lumina
             bFocusSearch = true;
             ImGui::SetWindowFocus(GetToolWindowName(SearchWindow).c_str());
         }
-        else if (Pressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S))
+        else if (Pressed(Keys.SaveAll))
         {
             SaveAll();
         }
-        else if (Pressed(ImGuiMod_Ctrl | ImGuiKey_W))
+        else if (Pressed(Keys.CloseFile))
         {
             RequestClose(ActiveIndex);
         }
-        else if ((Pressed(ImGuiMod_Ctrl | ImGuiKey_PageDown) || Pressed(ImGuiMod_Ctrl | ImGuiKey_PageUp)) && !Documents.empty())
+        else if (const int32 Step = Pressed(Keys.NextFile) ? 1 : Pressed(Keys.PreviousFile) ? -1 : 0; Step != 0 && !Documents.empty())
         {
             const int32 Count = (int32)Documents.size();
-            const int32 Step = ImGui::IsKeyDown(ImGuiKey_PageDown) ? 1 : -1;
             SelectRequest = ((ActiveIndex + Step) % Count + Count) % Count;
         }
-        else if (Pressed(ImGuiMod_Alt | ImGuiKey_LeftArrow))
+        else if (Pressed(Keys.NavigateBack))
         {
             GoBack();
         }
-        else if (Pressed(ImGuiMod_Alt | ImGuiKey_RightArrow))
+        else if (Pressed(Keys.NavigateForward))
         {
             GoForward();
         }
-        else if (Pressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_B))
+        else if (Pressed(Keys.ReloadScripts))
         {
             DotNet::RequestScriptReload();
+        }
+    }
+
+    void FCodeWorkspaceTool::DrawHelpMenu()
+    {
+        if (ImGui::BeginMenu(LE_ICON_KEYBOARD " Keyboard Shortcuts"))
+        {
+            CodeEditorPreferences::DrawShortcutReference();
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem(LE_ICON_PENCIL " Change Shortcuts"))
+        {
+            ToolContext->OpenSettings(CCodeEditorShortcuts::StaticClass());
         }
     }
 
@@ -1494,7 +1509,7 @@ namespace Lumina
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        if (ImGui::Button("Cancel") || GetDefault<CCodeEditorShortcuts>()->Dismiss.IsPressed(0, ImGuiInputFlags_RouteAlways))
         {
             ImGui::CloseCurrentPopup();
         }
@@ -1518,12 +1533,18 @@ namespace Lumina
             ImGui::TextDisabled("|");
             ImGui::SameLine();
         };
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
+        auto Hint = [](const char* Text, const SShortcut& Shortcut)
+        {
+            const FString Label = Shortcut.GetLabel();
+            return Label.empty() ? Lumina::Format("{}.", Text) : Lumina::Format("{} ({}).", Text, Label);
+        };
 
-        if (ToolbarButton(LE_ICON_ARROW_LEFT, !BackHistory.empty(), "Back (Alt+Left)."))
+        if (ToolbarButton(LE_ICON_ARROW_LEFT, !BackHistory.empty(), Hint("Back", Keys.NavigateBack).c_str()))
         {
             GoBack();
         }
-        if (ToolbarButton(LE_ICON_ARROW_RIGHT, !ForwardHistory.empty(), "Forward (Alt+Right)."))
+        if (ToolbarButton(LE_ICON_ARROW_RIGHT, !ForwardHistory.empty(), Hint("Forward", Keys.NavigateForward).c_str()))
         {
             GoForward();
         }
@@ -1532,34 +1553,34 @@ namespace Lumina
         {
             OnSave();
         }
-        if (ToolbarButton(LE_ICON_CONTENT_SAVE_ALL " Save All", IsUnsavedDocument(), "Save every changed file (Ctrl+Shift+S)."))
+        if (ToolbarButton(LE_ICON_CONTENT_SAVE_ALL " Save All", IsUnsavedDocument(), Hint("Save every changed file", Keys.SaveAll).c_str()))
         {
             SaveAll();
         }
         Divider();
-        if (ToolbarButton(LE_ICON_FILE_FIND_OUTLINE " Go to File", !Files.empty(), "Open a file by name (Ctrl+P), or go to a line (Ctrl+G)."))
+        if (ToolbarButton(LE_ICON_FILE_FIND_OUTLINE " Go to File", !Files.empty(), Lumina::Format("{} {}", Hint("Open a file by name", Keys.GoToFile), Hint("Go to a line", Keys.GoToLine)).c_str()))
         {
             OpenPicker(EPicker::Files);
         }
-        if (ToolbarButton(LE_ICON_FUNCTION " Go to Symbol", true, "Find a type or member in the scripts (Ctrl+T), or in this file (Ctrl+Shift+O)."))
+        if (ToolbarButton(LE_ICON_FUNCTION " Go to Symbol", true, Lumina::Format("{} {}", Hint("Find a type or member in the scripts", Keys.GoToSymbol), Hint("Find one in this file", Keys.GoToSymbolInFile)).c_str()))
         {
             OpenPicker(EPicker::WorkspaceSymbols);
         }
-        if (ToolbarButton(LE_ICON_MAGNIFY " Find in Files", true, "Search every file in the project (Ctrl+Shift+F)."))
+        if (ToolbarButton(LE_ICON_MAGNIFY " Find in Files", true, Hint("Search every file in the project", Keys.FindInFiles).c_str()))
         {
             bFocusSearch = true;
             ImGui::SetWindowFocus(GetToolWindowName(SearchWindow).c_str());
         }
         Divider();
-        if (ToolbarButton(LE_ICON_FORMAT_ALIGN_LEFT " Format", Active != nullptr, "Re-indent this file (Shift+Alt+F)."))
+        if (ToolbarButton(LE_ICON_FORMAT_ALIGN_LEFT " Format", Active != nullptr, Hint("Re-indent this file", Keys.FormatDocument).c_str()))
         {
             Active->Editor.FormatDocument();
         }
-        if (ToolbarButton(LE_ICON_CODE_BRACES " View", Active != nullptr, "Editor display options, shared by every open file."))
+        if (ToolbarButton(LE_ICON_CODE_BRACES " View", true, "Theme and display options for every code editor, and the keyboard shortcuts."))
         {
             ImGui::OpenPopup("##CodeView");
         }
-        if (ToolbarButton(LE_ICON_REFRESH " Reload Scripts", true, "Recompile and reload every script now (Ctrl+Shift+B)."))
+        if (ToolbarButton(LE_ICON_REFRESH " Reload Scripts", true, Hint("Recompile and reload every script now", Keys.ReloadScripts).c_str()))
         {
             DotNet::RequestScriptReload();
         }
@@ -1569,21 +1590,10 @@ namespace Lumina
         }
         ImGui::NewLine();
 
-        if (Active != nullptr && ImGui::BeginPopup("##CodeView"))
+        if (ImGui::BeginPopup("##CodeView"))
         {
-            FCodeEditorSettings& Settings = Active->Editor.GetSettings();
-            ImGui::SliderFloat("Font scale", &Settings.FontScale, 0.75f, 3.0f, "%.2fx");
-            ImGui::Checkbox("Suggest while typing", &Settings.bSuggestWhileTyping);
-            ImGui::Checkbox("Line numbers", &Settings.bShowLineNumbers);
-            ImGui::Checkbox("Minimap", &Settings.bShowMiniMap);
-            ImGui::Checkbox("Indent guides", &Settings.bShowIndentGuides);
-            ImGui::Checkbox("Whitespace", &Settings.bShowWhitespace);
-            ImGui::Checkbox("Highlight occurrences", &Settings.bHighlightOccurrences);
+            CodeEditorPreferences::DrawQuickSettings(ToolContext);
             ImGui::EndPopup();
-            for (TUniquePtr<FDocument>& Document : Documents)
-            {
-                Document->Editor.GetSettings() = Settings;
-            }
         }
     }
 
@@ -1594,21 +1604,25 @@ namespace Lumina
 
         if (Documents.empty())
         {
-            constexpr const char* Hints[][2] =
+            const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
+            const TPair<const SShortcut*, const char*> Hints[] =
             {
-                { "Ctrl+P", "Go to a file" },
-                { "Ctrl+T", "Go to a type or member in the scripts" },
-                { "Ctrl+Shift+F", "Find and replace in every file" },
-                { "Ctrl+Shift+B", "Reload the scripts" },
-                { "F12, Shift+F12, F2", "Go to definition, find references, rename" },
+                { &Keys.GoToFile, "Go to a file" },
+                { &Keys.GoToSymbol, "Go to a type or member in the scripts" },
+                { &Keys.FindInFiles, "Find and replace in every file" },
+                { &Keys.ReloadScripts, "Reload the scripts" },
+                { &Keys.GoToDefinition, "Go to a definition" },
             };
             ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
             ImGui::TextColored(EditorColors::TextDim(), "Open a file from the explorer, or");
-            for (const auto& Hint : Hints)
+            for (const auto& [Shortcut, Text] : Hints)
             {
-                ImGui::TextColored(EditorColors::SectionHeader(), "%-20s", Hint[0]);
-                ImGui::SameLine();
-                ImGui::TextUnformatted(Hint[1]);
+                if (Shortcut->Primary.IsValid())
+                {
+                    ImGui::TextColored(EditorColors::SectionHeader(), "%-20s", Shortcut->GetLabel().c_str());
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(Text);
+                }
             }
         }
         else if (ImGui::BeginTabBar("##CodeTabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_TabListPopupButton))
@@ -1628,7 +1642,7 @@ namespace Lumina
                 ImGui::SetItemTooltip("%s", Document.VirtualPath.c_str());
                 if (ImGui::BeginPopupContextItem())
                 {
-                    if (ImGui::MenuItem("Close", "Ctrl+W"))
+                    if (ImGui::MenuItem("Close", GetDefault<CCodeEditorShortcuts>()->CloseFile.GetLabel().c_str()))
                     {
                         RequestClose(Index);
                     }
@@ -2138,12 +2152,12 @@ namespace Lumina
 
         const int32 Count = (int32)Rows.size();
         bool bMoved = false;
-        if (Count > 0 && ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+        if (Count > 0 && GetDefault<CCodeEditorShortcuts>()->MoveDown.IsPressed(0, ImGuiInputFlags_RouteAlways | ImGuiInputFlags_Repeat))
         {
             PickerSelected = (PickerSelected + 1) % Count;
             bMoved = true;
         }
-        if (Count > 0 && ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+        if (Count > 0 && GetDefault<CCodeEditorShortcuts>()->MoveUp.IsPressed(0, ImGuiInputFlags_RouteAlways | ImGuiInputFlags_Repeat))
         {
             PickerSelected = (PickerSelected + Count - 1) % Count;
             bMoved = true;
@@ -2178,7 +2192,7 @@ namespace Lumina
         }
         ImGui::EndChild();
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        if (GetDefault<CCodeEditorShortcuts>()->Dismiss.IsPressed(0, ImGuiInputFlags_RouteAlways))
         {
             ImGui::CloseCurrentPopup();
             Picker = EPicker::None;
@@ -2236,7 +2250,7 @@ namespace Lumina
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        if (ImGui::Button("Cancel") || GetDefault<CCodeEditorShortcuts>()->Dismiss.IsPressed(0, ImGuiInputFlags_RouteAlways))
         {
             ImGui::CloseCurrentPopup();
         }
@@ -2287,7 +2301,7 @@ namespace Lumina
             bClose = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        if (ImGui::Button("Cancel") || GetDefault<CCodeEditorShortcuts>()->Dismiss.IsPressed(0, ImGuiInputFlags_RouteAlways))
         {
             PendingClose = -1;
             ImGui::CloseCurrentPopup();

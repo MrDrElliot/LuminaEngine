@@ -462,6 +462,18 @@ namespace Lumina
         PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.25f, ClampMax = 4.0f)
         float TemporalClampGamma = 1.0f;
 
+        // Roughens highlights where the surface normal turns within a pixel, which stops them sparkling on dense or curved geometry but dulls the look.
+        PROPERTY(Editable, Category = "Anti-Aliasing")
+        bool bSpecularAntiAliasing = false;
+
+        // How much the normal's change across a pixel roughens the highlight.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.0f, ClampMax = 1.0f, EditCondition = "bSpecularAntiAliasing")
+        float SpecularAntiAliasingStrength = 0.25f;
+
+        // The most the widening may add to GGX alpha, so a highlight is softened but never erased.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.0f, ClampMax = 1.0f, EditCondition = "bSpecularAntiAliasing")
+        float SpecularAntiAliasingLimit = 0.18f;
+
         // Scales the subpixel offset. 0 pins both subsamples to the pixel center, which isolates the resolve.
         PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.0f, ClampMax = 1.0f)
         float TemporalJitterScale = 0.4f;

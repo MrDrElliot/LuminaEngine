@@ -1,0 +1,43 @@
+{
+    "Syntax": {
+        "Default": "#d8dee9",
+        "Keyword": "#81a1c1",
+        "Type": "#8fbcbb",
+        "Function": "#88c0d0",
+        "KnownIdentifier": "#eceff4",
+        "Number": "#b48ead",
+        "String": "#a3be8c",
+        "Comment": "#616e88",
+        "Punctuation": "#eceff4",
+        "Preprocessor": "#5e81ac",
+        "Tag": "#81a1c1",
+        "Attribute": "#8fbcbb",
+        "Property": "#88c0d0",
+        "Selector": "#8fbcbb",
+        "Value": "#a3be8c",
+        "Binding": "#ebcb8b"
+    },
+    "Editor": {
+        "Background": "#2e3440",
+        "Gutter": "#2e3440",
+        "LineNumber": "#4c566a",
+        "LineNumberActive": "#d8dee9",
+        "CurrentLine": "#3b4252",
+        "Selection": "#434c5ecc",
+        "Cursor": "#d8dee9",
+        "Whitespace": "#d8dee926",
+        "IndentGuide": "#d8dee910",
+        "BracketMatch": "#88c0d078",
+        "WordHighlight": "#d8dee918",
+        "FindMatch": "#ebcb8b44",
+        "Error": "#bf616a",
+        "Warning": "#ebcb8b",
+        "Info": "#88c0d0",
+        "PopupBackground": "#3b4252fc",
+        "PopupBorder": "#4c566a",
+        "PopupSelected": "#88c0d040",
+        "PopupMatch": "#88c0d0",
+        "PopupDetail": "#616e88",
+        "MiniMapViewport": "#d8dee914"
+    }
+}

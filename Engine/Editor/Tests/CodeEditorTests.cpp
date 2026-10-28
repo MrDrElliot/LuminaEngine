@@ -8,8 +8,12 @@
 #include "Paths/Paths.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include <chrono>
+#include <filesystem>
 #include <thread>
+#include "FileSystem/FileSystem.h"
+#include "Settings/EditorSettings.h"
 #include "UI/CodeEditor/CodeEditor.h"
+#include "UI/CodeEditor/CodeEditorThemes.h"
 #include "UI/CodeEditor/Languages/CSharpLanguage.h"
 #include "UI/CodeEditor/Languages/CSharpScriptLanguage.h"
 #include "UI/CodeEditor/Languages/PlainTextLanguage.h"
@@ -419,6 +423,152 @@ TEST(CodeEditor, LinesRemovedByInputDrawInTheSameFrame)
     Harness.Key(ImGuiKey_Z, false);
     Harness.Key(ImGuiMod_Ctrl, false);
     EXPECT_EQ(Harness.Editor.GetLineCount(), 81);
+}
+
+namespace
+{
+    // Rebinds one shortcut on the settings for the length of a test.
+    class FScopedRebind
+    {
+    public:
+
+        FScopedRebind(SShortcut& InTarget, const SShortcut& Replacement)
+            : Target(InTarget)
+            , Saved(InTarget)
+        {
+            Target = Replacement;
+        }
+
+        ~FScopedRebind()
+        {
+            Target = Saved;
+        }
+
+    private:
+
+        SShortcut& Target;
+        SShortcut  Saved;
+    };
+
+    // A scratch folder mounted where the editor's resources live, so theme files can be written and read.
+    class FScopedEditorFolder
+    {
+    public:
+
+        FScopedEditorFolder()
+        {
+            Root = std::filesystem::temp_directory_path() / "LuminaCodeThemeTests";
+            std::filesystem::remove_all(Root);
+            std::filesystem::create_directories(Root / "Resources" / "CodeThemes");
+            VFS::Mount<VFS::FNativeFileSystem>("/Editor", FStringView(Root.string().c_str()));
+        }
+
+        ~FScopedEditorFolder()
+        {
+            VFS::Unmount("/Editor");
+            std::error_code Error;
+            std::filesystem::remove_all(Root, Error);
+        }
+
+        std::filesystem::path Root;
+    };
+
+    void Chord(FCodeEditorHarness& Harness, ImGuiKeyChord Mods, ImGuiKey Key)
+    {
+        for (const ImGuiKey Mod : { ImGuiMod_Ctrl, ImGuiMod_Shift, ImGuiMod_Alt })
+        {
+            if (Mods & Mod)
+            {
+                Harness.Key(Mod, true);
+            }
+        }
+        Harness.Key(Key, true);
+        Harness.Key(Key, false);
+        for (const ImGuiKey Mod : { ImGuiMod_Ctrl, ImGuiMod_Shift, ImGuiMod_Alt })
+        {
+            if (Mods & Mod)
+            {
+                Harness.Key(Mod, false);
+            }
+        }
+    }
+}
+
+TEST(CodeEditor, ShortcutsFollowTheSettings)
+{
+    FScopedRebind Rebind(GetMutableDefault<CCodeEditorShortcuts>()->SelectAll, SShortcut(SKey(EKey::E, true)));
+    FCodeEditorHarness Harness;
+    Harness.Editor.SetText("one\ntwo");
+    Harness.Editor.Focus();
+    Harness.Frame();
+    Harness.Frame();
+
+    Chord(Harness, ImGuiMod_Ctrl, ImGuiKey_A);
+    EXPECT_FALSE(Harness.Editor.HasSelection());
+    Chord(Harness, ImGuiMod_Ctrl, ImGuiKey_E);
+    EXPECT_TRUE(Harness.Editor.GetSelectedText() == "one\ntwo");
+}
+
+TEST(CodeEditor, AlternateChordsAndKeypadEnterAnswer)
+{
+    FCodeEditorHarness Harness;
+    Harness.Editor.SetText("one");
+    Harness.Editor.Focus();
+    Harness.Frame();
+    Harness.Frame();
+    Harness.Editor.SetCursor({ 0, 3 });
+
+    Chord(Harness, 0, ImGuiKey_KeypadEnter);
+    EXPECT_EQ(Harness.Editor.GetLineCount(), 2);
+    Chord(Harness, ImGuiMod_Ctrl, ImGuiKey_Z);
+    EXPECT_EQ(Harness.Editor.GetLineCount(), 1);
+    Chord(Harness, ImGuiMod_Ctrl | ImGuiMod_Shift, ImGuiKey_Z);
+    EXPECT_EQ(Harness.Editor.GetLineCount(), 2);
+}
+
+TEST(CodeEditorThemes, MissingColorsKeepTheBuiltInOnes)
+{
+    FScopedEditorFolder Folder;
+    ASSERT_TRUE(VFS::WriteFile(CodeEditorThemes::PathOf("Partial").View(), R"({ "Syntax": { "Keyword": "#FF0000" }, "Editor": { "Background": "#00000080" } })"));
+
+    FCodeEditorPalette Palette = FCodeEditorPalette::Dark();
+    ASSERT_TRUE(CodeEditorThemes::Load("Partial", Palette));
+    EXPECT_EQ(Palette[ECodeToken::Keyword], IM_COL32(255, 0, 0, 255));
+    EXPECT_EQ(Palette.Background, IM_COL32(0, 0, 0, 128));
+    EXPECT_EQ(Palette[ECodeToken::Comment], FCodeEditorPalette::Dark()[ECodeToken::Comment]);
+    EXPECT_FALSE(CodeEditorThemes::Load("Absent", Palette));
+
+    CCodeEditorSettings* Settings = GetMutableDefault<CCodeEditorSettings>();
+    const FString SavedTheme = Settings->Theme.Name;
+    Settings->Theme.Name = "Partial";
+    FCodeEditor Editor;
+    Settings->Theme.Name = SavedTheme;
+    EXPECT_EQ(Editor.GetPalette()[ECodeToken::Keyword], IM_COL32(255, 0, 0, 255));
+}
+
+TEST(CodeEditorThemes, ShippedThemesGiveEveryColor)
+{
+    FScopedEditorFolder Folder;
+    Paths::InitializePaths();
+    const std::filesystem::path Shipped = std::filesystem::path(Paths::GetEngineDirectory().c_str()) / "Editor" / "Resources" / "CodeThemes";
+    std::filesystem::copy(Shipped, Folder.Root / "Resources" / "CodeThemes");
+
+    const TVector<FString> Themes = CodeEditorThemes::List();
+    EXPECT_GE(Themes.size(), 10u);
+    EXPECT_TRUE(Algo::AnyOf(Themes.begin(), Themes.end(), [](const FString& Theme) { return Theme == "Dracula"; }));
+
+    // Saving writes every color in the same layout, so a file that left one out or misspelled one no longer matches.
+    for (const FString& Theme : Themes)
+    {
+        FString Original;
+        ASSERT_TRUE(VFS::ReadFile(Original, CodeEditorThemes::PathOf(Theme.View()).View()));
+        FCodeEditorPalette Palette = FCodeEditorPalette::Dark();
+        ASSERT_TRUE(CodeEditorThemes::Load(Theme.View(), Palette));
+        ASSERT_TRUE(CodeEditorThemes::Save(Theme.View(), Palette));
+        FString Written;
+        ASSERT_TRUE(VFS::ReadFile(Written, CodeEditorThemes::PathOf(Theme.View()).View()));
+        EXPECT_TRUE(Written == Original) << Theme.c_str();
+    }
 }
 
 class FScriptLanguageTest : public ::testing::Test

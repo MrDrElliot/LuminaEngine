@@ -1,4 +1,4 @@
-﻿#include "Containers/StringFormat.h"
+#include "Containers/StringFormat.h"
 #include <iterator>
 #include "CoreTypeCustomization.h"
 #include "AssetPickerFilter.h"
@@ -26,20 +26,20 @@ namespace Lumina
         }
     }
 
-    EPropertyChangeOp FKeyPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
+    bool FKeyCaptureField::Draw(SKey& Value, float Width, bool bChordOnly)
     {
-        bool bCommitted = false; // a new binding was set (or cleared) this frame
+        bool bCommitted = false;
 
         const ImGuiStyle& St     = ImGui::GetStyle();
-        const bool        bValid = DisplayValue.IsValid();
+        const bool        bValid = Value.IsValid();
 
         // Kept at full width while listening, so the field does not jump as the clear button comes and goes.
         const float ClearW = AssetPickerFilter::kButtonSize.x + St.ItemSpacing.x;
-        const float FieldW = ImGui::GetContentRegionAvail().x - ClearW;
+        const float FieldW = Width - ClearW;
+        const char* Prompt = bChordOnly ? "Press a key with any modifiers. Esc cancels." : "Press a key, mouse button or gamepad button. Esc cancels.";
 
         FFixedString Label;
-        AppendFormat(Label, "{}##skey",
-            bCapturing ? LE_ICON_KEYBOARD "  Press a key, mouse button or gamepad button..." : KeyBindingText(DisplayValue).c_str());
+        AppendFormat(Label, "{}##skey", bCapturing ? FString(LE_ICON_KEYBOARD "  ") + Prompt : KeyBindingText(Value));
 
         // Styled as a value field rather than a button, since it shows the binding the way its neighbors show theirs.
         ImGui::PushStyleColor(ImGuiCol_Button,        St.Colors[ImGuiCol_FrameBg]);
@@ -55,8 +55,7 @@ namespace Lumina
         }
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(4);
-        ImGuiX::TextTooltip("{}", bCapturing ? "Press a key, mouse button or gamepad button. Esc cancels."
-                                             : "Click, then press a key, mouse button or gamepad button to rebind");
+        ImGuiX::TextTooltip("{}", bCapturing ? Prompt : bChordOnly ? "Click, then press the new shortcut" : "Click, then press a key, mouse button or gamepad button to rebind");
 
         // Disabled rather than hidden while listening, or the activating click would land on it.
         ImGui::SameLine(0.0f, St.ItemSpacing.x);
@@ -66,7 +65,7 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
         if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##clearskey", AssetPickerFilter::kButtonSize))
         {
-            DisplayValue.Clear();
+            Value.Clear();
             bCapturing = false;
             bCommitted = true;
         }
@@ -74,65 +73,69 @@ namespace Lumina
         ImGui::EndDisabled();
         ImGuiX::TextTooltip("{}", "Clear the binding.");
 
-        if (bCapturing)
+        if (!bCapturing)
         {
-            if (!bArmed)
-            {
-                // Skip the frame the activating click landed on; otherwise that click binds immediately.
-                bArmed = true;
-            }
-            else if (ImGui::IsKeyPressed(ImGuiKey_Escape, /*repeat*/ false))
-            {
-                bCapturing = false; // cancel, leave the binding unchanged
-            }
-            else
-            {
-                // Bare modifier presses keep listening, so a chord can be built before the key commits.
-                const ImGuiIO& Io = ImGui::GetIO();
-                const EKey K = ImGuiX::PollPressedKey();
-                if (K != EKey::Num && ImGuiX::IsModifierEKey(K))
-                {
-                    PendingModifier = K;
-                }
-                else if (K != EKey::Num)
-                {
-                    DisplayValue.SetKey(K);
-                    DisplayValue.bCtrl  = Io.KeyCtrl;
-                    DisplayValue.bShift = Io.KeyShift;
-                    DisplayValue.bAlt   = Io.KeyAlt;
-                    bCapturing = false;
-                    bCommitted = true;
-                }
-                else if (const EMouseKey M = ImGuiX::PollPressedMouseButton(); M != EMouseKey::Num)
-                {
-                    DisplayValue.SetMouseButton(M);
-                    DisplayValue.bCtrl  = Io.KeyCtrl;
-                    DisplayValue.bShift = Io.KeyShift;
-                    DisplayValue.bAlt   = Io.KeyAlt;
-                    bCapturing = false;
-                    bCommitted = true;
-                }
-                else if (const EGamepadButton G = FInputViewportRegistry::Get().GetGamepads().GetFirstPressedButton(); G != EGamepadButton::Num)
-                {
-                    DisplayValue.SetGamepadButton(G);
-                    bCapturing = false;
-                    bCommitted = true;
-                }
-                else if (PendingModifier != EKey::Num && !ImGuiX::IsModifierHeld(PendingModifier))
-                {
-                    // Released with nothing pressed alongside it, so the modifier itself is the binding, such as Ctrl for crouch.
-                    DisplayValue.SetKey(PendingModifier);
-                    DisplayValue.bCtrl  = false;
-                    DisplayValue.bShift = false;
-                    DisplayValue.bAlt   = false;
-                    bCapturing = false;
-                    bCommitted = true;
-                }
-            }
+            return bCommitted;
+        }
+        if (!bArmed)
+        {
+            bArmed = true;
+            return bCommitted;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        {
+            bCapturing = false;
+            return bCommitted;
         }
 
-        // A discrete-edit transaction, opened on the change frame and closed the next.
-        if (bCommitted)
+        // Bare modifier presses keep listening, so a chord can be built before the key commits.
+        const ImGuiIO& Io = ImGui::GetIO();
+        const EKey K = ImGuiX::PollPressedKey();
+        if (K != EKey::Num && ImGuiX::IsModifierEKey(K))
+        {
+            PendingModifier = K;
+        }
+        else if (K != EKey::Num)
+        {
+            Value.SetKey(K);
+            Value.bCtrl  = Io.KeyCtrl;
+            Value.bShift = Io.KeyShift;
+            Value.bAlt   = Io.KeyAlt;
+            bCapturing = false;
+            bCommitted = true;
+        }
+        else if (bChordOnly)
+        {
+            return bCommitted;
+        }
+        else if (const EMouseKey M = ImGuiX::PollPressedMouseButton(); M != EMouseKey::Num)
+        {
+            Value.SetMouseButton(M);
+            Value.bCtrl  = Io.KeyCtrl;
+            Value.bShift = Io.KeyShift;
+            Value.bAlt   = Io.KeyAlt;
+            bCapturing = false;
+            bCommitted = true;
+        }
+        else if (const EGamepadButton G = FInputViewportRegistry::Get().GetGamepads().GetFirstPressedButton(); G != EGamepadButton::Num)
+        {
+            Value.SetGamepadButton(G);
+            bCapturing = false;
+            bCommitted = true;
+        }
+        else if (PendingModifier != EKey::Num && !ImGuiX::IsModifierHeld(PendingModifier))
+        {
+            // Released with nothing pressed alongside it, so the modifier itself is the binding, such as Ctrl for crouch.
+            Value.SetKey(PendingModifier);
+            bCapturing = false;
+            bCommitted = true;
+        }
+        return bCommitted;
+    }
+
+    EPropertyChangeOp FKeyPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
+    {
+        if (Field.Draw(DisplayValue, ImGui::GetContentRegionAvail().x, false))
         {
             bFinishPending = true;
             return EPropertyChangeOp::Started;
@@ -160,8 +163,7 @@ namespace Lumina
         if (CachedValue != ActualValue)
         {
             CachedValue = DisplayValue = ActualValue;
-            bCapturing  = false;
-            bArmed      = false;
+            Field.Cancel();
         }
     }
 }

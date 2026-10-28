@@ -87,6 +87,7 @@
 #include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Properties/Customizations/CoreTypeCustomization.h"
+#include "Properties/Customizations/CodeEditorCustomizations.h"
 #include "Properties/NamePicker.h"
 #include "Properties/Customizations/EntityScriptComponentCustomization.h"
 #include "Properties/Customizations/CurveGradientCustomization.h"
@@ -619,6 +620,16 @@ namespace Lumina
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SKey::StaticStruct()->GetName(), []
         {
            return FKeyPropertyCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SShortcut::StaticStruct()->GetName(), []
+        {
+           return FShortcutPropertyCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SCodeEditorTheme::StaticStruct()->GetName(), []
+        {
+           return FCodeEditorThemePropertyCustomization::MakeInstance();
         });
 
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SRenderLayerMask::StaticStruct()->GetName(), []
@@ -3522,6 +3533,17 @@ namespace Lumina
             DirtyPackages.push_back(*Itr);
         }
         SavePackages(Move(DirtyPackages));
+    }
+
+    void FEditorUI::OpenSettings(CClass* Page)
+    {
+        FSettingsEditorTool* Settings = FindTool<FSettingsEditorTool>();
+        if (Settings == nullptr)
+        {
+            Settings = CreateTool<FSettingsEditorTool>(this);
+        }
+        Settings->Select(Page);
+        FocusTargetWindowName = Settings->GetToolName().c_str();
     }
 
     void FEditorUI::SavePackages(TVector<CPackage*> Packages)

@@ -58,7 +58,6 @@ namespace Lumina
     private:
 
         enum class EBgMode : uint8 { Checker, Solid, Transparent };
-        enum class EPalette : uint8 { Dark, Light };
 
         void LoadFromDisk();
         // bAlwaysReport: report the parse outcome even when it matches the previous reload. Pass it for a
@@ -68,10 +67,8 @@ namespace Lumina
         void EnsurePreviewTarget(uint32 Width, uint32 Height);
         void TearDownPreview();
         void StartWatching();
-        // Copy persisted CRmlUiEditorSettings values into the cached member fields. Run at construction
-        // and on the OnSettingsSaved live-refresh.
+        // Takes the persisted CRmlUiEditorSettings, at construction and whenever they are saved.
         void PullSettings();
-        void ApplyEditorSettings();
         void DrawPreviewToolbar();
         void DrawPreviewCanvas();
         void DrawEditorToolbar();
@@ -82,7 +79,6 @@ namespace Lumina
         void DrawGotoLinePopup();
         void HandleEditorShortcuts();
         void InsertSnippet(const char* Snippet);
-        void PersistSettings() const;
 
         // A read-only view of the document, since editing happens by typing in the code editor.
         struct FCompSlot
@@ -254,10 +250,7 @@ namespace Lumina
 
         bool                        bShowRulers = false;
 
-        bool                        bTrimTrailingOnSave = false;
-        EPalette                    EditorPalette = EPalette::Dark;
-
-        int                         GotoLineBuffer = 1;
+        int                        GotoLineBuffer = 1;
         bool                        bRequestOpenGoto = false;
 
         FDirectoryWatcher           FileWatcher;

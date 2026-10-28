@@ -573,6 +573,25 @@ namespace Lumina
         FQuat DisplayValue{};
     };
 
+    // The click-to-listen field that binds one SKey, shared by the key and shortcut customizations.
+    class FKeyCaptureField
+    {
+    public:
+
+        // True on the frame Value is bound or cleared. A chord field ignores mouse buttons, gamepads and a lone modifier.
+        bool Draw(SKey& Value, float Width, bool bChordOnly);
+        bool IsCapturing() const { return bCapturing; }
+        void Cancel() { bCapturing = false; bArmed = false; }
+
+    private:
+
+        bool bCapturing = false;
+        // Skips the frame the activating click landed on, so that click is not itself bound.
+        bool bArmed = false;
+        // The last bare modifier pressed while capturing, bound by itself if it is released with nothing else pressed.
+        EKey PendingModifier = EKey::Num;
+    };
+
     class FKeyPropertyCustomization : public IPropertyTypeCustomization
     {
     public:
@@ -590,16 +609,9 @@ namespace Lumina
 
         SKey CachedValue;
         SKey DisplayValue;
+        FKeyCaptureField Field;
 
-        // True while listening for the bind key. bArmed skips the frame the activating click landed on,
-        // so the click that starts the capture isn't itself bound.
-        bool bCapturing = false;
-        // The last bare modifier pressed while capturing, bound by itself if it is released with nothing else pressed.
-        EKey PendingModifier = EKey::Num;
-        bool bArmed = false;
-
-        // Capture / clear are one-frame discrete edits: Started this frame, Finished the next, so they
-        // form a proper undo transaction (mirrors the object / transform-reset customizations).
+        // A binding is a one-frame discrete edit, Started this frame and Finished the next, so it forms one undo step.
         bool bFinishPending = false;
     };
 

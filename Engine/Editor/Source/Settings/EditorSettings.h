@@ -6,6 +6,7 @@
 #include "Containers/String.h"
 #include "Core/Math/Math.h"
 #include "Input/Key.h"
+#include <imgui.h>
 #include "EditorSettings.generated.h"
 
 namespace Lumina
@@ -139,10 +140,313 @@ namespace Lumina
         /** Full path to an editor executable; overrides the choice above. Invoked as: "<exe>" "<file>". */
         PROPERTY(Editable, Category = "Scripts")
         FString CustomEditorPath;
+    };
 
-        // Text size in the built-in script editor, which Ctrl+wheel also changes while it is open.
-        PROPERTY(Editable, Category = "Built In Editor", ClampMin = 0.75f, ClampMax = 3.0f)
+    // A command's key chord and an optional second one, such as Ctrl+Y and Ctrl+Shift+Z for redo.
+    REFLECT()
+    struct EDITOR_API SShortcut
+    {
+        GENERATED_BODY()
+
+        SShortcut() = default;
+        SShortcut(const SKey& InPrimary, const SKey& InAlternate = SKey()) : Primary(InPrimary), Alternate(InAlternate) {}
+
+        PROPERTY(Hidden)
+        SKey Primary;
+
+        PROPERTY(Hidden)
+        SKey Alternate;
+
+        // Through ImGui's shortcut routing, so the focused editor takes a chord before the tool around it.
+        bool IsPressed(ImGuiKeyChord ExtraMods = 0, ImGuiInputFlags Flags = ImGuiInputFlags_Repeat) const;
+
+        // The primary chord for menus and tooltips, such as "Ctrl+Shift+F", or empty when unbound.
+        FString GetLabel() const;
+    };
+
+    // A code editor color theme, named after its JSON file in the editor's CodeThemes folder.
+    REFLECT()
+    struct EDITOR_API SCodeEditorTheme
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Hidden)
+        FString Name = "Dark";
+    };
+
+    // Options every code editor shares, in the Code workspace, the RmlUi editor and the material Custom node.
+    REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Code Editor", Category = "Editor")
+    class CCodeEditorSettings : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        PROPERTY(Editable, Category = "Theme")
+        SCodeEditorTheme Theme;
+
+        // Ctrl+wheel zooms one editor until these settings next change.
+        PROPERTY(Editable, Category = "Appearance", ClampMin = 0.75f, ClampMax = 3.0f)
         float FontScale = 1.15f;
+
+        PROPERTY(Editable, Category = "Appearance", ClampMin = 1.0f, ClampMax = 2.0f)
+        float LineSpacing = 1.0f;
+
+        PROPERTY(Editable, Category = "Appearance")
+        bool bShowLineNumbers = true;
+
+        PROPERTY(Editable, Category = "Appearance")
+        bool bShowMiniMap = true;
+
+        PROPERTY(Editable, Category = "Appearance")
+        bool bShowIndentGuides = true;
+
+        PROPERTY(Editable, Category = "Appearance")
+        bool bShowWhitespace = false;
+
+        PROPERTY(Editable, Category = "Appearance")
+        bool bHighlightOccurrences = true;
+
+        PROPERTY(Editable, Category = "Editing", ClampMin = 1, ClampMax = 8)
+        int32 TabSize = 4;
+
+        PROPERTY(Editable, Category = "Editing")
+        bool bInsertSpaces = true;
+
+        PROPERTY(Editable, Category = "Editing")
+        bool bAutoIndent = true;
+
+        PROPERTY(Editable, Category = "Editing")
+        bool bMatchBrackets = true;
+
+        PROPERTY(Editable, Category = "Editing")
+        bool bAutoClosePairs = true;
+
+        PROPERTY(Editable, Category = "Editing")
+        bool bSuggestWhileTyping = true;
+
+        PROPERTY(Editable, Category = "Editing")
+        bool bTrimTrailingWhitespaceOnSave = false;
+    };
+
+    // Every key the code editors and the Code workspace answer to. Shift with a Cursor shortcut extends the selection.
+    REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Code Editor Shortcuts", Category = "Editor")
+    class CCodeEditorShortcuts : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveLeft = SShortcut(SKey(EKey::Left));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveRight = SShortcut(SKey(EKey::Right));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveUp = SShortcut(SKey(EKey::Up));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveDown = SShortcut(SKey(EKey::Down));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveWordLeft = SShortcut(SKey(EKey::Left, true));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveWordRight = SShortcut(SKey(EKey::Right, true));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveToLineStart = SShortcut(SKey(EKey::Home));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveToLineEnd = SShortcut(SKey(EKey::End));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveToDocumentStart = SShortcut(SKey(EKey::Home, true));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MoveToDocumentEnd = SShortcut(SKey(EKey::End, true));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MovePageUp = SShortcut(SKey(EKey::PageUp));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut MovePageDown = SShortcut(SKey(EKey::PageDown));
+
+        PROPERTY(Editable, Category = "Cursor")
+        SShortcut JumpToMatchingBracket = SShortcut(SKey(EKey::Backslash, true, true));
+
+        PROPERTY(Editable, Category = "Selection")
+        SShortcut SelectAll = SShortcut(SKey(EKey::A, true));
+
+        PROPERTY(Editable, Category = "Selection")
+        SShortcut AddCursorAbove = SShortcut(SKey(EKey::Up, true, false, true));
+
+        PROPERTY(Editable, Category = "Selection")
+        SShortcut AddCursorBelow = SShortcut(SKey(EKey::Down, true, false, true));
+
+        PROPERTY(Editable, Category = "Selection")
+        SShortcut AddNextOccurrence = SShortcut(SKey(EKey::D, true));
+
+        PROPERTY(Editable, Category = "Selection")
+        SShortcut SelectAllOccurrences = SShortcut(SKey(EKey::L, true, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut Undo = SShortcut(SKey(EKey::Z, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut Redo = SShortcut(SKey(EKey::Y, true), SKey(EKey::Z, true, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut Cut = SShortcut(SKey(EKey::X, true), SKey(EKey::Delete, false, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut Copy = SShortcut(SKey(EKey::C, true), SKey(EKey::Insert, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut Paste = SShortcut(SKey(EKey::V, true), SKey(EKey::Insert, false, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut DeleteLeft = SShortcut(SKey(EKey::Backspace), SKey(EKey::Backspace, false, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut DeleteRight = SShortcut(SKey(EKey::Delete));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut DeleteWordLeft = SShortcut(SKey(EKey::Backspace, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut DeleteWordRight = SShortcut(SKey(EKey::Delete, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut NewLine = SShortcut(SKey(EKey::Enter), SKey(EKey::Enter, false, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut InsertLineBelow = SShortcut(SKey(EKey::Enter, true));
+
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut InsertLineAbove = SShortcut(SKey(EKey::Enter, true, true));
+
+        // Moves to the next snippet field while one is active, and indents a selection of whole lines.
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut InsertTab = SShortcut(SKey(EKey::Tab));
+
+        // Moves to the previous snippet field while one is active, and outdents otherwise.
+        PROPERTY(Editable, Category = "Editing")
+        SShortcut TabBack = SShortcut(SKey(EKey::Tab, false, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut MoveLinesUp = SShortcut(SKey(EKey::Up, false, false, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut MoveLinesDown = SShortcut(SKey(EKey::Down, false, false, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut DuplicateLinesUp = SShortcut(SKey(EKey::Up, false, true, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut DuplicateLinesDown = SShortcut(SKey(EKey::Down, false, true, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut DeleteLines = SShortcut(SKey(EKey::K, true, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut Indent = SShortcut(SKey(EKey::RightBracket, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut Outdent = SShortcut(SKey(EKey::LeftBracket, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut ToggleLineComment = SShortcut(SKey(EKey::Slash, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut ToggleBlockComment = SShortcut(SKey(EKey::A, false, true, true));
+
+        PROPERTY(Editable, Category = "Lines")
+        SShortcut FormatDocument = SShortcut(SKey(EKey::F, false, true, true));
+
+        PROPERTY(Editable, Category = "View")
+        SShortcut ScrollLineUp = SShortcut(SKey(EKey::Up, true));
+
+        PROPERTY(Editable, Category = "View")
+        SShortcut ScrollLineDown = SShortcut(SKey(EKey::Down, true));
+
+        PROPERTY(Editable, Category = "View")
+        SShortcut ToggleFold = SShortcut(SKey(EKey::LeftBracket, true, true));
+
+        PROPERTY(Editable, Category = "View")
+        SShortcut Unfold = SShortcut(SKey(EKey::RightBracket, true, true));
+
+        PROPERTY(Editable, Category = "Find")
+        SShortcut Find = SShortcut(SKey(EKey::F, true));
+
+        PROPERTY(Editable, Category = "Find")
+        SShortcut Replace = SShortcut(SKey(EKey::H, true));
+
+        PROPERTY(Editable, Category = "Find")
+        SShortcut FindNext = SShortcut(SKey(EKey::F3));
+
+        PROPERTY(Editable, Category = "Find")
+        SShortcut FindPrevious = SShortcut(SKey(EKey::F3, false, true));
+
+        PROPERTY(Editable, Category = "Find")
+        SShortcut GoToLine = SShortcut(SKey(EKey::G, true));
+
+        PROPERTY(Editable, Category = "Code")
+        SShortcut TriggerSuggestions = SShortcut(SKey(EKey::Space, true));
+
+        PROPERTY(Editable, Category = "Code")
+        SShortcut AcceptSuggestion = SShortcut(SKey(EKey::Enter), SKey(EKey::Tab));
+
+        PROPERTY(Editable, Category = "Code")
+        SShortcut ParameterHints = SShortcut(SKey(EKey::Space, true, true));
+
+        PROPERTY(Editable, Category = "Code")
+        SShortcut GoToDefinition = SShortcut(SKey(EKey::F12));
+
+        PROPERTY(Editable, Category = "Code")
+        SShortcut FindReferences = SShortcut(SKey(EKey::F12, false, true));
+
+        PROPERTY(Editable, Category = "Code")
+        SShortcut RenameSymbol = SShortcut(SKey(EKey::F2));
+
+        PROPERTY(Editable, Category = "Code")
+        SShortcut QuickFix = SShortcut(SKey(EKey::Period, true));
+
+        // Closes a popup, the find bar or a snippet, or drops the extra cursors.
+        PROPERTY(Editable, Category = "Code")
+        SShortcut Dismiss = SShortcut(SKey(EKey::Escape));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut GoToFile = SShortcut(SKey(EKey::P, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut GoToSymbol = SShortcut(SKey(EKey::T, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut GoToSymbolInFile = SShortcut(SKey(EKey::O, true, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut FindInFiles = SShortcut(SKey(EKey::F, true, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut SaveAll = SShortcut(SKey(EKey::S, true, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut CloseFile = SShortcut(SKey(EKey::W, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut NextFile = SShortcut(SKey(EKey::PageDown, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut PreviousFile = SShortcut(SKey(EKey::PageUp, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut NavigateBack = SShortcut(SKey(EKey::Left, false, false, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut NavigateForward = SShortcut(SKey(EKey::Right, false, false, true));
+
+        PROPERTY(Editable, Category = "Workspace")
+        SShortcut ReloadScripts = SShortcut(SKey(EKey::B, true, true));
     };
 
     // Which tool tabs this project had open. Per-project (lives in the project's own /Config), and
@@ -211,101 +515,15 @@ namespace Lumina
         float TileSize = 86.0f;
     };
 
-    // In-engine RmlUi (.rml/.rcss) code editor preferences.
+    // RmlUi editor preferences beyond the shared Code Editor ones.
     REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "RmlUi Editor", Category = "Editor")
     class CRmlUiEditorSettings : public CDeveloperSettings
     {
         GENERATED_BODY()
     public:
 
-        /** Font scale multiplier for the in-engine RmlUi editor. */
-        PROPERTY(Editable, Category = "Appearance", ClampMin = 0.75f, ClampMax = 3.0f)
-        float FontScale = 1.25f;
-
-        /** Tab size in spaces. */
-        PROPERTY(Editable, Category = "Editing", ClampMin = 1, ClampMax = 8)
-        int32 TabSize = 4;
-
-        /** Line spacing multiplier. */
-        PROPERTY(Editable, Category = "Appearance", ClampMin = 1.0f, ClampMax = 2.0f)
-        float LineSpacing = 1.0f;
-
-        /** Render whitespace glyphs (spaces and tabs). */
-        PROPERTY(Editable, Category = "Appearance")
-        bool bShowWhitespace = false;
-
-        /** Show line numbers in the gutter. */
-        PROPERTY(Editable, Category = "Appearance")
-        bool bShowLineNumbers = true;
-
-        /** Show the scrollbar mini-map. */
-        PROPERTY(Editable, Category = "Appearance")
-        bool bShowMiniMap = true;
-
-        /** Auto-indent new lines based on surrounding scope. */
-        PROPERTY(Editable, Category = "Editing")
-        bool bAutoIndent = true;
-
-        /** Highlight matching brackets at the cursor. */
-        PROPERTY(Editable, Category = "Editing")
-        bool bMatchBrackets = true;
-
-        /** Auto-close paired glyphs (parentheses, brackets, quotes). */
-        PROPERTY(Editable, Category = "Editing")
-        bool bCompletePairs = true;
-
-        /** Insert spaces when the user presses Tab instead of a tab character. */
-        PROPERTY(Editable, Category = "Editing")
-        bool bInsertSpacesOnTabs = false;
-
-        /** Strip trailing whitespace from every line on save. */
-        PROPERTY(Editable, Category = "Editing")
-        bool bTrimTrailingOnSave = false;
-
         /** Re-parse the buffer into the preview ~250ms after each edit. */
         PROPERTY(Editable, Category = "General")
         bool bAutoReload = true;
-
-        /** Color palette for the RmlUi editor ("Dark" or "Light"). */
-        PROPERTY(Editable, Category = "Appearance")
-        FString Palette = "Dark";
-
-        // RGB token colors layered over the Dark/Light base. Defaults match the dark palette.
-
-        /** Element tags (div, span, button, ...). */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 TagColor = FVector3(0.773f, 0.525f, 0.753f);
-
-        /** Attribute names (id, class, style, ...). */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 AttributeColor = FVector3(0.353f, 0.702f, 0.608f);
-
-        /** RCSS property names (display, color, margin, ...). */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 PropertyColor = FVector3(0.310f, 0.757f, 1.0f);
-
-        /** Plain identifiers. */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 IdentifierColor = FVector3(0.612f, 0.863f, 0.996f);
-
-        /** Numeric literals and dimensions. */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 NumberColor = FVector3(0.710f, 0.808f, 0.659f);
-
-        /** String / attribute values. */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 StringColor = FVector3(0.808f, 0.569f, 0.471f);
-
-        /** Comments. */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 CommentColor = FVector3(0.416f, 0.600f, 0.333f);
-
-        /** Punctuation. */
-        PROPERTY(Editable, Color, Category = "Syntax Colors")
-        FVector3 PunctuationColor = FVector3(1.0f, 1.0f, 0.6f);
-        
-        /** Open the Go-To Line prompt. */
-        PROPERTY(Editable, Category = "Hotkeys")
-        SKey GoToLineKey = SKey(EKey::G, true);   // Ctrl+G
     };
 }

@@ -12,12 +12,12 @@
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
-#include "Tools/UI/ImGui/ImGuiKeyCapture.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "UI/RmlUiBridge.h"
 #include "UI/RmlUiRenderer.h"
+#include "UI/CodeEditor/CodeEditorPreferences.h"
 #include "UI/CodeEditor/Languages/RmlKnowledge.h"
 
 #include <imgui.h>
@@ -28,7 +28,6 @@
 #include <cfloat>
 #include <climits>
 #include <cmath>
-#include <random>
 #include "Containers/StringFormat.h"
 
 namespace Lumina
@@ -53,18 +52,6 @@ namespace Lumina
         {
             const FStringView Name = VFS::FileName(Path);
             return FString(Name.data(), Name.size());
-        }
-
-        // A random hue at high saturation and value, so the result stays vibrant rather than muddy.
-        FVector3 RandomVibrantColor()
-        {
-            static std::mt19937 Rng{std::random_device{}()};
-            std::uniform_real_distribution<float> Hue(0.0f, 1.0f);
-            std::uniform_real_distribution<float> Sat(0.55f, 0.9f);
-            std::uniform_real_distribution<float> Val(0.75f, 1.0f);
-            float R, G, B;
-            ImGui::ColorConvertHSVtoRGB(Hue(Rng), Sat(Rng), Val(Rng), R, G, B);
-            return FVector3(R, G, B);
         }
 
         // Standard 16 by 9 game-UI resolutions plus 4K, with index 0 meaning fit to pane.
@@ -625,29 +612,13 @@ namespace Lumina
 
     void FRmlUiEditorTool::PullSettings()
     {
-        // Syntax colors are read straight from the CDO, so they are not mirrored into members here.
-        const CRmlUiEditorSettings* Settings = GetDefault<CRmlUiEditorSettings>();
-        FCodeEditorSettings& Editor = CodeEditor.GetSettings();
-        Editor.FontScale        = Settings->FontScale;
-        Editor.TabSize          = Math::Clamp(Settings->TabSize, 1, 8);
-        Editor.LineSpacing      = Settings->LineSpacing;
-        Editor.bShowWhitespace  = Settings->bShowWhitespace;
-        Editor.bShowLineNumbers = Settings->bShowLineNumbers;
-        Editor.bShowMiniMap     = Settings->bShowMiniMap;
-        Editor.bAutoIndent      = Settings->bAutoIndent;
-        Editor.bMatchBrackets   = Settings->bMatchBrackets;
-        Editor.bAutoClosePairs  = Settings->bCompletePairs;
-        Editor.bInsertSpaces    = Settings->bInsertSpacesOnTabs;
-        bTrimTrailingOnSave     = Settings->bTrimTrailingOnSave;
-        bAutoReload             = Settings->bAutoReload;
-        EditorPalette = (Settings->Palette == "Light") ? EPalette::Light : EPalette::Dark;
+        bAutoReload = GetDefault<CRmlUiEditorSettings>()->bAutoReload;
     }
 
     void FRmlUiEditorTool::OnInitialize()
     {
         FAssetEditorTool::OnInitialize();
 
-        ApplyEditorSettings();
         CodeEditor.SetLanguage(&Language);
         ConfigureAutoComplete();
         LoadFromDisk();
@@ -670,13 +641,11 @@ namespace Lumina
             ReleaseDesignObjects();
         });
 
-        // Live-refreshes so palette and font tweaks apply without reopening the editor.
         SettingsSavedHandle = FCoreDelegates::OnSettingsSaved.AddLambda([this](CClass* Class)
         {
             if (Class == CRmlUiEditorSettings::StaticClass())
             {
                 PullSettings();
-                ApplyEditorSettings();
             }
         });
 
@@ -853,7 +822,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::OnSave()
     {
-        if (bTrimTrailingOnSave)
+        if (GetDefault<CCodeEditorSettings>()->bTrimTrailingWhitespaceOnSave)
         {
             CodeEditor.TrimTrailingWhitespace();
         }
@@ -898,49 +867,9 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlDataWindowName).c_str(), DataDockID);
     }
 
-    void FRmlUiEditorTool::ApplyEditorSettings()
-    {
-        // The syntax colors from CRmlUiEditorSettings layer over the chosen base palette.
-        FCodeEditorPalette Palette = EditorPalette == EPalette::Dark ? FCodeEditorPalette::Dark() : FCodeEditorPalette::Light();
-        const CRmlUiEditorSettings* Colors = GetDefault<CRmlUiEditorSettings>();
-        auto Set = [&Palette](ECodeToken Token, const FVector3& Color)
-        {
-            Palette[Token] = ImGui::ColorConvertFloat4ToU32(ImVec4(Color.x, Color.y, Color.z, 1.0f));
-        };
-        Set(ECodeToken::Tag,         Colors->TagColor);
-        Set(ECodeToken::Attribute,   Colors->AttributeColor);
-        Set(ECodeToken::Property,    Colors->PropertyColor);
-        Set(ECodeToken::Selector,    Colors->IdentifierColor);
-        Set(ECodeToken::Number,      Colors->NumberColor);
-        Set(ECodeToken::String,      Colors->StringColor);
-        Set(ECodeToken::Comment,     Colors->CommentColor);
-        Set(ECodeToken::Punctuation, Colors->PunctuationColor);
-        CodeEditor.SetPalette(Palette);
-    }
-
-    void FRmlUiEditorTool::PersistSettings() const
-    {
-        CRmlUiEditorSettings* Settings = GetMutableDefault<CRmlUiEditorSettings>();
-        const FCodeEditorSettings& Editor = CodeEditor.GetSettings();
-        Settings->FontScale             = Editor.FontScale;
-        Settings->TabSize               = Editor.TabSize;
-        Settings->LineSpacing           = Editor.LineSpacing;
-        Settings->bShowWhitespace       = Editor.bShowWhitespace;
-        Settings->bShowLineNumbers      = Editor.bShowLineNumbers;
-        Settings->bShowMiniMap          = Editor.bShowMiniMap;
-        Settings->bAutoIndent           = Editor.bAutoIndent;
-        Settings->bMatchBrackets        = Editor.bMatchBrackets;
-        Settings->bCompletePairs        = Editor.bAutoClosePairs;
-        Settings->bInsertSpacesOnTabs   = Editor.bInsertSpaces;
-        Settings->bTrimTrailingOnSave   = bTrimTrailingOnSave;
-        Settings->bAutoReload           = bAutoReload;
-        Settings->Palette               = (EditorPalette == EPalette::Dark) ? "Dark" : "Light";
-        GConfig->SaveSettings(CRmlUiEditorSettings::StaticClass());
-    }
-
-
     void FRmlUiEditorTool::DrawEditorToolbar()
     {
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
         ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "%s", VirtualPath.c_str());
         ImGuiX::Font::PopFont();
@@ -1001,14 +930,14 @@ namespace Lumina
         {
             CodeEditor.OpenFind(false);
         }
-        ImGuiX::TextTooltip("Open the find bar (Ctrl+F), or find and replace with Ctrl+H.");
+        ImGui::SetItemTooltip("Open the find bar (%s), or find and replace (%s).", Keys.Find.GetLabel().c_str(), Keys.Replace.GetLabel().c_str());
 
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_FORMAT_LINE_SPACING " Goto"))
         {
             bRequestOpenGoto = true;
         }
-        ImGuiX::TextTooltip("Jump to a specific line number (Ctrl+G).");
+        ImGui::SetItemTooltip("Jump to a specific line number (%s).", Keys.GoToLine.GetLabel().c_str());
 
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_CODE_BRACES " Snippets"))
@@ -1045,88 +974,9 @@ namespace Lumina
 
         if (ImGui::BeginPopup("##rml_editor_settings"))
         {
-            bool bDirty = false;
-
-            FCodeEditorSettings& Editor = CodeEditor.GetSettings();
-            ImGui::TextDisabled("Display");
+            CodeEditorPreferences::DrawQuickSettings(ToolContext);
             ImGui::Separator();
-
-            ImGui::SliderFloat("Font scale", &Editor.FontScale, 0.75f, 3.0f, "%.2fx");
-            ImGuiX::TextTooltip("Tip: Ctrl+wheel over the editor adjusts this live.");
-
-            ImGui::SliderFloat("Line spacing", &Editor.LineSpacing, 1.0f, 2.0f, "%.2f");
-            ImGui::SliderInt("Tab size", &Editor.TabSize, 1, 8);
-            ImGui::Checkbox("Show line numbers",      &Editor.bShowLineNumbers);
-            ImGui::Checkbox("Show whitespace",        &Editor.bShowWhitespace);
-            ImGui::Checkbox("Show indent guides",     &Editor.bShowIndentGuides);
-            ImGui::Checkbox("Show minimap",           &Editor.bShowMiniMap);
-            ImGui::Checkbox("Highlight occurrences",  &Editor.bHighlightOccurrences);
-            ImGui::Checkbox("Read-only",              &Editor.bReadOnly);
-
-            ImGui::Spacing();
-            ImGui::TextDisabled("Editing");
-            ImGui::Separator();
-            ImGui::Checkbox("Suggest while typing", &Editor.bSuggestWhileTyping);
-            ImGuiX::TextTooltip("Ctrl+Space opens suggestions when this is off.");
-            ImGui::Checkbox("Auto-indent",          &Editor.bAutoIndent);
-            ImGui::Checkbox("Match brackets",       &Editor.bMatchBrackets);
-            ImGui::Checkbox("Auto-close pairs",     &Editor.bAutoClosePairs);
-            ImGui::Checkbox("Insert spaces on Tab", &Editor.bInsertSpaces);
-            ImGuiX::TextTooltip("When on, pressing Tab inserts spaces instead of a tab character.");
-            ImGui::Checkbox("Trim trailing whitespace on save", &bTrimTrailingOnSave);
-
-            ImGui::Spacing();
-            ImGui::TextDisabled("Theme");
-            ImGui::Separator();
-
-            int PaletteIdx = (int)EditorPalette;
-            const char* PaletteLabels[] = { "Dark", "Light" };
-            if (ImGui::Combo("Palette", &PaletteIdx, PaletteLabels, IM_ARRAYSIZE(PaletteLabels)))
-            {
-                EditorPalette = (EPalette)PaletteIdx;
-                bDirty = true;
-            }
-
-            // Saving fires the live-refresh, so the editor recolors immediately.
-            if (ImGui::Button(LE_ICON_DICE_5 " Randomize colors", ImVec2(-1, 0)))
-            {
-                CRmlUiEditorSettings* Colors = GetMutableDefault<CRmlUiEditorSettings>();
-                Colors->TagColor         = RandomVibrantColor();
-                Colors->AttributeColor   = RandomVibrantColor();
-                Colors->PropertyColor    = RandomVibrantColor();
-                Colors->IdentifierColor  = RandomVibrantColor();
-                Colors->NumberColor      = RandomVibrantColor();
-                Colors->StringColor      = RandomVibrantColor();
-                Colors->CommentColor     = RandomVibrantColor();
-                Colors->PunctuationColor = RandomVibrantColor();
-                GConfig->SaveSettings(CRmlUiEditorSettings::StaticClass());
-            }
-            ImGuiX::TextTooltip("Roll a random vibrant set of syntax colors.");
-
-            ImGui::Spacing();
-            ImGui::Separator();
-
-            if (ImGui::Button("Persist as default", ImVec2(-1, 0)))
-            {
-                PersistSettings();
-                ImGuiX::Notifications::NotifySuccess("RmlUi editor settings saved.");
-            }
-
-            if (ImGui::Button("Reset to defaults", ImVec2(-1, 0)))
-            {
-                Editor = FCodeEditorSettings();
-                Editor.FontScale = 1.25f;
-                Editor.bInsertSpaces = false;
-                bTrimTrailingOnSave = false;
-                EditorPalette = EPalette::Dark;
-                bDirty = true;
-            }
-
-            if (bDirty)
-            {
-                ApplyEditorSettings();
-            }
-
+            ImGui::Checkbox("Read-only", &CodeEditor.GetSettings().bReadOnly);
             ImGui::EndPopup();
         }
 
@@ -1191,12 +1041,13 @@ namespace Lumina
         ImGui::Spacing();
         ImGui::TextDisabled("Lines");
         ImGui::Separator();
-        if (ImGui::MenuItem("Indent",          "Ctrl+]"))         CodeEditor.Indent();
-        if (ImGui::MenuItem("Outdent",         "Ctrl+["))         CodeEditor.Outdent();
-        if (ImGui::MenuItem("Move up",         "Alt+Up"))         CodeEditor.MoveLines(-1);
-        if (ImGui::MenuItem("Move down",       "Alt+Down"))       CodeEditor.MoveLines(1);
-        if (ImGui::MenuItem("Duplicate",       "Shift+Alt+Down")) CodeEditor.DuplicateLines(1);
-        if (ImGui::MenuItem("Toggle comment",  "Ctrl+/"))         CodeEditor.ToggleLineComment();
+        const CCodeEditorShortcuts& Keys = *GetDefault<CCodeEditorShortcuts>();
+        if (ImGui::MenuItem("Indent",          Keys.Indent.GetLabel().c_str()))             CodeEditor.Indent();
+        if (ImGui::MenuItem("Outdent",         Keys.Outdent.GetLabel().c_str()))            CodeEditor.Outdent();
+        if (ImGui::MenuItem("Move up",         Keys.MoveLinesUp.GetLabel().c_str()))        CodeEditor.MoveLines(-1);
+        if (ImGui::MenuItem("Move down",       Keys.MoveLinesDown.GetLabel().c_str()))      CodeEditor.MoveLines(1);
+        if (ImGui::MenuItem("Duplicate",       Keys.DuplicateLinesDown.GetLabel().c_str())) CodeEditor.DuplicateLines(1);
+        if (ImGui::MenuItem("Toggle comment",  Keys.ToggleLineComment.GetLabel().c_str()))  CodeEditor.ToggleLineComment();
 
         ImGui::Spacing();
         ImGui::TextDisabled("Selection");
@@ -1257,26 +1108,12 @@ namespace Lumina
                     ImGui::TableNextColumn(); ImGui::TextUnformatted(Desc);
                 };
                 Row("Ctrl+S",               "Save");
-                Row("Ctrl+Space",           "Suggestions");
-                Row("Ctrl+Shift+Space",     "Parameter hints");
-                Row("Tab / Enter",          "Accept a suggestion, or jump to the next snippet field");
-                Row("Ctrl+F / Ctrl+H",      "Find / find and replace");
-                Row("F3 / Shift+F3",        "Next / previous match");
-                Row("Ctrl+G",               "Goto line");
-                Row("Ctrl+Z / Y",           "Undo / redo");
-                Row("Ctrl+D",               "Select the next occurrence");
-                Row("Ctrl+Shift+L",         "Select every occurrence");
                 Row("Alt+Click",            "Add a cursor");
-                Row("Ctrl+Alt+Up / Down",   "Add a cursor above or below");
-                Row("Ctrl+/",               "Toggle comment");
-                Row("Alt+Up / Down",        "Move lines up or down");
-                Row("Shift+Alt+Up / Down",  "Duplicate lines");
-                Row("Ctrl+Shift+K",         "Delete lines");
-                Row("Ctrl+Shift+\\",        "Jump to the matching bracket");
                 Row("Ctrl+Click a color",   "Open the color picker");
                 Row("Ctrl+Wheel",           "Zoom the font");
                 ImGui::EndTable();
             }
+            CodeEditorPreferences::DrawShortcutReference();
         }
         if (ImGui::CollapsingHeader("Preview shortcuts"))
         {
@@ -1355,9 +1192,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::HandleEditorShortcuts()
     {
-        // Rebindable via CRmlUiEditorSettings > Hotkeys.
-        const CRmlUiEditorSettings* Keys = GetDefault<CRmlUiEditorSettings>();
-        if (ImGuiX::IsChordPressed(Keys->GoToLineKey))
+        if (GetDefault<CCodeEditorShortcuts>()->GoToLine.IsPressed(0, ImGuiInputFlags_RouteAlways))
         {
             bRequestOpenGoto = true;
         }

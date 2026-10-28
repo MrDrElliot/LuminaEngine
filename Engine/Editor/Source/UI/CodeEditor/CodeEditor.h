@@ -4,6 +4,7 @@
 #include "CodeLanguage.h"
 #include "Containers/Function.h"
 #include "Containers/Span.h"
+#include "Core/Delegates/Delegate.h"
 #include <imgui.h>
 
 namespace Lumina
@@ -36,8 +37,8 @@ namespace Lumina
         ImU32& operator[](ECodeToken Token) { return Tokens[(int32)Token]; }
         ImU32 operator[](ECodeToken Token) const { return Tokens[(int32)Token]; }
 
+        // The built-in colors, and what a theme file leaves out.
         static FCodeEditorPalette Dark();
-        static FCodeEditorPalette Light();
     };
 
     struct FCodeEditorSettings
@@ -70,6 +71,11 @@ namespace Lumina
     public:
 
         FCodeEditor();
+        ~FCodeEditor();
+
+        // Bound to the settings saved event by address, so it stays put.
+        FCodeEditor(const FCodeEditor&) = delete;
+        FCodeEditor& operator=(const FCodeEditor&) = delete;
 
         void Render(const char* Id, const ImVec2& Size, bool bBorder = false);
         void Focus() { bFocusRequested = true; }
@@ -89,8 +95,9 @@ namespace Lumina
 
         FCodeEditorSettings& GetSettings() { return Settings; }
         const FCodeEditorSettings& GetSettings() const { return Settings; }
-        FCodeEditorPalette& GetPalette() { return Palette; }
-        void SetPalette(const FCodeEditorPalette& InPalette) { Palette = InPalette; }
+        const FCodeEditorPalette& GetPalette() const { return Palette; }
+        // Takes the Code Editor settings and theme again, which happens by itself whenever they are saved.
+        void ApplyPreferences();
 
         void SetCompletionSource(FCodeCompletionSource Source) { CompletionSource = Move(Source); }
         // Receives a definition in another file. Without one, or for this document, the caret jumps there itself.
@@ -391,6 +398,8 @@ namespace Lumina
         void DrawSquiggle(ImDrawList* DrawList, float X0, float X1, float Y, ImU32 Color) const;
         ImU32 SeverityColor(ECodeSeverity Severity) const;
         bool PickColorAt(FCodePosition Position);
+        void ApplyTheme();
+        void ReloadEditedTheme();
 
         FCodeDocument                Document;
         const FCodeLanguage*         Language = nullptr;
@@ -467,5 +476,11 @@ namespace Lumina
         TVector<FCodeAction>         CodeActions;
         bool                         bOpenCodeActions = false;
         TFunction<void(ECommand, FCodePosition)> CommandHandler;
+
+        FDelegateHandle              PreferencesSavedHandle;
+        FString                      ThemeName;
+        FString                      ThemeFile;
+        int64                        ThemeWriteTime = 0;
+        double                       NextThemeCheck = 0.0;
     };
 }

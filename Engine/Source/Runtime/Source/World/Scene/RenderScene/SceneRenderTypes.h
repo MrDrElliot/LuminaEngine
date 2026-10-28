@@ -1511,7 +1511,10 @@ namespace Lumina
         uint32          DBufferAIndex     = Constants::kIndexNoneU32;
         uint32          DBufferBIndex     = Constants::kIndexNoneU32;
         uint32          DBufferCIndex     = Constants::kIndexNoneU32;
-        uint32          _PadFogParams[3]  = {};
+        // Geometric specular antialiasing, off while the variance scale is zero.
+        float           SpecularAAVariance  = 0.0f;
+        float           SpecularAAThreshold = 0.0f;
+        uint32          _PadFogParams     = 0;
 
         // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
         FExponentialHeightFogParams FogParams = {};

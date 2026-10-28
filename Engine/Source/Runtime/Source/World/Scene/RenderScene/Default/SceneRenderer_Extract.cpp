@@ -186,6 +186,10 @@ namespace Lumina
         // Below zero when upscaling, so textures pick the mips the display resolution would have.
         SceneGlobalData.TextureMipBias                  = PrimarySize.x < DisplaySize.x
                                                         ? Math::Log2((float)PrimarySize.x / (float)DisplaySize.x) : 0.0f;
+        const CRendererSettings* RenderSettings         = GetDefault<CRendererSettings>();
+        const bool bSpecularAA                          = RenderSettings != nullptr && RenderSettings->bSpecularAntiAliasing;
+        SceneGlobalData.SpecularAAVariance              = bSpecularAA ? Math::Clamp(RenderSettings->SpecularAntiAliasingStrength, 0.0f, 1.0f) : 0.0f;
+        SceneGlobalData.SpecularAAThreshold             = bSpecularAA ? Math::Clamp(RenderSettings->SpecularAntiAliasingLimit, 0.0f, 1.0f) : 0.0f;
         SceneGlobalData.GridSize                        = ComputeClusterGrid(PrimarySize);
         SceneGlobalData.Time                            = (float)World->GetTimeSinceWorldCreation();
         SceneGlobalData.DeltaTime                       = Frame.CachedWorldDeltaTime;
