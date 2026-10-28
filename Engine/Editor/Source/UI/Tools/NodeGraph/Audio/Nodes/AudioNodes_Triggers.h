@@ -128,4 +128,134 @@ namespace Lumina
         float Threshold = 0.5f;
     };
 
+    REFLECT()
+    class CAudioNode_TriggerSelect : public CAudioGraphNode
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void BuildNode() override;
+        FName GetOperatorName() const override { return "TriggerSelect"; }
+        FStringView GetNodeDisplayName() const override { return "Trigger Select"; }
+        FStringView GetNodeTooltip() const override { return "Sends each trigger to one of up to four outputs, in turn, at random, or to the one Index names."; }
+        FFixedString GetNodeCategory() const override { return "Triggers"; }
+
+        PROPERTY(Editable, Category = "Trigger Select")
+        EAudioPickMode Mode = EAudioPickMode::Sequential;
+
+        PROPERTY(Editable, Category = "Trigger Select", ClampMin = 0, ClampMax = 3)
+        int32 Index = 0;
+
+        /** How many of the outputs take part. */
+        PROPERTY(Editable, Category = "Trigger Select", ClampMin = 1, ClampMax = 4)
+        int32 Count = 4;
+
+        PROPERTY(Editable, Category = "Trigger Select")
+        int32 Seed = 1;
+    };
+
+    REFLECT()
+    class CAudioNode_TriggerProbability : public CAudioGraphNode
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void BuildNode() override;
+        FName GetOperatorName() const override { return "TriggerProbability"; }
+        FStringView GetNodeDisplayName() const override { return "Trigger Probability"; }
+        FStringView GetNodeTooltip() const override { return "Passes each trigger with the given chance, and sends the rest to On Fail."; }
+        FFixedString GetNodeCategory() const override { return "Triggers"; }
+
+        PROPERTY(Editable, Category = "Trigger Probability", ClampMin = 0.0f, ClampMax = 1.0f)
+        float Probability = 0.5f;
+
+        PROPERTY(Editable, Category = "Trigger Probability")
+        int32 Seed = 1;
+    };
+
+    REFLECT()
+    class CAudioNode_TriggerGate : public CAudioGraphNode
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void BuildNode() override;
+        FName GetOperatorName() const override { return "TriggerGate"; }
+        FStringView GetNodeDisplayName() const override { return "Trigger Gate"; }
+        FStringView GetNodeTooltip() const override { return "Lets triggers through only while open."; }
+        FFixedString GetNodeCategory() const override { return "Triggers"; }
+
+        PROPERTY(Editable, Category = "Trigger Gate")
+        bool StartOpen = true;
+    };
+
+    REFLECT()
+    class CAudioNode_TriggerOnBool : public CAudioGraphNode
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void BuildNode() override;
+        FName GetOperatorName() const override { return "TriggerOnBool"; }
+        FStringView GetNodeDisplayName() const override { return "Trigger On Bool"; }
+        FStringView GetNodeTooltip() const override { return "Fires when a bool changes. The starting value fires nothing."; }
+        FFixedString GetNodeCategory() const override { return "Triggers"; }
+
+        PROPERTY(Editable, Category = "Trigger On Bool")
+        bool Value = false;
+    };
+
+    REFLECT()
+    class CAudioNode_RandomInt : public CAudioGraphNode
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void BuildNode() override;
+        FName GetOperatorName() const override { return "Random.Int"; }
+        FStringView GetNodeDisplayName() const override { return "Random (Int)"; }
+        FStringView GetNodeTooltip() const override { return "Picks a whole number from Min to Max, inclusive, each time the trigger fires."; }
+        FFixedString GetNodeCategory() const override { return "Triggers"; }
+
+        PROPERTY(Editable, Category = "Random (Int)")
+        int32 Min = 0;
+
+        PROPERTY(Editable, Category = "Random (Int)")
+        int32 Max = 3;
+
+        PROPERTY(Editable, Category = "Random (Int)")
+        int32 Seed = 1;
+
+        PROPERTY(Editable, Category = "Random (Int)")
+        bool NoRepeat = true;
+    };
+
+    REFLECT()
+    class CAudioNode_BeatClock : public CAudioGraphNode
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void BuildNode() override;
+        FName GetOperatorName() const override { return "BeatClock"; }
+        FStringView GetNodeDisplayName() const override { return "Beat Clock"; }
+        FStringView GetNodeTooltip() const override { return "Musical clock firing on every subdivision, beat and bar, sample accurate."; }
+        FFixedString GetNodeCategory() const override { return "Triggers"; }
+
+        PROPERTY(Editable, Category = "Beat Clock", ClampMin = 1.0f)
+        float BPM = 120.0f;
+
+        PROPERTY(Editable, Category = "Beat Clock", ClampMin = 1)
+        int32 BeatsPerBar = 4;
+
+        /** Ticks per beat. */
+        PROPERTY(Editable, Category = "Beat Clock", ClampMin = 1)
+        int32 Subdivision = 4;
+    };
 }

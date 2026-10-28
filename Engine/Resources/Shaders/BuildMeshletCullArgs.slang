@@ -9,11 +9,13 @@ struct FMeshletDrawArgs
     uint Words[4];
 };
 
-struct FDispatchIndirectArguments
+// The indirect dispatch reads the first three words, and MeshletCull.slang reads how many blocks each group takes.
+struct FMeshletCullDispatch
 {
     uint GroupX;
     uint GroupY;
     uint GroupZ;
+    uint BlocksPerGroup;
 };
 
 struct FBuildMeshletCullArgsArgs
@@ -40,7 +42,7 @@ struct FBuildMeshletCullArgsArgs
 
     GPUSpan<FRenderBucket>                   Buckets;
     // One workgroup per written block, Y-folded exactly as BuildDrawPrefix folds the block dispatch.
-    GPUSpan<FDispatchIndirectArguments>      OutCullDispatchArgs;
+    GPUSpan<FMeshletCullDispatch>            OutCullDispatchArgs;
     // [(bucket * MESHLET_SLICE_COUNT + slice) * SubDrawsPerSlice + subdraw]
     GPUSpan<FMeshletDrawArgs>                OutMeshDrawArgs;
 };
@@ -90,14 +92,26 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         const bool bLate = (Slice == MESHLET_SLICE_LATE);
 
         uint Local = 0u;
+        uint LocalMeshlets = 0u;
+        uint LocalBlocks = 0u;
         for (uint i = First; i < Last; ++i)
         {
             // Blocks are dense inside a bucket but sparse across the arena, so the flat dispatch needs its own prefix.
-            Local += PhaseBlocks(Pass().Buckets.At(i), i / NumDraws, bLate, Pass().bSplitPhases != 0u);
+            FRenderBucket* Bucket = Pass().Buckets.At(i);
+            const uint Blocks = PhaseBlocks(Bucket, i / NumDraws, bLate, Pass().bSplitPhases != 0u);
+            Local += Blocks;
+            if (Blocks > 0u)
+            {
+                LocalMeshlets += Bucket.DrawDemand;
+                LocalBlocks   += Bucket.BlockDemand;
+            }
         }
 
         uint2 Total;
-        uint Running = GroupExclusiveScan(uint2(Local, 0u), ThreadID.x, BUILD_CULL_ARGS_GROUP, Total).x;
+        uint Running = GroupExclusiveScan(uint2(Local, LocalMeshlets), ThreadID.x, BUILD_CULL_ARGS_GROUP, Total).x;
+        GroupMemoryBarrierWithGroupSync();
+        uint2 BlockTotal;
+        GroupExclusiveScan(uint2(LocalBlocks, 0u), ThreadID.x, BUILD_CULL_ARGS_GROUP, BlockTotal);
 
         for (uint i = First; i < Last; ++i)
         {
@@ -113,10 +127,16 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
         if (ThreadID.x == 0u)
         {
-            FDispatchIndirectArguments Args;
-            Args.GroupX = min(Total.x, (uint)MAX_DISPATCH_AXIS);
-            Args.GroupY = (Total.x + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
+            // Small meshes fill a block with a meshlet or two, so a group takes as many blocks as fill its lanes on average.
+            const uint MeshletsPerBlock = clamp((Total.y + max(BlockTotal.x, 1u) - 1u) / max(BlockTotal.x, 1u), 1u, (uint)MESHLET_CULL_GROUP_SIZE);
+            const uint BlocksPerGroup   = (uint)MESHLET_CULL_GROUP_SIZE / MeshletsPerBlock;
+            const uint Groups           = (Total.x + BlocksPerGroup - 1u) / BlocksPerGroup;
+
+            FMeshletCullDispatch Args;
+            Args.GroupX = min(Groups, (uint)MAX_DISPATCH_AXIS);
+            Args.GroupY = (Groups + (uint)MAX_DISPATCH_AXIS - 1u) / (uint)MAX_DISPATCH_AXIS;
             Args.GroupZ = 1u;
+            Args.BlocksPerGroup = BlocksPerGroup;
             Pass().OutCullDispatchArgs.Set(0u, Args);
         }
         return;

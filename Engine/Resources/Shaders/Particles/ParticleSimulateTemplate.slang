@@ -344,8 +344,7 @@ uint ClaimSpawn(out FParticleEvent Source)
 {
     Source = (FParticleEvent)0;
 
-    uint Claim;
-    InterlockedAdd(SpawnCounter().At(0u)[0], 1u, Claim);
+    uint Claim = WaveInterlockedAdd(SpawnCounter().At(0u), 1u);
     if (Claim < SimParams().Counts.y)
     {
         return SPAWN_EMITTER;
@@ -354,7 +353,7 @@ uint ClaimSpawn(out FParticleEvent Source)
     const uint ScriptCount = SimArgs().ScriptEvents.Count;
     if (ScriptCount != 0u)
     {
-        InterlockedAdd(SpawnCounter().At(1u)[0], 1u, Claim);
+        Claim = WaveInterlockedAdd(SpawnCounter().At(1u), 1u);
         if (Claim < ScriptCount)
         {
             Source = SimArgs().ScriptEvents.Get(Claim);
@@ -367,7 +366,7 @@ uint ClaimSpawn(out FParticleEvent Source)
     {
         const uint PerEvent = max(SimParams().EventInfo.w, 1u);
         const uint Events   = min(SimArgs().SourceEventCounts.Get(List), PARTICLE_EVENT_CAPACITY);
-        InterlockedAdd(SpawnCounter().At(2u)[0], 1u, Claim);
+        Claim = WaveInterlockedAdd(SpawnCounter().At(2u), 1u);
         if (Claim < Events * PerEvent)
         {
             Source = SimArgs().SourceEvents.Get(List * PARTICLE_EVENT_CAPACITY + Claim / PerEvent);

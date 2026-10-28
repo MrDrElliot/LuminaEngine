@@ -9,9 +9,11 @@ namespace Lumina::AudioGraphOperators
     /** Pin ABI literal, so an operator's pin order reads next to the Execute that indexes it. */
     inline FAudioGraphOperatorSignature Signature(
         std::initializer_list<EAudioGraphType> Inputs,
-        std::initializer_list<EAudioGraphType> Outputs)
+        std::initializer_list<EAudioGraphType> Outputs,
+        EAudioGraphType Variadic = EAudioGraphType::Invalid)
     {
         FAudioGraphOperatorSignature Result;
+        Result.Variadic = Variadic;
 
         Result.Inputs.reserve(Inputs.size());
         for (EAudioGraphType Type : Inputs)

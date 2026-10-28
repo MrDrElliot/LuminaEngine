@@ -1,5 +1,6 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
+#include "Includes/WaveAtomics.slang"
 
 // Lists every 8x8 tile within outline reach of a selected pixel, once each, as the instances SelectionOutlineTileQuad.slang draws.
 struct FSelectionTileArgs
@@ -85,8 +86,6 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID, u
         return;
     }
 
-    uint* InstanceCount = Pass().DrawArgs.At(1u);
-    uint Slot = 0u;
-    InterlockedAdd(InstanceCount[0], 1u, Slot);
+    const uint Slot = WaveInterlockedAdd(Pass().DrawArgs.At(1u), 1u);
     Pass().TileList.Set(Slot, uint(Tile.x) | (uint(Tile.y) << 16u));
 }

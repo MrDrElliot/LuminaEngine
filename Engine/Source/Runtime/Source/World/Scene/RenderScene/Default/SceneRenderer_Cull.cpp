@@ -97,6 +97,7 @@ namespace Lumina
         }
 
         DirtyInstanceBlocks.clear();
+        const TVector<uint32>* StreamedBlocks = &ScenePrimitives.GetStreamedBlocks();
         if (bBlockBoundsRebuildAll)
         {
             InstanceBlockBounds.resize(NumBlocks);
@@ -112,6 +113,27 @@ namespace Lumina
                     DirtyInstanceBlocks.push_back(Block);
                 }
             }
+
+            // Both lists are sorted, so the merge keeps the run upload below working on one sorted, unique list.
+            if (!StreamedBlocks->empty())
+            {
+                BlockMergeScratch.clear();
+                SIZE_T Dirty = 0;
+                SIZE_T Streamed = 0;
+                while (Dirty < DirtyInstanceBlocks.size() || Streamed < StreamedBlocks->size())
+                {
+                    const uint32 Next = Streamed >= StreamedBlocks->size() ? DirtyInstanceBlocks[Dirty]
+                                      : Dirty >= DirtyInstanceBlocks.size() ? (*StreamedBlocks)[Streamed]
+                                      : Math::Min(DirtyInstanceBlocks[Dirty], (*StreamedBlocks)[Streamed]);
+                    Dirty    += (Dirty < DirtyInstanceBlocks.size() && DirtyInstanceBlocks[Dirty] == Next) ? 1u : 0u;
+                    Streamed += (Streamed < StreamedBlocks->size() && (*StreamedBlocks)[Streamed] == Next) ? 1u : 0u;
+                    if (Next < NumBlocks)
+                    {
+                        BlockMergeScratch.push_back(Next);
+                    }
+                }
+                DirtyInstanceBlocks.swap(BlockMergeScratch);
+            }
         }
 
         const uint32 NumWork = bBlockBoundsRebuildAll ? NumBlocks : (uint32)DirtyInstanceBlocks.size();
@@ -124,7 +146,7 @@ namespace Lumina
         constexpr uint32 BlocksPerTask = 256;
         const uint32 NumTasks = (NumWork + BlocksPerTask - 1u) / BlocksPerTask;
         const bool bAll = bBlockBoundsRebuildAll;
-        InstanceBlockBoundsTask = Task::AsyncTask(NumTasks, 1, [this, Entries, NumSlots, NumWork, bAll](uint32 Start, uint32 End, uint32)
+        InstanceBlockBoundsTask = Task::AsyncTask(NumTasks, 1, [this, Entries, NumSlots, NumWork, bAll, StreamedBlocks](uint32 Start, uint32 End, uint32)
         {
             for (uint32 TaskIndex = Start; TaskIndex < End; ++TaskIndex)
             {
@@ -134,7 +156,9 @@ namespace Lumina
                     const uint32 Block = bAll ? Work : DirtyInstanceBlocks[Work];
                     const uint32 First = Block * kInstanceCullBlockSize;
                     const uint32 Last  = Math::Min(First + kInstanceCullBlockSize, NumSlots);
-                    InstanceBlockBounds[Block] = SceneCull::ComputeInstanceBlockBounds(Entries, First, Last, OverlapsAny(GPUWrittenSlotRanges, First, Last));
+                    const bool bStreamed = !StreamedBlocks->empty() && Algo::BinarySearch(StreamedBlocks->begin(), StreamedBlocks->end(), Block);
+                    InstanceBlockBounds[Block] = SceneCull::ComputeInstanceBlockBounds(Entries, First, Last,
+                                                                                      bStreamed || OverlapsAny(GPUWrittenSlotRanges, First, Last));
 
                     const uint8 bHasDF = SceneCull::BlockHasDistanceFieldCaster(Entries, First, Last) ? 1u : 0u;
                     if (InstanceBlockHasDF[Block] != bHasDF)
@@ -145,6 +169,43 @@ namespace Lumina
                 }
             }
         }, ETaskPriority::Medium);
+    }
+
+    void FDefaultSceneRenderer::ScatterTransformStream(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload)
+    {
+        static const FShaderH StreamCS = FShaderLibrary::Get("RetainedTransformStream.slang");
+        if (Upload.StreamCount == 0u || !StreamCS || !Upload.StreamRecords || !Upload.StreamSlots)
+        {
+            return;
+        }
+
+        // Mirror of FPushConstants in RetainedTransformStream.slang.
+        struct FTransformStreamArgs
+        {
+            RHI::TGPUSpan<FTransformStreamRecord> Records;
+            RHI::TGPUSpan<uint32>                 Slots;
+            RHI::TGPUSpan<FTransform3x4>          RetainedTransforms;
+            RHI::TGPUSpan<FInstanceCullEntry>     RetainedCullEntries;
+        };
+
+        FTransformStreamArgs Args;
+        Args.Records             = Upload.StreamRecords;
+        Args.Slots               = Upload.StreamSlots;
+        Args.RetainedTransforms  = { RetainedTransformBuffer, Upload.SlotCount };
+        Args.RetainedCullEntries = { RetainedCullEntryBuffer, Upload.SlotCount };
+
+        // Last frame read these in every stage, and the copies just recorded wrote them.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+
+        const FUIntVector2 Groups = RenderUtils::FoldGroupCount(RenderUtils::GetGroupCount(Upload.StreamCount, kTransformStreamGroupSize));
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(StreamCS));
+        RHI::CmdDispatch(CL, MakeArgs(Args), Groups.x, Groups.y, 1u);
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
     }
 
     void FDefaultSceneRenderer::JoinInstanceBlockBounds()
@@ -1355,6 +1416,8 @@ namespace Lumina
 
                 }
 
+                ScatterTransformStream(CL, Upload);
+
                 if (Upload.bFullStatic)
                 {
                     StageWrite(RetainedStaticBuffer.Gpu, SrcStatic, (SIZE_T)RetainedSlots * sizeof(FInstanceStatic), true);
@@ -1646,6 +1709,16 @@ namespace Lumina
             DispatchMeshletBlockBuild(CL, /*bLatePass*/ false, /*bCascadePhase*/ true);
         }
 
+        // Mirror of FMeshletCullDispatch in BuildMeshletCullArgs.slang, an indirect dispatch with the blocks each group takes after it.
+        struct FMeshletCullDispatch
+        {
+            uint32 GroupX;
+            uint32 GroupY;
+            uint32 GroupZ;
+            uint32 BlocksPerGroup;
+        };
+        static_assert(sizeof(FMeshletCullDispatch) == 16);
+
         struct FCullArgsPC
         {
             uint32 NumViews;
@@ -1661,7 +1734,7 @@ namespace Lumina
             uint32 Pad1;
             uint32 Pad2;
             RHI::TGPUSpan<FRenderBucketGPU> Buckets;
-            RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutCullDispatchArgs;
+            RHI::TGPUSpan<FMeshletCullDispatch> OutCullDispatchArgs;
             RHI::TGPUSpan<FMeshletDrawArgs> OutMeshDrawArgs;
         } APC = {};
         static_assert(sizeof(FCullArgsPC) == 96, "FCullArgsPC must match BuildMeshletCullArgs.slang.");
@@ -1703,8 +1776,9 @@ namespace Lumina
             RHI::TGPUSpan<uint32>           OutVisibility;
             RHI::TGPUSpan<uint32>           MeshletVisibility;
             RHI::TGPUSpan<uint32>           ReceiverMask;
+            RHI::TGPUSpan<FMeshletCullDispatch> CullDispatch;
         } CPC = {};
-        static_assert(sizeof(FMeshletCullPC) == 128, "FMeshletCullPC must match MeshletCull.slang.");
+        static_assert(sizeof(FMeshletCullPC) == 144, "FMeshletCullPC must match MeshletCull.slang.");
 
         CPC.NumViews       = NumViews;
         CPC.NumDraws       = NumDraws;
@@ -1717,6 +1791,7 @@ namespace Lumina
         CPC.OutVisibility  = { GetInstanceVisibilityWrite(), InstanceVisibilityCapacity };
         CPC.MeshletVisibility = { GetMeshletVisibility(), CVarCullMeshletVisibility.GetValue() != 0 ? MeshletVisibilityCapacity : 0u };
         CPC.bDeferCascades = APC.bDeferCascades;
+        CPC.CullDispatch   = APC.OutCullDispatchArgs;
         if (bCascadePhase && bReceiverMaskValid)
         {
             CPC.ReceiverMaskDim    = kReceiverMaskDim;

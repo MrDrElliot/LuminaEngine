@@ -871,6 +871,21 @@ namespace Lumina::ECS::Utils
         {
             TVector<TUniquePtr<FMovedSlot>> Slots;
             FDirtyQueue                     Overflow;
+
+            // A filtered consumer records only the entities whose bit it set, written only while no system writes transforms.
+            bool            bFiltered = false;
+            TVector<uint64> Interest;
+
+            FORCEINLINE bool Wants(ECS::FEntity Entity) const
+            {
+                if (!bFiltered)
+                {
+                    return true;
+                }
+                const uint32 Index = Entity.GetIndex();
+                const SIZE_T Word  = Index >> 6;
+                return Word < Interest.size() && ((Interest[Word] >> (Index & 63u)) & 1u) != 0;
+            }
         };
 
         static constexpr uint32 kMaxMovedConsumers = 4;
@@ -880,11 +895,33 @@ namespace Lumina::ECS::Utils
         std::atomic<uint32>        MovedConsumerMask{ 0 };
         uint32                     NumMovedSlots = 0;
 
-        template<typename FnAppend>
-        FORCEINLINE void PublishToConsumers(FnAppend&& Append)
+        static void AppendTo(FMovedConsumer& Consumer, uint32 Slot, uint32 NumSlots, const ECS::FEntity* Entities, size_t Count)
         {
-            const uint32 Mask = MovedConsumerMask.load(std::memory_order_acquire);
-            if (Mask == 0)
+            if (Slot < NumSlots)
+            {
+                FMovedSlot& Moved = *Consumer.Slots[Slot];
+                TScopeLock<FMutex> Guard(Moved.Lock);
+                Moved.Items.insert(Moved.Items.end(), Entities, Entities + Count);
+            }
+            else
+            {
+                Consumer.Overflow.EnqueueBulk(Entities, Count);
+            }
+        }
+
+        FORCEINLINE void PublishMoved(ECS::FEntity Entity, uint32 SkipConsumer = Constants::kIndexNoneU32)
+        {
+            PublishMovedBulk(&Entity, 1, SkipConsumer);
+        }
+
+        void PublishMovedBulk(const ECS::FEntity* Entities, size_t Count, uint32 SkipConsumer = Constants::kIndexNoneU32)
+        {
+            uint32 Mask = MovedConsumerMask.load(std::memory_order_acquire);
+            if (SkipConsumer < kMaxMovedConsumers)
+            {
+                Mask &= ~(1u << SkipConsumer);
+            }
+            if (Mask == 0 || Count == 0)
             {
                 return;
             }
@@ -893,36 +930,57 @@ namespace Lumina::ECS::Utils
             for (uint32 Bits = Mask; Bits != 0; Bits &= Bits - 1)
             {
                 FMovedConsumer& Consumer = *MovedConsumers[(uint32)Math::CountTrailingZeros64(Bits)];
-                if (Slot < NumMovedSlots)
+                if (!Consumer.bFiltered)
                 {
-                    FMovedSlot& Moved = *Consumer.Slots[Slot];
-                    TScopeLock<FMutex> Guard(Moved.Lock);
-                    Append(Moved.Items);
+                    AppendTo(Consumer, Slot, NumMovedSlots, Entities, Count);
+                    continue;
                 }
-                else
+
+                // Gathered on the stack, so a batch the consumer ignores takes no lock at all.
+                ECS::FEntity Wanted[256];
+                size_t NumWanted = 0;
+                for (size_t Index = 0; Index < Count; ++Index)
                 {
-                    TVector<ECS::FEntity> Spill;
-                    Append(Spill);
-                    Consumer.Overflow.EnqueueBulk(Spill.data(), Spill.size());
+                    if (!Consumer.Wants(Entities[Index]))
+                    {
+                        continue;
+                    }
+                    Wanted[NumWanted++] = Entities[Index];
+                    if (NumWanted == std::size(Wanted))
+                    {
+                        AppendTo(Consumer, Slot, NumMovedSlots, Wanted, NumWanted);
+                        NumWanted = 0;
+                    }
+                }
+                if (NumWanted != 0)
+                {
+                    AppendTo(Consumer, Slot, NumMovedSlots, Wanted, NumWanted);
                 }
             }
         }
 
-        FORCEINLINE void PublishMoved(ECS::FEntity Entity)
+        void SetMovedInterest(uint32 Index, ECS::FEntity Entity, bool bInterested)
         {
-            PublishToConsumers([Entity](TVector<ECS::FEntity>& Items) { Items.push_back(Entity); });
-        }
-
-        void PublishMovedBulk(const ECS::FEntity* Entities, size_t Count)
-        {
-            if (Count == 0)
+            if (Index >= kMaxMovedConsumers || !MovedConsumers[Index] || !MovedConsumers[Index]->bFiltered)
             {
                 return;
             }
-            PublishToConsumers([Entities, Count](TVector<ECS::FEntity>& Items) { Items.insert(Items.end(), Entities, Entities + Count); });
+            TVector<uint64>& Interest = MovedConsumers[Index]->Interest;
+            const uint32 EntityIndex = Entity.GetIndex();
+            const SIZE_T Word = EntityIndex >> 6;
+            if (Word >= Interest.size())
+            {
+                if (!bInterested)
+                {
+                    return;
+                }
+                Interest.resize(Word + 1, 0);
+            }
+            const uint64 Bit = 1ull << (EntityIndex & 63u);
+            Interest[Word] = bInterested ? (Interest[Word] | Bit) : (Interest[Word] & ~Bit);
         }
 
-        uint32 AddMovedConsumer()
+        uint32 AddMovedConsumer(bool bFiltered)
         {
             for (uint32 Index = 0; Index < kMaxMovedConsumers; ++Index)
             {
@@ -939,6 +997,8 @@ namespace Lumina::ECS::Utils
                         MovedConsumers[Index]->Slots.push_back(MakeUnique<FMovedSlot>());
                     }
                 }
+                MovedConsumers[Index]->bFiltered = bFiltered;
+                MovedConsumers[Index]->Interest.clear();
                 MovedConsumerMask.fetch_or(1u << Index, std::memory_order_release);
                 return Index;
             }
@@ -1048,7 +1108,24 @@ namespace Lumina::ECS::Utils
         return !Registry.GetHierarchy().IsLinked(Entity);
     }
 
-    void PublishFlatMove(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bPublish, bool bQueueBody)
+    bool SetFlatMoveWriter(ECS::FRegistry& Registry, const FFlatMoveWriter* Writer)
+    {
+        FTransformDirtyState* State = EnsureTransformDirtyState(Registry);
+        const FFlatMoveWriter* Expected = nullptr;
+        return State->FlatMoveWriter.compare_exchange_strong(Expected, Writer, std::memory_order_acq_rel) || Expected == Writer;
+    }
+
+    void ClearFlatMoveWriter(ECS::FRegistry& Registry, const FFlatMoveWriter* Writer)
+    {
+        TUniquePtr<FTransformDirtyState>* Holder = Registry.Ctx().Find<TUniquePtr<FTransformDirtyState>>();
+        if (Holder != nullptr && Holder->get() != nullptr)
+        {
+            const FFlatMoveWriter* Expected = Writer;
+            (*Holder)->FlatMoveWriter.compare_exchange_strong(Expected, nullptr, std::memory_order_acq_rel);
+        }
+    }
+
+    void PublishFlatMove(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bPublish, bool bQueueBody, bool bTaken)
     {
         if (Gate == nullptr)
         {
@@ -1065,7 +1142,8 @@ namespace Lumina::ECS::Utils
 
         if (bPublish)
         {
-            State->PublishMoved(Entity);
+            const FFlatMoveWriter* Writer = bTaken ? State->FlatMoveWriter.load(std::memory_order_relaxed) : nullptr;
+            State->PublishMoved(Entity, Writer != nullptr ? Writer->Consumer : Constants::kIndexNoneU32);
         }
     }
 
@@ -1192,9 +1270,18 @@ namespace Lumina::ECS::Utils
         return World;
     }
 
-    uint32 AddMovedTransformConsumer(ECS::FRegistry& Registry)
+    uint32 AddMovedTransformConsumer(ECS::FRegistry& Registry, bool bFiltered)
     {
-        return EnsureTransformDirtyState(Registry)->AddMovedConsumer();
+        return EnsureTransformDirtyState(Registry)->AddMovedConsumer(bFiltered);
+    }
+
+    void SetMovedTransformInterest(ECS::FRegistry& Registry, uint32 Consumer, ECS::FEntity Entity, bool bInterested)
+    {
+        TUniquePtr<FTransformDirtyState>* Holder = Registry.Ctx().Find<TUniquePtr<FTransformDirtyState>>();
+        if (Holder != nullptr && Holder->get() != nullptr)
+        {
+            (*Holder)->SetMovedInterest(Consumer, Entity, bInterested);
+        }
     }
 
     void RemoveMovedTransformConsumer(ECS::FRegistry& Registry, uint32 Consumer)

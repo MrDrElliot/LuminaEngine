@@ -258,31 +258,19 @@ namespace Lumina
                 , DryLevelIn(Params.FloatIn(3))
                 , WetLevelIn(Params.FloatIn(4))
                 , Out(Params.AudioOut(0))
-                , SampleRate(Params.SampleRate)
             {
-                Buffer.resize((size_t)(kMaxDelaySeconds * (float)SampleRate) + 1, 0.0f);
+                Line.Initialize((uint32)(kMaxDelaySeconds * (float)Params.SampleRate));
             }
 
             void Reset() override
             {
-                for (float& Sample : Buffer)
-                {
-                    Sample = 0.0f;
-                }
-                WriteIndex = 0;
+                Line.Clear();
                 DelaySamples.Reset();
             }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
-                const size_t Capacity = Buffer.size();
-                if (Capacity == 0)
-                {
-                    return;
-                }
-
-                const float MaxSamples = (float)(Capacity - 2);
-                const float TargetDelay = Math::Clamp(*DelayTimeIn * (float)Context.SampleRate, 1.0f, MaxSamples);
+                const float TargetDelay = Math::Clamp(*DelayTimeIn * (float)Context.SampleRate, 1.0f, Line.GetMaxDelay());
                 const float Feedback = Math::Clamp(*FeedbackIn, 0.0f, 0.99f);
                 const float Dry = *DryLevelIn;
                 const float Wet = *WetLevelIn;
@@ -291,22 +279,8 @@ namespace Lumina
 
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    const float Delay = DelaySamples.Next();
-
-                    float ReadPosition = (float)WriteIndex - Delay;
-                    while (ReadPosition < 0.0f)
-                    {
-                        ReadPosition += (float)Capacity;
-                    }
-
-                    const size_t Index = (size_t)ReadPosition;
-                    const size_t Next  = (Index + 1) % Capacity;
-                    const float  Alpha = ReadPosition - (float)Index;
-
-                    const float Delayed = Buffer[Index % Capacity] + (Buffer[Next] - Buffer[Index % Capacity]) * Alpha;
-
-                    Buffer[WriteIndex] = In[Frame] + Delayed * Feedback;
-                    WriteIndex = (WriteIndex + 1) % Capacity;
+                    const float Delayed = Line.Read(DelaySamples.Next());
+                    Line.Write(In[Frame] + Delayed * Feedback);
 
                     Out[Frame] = In[Frame] * Dry + Delayed * Wet;
                 }
@@ -323,10 +297,8 @@ namespace Lumina
             const float* WetLevelIn;
             float*       Out;
 
-            TVector<float>           Buffer;
+            FAudioGraphDelayLine     Line;
             FAudioGraphSmoothedFloat DelaySamples;
-            size_t                   WriteIndex = 0;
-            uint32                   SampleRate = 48000;
         };
 
         class FSaturationOperator final : public IAudioGraphOperator

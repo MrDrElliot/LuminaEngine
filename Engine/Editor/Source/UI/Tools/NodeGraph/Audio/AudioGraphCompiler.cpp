@@ -366,6 +366,32 @@ namespace Lumina
                 Instance.InputSlots.push_back(ResolveInputSlot(InputPin.Get(), Context));
             }
 
+            if (Operator->Signature.Variadic == EAudioGraphType::Wave)
+            {
+                TVector<CAudioStream*> NodeWaves;
+                OperatorNode->GetNodeWaves(NodeWaves);
+
+                for (CAudioStream* Wave : NodeWaves)
+                {
+                    if (Wave == nullptr)
+                    {
+                        continue;
+                    }
+
+                    FAudioGraphSlotInit Init;
+                    Init.Type      = EAudioGraphType::Wave;
+                    Init.Slot      = Context.Allocate(EAudioGraphType::Wave);
+                    Init.WaveIndex = Context.FindOrAddWave(Wave);
+                    Result.Program.SlotInits.push_back(Init);
+                    Instance.InputSlots.push_back(Init.Slot);
+                }
+
+                if (Instance.InputSlots.size() == InputPins.size())
+                {
+                    Result.Warnings.push_back("Node '" + OperatorNode->GetNodeTitleText() + "' has no waves, so it plays nothing.");
+                }
+            }
+
             const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& OutputPins = Node->GetOutputPins();
             Instance.OutputSlots.reserve(OutputPins.size());
             for (const TStrongObjectPtr<CEdNodeGraphPin>& OutputPin : OutputPins)

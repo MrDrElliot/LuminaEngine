@@ -1,7 +1,9 @@
 #pragma once
 
+#include "Containers/Algorithm.h"
 #include "Containers/Name.h"
 #include "Containers/Vector.h"
+#include "Core/Math/Scalar.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Platform/GenericPlatform.h"
 #include "AudioGraphTypes.generated.h"
@@ -39,6 +41,58 @@ namespace Lumina
     };
 
     RUNTIME_API const char* ToString(EAudioGraphType Type);
+
+    /** How a node choosing among several options picks the next one. */
+    REFLECT()
+    enum class EAudioPickMode : uint8
+    {
+        Random,
+
+        /** Random, but never the same option twice in a row. */
+        RandomNoRepeat,
+
+        Sequential,
+
+        /** The option the Index pin names, wrapped into range. */
+        ByIndex,
+    };
+
+    REFLECT()
+    enum class EAudioCompareOp : uint8
+    {
+        Equal,
+        NotEqual,
+        Less,
+        LessEqual,
+        Greater,
+        GreaterEqual,
+    };
+
+    REFLECT()
+    enum class EAudioLogicOp : uint8
+    {
+        And,
+        Or,
+        Xor,
+        NotA,
+        Nand,
+        Nor,
+    };
+
+    /** A graph input set before a voice starts, such as one an audio source component carries. */
+    REFLECT()
+    struct RUNTIME_API SAudioGraphParameterValue
+    {
+        GENERATED_BODY()
+
+        /** The Graph Input this sets. */
+        PROPERTY(Editable)
+        FName Name;
+
+        /** Read as the input's own type, so it sets a float, an int or a bool, or fires a trigger when nonzero. */
+        PROPERTY(Editable)
+        float Value = 0.0f;
+    };
 
     /** Events fired inside one block, in ascending frame order. */
     struct FAudioGraphTriggerBuffer
@@ -137,6 +191,110 @@ namespace Lumina
         float Step   = 0.0f;
         float Target = 0.0f;
         bool  bPrimed = false;
+    };
+
+    // Seeded, so a graph's random choices repeat for a given seed.
+    struct FAudioGraphRandom
+    {
+        uint32 State = 0x9E3779B9u;
+        bool   bSeeded = false;
+
+        void Seed(int32 Seed) { State = (uint32)Seed * 2654435761u + 1u; bSeeded = true; }
+
+        // Seed pins hold their value only once the instance applied its initial values, so seed on the first block.
+        void SeedOnce(int32 InSeed)
+        {
+            if (!bSeeded)
+            {
+                Seed(InSeed);
+            }
+        }
+
+        FORCEINLINE float NextUnit()
+        {
+            State ^= State << 13;
+            State ^= State >> 17;
+            State ^= State << 5;
+            return (float)(State >> 8) * (1.0f / 16777216.0f);
+        }
+
+        FORCEINLINE uint32 NextIndex(uint32 Count) { return Count > 1 ? Math::Min((uint32)(NextUnit() * (float)Count), Count - 1) : 0u; }
+
+        uint32 NextIndexExcept(uint32 Count, uint32 Previous)
+        {
+            if (Count < 2 || Previous >= Count)
+            {
+                return NextIndex(Count);
+            }
+            const uint32 Pick = NextIndex(Count - 1);
+            return Pick >= Previous ? Pick + 1 : Pick;
+        }
+    };
+
+    inline uint32 PickNextOption(EAudioPickMode Mode, uint32 Count, uint32 Current, int32 Index, FAudioGraphRandom& Random)
+    {
+        if (Count == 0)
+        {
+            return 0u;
+        }
+
+        switch (Mode)
+        {
+        case EAudioPickMode::RandomNoRepeat: return Random.NextIndexExcept(Count, Current);
+        case EAudioPickMode::Sequential:     return (Current + 1) % Count;
+        case EAudioPickMode::ByIndex:        return (uint32)(((Index % (int32)Count) + (int32)Count) % (int32)Count);
+        default:                             return Random.NextIndex(Count);
+        }
+    }
+
+    class FAudioGraphDelayLine
+    {
+    public:
+
+        // Allocates, so call it while the operator is being built.
+        void Initialize(uint32 MaxDelayFrames)
+        {
+            Buffer.assign((size_t)MaxDelayFrames + 2, 0.0f);
+            WriteIndex = 0;
+        }
+
+        void Clear()
+        {
+            Algo::Fill(Buffer, 0.0f);
+            WriteIndex = 0;
+        }
+
+        float GetMaxDelay() const { return Buffer.size() > 2 ? (float)(Buffer.size() - 2) : 0.0f; }
+
+        // Delay counts frames back from the next write and may be fractional.
+        FORCEINLINE float Read(float Delay) const
+        {
+            const size_t Capacity = Buffer.size();
+
+            float Position = (float)WriteIndex - Delay;
+            while (Position < 0.0f)
+            {
+                Position += (float)Capacity;
+            }
+
+            const size_t Index = (size_t)Position % Capacity;
+            const size_t Next  = (Index + 1) % Capacity;
+            const float  Alpha = Math::Fract(Position);
+            return Buffer[Index] + (Buffer[Next] - Buffer[Index]) * Alpha;
+        }
+
+        FORCEINLINE void Write(float Sample)
+        {
+            Buffer[WriteIndex] = Sample;
+            WriteIndex = (WriteIndex + 1) % Buffer.size();
+        }
+
+        bool IsEmpty() const { return Buffer.empty(); }
+
+    private:
+
+        TVector<float> Buffer;
+        size_t         WriteIndex = 0;
     };
 
     /** Per-block state handed to every operator's Execute. */

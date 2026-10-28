@@ -406,10 +406,13 @@ namespace Lumina
                 LastPublishEpoch     = Epoch;
                 bBodyDirtyQueued    |= bQueueBody;
 
+                // Offered on every move, not just the first of the frame, so a writer keeps the latest pose.
+                const bool bTaken = ECS::Utils::TakeFlatMove(DirtyState, Entity, LocalTransform);
+
                 // Nothing is owed, so bWorldDirty and the dirty signal both stay down and the next propagation can skip.
                 if (bPublish || bQueueBody)
                 {
-                    ECS::Utils::PublishFlatMove(DirtyState, Entity, bPublish, bQueueBody);
+                    ECS::Utils::PublishFlatMove(DirtyState, Entity, bPublish, bQueueBody, bTaken);
                 }
                 return;
             }

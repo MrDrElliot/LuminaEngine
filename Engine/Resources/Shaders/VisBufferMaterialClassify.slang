@@ -1,6 +1,7 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/VisBufferSurface.slang"
 #include "Includes/GlobalRHI.slang"
+#include "Includes/WaveAtomics.slang"
 
 // Resolves each pixel's deferred material once, stores it, and bins each (tile, slot) pair as dense or sparse.
 
@@ -59,8 +60,7 @@ void ClaimTileSlot(uint Slot, uint TileIndex)
     // Past the inline entries a pair carries no pixel mask, so it always shades as a whole tile.
     InterlockedAdd(Pass().Counts.At(Slot)[0], 1u);
 
-    uint OverflowIndex;
-    InterlockedAdd(Pass().OverflowCount.At(0u)[0], 1u, OverflowIndex);
+    const uint OverflowIndex = WaveInterlockedAdd(Pass().OverflowCount.At(0u), 1u);
     const uint First = OverflowIndex * MATERIAL_OVERFLOW_PAIR_WORDS;
     if (First + 1u < Pass().Overflow.Count)
     {

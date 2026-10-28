@@ -10,10 +10,11 @@
 namespace Lumina
 {
     class CAudioGraphPin;
+    class CAudioStream;
 
     /** Base for every audio graph node, mapping declared pins onto the operator the compiler emits. */
     REFLECT(NotPlaceable)
-    class CAudioGraphNode : public CEdGraphNode
+    class EDITOR_API CAudioGraphNode : public CEdGraphNode
     {
         GENERATED_BODY()
 
@@ -27,6 +28,9 @@ namespace Lumina
         /** Runtime operator this node compiles to. Empty for a node the compiler handles itself. */
         virtual FName GetOperatorName() const { return FName(); }
 
+        // Waves the compiler appends after the pins, for an operator whose signature takes a variadic wave list.
+        virtual void GetNodeWaves(TVector<CAudioStream*>& OutWaves) const {}
+
     protected:
 
         // Binds the pin to the node property whose name matches, spaces removed, when one exists.
@@ -36,7 +40,7 @@ namespace Lumina
 
     /** Declares a named value gameplay can write on a live instance. */
     REFLECT()
-    class CAudioGraphInputNode : public CAudioGraphNode
+    class EDITOR_API CAudioGraphInputNode : public CAudioGraphNode
     {
         GENERATED_BODY()
 
@@ -124,7 +128,7 @@ namespace Lumina
 
     /** The graph's root. Everything the compiler emits is reachable backwards from this node. */
     REFLECT(NotPlaceable)
-    class CAudioGraphOutputNode : public CAudioGraphNode
+    class EDITOR_API CAudioGraphOutputNode : public CAudioGraphNode
     {
         GENERATED_BODY()
 

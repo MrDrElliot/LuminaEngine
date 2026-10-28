@@ -105,7 +105,7 @@ namespace Lumina
     };
 
     REFLECT()
-    class CAudioNode_WavePlayer : public CAudioGraphNode
+    class EDITOR_API CAudioNode_WavePlayer : public CAudioGraphNode
     {
         GENERATED_BODY()
 
@@ -126,8 +126,44 @@ namespace Lumina
         PROPERTY(Editable, Category = "Wave Player", ClampMin = 0.01f, ClampMax = 8.0f)
         float Pitch = 1.0f;
 
-        PROPERTY(Editable, Category = "Wave Player", ClampMin = 0.0f)
+        PROPERTY(Editable, Category = "Wave Player", ClampMin = 0.0f, Units = "s")
         float StartTime = 0.0f;
+
+        /** Where a loop jumps back to. */
+        PROPERTY(Editable, Category = "Wave Player", ClampMin = 0.0f, Units = "s")
+        float LoopStart = 0.0f;
+
+        /** Length of the looped region, or zero to loop to the end of the wave. */
+        PROPERTY(Editable, Category = "Wave Player", ClampMin = 0.0f, Units = "s")
+        float LoopDuration = 0.0f;
+    };
+
+    REFLECT()
+    class EDITOR_API CAudioNode_RandomWave : public CAudioGraphNode
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void BuildNode() override;
+        void GetNodeWaves(TVector<CAudioStream*>& OutWaves) const override;
+        FName GetOperatorName() const override { return "RandomWave"; }
+        FStringView GetNodeDisplayName() const override { return "Random Wave"; }
+        FStringView GetNodeTooltip() const override { return "Hands a Wave Player one of several waves, picked at random, in turn, or by index. Picks once on the first block and again on each Next."; }
+        FFixedString GetNodeCategory() const override { return "Generators"; }
+
+        PROPERTY(Editable, Category = "Random Wave")
+        TVector<TStrongObjectPtr<CAudioStream>> Waves;
+
+        PROPERTY(Editable, Category = "Random Wave")
+        EAudioPickMode Mode = EAudioPickMode::RandomNoRepeat;
+
+        /** The wave to play in By Index mode, wrapped into the list. */
+        PROPERTY(Editable, Category = "Random Wave")
+        int32 Index = 0;
+
+        PROPERTY(Editable, Category = "Random Wave")
+        int32 Seed = 1;
     };
 
 }

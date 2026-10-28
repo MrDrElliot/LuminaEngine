@@ -1,6 +1,7 @@
 #include "RuntimePCH.h"
 #include "AudioReverb.h"
 
+#include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
 
 namespace Lumina
@@ -77,6 +78,24 @@ namespace Lumina
 		}
 
 		ChannelCount = 0;
+	}
+
+	void FAudioReverb::Clear()
+	{
+		for (uint32 Channel = 0; Channel < ChannelCount; ++Channel)
+		{
+			for (FCombFilter& Comb : Networks[Channel].Combs)
+			{
+				Algo::Fill(Comb.Buffer, 0.0f);
+				Comb.Index = 0;
+				Comb.FilterStore = 0.0f;
+			}
+			for (FAllpassFilter& Allpass : Networks[Channel].Allpass)
+			{
+				Algo::Fill(Allpass.Buffer, 0.0f);
+				Allpass.Index = 0;
+			}
+		}
 	}
 
 	void FAudioReverb::SetParams(const FAudioReverbParams& InParams)

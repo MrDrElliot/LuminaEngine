@@ -2,6 +2,7 @@
 
 #include "Assets/AssetTypes/Audio/SoundAttenuation.h"
 #include "Audio/AudioTypes.h"
+#include "Audio/Graph/AudioGraphTypes.h"
 #include "Containers/Name.h"
 #include "Containers/Pair.h"
 #include "Containers/Vector.h"
@@ -23,6 +24,10 @@ namespace Lumina
 		/** Sound to play. Accepts a wave asset or a compiled audio graph. */
 		PROPERTY(Editable)
 		TStrongObjectPtr<CSoundBase> Sound;
+
+		/** Graph inputs set each time an audio graph starts, so one graph serves many sources. Ignored for a wave. */
+		PROPERTY(Editable)
+		TVector<SAudioGraphParameterValue> GraphParameters;
 
 		/** Mix group this source routes through. */
 		PROPERTY(Editable)

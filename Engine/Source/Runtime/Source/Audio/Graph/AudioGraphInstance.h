@@ -71,6 +71,11 @@ namespace Lumina
         /** Queues a trigger event, raised at the start of the next block. */
         bool TriggerParameter(const FName& Name);
 
+        bool SetParameter(const SAudioGraphParameterValue& Value);
+
+        // Loudest sample of the last block, channel zero being left and one right.
+        float GetOutputPeak(uint32 Channel) const { return Channel < 2 ? PublishedPeaks[Channel].load(Atomic::MemoryOrderRelaxed) : 0.0f; }
+
         /** Last block's value of a float output, or 0 when the graph declares no such output. */
         float GetFloatOutput(const FName& Name) const;
 
@@ -118,6 +123,7 @@ namespace Lumina
 
         TAtomic<float>  PublishedOutputs[MaxPublishedOutputs];
         TAtomic<uint32> PublishedTriggerCounts[MaxPublishedOutputs];
+        TAtomic<float>  PublishedPeaks[2];
         TAtomic<bool>   bFinished{false};
         TAtomic<uint64> RenderedFrames{0};
 

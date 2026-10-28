@@ -75,9 +75,6 @@ FHDRTerm AerialPerspectiveTerm(float2 UV, float3 ViewPos)
 static const float kCloudDepthMismatch  = 1.0e6;
 static const float kCloudDepthSharpness = 32.0;
 
-// In half-res texels; 1 would be plain bilinear.
-static const float kCloudTentRadius = 1.6;
-
 // How far a cloud texel's marched depth is from this pixel's, relative to the pixel's own distance.
 float CloudDepthError(float PixelRaw, float PixelLinear, float TexelRaw)
 {
@@ -105,66 +102,12 @@ float GatherTexel(float4 Quad, int2 Texel)
     return Texel.y == 0 ? (Texel.x == 0 ? Quad.w : Quad.z) : (Texel.x == 0 ? Quad.x : Quad.y);
 }
 
-// Bilinear over the four nearest half-res texels, weighted toward those marched against this pixel's depth.
-float4 UpsampleClouds(float2 UV, float Depth)
+// The four nearest half-res texels, weighted toward those marched against this pixel's depth.
+float4 UpsampleHalfRes(FTexture2D Source, FTexture2D SourceDepth, float2 UV, float Depth)
 {
     uint Width;
     uint Height;
-    Pass().CloudScatter.GetDimensions(Width, Height);
-    int2 MaxTexel = int2(Width, Height) - 1;
-
-    float2 Coord = UV * float2(Width, Height) - 0.5;
-    int2   Base  = int2(floor(Coord));
-    float2 Frac  = Coord - float2(Base);
-
-    float PixelLinear = Depth > 0.0 ? LinearizeSceneDepth(Depth) : 0.0;
-
-    float4 Sum        = float4(0.0, 0.0, 0.0, 0.0);
-    float  WeightSum  = 0.0;
-    float4 Closest    = float4(0.0, 0.0, 0.0, 1.0);
-    float  ClosestErr = 3.0e38;
-
-    // Clamp-to-edge gathers cover the 4x4 depths in four fetches and clamp the border exactly like the loads do.
-    const float2 InvSize = 1.0 / float2(Width, Height);
-    float4 DepthQuads[4];
-    [unroll]
-    for (int q = 0; q < 4; ++q)
-    {
-        DepthQuads[q] = Pass().CloudDepth.GatherRed(Samplers::PointClamp, (float2(Base) + float2(q & 1, q >> 1) * 2.0) * InvSize);
-    }
-
-    // A tent wider than bilinear, so the march's per-pixel start jitter averages out on thin wisps.
-    [unroll]
-    for (int i = 0; i < 16; ++i)
-    {
-        int2   Offset = int2(i & 3, i >> 2) - 1;
-        int2   Texel  = clamp(Base + Offset, int2(0, 0), MaxTexel);
-        float4 Cloud  = Pass().CloudScatter.Load(int3(Texel, 0));
-        int2   InQuad = Offset + 1;
-        float  Err    = CloudDepthError(Depth, PixelLinear, GatherTexel(DepthQuads[(InQuad.y >> 1) * 2 + (InQuad.x >> 1)], InQuad & 1));
-
-        float2 Axis   = max(kCloudTentRadius - abs(float2(Offset) - Frac), 0.0);
-        float  Weight = Axis.x * Axis.y / (1.0 + Err * kCloudDepthSharpness);
-        Sum          += Cloud * Weight;
-        WeightSum    += Weight;
-
-        if (Err < ClosestErr)
-        {
-            ClosestErr = Err;
-            Closest    = Cloud;
-        }
-    }
-
-    // No texel matched, as in a sky gap narrower than a texel, so the best match is taken alone.
-    return WeightSum > 1.0e-4 ? Sum / WeightSum : Closest;
-}
-
-// The four nearest half-res shaft texels, weighted toward those marched against this pixel's depth.
-float4 UpsampleFogShafts(float2 UV, float Depth)
-{
-    uint Width;
-    uint Height;
-    Pass().FogShaft.GetDimensions(Width, Height);
+    Source.GetDimensions(Width, Height);
     const int2 MaxTexel = int2(Width, Height) - 1;
 
     const float2 Coord = UV * float2(Width, Height) - 0.5;
@@ -178,28 +121,29 @@ float4 UpsampleFogShafts(float2 UV, float Depth)
     float4 Closest    = float4(0.0, 0.0, 0.0, 1.0);
     float  ClosestErr = 3.0e38;
 
-    const float4 DepthQuad = Pass().FogShaftDepth.GatherRed(Samplers::PointClamp, (float2(Base) + 1.0) / float2(Width, Height));
+    const float4 DepthQuad = SourceDepth.GatherRed(Samplers::PointClamp, (float2(Base) + 1.0) / float2(Width, Height));
 
     [unroll]
     for (int i = 0; i < 4; ++i)
     {
         const int2   Offset = int2(i & 1, i >> 1);
         const int2   Texel  = clamp(Base + Offset, int2(0, 0), MaxTexel);
-        const float4 Shaft  = Pass().FogShaft.Load(int3(Texel, 0));
+        const float4 Value  = Source.Load(int3(Texel, 0));
         const float  Err    = CloudDepthError(Depth, PixelLinear, GatherTexel(DepthQuad, Offset));
 
         const float2 Axis   = lerp(1.0 - Frac, Frac, float2(Offset));
         const float  Weight = Axis.x * Axis.y / (1.0 + Err * kCloudDepthSharpness);
-        Sum       += Shaft * Weight;
+        Sum       += Value * Weight;
         WeightSum += Weight;
 
         if (Err < ClosestErr)
         {
             ClosestErr = Err;
-            Closest    = Shaft;
+            Closest    = Value;
         }
     }
 
+    // No texel matched, as in a sky gap narrower than a texel, so the best match is taken alone.
     return WeightSum > 1.0e-4 ? Sum / WeightSum : Closest;
 }
 
@@ -277,7 +221,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth, float3 SurfaceViewP
 
         if (TMarchEnd > T0)
         {
-            const float4 Shaft = UpsampleFogShafts(UV, Depth);
+            const float4 Shaft = UpsampleHalfRes(Pass().FogShaft, Pass().FogShaftDepth, UV, Depth);
             InScatter += Trans * Shaft.rgb;
             Trans     *= Shaft.a;
         }
@@ -351,7 +295,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         || length(ViewPos) >= CloudGap;
     if (SPEC_ATMOS_CLOUDS != 0 && Pass().CloudScatter.IsValid() && bCloudReachable)
     {
-        float4 Cloud = UpsampleClouds(UV, Depth);
+        float4 Cloud = UpsampleHalfRes(Pass().CloudScatter, Pass().CloudDepth, UV, Depth);
         if (Cloud.a <= 0.999)
         {
             ComposeTerm(Total, float3(Cloud.a), Cloud.rgb);

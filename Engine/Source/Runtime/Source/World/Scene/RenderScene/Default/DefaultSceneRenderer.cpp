@@ -235,6 +235,7 @@ namespace Lumina
         if (World != nullptr)
         {
             ECS::FRegistry& Registry = World->GetEntityRegistry();
+            ScenePrimitives.DisarmMoveStream(Registry);
             ECS::Utils::RemoveMovedTransformConsumer(Registry, MovedTransformConsumer);
             MovedTransformConsumer = Constants::kIndexNoneU32;
 
@@ -295,6 +296,7 @@ namespace Lumina
         SunDFCellItemBuffer.Release();
         SunDFCounterBuffer.Release();
         SunDFBlockListBuffer.Release();
+        SunDFLargeObjectBuffer.Release();
         SkinnedMeshletBoundsBuffer.Release();
         SkinnedMeshletConeBuffer.Release();
         SurfaceDescBuffer.Release();
@@ -326,6 +328,10 @@ namespace Lumina
             }
         }
 
+        for (FSceneBuffer& Slice : TransformStreamRing)
+        {
+            Slice.Release();
+        }
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
             RenderBucketRing[Slot].Release();
@@ -1651,7 +1657,8 @@ namespace Lumina
             // Fixed size, one grid each, rewritten every frame.
             BlockDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments));
             SkinDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments));
-            MeshletCullDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments));
+            // Three dispatch words, then the blocks each meshlet cull group takes.
+            MeshletCullDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments) + sizeof(uint32));
 
             TotalsRing[Slot].Allocate(sizeof(uint32) * kTotalsSlots);
             TotalsZeroed[Slot] = false;
@@ -1755,6 +1762,8 @@ namespace Lumina
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
         case ENamedImage::CloudScatter:       return "Scene.CloudScatter";
         case ENamedImage::CloudDepth:         return "Scene.CloudDepth";
+        case ENamedImage::CloudScatterHistory: return "Scene.CloudScatterHistory";
+        case ENamedImage::CloudDepthHistory:  return "Scene.CloudDepthHistory";
         case ENamedImage::CloudShadow:        return "Scene.CloudShadow";
         case ENamedImage::BRDFLut:            return "Scene.BRDFLut";
         case ENamedImage::SkyCube:            return "Scene.SkyCube";
@@ -2264,12 +2273,15 @@ namespace Lumina
                                                  std::max<uint32>(Extent.y / 2u, 1u), 1);
             ScatterDesc.Format    = EFormat::RGBA16_FLOAT;
             ScatterDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
-            View.Images[(int)ENamedImage::CloudScatter] = CreateSceneImage(ScatterDesc, true, true);
+            View.Images[(int)ENamedImage::CloudScatter]        = CreateSceneImage(ScatterDesc, true, true);
+            View.Images[(int)ENamedImage::CloudScatterHistory] = CreateSceneImage(ScatterDesc, true, true);
 
             // The scene depth each half-res texel was marched against, so the composite can upsample by depth.
             RHI::FTextureDesc CloudDepthDesc = ScatterDesc;
             CloudDepthDesc.Format = EFormat::R32_FLOAT;
-            View.Images[(int)ENamedImage::CloudDepth] = CreateSceneImage(CloudDepthDesc, true, true);
+            View.Images[(int)ENamedImage::CloudDepth]        = CreateSceneImage(CloudDepthDesc, true, true);
+            View.Images[(int)ENamedImage::CloudDepthHistory] = CreateSceneImage(CloudDepthDesc, true, true);
+            View.bCloudHistoryValid = false;
 
             int32 CloudShadowRes = 512;
             if (const CRendererSettings* RS = GetDefault<CRendererSettings>())

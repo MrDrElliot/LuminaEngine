@@ -177,6 +177,8 @@ namespace Lumina
             return;
         }
 
+        DrawLevelMeters();
+
         ImGui::Separator();
         ImGui::TextUnformatted("Parameters");
 
@@ -234,6 +236,34 @@ namespace Lumina
             for (const FAudioGraphParameterDecl& Output : PreviewInstance->GetOutputs())
             {
                 ImGui::Text("%s  %.3f", Output.Name.c_str(), PreviewInstance->GetFloatOutput(Output.Name));
+            }
+        }
+    }
+
+    void FAudioGraphEditorTool::DrawLevelMeters()
+    {
+        // Peaks fall back slowly, so a short transient stays readable for a moment.
+        constexpr float kMeterFallPerFrame = 0.92f;
+        constexpr float kDecibelsPerNeper  = 8.6858896f;
+        constexpr const char* ChannelLabels[] = { "L", "R" };
+
+        ImGui::Separator();
+        for (uint32 Channel = 0; Channel < 2; ++Channel)
+        {
+            MeterLevels[Channel] = Math::Max(PreviewInstance->GetOutputPeak(Channel), MeterLevels[Channel] * kMeterFallPerFrame);
+
+            const float Decibels = MeterLevels[Channel] > 1.0e-5f ? kDecibelsPerNeper * Math::Log(MeterLevels[Channel]) : -100.0f;
+            const auto Overlay = Format("{}  {:.1f} dB", ChannelLabels[Channel], Decibels);
+
+            const bool bClipping = MeterLevels[Channel] >= 1.0f;
+            if (bClipping)
+            {
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.9f, 0.25f, 0.2f, 1.0f));
+            }
+            ImGui::ProgressBar(Math::Min(MeterLevels[Channel], 1.0f), ImVec2(-1.0f, 0.0f), Overlay.c_str());
+            if (bClipping)
+            {
+                ImGui::PopStyleColor();
             }
         }
     }
@@ -330,6 +360,8 @@ namespace Lumina
         PreviewHandle = SAudioHandle::Invalid();
         PreviewInstance.reset();
         PreviewParameters.clear();
+        MeterLevels[0] = 0.0f;
+        MeterLevels[1] = 0.0f;
     }
 
     void FAudioGraphEditorTool::OnSave()

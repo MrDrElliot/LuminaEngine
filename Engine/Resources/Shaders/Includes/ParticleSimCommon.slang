@@ -1,6 +1,7 @@
 #pragma once
 #include "SceneGlobals.slang"
 #include "Noise.slang"
+#include "WaveAtomics.slang"
 
 // Structs must stay byte-identical to CParticleSystem and FParticleSimArgs in DefaultSceneRenderer.cpp.
 
@@ -218,8 +219,8 @@ void RaiseParticleEvent(uint List, FGPUParticle P)
         return;
     }
 
-    uint Slot;
-    InterlockedAdd(SimArgs().OwnEventCounts.At(List)[0], 1u, Slot);
+    // Every call site passes a constant List, so the wave shares one counter.
+    const uint Slot = WaveInterlockedAdd(SimArgs().OwnEventCounts.At(List), 1u);
     if (Slot < PARTICLE_EVENT_CAPACITY)
     {
         FParticleEvent Event;
@@ -238,8 +239,7 @@ void RaiseParticleCollision(FGPUParticle P, float3 Normal, float ImpactSpeed)
         return;
     }
 
-    uint Slot;
-    InterlockedAdd(SimArgs().OwnEventCounts.At(PARTICLE_EVENT_COLLISION)[0], 1u, Slot);
+    const uint Slot = WaveInterlockedAdd(SimArgs().OwnEventCounts.At(PARTICLE_EVENT_COLLISION), 1u);
     if (Slot < PARTICLE_EVENT_CAPACITY)
     {
         FParticleEvent Event;

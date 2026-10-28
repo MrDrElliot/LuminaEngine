@@ -554,7 +554,6 @@ namespace Lumina
 
         if (IsAssetEditorTool())
         {
-            // The icon looked identical saved or not, and asset editors never reported the unsaved dot.
             const bool bUnsaved = IsUnsavedDocument();
             ImGui::PushStyleColor(ImGuiCol_Text, bUnsaved ? EditorColors::Warning() : EditorColors::TextDim());
             if (ImGui::MenuItem(bUnsaved ? LE_ICON_CONTENT_SAVE_EDIT "##Save" : LE_ICON_CONTENT_SAVE "##Save"))
@@ -562,8 +561,7 @@ namespace Lumina
                 OnSave();
             }
             ImGui::PopStyleColor();
-            // TextTooltip takes a consteval format string, so a ternary of literals cannot be the format.
-            ImGuiX::TextTooltip("{}", bUnsaved ? "Save -- this asset has unsaved changes" : "Save (no changes)");
+            ImGuiX::TextTooltip("{}", bUnsaved ? "Save (this asset has unsaved changes)" : "Save (no changes)");
         }
 
         const FFixedString AssetVirtualPath = GetAssetVirtualPath();

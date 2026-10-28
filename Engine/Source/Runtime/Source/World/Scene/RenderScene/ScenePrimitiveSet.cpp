@@ -11,6 +11,8 @@
 #include "Containers/ConcurrentQueue.h"
 #include "Memory/Memcpy.h"
 #include "TaskSystem/TaskSystem.h"
+#include "TaskSystem/Scheduler/JobScheduler.h"
+#include <immintrin.h>
 #include "World/World.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/EntityTags.h"
@@ -33,6 +35,36 @@ namespace Lumina
         }
         Array.reserve(Math::Max(Target, Capacity + Capacity / 2u));
     }
+
+    // Writes a whole cache line without reading it in first, which a crowd of movers would otherwise pay on every primitive.
+    static FORCEINLINE void StreamMatrix(FMatrix4& Dest, const FMatrix4& Value)
+    {
+        const float* Source = &Value[0][0];
+        float* Target = &Dest[0][0];
+        _mm256_stream_ps(Target, _mm256_loadu_ps(Source));
+        _mm256_stream_ps(Target + 8, _mm256_loadu_ps(Source + 8));
+    }
+
+    // A full write-combined line for the GPU, which the CPU never reads back.
+    static FORCEINLINE void StreamRecord(FTransformStreamRecord& Dest, const FTransformStreamRecord& Value)
+    {
+        const float* Source = reinterpret_cast<const float*>(&Value);
+        float* Target = reinterpret_cast<float*>(&Dest);
+        _mm256_stream_ps(Target, _mm256_loadu_ps(Source));
+        _mm256_stream_ps(Target + 8, _mm256_loadu_ps(Source + 8));
+    }
+
+    static FORCEINLINE FTransformStreamRecord MakeStreamRecord(const FMatrix4& Matrix, const FVector3& LocalCenter, float Radius)
+    {
+        FTransformStreamRecord Out;
+        Out.Transform    = PackTransform3x4(Matrix);
+        Out.SphereBounds = SceneCull::TransformSphere(Matrix, LocalCenter, Radius);
+        return Out;
+    }
+
+    static constexpr uint8  kMovedSources     = (uint8)((1u << (uint32)EPrimitiveSource::Foliage) - 1u);
+    // Below this many movers the CPU copies cost less than keeping a stream and catching its stoppers up.
+    static constexpr uint32 kMinStreamedMoves = 1024;
 
     static FORCEINLINE uint64 PackDirty(ECS::FEntity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags)
     {
@@ -496,9 +528,14 @@ namespace Lumina
 
     void FScenePrimitiveSet::RebuildWorldBounds(uint32 Index)
     {
+        RebuildWorldBounds(Index, Primitives[Index].Transform);
+    }
+
+    void FScenePrimitiveSet::RebuildWorldBounds(uint32 Index, const FMatrix4& Transform)
+    {
         const FScenePrimitive& Prim = Primitives[Index];
         const float CullScale = Math::Max(Prim.BoundsScale, 1.0f);
-        Bounds[Index] = SceneCull::TransformSphere(Prim.Transform, Prim.LocalCenter, Prim.LocalRadius * CullScale);
+        Bounds[Index] = SceneCull::TransformSphere(Transform, Prim.LocalCenter, Prim.LocalRadius * CullScale);
     }
 
     void FScenePrimitiveSet::CompactBindings()
@@ -652,22 +689,27 @@ namespace Lumina
         }
     }
 
-    void FScenePrimitiveSet::UpdateMeshletVisibility(uint32 Slot)
+    uint32 FScenePrimitiveSet::MeshletVisibilityWordsOf(uint32 Slot) const
     {
         const FInstanceCullEntry& Cull = RetainedCullEntries[Slot];
         const bool bActive = ((Cull.DrawIDAndFlags >> 16) & (uint32)EInstanceFlags::Active) != 0u;
-
-        uint32 Words = 0u;
-        if (bActive && Cull.SurfaceDescIndex < (uint32)SurfaceDescs.size())
+        if (!bActive || Cull.SurfaceDescIndex >= (uint32)SurfaceDescs.size())
         {
-            const FSurfaceDescGPU& Desc = SurfaceDescs[Cull.SurfaceDescIndex];
-            uint32 LargestLOD = 0u;
-            for (uint32 LOD = 0; LOD < Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS); ++LOD)
-            {
-                LargestLOD = Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
-            }
-            Words = (LargestLOD + MESHLET_CULL_GROUP_SIZE - 1u) / MESHLET_CULL_GROUP_SIZE;
+            return 0u;
         }
+
+        const FSurfaceDescGPU& Desc = SurfaceDescs[Cull.SurfaceDescIndex];
+        uint32 LargestLOD = 0u;
+        for (uint32 LOD = 0; LOD < Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS); ++LOD)
+        {
+            LargestLOD = Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
+        }
+        return (LargestLOD + MESHLET_CULL_GROUP_SIZE - 1u) / MESHLET_CULL_GROUP_SIZE;
+    }
+
+    void FScenePrimitiveSet::UpdateMeshletVisibility(uint32 Slot)
+    {
+        const uint32 Words = MeshletVisibilityWordsOf(Slot);
 
         FUIntVector2& Range = SlotMeshletVisibility[Slot];
         if (Range.y != Words)
@@ -706,7 +748,39 @@ namespace Lumina
 
         if (bFullInstanceUpload || bFullStaticUpload)
         {
-            for (uint32 Slot = 0; Slot < SlotCount; ++Slot)
+            // Nearly every slot already holds the range its LODs need, so the check runs wide and only the stale ones allocate, in slot order.
+            EnsureParallelBuckets();
+            for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
+            {
+                Bucket.Slots.clear();
+            }
+
+            const auto IsStale = [this](uint32 Slot)
+            {
+                const FUIntVector2& Range = SlotMeshletVisibility[Slot];
+                return Range.y != MeshletVisibilityWordsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
+            };
+            constexpr uint32 kMeshletVisibilityScanGrain = 4096;
+            Task::ParallelForOrSerial(SlotCount, kMeshletVisibilityScanGrain, [&](const Task::FParallelRange& Range)
+            {
+                TVector<uint32>& Stale = ParallelDirtySlots[Range.Thread < (uint32)ParallelDirtySlots.size() ? Range.Thread : 0u].Slots;
+                for (uint32 Slot = Range.Start; Slot < Range.End; ++Slot)
+                {
+                    if (IsStale(Slot))
+                    {
+                        Stale.push_back(Slot);
+                    }
+                }
+            });
+
+            MeshletVisibilityScratch.clear();
+            for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
+            {
+                MeshletVisibilityScratch.insert(MeshletVisibilityScratch.end(), Bucket.Slots.begin(), Bucket.Slots.end());
+                Bucket.Slots.clear();
+            }
+            Algo::Sort(MeshletVisibilityScratch);
+            for (uint32 Slot : MeshletVisibilityScratch)
             {
                 UpdateMeshletVisibility(Slot);
             }
@@ -1190,6 +1264,11 @@ namespace Lumina
 
     void FScenePrimitiveSet::RefreshInstanceTransform(uint32 Index, TVector<uint32>* DirtySink)
     {
+        RefreshInstanceTransform(Index, Primitives[Index].Transform, DirtySink);
+    }
+
+    void FScenePrimitiveSet::RefreshInstanceTransform(uint32 Index, const FMatrix4& Transform, TVector<uint32>* DirtySink)
+    {
         if (DirtySink == nullptr)
         {
             ++SyncStats.RefreshInstanceCalls;
@@ -1197,7 +1276,7 @@ namespace Lumina
 
         const FScenePrimitive& Prim   = Primitives[Index];
         const FVector4         Sphere = InstanceSphereOf(Index);
-        const FTransform3x4    Packed = PackTransform3x4(InstanceTransformOf(Prim));
+        const FTransform3x4    Packed = PackTransform3x4(IsRemappedForeground(Prim) ? ForegroundTransform * Transform : Transform);
 
         for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
@@ -1267,6 +1346,12 @@ namespace Lumina
         if (!bToggled && Transform == ForegroundTransform)
         {
             return;
+        }
+        // Whether a foreground primitive needs the remap decides if it may stream at all.
+        if (bToggled)
+        {
+            InvalidateAllStreamCache();
+            bDiscardMoveStream = bMoveStreamArmed;
         }
 
         bForegroundActive     = bActive;
@@ -1756,6 +1841,8 @@ namespace Lumina
                                         EPrimitiveSource Source, EPrimitiveDirty Flags)
     {
         ++SyncStats.SyncEntityCalls;
+        InvalidateStreamCache(Entity);
+        KillMoveRecord(Entity);
 
         const uint64 Key = MakeKey(Entity, Source);
         uint32 Index = FindLinked(Entity, Source);
@@ -2958,7 +3045,6 @@ namespace Lumina
         {
             return;
         }
-
         const FMatrix4 Matrix = Transform->GetWorldMatrixCached();
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
@@ -2974,11 +3060,14 @@ namespace Lumina
                 continue;
             }
 
-            Primitives[Index].Transform = Matrix;
-            RebuildWorldBounds(Index);
-            RefreshInstanceTransform(Index, OutDirty);
+            StreamMatrix(Primitives[Index].Transform, Matrix);
+            RebuildWorldBounds(Index, Matrix);
+            RefreshInstanceTransform(Index, Matrix, OutDirty);
         }
     }
+
+    static_assert(offsetof(FScenePrimitive, Transform) == 0 && alignof(FScenePrimitive) >= 64 && sizeof(FMatrix4) == 64,
+                  "StreamMatrix writes the first cache line of a primitive as two aligned 32-byte halves.");
 
     bool FScenePrimitiveSet::HasCoalescedRecord(ECS::FEntity Entity) const
     {
@@ -2993,19 +3082,8 @@ namespace Lumina
             && CoalescedScratch[Mapped.Index].Entity == Entity.Value;
     }
 
-    void FScenePrimitiveSet::ApplyMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved)
+    uint32 FScenePrimitiveSet::BeginMovedClaims()
     {
-        const uint32 Count = (uint32)Moved.size();
-        if (Count == 0)
-        {
-            return;
-        }
-
-        LUMINA_PROFILE_SECTION("Sync/Apply/Moved");
-
-        ++StructureGeneration;
-        SyncStats.SyncEntityCalls += Count;
-
         if (MovedClaimByEntityIndex.empty())
         {
             MovedClaimByEntityIndex.resize((SIZE_T)ECS::FEntity::IndexMask + 1u, 0u);
@@ -3016,9 +3094,66 @@ namespace Lumina
             std::fill(MovedClaimByEntityIndex.begin(), MovedClaimByEntityIndex.end(), 0u);
             MovedClaimStamp = 1u;
         }
+        return MovedClaimStamp;
+    }
 
-        constexpr uint8 kMovedSources = (uint8)((1u << kLinkedSources) - 1u);
-        const uint32 Stamp = MovedClaimStamp;
+    void FScenePrimitiveSet::EnsureParallelBuckets()
+    {
+        const uint32 NumSlots = (GTaskSystem != nullptr) ? GTaskSystem->GetNumTaskThreads() : 0u;
+        if ((uint32)ParallelDirtySlots.size() < Math::Max(NumSlots, 1u))
+        {
+            ParallelDirtySlots.resize(Math::Max(NumSlots, 1u));
+        }
+    }
+
+    void FScenePrimitiveSet::ApplyMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved)
+    {
+        LUMINA_PROFILE_SECTION("Sync/Apply/Moved");
+
+        // Movers whose move-time records were thrown away go round again with the rest.
+        if (!MoveReplay.empty())
+        {
+            MoveReplay.insert(MoveReplay.end(), Moved.begin(), Moved.end());
+            Moved = TSpan<const ECS::FEntity>(MoveReplay.data(), MoveReplay.size());
+        }
+        const bool bReplayed = !MoveReplay.empty();
+
+        const uint32 Count = (uint32)Moved.size();
+        const uint32 NumSlots = (GTaskSystem != nullptr) ? GTaskSystem->GetNumTaskThreads() : 0u;
+        const bool bStream = Count >= kMinStreamedMoves && NumSlots > 1 && StreamCount + Count <= StreamTarget.Capacity
+                          && StreamTarget.Records != nullptr && StreamTarget.Slots != nullptr;
+        if (bStream)
+        {
+            StreamMovedTransforms(Pools, Moved);
+        }
+        else if (Count > 0)
+        {
+            ApplyMovedLegacy(Pools, Moved);
+        }
+        else
+        {
+            // The catch-up reads this frame's claims, so a frame the movers covered alone still opens a pass.
+            BeginMovedClaims();
+        }
+        MoveReplay.clear();
+
+        Algo::Sort(StreamedBlocks);
+        StreamedBlocks.erase(Algo::Unique(StreamedBlocks), StreamedBlocks.end());
+
+        // The movers count each entity once, but the drained list can repeat one, so only a frame they streamed alone can trust the count.
+        const bool bNoneStopped = bStreamListsExact && ContinuingStreams == StreamedLastFrame.Count;
+        bStreamListsExact = !bStream && !bReplayed;
+        ContinuingStreams = 0;
+        CatchUpStoppedStreams(Pools, MovedClaimStamp, bNoneStopped);
+    }
+
+    void FScenePrimitiveSet::ApplyMovedLegacy(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved)
+    {
+        const uint32 Count = (uint32)Moved.size();
+        ++StructureGeneration;
+        SyncStats.SyncEntityCalls += Count;
+
+        const uint32 Stamp = BeginMovedClaims();
         uint32* Claims = MovedClaimByEntityIndex.data();
 
         const auto ApplyOne = [this, &Pools, Stamp, Claims](ECS::FEntity Entity, TVector<uint32>* OutDirty)
@@ -3043,20 +3178,19 @@ namespace Lumina
             {
                 ApplyOne(Entity, nullptr);
             }
+            _mm_sfence();
             return;
         }
 
         SyncStats.RefreshInstanceCalls += Count;
 
-        if ((uint32)ParallelDirtySlots.size() < NumSlots)
-        {
-            ParallelDirtySlots.resize(NumSlots);
-        }
+        EnsureParallelBuckets();
         for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
         {
             Bucket.Slots.clear();
         }
 
+        // Streaming stores are not ordered by the join, so each range fences its own.
         Task::ParallelFor(Count, [&ApplyOne, Moved, this](const Task::FParallelRange& Range)
         {
             TVector<uint32>& Bucket = ParallelDirtySlots[Range.Thread].Slots;
@@ -3064,9 +3198,435 @@ namespace Lumina
             {
                 ApplyOne(Moved[i], &Bucket);
             }
+            _mm_sfence();
         }, 64);
 
         MergeParallelDirtySlots();
+    }
+
+    bool FScenePrimitiveSet::StreamEntityTransform(const FSyncPools& Pools, ECS::FEntity Entity, uint32 Record, FDirtySlotBucket& Bucket)
+    {
+        const uint32 EntityIndex = Entity.GetIndex();
+        const FStreamCacheEntry Entry = LookupStreamCacheEntry(Entity);
+        if (Entry.Kind == EStreamKind::CPUPath)
+        {
+            return false;
+        }
+        const STransformComponent* Transform = Entry.Kind == EStreamKind::Stream ? Pools.Transform->TryGet(Entity) : nullptr;
+        if (Transform == nullptr)
+        {
+            StreamTarget.Slots[Record] = kNoStreamSlot;
+            return true;
+        }
+
+        StreamRecord(StreamTarget.Records[Record], MakeStreamRecord(Transform->GetWorldMatrixCached(), Entry.LocalCenter, Entry.Radius));
+        StreamTarget.Slots[Record] = Entry.Slot;
+        const uint32 Slot = Entry.Slot;
+
+        MoveRecords[EntityIndex] = { StreamFrame, Record };
+        Bucket.Streamed.push_back(Entity);
+        const uint32 Block = Slot / kInstanceCullBlockSize;
+        if (Bucket.StreamedBlocks.empty() || Bucket.StreamedBlocks.back() != Block)
+        {
+            Bucket.StreamedBlocks.push_back(Block);
+        }
+        return true;
+    }
+
+    FScenePrimitiveSet::FStreamCacheEntry FScenePrimitiveSet::BuildStreamCacheEntry(ECS::FEntity Entity) const
+    {
+        FStreamCacheEntry Entry;
+        Entry.Generation = StreamCacheGeneration;
+        Entry.Entity     = Entity.Value;
+
+        const uint8 Mask = GetSourceMask(Entity) & kMovedSources;
+        if (Mask == 0)
+        {
+            Entry.Kind = EStreamKind::Skip;
+            return Entry;
+        }
+
+        // One instance slot of a plain mesh in place, since several sources, surfaces, bones or a foreground remap need the CPU path.
+        Entry.Kind = EStreamKind::CPUPath;
+        if ((Mask & (Mask - 1u)) != 0)
+        {
+            return Entry;
+        }
+        const uint32 Index = FindLinked(Entity, (EPrimitiveSource)Math::CountTrailingZeros64(Mask));
+        if (Index == Constants::kIndexNoneU32)
+        {
+            return Entry;
+        }
+        const FScenePrimitive& Prim = Primitives[Index];
+        if (Prim.SurfaceCount != 1u || Prim.Source == EPrimitiveSource::SkeletalMesh || IsRemappedForeground(Prim))
+        {
+            return Entry;
+        }
+        const uint32 Slot = Bindings[Prim.BindingBase].InstanceSlot;
+        if (Slot >= (uint32)RetainedCullEntries.size())
+        {
+            return Entry;
+        }
+
+        Entry.Kind        = EStreamKind::Stream;
+        Entry.Slot        = Slot;
+        Entry.LocalCenter = Prim.LocalCenter;
+        Entry.Radius      = Prim.LocalRadius * Math::Max(Prim.BoundsScale, 1.0f);
+        return Entry;
+    }
+
+    FScenePrimitiveSet::FStreamCacheEntry FScenePrimitiveSet::LookupStreamCacheEntry(ECS::FEntity Entity)
+    {
+        const uint32 EntityIndex = Entity.GetIndex();
+        FStreamCacheEntry* Cached = EntityIndex < (uint32)StreamCache.size() ? &StreamCache[EntityIndex] : nullptr;
+        if (Cached != nullptr && Cached->Generation == StreamCacheGeneration && Cached->Entity == Entity.Value)
+        {
+            return *Cached;
+        }
+
+        const FStreamCacheEntry Entry = BuildStreamCacheEntry(Entity);
+        if (Cached != nullptr)
+        {
+            *Cached = Entry;
+        }
+        return Entry;
+    }
+
+    void FScenePrimitiveSet::OpenStreamFrame()
+    {
+        if (MoveRecords.empty())
+        {
+            MoveRecords.resize((SIZE_T)ECS::FEntity::IndexMask + 1u);
+        }
+        // Zero is never a frame, so a wrapped counter clears the table rather than matching an old stamp.
+        if (++StreamFrame == 0u)
+        {
+            Algo::Fill(MoveRecords, FMoveRecordStamp{});
+            StreamFrame = 1u;
+        }
+        bStreamFrameOpen = true;
+    }
+
+    void FScenePrimitiveSet::ArmMoveStream(ECS::FRegistry& Registry, const FTransformStreamTarget& Target, uint32 MovedConsumer)
+    {
+        DisarmMoveStream(Registry);
+        StreamTarget = Target;
+        if (Target.Records == nullptr || Target.Slots == nullptr || Target.Capacity == 0 || !Jobs::IsInitialized())
+        {
+            return;
+        }
+
+        if (MoveLanes.size() < Jobs::GetNumThreadSlots())
+        {
+            MoveLanes.resize(Jobs::GetNumThreadSlots());
+        }
+        // Every streamable entity has a link, so the link table bounds the entity indices a mover can write for.
+        if (StreamCache.size() < LinksByEntityIndex.size())
+        {
+            StreamCache.resize(LinksByEntityIndex.size());
+        }
+        OpenStreamFrame();
+        MoveStreamNext.store(0u, std::memory_order_relaxed);
+
+        MoveWriter.Write    = &FScenePrimitiveSet::WriteFlatMove;
+        MoveWriter.Context  = this;
+        MoveWriter.Consumer = MovedConsumer;
+        bMoveStreamArmed = ECS::Utils::SetFlatMoveWriter(Registry, &MoveWriter);
+    }
+
+    void FScenePrimitiveSet::DisarmMoveStream(ECS::FRegistry& Registry)
+    {
+        if (!bMoveStreamArmed)
+        {
+            return;
+        }
+        ECS::Utils::ClearFlatMoveWriter(Registry, &MoveWriter);
+        bMoveStreamArmed = false;
+        for (FMoveStreamLane& Lane : MoveLanes)
+        {
+            Lane.Next = Lane.End = 0;
+            Lane.Streamed.clear();
+            Lane.Blocks.clear();
+            Lane.Rewrites.clear();
+        }
+        StreamTarget = {};
+    }
+
+    bool FScenePrimitiveSet::WriteFlatMove(void* Context, ECS::FEntity Entity, const FTransform& World)
+    {
+        return static_cast<FScenePrimitiveSet*>(Context)->WriteMove(Entity, World);
+    }
+
+    bool FScenePrimitiveSet::WriteMove(ECS::FEntity Entity, const FTransform& World)
+    {
+        const uint32 LaneIndex   = Jobs::GetWorkerIndex();
+        const uint32 EntityIndex = Entity.GetIndex();
+        if (LaneIndex >= (uint32)MoveLanes.size() || EntityIndex >= (uint32)StreamCache.size())
+        {
+            return false;
+        }
+        FMoveStreamLane& Lane = MoveLanes[LaneIndex];
+
+        FMoveRecordStamp& Stamp = MoveRecords[EntityIndex];
+        if (Stamp.Frame == StreamFrame)
+        {
+            if ((Stamp.Record & kMoveRewriteQueued) == 0u)
+            {
+                Stamp.Record |= kMoveRewriteQueued;
+                Lane.Rewrites.push_back(Entity);
+            }
+            return true;
+        }
+
+        const FStreamCacheEntry Entry = LookupStreamCacheEntry(Entity);
+        if (Entry.Kind != EStreamKind::Stream)
+        {
+            return Entry.Kind == EStreamKind::Skip;
+        }
+
+        if (Lane.Next == Lane.End)
+        {
+            const uint32 Begin = MoveStreamNext.fetch_add(kMoveStreamChunk, std::memory_order_relaxed);
+            if (Begin >= StreamTarget.Capacity)
+            {
+                return false;
+            }
+            Lane.Next = Begin;
+            Lane.End  = Math::Min(Begin + kMoveStreamChunk, StreamTarget.Capacity);
+        }
+        // No fence, since the locked operation that ends every job flushes a worker's write-combining buffers.
+        const uint32 Record = Lane.Next++;
+        StreamRecord(StreamTarget.Records[Record], MakeStreamRecord(World.GetMatrix(), Entry.LocalCenter, Entry.Radius));
+        StreamTarget.Slots[Record] = Entry.Slot;
+
+        // Zero is no frame, so a table cleared by a wrapped counter never reads as continuing.
+        Lane.Continuing += (Stamp.Frame != 0u && Stamp.Frame + 1u == StreamFrame) ? 1u : 0u;
+        Stamp = { StreamFrame, Record };
+        Lane.Streamed.push_back(Entity);
+        const uint32 Block = Entry.Slot / kInstanceCullBlockSize;
+        if (Lane.Blocks.empty() || Lane.Blocks.back() != Block)
+        {
+            Lane.Blocks.push_back(Block);
+        }
+        return true;
+    }
+
+    uint32 FScenePrimitiveSet::SealMoveStream(ECS::FRegistry& Registry)
+    {
+        if (!bMoveStreamArmed)
+        {
+            return 0u;
+        }
+
+        LUMINA_PROFILE_SECTION("Sync/Seal Move Stream");
+        ECS::Utils::ClearFlatMoveWriter(Registry, &MoveWriter);
+        bMoveStreamArmed = false;
+
+        const uint32 Used = Math::Min(MoveStreamNext.load(std::memory_order_relaxed), StreamTarget.Capacity);
+        bool bRewrites = false;
+        for (FMoveStreamLane& Lane : MoveLanes)
+        {
+            ContinuingStreams += Lane.Continuing;
+            Lane.Continuing = 0;
+            // The rest of the lane's last chunk was claimed but never written.
+            for (uint32 Record = Lane.Next; Record < Lane.End; ++Record)
+            {
+                StreamTarget.Slots[Record] = kNoStreamSlot;
+            }
+            Lane.Next = Lane.End = 0;
+
+            StreamedThisFrame.Take(Lane.Streamed);
+            StreamedBlocks.insert(StreamedBlocks.end(), Lane.Blocks.begin(), Lane.Blocks.end());
+            Lane.Blocks.clear();
+            bRewrites |= !Lane.Rewrites.empty();
+        }
+
+        if (bRewrites)
+        {
+            const FSyncPools Pools(Registry);
+            for (FMoveStreamLane& Lane : MoveLanes)
+            {
+                for (ECS::FEntity Entity : Lane.Rewrites)
+                {
+                    FMoveRecordStamp& Stamp = MoveRecords[Entity.GetIndex()];
+                    Stamp.Record &= ~kMoveRewriteQueued;
+                    const STransformComponent* Transform = Pools.Transform->TryGet(Entity);
+                    if (Transform != nullptr && Stamp.Record < Used)
+                    {
+                        const FStreamCacheEntry& Entry = StreamCache[Entity.GetIndex()];
+                        StreamRecord(StreamTarget.Records[Stamp.Record], MakeStreamRecord(Transform->GetWorldMatrixCached(), Entry.LocalCenter, Entry.Radius));
+                    }
+                }
+                Lane.Rewrites.clear();
+            }
+        }
+        _mm_sfence();
+
+        if (!bDiscardMoveStream)
+        {
+            return Used;
+        }
+
+        // Records past the frame's count never reach the GPU, so dropping them only needs their movers replayed.
+        bDiscardMoveStream = false;
+        bStreamListsExact  = false;
+        MoveReplay.clear();
+        for (uint32 List = 0; List < StreamedThisFrame.Used; ++List)
+        {
+            MoveReplay.insert(MoveReplay.end(), StreamedThisFrame.Lists[List].begin(), StreamedThisFrame.Lists[List].end());
+        }
+        for (ECS::FEntity Entity : MoveReplay)
+        {
+            MoveRecords[Entity.GetIndex()].Record = kNoStreamSlot;
+        }
+        StreamedThisFrame.Clear();
+        StreamedBlocks.clear();
+        return 0u;
+    }
+
+    void FScenePrimitiveSet::KillMoveRecord(ECS::FEntity Entity)
+    {
+        const uint32 Index = Entity.GetIndex();
+        if (Index >= (uint32)MoveRecords.size() || MoveRecords[Index].Frame != StreamFrame)
+        {
+            return;
+        }
+        FMoveRecordStamp& Stamp = MoveRecords[Index];
+        const uint32 Record = Stamp.Record & ~kMoveRewriteQueued;
+        if (Record < StreamTarget.Capacity && StreamTarget.Slots != nullptr)
+        {
+            StreamTarget.Slots[Record] = kNoStreamSlot;
+        }
+        Stamp.Record = kNoStreamSlot;
+    }
+
+    void FScenePrimitiveSet::InvalidateStreamCache(ECS::FEntity Entity)
+    {
+        const uint32 EntityIndex = Entity.GetIndex();
+        if (EntityIndex < (uint32)StreamCache.size())
+        {
+            StreamCache[EntityIndex].Generation = 0u;
+        }
+    }
+
+    void FScenePrimitiveSet::InvalidateAllStreamCache()
+    {
+        // Zero marks an empty entry, so a wrapped generation clears the table instead.
+        if (++StreamCacheGeneration == 0u)
+        {
+            std::fill(StreamCache.begin(), StreamCache.end(), FStreamCacheEntry{});
+            StreamCacheGeneration = 1u;
+        }
+    }
+
+    void FScenePrimitiveSet::StreamMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved)
+    {
+        LUMINA_PROFILE_SECTION("Sync/Apply/Stream");
+
+        const uint32 Count = (uint32)Moved.size();
+        ++StructureGeneration;
+        SyncStats.SyncEntityCalls += Count;
+
+        // Every streamable entity has a link, so the link table bounds the entity indices worth caching.
+        if (StreamCache.size() < LinksByEntityIndex.size())
+        {
+            StreamCache.resize(LinksByEntityIndex.size());
+        }
+        const uint32 Stamp = BeginMovedClaims();
+        uint32* Claims = MovedClaimByEntityIndex.data();
+
+        EnsureParallelBuckets();
+        for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
+        {
+            Bucket.Slots.clear();
+            Bucket.Streamed.clear();
+            Bucket.StreamedBlocks.clear();
+        }
+
+        // Record i belongs to Moved[i], so a duplicate mover streams twice harmlessly and only the CPU path claims, since a locked exchange drains write-combining.
+        const auto StreamOne = [this, &Pools, Stamp, Claims](ECS::FEntity Entity, uint32 Record, FDirtySlotBucket& Bucket)
+        {
+            if (Entity != ECS::NullEntity && !HasCoalescedRecord(Entity))
+            {
+                if (StreamEntityTransform(Pools, Entity, Record, Bucket))
+                {
+                    return;
+                }
+                if (std::atomic_ref<uint32>(Claims[Entity.GetIndex()]).exchange(Stamp, std::memory_order_relaxed) != Stamp)
+                {
+                    ApplyEntityTransform(Pools, Entity, kMovedSources, &Bucket.Slots);
+                }
+            }
+            StreamTarget.Slots[Record] = kNoStreamSlot;
+        };
+
+        const uint32 Base = StreamCount;
+        Task::ParallelFor(Count, [&StreamOne, Moved, Base, this](const Task::FParallelRange& Range)
+        {
+            FDirtySlotBucket& Bucket = ParallelDirtySlots[Range.Thread];
+            for (uint32 i = Range.Start; i < Range.End; ++i)
+            {
+                StreamOne(Moved[i], Base + i, Bucket);
+            }
+            _mm_sfence();
+        }, 64);
+
+        MergeParallelDirtySlots();
+
+        for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
+        {
+            StreamedThisFrame.Take(Bucket.Streamed);
+            StreamedBlocks.insert(StreamedBlocks.end(), Bucket.StreamedBlocks.begin(), Bucket.StreamedBlocks.end());
+        }
+
+        StreamCount = Base + Count;
+    }
+
+    void FScenePrimitiveSet::CatchUpStoppedStreams(const FSyncPools& Pools, uint32 MovedStamp, bool bNoneStopped)
+    {
+        StoppedScratch.clear();
+        if (!StreamedLastFrame.IsEmpty() && !bNoneStopped)
+        {
+            LUMINA_PROFILE_SECTION("Sync/Apply/CatchUp");
+
+            EnsureParallelBuckets();
+            for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
+            {
+                Bucket.Stopped.clear();
+            }
+
+            // Streamed again, or moved through the CPU path this frame, means its copies are already handled.
+            const FMoveRecordStamp* Streamed = MoveRecords.data();
+            const uint32* Claims   = MovedClaimByEntityIndex.data();
+            const uint32  Frame    = StreamFrame;
+            Task::ParallelForOrSerial(StreamedLastFrame.Used, 1, [&](const Task::FParallelRange& Range)
+            {
+                TVector<ECS::FEntity>& Stopped = ParallelDirtySlots[Range.Thread < (uint32)ParallelDirtySlots.size() ? Range.Thread : 0u].Stopped;
+                for (uint32 List = Range.Start; List < Range.End; ++List)
+                {
+                    for (const ECS::FEntity Entity : StreamedLastFrame.Lists[List])
+                    {
+                        const uint32 Index = Entity.GetIndex();
+                        if (Streamed[Index].Frame != Frame && Claims[Index] != MovedStamp)
+                        {
+                            Stopped.push_back(Entity);
+                        }
+                    }
+                }
+            });
+            for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
+            {
+                StoppedScratch.insert(StoppedScratch.end(), Bucket.Stopped.begin(), Bucket.Stopped.end());
+            }
+        }
+
+        std::swap(StreamedLastFrame, StreamedThisFrame);
+        StreamedThisFrame.Clear();
+
+        if (!StoppedScratch.empty())
+        {
+            ApplyMovedLegacy(Pools, TSpan<const ECS::FEntity>(StoppedScratch.data(), StoppedScratch.size()));
+        }
     }
 
     void FScenePrimitiveSet::MergeParallelDirtySlots()
@@ -3121,6 +3681,7 @@ namespace Lumina
                 // A nullptr sink goes straight onto the shared list, thresholds and all.
                 ApplyTransformRecord(Pools, RecordIndex, nullptr);
             }
+            _mm_sfence();
             return;
         }
 
@@ -3143,6 +3704,7 @@ namespace Lumina
             {
                 ApplyTransformRecord(Pools, TransformRecords[i], &Bucket);
             }
+            _mm_sfence();
         }, 64);
 
         MergeParallelDirtySlots();
@@ -3154,6 +3716,14 @@ namespace Lumina
         FRenderDirtyTracker& Tracker  = FRenderDirtyTracker::Ensure(Registry);
 
         SyncStats = FSyncStats{};
+        StreamedBlocks.clear();
+        StreamCount = SealMoveStream(Registry);
+        MoveTimeRecords = StreamCount;
+        if (!bStreamFrameOpen)
+        {
+            OpenStreamFrame();
+        }
+        bStreamFrameOpen = false;
 
         {
             LUMINA_PROFILE_SECTION("Sync/Poll");
@@ -3162,7 +3732,7 @@ namespace Lumina
 
         ApplyFoliageVisibilityEdits(Registry);
 
-        if (!Tracker.HasPending() && !bResolveTableChanged && Moved.empty())
+        if (!Tracker.HasPending() && !bResolveTableChanged && Moved.empty() && StreamedLastFrame.IsEmpty() && StreamedThisFrame.IsEmpty() && MoveReplay.empty())
         {
             return;
         }
@@ -3176,6 +3746,15 @@ namespace Lumina
             Tracker.Drain(DrainScratch);
             DrainScratch.clear();
             bResolveTableChanged = false;
+            // Rebuilt from the ECS, so nothing streamed is behind any more.
+            InvalidateAllStreamCache();
+            StreamCount = 0;
+            ContinuingStreams = 0;
+            bStreamListsExact = false;
+            MoveReplay.clear();
+            StreamedLastFrame.Clear();
+            StreamedThisFrame.Clear();
+            StreamedBlocks.clear();
             FullRescan(Registry);
             PublishSyncStats();
             return;
@@ -3302,6 +3881,18 @@ namespace Lumina
     // Every active slot contributes its surface's LARGEST LOD, a true bound on one view's appends.
     void FScenePrimitiveSet::Reset(ECS::FRegistry* Registry)
     {
+        if (Registry != nullptr)
+        {
+            DisarmMoveStream(*Registry);
+        }
+        MoveReplay.clear();
+        ContinuingStreams = 0;
+        bStreamListsExact = false;
+        InvalidateAllStreamCache();
+        StreamedLastFrame.Clear();
+        StreamedThisFrame.Clear();
+        StreamedBlocks.clear();
+        StreamCount = 0;
         Primitives.clear();
         Bounds.clear();
         CullData.clear();

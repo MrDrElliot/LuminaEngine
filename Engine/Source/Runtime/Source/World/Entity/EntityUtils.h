@@ -87,9 +87,23 @@ namespace Lumina::ECS::Utils
 	 * opaque state instead meant every GetWorld* re-derived the state from the registry context first --
 	 * a type-keyed hash lookup, per call, to discover that nothing had moved.
 	 */
+	// Takes a flat entity's move as it happens, while its transform is still hot, for a consumer that would otherwise re-read every mover after the drain.
+	struct FFlatMoveWriter
+	{
+		// False hands the move to the consumer's moved list as usual.
+		bool (*Write)(void* Context, ECS::FEntity Entity, const FTransform& World) = nullptr;
+		void*  Context  = nullptr;
+
+		// The moved list this writer stands in for, which a taken move then skips.
+		uint32 Consumer = Constants::kIndexNoneU32;
+	};
+
 	struct FTransformDirtyGate
 	{
 		std::atomic<bool> bAnyDirty{ true };
+
+		// Set and cleared only between frames, while no system writes transforms.
+		std::atomic<const FFlatMoveWriter*> FlatMoveWriter{ nullptr };
 
 		/**
 		 * Bumped once per drain of the moved channel (i.e. once a frame). A flat setter publishes only when
@@ -118,7 +132,21 @@ namespace Lumina::ECS::Utils
 	RUNTIME_API bool IsEntityTransformFlat(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
 	// A flat setter already made world equal local, so this only records the move for the render sync and queues a bodied entity's physics re-sync, without raising the dirty signal.
-	RUNTIME_API void PublishFlatMove(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bPublish, bool bQueueBody);
+	// A move the gate's writer took skips that writer's consumer.
+	RUNTIME_API void PublishFlatMove(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bPublish, bool bQueueBody, bool bTaken);
+
+	// Offers a flat move to the gate's writer, reporting whether it took it.
+	FORCEINLINE bool TakeFlatMove(const FTransformDirtyGate* Gate, ECS::FEntity Entity, const FTransform& World)
+	{
+		const FFlatMoveWriter* Writer = Gate != nullptr ? Gate->FlatMoveWriter.load(std::memory_order_acquire) : nullptr;
+		return Writer != nullptr && Writer->Write(Writer->Context, Entity, World);
+	}
+
+	// Installs a writer for the registry's flat moves, false when another holds the gate. Only while no system writes transforms.
+	RUNTIME_API bool SetFlatMoveWriter(ECS::FRegistry& Registry, const FFlatMoveWriter* Writer);
+
+	// Removes the writer if it is still the installed one.
+	RUNTIME_API void ClearFlatMoveWriter(ECS::FRegistry& Registry, const FFlatMoveWriter* Writer);
 
 	// Enqueue an entity whose local transform changed (lock-free, any thread); raises the dirty signal.
 	// The two queues are independent, each deduped by its own guard on the caller (bWorldDirty /
@@ -128,7 +156,11 @@ namespace Lumina::ECS::Utils
 
 
 	// Start recording which entities the resolve moved for one more consumer, such as the render scene or navigation, each draining its own copy.
-	RUNTIME_API uint32 AddMovedTransformConsumer(ECS::FRegistry& Registry);
+	// A filtered consumer records only the entities it marks with SetMovedTransformInterest, so a world of moving props costs it nothing.
+	RUNTIME_API uint32 AddMovedTransformConsumer(ECS::FRegistry& Registry, bool bFiltered = false);
+
+	// Whether a filtered consumer records this entity's moves. Only while no system writes transforms, since publishers read it unlocked.
+	RUNTIME_API void SetMovedTransformInterest(ECS::FRegistry& Registry, uint32 Consumer, ECS::FEntity Entity, bool bInterested);
 	RUNTIME_API void RemoveMovedTransformConsumer(ECS::FRegistry& Registry, uint32 Consumer);
 
 	// Appends every entity moved since this consumer last drained. Game thread. False when none.

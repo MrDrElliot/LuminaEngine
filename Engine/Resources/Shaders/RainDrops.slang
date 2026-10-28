@@ -2,6 +2,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/Weather.slang"
 #include "Includes/RainCommon.slang"
+#include "Includes/WaveAtomics.slang"
 
 struct FPushConstants
 {
@@ -64,7 +65,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float Fade = saturate((Radius - Dist) / (Radius * 0.25)) * saturate((Dist - kRainNearClip) / 1.2);
     const float3 Light = RainLightAt(Drop.Position);
 
-    uint Slot;
-    InterlockedAdd(Pass().Args.At(1u)[0], 1u, Slot);
+    const uint Slot = WaveInterlockedAdd(Pass().Args.At(1u), 1u);
     Pass().Visible.Set(Slot, uint4(Index, PackHalf2(Light.rg), PackHalf2(float2(Light.b, Fade)), 0u));
 }

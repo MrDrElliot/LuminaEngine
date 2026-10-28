@@ -41,7 +41,7 @@ namespace Lumina
 		Params.FadeInSeconds     = FadeInTime;
 		Params.bUseOcclusion     = Occlusion.bEnabled;
 
-		const FSoundPlayResult Started = Audio::PlaySound(Sound.Get(), Params);
+		const FSoundPlayResult Started = Audio::PlaySound(Sound.Get(), Params, GraphParameters);
 		ActiveHandle  = Started.Handle;
 		GraphInstance = Started.GraphInstance;
 

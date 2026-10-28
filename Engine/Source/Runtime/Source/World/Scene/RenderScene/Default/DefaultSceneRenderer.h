@@ -361,6 +361,11 @@ namespace Lumina
                     uint32                      MaxSurfaceDescMeshlets = 0;
 
                     uint32                      MeshletVisibilityWords = 0;
+
+                    // Moved instances the extract wrote straight to GPU-visible memory, scattered after the uploads above.
+                    RHI::FGPURange              StreamRecords;
+                    RHI::FGPURange              StreamSlots;
+                    uint32                      StreamCount = 0;
                 } RetainedUpload;
             } Geometry;
 
@@ -635,6 +640,8 @@ namespace Lumina
             CloudNoise,
             CloudScatter,
             CloudDepth,
+            CloudScatterHistory,
+            CloudDepthHistory,
             CloudShadow,
             BRDFLut,
             SkyCube,
@@ -686,6 +693,9 @@ namespace Lumina
             FSceneImage                                     BloomChainImage;
             // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
             bool                                            bCloudNoiseBaked = false;
+            // Picks which texel of each 2x2 block the clouds march this frame, the rest coming from history.
+            uint32                                          CloudFrame = 0;
+            bool                                            bCloudHistoryValid = false;
             RHI::EQueueType                                 CloudNoiseQueue  = RHI::EQueueType::Graphics;
             RHI::FGPUAllocation                                    ClusterBuffer;
             RHI::FGPUAllocation                                    ClusterLightMaskBuffer;
@@ -1586,6 +1596,13 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight> SkinWorkEntryRing = MakeSceneRing<RHI::kFramesInFlight>("Skinning.WorkEntry", 1.5f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> SkinDispatchArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.SkinDispatchArgs", 1.0f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MeshletCullDispatchArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshletCullDispatchArgs", 1.0f);
+        // One slice more than frames in flight, since movers fill the next frame's slice before that frame waits on its fence.
+        static constexpr uint32 kTransformStreamSlices = RHI::kFramesInFlight + 1;
+        // CPU-written per frame, the moved transforms the movers and the extract stream for the GPU to scatter.
+        TArray<FSceneBuffer, kTransformStreamSlices> TransformStreamRing = MakeSceneRing<kTransformStreamSlices>("Scene.TransformStream", 1.25f);
+        uint32                                       TransformStreamSlot = 0;
+        // Counts extracts, which picks each frame's slice so a slice is reused only after its frame's fence.
+        uint64                                       TransformStreamSerial = 0;
         TArray<FSceneBuffer, RHI::kFramesInFlight> InstanceViewRangeRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.InstanceViewRanges", 1.25f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> TotalsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.Totals", 1.0f);
         TArray<bool, RHI::kFramesInFlight>                                  TotalsZeroed = {};
@@ -1601,12 +1618,17 @@ namespace Lumina
         FSceneBuffer SunDFCellItemBuffer  { "SunDF.CellItems",  1.0f, EBufferInit::Undefined, false };
         FSceneBuffer SunDFCounterBuffer   { "SunDF.Counters",   1.0f, EBufferInit::Zeroed,    false };
         FSceneBuffer SunDFBlockListBuffer { "SunDF.Blocks",     1.5f, EBufferInit::Undefined };
+        FSceneBuffer SunDFLargeObjectBuffer { "SunDF.LargeObjects", 1.0f, EBufferInit::Undefined, false };
         static constexpr uint32 kSunDFGridDimension = 128u;
         static constexpr uint32 kSunDFCellCapacity  = 32u;
         static constexpr uint32 kSunDFMaxObjects    = 16384u;
+        static constexpr uint32 kTransformStreamGroupSize = 64u;
+        // A caster past this count bins in the cull pass itself, slower but never dropped.
+        static constexpr uint32 kSunDFMaxLargeCasters = 256u;
         bool                    bSunDFGridReady     = false;
         TVector<FInstanceBlockBounds> InstanceBlockBounds;
         TVector<uint32>               DirtyInstanceBlocks;
+        TVector<uint32>               BlockMergeScratch;
         // Per block, whether it holds a distance-field caster, and the compact list the sun's distance-field cull walks.
         TVector<uint8>                InstanceBlockHasDF;
         TVector<uint32>               DistanceFieldBlocks;
@@ -1672,6 +1694,12 @@ namespace Lumina
         void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
 
         void PublishRetainedUpload();
+
+        // Room for this many moved records in this frame slot's stream, or an empty target when it cannot be had.
+        FTransformStreamTarget ReserveTransformStream(uint64 Serial, uint32 NumMoved);
+        // Opens the next frame's slice to the movers, when this frame moved enough to be worth it.
+        void ArmTransformStream(ECS::FRegistry& Registry);
+        void ScatterTransformStream(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
 
         std::atomic<uint32>                                 RetainedDeviceCapacity{0};
 

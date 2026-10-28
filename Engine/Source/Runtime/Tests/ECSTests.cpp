@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "World/ECS/Registry.h"
+#include "Containers/Algorithm.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Versioning/CoreVersion.h"
 #include "World/Entity/EntityUtils.h"
@@ -629,4 +630,105 @@ TEST(ECSTests, MaxLiveIndexSkipsTombstones)
         Registry.Remove<STransformComponent>(Entity);
     }
     EXPECT_EQ(Pool->MaxLiveIndex(), 0u);
+}
+
+// A filtered consumer hears only about the entities it marked, while an unfiltered one still hears about every move.
+TEST(ECSTests, FilteredMovedConsumerSeesOnlyItsEntities)
+{
+    ECS::FRegistry Registry{};
+    const uint32 Everything = ECS::Utils::AddMovedTransformConsumer(Registry);
+    const uint32 Filtered   = ECS::Utils::AddMovedTransformConsumer(Registry, true);
+
+    const ECS::FEntity Watched = Registry.Create();
+    const ECS::FEntity Ignored = Registry.Create();
+    Registry.Emplace<STransformComponent>(Watched).LocalTransform.SetLocation(FVector3(1.f, 0.f, 0.f));
+    Registry.Emplace<STransformComponent>(Ignored).LocalTransform.SetLocation(FVector3(2.f, 0.f, 0.f));
+    ECS::Utils::SetMovedTransformInterest(Registry, Filtered, Watched, true);
+
+    Registry.Emplace<FNeedsTransformUpdate>(Watched);
+    Registry.Emplace<FNeedsTransformUpdate>(Ignored);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    TVector<ECS::FEntity> All;
+    TVector<ECS::FEntity> Some;
+    ECS::Utils::DrainMovedTransforms(Registry, Everything, All);
+    ECS::Utils::DrainMovedTransforms(Registry, Filtered, Some);
+    EXPECT_TRUE(Algo::Contains(All, Watched));
+    EXPECT_TRUE(Algo::Contains(All, Ignored));
+    ASSERT_EQ(Some.size(), 1u);
+    EXPECT_EQ(Some[0], Watched);
+
+    // Dropping interest stops the next move from reaching it.
+    ECS::Utils::SetMovedTransformInterest(Registry, Filtered, Watched, false);
+    Registry.Get<STransformComponent>(Watched).LocalTransform.SetLocation(FVector3(3.f, 0.f, 0.f));
+    Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Watched);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+    Some.clear();
+    ECS::Utils::DrainMovedTransforms(Registry, Filtered, Some);
+    EXPECT_TRUE(Some.empty());
+}
+
+// A writer on the gate is offered every flat move, repeats included, and a move it takes skips only its own consumer's list.
+TEST(ECSTests, FlatMoveWriterTakesMovesForItsConsumer)
+{
+    ECS::FRegistry Registry{};
+    const uint32 Written = ECS::Utils::AddMovedTransformConsumer(Registry);
+    const uint32 Other   = ECS::Utils::AddMovedTransformConsumer(Registry);
+
+    const ECS::FEntity Taken   = Registry.Create();
+    const ECS::FEntity Refused = Registry.Create();
+    // A world binds each transform as it is made, which a bare registry leaves to the caller.
+    Registry.Emplace<STransformComponent>(Taken).Bind(Registry, Taken);
+    Registry.Emplace<STransformComponent>(Refused).Bind(Registry, Refused);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    TVector<ECS::FEntity> Settled;
+    ECS::Utils::DrainMovedTransforms(Registry, Written, Settled);
+    ECS::Utils::DrainMovedTransforms(Registry, Other, Settled);
+
+    struct FSeen
+    {
+        TVector<ECS::FEntity> Moves;
+        ECS::FEntity          Refuse = ECS::NullEntity;
+        FVector3              Last = FVector3(0.0f);
+    } Seen;
+    Seen.Refuse = Refused;
+
+    ECS::Utils::FFlatMoveWriter Writer;
+    Writer.Write = [](void* Context, ECS::FEntity Entity, const FTransform& World)
+    {
+        FSeen& State = *static_cast<FSeen*>(Context);
+        State.Moves.push_back(Entity);
+        State.Last = World.GetLocation();
+        return Entity != State.Refuse;
+    };
+    Writer.Context  = &Seen;
+    Writer.Consumer = Written;
+    ASSERT_TRUE(ECS::Utils::SetFlatMoveWriter(Registry, &Writer));
+
+    ECS::Utils::FFlatMoveWriter Rival = Writer;
+    EXPECT_FALSE(ECS::Utils::SetFlatMoveWriter(Registry, &Rival));
+
+    Registry.Get<STransformComponent>(Taken).SetLocalLocation(FVector3(1.0f, 0.0f, 0.0f));
+    Registry.Get<STransformComponent>(Taken).SetLocalLocation(FVector3(2.0f, 0.0f, 0.0f));
+    Registry.Get<STransformComponent>(Refused).SetLocalLocation(FVector3(3.0f, 0.0f, 0.0f));
+    EXPECT_EQ(Seen.Moves.size(), 3u);
+    EXPECT_TRUE(Seen.Last == FVector3(3.0f, 0.0f, 0.0f));
+
+    TVector<ECS::FEntity> WrittenMoves;
+    TVector<ECS::FEntity> OtherMoves;
+    ECS::Utils::DrainMovedTransforms(Registry, Written, WrittenMoves);
+    ECS::Utils::DrainMovedTransforms(Registry, Other, OtherMoves);
+    EXPECT_FALSE(Algo::Contains(WrittenMoves, Taken));
+    EXPECT_TRUE(Algo::Contains(WrittenMoves, Refused));
+    EXPECT_TRUE(Algo::Contains(OtherMoves, Taken));
+    EXPECT_TRUE(Algo::Contains(OtherMoves, Refused));
+
+    // Cleared, the next move reaches the consumer's list again.
+    ECS::Utils::ClearFlatMoveWriter(Registry, &Writer);
+    Registry.Get<STransformComponent>(Taken).SetLocalLocation(FVector3(4.0f, 0.0f, 0.0f));
+    WrittenMoves.clear();
+    ECS::Utils::DrainMovedTransforms(Registry, Written, WrittenMoves);
+    EXPECT_TRUE(Algo::Contains(WrittenMoves, Taken));
+    EXPECT_EQ(Seen.Moves.size(), 3u);
 }

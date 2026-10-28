@@ -2,6 +2,7 @@
 
 #include "Includes/SceneGlobals.slang"
 #include "Includes/TerrainCommon.slang"
+#include "Includes/WaveAtomics.slang"
 
 #define LOCAL_SIZE_X 8
 #define LOCAL_SIZE_Y 8
@@ -191,8 +192,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
         TiltQuat.w * YawQuat.xyz + YawQuat.w * TiltQuat.xyz + cross(TiltQuat.xyz, YawQuat.xyz),
         TiltQuat.w * YawQuat.w - dot(TiltQuat.xyz, YawQuat.xyz));
 
-    uint Slot;
-    InterlockedAdd((P->OutCursor).At(0u)[0], 1u, Slot);
+    const uint Slot = WaveInterlockedAdd((P->OutCursor).At(0u), 1u);
     if (!(P->OutCullEntries).Contains(Slot))
     {
         // Over budget, so hold the cursor at capacity and nothing writes past the reserved block.

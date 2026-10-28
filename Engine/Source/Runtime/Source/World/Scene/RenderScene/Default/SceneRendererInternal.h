@@ -13,6 +13,7 @@
 #include "Core/Windows/Window.h"
 #include "Memory/MemoryTracking.h"
 #include "Paths/Paths.h"
+#include "Platform/Process/PlatformProcess.h"
 #include "Renderer/MeshletHeaderSlab.h"
 #include "Renderer/RendererUtils.h"
 #include "Renderer/ShaderCompiler.h"
@@ -254,8 +255,16 @@ namespace Lumina
     struct FScopedGPUMarker
     {
         RHI::FCmdListH CL;
-        FScopedGPUMarker(RHI::FCmdListH InCL, const char* Name) : CL(InCL) { RHI::CmdBeginMarker(CL, Name); }
-        ~FScopedGPUMarker() { RHI::CmdEndMarker(CL); }
+        static void SerializeForTiming(RHI::FCmdListH InCL)
+        {
+            static const bool bSerialize = !Platform::GetEnvVariable("LUMINA_SERIAL_GPU_SCOPES").empty();
+            if (bSerialize)
+            {
+                RHI::CmdBarrier(InCL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::AllCommands);
+            }
+        }
+        FScopedGPUMarker(RHI::FCmdListH InCL, const char* Name) : CL(InCL) { SerializeForTiming(CL); RHI::CmdBeginMarker(CL, Name); }
+        ~FScopedGPUMarker() { SerializeForTiming(CL); RHI::CmdEndMarker(CL); }
         FScopedGPUMarker(const FScopedGPUMarker&) = delete;
         FScopedGPUMarker& operator=(const FScopedGPUMarker&) = delete;
         FScopedGPUMarker(FScopedGPUMarker&&) = delete;

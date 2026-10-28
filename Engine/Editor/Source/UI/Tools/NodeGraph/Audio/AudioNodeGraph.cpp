@@ -4,6 +4,7 @@
 #include "AudioGraphNode.h"
 #include "Nodes/AudioNodes_Generators.h"
 #include "AudioGraphSchema.h"
+#include "Audio/Graph/AudioGraphInstance.h"
 #include "Audio/Graph/AudioGraphOperator.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Core/Object/Cast.h"
@@ -24,12 +25,34 @@ namespace Lumina
 
     void CAudioNodeGraph::EnsureRootNodes()
     {
-        if (FindOutputNode() != nullptr)
+        if (FindOutputNode() == nullptr)
         {
-            return;
+            CreateNode(CAudioGraphOutputNode::StaticClass());
         }
 
-        CreateNode(CAudioGraphOutputNode::StaticClass());
+        if (FindOnPlayNode() == nullptr)
+        {
+            // Typed before AddNode, because AddNode builds the pin from the type.
+            CAudioGraphInputNode* OnPlay = NewObject<CAudioGraphInputNode>(GetNodeOuter());
+            OnPlay->ParameterName = FName(kAudioGraphOnPlayInput);
+            OnPlay->Type          = EAudioGraphType::Trigger;
+            AddNode(OnPlay);
+            OnPlay->SetGridPos(-400.0f, 0.0f);
+        }
+    }
+
+    CAudioGraphInputNode* CAudioNodeGraph::FindOnPlayNode() const
+    {
+        const FName OnPlayName = FName(kAudioGraphOnPlayInput);
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            CAudioGraphInputNode* Input = Node.IsValid() ? Cast<CAudioGraphInputNode>(Node.Get()) : nullptr;
+            if (Input != nullptr && Input->ParameterName == OnPlayName)
+            {
+                return Input;
+            }
+        }
+        return nullptr;
     }
 
     CAudioGraphOutputNode* CAudioNodeGraph::FindOutputNode() const
@@ -78,9 +101,52 @@ namespace Lumina
                     Node->Wave = Dropped;
                     Node->NotifyValueEdited();
                     PlaceNodeAtScreen(Node, ImGui::GetMousePos());
+                    WireDroppedWavePlayer(Node);
                 }
             }
             ImGui::EndDragDropTarget();
+        }
+    }
+
+    namespace
+    {
+        CEdNodeGraphPin* FindPinNamed(const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& Pins, const char* Name)
+        {
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            {
+                if (Pin.IsValid() && Pin->GetPinName() == Name)
+                {
+                    return Pin.Get();
+                }
+            }
+            return nullptr;
+        }
+    }
+
+    void CAudioNodeGraph::WireDroppedWavePlayer(CAudioNode_WavePlayer* Player)
+    {
+        CAudioGraphInputNode* OnPlay = FindOnPlayNode();
+        CEdNodeGraphPin* Play = FindPinNamed(Player->GetInputPins(), "Play");
+        if (OnPlay != nullptr && OnPlay->Type == EAudioGraphType::Trigger && !OnPlay->GetOutputPins().empty() && Play != nullptr)
+        {
+            ConnectPins(OnPlay->GetOutputPins()[0].Get(), Play);
+        }
+
+        // Output inputs already in use stay as the designer wired them.
+        CAudioGraphOutputNode* Output = FindOutputNode();
+        if (Output == nullptr)
+        {
+            return;
+        }
+
+        for (const char* PinName : { "Out Left", "Out Right", "On Finished" })
+        {
+            CEdNodeGraphPin* Destination = FindPinNamed(Output->GetInputPins(), PinName);
+            CEdNodeGraphPin* Source      = FindPinNamed(Player->GetOutputPins(), PinName);
+            if (Destination != nullptr && Source != nullptr && !Destination->HasConnection())
+            {
+                ConnectPins(Source, Destination);
+            }
         }
     }
 

@@ -24,7 +24,7 @@ namespace Lumina
     };
 
     /** Flattens an editor audio graph into the program the mixer runs. */
-    class FAudioGraphCompiler
+    class EDITOR_API FAudioGraphCompiler
     {
     public:
 

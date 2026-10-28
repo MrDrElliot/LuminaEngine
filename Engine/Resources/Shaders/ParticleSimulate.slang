@@ -131,9 +131,8 @@ void ComputeMain(uint3 GroupId : SV_GroupID, uint Lane : SV_GroupIndex)
     if (!bAlive)
     {
         // The first SpawnCount dead particles to win the counter spawn this frame.
-        uint myAlloc;
-        InterlockedAdd(SpawnCounter().At(0u)[0], 1u, myAlloc);
-        if (myAlloc < SimParams().Counts.y)
+        const uint Claim = WaveInterlockedAdd(SpawnCounter().At(0u), 1u);
+        if (Claim < SimParams().Counts.y)
         {
             SpawnParticle(Index, P);
         }

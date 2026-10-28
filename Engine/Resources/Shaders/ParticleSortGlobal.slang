@@ -65,7 +65,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 DispatchID : SV_DispatchThrea
                     const uint MaxKey = (1u << PARTICLE_GLOBAL_SORT_KEY_BITS) - 2u;
                     const uint Value  = (uint)(saturate(ParticleSortValue(P, GetCameraPosition(), Pass().SortMode)) * (float)MaxKey);
                     Key = (Value << PARTICLE_GLOBAL_SORT_INDEX_BITS) | Index;
-                    InterlockedAdd(Pass().Counters.At(kLiveCounter)[0], 1u);
+                    WaveInterlockedAddNoReturn(Pass().Counters.At(kLiveCounter), 1u);
                 }
             }
             Pass().Keys.Set(Index, Key);

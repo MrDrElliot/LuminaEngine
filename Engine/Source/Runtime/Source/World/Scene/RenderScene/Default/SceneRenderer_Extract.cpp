@@ -688,17 +688,84 @@ namespace Lumina
 
         ScenePrimitives.SetForegroundView(ExtractFrame->ViewVolume, ExtractFrame->ViewLayers);
 
+        ++TransformStreamSerial;
         MovedTransformScratch.clear();
-        ECS::Utils::DrainMovedTransforms(Registry, MovedTransformConsumer, MovedTransformScratch);
+        {
+            LUMINA_PROFILE_SECTION("Drain Moved Transforms");
+            ECS::Utils::DrainMovedTransforms(Registry, MovedTransformConsumer, MovedTransformScratch);
+        }
+        // An armed stream already holds what the movers wrote, and takes the drained rest after it.
+        if (!ScenePrimitives.IsMoveStreamArmed())
+        {
+            ScenePrimitives.SetTransformStream(ReserveTransformStream(TransformStreamSerial, (uint32)MovedTransformScratch.size()));
+        }
         ScenePrimitives.Sync(*World, TSpan<const ECS::FEntity>(MovedTransformScratch.data(), MovedTransformScratch.size()));
 
         PublishRetainedUpload();
+        ArmTransformStream(Registry);
         LaunchInstanceBlockBounds();
+    }
+
+    void FDefaultSceneRenderer::ArmTransformStream(ECS::FRegistry& Registry)
+    {
+        // Below this many movers a frame, the drained list costs less than a slice of write-combined memory per renderer.
+        constexpr uint32 kMinArmedMoves = 1024;
+
+        const uint32 Moved = ScenePrimitives.GetMoveTimeRecords() + (uint32)MovedTransformScratch.size();
+        const FTransformStreamTarget Target = Moved >= kMinArmedMoves
+            ? ReserveTransformStream(TransformStreamSerial + 1, Moved + Moved / 4u)
+            : FTransformStreamTarget{};
+        if (Target.Records == nullptr)
+        {
+            ScenePrimitives.SetTransformStream({});
+            return;
+        }
+        ScenePrimitives.ArmMoveStream(Registry, Target, MovedTransformConsumer);
+    }
+
+    FTransformStreamTarget FDefaultSceneRenderer::ReserveTransformStream(uint64 Serial, uint32 NumMoved)
+    {
+        if (NumMoved == 0u || TryRender() == nullptr)
+        {
+            return {};
+        }
+
+        // Its last frame is at least kFramesInFlight extracts old, whose fence the loop already waited on.
+        TransformStreamSlot = (uint32)(Serial % kTransformStreamSlices);
+        FSceneBuffer& Stream = TransformStreamRing[TransformStreamSlot];
+
+        constexpr uint64 BytesPerMove = sizeof(FTransformStreamRecord) + sizeof(uint32);
+        const uint64 Needed = (uint64)NumMoved * BytesPerMove;
+        if (Stream.Size < Needed || Stream.Cpu == nullptr)
+        {
+            const uint64 Bytes = Stream.SlackedBytes(Needed);
+            // A small CPU-visible aperture without ReBAR cannot spare it, so those moves take the CPU path.
+            if (Bytes > RHI::GetCPUWriteSliceCap(kTransformStreamSlices))
+            {
+                return {};
+            }
+            Stream.Release();
+            const RHI::FGPUAllocation Allocation = RHI::Malloc(Bytes, alignof(FTransformStreamRecord), RHI::EMemoryType::CPUWrite);
+            if (!Allocation || Allocation.Cpu == nullptr)
+            {
+                return {};
+            }
+            RHI::SetDebugName(Allocation.Gpu, Stream.DebugName);
+            Stream.Adopt(Allocation);
+        }
+
+        const uint64 Capacity = Stream.Size / BytesPerMove;
+        FTransformStreamTarget Target;
+        Target.Records  = reinterpret_cast<FTransformStreamRecord*>(Stream.Cpu);
+        Target.Slots    = reinterpret_cast<uint32*>(Stream.Cpu + Capacity * sizeof(FTransformStreamRecord));
+        Target.Capacity = (uint32)Math::Min<uint64>(Capacity, 0xFFFFFFFFull);
+        return Target;
     }
 
     // Collects what changed in the retained scene, before the render phase uploads it.
     void FDefaultSceneRenderer::PublishRetainedUpload()
     {
+        LUMINA_PROFILE_SCOPE();
         FFrameData::FGeometry::FRetainedUpload& Out = ExtractFrame->Geometry.RetainedUpload;
 
         // Ahead of everything below, since a base that moves marks its slot static-dirty.
@@ -795,6 +862,18 @@ namespace Lumina
                     Out.DeactivatedSlots.push_back(Slot);
                 }
             }
+        }
+
+        // Records sit at the front of the slot's buffer and their slots after room for every record it can hold.
+        Out.StreamCount = ScenePrimitives.GetTransformStreamCount();
+        Out.StreamRecords = {};
+        Out.StreamSlots = {};
+        if (Out.StreamCount > 0)
+        {
+            const FSceneBuffer& Stream = TransformStreamRing[TransformStreamSlot];
+            const uint64 Capacity = Stream.Size / (sizeof(FTransformStreamRecord) + sizeof(uint32));
+            Out.StreamRecords = Stream.Sub(0, (uint64)Out.StreamCount * sizeof(FTransformStreamRecord));
+            Out.StreamSlots   = Stream.Sub(Capacity * sizeof(FTransformStreamRecord), (uint64)Out.StreamCount * sizeof(uint32));
         }
 
         // Interned; a full instance re-send also re-sends these, since a replaced device buffer loses them.

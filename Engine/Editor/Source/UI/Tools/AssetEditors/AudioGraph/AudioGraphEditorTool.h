@@ -43,6 +43,7 @@ namespace Lumina
         void DrawGraphWindow();
         void DrawPropertiesWindow();
         void DrawTransportWindow();
+        void DrawLevelMeters();
 
         /** Flattens the canvas into the asset's program. Returns false when the graph has errors. */
         bool Compile(bool bMarkPackageDirty = true);
@@ -66,6 +67,7 @@ namespace Lumina
         TSharedPtr<FAudioGraphInstance> PreviewInstance;
         SAudioHandle                    PreviewHandle;
         TVector<FPreviewParameter>      PreviewParameters;
+        float                           MeterLevels[2] = {};
 
         TVector<FString>                CompileMessages;
         bool                            bHasErrors = false;

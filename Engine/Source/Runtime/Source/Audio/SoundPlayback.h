@@ -1,12 +1,14 @@
 #pragma once
 
 #include "Audio/AudioTypes.h"
+#include "Containers/Span.h"
 #include "Memory/SmartPtr.h"
 
 namespace Lumina
 {
     class CSoundBase;
     class FAudioGraphInstance;
+    struct SAudioGraphParameterValue;
 
     /** A started voice, plus the graph behind it when the sound was a graph rather than a wave. */
     struct FSoundPlayResult
@@ -22,6 +24,8 @@ namespace Lumina
     namespace Audio
     {
         // One dispatch for every sound kind, so a component, an anim notify and a script all behave alike.
-        RUNTIME_API FSoundPlayResult PlaySound(CSoundBase* Sound, const SAudioPlayParams& Params);
+        // GraphParameters reach a graph before its first block and are ignored for a wave.
+        RUNTIME_API FSoundPlayResult PlaySound(CSoundBase* Sound, const SAudioPlayParams& Params,
+            TSpan<const SAudioGraphParameterValue> GraphParameters = {});
     }
 }

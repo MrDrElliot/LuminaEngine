@@ -2,6 +2,7 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/DistanceField.slang"
 #include "Includes/SunDFShadowCommon.slang"
+#include "Includes/WaveAtomics.slang"
 
 // Gathers every static caster with a distance field and bins it into the sun-space grid the trace walks.
 
@@ -15,6 +16,8 @@ struct FPushConstants
     GPUSpan<FInstanceCullEntry> RetainedCullEntries;
     GPUSpan<FTransform3x4>      RetainedTransforms;
     GPUSpan<FInstanceStatic>    RetainedStatic;
+    // Casters over many cells, left for SunDFShadowBinLarge.slang to bin with a whole group each.
+    GPUSpan<uint>               LargeObjects;
     FSunDFShadowGrid            Grid;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -102,8 +105,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         return;
     }
 
-    uint ObjectIndex;
-    InterlockedAdd(Grid.Counters.At(kSunDFObjectCounter)[0], 1u, ObjectIndex);
+    const uint ObjectIndex = WaveInterlockedAdd(Grid.Counters.At(kSunDFObjectCounter), 1u);
     if (ObjectIndex >= Grid.Objects.Count)
     {
         return;
@@ -122,13 +124,20 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
     Object._Pad1        = 0u;
     Grid.Objects.Set(ObjectIndex, Object);
 
-    // Clamped after the conversion as well, so no float the conversion mishandles can widen the loop past the grid.
-    const int  LastCell = int(Grid.Dimension) - 1;
-    const int2 First = clamp(int2(max(CellMin, 0.0)), int2(0, 0), int2(LastCell, LastCell));
-    const int2 Last  = clamp(int2(min(CellMax, float2(LastCell, LastCell))), int2(0, 0), int2(LastCell, LastCell));
-    for (int Y = First.y; Y <= Last.y; ++Y)
+    const int4 Range = SunDFCellRange(Sphere, Grid.SunRight, Grid.SunUp, Grid.Origin, Grid.CellSize, Grid.Dimension);
+    if (uint(Range.z - Range.x + 1) * uint(Range.w - Range.y + 1) > kSunDFLargeCasterCells)
     {
-        for (int X = First.x; X <= Last.x; ++X)
+        const uint LargeIndex = WaveInterlockedAdd(Grid.Counters.At(kSunDFLargeCounter), 1u);
+        if (LargeIndex < Pass().LargeObjects.Count)
+        {
+            Pass().LargeObjects.Set(LargeIndex, ObjectIndex);
+            return;
+        }
+    }
+
+    for (int Y = Range.y; Y <= Range.w; ++Y)
+    {
+        for (int X = Range.x; X <= Range.z; ++X)
         {
             const uint Cell = uint(Y) * Grid.Dimension + uint(X);
             uint Index;

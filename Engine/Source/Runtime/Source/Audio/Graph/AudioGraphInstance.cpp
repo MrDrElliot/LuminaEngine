@@ -18,6 +18,8 @@ namespace Lumina
             PublishedOutputs[Index].store(0.0f, Atomic::MemoryOrderRelaxed);
             PublishedTriggerCounts[Index].store(0, Atomic::MemoryOrderRelaxed);
         }
+        PublishedPeaks[0].store(0.0f, Atomic::MemoryOrderRelaxed);
+        PublishedPeaks[1].store(0.0f, Atomic::MemoryOrderRelaxed);
     }
 
     FAudioGraphInstance::~FAudioGraphInstance() = default;
@@ -177,6 +179,18 @@ namespace Lumina
 
     void FAudioGraphInstance::PublishOutputs()
     {
+        const float* Left  = Arena.AudioRead(OutputLeftSlot);
+        const float* Right = OutputRightSlot != kAudioGraphInvalidSlot ? Arena.AudioRead(OutputRightSlot) : Left;
+        float PeakLeft  = 0.0f;
+        float PeakRight = 0.0f;
+        for (uint32 Frame = 0; Frame < kAudioGraphBlockFrames; ++Frame)
+        {
+            PeakLeft  = Math::Max(PeakLeft, Math::Abs(Left[Frame]));
+            PeakRight = Math::Max(PeakRight, Math::Abs(Right[Frame]));
+        }
+        PublishedPeaks[0].store(PeakLeft, Atomic::MemoryOrderRelaxed);
+        PublishedPeaks[1].store(PeakRight, Atomic::MemoryOrderRelaxed);
+
         const uint32 Count = Math::Min((uint32)OutputDecls.size(), MaxPublishedOutputs);
 
         for (uint32 Index = 0; Index < Count; ++Index)
@@ -357,6 +371,24 @@ namespace Lumina
     bool FAudioGraphInstance::TriggerParameter(const FName& Name)
     {
         return Enqueue(Name, EAudioGraphType::Trigger, 0.0f, 0, false);
+    }
+
+    bool FAudioGraphInstance::SetParameter(const SAudioGraphParameterValue& Value)
+    {
+        const FAudioGraphParameterDecl* Decl = FindInputDecl(Value.Name);
+        if (Decl == nullptr)
+        {
+            return false;
+        }
+
+        switch (Decl->Type)
+        {
+        case EAudioGraphType::Float:   return SetFloatParameter(Value.Name, Value.Value);
+        case EAudioGraphType::Int32:   return SetIntParameter(Value.Name, (int32)Math::Round(Value.Value));
+        case EAudioGraphType::Bool:    return SetBoolParameter(Value.Name, Value.Value != 0.0f);
+        case EAudioGraphType::Trigger: return Value.Value != 0.0f && TriggerParameter(Value.Name);
+        default:                       return false;
+        }
     }
 
     float FAudioGraphInstance::GetFloatOutput(const FName& Name) const

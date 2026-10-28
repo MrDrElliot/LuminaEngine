@@ -4,7 +4,11 @@
 // Shared by the caster binning pass and the per-pixel trace of the sun's distance-field shadows.
 
 static const uint kSunDFObjectCounter   = 0u;
+static const uint kSunDFLargeCounter    = 1u;
 static const uint kSunDFMaxStepsPerObject = 32u;
+
+// Past this many cells a caster is binned by a whole group, since one lane walking them in turn stalls the pass.
+static const uint kSunDFLargeCasterCells = 64u;
 
 // Mirror of Lumina::FSunDFObject (112 B). One caster, already inverted so the trace never touches its transform.
 struct FSunDFObject
@@ -36,6 +40,18 @@ struct FSunDFShadowGrid
     uint                  Dimension;
     uint                  CellCapacity;
 };
+
+// First cell in xy and last in zw that a caster's sphere covers, clamped after the conversion so no float it mishandles can widen a loop past the grid.
+int4 SunDFCellRange(float4 Sphere, float3 SunRight, float3 SunUp, float2 Origin, float CellSize, uint Dimension)
+{
+    const float2 SunXY   = float2(dot(Sphere.xyz, SunRight), dot(Sphere.xyz, SunUp));
+    const float2 CellMin = floor((SunXY - Sphere.w - Origin) / CellSize);
+    const float2 CellMax = floor((SunXY + Sphere.w - Origin) / CellSize);
+    const int    LastCell = int(Dimension) - 1;
+    const int2   First = clamp(int2(max(CellMin, 0.0)), int2(0, 0), int2(LastCell, LastCell));
+    const int2   Last  = clamp(int2(min(CellMax, float2(LastCell, LastCell))), int2(0, 0), int2(LastCell, LastCell));
+    return int4(First, Last);
+}
 
 float SampleSunDFObject(FSunDFObject Object, float3 LocalPosition)
 {

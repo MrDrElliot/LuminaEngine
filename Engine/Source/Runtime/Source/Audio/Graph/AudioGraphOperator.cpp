@@ -32,6 +32,12 @@ namespace Lumina
         }
     }
 
+    uint32 FAudioGraphOperatorBuildParams::NumInputs() const
+    {
+        return (uint32)Node->InputSlots.size();
+    }
+
+    // A pin past the compiled list reads zero and writes nowhere, so an operator may gain pins after a graph was saved.
     uint16 FAudioGraphOperatorBuildParams::InputSlot(uint32 Pin) const
     {
         return Pin < Node->InputSlots.size() ? Node->InputSlots[Pin] : kAudioGraphInvalidSlot;
@@ -88,17 +94,6 @@ namespace Lumina
         if (NodeClass == nullptr)
         {
             LOG_WARN("AudioGraph: no operator named '{}'", Params.Node->OperatorName.c_str());
-            return nullptr;
-        }
-
-        // An operator indexes its pins positionally, so a short slot list would read a neighbor's value.
-        if (Params.Node->InputSlots.size() < NodeClass->Signature.Inputs.size()
-            || Params.Node->OutputSlots.size() < NodeClass->Signature.Outputs.size())
-        {
-            LOG_ERROR("AudioGraph: operator '{}' was compiled with {} inputs and {} outputs, but needs {} and {}",
-                NodeClass->Name.c_str(),
-                (uint32)Params.Node->InputSlots.size(), (uint32)Params.Node->OutputSlots.size(),
-                (uint32)NodeClass->Signature.Inputs.size(), (uint32)NodeClass->Signature.Outputs.size());
             return nullptr;
         }
 

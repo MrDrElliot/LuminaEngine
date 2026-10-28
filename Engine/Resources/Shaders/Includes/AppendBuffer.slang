@@ -1,14 +1,14 @@
 #pragma once
+#include "WaveAtomics.slang"
 
 // Bare pointer parameters, since a local struct holding a PhysicalStorageBuffer pointer emits invalid SPIR-V without Aliased or Restrict.
 
 static const uint kAppendFull = ~0u;
 
-// All-or-nothing. The cursor keeps advancing past Capacity so readback reports demand and an undersized buffer self-corrects.
+// All-or-nothing, one atomic per wave so active lanes must share Cursor, which keeps advancing past Capacity so readback reports demand.
 uint AppendReserve(uint* Cursor, uint Capacity, uint Base, uint Count = 1u)
 {
-    uint Old;
-    InterlockedAdd(Cursor[0], Count, Old);
+    const uint Old = WaveInterlockedAdd(Cursor, Count);
 
     // Subtracting cannot wrap the way Old + Count can, since Old is unbounded by design.
     const bool bFits = (Old < Capacity) && ((Capacity - Old) >= Count);

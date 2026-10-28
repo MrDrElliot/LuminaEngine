@@ -3,6 +3,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/Sky.slang"
 #include "Includes/CloudCommon.slang"
+#include "Includes/CloudRay.slang"
 
 // Shell march between two spheres about the same planet the atmosphere uses, so the horizon curves.
 
@@ -41,6 +42,11 @@ struct FPushConstants
     float2 DetailWindOffset;
 
     FRWTexture2D CloudDepth;   // raw depth the march was clamped to, 0 where it saw sky
+    uint         Stride;       // 2 marches one texel of each 2x2 block, which the resolve then fills around
+    uint         OffsetX;
+    uint         OffsetY;
+
+    uint         FrameIndex;   // turns the march jitter every frame, so the resolve integrates it
     uint         _Pad0;
     uint         _Pad1;
     uint         _Pad2;
@@ -77,6 +83,11 @@ float Cloud_SampleDensity(float3 WorldPos, float HeightFrac, bool bCheap)
     return Cloud_SampleDensityM(Cloud_Medium(), WorldPos, HeightFrac, bCheap);
 }
 
+float Cloud_SampleDensityEnvelope(float3 WorldPos, float HeightFrac, out float Envelope)
+{
+    return Cloud_SampleDensityEnvelopeM(Cloud_Medium(), WorldPos, HeightFrac, false, Envelope);
+}
+
 // A step wider than a small cumulus lets neighboring pixels disagree on whether it is there at all.
 static const float kMaxStepLength = 150.0;
 static const uint  kMaxStepScale  = 4u;
@@ -85,88 +96,45 @@ static const float kEmptyStepScale = 3.0;
 static const float kMaxEmptyStride = 300.0;
 static const uint  kEntryFineSteps = 3u;
 
-// Offsetting the first sample hides the march's step banding.
-float Cloud_IGN(float2 PixelPos)
+// Turned by the golden ratio each frame, since one fixed offset per pixel samples a cloud at the same slices forever and the resolve sees them as slats.
+float Cloud_MarchJitter(float2 PixelPos, uint FrameIndex)
 {
-    return InterleavedGradientNoise(PixelPos);
+    return frac(InterleavedGradientNoise(PixelPos) + float(FrameIndex & 1023u) * 0.61803399);
 }
+
+// Light that scattered more than once, approximated by octaves each weaker, softer and more forward, so dense cores glow instead of going flat.
+static const uint  kScatterOctaves     = 3u;
+static const float kOctaveAttenuation  = 0.5;
+static const float kOctaveExtinction   = 0.5;
+static const float kOctaveEccentricity = 0.5;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
     uint2 Size = uint2(Pass().ScreenW, Pass().ScreenH);
-    if (DTid.x >= Size.x || DTid.y >= Size.y)
+    int2  P    = int2(DTid.xy * Pass().Stride + uint2(Pass().OffsetX, Pass().OffsetY));
+    if (P.x >= int(Size.x) || P.y >= int(Size.y))
     {
         return;
     }
-
-    int2   P  = int2(DTid.xy);
-    float2 UV = (float2(DTid.xy) + 0.5) / float2(Size);
 
     Pass().Scatter[P] = float4(0.0, 0.0, 0.0, 1.0);
 
-    // Sampled by UV, not Load, since P indexes the half-res target while depth is full-res.
-    float2 Off = 0.5 / float2(Size);
-    float  D0  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2(-Off.x, -Off.y), 0.0).r;
-    float  D1  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2( Off.x, -Off.y), 0.0).r;
-    float  D2  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2(-Off.x,  Off.y), 0.0).r;
-    float  D3  = Pass().Depth.SampleLevel(Samplers::PointClamp, UV + float2( Off.x,  Off.y), 0.0).r;
+    const FCloudRay Ray = Cloud_SetupRay(Pass().Depth, P, Size, Pass().LayerBottom, Pass().LayerTop, Pass().MaxDistance);
+    Pass().CloudDepth[P] = float4(Ray.RawDepth, 0.0, 0.0, 0.0);
+    if (Ray.End <= Ray.Start)
+    {
+        return;
+    }
 
-    // Reverse-Z, so max is the closest surface in the footprint, and the composite rejects this texel for pixels behind it.
-    float RawDepth = max(max(D0, D1), max(D2, D3));
-    Pass().CloudDepth[P] = float4(RawDepth, 0.0, 0.0, 0.0);
-
-    float2 NDC     = UV * 2.0 - 1.0;
-    float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));
-    float3 ViewRay = ViewH.xyz / ViewH.w;
-    float3 RayDir  = normalize(mul(GetInverseCameraView(), float4(ViewRay, 0.0)).xyz);
-
+    float3 RayDir = Ray.Dir;
     float3 CamPos = GetCameraPosition();
-
-    // Planet-relative, so the layer curves away to the horizon instead of running to infinity.
-    float3 Origin = float3(0.0, kPlanetR + CamPos.y, 0.0);
-    float  InnerR = kPlanetR + Pass().LayerBottom;
-    float  OuterR = kPlanetR + max(Pass().LayerTop, Pass().LayerBottom + 1.0);
-
-    float2 Outer = Sky_RaySphereIntersect(Origin, RayDir, OuterR);
-    if (Outer.y <= 0.0)
-    {
-        return;
-    }
-
-    float2 Inner = Sky_RaySphereIntersect(Origin, RayDir, InnerR);
-
-    float Start;
-    float End;
-    if (Inner.x > 0.0)
-    {
-        Start = max(Outer.x, 0.0);
-        End   = Inner.x;
-    }
-    else if (Inner.y > 0.0)
-    {
-        Start = Inner.y;
-        End   = Outer.y;
-    }
-    else
-    {
-        Start = max(Outer.x, 0.0);
-        End   = Outer.y;
-    }
-
-    if (RawDepth > 0.0)
-    {
-        float3 SceneView  = ReconstructViewPos(UV, RawDepth, GetInverseCameraProjection());
-        float3 SceneWorld = mul(GetInverseCameraView(), float4(SceneView, 1.0)).xyz;
-        End = min(End, length(SceneWorld - CamPos));
-    }
-
-    End = min(End, Pass().MaxDistance);
-    if (End <= Start)
-    {
-        return;
-    }
+    float3 Origin = Ray.Origin;
+    float  InnerR = Ray.InnerR;
+    float  OuterR = Ray.OuterR;
+    float  Start  = Ray.Start;
+    float  End    = Ray.End;
 
     // Grazing rays cross tens of kilometers of shell, so they buy more steps rather than outgrowing a cumulus.
     uint  MinSteps = max(Pass().MarchSteps, 16u);
@@ -175,15 +143,25 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     float LayerThickness = max(OuterR - InnerR, 1.0);
     float CosTheta       = dot(RayDir, Pass().SunDirection);
-    float Phase          = Cloud_Phase(CosTheta, Pass().ForwardScattering, Pass().BackScattering);
+
+    // The phase per octave is fixed along the ray, so it is weighed once here rather than per sample.
+    float OctavePhase[kScatterOctaves];
+    [unroll]
+    for (uint o = 0u; o < kScatterOctaves; ++o)
+    {
+        const float Eccentricity = pow(kOctaveEccentricity, float(o));
+        OctavePhase[o] = pow(kOctaveAttenuation, float(o))
+                       * Cloud_Phase(CosTheta, Pass().ForwardScattering * Eccentricity, Pass().BackScattering * Eccentricity);
+    }
 
     float3 Scattered     = float3(0.0, 0.0, 0.0);
     float  Transmittance = 1.0;
 
-    // Empty space is cheap, so stride through it, but never far enough to jump a whole small cloud.
-    float EmptyStep = max(min(BaseStep * kEmptyStepScale, kMaxEmptyStride), BaseStep);
+    // Clear air between clouds is cheap, so stride through it in whole fine steps, which keeps every sample on one jittered lattice.
+    float EmptyStep = BaseStep * clamp(floor(kMaxEmptyStride / BaseStep), 1.0, kEmptyStepScale);
 
-    float T        = Start + Cloud_IGN(float2(P)) * BaseStep;
+    // Within one fine step, since the empty strides are whole fine steps and a wider jitter lets a stride skip a small puff on some frames only.
+    float T        = Start + Cloud_MarchJitter(float2(P), Pass().FrameIndex) * BaseStep;
     bool  bStrode  = false;
     uint  FineLeft = 0u;
 
@@ -203,9 +181,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         float3 WorldSample = float3(CamPos.x, 0.0, CamPos.z) + RayDir * T;
         WorldSample.y = Altitude;
 
-        // Returns early on a zero shape without paying for the detail fetch.
-        float Density = Cloud_SampleDensity(WorldSample, HeightFrac, false);
-        if (Density <= 0.0)
+        // Strides only through clear air, since a stride across a cloud's eroded holes skips its thin parts on whole rows of pixels.
+        float Envelope;
+        float Density = Cloud_SampleDensityEnvelope(WorldSample, HeightFrac, Envelope);
+        if (Envelope <= 0.0)
         {
             float Advance = FineLeft > 0u ? BaseStep : EmptyStep;
             FineLeft = FineLeft > 0u ? FineLeft - 1u : 0u;
@@ -224,6 +203,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         }
 
         T += BaseStep;
+        if (Density <= 0.0)
+        {
+            continue;
+        }
 
         // Widening light steps let the far samples cover the cloud's bulk cheaply.
         uint  LSteps   = max(Pass().LightSteps, 1u);
@@ -252,13 +235,18 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             SunDepth += Cloud_SampleDensity(LWorld, LHF, true) * SegmentLen;
         }
 
-        float SunTransmittance = exp(-SunDepth);
+        float SunScatter = 0.0;
+        [unroll]
+        for (uint o = 0u; o < kScatterOctaves; ++o)
+        {
+            SunScatter += OctavePhase[o] * exp(-SunDepth * pow(kOctaveExtinction, float(o)));
+        }
 
         // Powder, since thin sunward edges scatter out before they scatter back and read dark.
         float Powder = 1.0 - exp(-Density * BaseStep * 2.0);
         float Lit    = lerp(1.0, Powder, Pass().PowderStrength);
 
-        float3 SunTerm     = Pass().SunColor * SunTransmittance * Phase * Lit;
+        float3 SunTerm     = Pass().SunColor * SunScatter * Lit;
         float3 AmbientTerm = Pass().AmbientColor * lerp(0.35, 1.0, HeightFrac);
 
         float StepTrans = exp(-Density * BaseStep);

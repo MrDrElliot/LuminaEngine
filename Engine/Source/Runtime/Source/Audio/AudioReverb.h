@@ -33,6 +33,9 @@ namespace Lumina
 		bool Initialize(uint32 Channels, uint32 SampleRate);
 		void Shutdown();
 
+		// Silences the tail without reallocating, so it is safe on the audio thread.
+		void Clear();
+
 		bool IsInitialized() const { return bInitialized; }
 		uint32 GetChannelCount() const { return ChannelCount; }
 

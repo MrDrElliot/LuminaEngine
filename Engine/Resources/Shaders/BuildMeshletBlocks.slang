@@ -67,16 +67,14 @@ bool ClaimWithin(uint* Counter, uint Capacity, uint Count, out uint Old)
 }
 
 // A bucket whose whole demand fits takes the plain append, which cannot fail since demand rounds each run's blocks the same way.
-bool TryReserveRun(FRenderBucket* Bucket, uint Count, out uint Slot)
+bool TryReserveRun(uint BucketIndex, FRenderBucket* Bucket, uint Count, out uint Slot)
 {
     Slot = 0u;
     const uint Blocks = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
 
     if (Bucket.DrawDemand <= Bucket.DrawCapacity && Bucket.BlockDemand <= Bucket.BlockCapacity)
     {
-        uint OldBlock;
-        InterlockedAdd(Bucket.BlockCursor, Blocks, OldBlock);
-        Slot = Bucket.BlockBase + OldBlock;
+        Slot = Bucket.BlockBase + WaveInterlockedAddKeyed(BucketIndex, &Bucket.BlockCursor, Blocks);
         return true;
     }
 
@@ -180,7 +178,8 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         return;
     }
 
-    FRenderBucket* Bucket = Pass().Buckets.At(ViewIndex * Pass().NumBatches + DrawID);
+    const uint     BucketIndex = ViewIndex * Pass().NumBatches + DrawID;
+    FRenderBucket* Bucket      = Pass().Buckets.At(BucketIndex);
 
     // A split bucket builds last frame's visible set now and its late blocks after the pyramid, so a hidden instance gets none.
     const bool bSplit = Pass().BuildMode != MESHLET_BUILD_EARLY_NOSPLIT
@@ -212,8 +211,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
         // Early-drawn instances come back too, since a sphere-level flag lets coarse pyramid tiles keep whole trees early for good.
         const uint BackBlocks = (Range.y + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
-        uint OldBack;
-        InterlockedAdd(Bucket.BlockBackCount, BackBlocks, OldBack);
+        const uint OldBack = WaveInterlockedAddKeyed(BucketIndex, &Bucket.BlockBackCount, BackBlocks);
 
         // Front and back together never pass the demand this bucket fits, so this only guards against a broken reservation.
         const uint Front = min(Bucket.BlockCursor, Bucket.BlockCapacity);
@@ -242,7 +240,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
     // Only an instance that does not fit steps down, one LOD at a time, so a short frame degrades the overflow and nothing else.
     uint Slot;
-    if (!TryReserveRun(Bucket, Range.y, Slot))
+    if (!TryReserveRun(BucketIndex, Bucket, Range.y, Slot))
     {
         bool bFitted = false;
         for (uint Step = 0u; Step < (uint)MESHLET_MAX_LODS && !bFitted; ++Step)
@@ -253,7 +251,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
                 break;
             }
             Range   = Coarser;
-            bFitted = TryReserveRun(Bucket, Range.y, Slot);
+            bFitted = TryReserveRun(BucketIndex, Bucket, Range.y, Slot);
         }
         if (!bFitted)
         {

@@ -89,6 +89,10 @@ namespace Lumina
         FAudioGraphTriggerBuffer* TriggerOut(uint32 Pin) const      { return Arena->TriggerWrite(OutputSlot(Pin)); }
 
         const FAudioGraphWaveResource** WaveIn(uint32 Pin) const { return Arena->WaveRead(InputSlot(Pin)); }
+        const FAudioGraphWaveResource** WaveOut(uint32 Pin) const { return Arena->WaveWrite(OutputSlot(Pin)); }
+
+        // Includes the variadic tail, so an operator learns how many trailing pins it was given.
+        uint32 NumInputs() const;
 
         uint16 InputSlot(uint32 Pin) const;
         uint16 OutputSlot(uint32 Pin) const;
@@ -117,6 +121,9 @@ namespace Lumina
     {
         TVector<EAudioGraphType> Inputs;
         TVector<EAudioGraphType> Outputs;
+
+        // Type of any inputs past the fixed ones, such as a node's wave list, or Invalid when it takes none.
+        EAudioGraphType Variadic = EAudioGraphType::Invalid;
     };
 
     /** A runtime operator, addressed by the name compiled programs store. */

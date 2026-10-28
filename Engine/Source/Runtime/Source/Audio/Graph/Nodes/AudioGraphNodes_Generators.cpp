@@ -214,11 +214,8 @@ namespace Lumina
 
             void Reset() override
             {
-                State = 0x9E3779B9u;
-                for (float& Value : PinkState)
-                {
-                    Value = 0.0f;
-                }
+                Random = FAudioGraphRandom();
+                Algo::Fill(PinkState, 0.0f);
             }
 
             void Execute(const FAudioGraphBlockContext& Context) override
@@ -227,20 +224,12 @@ namespace Lumina
 
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    const float White = NextWhite();
+                    const float White = Random.NextUnit() * 2.0f - 1.0f;
                     Out[Frame] = bPink ? NextPink(White) : White;
                 }
             }
 
         private:
-
-            FORCEINLINE float NextWhite()
-            {
-                State ^= State << 13;
-                State ^= State >> 17;
-                State ^= State << 5;
-                return (float)(int32)(State >> 8) * (1.0f / 8388608.0f) - 1.0f;
-            }
 
             // Paul Kellet's filter bank, an inexpensive one-over-f approximation.
             FORCEINLINE float NextPink(float White)
@@ -262,8 +251,8 @@ namespace Lumina
             const int32* TypeIn;
             float*       Out;
 
-            uint32 State = 0x9E3779B9u;
-            float  PinkState[7] = {};
+            FAudioGraphRandom Random;
+            float             PinkState[7] = {};
         };
 
         class FWavePlayerOperator final : public IAudioGraphOperator
@@ -277,28 +266,26 @@ namespace Lumina
                 , LoopIn(Params.BoolIn(3))
                 , PitchIn(Params.FloatIn(4))
                 , StartSecondsIn(Params.FloatIn(5))
+                , LoopStartIn(Params.FloatIn(6))
+                , LoopDurationIn(Params.FloatIn(7))
                 , OutLeft(Params.AudioOut(0))
                 , OutRight(Params.AudioOut(1))
                 , FinishedOut(Params.TriggerOut(2))
+                , LoopedOut(Params.TriggerOut(3))
+                , TimeOut(Params.FloatOut(4))
             {}
 
             void Reset() override
             {
-                Position  = 0.0;
-                bPlaying  = false;
+                Wave     = nullptr;
+                Position = 0.0;
+                bPlaying = false;
             }
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
-                const FAudioGraphWaveResource* Wave = *WaveIn;
-
                 PlayCursor.Reset();
                 StopCursor.Reset();
-
-                const bool bValid = Wave != nullptr && Wave->IsValid();
-                const double RateRatio = bValid
-                    ? (double)Wave->SampleRate / (double)Context.SampleRate
-                    : 1.0;
 
                 const float Pitch = Math::Clamp(*PitchIn, 0.01f, 8.0f);
                 const bool  bLoop = *LoopIn != 0;
@@ -307,71 +294,84 @@ namespace Lumina
                 {
                     if (PlayCursor.Consume(*PlayIn, Frame))
                     {
-                        Position = bValid ? Math::Max(0.0, (double)*StartSecondsIn * (double)Wave->SampleRate) : 0.0;
-                        bPlaying = bValid;
+                        Start(Frame);
                     }
 
-                    if (StopCursor.Consume(*StopIn, Frame))
+                    if (StopCursor.Consume(*StopIn, Frame) && bPlaying)
                     {
                         bPlaying = false;
                         FinishedOut->Add(Frame);
                     }
 
-                    if (!bPlaying || !bValid)
+                    if (!bPlaying)
                     {
                         OutLeft[Frame]  = 0.0f;
                         OutRight[Frame] = 0.0f;
                         continue;
                     }
 
-                    float Left = 0.0f;
-                    float Right = 0.0f;
-                    Sample(*Wave, Left, Right);
+                    Sample(OutLeft[Frame], OutRight[Frame]);
+                    Position += (double)Wave->SampleRate / (double)Context.SampleRate * (double)Pitch;
 
-                    OutLeft[Frame]  = Left;
-                    OutRight[Frame] = Right;
-
-                    Position += RateRatio * (double)Pitch;
-
-                    if (Position >= (double)Wave->NumFrames)
+                    if (bLoop && Position >= LoopEnd)
                     {
-                        if (bLoop)
-                        {
-                            Position -= (double)Wave->NumFrames;
-                        }
-                        else
-                        {
-                            bPlaying = false;
-                            FinishedOut->Add(Frame);
-                        }
+                        Position = LoopStart + Math::Mod(Position - LoopStart, LoopEnd - LoopStart);
+                        LoopedOut->Add(Frame);
+                    }
+                    else if (Position >= (double)Wave->NumFrames)
+                    {
+                        bPlaying = false;
+                        FinishedOut->Add(Frame);
                     }
                 }
+
+                *TimeOut = bPlaying ? (float)(Position / (double)Wave->SampleRate) : 0.0f;
             }
 
         private:
 
-            void Sample(const FAudioGraphWaveResource& Wave, float& OutLeftSample, float& OutRightSample) const
+            // Latches the wave, so one chosen for the next play cannot swap under one already sounding.
+            void Start(uint32 Frame)
+            {
+                Wave = *WaveIn;
+                if (Wave == nullptr || !Wave->IsValid())
+                {
+                    Wave     = nullptr;
+                    bPlaying = false;
+                    return;
+                }
+
+                const double Rate   = (double)Wave->SampleRate;
+                const double Length = (double)Wave->NumFrames;
+
+                Position = Math::Max(0.0, (double)*StartSecondsIn * Rate);
+                if (Position >= Length)
+                {
+                    bPlaying = false;
+                    FinishedOut->Add(Frame);
+                    return;
+                }
+
+                // At least one frame long, so the wrap in Execute always makes progress.
+                LoopStart = Math::Clamp((double)*LoopStartIn * Rate, 0.0, Length - 1.0);
+                LoopEnd   = *LoopDurationIn > 0.0f
+                    ? Math::Clamp(LoopStart + (double)*LoopDurationIn * Rate, LoopStart + 1.0, Length)
+                    : Length;
+                bPlaying  = true;
+            }
+
+            void Sample(float& OutLeftSample, float& OutRightSample) const
             {
                 const uint64 Index = (uint64)Position;
-                const uint64 Next  = Index + 1 < Wave.NumFrames ? Index + 1 : Index;
+                const uint64 Next  = Index + 1 < Wave->NumFrames ? Index + 1 : Index;
                 const float  Alpha = (float)(Position - (double)Index);
 
-                const uint32 Channels = Wave.NumChannels;
-                const float* Samples  = Wave.Samples.data();
+                const uint32 Channels = Wave->NumChannels;
+                const float* A = Wave->Samples.data() + Index * Channels;
+                const float* B = Wave->Samples.data() + Next * Channels;
 
-                const float* A = Samples + Index * Channels;
-                const float* B = Samples + Next * Channels;
-
-                OutLeftSample = A[0] + (B[0] - A[0]) * Alpha;
-
-                if (Channels > 1)
-                {
-                    OutRightSample = A[1] + (B[1] - A[1]) * Alpha;
-                }
-                else
-                {
-                    OutRightSample = OutLeftSample;
-                }
+                OutLeftSample  = A[0] + (B[0] - A[0]) * Alpha;
+                OutRightSample = Channels > 1 ? A[1] + (B[1] - A[1]) * Alpha : OutLeftSample;
             }
 
             const FAudioGraphWaveResource** WaveIn;
@@ -380,16 +380,105 @@ namespace Lumina
             const uint8*                    LoopIn;
             const float*                    PitchIn;
             const float*                    StartSecondsIn;
+            const float*                    LoopStartIn;
+            const float*                    LoopDurationIn;
 
             float*                          OutLeft;
             float*                          OutRight;
             FAudioGraphTriggerBuffer*       FinishedOut;
+            FAudioGraphTriggerBuffer*       LoopedOut;
+            float*                          TimeOut;
 
             FAudioGraphTriggerCursor PlayCursor;
             FAudioGraphTriggerCursor StopCursor;
 
-            double Position = 0.0;
-            bool   bPlaying = false;
+            const FAudioGraphWaveResource* Wave = nullptr;
+
+            double Position  = 0.0;
+            double LoopStart = 0.0;
+            double LoopEnd   = 0.0;
+            bool   bPlaying  = false;
+        };
+
+        // Hands a Wave Player one of the node's waves, so one graph covers every variation of a sound.
+        class FRandomWaveOperator final : public IAudioGraphOperator
+        {
+        public:
+
+            explicit FRandomWaveOperator(const FAudioGraphOperatorBuildParams& Params)
+                : NextIn(Params.TriggerIn(0))
+                , ModeIn(Params.IntIn(1))
+                , IndexIn(Params.IntIn(2))
+                , SeedIn(Params.IntIn(3))
+                , WaveOut(Params.WaveOut(0))
+                , IndexOut(Params.IntOut(1))
+            {
+                const uint32 Listed = Params.NumInputs() > kFixedInputs ? Params.NumInputs() - kFixedInputs : 0u;
+                WaveCount = Math::Min(Listed, kMaxWaves);
+                for (uint32 Index = 0; Index < WaveCount; ++Index)
+                {
+                    Waves[Index] = Params.WaveIn(kFixedInputs + Index);
+                }
+            }
+
+            void Reset() override
+            {
+                Random  = FAudioGraphRandom();
+                bPicked = false;
+                Current = 0;
+            }
+
+            void Execute(const FAudioGraphBlockContext& Context) override
+            {
+                const EAudioPickMode Mode = (EAudioPickMode)*ModeIn;
+
+                // Picks on the first block too, so a graph that never fires Next still varies per voice.
+                if (!bPicked)
+                {
+                    bPicked = true;
+                    Random.SeedOnce(*SeedIn);
+                    Current = Mode == EAudioPickMode::Sequential ? 0u : Pick(Mode);
+                }
+
+                Cursor.Reset();
+                for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
+                {
+                    if (Cursor.Consume(*NextIn, Frame))
+                    {
+                        Current = Pick(Mode);
+                    }
+                }
+
+                if (Mode == EAudioPickMode::ByIndex)
+                {
+                    Current = Pick(Mode);
+                }
+
+                *WaveOut  = WaveCount != 0 ? *Waves[Current] : nullptr;
+                *IndexOut = (int32)Current;
+            }
+
+        private:
+
+            static constexpr uint32 kFixedInputs = 4;
+            static constexpr uint32 kMaxWaves    = 64;
+
+            uint32 Pick(EAudioPickMode Mode) { return PickNextOption(Mode, WaveCount, Current, *IndexIn, Random); }
+
+            const FAudioGraphTriggerBuffer* NextIn;
+            const int32*                    ModeIn;
+            const int32*                    IndexIn;
+            const int32*                    SeedIn;
+            const FAudioGraphWaveResource** WaveOut;
+            int32*                          IndexOut;
+
+            const FAudioGraphWaveResource** Waves[kMaxWaves] = {};
+            uint32                          WaveCount = 0;
+
+            FAudioGraphTriggerCursor Cursor;
+            FAudioGraphRandom        Random;
+            uint32                   Current = 0;
+            bool                     bPicked = false;
         };
     }
 
@@ -403,5 +492,7 @@ namespace Lumina
 
     LUMINA_AUDIO_GRAPH_OPERATOR(GAudioNodeNoise, FNoiseOperator, "Noise", { PinInt32 }, { PinAudio })
 
-    LUMINA_AUDIO_GRAPH_OPERATOR(GAudioNodeWavePlayer, FWavePlayerOperator, "WavePlayer", { PinWave, PinTrigger, PinTrigger, PinBool, PinFloat, PinFloat }, { PinAudio, PinAudio, PinTrigger })
+    LUMINA_AUDIO_GRAPH_OPERATOR(GAudioNodeWavePlayer, FWavePlayerOperator, "WavePlayer", { PinWave, PinTrigger, PinTrigger, PinBool, PinFloat, PinFloat, PinFloat, PinFloat }, { PinAudio, PinAudio, PinTrigger, PinTrigger, PinFloat })
+
+    LUMINA_AUDIO_GRAPH_OPERATOR(GAudioNodeRandomWave, FRandomWaveOperator, "RandomWave", { PinTrigger, PinInt32, PinInt32, PinInt32 }, { PinWave, PinInt32 }, PinWave)
 }

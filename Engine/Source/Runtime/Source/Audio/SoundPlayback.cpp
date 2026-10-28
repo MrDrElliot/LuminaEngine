@@ -10,7 +10,7 @@
 
 namespace Lumina::Audio
 {
-    FSoundPlayResult PlaySound(CSoundBase* Sound, const SAudioPlayParams& Params)
+    FSoundPlayResult PlaySound(CSoundBase* Sound, const SAudioPlayParams& Params, TSpan<const SAudioGraphParameterValue> GraphParameters)
     {
         FSoundPlayResult Result;
 
@@ -28,6 +28,11 @@ namespace Lumina::Audio
             if (!Result.GraphInstance)
             {
                 return Result;
+            }
+
+            for (const SAudioGraphParameterValue& Parameter : GraphParameters)
+            {
+                Result.GraphInstance->SetParameter(Parameter);
             }
 
             Result.Handle = Context().PlayAudioGraph(Result.GraphInstance, Params);

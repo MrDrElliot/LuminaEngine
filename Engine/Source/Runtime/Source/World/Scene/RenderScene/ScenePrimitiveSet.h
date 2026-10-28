@@ -1,6 +1,7 @@
 #pragma once
 
 #include "World/ECS/Registry.h"
+#include "World/Entity/EntityUtils.h"
 
 
 #include "Renderer/ShaderHandle.h"
@@ -194,15 +195,40 @@ namespace Lumina
         uint32          SkinnedIndex = kNoSkinnedIndex;
     };
 
-    struct FScenePrimitive
+    // Mirror of FTransformStreamRecord in RetainedTransformStream.slang, one moved instance's packed transform and world sphere in one line.
+    struct alignas(64) FTransformStreamRecord
     {
+        FTransform3x4 Transform;
+        FVector4      SphereBounds;
+    };
+    static_assert(sizeof(FTransformStreamRecord) == 64, "FTransformStreamRecord must match RetainedTransformStream.slang");
+
+    // A slot the GPU scatter skips, written for a mover that took the CPU path instead.
+    constexpr uint32 kNoStreamSlot = 0xFFFFFFFFu;
+
+    // Where moved instances go this frame, write-combined memory the GPU scatters into the retained buffers, never read back.
+    struct FTransformStreamTarget
+    {
+        FTransformStreamRecord* Records  = nullptr;
+        uint32*                 Slots    = nullptr;
+        uint32                  Capacity = 0;
+    };
+
+    // Cache-line aligned so the matrix fills exactly one line, which a moved transform streams out without reading it first.
+    struct CACHE_ALIGN FScenePrimitive
+    {
+        // Everything a moved transform rewrites or reads sits together, since a crowd of movers streams this from memory every frame.
         FMatrix4                            Transform = FMatrix4(1.0f);
+        FVector3                            LocalCenter = FVector3(0.0f);
+        float                               LocalRadius = 0.0f;
+        float                               BoundsScale = 1.0f;
+        uint32                              BindingBase = 0;    // span into FScenePrimitiveSet::Bindings
+        uint32                              SurfaceCount = 0;
+        uint32                              RenderLayers = RenderLayers::kDefaultMask;
+
         uint32                              MeshletHeaderSlot = 0;
 
         const TVector<FResolvedSurface>*    Surfaces = nullptr;
-
-        uint32                              BindingBase = 0;    // span into FScenePrimitiveSet::Bindings
-        uint32                              SurfaceCount = 0;
 
         ECS::FEntity                        Entity = ECS::NullEntity;
         uint32                              EntityID = 0;
@@ -213,12 +239,7 @@ namespace Lumina
         uint32                              ResolveHandle = INVALID_MESH_RESOLVE_HANDLE;
         uint32                              ResolveGeneration = 0;
 
-        FVector3                            LocalCenter = FVector3(0.0f);
-        float                               LocalRadius = 0.0f;
-        float                               BoundsScale = 1.0f;
-
         int32                               ForcedLODIndex = -1;
-        uint32                              RenderLayers = RenderLayers::kDefaultMask;
         // PackCustomDepthStencil, zero when it draws no custom depth.
         uint32                              CustomDepthStencil = 0;
         EInstanceFlags                      BaseFlags = EInstanceFlags::None;
@@ -265,6 +286,26 @@ namespace Lumina
 
         // Remaps Foreground-layer instances for this camera, or draws them in place when it has no foreground. Call before Sync.
         void SetForegroundView(const FViewVolume& View, const FViewLayerSettings& Layers);
+
+        // Moved instances that fit the stream write their transform there instead of into the CPU copies. Call before Sync, or pass an empty target.
+        void SetTransformStream(const FTransformStreamTarget& Target) { StreamTarget = Target; }
+
+        // Records the last Sync wrote, one per moved entity, with kNoStreamSlot for any that took the CPU path.
+        uint32 GetTransformStreamCount() const { return StreamCount; }
+
+        // Records the movers themselves wrote into the last Sync's stream, as they moved.
+        uint32 GetMoveTimeRecords() const { return MoveTimeRecords; }
+
+        // Flat movers write their own records into Target until the next Sync folds them in, so arm it only between frames, with a slice the GPU is done with.
+        void ArmMoveStream(ECS::FRegistry& Registry, const FTransformStreamTarget& Target, uint32 MovedConsumer);
+
+        // Takes the writer back off the registry, for a renderer going away while armed.
+        void DisarmMoveStream(ECS::FRegistry& Registry);
+
+        bool IsMoveStreamArmed() const { return bMoveStreamArmed; }
+
+        // Blocks of slots holding an instance streamed this frame, sorted, whose CPU spheres trail the GPU.
+        const TVector<uint32>& GetStreamedBlocks() const { return StreamedBlocks; }
 
         uint32                              Num() const { return (uint32)Primitives.size(); }
         const FScenePrimitive*              GetPrimitives() const { return Primitives.data(); }
@@ -414,6 +455,8 @@ namespace Lumina
         void    RefreshInstances(uint32 Index, TVector<uint32>* DirtySink = nullptr);
 
         void    RefreshInstanceTransform(uint32 Index, TVector<uint32>* DirtySink = nullptr);
+        // Takes the matrix just written, since reading back a line that was streamed past the cache costs a trip to memory.
+        void    RefreshInstanceTransform(uint32 Index, const FMatrix4& Transform, TVector<uint32>* DirtySink);
 
         bool        IsRemappedForeground(const FScenePrimitive& Prim) const { return bForegroundActive && (Prim.RenderLayers & RenderLayers::kForegroundMask) != 0u; }
         FMatrix4    InstanceTransformOf(const FScenePrimitive& Prim) const;
@@ -450,6 +493,7 @@ namespace Lumina
         void    PollSkeletalBoneRanges(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
 
         void    RebuildWorldBounds(uint32 Index);
+        void    RebuildWorldBounds(uint32 Index, const FMatrix4& Transform);
 
         TVector<FScenePrimitive>            Primitives;
         TVector<FVector4>                   Bounds;
@@ -647,6 +691,10 @@ namespace Lumina
 
         // Movers with no record skip coalescing entirely and are applied in parallel after the structural pass.
         void ApplyMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved);
+        // Every moved entity through the CPU copies, which upload as dirty slots.
+        void ApplyMovedLegacy(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved);
+        // Opens a claim pass and returns its stamp, so a mover listed twice in it is applied once.
+        uint32 BeginMovedClaims();
 
         // Per entity index, the stamp of the pass that claimed it, so a mover listed twice is applied once.
         TVector<uint32>             MovedClaimByEntityIndex;
@@ -660,9 +708,133 @@ namespace Lumina
         // One cache line per worker, since neighboring vectors bounced the line on every push.
         struct CACHE_ALIGN FDirtySlotBucket
         {
-            TVector<uint32> Slots;
+            TVector<uint32>       Slots;
+            TVector<ECS::FEntity> Streamed;
+            TVector<uint32>       StreamedBlocks;
+            TVector<ECS::FEntity> Stopped;
         };
         TVector<FDirtySlotBucket>   ParallelDirtySlots;
+        void EnsureParallelBuckets();
+
+        // Writes the record for a mover the stream can take, and reports false for one that needs the CPU path.
+        bool StreamEntityTransform(const FSyncPools& Pools, ECS::FEntity Entity, uint32 Record, FDirtySlotBucket& Bucket);
+
+        // One job thread's share of the move-time stream, so a mover allocates records without touching another's line.
+        static constexpr uint32 kMoveStreamChunk = 256;
+        struct CACHE_ALIGN FMoveStreamLane
+        {
+            uint32                 Next = 0;
+            uint32                 End = 0;
+            // Movers that streamed last frame too, which lets the catch-up skip its scan when none stopped.
+            uint32                 Continuing = 0;
+            TVector<ECS::FEntity>  Streamed;
+            TVector<uint32>        Blocks;
+            // Moved again after their record was written, so the seal rewrites them from the final pose.
+            TVector<ECS::FEntity>  Rewrites;
+        };
+
+        static bool WriteFlatMove(void* Context, ECS::FEntity Entity, const FTransform& World);
+        bool WriteMove(ECS::FEntity Entity, const FTransform& World);
+        // Disarms, closes every lane and returns how many records the movers used, zero when they have to be replayed.
+        uint32 SealMoveStream(ECS::FRegistry& Registry);
+        // A structural sync can move the entity's slot, so a record written for it this frame must not land.
+        void KillMoveRecord(ECS::FEntity Entity);
+        void OpenStreamFrame();
+
+        TVector<FMoveStreamLane>    MoveLanes;
+        ECS::Utils::FFlatMoveWriter MoveWriter;
+        std::atomic<uint32>         MoveStreamNext{ 0 };
+        uint32                      MoveTimeRecords = 0;
+        bool                        bMoveStreamArmed = false;
+        bool                        bStreamFrameOpen = false;
+        // A foreground toggle after the movers wrote changes which of them may stream at all.
+        bool                        bDiscardMoveStream = false;
+        TVector<ECS::FEntity>       MoveReplay;
+        uint64                      ContinuingStreams = 0;
+        // False after a frame whose stamps no longer match its lists one to one, so the next catch-up has to scan.
+        bool                        bStreamListsExact = false;
+        void StreamMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved);
+        // A streamed mover that stopped still holds CPU copies from before it streamed, so it takes the CPU path once.
+        void CatchUpStoppedStreams(const FSyncPools& Pools, uint32 MovedStamp, bool bNoneStopped);
+
+        // What the stream needs of an entity, kept apart so a mover reads one dense entry instead of its primitive and binding.
+        enum class EStreamKind : uint32
+        {
+            Skip,
+            CPUPath,
+            Stream,
+        };
+        struct FStreamCacheEntry
+        {
+            uint32      Generation = 0;
+            uint32      Entity = 0;
+            uint32      Slot = 0;
+            EStreamKind Kind = EStreamKind::Skip;
+            FVector3    LocalCenter = FVector3(0.0f);
+            float       Radius = 0.0f;
+        };
+        static_assert(sizeof(FStreamCacheEntry) == 32, "Two cache entries per line.");
+        FStreamCacheEntry BuildStreamCacheEntry(ECS::FEntity Entity) const;
+        FStreamCacheEntry LookupStreamCacheEntry(ECS::FEntity Entity);
+        // A structural sync of the entity, which may move its slot or bounds.
+        void InvalidateStreamCache(ECS::FEntity Entity);
+        // Everything at once, for a rescan, a reset or a foreground toggle.
+        void InvalidateAllStreamCache();
+        TVector<FStreamCacheEntry>  StreamCache;
+        uint32                      StreamCacheGeneration = 1;
+
+        FTransformStreamTarget      StreamTarget;
+        uint32                      StreamCount = 0;
+        // Bumped every frame the stream opens, and per entity index the frame that last streamed it and its record.
+        struct FMoveRecordStamp
+        {
+            uint32 Frame  = 0;
+            uint32 Record = kNoStreamSlot;
+        };
+        // Set on a stamp's record once its rewrite is queued, so a mover moved many times queues one.
+        static constexpr uint32 kMoveRewriteQueued = 0x80000000u;
+        uint32                      StreamFrame = 0;
+        TVector<FMoveRecordStamp>   MoveRecords;
+        // A frame's streamed movers kept as the lists their threads built, which are swapped in rather than copied into one.
+        struct FStreamedLists
+        {
+            TVector<TVector<ECS::FEntity>> Lists;
+            uint32                         Used = 0;
+            uint64                         Count = 0;
+
+            bool IsEmpty() const { return Used == 0; }
+
+            // Takes List's entities and hands it back an emptied vector that keeps its capacity.
+            void Take(TVector<ECS::FEntity>& List)
+            {
+                if (List.empty())
+                {
+                    return;
+                }
+                if (Used == (uint32)Lists.size())
+                {
+                    Lists.emplace_back();
+                }
+                Count += List.size();
+                Lists[Used].clear();
+                Lists[Used].swap(List);
+                ++Used;
+            }
+
+            void Clear()
+            {
+                for (uint32 Index = 0; Index < Used; ++Index)
+                {
+                    Lists[Index].clear();
+                }
+                Used  = 0;
+                Count = 0;
+            }
+        };
+        FStreamedLists              StreamedThisFrame;
+        FStreamedLists              StreamedLastFrame;
+        TVector<ECS::FEntity>       StoppedScratch;
+        TVector<uint32>             StreamedBlocks;
 
         // Folds the per-worker lists back into DirtyInstanceSlots, or gives up and re-sends everything.
         void MergeParallelDirtySlots();
@@ -696,6 +868,8 @@ namespace Lumina
         void                                ReleaseBoneSlice(FScenePrimitive& Prim);
 
         void                                UpdateMeshletVisibility(uint32 Slot);
+        // Visibility words the slot's largest LOD needs, zero for an inactive slot.
+        uint32                              MeshletVisibilityWordsOf(uint32 Slot) const;
         void                                ReleaseMeshletVisibility(uint32 Slot);
         void                                ResetMeshletVisibility();
 

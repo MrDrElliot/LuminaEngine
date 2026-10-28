@@ -7,10 +7,12 @@
 namespace Lumina
 {
     class CAudioGraph;
+    class CAudioGraphInputNode;
+    class CAudioNode_WavePlayer;
     class CAudioGraphOutputNode;
 
     REFLECT()
-    class CAudioNodeGraph : public CEdNodeGraph
+    class EDITOR_API CAudioNodeGraph : public CEdNodeGraph
     {
         GENERATED_BODY()
 
@@ -33,6 +35,12 @@ namespace Lumina
         CAudioGraph* GetAudioGraph() const { return AudioGraph.Get(); }
 
         CAudioGraphOutputNode* FindOutputNode() const;
+
+        // The trigger input every graph raises on its first block, which is what starts a Wave Player.
+        CAudioGraphInputNode* FindOnPlayNode() const;
+
+        // A dropped wave plays as soon as the graph does, through any Output pins still free.
+        void WireDroppedWavePlayer(CAudioNode_WavePlayer* Player);
 
     private:
 

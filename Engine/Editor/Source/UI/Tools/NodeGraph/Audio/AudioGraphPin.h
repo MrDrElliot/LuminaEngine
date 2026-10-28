@@ -13,7 +13,7 @@ namespace Lumina
     EDITOR_API uint32 GetAudioGraphTypeColor(EAudioGraphType Type);
 
     REFLECT()
-    class CAudioGraphPin : public CEdNodeGraphPin
+    class EDITOR_API CAudioGraphPin : public CEdNodeGraphPin
     {
         GENERATED_BODY()
 

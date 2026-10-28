@@ -57,9 +57,32 @@ namespace Lumina
         CreateInputPin("Loop", EAudioGraphType::Bool);
         CreateInputPin("Pitch", EAudioGraphType::Float);
         CreateInputPin("Start Time", EAudioGraphType::Float);
+        CreateInputPin("Loop Start", EAudioGraphType::Float);
+        CreateInputPin("Loop Duration", EAudioGraphType::Float);
 
         CreateOutputPin("Out Left", EAudioGraphType::Audio);
         CreateOutputPin("Out Right", EAudioGraphType::Audio);
         CreateOutputPin("On Finished", EAudioGraphType::Trigger);
+        CreateOutputPin("On Looped", EAudioGraphType::Trigger);
+        CreateOutputPin("Playback Time", EAudioGraphType::Float);
+    }
+
+    void CAudioNode_RandomWave::BuildNode()
+    {
+        CreateInputPin("Next", EAudioGraphType::Trigger);
+        CreateInputPin("Mode", EAudioGraphType::Int32);
+        CreateInputPin("Index", EAudioGraphType::Int32);
+        CreateInputPin("Seed", EAudioGraphType::Int32);
+
+        CreateOutputPin("Wave", EAudioGraphType::Wave);
+        CreateOutputPin("Index", EAudioGraphType::Int32);
+    }
+
+    void CAudioNode_RandomWave::GetNodeWaves(TVector<CAudioStream*>& OutWaves) const
+    {
+        for (const TStrongObjectPtr<CAudioStream>& Wave : Waves)
+        {
+            OutWaves.push_back(Wave.Get());
+        }
     }
 }
