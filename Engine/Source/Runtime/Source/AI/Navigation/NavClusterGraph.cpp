@@ -380,10 +380,10 @@ namespace Lumina
         const dtPolyRef Base = Mesh.getPolyRefBase(Tile);
         const TVector<uint16>& PolyCluster = Tiles[TileOfKey(Key)].PolyCluster;
         uint64 Nearest = 0;
-        float NearestDistance = FLT_MAX;
+        float NearestDistance = TNumericLimits<float>::Max();
         for (size_t i = 0; i < PolyCluster.size(); ++i)
         {
-            const float Distance = PolyCluster[i] == ClusterOfKey(Key) ? Math::LengthSquared(PolyCenter(*Tile, Tile->polys[i]) - Pos) : FLT_MAX;
+            const float Distance = PolyCluster[i] == ClusterOfKey(Key) ? Math::LengthSquared(PolyCenter(*Tile, Tile->polys[i]) - Pos) : TNumericLimits<float>::Max();
             if (Distance < NearestDistance)
             {
                 NearestDistance = Distance;
@@ -412,7 +412,7 @@ namespace Lumina
 
         // A different island, so the route heads for the part of the start's island nearest the goal instead.
         uint64 NearestKey = StartKey;
-        float NearestDistance = FLT_MAX;
+        float NearestDistance = TNumericLimits<float>::Max();
         for (size_t t = 0; t < Tiles.size(); ++t)
         {
             if (t % 1024 == 0 && Abandon.load(std::memory_order_relaxed) != 0)
@@ -421,7 +421,7 @@ namespace Lumina
             }
             for (size_t c = 0; c < Tiles[t].Centers.size(); ++c)
             {
-                const float Distance = ComponentOf(PackKey((uint32)t, (uint16)c)) == StartComponent ? Math::LengthSquared(Tiles[t].Centers[c] - EndPos) : FLT_MAX;
+                const float Distance = ComponentOf(PackKey((uint32)t, (uint16)c)) == StartComponent ? Math::LengthSquared(Tiles[t].Centers[c] - EndPos) : TNumericLimits<float>::Max();
                 if (Distance < NearestDistance)
                 {
                     NearestDistance = Distance;
@@ -462,7 +462,7 @@ namespace Lumina
 
         int32 Goal = -1;
         int32 Closest = 0;
-        float ClosestDistance = FLT_MAX;
+        float ClosestDistance = TNumericLimits<float>::Max();
         int32 Expansions = 0;
         while (!Open.empty() && Expansions < kMaxExpansions)
         {

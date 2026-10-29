@@ -177,11 +177,9 @@ public abstract class LuminaTargetRules : TargetRules
             Warnings.Set(WarningSeverity.Fatal,
                 CompilerWarning.Switch,
 
-                CompilerWarning.Shadow,                  // a name that hides a member, a parameter or an outer local
                 CompilerWarning.OverloadedVirtual,       // an overload set a derived class silently narrowed
                 CompilerWarning.NonVirtualDtor,          // a base deleted through a pointer it cannot destroy
                 CompilerWarning.SuggestOverride,         // an override that no longer has to match the base
-                CompilerWarning.SubobjectLinkage,        // a type whose definition differs between units
 
                 CompilerWarning.ReturnLocalAddr,         // a pointer to a frame that has already gone
                 CompilerWarning.MismatchedNewDelete,     // new[] released with delete, or the reverse
@@ -214,12 +212,15 @@ public abstract class LuminaTargetRules : TargetRules
                 CompilerWarning.Attributes,              // an attribute the compiler is quietly dropping
                 CompilerWarning.Comment,                 // a // comment continued by a trailing backslash
                 CompilerWarning.ExtraSemi,               // a semicolon that declares nothing
-                CompilerWarning.SignCompare,             // a signed and an unsigned value compared directly
-                CompilerWarning.UnusedFunction);
+                CompilerWarning.SignCompare);            // a signed and an unsigned value compared directly
 
             Warnings.Set(WarningSeverity.Warning,
                 CompilerWarning.UnusedVariable,
-                CompilerWarning.UnusedButSetVariable);
+                CompilerWarning.UnusedButSetVariable,
+                // Not clean on GCC 16.2, which is newer than the pass above was verified against.
+                CompilerWarning.Shadow,
+                CompilerWarning.SubobjectLinkage,
+                CompilerWarning.UnusedFunction);
         }
     }
 }

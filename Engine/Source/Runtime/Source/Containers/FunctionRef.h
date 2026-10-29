@@ -22,10 +22,31 @@ namespace Lumina::Containers
             !std::is_same_v<std::remove_cvref_t<TCallable>, std::nullptr_t> &&
             std::is_invocable_r_v<TRet, TCallable&, TArgs...>;
 
+        // A plain function is passed by reference, and only reinterpret_cast turns a function pointer into void*.
+        template <typename T>
+        static void* ToTarget(T* Ptr) noexcept
+        {
+            if constexpr (std::is_function_v<T>)
+            {
+                return reinterpret_cast<void*>(Ptr);
+            }
+            else
+            {
+                return const_cast<void*>(static_cast<const void*>(Ptr));
+            }
+        }
+
         template <typename TCallable>
         static TRet InvokeThunk(void* Target, TArgs&&... Args)
         {
-            return InvokeR<TRet>(*static_cast<TCallable*>(Target), std::forward<TArgs>(Args)...);
+            if constexpr (std::is_function_v<TCallable>)
+            {
+                return InvokeR<TRet>(*reinterpret_cast<TCallable*>(Target), std::forward<TArgs>(Args)...);
+            }
+            else
+            {
+                return InvokeR<TRet>(*static_cast<TCallable*>(Target), std::forward<TArgs>(Args)...);
+            }
         }
 
     public:
@@ -39,7 +60,7 @@ namespace Lumina::Containers
         requires (bIsValidCallable<TCallable>)
         TFunctionRef(TCallable&& Callable) noexcept
             : Thunk(&InvokeThunk<std::remove_reference_t<TCallable>>)
-            , Target(const_cast<void*>(static_cast<const void*>(std::addressof(Callable))))
+            , Target(ToTarget(std::addressof(Callable)))
         {
         }
 

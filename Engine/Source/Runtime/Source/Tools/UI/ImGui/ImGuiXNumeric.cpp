@@ -124,7 +124,7 @@ namespace Lumina::ImGuiX
                     }
                     ++At;
                     double Right;
-                    if (!Unary(Right) || Right == 0.0 && Operator != '*')
+                    if (!Unary(Right) || (Right == 0.0 && Operator != '*'))
                     {
                         return false;
                     }
