@@ -31,14 +31,19 @@ void WaveInterlockedAddNoReturn(uint* Counter, uint Value)
 // Lanes may name different counters, each picked by Key, so a wave that mostly shares one pays one atomic per key it holds.
 uint WaveInterlockedAddKeyed(uint Key, uint* Counter, uint Value)
 {
+    // Pending flag rather than a break: AMD's compiler sinks a broken-out body past the loop exit, running the add once over every key.
     uint Result = 0u;
+    bool bPending = true;
     [loop]
-    for (;;)
+    while (WaveActiveAnyTrue(bPending))
     {
-        if (Key == WaveReadLaneFirst(Key))
+        if (bPending)
         {
-            Result = WaveInterlockedAdd(Counter, Value);
-            break;
+            if (Key == WaveReadLaneFirst(Key))
+            {
+                Result = WaveInterlockedAdd(Counter, Value);
+                bPending = false;
+            }
         }
     }
     return Result;
