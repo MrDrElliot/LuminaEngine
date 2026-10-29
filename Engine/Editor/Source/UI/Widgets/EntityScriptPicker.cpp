@@ -29,7 +29,7 @@ namespace Lumina::EntityScriptPicker
             CClass* Base = CEntityScript::StaticClass();
             return Class != nullptr && Class != Base && Class->IsChildOf(Base)
                 && !Class->HasAnyFlag(OF_DefaultObject) && !Class->HasAnyFlag(OF_MarkedDestroy)
-                && !Class->IsAbstract() && !Class->IsSuperseded();
+                && Class->CanInstantiate();
         }
     }
 

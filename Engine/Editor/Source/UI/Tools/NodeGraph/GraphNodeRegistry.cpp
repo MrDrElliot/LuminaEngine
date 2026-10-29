@@ -54,7 +54,7 @@ namespace Lumina
             }
 
             // Family bases and graph-created root nodes, which is class metadata rather than a virtual.
-            if (Class->HasMeta("NotPlaceable"))
+            if (Class->HasMeta("NotPlaceable") || !Class->CanInstantiate())
             {
                 return;
             }

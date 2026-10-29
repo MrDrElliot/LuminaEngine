@@ -79,6 +79,12 @@ namespace Lumina
         return Metadata.GetMetadata(Key);
     }
 
+    bool CClass::IsAbstract() const
+    {
+        static const FName AbstractKey("Abstract");
+        return HasMeta(AbstractKey);
+    }
+
     CClass* CClass::GetMetaClass() const
     {
         return StaticClass();

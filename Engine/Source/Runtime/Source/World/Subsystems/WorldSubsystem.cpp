@@ -27,7 +27,7 @@ namespace Lumina::WorldSubsystems
         // Null when the class is abstract, the world's realm excludes it, or it declines the world.
         CWorldSubsystem* Instantiate(CWorld& World, CClass* Class)
         {
-            if (Class->IsAbstract() || !NetRealm::Allows(Class, &World))
+            if (!Class->CanInstantiate() || !NetRealm::Allows(Class, &World))
             {
                 return nullptr;
             }
@@ -75,7 +75,7 @@ namespace Lumina::WorldSubsystems
             }
 
             CClass* Class = static_cast<CClass*>(Object);
-            if (Class != BaseClass && Class->IsChildOf(BaseClass) && !Class->IsAbstract() && !Class->IsSuperseded() && !AlreadyPresent(Out, Class))
+            if (Class != BaseClass && Class->IsChildOf(BaseClass) && Class->CanInstantiate() && !AlreadyPresent(Out, Class))
             {
                 Candidates.push_back(Class);
             }

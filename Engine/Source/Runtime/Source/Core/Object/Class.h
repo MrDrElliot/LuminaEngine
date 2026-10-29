@@ -326,10 +326,12 @@ namespace Lumina
         RUNTIME_API virtual CClass* GetMetaClass() const;
 
         // A base other classes derive from, which nothing may instantiate.
-        RUNTIME_API virtual bool IsAbstract() const { return false; }
+        RUNTIME_API virtual bool IsAbstract() const;
 
         // Replaced or removed by a script reload, so it lives on only for the instances it already has.
         RUNTIME_API virtual bool IsSuperseded() const { return false; }
+
+        NODISCARD bool CanInstantiate() const { return !IsAbstract() && !IsSuperseded(); }
 
         CClass() = default;
 

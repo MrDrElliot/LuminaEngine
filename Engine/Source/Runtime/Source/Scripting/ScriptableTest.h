@@ -48,6 +48,28 @@ namespace Lumina
         void ResetNativeValue() { NativeValue = 1.5f; }
     };
 
+    REFLECT(Abstract)
+    class RUNTIME_API CAbstractEntityScriptTest : public CEntityScript
+    {
+        GENERATED_BODY()
+    public:
+
+        void OnAttach() override { AttachKind = Kind(); }
+
+        virtual int32 Kind() const { return 0; }
+
+        int32 AttachKind = -1;
+    };
+
+    REFLECT()
+    class RUNTIME_API CConcreteEntityScriptTest : public CAbstractEntityScriptTest
+    {
+        GENERATED_BODY()
+    public:
+
+        int32 Kind() const override { return 1; }
+    };
+
     /// Test C++ entity script, ticked by the same driver as a C# one, counting what ran so a test can assert the order.
     REFLECT()
     class RUNTIME_API CEntityScriptTest : public CEntityScript
@@ -230,6 +252,35 @@ namespace Lumina
         int32 StartupCount = 0;
         int32 UpdateCount = 0;
         int32 TeardownCount = 0;
+    };
+
+    REFLECT(Abstract)
+    class RUNTIME_API CEntitySystemAbstractBaseTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override
+        {
+            RequireUpdate(EUpdateStage::PrePhysics);
+            DeclareRead("SStaticMeshComponent");
+            ConfigureDerived();
+        }
+
+        virtual void ConfigureDerived() {}
+
+        int32 DerivedConfigureCount = 0;
+    };
+
+    REFLECT()
+    class RUNTIME_API CEntitySystemDerivedTest : public CEntitySystemAbstractBaseTest
+    {
+        GENERATED_BODY()
+    public:
+
+        void ConfigureDerived() override { ++DerivedConfigureCount; }
     };
 
     // Declares no access, so a test can prove the driver falls back to running it alone.
