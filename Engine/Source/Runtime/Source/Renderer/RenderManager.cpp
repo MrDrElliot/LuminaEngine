@@ -35,8 +35,8 @@ namespace Lumina
     // Not exported, so exactly one place can be wrong about whether a renderer exists.
     static FRenderManager* GRenderManager = nullptr;
 
-    // Under 4 GiB so a card sold as 4 GB still passes whatever its driver reserves off the heap.
-    static constexpr uint32 kMinimumVRAMMiB     = 3840;
+    // Under 3 GiB so a Steam Deck (3 GiB UMA heap) still passes whatever its driver reserves off the heap.
+    static constexpr uint32 kMinimumVRAMMiB     = 2816;
     static constexpr uint32 kRecommendedVRAMMiB = 6144;
 
     static void WarnIfBelowRecommendedVRAM()
