@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Threading/Atomic.h"
+#include "TaskSystem/FiberSync.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 
@@ -90,8 +91,9 @@ namespace Lumina
         FRecursiveMutex(FRecursiveMutex&&) = delete;
         FRecursiveMutex& operator=(FRecursiveMutex&&) = delete;
 
-        void Lock() noexcept;
-        NODISCARD bool TryLock() noexcept;
+        // Out of line so whole-program optimization cannot reuse a caller's TLS address from before a park.
+        FORCENOINLINE void Lock() noexcept;
+        FORCENOINLINE NODISCARD bool TryLock() noexcept;
         void Unlock() noexcept;
 
         FORCEINLINE void lock() noexcept { Lock(); }
@@ -100,9 +102,10 @@ namespace Lumina
 
     private:
 
-        FMutex         Inner;
+        // Owned by a fiber rather than a thread, and parks rather than blocking, since a holder may park mid-section.
+        FFiberMutex     Inner;
         TAtomic<uint64> Owner{ 0 };
-        uint32         Depth = 0;
+        uint32          Depth = 0;
     };
 
     template <typename TLockable>
