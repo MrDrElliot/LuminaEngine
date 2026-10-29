@@ -49,6 +49,10 @@ namespace Lumina
         "Forces the scene debug view to this ERenderSceneDebugFlags value in every view; -1 leaves each viewport's own.");
     #endif
 
+    // The pyramid is a full-atlas reduction each frame, which on a bandwidth-starved GPU can cost more than the casters it culls.
+    static TConsoleVar<bool> CVarShadowOcclusionCull("r.Shadows.OcclusionCull", true,
+        "Build the cascade depth pyramid and cull cascade casters hidden behind nearer casters.");
+
     namespace
     {
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
@@ -4244,7 +4248,7 @@ namespace Lumina
             SunFarShadow.GridCellSize = Grid.CellSize;
         }
 
-        if (!DirectionalLight.bCascadeOcclusionCull)
+        if (!DirectionalLight.bCascadeOcclusionCull || !CVarShadowOcclusionCull.GetValue())
         {
             SceneGlobalData.CullData.bShadowOcclusionCull = 0u;
         }
