@@ -2814,6 +2814,8 @@ namespace Lumina::RHI
         Features12.timelineSemaphore                            = VK_TRUE;
         Features12.drawIndirectCount                            = VK_TRUE;
         Features12.bufferDeviceAddress                          = VK_TRUE;
+        // Slang lays out pointer-reached structs scalar-packed (a float3 at offset 4), which std430 forbids without this.
+        Features12.scalarBlockLayout                            = VK_TRUE;
 
         if (Supported12.bufferDeviceAddressCaptureReplay && FRenderDoc::IsAttached())
         {
