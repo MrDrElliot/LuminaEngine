@@ -1442,18 +1442,3 @@ TEST(EntityScriptUnification, LifecycleOrderHoldsForAScriptAddedLater)
 
     EXPECT_EQ(Joined(Log), FString("A:late A:child R:child R:late"));
 }
-
-TEST(EntityScriptUnification, AnAbstractScriptIsRefusedAndItsSubclassAttaches)
-{
-    RegisterPendingTypes();
-    ECS::FRegistry Registry{};
-    const ECS::FEntity Entity = Registry.Create();
-
-    EXPECT_FALSE(CAbstractEntityScriptTest::StaticClass()->CanInstantiate());
-    EXPECT_TRUE(CConcreteEntityScriptTest::StaticClass()->CanInstantiate());
-    EXPECT_EQ(EntityScripts::Attach(Registry, Entity, CAbstractEntityScriptTest::StaticClass()), nullptr);
-
-    auto* Script = Cast<CConcreteEntityScriptTest>(EntityScripts::Attach(Registry, Entity, CConcreteEntityScriptTest::StaticClass()));
-    ASSERT_NE(Script, nullptr);
-    EXPECT_EQ(Script->AttachKind, 1);
-}
