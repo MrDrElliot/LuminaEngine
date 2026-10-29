@@ -4320,7 +4320,7 @@ namespace Lumina
             const float SplitNear = LastSplitDistance;
             const float SplitFar  = CascadeFarDistances[i];
 
-            const int   CascadeRes        = GCSMCascadeSizes[i];
+            const int   CascadeRes        = GCSMCascadeSize;
             const float CascadeResFloat   = (float)CascadeRes;
             LightData.CascadeResolutions[i] = CascadeResFloat;
 
@@ -4378,12 +4378,14 @@ namespace Lumina
                 CascadeShadowData->ViewProjection[i] = CascadeVP;
                 
                 FLightShadow& CascadeTile = CascadeShadowData->Shadow[i];
+                // The same count PrepareRender sizes the atlas from, so these UVs match the image this frame draws into.
+                const float AtlasW = (float)GCSMAtlasWidth(ActiveCascadeCount);
                 CascadeTile.AtlasUVOffset = FVector2(
-                    (float)GCSMCascadeOriginX[i] / (float)GCSMAtlasWidth,
-                    (float)GCSMCascadeOriginY[i] / (float)GCSMAtlasHeight);
+                    (float)GCSMCascadeOriginX(i) / AtlasW,
+                    (float)GCSMCascadeOriginY(i) / (float)GCSMAtlasHeight);
                 CascadeTile.AtlasUVScale = FVector2(
-                    (float)GCSMCascadeSizes[i]  / (float)GCSMAtlasWidth,
-                    (float)GCSMCascadeSizes[i]  / (float)GCSMAtlasHeight);
+                    (float)GCSMCascadeSize / AtlasW,
+                    (float)GCSMCascadeSize / (float)GCSMAtlasHeight);
                 CascadeTile.ShadowMapIndex  = Constants::kIndexNone;
                 CascadeTile.LightIndex      = 0;
                 CascadeTile.ShadowDataIndex = (int32)ShadowSlot;

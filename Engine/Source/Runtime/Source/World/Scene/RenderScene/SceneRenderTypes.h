@@ -37,11 +37,13 @@ constexpr int MaxClusterCullBlocks = 512;
 
 static_assert(ClusterGridSizeZ % CLUSTER_CULL_BLOCK_Z == 0, "Z slices must fill whole cull blocks");
 
-constexpr int GCSMCascadeSizes[NumCascades]   = { 2048, 2048, 2048, 2048 };
-constexpr int GCSMAtlasWidth                  = 4096;
-constexpr int GCSMAtlasHeight                 = 4096;
-constexpr int GCSMCascadeOriginX[NumCascades] = { 0,    2048, 0,    2048 };
-constexpr int GCSMCascadeOriginY[NumCascades] = { 0,    0,    2048, 2048 };
+// Cascades sit side by side in one row, so the atlas holds only the ones the sun uses.
+constexpr int GCSMCascadeSize  = 2048;
+constexpr int GCSMAtlasHeight  = GCSMCascadeSize;
+constexpr int GCSMCascadeOriginX(int Cascade) { return Cascade * GCSMCascadeSize; }
+constexpr int GCSMCascadeOriginY(int /*Cascade*/) { return 0; }
+// Four in a row is 8192 wide, inside the 16384 every mesh-shader GPU allows.
+constexpr int GCSMAtlasWidth(int CascadeCount) { return (CascadeCount < 1 ? 1 : CascadeCount) * GCSMCascadeSize; }
 
 constexpr int GShadowAtlasResolution    = 4096;
 
