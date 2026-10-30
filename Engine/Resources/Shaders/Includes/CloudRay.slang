@@ -19,15 +19,8 @@ FCloudRay Cloud_SetupRay(FTexture2D Depth, int2 P, uint2 Size, float LayerBottom
     FCloudRay Ray;
     float2 UV = (float2(P) + 0.5) / float2(Size);
 
-    // Sampled by UV, not Load, since P indexes the half-res target while depth is full-res.
-    float2 Off = 0.5 / float2(Size);
-    float  D0  = Depth.SampleLevel(Samplers::PointClamp, UV + float2(-Off.x, -Off.y), 0.0).r;
-    float  D1  = Depth.SampleLevel(Samplers::PointClamp, UV + float2( Off.x, -Off.y), 0.0).r;
-    float  D2  = Depth.SampleLevel(Samplers::PointClamp, UV + float2(-Off.x,  Off.y), 0.0).r;
-    float  D3  = Depth.SampleLevel(Samplers::PointClamp, UV + float2( Off.x,  Off.y), 0.0).r;
-
-    // Reverse-Z, so max is the closest surface in the footprint, and the composite rejects this texel for pixels behind it.
-    Ray.RawDepth = max(max(D0, D1), max(D2, D3));
+    // One max-reduction tap at the half-res texel center covers its 2x2 full-res footprint; reverse-Z, so max is the closest surface.
+    Ray.RawDepth = Depth.SampleLevel(Samplers::MaxReduction, UV, 0.0).r;
 
     float2 NDC     = UV * 2.0 - 1.0;
     float4 ViewH   = mul(GetInverseCameraProjection(), float4(NDC, 1.0, 1.0));

@@ -880,7 +880,7 @@ namespace Lumina
         void DepthPyramidPass(RHI::FCmdListH CL);
         void CascadePyramidPass(RHI::FCmdListH CL);
         void BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
-                               uint32 SpdCounterIndex);
+                               uint32 SpdCounterIndex, uint32 SourceScale = 2);
 
         // Sizes and zeroes this frame's scratch counters, the one fill and barrier the counters share.
         void BeginFrameScratch(RHI::FCmdListH CL, const FFrameData& Frame);

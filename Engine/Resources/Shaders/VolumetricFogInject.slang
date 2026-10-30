@@ -93,10 +93,13 @@ float SampleLocalShadow(FLight Light, float3 WorldPos)
 
 static const uint kMaxLocalSamples = 4;
 
+static const float2 kLocalSampleOffsets[kMaxLocalSamples] = { float2(-0.25, -0.25), float2(0.25, -0.25),
+                                                               float2(-0.25,  0.25), float2(0.25,  0.25) };
+
 // Every sample shares one walk of the cluster list, so a supersampled froxel fetches each light once.
-float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, float3 SamplePos[kMaxLocalSamples],
-                            float3 SampleToCam[kMaxLocalSamples], uint NumSamples)
+float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, float3 Center, float3 AxisX, float3 AxisY, uint NumSamples)
 {
+    const float3 CamPos = GetCameraPosition();
     float  G         = Fog.VolumetricParams.y;
     float3 InScatter = float3(0.0);
 
@@ -132,7 +135,8 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
 
             for (uint s = 0; s < NumSamples; ++s)
             {
-                const float3 WorldPos = SamplePos[s];
+                const float2 O        = NumSamples == 1 ? float2(0.0, 0.0) : kLocalSampleOffsets[s];
+                const float3 WorldPos = Center + AxisX * O.x + AxisY * O.y;
                 float3 ToL  = L.Position - WorldPos;
                 float  Dist = length(ToL);
                 if (Dist > L.Radius)
@@ -166,7 +170,7 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
                 float Shadow = SampleLocalShadow(L, WorldPos);
 
                 // Negated because Ldir points at the light while the photon travels away from it, as the sun's phase expects.
-                float PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, SampleToCam[s]), G, Shadow);
+                float PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, normalize(CamPos - WorldPos)), G, Shadow);
                 InScatter += LC * Atten * Cone * PhaseShadow * LightFunctionMask(L, Ldir, WorldPos);
             }
         }
@@ -256,17 +260,9 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     const uint NumSamples = min(Pass().LocalLightSamples, kMaxLocalSamples);
     if (NumSamples > 0)
     {
-        const float2 Offs[kMaxLocalSamples] = { float2(0.25, 0.25), float2(0.75, 0.25),
-                                                float2(0.25, 0.75), float2(0.75, 0.75) };
-        float3 SamplePos[kMaxLocalSamples];
-        float3 SampleToCam[kMaxLocalSamples];
-        [unroll]
-        for (uint s = 0; s < kMaxLocalSamples; ++s)
-        {
-            SamplePos[s]   = NumSamples == 1 ? WorldPos : FroxelToWorld(DispatchID, float3(Offs[s], 0.5));
-            SampleToCam[s] = NumSamples == 1 ? ToCam : normalize(GetCameraPosition() - SamplePos[s]);
-        }
-        InScatter += LocalLightsInScatter(uFog, FroxelClusterIndex(DispatchID), SamplePos, SampleToCam, NumSamples);
+        const float3 AxisX = FroxelToWorld(DispatchID, float3(1.0, 0.5, 0.5)) - FroxelToWorld(DispatchID, float3(0.0, 0.5, 0.5));
+        const float3 AxisY = FroxelToWorld(DispatchID, float3(0.5, 1.0, 0.5)) - FroxelToWorld(DispatchID, float3(0.5, 0.0, 0.5));
+        InScatter += LocalLightsInScatter(uFog, FroxelClusterIndex(DispatchID), WorldPos, AxisX, AxisY, NumSamples);
     }
 
     // Emissive volumes glow on their own, so it rides outside the extinction-weighted scattering term.

@@ -119,12 +119,11 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    Pass().Scatter[P] = float4(0.0, 0.0, 0.0, 1.0);
-
     const FCloudRay Ray = Cloud_SetupRay(Pass().Depth, P, Size, Pass().LayerBottom, Pass().LayerTop, Pass().MaxDistance);
     Pass().CloudDepth[P] = float4(Ray.RawDepth, 0.0, 0.0, 0.0);
     if (Ray.End <= Ray.Start)
     {
+        Pass().Scatter[P] = float4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 

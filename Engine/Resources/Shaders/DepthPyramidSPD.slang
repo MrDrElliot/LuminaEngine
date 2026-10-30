@@ -20,6 +20,8 @@ struct FPushConstants
     uint          ReduceMax;       // 0 = min (reverse-Z camera depth), 1 = max (standard-Z shadow depth)
     GPUSpan<uint> AtomicCounter;
     uint          MipUAV[SPD_MAX_MIPS];
+    float2        InvSrcSize;
+    uint          SrcScale;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -81,8 +83,19 @@ float4 DownsampleMipN0_BaseCase(uint2 Tile, uint2 TileThread)
 
         if (all(uint2(DstP) < Pass().PyramidSize))
         {
-            const float2 UV = (float2(DstP) + 0.5f) * Pass().InvPyramidSize;
-            const float  V  = SampleSrcDepth(UV);
+            float V;
+            if (Pass().SrcScale == 4u)
+            {
+                const float2 Base = float2(DstP * 4);
+                V = Reduce4(SampleSrcDepth((Base + float2(1.0f, 1.0f)) * Pass().InvSrcSize),
+                            SampleSrcDepth((Base + float2(3.0f, 1.0f)) * Pass().InvSrcSize),
+                            SampleSrcDepth((Base + float2(1.0f, 3.0f)) * Pass().InvSrcSize),
+                            SampleSrcDepth((Base + float2(3.0f, 3.0f)) * Pass().InvSrcSize));
+            }
+            else
+            {
+                V = SampleSrcDepth((float2(DstP) + 0.5f) * Pass().InvPyramidSize);
+            }
 
             FRWTexture2D(Pass().MipUAV[0])[DstP] = float4(V, 0, 0, 0);
             Quad[qi] = V;

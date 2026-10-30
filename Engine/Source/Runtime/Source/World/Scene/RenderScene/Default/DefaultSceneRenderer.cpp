@@ -526,14 +526,16 @@ namespace Lumina
                 CullData.bCascadeHZBValid = 0u;
             }
 
+            const float AtlasW = (float)GCSMAtlasWidth(CascadeAtlasCount);
+            const float AtlasH = (float)GCSMAtlasHeight;
             for (int32 i = 0; i < NumCascades; ++i)
             {
                 // A slot past the allocated row has no tile, and a zero scale keeps a stray test off its neighbour.
                 CullData.CascadeHZBTile[i] = i < CascadeAtlasCount ? FVector4(
-                    (float)(GCSMCascadeOriginX(i) / 2) / CullData.CascadePyramidWidth,
-                    (float)(GCSMCascadeOriginY(i) / 2) / CullData.CascadePyramidHeight,
-                    (float)(GCSMCascadeSize      / 2) / CullData.CascadePyramidWidth,
-                    (float)(GCSMCascadeSize      / 2) / CullData.CascadePyramidHeight) : FVector4(0.0f);
+                    (float)GCSMCascadeOriginX(i) / AtlasW,
+                    (float)GCSMCascadeOriginY(i) / AtlasH,
+                    (float)GCSMCascadeSize       / AtlasW,
+                    (float)GCSMCascadeSize       / AtlasH) : FVector4(0.0f);
             }
         }
 
@@ -2483,8 +2485,8 @@ namespace Lumina
         }
 
         {
-            const uint32 PyramidW = AtlasW / 2u;
-            const uint32 PyramidH = AtlasH / 2u;
+            const uint32 PyramidW = AtlasW / 4u;
+            const uint32 PyramidH = AtlasH / 4u;
 
             RHI::FTextureDesc Desc;
             Desc.Type      = RHI::ETextureType::Tex2D;
