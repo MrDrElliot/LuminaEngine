@@ -47,7 +47,7 @@ struct FPushConstants
     uint         OffsetY;
 
     uint         FrameIndex;   // turns the march jitter every frame, so the resolve integrates it
-    uint         _Pad0;
+    FTexture2D   Weather;
     uint         _Pad1;
     uint         _Pad2;
 };
@@ -71,7 +71,7 @@ FCloudMedium Cloud_Medium()
     M.Density          = Pass().Density;
     M.LayerBottom      = Pass().LayerBottom;
     M.LayerTop         = Pass().LayerTop;
-    M._Pad0            = 0.0;
+    M.Weather          = Pass().Weather;
     M.WindOffset       = Pass().WindOffset;
     M.DetailWindOffset = Pass().DetailWindOffset;
     M._Pad1            = float2(0.0);
@@ -119,12 +119,11 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    Pass().Scatter[P] = float4(0.0, 0.0, 0.0, 1.0);
-
     const FCloudRay Ray = Cloud_SetupRay(Pass().Depth, P, Size, Pass().LayerBottom, Pass().LayerTop, Pass().MaxDistance);
     Pass().CloudDepth[P] = float4(Ray.RawDepth, 0.0, 0.0, 0.0);
     if (Ray.End <= Ray.Start)
     {
+        Pass().Scatter[P] = float4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 

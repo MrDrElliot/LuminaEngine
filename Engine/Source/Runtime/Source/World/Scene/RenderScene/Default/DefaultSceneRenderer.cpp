@@ -526,14 +526,16 @@ namespace Lumina
                 CullData.bCascadeHZBValid = 0u;
             }
 
+            const float AtlasW = (float)GCSMAtlasWidth(CascadeAtlasCount);
+            const float AtlasH = (float)GCSMAtlasHeight;
             for (int32 i = 0; i < NumCascades; ++i)
             {
                 // A slot past the allocated row has no tile, and a zero scale keeps a stray test off its neighbour.
                 CullData.CascadeHZBTile[i] = i < CascadeAtlasCount ? FVector4(
-                    (float)(GCSMCascadeOriginX(i) / 2) / CullData.CascadePyramidWidth,
-                    (float)(GCSMCascadeOriginY(i) / 2) / CullData.CascadePyramidHeight,
-                    (float)(GCSMCascadeSize      / 2) / CullData.CascadePyramidWidth,
-                    (float)(GCSMCascadeSize      / 2) / CullData.CascadePyramidHeight) : FVector4(0.0f);
+                    (float)GCSMCascadeOriginX(i) / AtlasW,
+                    (float)GCSMCascadeOriginY(i) / AtlasH,
+                    (float)GCSMCascadeSize       / AtlasW,
+                    (float)GCSMCascadeSize       / AtlasH) : FVector4(0.0f);
             }
         }
 
@@ -1741,9 +1743,12 @@ namespace Lumina
         case ENamedImage::AdaptedLuminance:   return "Scene.AdaptedLuminance";
         case ENamedImage::FroxelScatter:      return "Scene.FroxelScatter";
         case ENamedImage::FroxelIntegrated:   return "Scene.FroxelIntegrated";
+        case ENamedImage::FroxelShadow:       return "Scene.FroxelShadow";
+        case ENamedImage::FroxelShadowHistory: return "Scene.FroxelShadowHistory";
         case ENamedImage::AerialInScatter:    return "Scene.AerialInScatter";
         case ENamedImage::AerialTransmittance: return "Scene.AerialTransmittance";
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
+        case ENamedImage::CloudWeather:       return "Scene.CloudWeather";
         case ENamedImage::CloudScatter:       return "Scene.CloudScatter";
         case ENamedImage::CloudDepth:         return "Scene.CloudDepth";
         case ENamedImage::CloudScatterHistory: return "Scene.CloudScatterHistory";
@@ -2230,6 +2235,11 @@ namespace Lumina
             FroxelDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::FroxelScatter]    = CreateSceneImage(FroxelDesc, true, true);
             View.Images[(int)ENamedImage::FroxelIntegrated] = CreateSceneImage(FroxelDesc, true, true);
+
+            FroxelDesc.Format = EFormat::RG16_FLOAT;
+            View.Images[(int)ENamedImage::FroxelShadow]        = CreateSceneImage(FroxelDesc, true, true);
+            View.Images[(int)ENamedImage::FroxelShadowHistory] = CreateSceneImage(FroxelDesc, true, true);
+            View.bFroxelShadowHistoryValid = false;
         }
 
         {
@@ -2250,6 +2260,13 @@ namespace Lumina
             CloudDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::CloudNoise] = CreateSceneImage(CloudDesc, true, true);
             View.bCloudNoiseBaked = false;
+
+            RHI::FTextureDesc WeatherDesc;
+            WeatherDesc.Type      = RHI::ETextureType::Tex2D;
+            WeatherDesc.Dimension = FUIntVector3(kCloudNoiseSize, kCloudNoiseSize, 1);
+            WeatherDesc.Format    = EFormat::RGBA16_FLOAT;
+            WeatherDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            View.Images[(int)ENamedImage::CloudWeather] = CreateSceneImage(WeatherDesc, true, true);
 
             RHI::FTextureDesc ScatterDesc;
             ScatterDesc.Type      = RHI::ETextureType::Tex2D;
@@ -2483,8 +2500,8 @@ namespace Lumina
         }
 
         {
-            const uint32 PyramidW = AtlasW / 2u;
-            const uint32 PyramidH = AtlasH / 2u;
+            const uint32 PyramidW = AtlasW / 4u;
+            const uint32 PyramidH = AtlasH / 4u;
 
             RHI::FTextureDesc Desc;
             Desc.Type      = RHI::ETextureType::Tex2D;

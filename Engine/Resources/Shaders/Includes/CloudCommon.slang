@@ -15,7 +15,7 @@ struct FCloudMedium
     float  LayerBottom;
 
     float  LayerTop;
-    float  _Pad0;
+    FTexture2D Weather;
     float2 WindOffset;
 
     float2 DetailWindOffset;
@@ -55,6 +55,8 @@ float Cloud_HeightFraction(FCloudMedium M, float Y)
 // The weather layer tiles at an irrational multiple of the shape tile, so the two repeats never line up.
 static const float kWeatherScaleRatio = 4.37;
 
+static const float kWeatherSliceV = 0.37;
+
 // Turning the weather layer against the shape tile keeps the two lattices from sharing an axis.
 static const float2x2 kWeatherRotation = float2x2(0.8572, -0.5150, 0.5150, 0.8572);
 
@@ -73,7 +75,7 @@ FCloudWeather Cloud_SampleWeather(FCloudMedium M, float3 WorldPos)
 {
     float2 Drifted = WorldPos.xz + M.WindOffset * 0.5;
     float2 P = mul(kWeatherRotation, Drifted) / max(M.ShapeScale * kWeatherScaleRatio, 1.0);
-    float4 Layout = M.Noise.SampleLevel(Samplers::LinearWrap, float3(P.x, 0.37, P.y), 0.0);
+    float4 Layout = M.Weather.SampleLevel(Samplers::LinearWrap, P, 0.0);
 
     float Regional = smoothstep(0.3, 0.8, Layout.g * 0.6 + Layout.b * 0.4);
 

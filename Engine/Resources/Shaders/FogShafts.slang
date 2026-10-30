@@ -72,6 +72,9 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
     const float  Jitter       = InterleavedGradientNoise(TexelPos);
     const float2 ShadowCenter = float2(Pass().CloudShadowCenterX, Pass().CloudShadowCenterY);
     const float3 Ambient      = GetVolumetricAmbientRadiance();
+    const FFogPhaseTerms Phase = Fog_MultiScatterPhaseTerms(uFog, CosSun, uFog.VolumetricParams.y);
+    const float DirStart      = uFog.VolumetricParams.w;
+    const float AlbedoLobe    = pow(saturate(CosSun), uFog.DirectionalColor.w);
     // The march only recedes, so each step resumes the cascade search where the last one hit.
     int CascadeCursor = 0;
 
@@ -97,8 +100,9 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
         float Shadow = SampleSunCascadeFrom(Sun, P, CascadeCursor)
                      * CloudShadow_Sample(Pass().CloudShadow, P, ShadowCenter, Pass().CloudShadowExtent);
 
-        float3 Light  = Ambient + SunRadiance * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, Shadow);
-        float3 Albedo = Fog_Albedo(uFog, CosSun, T);
+        float3 Light  = Ambient + SunRadiance * Fog_ApplyPhaseShadow(Phase, Shadow);
+        float  Ramp   = DirStart > 0.0 ? saturate(T / DirStart - 1.0) : 1.0;
+        float3 Albedo = lerp(uFog.InscatteringColor.rgb, uFog.DirectionalColor.rgb, AlbedoLobe * Ramp);
 
         float  StepTrans = exp(-Density * StepLen);
         // Analytic integral of in-scatter across the step, matching the froxel integrate pass.
@@ -117,18 +121,13 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    const int2 P       = int2(DTid.xy);
-    const int2 MaxFull = int2(Pass().ScreenW, Pass().ScreenH) - 1;
-    const int2 Full    = P * 2;
-
-    // The nearest of the four covered pixels, as the cloud march does, so a near edge never marches past its surface.
-    const float D0 = Pass().Depth.Load(int3(min(Full,               MaxFull), 0)).r;
-    const float D1 = Pass().Depth.Load(int3(min(Full + int2(1, 0), MaxFull), 0)).r;
-    const float D2 = Pass().Depth.Load(int3(min(Full + int2(0, 1), MaxFull), 0)).r;
-    const float D3 = Pass().Depth.Load(int3(min(Full + int2(1, 1), MaxFull), 0)).r;
-    const float Depth = max(max(D0, D1), max(D2, D3));
+    const int2 P    = int2(DTid.xy);
+    const int2 Full = P * 2;
 
     const float2 UV = (float2(Full) + 1.0) / float2(Pass().ScreenW, Pass().ScreenH);
+
+    // The nearest of the four covered pixels, as the cloud march does, so a near edge never marches past its surface.
+    const float Depth = Pass().Depth.SampleLevel(Samplers::MaxReduction, UV, 0.0).r;
 
     Pass().ShaftDepth[P] = float4(Depth, 0.0, 0.0, 0.0);
     Pass().Shaft[P]      = MarchShafts(UV, float2(P) + 0.5, Depth);

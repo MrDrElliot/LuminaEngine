@@ -635,9 +635,12 @@ namespace Lumina
             AdaptedLuminance,
             FroxelScatter,
             FroxelIntegrated,
+            FroxelShadow,
+            FroxelShadowHistory,
             AerialInScatter,
             AerialTransmittance,
             CloudNoise,
+            CloudWeather,
             CloudScatter,
             CloudDepth,
             CloudScatterHistory,
@@ -696,6 +699,10 @@ namespace Lumina
             // Picks which texel of each 2x2 block the clouds march this frame, the rest coming from history.
             uint32                                          CloudFrame = 0;
             bool                                            bCloudHistoryValid = false;
+            uint32                                          FroxelFrame = 0;
+            bool                                            bFroxelShadowHistoryValid = false;
+            float                                           FroxelHistoryNear = 0.0f;
+            float                                           FroxelHistoryRange = 0.0f;
             RHI::EQueueType                                 CloudNoiseQueue  = RHI::EQueueType::Graphics;
             RHI::FGPUAllocation                                    ClusterBuffer;
             RHI::FGPUAllocation                                    ClusterLightMaskBuffer;
@@ -880,7 +887,7 @@ namespace Lumina
         void DepthPyramidPass(RHI::FCmdListH CL);
         void CascadePyramidPass(RHI::FCmdListH CL);
         void BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
-                               uint32 SpdCounterIndex);
+                               uint32 SpdCounterIndex, uint32 SourceScale = 2);
 
         // Sizes and zeroes this frame's scratch counters, the one fill and barrier the counters share.
         void BeginFrameScratch(RHI::FCmdListH CL, const FFrameData& Frame);

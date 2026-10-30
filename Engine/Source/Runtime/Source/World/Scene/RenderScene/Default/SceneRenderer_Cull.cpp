@@ -1112,7 +1112,7 @@ namespace Lumina
     }
 
     void FDefaultSceneRenderer::BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax,
-                                                  uint32 SpdCounterIndex)
+                                                  uint32 SpdCounterIndex, uint32 SourceScale)
     {
         static const FShaderH ComputeShader = FShaderLibrary::Get("DepthPyramidSPD.slang");
         if (!ComputeShader)
@@ -1145,6 +1145,8 @@ namespace Lumina
             uint32 ReduceMax;
             RHI::TGPUSpan<uint32> AtomicCounter;
             uint32 MipUAV[SpdMaxMips];
+            float  InvSrcSize[2];
+            uint32 SrcScale;
         } PC = {};
 
         constexpr uint32 SpdTileSize = 32;
@@ -1169,6 +1171,9 @@ namespace Lumina
         PC.SrcDepthIndex      = (uint32)SrcDepthSlot;
         PC.ReduceMax          = bReduceMax ? 1u : 0u;
         PC.AtomicCounter      = { SpdCounter };
+        PC.InvSrcSize[0]      = 1.0f / (float)Math::Max(Source.GetSizeX(), 1u);
+        PC.InvSrcSize[1]      = 1.0f / (float)Math::Max(Source.GetSizeY(), 1u);
+        PC.SrcScale           = SourceScale;
         for (uint32 i = 0; i < SpdMaxMips; ++i)
         {
             const uint32 SrcMip = (i < MipCount) ? i : 0u;
@@ -1228,7 +1233,7 @@ namespace Lumina
         BuildDepthPyramid(CL,
             GetNamedImage(ENamedImage::Cascade),
             GetNamedImage(ENamedImage::CascadePyramid),
-            /*bReduceMax*/ true, /*SpdCounterIndex*/ 1u);
+            /*bReduceMax*/ true, /*SpdCounterIndex*/ 1u, /*SourceScale*/ 4u);
 
         bCascadePyramidValid.store(true, std::memory_order_release);
     }

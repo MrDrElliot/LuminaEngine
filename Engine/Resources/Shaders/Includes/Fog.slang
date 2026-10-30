@@ -87,6 +87,49 @@ float Fog_Phase(float CosTheta, float G)
 }
 
 // Hillaire 2015 multiple-scattering octaves, additive and deliberately not renormalized.
+struct FFogPhaseTerms
+{
+    float Base;
+    float ShadowSlope;
+};
+
+FFogPhaseTerms Fog_MultiScatterPhaseTerms(FExponentialHeightFogParams Fog, float CosTheta, float G)
+{
+    FFogPhaseTerms Terms;
+    int Octaves = min(int(Fog.MultiScatterParams.x + 0.5), FOG_MAX_MULTISCATTER_OCTAVES);
+    if (Octaves <= 1)
+    {
+        Terms.Base        = Fog_Phase(CosTheta, G);
+        Terms.ShadowSlope = Terms.Base;
+        return Terms;
+    }
+
+    float ScatterAtten = saturate(Fog.MultiScatterParams.y);
+    float ShadowAtten  = saturate(Fog.MultiScatterParams.z);
+    float PhaseAtten   = saturate(Fog.MultiScatterParams.w);
+
+    Terms.Base        = 0.0;
+    Terms.ShadowSlope = 0.0;
+    float Aw = 1.0;
+    float Bw = 1.0;
+    float Cw = 1.0;
+    for (int n = 0; n < Octaves; ++n)
+    {
+        float Weighted = Aw * Fog_Phase(CosTheta, G * Cw);
+        Terms.Base        += Weighted;
+        Terms.ShadowSlope += Weighted * Bw;
+        Aw *= ScatterAtten;
+        Bw *= ShadowAtten;
+        Cw *= PhaseAtten;
+    }
+    return Terms;
+}
+
+float Fog_ApplyPhaseShadow(FFogPhaseTerms Terms, float Shadow)
+{
+    return Terms.Base + (Shadow - 1.0) * Terms.ShadowSlope;
+}
+
 float Fog_MultiScatterPhaseShadow(FExponentialHeightFogParams Fog, float CosTheta, float G, float Shadow)
 {
     int Octaves = min(int(Fog.MultiScatterParams.x + 0.5), FOG_MAX_MULTISCATTER_OCTAVES);
