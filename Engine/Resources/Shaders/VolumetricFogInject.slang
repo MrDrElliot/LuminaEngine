@@ -21,10 +21,15 @@ struct FPushConstants
     float      CloudShadowExtent;
 
     float2 CloudShadowCenter;
-    float2 _Pad0;
+    FRWTexture3D ShadowOut;
+    FTexture3D   ShadowHistory;
 
-    // Pointer last so its 8-byte alignment lands on a multiple of 8.
     GPUSpan<FFogVolume> FogVolumes;
+
+    uint FrameIndex;
+    uint bShadowHistoryValid;
+    uint _Pad1;
+    uint _Pad2;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -47,20 +52,52 @@ float SampleCloudShadow(float3 WorldPos)
     return CloudShadow_Sample(Pass().CloudShadow, WorldPos, Pass().CloudShadowCenter, Pass().CloudShadowExtent);
 }
 
-float SampleSunShadowAA(FLight Sun, uint3 Coord)
+static const float3 kShadowSequence = float3(0.8191725134, 0.6710436067, 0.5497004779);
+static const float  kShadowHistoryWeight = 0.9;
+
+float ReprojectSunShadow(float3 WorldPos)
+{
+    if (Pass().bShadowHistoryValid == 0u)
+    {
+        return -1.0;
+    }
+    float4 Clip = mul(GetPrevViewProjection(), float4(WorldPos, 1.0));
+    if (Clip.w <= 1e-4)
+    {
+        return -1.0;
+    }
+    float2 UV = (Clip.xy / Clip.w) * 0.5 + 0.5;
+    float  W  = log(max(Clip.w, 1e-4) / Pass().NearPlane) / log(Pass().FogRange / Pass().NearPlane);
+    float3 UVW = float3(UV, W);
+    if (any(UVW < 0.0) || any(UVW > 1.0))
+    {
+        return -1.0;
+    }
+    float2 H = Pass().ShadowHistory.SampleLevel(Samplers::LinearClamp, UVW, 0.0).xy;
+    return H.y > 0.5 ? H.x / H.y : -1.0;
+}
+
+float SampleSunShadowTemporal(FLight Sun, uint3 Coord, float3 CenterPos)
 {
     // Taps stratified across the slab's depth too, which smooths exponential-Z stepping in shafts without grain.
     const float3 Offs[4] = { float3(0.25, 0.25, 0.2), float3(0.75, 0.25, 0.4),
                              float3(0.25, 0.75, 0.6), float3(0.75, 0.75, 0.8) };
+    const float History  = ReprojectSunShadow(CenterPos);
+    const bool  bHistory = History >= 0.0;
+    const float Rotation = InterleavedGradientNoise(float2(Coord.xy) + float2(Coord.z * 7.0, Coord.z * 3.0));
+    const float3 Jitter  = frac(0.5 + float(Pass().FrameIndex & 4095u) * kShadowSequence + Rotation);
+    const int   Taps     = bHistory ? 1 : 4;
+
     float S = 0.0;
     // Each copy holds a whole cascade search plus a cloud shadow tap live.
     [loop]
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < Taps; ++i)
     {
-        float3 P = FroxelToWorld(Coord, Offs[i]);
+        float3 P = FroxelToWorld(Coord, bHistory ? Jitter : Offs[i]);
         S += SampleSunCascadeByContainment(Sun, P) * SampleCloudShadow(P);
     }
-    return S * 0.25;
+    S /= float(Taps);
+    return bHistory ? lerp(S, History, kShadowHistoryWeight) : S;
 }
 
 // Spot lights rasterize one atlas tile; point lights rasterize six, picked by the light-to-froxel ray.
@@ -209,6 +246,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
             if (Froxel_SliceDistance(float(DispatchID.z) - 2.0, float(Pass().GridSize.z), Pass().NearPlane, Pass().FogRange) > MaxTileDist)
             {
                 Pass().Scatter[DispatchID] = float4(0.0);
+                Pass().ShadowOut[DispatchID] = float4(0.0);
                 return;
             }
         }
@@ -250,10 +288,15 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     if (Pass().bSunVolumetric != 0)
     {
         FLight Sun      = GetLightAt(0);
-        float  Shadow   = SampleSunShadowAA(Sun, DispatchID);
+        float  Shadow   = SampleSunShadowTemporal(Sun, DispatchID, WorldPos);
+        Pass().ShadowOut[DispatchID] = float4(Shadow, 1.0, 0.0, 0.0);
         float3 SunColor = UnpackColor(Sun.Color).rgb;
         InScatter += SunColor * Sun.Intensity * Fog_MultiScatterPhaseShadow(uFog, CosSun, G, Shadow) * Sun.VolumetricIntensity
                    * LightFunctionMask(Sun, Sun.Direction, WorldPos);
+    }
+    else
+    {
+        Pass().ShadowOut[DispatchID] = float4(0.0);
     }
 
     // Supersampled because one center sample aliases the near-light core and cone edge into froxel-sized blocks.

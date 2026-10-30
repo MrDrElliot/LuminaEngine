@@ -1743,9 +1743,12 @@ namespace Lumina
         case ENamedImage::AdaptedLuminance:   return "Scene.AdaptedLuminance";
         case ENamedImage::FroxelScatter:      return "Scene.FroxelScatter";
         case ENamedImage::FroxelIntegrated:   return "Scene.FroxelIntegrated";
+        case ENamedImage::FroxelShadow:       return "Scene.FroxelShadow";
+        case ENamedImage::FroxelShadowHistory: return "Scene.FroxelShadowHistory";
         case ENamedImage::AerialInScatter:    return "Scene.AerialInScatter";
         case ENamedImage::AerialTransmittance: return "Scene.AerialTransmittance";
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
+        case ENamedImage::CloudWeather:       return "Scene.CloudWeather";
         case ENamedImage::CloudScatter:       return "Scene.CloudScatter";
         case ENamedImage::CloudDepth:         return "Scene.CloudDepth";
         case ENamedImage::CloudScatterHistory: return "Scene.CloudScatterHistory";
@@ -2232,6 +2235,11 @@ namespace Lumina
             FroxelDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::FroxelScatter]    = CreateSceneImage(FroxelDesc, true, true);
             View.Images[(int)ENamedImage::FroxelIntegrated] = CreateSceneImage(FroxelDesc, true, true);
+
+            FroxelDesc.Format = EFormat::RG16_FLOAT;
+            View.Images[(int)ENamedImage::FroxelShadow]        = CreateSceneImage(FroxelDesc, true, true);
+            View.Images[(int)ENamedImage::FroxelShadowHistory] = CreateSceneImage(FroxelDesc, true, true);
+            View.bFroxelShadowHistoryValid = false;
         }
 
         {
@@ -2252,6 +2260,13 @@ namespace Lumina
             CloudDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::CloudNoise] = CreateSceneImage(CloudDesc, true, true);
             View.bCloudNoiseBaked = false;
+
+            RHI::FTextureDesc WeatherDesc;
+            WeatherDesc.Type      = RHI::ETextureType::Tex2D;
+            WeatherDesc.Dimension = FUIntVector3(kCloudNoiseSize, kCloudNoiseSize, 1);
+            WeatherDesc.Format    = EFormat::RGBA16_FLOAT;
+            WeatherDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            View.Images[(int)ENamedImage::CloudWeather] = CreateSceneImage(WeatherDesc, true, true);
 
             RHI::FTextureDesc ScatterDesc;
             ScatterDesc.Type      = RHI::ETextureType::Tex2D;

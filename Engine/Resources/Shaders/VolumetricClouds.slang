@@ -47,7 +47,7 @@ struct FPushConstants
     uint         OffsetY;
 
     uint         FrameIndex;   // turns the march jitter every frame, so the resolve integrates it
-    uint         _Pad0;
+    FTexture2D   Weather;
     uint         _Pad1;
     uint         _Pad2;
 };
@@ -71,7 +71,7 @@ FCloudMedium Cloud_Medium()
     M.Density          = Pass().Density;
     M.LayerBottom      = Pass().LayerBottom;
     M.LayerTop         = Pass().LayerTop;
-    M._Pad0            = 0.0;
+    M.Weather          = Pass().Weather;
     M.WindOffset       = Pass().WindOffset;
     M.DetailWindOffset = Pass().DetailWindOffset;
     M._Pad1            = float2(0.0);
