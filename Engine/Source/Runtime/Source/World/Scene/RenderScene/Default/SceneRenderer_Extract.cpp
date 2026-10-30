@@ -49,6 +49,10 @@ namespace Lumina
         "Forces the scene debug view to this ERenderSceneDebugFlags value in every view; -1 leaves each viewport's own.");
     #endif
 
+    // The pyramid is a full-atlas reduction each frame, which on a bandwidth-starved GPU can cost more than the casters it culls.
+    static TConsoleVar<bool> CVarShadowOcclusionCull("r.Shadows.OcclusionCull", true,
+        "Build the cascade depth pyramid and cull cascade casters hidden behind nearer casters.");
+
     namespace
     {
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
@@ -4244,7 +4248,7 @@ namespace Lumina
             SunFarShadow.GridCellSize = Grid.CellSize;
         }
 
-        if (!DirectionalLight.bCascadeOcclusionCull)
+        if (!DirectionalLight.bCascadeOcclusionCull || !CVarShadowOcclusionCull.GetValue())
         {
             SceneGlobalData.CullData.bShadowOcclusionCull = 0u;
         }
@@ -4316,7 +4320,7 @@ namespace Lumina
             const float SplitNear = LastSplitDistance;
             const float SplitFar  = CascadeFarDistances[i];
 
-            const int   CascadeRes        = GCSMCascadeSizes[i];
+            const int   CascadeRes        = GCSMCascadeSize;
             const float CascadeResFloat   = (float)CascadeRes;
             LightData.CascadeResolutions[i] = CascadeResFloat;
 
@@ -4374,12 +4378,14 @@ namespace Lumina
                 CascadeShadowData->ViewProjection[i] = CascadeVP;
                 
                 FLightShadow& CascadeTile = CascadeShadowData->Shadow[i];
+                // The same count PrepareRender sizes the atlas from, so these UVs match the image this frame draws into.
+                const float AtlasW = (float)GCSMAtlasWidth(ActiveCascadeCount);
                 CascadeTile.AtlasUVOffset = FVector2(
-                    (float)GCSMCascadeOriginX[i] / (float)GCSMAtlasWidth,
-                    (float)GCSMCascadeOriginY[i] / (float)GCSMAtlasHeight);
+                    (float)GCSMCascadeOriginX(i) / AtlasW,
+                    (float)GCSMCascadeOriginY(i) / (float)GCSMAtlasHeight);
                 CascadeTile.AtlasUVScale = FVector2(
-                    (float)GCSMCascadeSizes[i]  / (float)GCSMAtlasWidth,
-                    (float)GCSMCascadeSizes[i]  / (float)GCSMAtlasHeight);
+                    (float)GCSMCascadeSize / AtlasW,
+                    (float)GCSMCascadeSize / (float)GCSMAtlasHeight);
                 CascadeTile.ShadowMapIndex  = Constants::kIndexNone;
                 CascadeTile.LightIndex      = 0;
                 CascadeTile.ShadowDataIndex = (int32)ShadowSlot;

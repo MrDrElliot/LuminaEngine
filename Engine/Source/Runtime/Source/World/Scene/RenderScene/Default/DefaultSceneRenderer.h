@@ -1510,6 +1510,7 @@ namespace Lumina
 
         void InitReflectionProbeTargets();
         void SyncProbeCaptureCube(uint32 FaceSize);
+        void SyncCascadeAtlas(int32 CascadeCount);
         void ExtractReflectionProbes(ECS::FRegistry& Registry, FFrameData& Frame);
         void ScheduleReflectionProbeBake(FFrameData& Frame);
         // Renders the six faces, copies each into the scratch cube, prefilters into the probe's slice.
@@ -1763,6 +1764,8 @@ namespace Lumina
         float                                               CasterMinScreenRadius = 0.0f;
         int32                                               ActiveCascadeCount = NumCascades;
         int32                                               NearCascadeCount = NumCascades;
+        // Cascades the atlas and pyramid are sized for; PrepareRender reallocates when ActiveCascadeCount moves.
+        int32                                               CascadeAtlasCount = 0;
 
         static constexpr uint32                             kTotalsSlots = 8;
 

@@ -3,12 +3,28 @@
 
 #include "Thread.h"
 #include "Platform/Time/PlatformTime.h"
+#include "TaskSystem/Scheduler/JobScheduler.h"
 
 namespace Lumina
 {
+    namespace
+    {
+        // A fiber can park mid-section and resume on another worker, so a thread id would let the next fiber on that worker in.
+        FORCEINLINE uint64 RecursiveOwnerToken() noexcept
+        {
+            if (const Jobs::FFiberHandle Fiber = Jobs::GetCurrentFiberHandle())
+            {
+                return reinterpret_cast<uint64>(Fiber.Fiber);
+            }
+
+            // The top bit is never set in a user-space address, so a thread can never pass for a fiber.
+            return Threading::GetThreadID() | (1ull << 63);
+        }
+    }
+
     void FRecursiveMutex::Lock() noexcept
     {
-        const uint64 Self = Threading::GetThreadID();
+        const uint64 Self = RecursiveOwnerToken();
 
         if (Owner.load(std::memory_order_relaxed) == Self)
         {
@@ -23,7 +39,7 @@ namespace Lumina
 
     bool FRecursiveMutex::TryLock() noexcept
     {
-        const uint64 Self = Threading::GetThreadID();
+        const uint64 Self = RecursiveOwnerToken();
 
         if (Owner.load(std::memory_order_relaxed) == Self)
         {

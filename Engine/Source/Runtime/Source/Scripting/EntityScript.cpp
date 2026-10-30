@@ -1711,6 +1711,12 @@ namespace Lumina
                 return nullptr;
             }
 
+            if (ScriptClass->IsAbstract())
+            {
+                LOG_WARN("EntityScripts::Attach: '{}' is abstract, so attach one of its subclasses instead.", ScriptClass->GetName().c_str());
+                return nullptr;
+            }
+
             // find, not get, since a bare registry in a test or tool has no world and its scripts have none.
             CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
             if (WorldPtr != nullptr && !NetRealm::Allows(ScriptClass, *WorldPtr))

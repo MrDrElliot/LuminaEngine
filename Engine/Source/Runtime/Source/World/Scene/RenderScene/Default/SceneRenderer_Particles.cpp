@@ -1869,9 +1869,9 @@ namespace Lumina
 
             for (uint32 Cascade = 0; Cascade < RenderFrame->Views.NumNearCascadeViews; ++Cascade)
             {
-                const int32 TileX = GCSMCascadeOriginX[Cascade];
-                const int32 TileY = GCSMCascadeOriginY[Cascade];
-                const int32 TileW = GCSMCascadeSizes[Cascade];
+                const int32 TileX = GCSMCascadeOriginX((int)Cascade);
+                const int32 TileY = GCSMCascadeOriginY((int)Cascade);
+                const int32 TileW = GCSMCascadeSize;
                 const RHI::FRect TileRect{ TileX, TileX + TileW, TileY, TileY + TileW };
                 RHI::CmdSetViewport(CL, TileRect);
                 RHI::CmdSetScissor(CL, TileRect);

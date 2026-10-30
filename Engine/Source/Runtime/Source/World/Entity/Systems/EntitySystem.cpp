@@ -108,7 +108,7 @@ namespace Lumina
                 }
 
                 CClass* Class = static_cast<CClass*>(Object);
-                if (Class != BaseClass && Class->IsChildOf(BaseClass) && !Class->IsAbstract() && !Class->IsSuperseded())
+                if (Class != BaseClass && Class->IsChildOf(BaseClass) && Class->CanInstantiate())
                 {
                     Classes.push_back(Class);
                 }

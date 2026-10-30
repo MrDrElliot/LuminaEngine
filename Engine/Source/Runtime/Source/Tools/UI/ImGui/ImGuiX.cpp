@@ -985,7 +985,7 @@ namespace Lumina::ImGuiX
         for (TObjectIterator<CClass> It; It; ++It)
         {
             CClass* Candidate = *It;
-            if (BaseClass == nullptr || Candidate->IsChildOf(BaseClass))
+            if (Candidate->CanInstantiate() && (BaseClass == nullptr || Candidate->IsChildOf(BaseClass)))
             {
                 Candidates.push_back(Candidate);
             }

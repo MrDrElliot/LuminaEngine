@@ -321,7 +321,7 @@ namespace Lumina::Reflection
             return EnumHasAnyFlags(Prop.PropertyFlags, EPropertyFlags::ScriptHidden);
         }
         
-        void EmitThunkField(FCodeWriter& Writer, const std::string& Module, const std::string& EntryPoint,
+        [[maybe_unused]] void EmitThunkField(FCodeWriter& Writer, const std::string& Module, const std::string& EntryPoint,
             const std::string& Fn, const std::string& ParamTypesCsv, const std::string& RetType)
         {
             const std::string Sig = ParamTypesCsv.empty() ? RetType : (ParamTypesCsv + ", " + RetType);
@@ -1166,6 +1166,7 @@ namespace Lumina::Reflection
                 }
                 case EBind::Span:
                 case EBind::None:
+                case EBind::Pointer:
                     break;
             }
         }

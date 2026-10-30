@@ -43,27 +43,7 @@ namespace Lumina
 
         ShadowAtlas.InitImage();
 
-        {
-            RHI::FTextureDesc Desc;
-            Desc.Type      = RHI::ETextureType::Tex2D;
-            Desc.Dimension = FUIntVector3(GCSMAtlasWidth, GCSMAtlasHeight, 1);
-            Desc.Format    = EFormat::D32;
-            Desc.Usage     = RHI::EImageUsageFlags::DepthAttachment | RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
-            NamedImages[(int)ENamedImage::Cascade] = CreateSceneImage(Desc);
-        }
-
-        {
-            const uint32 PyramidW = GCSMAtlasWidth  / 2u;
-            const uint32 PyramidH = GCSMAtlasHeight / 2u;
-
-            RHI::FTextureDesc Desc;
-            Desc.Type      = RHI::ETextureType::Tex2D;
-            Desc.Dimension = FUIntVector3(PyramidW, PyramidH, 1);
-            Desc.Format    = EFormat::R32_FLOAT;
-            Desc.MipCount  = RenderUtils::CalculateMipCount(PyramidW, PyramidH);
-            Desc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
-            NamedImages[(int)ENamedImage::CascadePyramid] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
-        }
+        SyncCascadeAtlas(ActiveCascadeCount);
 
         SceneViews.reserve(MaxSceneViews);
 
@@ -444,6 +424,9 @@ namespace Lumina
 
         SyncIBLResolution(Frame.Volumetrics.IBLResolution);
 
+        // Extraction just settled the sun's cascade count, and nothing has recorded against the atlas yet.
+        SyncCascadeAtlas(ActiveCascadeCount);
+
         // Same reason, since the scratch cube may need resizing for this frame's bake.
         if (Frame.ReflectionProbes.BakingProbe >= 0)
         {
@@ -545,11 +528,12 @@ namespace Lumina
 
             for (int32 i = 0; i < NumCascades; ++i)
             {
-                CullData.CascadeHZBTile[i] = FVector4(
-                    (float)(GCSMCascadeOriginX[i] / 2) / CullData.CascadePyramidWidth,
-                    (float)(GCSMCascadeOriginY[i] / 2) / CullData.CascadePyramidHeight,
-                    (float)(GCSMCascadeSizes[i]   / 2) / CullData.CascadePyramidWidth,
-                    (float)(GCSMCascadeSizes[i]   / 2) / CullData.CascadePyramidHeight);
+                // A slot past the allocated row has no tile, and a zero scale keeps a stray test off its neighbour.
+                CullData.CascadeHZBTile[i] = i < CascadeAtlasCount ? FVector4(
+                    (float)(GCSMCascadeOriginX(i) / 2) / CullData.CascadePyramidWidth,
+                    (float)(GCSMCascadeOriginY(i) / 2) / CullData.CascadePyramidHeight,
+                    (float)(GCSMCascadeSize      / 2) / CullData.CascadePyramidWidth,
+                    (float)(GCSMCascadeSize      / 2) / CullData.CascadePyramidHeight) : FVector4(0.0f);
             }
         }
 
@@ -2471,6 +2455,58 @@ namespace Lumina
 
         NamedImages[(int)ENamedImage::ProbeCaptureCube] = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ false);
         ProbeCaptureCubeSize = FaceSize;
+
+        NameOwnedImages(NamedImages);
+    }
+
+    void FDefaultSceneRenderer::SyncCascadeAtlas(int32 CascadeCount)
+    {
+        CascadeCount = Math::Clamp(CascadeCount, 1, NumCascades);
+        if (CascadeCount == CascadeAtlasCount)
+        {
+            return;
+        }
+
+        // Retired rather than freed, so a frame still in flight keeps sampling the old atlas.
+        RetireSceneImage(NamedImages[(int)ENamedImage::Cascade]);
+        RetireSceneImage(NamedImages[(int)ENamedImage::CascadePyramid]);
+
+        const uint32 AtlasW = (uint32)GCSMAtlasWidth(CascadeCount);
+        const uint32 AtlasH = (uint32)GCSMAtlasHeight;
+        {
+            RHI::FTextureDesc Desc;
+            Desc.Type      = RHI::ETextureType::Tex2D;
+            Desc.Dimension = FUIntVector3(AtlasW, AtlasH, 1);
+            Desc.Format    = EFormat::D32;
+            Desc.Usage     = RHI::EImageUsageFlags::DepthAttachment | RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
+            NamedImages[(int)ENamedImage::Cascade] = CreateSceneImage(Desc);
+        }
+
+        {
+            const uint32 PyramidW = AtlasW / 2u;
+            const uint32 PyramidH = AtlasH / 2u;
+
+            RHI::FTextureDesc Desc;
+            Desc.Type      = RHI::ETextureType::Tex2D;
+            Desc.Dimension = FUIntVector3(PyramidW, PyramidH, 1);
+            Desc.Format    = EFormat::R32_FLOAT;
+            Desc.MipCount  = RenderUtils::CalculateMipCount(PyramidW, PyramidH);
+            Desc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            NamedImages[(int)ENamedImage::CascadePyramid] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
+        }
+
+        // Views read through borrowed copies, which would otherwise keep pointing at the retired pair.
+        for (FSceneView& View : SceneViews)
+        {
+            View.Images[(int)ENamedImage::Cascade]        = BorrowSceneImage(NamedImages[(int)ENamedImage::Cascade]);
+            View.Images[(int)ENamedImage::CascadePyramid] = BorrowSceneImage(NamedImages[(int)ENamedImage::CascadePyramid]);
+        }
+
+        CascadeAtlasCount = CascadeCount;
+
+        // Last frame's pyramid has the old layout, so the next cull must not test against it.
+        bCascadePyramidValid.store(false, std::memory_order_release);
+        CascadePyramidOnCompute = {};
 
         NameOwnedImages(NamedImages);
     }

@@ -17,6 +17,11 @@
 #include "UI/CodeEditor/Languages/SlangLanguage.h"
 #include "UI/Tools/EditorToolContext.h"
 
+#if !defined(_WIN32)
+#include <strings.h>
+#define _stricmp strcasecmp
+#endif
+
 namespace Lumina
 {
     namespace CodeWorkspaceInternal

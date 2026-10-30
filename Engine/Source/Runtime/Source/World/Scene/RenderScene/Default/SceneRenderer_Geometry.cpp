@@ -782,7 +782,7 @@ namespace Lumina
         Pass.DepthAttachment.LoadOp   = TakeCascadeLoadOp();
         Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
         Pass.DepthAttachment.Color[0] = 1.0f;
-        Pass.RenderArea               = FUIntVector2(GCSMAtlasWidth, GCSMAtlasHeight);
+        Pass.RenderArea               = GetNamedImage(ENamedImage::Cascade).GetExtent();
 
         RHI::CmdBeginRenderPass(CL, Pass);
 
@@ -799,8 +799,8 @@ namespace Lumina
         FShadowViewRun Run;
         for (uint32 c = 0; c < NumCascadeViews; ++c)
         {
-            const RHI::FRect TileRect{ GCSMCascadeOriginX[c], GCSMCascadeOriginX[c] + GCSMCascadeSizes[c],
-                                       GCSMCascadeOriginY[c], GCSMCascadeOriginY[c] + GCSMCascadeSizes[c] };
+            const RHI::FRect TileRect{ GCSMCascadeOriginX((int)c), GCSMCascadeOriginX((int)c) + GCSMCascadeSize,
+                                       GCSMCascadeOriginY((int)c), GCSMCascadeOriginY((int)c) + GCSMCascadeSize };
             Run.Add(CascadeViewBase + c, SunShadowDataIndex, (int32)c, TileRect);
         }
 
@@ -814,9 +814,9 @@ namespace Lumina
 
             for (uint32 c = 0; c < NumCascadeViews; ++c)
             {
-                const int32 TileX = GCSMCascadeOriginX[c];
-                const int32 TileY = GCSMCascadeOriginY[c];
-                const int32 TileW = GCSMCascadeSizes[c];
+                const int32 TileX = GCSMCascadeOriginX((int)c);
+                const int32 TileY = GCSMCascadeOriginY((int)c);
+                const int32 TileW = GCSMCascadeSize;
 
                 const RHI::FRect TileRect{ TileX, TileX + TileW, TileY, TileY + TileW };
                 RHI::CmdSetViewport(CL, TileRect);
@@ -837,9 +837,9 @@ namespace Lumina
             const FLightShadowData& SunShadow = Frame.Lighting.Shadows[SunShadowDataIndex];
             for (uint32 c = 0; c < Frame.Views.NumNearCascadeViews; ++c)
             {
-                const int32 TileX = GCSMCascadeOriginX[c];
-                const int32 TileY = GCSMCascadeOriginY[c];
-                const int32 TileW = GCSMCascadeSizes[c];
+                const int32 TileX = GCSMCascadeOriginX((int)c);
+                const int32 TileY = GCSMCascadeOriginY((int)c);
+                const int32 TileW = GCSMCascadeSize;
                 RunShadowRenderCallbacks(CL, EShadowViewType::Cascade, c, SunShadow.ViewProjection[c],
                                          RHI::FRect{ TileX, TileX + TileW, TileY, TileY + TileW }, CascadeFormat);
             }
