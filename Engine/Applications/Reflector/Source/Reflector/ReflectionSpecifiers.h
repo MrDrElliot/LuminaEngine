@@ -47,6 +47,7 @@ namespace Lumina::Reflection
     X(System,               Flag,   Runtime,   "Marks the struct as an ECS system and registers it with the system registry.") \
     X(Event,                Flag,   Runtime,   "Documents the struct as an ECS event. The dispatcher is type-driven, so this emits no registration.") \
     X(BitMask,              Flag,   Runtime,   "Marks an enum as a set of bit flags. CEnum::IsBitmaskEnum() reports it and the editor draws checkboxes.") \
+    X(Abstract,             Flag,   Runtime,   "A base other classes derive from. It is never instantiated, created as a system or subsystem, or listed in a class picker; its subclasses are unaffected. C# spells it with the abstract keyword.") \
     X(ParallelUpdate,       Flag,   Runtime,   "An entity script's promise that its OnUpdate and OnFixedUpdate read and write only its own entity, so the driver runs it in parallel with other such scripts. Inherited by subclasses.") \
     X(HostOnly,             Flag,   Runtime,   "A script, system or world subsystem that runs only on the host, a dedicated server or a standalone game. Inherited, and spelled [Reflect(HostOnly = true)] in C#.") \
     X(ClientOnly,           Flag,   Runtime,   "A script, system or world subsystem that runs only on a client joined to a host. Inherited, and spelled [Reflect(ClientOnly = true)] in C#.") \
