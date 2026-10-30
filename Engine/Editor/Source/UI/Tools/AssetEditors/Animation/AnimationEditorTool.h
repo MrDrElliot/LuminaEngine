@@ -15,6 +15,7 @@
 namespace Lumina
 {
     class CAnimation;
+    class CSkeletalMesh;
     struct FAnimationResource;
     struct SSimpleAnimationComponent;
 
@@ -32,6 +33,7 @@ namespace Lumina
         void SerializeAssetForUndo(FArchive& Ar, CObject* InAsset) override;
         void OnInitialize() override;
         void OnPostUndoRedo() override;
+        void OnAssetDataChangedExternally() override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
@@ -84,6 +86,7 @@ namespace Lumina
         // Timeline view state
         float TimelineZoom = 1.0f;       // 1 == fit clip to visible width
         float TimelinePanSeconds = 0.0f; // time at the left edge of the lane area
+        float TrackScroll = 0.0f;
         bool  bSnapToFrame = true;
         int   FrameRate = 30;
 
@@ -95,6 +98,7 @@ namespace Lumina
         EDragMode   DragMode = EDragMode::None;
         ENotifyKind DragKind = ENotifyKind::None;
         int         DragIndex = -1;
+        float       DragGrabOffset = 0.0f;
 
         // Clip time captured when the "add notify" lane popup opens.
         float       LaneAddTime = 0.0f;
@@ -120,5 +124,6 @@ namespace Lumina
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;
         FPreviewMeshSelection PreviewMeshSelection;
+        TWeakObjectPtr<CSkeletalMesh> PreviewMeshInUse;
     };
 }

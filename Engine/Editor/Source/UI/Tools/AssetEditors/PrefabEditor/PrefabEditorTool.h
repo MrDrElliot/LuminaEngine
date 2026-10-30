@@ -139,6 +139,7 @@ namespace Lumina
 
         // Resolve count the preview world was built from; a mismatch means a parent edit landed.
         uint32                              LastVariantResolveCount = 0;
+        bool                                bParentChangeDeferred = false;
 
         // Draws the prefab's own ParentPrefab slot above the Scene Graph. Built on first use.
         TUniquePtr<FPropertyTable>          VariantPropertyTable;

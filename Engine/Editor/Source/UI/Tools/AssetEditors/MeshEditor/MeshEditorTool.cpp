@@ -13,6 +13,7 @@
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "Containers/StringFormat.h"
+#include "FileSystem/FileSystem.h"
 
 
 namespace Lumina
@@ -55,366 +56,321 @@ namespace Lumina
             {
                 return;
             }
-    
-            FMeshResource& Resource = StaticMesh->GetMeshResource();
-            const SAABB& BoundingBox = StaticMesh->GetAABB();
-            
+
+            DrawMeshSummary(*StaticMesh);
+            DrawLODSection(*StaticMesh);
+            DrawSurfaceList(*StaticMesh);
+
+            ImGui::Spacing();
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::SeparatorText("Mesh Statistics");
+            ImGui::SeparatorText("Properties");
             ImGuiX::Font::PopFont();
-            
-            ImGui::Spacing();
-            
-            if (ImGui::BeginTable("##MeshStats", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
-            {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 180.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-    
-                auto PropertyRow = [](const char* label, const FString& value, const ImVec4* color = nullptr)
-                {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(label);
-                    ImGui::TableSetColumnIndex(1);
-                    if (color)
-                    {
-                        ImGui::PushStyleColor(ImGuiCol_Text, *color);
-                    }
-                    ImGui::TextUnformatted(value.c_str());
-                    if (color)
-                    {
-                        ImGui::PopStyleColor();
-                    }
-                };
-    
-                PropertyRow("Vertices", Format("{}", Resource.GetNumVertices()));
-                PropertyRow("Meshlets", Format("{}", Resource.MeshletData.Meshlets.size()));
-                PropertyRow("Surfaces", Format("{}", Resource.GetNumSurfaces()));
-
-                // Maximum LOD count across surfaces.
-                uint32 MaxLODsAcrossSurfaces = 0;
-                for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-                {
-                    MaxLODsAcrossSurfaces = Math::Max(MaxLODsAcrossSurfaces, Surface.NumLODs);
-                }
-                PropertyRow("LOD Levels", Format("{}", MaxLODsAcrossSurfaces));
-                
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::Dummy(ImVec2(0, 4));
-                
-                const float vertexSizeKB     = (Resource.GetNumVertices() * Resource.GetVertexTypeSize()) / 1024.0f;
-                const float meshletSizeKB    = (Resource.MeshletData.Meshlets.size() * sizeof(FMeshlet)
-                                              + Resource.MeshletData.MeshletSpheres.size() * sizeof(FMeshletSphere)
-                                              + Resource.MeshletData.MeshletCones.size() * sizeof(FMeshletCone)
-                                              + Resource.MeshletData.MeshletVertexRefs.size() * sizeof(uint32)
-                                              + Resource.MeshletData.MeshletTriangles.size() * sizeof(uint32)) / 1024.0f;
-                const float totalSizeKB      = vertexSizeKB + meshletSizeKB;
-
-                PropertyRow("Vertex Buffer", Format("{}", static_cast<int>(vertexSizeKB)) + " KB");
-                PropertyRow("Meshlet Data",  Format("{}", static_cast<int>(meshletSizeKB)) + " KB");
-
-                ImVec4 totalColor = totalSizeKB > 1024 ? ImVec4(1.0f, 0.7f, 0.3f, 1.0f) : ImVec4(0.7f, 1.0f, 0.7f, 1.0f);
-                PropertyRow("Total Memory", Format("{}", static_cast<int>(totalSizeKB)) + " KB", &totalColor);
-                
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::Dummy(ImVec2(0, 4));
-                
-                PropertyRow("Bounds Min", Math::ToString(BoundingBox.Min).c_str());
-                PropertyRow("Bounds Max", Math::ToString(BoundingBox.Max).c_str());
-                
-                FVector3 extents = BoundingBox.Max - BoundingBox.Min;
-                PropertyRow("Bounds Extents", Math::ToString(extents).c_str());
-    
-                ImGui::EndTable();
-            }
-    
-            ImGui::Spacing();
-            ImGui::SeparatorText("Meshlets");
-            ImGui::Spacing();
-
-            const TVector<FMeshlet>&       Meshlets = Resource.MeshletData.Meshlets;
-            const TVector<FMeshletSphere>& Bounds   = Resource.MeshletData.MeshletSpheres;
-            ImGui::Text("Total Meshlets: %zu", Meshlets.size());
-            ImGui::Spacing();
-
-            if (ImGui::BeginTable("##Meshlets", 4,
-                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit,
-                ImVec2(0, 300)))
-            {
-                ImGui::TableSetupColumn("Index",     ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                ImGui::TableSetupColumn("Verts",     ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                ImGui::TableSetupColumn("Tris",      ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                ImGui::TableSetupColumn("Bounds (center, radius)", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-
-                ImGuiListClipper Clipper;
-                Clipper.Begin((int)Meshlets.size());
-                while (Clipper.Step())
-                {
-                    for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
-                    {
-                        const FMeshlet& M = Meshlets[i];
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0); ImGui::Text("%d", i);
-                        ImGui::TableSetColumnIndex(1); ImGui::Text("%u", M.VertexCount);
-                        ImGui::TableSetColumnIndex(2); ImGui::Text("%u", M.TriangleCount);
-                        ImGui::TableSetColumnIndex(3);
-                        if (i < (int)Bounds.size())
-                        {
-                            const FMeshletSphere& B = Bounds[i];
-                            ImGui::Text("(%.2f, %.2f, %.2f)  r=%.2f", B.Center.x, B.Center.y, B.Center.z, B.Radius);
-                        }
-                    }
-                }
-                ImGui::EndTable();
-            }
-            
-            ImGui::Spacing();
-            ImGui::Spacing();
-
-            // LOD override is pushed onto SStaticMeshComponent each frame in Update(); thresholds persist on FGeometrySurface.
-            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::SeparatorText("Levels of Detail");
-            ImGuiX::Font::PopFont();
-
-            ImGui::Spacing();
-
-            {
-                // Listing all MAX_MESH_LODS made a mesh whose simplifier stopped early look broken.
-                uint32 AvailableLODs = 1;
-                for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-                {
-                    AvailableLODs = Math::Max(AvailableLODs, Surface.NumLODs);
-                }
-                AvailableLODs = Math::Clamp(AvailableLODs, 1u, (uint32)MAX_MESH_LODS);
-
-                // Names built at runtime; no parallel string list needed for MAX_MESH_LODS tracking.
-                char        LODNames[MAX_MESH_LODS][24];
-                const char* PreviewItems[MAX_MESH_LODS + 1];
-                PreviewItems[0] = "Automatic (distance)";
-                for (uint32 i = 0; i < AvailableLODs; ++i)
-                {
-                    if (i == 0)
-                    {
-                        snprintf(LODNames[i], sizeof(LODNames[i]), "LOD %u (full detail)", i);
-                    }
-                    else
-                    {
-                        snprintf(LODNames[i], sizeof(LODNames[i]), "LOD %u", i);
-                    }
-                    PreviewItems[i + 1] = LODNames[i];
-                }
-
-                // A stale selection from a mesh with more LODs would otherwise index past the list.
-                PreviewLODIndex = Math::Min(PreviewLODIndex, (int32)AvailableLODs - 1);
-
-                int PreviewItem = (PreviewLODIndex < 0) ? 0 : PreviewLODIndex + 1;
-                ImGui::SetNextItemWidth(220.0f);
-                if (ImGui::Combo("Preview LOD", &PreviewItem, PreviewItems, (int)AvailableLODs + 1))
-                {
-                    PreviewLODIndex = (PreviewItem == 0) ? -1 : PreviewItem - 1;
-                }
-                ImGuiX::TextTooltip("Force the viewport mesh to a specific LOD regardless of camera distance.");
-
-                if (AvailableLODs == 1)
-                {
-                    ImGui::TextDisabled("This mesh has one LOD, so there is nothing to switch between.");
-                }
-            }
-
-            ImGui::Spacing();
-
-            // Per-LOD aggregate stats across surfaces.
-            uint32 LODAggMeshlets[MAX_MESH_LODS]  = { 0 };
-            uint32 LODAggTriangles[MAX_MESH_LODS] = { 0 };
-            uint32 LODAggSurfaces[MAX_MESH_LODS]  = { 0 };
-            float  LODAggError[MAX_MESH_LODS]     = { 0.0f };
-            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-            {
-                for (uint32 lod = 0; lod < Surface.NumLODs; ++lod)
-                {
-                    const uint32 MCnt = Surface.LODMeshletCount[lod];
-                    LODAggMeshlets[lod]  += MCnt;
-                    LODAggSurfaces[lod]  += (MCnt > 0) ? 1u : 0u;
-                    LODAggError[lod]      = Math::Max(LODAggError[lod], Surface.LODError[lod]);
-                    LODAggTriangles[lod] += SumTrianglesInRange(Resource.MeshletData.Meshlets, Surface.LODMeshletOffset[lod], MCnt);
-                }
-            }
-
-            const uint32 LOD0Tris = LODAggTriangles[0];
-
-            if (ImGui::BeginTable("##LODSummary", 6,
-                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
-            {
-                ImGui::TableSetupColumn("LOD",       ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                ImGui::TableSetupColumn("Surfaces",  ImGuiTableColumnFlags_WidthFixed, 70.0f);
-                ImGui::TableSetupColumn("Meshlets",  ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-                ImGui::TableSetupColumn("vs LOD 0",  ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                ImGui::TableSetupColumn("Max Error", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-
-                for (uint32 lod = 0; lod < MAX_MESH_LODS; ++lod)
-                {
-                    if (LODAggSurfaces[lod] == 0)
-                    {
-                        continue;
-                    }
-
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0); ImGui::Text("%u", lod);
-                    ImGui::TableSetColumnIndex(1); ImGui::Text("%u", LODAggSurfaces[lod]);
-                    ImGui::TableSetColumnIndex(2); ImGui::Text("%u", LODAggMeshlets[lod]);
-                    ImGui::TableSetColumnIndex(3); ImGui::Text("%u", LODAggTriangles[lod]);
-                    ImGui::TableSetColumnIndex(4);
-                    if (LOD0Tris > 0)
-                    {
-                        const float Ratio = (float)LODAggTriangles[lod] / (float)LOD0Tris;
-                        ImGui::Text("%.1f%%", Ratio * 100.0f);
-                    }
-                    else
-                    {
-                        ImGui::TextDisabled("--");
-                    }
-                    ImGui::TableSetColumnIndex(5); ImGui::Text("%.4g", LODAggError[lod]);
-                }
-                ImGui::EndTable();
-            }
-
-            ImGui::Spacing();
-            ImGui::TextDisabled("Each LOD is drawn once its error shrinks below a pixel on screen. Level Of Detail in the details below biases it.");
-            ImGui::Spacing();
-            ImGui::Spacing();
-
-            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::SeparatorText("Geometry Surfaces");
-            ImGuiX::Font::PopFont();
-            
-            ImGui::Spacing();
-            
-            if (Resource.GeometrySurfaces.empty())
-            {
-                ImGui::TextDisabled("No surfaces defined");
-            }
-            else
-            {
-                ImGui::TextDisabled("Click a surface to highlight its bounds in the viewport.");
-                ImGui::Spacing();
-
-                for (size_t i = 0; i < Resource.GeometrySurfaces.size(); ++i)
-                {
-                    const FGeometrySurface& Surface = Resource.GeometrySurfaces[i];
-                    ImGui::PushID((int)i);
-
-                    CMaterialInterface* Mat        = StaticMesh->GetMaterialAtSlot((size_t)Surface.MaterialIndex);
-                    const FString       MaterialName = IsValid(Mat) ? Mat->GetName().ToString() : FString("(none)");
-
-                    const bool   bSelected     = ((int32)i == SelectedSurfaceIndex);
-                    const uint32 LOD0Meshlets  = Surface.LODMeshletCount[0];
-                    FString      Label         = "Surface " + Format("{}", i)
-                                               + "  |  " + MaterialName
-                                               + "  |  " + Format("{}", Surface.IndexCount / 3) + " tris, "
-                                               + Format("{}", LOD0Meshlets) + " meshlets";
-
-                    if (ImGui::Selectable(Label.c_str(), bSelected, ImGuiSelectableFlags_SpanAllColumns))
-                    {
-                        SelectedSurfaceIndex = bSelected ? -1 : (int32)i;
-                    }
-
-                    if (bSelected)
-                    {
-                        ImGui::Indent(16.0f);
-                        if (ImGui::BeginTable("##SurfaceDetails", 2, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp))
-                        {
-                            ImGui::TableSetupColumn("##Label", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                            ImGui::TableSetupColumn("##Value", ImGuiTableColumnFlags_WidthStretch);
-
-                            auto DetailRow = [](const char* label, const FString& value)
-                            {
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", label);
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::TextUnformatted(value.c_str());
-                            };
-
-                            const uint32 LOD0Off = Surface.LODMeshletOffset[0];
-                            const uint32 LOD0Cnt = Surface.LODMeshletCount[0];
-
-                            DetailRow("Material:",       MaterialName);
-                            DetailRow("Material Index:", Format("{}", Surface.MaterialIndex));
-                            DetailRow("Start Index:",    Format("{}", Surface.StartIndex));
-                            DetailRow("Index Count:",    Format("{}", Surface.IndexCount));
-                            DetailRow("Triangles:",      Format("{}", Surface.IndexCount / 3));
-                            DetailRow("LOD 0 Range:",    Format("{}", LOD0Off) + " .. " + Format("{}", LOD0Off + LOD0Cnt));
-                            DetailRow("LOD 0 Meshlets:", Format("{}", LOD0Cnt));
-                            DetailRow("LOD Levels:",     Format("{}", Surface.NumLODs));
-
-                            ImGui::EndTable();
-                        }
-
-                        ImGui::Spacing();
-                        if (ImGui::BeginTable("##SurfaceLODs", 5,
-                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
-                        {
-                            ImGui::TableSetupColumn("LOD",       ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                            ImGui::TableSetupColumn("Meshlets",  ImGuiTableColumnFlags_WidthFixed, 80.0f);
-                            ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthFixed, 90.0f);
-                            ImGui::TableSetupColumn("Range",     ImGuiTableColumnFlags_WidthStretch);
-                            ImGui::TableSetupColumn("Error",     ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                            ImGui::TableHeadersRow();
-
-                            const TVector<FMeshlet>& MeshletsRef = Resource.MeshletData.Meshlets;
-
-                            for (uint32 lod = 0; lod < Surface.NumLODs; ++lod)
-                            {
-                                const uint32 MOff = Surface.LODMeshletOffset[lod];
-                                const uint32 MCnt = Surface.LODMeshletCount[lod];
-                                const uint32 Tris = SumTrianglesInRange(MeshletsRef, MOff, MCnt);
-
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0); ImGui::Text("%u", lod);
-                                ImGui::TableSetColumnIndex(1); ImGui::Text("%u", MCnt);
-                                ImGui::TableSetColumnIndex(2); ImGui::Text("%u", Tris);
-                                ImGui::TableSetColumnIndex(3); ImGui::Text("%u .. %u", MOff, MOff + MCnt);
-                                ImGui::TableSetColumnIndex(4); ImGui::Text("%.4g", Surface.LODError[lod]);
-                            }
-
-                            ImGui::EndTable();
-                        }
-
-                        ImGui::Unindent(16.0f);
-                    }
-
-                    ImGui::PopID();
-                }
-
-                // Asset reload may shrink the surface list; clear stale selection rather than draw garbage.
-                if (SelectedSurfaceIndex >= (int32)Resource.GeometrySurfaces.size())
-                {
-                    SelectedSurfaceIndex = -1;
-                }
-            }
-    
-            ImGui::Spacing();
-    
-            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::SeparatorText("Asset Details");
-            ImGuiX::Font::PopFont();
-            
             ImGui::Spacing();
             PropertyTable.DrawTree();
+
+            DrawAdvancedSection(*StaticMesh);
         });
 
-        // After Mesh Properties, so a layout saved before this tab existed docks it beside that window instead of floating it.
+        // After Details, so a layout saved before this tab existed docks it beside that window instead of floating it.
         CreateToolWindow(CollisionName, [&](bool bFocused)
         {
             DrawCollisionWindow();
         });
+    }
+
+    namespace
+    {
+        FString FormatCount(uint64 Value)
+        {
+            FString Digits = Format("{}", Value).c_str();
+            FString Out;
+            const int32 Length = (int32)Digits.size();
+            for (int32 Index = 0; Index < Length; ++Index)
+            {
+                Out += Digits[Index];
+                const int32 Remaining = Length - Index - 1;
+                if (Remaining > 0 && Remaining % 3 == 0)
+                {
+                    Out += ',';
+                }
+            }
+            return Out;
+        }
+
+        void SectionTitle(const char* Title)
+        {
+            ImGui::Spacing();
+            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
+            ImGui::SeparatorText(Title);
+            ImGuiX::Font::PopFont();
+            ImGui::Spacing();
+        }
+
+        uint32 CountLODs(const FMeshResource& Resource)
+        {
+            uint32 Count = 1;
+            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+            {
+                Count = Math::Max(Count, Surface.NumLODs);
+            }
+            return Math::Clamp(Count, 1u, (uint32)MAX_MESH_LODS);
+        }
+    }
+
+    void FStaticMeshEditorTool::DrawMeshSummary(CStaticMesh& Mesh)
+    {
+        const FMeshResource& Resource = Mesh.GetMeshResource();
+        const FVector3 Size = Mesh.GetAABB().Max - Mesh.GetAABB().Min;
+
+        uint64 Triangles = 0;
+        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+        {
+            Triangles += SumTrianglesInRange(Resource.MeshletData.Meshlets, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
+        }
+
+        ImGui::BeginChild("##MeshSummary", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+
+        ImGuiX::Font::PushFont(ImGuiX::Font::EFont::LargeBold);
+        ImGui::TextUnformatted(LE_ICON_CUBE " ");
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextUnformatted(Mesh.GetName().c_str());
+        ImGuiX::Font::PopFont();
+
+        if (Mesh.SourcePath.empty())
+        {
+            ImGui::TextDisabled("No source file, so it cannot be reimported.");
+        }
+        else
+        {
+            const FStringView Source(Mesh.SourcePath.c_str(), Mesh.SourcePath.size());
+            const FStringView FileName = VFS::FileName(Source);
+            ImGui::TextDisabled("Imported from %.*s", (int)FileName.size(), FileName.data());
+            ImGuiX::TextTooltip("{}", Mesh.SourcePath);
+        }
+
+        ImGui::Spacing();
+        if (ImGui::BeginTable("##SummaryStats", 3, ImGuiTableFlags_SizingStretchSame))
+        {
+            const FString TriangleText = FormatCount(Triangles);
+            const FString MaterialText = Format("{}", Mesh.GetNumMaterials()).c_str();
+            const FString LODText      = Format("{}", CountLODs(Resource)).c_str();
+
+            const char* Values[] = { TriangleText.c_str(), MaterialText.c_str(), LODText.c_str() };
+            const char* Labels[] = { "Triangles", "Materials", "LODs" };
+            ImGui::TableNextRow();
+            for (int32 Column = 0; Column < 3; ++Column)
+            {
+                ImGui::TableSetColumnIndex(Column);
+                ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
+                ImGui::TextUnformatted(Values[Column]);
+                ImGuiX::Font::PopFont();
+                ImGui::TextDisabled("%s", Labels[Column]);
+            }
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Size");
+        ImGui::SameLine();
+        ImGui::Text("%.2f x %.2f x %.2f m", Size.x, Size.y, Size.z);
+
+        ImGui::EndChild();
+    }
+
+    void FStaticMeshEditorTool::DrawLODSection(CStaticMesh& Mesh)
+    {
+        const FMeshResource& Resource = Mesh.GetMeshResource();
+        const uint32 AvailableLODs = CountLODs(Resource);
+        PreviewLODIndex = Math::Min(PreviewLODIndex, (int32)AvailableLODs - 1);
+
+        SectionTitle("Level of Detail");
+
+        char LODNames[MAX_MESH_LODS][24];
+        const char* PreviewItems[MAX_MESH_LODS + 1];
+        PreviewItems[0] = "Automatic (by distance)";
+        for (uint32 Index = 0; Index < AvailableLODs; ++Index)
+        {
+            snprintf(LODNames[Index], sizeof(LODNames[Index]), Index == 0 ? "LOD %u (full detail)" : "LOD %u", Index);
+            PreviewItems[Index + 1] = LODNames[Index];
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Preview");
+        ImGui::SameLine(110.0f);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        int PreviewItem = PreviewLODIndex < 0 ? 0 : PreviewLODIndex + 1;
+        if (ImGui::Combo("##PreviewLOD", &PreviewItem, PreviewItems, (int)AvailableLODs + 1))
+        {
+            PreviewLODIndex = PreviewItem == 0 ? -1 : PreviewItem - 1;
+        }
+        ImGuiX::TextTooltip("Force the viewport to one LOD instead of switching by distance.");
+
+        if (AvailableLODs == 1)
+        {
+            ImGui::TextDisabled("This mesh has a single LOD.");
+            return;
+        }
+
+        uint32 LODTriangles[MAX_MESH_LODS] = {};
+        float  LODError[MAX_MESH_LODS]     = {};
+        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+        {
+            for (uint32 LOD = 0; LOD < Surface.NumLODs && LOD < MAX_MESH_LODS; ++LOD)
+            {
+                LODTriangles[LOD] += SumTrianglesInRange(Resource.MeshletData.Meshlets, Surface.LODMeshletOffset[LOD], Surface.LODMeshletCount[LOD]);
+                LODError[LOD] = Math::Max(LODError[LOD], Surface.LODError[LOD]);
+            }
+        }
+
+        ImGui::Spacing();
+        if (ImGui::BeginTable("##LODs", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp))
+        {
+            ImGui::TableSetupColumn("LOD", ImGuiTableColumnFlags_WidthFixed, 44.0f);
+            ImGui::TableSetupColumn("Triangles", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+            ImGui::TableSetupColumn("Of LOD 0", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Error", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableHeadersRow();
+
+            for (uint32 LOD = 0; LOD < AvailableLODs; ++LOD)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::PushID((int)LOD);
+                const bool bPreviewed = PreviewLODIndex == (int32)LOD;
+                char Label[16];
+                snprintf(Label, sizeof(Label), "%u", LOD);
+                if (ImGui::Selectable(Label, bPreviewed, ImGuiSelectableFlags_SpanAllColumns))
+                {
+                    PreviewLODIndex = bPreviewed ? -1 : (int32)LOD;
+                }
+                ImGui::PopID();
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(FormatCount(LODTriangles[LOD]).c_str());
+
+                ImGui::TableSetColumnIndex(2);
+                const float Ratio = LODTriangles[0] > 0 ? (float)LODTriangles[LOD] / (float)LODTriangles[0] : 0.0f;
+                const ImVec2 BarPos = ImGui::GetCursorScreenPos();
+                const float BarWidth = Math::Max(ImGui::GetContentRegionAvail().x - 46.0f, 10.0f);
+                const float BarHeight = ImGui::GetTextLineHeight() * 0.5f;
+                const float BarY = BarPos.y + (ImGui::GetTextLineHeight() - BarHeight) * 0.5f;
+                ImDrawList* DrawList = ImGui::GetWindowDrawList();
+                DrawList->AddRectFilled(ImVec2(BarPos.x, BarY), ImVec2(BarPos.x + BarWidth, BarY + BarHeight), IM_COL32(255, 255, 255, 18), 3.0f);
+                DrawList->AddRectFilled(ImVec2(BarPos.x, BarY), ImVec2(BarPos.x + BarWidth * Ratio, BarY + BarHeight), IM_COL32(110, 170, 240, 200), 3.0f);
+                ImGui::Dummy(ImVec2(BarWidth, ImGui::GetTextLineHeight()));
+                ImGui::SameLine();
+                ImGui::TextDisabled("%3.0f%%", Ratio * 100.0f);
+
+                ImGui::TableSetColumnIndex(3);
+                if (LOD == 0)
+                {
+                    ImGui::TextDisabled("-");
+                }
+                else
+                {
+                    ImGui::Text("%.3g", LODError[LOD]);
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::TextDisabled("Click a row to preview that LOD.");
+    }
+
+    void FStaticMeshEditorTool::DrawSurfaceList(CStaticMesh& Mesh)
+    {
+        const FMeshResource& Resource = Mesh.GetMeshResource();
+        if (SelectedSurfaceIndex >= (int32)Resource.GeometrySurfaces.size())
+        {
+            SelectedSurfaceIndex = -1;
+        }
+
+        SectionTitle("Surfaces");
+        if (Resource.GeometrySurfaces.empty())
+        {
+            ImGui::TextDisabled("This mesh has no surfaces.");
+            return;
+        }
+
+        for (int32 Index = 0; Index < (int32)Resource.GeometrySurfaces.size(); ++Index)
+        {
+            const FGeometrySurface& Surface = Resource.GeometrySurfaces[Index];
+            CMaterialInterface* Material = Mesh.GetMaterialAtSlot((size_t)Surface.MaterialIndex);
+            const FString MaterialName = IsValid(Material) ? Material->GetName().ToString() : FString("No material");
+            const uint32 Triangles = SumTrianglesInRange(Resource.MeshletData.Meshlets, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
+            const FString TriangleText = FormatCount(Triangles) + " tris";
+
+            ImGui::PushID(Index);
+            const bool bSelected = SelectedSurfaceIndex == Index;
+            const ImVec2 RowPos = ImGui::GetCursorScreenPos();
+            const float RowWidth = ImGui::GetContentRegionAvail().x;
+            const float RowHeight = ImGui::GetFrameHeight() + 4.0f;
+            if (ImGui::Selectable("##Surface", bSelected, ImGuiSelectableFlags_None, ImVec2(RowWidth, RowHeight)))
+            {
+                SelectedSurfaceIndex = bSelected ? -1 : Index;
+            }
+            ImGuiX::TextTooltip("{}", "Outline this surface in the viewport");
+
+            ImDrawList* DrawList = ImGui::GetWindowDrawList();
+            const float TextY = RowPos.y + (RowHeight - ImGui::GetFontSize()) * 0.5f;
+            char SlotText[16];
+            snprintf(SlotText, sizeof(SlotText), "%d", Surface.MaterialIndex);
+            const ImVec2 SlotSize = ImGui::CalcTextSize(SlotText);
+            const ImVec2 Badge0(RowPos.x + 4.0f, TextY - 2.0f);
+            const ImVec2 Badge1(Badge0.x + Math::Max(SlotSize.x + 12.0f, 22.0f), TextY + SlotSize.y + 2.0f);
+            DrawList->AddRectFilled(Badge0, Badge1, IM_COL32(110, 170, 240, 60), 4.0f);
+            DrawList->AddText(ImVec2((Badge0.x + Badge1.x - SlotSize.x) * 0.5f, TextY), IM_COL32(200, 220, 250, 255), SlotText);
+
+            const float TrisW = ImGui::CalcTextSize(TriangleText.c_str()).x;
+            DrawList->AddText(ImVec2(RowPos.x + RowWidth - TrisW - 6.0f, TextY), ImGui::GetColorU32(ImGuiCol_TextDisabled), TriangleText.c_str());
+            DrawList->PushClipRect(ImVec2(Badge1.x + 8.0f, RowPos.y), ImVec2(RowPos.x + RowWidth - TrisW - 14.0f, RowPos.y + RowHeight), true);
+            DrawList->AddText(ImVec2(Badge1.x + 8.0f, TextY), ImGui::GetColorU32(ImGuiCol_Text), MaterialName.c_str());
+            DrawList->PopClipRect();
+            ImGui::PopID();
+        }
+        ImGui::TextDisabled("Assign materials per slot in Properties below.");
+    }
+
+    void FStaticMeshEditorTool::DrawAdvancedSection(CStaticMesh& Mesh)
+    {
+        ImGui::Spacing();
+        if (!ImGui::CollapsingHeader("Advanced"))
+        {
+            return;
+        }
+
+        const FMeshResource& Resource = Mesh.GetMeshResource();
+        const SAABB& Bounds = Mesh.GetAABB();
+        const FDistanceFieldVolume& Field = Resource.DistanceField;
+
+        if (ImGui::BeginTable("##Advanced", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+        {
+            ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+            ImGui::TableSetupColumn("##Value", ImGuiTableColumnFlags_WidthStretch);
+
+            auto Row = [](const char* Name, const FString& Value)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled("%s", Name);
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(Value.c_str());
+            };
+
+            Row("GPU memory", ImGuiX::FormatSize(Resource.MeshBuffers.GeometryBlock.Size));
+            Row("Meshlets", FormatCount(Resource.MeshletData.Meshlets.size()) + " across all LODs");
+            Row("Bounds min", Math::ToString(Bounds.Min).c_str());
+            Row("Bounds max", Math::ToString(Bounds.Max).c_str());
+            if (Field.IsValid())
+            {
+                Row("Distance field", Format("{} x {} x {}, {}", Field.Dimensions.x, Field.Dimensions.y, Field.Dimensions.z,
+                                             ImGuiX::FormatSize(Field.GetSizeBytes()).c_str()).c_str());
+            }
+            else
+            {
+                Row("Distance field", "Not built");
+            }
+            ImGui::EndTable();
+        }
     }
 
     void FStaticMeshEditorTool::SetupWorldForTool()
@@ -469,7 +425,7 @@ namespace Lumina
             StaticMeshComponent.MarkRenderStateDirty();
         }
 
-        if (bShowAABB)
+        if (bShowAABB && IsValid(StaticMeshComponent.StaticMesh.Get()))
         {
             SAABB AABB = StaticMeshComponent.StaticMesh->GetAABB().ToWorld(Transform.GetWorldMatrix());
             World->GetDebugInterface()->DrawBox(AABB.GetCenter(), AABB.GetSize() * 0.5f, FQuat(1, 0, 0, 0), FColor::Green);
@@ -496,7 +452,7 @@ namespace Lumina
                 {
                     FVector3 Lo( FLT_MAX);
                     FVector3 Hi(-FLT_MAX);
-                    const uint32 End = OverlayOffset + OverlayCount;
+                    const uint32 End = Math::Min(OverlayOffset + OverlayCount, (uint32)MD.MeshletSpheres.size());
                     for (uint32 m = OverlayOffset; m < End; ++m)
                     {
                         const FMeshletSphere& B = MD.MeshletSpheres[m];
@@ -550,6 +506,12 @@ namespace Lumina
     {
         FAssetEditorTool::OnPostUndoRedo();
         CollisionEditing->OnUndoRedo();
+
+        CStaticMesh* Mesh = Cast<CStaticMesh>(Asset.Get());
+        if (Mesh != nullptr && Mesh->DistanceFieldSettings.bEnabled != Mesh->HasDistanceField())
+        {
+            Mesh->BuildDistanceField();
+        }
     }
 
     void FStaticMeshEditorTool::DrawCollisionWindow()
@@ -567,7 +529,14 @@ namespace Lumina
         ImGuiX::Font::PopFont();
         ImGui::Spacing();
 
-        if (!Collision.HasCollision())
+        if (Collision.bUseTriangleMesh && Collision.TriangleIndices.empty())
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Warning());
+            ImGui::TextWrapped(LE_ICON_ALERT " Use Triangle Mesh is on but no triangles are baked, so this mesh has no collision. "
+                               "Turn it off in Settings to use the shapes below.");
+            ImGui::PopStyleColor();
+        }
+        else if (!Collision.HasCollision())
         {
             ImGui::TextWrapped("This mesh has no collision yet. Click a shape to wrap the mesh, or drag one onto the mesh to "
                                "place it. Every entity that shows this mesh with a Mesh Collider uses it.");
@@ -660,59 +629,33 @@ namespace Lumina
     void FStaticMeshEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("LODs",
-            "Each LOD is a separate index buffer over the same vertex stream. The Preview LOD picker forces "
-            "a specific level so you can inspect its geometry; -1 returns to automatic distance-based selection.");
+            "Simplified levels the importer generated. Pick one under Level of Detail, or click its row, to preview it; "
+            "Automatic switches by distance. LOD Distance Scale in Properties moves the switch distances.");
         DrawHelpTextRow("Surfaces",
-            "Surfaces (sub-meshes) are the unit at which materials are assigned. Click a row to highlight "
-            "its AABB in the viewport.");
+            "Surfaces are the parts of the mesh that each draw with one material slot. Click a surface to outline "
+            "its bounds in the viewport.");
         DrawHelpTextRow("Materials",
-            "Material slots come from the source asset. Drag a Material or Material Instance from the "
-            "Content Browser onto a slot to override.");
+            "Material slots come from the source asset. Assign them under Properties > Materials, or drag a Material "
+            "or Material Instance from the Content Browser onto a slot.");
         DrawHelpTextRow("Visualizers",
-            "Toggle wireframe, normals, tangents, AABB from the View menu. Useful for verifying imports "
-            "and diagnosing lighting issues.");
+            "Toggle the mesh AABB from the View menu, and click a surface row to outline its bounds.");
         DrawHelpTextRow("Collision",
             "The Collision tab makes and edits this mesh's collision. Pick Box, Sphere, Capsule, Convex Hull, Hull per Part "
             "or Exact Mesh to create it, then click shapes in the viewport to move and resize them. Any entity showing "
             "this mesh with a Mesh Collider uses it. Saving the mesh saves its collision too.");
         DrawHelpTextRow("Reimport",
-            "If the source FBX/GLTF on disk changed, use File > Reimport to refresh, preserves material "
-            "overrides where slot names match.");
+            "If the source file changed, right-click the mesh in the Content Browser and pick Reimport From File.");
     }
 
     void FStaticMeshEditorTool::DrawViewModeExtraItems()
     {
         ImGui::Separator();
         ImGui::MenuItem(LE_ICON_CUBE_OUTLINE " Show AABB", nullptr, &bShowAABB);
-
-        if (ImGui::MenuItem(LE_ICON_RELOAD " Reload Mesh Buffers"))
-        {
-            Cast<CStaticMesh>(Asset.Get())->PostLoad();
-        }
     }
 
     void FStaticMeshEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::DrawToolMenu(UpdateContext);
-        
-        // Gizmo Control Dropdown
-        if (ImGui::BeginMenu(LE_ICON_MOVE_RESIZE " Gizmo Control"))
-        {
-            const char* operations[] = { "Translate", "Rotate", "Scale" };
-            static int currentOp = 0;
-
-            if (ImGui::Combo("##", &currentOp, operations, IM_ARRAYSIZE(operations)))
-            {
-                switch (currentOp)
-                {
-                case 0: GuizmoOp = ImGuizmo::TRANSLATE; break;
-                case 1: GuizmoOp = ImGuizmo::ROTATE;    break;
-                case 2: GuizmoOp = ImGuizmo::SCALE;     break;
-                }
-            }
-
-            ImGui::EndMenu();
-        }
 
         if (ImGui::BeginMenu(LE_ICON_CUBE_OUTLINE " Distance Field"))
         {
@@ -744,8 +687,12 @@ namespace Lumina
 
             if (Volume.IsValid() && ImGui::MenuItem(LE_ICON_DELETE " Clear Distance Field"))
             {
+                const FName Label("Clear Distance Field");
+                GetTransactionManager().BeginTransaction(Label);
+                GetTransactionManager().Record(MakeUnique<FObjectSnapshotCommand>(Mesh, Label));
                 Mesh->DistanceFieldSettings.bEnabled = false;
                 Mesh->BuildDistanceField();
+                GetTransactionManager().CommitTransaction();
                 Asset->GetPackage()->MarkDirty();
                 PropertyTable.MarkDirty();
             }
@@ -772,8 +719,12 @@ namespace Lumina
                     SocketName = FName(Numbered.c_str());
                 }
 
+                const FName Label("Add Socket");
+                GetTransactionManager().BeginTransaction(Label);
+                GetTransactionManager().Record(MakeUnique<FObjectSnapshotCommand>(Mesh, Label));
                 SMeshSocket& Socket = Mesh->Sockets.emplace_back();
                 Socket.SocketName = SocketName;
+                GetTransactionManager().CommitTransaction();
 
                 Asset->GetPackage()->MarkDirty();
                 PropertyTable.MarkDirty();

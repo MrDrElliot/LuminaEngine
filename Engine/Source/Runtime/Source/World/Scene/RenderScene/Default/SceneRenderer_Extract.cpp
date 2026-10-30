@@ -1364,6 +1364,9 @@ namespace Lumina
         EmitGraph.Add([this, &Registry, &Frame] { ExtractSprites(Registry, Frame); },     ETaskPriority::Medium);
         EmitGraph.Add([this, &Registry, &Frame] { ExtractBillboards(Registry, Frame); },  ETaskPriority::Medium);
         #if USING(WITH_EDITOR)
+        const FEditorGridRequest* Grid = Registry.Ctx().Find<FEditorGridRequest>();
+        Frame.Extracts.Grid = Grid != nullptr ? *Grid : FEditorGridRequest{};
+
         EmitGraph.Add([this, &Registry, &Frame] { ExtractSelection(Registry, Frame); },   ETaskPriority::Medium);
         #endif
 

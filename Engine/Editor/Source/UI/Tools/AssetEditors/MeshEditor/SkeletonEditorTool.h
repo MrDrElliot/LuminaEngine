@@ -15,6 +15,7 @@
 namespace Lumina
 {
     struct FSkeletonResource;
+    class CSkeletalMesh;
 
     class FSkeletonEditorTool : public FAssetEditorTool
     {
@@ -45,6 +46,9 @@ namespace Lumina
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;
+        TWeakObjectPtr<CSkeletalMesh> PreviewMeshInUse;
+
+        void RefreshPreviewMesh();
         
         FPropertyEditContext PropertyContext;
         FSkeletonEditContext SkeletonCtx;

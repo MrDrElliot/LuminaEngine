@@ -4,6 +4,7 @@
 #include "Renderer/RHICore.h"
 #include "World/ECS/Registry.h"
 #include "EditorTool.h"
+#include "World/Scene/RenderScene/EditorGridRequest.h"
 
 #include <Tools/PrimitiveManager/PrimitiveManager.h>
 
@@ -37,8 +38,6 @@
 #include "Input/InputContext.h"
 #include "Input/InputViewport.h"
 #include "Renderer/RHI.h"
-#include "Renderer/ImmediateLineRenderer.h"
-#include "World/Entity/Systems/DebugDrawSystem.h"
 #include "UI/RmlUiBridge.h"
 #include "World/WorldManager.h"
 #include "World/Entity/EntityUtils.h"
@@ -547,11 +546,6 @@ namespace Lumina
 
     void FEditorTool::DrawMainToolbar(const FUpdateContext& UpdateContext)
     {
-        if (ImGui::MenuItem(LE_ICON_FILE_PLUS_OUTLINE"##New"))
-        {
-            OnNew();
-        }
-
         if (IsAssetEditorTool())
         {
             const bool bUnsaved = IsUnsavedDocument();
@@ -700,11 +694,7 @@ namespace Lumina
         }
 
         const char* Icon = bOrtho ? LE_ICON_VECTOR_SQUARE : LE_ICON_ANGLE_ACUTE;
-        const float FontSize = ImGui::GetFontSize();
-        const ImVec2 IconSize = ImGui::GetFont()->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Icon);
-        DrawList->AddText(ImGui::GetFont(), FontSize,
-            ImVec2(Center.x - IconSize.x * 0.5f, Center.y - IconSize.y * 0.5f),
-            Style.toolButtonIconColor, Icon);
+        DrawList->AddText(ImGuiX::CenteredIconPos(Icon, Center - ImVec2(Radius, Radius), Center + ImVec2(Radius, Radius)), Style.toolButtonIconColor, Icon);
 
         ImGui::SetCursorScreenPos(Cursor);
     }
@@ -2033,73 +2023,31 @@ namespace Lumina
 
     void FEditorTool::DrawWorldGrid()
     {
-        if (!HasEditorCameraControl() || !bWorldGridEnabled)
+        CWorld* GridWorld = World.Get();
+        if (GridWorld == nullptr)
+        {
+            return;
+        }
+
+        FEditorGridRequest& Grid = GridWorld->GetEntityRegistry().Ctx().GetOrEmplace<FEditorGridRequest>();
+        Grid.bEnabled = HasEditorCameraControl() && bWorldGridEnabled;
+        if (!Grid.bEnabled)
         {
             return;
         }
 
         const CViewportGridSettings* Settings = GetDefault<CViewportGridSettings>();
-
-        const float Spacing = Math::Max(Settings->Spacing, 0.01f);
-        const float Extent  = Math::Max(Settings->Extent, Spacing);
-
-        // Extent and spacing are independent, so the grid coarsens past the cap rather than adding lines.
-        int32       HalfCount = (int32)(Extent / Spacing);
-        const int32 HalfLimit = Math::Max(Settings->MaxLinesPerAxis / 2, 1);
-        float       Step      = Spacing;
-
-        if (HalfCount > HalfLimit)
-        {
-            HalfCount = HalfLimit;
-            Step      = Extent / (float)HalfLimit;
-        }
-
-        const float Reach = Step * (float)HalfCount;
-
-        // Axis lines keep their own thickness, which is raster state, so they stay on the batched path.
-        const FDebugDrawState*  DrawState = DebugDraw::GetState(World.Get());
-        FImmediateLineRenderer* Lines     = DebugDraw::GetLines(World.Get());
-        const uint32            GridColor = PackColor(Settings->LineColor);
-
-        for (int32 i = -HalfCount; i <= HalfCount; ++i)
-        {
-            const float Coord  = (float)i * Step;
-            const bool  bIsAxis = (i == 0);
-
-            if (bIsAxis)
-            {
-                World->GetDebugInterface()->DrawLine(FVector3(Coord, 0, -Reach), FVector3(Coord, 0, Reach),
-                                FVector4(0.0f, 0.0f, 1.0f, 1.0f), Settings->AxisThickness);
-                World->GetDebugInterface()->DrawLine(FVector3(-Reach, 0, Coord), FVector3(Reach, 0, Coord),
-                                FVector4(1.0f, 0.0f, 0.0f, 1.0f), Settings->AxisThickness);
-                continue;
-            }
-
-            if (Lines == nullptr)
-            {
-                continue;
-            }
-
-            // Each grid line is axis-aligned, so its own AABB prunes where a bounding sphere never would.
-            if (DebugDraw::ShouldDraw(*DrawState, SAABB(FVector3(Coord, 0.0f, -Reach), FVector3(Coord, 0.0f, Reach))))
-            {
-                Lines->Line(FVector3(Coord, 0, -Reach), FVector3(Coord, 0, Reach), GridColor);
-            }
-
-            if (DebugDraw::ShouldDraw(*DrawState, SAABB(FVector3(-Reach, 0.0f, Coord), FVector3(Reach, 0.0f, Coord))))
-            {
-                Lines->Line(FVector3(-Reach, 0, Coord), FVector3(Reach, 0, Coord), GridColor);
-            }
-        }
+        Grid.Spacing      = Math::Max(Settings->Spacing, 0.01f);
+        Grid.FadeDistance = Math::Max(Settings->Extent, Grid.Spacing);
+        Grid.LineWidth    = Settings->LineThickness;
+        Grid.AxisWidth    = Settings->AxisThickness;
+        Grid.MinorColor   = Settings->MinorLineColor;
+        Grid.MajorColor   = Settings->MajorLineColor;
 
         if (Settings->bShowVerticalAxis)
         {
-            // It used to use the line count, so it only matched the grid while spacing happened to be 1.
-            World->GetDebugInterface()->DrawLine(
-                FVector3(0, -Reach, 0),
-                FVector3(0,  Reach, 0),
-                FVector4(0.0f, 1.0f, 0.0f, 1.0f),
-                Settings->VerticalAxisThickness);
+            GridWorld->GetDebugInterface()->DrawLine(FVector3(0.0f, 0.0f, 0.0f), FVector3(0.0f, Grid.FadeDistance, 0.0f),
+                                                     FVector4(0.0f, 1.0f, 0.0f, 1.0f), Settings->VerticalAxisThickness);
         }
     }
 

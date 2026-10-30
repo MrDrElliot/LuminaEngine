@@ -836,10 +836,12 @@ namespace Lumina
             Spaced.reserve(Name.size() + 4);
             for (size_t Index = 0; Index < Name.size(); ++Index)
             {
+                auto IsUpper = [](char C) { return C >= 'A' && C <= 'Z'; };
+                auto IsLower = [](char C) { return C >= 'a' && C <= 'z'; };
                 const char Char = Name[Index];
-                const bool bUpper = Char >= 'A' && Char <= 'Z';
-                const bool bAfterLower = Index > 0 && Name[Index - 1] >= 'a' && Name[Index - 1] <= 'z';
-                if (bUpper && bAfterLower)
+                const bool bAfterLower  = Index > 0 && IsLower(Name[Index - 1]);
+                const bool bAcronymEnds = Index > 0 && IsUpper(Name[Index - 1]) && Index + 1 < Name.size() && IsLower(Name[Index + 1]);
+                if (IsUpper(Char) && (bAfterLower || bAcronymEnds))
                 {
                     Spaced.push_back(' ');
                 }
@@ -977,6 +979,9 @@ namespace Lumina
         ImGuiX::TextTooltip("{}", Entry.Title);
 
         ImGui::SameLine(ButtonsLeft);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::WithAlpha(EditorColors::TextPrimary(), 0.10f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::WithAlpha(EditorColors::TextPrimary(), 0.16f));
         if (ImGui::Button(LE_ICON_DOTS_VERTICAL "##ComponentOptions", GHeaderButtonSize))
         {
             ImGui::OpenPopup("ComponentOptions");
@@ -986,9 +991,9 @@ namespace Lumina
         if (!bIsRequired)
         {
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::WithAlpha(EditorColors::Danger(), 0.22f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::WithAlpha(EditorColors::Danger(), 0.32f));
             if (ImGui::Button(LE_ICON_CLOSE_CIRCLE "##RemoveComponent", GHeaderButtonSize))
             {
                 ComponentDestroyRequests.push(FComponentDestroyRequest{ Entry.ReflectedType, Entity });
@@ -996,6 +1001,7 @@ namespace Lumina
             ImGui::PopStyleColor(3);
             ImGuiX::TextTooltip("{}", "Remove this component.");
         }
+        ImGui::PopStyleColor(3);
 
         if (ImGui::BeginPopup("ComponentOptions"))
         {
@@ -1503,6 +1509,7 @@ namespace Lumina
                     : MakeUnique<FPropertyTable>(Row.Data, Row.Layout);
                 // The panel owns ONE search box, or a per-table box would sit above each component header.
                 Entry.Table->SetShowSearchBar(false);
+                Entry.Table->SetOwnerHeading(FName(FriendlyComponentName(Row.Title).c_str()));
                 Entry.Table->SetPreEditCallback([&](const FPropertyChangedEvent& Event)    { OnPrePropertyChangeEvent(Event); });
                 Entry.Table->SetPostEditCallback([&](const FPropertyChangedEvent& Event)   { OnPostPropertyChangeEvent(Event); MarkSceneDirty(); });
                 Entry.Table->SetStartEditCallback([this, Layout = Row.Layout](const FPropertyChangedEvent& Event) { BeginPropertyEditTransaction(Layout); });
@@ -1654,7 +1661,7 @@ namespace Lumina
         {
             Name.append(LE_ICON_CUBE).append(" ");
         }
-        Name.append(NameComponent.Name.c_str()).append(" (").append(Format("{}", (Entity).Value) + ")");
+        Name.append(NameComponent.Name.c_str());
 
         FTreeNodeID ItemEntity = OutlinerListView.CreateNode(ParentNode, FStringView(Name.data(), Name.length()));
         EntityToTreeNode[Entity] = ItemEntity;
@@ -1748,7 +1755,7 @@ namespace Lumina
         ECS::Utils::ForEachComponent(Registry, Entity, [&](void*, const ECS::FSparseSet&, CStruct* StructType)
         {
             FString Chip = LE_ICON_PUZZLE " ";
-            Chip += StructType->MakeDisplayName().c_str();
+            Chip += FriendlyComponentName(StructType->MakeDisplayName().c_str());
             Display.TooltipChips.emplace_back(std::move(Chip));
         });
         if (Display.TooltipChips.empty())
@@ -3105,7 +3112,8 @@ namespace Lumina
             }
 
             FFixedString DisplayName = Struct->MakeDisplayName();
-            if (!ImGuiX::PassSearchFilter(Filter, DisplayName.c_str()))
+            if (!ImGuiX::PassSearchFilter(Filter, DisplayName.c_str())
+                && !ImGuiX::PassSearchFilter(Filter, FriendlyComponentName(DisplayName.c_str()).c_str()))
             {
                 return;
             }
@@ -3142,7 +3150,7 @@ namespace Lumina
         {
             auto EntryName = [](const FComponentEntry& E) -> FString
             {
-                return E.Struct->GetName().ToString();
+                return FriendlyComponentName(E.Struct->MakeDisplayName().c_str());
             };
             Algo::Sort(Category.Entries, [&](const FComponentEntry& LHS, const FComponentEntry& RHS)
             {
@@ -3185,7 +3193,8 @@ namespace Lumina
                                 *OutDragging = true;
                             };
                         }
-                        if (DrawPickerRow((void*)Entry.Struct, CategoryIcon, DisplayName.c_str(), SetDragPayload))
+                        const FString Label = FriendlyComponentName(DisplayName.c_str());
+                        if (DrawPickerRow((void*)Entry.Struct, CategoryIcon, Label.c_str(), SetDragPayload))
                         {
                             OutMetaType = Entry.MetaType;
                             OutStruct   = Entry.Struct;
@@ -4025,7 +4034,7 @@ namespace Lumina
     // On the base, since the prefab editor's preview world is what GetSceneRegistry resolves.
     void FSceneEditorTool::PushRenameEntityModal(ECS::FEntity Entity)
     {
-        ToolContext->PushModal("Rename Entity", ImVec2(450.0f, 250.0f), [this, Entity]() -> bool
+        ToolContext->PushModal("Rename Entity", ImVec2(450.0f, 0.0f), [this, Entity]() -> bool
         {
             auto& NameComponent = GetSceneRegistry().Get<SNameComponent>(Entity);
 
@@ -4039,9 +4048,13 @@ namespace Lumina
     
             ImGui::Text("Enter new name:");
             ImGui::Spacing();
-    
+
+            if (ImGui::IsWindowAppearing())
+            {
+                ImGui::SetKeyboardFocusHere();
+            }
             ImGui::SetNextItemWidth(-1.0f);
-            bool bShouldClose = ImGuiX::InputText("##Name", InputBuffer, ImGuiInputTextFlags_EnterReturnsTrue);
+            bool bShouldClose = ImGuiX::InputText("##Name", InputBuffer, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
     
             ImGui::Spacing();
             ImGui::Separator();
@@ -4062,11 +4075,7 @@ namespace Lumina
                 auto It = EntityToTreeNode.find(Entity);
                 if (It != EntityToTreeNode.end())
                 {
-                    FFixedString Label;
-                    Label.append(LE_ICON_CUBE).append(" ")
-                        .append(NameComponent.Name.c_str())
-                        .append(FString(" - (" + Format("{}", (Entity).Value) + ")"));
-                    OutlinerListView.Get<FTreeNodeDisplay>(It->second).DisplayName.assign(Label.data(), Label.length());
+                    EditorEntityUtils::RenameOutlinerRow(OutlinerListView.Get<FTreeNodeDisplay>(It->second), NameComponent.Name.c_str());
                 }
                 return true;
             }
@@ -4084,7 +4093,7 @@ namespace Lumina
 
     void FSceneEditorTool::PushAddTagModal(ECS::FEntity Entity)
     {
-        ToolContext->PushModal("Add Tag", ImVec2(450.0f, 220.0f), [this, Entity]() -> bool
+        ToolContext->PushModal("Add Tag", ImVec2(450.0f, 0.0f), [this, Entity]() -> bool
         {
             ECS::FRegistry& Registry = GetSceneRegistry();
             if (!Registry.IsValid(Entity))
@@ -4257,22 +4266,24 @@ namespace Lumina
             const ImVec2 ActionSize(ActionDim, ActionDim);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
 
-            ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::Success());
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::Lighten(EditorColors::Success(), 0.12f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::WithAlpha(EditorColors::Success(), 0.85f));
-
-            if (ImGui::Button(LE_ICON_PLUS, ActionSize))
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Success());
+            const bool bAddPressed = ImGui::Button(LE_ICON_PLUS, ActionSize);
+            ImGui::PopStyleColor();
+            if (bAddPressed)
             {
                 AddEntityComponentFilter.Clear();
                 ImGui::OpenPopup("AddToEntityMenu");
             }
-            DrawAddToEntityOrWorldPopup(Entity);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             {
                 ImGui::SetTooltip("Add Component");
             }
+            DrawAddToEntityOrWorldPopup(Entity);
 
-            if (ImGui::Button(LE_ICON_TAG, ActionSize))
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Success());
+            const bool bTagPressed = ImGui::Button(LE_ICON_TAG, ActionSize);
+            ImGui::PopStyleColor();
+            if (bTagPressed)
             {
                 PushAddTagModal(Entity);
             }
@@ -4280,8 +4291,6 @@ namespace Lumina
             {
                 ImGui::SetTooltip("Add Tag");
             }
-
-            ImGui::PopStyleColor(3);
 
             // One name, so a multi-selection rename has no meaning and an unnamed entity has no target.
             const bool bCanRename = !bMultiSelect && NameComponent != nullptr;
@@ -4300,11 +4309,13 @@ namespace Lumina
 
             const bool bCanDelete = bMultiSelect || CanDeleteEntity(Entity);
             ImGui::BeginDisabled(!bCanDelete);
-            ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::Danger());
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::Lighten(EditorColors::Danger(), 0.12f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::WithAlpha(EditorColors::Danger(), 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::WithAlpha(EditorColors::Danger(), 0.22f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::WithAlpha(EditorColors::Danger(), 0.32f));
+            const bool bDeletePressed = ImGui::Button(LE_ICON_TRASH_CAN, ActionSize);
+            ImGui::PopStyleColor(3);
 
-            if (ImGui::Button(LE_ICON_TRASH_CAN, ActionSize))
+            if (bDeletePressed)
             {
                 if (bMultiSelect)
                 {
@@ -4333,7 +4344,6 @@ namespace Lumina
                 ImGui::SetTooltip(bMultiSelect ? "Delete Selected" : "Delete Entity");
             }
 
-            ImGui::PopStyleColor(3);
             ImGui::EndDisabled();
             ImGui::PopStyleVar();
 
@@ -4343,60 +4353,37 @@ namespace Lumina
             ImGui::EndTable();
         }
 
-        ImGui::SeparatorText("Details");
+        ImGui::Spacing();
 
         DrawTagSection(Entity);
-
-        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(LE_ICON_CUBE " Components");
-        ImGui::PopStyleColor();
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
 
         DrawComponentList(Entity);
     }
 
     void FSceneEditorTool::DrawEmptyState()
     {
-        ImVec2 WindowSize = ImGui::GetWindowSize();
-        ImVec2 CenterPos = ImVec2(WindowSize.x * 0.5f, WindowSize.y * 0.5f);
+        const ImVec2 WindowSize = ImGui::GetWindowSize();
+        ImGui::SetCursorPosY(WindowSize.y * 0.5f - 40.0f);
 
-        ImGui::SetCursorPos(ImVec2(CenterPos.x - 100.0f, CenterPos.y - 40.0f));
-
-        ImGui::BeginGroup();
+        auto DrawCentered = [&WindowSize](const char* Text)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::SetCursorPosX(Math::Max(ImGui::GetStyle().WindowPadding.x, (WindowSize.x - ImGui::CalcTextSize(Text).x) * 0.5f));
+            ImGui::TextUnformatted(Text);
+        };
 
-            const char* EmptyIcon = LE_ICON_INBOX;
-            ImVec2 IconSize = ImGui::CalcTextSize(EmptyIcon);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (200.0f - IconSize.x) * 0.5f);
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
 
-            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-            ImGui::TextUnformatted(EmptyIcon);
-            ImGui::PopFont();
+        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+        DrawCentered(LE_ICON_INBOX);
+        ImGui::PopFont();
 
-            ImGui::Spacing();
+        ImGui::Spacing();
+        DrawCentered("Nothing selected");
+        ImGui::Spacing();
 
-            const char* EmptyText = "Nothing selected";
-            ImVec2 TextSize = ImGui::CalcTextSize(EmptyText);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (200.0f - TextSize.x) * 0.5f);
-            ImGui::TextUnformatted(EmptyText);
-
-            ImGui::Spacing();
-
-            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::WithAlpha(EditorColors::TextMuted(), 0.7f));
-            const char* HintText = "Select an entity to view properties";
-            ImVec2 HintSize = ImGui::CalcTextSize(HintText);
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (200.0f - HintSize.x) * 0.5f);
-            ImGui::TextUnformatted(HintText);
-            ImGui::PopStyleColor();
-
-            ImGui::PopStyleColor();
-        }
-        ImGui::EndGroup();
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::WithAlpha(EditorColors::TextMuted(), 0.7f));
+        DrawCentered("Select an entity to view properties");
+        ImGui::PopStyleColor(2);
     }
 
     size_t FSceneEditorTool::CountOutlinerEntities() const
@@ -4550,11 +4537,11 @@ namespace Lumina
         DrawOutlinerWorldSelector();
 
         {
-            ImGui::Text(LE_ICON_FORMAT_LIST_NUMBERED " Total Entities: %zu", CountOutlinerEntities());
             const float RefreshButtonOffset = ImGui::GetContentRegionAvail().x - 24 - ImGui::GetStyle().FramePadding.x;
-            ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-            ImGui::TextDisabled("(%zu)", (size_t)GetSceneRegistry().NumEntities());
-            ImGui::SetItemTooltip("Entities listed below, parentheses include those hidden from the outliner.");
+            const size_t ListedCount = CountOutlinerEntities();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%zu %s", ListedCount, ListedCount == 1 ? "entity" : "entities");
+            ImGui::SetItemTooltip("%zu in the world, counting those hidden from the outliner.", (size_t)GetSceneRegistry().NumEntities());
             ImGui::SameLine(RefreshButtonOffset);
             if (ImGui::Button(LE_ICON_REFRESH))
             {
@@ -4630,7 +4617,7 @@ namespace Lumina
                 ImVec2 TextPos = ImGui::GetItemRectMin();
                 TextPos.x += Style.FramePadding.x + 2.0f;
                 TextPos.y += Style.FramePadding.y;
-                DrawList->AddText(TextPos, EditorColors::U32(EditorColors::TextMuted()), LE_ICON_FOLDER_SEARCH " Search components...");
+                DrawList->AddText(TextPos, EditorColors::U32(EditorColors::TextMuted()), LE_ICON_MAGNIFY " Search components...");
             }
             ImGui::PopStyleVar();
 
@@ -4822,13 +4809,11 @@ namespace Lumina
 
             ImGui::BeginGroup();
             {
-                ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::Danger());
                 if (ImGui::Button("Cancel", ImVec2(80.0f, 0.0f)))
                 {
                     ImGui::CloseCurrentPopup();
                     AddEntityComponentFilter.Clear();
                 }
-                ImGui::PopStyleColor();
 
                 if (Entity == ECS::NullEntity)
                 {

@@ -24,7 +24,7 @@ namespace Lumina
         // Deliberately holds no FImmediateLineRenderer*. The renderer dies with its scene -- on tool
         // close, or when ReclaimIdleRenderers frees a hidden world's -- and this state is only
         // refreshed on the world's own tick, which for an editor world is the Paused stage while
-        // producers like the grid run in FrameStart. A cached pointer dangles in that gap. Resolve the
+        // editor producers run in FrameStart. A cached pointer dangles in that gap. Resolve the
         // sink through DebugDraw::GetLines at the point of use instead.
         FFrustum    Frustum;
         FVector3    ViewOrigin      = FVector3(0.0f, 0.0f, 0.0f);

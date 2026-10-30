@@ -20,6 +20,7 @@
 namespace Lumina
 {
     class CSkeleton;
+    class CSkeletalMesh;
     struct FSkeletonResource;
 
     enum class EPhysicsAssetSelection : uint8
@@ -49,6 +50,7 @@ namespace Lumina
         void OnDeinitialize(const FUpdateContext& UpdateContext) override { CloseOpenDragTransaction(); StopSimulation(); }
         void OnAssetDataChangedExternally() override;
         void OnPostUndoRedo() override;
+        void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
         void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;
         void DrawHelpMenu() override;
@@ -72,6 +74,8 @@ namespace Lumina
         void RebuildBodySubtreeMask();
 
         FMatrix4 GetBodyWorldMatrix(const SPhysicsBodySetup& Body);
+
+        bool HasBodyBone(const SPhysicsBodySetup& Body);
 
         void DrawBodies();
         void DrawConstraints();
@@ -161,6 +165,7 @@ namespace Lumina
         FName                       SelectedBone;
 
         TStrongObjectPtr<CSkeleton> CachedSkeleton;
+        TWeakObjectPtr<CSkeletalMesh> CachedPreviewMesh;
 
         float                       GenerateMinBoneLength = 0.05f;
         int32                       SimulationFrames = 0;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "World/ECS/Registry.h"
 
@@ -109,6 +109,7 @@ namespace Lumina
 
         int32                       SelectedSample = Constants::kIndexNone;
         int32                       DraggedSample = Constants::kIndexNone;
+        FVector2                    DragGrabOffset = FVector2(0.0f);
 
         TStrongObjectPtr<CSkeleton> CachedSkeleton;
 

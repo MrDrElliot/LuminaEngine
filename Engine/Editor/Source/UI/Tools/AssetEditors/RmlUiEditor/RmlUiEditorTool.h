@@ -52,6 +52,7 @@ namespace Lumina
         void DrawHelpMenu() override;
 
         bool IsUnsavedDocument() override { return bBufferDirty; }
+        bool HasUnsavedFileChanges() override { return bBufferDirty; }
 
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
@@ -60,6 +61,7 @@ namespace Lumina
         enum class EBgMode : uint8 { Checker, Solid, Transparent };
 
         void LoadFromDisk();
+        void WriteBufferToDisk();
         // bAlwaysReport: report the parse outcome even when it matches the previous reload. Pass it for a
         // deliberate action; leave it off for the debounced auto reload.
         void ReloadDocument(bool bAlwaysReport = false);
@@ -201,6 +203,7 @@ namespace Lumina
         bool                               bScriptsReloaded = false;
         std::string                 LastSyncedText;     // matches disk + last preview reload
         bool                        bBufferDirty = false;
+        bool                        bDiskChangedWhileDirty = false;
         bool                        bAutoReload = true;
 
         Rml::Context*               PreviewContext = nullptr;

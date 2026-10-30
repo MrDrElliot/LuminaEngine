@@ -6,6 +6,7 @@
 #include "Core/Object/ObjectCore.h"
 #include "Log/Log.h"
 #include "Core/Math/AABB.h"
+#include "Tools/UI/ImGui/Widgets/TreeListView.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
@@ -95,13 +96,13 @@ namespace Lumina::EditorEntityUtils
         Transform->SetLocalScale(LocalScale);
     }
 
-    FFixedString MakeOutlinerDisplayName(const SNameComponent* Name, ECS::FEntity Entity, const char* Icon)
+    void RenameOutlinerRow(FTreeNodeDisplay& Display, FStringView NewName)
     {
-        FFixedString Out;
-        Out.append(Icon).append(" ");
-        Out.append(Name ? Name->Name.c_str() : "<unnamed>");
-        Out.append(FString(" - (" + Format("{}", (Entity).Value) + ")"));
-        return Out;
+        const size_t IconEnd = Display.DisplayName.find(' ');
+        FString Label = IconEnd == FString::npos ? FString() : Display.DisplayName.substr(0, IconEnd + 1);
+        Label.append(NewName.data(), NewName.size());
+        Display.DisplayName = Move(Label);
+        Display.bTooltipBuilt = false;
     }
 
     bool ComputeFocusBoundsForEntity(ECS::FRegistry& Registry, ECS::FEntity Entity, FVector3& OutCenter, float& OutRadius)

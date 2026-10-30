@@ -375,6 +375,23 @@ namespace Lumina::ImGuiX
         return Pressed;
     }
 
+    ImVec2 CenteredIconPos(const char* Icon, const ImVec2& Min, const ImVec2& Max)
+    {
+        const ImVec2 Size = ImGui::CalcTextSize(Icon);
+        ImVec2 Pos((Min.x + Max.x - Size.x) * 0.5f, (Min.y + Max.y - Size.y) * 0.5f);
+
+        unsigned int Codepoint = 0;
+        const char* IconEnd = Icon + strlen(Icon);
+        const int GlyphBytes = ImTextCharFromUtf8(&Codepoint, Icon, IconEnd);
+        ImFontBaked* Baked = ImGui::GetFontBaked();
+        const ImFontGlyph* Glyph = (GlyphBytes > 0 && Icon + GlyphBytes == IconEnd) ? Baked->FindGlyphNoFallback((ImWchar)Codepoint) : nullptr;
+        if (Glyph != nullptr && Glyph->Visible)
+        {
+            Pos.y = (Min.y + Max.y) * 0.5f - (Glyph->Y0 + Glyph->Y1) * 0.5f * (ImGui::GetFontSize() / Baked->Size) + 0.5f;
+        }
+        return Pos;
+    }
+
     bool ButtonEx(char const* pIcon, char const* pLabel, ImVec2 const& size, const ImColor& backgroundColor, const ImColor& iconColor, const ImColor& foregroundColor, bool shouldCenterContents)
     {
     	// Taken from Esoterica.
@@ -463,10 +480,7 @@ namespace Lumina::ImGuiX
                 }
                 else
                 {
-                    float const offsetX = ( bb.GetWidth() - iconSize.x ) / 2.0f;
-                    float const offsetY = ( ( bb.GetHeight() - iconSize.y ) / 2.0f );
-                    ImVec2 const iconOffset( offsetX, offsetY );
-                    pWindow->DrawList->AddText( pos + iconOffset, finalIconColor, pIcon );
+                    pWindow->DrawList->AddText( CenteredIconPos( pIcon, bb.Min, bb.Max ), finalIconColor, pIcon );
                 }
             }
             else
@@ -1575,25 +1589,37 @@ namespace Lumina::ImGuiX
 
         // Their hit boxes reach the window edge, which is what the OS does and what Fitts' law wants.
         const ImVec2 ButtonSize(UnscaledButtonWidth * GetUIScale(), ImGui::GetContentRegionAvail().y);
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        const ImVec4 TextColor = EditorColors::TextPrimary();
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
 
-        // Drawn with the stock button, since the flat one scales a transparent background and shows none.
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.16f));
+        auto ControlButton = [&](const char* ID, const char* Icon, ImU32 HoverFill, ImU32 HeldFill)
+        {
+            const bool bPressed = ImGui::InvisibleButton(ID, ButtonSize);
+            const bool bHovered = ImGui::IsItemHovered();
+            const ImVec2 Min = ImGui::GetItemRectMin();
+            const ImVec2 Max = ImGui::GetItemRectMax();
+            if (bHovered)
+            {
+                DrawList->AddRectFilled(Min, Max, ImGui::IsItemActive() ? HeldFill : HoverFill);
+            }
 
-        if (ImGui::Button(LE_ICON_WINDOW_MINIMIZE "##Minimize", ButtonSize))
+            DrawList->AddText(CenteredIconPos(Icon, Min, Max), EditorColors::U32(EditorColors::WithAlpha(TextColor, bHovered ? 1.0f : 0.62f)), Icon);
+            ImGui::SameLine();
+            return bPressed;
+        };
+
+        const ImU32 HoverFill = IM_COL32(255, 255, 255, 22);
+        const ImU32 HeldFill  = IM_COL32(255, 255, 255, 36);
+
+        if (ControlButton("##Minimize", LE_ICON_WINDOW_MINIMIZE, HoverFill, HeldFill))
         {
             Window->Minimize();
         }
 
-        ImGui::SameLine();
-
         const bool bMaximized = Window->IsWindowMaximized();
-        if (ImGui::Button(bMaximized ? LE_ICON_WINDOW_RESTORE "##Restore" : LE_ICON_WINDOW_MAXIMIZE "##Restore", ButtonSize))
+        if (ControlButton("##Restore", bMaximized ? LE_ICON_WINDOW_RESTORE : LE_ICON_WINDOW_MAXIMIZE, HoverFill, HeldFill))
         {
             if (bMaximized)
             {
@@ -1605,18 +1631,12 @@ namespace Lumina::ImGuiX
             }
         }
 
-        ImGui::SameLine();
-
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.13f, 0.13f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.10f, 0.10f, 1.0f));
-        if (ImGui::Button(LE_ICON_WINDOW_CLOSE "##Close", ButtonSize))
+        if (ControlButton("##Close", LE_ICON_WINDOW_CLOSE, IM_COL32(196, 43, 28, 255), IM_COL32(160, 32, 22, 255)))
         {
             FApplication::RequestExit();
         }
-        ImGui::PopStyleColor(2);
 
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar(3);
+        ImGui::PopStyleVar();
     }
 
     void FApplicationTitleBar::Draw(TFunction<void()>&& MenuSectionDrawFunction, TFunction<void()>&& InfoSectionDrawFunction, float InfoSectionWidth)
@@ -1664,10 +1684,15 @@ namespace Lumina::ImGuiX
             const bool bVisible = BeginTitleBarSection("##MenuSection", ImVec2(MenuX, 0.0f), ImVec2(MenuWidth, BarHeight), true);
             if (bVisible)
             {
+                // BeginMenu places text below and popups above the cursor by the frame padding, so both are aligned through it.
+                const float FramePaddingY = ImGui::GetStyle().FramePadding.y;
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(16.0f * Scale, 8.0f * Scale));
-                if (ImGui::BeginMenuBar())
+                ImGui::PushStyleVarY(ImGuiStyleVar_FramePadding, Math::Max(0.0f, RowOffsetY - FramePaddingY));
+                const bool bMenuBar = ImGui::BeginMenuBar();
+                ImGui::PopStyleVar();
+                if (bMenuBar)
                 {
-                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + RowOffsetY);
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + Math::Min(FramePaddingY, RowOffsetY));
                     MenuSectionDrawFunction();
                     ImGui::EndMenuBar();
                 }

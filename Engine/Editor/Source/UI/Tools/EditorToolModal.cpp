@@ -25,6 +25,24 @@ namespace Lumina
             }
             return ImGui::GetMainViewport()->GetCenter();
         }
+
+        // A zero height keeps the width and fits the content every frame, so a short form has no empty tail.
+        void SetNextModalSize(const ImVec2& Size)
+        {
+            if (Size.y <= 0.0f)
+            {
+                ImGui::SetNextWindowSize(ImVec2(Size.x, 0.0f), ImGuiCond_Always);
+            }
+            else
+            {
+                ImGui::SetNextWindowSize(Size, ImGuiCond_Appearing);
+            }
+        }
+
+        bool WantsEscapeClose(bool bCloseable)
+        {
+            return bCloseable && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        }
     }
 
     void FEditorModalManager::CreateDialogue(const FString& Title, ImVec2 Size, TMoveOnlyFunction<bool()> DrawFunction, bool bBlocking, bool bCloseable)
@@ -49,13 +67,14 @@ namespace Lumina
             ImGui::OpenPopup(ActiveModal->Title.c_str());
 
             ImGui::SetNextWindowPos(ModalAnchorCenter(ActiveModal->OpenPos), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ActiveModal->Size, ImGuiCond_Appearing);
+            SetNextModalSize(ActiveModal->Size);
 
             bool* bOpen = ActiveModal->bCloseable ? &ActiveModal->bOpen : nullptr;
 
             if (ImGui::BeginPopupModal(ActiveModal->Title.c_str(), bOpen, ImGuiWindowFlags_NoCollapse))
             {
-                const bool bClose = ActiveModal->DrawModal() || !ActiveModal->bOpen;
+                const bool bEscape = WantsEscapeClose(ActiveModal->bCloseable);
+                const bool bClose = ActiveModal->DrawModal() || !ActiveModal->bOpen || bEscape;
 
                 SlowTaskModal::Render();
 
@@ -78,12 +97,13 @@ namespace Lumina
         {
             // A non-blocking modal is a plain window, so there is no modal chain to conflict with.
             ImGui::SetNextWindowPos(ModalAnchorCenter(ActiveModal->OpenPos), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ActiveModal->Size, ImGuiCond_Appearing);
+            SetNextModalSize(ActiveModal->Size);
 
             bool* bOpen = ActiveModal->bCloseable ? &ActiveModal->bOpen : nullptr;
 
             const bool bVisible = ImGui::Begin(ActiveModal->Title.c_str(), bOpen, ImGuiWindowFlags_NoCollapse);
-            if (bVisible && (ActiveModal->DrawModal() || !ActiveModal->bOpen))
+            const bool bEscape = bVisible && WantsEscapeClose(ActiveModal->bCloseable);
+            if (bVisible && (ActiveModal->DrawModal() || !ActiveModal->bOpen || bEscape))
             {
                 ActiveModal.reset();
             }

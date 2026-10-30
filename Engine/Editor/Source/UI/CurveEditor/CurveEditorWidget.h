@@ -26,6 +26,11 @@ namespace Lumina
         void SetTimeMarker(float InTime) { TimeMarker = InTime; bShowTimeMarker = true; }
         void ClearTimeMarker() { bShowTimeMarker = false; }
 
+        void SetTimeRange(float InMinTime, float InMaxTime) { RangeMinTime = InMinTime; RangeMaxTime = InMaxTime; bHasTimeRange = InMaxTime > InMinTime; }
+        void ClearTimeRange() { bHasTimeRange = false; }
+
+        void SetToolbarExtension(const TFunction<void()>& InDraw) { ToolbarExtension = InDraw; }
+
         void FrameAll();
         void FrameSelection();
 
@@ -114,6 +119,12 @@ namespace Lumina
 
         float               TimeMarker = 0.0f;
         bool                bShowTimeMarker = false;
+
+        float               RangeMinTime = 0.0f;
+        float               RangeMaxTime = 1.0f;
+        bool                bHasTimeRange = false;
+        bool                bCanvasHovered = false;
+        TFunction<void()>   ToolbarExtension;
 
         bool                bSnapTime = false;
         bool                bSnapValue = false;

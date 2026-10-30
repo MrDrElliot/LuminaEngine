@@ -1025,7 +1025,7 @@ namespace Lumina
         
         if (ToolToClose)
         {
-            ToolsPendingDestroy.push(ToolToClose);
+            PromptCloseTools({ ToolToClose });
         }
 
         while (!ToolsPendingDestroy.empty())
@@ -2299,40 +2299,82 @@ namespace Lumina
         const float BarHeight = ImGui::GetFrameHeight() + 6.0f * Scale;
 
         ImGuiViewport* Viewport = ImGui::GetMainViewport();
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * Scale, 2.0f * Scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * Scale, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f * Scale, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, EditorColors::TitleBg());
         if (ImGui::BeginViewportSideBar("##EditorStatusBar", Viewport, ImGuiDir_Down, BarHeight,
             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoNav))
         {
+            ImDrawList* DrawList = ImGui::GetWindowDrawList();
+            const ImVec2 BarMin = ImGui::GetWindowPos();
+            DrawList->AddLine(BarMin, ImVec2(BarMin.x + ImGui::GetWindowWidth(), BarMin.y), IM_COL32(0, 0, 0, 160));
+
+            const float PadX    = 12.0f * Scale;
+            const float IconGap = 7.0f * Scale;
+            const ImU32 AccentColor = EditorColors::U32(EditorColors::Accent());
+            const ImU32 OpenFill    = EditorColors::U32(EditorColors::WindowBg());
+            const ImU32 HoverFill   = EditorColors::U32(EditorColors::Lighten(EditorColors::TitleBg(), 0.05f));
+            const ImU32 HeldFill    = EditorColors::U32(EditorColors::Lighten(EditorColors::TitleBg(), 0.09f));
+            const ImU32 BrightText  = EditorColors::U32(EditorColors::TextPrimary());
+            const ImU32 DimText     = EditorColors::U32(EditorColors::TextDim());
+
             for (FFooterDrawer& Drawer : FooterDrawers)
             {
-                const bool bActive = (OpenDrawer == Drawer.Tool) || Drawer.bDocked;
-                if (bActive)
+                const bool bOpen = OpenDrawer == Drawer.Tool;
+                const ImVec2 IconSize  = ImGui::CalcTextSize(Drawer.Icon);
+                const ImVec2 LabelSize = ImGui::CalcTextSize(Drawer.Label);
+
+                ImGui::SetCursorPosY(0.0f);
+                ImGui::PushID(Drawer.Label);
+                // The drawer auto-dismisses on mouse-down, so a release toggle would re-open what the press closed.
+                const bool bPressed = ImGui::InvisibleButton("##Drawer", ImVec2(PadX * 2.0f + IconSize.x + IconGap + LabelSize.x, BarHeight),
+                                                             ImGuiButtonFlags_PressedOnClick);
+                ImGui::PopID();
+
+                const bool bHovered = ImGui::IsItemHovered();
+                const ImVec2 Min = ImGui::GetItemRectMin();
+                const ImVec2 Max = ImGui::GetItemRectMax();
+
+                if (bOpen)
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                    DrawList->AddRectFilled(Min, Max, OpenFill);
+                    DrawList->AddRectFilled(Min, ImVec2(Max.x, Min.y + 2.0f * Scale), AccentColor);
+                }
+                else if (bHovered)
+                {
+                    DrawList->AddRectFilled(Min, Max, ImGui::IsItemActive() ? HeldFill : HoverFill);
                 }
 
-                const FFixedString Label = FormatAs<FFixedString>("{}  {}", Drawer.Icon, Drawer.Label);
-                // The drawer auto-dismisses on mouse-down, so a release toggle would re-open what the press closed.
-                if (ImGui::ButtonEx(Label.c_str(), ImVec2(0, 0), ImGuiButtonFlags_PressedOnClick))
+                const ImU32 TextColor = (bOpen || bHovered || Drawer.bDocked) ? BrightText : DimText;
+                const float TextY = Min.y + (BarHeight - LabelSize.y) * 0.5f;
+                DrawList->AddText(ImVec2(Min.x + PadX, TextY), bOpen ? AccentColor : TextColor, Drawer.Icon);
+                DrawList->AddText(ImVec2(Min.x + PadX + IconSize.x + IconGap, TextY), TextColor, Drawer.Label);
+
+                if (bHovered)
+                {
+                    const char* Action = Drawer.bDocked ? "Focus" : (bOpen ? "Close" : "Open");
+                    if (Drawer.Shortcut != 0)
+                    {
+                        ImGui::SetTooltip("%s %s (%s)", Action, Drawer.Label, ImGui::GetKeyChordName(Drawer.Shortcut));
+                    }
+                    else
+                    {
+                        ImGui::SetTooltip("%s %s", Action, Drawer.Label);
+                    }
+                }
+
+                if (bPressed)
                 {
                     ActivateDrawer(Drawer);
-                }
-
-                if (bActive)
-                {
-                    ImGui::PopStyleColor();
-                }
-
-                if (ImGui::IsItemHovered())
-                {
-                    ImGui::SetTooltip("%s%s", Drawer.bDocked ? "Focus " : "Toggle ", Drawer.Label);
                 }
 
                 ImGui::SameLine();
             }
         }
         ImGui::End();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(3);
     }
 
     ImGuiID FEditorUI::GetOrCreateBottomDockID(float HeightFrac)
@@ -2773,18 +2815,20 @@ namespace Lumina
 
         auto CloseRange = [this, &Order, Count](int32 First, int32 Last, int32 Skip)
         {
+            TVector<FEditorTool*> Closing;
             for (int32 i = Math::Max(0, First); i <= Last && i < Count; ++i)
             {
-                if (i != Skip)
+                if (i != Skip && CanCloseTool(Order[i]))
                 {
-                    RequestCloseTool(Order[i]);
+                    Closing.push_back(Order[i]);
                 }
             }
+            PromptCloseTools(Move(Closing));
         };
 
         if (ImGui::MenuItem(LE_ICON_CLOSE " Close", nullptr, false, CanCloseTool(EditorTool)))
         {
-            RequestCloseTool(EditorTool);
+            PromptCloseTools({ EditorTool });
         }
 
         if (ImGui::MenuItem("Close Others", nullptr, false, SelfIndex >= 0 && AnyClosableIn(0, Count - 1, SelfIndex)))
@@ -3111,25 +3155,33 @@ namespace Lumina
                     // A window added after this tool's layout was saved has no settings, so it joins a docked sibling instead of floating.
                     if (ImGui::FindWindowByName(ToolWindowName.c_str()) == nullptr && ImGui::FindWindowSettingsByID(ImHashStr(ToolWindowName.c_str())) == nullptr)
                     {
-                        auto FindToolWindow = [&](const FName& Name)
+                        auto FindToolDockId = [&](const FName& Name) -> ImGuiID
                         {
-                            return ImGui::FindWindowByName(FEditorTool::GetToolWindowName(Name.c_str(), Tool->GetCurrentDockspaceID()).c_str());
+                            const FFixedString SiblingName = FEditorTool::GetToolWindowName(Name.c_str(), Tool->GetCurrentDockspaceID());
+                            if (ImGuiWindow* SiblingWindow = ImGui::FindWindowByName(SiblingName.c_str()))
+                            {
+                                return SiblingWindow->DockId;
+                            }
+                            const ImGuiWindowSettings* Settings = ImGui::FindWindowSettingsByID(ImHashStr(SiblingName.c_str()));
+                            return Settings != nullptr ? Settings->DockId : 0;
                         };
 
                         // A sibling tabbed behind the viewport would hide the new window there too.
                         ImGuiID ViewportDockId = 0;
                         for (auto& Sibling : Tool->ToolWindows)
                         {
-                            ImGuiWindow* SiblingWindow = Sibling->bViewport ? FindToolWindow(Sibling->Name) : nullptr;
-                            ViewportDockId = SiblingWindow != nullptr ? SiblingWindow->DockId : ViewportDockId;
+                            if (Sibling->bViewport)
+                            {
+                                ViewportDockId = FindToolDockId(Sibling->Name);
+                            }
                         }
 
                         for (auto& Sibling : Tool->ToolWindows)
                         {
-                            ImGuiWindow* SiblingWindow = (Sibling != Window && !Sibling->bViewport) ? FindToolWindow(Sibling->Name) : nullptr;
-                            if (SiblingWindow != nullptr && SiblingWindow->DockId != 0 && SiblingWindow->DockId != ViewportDockId)
+                            const ImGuiID SiblingDockId = (Sibling != Window && !Sibling->bViewport) ? FindToolDockId(Sibling->Name) : 0;
+                            if (SiblingDockId != 0 && SiblingDockId != ViewportDockId)
                             {
-                                ImGui::SetNextWindowDockID(SiblingWindow->DockId, ImGuiCond_FirstUseEver);
+                                ImGui::SetNextWindowDockID(SiblingDockId, ImGuiCond_FirstUseEver);
                                 break;
                             }
                         }
@@ -3398,8 +3450,13 @@ namespace Lumina
 
                         DrawList->AddText(ImVec2(TextX, TextTop),
                                           EditorColors::U32(EditorColors::TextPrimary()), Entry.Name.c_str());
+                        FStringView PathText(Entry.Path.c_str(), Entry.Path.size());
+                        if (PathText.ends_with(".lasset"))
+                        {
+                            PathText.remove_suffix(7);
+                        }
                         DrawList->AddText(ImVec2(TextX, TextTop + LineHeight),
-                                          EditorColors::U32(EditorColors::TextMuted()), Entry.Path.c_str());
+                                          EditorColors::U32(EditorColors::TextMuted()), PathText.data(), PathText.data() + PathText.size());
 
                         ImGui::PopID();
                     }
@@ -3638,18 +3695,150 @@ namespace Lumina
             }
         }
 
-        if (!DirtyPackages.empty())
+        TVector<FEditorTool*> FileTools;
+        for (FEditorTool* Tool : EditorTools)
         {
-            OpenUnsavedChangesDialog(Move(DirtyPackages));
+            if (Tool != nullptr && Tool->HasUnsavedFileChanges())
+            {
+                FileTools.push_back(Tool);
+            }
+        }
+
+        if (!DirtyPackages.empty() || !FileTools.empty())
+        {
+            OpenUnsavedChangesDialog(Move(DirtyPackages), Move(FileTools));
         }
     }
 
-    void FEditorUI::OpenUnsavedChangesDialog(TVector<CPackage*> Packages)
+    FEditorTool* FEditorUI::FindAssetToolForPackage(const CPackage* Package) const
+    {
+        for (const auto& [Asset, Tool] : ActiveAssetTools)
+        {
+            if (Asset != nullptr && Tool != nullptr && Asset->GetPackage() == Package)
+            {
+                return Tool;
+            }
+        }
+        return nullptr;
+    }
+
+    bool FEditorUI::SaveToolBeforeClose(FEditorTool* Tool)
+    {
+        if (Tool->HasUnsavedFileChanges())
+        {
+            return Tool->SaveFileChanges();
+        }
+        Tool->OnSave();
+        return !Tool->IsUnsavedDocument();
+    }
+
+    void FEditorUI::PromptCloseTools(TVector<FEditorTool*> Tools)
+    {
+        TVector<FEditorTool*> Unsaved;
+        for (FEditorTool* Tool : Tools)
+        {
+            if (!CanCloseTool(Tool))
+            {
+                continue;
+            }
+            if (Tool->IsUnsavedDocument() || Tool->HasUnsavedFileChanges())
+            {
+                Unsaved.push_back(Tool);
+            }
+            else
+            {
+                RequestCloseTool(Tool);
+            }
+        }
+
+        if (Unsaved.empty())
+        {
+            return;
+        }
+
+        const float DialogHeight = Math::Min(150.0f + 22.0f * (float)Unsaved.size(), 420.0f);
+        ModalManager.CreateDialogue("Save Changes?", ImVec2(480, DialogHeight), [this, Unsaved = Move(Unsaved)]() -> bool
+        {
+            const auto IsOpen = [this](FEditorTool* Tool) { return Algo::Contains(EditorTools, Tool); };
+
+            ImGui::TextUnformatted(Unsaved.size() == 1 ? "This tab has unsaved changes:" : "These tabs have unsaved changes:");
+            ImGui::Spacing();
+            for (FEditorTool* Tool : Unsaved)
+            {
+                if (IsOpen(Tool))
+                {
+                    const FStringView Name(Tool->GetToolName().c_str());
+                    const FStringView Shown = Name.substr(0, Name.find("###"));
+                    ImGui::BulletText("%.*s", (int)Shown.size(), Shown.data());
+                }
+            }
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
+            ImGui::TextWrapped("Closing without saving discards edits that only exist in the tab.");
+            ImGui::PopStyleColor();
+
+            const char* SaveLabel    = "Save";
+            const char* DiscardLabel = "Don't Save";
+            const char* CancelLabel  = "Cancel";
+
+            constexpr float MinButtonWidth = 96.0f;
+            const float Gap      = ImGui::GetStyle().ItemSpacing.x;
+            const float SaveW    = ImGuiX::ButtonWidth(SaveLabel, MinButtonWidth);
+            const float DiscardW = ImGuiX::ButtonWidth(DiscardLabel, MinButtonWidth);
+            const float CancelW  = ImGuiX::ButtonWidth(CancelLabel, MinButtonWidth);
+
+            const float Remaining = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
+            if (Remaining > 0.0f)
+            {
+                ImGui::Dummy(ImVec2(0.0f, Remaining));
+            }
+            ImGuiX::AlignRight(SaveW + DiscardW + CancelW + Gap * 2.0f);
+
+            if (ImGuiX::ToneButton(SaveLabel, ImGuiX::EButtonTone::Primary, ImVec2(SaveW, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Enter, false))
+            {
+                for (FEditorTool* Tool : Unsaved)
+                {
+                    if (!IsOpen(Tool))
+                    {
+                        continue;
+                    }
+                    if (SaveToolBeforeClose(Tool))
+                    {
+                        RequestCloseTool(Tool);
+                    }
+                    else
+                    {
+                        ImGuiX::Notifications::NotifyError("'{0}' could not be saved, so it was left open.", Tool->GetToolName().c_str());
+                    }
+                }
+                return true;
+            }
+
+            ImGui::SameLine(0.0f, Gap);
+            if (ImGuiX::ToneButton(DiscardLabel, ImGuiX::EButtonTone::Danger, ImVec2(DiscardW, 0.0f)))
+            {
+                for (FEditorTool* Tool : Unsaved)
+                {
+                    if (IsOpen(Tool))
+                    {
+                        RequestCloseTool(Tool);
+                    }
+                }
+                return true;
+            }
+
+            ImGui::SameLine(0.0f, Gap);
+            return ImGui::Button(CancelLabel, ImVec2(CancelW, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        });
+    }
+
+    void FEditorUI::OpenUnsavedChangesDialog(TVector<CPackage*> Packages, TVector<FEditorTool*> FileTools)
     {
         enum class ESaveState : uint8 { Pending, ReadOnly, Saved, Failed };
 
-        TVector<bool>       Selection(Packages.size(), true);
-        TVector<ESaveState> States(Packages.size(), ESaveState::Pending);
+        const size_t RowCount = Packages.size() + FileTools.size();
+        TVector<bool>       Selection(RowCount, true);
+        TVector<ESaveState> States(RowCount, ESaveState::Pending);
         for (size_t Index = 0; Index < Packages.size(); ++Index)
         {
             const FFixedString Path = Packages[Index]->GetPackagePath();
@@ -3660,9 +3849,10 @@ namespace Lumina
         }
 
         ModalManager.CreateDialogue("Unsaved Changes", ImVec2(560, 380),
-            [this, Packages = Move(Packages), Selection = Move(Selection), States = Move(States)]() mutable -> bool
+            [this, Packages = Move(Packages), FileTools = Move(FileTools), Selection = Move(Selection), States = Move(States)]() mutable -> bool
         {
-            const uint32 NumPackages = (uint32)Packages.size();
+            const uint32 NumPackageRows = (uint32)Packages.size();
+            const uint32 NumPackages = (uint32)(Packages.size() + FileTools.size());
             uint32 NumSelected = 0;
             for (bool bSelected : Selection)
             {
@@ -3671,11 +3861,11 @@ namespace Lumina
 
             if (NumPackages == 1)
             {
-                ImGui::TextUnformatted("1 package has unsaved changes.");
+                ImGui::TextUnformatted("1 item has unsaved changes.");
             }
             else
             {
-                ImGuiX::Text("{} packages have unsaved changes.", NumPackages);
+                ImGuiX::Text("{} items have unsaved changes.", NumPackages);
             }
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             ImGui::TextUnformatted("Save them before the editor closes?");
@@ -3717,7 +3907,11 @@ namespace Lumina
 
                 for (uint32 Index = 0; Index < NumPackages; ++Index)
                 {
-                    CPackage* Package = Packages[Index];
+                    const bool bToolRow = Index >= NumPackageRows;
+                    CPackage* Package = bToolRow ? nullptr : Packages[Index];
+                    FEditorTool* FileTool = bToolRow ? FileTools[Index - NumPackageRows] : nullptr;
+                    const FString RowName = bToolRow ? FString(FileTool->GetToolName().c_str()) : FString(Package->GetName().c_str());
+                    const FString RowPath = bToolRow ? FString(FileTool->GetAssetVirtualPath().c_str()) : FString(Package->GetPackagePath().c_str());
                     const bool bLocked = States[Index] == ESaveState::Saved || States[Index] == ESaveState::Failed;
 
                     ImGui::TableNextRow();
@@ -3726,14 +3920,14 @@ namespace Lumina
                     // Submitted before the checkbox, since an overlapping item only wins the click when it comes later.
                     ImGui::TableSetColumnIndex(1);
                     ImGui::AlignTextToFramePadding();
-                    if (ImGui::Selectable(Package->GetName().c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap) && !bLocked)
+                    if (ImGui::Selectable(RowName.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap) && !bLocked)
                     {
                         Selection[Index] = !Selection[Index];
                     }
-                    ImGuiX::TextTooltip("{}", Package->GetPackagePath());
+                    ImGuiX::TextTooltip("{}", RowPath);
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
-                    ImGui::TextUnformatted(Package->GetPackagePath().c_str());
+                    ImGui::TextUnformatted(RowPath.c_str());
                     ImGui::PopStyleColor();
 
                     ImGui::TableSetColumnIndex(0);
@@ -3751,7 +3945,7 @@ namespace Lumina
                         ImGui::TextColored(EditorColors::Danger(), LE_ICON_ALERT_CIRCLE_OUTLINE " Failed");
                         break;
                     case ESaveState::ReadOnly:
-                        if (ImGui::SmallButton(LE_ICON_LOCK_OPEN_VARIANT " Make Writable"))
+                        if (Package != nullptr && ImGui::SmallButton(LE_ICON_LOCK_OPEN_VARIANT " Make Writable"))
                         {
                             const FFixedString Path = Package->GetPackagePath();
                             if (VFS::MakeWritable(FStringView(Path.c_str(), Path.size())))
@@ -3811,7 +4005,20 @@ namespace Lumina
                         bAllSaved = false;
                         continue;
                     }
-                    const bool bSaved = CPackage::SavePackage(Packages[Index], Packages[Index]->GetPackagePath());
+                    bool bSaved = false;
+                    if (Index >= NumPackageRows)
+                    {
+                        bSaved = FileTools[Index - NumPackageRows]->SaveFileChanges();
+                    }
+                    else if (FEditorTool* Owner = FindAssetToolForPackage(Packages[Index]))
+                    {
+                        Owner->OnSave();
+                        bSaved = !Packages[Index]->IsDirty();
+                    }
+                    else
+                    {
+                        bSaved = CPackage::SavePackage(Packages[Index], Packages[Index]->GetPackagePath());
+                    }
                     States[Index] = bSaved ? ESaveState::Saved : ESaveState::Failed;
                     bAllSaved &= bSaved;
                 }
@@ -3866,39 +4073,49 @@ namespace Lumina
 
         const float Scale     = ImGuiX::GetUIScale();
         const float RowHeight = ImGuiX::FApplicationTitleBar::GetContentRowHeight();
-
-        // The bar restores the row's Y after each item, so the lift has to be reapplied every time.
-        const float IconSize = ImFloor(RowHeight * 1.5f);
-        const float IconLift = ImFloor((IconSize - RowHeight) * 0.5f);
+        const float BarHeight = ImGui::GetWindowHeight();
+        const float IconSize  = ImFloor(RowHeight * 1.5f);
 
         static const FString LuminaIcon = Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png";
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - IconLift);
+        const float RowY = ImGui::GetCursorPosY();
+        ImGui::SetCursorPosY(ImFloor((BarHeight - IconSize) * 0.5f));
         ImGui::Image(ImGuiX::ToImTextureRef(LuminaIcon), ImVec2(IconSize, IconSize));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + IconLift);
+        ImGui::SetCursorPosY(RowY);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * Scale, 10.0f * Scale));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * Scale, 8.0f * Scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImFloor(ImVec2(12.0f * Scale, 10.0f * Scale)));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImFloor(ImVec2(8.0f * Scale, 8.0f * Scale)));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * Scale);
 
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.08f, 0.1f, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.2f, 0.2f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.25f, 0.25f, 0.27f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.92f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.35f, 0.45f, 0.8f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, EditorColors::Lighten(EditorColors::TitleBg(), 0.02f));
+        ImGui::PushStyleColor(ImGuiCol_Border, EditorColors::WithAlpha(EditorColors::Border(), 0.35f));
+        ImGui::PushStyleColor(ImGuiCol_Separator, EditorColors::WithAlpha(EditorColors::Border(), 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
+        ImGui::PushStyleColor(ImGuiCol_Header, EditorColors::WithAlpha(EditorColors::Accent(), 0.22f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorColors::WithAlpha(EditorColors::Accent(), 0.32f));
 
-        ImGui::SetNextWindowSizeConstraints(ImVec2(220 * Scale, 1), ImVec2(280 * Scale, 1000 * Scale));
+        const ImVec2 MenuMinSize(200.0f * Scale, 0.0f);
+        const ImVec2 MenuMaxSize(FLT_MAX, FLT_MAX);
+        ImGui::SetNextWindowSizeConstraints(MenuMinSize, MenuMaxSize);
         DrawFileMenu();
+        ImGui::SetNextWindowSizeConstraints(MenuMinSize, MenuMaxSize);
         DrawProjectMenu();
+        ImGui::SetNextWindowSizeConstraints(MenuMinSize, MenuMaxSize);
         DrawToolsMenu();
+        ImGui::SetNextWindowSizeConstraints(MenuMinSize, MenuMaxSize);
         DrawHelpMenu();
 
-        ImGui::PopStyleColor(5);
+        ImGui::PopStyleColor(6);
         ImGui::PopStyleVar(3);
 
         // Sized from what is left over, so a long name clips only when it genuinely runs out of window.
         if (GEditorEngine->HasLoadedProject())
         {
-            ImGui::Separator();
+            const float DividerX   = ImFloor(ImGui::GetCursorScreenPos().x);
+            const float DividerTop = ImGui::GetWindowPos().y + ImFloor((BarHeight - RowHeight) * 0.5f);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(DividerX, DividerTop), ImVec2(DividerX, DividerTop + RowHeight),
+                                                EditorColors::U32(EditorColors::WithAlpha(EditorColors::Border(), 0.45f)));
+            ImGui::Dummy(ImVec2(1.0f, RowHeight));
+
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
             ImGuiX::Text("{}", GEditorEngine->GetProjectName());
             ImGui::PopStyleColor();
@@ -3906,7 +4123,7 @@ namespace Lumina
             if (DirtyPackageCount > 0)
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Warning());
-                ImGui::TextUnformatted(LE_ICON_CONTENT_SAVE_ALERT " Unsaved Changes");
+                ImGuiX::Text(LE_ICON_CIRCLE_MEDIUM "{} unsaved", DirtyPackageCount);
                 ImGui::PopStyleColor();
                 ImGuiX::TextTooltip("{} package(s) with unsaved changes. Ctrl+Shift+S saves all of them.", DirtyPackageCount);
             }
@@ -3973,45 +4190,88 @@ namespace Lumina
             GPUMemoryBudgetMiB = (float)GPUBudgetBytes / BytesPerMiB;
         }
 
-        FormatTo(Stats.Perf, LE_ICON_GAUGE " {:>3.0f} FPS / {:.2f} ms", SmoothedFPS, SmoothedFrameTime);
-        FormatTo(Stats.Objects, LE_ICON_CUBE_OUTLINE " {}", Object::Internal::GetNumAliveObjects());
-        FormatTo(Stats.Memory, LE_ICON_MEMORY " {:.0f} MiB", SmoothedMemoryMiB);
-        FormatTo(Stats.GPUMemory, LE_ICON_EXPANSION_CARD " {:.0f} / {:.0f} MiB", SmoothedGPUMemoryMiB, GPUMemoryBudgetMiB);
+        auto FormatMemory = [](float MiB) -> TFixedString<48>
+        {
+            TFixedString<48> Result;
+            if (MiB >= 1024.0f)
+            {
+                FormatTo(Result, "{:.1f} GiB", MiB / 1024.0f);
+            }
+            else
+            {
+                FormatTo(Result, "{:.0f} MiB", MiB);
+            }
+            return Result;
+        };
+
+        Stats.Entries[0] = { "FPS", "Frame rate, smoothed." };
+        FormatTo(Stats.Entries[0].Value, "{:.0f}", SmoothedFPS);
+
+        Stats.Entries[1] = { "Frame", "Frame time, smoothed." };
+        FormatTo(Stats.Entries[1].Value, "{:.2f} ms", SmoothedFrameTime);
+
+        Stats.Entries[2] = { "Objects", "Live CObjects." };
+        FormatTo(Stats.Entries[2].Value, "{}", Object::Internal::GetNumAliveObjects());
+
+        Stats.Entries[3] = { "RAM", "Process working set (matches Task Manager), smoothed." };
+        Stats.Entries[3].Value = FormatMemory(SmoothedMemoryMiB);
+
+        Stats.Entries[4] = { "VRAM", "Device-local GPU memory in use against the driver's budget for this process, smoothed. "
+                                     "Includes memory other processes forced us to share." };
+        if (GPUMemoryBudgetMiB >= 1024.0f)
+        {
+            FormatTo(Stats.Entries[4].Value, "{:.1f} / {:.1f} GiB", SmoothedGPUMemoryMiB / 1024.0f, GPUMemoryBudgetMiB / 1024.0f);
+        }
+        else if (GPUMemoryBudgetMiB > 0.0f)
+        {
+            FormatTo(Stats.Entries[4].Value, "{:.0f} / {:.0f} MiB", SmoothedGPUMemoryMiB, GPUMemoryBudgetMiB);
+        }
+        else
+        {
+            Stats.Entries[4].Value = FormatMemory(SmoothedGPUMemoryMiB);
+        }
+
+        const float Scale = ImGuiX::GetUIScale();
+        Stats.LabelGap = 5.0f * Scale;
+        Stats.EntryGap = 16.0f * Scale;
 
         // One gap of slack, since the strings change width and a pixel short clips the last character.
-        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
-        Stats.Width = ImGui::CalcTextSize(Stats.Perf.c_str()).x
-                    + ImGui::CalcTextSize(Stats.Objects.c_str()).x
-                    + ImGui::CalcTextSize(Stats.Memory.c_str()).x
-                    + ImGui::CalcTextSize(Stats.GPUMemory.c_str()).x
-                    + Spacing * 4.0f;
+        Stats.Width = Stats.EntryGap * (float)(std::size(Stats.Entries) - 1) + ImGui::GetStyle().ItemSpacing.x;
+        for (const FTitleBarStat& Stat : Stats.Entries)
+        {
+            Stats.Width += ImGui::CalcTextSize(Stat.Label).x + Stats.LabelGap + ImGui::CalcTextSize(Stat.Value.c_str()).x;
+        }
 
         return Stats;
     }
 
     void FEditorUI::DrawTitleBarInfoStats(const FTitleBarStats& Stats)
     {
-        // Icons rather than labels, since the section competes with the menus and each stat has a tooltip.
-        ImGui::TextUnformatted(Stats.Perf.c_str());
-        ImGuiX::TextTooltip("{}", "Frame rate and frame time, smoothed.");
+        bool bFirst = true;
+        for (const FTitleBarStat& Stat : Stats.Entries)
+        {
+            if (!bFirst)
+            {
+                ImGui::SameLine(0.0f, Stats.EntryGap);
+            }
+            bFirst = false;
 
-        ImGui::SameLine();
-        ImGui::TextUnformatted(Stats.Objects.c_str());
-        ImGuiX::TextTooltip("{}", "Live CObjects.");
-
-        ImGui::SameLine();
-        ImGui::TextUnformatted(Stats.Memory.c_str());
-        ImGuiX::TextTooltip("{}", "Process working set (matches Task Manager), smoothed.");
-
-        ImGui::SameLine();
-        ImGui::TextUnformatted(Stats.GPUMemory.c_str());
-        ImGuiX::TextTooltip("{}", "Device-local GPU memory in use against the driver's budget for this "
-                                  "process, smoothed. Includes memory other processes forced us to share.");
+            ImGui::BeginGroup();
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextUnformatted(Stat.Label);
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0.0f, Stats.LabelGap);
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::WithAlpha(EditorColors::TextPrimary(), 0.78f));
+            ImGui::TextUnformatted(Stat.Value.c_str());
+            ImGui::PopStyleColor();
+            ImGui::EndGroup();
+            ImGuiX::TextTooltip("{}", Stat.Tooltip);
+        }
     }
 
     void FEditorUI::DrawFileMenu()
     {
-        if (!ImGui::BeginMenu(LE_ICON_FILE " File"))
+        if (!ImGui::BeginMenu("File"))
         {
             return;
         }
@@ -4059,7 +4319,7 @@ namespace Lumina
 
             if (!bAny)
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.62f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
                 ImGui::TextUnformatted("(none)");
                 ImGui::PopStyleColor();
             }
@@ -4068,12 +4328,9 @@ namespace Lumina
         }
 
         ImGui::Separator();
-        
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.6f, 0.4f, 1.0f));
         if (ImGui::BeginMenu(LE_ICON_HAMMER " Shaders"))
         {
-            
             if (ImGui::MenuItem(LE_ICON_MATERIAL_DESIGN " Recompile Default Material"))
             {
                 CMaterial::CreateDefaultMaterial();
@@ -4086,23 +4343,20 @@ namespace Lumina
             
             ImGui::EndMenu();
         }
-        ImGui::PopStyleColor();
 
         ImGui::Separator();
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.4f, 0.4f, 1.0f));
         if (ImGui::MenuItem(LE_ICON_DOOR_OPEN " Exit", "Alt+F4"))
         {
 			FApplication::RequestExit();
         }
-        ImGui::PopStyleColor();
 
         ImGui::EndMenu();
     }
 
     void FEditorUI::DrawProjectMenu()
     {
-        if (!ImGui::BeginMenu(LE_ICON_FOLDER " Project"))
+        if (!ImGui::BeginMenu("Project"))
         {
             return;
         }
@@ -4132,12 +4386,12 @@ namespace Lumina
 
     void FEditorUI::DrawToolsMenu()
     {
-        if (!ImGui::BeginMenu(LE_ICON_WRENCH " Tools"))
+        if (!ImGui::BeginMenu("Tools"))
         {
             return;
         }
 
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "Workspace");
+        ImGui::TextColored(EditorColors::TextDim(), "Workspace");
         ImGui::Separator();
 
         DrawToolMenuItem<FTerminalEditorTool>(LE_ICON_CONSOLE_LINE " Terminal", this);
@@ -4145,7 +4399,7 @@ namespace Lumina
         {
             if (FCodeWorkspaceTool* Workspace = FindTool<FCodeWorkspaceTool>())
             {
-                RequestCloseTool(Workspace);
+                PromptCloseTools({ Workspace });
             }
             else
             {
@@ -4155,7 +4409,7 @@ namespace Lumina
 
         ImGui::Spacing();
 
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "Debug Windows");
+        ImGui::TextColored(EditorColors::TextDim(), "Debug Windows");
         ImGui::Separator();
 
         DrawToolMenuItem<FAssetRegistryEditorTool>(LE_ICON_DATABASE " Asset Registry", this);
@@ -4173,7 +4427,7 @@ namespace Lumina
         if (!FToolsMenuRegistry::Get().IsEmpty())
         {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "Plugins");
+            ImGui::TextColored(EditorColors::TextDim(), "Plugins");
             ImGui::Separator();
 
             for (const FToolsMenuEntry& Entry : FToolsMenuRegistry::Get().GetEntries())
@@ -4188,7 +4442,7 @@ namespace Lumina
 
         ImGui::Spacing();
 
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "ImGui Tools");
+        ImGui::TextColored(EditorColors::TextDim(), "ImGui Tools");
         ImGui::Separator();
         
         ImGui::MenuItem(LE_ICON_WINDOW_OPEN " ImGui Style Editor", nullptr, &bShowImGuiStyleEditor);
@@ -4197,7 +4451,7 @@ namespace Lumina
         
         ImGui::Spacing();
         
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "External Tools");
+        ImGui::TextColored(EditorColors::TextDim(), "External Tools");
         ImGui::Separator();
         
         if (ImGui::MenuItem(LE_ICON_WATCH " Tracy Profiler", "F7"))
@@ -4232,7 +4486,7 @@ namespace Lumina
 
         ImGui::Spacing();
         
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "Settings");
+        ImGui::TextColored(EditorColors::TextDim(), "Settings");
         ImGui::Separator();
         
         if (ImGui::BeginMenu(LE_ICON_PALETTE " Theme"))
@@ -4260,7 +4514,7 @@ namespace Lumina
 
     void FEditorUI::DrawHelpMenu()
     {
-        if (!ImGui::BeginMenu(LE_ICON_HELP " Help"))
+        if (!ImGui::BeginMenu("Help"))
         {
             return;
         }
@@ -4480,7 +4734,7 @@ namespace Lumina
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
             ImGui::SetNextItemWidth(-1);
-            ImGui::InputText("##ProjectName", NewProjectName, sizeof(NewProjectName));
+            ImGui::InputTextWithHint("##ProjectName", "Project name", NewProjectName, sizeof(NewProjectName));
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(3);
 
@@ -4491,7 +4745,7 @@ namespace Lumina
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
             ImGui::SetNextItemWidth(-120);
-            ImGui::InputText("##ProjectPath", NewProjectPath, sizeof(NewProjectPath));
+            ImGui::InputTextWithHint("##ProjectPath", "Folder the project is created in", NewProjectPath, sizeof(NewProjectPath));
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(3);
             ImGui::SameLine();
@@ -4543,7 +4797,9 @@ namespace Lumina
 
             ImGui::SameLine(ImGui::GetContentRegionAvail().x - 156);
 
+            ImGui::BeginDisabled(NewProjectName[0] == '\0' || NewProjectPath[0] == '\0');
             const bool bCreateClicked = SchemeButton(LE_ICON_CHECK "  Create Project", ImVec2(160, 30), kButtonPrimary);
+            ImGui::EndDisabled();
 
             ImGui::PopStyleVar();
 

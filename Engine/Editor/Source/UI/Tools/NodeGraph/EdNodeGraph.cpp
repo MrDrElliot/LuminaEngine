@@ -1251,10 +1251,9 @@ namespace Lumina
         {
             constexpr float Radius = 11.0f;
             const ImVec2 Corner(Node->GetNodeX() + Editor.GetNodeSize(Node->GetNodeID()).x, Node->GetNodeY());
-            const ImVec2 TextSize = ImGui::CalcTextSize(LE_ICON_EYE);
             ImDrawList* DrawList = Editor.GetNodeBackgroundDrawList(Node->GetNodeID());
             DrawList->AddCircleFilled(Corner, Radius, EditorColors::U32(EditorColors::Accent()));
-            DrawList->AddText(Corner - TextSize * 0.5f, IM_COL32_WHITE, LE_ICON_EYE);
+            DrawList->AddText(ImGuiX::CenteredIconPos(LE_ICON_EYE, Corner - ImVec2(Radius, Radius), Corner + ImVec2(Radius, Radius)), IM_COL32_WHITE, LE_ICON_EYE);
         }
 
         if (Node->HasError())

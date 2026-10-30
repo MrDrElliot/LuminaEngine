@@ -155,6 +155,9 @@ namespace Lumina::ImGuiX
     RUNTIME_API bool SelectAllCheckbox(const char* Label, uint32 NumChecked, uint32 NumTotal, bool& bOutCheckAll);
     RUNTIME_API bool ToggleSwitch(const char* Label, bool* Value);
 
+    // Top-left position that centers a lone icon glyph in a rectangle: on its advance across, and on its ink vertically.
+    RUNTIME_API ImVec2 CenteredIconPos(const char* Icon, const ImVec2& Min, const ImVec2& Max);
+
     inline bool FlatButton( char const* pLabel, ImVec2 const& size = ImVec2( 0, 0 ), const ImColor& foregroundColor = ImGui::ColorConvertFloat4ToU32( ImGui::GetStyle().Colors[ImGuiCol_Text] ) )
     {
         return ButtonEx( nullptr, pLabel, size, ImColor(0), ImColor(0), ImGui::ColorConvertFloat4ToU32(ImGui::GetStyle().Colors[ImGuiCol_Text]));
@@ -341,7 +344,7 @@ namespace Lumina::ImGuiX
         static float GetWindowControlsWidth();
 
         // Height of the single row the sections draw on. Content taller than a line of text (icons,
-        // images) must be offset up by half the difference to stay centered on the bar.
+        // images) should be centered on the section's height, since the menu cursor is not on the text row.
         static float GetContentRowHeight();
 
     private:

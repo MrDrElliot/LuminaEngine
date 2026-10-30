@@ -50,6 +50,7 @@ namespace Lumina
         // A reimport can change the reflected shape, so SetObject rebuilds rows and handles both.
         PropertyTable.SetObject(Asset.Get(), Asset->GetClass());
         PropertyTable.MarkDirty();
+        bAssetUndoImageStale = true;
     }
 
     void FAssetEditorTool::SetupPropertyUndo()
@@ -216,6 +217,11 @@ namespace Lumina
     {
         // A restore can resize containers the rows were built from, so the table rebuilds rather than trusts them.
         PropertyTable.MarkDirty();
+
+        if (Asset.IsValid() && (Asset->IsA<CMesh>() || Asset->IsA<CMaterialInterface>()))
+        {
+            FMeshResolveCache::BumpEpoch();
+        }
     }
 
     FAssetEditorTool::~FAssetEditorTool()

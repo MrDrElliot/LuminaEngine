@@ -21,6 +21,7 @@
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "imgui.h"
 #include "Renderer/SkeletonResource.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 
 namespace Lumina
 {
@@ -246,6 +247,8 @@ namespace Lumina
         DetailsTable->SetPostEditCallback([this](const FPropertyChangedEvent&)
         {
             NotifyAssetDataChanged();
+            RebuildBodySubtreeMask();
+            BoneListView.MarkTreeDirty();
         });
         WirePropertyTableUndo(*DetailsTable);
 
@@ -423,6 +426,7 @@ namespace Lumina
         StopSimulation();
 
         CachedSkeleton = GetSkeleton();
+        CachedPreviewMesh = CachedSkeleton.IsValid() ? CachedSkeleton->PreviewMesh.Get() : nullptr;
 
         ClearSelection();
         SelectedBone = NAME_None;
@@ -465,6 +469,12 @@ namespace Lumina
         RefreshForSkeletonChange();
     }
 
+    void FPhysicsAssetEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
+    {
+        RebuildBodySubtreeMask();
+        BoneListView.MarkTreeDirty();
+    }
+
     void FPhysicsAssetEditorTool::OnPostUndoRedo()
     {
         FAssetEditorTool::OnPostUndoRedo();
@@ -495,7 +505,8 @@ namespace Lumina
         }
 
         // Skeleton is an editable property, so it can be swapped from the details panel at any time.
-        if (CachedSkeleton.Get() != GetSkeleton())
+        const CSkeleton* Skeleton = GetSkeleton();
+        if (CachedSkeleton.Get() != Skeleton || (Skeleton != nullptr && CachedPreviewMesh.Get() != Skeleton->PreviewMesh.Get()))
         {
             RefreshForSkeletonChange();
         }
@@ -617,6 +628,17 @@ namespace Lumina
         return BoneWorldTransforms[BoneIndex] * Offset;
     }
 
+    bool FPhysicsAssetEditorTool::HasBodyBone(const SPhysicsBodySetup& Body)
+    {
+        FSkeletonResource* Resource = GetSkeletonResource();
+        if (Resource == nullptr)
+        {
+            return false;
+        }
+        const int32 BoneIndex = Resource->FindBoneIndex(Body.BoneName);
+        return BoneIndex != Constants::kIndexNone && BoneIndex < (int32)BoneWorldTransforms.size();
+    }
+
     void FPhysicsAssetEditorTool::DrawBodies()
     {
         CPhysicsAsset* PhysicsAsset = GetAsset<CPhysicsAsset>();
@@ -624,6 +646,10 @@ namespace Lumina
         for (int32 i = 0; i < (int32)PhysicsAsset->Bodies.size(); ++i)
         {
             const SPhysicsBodySetup& Body = PhysicsAsset->Bodies[i];
+            if (!HasBodyBone(Body))
+            {
+                continue;
+            }
             const bool bSelected = (SelectionMode == EPhysicsAssetSelection::Body && i == SelectedBodyIndex);
             const FVector4 Color = bSelected ? BodySelectedColor : BodyColor;
             const float Thickness = bSelected ? 6.0f : 3.5f;
@@ -709,6 +735,10 @@ namespace Lumina
         for (int32 i = 0; i < (int32)PhysicsAsset->Bodies.size(); ++i)
         {
             const SPhysicsBodySetup& Body = PhysicsAsset->Bodies[i];
+            if (!HasBodyBone(Body))
+            {
+                continue;
+            }
             const FMatrix4 BodyMatrix = GetBodyWorldMatrix(Body);
             const FVector3 Center = FVector3(BodyMatrix[3]);
 
@@ -1615,10 +1645,12 @@ namespace Lumina
                 ImGui::TextUnformatted(Constraint.ChildBone.c_str());
 
                 ImGui::TableNextColumn();
+                ImGui::BeginDisabled(bSimulating);
                 if (ImGui::SmallButton(LE_ICON_DELETE))
                 {
                     PendingRemoval = i;
                 }
+                ImGui::EndDisabled();
 
                 ImGui::PopID();
             }
@@ -1640,6 +1672,22 @@ namespace Lumina
         ImGuiX::Font::PopFont();
         ImGui::Spacing();
 
+        if (bSimulating)
+        {
+            ImGui::TextDisabled("Stop simulating to edit.");
+        }
+
+        int32 Orphaned = 0;
+        for (const SPhysicsBodySetup& Body : GetAsset<CPhysicsAsset>()->Bodies)
+        {
+            Orphaned += HasBodyBone(Body) ? 0 : 1;
+        }
+        if (Orphaned > 0)
+        {
+            ImGui::TextColored(EditorColors::Warning(), LE_ICON_ALERT " %d body(s) name a bone this skeleton does not have.", Orphaned);
+        }
+        ImGui::BeginDisabled(bSimulating);
+
         if (DetailsTarget != nullptr)
         {
             DetailsTable->DrawTree();
@@ -1656,6 +1704,8 @@ namespace Lumina
         ImGui::Spacing();
 
         PropertyTable.DrawTree();
+
+        ImGui::EndDisabled();
     }
 
     void FPhysicsAssetEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)

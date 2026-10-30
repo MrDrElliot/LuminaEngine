@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "Containers/HashTable.h"
 #include "Containers/Optional.h"
+#include "Containers/Pair.h"
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
@@ -508,6 +509,9 @@ namespace Lumina
         // On by default, and off for a panel that drives one search box across several tables.
         void SetShowSearchBar(bool bShow) { bShowSearchBar = bShow; }
 
+        // Drawn under an owner header of this name, so a lone category of the same name folds into it.
+        void SetOwnerHeading(const FName& InHeading) { OwnerHeading = InHeading; }
+
         // Clears the search text and restores every row's pre-filter collapse state.
         void ClearSearch();
 
@@ -540,6 +544,7 @@ namespace Lumina
 
         ImGuiTextFilter                PropertyFilter;
         bool                           bShowSearchBar = true;
+        FName                          OwnerHeading;
         // Edge detection: the save/restore of per-row expansion has to happen exactly once on each
         // transition, not every frame the filter happens to be active.
         bool                           bWasFiltering  = false;
@@ -565,7 +570,7 @@ namespace Lumina
         CStruct*                                            Struct = nullptr;
         void*                                               Object = nullptr;
         void*                                               DefaultObject = nullptr;
-        THashMap<FName, TUniquePtr<FCategoryPropertyRow>>   CategoryMap;
+        TVector<TPair<FName, TUniquePtr<FCategoryPropertyRow>>> Categories;
         const FPropertyEditContext*                         Context = nullptr;
         
     };

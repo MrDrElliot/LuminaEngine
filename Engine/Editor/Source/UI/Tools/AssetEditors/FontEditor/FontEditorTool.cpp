@@ -11,20 +11,36 @@ namespace Lumina
     const char* FontPreviewName = "FontPreview";
     const char* FontDetailsName  = "FontDetails";
 
+    void FFontEditorTool::RebuildPreviewFont()
+    {
+        if (PreviewFont != nullptr)
+        {
+            ImGui::GetIO().Fonts->RemoveFont(PreviewFont);
+            PreviewFont = nullptr;
+        }
+
+        CFont* Font = Cast<CFont>(Asset.Get());
+        if (Font == nullptr || !Font->IsValid())
+        {
+            PreviewFontBytes.clear();
+            return;
+        }
+
+        PreviewFontBytes = Font->GetFontData();
+        ImFontConfig Config;
+        Config.FontDataOwnedByAtlas = false;
+        PreviewFont = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(PreviewFontBytes.data(), (int)PreviewFontBytes.size(), 0.0f, &Config);
+    }
+
+    void FFontEditorTool::OnAssetDataChangedExternally()
+    {
+        FAssetEditorTool::OnAssetDataChangedExternally();
+        bPreviewFontStale = true;
+    }
+
     void FFontEditorTool::OnInitialize()
     {
-        CFont* Font = Cast<CFont>(Asset.Get());
-        if (Font && Font->IsValid())
-        {
-            // The face can be added live and rasterized at any size, with bytes owned by the asset.
-            ImFontConfig Config;
-            Config.FontDataOwnedByAtlas = false;
-            PreviewFont = ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
-                const_cast<uint8*>(Font->GetFontData().data()),
-                (int)Font->GetFontData().size(),
-                0.0f,
-                &Config);
-        }
+        RebuildPreviewFont();
 
         CreateToolWindow(FontPreviewName, [this](bool /*bFocused*/)
         {
@@ -32,6 +48,12 @@ namespace Lumina
             if (!FontAsset)
             {
                 return;
+            }
+
+            if (bPreviewFontStale)
+            {
+                bPreviewFontStale = false;
+                RebuildPreviewFont();
             }
 
             ImGui::SetNextItemWidth(240.0f);

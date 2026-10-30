@@ -236,11 +236,19 @@ namespace Lumina
 
             size_t Start = (Raw[0] == 'C' && Raw[1] >= 'A' && Raw[1] <= 'Z') ? 1 : 0;
 
+            auto IsUpper = [](char C) { return C >= 'A' && C <= 'Z'; };
+            auto IsLower = [](char C) { return C >= 'a' && C <= 'z'; };
+
             FFixedString Out;
             for (size_t i = Start; Raw[i] != '\0'; ++i)
             {
                 const char C = Raw[i];
-                Out.push_back((C >= 'a' && C <= 'z') ? (char)(C - ('a' - 'A')) : C);
+                const bool bWordStart = i > Start && IsUpper(C) && (IsLower(Raw[i - 1]) || (IsUpper(Raw[i - 1]) && IsLower(Raw[i + 1])));
+                if (bWordStart)
+                {
+                    Out.push_back(' ');
+                }
+                Out.push_back(IsLower(C) ? (char)(C - ('a' - 'A')) : C);
             }
             return Out;
         }
@@ -277,12 +285,21 @@ namespace Lumina
                 { "CS",               LE_ICON_LANGUAGE_CSHARP,     IM_COL32(160, 200, 130, 255) },
                 { "RML",              LE_ICON_XML,                 IM_COL32(200, 180, 140, 255) },
                 { "RCSS",             LE_ICON_LANGUAGE_CSS3,       IM_COL32(150, 190, 230, 255) },
-                { kMissingTypeTag,    LE_ICON_FILE_ALERT_OUTLINE,  IM_COL32(235, 95, 90, 255) },
+                { "MISSINGTYPE",      LE_ICON_FILE_ALERT_OUTLINE,  IM_COL32(235, 95, 90, 255) },
             };
+
+            FFixedString Compact;
+            for (const char C : TypeTag)
+            {
+                if (C != ' ')
+                {
+                    Compact.push_back(C);
+                }
+            }
 
             for (const FEntry& Entry : kEntries)
             {
-                if (IEquals(TypeTag, Entry.Tag))
+                if (IEquals(FStringView(Compact.c_str(), Compact.size()), Entry.Tag))
                 {
                     return { Entry.Glyph, Entry.Accent };
                 }
@@ -328,21 +345,6 @@ namespace Lumina
                 const ImVec2 GlyphPos((PageMin.x + PageMax.x - GlyphExtent.x) * 0.5f,
                                       PageMin.y + (PageMax.y - PageMin.y) * 0.20f);
                 DrawList.AddText(Font, GlyphSize, GlyphPos, Style.Accent, Style.Glyph);
-            }
-
-            // Dropped rather than squeezed when illegible, since the line under the name carries the type.
-            const float TagSize = Math::Min((PageMax.y - PageMin.y) * 0.16f, 13.0f);
-            if (TagSize >= 7.0f && !TypeTag.empty())
-            {
-                ImFont* Font = ImGui::GetFont();
-                const ImVec2 TagExtent = Font->CalcTextSizeA(TagSize, FLT_MAX, 0.0f, TypeTag.data(), TypeTag.data() + TypeTag.size());
-                if (TagExtent.x <= (PageMax.x - PageMin.x) * 0.86f)
-                {
-                    const ImVec2 TagPos((PageMin.x + PageMax.x - TagExtent.x) * 0.5f,
-                                        PageMax.y - TagExtent.y - (PageMax.y - PageMin.y) * 0.10f);
-                    DrawList.AddText(Font, TagSize, TagPos, Style.Accent,
-                        TypeTag.data(), TypeTag.data() + TypeTag.size());
-                }
             }
         }
 
@@ -2886,7 +2888,7 @@ namespace Lumina
         ImGuiX::TextTooltip("Forward");
         ImGui::PopStyleVar();
 
-        ImGui::TextUnformatted("|");
+        ImGui::Spring(0.0f, 10.0f);
 
         // The first segment is the mount alias, shown with its tree label.
         auto RootSegmentLabel = [](FStringView) -> const char*
@@ -2909,12 +2911,18 @@ namespace Lumina
 
             if (CrumbIndex > 0)
             {
-                ImGui::TextUnformatted(LE_ICON_ARROW_RIGHT);
+                ImGuiX::TextColoredUnformatted(EditorColors::TextMuted(), LE_ICON_CHEVRON_RIGHT);
             }
+
+            const bool bCurrentFolder = FullPath.find_first_not_of('/', Cursor) == FStringView::npos;
 
             ImGui::PushID(CrumbIndex);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3, 2));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 0));
+            ImGui::PushStyleColor(ImGuiCol_Text, bCurrentFolder ? EditorColors::TextPrimary() : EditorColors::TextDim());
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::WithAlpha(EditorColors::TextPrimary(), 0.10f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::WithAlpha(EditorColors::TextPrimary(), 0.16f));
 
             const char* Label = (CrumbIndex == 0) ? RootSegmentLabel(Segment) : nullptr;
             FFixedString Display;
@@ -2926,6 +2934,7 @@ namespace Lumina
                 NavigateTo(CrumbPath);
             }
 
+            ImGui::PopStyleColor(4);
             ImGui::PopStyleVar(2);
             ImGui::PopID();
 

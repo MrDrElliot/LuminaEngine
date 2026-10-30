@@ -127,6 +127,104 @@ namespace Lumina
 #endif
 
 #if USING(WITH_EDITOR)
+    void FDefaultSceneRenderer::EditorGridPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const FEditorGridRequest& Grid = Frame.Extracts.Grid;
+        if (!Grid.bEnabled || !CurrentView->Output.IsValid())
+        {
+            return;
+        }
+
+        const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
+        if (!Depth.IsValid())
+        {
+            return;
+        }
+
+        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH PixelShader  = FShaderLibrary::Get("EditorGrid.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Editor Grid", tracy::Color::Gray);
+
+        // The output is past the temporal resolve, so the grid is placed with the camera's unjittered projection.
+        const FSceneGlobalData& Globals = Frame.SceneGlobalData;
+        FMatrix4 Projection = Globals.CameraData.Projection;
+        Projection[2][0] -= Globals.TemporalJitterU * 2.0f;
+        Projection[2][1] -= Globals.TemporalJitterV * 2.0f;
+        const FMatrix4 ViewProjection = Projection * Globals.CameraData.View;
+
+        struct FEditorGridPC
+        {
+            FMatrix4 ViewProjection;
+            FMatrix4 InverseViewProjection;
+            FVector4 MinorColor;
+            FVector4 MajorColor;
+            FVector4 AxisXColor;
+            FVector4 AxisZColor;
+            float    Spacing;
+            float    FadeDistance;
+            float    LineWidth;
+            float    AxisWidth;
+            uint32   DepthIndex;
+            uint32   _Pad0;
+            uint32   _Pad1;
+            uint32   _Pad2;
+        } PC = {};
+        static_assert(sizeof(FEditorGridPC) == 224, "FEditorGridPC must match EditorGrid.slang.");
+
+        PC.ViewProjection        = ViewProjection;
+        PC.InverseViewProjection = Math::Inverse(ViewProjection);
+        PC.MinorColor            = Grid.MinorColor;
+        PC.MajorColor            = Grid.MajorColor;
+        PC.AxisXColor            = FVector4(0.86f, 0.30f, 0.33f, 0.95f);
+        PC.AxisZColor            = FVector4(0.30f, 0.52f, 0.92f, 0.95f);
+        PC.Spacing               = Grid.Spacing;
+        PC.FadeDistance          = Grid.FadeDistance;
+        PC.LineWidth             = Grid.LineWidth;
+        PC.AxisWidth             = Grid.AxisWidth;
+        PC.DepthIndex            = (uint32)Depth.GetResourceID();
+
+        const FSceneImage& Output = CurrentView->Output;
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = Output.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Load;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = Output.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, Output.GetExtent());
+        RHI::CmdSetDepthStencil(CL, (RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        RHI::FBlendDesc PremultipliedBlend;
+        PremultipliedBlend.bBlendEnable   = true;
+        PremultipliedBlend.SrcColorFactor = RHI::EFactor::One;
+        PremultipliedBlend.DstColorFactor = RHI::EFactor::OneMinusSrcAlpha;
+        PremultipliedBlend.SrcAlphaFactor = RHI::EFactor::One;
+        PremultipliedBlend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VertexShader;
+        Key.PS = PixelShader;
+        Key.ColorTargets.push_back({ Output.Desc.Format, PremultipliedBlend });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+#endif
+
+#if USING(WITH_EDITOR)
     static TConsoleVar<bool> CVarSelectionOutlineTiles("r.Editor.SelectionOutlineTiles", true,
         "Skip the selection outline's neighborhood test outside the tiles a selected pixel can reach.");
 

@@ -446,6 +446,28 @@ namespace Lumina
             return;
         }
 
+        bool bSingleCategory = true;
+        FCStringView FirstCategory;
+        bool bFirst = true;
+        for (FProperty* Member : Type->GetProperties())
+        {
+            if (!Member->IsVisible())
+            {
+                continue;
+            }
+            const FCStringView Category = Member->HasMetadata("Category") ? Member->GetMetadata("Category") : FCStringView();
+            if (bFirst)
+            {
+                FirstCategory = Category;
+                bFirst = false;
+            }
+            else if (FStringView(Category.c_str(), Category.size()) != FStringView(FirstCategory.c_str(), FirstCategory.size()))
+            {
+                bSingleCategory = false;
+                break;
+            }
+        }
+
         for (FProperty* Member : Type->GetProperties())
         {
             if (!Member->IsVisible())
@@ -454,7 +476,7 @@ namespace Lumina
             }
 
             FPropertyRow* Target = this;
-            if (Member->HasMetadata("Category"))
+            if (!bSingleCategory && Member->HasMetadata("Category"))
             {
                 const FCStringView Path = Member->GetMetadata("Category");
                 for (const FName& Segment : SplitCategoryPath(FStringView(Path.c_str(), Path.size())))
@@ -2530,7 +2552,7 @@ namespace Lumina
 
     void FPropertyTable::RebuildTree()
     {
-        CategoryMap.clear();
+        Categories.clear();
 
         if (Struct == nullptr || Object == nullptr)
         {
@@ -2671,7 +2693,7 @@ namespace Lumina
         ImGui::PushID(this);
         
         float HeaderColumnWidth = 0.0f;
-        for (auto& [Name, Row] : CategoryMap)
+        for (auto& [Name, Row] : Categories)
         {
             if (!Row->PassesFilter())
             {
@@ -2689,11 +2711,21 @@ namespace Lumina
             ImGui::TableSetupColumn("##Header", ImGuiTableColumnFlags_WidthFixed, HeaderColumnWidth);
             ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
 
-            for (auto& [Name, Row] : CategoryMap)
+            const bool bFoldSoleCategory = Categories.size() == 1 && !OwnerHeading.IsNone() && Categories.begin()->first == OwnerHeading;
+            for (auto& [Name, Row] : Categories)
             {
                 // UpdateRow drains queued array mutations, so skipping it strands an edit made before the search.
                 Row->UpdateRow();
-                if (Row->PassesFilter())
+                if (!Row->PassesFilter())
+                {
+                    continue;
+                }
+
+                if (bFoldSoleCategory)
+                {
+                    Row->DrawChildren(0.0f, Args);
+                }
+                else
                 {
                     Row->DrawRow(0.0f, Args);
                 }
@@ -2713,7 +2745,7 @@ namespace Lumina
         {
             return;
         }
-        for (auto& [Name, Row] : CategoryMap)
+        for (auto& [Name, Row] : Categories)
         {
             Row->UpdateRow();
         }
@@ -2733,7 +2765,7 @@ namespace Lumina
         }
 
         // Dropped rather than reused, since the properties the old rows point at belong to the previous block.
-        CategoryMap.clear();
+        Categories.clear();
         Customization = nullptr;
         bDirty = true;
     }
@@ -2765,7 +2797,7 @@ namespace Lumina
         // The tree is rebuilt underneath by array edits and object swaps, so a stale flag would hide a row.
         if (bFiltering || bJustCleared)
         {
-            for (auto& [Name, Row] : CategoryMap)
+            for (auto& [Name, Row] : Categories)
             {
                 Row->ApplyFilter(PropertyFilter, bFiltering, bJustActive, bJustCleared);
             }
@@ -2801,7 +2833,7 @@ namespace Lumina
             return true;
         }
 
-        for (auto& [Name, Row] : CategoryMap)
+        for (auto& [Name, Row] : Categories)
         {
             if (Row->PassesFilter())
             {
@@ -2818,7 +2850,7 @@ namespace Lumina
         // Restored immediately, so the button press and the restore look like one action.
         if (bWasFiltering)
         {
-            for (auto& [Name, Row] : CategoryMap)
+            for (auto& [Name, Row] : Categories)
             {
                 Row->ApplyFilter(PropertyFilter, /*bFilterActive*/ false, /*bJustActivated*/ false, /*bJustCleared*/ true);
             }
@@ -2877,13 +2909,16 @@ namespace Lumina
 
     FCategoryPropertyRow* FPropertyTable::FindOrCreateCategoryRow(const FName& CategoryName)
     {
-        auto It = CategoryMap.find(CategoryName);
-        if (It == CategoryMap.end())
+        for (auto& [Name, Row] : Categories)
         {
-            auto NewRow = MakeUnique<FCategoryPropertyRow>(Object, CategoryName, ChangeEventCallbacks);
-            It = CategoryMap.emplace(CategoryName, Move(NewRow)).first;
+            if (Name == CategoryName)
+            {
+                return Row.get();
+            }
         }
-        return It->second.get();
+
+        Categories.emplace_back(CategoryName, MakeUnique<FCategoryPropertyRow>(Object, CategoryName, ChangeEventCallbacks));
+        return Categories.back().second.get();
     }
 
     bool DrawInstancedStructEditor(const char* StrId, FInstancedStruct& Value, CStruct* BaseStruct, FPropertyTable& Table)

@@ -30,6 +30,8 @@ namespace Lumina
         // Undo can add, remove or rebind sockets, which the bone LOD layouts key on.
         void OnUndoRedo();
 
+        void CloseOpenDragTransaction();
+
         // World space bone matrices of the pose being shown, which the markers, gizmo and picking ride.
         void SetBoneWorldTransforms(const TVector<FMatrix4>& Transforms) { BoneWorldTransforms = Transforms; }
 

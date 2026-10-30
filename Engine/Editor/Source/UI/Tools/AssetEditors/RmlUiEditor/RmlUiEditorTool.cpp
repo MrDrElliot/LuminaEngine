@@ -7,6 +7,7 @@
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Object/ObjectCore.h"
 #include "Settings/EditorSettings.h"
+#include "UI/Tools/EditorToolContext.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Renderer/RenderManager.h"
@@ -633,6 +634,8 @@ namespace Lumina
             VirtualPath.assign(New.data(), New.size());
             const FStringView ParentView = VFS::Parent(New, true);
             ParentDir.assign(ParentView.data(), ParentView.size());
+            FileWatcher.Stop();
+            StartWatching();
         });
 
         // The preview instances belong to classes the reload is about to replace, and the next frame rebuilds them.
@@ -791,12 +794,14 @@ namespace Lumina
             if (!bBufferDirty)
             {
                 // Someone saved the file in another editor, which is as deliberate an act as saving here.
+                bDiskChangedWhileDirty = false;
                 LoadFromDisk();
                 ReloadDocument(/*bAlwaysReport*/ true);
             }
-            else
+            else if (!bDiskChangedWhileDirty)
             {
-                LOG_WARN("[RmlUiEditor] '{}' changed on disk but buffer is dirty; ignoring.", VirtualPath.c_str());
+                bDiskChangedWhileDirty = true;
+                ImGuiX::Notifications::NotifyWarning("'{0}' changed on disk while it has unsaved edits here. Saving will ask before overwriting.", VirtualPath.c_str());
             }
         }
 
@@ -821,6 +826,42 @@ namespace Lumina
     }
 
     void FRmlUiEditorTool::OnSave()
+    {
+        if (!ToolContext->ConfirmWritable({ FString(VirtualPath.c_str()) }, [this] { OnSave(); }))
+        {
+            return;
+        }
+
+        if (!bDiskChangedWhileDirty)
+        {
+            WriteBufferToDisk();
+            return;
+        }
+
+        ToolContext->PushModal("File Changed On Disk", ImVec2(520.0f, 0.0f), [this]() -> bool
+        {
+            ImGui::TextWrapped("'%s' was changed by another program after you started editing it here.", VirtualPath.c_str());
+            ImGui::Spacing();
+            if (ImGui::Button("Overwrite"))
+            {
+                bDiskChangedWhileDirty = false;
+                WriteBufferToDisk();
+                return true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reload From Disk"))
+            {
+                bDiskChangedWhileDirty = false;
+                LoadFromDisk();
+                ReloadDocument(true);
+                return true;
+            }
+            ImGui::SameLine();
+            return ImGui::Button("Cancel");
+        });
+    }
+
+    void FRmlUiEditorTool::WriteBufferToDisk()
     {
         if (GetDefault<CCodeEditorSettings>()->bTrimTrailingWhitespaceOnSave)
         {

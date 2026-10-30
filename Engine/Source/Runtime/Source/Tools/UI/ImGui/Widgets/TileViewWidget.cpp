@@ -3,6 +3,7 @@
 #include "TileViewWidget.h"
 
 #include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "imgui_internal.h"
 
 namespace Lumina
 {
@@ -192,16 +193,50 @@ namespace Lumina
             }
             if (!TypeLabel.empty())
             {
+                ImDrawList* DrawList   = ImGui::GetWindowDrawList();
+                const ImU32 TypeColor  = ImGui::GetColorU32(ImVec4(0.52f, 0.55f, 0.62f, 1.0f));
+                const float TypeTop    = LabelPos.y + Math::Min(TextSize.y, GLabelHeight) + GTypeLabelPad;
+                const float BandBottom = LabelPos.y + GLabelHeight + TypeBandHeight;
+
+                auto DrawCenteredLine = [&](const char* Begin, const char* End, float Y)
+                {
+                    const float Width = ImGui::CalcTextSize(Begin, End).x;
+                    if (Width <= TileSize)
+                    {
+                        DrawList->AddText(TypeFont, TypeFontSize, ImVec2(LabelPos.x + (TileSize - Width) * 0.5f, Y), TypeColor, Begin, End);
+                        return;
+                    }
+
+                    ImGui::PushStyleColor(ImGuiCol_Text, TypeColor);
+                    ImGui::RenderTextEllipsis(DrawList, ImVec2(LabelPos.x, Y), ImVec2(LabelPos.x + TileSize, Y + TypeFontSize),
+                                              LabelPos.x + TileSize, Begin, End, nullptr);
+                    ImGui::PopStyleColor();
+                };
+
                 const char* TypeBegin = TypeLabel.c_str();
-                const char* TypeEnd   = TypeLabel.c_str() + TypeLabel.size();
-                const ImVec2 TypeSize = ImGui::CalcTextSize(TypeBegin, TypeEnd, false, TileSize);
+                const char* TypeEnd   = TypeBegin + TypeLabel.size();
 
-                const ImVec2 TypePos(LabelPos.x + (TileSize - Math::Min(TypeSize.x, TileSize)) * 0.5f,
-                                     LabelPos.y + GLabelHeight);
-                const ImVec4 TypeClip(LabelPos.x, TypePos.y, LabelPos.x + TileSize, TypePos.y + TypeBandHeight);
+                const char* Split = nullptr;
+                if (ImGui::CalcTextSize(TypeBegin, TypeEnd).x > TileSize && TypeTop + TypeFontSize * 2.0f <= BandBottom)
+                {
+                    for (const char* Char = TypeBegin; Char < TypeEnd; ++Char)
+                    {
+                        if (*Char == ' ' && (Split == nullptr || ImGui::CalcTextSize(TypeBegin, Char).x <= TileSize))
+                        {
+                            Split = Char;
+                        }
+                    }
+                }
 
-                ImGui::GetWindowDrawList()->AddText(TypeFont, TypeFontSize, TypePos,
-                    ImGui::GetColorU32(ImVec4(0.52f, 0.55f, 0.62f, 1.0f)), TypeBegin, TypeEnd, TileSize, &TypeClip);
+                if (Split != nullptr)
+                {
+                    DrawCenteredLine(TypeBegin, Split, TypeTop);
+                    DrawCenteredLine(Split + 1, TypeEnd, TypeTop + TypeFontSize);
+                }
+                else
+                {
+                    DrawCenteredLine(TypeBegin, TypeEnd, TypeTop);
+                }
             }
             ImGuiX::Font::PopFont();
 

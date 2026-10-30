@@ -4,6 +4,7 @@
 #include "Platform/Process/PlatformProcess.h"
 #include "Tools/Export/AssetExport.h"
 #include "Assets/AssetTypes/Textures/TextureArray.h"
+#include "Assets/AssetTypes/Textures/TextureRenderTarget.h"
 #include "Assets/Factories/TextureFactory/TextureFactory.h"
 #include "Assets/Factories/TextureFactory/TextureArrayFactory.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
@@ -43,6 +44,12 @@ namespace Lumina
 
     void FTextureEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
     {
+        if (CTextureRenderTarget* RenderTarget = Cast<CTextureRenderTarget>(Asset.Get()))
+        {
+            RenderTarget->BuildResource();
+            return;
+        }
+
         // Never Stream, Filter and Address Mode carry no RequiresRecook, since no stored pixel depends on them.
         if (Event.Property == nullptr || !Event.Property->HasEditorFlag(EPropertyEditorFlags::RequiresRecook))
         {
@@ -72,6 +79,12 @@ namespace Lumina
     {
         FAssetEditorTool::OnPostUndoRedo();
 
+        if (CTextureRenderTarget* RenderTarget = Cast<CTextureRenderTarget>(Asset.Get()))
+        {
+            RenderTarget->BuildResource();
+            return;
+        }
+
         CTexture* Texture = Cast<CTexture>(Asset.Get());
         if (Texture != nullptr && !RecookForPropertyChange(Texture))
         {
@@ -81,6 +94,11 @@ namespace Lumina
 
     bool FTextureEditorTool::RecookForPropertyChange(CTexture* Texture)
     {
+        if (CTextureArray* Array = Cast<CTextureArray>(Texture))
+        {
+            return CTextureArrayFactory::Rebuild(Array);
+        }
+
         // Pristine bytes, on disk or stored on the asset, make an edit replace the last cook rather than layer on it.
         if (!Texture->SourcePath.empty() || Texture->HasSourceFile())
         {
@@ -392,7 +410,9 @@ namespace Lumina
                 };
             
                 ImVec4 dimensionColor(0.5f, 0.9f, 0.5f, 1.0f);
-                PropertyRow("Type", "2D Texture", &dimensionColor);
+                const char* TypeLabel = Texture->IsA<CTextureRenderTarget>() ? "Render Target"
+                                      : (Texture->IsA<CTextureArray>() ? "2D Texture Array" : "2D Texture");
+                PropertyRow("Type", TypeLabel, &dimensionColor);
                 PropertyRow("Resolution", Format("{}", ImageDesc.Extent.x) + " x " + Format("{}", ImageDesc.Extent.y));
 
                 // Format
@@ -731,7 +751,7 @@ namespace Lumina
             ImGui::Spacing();
 
             // The settings above are recorded, not applied, so the chain is whatever the last cook produced.
-            if (Texture->TextureResource != nullptr)
+            if (Texture->TextureResource != nullptr && !Texture->IsA<CTextureRenderTarget>() && !Texture->IsA<CTextureArray>())
             {
                 const FTextureResource::FDescription& CookedDesc = Texture->TextureResource->ImageDescription;
                 const FTextureGroupPolicy Policy = Texture->GetResolvedPolicy();

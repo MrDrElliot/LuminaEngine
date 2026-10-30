@@ -18,7 +18,7 @@ namespace Lumina
     {
     public:
 
-        FStringView MeshPropertiesName = "MeshProperties";
+        FStringView MeshPropertiesName = "Details";
         FStringView UVViewerName = "UVs";
         FStringView CollisionName = "Collision";
         
@@ -49,8 +49,6 @@ namespace Lumina
 
         bool bShowAABB = false;
         bool bShowWireframe = false;
-        bool bShowNormals = false;
-        bool bShowTangents = false;
 
         // Selected surface in the Geometry Surfaces UI (-1 = none); drawn as a colored
         // AABB overlay in Update() to show which part of the mesh it covers.
@@ -59,7 +57,6 @@ namespace Lumina
         // -1 = automatic (distance-driven), 0..MAX_MESH_LODS-1 = forced.
         int32 PreviewLODIndex = -1;
 
-        ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;
 
@@ -70,6 +67,10 @@ namespace Lumina
 
         void DrawCollisionWindow();
         void DrawCollisionMenu();
+        void DrawMeshSummary(CStaticMesh& Mesh);
+        void DrawLODSection(CStaticMesh& Mesh);
+        void DrawSurfaceList(CStaticMesh& Mesh);
+        void DrawAdvancedSection(CStaticMesh& Mesh);
 
         // Edits the collision stored on this mesh, through the Collision tab and the viewport.
         TUniquePtr<FMeshCollisionEditing> CollisionEditing;

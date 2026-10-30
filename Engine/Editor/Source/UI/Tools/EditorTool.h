@@ -361,7 +361,7 @@ namespace Lumina
         /** Moves the viewport to focus on the desired entity */
         virtual void FocusViewportToEntity(ECS::FEntity Entity);
         
-        /** Draws an editor viewport grid if a world exists. Extent, spacing and color come from CViewportGridSettings. */
+        /** Publishes this viewport's ground grid to its world's renderer, from CViewportGridSettings. */
         virtual void DrawWorldGrid();
 
         /** Draws bone debug lines/joints for every skeletal mesh in the world (CVar-gated). */
@@ -432,10 +432,11 @@ namespace Lumina
         /** Called when the save icon is pressed. */
         virtual void OnSave() { }
 
-        /** Called when the new icon is pressed */
-        virtual void OnNew() { }
-        
         NODISCARD virtual bool IsUnsavedDocument() { return false; }
+
+        NODISCARD virtual bool HasUnsavedFileChanges() { return false; }
+
+        virtual bool SaveFileChanges() { OnSave(); return !HasUnsavedFileChanges(); }
 
         /** @TODO Cache and compare */
         // The CONTENT hash, not the name index: an ImGui dock class has to mean the same thing next session.

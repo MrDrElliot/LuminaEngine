@@ -123,10 +123,7 @@ namespace Lumina
         
         GetPropertyTable()->SetPostEditCallback([this](const FPropertyChangedEvent& Event)
         {
-            if (Asset.IsValid())
-            {
-                Asset->GetPackage()->MarkDirty();
-            }
+            NotifyAssetDataChanged();
 
             // A property edit changes the shader as much as rewiring, so it counts toward needing a compile.
             if (NodeGraph != nullptr)
@@ -1378,6 +1375,12 @@ namespace Lumina
         {
             ImGuiX::Notifications::NotifyWarning("Material compiled with {0} warnings.", (SIZE_T)CompilationResult.Warnings.size());
         }
+    }
+
+    void FMaterialEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+        CodeEditorBoundNode = nullptr;
     }
 
     void FMaterialEditorTool::OnSave()

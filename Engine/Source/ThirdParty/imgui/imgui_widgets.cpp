@@ -815,7 +815,27 @@ bool ImGui::ButtonEx(const char* label, const ImVec2& size_arg, ImGuiButtonFlags
 
     if (g.LogEnabled)
         LogSetNextTextDecoration("[", "]");
-    RenderTextClipped(bb.Min + style.FramePadding, bb.Max - style.FramePadding, label, label_end, &label_size, style.ButtonTextAlign, &bb);
+    // Lumina: a lone icon is centered on its advance and its vertical bounds, and a label that only overflows the padding is
+    // laid out on the whole frame, since the merged icon font sits lower and wider than the text it is aligned with.
+    unsigned int icon_codepoint = 0;
+    const int icon_bytes = (label != label_end) ? ImTextCharFromUtf8(&icon_codepoint, label, label_end) : 0;
+    const ImFontGlyph* icon_glyph = (icon_bytes > 0 && label + icon_bytes == label_end && icon_codepoint >= 0xE000) ? g.FontBaked->FindGlyphNoFallback((ImWchar)icon_codepoint) : NULL;
+    if (icon_glyph != NULL && icon_glyph->Visible)
+    {
+        const float icon_scale = g.FontSize / g.FontBaked->Size;
+        const ImVec2 center = bb.GetCenter();
+        const ImVec2 icon_pos(center.x - icon_glyph->AdvanceX * 0.5f * icon_scale + 0.5f, center.y - (icon_glyph->Y0 + icon_glyph->Y1) * 0.5f * icon_scale + 0.5f);
+        const ImVec4 icon_clip(bb.Min.x, bb.Min.y, bb.Max.x, bb.Max.y);
+        window->DrawList->AddText(g.Font, g.FontSize, icon_pos, GetColorU32(ImGuiCol_Text), label, label_end, 0.0f, &icon_clip);
+    }
+    else
+    {
+        ImVec2 text_min = bb.Min + style.FramePadding;
+        ImVec2 text_max = bb.Max - style.FramePadding;
+        if (label_size.x > text_max.x - text_min.x && label_size.x <= bb.GetWidth()) { text_min.x = bb.Min.x; text_max.x = bb.Max.x; }
+        if (label_size.y > text_max.y - text_min.y && label_size.y <= bb.GetHeight()) { text_min.y = bb.Min.y; text_max.y = bb.Max.y; }
+        RenderTextClipped(text_min, text_max, label, label_end, &label_size, style.ButtonTextAlign, &bb);
+    }
 
     // Automatically close popups
     //if (pressed && !(flags & ImGuiButtonFlags_DontClosePopups) && (window->Flags & ImGuiWindowFlags_Popup))

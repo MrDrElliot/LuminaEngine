@@ -13,6 +13,7 @@
 namespace Lumina
 {
     class CWorld;
+    struct FTreeNodeDisplay;
     struct SNameComponent;
     struct STransformComponent;
 }
@@ -40,8 +41,8 @@ namespace Lumina::EditorEntityUtils
      *  via the transform setters so the dirty flag is raised. Safe with no parent. */
     void ApplyWorldMatrixToTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FMatrix4& WorldMatrix);
 
-    /** Standard formatting for an entity's outliner row: "<icon> <name> - (<id>)". */
-    FFixedString MakeOutlinerDisplayName(const SNameComponent* Name, ECS::FEntity Entity, const char* Icon = LE_ICON_CUBE);
+    /** Relabels a renamed entity's outliner row, keeping its type icon and rebuilding its tooltip on next hover. */
+    void RenameOutlinerRow(FTreeNodeDisplay& Display, FStringView NewName);
 
     /** Returns world-space center + radius covering Entity and descendants (mesh AABBs/
      *  transforms); false if nothing focusable. */

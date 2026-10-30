@@ -1,5 +1,6 @@
 ﻿#include "Containers/StringFormat.h"
 #include "AnimationMontageEditorTool.h"
+#include "UI/Tools/AssetEditors/Animation/TimelineDrawing.h"
 #include "World/ECS/Registry.h"
 #include <string>
 #include "UI/Properties/PropertyTable.h"
@@ -25,22 +26,6 @@ namespace Lumina
 {
     static const char* MontageDetailsName  = "Details";
     static const char* MontageTimelineName = "MontageTimeline";
-
-    namespace
-    {
-        constexpr float kMontageHeaderWidth  = 168.0f;
-        constexpr float kMontageRulerHeight  = 26.0f;
-        constexpr float kMontageSectionHeight = 24.0f;
-        constexpr float kMontageTrackHeight  = 34.0f;
-        constexpr float kMontageNotifyHeight = 26.0f;
-
-        const ImU32 kSegmentFill    = IM_COL32(66, 118, 172, 200);
-        const ImU32 kSegmentBorder  = IM_COL32(150, 200, 255, 220);
-        const ImU32 kSegmentLoopBar = IM_COL32(255, 255, 255, 40);
-        const ImU32 kSectionFill    = IM_COL32(120, 92, 168, 210);
-        const ImU32 kNotifyColor    = IM_COL32(238, 107, 92, 235);
-        const ImU32 kNotifyStateFill = IM_COL32(238, 199, 89, 90);
-    }
 
     FAnimationMontageEditorTool::FAnimationMontageEditorTool(IEditorToolContext* Context, CObject* InAsset)
         : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
@@ -72,6 +57,11 @@ namespace Lumina
         CreateToolWindow(MontageTimelineName, [&](bool bFocused)
         {
             DrawTimeline();
+        });
+
+        NotifyDetails.SetPostEditCallback([this](const FPropertyChangedEvent&)
+        {
+            MarkMontageDirty();
         });
     }
 
@@ -117,6 +107,7 @@ namespace Lumina
 
         CAnimationMontage* Montage = GetAsset<CAnimationMontage>();
         CSkeletalMesh* PreviewMesh = Montage != nullptr ? PreviewMeshSelection.Resolve(Montage->Skeleton.Get()) : nullptr;
+        PreviewMeshInUse = PreviewMesh;
         if (PreviewMesh == nullptr)
         {
             return;
@@ -133,6 +124,12 @@ namespace Lumina
     void FAnimationMontageEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::Update(UpdateContext);
+
+        CAnimationMontage* Montage = GetAsset<CAnimationMontage>();
+        if (World.IsValid() && Montage != nullptr && PreviewMeshSelection.Resolve(Montage->Skeleton.Get()) != PreviewMeshInUse.Get())
+        {
+            CreatePreviewEntity();
+        }
 
         if (World && World->GetRenderer())
         {
@@ -248,7 +245,15 @@ namespace Lumina
         {
             if (SelectedIndex >= 0 && SelectedIndex < (int32)Montage->Sections.size())
             {
+                const FName Removed = Montage->Sections[SelectedIndex].Name;
                 Montage->Sections.erase(Montage->Sections.begin() + SelectedIndex);
+                for (SAnimMontageSection& Other : Montage->Sections)
+                {
+                    if (Other.NextSection == Removed)
+                    {
+                        Other.NextSection = FName();
+                    }
+                }
                 MarkMontageDirty();
             }
             break;
@@ -334,7 +339,11 @@ namespace Lumina
         DrawHelpTextRow("Sections",
             "Sections split the timeline into named regions. A section runs to the next one in time order, "
             "then continues into its Next Section; leaving Next Section empty ends the montage there. "
-            "Point Next Section at itself to loop, and call JumpToMontageSection from script to chain a combo.");
+            "Point Next Section at itself to loop, and call JumpToMontageSection from script to chain a combo. "
+            "Double-click the Sections row to add one, and right-click a section to pick its Next Section.");
+        DrawHelpTextRow("Notifies",
+            "Each notify track is its own row. Double-click a row to add a notify, right-click it for a notify state, "
+            "and drag a state's edges to resize it. Use + Add in the corner for new slots, sections and notify tracks.");
         DrawHelpTextRow("Playing from script",
             "Grab the entity's AnimationGraphComponent:\n"
             "  anim.PlayMontage(Montage, 1.0f)\n"
@@ -377,7 +386,7 @@ namespace Lumina
         // An empty montage still needs a lane wide enough to drop the first clip onto.
         const float Duration = Math::Max(Montage->GetDuration(), 1.0f);
 
-        DrawTransport(Duration);
+        DrawTransport(Montage->GetDuration() > 0.0f ? Montage->GetDuration() : Duration);
         SyncPreviewToPlayhead(Montage);
 
         ImGui::Separator();
@@ -397,7 +406,18 @@ namespace Lumina
             }
         }
 
-        if (ImGui::Button(bIsPlaying ? LE_ICON_PAUSE " Pause" : LE_ICON_PLAY " Play", ImVec2(96, 0)))
+        const bool bShortcutsActive = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput;
+        const bool bSpacePressed = bShortcutsActive && ImGui::IsKeyPressed(ImGuiKey_Space, false);
+
+        if (bShortcutsActive && ImGui::IsKeyPressed(ImGuiKey_Delete, false) && SelectedKind != ESelectionKind::None)
+        {
+            if (CAnimationMontage* Montage = GetAsset<CAnimationMontage>())
+            {
+                DeleteSelected(Montage);
+            }
+        }
+
+        if (ImGui::Button(bIsPlaying ? LE_ICON_PAUSE " Pause" : LE_ICON_PLAY " Play", ImVec2(96, 0)) || bSpacePressed)
         {
             if (!bIsPlaying && Playhead >= Duration && !bLooping)
             {
@@ -452,160 +472,217 @@ namespace Lumina
 
     void FAnimationMontageEditorTool::DrawSlotTracks(CAnimationMontage* Montage, float Duration)
     {
-        if (ImGui::Button(LE_ICON_PLUS " Slot"))
-        {
-            SAnimMontageSlotTrack& Track = Montage->SlotTracks.emplace_back();
-            Track.SlotName = FName(Format("Slot {}", (int)Montage->SlotTracks.size()).c_str());
-            MarkMontageDirty();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(LE_ICON_PLUS " Section"))
-        {
-            SAnimMontageSection& Section = Montage->Sections.emplace_back();
-            Section.Name = FName(Format("Section{}", (int)Montage->Sections.size()).c_str());
-            Section.StartTime = SnapTime(Playhead, Duration);
-            MarkMontageDirty();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(LE_ICON_PLUS " Notify"))
-        {
-            SAnimMontageNotify& Notify = Montage->Notifies.emplace_back();
-            Notify.Name  = "NewNotify";
-            Notify.Time  = SnapTime(Playhead, Duration);
-            Notify.Track = Montage->NotifyTracks.empty() ? FName("Notifies") : Montage->NotifyTracks[0];
-            SelectedKind  = ESelectionKind::Notify;
-            SelectedIndex = (int32)Montage->Notifies.size() - 1;
-            MarkMontageDirty();
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(drag a clip from the content browser onto a slot lane)");
-
-        const int32 NumTracks = (int32)Montage->SlotTracks.size();
-        const float CanvasHeight = kMontageRulerHeight + kMontageSectionHeight + NumTracks * kMontageTrackHeight + kMontageNotifyHeight + 8.0f;
-
-        ImGui::BeginChild("MontageCanvas", ImVec2(0, CanvasHeight), true,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::BeginChild("MontageCanvas", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
         ImDrawList*  DrawList   = ImGui::GetWindowDrawList();
         const ImVec2 CanvasPos  = ImGui::GetCursorScreenPos();
         const ImVec2 CanvasSize = ImGui::GetContentRegionAvail();
+        const float  CanvasY1   = CanvasPos.y + CanvasSize.y;
 
-        const float LaneX0 = CanvasPos.x + kMontageHeaderWidth;
-        const float LaneX1 = CanvasPos.x + CanvasSize.x;
-        const float LaneW  = Math::Max(LaneX1 - LaneX0, 1.0f);
+        const int32 NumSlots  = (int32)Montage->SlotTracks.size();
+        const int32 NumLanes  = (int32)Montage->NotifyTracks.size();
+        constexpr float SectionRowH = 34.0f;
+        constexpr float SlotRowH    = 44.0f;
+        const float NotifyRowH = Timeline::TrackHeight;
 
-        const float RulerY0    = CanvasPos.y;
-        const float SectionY0  = RulerY0 + kMontageRulerHeight;
-        const float TracksY0   = SectionY0 + kMontageSectionHeight;
-        const float NotifyY0   = TracksY0 + NumTracks * kMontageTrackHeight;
-        const float CanvasY1   = CanvasPos.y + CanvasSize.y;
+        const float RulerY0     = CanvasPos.y;
+        const float TrackAreaY0 = CanvasPos.y + Timeline::RulerHeight;
+        const float ContentH    = SectionRowH + (float)NumSlots * SlotRowH + (float)NumLanes * NotifyRowH;
+        const float MaxScroll   = Math::Max(0.0f, ContentH - (CanvasY1 - TrackAreaY0));
+        TrackScroll = Math::Clamp(TrackScroll, 0.0f, MaxScroll);
 
-        const float BasePPS = LaneW / Duration;
-        const float PPS     = BasePPS * TimelineZoom;
+        const float SectionY0 = TrackAreaY0 - TrackScroll;
+        const float SlotsY0   = SectionY0 + SectionRowH;
+        const float LanesY0   = SlotsY0 + (float)NumSlots * SlotRowH;
 
-        const float MaxPan = Math::Max(0.0f, Duration - LaneW / PPS);
-        TimelinePanSeconds = Math::Clamp(TimelinePanSeconds, 0.0f, MaxPan);
-
-        auto TimeToX = [&](float T) { return LaneX0 + (T - TimelinePanSeconds) * PPS; };
-        auto XToTime = [&](float X) { return TimelinePanSeconds + (X - LaneX0) / PPS; };
+        Timeline::FView View;
+        View.LaneX0    = CanvasPos.x + Timeline::HeaderWidth;
+        View.LaneX1    = CanvasPos.x + CanvasSize.x;
+        View.ContentX0 = View.LaneX0 + Timeline::LanePad;
+        const float LaneX0   = View.LaneX0;
+        const float LaneX1   = View.LaneX1;
+        const float ContentW = Math::Max(LaneX1 - LaneX0 - Timeline::LanePad * 2.0f, 1.0f);
+        const float BasePPS  = ContentW / Duration;
+        View.PPS = BasePPS * TimelineZoom;
+        TimelinePanSeconds = Math::Clamp(TimelinePanSeconds, 0.0f, Math::Max(0.0f, Duration - ContentW / View.PPS));
+        View.Pan = TimelinePanSeconds;
 
         const ImGuiIO& IO = ImGui::GetIO();
+        const ImVec2 Mouse = IO.MousePos;
         const bool bCanvasHovered = ImGui::IsWindowHovered();
+        const bool bLanesHovered = bCanvasHovered && Mouse.y >= TrackAreaY0 && Mouse.x >= LaneX0 && Mouse.x <= LaneX1;
 
-        if (bCanvasHovered && IO.MouseWheel != 0.0f && IO.MousePos.x > LaneX0)
+        if (bCanvasHovered && IO.MouseWheel != 0.0f && (Mouse.x <= LaneX0 || IO.KeyCtrl))
+        {
+            TrackScroll = Math::Clamp(TrackScroll - IO.MouseWheel * NotifyRowH, 0.0f, MaxScroll);
+        }
+        else if (bCanvasHovered && IO.MouseWheel != 0.0f && Mouse.x > LaneX0)
         {
             if (IO.KeyShift)
             {
-                TimelinePanSeconds -= IO.MouseWheel * (LaneW / PPS) * 0.15f;
+                TimelinePanSeconds -= IO.MouseWheel * (ContentW / View.PPS) * 0.15f;
             }
             else
             {
-                const float CursorT = XToTime(IO.MousePos.x);
+                const float CursorT = View.XToTime(Mouse.x);
                 TimelineZoom = Math::Clamp(TimelineZoom * (IO.MouseWheel > 0 ? 1.15f : 1.0f / 1.15f), 1.0f, 16.0f);
-                TimelinePanSeconds = CursorT - (IO.MousePos.x - LaneX0) / (BasePPS * TimelineZoom);
+                TimelinePanSeconds = CursorT - (Mouse.x - View.ContentX0) / (BasePPS * TimelineZoom);
             }
         }
 
-        DrawList->AddRectFilled(CanvasPos, ImVec2(LaneX1, CanvasY1), IM_COL32(24, 24, 28, 255));
-        DrawList->AddRectFilled(CanvasPos, ImVec2(CanvasPos.x + kMontageHeaderWidth, CanvasY1), IM_COL32(32, 33, 38, 255));
-        DrawList->AddRectFilled(ImVec2(LaneX0, RulerY0), ImVec2(LaneX1, RulerY0 + kMontageRulerHeight), IM_COL32(40, 41, 47, 255));
-
-        DrawList->PushClipRect(ImVec2(LaneX0, RulerY0), ImVec2(LaneX1, CanvasY1), true);
+        auto LaneOf = [&](const FName& Track) -> int32
         {
-            float TargetSec = 90.0f / PPS;
-            const float FrameSec = 1.0f / (float)FrameRate;
-            float Step = FrameSec;
-            while (Step < TargetSec) { Step *= (Step * 5.0f < TargetSec ? 5.0f : 2.0f); }
-
-            const float FirstT = floorf(TimelinePanSeconds / Step) * Step;
-            for (float T = FirstT; T <= XToTime(LaneX1); T += Step)
+            for (int32 n = 0; n < NumLanes; ++n)
             {
-                if (T < 0.0f) continue;
-                const float X = TimeToX(T);
-                DrawList->AddLine(ImVec2(X, RulerY0 + kMontageRulerHeight - 7.0f), ImVec2(X, CanvasY1), IM_COL32(255, 255, 255, 16));
-                DrawList->AddLine(ImVec2(X, RulerY0 + kMontageRulerHeight - 7.0f), ImVec2(X, RulerY0 + kMontageRulerHeight), IM_COL32(200, 200, 210, 120));
-                FString Label = Format("{:.2f}", T).c_str();
-                DrawList->AddText(ImVec2(X + 3.0f, RulerY0 + 3.0f), IM_COL32(180, 182, 190, 200), Label.c_str());
+                if (Montage->NotifyTracks[n] == Track) return n;
             }
+            return -1;
+        };
+
+        TVector<int32> LaneCounts(NumLanes, 0);
+        for (const SAnimMontageNotify& N : Montage->Notifies)
+        {
+            const int32 Lane = LaneOf(N.Track);
+            if (Lane >= 0) { ++LaneCounts[Lane]; }
         }
-        DrawList->PopClipRect();
+        for (const SAnimMontageNotifyState& S : Montage->NotifyStates)
+        {
+            const int32 Lane = LaneOf(S.Track);
+            if (Lane >= 0) { ++LaneCounts[Lane]; }
+        }
+
+        const bool bInRows = bCanvasHovered && Mouse.y >= TrackAreaY0;
+        const bool bSectionRowHovered = bInRows && Mouse.y >= SectionY0 && Mouse.y < SlotsY0;
+        int32 HoveredSlot = -1;
+        int32 HoveredLane = -1;
+        if (bInRows && Mouse.y >= SlotsY0 && Mouse.y < LanesY0)
+        {
+            HoveredSlot = Math::Clamp((int32)floorf((Mouse.y - SlotsY0) / SlotRowH), 0, NumSlots - 1);
+        }
+        else if (bInRows && Mouse.y >= LanesY0 && Mouse.y < LanesY0 + (float)NumLanes * NotifyRowH)
+        {
+            HoveredLane = Math::Clamp((int32)floorf((Mouse.y - LanesY0) / NotifyRowH), 0, NumLanes - 1);
+        }
+
+        auto AddNotifyAt = [&](int32 Lane, float Time, bool bState)
+        {
+            const FName Track = (Lane >= 0 && Lane < NumLanes) ? Montage->NotifyTracks[Lane] : FName("Notifies");
+            if (bState)
+            {
+                SAnimMontageNotifyState& State = Montage->NotifyStates.emplace_back();
+                State.Name      = "NewNotifyState";
+                State.Track     = Track;
+                State.StartTime = Time;
+                State.EndTime   = Math::Min(Time + Math::Max(Duration * 0.1f, 0.1f), Duration);
+                SelectedKind  = ESelectionKind::NotifyState;
+                SelectedIndex = (int32)Montage->NotifyStates.size() - 1;
+            }
+            else
+            {
+                SAnimMontageNotify& Notify = Montage->Notifies.emplace_back();
+                Notify.Name  = "NewNotify";
+                Notify.Time  = Time;
+                Notify.Track = Track;
+                SelectedKind  = ESelectionKind::Notify;
+                SelectedIndex = (int32)Montage->Notifies.size() - 1;
+            }
+            MarkMontageDirty();
+        };
+
+        auto AddSectionAt = [&](float Time)
+        {
+            SAnimMontageSection& Section = Montage->Sections.emplace_back();
+            Section.Name = FName(Format("Section{}", (int)Montage->Sections.size()).c_str());
+            Section.StartTime = Time;
+            SelectedKind  = ESelectionKind::Section;
+            SelectedIndex = (int32)Montage->Sections.size() - 1;
+            MarkMontageDirty();
+        };
+
+        DrawList->AddRectFilled(CanvasPos, ImVec2(LaneX1, CanvasY1), Timeline::CanvasColor);
+        DrawList->AddRectFilled(CanvasPos, ImVec2(LaneX0, CanvasY1), Timeline::HeaderColor);
+        DrawList->AddRectFilled(ImVec2(CanvasPos.x, RulerY0), ImVec2(LaneX1, TrackAreaY0), Timeline::RulerColor);
+
+        ImGui::SetCursorScreenPos(ImVec2(CanvasPos.x + 8.0f, RulerY0 + (Timeline::RulerHeight - ImGui::GetFrameHeight()) * 0.5f));
+        if (ImGui::Button(LE_ICON_PLUS " Add"))
+        {
+            ImGui::OpenPopup("montage_add");
+        }
+        if (ImGui::BeginPopup("montage_add"))
+        {
+            const float AtTime = SnapTime(Playhead, Duration);
+            if (ImGui::MenuItem(LE_ICON_ANIMATION " Slot Track"))
+            {
+                SAnimMontageSlotTrack& Track = Montage->SlotTracks.emplace_back();
+                Track.SlotName = FName(Format("Slot {}", (int)Montage->SlotTracks.size()).c_str());
+                MarkMontageDirty();
+            }
+            if (ImGui::MenuItem(LE_ICON_BOOKMARK " Section at Playhead"))
+            {
+                AddSectionAt(AtTime);
+            }
+            if (ImGui::MenuItem(LE_ICON_BELL_RING " Notify Track"))
+            {
+                Montage->NotifyTracks.push_back(FName(Format("Track {}", NumLanes).c_str()));
+                MarkMontageDirty();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(LE_ICON_BELL " Notify at Playhead"))
+            {
+                AddNotifyAt(SelectedNotifyTrack, AtTime, false);
+            }
+            if (ImGui::MenuItem(LE_ICON_BELL_OUTLINE " Notify State at Playhead"))
+            {
+                AddNotifyAt(SelectedNotifyTrack, AtTime, true);
+            }
+            ImGui::EndPopup();
+        }
 
         SortSections(Montage);
 
-        // Section lane, drawn here because it shares the canvas geometry above.
-        DrawList->AddRectFilled(ImVec2(CanvasPos.x, SectionY0), ImVec2(LaneX1, SectionY0 + kMontageSectionHeight), IM_COL32(30, 30, 36, 255));
-        DrawList->AddText(ImVec2(CanvasPos.x + 8, SectionY0 + 4), IM_COL32(170, 172, 182, 220), "Sections");
+        ImGui::PushClipRect(ImVec2(CanvasPos.x, TrackAreaY0), ImVec2(LaneX1, CanvasY1), true);
 
-        DrawList->PushClipRect(ImVec2(LaneX0, SectionY0), ImVec2(LaneX1, SectionY0 + kMontageSectionHeight), true);
-        for (int32 i = 0; i < (int32)Montage->Sections.size(); ++i)
         {
-            const SAnimMontageSection& Section = Montage->Sections[i];
-            const float X0 = TimeToX(Section.StartTime);
-            const float X1 = TimeToX(Montage->GetSectionEndTime(i));
-
-            const bool bSel = (SelectedKind == ESelectionKind::Section && SelectedIndex == i);
-            DrawList->AddRectFilled(ImVec2(X0 + 1, SectionY0 + 3), ImVec2(X1 - 1, SectionY0 + kMontageSectionHeight - 3), kSectionFill, 3.0f);
-            if (bSel)
+            const float RowY1 = SectionY0 + SectionRowH;
+            DrawList->AddRectFilled(ImVec2(LaneX0, SectionY0), ImVec2(LaneX1, RowY1), Timeline::RowAltColor);
+            if (bSectionRowHovered)
             {
-                DrawList->AddRect(ImVec2(X0 + 1, SectionY0 + 3), ImVec2(X1 - 1, SectionY0 + kMontageSectionHeight - 3), IM_COL32(255, 255, 255, 230), 3.0f, 2.0f, 0);
+                DrawList->AddRectFilled(ImVec2(LaneX0, SectionY0), ImVec2(LaneX1, RowY1), Timeline::RowHoverColor);
             }
-            DrawList->AddText(ImVec2(X0 + 6, SectionY0 + 4), IM_COL32(255, 255, 255, 235), Section.Name.c_str());
-
-            const ImRect Rect(ImVec2(X0, SectionY0), ImVec2(X1, SectionY0 + kMontageSectionHeight));
-            if (bCanvasHovered && DragMode == EDragMode::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && Rect.Contains(IO.MousePos))
-            {
-                SelectedKind  = ESelectionKind::Section;
-                SelectedIndex = i;
-                DragKind = ESelectionKind::Section;
-                DragIndex = i;
-                DragMode = EDragMode::MoveItem;
-                DragGrabOffset = XToTime(IO.MousePos.x) - Section.StartTime;
-            }
+            DrawList->AddLine(ImVec2(CanvasPos.x, RowY1 - 0.5f), ImVec2(LaneX1, RowY1 - 0.5f), Timeline::SeparatorColor);
+            Timeline::DrawTrackHeader(DrawList, ImVec2(CanvasPos.x, SectionY0), ImVec2(LaneX0, RowY1), FVector4(0.62f, 0.5f, 0.9f, 1.0f),
+                                      LE_ICON_BOOKMARK, "Sections", (int32)Montage->Sections.size(), false, bSectionRowHovered && Mouse.x < LaneX0);
         }
-        DrawList->PopClipRect();
 
-        // Slot lanes.
-        for (int32 t = 0; t < NumTracks; ++t)
+        for (int32 t = 0; t < NumSlots; ++t)
         {
             SAnimMontageSlotTrack& Track = Montage->SlotTracks[t];
+            const float RowY0 = SlotsY0 + (float)t * SlotRowH;
+            const float RowY1 = RowY0 + SlotRowH;
+            if (RowY0 > CanvasY1) break;
+            if (RowY1 <= TrackAreaY0) continue;
 
-            const float RowY0 = TracksY0 + t * kMontageTrackHeight;
-            const float RowY1 = RowY0 + kMontageTrackHeight;
+            const bool bPreview = (PreviewTrack == t);
+            const bool bHovered = (HoveredSlot == t);
+            const FVector4 SlotColor = Timeline::PaletteColor(t + 1);
 
-            const ImU32 RowBg = (t & 1) ? IM_COL32(28, 28, 33, 255) : IM_COL32(24, 24, 28, 255);
-            DrawList->AddRectFilled(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), RowBg);
-            DrawList->AddLine(ImVec2(CanvasPos.x, RowY1), ImVec2(LaneX1, RowY1), IM_COL32(0, 0, 0, 120));
+            DrawList->AddRectFilled(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), (t & 1) ? Timeline::RowAltColor : Timeline::RowColor);
+            if (bHovered)
+            {
+                DrawList->AddRectFilled(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), Timeline::RowHoverColor);
+            }
+            DrawList->AddLine(ImVec2(CanvasPos.x, RowY1 - 0.5f), ImVec2(LaneX1, RowY1 - 0.5f),
+                              t == NumSlots - 1 ? Timeline::SeparatorColor : Timeline::RowLineColor);
+            Timeline::DrawTrackHeader(DrawList, ImVec2(CanvasPos.x, RowY0), ImVec2(LaneX0, RowY1), SlotColor,
+                                      bPreview ? LE_ICON_EYE : nullptr, Track.SlotName.c_str(), (int32)Track.Segments.size(), bPreview, bHovered && Mouse.x < LaneX0);
 
-            const bool bIsPreview = (PreviewTrack == t);
-            DrawList->AddRectFilled(ImVec2(CanvasPos.x + 6, RowY0 + 8), ImVec2(CanvasPos.x + 16, RowY1 - 8),
-                                    bIsPreview ? IM_COL32(120, 220, 140, 255) : IM_COL32(90, 92, 100, 255), 2.0f);
-
-            ImGui::SetCursorScreenPos(ImVec2(CanvasPos.x + 22, RowY0 + 6));
+            ImGui::SetCursorScreenPos(ImVec2(CanvasPos.x, RowY0));
             ImGui::PushID(t);
-            if (ImGui::Selectable(Track.SlotName.c_str(), bIsPreview, ImGuiSelectableFlags_None, ImVec2(kMontageHeaderWidth - 30, kMontageTrackHeight - 12)))
+            if (ImGui::InvisibleButton("##SlotHeader", ImVec2(Timeline::HeaderWidth, SlotRowH)))
             {
                 PreviewTrack = t;
             }
+            ImGuiX::TextTooltip("{}", bPreview ? "The preview plays this slot" : "Click to preview this slot. Right-click for options.");
 
             if (ImGui::BeginPopupContextItem("slot_ctx"))
             {
@@ -625,7 +702,7 @@ namespace Lumina
                 {
                     ReflowTrack(Montage, t);
                 }
-                if (NumTracks > 1 && ImGui::MenuItem(LE_ICON_DELETE " Delete Slot"))
+                if (NumSlots > 1 && ImGui::MenuItem(LE_ICON_DELETE " Delete Slot"))
                 {
                     Montage->SlotTracks.erase(Montage->SlotTracks.begin() + t);
                     PreviewTrack = 0;
@@ -637,53 +714,222 @@ namespace Lumina
                 }
                 ImGui::EndPopup();
             }
-            ImGui::PopID();
 
-            // Drop target covering the lane, so a clip can be dragged straight onto it.
-            ImGui::SetCursorScreenPos(ImVec2(LaneX0, RowY0));
-            ImGui::PushID(1000 + t);
-            ImGui::InvisibleButton("lane_drop", ImVec2(Math::Max(LaneX1 - LaneX0, 1.0f), kMontageTrackHeight));
-            if (ImGui::BeginDragDropTarget())
+            const ImRect LaneRect(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1));
+            if (ImGui::BeginDragDropTargetCustom(LaneRect, ImGui::GetID("##SlotDrop")))
             {
                 if (CAnimation* Dropped = DragDrop::AcceptAsset<CAnimation>())
                 {
-                    AppendSegment(Montage, t, Dropped, SnapTime(XToTime(IO.MousePos.x), Duration * 4.0f));
+                    AppendSegment(Montage, t, Dropped, SnapTime(View.XToTime(Mouse.x), Duration * 4.0f));
                 }
                 ImGui::EndDragDropTarget();
             }
             ImGui::PopID();
+        }
 
-            DrawList->PushClipRect(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), true);
+        for (int32 n = 0; n < NumLanes; ++n)
+        {
+            const float RowY0 = LanesY0 + (float)n * NotifyRowH;
+            const float RowY1 = RowY0 + NotifyRowH;
+            if (RowY0 > CanvasY1) break;
+            if (RowY1 <= TrackAreaY0) continue;
+
+            const bool bSelectedLane = (SelectedNotifyTrack == n);
+            const bool bHovered = (HoveredLane == n);
+            const FVector4 LaneColor = Timeline::PaletteColor(n);
+
+            DrawList->AddRectFilled(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), (n & 1) ? Timeline::RowAltColor : Timeline::RowColor);
+            if (bSelectedLane)
+            {
+                DrawList->AddRectFilled(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), Timeline::WithAlpha(LaneColor, 0.05f));
+            }
+            else if (bHovered)
+            {
+                DrawList->AddRectFilled(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1), Timeline::RowHoverColor);
+            }
+            DrawList->AddLine(ImVec2(CanvasPos.x, RowY1 - 0.5f), ImVec2(LaneX1, RowY1 - 0.5f), Timeline::RowLineColor);
+            Timeline::DrawTrackHeader(DrawList, ImVec2(CanvasPos.x, RowY0), ImVec2(LaneX0, RowY1), LaneColor, nullptr,
+                                      Montage->NotifyTracks[n].c_str(), LaneCounts[n], bSelectedLane, bHovered && Mouse.x < LaneX0);
+
+            ImGui::SetCursorScreenPos(ImVec2(CanvasPos.x, RowY0));
+            ImGui::PushID(2000 + n);
+            if (ImGui::InvisibleButton("##LaneHeader", ImVec2(Timeline::HeaderWidth, NotifyRowH)))
+            {
+                SelectedNotifyTrack = n;
+            }
+
+            if (ImGui::BeginPopupContextItem("lane_ctx"))
+            {
+                static char RenameBuf[128];
+                if (ImGui::IsWindowAppearing())
+                {
+                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", Montage->NotifyTracks[n].c_str());
+                }
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
+                {
+                    const FName PreviousName = Montage->NotifyTracks[n];
+                    const FName NewName(RenameBuf);
+                    Montage->NotifyTracks[n] = NewName;
+                    for (SAnimMontageNotify& N : Montage->Notifies)
+                    {
+                        if (N.Track == PreviousName) { N.Track = NewName; }
+                    }
+                    for (SAnimMontageNotifyState& S : Montage->NotifyStates)
+                    {
+                        if (S.Track == PreviousName) { S.Track = NewName; }
+                    }
+                    MarkMontageDirty();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem(LE_ICON_PLUS " Add Notify"))       { AddNotifyAt(n, SnapTime(Playhead, Duration), false); }
+                if (ImGui::MenuItem(LE_ICON_PLUS " Add Notify State")) { AddNotifyAt(n, SnapTime(Playhead, Duration), true); }
+                ImGui::Separator();
+                if (NumLanes > 1 && ImGui::MenuItem(LE_ICON_DELETE " Delete Track"))
+                {
+                    const FName Removed = Montage->NotifyTracks[n];
+                    Montage->NotifyTracks.erase(Montage->NotifyTracks.begin() + n);
+                    Montage->Notifies.erase(Algo::RemoveIf(Montage->Notifies, [&](const SAnimMontageNotify& N) { return N.Track == Removed; }), Montage->Notifies.end());
+                    Montage->NotifyStates.erase(Algo::RemoveIf(Montage->NotifyStates, [&](const SAnimMontageNotifyState& S) { return S.Track == Removed; }), Montage->NotifyStates.end());
+                    SelectedNotifyTrack = 0;
+                    ClearSelection();
+                    MarkMontageDirty();
+                    ImGui::EndPopup();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+
+            const ImRect LaneRect(ImVec2(LaneX0, RowY0), ImVec2(LaneX1, RowY1));
+            if (bLanesHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && LaneRect.Contains(Mouse))
+            {
+                LaneAddTrack = n;
+                LaneAddTime = SnapTime(View.XToTime(Mouse.x), Duration);
+                ImGui::OpenPopup("notify_lane_add");
+            }
+        }
+        ImGui::PopClipRect();
+
+        if (ImGui::BeginPopup("notify_lane_add"))
+        {
+            ImGui::TextDisabled("at %.3fs (frame %d)", LaneAddTime, (int)roundf(LaneAddTime * (float)FrameRate));
+            ImGui::Separator();
+            if (ImGui::MenuItem(LE_ICON_BELL " Add Notify"))             { AddNotifyAt(LaneAddTrack, LaneAddTime, false); }
+            if (ImGui::MenuItem(LE_ICON_BELL_OUTLINE " Add Notify State")) { AddNotifyAt(LaneAddTrack, LaneAddTime, true); }
+            ImGui::EndPopup();
+        }
+
+        Timeline::DrawRuler(DrawList, View, RulerY0, TrackAreaY0, Math::Min(CanvasY1, LanesY0 + (float)NumLanes * NotifyRowH), Duration, FrameRate);
+
+        DrawList->PushClipRect(ImVec2(LaneX0, TrackAreaY0), ImVec2(LaneX1, CanvasY1), true);
+        bool bItemHovered = false;
+
+        for (int32 i = 0; i < (int32)Montage->Sections.size(); ++i)
+        {
+            const SAnimMontageSection& Section = Montage->Sections[i];
+            const float X0 = View.TimeToX(Section.StartTime);
+            const float X1 = Math::Max(View.TimeToX(Montage->GetSectionEndTime(i)), X0 + 4.0f);
+            const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, SectionY0 - 3.0f, SectionY0 + SectionRowH + 3.0f, Section.Name.c_str());
+
+            const bool bHover = bLanesHovered && Mouse.x >= X0 && Mouse.x <= X1 && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1;
+            const bool bSel   = (SelectedKind == ESelectionKind::Section && SelectedIndex == i);
+            bItemHovered |= bHover;
+
+            FFixedString Detail;
+            if (Section.NextSection.IsNone())
+            {
+                Detail = LE_ICON_FLAG_CHECKERED " End";
+            }
+            else if (Section.NextSection == Section.Name)
+            {
+                Detail = LE_ICON_REPEAT " Loop";
+            }
+            else
+            {
+                Detail = FormatAs<FFixedString>("{} {}", LE_ICON_ARROW_RIGHT, Section.NextSection.c_str());
+            }
+            Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(i + 4), Section.Name.c_str(), Detail.c_str(), bSel, bHover, false, false);
+
+            if (bHover && DragMode == EDragMode::None)
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+            if (DragMode == EDragMode::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && bHover)
+            {
+                SelectedKind  = ESelectionKind::Section;
+                SelectedIndex = i;
+                DragKind = ESelectionKind::Section;
+                DragIndex = i;
+                DragMode = EDragMode::MoveItem;
+                DragGrabOffset = View.XToTime(Mouse.x) - Section.StartTime;
+            }
+            if (bHover && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                SelectedKind  = ESelectionKind::Section;
+                SelectedIndex = i;
+                ImGui::OpenPopup("section_ctx");
+            }
+        }
+
+        for (int32 t = 0; t < NumSlots; ++t)
+        {
+            SAnimMontageSlotTrack& Track = Montage->SlotTracks[t];
+            const float RowY0 = SlotsY0 + (float)t * SlotRowH;
+            const float RowY1 = RowY0 + SlotRowH;
+            if (RowY1 <= TrackAreaY0 || RowY0 >= CanvasY1) continue;
+
             for (int32 s = 0; s < (int32)Track.Segments.size(); ++s)
             {
                 SAnimMontageSegment& Segment = Track.Segments[s];
+                const char* ClipName = Segment.Animation.IsValid() ? Segment.Animation->GetName().c_str() : "<empty>";
+                const float X0 = View.TimeToX(Segment.StartTime);
+                const float X1 = Math::Max(View.TimeToX(Segment.GetEndTime()), X0 + 4.0f);
+                const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, RowY0, RowY1, ClipName);
 
-                const float X0 = TimeToX(Segment.StartTime);
-                const float X1 = TimeToX(Segment.GetEndTime());
-                const float BarY0 = RowY0 + 5.0f;
-                const float BarY1 = RowY1 - 5.0f;
-
-                const bool bSel = (SelectedKind == ESelectionKind::Segment && SelectedTrack == t && SelectedIndex == s);
-
-                DrawList->AddRectFilled(ImVec2(X0, BarY0), ImVec2(X1, BarY1), kSegmentFill, 3.0f);
-                DrawList->AddRect(ImVec2(X0, BarY0), ImVec2(X1, BarY1),
-                                  bSel ? IM_COL32(255, 255, 255, 235) : kSegmentBorder, 3.0f, bSel ? 2.0f : 1.0f, 0);
+                const bool bOverRight = bLanesHovered && fabsf(Mouse.x - X1) <= 5.0f && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1;
+                const bool bOverBody  = bLanesHovered && Mouse.x >= X0 && Mouse.x <= X1 && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1;
+                const bool bHover     = bOverBody || bOverRight;
+                const bool bSel       = (SelectedKind == ESelectionKind::Segment && SelectedTrack == t && SelectedIndex == s);
+                const bool bDragged   = (DragKind == ESelectionKind::Segment && DragTrack == t && DragIndex == s);
+                bItemHovered |= bHover;
 
                 const int32 Loops = Math::Max(Segment.LoopCount, 1);
+                FFixedString Detail;
+                if (fabsf(Segment.PlayRate - 1.0f) > 0.001f)
+                {
+                    Detail = FormatAs<FFixedString>("x{:.2f}", Segment.PlayRate);
+                }
+                if (Loops > 1)
+                {
+                    Detail += FormatAs<FFixedString>("{}{} loops", Detail.empty() ? "" : "  ", Loops);
+                }
+
+                Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(t + 1), ClipName, Detail.empty() ? nullptr : Detail.c_str(),
+                                    bSel, bHover, false, bOverRight || (bDragged && DragMode == EDragMode::ResizeEnd));
+
                 for (int32 L = 1; L < Loops; ++L)
                 {
                     const float LX = X0 + (X1 - X0) * ((float)L / (float)Loops);
-                    DrawList->AddLine(ImVec2(LX, BarY0), ImVec2(LX, BarY1), kSegmentLoopBar, 1.0f);
+                    for (float Y = Bar.BarY0 + 3.0f; Y < Bar.BarY1 - 3.0f; Y += 6.0f)
+                    {
+                        DrawList->AddLine(ImVec2(LX, Y), ImVec2(LX, Math::Min(Y + 3.0f, Bar.BarY1 - 3.0f)), IM_COL32(255, 255, 255, 120), 1.0f);
+                    }
                 }
 
-                const char* ClipName = Segment.Animation.IsValid() ? Segment.Animation->GetName().c_str() : "<empty>";
-                DrawList->AddText(ImVec2(X0 + 6.0f, BarY0 + 2.0f), IM_COL32(255, 255, 255, 235), ClipName);
+                if (DragMode == EDragMode::None && bOverRight)
+                {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                }
+                else if (DragMode == EDragMode::None && bOverBody)
+                {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::SetTooltip("%s\nStarts at %.2fs, runs %.2fs\nRate x%.2f, %d loop(s)", ClipName, Segment.StartTime,
+                                      Segment.GetTimelineLength(), Segment.PlayRate, Loops);
+                }
 
-                const ImVec2 M = IO.MousePos;
-                const bool bOverBody  = bCanvasHovered && M.x >= X0 && M.x <= X1 && M.y >= BarY0 && M.y <= BarY1;
-                const bool bOverRight = bCanvasHovered && fabsf(M.x - X1) <= 4.0f && M.y >= BarY0 && M.y <= BarY1;
-
-                if (DragMode == EDragMode::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && (bOverBody || bOverRight))
+                if (DragMode == EDragMode::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && bHover)
                 {
                     SelectedKind  = ESelectionKind::Segment;
                     SelectedTrack = t;
@@ -692,117 +938,274 @@ namespace Lumina
                     DragTrack = t;
                     DragIndex = s;
                     DragMode  = bOverRight ? EDragMode::ResizeEnd : EDragMode::MoveItem;
-                    DragGrabOffset = XToTime(M.x) - Segment.StartTime;
+                    DragGrabOffset = View.XToTime(Mouse.x) - Segment.StartTime;
+                }
+                if (bOverBody && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+                {
+                    SelectedKind  = ESelectionKind::Segment;
+                    SelectedTrack = t;
+                    SelectedIndex = s;
+                    ImGui::OpenPopup("segment_ctx");
                 }
             }
-            DrawList->PopClipRect();
+
+            if (HoveredSlot == t && bLanesHovered && Track.Segments.empty() && DragMode == EDragMode::None)
+            {
+                const char* Hint = "Drop an animation from the Content Browser here";
+                const ImVec2 HintSize = ImGui::CalcTextSize(Hint);
+                DrawList->AddText(ImVec2(LaneX0 + (LaneX1 - LaneX0 - HintSize.x) * 0.5f, RowY0 + (SlotRowH - HintSize.y) * 0.5f), Timeline::MutedTextColor, Hint);
+            }
         }
 
-        // Notify lane.
-        DrawList->AddRectFilled(ImVec2(CanvasPos.x, NotifyY0), ImVec2(LaneX1, NotifyY0 + kMontageNotifyHeight), IM_COL32(30, 30, 36, 255));
-        DrawList->AddText(ImVec2(CanvasPos.x + 8, NotifyY0 + 5), IM_COL32(170, 172, 182, 220), "Notifies");
-
-        DrawList->PushClipRect(ImVec2(LaneX0, NotifyY0), ImVec2(LaneX1, NotifyY0 + kMontageNotifyHeight), true);
+        TVector<TVector<ImVec2>> LaneLabels(NumLanes);
+        TVector<TVector<ImVec2>> LaneBars(NumLanes);
 
         for (int32 i = 0; i < (int32)Montage->NotifyStates.size(); ++i)
         {
             SAnimMontageNotifyState& State = Montage->NotifyStates[i];
-            const float X0 = TimeToX(State.StartTime);
-            const float X1 = TimeToX(State.EndTime);
+            const int32 Lane = LaneOf(State.Track);
+            if (Lane < 0) continue;
 
-            const bool bSel = (SelectedKind == ESelectionKind::NotifyState && SelectedIndex == i);
-            DrawList->AddRectFilled(ImVec2(X0, NotifyY0 + 4), ImVec2(X1, NotifyY0 + kMontageNotifyHeight - 4), kNotifyStateFill, 3.0f);
-            DrawList->AddRect(ImVec2(X0, NotifyY0 + 4), ImVec2(X1, NotifyY0 + kMontageNotifyHeight - 4),
-                              bSel ? IM_COL32(255, 255, 255, 230) : IM_COL32(238, 199, 89, 200), 3.0f, bSel ? 2.0f : 1.0f, 0);
-            DrawList->AddText(ImVec2(X0 + 5, NotifyY0 + 5), IM_COL32(255, 255, 255, 220), State.Name.c_str());
+            const float RowY0 = LanesY0 + (float)Lane * NotifyRowH;
+            const float RowY1 = RowY0 + NotifyRowH;
+            if (RowY1 <= TrackAreaY0 || RowY0 >= CanvasY1) continue;
 
-            const ImVec2 M = IO.MousePos;
-            const bool bOverBody  = bCanvasHovered && M.x >= X0 && M.x <= X1 && M.y >= NotifyY0 && M.y <= NotifyY0 + kMontageNotifyHeight;
-            const bool bOverLeft  = bCanvasHovered && fabsf(M.x - X0) <= 4.0f && M.y >= NotifyY0 && M.y <= NotifyY0 + kMontageNotifyHeight;
-            const bool bOverRight = bCanvasHovered && fabsf(M.x - X1) <= 4.0f && M.y >= NotifyY0 && M.y <= NotifyY0 + kMontageNotifyHeight;
+            const float X0 = View.TimeToX(State.StartTime);
+            const float X1 = Math::Max(View.TimeToX(State.EndTime), X0 + 4.0f);
+            const Timeline::FRangeGeometry Bar = Timeline::GetRangeGeometry(X0, X1, RowY0, RowY1, State.Name.c_str());
+            LaneLabels[Lane].push_back(Timeline::RangeLabelSpan(Bar, X0, X1, State.Name.c_str()));
+            LaneBars[Lane].push_back(ImVec2(X0, X1));
+            const bool bOverTag = !Bar.bNameInside && Mouse.x >= Bar.Tag0.x && Mouse.x <= Bar.Tag1.x && Mouse.y >= Bar.Tag0.y && Mouse.y <= Bar.Tag1.y;
 
-            if (DragMode == EDragMode::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && (bOverBody || bOverLeft || bOverRight))
+            const bool bOverLeft  = bLanesHovered && fabsf(Mouse.x - X0) <= 5.0f && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1;
+            const bool bOverRight = bLanesHovered && fabsf(Mouse.x - X1) <= 5.0f && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1;
+            const bool bOverBody  = bLanesHovered && ((Mouse.x >= X0 && Mouse.x <= X1 && Mouse.y >= Bar.BarY0 && Mouse.y <= Bar.BarY1) || bOverTag);
+            const bool bHover     = bOverBody || bOverLeft || bOverRight;
+            const bool bSel       = (SelectedKind == ESelectionKind::NotifyState && SelectedIndex == i);
+            const bool bDragged   = (DragKind == ESelectionKind::NotifyState && DragIndex == i);
+            bItemHovered |= bHover;
+
+            char DurationText[24];
+            snprintf(DurationText, sizeof(DurationText), "%.2fs", State.EndTime - State.StartTime);
+            Timeline::DrawRange(DrawList, Bar, X0, X1, Timeline::PaletteColor(Lane), State.Name.c_str(), DurationText, bSel, bHover,
+                                bOverLeft || (bDragged && DragMode == EDragMode::ResizeStart),
+                                bOverRight || (bDragged && DragMode == EDragMode::ResizeEnd));
+
+            if (DragMode == EDragMode::None && (bOverLeft || bOverRight))
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            }
+            else if (DragMode == EDragMode::None && bOverBody)
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+
+            if (DragMode == EDragMode::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && bHover)
             {
                 SelectedKind  = ESelectionKind::NotifyState;
                 SelectedIndex = i;
+                SelectedNotifyTrack = Lane;
                 DragKind  = ESelectionKind::NotifyState;
                 DragIndex = i;
                 DragMode  = bOverLeft ? EDragMode::ResizeStart : (bOverRight ? EDragMode::ResizeEnd : EDragMode::MoveItem);
-                DragGrabOffset = XToTime(M.x) - State.StartTime;
+                DragGrabOffset = View.XToTime(Mouse.x) - State.StartTime;
+            }
+            if (bOverBody && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                SelectedKind  = ESelectionKind::NotifyState;
+                SelectedIndex = i;
+                ImGui::OpenPopup("notify_item_ctx");
             }
         }
 
         for (int32 i = 0; i < (int32)Montage->Notifies.size(); ++i)
         {
             SAnimMontageNotify& Notify = Montage->Notifies[i];
-            const float X = TimeToX(Notify.Time);
-            const float Top = NotifyY0 + 3.0f;
-            const float Bot = NotifyY0 + kMontageNotifyHeight - 3.0f;
+            const int32 Lane = LaneOf(Notify.Track);
+            if (Lane < 0) continue;
 
-            const bool bSel = (SelectedKind == ESelectionKind::Notify && SelectedIndex == i);
+            const float RowY0 = LanesY0 + (float)Lane * NotifyRowH;
+            const float RowY1 = RowY0 + NotifyRowH;
+            if (RowY1 <= TrackAreaY0 || RowY0 >= CanvasY1) continue;
 
-            DrawList->AddLine(ImVec2(X, Top), ImVec2(X, Bot), kNotifyColor, 2.0f);
-            DrawList->AddTriangleFilled(ImVec2(X, Top), ImVec2(X + 11.0f, Top + 4.0f), ImVec2(X, Top + 8.0f), kNotifyColor);
-            if (bSel)
+            const float X = View.TimeToX(Notify.Time);
+            const Timeline::FPointGeometry Point = Timeline::GetPointGeometry(X, RowY0, RowY1, Notify.Name.c_str(), Timeline::Overlaps(LaneBars[Lane], X - 1.0f, X + 1.0f));
+            const bool bSel  = (SelectedKind == ESelectionKind::Notify && SelectedIndex == i);
+            const bool bShowTag = bSel || !Timeline::Overlaps(LaneLabels[Lane], Point.Tag0.x, Point.Tag1.x);
+            if (bShowTag)
             {
-                DrawList->AddCircleFilled(ImVec2(X, Bot), 3.0f, IM_COL32(255, 255, 255, 255));
+                LaneLabels[Lane].push_back(ImVec2(Point.Tag0.x, Point.Tag1.x));
             }
+            const bool bOver = bLanesHovered && Timeline::HitPoint(Point, X, Mouse, bShowTag);
+            bItemHovered |= bOver;
 
-            const ImVec2 M = IO.MousePos;
-            const bool bOver = bCanvasHovered && fabsf(M.x - X) <= 6.0f && M.y >= Top && M.y <= Bot;
-            if (bOver)
+            Timeline::DrawPoint(DrawList, Point, X, RowY0, RowY1, Timeline::PaletteColor(Lane), Notify.Name.c_str(), bSel, bOver, 0.0f, bShowTag);
+
+            if (bOver && DragMode == EDragMode::None)
             {
-                ImGui::SetTooltip("%s @ %.3fs", Notify.Name.c_str(), Notify.Time);
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImGui::SetTooltip("%s  %.3fs (frame %d)", Notify.Name.c_str(), Notify.Time, (int)roundf(Notify.Time * (float)FrameRate));
             }
             if (DragMode == EDragMode::None && bOver && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 SelectedKind  = ESelectionKind::Notify;
                 SelectedIndex = i;
+                SelectedNotifyTrack = Lane;
                 DragKind  = ESelectionKind::Notify;
                 DragIndex = i;
                 DragMode  = EDragMode::MoveItem;
-                DragGrabOffset = 0.0f;
+                DragGrabOffset = View.XToTime(Mouse.x) - Notify.Time;
             }
+            if (bOver && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                SelectedKind  = ESelectionKind::Notify;
+                SelectedIndex = i;
+                ImGui::OpenPopup("notify_item_ctx");
+            }
+        }
+
+        if (HoveredLane >= 0 && bLanesHovered && !bItemHovered && DragMode == EDragMode::None && LaneCounts[HoveredLane] == 0)
+        {
+            const char* Hint = "Double-click to add a notify, right-click for more";
+            const ImVec2 HintSize = ImGui::CalcTextSize(Hint);
+            const float RowY0 = LanesY0 + (float)HoveredLane * NotifyRowH;
+            DrawList->AddText(ImVec2(LaneX0 + (LaneX1 - LaneX0 - HintSize.x) * 0.5f, RowY0 + (NotifyRowH - HintSize.y) * 0.5f), Timeline::MutedTextColor, Hint);
         }
 
         DrawList->PopClipRect();
 
-        // Playhead over everything.
+        Timeline::DrawPlayhead(DrawList, View, RulerY0, TrackAreaY0, Math::Min(CanvasY1, LanesY0 + (float)NumLanes * NotifyRowH), Playhead, FrameRate);
+
+        DrawList->AddLine(ImVec2(CanvasPos.x, TrackAreaY0 - 0.5f), ImVec2(LaneX1, TrackAreaY0 - 0.5f), Timeline::SeparatorColor);
+        DrawList->AddLine(ImVec2(LaneX0 - 0.5f, RulerY0), ImVec2(LaneX0 - 0.5f, CanvasY1), Timeline::SeparatorColor);
+
+        if (MaxScroll > 0.0f)
         {
-            const float PX = TimeToX(Playhead);
-            if (PX >= LaneX0 - 1.0f && PX <= LaneX1 + 1.0f)
-            {
-                DrawList->PushClipRect(ImVec2(LaneX0, RulerY0), ImVec2(LaneX1, CanvasY1), true);
-                DrawList->AddLine(ImVec2(PX, RulerY0), ImVec2(PX, CanvasY1), IM_COL32(255, 220, 60, 230), 1.5f);
-                DrawList->AddTriangleFilled(ImVec2(PX - 6, RulerY0), ImVec2(PX + 6, RulerY0), ImVec2(PX, RulerY0 + 8), IM_COL32(255, 220, 60, 255));
-                DrawList->PopClipRect();
-            }
+            const float AreaH  = CanvasY1 - TrackAreaY0;
+            const float ThumbH = Math::Max(AreaH * AreaH / ContentH, 16.0f);
+            const float ThumbY = TrackAreaY0 + (TrackScroll / MaxScroll) * (AreaH - ThumbH);
+            DrawList->AddRectFilled(ImVec2(LaneX1 - 6.0f, ThumbY + 2.0f), ImVec2(LaneX1 - 2.0f, ThumbY + ThumbH - 2.0f), IM_COL32(255, 255, 255, 55), 2.0f);
         }
 
-        const ImRect RulerRect(ImVec2(LaneX0, RulerY0), ImVec2(LaneX1, RulerY0 + kMontageRulerHeight));
-        if (DragMode == EDragMode::None && bCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && RulerRect.Contains(IO.MousePos))
+        if (ImGui::BeginPopup("section_ctx"))
+        {
+            if (SelectedKind == ESelectionKind::Section && SelectedIndex >= 0 && SelectedIndex < (int32)Montage->Sections.size())
+            {
+                SAnimMontageSection& Section = Montage->Sections[SelectedIndex];
+                if (ImGui::BeginMenu(LE_ICON_ARROW_RIGHT " Next Section"))
+                {
+                    if (ImGui::MenuItem(LE_ICON_FLAG_CHECKERED " End montage", nullptr, Section.NextSection.IsNone()))
+                    {
+                        Section.NextSection = FName();
+                        MarkMontageDirty();
+                    }
+                    for (const SAnimMontageSection& Other : Montage->Sections)
+                    {
+                        if (ImGui::MenuItem(Other.Name.c_str(), nullptr, Other.Name == Section.NextSection))
+                        {
+                            Section.NextSection = Other.Name;
+                            MarkMontageDirty();
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::MenuItem(LE_ICON_MAP_MARKER " Move to playhead"))
+                {
+                    Section.StartTime = SnapTime(Playhead, Duration);
+                    MarkMontageDirty();
+                }
+                if (ImGui::MenuItem(LE_ICON_DELETE " Delete"))
+                {
+                    DeleteSelected(Montage);
+                }
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopup("segment_ctx"))
+        {
+            if (ImGui::MenuItem(LE_ICON_ARROW_COLLAPSE_LEFT " Reflow Slot"))
+            {
+                ReflowTrack(Montage, SelectedTrack);
+            }
+            if (ImGui::MenuItem(LE_ICON_DELETE " Delete"))
+            {
+                DeleteSelected(Montage);
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopup("notify_item_ctx"))
+        {
+            if (ImGui::MenuItem(LE_ICON_MAP_MARKER " Move to playhead"))
+            {
+                const float AtTime = SnapTime(Playhead, Duration);
+                if (SelectedKind == ESelectionKind::Notify && SelectedIndex >= 0 && SelectedIndex < (int32)Montage->Notifies.size())
+                {
+                    Montage->Notifies[SelectedIndex].Time = AtTime;
+                }
+                else if (SelectedKind == ESelectionKind::NotifyState && SelectedIndex >= 0 && SelectedIndex < (int32)Montage->NotifyStates.size())
+                {
+                    SAnimMontageNotifyState& State = Montage->NotifyStates[SelectedIndex];
+                    const float Len = State.EndTime - State.StartTime;
+                    State.StartTime = Math::Clamp(AtTime, 0.0f, Math::Max(Duration - Len, 0.0f));
+                    State.EndTime = State.StartTime + Len;
+                }
+                MarkMontageDirty();
+            }
+            if (ImGui::MenuItem(LE_ICON_DELETE " Delete"))
+            {
+                DeleteSelected(Montage);
+            }
+            ImGui::EndPopup();
+        }
+
+        const ImRect RulerRect(ImVec2(LaneX0, RulerY0), ImVec2(LaneX1, TrackAreaY0));
+        if (DragMode == EDragMode::None && bCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && RulerRect.Contains(Mouse))
         {
             DragMode = EDragMode::Playhead;
         }
 
         // Every item and the ruler set a DragMode, so an unclaimed press landed on empty canvas.
-        if (DragMode == EDragMode::None && bCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        if (DragMode == EDragMode::None && bCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered())
         {
             ClearSelection();
+            if (HoveredLane >= 0)
+            {
+                SelectedNotifyTrack = HoveredLane;
+            }
+        }
+
+        if (DragMode == EDragMode::None && bLanesHovered && !bItemHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        {
+            if (HoveredLane >= 0)
+            {
+                SelectedNotifyTrack = HoveredLane;
+                AddNotifyAt(HoveredLane, SnapTime(View.XToTime(Mouse.x), Duration), false);
+            }
+            else if (bSectionRowHovered)
+            {
+                AddSectionAt(SnapTime(View.XToTime(Mouse.x), Duration));
+            }
         }
 
         if (DragMode != EDragMode::None)
         {
             if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
             {
-                const float RawT = XToTime(IO.MousePos.x);
+                const float RawT = View.XToTime(Mouse.x);
+                const bool bMoved = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+                if (DragMode == EDragMode::ResizeStart || DragMode == EDragMode::ResizeEnd)
+                {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                }
 
                 if (DragMode == EDragMode::Playhead)
                 {
                     bIsPlaying = false;
                     Playhead = SnapTime(RawT, Duration);
                 }
-                else if (DragKind == ESelectionKind::Segment &&
+                else if (bMoved && DragKind == ESelectionKind::Segment &&
                          DragTrack >= 0 && DragTrack < (int32)Montage->SlotTracks.size())
                 {
                     SAnimMontageSlotTrack& Track = Montage->SlotTracks[DragTrack];
@@ -815,25 +1218,30 @@ namespace Lumina
                             const float NewLength = Math::Max(RawT - Segment.StartTime, 0.02f);
                             const float Content = Segment.GetTrimmedLength() * (float)Math::Max(Segment.LoopCount, 1);
                             Segment.PlayRate = Math::Clamp(Content / NewLength, 0.05f, 20.0f);
+                            ImGui::SetTooltip("Rate x%.2f, runs %.2fs", Segment.PlayRate, Segment.GetTimelineLength());
                         }
                         else
                         {
                             Segment.StartTime = Math::Max(SnapTime(RawT - DragGrabOffset, Duration * 4.0f), 0.0f);
+                            ImGui::SetTooltip("Starts at %.3fs", Segment.StartTime);
                         }
                         MarkMontageDirty();
                     }
                 }
-                else if (DragKind == ESelectionKind::Section && DragIndex >= 0 && DragIndex < (int32)Montage->Sections.size())
+                else if (bMoved && DragKind == ESelectionKind::Section && DragIndex >= 0 && DragIndex < (int32)Montage->Sections.size())
                 {
                     Montage->Sections[DragIndex].StartTime = SnapTime(RawT - DragGrabOffset, Duration);
                     MarkMontageDirty();
+                    ImGui::SetTooltip("%.3fs (frame %d)", Montage->Sections[DragIndex].StartTime, (int)roundf(Montage->Sections[DragIndex].StartTime * (float)FrameRate));
                 }
-                else if (DragKind == ESelectionKind::Notify && DragIndex >= 0 && DragIndex < (int32)Montage->Notifies.size())
+                else if (bMoved && DragKind == ESelectionKind::Notify && DragIndex >= 0 && DragIndex < (int32)Montage->Notifies.size())
                 {
-                    Montage->Notifies[DragIndex].Time = SnapTime(RawT, Duration);
+                    SAnimMontageNotify& Notify = Montage->Notifies[DragIndex];
+                    Notify.Time = SnapTime(RawT - DragGrabOffset, Duration);
                     MarkMontageDirty();
+                    ImGui::SetTooltip("%.3fs (frame %d)", Notify.Time, (int)roundf(Notify.Time * (float)FrameRate));
                 }
-                else if (DragKind == ESelectionKind::NotifyState && DragIndex >= 0 && DragIndex < (int32)Montage->NotifyStates.size())
+                else if (bMoved && DragKind == ESelectionKind::NotifyState && DragIndex >= 0 && DragIndex < (int32)Montage->NotifyStates.size())
                 {
                     SAnimMontageNotifyState& State = Montage->NotifyStates[DragIndex];
                     const float T = SnapTime(RawT, Duration);
@@ -852,6 +1260,7 @@ namespace Lumina
                         State.EndTime = State.StartTime + Len;
                     }
                     MarkMontageDirty();
+                    ImGui::SetTooltip("%.3fs to %.3fs (%.3fs)", State.StartTime, State.EndTime, State.EndTime - State.StartTime);
                 }
             }
             else
@@ -874,8 +1283,40 @@ namespace Lumina
             return;
         }
 
-        Algo::StableSort(Montage->Sections,
-            [](const SAnimMontageSection& A, const SAnimMontageSection& B) { return A.StartTime < B.StartTime; });
+        const int32 Count = (int32)Montage->Sections.size();
+        TVector<int32> Order(Count);
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            Order[Index] = Index;
+        }
+        Algo::StableSort(Order, [Montage](int32 A, int32 B) { return Montage->Sections[A].StartTime < Montage->Sections[B].StartTime; });
+
+        bool bReordered = false;
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            bReordered |= Order[Index] != Index;
+        }
+        if (!bReordered)
+        {
+            return;
+        }
+
+        TVector<SAnimMontageSection> Sorted;
+        Sorted.reserve(Count);
+        int32 NewSelection = SelectedIndex;
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            Sorted.push_back(Montage->Sections[Order[Index]]);
+            if (Order[Index] == SelectedIndex)
+            {
+                NewSelection = Index;
+            }
+        }
+        Montage->Sections = Move(Sorted);
+        if (SelectedKind == ESelectionKind::Section)
+        {
+            SelectedIndex = NewSelection;
+        }
     }
 
     void FAnimationMontageEditorTool::NotifyTrackCombo(CAnimationMontage* Montage, FName& Track, const char* StrId)
@@ -945,7 +1386,20 @@ namespace Lumina
 
             snprintf(NameBuf, sizeof(NameBuf), "%s", Section.Name.c_str());
             ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf))) { Section.Name = FName(NameBuf); MarkMontageDirty(); }
+            if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf)))
+            {
+                const FName OldName = Section.Name;
+                const FName NewName(NameBuf);
+                for (SAnimMontageSection& Other : Montage->Sections)
+                {
+                    if (Other.NextSection == OldName)
+                    {
+                        Other.NextSection = NewName;
+                    }
+                }
+                Section.Name = NewName;
+                MarkMontageDirty();
+            }
 
             ImGui::SetNextItemWidth(FieldWidth);
             if (ImGui::DragFloat("Start##Sec", &Section.StartTime, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
@@ -1026,9 +1480,9 @@ namespace Lumina
             if (ImGui::InputText("Name##NS", NameBuf, sizeof(NameBuf))) { State.Name = FName(NameBuf); MarkMontageDirty(); }
 
             ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::DragFloat("Start##NS", &State.StartTime, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
+            if (ImGui::DragFloat("Start##NS", &State.StartTime, 0.01f, 0.0f, State.EndTime - 0.001f, "%.3fs")) { MarkMontageDirty(); }
             ImGui::SetNextItemWidth(FieldWidth);
-            if (ImGui::DragFloat("End##NS", &State.EndTime, 0.01f, 0.0f, Duration, "%.3fs")) { MarkMontageDirty(); }
+            if (ImGui::DragFloat("End##NS", &State.EndTime, 0.01f, State.StartTime + 0.001f, Duration, "%.3fs")) { MarkMontageDirty(); }
 
             NotifyTrackCombo(Montage, State.Track, "Track##NS");
 

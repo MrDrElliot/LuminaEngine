@@ -55,6 +55,7 @@ namespace Lumina
          *  no longer matches the compiled shader, meaning the caller must fall back to Compile(). */
         bool RefreshModuleParams();
         void OnSave() override;
+        bool IsUnsavedDocument() override;
         bool ShouldGenerateThumbnailOnSave() const override { return true; }
 
     private:

@@ -344,6 +344,11 @@ namespace Lumina
             DrawOutliner(bFocused);
         });
         
+        CreateToolWindow("Details", [&] (bool bFocused)
+        {
+            DrawDetailsPanel(bFocused);
+        });
+
         CreateToolWindow(WorldSettingsName, [&](bool bFocused)
         {
             DrawWorldSettings(bFocused);
@@ -352,11 +357,6 @@ namespace Lumina
         CreateToolWindow(SystemsName, [&](bool bFocused)
         {
             DrawSystemsPanel(bFocused);
-        });
-
-        CreateToolWindow("Details", [&] (bool bFocused)
-        {
-            DrawDetailsPanel(bFocused);
         });
         
         const CWorldEditorSettings* Settings = GetDefault<CWorldEditorSettings>();
@@ -689,11 +689,7 @@ namespace Lumina
                 return;
             }
 
-            FFixedString Name;
-            Name.append(LE_ICON_CUBE).append(" ")
-                .append(NewName).append(Format(" - ({})", (Data.Entity).Value));
-
-			Tree.Get<FTreeNodeDisplay>(Item).DisplayName = Name;
+            EditorEntityUtils::RenameOutlinerRow(Tree.Get<FTreeNodeDisplay>(Item), NewName);
 
             SNameComponent& NameComponent = World->GetEntityRegistry().Get<SNameComponent>(Data.Entity);
             NameComponent.Name = NewName;
@@ -1531,17 +1527,13 @@ namespace Lumina
 
         // SplitNode takes parent, direction, ratio, out-at-direction and out-opposite, easy to swap.
         ImGuiID dockRightBottom = 0, dockRightTop = 0;
-        ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.35f, &dockRightBottom, &dockRightTop);
-
-        // A bottom strip with Details and World Settings side by side.
-        ImGuiID dockRightBottomLeft = 0, dockRightBottomRight = 0;
-        ImGui::DockBuilderSplitNode(dockRightBottom, ImGuiDir_Right, 0.5f, &dockRightBottomRight, &dockRightBottomLeft);
+        ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.55f, &dockRightBottom, &dockRightTop);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),    dockLeft);
         ImGui::DockBuilderDockWindow(GetToolWindowName(SceneGraphName).c_str(),        dockRightTop);
-        ImGui::DockBuilderDockWindow(GetToolWindowName("Details").c_str(),             dockRightBottomLeft);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(WorldSettingsName).c_str(),     dockRightBottomRight);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(SystemsName).c_str(),           dockRightBottomRight);
+        ImGui::DockBuilderDockWindow(GetToolWindowName("Details").c_str(),             dockRightBottom);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(WorldSettingsName).c_str(),     dockRightBottom);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(SystemsName).c_str(),           dockRightBottom);
     }
 
     void FWorldEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)

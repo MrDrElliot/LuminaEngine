@@ -518,7 +518,7 @@ namespace Lumina
 
     void FPluginBrowserEditorTool::PromptRestart()
     {
-        ToolContext->PushModal("Restart Required", ImVec2(420, 160),
+        ToolContext->PushModal("Restart Required", ImVec2(420, 0),
             []() -> bool
             {
                 ImGui::TextWrapped("Plugin changes were saved to the .lproject. "

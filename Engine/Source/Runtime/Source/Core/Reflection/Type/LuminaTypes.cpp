@@ -149,7 +149,8 @@ namespace Lumina
         FString Display;
         for (size_t i = 0; i < Raw.size(); ++i)
         {
-            if (i > 0 && std::isupper(Raw[i]) && !std::isspace(Raw[i - 1]) && !std::isupper(Raw[i - 1]))
+            const bool bAcronymEnds = i > 0 && i + 1 < Raw.size() && std::isupper(Raw[i - 1]) && std::islower(Raw[i + 1]);
+            if (i > 0 && std::isupper(Raw[i]) && !std::isspace(Raw[i - 1]) && (!std::isupper(Raw[i - 1]) || bAcronymEnds))
             {
                 Display += ' ';
             }

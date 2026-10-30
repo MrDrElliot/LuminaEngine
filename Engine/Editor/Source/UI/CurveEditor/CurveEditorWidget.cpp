@@ -33,6 +33,15 @@ namespace Lumina
         const ImU32 ColTimeMarker = IM_COL32(255, 220, 60, 230);
         const ImU32 ColBoxSelect = IM_COL32(120, 180, 240, 40);
         const ImU32 ColBoxSelectBorder = IM_COL32(140, 200, 255, 180);
+        const ImU32 ColRuler = IM_COL32(30, 31, 38, 245);
+        const ImU32 ColRulerLine = IM_COL32(0, 0, 0, 170);
+        const ImU32 ColOutOfRange = IM_COL32(0, 0, 0, 80);
+        const ImU32 ColRangeEnd = IM_COL32(230, 90, 80, 150);
+
+        float RulerHeight()
+        {
+            return ImGui::GetTextLineHeight() + 8.0f;
+        }
 
         // Rounds a rough step up to the nearest 1/2/5 * 10^N so labels stay readable at any zoom.
         float NiceStep(float RoughStep)
@@ -103,7 +112,7 @@ namespace Lumina
 
     float FCurveEditorWidget::GetPixelsPerValue() const
     {
-        return (CanvasMax.y - CanvasMin.y) / Math::Max(ViewMaxValue - ViewMinValue, MinViewSpan);
+        return Math::Max(CanvasMax.y - CanvasMin.y - RulerHeight(), 1.0f) / Math::Max(ViewMaxValue - ViewMinValue, MinViewSpan);
     }
 
     ImVec2 FCurveEditorWidget::CurveToScreen(float InTime, float InValue) const
@@ -220,13 +229,18 @@ namespace Lumina
     {
         if (Curve == nullptr || Curve->IsEmpty())
         {
-            FrameRange(0.0f, 1.0f, 0.0f, 1.0f);
+            FrameRange(bHasTimeRange ? RangeMinTime : 0.0f, bHasTimeRange ? RangeMaxTime : 1.0f, 0.0f, 1.0f);
             return;
         }
 
         float MinTime, MaxTime, MinValue, MaxValue;
         Curve->GetTimeRange(MinTime, MaxTime);
         Curve->GetValueRange(MinValue, MaxValue);
+        if (bHasTimeRange)
+        {
+            MinTime = Math::Min(MinTime, RangeMinTime);
+            MaxTime = Math::Max(MaxTime, RangeMaxTime);
+        }
         FrameRange(MinTime, MaxTime, MinValue, MaxValue);
     }
 
@@ -506,6 +520,7 @@ namespace Lumina
             ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
 
         const bool bHovered = ImGui::IsItemHovered();
+        bCanvasHovered = bHovered;
 
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
         DrawList->PushClipRect(CanvasMin, CanvasMax, true);
@@ -547,6 +562,14 @@ namespace Lumina
     {
         const bool bHasSelection = !Selection.empty();
 
+        if (ToolbarExtension)
+        {
+            ToolbarExtension();
+            ImGui::SameLine();
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+            ImGui::SameLine();
+        }
+
         if (ImGui::Button(LE_ICON_STAIRS "##Constant"))
         {
             SetSelectionInterpMode(ECurveInterpMode::Constant, false);
@@ -585,16 +608,34 @@ namespace Lumina
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
 
-        ImGui::Checkbox("Snap T", &bSnapTime);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(70.0f);
-        ImGui::DragFloat("##TimeSnap", &TimeSnapStep, 0.005f, 0.0001f, 1000.0f, "%.3f");
+        const bool bAnySnap = bSnapTime || bSnapValue;
+        if (bAnySnap)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        }
+        if (ImGui::Button(LE_ICON_MAGNET " Snap"))
+        {
+            ImGui::OpenPopup("##SnapSettings");
+        }
+        if (bAnySnap)
+        {
+            ImGui::PopStyleColor();
+        }
+        ImGuiX::TextTooltip("Snap dragged keys to a time and value step");
 
-        ImGui::SameLine();
-        ImGui::Checkbox("Snap V", &bSnapValue);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(70.0f);
-        ImGui::DragFloat("##ValueSnap", &ValueSnapStep, 0.005f, 0.0001f, 1000.0f, "%.3f");
+        if (ImGui::BeginPopup("##SnapSettings"))
+        {
+            ImGui::Checkbox("Time", &bSnapTime);
+            ImGui::SameLine(80.0f);
+            ImGui::SetNextItemWidth(80.0f);
+            ImGui::DragFloat("##TimeSnap", &TimeSnapStep, 0.005f, 0.0001f, 1000.0f, "%.3f");
+
+            ImGui::Checkbox("Value", &bSnapValue);
+            ImGui::SameLine(80.0f);
+            ImGui::SetNextItemWidth(80.0f);
+            ImGui::DragFloat("##ValueSnap", &ValueSnapStep, 0.005f, 0.0001f, 1000.0f, "%.3f");
+            ImGui::EndPopup();
+        }
 
         ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
@@ -641,10 +682,25 @@ namespace Lumina
         const float ValueStep = NiceStep((ViewMaxValue - ViewMinValue) * (60.0f / Math::Max(Height, 1.0f)));
 
         char Label[32];
+        const float BandBottom = CanvasMin.y + RulerHeight();
+
+        if (bHasTimeRange)
+        {
+            const float RangeX0 = CurveToScreen(RangeMinTime, 0.0f).x;
+            const float RangeX1 = CurveToScreen(RangeMaxTime, 0.0f).x;
+            if (RangeX0 > CanvasMin.x)
+            {
+                DrawList->AddRectFilled(ImVec2(CanvasMin.x, CanvasMin.y), ImVec2(RangeX0, CanvasMax.y), ColOutOfRange);
+            }
+            if (RangeX1 < CanvasMax.x)
+            {
+                DrawList->AddRectFilled(ImVec2(RangeX1, CanvasMin.y), ImVec2(CanvasMax.x, CanvasMax.y), ColOutOfRange);
+            }
+            DrawList->AddLine(ImVec2(RangeX1, CanvasMin.y), ImVec2(RangeX1, CanvasMax.y), ColRangeEnd, 1.0f);
+        }
 
         // Vertical (time) lines.
         {
-            const int32 Decimals = DecimalsForStep(TimeStep);
             const float Minor = TimeStep * 0.2f;
             const float FirstMinor = Math::Floor(ViewMinTime / Minor) * Minor;
             for (float T = FirstMinor; T <= ViewMaxTime; T += Minor)
@@ -659,9 +715,6 @@ namespace Lumina
                 const float X = CurveToScreen(T, 0.0f).x;
                 const bool bZero = Math::Abs(T) < TimeStep * 0.01f;
                 DrawList->AddLine(ImVec2(X, CanvasMin.y), ImVec2(X, CanvasMax.y), bZero ? ColAxis : ColGridMajor, bZero ? 1.5f : 1.0f);
-
-                snprintf(Label, sizeof(Label), "%.*f", Decimals, bZero ? 0.0f : T);
-                DrawList->AddText(ImVec2(X + 3.0f, CanvasMax.y - ImGui::GetTextLineHeight() - 2.0f), ColLabel, Label);
             }
         }
 
@@ -683,8 +736,26 @@ namespace Lumina
                 const bool bZero = Math::Abs(V) < ValueStep * 0.01f;
                 DrawList->AddLine(ImVec2(CanvasMin.x, Y), ImVec2(CanvasMax.x, Y), bZero ? ColAxis : ColGridMajor, bZero ? 1.5f : 1.0f);
 
-                snprintf(Label, sizeof(Label), "%.*f", Decimals, bZero ? 0.0f : V);
-                DrawList->AddText(ImVec2(CanvasMin.x + 4.0f, Y + 2.0f), ColLabel, Label);
+                if (Y > BandBottom + 2.0f)
+                {
+                    snprintf(Label, sizeof(Label), "%.*f", Decimals, bZero ? 0.0f : V);
+                    DrawList->AddText(ImVec2(CanvasMin.x + 4.0f, Y + 2.0f), ColLabel, Label);
+                }
+            }
+        }
+
+        DrawList->AddRectFilled(CanvasMin, ImVec2(CanvasMax.x, BandBottom), ColRuler);
+        DrawList->AddLine(ImVec2(CanvasMin.x, BandBottom), ImVec2(CanvasMax.x, BandBottom), ColRulerLine);
+        {
+            const int32 Decimals = DecimalsForStep(TimeStep);
+            const float FirstMajor = Math::Floor(ViewMinTime / TimeStep) * TimeStep;
+            for (float T = FirstMajor; T <= ViewMaxTime; T += TimeStep)
+            {
+                const float X = CurveToScreen(T, 0.0f).x;
+                const bool bZero = Math::Abs(T) < TimeStep * 0.01f;
+                DrawList->AddLine(ImVec2(X, BandBottom - 6.0f), ImVec2(X, BandBottom), ColLabel);
+                snprintf(Label, sizeof(Label), "%.*f", Decimals, bZero ? 0.0f : T);
+                DrawList->AddText(ImVec2(X + 4.0f, CanvasMin.y + 3.0f), ColLabel, Label);
             }
         }
     }
@@ -798,10 +869,16 @@ namespace Lumina
             const float X = CurveToScreen(TimeMarker, 0.0f).x;
             if (X >= CanvasMin.x && X <= CanvasMax.x)
             {
-                DrawList->AddLine(ImVec2(X, CanvasMin.y), ImVec2(X, CanvasMax.y), ColTimeMarker, 1.5f);
-                DrawList->AddTriangleFilled(ImVec2(X - 5.0f, CanvasMin.y), ImVec2(X + 5.0f, CanvasMin.y),
-                                            ImVec2(X, CanvasMin.y + 7.0f), ColTimeMarker);
+                const float BandBottom = CanvasMin.y + RulerHeight();
+                DrawList->AddLine(ImVec2(X, BandBottom), ImVec2(X, CanvasMax.y), ColTimeMarker, 1.5f);
+                DrawList->AddTriangleFilled(ImVec2(X - 5.0f, BandBottom - 7.0f), ImVec2(X + 5.0f, BandBottom - 7.0f),
+                                            ImVec2(X, BandBottom), ColTimeMarker);
             }
+        }
+
+        if (!bCanvasHovered && DragMode == EDragMode::None)
+        {
+            return;
         }
 
         char Buffer[96];
@@ -809,7 +886,7 @@ namespace Lumina
             MouseCurvePos.x, MouseCurvePos.y, Curve->NumKeys(), (int32)Selection.size());
 
         const ImVec2 TextSize = ImGui::CalcTextSize(Buffer);
-        const ImVec2 Origin = ImVec2(CanvasMax.x - TextSize.x - 10.0f, CanvasMin.y + 6.0f);
+        const ImVec2 Origin = ImVec2(CanvasMax.x - TextSize.x - 10.0f, CanvasMax.y - TextSize.y - 8.0f);
 
         DrawList->AddRectFilled(ImVec2(Origin.x - 5.0f, Origin.y - 3.0f),
                                 ImVec2(Origin.x + TextSize.x + 5.0f, Origin.y + TextSize.y + 3.0f),

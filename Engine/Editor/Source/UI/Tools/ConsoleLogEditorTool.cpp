@@ -3,6 +3,7 @@
 #include "Core/Math/Math.h"
 #include "Settings/EditorSettings.h"
 #include "UI/EditorUI.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 
 #include <utility>
 
@@ -223,9 +224,7 @@ namespace Lumina
     {
         const float InputHeight = ImGui::GetFrameHeightWithSpacing() * 1.2f;
         
-        ImGui::SetNextItemWidth(-1);
-        
-        Filter.TextFilter.Draw("##LogFilter");
+        ImGuiX::SearchBar("##LogFilter", Filter.TextFilter, LE_ICON_MAGNIFY " Filter messages...");
 
         ImGui::Spacing();
 
@@ -288,7 +287,7 @@ namespace Lumina
 
             if (Settings.bShowTimestamps)
             {
-                ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.45f, 1.0f), "[%s]", Message.Time.c_str());
+                ImGui::TextColored(EditorColors::TextMuted(), "[%s]", Message.Time.c_str());
                 ImGui::SameLine(0, 6);
             }
 
@@ -300,7 +299,7 @@ namespace Lumina
 
             if (Settings.bShowLogger)
             {
-                ImGui::TextColored(ImVec4(0.55f, 0.70f, 0.90f, 1.0f), "%s:", Message.LoggerName.data());
+                ImGui::TextColored(EditorColors::TextDim(), "%s:", Message.LoggerName.data());
                 ImGui::SameLine(0, 6);
             }
 

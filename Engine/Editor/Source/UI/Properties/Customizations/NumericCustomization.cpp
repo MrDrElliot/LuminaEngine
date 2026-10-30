@@ -51,11 +51,14 @@ namespace Lumina
             }
             ImGui::SameLine(IconColumnW);
 
-            const float TagW = LineHeight;
             // Reserved on EVERY row, or the lock row's fields end up narrower and break column alignment.
             const float LockW = LineHeight + Style.ItemInnerSpacing.x;
             const float Avail = ImGui::GetContentRegionAvail().x;
-            const float FieldW = Math::Max((Avail - LockW - 3.0f * (TagW + Style.ItemInnerSpacing.x)) / 3.0f, 1.0f);
+            auto FieldWidthFor = [&](float TagWidth) { return (Avail - LockW - 3.0f * (TagWidth + Style.ItemInnerSpacing.x)) / 3.0f; };
+
+            const bool  bCompactTags = FieldWidthFor(LineHeight) < LineHeight * 2.5f;
+            const float TagW   = bCompactTags ? Math::Max(3.0f, ImFloor(LineHeight * 0.18f)) : LineHeight;
+            const float FieldW = Math::Max(FieldWidthFor(TagW), 1.0f);
 
             for (int32 Axis = 0; Axis < 3; ++Axis)
             {
@@ -69,7 +72,7 @@ namespace Lumina
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, GAxisColors[Axis]);
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, GAxisColors[Axis]);
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
-                if (ImGui::Button(GAxisLabels[Axis], ImVec2(TagW, LineHeight)))
+                if (ImGui::Button(bCompactTags ? "##Axis" : GAxisLabels[Axis], ImVec2(TagW, LineHeight)))
                 {
                     Values[Axis] = ResetValue;
                     bResetClicked = true;
@@ -78,7 +81,7 @@ namespace Lumina
                 ImGui::PopStyleColor(3);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
                 {
-                    ImGui::SetTooltip("Reset to: %f", ResetValue);
+                    ImGui::SetTooltip("Reset %s to %g", GAxisLabels[Axis], ResetValue);
                 }
 
                 ImGui::SameLine(0.0f, 0.0f);

@@ -206,12 +206,7 @@ namespace Lumina
 
         ImGui::BeginChild("##SettingsCategories", ImVec2(LeftWidth, 0), true);
         {
-            ImGui::AlignTextToFramePadding();
-            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
-            ImGui::TextUnformatted(LE_ICON_MAGNIFY);
-            ImGui::PopStyleColor();
-            ImGui::SameLine();
-            SettingsFilter.Draw("##SettingsSearch", ImGui::GetContentRegionAvail().x);
+            ImGuiX::SearchBar("##SettingsSearch", SettingsFilter, LE_ICON_MAGNIFY " Search settings...");
 
             for (const FString& Category : Categories)
             {

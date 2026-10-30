@@ -483,6 +483,19 @@ namespace Lumina
         BeginEdit(Name, SelectedSocket.Owner);
     }
 
+    void FSocketHierarchy::CloseOpenDragTransaction()
+    {
+        if (HandleState.bHandleTransactionOpen || HandleState.bGizmoTransactionOpen)
+        {
+            HandleState.bHandleTransactionOpen = false;
+            HandleState.bGizmoTransactionOpen = false;
+            if (Transactions != nullptr)
+            {
+                Transactions->CommitTransaction();
+            }
+        }
+    }
+
     void FSocketHierarchy::EndShapeTransaction()
     {
         // Only the offset moved, so the bones carrying sockets and both generations stay as they were.

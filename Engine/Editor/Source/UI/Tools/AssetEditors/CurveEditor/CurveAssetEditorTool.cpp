@@ -1,4 +1,4 @@
-#include "CurveAssetEditorTool.h"
+﻿#include "CurveAssetEditorTool.h"
 
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "UI/Properties/PropertyTable.h"
@@ -27,11 +27,7 @@ namespace Lumina
         // Canvas edits bypass the PropertyTable, so they dirty the package and rebuild the tree here.
         CurveWidget.SetOnModified([this]()
         {
-            if (Asset.IsValid() && Asset->GetPackage() != nullptr)
-            {
-                Asset->GetPackage()->MarkDirty();
-            }
-
+            NotifyAssetDataChanged();
             PropertyTable.MarkDirty();
         });
 
@@ -44,6 +40,26 @@ namespace Lumina
         {
             PropertyTable.DrawTree();
         });
+    }
+
+    void FCurveAssetEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
+    {
+        if (CCurveAsset* CurveAsset = GetAsset<CCurveAsset>())
+        {
+            CurveAsset->Curve.SortKeys();
+            CurveAsset->Curve.ComputeAutoTangents();
+            PropertyTable.MarkDirty();
+        }
+    }
+
+    void FCurveAssetEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+        if (CCurveAsset* CurveAsset = GetAsset<CCurveAsset>())
+        {
+            CurveAsset->Curve.SortKeys();
+            CurveAsset->Curve.ComputeAutoTangents();
+        }
     }
 
     void FCurveAssetEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& /*InDockspaceSize*/) const

@@ -39,6 +39,14 @@ namespace Lumina
         StopPreview();
     }
 
+    void FAudioStreamEditorTool::OnAssetDataChangedExternally()
+    {
+        FAssetEditorTool::OnAssetDataChangedExternally();
+        StopPreview();
+        ScrubTime = 0.0f;
+        BuildPeaks();
+    }
+
     void FAudioStreamEditorTool::BuildPeaks()
     {
         bPeaksValid = false;

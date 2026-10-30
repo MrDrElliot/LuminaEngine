@@ -4,6 +4,7 @@
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
 {
@@ -282,10 +283,9 @@ namespace Lumina
             DrawList->AddRectFilled(Min, Max, kExpandBarHover, Style.Rounding, ImDrawFlags_RoundCornersBottom);
         }
 
-        const char*  Icon     = bExpanded ? LE_ICON_CHEVRON_UP : LE_ICON_CHEVRON_DOWN;
-        const ImVec2 IconSize = ImGui::CalcTextSize(Icon);
-        const ImVec2 Center((Min.x + Max.x) * 0.5f, ExpandBarTop + kExpandBarHeight * 0.5f);
-        DrawList->AddText(Center - IconSize * 0.5f, ImGui::GetColorU32(bExpandBarHovered ? ImGuiCol_Text : ImGuiCol_TextDisabled), Icon);
+        const char* Icon = bExpanded ? LE_ICON_CHEVRON_UP : LE_ICON_CHEVRON_DOWN;
+        const ImVec2 IconPos = ImGuiX::CenteredIconPos(Icon, ImVec2(Min.x, ExpandBarTop), ImVec2(Max.x, ExpandBarTop + kExpandBarHeight));
+        DrawList->AddText(IconPos, ImGui::GetColorU32(bExpandBarHovered ? ImGuiCol_Text : ImGuiCol_TextDisabled), Icon);
     }
 
     void FGraphNodeBuilder::SetStage(EStage NewStage)

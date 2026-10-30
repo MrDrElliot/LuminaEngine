@@ -216,8 +216,7 @@ namespace Lumina
             }
             EndTransaction("Rename");
 
-            const SNameComponent* NameComp = Registry.TryGet<SNameComponent>(Data.Entity);
-            Tree.Get<FTreeNodeDisplay>(Item).DisplayName = EditorEntityUtils::MakeOutlinerDisplayName(NameComp, Data.Entity).c_str();
+            EditorEntityUtils::RenameOutlinerRow(Tree.Get<FTreeNodeDisplay>(Item), NewName);
             Asset->GetPackage()->MarkDirty();
         };
 
@@ -562,11 +561,21 @@ namespace Lumina
         if (CPrefab* Prefab = GetPrefab())
         {
             const uint32 ResolveCount = Prefab->GetVariantResolveCount();
-            if (ResolveCount != LastVariantResolveCount)
+            if (ResolveCount != LastVariantResolveCount && IsUnsavedDocument())
+            {
+                if (!bParentChangeDeferred)
+                {
+                    bParentChangeDeferred = true;
+                    ImGuiX::Notifications::NotifyInfo("The parent of '{0}' changed. Its edits are kept, and the view refreshes after you save.", Prefab->GetName().c_str());
+                }
+            }
+            else if (ResolveCount != LastVariantResolveCount)
             {
                 LastVariantResolveCount = ResolveCount;
+                bParentChangeDeferred = false;
                 LoadPrefabIntoPreviewWorld();
                 OutlinerListView.MarkTreeDirty();
+                ClearTransactionHistory();
             }
         }
 
@@ -1329,12 +1338,12 @@ namespace Lumina
         DrawHelpTextRow("Components",
             "Add Component on a selected entity to attach. Drag an asset directly onto the entity row "
             "in the outliner for shortcut adds (e.g. drop a static mesh to add a SStaticMeshComponent).");
-        DrawHelpTextRow("Nested Prefabs",
-            "Drag another prefab asset into the outliner to instance it as a child. Property overrides "
-            "are per-instance; structural changes happen on the source prefab.");
+        DrawHelpTextRow("Dropping Prefabs",
+            "Dropping another prefab into the outliner copies its entities in. Prefabs do not nest, so "
+            "the copies are no longer linked to the source prefab.");
         DrawHelpTextRow("Save",
-            "Ctrl+S commits all entities, components and overrides to the prefab. Existing instances "
-            "in worlds reload on next open or with Reload Asset.");
+            "Ctrl+S commits all entities, components and overrides to the prefab, then refreshes its "
+            "placed copies in loaded worlds and its variants.");
     }
 
     void FPrefabEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
