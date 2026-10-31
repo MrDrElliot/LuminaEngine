@@ -196,6 +196,9 @@ namespace Lumina::SessionOps
     // Saves every dirty package as File > Save All does; false when any refused, which OutFailedPaths names.
     EDITOR_API bool SaveAll(uint32& OutSaved, TVector<FString>& OutFailedPaths, FString& OutError);
 
+    // Through the asset's open editor when it has one, so edits still in its preview reach the file and its instances refresh.
+    EDITOR_API bool SaveAsset(CObject* Asset, FString& OutError);
+
     enum class EQuitUnsaved : uint8
     {
         Refuse,

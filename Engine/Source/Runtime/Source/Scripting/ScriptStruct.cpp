@@ -257,16 +257,67 @@ namespace Lumina
             return static_cast<FScriptDynamicArray*>(Vector)->Bytes.data();
         }
 
+        // A raw byte move breaks an element that points into itself, such as an inline instanced struct, so a reallocation copies each one through its ops.
+        template<typename TCopyInto>
+        TVector<uint8> GrowCapacity(TVector<uint8>& Bytes, SIZE_T Stride, SIZE_T WantedBytes, TCopyInto&& CopyInto)
+        {
+            TVector<uint8> Retired;
+            if (WantedBytes <= Bytes.capacity())
+            {
+                return Retired;
+            }
+
+            TVector<uint8> Grown;
+            Grown.reserve(Math::Max<SIZE_T>(WantedBytes, Bytes.capacity() * 2));
+            Grown.resize(Bytes.size());
+            for (SIZE_T Offset = 0; Offset + Stride <= Bytes.size(); Offset += Stride)
+            {
+                CopyInto(Grown.data() + Offset, Bytes.data() + Offset);
+            }
+
+            Retired = Move(Bytes);
+            Bytes = Move(Grown);
+            return Retired;
+        }
+
+        // Run after the caller is done reading a source that may have lived in the old block.
+        template<typename TDestruct>
+        void DestroyRetired(TVector<uint8>& Retired, SIZE_T Stride, TDestruct&& Destruct)
+        {
+            for (SIZE_T Offset = 0; Offset + Stride <= Retired.size(); Offset += Stride)
+            {
+                Destruct(Retired.data() + Offset);
+            }
+        }
+
+        TVector<uint8> GrowElements(FScriptDynamicArray& Array, SIZE_T WantedBytes)
+        {
+            const FScriptArrayElementDesc* Element = Array.Element;
+            return GrowCapacity(Array.Bytes, Element->Size, WantedBytes, [Element](void* Dst, const void* Src)
+            {
+                Element->ConstructElement(Dst);
+                Element->CopyElement(Dst, Src);
+            });
+        }
+
+        void DestroyRetiredElements(const FScriptDynamicArray& Array, TVector<uint8>& Retired)
+        {
+            const FScriptArrayElementDesc* Element = Array.Element;
+            DestroyRetired(Retired, Element->Size, [Element](void* Value) { Element->DestructElement(Value); });
+        }
+
         void ArrayPushBack(void* Vector, const void* InElement)
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
             const uint32 ES = Array->Element ? Array->Element->Size : 0;
             if (ES == 0) { return; }
             const SIZE_T Old = Array->Bytes.size();
+            TVector<uint8> Retired = GrowElements(*Array, Old + ES);
             Array->Bytes.resize(Old + ES);
             uint8* Slot = Array->Bytes.data() + Old;
             Array->Element->ConstructElement(Slot);
             if (InElement != nullptr) { Array->Element->CopyElement(Slot, InElement); }
+            DestroyRetiredElements(*Array, Retired);
         }
 
         void ArrayRemoveAt(void* Vector, SIZE_T Index)
@@ -305,6 +356,8 @@ namespace Lumina
             const SIZE_T Count = ArraySize(Vector);
             if (NewCount > Count)
             {
+                TVector<uint8> Retired = GrowElements(*Array, NewCount * ES);
+                DestroyRetiredElements(*Array, Retired);
                 Array->Bytes.resize(NewCount * ES);
                 uint8* Data = Array->Bytes.data();
                 for (SIZE_T Index = Count; Index < NewCount; ++Index)
@@ -327,7 +380,11 @@ namespace Lumina
         {
             FScriptDynamicArray* Array = static_cast<FScriptDynamicArray*>(Vector);
             const uint32 ES = Array->Element ? Array->Element->Size : 0;
-            if (ES > 0) { Array->Bytes.reserve(NewCount * ES); }
+            if (ES > 0)
+            {
+                TVector<uint8> Retired = GrowElements(*Array, NewCount * ES);
+                DestroyRetiredElements(*Array, Retired);
+            }
         }
 
         void ArraySwap(void* Vector, SIZE_T A, SIZE_T B)
@@ -480,6 +537,22 @@ namespace Lumina
             return nullptr;
         }
 
+        TVector<uint8> GrowPairs(FScriptDynamicMap& Map, SIZE_T WantedBytes)
+        {
+            const FScriptMapElementDesc* Desc = Map.Desc;
+            return GrowCapacity(Map.Bytes, Desc->PairStride, WantedBytes, [Desc](void* Dst, const void* Src)
+            {
+                Desc->ConstructPair(Dst);
+                Desc->CopyPair(Dst, Src);
+            });
+        }
+
+        void DestroyRetiredPairs(const FScriptDynamicMap& Map, TVector<uint8>& Retired)
+        {
+            const FScriptMapElementDesc* Desc = Map.Desc;
+            DestroyRetired(Retired, Desc->PairStride, [Desc](void* Pair) { Desc->DestructPair(Pair); });
+        }
+
         void* MapInsert(void* InMap, const void* KeyPtr, const void* ValuePtr)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
@@ -493,11 +566,13 @@ namespace Lumina
             }
 
             const SIZE_T Old = Map->Bytes.size();
+            TVector<uint8> Retired = GrowPairs(*Map, Old + Desc->PairStride);
             Map->Bytes.resize(Old + Desc->PairStride);
             uint8* Pair = Map->Bytes.data() + Old;
             Desc->ConstructPair(Pair);
             if (KeyPtr != nullptr)   { Desc->Key.CopyElement(Desc->KeyAt(Pair), KeyPtr); }
             if (ValuePtr != nullptr) { Desc->Value.CopyElement(Desc->ValueAt(Pair), ValuePtr); }
+            DestroyRetiredPairs(*Map, Retired);
             return Desc->ValueAt(Pair);
         }
 
@@ -543,7 +618,11 @@ namespace Lumina
         void MapReserve(void* InMap, SIZE_T Count)
         {
             FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
-            if (Map->Desc && Map->Desc->PairStride > 0) { Map->Bytes.reserve(Count * Map->Desc->PairStride); }
+            if (Map->Desc && Map->Desc->PairStride > 0)
+            {
+                TVector<uint8> Retired = GrowPairs(*Map, Count * Map->Desc->PairStride);
+                DestroyRetiredPairs(*Map, Retired);
+            }
         }
 
         void MapForEach(const void* InMap, void (*Visitor)(const void*, void*, void*), void* UserData)

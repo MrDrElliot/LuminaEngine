@@ -772,6 +772,11 @@ namespace Lumina::ImGuiX
         return PassSearchFilter(FStringView(Filter.InputBuf), Text);
     }
 
+    bool IsSearchableComboOpen(const char* StrId)
+    {
+        return ImGui::IsPopupOpen(ImHashStr("##ComboPopup", 0, ImGui::GetID(StrId)), ImGuiPopupFlags_None);
+    }
+
     int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon, FFixedString* OutCreatedText)
     {
         int32 Result = Constants::kIndexNone;
@@ -793,8 +798,7 @@ namespace Lumina::ImGuiX
         }
 
         // Measured only while open, and ImGui honors a size constraint rather than forcing the button width.
-        const ImGuiID PopupId = ImHashStr("##ComboPopup", 0, ComboId);
-        if (ImGui::IsPopupOpen(PopupId, ImGuiPopupFlags_None))
+        if (IsSearchableComboOpen(StrId))
         {
             float ContentWidth = 0.0f;
             for (int32 i = 0; i < ItemCount; ++i)

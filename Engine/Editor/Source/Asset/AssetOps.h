@@ -50,6 +50,12 @@ namespace Lumina::AssetOps
     // Every file at or under VirtualPath that is read-only on disk, which move, rename and delete leave alone.
     NODISCARD EDITOR_API TVector<FString> FindReadOnlyFiles(FStringView VirtualPath);
 
+    // A single path segment every platform accepts, with no separator that would turn a rename into a move into a folder.
+    NODISCARD EDITOR_API bool IsValidLeafName(FStringView Name, FString* OutReason = nullptr);
+
+    // The prefab variants whose parent is the prefab at AssetPath, comma separated, or empty when it has none.
+    NODISCARD EDITOR_API FString FindDependentPrefabVariants(FStringView AssetPath);
+
     // Rename and move are one operation, since both only change the full path.
     NODISCARD EDITOR_API FPathOpResult MovePath(FStringView OldPath, FStringView NewPath);
 

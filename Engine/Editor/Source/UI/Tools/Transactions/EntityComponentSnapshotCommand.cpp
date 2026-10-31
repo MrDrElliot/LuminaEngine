@@ -47,13 +47,26 @@ namespace Lumina
         }
     }
 
+    CStruct* FEntityComponentSnapshotCommand::ResolveType() const
+    {
+        if (Ops != nullptr && Ops->GetTypeID() != ECS::InvalidComponentTypeID)
+        {
+            if (CStruct* Current = ECS::FComponentTypeRegistry::Get().GetInfo(Ops->GetTypeID()).GetStruct())
+            {
+                return Current;
+            }
+        }
+        return ComponentType;
+    }
+
     void FEntityComponentSnapshotCommand::Finalize()
     {
         TVector<TVector<FName>> Unused;
         Capture(After, Unused);
 
         CWorld* W = World.Get();
-        if (W == nullptr || Ops == nullptr)
+        CStruct* Type = ResolveType();
+        if (W == nullptr || Ops == nullptr || Type == nullptr)
         {
             return;
         }
@@ -71,23 +84,23 @@ namespace Lumina
             const bool bPresentNow = Ops->Has(Registry, Entity) != 0;
             if (PresentBefore[i] && !bPresentNow)
             {
-                CPrefab::NoteComponentRemoved(Registry, Entity, ComponentType);
+                CPrefab::NoteComponentRemoved(Registry, Entity, Type);
             }
             else if (!PresentBefore[i] && bPresentNow)
             {
-                CPrefab::NoteComponentAdded(Registry, Entity, ComponentType);
+                CPrefab::NoteComponentAdded(Registry, Entity, Type);
             }
 
             if (bPresentNow)
             {
-                CPrefab::RecaptureComponentOverrides(Registry, Entity, ComponentType);
+                CPrefab::RecaptureComponentOverrides(Registry, Entity, Type);
             }
         }
 
         OverridesAfter.clear();
         for (ECS::FEntity Entity : Entities)
         {
-            OverridesAfter.push_back(CPrefab::GetComponentOverrides(Registry, Entity, ComponentType));
+            OverridesAfter.push_back(CPrefab::GetComponentOverrides(Registry, Entity, Type));
         }
     }
 
@@ -99,7 +112,8 @@ namespace Lumina
         OutOverrides.clear();
 
         CWorld* W = World.Get();
-        if (W == nullptr || ComponentType == nullptr || Ops == nullptr)
+        CStruct* Type = ResolveType();
+        if (W == nullptr || Type == nullptr || Ops == nullptr)
         {
             return;
         }
@@ -111,7 +125,7 @@ namespace Lumina
 
         for (ECS::FEntity Entity : Entities)
         {
-            OutOverrides.push_back(Registry.IsValid(Entity) ? CPrefab::GetComponentOverrides(Registry, Entity, ComponentType) : TVector<FName>());
+            OutOverrides.push_back(Registry.IsValid(Entity) ? CPrefab::GetComponentOverrides(Registry, Entity, Type) : TVector<FName>());
             const bool bPresent = Registry.IsValid(Entity) && Ops->Has(Registry, Entity) != 0;
 
             int32 Size = AbsentComponent;
@@ -129,7 +143,7 @@ namespace Lumina
             const int64 DataStart = Ar.Tell();
             if (Component != nullptr)
             {
-                ComponentType->SerializeProperties(Ar, Component);
+                Type->SerializeProperties(Ar, Component);
             }
             const int64 DataEnd = Ar.Tell();
 
@@ -144,8 +158,10 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        CWorld* W = World.Get();   // null once the map is closed/swapped -> a stale undo safely no-ops
-        if (W == nullptr || ComponentType == nullptr || Ops == nullptr || In.empty())
+        // Null once the map is closed or swapped, so a stale undo no-ops.
+        CWorld* W = World.Get();
+        CStruct* Type = ResolveType();
+        if (W == nullptr || Type == nullptr || Ops == nullptr || In.empty())
         {
             return;
         }
@@ -156,7 +172,7 @@ namespace Lumina
         FObjectProxyArchiver Ar(Reader, true);
 
         // Same reason FEntityTransformCommand re-tags, a restored local transform needs a resolve.
-        const bool bTransformRestored = (ComponentType == STransformComponent::StaticStruct());
+        const bool bTransformRestored = (Type == STransformComponent::StaticStruct());
 
         for (SIZE_T Index = 0; Index < Entities.size(); ++Index)
         {
@@ -183,7 +199,7 @@ namespace Lumina
                 void* Component = Ops->Emplace(Registry, Entity);
                 if (Component != nullptr)
                 {
-                    ComponentType->SerializeProperties(Ar, Component);
+                    Type->SerializeProperties(Ar, Component);
 
                     // The write above is a raw store, so the registry signal has to be raised by hand.
                     Ops->Patch(Registry, Entity);
@@ -195,7 +211,7 @@ namespace Lumina
 
                     if (Index < Overrides.size())
                     {
-                        CPrefab::RestoreComponentOverrides(Registry, Entity, ComponentType, Overrides[Index]);
+                        CPrefab::RestoreComponentOverrides(Registry, Entity, Type, Overrides[Index]);
                     }
                 }
             }

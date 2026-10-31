@@ -1,51 +1,80 @@
 ﻿#pragma once
-#include "Physics/Ray/RayCast.h"
-
-#include "World/ECS/Registry.h"
-
 
 #define USE_IMGUI_API
 #include <imgui.h>
 #include "EditorTool.h"
 #include "FSceneEditorTool.h"
 #include "ImGuizmo.h"
-#include "Core/Delegates/Delegate.h"
-#include "Core/Object/Class.h"
 #include "NavMeshEditMode.h"
 #include "WorldEditorMode.h"
+#include "Core/Delegates/Delegate.h"
+#include "Core/Object/Class.h"
+#include "Events/MouseCodes.h"
+#include "Input/InputMode.h"
 #include "Memory/Memory.h"
+#include "Physics/Ray/RayCast.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Widgets/CategorizedPicker.h"
-#include "World/Entity/Components/NameComponent.h"
-#include "World/Entity/Systems/EntitySystem.h"
 #include "World/World.h"
 #include "World/WorldContext.h"
-#include "Events/MouseCodes.h"
-#include "Input/InputMode.h"
+#include "World/ECS/Registry.h"
+#include "World/Entity/Components/NameComponent.h"
+#include "World/Entity/Systems/EntitySystem.h"
 
 namespace Lumina
 {
     class CPrefab;
     class CStaticMesh;
+
     DECLARE_MULTICAST_DELEGATE(FOnGamePreview);
-    
-    // Base class for displaying and manipulating scenes.
+
     class FWorldEditorTool : public FSceneEditorTool, public IEditorModeContext
     {
         using Super = FSceneEditorTool;
 
     public:
 
-        // Public so FEditorUI::FindTool can reach the type id from outside, as other tools declare it.
         LUMINA_SINGLETON_EDITOR_TOOL(FWorldEditorTool)
 
-        
         FWorldEditorTool(IEditorToolContext* Context, CWorld* InWorld);
         ~FWorldEditorTool() noexcept override = default;
         LE_NO_COPYMOVE(FWorldEditorTool);
 
         void OnInitialize() override;
+        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
+        void Update(const FUpdateContext& UpdateContext) override;
+        bool OnEvent(FEvent& Event) override;
+        void OnSave() override;
+        void SetWorld(CWorld* InWorld) override;
+        bool IsUnsavedDocument() override;
+        NODISCARD bool IsAssetEditorTool() const override;
+        bool ShouldGenerateThumbnailOnSave() const override { return true; }
+        FName GetToolName() const override;
+        const char* GetTitlebarIcon() const override;
+        void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const override;
+        void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
+        void DrawToolMenu(const FUpdateContext& UpdateContext) override;
+        void DrawHelpMenu() override;
+        void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;
+        void DrawViewModeExtraItems() override;
+        bool IsViewportPlaying() const override;
+        void PersistGizmoSettings() override;
+        void DrawViewportToolbarPlayControls(float ButtonSize) override;
+        void DrawViewportToolbarModeSelector(float ButtonSize) override;
+
+        // The ejected flycam is the editor's camera, so it gets the grid, view gizmo and F-to-focus back.
+        NODISCARD bool HasEditorCameraControl() const override { return FEditorTool::HasEditorCameraControl() || (bEjectedFromPlay && HasWorld()); }
+
+        void BeginModeTransaction() override { BeginTransaction(); }
+        void EndModeTransaction(const char* Name) override { EndTransaction(FName(Name)); }
+        void BeginModeCreationTransaction() override { BeginCreationTransaction(); }
+        ECS::FEntity GetModeSelectionFocus() const override { return GetLastSelectedEntity(); }
+        void SetModeSelection(ECS::FEntity Entity) override { SetSingleSelectedEntity(Entity); }
+
+        void OnEntityCreated(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
+        void OnEntityScriptChanged(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         // Hides the grid, billboards, AABBs and gizmos so the viewport shows what a runtime camera would.
         void ToggleGameViewMode();
@@ -53,35 +82,6 @@ namespace Lumina
         // Swaps in a transient world holding the shadow range demo, discarding whatever world was open.
         void OpenShadowRangeDemo();
 
-        /** Frames the default scene's floor and sphere. */
-        void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const override;
-        void OnDeinitialize(const FUpdateContext& UpdateContext) override;
-        bool ShouldGenerateThumbnailOnSave() const override { return true; }
-        
-        void Update(const FUpdateContext& UpdateContext) override;
-
-        bool OnEvent(FEvent& Event) override;
-        
-        void OnEntityCreated(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
-        FName GetToolName() const override;
-        const char* GetTitlebarIcon() const override;
-        void DrawToolMenu(const FUpdateContext& UpdateContext) override;
-        void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
-
-        void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;
-        void DrawHelpMenu() override;
-
-        // The viewport overlay toolbar is shared (FSceneEditorTool); these hooks add the world's
-        // play/simulate controls, editor-mode selector, view-mode extras, and config section.
-        bool IsViewportPlaying() const override;
-        void PersistGizmoSettings() override;
-        void DrawViewportToolbarPlayControls(float ButtonSize) override;
-        void DrawViewportToolbarModeSelector(float ButtonSize) override;
-        void DrawViewModeExtraItems() override;
-
-        // GetComponentEditTargets / ApplyAddComponentToTargets / DrawAddableComponentList and the
-        // CreateEntity* helpers now live in FSceneEditorTool.
         void PushSaveAsAssetModal();
         void PushCreatePrefabFromSelectionModal();
         void PushCreatePrefabModalForEntity(ECS::FEntity Entity);
@@ -90,234 +90,188 @@ namespace Lumina
         EDITOR_API CPrefab* CreatePrefabFromSelection(FStringView Folder, FStringView Name, FFixedString& OutError);
         CPrefab* CreatePrefabFromRoots(const TVector<ECS::FEntity>& Roots, const FVector3& Pivot, FStringView Folder, FStringView Name, FFixedString& OutError);
         TVector<ECS::FEntity> GatherPrefabSelectionRoots() const;
-
-        // Prefab instance context-menu actions, shared between the outliner and viewport menus.
         EDITOR_API void ResyncPrefabInstance(ECS::FEntity InstanceRoot);
         EDITOR_API void DetachPrefabInstance(ECS::FEntity InstanceRoot);
 
-        // Script context-menu helpers, shared between the outliner and viewport menus. The inline
-        // assign/change dropdown is always offered; "Remove Script" only when one is present.
+        // The assign or change dropdown is always offered, Remove Script only when a script is present.
         void DrawScriptAttachMenuItems(ECS::FEntity Entity);
-
-        // The Add Component submenu, filed by where each component comes from the way the script submenu is.
         void DrawAddComponentMenu(ECS::FEntity Entity);
-        void AttachScriptToEntity(ECS::FEntity Entity, const FString& ScriptClass);  // C# class name; attaches or swaps
+        void AttachScriptToEntity(ECS::FEntity Entity, const FString& ScriptClass);
         void RemoveScriptFromEntity(ECS::FEntity Entity);
 
-        // Refreshes the outliner when a script component is added/removed (the row's script toggle).
-        void OnEntityScriptChanged(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
-		void OnSave() override;
-
-        // The world editor edits the live CWorld in place (not held as the FAssetEditorTool Asset);
-        // dirtying targets the world's own package.
-        CPackage* GetScenePackage() const override;
-
-        NODISCARD bool IsAssetEditorTool() const override;
         FOnGamePreview& GetOnPreviewStartRequestedDelegate() { return OnGamePreviewStartRequested; }
         FOnGamePreview& GetOnPreviewStopRequestedDelegate() { return OnGamePreviewStopRequested; }
 
-        // Multiplayer PIE: player 1 runs in the main viewport, players 2..N get Game Preview pop-ups.
-        // FEditorUI reads these on the OnGamePreviewStartRequested broadcast to spawn the extra worlds + tools.
         NODISCARD int32 GetPIEPlayerCount() const { return PlaySettings.NumPlayers; }
         NODISCARD CWorld* GetPIESourceWorld() const { return ProxyWorld.Get(); }
-        /** Net mode for a player index, derived from PlaySettings (player 0 is the server when a server mode is chosen). */
+
+        // Player zero is the server when a server mode is chosen.
         NODISCARD ENetMode ResolvePlayerNetMode(int32 PlayerIndex) const;
 
         void NotifyPlayInEditorStart();
         void NotifyPlayInEditorStop();
+        bool HasSimulatingWorld() const { return bSimulatingWorld || bGamePreviewRunning; }
+        EDITOR_API void StopAllSimulations();
 
-        void SetWorld(CWorld* InWorld) override;
-        
-        void OnEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
-        
-        void DrawSimulationControls(float ButtonSize);
+        // Play in editor for a caller outside the tool; false when a session is already running.
+        EDITOR_API bool StartPlayInEditor();
 
-        // Pause/Resume for an in-progress Play or Simulate session; sits in the Play button's slot.
-        void DrawPauseResumeButton(const ImVec2& ButtonSize);
+        // Players clamps to 1..MaxPlayers, and every player past the first is a client of player one.
+        EDITOR_API void SetPlayNetwork(int32 NumPlayers, ENetMode NetMode);
+
         EDITOR_API bool IsPlaySessionPaused() const;
         EDITOR_API void SetPlaySessionPaused(bool bPause);
-
-        // Eject/Possess, PIE only.
-        void DrawEjectButton(const ImVec2& ButtonSize);
         NODISCARD bool IsEjectedFromPlay() const { return bEjectedFromPlay; }
         void SetEjectedFromPlay(bool bEject);
         void TickEjectState();
 
-        // The ejected flycam is the editor's camera, so it gets the grid, view gizmo and F-to-focus back.
-        NODISCARD bool HasEditorCameraControl() const override
-        {
-            return FEditorTool::HasEditorCameraControl() || (bEjectedFromPlay && HasWorld());
-        }
+        void DrawSimulationControls(float ButtonSize);
+        void DrawPauseResumeButton(const ImVec2& ButtonSize);
+        void DrawEjectButton(const ImVec2& ButtonSize);
 
-        // QoL viewport actions, all bound from the Update() key handler. Each begins/ends
-        // a transaction internally where appropriate so they compose with undo/redo.
+        // Shift and a left drag while simulating springs the grabbed body toward the cursor, as the physics asset editor does.
+        void UpdateSimulationGrab(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, bool bInViewportHovered);
+        bool IsSimulationGrabActive() const { return GrabbedTarget.IsSet(); }
+
         void GroupSelectedEntities();
         void DropSelectionToFloor();
 
-        /** Selection takes the editor camera's placement; rotation only when bRotationOnly. */
+        // The selection takes the editor camera's placement, or only its rotation with bRotationOnly.
         void AlignSelectionToView(bool bRotationOnly);
-
-        /** The inverse, so a camera entity can be checked through its own framing. */
         void AlignViewToSelection();
 
-        /** Numeric relative transform, applied to every selected entity in one transaction. */
         void OpenTransformDialog();
         void ApplyTransformDialog();
         void FrameAllEntities();
         void CopyTransformFromLastSelected();
         void PasteTransformToSelection();
-
-        // Godot's dialog composes one delta and multiplies it onto each selection, before or after.
-        enum class ETransformDialogOrder : uint8 { Pre, Post };
-
-        struct FTransformDialogState
-        {
-            FVector3              Translate = FVector3(0.0f);
-            FVector3              RotateDegrees = FVector3(0.0f);
-            FVector3              Scale = FVector3(1.0f);
-            ETransformDialogOrder Order = ETransformDialogOrder::Post;
-        };
-        FTransformDialogState TransformDialog;
-
         void SaveCameraBookmark(int32 Slot);
         void RecallCameraBookmark(int32 Slot);
         void DrawCursorWorldPositionOverlay(ImVec2 ViewportOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera);
         void DrawEntityDebugOverlay(ImVec2 ViewportOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera);
         void DrawOffscreenSelectionIndicators(ImVec2 ViewportOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera);
-        // Net interest-management overlay: the spatial grid (occupied cells), per-client AOI circles, and
-        // relevant entities colored by LOD tier. Draws into the world if it has a live FNetWorldState.
-        
-        bool HasSimulatingWorld() const { return bSimulatingWorld || bGamePreviewRunning; }
-
-        // Shift + left-drag while simulating: springs the grabbed body toward the cursor so a running
-        // simulation can be poked at without stopping it. Mirrors the physics asset editor's grab.
-        void UpdateSimulationGrab(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, bool bInViewportHovered);
-
-        bool IsSimulationGrabActive() const { return GrabbedTarget.IsSet(); }
-
-        EDITOR_API void StopAllSimulations();
-
-        // Play-in-editor for a caller outside the tool; false when a session is already running.
-        EDITOR_API bool StartPlayInEditor();
-
-        // Players clamps to 1..MaxPlayers, and every player past the first is a client of player one.
-        EDITOR_API void SetPlayNetwork(int32 NumPlayers, ENetMode NetMode);
-        
-        bool IsUnsavedDocument() override;
-
-        // IEditorModeContext: lets an active mode wrap an interaction in the undo system.
-        void BeginModeTransaction() override { BeginTransaction(); }
-        void EndModeTransaction(const char* Name) override { EndTransaction(FName(Name)); }
-        void BeginModeCreationTransaction() override { BeginCreationTransaction(); }
-        ECS::FEntity GetModeSelectionFocus() const override { return GetLastSelectedEntity(); }
-        void SetModeSelection(ECS::FEntity Entity) override { SetSingleSelectedEntity(Entity); }
-
 
     protected:
 
         void OnPostUndoRedo() override;
 
-        // Block undo/redo during PIE: transactions target the editor source world, not the running game.
+        // Undo is blocked during play, since its transactions target the editor's source world.
         bool AllowsUndoRedo() const override;
 
-        // Selection model + outliner engine live in FSceneEditorTool; the world editor only
-        // supplies this hook (the base selection methods call it on focus change).
         void OnSelectionChanged() override { bDetailsDirty = true; bSelectionTransformRefreshPending = true; }
+        CPackage* GetScenePackage() const override;
+        NODISCARD bool SupportsSceneFolders() const override { return true; }
+        void DrawOutlinerWorldSelector() override;
+        void HandleOutlinerEmptyAreaDrop() override;
+        void HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget, const FTransform* SpawnTransform = nullptr) override;
+        void OnDropSpawnedEntity(ECS::FEntity Entity) override;
 
         void SetWorldPlayInEditor(bool bShouldPlay);
         void SetWorldNewSimulate(bool bShouldSimulate);
-
-        /** Play-in-editor settings popup (player count + net mode), opened from the play controls. */
         void DrawPlaySettingsPopup();
 
-        /** Starts the game in its own process against this project, with no editor around it. */
+        // Starts the game in its own process against this project, with no editor around it.
         void LaunchStandalone();
 
-        /** Rebind OnEntityCreated/OnEntityDestroyed observers to the observed world's registry. */
         void RebindRegistryObservers();
         void UnbindRegistryObservers();
 
-        // Inspect-only world switching: point the outliner/details/selection at NewWorld without touching
-        // the viewport or PIE lifecycle (those stay anchored on World). Pass null (or World) to follow World
-        // again. Unbinds the old observers, clears selection/details/tree, rebinds, and resyncs selection.
+        // Points the outliner, details and selection at NewWorld without touching the viewport or play; null follows World.
         void SetObservedWorld(CWorld* NewWorld);
 
-        // Outliner row that lists every live play world (server/clients) when more than one exists, so the
-        // user can switch which world's scene graph is shown. Calls SetObservedWorld on pick.
-        void DrawOutlinerWorldSelector() override;
-
-        /** Engine-driven world travel: drop everything tied to OldWorld and re-bind to NewWorld. ProxyWorld is preserved. */
+        // Drops everything tied to OldWorld and rebinds to NewWorld, keeping ProxyWorld so play can still restore the source map.
         void OnWorldTraveled(CWorld* OldWorld, CWorld* NewWorld);
 
-        /** Gameplay quit (Game.Quit): raised mid-world-tick, so only flag it; Update ends PIE at FrameStart. */
+        // Raised mid world tick, so it only flags and Update ends play at FrameStart.
         void OnGameQuitRequested() { bGameQuitRequested = true; }
-
-        // The Scene Graph panel + shared Add menu + filter UI + the incremental outliner engine now
-        // live in FSceneEditorTool. The world editor supplies the empty-area drop + prefab instantiation
-        // hooks and drives the tree via its registry observers below.
-        void HandleOutlinerEmptyAreaDrop() override;
 
         void HandleEntityEditorDragDrop(FTreeListView& Tree, ECS::FEntity DropItem);
 
-        /** Outliner folders are a world-editor feature; the prefab editor's rows stay pure entities. */
-        NODISCARD bool SupportsSceneFolders() const override { return true; }
-
-        /** Drop onto a folder row: file entities, reparent a folder, or spawn a dropped asset into it. */
+        // A drop onto a folder row files entities, reparents a folder, or spawns a dropped asset into it.
         void HandleFolderDragDrop(uint32 FolderID);
-        void HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget, const FTransform* SpawnTransform = nullptr) override;
-        void OnDropSpawnedEntity(ECS::FEntity Entity) override;
 
         void DrawWorldSettings(bool bFocused);
         void DrawSystemsPanel(bool bFocused);
         void DrawSelectedSystemDetails(const CWorld::FSystemInfo& Info, const TVector<FSystemScheduleEntry>& Schedule);
 
-
     private:
 
-        /** Register the tool's keyboard shortcuts with the FEditorAction registry.
-         *  Called from OnInitialize. */
-        void RegisterEditorActions();
+        enum class ETransformDialogOrder : uint8 { Pre, Post };
 
-        /** Build the editor-mode registry. Selection mode is always first; new modes
-         *  are added by appending to EditorModes here. */
-        void RegisterEditorModes();
-
-        /** Current viewport mode. Always non-null after OnInitialize. */
-        NODISCARD IWorldEditorMode* GetActiveMode() const;
-
-        /** Switch the active mode by registry index. Drives OnEnter/OnExit and
-         *  clears any half-finished gizmo / vertex-snap state from the prior mode. */
-        void SetActiveMode(int32 NewIndex);
-
-        bool CanDuplicateEntity(ECS::FEntity Entity) const override;
-
-    private:
-
-        // How far a Shift drag has carried the camera, taken back off the gizmo's target.
-        FVector3 GizmoFollowOffset = FVector3(0.0f);
+        // One delta composed once and multiplied onto each selected entity, before or after its own transform.
+        struct FTransformDialogState
+        {
+            FVector3                Translate = FVector3(0.0f);
+            FVector3                RotateDegrees = FVector3(0.0f);
+            FVector3                Scale = FVector3(1.0f);
+            ETransformDialogOrder   Order = ETransformDialogOrder::Post;
+        };
 
         struct FSelectionBox
         {
-            bool bActive = false;
-            ImVec2 Start;
-            ImVec2 Current;
-        } SelectionBox;
-        
+            bool    bActive = false;
+            ImVec2  Start;
+            ImVec2  Current;
+        };
+
+        struct FPlayInEditorSettings
+        {
+            int32       NumPlayers = 1;
+            ENetMode    NetMode = ENetMode::Standalone;
+
+            // A separate game process reads assets off disk, so it opens the edited map only once saved.
+            bool        bStandaloneCurrentMap = true;
+            bool        bStandaloneSaveFirst = true;
+            bool        bStandaloneBuild = true;
+        };
+
+        void RegisterEditorActions();
+
+        // Selection mode is always first; a new mode is added by appending to EditorModes here.
+        void RegisterEditorModes();
+
+        NODISCARD IWorldEditorMode* GetActiveMode() const;
+
+        // Also clears any half-finished gizmo or vertex snap left by the previous mode.
+        void SetActiveMode(int32 NewIndex);
+
+        // A mode holds handles into the world it entered, so every world swap exits it first and re-enters it after.
+        void ExitActiveMode();
+        void EnterActiveMode();
+
+        bool CanDuplicateEntity(ECS::FEntity Entity) const override;
+        bool AllowCameraPreview() const override { return !bGameViewMode; }
+        void PersistCameraPreviewScale() override;
+
+        static constexpr int32                  MaxPlayers = 4;
+        static constexpr int32                  NumCameraBookmarks = 9;
+
         TStrongObjectPtr<CWorld>                ProxyWorld;
 
-        // Hidden, non-rendered server world spawned for "Play as Dedicated Server" (owned by
-        // FWorldManager via StartPIE/StopPIE). Null unless the PIE net mode is DedicatedServer.
-        CWorld*                                 PIEDedicatedServerWorld = nullptr;
-
-        // Editor entity in ProxyWorld, tracked separately from EditorEntity (active World) so
-        // PIE/Simulate can restore the editor world even if Travel swaps it mid-session.
+        // Tracked apart from EditorEntity, so play can restore the editor world even if travel swaps it mid-session.
         ECS::FEntity                            ProxyEditorEntity = ECS::NullEntity;
 
-        // Eject: a free-fly editor camera spawned INTO the running PIE world. The game keeps ticking;
-        // only the view and the input focus change. Possess reverses it.
+        // The hidden server world FWorldManager owns for a dedicated-server play session, null otherwise.
+        CWorld*                                 PIEDedicatedServerWorld = nullptr;
+
+        // RebindToWorld swaps World without touching observers, so the connected registry is tracked to unbind that one.
+        ECS::FRegistry*                         ObservedRegistry = nullptr;
+
+        FPlayInEditorSettings                   PlaySettings;
+        FOnGamePreview                          OnGamePreviewStartRequested;
+        FOnGamePreview                          OnGamePreviewStopRequested;
+        FDelegateHandle                         WorldTraveledHandle;
+        FDelegateHandle                         GameQuitHandle;
+        bool                                    bGameQuitRequested = false;
+        bool                                    bGamePreviewRunning = false;
+        bool                                    bSimulatingWorld = false;
+
+        // Set by the raw event handler and consumed in Update, since stopping tears the play world down mid-dispatch otherwise.
+        bool                                    bStopPlayRequested = false;
+
+        // An eject spawns a free-fly editor camera into the running play world, which possess reverses.
         bool                                    bEjectedFromPlay = false;
-        ECS::FEntity                            PossessedCameraEntity = ECS::NullEntity;   // game camera to hand back to
+        ECS::FEntity                            PossessedCameraEntity = ECS::NullEntity;
         bool                                    bRestoreGameViewOnPossess = false;
 
         // The game's own input and cursor modes, since the flycam's look capture rewrites the shared context while ejected.
@@ -325,97 +279,54 @@ namespace Lumina
         EMouseMode                              PossessedMouseMode = EMouseMode::Normal;
         bool                                    bHasPossessedInputModes = false;
 
-        // Play-in-editor session config, edited via the play-controls dropdown.
-        struct FPlayInEditorSettings
-        {
-            int32    NumPlayers          = 1;                     // 1..4; player 1 = main viewport, 2..N = preview windows
-            ENetMode NetMode             = ENetMode::Standalone;
+        // Held across frames, since the spring needs the attach point picked on the click rather than what the ray hits later.
+        SPhysicsBodyTarget                      GrabbedTarget;
+        float                                   GrabDistance = 0.0f;
+        FVector3                                GrabLocalOffset = FVector3(0.0f);
 
-            // A separate game process reads assets off disk, so it opens the edited map only once saved.
-            bool     bStandaloneCurrentMap = true;
-            bool     bStandaloneSaveFirst  = true;
-            bool     bStandaloneBuild      = true;
-        };
-        FPlayInEditorSettings                   PlaySettings;
-        static constexpr int32                  MaxPlayers = 4;
-
-        FOnGamePreview                          OnGamePreviewStartRequested;
-        FOnGamePreview                          OnGamePreviewStopRequested;
-
-        // Gizmo op/mode/snap state + OutlinerListView/OutlinerContext/EntityToTreeNode/PendingOutlinerAdds
-        // + EntityDestroyRequests now live in FSceneEditorTool.
-
-        // The registry our observers are currently connected to. RebindToWorld swaps World without
-        // touching observers, so we can't rely on World to find the old registry -- track it explicitly
-        // and always unbind THIS one (else entering PIE leaves the editor world observed -> teardown crash).
-        ECS::FRegistry*                        ObservedRegistry = nullptr;
+        TVector<TUniquePtr<IWorldEditorMode>>   EditorModes;
+        int32                                   ActiveModeIndex = 0;
 
         TUniquePtr<FPropertyTable>              WorldSettingsPropertyTable;
-
-        // Name filter for the Systems panel.
         ImGuiTextFilter                         SystemsFilter;
 
-        // The Systems panel's list of system classes, refreshed on a timer since gathering it configures every one.
+        // Refreshed on a timer, since gathering the list configures every system class.
         TVector<CWorld::FSystemInfo>            CachedSystemInfos;
         const CWorld*                           CachedSystemsWorld = nullptr;
         double                                  CachedSystemsTime = 0.0;
         FName                                   SelectedSystem;
 
-        // The outliner's Attach Script submenu, which keeps its open categories between uses.
         FCategorizedPicker                      ScriptAttachPicker;
         FCategorizedPicker                      ComponentAttachPicker;
 
-        TVector<TUniquePtr<IWorldEditorMode>>   EditorModes;
-        int32                                   ActiveModeIndex = 0;
-
-        // Folder a content-browser drop files its spawned entity into (0 = none), set for one drop.
+        // The folder a content-browser drop files its spawned entity into, set for one drop.
         uint32                                  PendingAssetDropFolder = 0;
+
+        FTransformDialogState                   TransformDialog;
+        FSelectionBox                           SelectionBox;
+
+        // How far a Shift drag has carried the camera, taken back off the gizmo's target.
+        FVector3                                GizmoFollowOffset = FVector3(0.0f);
 
         FTransform                              CopiedTransform;
         bool                                    bHasCopiedTransform = false;
-        
-        static constexpr int32                  NumCameraBookmarks = 9;
         FTransform                              CameraBookmarks[NumCameraBookmarks];
         bool                                    bCameraBookmarkSet[NumCameraBookmarks] = {};
-        
-        // Camera preview (UpdateCameraPreview / DrawCameraPreviewOverlay) lives in FSceneEditorTool;
-        // the world editor only adds the game-view gate + its settings persistence.
-        bool AllowCameraPreview() const override { return !bGameViewMode; }
-        void PersistCameraPreviewScale() override;
 
         bool                                    bDrawEntityDebugInfo = false;
         bool                                    bDrawNetworkDebug = false;
-        bool                                    bGamePreviewRunning = false;
-        bool                                    bSimulatingWorld = false;
-
-        // Physics-body grab. Held across frames: the spring needs the attach point that was picked on the
-        // initial click, not whatever the ray hits as the body swings away.
-        SPhysicsBodyTarget                      GrabbedTarget;
-        float                                   GrabDistance = 0.0f;
-        FVector3                                GrabLocalOffset = FVector3(0.0f);
-
-        // Set from the raw event handler (Esc during play) and consumed in Update,
-        // since stopping tears down the PIE world and shouldn't run mid-dispatch.
-        bool                                    bStopPlayRequested = false;
-
         bool                                    bGameViewMode = false;
         bool                                    bSavedWorldGridEnabled = true;
         bool                                    bSavedShowComponentVisualizers = true;
 
-        FDelegateHandle                         WorldTraveledHandle;
-        FDelegateHandle                         GameQuitHandle;
-        bool                                    bGameQuitRequested = false;
-        
         bool                                    bVertexSnapAnchorValid = false;
-        FVector3                                VertexSnapAnchorLocal = FVector3(0.0f);
         bool                                    bVertexSnapApplied = false;
+        FVector3                                VertexSnapAnchorLocal = FVector3(0.0f);
         FVector3                                VertexSnapTargetWorld = FVector3(0.0f);
         FVector3                                VertexSnapAnchorWorld = FVector3(0.0f);
         float                                   VertexSnapPixelRadius = 16.0f;
 
-        // Set when the Ctrl currently held has already been used as a command chord (Ctrl+D and friends).
-        // Latched until Ctrl is released, so that Ctrl cannot also mean vertex-snap.
+        // Latched until Ctrl is released once it served a command chord such as Ctrl+D, so it cannot also mean vertex snap.
         bool                                    bCtrlConsumedByChord = false;
     };
-    
 }

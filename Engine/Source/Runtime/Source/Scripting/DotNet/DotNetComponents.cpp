@@ -136,6 +136,12 @@ LUMINA_DOTNET_EXPORT(void*, RegistryConnect)(uint64 World, const void* Ops, int3
         return nullptr;
     }
 
+    // Teardown has already released this world's listeners, so one made now would outlive the world untracked.
+    if (reinterpret_cast<Lumina::CWorld*>(World)->IsTearingDown())
+    {
+        return nullptr;
+    }
+
     auto* Listener = new Lumina::FManagedSignalListener();
     O->ConnectSignal(*R, static_cast<Lumina::EComponentSignal>(Kind), Listener);
 
@@ -157,6 +163,13 @@ LUMINA_DOTNET_EXPORT(void, RegistryDisconnect)(uint64 World, const void* Ops, in
     {
         return;
     }
+
+    // World teardown frees every listener it tracked before scripts detach, so a dispose from OnDetach lands here after it.
+    if (!Lumina::DotNet::ForgetSignalListener(reinterpret_cast<Lumina::CWorld*>(World), Handle))
+    {
+        return;
+    }
+
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
     if (R != nullptr && O != nullptr)
@@ -164,7 +177,6 @@ LUMINA_DOTNET_EXPORT(void, RegistryDisconnect)(uint64 World, const void* Ops, in
         O->DisconnectSignal(*R, static_cast<Lumina::EComponentSignal>(Kind), static_cast<Lumina::FManagedSignalListener*>(Handle));
     }
 
-    Lumina::DotNet::ForgetSignalListener(reinterpret_cast<Lumina::CWorld*>(World), Handle);
     delete static_cast<Lumina::FManagedSignalListener*>(Handle);
 }
 

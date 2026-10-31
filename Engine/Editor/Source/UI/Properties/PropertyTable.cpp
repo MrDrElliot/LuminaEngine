@@ -2,59 +2,408 @@
 
 #include <cstdlib>
 
+#include "Containers/HashTable.h"
+#include "Containers/Optional.h"
+#include "Core/Delegates/CoreDelegates.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectIterator.h"
-#include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
-#include "Scripting/ScriptTypeRegistry.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/ClassProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
-#include "Core/Reflection/Type/Properties/MapProperty.h"
-#include "Memory/Memory.h"
 #include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
+#include "Core/Reflection/Type/Properties/SoftObjectProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Core/Reflection/Type/Properties/SubStructProperty.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Customizations/CoreTypeCustomization.h"
 #include "Customizations/EntityPropertyCustomization.h"
+#include "Memory/Memory.h"
+#include "Scripting/ScriptTypeRegistry.h"
 #include "Tools/UI/DevelopmentToolUI.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-#include "Tools/UI/ImGui/EditorColors.h"
-#include "Core/Templates/IntegerCompare.h"
 
-namespace Lumina
+namespace Lumina::PropertyTableInternal
 {
-    static constexpr int        ComplexArrayDisplayLimit = 32;
-    static constexpr int32      MaxLiveElementRows = 1024;
-    static constexpr int32      ElementRowMargin = 64;
-    static constexpr float      ChildIndentStep = 14.0f;
-    static constexpr uint32     ArrayControlSeed = 428768833;
-    static constexpr float      ResetColumnWidth = 22.0f;
-    static constexpr float      MaxHeaderColumnShare = 0.45f;
-    static ImU32 ModifiedMarkerColor() { return EditorColors::U32(EditorColors::Warning()); }
+    using FRowExpansionState = THashMap<FString, bool>;
 
-    // Inside a session only Finished commits, since a lifecycle-free widget sends a lone Updated.
-    static bool IsCommitOp(EPropertyChangeOp Op, bool bSessionActive)
+    // EditCondition metadata, "Prop", "!Prop", "Prop == V" or "Prop != V" joined by && or ||.
+    class FPropertyEditCondition
     {
-        return Op == EPropertyChangeOp::Finished
-            || (Op == EPropertyChangeOp::Updated && !bSessionActive);
-    }
+    public:
 
-    // For a session that is Started, since by the commit the interactive writes have already landed.
-    static bool IsPreEditOp(EPropertyChangeOp Op, bool bSessionActive)
+        enum class EOperator : uint8
+        {
+            Truthy,
+            Equals,
+            NotEquals,
+        };
+
+        struct FTerm
+        {
+            FProperty*  Property = nullptr;
+            int64       Expected = 0;
+            EOperator   Operator = EOperator::Truthy;
+            bool        bNegated = false;
+            bool        bLiteralResolved = false;
+        };
+
+        void Parse(FProperty* Source);
+        bool Evaluate(void* ContainerPtr) const;
+        bool IsBound() const { return !Terms.empty(); }
+        bool ShouldHide() const { return bHides; }
+
+    private:
+
+        TVector<FTerm>  Terms;
+        bool            bRequireAll = true;
+        bool            bHides = false;
+    };
+
+    class FPropertyRow
     {
-        return Op == EPropertyChangeOp::Started
-            || (Op == EPropertyChangeOp::Updated && !bSessionActive);
-    }
+    public:
+
+        explicit FPropertyRow(const FPropertyChangedEventCallbacks& InCallbacks);
+        FPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+        virtual ~FPropertyRow() = default;
+
+        FPropertyRow(const FPropertyRow&) = delete;
+        FPropertyRow& operator=(const FPropertyRow&) = delete;
+
+        virtual void Update() {}
+        virtual void SyncChildren() {}
+        virtual void DrawHeader(const FPropertyDrawArgs& Args) {}
+        virtual void DrawEditor(const FPropertyDrawArgs& Args) {}
+        virtual void DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args);
+        virtual float GetMeasuredHeaderTextWidth() const { return 0.0f; }
+        virtual bool HasExtraControls() const;
+        virtual float GetExtraControlsSectionWidth() const;
+        virtual void DrawExtraControlsSection();
+        virtual void OnValueResetToDefault() {}
+        virtual void SetExpandedRecursive(bool bExpand);
+        virtual FString GetExpansionKey() const;
+        virtual FStringView GetFilterLabel() const;
+        virtual bool IsCategory() const { return false; }
+
+        void UpdateRow();
+        void DrawRow(float Offset, const FPropertyDrawArgs& Args);
+        float ComputeRequiredHeaderWidth(float Offset) const;
+        bool ApplyFilter(const ImGuiTextFilter& Filter, bool bFilterActive, bool bJustActivated, bool bJustCleared, bool bAncestorMatched = false);
+        void CaptureExpansion(FRowExpansionState& Out, const FString& Path = FString()) const;
+        void RestoreExpansion(const FRowExpansionState& In, const FString& Path = FString());
+        void AddPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle);
+        FPropertyRow* FindOrCreateCategoryChild(const FName& InCategory);
+
+        const TSharedPtr<FPropertyHandle>& GetPropertyHandle() const { return PropertyHandle; }
+        bool HasCustomization() const { return Customization != nullptr; }
+        bool PassesFilter() const { return bPassesFilter; }
+        bool IsArrayElement() const { return bArrayElement; }
+        void SetIsArrayElement(bool bTrue) { bArrayElement = bTrue; }
+        bool IsReadOnly() const;
+        bool IsVisible() const;
+        bool IsTopLevel() const;
+
+    protected:
+
+        void DispatchChange(EPropertyChangeOp Op);
+        void PerformResetToDefault();
+        void CopyPropertyValue();
+        void PastePropertyValue();
+        void DestroyChildren();
+        void* GetEditConditionContainer() const;
+        void BuildMemberRows(CStruct* Type, void* Instance, void* DefaultInstance);
+
+        template<typename TRebuild>
+        void RebuildKeepingExpansion(TRebuild&& Rebuild)
+        {
+            FRowExpansionState State;
+            CaptureExpansion(State);
+            Rebuild();
+            RestoreExpansion(State);
+        }
+
+        const FPropertyChangedEventCallbacks&   Callbacks;
+        FPropertyEditCondition                  EditCondition;
+        TSharedPtr<IPropertyTypeCustomization>  Customization;
+        TSharedPtr<FPropertyHandle>             PropertyHandle;
+        FPropertyRow*                           ParentRow = nullptr;
+        TVector<TUniquePtr<FPropertyRow>>       Children;
+        EPropertyChangeOp                       ChangeOp = EPropertyChangeOp::None;
+        float                                   LastDrawnHeight = 0.0f;
+        bool                                    bEditSessionActive = false;
+        bool                                    bArrayElement = false;
+        bool                                    bExpanded = true;
+        bool                                    bExpandedSaved = true;
+        bool                                    bPassesFilter = true;
+        bool                                    bDrawReadOnly = false;
+
+    private:
+
+        struct FRowDrawState
+        {
+            bool bHasProperty = false;
+            bool bTopLevel = false;
+            bool bMultipleValues = false;
+            bool bValuesLocked = false;
+            bool bEditable = false;
+            bool bDiffers = false;
+        };
+
+        void DrawCells(float Offset, const FPropertyDrawArgs& Args, FRowDrawState& State);
+        void DrawNameCellActions(const FRowDrawState& State);
+        void DrawValueCell(const FPropertyDrawArgs& Args, const FRowDrawState& State);
+    };
+
+    class FLeafPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FLeafPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void Update() override;
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+    };
+
+    class FArrayPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FArrayPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void Update() override;
+        void SyncChildren() override;
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
+        void DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        bool HasExtraControls() const override;
+        float GetExtraControlsSectionWidth() const override;
+        void DrawExtraControlsSection() override;
+        void OnValueResetToDefault() override { RebuildChildren(); }
+        void SetExpandedRecursive(bool bExpand) override;
+
+        int32 GetElementCount() const;
+        bool AllowResize() const;
+        bool AllowReorder() const;
+        void QueueMoveElement(int64 Index, int64 Target);
+        void QueueInsertElement(int64 Index);
+        void QueueRemoveElement(int64 Index);
+
+    private:
+
+        void QueueMutation(TFunction<void()> Mutation);
+        void RebuildChildren();
+        void CaptureElementStates();
+        bool IsInnerFixedHeight() const;
+        TUniquePtr<FPropertyRow> CreateElementRow(int32 Index);
+        void SetWindow(int32 Begin, int32 End);
+        void CoverElements(int32 Begin, int32 End);
+        void DrawTruncationRow(float Offset, int32 HiddenCount);
+
+        FArrayProperty*                 ArrayProperty = nullptr;
+        TVector<TFunction<void()>>      PendingMutations;
+        TVector<FRowExpansionState>     ElementStates;
+        TOptional<bool>                 ElementExpansion;
+        void*                           BuiltArray = nullptr;
+        float                           ElementRowHeight = -1.0f;
+        int32                           WindowBegin = 0;
+        int32                           LastVisibleBegin = 0;
+        int32                           LastVisibleEnd = 0;
+        bool                            bShowAllElements = false;
+    };
+
+    class FMapPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FMapPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void Update() override;
+        void SyncChildren() override;
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        bool HasExtraControls() const override;
+        float GetExtraControlsSectionWidth() const override;
+        void DrawExtraControlsSection() override;
+        void OnValueResetToDefault() override { RebuildChildren(); }
+
+        FMapProperty* GetMapProperty() const { return MapProperty; }
+        bool AllowResize() const;
+        void QueueRemoveEntry(int64 Index);
+
+    private:
+
+        void QueueMutation(TFunction<void()> Mutation);
+        void RebuildChildren();
+
+        FMapProperty*               MapProperty = nullptr;
+        TVector<TFunction<void()>>  PendingMutations;
+        void*                       BuiltMap = nullptr;
+    };
+
+    // A heap key built through the key property, so it never depends on a map instance staying alive.
+    class FMapKeyScratch
+    {
+    public:
+
+        explicit FMapKeyScratch(FMapProperty* Map);
+        ~FMapKeyScratch();
+
+        FMapKeyScratch(const FMapKeyScratch&) = delete;
+        FMapKeyScratch& operator=(const FMapKeyScratch&) = delete;
+
+        void* Get() const { return Memory; }
+
+    private:
+
+        FProperty*  KeyProperty = nullptr;
+        void*       Memory = nullptr;
+    };
+
+    // One map entry, its key edited in the header column and its value through a composed row.
+    class FMapEntryRow : public FPropertyRow
+    {
+    public:
+
+        FMapEntryRow(FMapPropertyRow* InMapRow, int64 InIndex, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void Update() override;
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        bool HasExtraControls() const override;
+        float GetExtraControlsSectionWidth() const override;
+        void DrawExtraControlsSection() override;
+        FStringView GetFilterLabel() const override { return FStringView(); }
+
+    private:
+
+        void CaptureKeySnapshot();
+        bool KeyDuplicatesAnotherEntry() const;
+
+        FMapPropertyRow*                        MapRow = nullptr;
+        FMapProperty*                           Map = nullptr;
+        FProperty*                              KeyProperty = nullptr;
+        void*                                   MapContainer = nullptr;
+        FMapKeyScratch                          PreviousKey;
+        TSharedPtr<FPropertyHandle>             KeyHandle;
+        TSharedPtr<IPropertyTypeCustomization>  KeyCustomization;
+        TUniquePtr<FPropertyRow>                ValueRow;
+        int64                                   EntryIndex = 0;
+        EPropertyChangeOp                       KeyChangeOp = EPropertyChangeOp::None;
+        bool                                    bKeyEditSessionActive = false;
+    };
+
+    class FStructPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FStructPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void Update() override;
+        void SyncChildren() override;
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        void OnValueResetToDefault() override { RebuildChildren(); }
+
+    private:
+
+        void RebuildChildren();
+        FFixedString GetHeaderLabel() const;
+
+        FStructProperty*    StructProperty = nullptr;
+        void*               BuiltValue = nullptr;
+    };
+
+    class FInstancedStructPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FInstancedStructPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void Update() override;
+        void SyncChildren() override;
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        void OnValueResetToDefault() override { RebuildChildren(); }
+
+    private:
+
+        void RebuildChildren();
+
+        FInstancedStructProperty*   InstancedStructProperty = nullptr;
+        CStruct*                    CachedType = nullptr;
+        void*                       BuiltMemory = nullptr;
+    };
+
+    class FOptionalPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FOptionalPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void Update() override;
+        void SyncChildren() override;
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        void DrawEditor(const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        void OnValueResetToDefault() override { RebuildChildren(); }
+
+    private:
+
+        void RebuildChildren();
+
+        FOptionalProperty*  OptionalProperty = nullptr;
+        void*               BuiltPayload = nullptr;
+    };
+
+    class FCategoryPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FCategoryPropertyRow(const FName& InCategory, const FPropertyChangedEventCallbacks& InCallbacks);
+
+        void DrawHeader(const FPropertyDrawArgs& Args) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        FString GetExpansionKey() const override { return Category.ToString(); }
+        FStringView GetFilterLabel() const override;
+        bool IsCategory() const override { return true; }
+
+        const FName& GetCategoryName() const { return Category; }
+
+    private:
+
+        FName Category;
+    };
+
+    constexpr int32     ComplexArrayDisplayLimit = 32;
+    constexpr int32     MaxLiveElementRows = 1024;
+    constexpr int32     ElementRowMargin = 64;
+    constexpr float     ChildIndentStep = 14.0f;
+    constexpr float     ResetColumnWidth = 22.0f;
+    constexpr float     ElementButtonWidth = 18.0f;
+    constexpr float     MaxHeaderColumnShare = 0.45f;
+    constexpr uint32    ArrayControlSeed = 428768833;
+
+    ImU32 ModifiedMarkerColor() { return EditorColors::U32(EditorColors::Warning()); }
 
     // Byte offset of an edited value inside its outer instance; -1 when it sits in a separate heap block.
-    static int64 ValueOffsetInOuter(const void* ValuePtr, const void* OuterInstance, const CStruct* OuterType)
+    int64 ValueOffsetInOuter(const void* ValuePtr, const void* OuterInstance, const CStruct* OuterType)
     {
         if (ValuePtr == nullptr || OuterInstance == nullptr || OuterType == nullptr)
         {
@@ -65,10 +414,57 @@ namespace Lumina
         return (Offset >= 0 && Offset < (int64)OuterType->GetSize()) ? Offset : -1;
     }
 
-    static ImU32 CategoryBgColor()     { return EditorColors::U32(EditorColors::RowBg()); }
+    // A lone Updated or Finished, from a widget with no drag, is a whole edit that opens and closes its own transaction.
+    template<typename TApply>
+    void DispatchPropertyChange(EPropertyChangeOp Op, bool& bSessionActive, const FPropertyChangedEventCallbacks& Callbacks, FProperty* Property, const void* ValuePtr, TApply&& Apply)
+    {
+        if (Op == EPropertyChangeOp::None)
+        {
+            return;
+        }
+
+        const bool bAtomic = !bSessionActive && (Op == EPropertyChangeOp::Updated || Op == EPropertyChangeOp::Finished);
+        const bool bStart = Op == EPropertyChangeOp::Started || bAtomic;
+        const bool bCommit = Op == EPropertyChangeOp::Finished || bAtomic;
+        const FPropertyChangedEvent Event{ Callbacks.Type, Property, Property != nullptr ? Property->Name : FName(),
+            bCommit, ValueOffsetInOuter(ValuePtr, Callbacks.Instance, Callbacks.Type) };
+
+        if (bStart && Callbacks.StartChangeCallback)
+        {
+            Callbacks.StartChangeCallback(Event);
+        }
+        bSessionActive = Op == EPropertyChangeOp::Started || (bSessionActive && Op != EPropertyChangeOp::Finished);
+
+        FStructOps* Ops = Callbacks.Type != nullptr && Callbacks.Instance != nullptr ? Callbacks.Type->GetStructOps() : nullptr;
+        if (bStart && Ops != nullptr && Ops->HasPreEdit())
+        {
+            Ops->PreEdit(Callbacks.Instance, Event);
+        }
+        if (Callbacks.PreChangeCallback)
+        {
+            Callbacks.PreChangeCallback(Event);
+        }
+
+        Apply();
+
+        if (bCommit && Ops != nullptr && Ops->HasPostEdit())
+        {
+            Ops->PostEdit(Callbacks.Instance, Event);
+        }
+        if (Callbacks.PostChangeCallback)
+        {
+            Callbacks.PostChangeCallback(Event);
+        }
+        if (bCommit && Callbacks.FinishChangeCallback)
+        {
+            Callbacks.FinishChangeCallback(Event);
+        }
+    }
+
+    ImU32 CategoryBgColor() { return EditorColors::U32(EditorColors::RowBg()); }
 
     // Caller passes explicit Y bounds; the table row's bottom isn't queryable until after row finalization.
-    static void DrawModifiedMarker(float RowTopY, float RowBottomY)
+    void DrawModifiedMarker(float RowTopY, float RowBottomY)
     {
         ImGuiTable* Table = ImGui::GetCurrentTable();
         if (Table == nullptr)
@@ -80,7 +476,7 @@ namespace Lumina
             ImVec2(X, RowTopY), ImVec2(X + 2.5f, RowBottomY), ModifiedMarkerColor());
     }
 
-    static bool IsFixedHeightPropertyType(EPropertyTypeFlags Type)
+    bool IsFixedHeightPropertyType(EPropertyTypeFlags Type)
     {
         switch (Type)
         {
@@ -95,7 +491,7 @@ namespace Lumina
         }
     }
 
-    static TUniquePtr<FPropertyRow> CreatePropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
+    TUniquePtr<FPropertyRow> CreatePropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
     {
         switch (InPropHandle->Property->GetType())
         {
@@ -110,12 +506,12 @@ namespace Lumina
         case EPropertyTypeFlags::InstancedStruct:
             return MakeUnique<FInstancedStructPropertyRow>(InPropHandle, InParentRow, InCallbacks);
         default:
-            return MakeUnique<FPropertyPropertyRow>(InPropHandle, InParentRow, InCallbacks);
+            return MakeUnique<FLeafPropertyRow>(InPropHandle, InParentRow, InCallbacks);
         }
     }
 
     // "Outer|Inner" as one name per nesting level, skipping empty segments.
-    static TVector<FName> SplitCategoryPath(FStringView Path)
+    TVector<FName> SplitCategoryPath(FStringView Path)
     {
         TVector<FName> Segments;
         size_t Start = 0;
@@ -136,7 +532,7 @@ namespace Lumina
         return Segments;
     }
 
-    static FStringView TrimWhitespace(FStringView In)
+    FStringView TrimWhitespace(FStringView In)
     {
         while (!In.empty() && (In.front() == ' ' || In.front() == '\t'))
         {
@@ -149,7 +545,7 @@ namespace Lumina
         return In;
     }
 
-    static bool IsIntegerPropertyType(EPropertyTypeFlags Type)
+    bool IsIntegerPropertyType(EPropertyTypeFlags Type)
     {
         switch (Type)
         {
@@ -168,7 +564,7 @@ namespace Lumina
         }
     }
 
-    static bool TryReadConditionInteger(FProperty* Property, void* ContainerPtr, int64& OutValue)
+    bool TryReadConditionInteger(FProperty* Property, void* ContainerPtr, int64& OutValue)
     {
         void* ValuePtr = Property->GetValuePtr<uint8>(ContainerPtr);
         if (ValuePtr == nullptr)
@@ -198,7 +594,7 @@ namespace Lumina
     }
 
     // The literal side of an == / != term, as an integer. Enum terms accept a bare or qualified enumerator.
-    static bool TryResolveConditionLiteral(FProperty* Property, const FString& Literal, int64& OutValue)
+    bool TryResolveConditionLiteral(FProperty* Property, FStringView Literal, int64& OutValue)
     {
         if (Property->GetType() == EPropertyTypeFlags::Enum)
         {
@@ -210,10 +606,10 @@ namespace Lumina
 
             for (const TPair<FName, uint64>& Entry : Enum->Names)
             {
-                const FString Name = Entry.first.ToString();
+                const FStringView Name(Entry.first.c_str());
                 const size_t Scope = Name.rfind("::");
                 const bool bMatches = Name == Literal
-                    || (Scope != FString::npos && Name.compare(Scope + 2, FString::npos, Literal) == 0);
+                    || (Scope != FStringView::npos && Name.substr(Scope + 2) == Literal);
                 if (bMatches)
                 {
                     OutValue = static_cast<int64>(Entry.second);
@@ -234,9 +630,10 @@ namespace Lumina
             return true;
         }
 
+        const FString Text(Literal.data(), Literal.size());
         char* End = nullptr;
-        const long long Parsed = strtoll(Literal.c_str(), &End, 10);
-        if (End == Literal.c_str())
+        const long long Parsed = strtoll(Text.c_str(), &End, 10);
+        if (End == Text.c_str())
         {
             return false;
         }
@@ -244,7 +641,7 @@ namespace Lumina
         return true;
     }
 
-    static bool EvaluateConditionTerm(const FPropertyEditCondition::FTerm& Term, void* ContainerPtr)
+    bool EvaluateConditionTerm(const FPropertyEditCondition::FTerm& Term, void* ContainerPtr)
     {
         bool bResult = false;
 
@@ -265,15 +662,360 @@ namespace Lumina
         else
         {
             int64 Value = 0;
-            int64 Expected = 0;
-            if (TryReadConditionInteger(Term.Property, ContainerPtr, Value)
-                && TryResolveConditionLiteral(Term.Property, Term.Literal, Expected))
+            if (Term.bLiteralResolved && TryReadConditionInteger(Term.Property, ContainerPtr, Value))
             {
-                bResult = Term.Operator == FPropertyEditCondition::EOperator::Equals ? Value == Expected : Value != Expected;
+                bResult = Term.Operator == FPropertyEditCondition::EOperator::Equals ? Value == Term.Expected : Value != Term.Expected;
             }
         }
 
         return Term.bNegated ? !bResult : bResult;
+    }
+
+    // One buffer for the whole editor, so a value can move between panels, not just within one table.
+    TVector<uint8> GPropertyClipboardBytes;
+    FProperty*     GPropertyClipboardSource = nullptr;
+
+    // Two different structs agree on flags and size, so a paste between them reinterprets raw bytes.
+    bool ArePropertiesCompatible(FProperty* A, FProperty* B)
+    {
+        if (A == nullptr || B == nullptr)
+        {
+            return false;
+        }
+
+        if (A->GetType() != B->GetType() || A->GetElementSize() != B->GetElementSize())
+        {
+            return false;
+        }
+
+        if (A->IsA(EPropertyTypeFlags::Vector) || A->IsA(EPropertyTypeFlags::Map))
+        {
+            return false;
+        }
+
+        if (A->IsA(EPropertyTypeFlags::Struct))
+        {
+            return static_cast<FStructProperty*>(A)->GetStruct() == static_cast<FStructProperty*>(B)->GetStruct();
+        }
+
+        if (A->IsA(EPropertyTypeFlags::Object))
+        {
+            return static_cast<FObjectProperty*>(A)->GetPropertyClass() == static_cast<FObjectProperty*>(B)->GetPropertyClass();
+        }
+
+        if (A->IsA(EPropertyTypeFlags::SoftObject))
+        {
+            return static_cast<FSoftObjectProperty*>(A)->GetPropertyClass() == static_cast<FSoftObjectProperty*>(B)->GetPropertyClass();
+        }
+
+        if (A->IsA(EPropertyTypeFlags::Class))
+        {
+            return static_cast<FClassProperty*>(A)->GetMetaClass() == static_cast<FClassProperty*>(B)->GetMetaClass();
+        }
+
+        if (A->IsA(EPropertyTypeFlags::SubStruct))
+        {
+            return static_cast<FSubStructProperty*>(A)->GetMetaStruct() == static_cast<FSubStructProperty*>(B)->GetMetaStruct();
+        }
+
+        if (A->IsA(EPropertyTypeFlags::Enum))
+        {
+            return static_cast<FEnumProperty*>(A)->GetEnum() == static_cast<FEnumProperty*>(B)->GetEnum();
+        }
+
+        if (A->IsA(EPropertyTypeFlags::Optional))
+        {
+            return ArePropertiesCompatible(static_cast<FOptionalProperty*>(A)->GetInternalProperty(), static_cast<FOptionalProperty*>(B)->GetInternalProperty());
+        }
+
+        return true;
+    }
+
+    bool IsCopyableProperty(FProperty* Property)
+    {
+        return ArePropertiesCompatible(Property, Property);
+    }
+
+    void ClearPropertyClipboard()
+    {
+        GPropertyClipboardBytes.clear();
+        GPropertyClipboardSource = nullptr;
+    }
+
+    // Rows are drawn whole while anything in the window is being edited or a keyboard move is looking for its target.
+    bool IsRowOutsideView(const ImGuiTable& Table, float Height)
+    {
+        if (FPropertyTable::IsDetailsRemeasureFrame())
+        {
+            return false;
+        }
+        const ImGuiContext& Context = *GImGui;
+        if (Context.NavMoveScoringItems || (Context.ActiveId != 0 && Context.ActiveIdWindow == Context.CurrentWindow))
+        {
+            return false;
+        }
+        return Table.RowPosY1 > Table.InnerClipRect.Max.y || Table.RowPosY1 + Height < Table.InnerClipRect.Min.y;
+    }
+
+    // A clipped label leads its tooltip with the full name, since the cell no longer shows it.
+    void DrawPropertyTooltip(const FProperty* Property, bool bLabelClipped = false)
+    {
+        if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            return;
+        }
+
+        const FCStringView Name = Property->GetPropertyDisplayName();
+        const FStringView Tooltip = Property->GetMetadata("ToolTip");
+        if (Tooltip.empty())
+        {
+            ImGuiX::WrappedTooltip_Internal(FStringView(Name.c_str(), Name.size()));
+            return;
+        }
+        if (bLabelClipped)
+        {
+            const FString Both = FString(Name.c_str()) + "\n\n" + FString(Tooltip.data(), Tooltip.size());
+            ImGuiX::WrappedTooltip_Internal(FStringView(Both.c_str(), Both.size()));
+            return;
+        }
+        ImGuiX::WrappedTooltip_Internal(Tooltip);
+    }
+
+    // An element's inner property has no name or tooltip, so the element reads as its place in the array plus the array's own tooltip.
+    void DrawRowTooltip(const FPropertyHandle* Handle, const FProperty* Property, bool bLabelClipped, FStringView Label = FStringView())
+    {
+        if (Handle == nullptr || Handle->OwnerArray == nullptr)
+        {
+            DrawPropertyTooltip(Property, bLabelClipped);
+            return;
+        }
+        if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            return;
+        }
+
+        const FArrayProperty* Array = Handle->OwnerArray;
+        const FString TypeName = Property->GetType() == EPropertyTypeFlags::Struct
+            ? static_cast<const FStructProperty*>(Property)->GetStruct()->GetName().ToString()
+            : FString(PropertyTypePlainNames[(size_t)Property->GetType()]);
+
+        FString Text;
+        if (bLabelClipped && !Label.empty())
+        {
+            Text += FString(Label.data(), Label.size()) + "\n\n";
+        }
+        Text += Lumina::Format("Element {} of {} ({})", Handle->Index, Array->GetPropertyDisplayName().c_str(), TypeName.c_str());
+
+        const FStringView ArrayTooltip = Array->GetMetadata("ToolTip");
+        if (!ArrayTooltip.empty())
+        {
+            Text += "\n\n" + FString(ArrayTooltip.data(), ArrayTooltip.size());
+        }
+        ImGuiX::WrappedTooltip_Internal(FStringView(Text.c_str(), Text.size()));
+    }
+
+    // A label too long for its cell ends in an ellipsis rather than being cut mid-letter, and reports that it did.
+    bool DrawHeaderLabel(const char* Label)
+    {
+        const bool bClipped = ImGui::CalcTextSize(Label).x > ImGui::GetContentRegionAvail().x;
+        ImGui::TextAligned(0.0f, -FLT_MIN, "%s", Label);
+        return bClipped;
+    }
+
+    // The foldout version of DrawHeaderLabel, drawing the text itself over a header whose own label is hidden.
+    bool CollapsingHeaderEllipsis(const char* Label, ImGuiTreeNodeFlags Flags, bool& bOutClipped, const void* StableId = nullptr)
+    {
+        if (StableId != nullptr)
+        {
+            ImGui::PushID(StableId);
+        }
+        else
+        {
+            ImGui::PushID(Label);
+        }
+        const bool bOpen = ImGui::CollapsingHeader("##Header", Flags);
+        ImGui::PopID();
+
+        const ImGuiStyle& Style = ImGui::GetStyle();
+        const ImVec2 Min = ImGui::GetItemRectMin();
+        const ImVec2 Max = ImGui::GetItemRectMax();
+        const bool bLeaf = (Flags & ImGuiTreeNodeFlags_Leaf) != 0;
+        const float ArrowWidth = bLeaf ? Style.FramePadding.x : ImGui::GetFontSize() + Style.FramePadding.x * 3.0f;
+        const ImVec2 TextSize = ImGui::CalcTextSize(Label);
+        const ImVec2 TextMin(Min.x + ArrowWidth, Min.y + Style.FramePadding.y);
+        const ImVec2 TextMax(Max.x - Style.FramePadding.x, Max.y);
+
+        bOutClipped = TextMin.x + TextSize.x > TextMax.x;
+        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), TextMin, TextMax, TextMax.x, Label, nullptr, &TextSize);
+        return bOpen;
+    }
+
+    // A transparent foldout whose open state the row keeps, rather than ImGui's storage.
+    bool DrawRowFoldout(const char* Label, bool bOpen, ImGuiTreeNodeFlags Flags, bool& bOutClipped, const void* StableId = nullptr)
+    {
+        ImGui::SetNextItemOpen(bOpen);
+        ImGui::PushStyleColor(ImGuiCol_Header, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
+        const bool bResult = CollapsingHeaderEllipsis(Label, Flags, bOutClipped, StableId);
+        ImGui::PopStyleColor(3);
+        return bResult;
+    }
+
+    // Shared by the leaf row and the map-entry editors, returning null for struct and array types.
+    TSharedPtr<IPropertyTypeCustomization> MakeLeafPropertyCustomization(FProperty* Prop)
+    {
+        switch (Prop->GetType())
+        {
+        case EPropertyTypeFlags::Int8:   return FNumericPropertyCustomization<int8,   ImGuiDataType_S8>::MakeInstance();
+        case EPropertyTypeFlags::Int16:  return FNumericPropertyCustomization<int16,  ImGuiDataType_S16>::MakeInstance();
+        case EPropertyTypeFlags::Int32:  return FNumericPropertyCustomization<int32,  ImGuiDataType_S32>::MakeInstance();
+        case EPropertyTypeFlags::Int64:  return FNumericPropertyCustomization<int64,  ImGuiDataType_S64>::MakeInstance();
+        case EPropertyTypeFlags::UInt8:  return FNumericPropertyCustomization<uint8,  ImGuiDataType_U8>::MakeInstance();
+        case EPropertyTypeFlags::UInt16: return FNumericPropertyCustomization<uint16, ImGuiDataType_U16>::MakeInstance();
+        case EPropertyTypeFlags::UInt32: return FNumericPropertyCustomization<uint32, ImGuiDataType_U32>::MakeInstance();
+        case EPropertyTypeFlags::Entity: return FEntityPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::UInt64: return FNumericPropertyCustomization<uint64, ImGuiDataType_U64>::MakeInstance();
+        case EPropertyTypeFlags::Float:  return FNumericPropertyCustomization<float,  ImGuiDataType_Float>::MakeInstance();
+        case EPropertyTypeFlags::Double: return FNumericPropertyCustomization<double, ImGuiDataType_Double>::MakeInstance();
+        case EPropertyTypeFlags::Bool:   return FBoolPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Object: return FCObjectPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::SoftObject: return FSoftObjectPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Class:  return FClassPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::SubStruct: return FSubStructPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Name:   return FNamePropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::String: return FStringPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Enum:
+        {
+            // An enum can register its own drawing by name, the way a struct does.
+            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+            TSharedPtr<IPropertyTypeCustomization> Registered = Registry->GetPropertyCustomizationForType(static_cast<FEnumProperty*>(Prop)->GetEnum()->GetName());
+            return Registered ? Registered : FEnumPropertyCustomization::MakeInstance();
+        }
+        case EPropertyTypeFlags::Delegate: return FDelegatePropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::ComponentRef: return FComponentRefPropertyCustomization::MakeInstance();
+        default: return nullptr;
+        }
+    }
+
+    // Disabled rather than hidden when it cannot act, so every element row keeps the same columns.
+    bool ElementButton(const char* Icon, bool bEnabled, const char* Tooltip)
+    {
+        ImGui::BeginDisabled(!bEnabled);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
+        const bool bClicked = ImGuiX::FlatButton(Icon, ImVec2(ElementButtonWidth, 24), ArrayControlSeed);
+        ImGui::PopStyleVar();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGuiX::TextTooltip_Internal(Tooltip);
+        }
+        return bClicked;
+    }
+
+    float ContainerControlsWidth()
+    {
+        return ElementButtonWidth * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+    }
+
+    TSharedPtr<FPropertyHandle> MakeMapValueHandle(FMapPropertyRow* MapRow, int64 Index)
+    {
+        FMapProperty* Map = MapRow->GetMapProperty();
+        void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
+        void* DefaultContainer = MapRow->GetPropertyHandle()->GetDefaultValuePtr();
+        return MakeShared<FPropertyHandle>(Map, Container, DefaultContainer, Map->GetValueProperty(), Index, false);
+    }
+
+    const char* InstancedStructLabel(const CStruct* Type)
+    {
+        return StructIdentity(Type).c_str();
+    }
+
+    // Whether Candidate lists Interface among the interfaces its C# type implements.
+    bool ImplementsInterface(const CStruct* Candidate, FStringView Interface)
+    {
+        if (!Candidate->HasMeta("Implements"))
+        {
+            return false;
+        }
+        const FString& Listed = Candidate->GetMeta("Implements");
+        const FStringView All(Listed.c_str(), Listed.size());
+        size_t Start = 0;
+        while (Start <= All.size())
+        {
+            size_t End = Start;
+            while (End < All.size() && All[End] != ';')
+            {
+                ++End;
+            }
+            if (All.substr(Start, End - Start) == Interface)
+            {
+                return true;
+            }
+            Start = End + 1;
+        }
+        return false;
+    }
+
+    // A None entry sits at index 0. A nonempty Implements keeps only the structs that implement that interface.
+    CStruct* DrawInstancedStructTypePicker(const char* StrId, CStruct* Base, FStringView Implements, CStruct* Current, bool& bOutChanged)
+    {
+        bOutChanged = false;
+
+        // Gathered only while the list is open, since walking every struct each frame for a closed combo is wasted.
+        TVector<CStruct*> Candidates;
+        if (ImGuiX::IsSearchableComboOpen(StrId))
+        {
+            for (TObjectIterator<CStruct> It; It; ++It)
+            {
+                CStruct* Candidate = *It;
+                if (IsInstancableStructType(Candidate) && (Base == nullptr || Candidate->IsChildOf(Base))
+                    && (Implements.empty() || ImplementsInterface(Candidate, Implements)))
+                {
+                    Candidates.push_back(Candidate);
+                }
+            }
+
+            Algo::Sort(Candidates, [](CStruct* A, CStruct* B)
+            {
+                return strcmp(InstancedStructLabel(A), InstancedStructLabel(B)) < 0;
+            });
+        }
+
+        int32 CurrentIndex = 0;
+        for (size_t i = 0; i < Candidates.size(); ++i)
+        {
+            if (Candidates[i] == Current)
+            {
+                CurrentIndex = static_cast<int32>(i + 1);
+                break;
+            }
+        }
+
+        const char* Preview = Current ? InstancedStructLabel(Current) : "None";
+
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+        const int32 Picked = ImGuiX::SearchableCombo(StrId, Preview, static_cast<int32>(Candidates.size()) + 1, CurrentIndex,
+            [&Candidates](int32 Index) -> FFixedString
+            {
+                return (Index == 0) ? FFixedString("None") : FFixedString(InstancedStructLabel(Candidates[Index - 1]));
+            }, LE_ICON_CUBE_OUTLINE);
+        ImGui::PopItemWidth();
+
+        if (Picked != Constants::kIndexNone)
+        {
+            bOutChanged = true;
+            return (Picked == 0) ? nullptr : Candidates[Picked - 1];
+        }
+
+        return Current;
+    }
+
+    // The type's default instance to diff against, unless the object is that default itself.
+    void* DefaultInstanceFor(void* InObject, CStruct* InType)
+    {
+        void* Default = InType != nullptr && InObject != nullptr ? InType->GetDefaultInstance() : nullptr;
+        return Default != InObject ? Default : nullptr;
     }
 
     void FPropertyEditCondition::Parse(FProperty* Source)
@@ -317,6 +1059,7 @@ namespace Lumina
             }
 
             FStringView NameView = Text;
+            FStringView LiteralView;
             const size_t Equals    = Text.find("==");
             const size_t NotEquals = Text.find("!=");
             if (Equals != FStringView::npos || NotEquals != FStringView::npos)
@@ -325,12 +1068,11 @@ namespace Lumina
                 Term.Operator = Sep == Equals ? EOperator::Equals : EOperator::NotEquals;
                 NameView = Text.substr(0, Sep);
 
-                FStringView LiteralView = TrimWhitespace(Text.substr(Sep + 2));
+                LiteralView = TrimWhitespace(Text.substr(Sep + 2));
                 if (LiteralView.size() >= 2 && LiteralView.front() == '"' && LiteralView.back() == '"')
                 {
                     LiteralView = LiteralView.substr(1, LiteralView.size() - 2);
                 }
-                Term.Literal.assign(LiteralView.data(), LiteralView.size());
             }
 
             NameView = TrimWhitespace(NameView);
@@ -348,7 +1090,12 @@ namespace Lumina
                 return;
             }
 
-            Terms.push_back(std::move(Term));
+            if (Term.Operator != EOperator::Truthy)
+            {
+                Term.bLiteralResolved = TryResolveConditionLiteral(Term.Property, LiteralView, Term.Expected);
+            }
+
+            Terms.push_back(Term);
         }
 
         bHides = Source->HasEditorFlag(EPropertyEditorFlags::EditConditionHides);
@@ -375,6 +1122,11 @@ namespace Lumina
         }
 
         return bRequireAll;
+    }
+
+    FPropertyRow::FPropertyRow(const FPropertyChangedEventCallbacks& InCallbacks)
+        : Callbacks(InCallbacks)
+    {
     }
 
     FPropertyRow::FPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
@@ -417,25 +1169,26 @@ namespace Lumina
         return true;
     }
 
-    FCategoryPropertyRow* FPropertyRow::FindOrCreateCategoryChild(const FName& InCategory, void* OwnerObject)
+    FPropertyRow* FPropertyRow::FindOrCreateCategoryChild(const FName& InCategory)
     {
         for (const TUniquePtr<FPropertyRow>& Child : Children)
         {
-            if (Child->IsCategory())
+            if (Child->IsCategory() && static_cast<FCategoryPropertyRow*>(Child.get())->GetCategoryName() == InCategory)
             {
-                FCategoryPropertyRow* AsCategory = static_cast<FCategoryPropertyRow*>(Child.get());
-                if (AsCategory->GetCategoryName() == InCategory)
-                {
-                    return AsCategory;
-                }
+                return Child.get();
             }
         }
 
-        TUniquePtr<FCategoryPropertyRow> NewRow = MakeUnique<FCategoryPropertyRow>(OwnerObject, InCategory, Callbacks);
+        TUniquePtr<FCategoryPropertyRow> NewRow = MakeUnique<FCategoryPropertyRow>(InCategory, Callbacks);
         NewRow->ParentRow = this;
-        FCategoryPropertyRow* RawPtr = NewRow.get();
-        Children.emplace_back(Move(NewRow));
-        return RawPtr;
+        FPropertyRow* Row = NewRow.get();
+        Children.push_back(Move(NewRow));
+        return Row;
+    }
+
+    void FPropertyRow::AddPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle)
+    {
+        Children.push_back(CreatePropertyRow(InPropHandle, this, Callbacks));
     }
 
     void FPropertyRow::BuildMemberRows(CStruct* Type, void* Instance, void* DefaultInstance)
@@ -481,12 +1234,11 @@ namespace Lumina
                 const FCStringView Path = Member->GetMetadata("Category");
                 for (const FName& Segment : SplitCategoryPath(FStringView(Path.c_str(), Path.size())))
                 {
-                    Target = Target->FindOrCreateCategoryChild(Segment, Instance);
+                    Target = Target->FindOrCreateCategoryChild(Segment);
                 }
             }
 
-            TSharedPtr<FPropertyHandle> Handle = MakeShared<FPropertyHandle>(Instance, DefaultInstance, Member);
-            Target->Children.push_back(CreatePropertyRow(Handle, Target, Target->Callbacks));
+            Target->AddPropertyRow(MakeShared<FPropertyHandle>(Instance, DefaultInstance, Member));
         }
     }
 
@@ -516,7 +1268,7 @@ namespace Lumina
         {
             return FString();
         }
-        if (IsArrayElementProperty())
+        if (IsArrayElement())
         {
             return Lumina::Format("[{}]", PropertyHandle->Index);
         }
@@ -552,6 +1304,7 @@ namespace Lumina
 
     void FPropertyRow::UpdateRow()
     {
+        SyncChildren();
         Update();
 
         // Children only accumulate ChangeOp when drawn, and a huge array gets expensive.
@@ -581,44 +1334,6 @@ namespace Lumina
         return Width;
     }
 
-    namespace
-    {
-        // One buffer for the whole editor, so a value can move between panels, not just within one table.
-        TVector<uint8> GPropertyClipboardBytes;
-        FProperty*     GPropertyClipboardSource = nullptr;
-
-        // Two different structs agree on flags and size, so a paste between them reinterprets raw bytes.
-        bool ArePropertiesCompatible(FProperty* A, FProperty* B)
-        {
-            if (A == nullptr || B == nullptr)
-            {
-                return false;
-            }
-
-            if (A->GetType() != B->GetType() || A->GetElementSize() != B->GetElementSize())
-            {
-                return false;
-            }
-
-            if (A->IsA(EPropertyTypeFlags::Vector) || A->IsA(EPropertyTypeFlags::Map))
-            {
-                return false;
-            }
-
-            if (A->IsA(EPropertyTypeFlags::Struct))
-            {
-                return static_cast<FStructProperty*>(A)->GetStruct() == static_cast<FStructProperty*>(B)->GetStruct();
-            }
-
-            if (A->IsA(EPropertyTypeFlags::Object))
-            {
-                return static_cast<FObjectProperty*>(A)->GetPropertyClass() == static_cast<FObjectProperty*>(B)->GetPropertyClass();
-            }
-
-            return true;
-        }
-    }
-
     void FPropertyRow::CopyPropertyValue()
     {
         void* Value = PropertyHandle != nullptr ? PropertyHandle->GetValuePtr() : nullptr;
@@ -627,11 +1342,15 @@ namespace Lumina
             return;
         }
 
-        if (!ArePropertiesCompatible(PropertyHandle->Property, PropertyHandle->Property))
+        if (!IsCopyableProperty(PropertyHandle->Property))
         {
             ImGuiX::Notifications::NotifyWarning("'{0}' is not a copyable property type.", PropertyHandle->Property->Name);
             return;
         }
+
+        // The source can be a property of a script type, which a reload frees.
+        static const FDelegateHandle ClearOnReload = FCoreDelegates::OnScriptsWillReload.AddLambda([] { ClearPropertyClipboard(); });
+        (void)ClearOnReload;
 
         GPropertyClipboardBytes.clear();
 
@@ -659,24 +1378,17 @@ namespace Lumina
             return;
         }
 
-        // Bracketed like a discrete edit so undo captures the old value and post-edit hooks fire.
         DispatchChange(EPropertyChangeOp::Started);
 
-        {
-            FMemoryReader Reader(GPropertyClipboardBytes);
-            FObjectProxyArchiver Proxy(Reader, true);
-            PropertyHandle->Property->Serialize(Proxy, Value);
-        }
-
+        FMemoryReader Reader(GPropertyClipboardBytes);
+        FObjectProxyArchiver Proxy(Reader, true);
+        PropertyHandle->Property->Serialize(Proxy, Value);
         if (Customization)
         {
             Customization->HandleExternalUpdate(PropertyHandle);
         }
 
-        ChangeOp = EPropertyChangeOp::Updated;
-        DispatchChange(EPropertyChangeOp::Updated);
         DispatchChange(EPropertyChangeOp::Finished);
-        ChangeOp = EPropertyChangeOp::None;
 
         ImGuiX::Notifications::NotifySuccess("Pasted into '{0}'.", PropertyHandle->Property->Name);
     }
@@ -691,19 +1403,13 @@ namespace Lumina
         DispatchChange(EPropertyChangeOp::Started);
 
         PropertyHandle->ResetToDefault();
-
-        // Re-sync customization cache after reset; stale cache would push the old value back via UpdatePropertyValue.
         if (Customization)
         {
             Customization->HandleExternalUpdate(PropertyHandle);
         }
-
         OnValueResetToDefault();
 
-        ChangeOp = EPropertyChangeOp::Updated;
-        DispatchChange(EPropertyChangeOp::Updated);
         DispatchChange(EPropertyChangeOp::Finished);
-        ChangeOp = EPropertyChangeOp::None;
     }
 
     void FPropertyRow::DispatchChange(EPropertyChangeOp Op)
@@ -713,280 +1419,209 @@ namespace Lumina
             return;
         }
 
-        // Hoisted above the event so it can carry the commit flag; equal to reading bEditSessionActive after the Started transition below.
-        const bool bSessionActiveForHooks = bEditSessionActive || (Op == EPropertyChangeOp::Started);
-        const bool bFirePreEdit  = IsPreEditOp(Op, bSessionActiveForHooks);
-        const bool bFirePostEdit = IsCommitOp(Op, bSessionActiveForHooks);
-
-        const FPropertyChangedEvent Event{Callbacks.Type, PropertyHandle->Property, PropertyHandle->Property->Name,
-            bFirePostEdit, ValueOffsetInOuter(PropertyHandle->GetValuePtr(), Callbacks.Instance, Callbacks.Type)};
-
-        if (Op == EPropertyChangeOp::Started && Callbacks.StartChangeCallback)
+        DispatchPropertyChange(Op, bEditSessionActive, Callbacks, PropertyHandle->Property, PropertyHandle->GetValuePtr(), [this]
         {
-            Callbacks.StartChangeCallback(Event);
-        }
-        // An atomic commit has no drag to open a session, so its undo transaction is opened here.
-        else if (Op == EPropertyChangeOp::Finished && !bEditSessionActive && Callbacks.StartChangeCallback)
-        {
-            Callbacks.StartChangeCallback(Event);
-        }
-
-        // Null for script-defined structs, which carry no compile-time struct ops.
-        FStructOps* Ops = Callbacks.Type ? Callbacks.Type->GetStructOps() : nullptr;
-
-        if (Op == EPropertyChangeOp::Started)
-        {
-            bEditSessionActive = true;
-        }
-        if (Op == EPropertyChangeOp::Finished)
-        {
-            bEditSessionActive = false;
-        }
-
-        if (Ops && Ops->HasPreEdit() && Callbacks.Instance && bFirePreEdit)
-        {
-            Ops->PreEdit(Callbacks.Instance, Event);
-        }
-
-        if (Callbacks.PreChangeCallback)
-        {
-            Callbacks.PreChangeCallback(Event);
-        }
-
-        if (Customization)
-        {
-            Customization->UpdatePropertyValue(PropertyHandle);
-        }
-
-        if (Ops && Ops->HasPostEdit() && Callbacks.Instance && bFirePostEdit)
-        {
-            Ops->PostEdit(Callbacks.Instance, Event);
-        }
-        
-        if (Callbacks.PostChangeCallback)
-        {
-            Callbacks.PostChangeCallback(Event);
-        }
-
-        if (Op == EPropertyChangeOp::Finished && Callbacks.FinishChangeCallback)
-        {
-            Callbacks.FinishChangeCallback(Event);
-        }
-    }
-
-    namespace
-    {
-        // Rows are drawn whole while anything in the window is being edited or a keyboard move is looking for its target.
-        bool IsRowOutsideView(const ImGuiTable& Table, float Height)
-        {
-            if (FPropertyTable::IsDetailsRemeasureFrame())
+            if (Customization)
             {
-                return false;
+                Customization->UpdatePropertyValue(PropertyHandle);
             }
-            const ImGuiContext& Context = *GImGui;
-            if (Context.NavMoveScoringItems || (Context.ActiveId != 0 && Context.ActiveIdWindow == Context.CurrentWindow))
-            {
-                return false;
-            }
-            return Table.RowPosY1 > Table.InnerClipRect.Max.y || Table.RowPosY1 + Height < Table.InnerClipRect.Min.y;
-        }
+        });
     }
 
     void FPropertyRow::DrawRow(float Offset, const FPropertyDrawArgs& Args)
     {
-        const bool bReadOnly = Args.bReadOnly;
+        // First, since HasExtraControls reads it through AllowResize.
+        bDrawReadOnly = Args.bReadOnly;
 
-        // First, since HasExtraControls() resolves through AllowResize(), which reads this.
-        bDrawReadOnly = bReadOnly;
+        FRowDrawState State;
+        State.bHasProperty = !IsCategory() && PropertyHandle != nullptr && PropertyHandle->Property != nullptr;
+        State.bTopLevel = State.bHasProperty && IsTopLevel();
+        State.bMultipleValues = State.bTopLevel && Callbacks.IsMultiValueFn && Callbacks.IsMultiValueFn(PropertyHandle->Property);
+        State.bValuesLocked = State.bMultipleValues && !Callbacks.bEditMultipleValues;
 
         ImGui::PushID(this);
-
         ImGui::TableNextRow();
 
-        const bool bIsCategory = IsCategory();
-        const bool bTopLevel = IsTopLevel();
-        const bool bMultipleValues = bTopLevel && PropertyHandle && PropertyHandle->Property
-            && Callbacks.IsMultiValueFn && Callbacks.IsMultiValueFn(PropertyHandle->Property);
-        const bool bValuesLocked = bMultipleValues && !Callbacks.bEditMultipleValues;
-
-        // Capture row top before drawing for later modified-marker rendering.
-        ImGuiTable* CurrentTable = ImGui::GetCurrentTable();
-        const float RowTopY = CurrentTable ? CurrentTable->RowPosY1 : 0.0f;
-
-        // Holding the measured height in an empty row keeps the scroll range and every row below exactly where drawing would put them.
-        if (CurrentTable != nullptr && LastDrawnHeight > 0.0f && IsRowOutsideView(*CurrentTable, LastDrawnHeight))
+        // An offscreen row holds its measured height, so the scroll range and every row below stay where drawing would put them.
+        ImGuiTable* Table = ImGui::GetCurrentTable();
+        if (Table != nullptr && LastDrawnHeight > 0.0f && IsRowOutsideView(*Table, LastDrawnHeight))
         {
-            CurrentTable->RowPosY2 = ImMax(CurrentTable->RowPosY2, CurrentTable->RowPosY1 + LastDrawnHeight);
-            ImGui::PopID();
-
-            if (bExpanded && !Children.empty() && !bValuesLocked)
-            {
-                ImGui::BeginDisabled(IsReadOnly());
-                DrawChildren(Offset + ChildIndentStep, Args);
-                ImGui::EndDisabled();
-            }
-            return;
+            Table->RowPosY2 = ImMax(Table->RowPosY2, Table->RowPosY1 + LastDrawnHeight);
         }
-
-        const bool bHasDefault = !bIsCategory && PropertyHandle && PropertyHandle->HasDefault();
-        const bool bDiffers = bHasDefault && PropertyHandle->DiffersFromDefault();
-
-        ImGui::TableNextColumn();
-        ImGui::AlignTextToFramePadding();
-        DrawHeader(Offset, Args);
-
-        // Hung off the name cell, the row's only stable click target, since the value cell is the widget's.
-        const bool bShiftHeld = ImGui::GetIO().KeyShift;
-        if (!bIsCategory && PropertyHandle && PropertyHandle->Property && bShiftHeld && ImGui::IsItemHovered())
+        else
         {
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-            {
-                CopyPropertyValue();
-            }
-            else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-                && !bReadOnly && !IsReadOnly() && !bValuesLocked)
-            {
-                PastePropertyValue();
-            }
-        }
-
-        // Skipped while Shift is held, so the copy chord above does not also pop the menu.
-        const bool bHasProperty = !bIsCategory && PropertyHandle && PropertyHandle->Property;
-        const bool bCanExpand = !Children.empty();
-        if (!bShiftHeld && (bHasProperty || bCanExpand))
-        {
-            if (ImGui::BeginPopupContextItem("##PropCtx"))
-            {
-                if (bHasProperty)
-                {
-                    ImGui::BeginDisabled(!bDiffers || bReadOnly || IsReadOnly() || bValuesLocked);
-                    if (ImGui::MenuItem(LE_ICON_REFRESH " Reset to Default"))
-                    {
-                        PerformResetToDefault();
-                    }
-                    ImGui::EndDisabled();
-                }
-                if (bHasProperty && bCanExpand)
-                {
-                    ImGui::Separator();
-                }
-                if (bCanExpand && ImGui::MenuItem(LE_ICON_EXPAND_ALL " Expand All"))
-                {
-                    SetExpandedRecursive(true);
-                }
-                if (bCanExpand && ImGui::MenuItem(LE_ICON_COLLAPSE_ALL " Collapse All"))
-                {
-                    SetExpandedRecursive(false);
-                }
-                ImGui::EndPopup();
-            }
-        }
-
-        ImGui::TableNextColumn();
-        {
-            const bool bHasExtras = HasExtraControls();
-
-            // Gated to top-level rows so nested members do not inherit it from shared callbacks.
-            const bool bHasTrailing = Callbacks.RowTrailingControlFn
-                && PropertyHandle && PropertyHandle->Property && bTopLevel;
-            const float TrailingWidth = Callbacks.RowTrailingControlWidth > 0.0f ? Callbacks.RowTrailingControlWidth : 24.0f;
-
-            const int ColumnCount = 2 + (bHasExtras ? 1 : 0) + (bHasTrailing ? 1 : 0);
-
-            constexpr ImGuiTableFlags Flags = ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_SizingFixedFit;
-            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(2, 0));
-            if (ImGui::BeginTable("EditorRow", ColumnCount, Flags))
-            {
-                ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
-                if (bHasExtras)
-                {
-                    ImGui::TableSetupColumn("##Extra", ImGuiTableColumnFlags_WidthFixed, GetExtraControlsSectionWidth());
-                }
-                if (bHasTrailing)
-                {
-                    ImGui::TableSetupColumn("##Trailing", ImGuiTableColumnFlags_WidthFixed, TrailingWidth);
-                }
-                ImGui::TableSetupColumn("##Reset", ImGuiTableColumnFlags_WidthFixed, ResetColumnWidth);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::AlignTextToFramePadding();
-                if (bValuesLocked)
-                {
-                    ImGui::TextDisabled("(Multiple Values)");
-                }
-                else
-                {
-                    const ImVec2 CellMin = ImGui::GetCursorScreenPos();
-                    const float CellWidth = ImGui::GetContentRegionAvail().x;
-                    DrawEditor(Args);
-                    if (bMultipleValues)
-                    {
-                        // Shaded over rather than drawn with lowered alpha, which a combo's popup would inherit.
-                        ImGui::GetWindowDrawList()->AddRectFilled(CellMin, ImVec2(CellMin.x + CellWidth, ImGui::GetItemRectMax().y),
-                            ImGui::GetColorU32(ImGuiCol_WindowBg, 0.55f));
-                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-                        {
-                            ImGuiX::TextTooltip_Internal("The selected objects differ here. Editing sets them all.");
-                        }
-                    }
-                }
-
-                if (bHasExtras)
-                {
-                    ImGui::TableNextColumn();
-                    DrawExtraControlsSection();
-                }
-
-                if (bHasTrailing)
-                {
-                    ImGui::TableNextColumn();
-                    Callbacks.RowTrailingControlFn(PropertyHandle->Property);
-                }
-
-                ImGui::TableNextColumn();
-                if (bDiffers && !bReadOnly && !IsReadOnly() && !bValuesLocked)
-                {
-                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-                    if (ImGuiX::FlatButton(LE_ICON_REFRESH "##Reset", ImVec2(ResetColumnWidth - 2, 22), ModifiedMarkerColor()))
-                    {
-                        PerformResetToDefault();
-                    }
-                    ImGui::PopStyleVar();
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-                    {
-                        ImGuiX::TextTooltip_Internal("Reset to default");
-                    }
-                }
-
-                ImGui::EndTable();
-            }
-            ImGui::PopStyleVar();
-        }
-
-        // Fetched again, since a table first seen inside this row can grow ImGui's table pool and move the one above.
-        if (const ImGuiTable* RowTable = ImGui::GetCurrentTable())
-        {
-            // What TableEndCell will settle the row at, read before the children open rows of their own.
-            const float RowBottom = ImMax(RowTable->RowPosY2, ImGui::GetCurrentWindow()->DC.CursorMaxPos.y + RowTable->RowCellPaddingY);
-            LastDrawnHeight = RowBottom - RowTable->RowPosY1;
-        }
-
-        if (bDiffers)
-        {
-            const float RowBottomY = ImGui::GetCursorScreenPos().y;
-            DrawModifiedMarker(RowTopY, RowBottomY);
+            DrawCells(Offset, Args, State);
         }
 
         ImGui::PopID();
 
         // The aggregate stands in for the subtree, which would otherwise show the focus object's values.
-        if (bExpanded && !Children.empty() && !bValuesLocked)
+        if (bExpanded && !State.bValuesLocked)
         {
-            ImGui::BeginDisabled(IsReadOnly());
-            DrawChildren(Offset + ChildIndentStep, Args);
+            // Synced here as well as in UpdateRow, since a paste or a hook earlier this frame can move the value.
+            SyncChildren();
+            if (!Children.empty())
+            {
+                ImGui::BeginDisabled(IsReadOnly());
+                DrawChildren(Offset + ChildIndentStep, Args);
+                ImGui::EndDisabled();
+            }
+        }
+    }
+
+    void FPropertyRow::DrawCells(float Offset, const FPropertyDrawArgs& Args, FRowDrawState& State)
+    {
+        const float RowTopY = ImGui::GetCurrentTable()->RowPosY1;
+        State.bEditable = !Args.bReadOnly && !State.bValuesLocked && !IsReadOnly();
+        State.bDiffers = State.bHasProperty && PropertyHandle->HasDefault() && PropertyHandle->DiffersFromDefault();
+
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Dummy(ImVec2(Offset, 0));
+        ImGui::SameLine();
+        DrawHeader(Args);
+        DrawNameCellActions(State);
+
+        ImGui::TableNextColumn();
+        DrawValueCell(Args, State);
+
+        // Fetched again, since a table first seen inside this row can grow ImGui's table pool and move the one above.
+        if (const ImGuiTable* RowTable = ImGui::GetCurrentTable())
+        {
+            const float RowBottom = ImMax(RowTable->RowPosY2, ImGui::GetCurrentWindow()->DC.CursorMaxPos.y + RowTable->RowCellPaddingY);
+            LastDrawnHeight = RowBottom - RowTable->RowPosY1;
+        }
+
+        if (State.bDiffers)
+        {
+            DrawModifiedMarker(RowTopY, ImGui::GetCursorScreenPos().y);
+        }
+    }
+
+    void FPropertyRow::DrawNameCellActions(const FRowDrawState& State)
+    {
+        // Hung off the name cell, the row's only stable click target, since the value cell is the widget's.
+        const bool bShiftHeld = ImGui::GetIO().KeyShift;
+        if (State.bHasProperty && bShiftHeld && ImGui::IsItemHovered())
+        {
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                CopyPropertyValue();
+            }
+            else if (State.bEditable && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            {
+                PastePropertyValue();
+            }
+        }
+
+        // Skipped while Shift is held, so the copy chord does not also open the menu.
+        const bool bCanExpand = !Children.empty();
+        if (bShiftHeld || (!State.bHasProperty && !bCanExpand) || !ImGui::BeginPopupContextItem("##PropCtx"))
+        {
+            return;
+        }
+
+        if (State.bHasProperty)
+        {
+            ImGui::BeginDisabled(!State.bDiffers || !State.bEditable);
+            if (ImGui::MenuItem(LE_ICON_REFRESH " Reset to Default"))
+            {
+                PerformResetToDefault();
+            }
             ImGui::EndDisabled();
         }
+        if (State.bHasProperty && bCanExpand)
+        {
+            ImGui::Separator();
+        }
+        if (bCanExpand && ImGui::MenuItem(LE_ICON_EXPAND_ALL " Expand All"))
+        {
+            SetExpandedRecursive(true);
+        }
+        if (bCanExpand && ImGui::MenuItem(LE_ICON_COLLAPSE_ALL " Collapse All"))
+        {
+            SetExpandedRecursive(false);
+        }
+        ImGui::EndPopup();
+    }
+
+    void FPropertyRow::DrawValueCell(const FPropertyDrawArgs& Args, const FRowDrawState& State)
+    {
+        const bool bHasExtras = HasExtraControls();
+        const bool bHasTrailing = State.bTopLevel && Callbacks.TrailingControlFn;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(2, 0));
+        const int32 ColumnCount = 2 + (bHasExtras ? 1 : 0) + (bHasTrailing ? 1 : 0);
+        if (!ImGui::BeginTable("EditorRow", ColumnCount, ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_SizingFixedFit))
+        {
+            ImGui::PopStyleVar();
+            return;
+        }
+
+        ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
+        if (bHasExtras)
+        {
+            ImGui::TableSetupColumn("##Extra", ImGuiTableColumnFlags_WidthFixed, GetExtraControlsSectionWidth());
+        }
+        if (bHasTrailing)
+        {
+            ImGui::TableSetupColumn("##Trailing", ImGuiTableColumnFlags_WidthFixed, Callbacks.TrailingControlWidth);
+        }
+        ImGui::TableSetupColumn("##Reset", ImGuiTableColumnFlags_WidthFixed, ResetColumnWidth);
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        if (State.bValuesLocked)
+        {
+            ImGui::TextDisabled("(Multiple Values)");
+        }
+        else
+        {
+            const ImVec2 CellMin = ImGui::GetCursorScreenPos();
+            const float CellWidth = ImGui::GetContentRegionAvail().x;
+            DrawEditor(Args);
+            if (State.bMultipleValues)
+            {
+                // Shaded over rather than drawn with lowered alpha, which a combo's popup would inherit.
+                ImGui::GetWindowDrawList()->AddRectFilled(CellMin, ImVec2(CellMin.x + CellWidth, ImGui::GetItemRectMax().y),
+                    ImGui::GetColorU32(ImGuiCol_WindowBg, 0.55f));
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                {
+                    ImGuiX::TextTooltip_Internal("The selected objects differ here. Editing sets them all.");
+                }
+            }
+        }
+
+        if (bHasExtras)
+        {
+            ImGui::TableNextColumn();
+            DrawExtraControlsSection();
+        }
+
+        if (bHasTrailing)
+        {
+            ImGui::TableNextColumn();
+            Callbacks.TrailingControlFn(PropertyHandle->Property);
+        }
+
+        ImGui::TableNextColumn();
+        if (State.bDiffers && State.bEditable)
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
+            if (ImGuiX::FlatButton(LE_ICON_REFRESH "##Reset", ImVec2(ResetColumnWidth - 2, 22), ModifiedMarkerColor()))
+            {
+                PerformResetToDefault();
+            }
+            ImGui::PopStyleVar();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            {
+                ImGuiX::TextTooltip_Internal("Reset to default");
+            }
+        }
+
+        ImGui::EndTable();
+        ImGui::PopStyleVar();
     }
 
     void FPropertyRow::DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args)
@@ -1001,7 +1636,18 @@ namespace Lumina
         }
     }
 
-    bool FPropertyRow::ApplyFilter(const ImGuiTextFilter& Filter, bool bFilterActive, bool bJustActivated, bool bJustCleared)
+    FStringView FPropertyRow::GetFilterLabel() const
+    {
+        // Elements are labeled by index, which nobody searches.
+        if (IsArrayElement() || PropertyHandle == nullptr || PropertyHandle->Property == nullptr)
+        {
+            return FStringView();
+        }
+        const FCStringView Display = PropertyHandle->Property->GetPropertyDisplayName();
+        return FStringView(Display.c_str(), Display.size());
+    }
+
+    bool FPropertyRow::ApplyFilter(const ImGuiTextFilter& Filter, bool bFilterActive, bool bJustActivated, bool bJustCleared, bool bAncestorMatched)
     {
         // Without this a search would silently expand the whole tree and leave it that way.
         if (bJustActivated)
@@ -1009,11 +1655,14 @@ namespace Lumina
             bExpandedSaved = bExpanded;
         }
 
-        bool bAnyChildPasses = false;
+        const FStringView Label = GetFilterLabel();
+        const bool bSelfMatches = bFilterActive && !Label.empty() && ImGuiX::PassSearchFilter(Filter, Label);
+
+        // Not short-circuited, since every descendant needs its own flag updated.
+        bool bDescendantMatches = false;
         for (const TUniquePtr<FPropertyRow>& Child : Children)
         {
-            // Not short-circuited, since every descendant needs its own flag updated.
-            bAnyChildPasses |= Child->ApplyFilter(Filter, bFilterActive, bJustActivated, bJustCleared);
+            bDescendantMatches |= Child->ApplyFilter(Filter, bFilterActive, bJustActivated, bJustCleared, bAncestorMatched || bSelfMatches);
         }
 
         if (!bFilterActive)
@@ -1023,21 +1672,16 @@ namespace Lumina
             {
                 bExpanded = bExpandedSaved;
             }
-            return true;
+            return false;
         }
 
-        const FStringView Label = GetFilterLabel();
-        const bool bSelfMatches = !Label.empty() && ImGuiX::PassSearchFilter(Filter, Label);
-
-        bPassesFilter = bSelfMatches || bAnyChildPasses;
-
-        // A row that matched on its own name stays as the user left it rather than dumping its subtree.
-        if (bAnyChildPasses)
+        // A matching row keeps its whole subtree, and only a match further down opens the rows on the way to it.
+        bPassesFilter = bAncestorMatched || bSelfMatches || bDescendantMatches;
+        if (bDescendantMatches)
         {
             bExpanded = true;
         }
-
-        return bPassesFilter;
+        return bSelfMatches || bDescendantMatches;
     }
 
     bool FPropertyRow::IsReadOnly() const
@@ -1053,203 +1697,6 @@ namespace Lumina
         return PropertyHandle->Property->IsReadOnly();
     }
 
-    // A clipped label leads its tooltip with the full name, since the cell no longer shows it.
-    static void DrawPropertyTooltip(const FProperty* Property, bool bLabelClipped = false)
-    {
-        if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        {
-            return;
-        }
-
-        const FCStringView Name = Property->GetPropertyDisplayName();
-        const FStringView Tooltip = Property->GetMetadata("ToolTip");
-        if (Tooltip.empty())
-        {
-            ImGuiX::WrappedTooltip_Internal(FStringView(Name.c_str(), Name.size()));
-            return;
-        }
-        if (bLabelClipped)
-        {
-            const FString Both = FString(Name.c_str()) + "\n\n" + FString(Tooltip.data(), Tooltip.size());
-            ImGuiX::WrappedTooltip_Internal(FStringView(Both.c_str(), Both.size()));
-            return;
-        }
-        ImGuiX::WrappedTooltip_Internal(Tooltip);
-    }
-
-    // An element's inner property has no name or tooltip, so the element reads as its place in the array plus the array's own tooltip.
-    static void DrawRowTooltip(const FPropertyHandle* Handle, const FProperty* Property, bool bLabelClipped, FStringView Label = FStringView())
-    {
-        if (Handle == nullptr || Handle->OwnerArray == nullptr)
-        {
-            DrawPropertyTooltip(Property, bLabelClipped);
-            return;
-        }
-        if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        {
-            return;
-        }
-
-        const FArrayProperty* Array = Handle->OwnerArray;
-        const FString TypeName = Property->GetType() == EPropertyTypeFlags::Struct
-            ? static_cast<const FStructProperty*>(Property)->GetStruct()->GetName().ToString()
-            : FString(PropertyTypePlainNames[(size_t)Property->GetType()]);
-
-        FString Text;
-        if (bLabelClipped && !Label.empty())
-        {
-            Text += FString(Label.data(), Label.size()) + "\n\n";
-        }
-        Text += Lumina::Format("Element {} of {} ({})", Handle->Index, Array->GetPropertyDisplayName().c_str(), TypeName.c_str());
-
-        const FStringView ArrayTooltip = Array->GetMetadata("ToolTip");
-        if (!ArrayTooltip.empty())
-        {
-            Text += "\n\n" + FString(ArrayTooltip.data(), ArrayTooltip.size());
-        }
-        ImGuiX::WrappedTooltip_Internal(FStringView(Text.c_str(), Text.size()));
-    }
-
-    // A label too long for its cell ends in an ellipsis rather than being cut mid-letter, and reports that it did.
-    static bool DrawHeaderLabel(const char* Label)
-    {
-        const bool bClipped = ImGui::CalcTextSize(Label).x > ImGui::GetContentRegionAvail().x;
-        ImGui::TextAligned(0.0f, -FLT_MIN, "%s", Label);
-        return bClipped;
-    }
-
-    // The foldout version of DrawHeaderLabel, drawing the text itself over a header whose own label is hidden.
-    static bool CollapsingHeaderEllipsis(const char* Label, ImGuiTreeNodeFlags Flags, bool& bOutClipped, const void* StableId = nullptr)
-    {
-        if (StableId != nullptr)
-        {
-            ImGui::PushID(StableId);
-        }
-        else
-        {
-            ImGui::PushID(Label);
-        }
-        const bool bOpen = ImGui::CollapsingHeader("##Header", Flags);
-        ImGui::PopID();
-
-        const ImGuiStyle& Style = ImGui::GetStyle();
-        const ImVec2 Min = ImGui::GetItemRectMin();
-        const ImVec2 Max = ImGui::GetItemRectMax();
-        const bool bLeaf = (Flags & ImGuiTreeNodeFlags_Leaf) != 0;
-        const float ArrowWidth = bLeaf ? Style.FramePadding.x : ImGui::GetFontSize() + Style.FramePadding.x * 3.0f;
-        const ImVec2 TextSize = ImGui::CalcTextSize(Label);
-        const ImVec2 TextMin(Min.x + ArrowWidth, Min.y + Style.FramePadding.y);
-        const ImVec2 TextMax(Max.x - Style.FramePadding.x, Max.y);
-
-        bOutClipped = TextMin.x + TextSize.x > TextMax.x;
-        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), TextMin, TextMax, TextMax.x, Label, nullptr, &TextSize);
-        return bOpen;
-    }
-
-    // Shared by the leaf row and the map-entry editors, returning null for struct and array types.
-    TSharedPtr<IPropertyTypeCustomization> MakeLeafPropertyCustomization(FProperty* Prop)
-    {
-        switch (Prop->GetType())
-        {
-        case EPropertyTypeFlags::Int8:   return FNumericPropertyCustomization<int8,   ImGuiDataType_S8>::MakeInstance();
-        case EPropertyTypeFlags::Int16:  return FNumericPropertyCustomization<int16,  ImGuiDataType_S16>::MakeInstance();
-        case EPropertyTypeFlags::Int32:  return FNumericPropertyCustomization<int32,  ImGuiDataType_S32>::MakeInstance();
-        case EPropertyTypeFlags::Int64:  return FNumericPropertyCustomization<int64,  ImGuiDataType_S64>::MakeInstance();
-        case EPropertyTypeFlags::UInt8:  return FNumericPropertyCustomization<uint8,  ImGuiDataType_U8>::MakeInstance();
-        case EPropertyTypeFlags::UInt16: return FNumericPropertyCustomization<uint16, ImGuiDataType_U16>::MakeInstance();
-        case EPropertyTypeFlags::UInt32: return FNumericPropertyCustomization<uint32, ImGuiDataType_U32>::MakeInstance();
-        case EPropertyTypeFlags::Entity: return FEntityPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::UInt64: return FNumericPropertyCustomization<uint64, ImGuiDataType_U64>::MakeInstance();
-        case EPropertyTypeFlags::Float:  return FNumericPropertyCustomization<float,  ImGuiDataType_Float>::MakeInstance();
-        case EPropertyTypeFlags::Double: return FNumericPropertyCustomization<double, ImGuiDataType_Double>::MakeInstance();
-        case EPropertyTypeFlags::Bool:   return FBoolPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::Object: return FCObjectPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::SoftObject: return FSoftObjectPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::Class:  return FClassPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::SubStruct: return FSubStructPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::Name:   return FNamePropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::String: return FStringPropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::Enum:
-        {
-            // An enum can register its own drawing by name, the way a struct does.
-            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
-            TSharedPtr<IPropertyTypeCustomization> Registered = Registry->GetPropertyCustomizationForType(static_cast<FEnumProperty*>(Prop)->GetEnum()->GetName());
-            return Registered ? Registered : FEnumPropertyCustomization::MakeInstance();
-        }
-        case EPropertyTypeFlags::Delegate: return FDelegatePropertyCustomization::MakeInstance();
-        case EPropertyTypeFlags::ComponentRef: return FComponentRefPropertyCustomization::MakeInstance();
-        default: return nullptr;
-        }
-    }
-
-    FPropertyPropertyRow::FPropertyPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
-        : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
-    {
-        Customization = MakeLeafPropertyCustomization(PropertyHandle->Property);
-    }
-
-    void FPropertyPropertyRow::Update()
-    {
-        DispatchChange(ChangeOp);
-        ChangeOp = EPropertyChangeOp::None;
-    }
-
-    FStringView FPropertyPropertyRow::GetFilterLabel() const
-    {
-        // Array elements are labeled by index, which nobody searches, but a descendant match still passes.
-        if (IsArrayElementProperty() || PropertyHandle == nullptr || PropertyHandle->Property == nullptr)
-        {
-            return FStringView();
-        }
-        const FCStringView Display = PropertyHandle->Property->GetPropertyDisplayName();
-        return FStringView(Display.c_str(), Display.size());
-    }
-
-    void FPropertyPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
-    {
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
-
-        bool bClipped = false;
-        if (IsArrayElementProperty())
-        {
-            ImGui::Text("%lld", static_cast<long long>(PropertyHandle->Index));
-        }
-        else
-        {
-            bClipped = DrawHeaderLabel(PropertyHandle->Property->GetPropertyDisplayName().c_str());
-        }
-
-        DrawRowTooltip(PropertyHandle.get(), PropertyHandle->Property, bClipped);
-    }
-
-    void FPropertyPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
-    {
-        ImGui::BeginDisabled(IsReadOnly());
-
-        if (Customization)
-        {
-            ChangeOp = Customization->UpdateAndDraw(PropertyHandle, Args);
-        }
-        else
-        {
-            ImGui::TextUnformatted(LE_ICON_EXCLAMATION "Missing Property Customization");
-        }
-
-        ImGui::EndDisabled();
-    }
-
-    float FPropertyPropertyRow::GetMeasuredHeaderTextWidth() const
-    {
-        if (IsArrayElementProperty())
-        {
-            char Buf[32];
-            snprintf(Buf, sizeof(Buf), "%lld", static_cast<long long>(PropertyHandle->Index));
-            return ImGui::CalcTextSize(Buf).x;
-        }
-        return ImGui::CalcTextSize(PropertyHandle->Property->GetPropertyDisplayName().c_str()).x;
-    }
-
     bool FPropertyRow::HasExtraControls() const
     {
         if (!bArrayElement)
@@ -1262,27 +1709,7 @@ namespace Lumina
         return ArrayRow->AllowResize() || ArrayRow->AllowReorder();
     }
 
-    namespace
-    {
-        constexpr float kElementButtonWidth = 18.0f;
-
-        // Disabled rather than hidden when it cannot act, so every element row keeps the same columns.
-        bool ElementButton(const char* Icon, bool bEnabled, const char* Tooltip)
-        {
-            ImGui::BeginDisabled(!bEnabled);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-            const bool bClicked = ImGuiX::FlatButton(Icon, ImVec2(kElementButtonWidth, 24), ArrayControlSeed);
-            ImGui::PopStyleVar();
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
-            {
-                ImGuiX::TextTooltip_Internal(Tooltip);
-            }
-            return bClicked;
-        }
-    }
-
-    float FPropertyRow::GetExtraControlsSectionWidth()
+    float FPropertyRow::GetExtraControlsSectionWidth() const
     {
         if (!bArrayElement)
         {
@@ -1292,48 +1719,28 @@ namespace Lumina
         // Up and down for a reorderable array, delete for a resizable one, then the options menu.
         const FArrayPropertyRow* ArrayRow = static_cast<const FArrayPropertyRow*>(ParentRow);
         const int32 Buttons = 1 + (ArrayRow->AllowReorder() ? 2 : 0) + (ArrayRow->AllowResize() ? 1 : 0);
-        return Buttons * kElementButtonWidth + (Buttons - 1) * ImGui::GetStyle().ItemSpacing.x + 4.0f;
+        return Buttons * ElementButtonWidth + (Buttons - 1) * ImGui::GetStyle().ItemSpacing.x + 4.0f;
     }
 
     void FPropertyRow::DrawExtraControlsSection()
     {
         FArrayPropertyRow* ArrayRow = static_cast<FArrayPropertyRow*>(ParentRow);
-        FArrayProperty* ArrayProperty = ArrayRow->ArrayProperty;
-        void* ContainerPtr = ArrayRow->GetPropertyHandle()->GetValuePtr();
-        const size_t ArrayNum = ArrayProperty->GetNum(ContainerPtr);
         const int64 Index = PropertyHandle->Index;
         const bool bAllowResize = ArrayRow->AllowResize();
         const bool bAllowReorder = ArrayRow->AllowReorder();
         const bool bCanMoveUp = bAllowReorder && Index > 0;
-        const bool bCanMoveDown = bAllowReorder && ArrayNum > 0 && Cmp::Less(Index, ArrayNum - 1);
-
-        auto QueueMove = [ArrayRow, ArrayProperty, ContainerPtr, Index](int64 Target)
-        {
-            ArrayRow->QueueMutation([ArrayRow, ArrayProperty, ContainerPtr, Index, Target]
-            {
-                ArrayProperty->Swap(ContainerPtr, Index, Target);
-                ArrayRow->SwapElementExpansion(Index, Target);
-            });
-        };
-        auto QueueRemove = [ArrayRow, ArrayProperty, ContainerPtr, Index]()
-        {
-            ArrayRow->QueueMutation([ArrayRow, ArrayProperty, ContainerPtr, Index]
-            {
-                ArrayProperty->RemoveAt(ContainerPtr, Index);
-                ArrayRow->RemoveElementExpansion(Index);
-            });
-        };
+        const bool bCanMoveDown = bAllowReorder && Index + 1 < ArrayRow->GetElementCount();
 
         if (bAllowReorder)
         {
             if (ElementButton(LE_ICON_ARROW_UP, bCanMoveUp, "Move element up"))
             {
-                QueueMove(Index - 1);
+                ArrayRow->QueueMoveElement(Index, Index - 1);
             }
             ImGui::SameLine();
             if (ElementButton(LE_ICON_ARROW_DOWN, bCanMoveDown, "Move element down"))
             {
-                QueueMove(Index + 1);
+                ArrayRow->QueueMoveElement(Index, Index + 1);
             }
             ImGui::SameLine();
         }
@@ -1341,47 +1748,94 @@ namespace Lumina
         {
             if (ElementButton(LE_ICON_TRASH_CAN, true, "Remove element"))
             {
-                QueueRemove();
+                ArrayRow->QueueRemoveElement(Index);
             }
             ImGui::SameLine();
         }
 
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-        ImGuiX::FlatButton(LE_ICON_DOTS_HORIZONTAL, ImVec2(kElementButtonWidth, 24), ArrayControlSeed);
+        ImGuiX::FlatButton(LE_ICON_DOTS_HORIZONTAL, ImVec2(ElementButtonWidth, 24), ArrayControlSeed);
         ImGui::PopStyleVar();
-
-        if (ImGui::BeginPopupContextItem(nullptr, ImGuiPopupFlags_MouseButtonLeft))
-        {
-            if (bAllowResize && ImGui::MenuItem(LE_ICON_PLUS " Insert New Element"))
-            {
-                ArrayRow->QueueMutation([ArrayProperty, ContainerPtr]
-                {
-                    ArrayProperty->PushBack(ContainerPtr, nullptr);
-                });
-            }
-
-            if (bCanMoveUp && ImGui::MenuItem(LE_ICON_ARROW_UP " Move Element Up"))
-            {
-                QueueMove(Index - 1);
-            }
-
-            if (bCanMoveDown && ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move Element Down"))
-            {
-                QueueMove(Index + 1);
-            }
-
-            if (bAllowResize && ImGui::MenuItem(LE_ICON_TRASH_CAN " Remove Element"))
-            {
-                QueueRemove();
-            }
-
-            ImGui::EndPopup();
-        }
-
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         {
             ImGuiX::TextTooltip_Internal("Array Element Options");
         }
+
+        if (!ImGui::BeginPopupContextItem(nullptr, ImGuiPopupFlags_MouseButtonLeft))
+        {
+            return;
+        }
+        if (bAllowResize && ImGui::MenuItem(LE_ICON_PLUS " Insert New Element"))
+        {
+            ArrayRow->QueueInsertElement(Index);
+        }
+        if (bCanMoveUp && ImGui::MenuItem(LE_ICON_ARROW_UP " Move Element Up"))
+        {
+            ArrayRow->QueueMoveElement(Index, Index - 1);
+        }
+        if (bCanMoveDown && ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move Element Down"))
+        {
+            ArrayRow->QueueMoveElement(Index, Index + 1);
+        }
+        if (bAllowResize && ImGui::MenuItem(LE_ICON_TRASH_CAN " Remove Element"))
+        {
+            ArrayRow->QueueRemoveElement(Index);
+        }
+        ImGui::EndPopup();
+    }
+
+    FLeafPropertyRow::FLeafPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
+        : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
+    {
+        Customization = MakeLeafPropertyCustomization(PropertyHandle->Property);
+    }
+
+    void FLeafPropertyRow::Update()
+    {
+        DispatchChange(ChangeOp);
+        ChangeOp = EPropertyChangeOp::None;
+    }
+
+    void FLeafPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
+    {
+        bool bClipped = false;
+        if (IsArrayElement())
+        {
+            ImGui::Text("%lld", static_cast<long long>(PropertyHandle->Index));
+        }
+        else
+        {
+            bClipped = DrawHeaderLabel(PropertyHandle->Property->GetPropertyDisplayName().c_str());
+        }
+
+        DrawRowTooltip(PropertyHandle.get(), PropertyHandle->Property, bClipped);
+    }
+
+    void FLeafPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
+    {
+        ImGui::BeginDisabled(IsReadOnly());
+
+        if (Customization)
+        {
+            ChangeOp = Customization->UpdateAndDraw(PropertyHandle, Args);
+        }
+        else
+        {
+            ImGui::TextUnformatted(LE_ICON_EXCLAMATION " Missing Property Customization");
+        }
+
+        ImGui::EndDisabled();
+    }
+
+    float FLeafPropertyRow::GetMeasuredHeaderTextWidth() const
+    {
+        if (IsArrayElement())
+        {
+            char Buf[32];
+            snprintf(Buf, sizeof(Buf), "%lld", static_cast<long long>(PropertyHandle->Index));
+            return ImGui::CalcTextSize(Buf).x;
+        }
+        return ImGui::CalcTextSize(PropertyHandle->Property->GetPropertyDisplayName().c_str()).x;
     }
 
     FArrayPropertyRow::FArrayPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
@@ -1397,26 +1851,15 @@ namespace Lumina
 
         if (!PendingMutations.empty())
         {
-            // Structural edits must notify like value edits; Started fires before mutation so the undo snapshot captures the pre-edit array.
+            // Started fires before the mutation, so an undo snapshot captures the array as it was.
             DispatchChange(EPropertyChangeOp::Started);
-
-            // Live rows hold the newest state, while elements outside the window keep whatever was saved for them.
-            ElementStates.resize(Math::Max((int32)ElementStates.size(), GetElementCount()));
-            for (int32 i = 0; i < (int32)Children.size(); ++i)
-            {
-                FRowExpansionState& State = ElementStates[WindowBegin + i];
-                State.clear();
-                Children[i]->CaptureExpansion(State);
-            }
-
+            CaptureElementStates();
             for (const TFunction<void()>& Mutation : PendingMutations)
             {
                 Mutation();
             }
             PendingMutations.clear();
             RebuildChildren();
-
-            DispatchChange(EPropertyChangeOp::Updated);
             DispatchChange(EPropertyChangeOp::Finished);
         }
 
@@ -1438,29 +1881,42 @@ namespace Lumina
         PendingMutations.push_back(Move(Mutation));
     }
 
-    void FArrayPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
+    void FArrayPropertyRow::CaptureElementStates()
     {
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
+        // Live rows hold the newest state, while elements outside the window keep whatever was saved for them.
+        const int32 Needed = Math::Max(GetElementCount(), WindowBegin + (int32)Children.size());
+        if ((int32)ElementStates.size() < Needed)
+        {
+            ElementStates.resize(Needed);
+        }
+        for (int32 i = 0; i < (int32)Children.size(); ++i)
+        {
+            FRowExpansionState& State = ElementStates[WindowBegin + i];
+            State.clear();
+            Children[i]->CaptureExpansion(State);
+        }
+    }
 
-        const size_t ElementCount = ArrayProperty->GetNum(GetPropertyHandle()->GetValuePtr());
+    void FArrayPropertyRow::SyncChildren()
+    {
+        if (GetPropertyHandle()->GetValuePtr() != BuiltArray)
+        {
+            CaptureElementStates();
+            RebuildChildren();
+        }
+    }
 
-        ImGui::SetNextItemOpen(bExpanded);
-        ImGui::PushStyleColor(ImGuiCol_Header, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
-        const ImGuiTreeNodeFlags Flags = ElementCount ? 0 : ImGuiTreeNodeFlags_Leaf;
+    void FArrayPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
+    {
         bool bClipped = false;
-        bExpanded = CollapsingHeaderEllipsis(ArrayProperty->GetPropertyDisplayName().c_str(), Flags, bClipped);
-        ImGui::PopStyleColor(3);
-
+        const ImGuiTreeNodeFlags Flags = GetElementCount() > 0 ? 0 : ImGuiTreeNodeFlags_Leaf;
+        bExpanded = DrawRowFoldout(ArrayProperty->GetPropertyDisplayName().c_str(), bExpanded, Flags, bClipped);
         DrawPropertyTooltip(ArrayProperty, bClipped);
     }
 
     void FArrayPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
-        const size_t ElementCount = ArrayProperty->GetNum(GetPropertyHandle()->GetValuePtr());
-        ImGui::TextColored(EditorColors::TextMuted(), "%llu Elements", static_cast<unsigned long long>(ElementCount));
+        ImGui::TextColored(EditorColors::TextMuted(), "%d Elements", GetElementCount());
     }
 
     float FArrayPropertyRow::GetMeasuredHeaderTextWidth() const
@@ -1532,7 +1988,7 @@ namespace Lumina
         }
     }
 
-    void FArrayPropertyRow::DrawTruncationRow(float Offset, int HiddenCount)
+    void FArrayPropertyRow::DrawTruncationRow(float Offset, int32 HiddenCount)
     {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -1549,6 +2005,7 @@ namespace Lumina
 
     void FArrayPropertyRow::RebuildChildren()
     {
+        BuiltArray = GetPropertyHandle()->GetValuePtr();
         DestroyChildren();
         WindowBegin = 0;
         bShowAllElements = false;
@@ -1557,7 +2014,8 @@ namespace Lumina
 
     int32 FArrayPropertyRow::GetElementCount() const
     {
-        return (int32)ArrayProperty->GetNum(GetPropertyHandle()->GetValuePtr());
+        const void* Array = PropertyHandle->GetValuePtr();
+        return Array != nullptr ? (int32)ArrayProperty->GetNum(Array) : 0;
     }
 
     void FArrayPropertyRow::SetExpandedRecursive(bool bExpand)
@@ -1589,20 +2047,61 @@ namespace Lumina
         return NewRow;
     }
 
-    void FArrayPropertyRow::SwapElementExpansion(int64 A, int64 B)
+    void FArrayPropertyRow::QueueMoveElement(int64 Index, int64 Target)
     {
-        if (A >= 0 && B >= 0 && A < (int64)ElementStates.size() && B < (int64)ElementStates.size())
+        QueueMutation([this, Index, Target]
         {
-            std::swap(ElementStates[A], ElementStates[B]);
-        }
+            void* Array = PropertyHandle->GetValuePtr();
+            const int64 Num = GetElementCount();
+            if (Array == nullptr || Index < 0 || Index >= Num || Target < 0 || Target >= Num)
+            {
+                return;
+            }
+            ArrayProperty->Swap(Array, Index, Target);
+            if (Index < (int64)ElementStates.size() && Target < (int64)ElementStates.size())
+            {
+                std::swap(ElementStates[Index], ElementStates[Target]);
+            }
+        });
     }
 
-    void FArrayPropertyRow::RemoveElementExpansion(int64 Index)
+    void FArrayPropertyRow::QueueInsertElement(int64 Index)
     {
-        if (Index >= 0 && Index < (int64)ElementStates.size())
+        QueueMutation([this, Index]
         {
-            ElementStates.erase(ElementStates.begin() + Index);
-        }
+            void* Array = PropertyHandle->GetValuePtr();
+            const int64 Num = GetElementCount();
+            if (Array == nullptr || Index < 0 || Index > Num)
+            {
+                return;
+            }
+            ArrayProperty->PushBack(Array, nullptr);
+            for (int64 i = Num; i > Index; --i)
+            {
+                ArrayProperty->Swap(Array, i, i - 1);
+            }
+            if (Index <= (int64)ElementStates.size())
+            {
+                ElementStates.insert(ElementStates.begin() + Index, FRowExpansionState());
+            }
+        });
+    }
+
+    void FArrayPropertyRow::QueueRemoveElement(int64 Index)
+    {
+        QueueMutation([this, Index]
+        {
+            void* Array = PropertyHandle->GetValuePtr();
+            if (Array == nullptr || Index < 0 || Index >= GetElementCount())
+            {
+                return;
+            }
+            ArrayProperty->RemoveAt(Array, Index);
+            if (Index < (int64)ElementStates.size())
+            {
+                ElementStates.erase(ElementStates.begin() + Index);
+            }
+        });
     }
 
     void FArrayPropertyRow::SetWindow(int32 Begin, int32 End)
@@ -1656,48 +2155,36 @@ namespace Lumina
         return AllowResize();
     }
 
-    float FArrayPropertyRow::GetExtraControlsSectionWidth()
+    float FArrayPropertyRow::GetExtraControlsSectionWidth() const
     {
-        return 18 * 2 + 4;
+        return ContainerControlsWidth();
     }
 
     void FArrayPropertyRow::DrawExtraControlsSection()
     {
-        FArrayProperty* LocalArrayProperty = ArrayProperty;
-        void* LocalContainerPtr = PropertyHandle->GetValuePtr();
-
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-        if (ImGuiX::FlatButton(LE_ICON_PLUS, ImVec2(18, 24), ArrayControlSeed))
+        if (ElementButton(LE_ICON_PLUS, true, "Add array element"))
         {
-            QueueMutation([LocalArrayProperty, LocalContainerPtr]
+            QueueMutation([this]
             {
-                LocalArrayProperty->PushBack(LocalContainerPtr, nullptr);
+                if (void* Array = PropertyHandle->GetValuePtr())
+                {
+                    ArrayProperty->PushBack(Array, nullptr);
+                }
             });
         }
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        {
-            ImGuiX::TextTooltip_Internal("Add array element");
-        }
-
         ImGui::SameLine();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-        if (ImGuiX::FlatButton(LE_ICON_TRASH_CAN, ImVec2(18, 24), ArrayControlSeed))
+        if (ElementButton(LE_ICON_TRASH_CAN, true, "Remove all array elements"))
         {
-            QueueMutation([this, LocalArrayProperty, LocalContainerPtr]
+            QueueMutation([this]
             {
-                LocalArrayProperty->Clear(LocalContainerPtr);
-                ClearElementExpansion();
+                if (void* Array = PropertyHandle->GetValuePtr())
+                {
+                    ArrayProperty->Clear(Array);
+                    ElementStates.clear();
+                }
             });
-        }
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        {
-            ImGuiX::TextTooltip_Internal("Remove all array elements");
         }
     }
-
-    // ---- Map property row ----
 
     FMapPropertyRow::FMapPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
         : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
@@ -1710,18 +2197,19 @@ namespace Lumina
     {
         ChangeOp = EPropertyChangeOp::None;
 
-        if (!PendingMutations.empty())
+        if (PendingMutations.empty())
         {
-            DispatchChange(EPropertyChangeOp::Started);
-            for (const TFunction<void()>& Mutation : PendingMutations)
-            {
-                Mutation();
-            }
-            PendingMutations.clear();
-            RebuildChildren();
-            DispatchChange(EPropertyChangeOp::Updated);
-            DispatchChange(EPropertyChangeOp::Finished);
+            return;
         }
+
+        DispatchChange(EPropertyChangeOp::Started);
+        for (const TFunction<void()>& Mutation : PendingMutations)
+        {
+            Mutation();
+        }
+        PendingMutations.clear();
+        RebuildChildren();
+        DispatchChange(EPropertyChangeOp::Finished);
     }
 
     void FMapPropertyRow::QueueMutation(TFunction<void()> Mutation)
@@ -1729,29 +2217,34 @@ namespace Lumina
         PendingMutations.push_back(Move(Mutation));
     }
 
-    void FMapPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
+    void FMapPropertyRow::QueueRemoveEntry(int64 Index)
     {
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
+        QueueMutation([this, Index]
+        {
+            void* Container = PropertyHandle->GetValuePtr();
+            if (Container == nullptr || Index < 0 || static_cast<size_t>(Index) >= MapProperty->GetNum(Container))
+            {
+                return;
+            }
 
-        const size_t Count = MapProperty->GetNum(GetPropertyHandle()->GetValuePtr());
+            // Copied out first, since the key it names lives in the slot the removal destroys.
+            FMapKeyScratch Key(MapProperty);
+            MapProperty->GetKeyProperty()->CopyCompleteValue(Key.Get(), MapProperty->GetKeyAt(Container, static_cast<size_t>(Index)));
+            MapProperty->RemoveByKey(Container, Key.Get());
+        });
+    }
 
-        ImGui::SetNextItemOpen(bExpanded);
-        ImGui::PushStyleColor(ImGuiCol_Header, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
-        const ImGuiTreeNodeFlags Flags = Count ? 0 : ImGuiTreeNodeFlags_Leaf;
+    void FMapPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
+    {
         bool bClipped = false;
-        bExpanded = CollapsingHeaderEllipsis(MapProperty->GetPropertyDisplayName().c_str(), Flags, bClipped);
-        ImGui::PopStyleColor(3);
-
+        const ImGuiTreeNodeFlags Flags = Children.empty() ? ImGuiTreeNodeFlags_Leaf : 0;
+        bExpanded = DrawRowFoldout(MapProperty->GetPropertyDisplayName().c_str(), bExpanded, Flags, bClipped);
         DrawPropertyTooltip(MapProperty, bClipped);
     }
 
     void FMapPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
-        const size_t Count = MapProperty->GetNum(GetPropertyHandle()->GetValuePtr());
-        ImGui::TextColored(EditorColors::TextMuted(), "%llu Entries", static_cast<unsigned long long>(Count));
+        ImGui::TextColored(EditorColors::TextMuted(), "%llu Entries", static_cast<unsigned long long>(Children.size()));
     }
 
     float FMapPropertyRow::GetMeasuredHeaderTextWidth() const
@@ -1759,11 +2252,22 @@ namespace Lumina
         return ImGui::GetTreeNodeToLabelSpacing() + ImGui::CalcTextSize(MapProperty->GetPropertyDisplayName().c_str()).x;
     }
 
+    void FMapPropertyRow::SyncChildren()
+    {
+        void* Container = PropertyHandle->GetValuePtr();
+        const size_t Count = Container != nullptr ? MapProperty->GetNum(Container) : 0;
+        if (Container != BuiltMap || Count != Children.size())
+        {
+            RebuildChildren();
+        }
+    }
+
     void FMapPropertyRow::RebuildChildren()
     {
         DestroyChildren();
 
         void* Container = GetPropertyHandle()->GetValuePtr();
+        BuiltMap = Container;
         if (Container == nullptr || MapProperty == nullptr)
         {
             return;
@@ -1787,81 +2291,68 @@ namespace Lumina
         return AllowResize();
     }
 
-    float FMapPropertyRow::GetExtraControlsSectionWidth()
+    float FMapPropertyRow::GetExtraControlsSectionWidth() const
     {
-        return 18 * 2 + 4;
+        return ContainerControlsWidth();
     }
 
     void FMapPropertyRow::DrawExtraControlsSection()
     {
-        FMapProperty* Map = MapProperty;
-        void* Container = PropertyHandle->GetValuePtr();
-
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-        if (ImGuiX::FlatButton(LE_ICON_PLUS, ImVec2(18, 24), ArrayControlSeed))
+        if (ElementButton(LE_ICON_PLUS, true, "Add map entry"))
         {
-            QueueMutation([Map, Container]
+            QueueMutation([this]
             {
-                // Default key + value; a colliding default key is a no-op (Insert is insert-or-assign).
-                const uint32 KeySize = Map->GetKeySize();
-                void* KeyScratch = Memory::Malloc(KeySize > 0 ? KeySize : 1, 16);
-                Map->ConstructKey(Container, KeyScratch);
-                Map->Insert(Container, KeyScratch, nullptr);
-                Map->DestructKey(Container, KeyScratch);
-                Memory::Free(KeyScratch);
+                if (void* Container = PropertyHandle->GetValuePtr())
+                {
+                    // A colliding default key is a no-op, since Insert is insert-or-assign.
+                    FMapKeyScratch Key(MapProperty);
+                    MapProperty->Insert(Container, Key.Get(), nullptr);
+                }
             });
         }
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        {
-            ImGuiX::TextTooltip_Internal("Add map entry");
-        }
-
         ImGui::SameLine();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-        if (ImGuiX::FlatButton(LE_ICON_TRASH_CAN, ImVec2(18, 24), ArrayControlSeed))
+        if (ElementButton(LE_ICON_TRASH_CAN, true, "Remove all map entries"))
         {
-            QueueMutation([Map, Container] { Map->Clear(Container); });
-        }
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        {
-            ImGuiX::TextTooltip_Internal("Remove all map entries");
+            QueueMutation([this]
+            {
+                if (void* Container = PropertyHandle->GetValuePtr())
+                {
+                    MapProperty->Clear(Container);
+                }
+            });
         }
     }
 
-    // ---- Map entry row ----
-
-    static TSharedPtr<FPropertyHandle> MakeMapValueHandle(FMapPropertyRow* MapRow, int64 Index)
+    FMapKeyScratch::FMapKeyScratch(FMapProperty* Map)
+        : KeyProperty(Map->GetKeyProperty())
     {
-        FMapProperty* Map = MapRow->MapProperty;
-        void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
-        void* DefaultContainer = MapRow->GetPropertyHandle()->GetDefaultValuePtr();
-        return MakeShared<FPropertyHandle>(Map, Container, DefaultContainer, Map->GetValueProperty(), Index, false);
+        const uint32 Size = Math::Max(Map->GetKeySize(), 1u);
+        Memory = Memory::Malloc(Size, 16);
+        Memory::Memzero(Memory, Size);
+        KeyProperty->ConstructValue(Memory);
+    }
+
+    FMapKeyScratch::~FMapKeyScratch()
+    {
+        KeyProperty->DestructValue(Memory);
+        Memory::Free(Memory);
     }
 
     FMapEntryRow::FMapEntryRow(FMapPropertyRow* InMapRow, int64 InIndex, const FPropertyChangedEventCallbacks& InCallbacks)
         : FPropertyRow(MakeMapValueHandle(InMapRow, InIndex), InMapRow, InCallbacks)
         , MapRow(InMapRow)
-        , Map(InMapRow->MapProperty)
+        , Map(InMapRow->GetMapProperty())
+        , KeyProperty(Map->GetKeyProperty())
+        , MapContainer(InMapRow->GetPropertyHandle()->GetValuePtr())
+        , PreviousKey(Map)
         , EntryIndex(InIndex)
     {
-        void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
-        void* DefaultContainer = MapRow->GetPropertyHandle()->GetDefaultValuePtr();
-        MapContainer = Container;
-
-        KeyHandle = MakeShared<FPropertyHandle>(Map, Container, DefaultContainer, Map->GetKeyProperty(), InIndex, true);
-        KeyCustomization = MakeLeafPropertyCustomization(Map->GetKeyProperty());
-
-        // Last unique key, to revert a duplicate edit to.
-        const uint32 KeySize = Map->GetKeySize();
-        PreviousKey = Memory::Malloc(KeySize > 0 ? KeySize : 1, 16);
-        Map->ConstructKey(MapContainer, PreviousKey);
-        CaptureKeySnapshot();
+        KeyHandle = MakeShared<FPropertyHandle>(Map, MapContainer, MapRow->GetPropertyHandle()->GetDefaultValuePtr(), KeyProperty, InIndex, true);
+        KeyCustomization = MakeLeafPropertyCustomization(KeyProperty);
 
         // A value with member rows (a struct, array or map) has nothing to draw inline, so it nests below the key.
         TUniquePtr<FPropertyRow> Row = CreatePropertyRow(PropertyHandle, this, Callbacks);
-        if (MakeInlinePropertyCustomization(Map->GetValueProperty()) != nullptr)
+        if (Row->HasCustomization())
         {
             ValueRow = Move(Row);
         }
@@ -1871,52 +2362,21 @@ namespace Lumina
         }
     }
 
-    TSharedPtr<IPropertyTypeCustomization> MakeInlinePropertyCustomization(FProperty* Prop)
-    {
-        if (Prop->GetType() == EPropertyTypeFlags::Struct)
-        {
-            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
-            return Registry->GetPropertyCustomizationForType(static_cast<FStructProperty*>(Prop)->GetStruct()->GetName());
-        }
-        return MakeLeafPropertyCustomization(Prop);
-    }
-
-    FMapEntryRow::~FMapEntryRow()
-    {
-        if (PreviousKey != nullptr)
-        {
-            if (Map != nullptr)
-            {
-                Map->DestructKey(MapContainer, PreviousKey);
-            }
-            Memory::Free(PreviousKey);
-        }
-    }
-
     void FMapEntryRow::CaptureKeySnapshot()
     {
-        if (Map == nullptr || PreviousKey == nullptr)
-        {
-            return;
-        }
         if (const void* Slot = KeyHandle->GetValuePtr())
         {
-            Map->GetKeyProperty()->CopyCompleteValue(PreviousKey, Slot);
+            KeyProperty->CopyCompleteValue(PreviousKey.Get(), Slot);
         }
     }
 
     bool FMapEntryRow::KeyDuplicatesAnotherEntry() const
     {
-        if (Map == nullptr || MapContainer == nullptr)
-        {
-            return false;
-        }
         const void* MyKey = KeyHandle->GetValuePtr();
         if (MyKey == nullptr)
         {
             return false;
         }
-        FProperty* KeyProp = Map->GetKeyProperty();
         const size_t Count = Map->GetNum(MapContainer);
         for (size_t j = 0; j < Count; ++j)
         {
@@ -1925,7 +2385,7 @@ namespace Lumina
                 continue;
             }
             const void* OtherKey = Map->GetKeyAt(MapContainer, j);
-            if (OtherKey != nullptr && KeyProp->Identical(MyKey, OtherKey))
+            if (OtherKey != nullptr && KeyProperty->Identical(MyKey, OtherKey))
             {
                 return true;
             }
@@ -1940,86 +2400,42 @@ namespace Lumina
             ValueRow->UpdateRow();
         }
 
-        if (Map == nullptr)
+        const EPropertyChangeOp Op = KeyChangeOp;
+        KeyChangeOp = EPropertyChangeOp::None;
+        if (Op == EPropertyChangeOp::None || KeyCustomization == nullptr)
         {
             return;
         }
 
-        // While idle, track the committed key so a duplicate edit has a value to revert to.
-        if (KeyChangeOp == EPropertyChangeOp::None)
+        // Taken before the edit's first write, so a duplicate has the committed key to revert to.
+        if (!bKeyEditSessionActive)
         {
             CaptureKeySnapshot();
-            return;
         }
 
-        // Keys are edited in place, since entries are addressed by iteration index and reload re-hashes.
-        const bool bKeySessionActiveForHooks = bKeyEditSessionActive || (KeyChangeOp == EPropertyChangeOp::Started);
-        const bool bFirePreEdit  = IsPreEditOp(KeyChangeOp, bKeySessionActiveForHooks);
-        const bool bFirePostEdit = IsCommitOp(KeyChangeOp, bKeySessionActiveForHooks);
-
-        const FPropertyChangedEvent Event{Callbacks.Type, Map, Map->Name,
-            bFirePostEdit, ValueOffsetInOuter(MapContainer, Callbacks.Instance, Callbacks.Type)};
-        if (KeyChangeOp == EPropertyChangeOp::Started && Callbacks.StartChangeCallback)
+        const bool bCommit = Op == EPropertyChangeOp::Finished || (Op == EPropertyChangeOp::Updated && !bKeyEditSessionActive);
+        DispatchPropertyChange(Op, bKeyEditSessionActive, Callbacks, Map, MapContainer, [this, bCommit]
         {
-            Callbacks.StartChangeCallback(Event);
-        }
-        
-        // Null for script-defined structs; see FPropertyRow::DispatchChange.
-        FStructOps* Ops = Callbacks.Type ? Callbacks.Type->GetStructOps() : nullptr;
+            KeyCustomization->UpdatePropertyValue(KeyHandle);
 
-        if (KeyChangeOp == EPropertyChangeOp::Started)
-        {
-            bKeyEditSessionActive = true;
-        }
-        if (KeyChangeOp == EPropertyChangeOp::Finished)
-        {
-            bKeyEditSessionActive = false;
-        }
-
-        if (Ops && Ops->HasPreEdit() && Callbacks.Instance && bFirePreEdit)
-        {
-            Ops->PreEdit(Callbacks.Instance, Event);
-        }
-
-        if (Callbacks.PreChangeCallback)
-        {
-            Callbacks.PreChangeCallback(Event);
-        }
-
-        if (KeyCustomization) { KeyCustomization->UpdatePropertyValue(KeyHandle); }
-
-        // A key duplicating another entry silently collapses on reload; revert it and re-sync the widget.
-        if (KeyChangeOp == EPropertyChangeOp::Finished && KeyDuplicatesAnotherEntry())
-        {
-            if (void* Slot = KeyHandle->GetValuePtr())
+            // A key duplicating another entry would silently collapse on reload, so the commit reverts it.
+            if (bCommit && KeyDuplicatesAnotherEntry())
             {
-                Map->GetKeyProperty()->CopyCompleteValue(Slot, PreviousKey);
+                if (void* Slot = KeyHandle->GetValuePtr())
+                {
+                    KeyProperty->CopyCompleteValue(Slot, PreviousKey.Get());
+                }
+                KeyCustomization->HandleExternalUpdate(KeyHandle);
+                ImGuiX::Notifications::NotifyWarning("Duplicate map key ignored; keys must be unique.");
             }
-            if (KeyCustomization) { KeyCustomization->HandleExternalUpdate(KeyHandle); }
-            ImGuiX::Notifications::NotifyWarning("Duplicate map key ignored; keys must be unique.");
-        }
-        
-        if (Ops && Ops->HasPostEdit() && Callbacks.Instance && bFirePostEdit)
-        {
-            Ops->PostEdit(Callbacks.Instance, Event);
-        }
-
-        if (Callbacks.PostChangeCallback)
-        {
-            Callbacks.PostChangeCallback(Event);
-        }
-        if (KeyChangeOp == EPropertyChangeOp::Finished && Callbacks.FinishChangeCallback) { Callbacks.FinishChangeCallback(Event); }
-        KeyChangeOp = EPropertyChangeOp::None;
+        });
     }
 
-    void FMapEntryRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
+    void FMapEntryRow::DrawHeader(const FPropertyDrawArgs& Args)
     {
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
-
         if (KeyCustomization)
         {
-            KeyChangeOp = KeyCustomization->UpdateAndDraw(KeyHandle, FPropertyDrawArgs{ IsReadOnly(), Args.Context });
+            KeyChangeOp = KeyCustomization->UpdateAndDraw(KeyHandle, FPropertyDrawArgs{ Args.bReadOnly || IsReadOnly(), Args.Context });
         }
         else
         {
@@ -2038,30 +2454,24 @@ namespace Lumina
 
     float FMapEntryRow::GetMeasuredHeaderTextWidth() const
     {
-        return 120.0f;
+        return ImGui::GetFontSize() * 8.0f;
+    }
+
+    bool FMapEntryRow::HasExtraControls() const
+    {
+        return MapRow->AllowResize();
+    }
+
+    float FMapEntryRow::GetExtraControlsSectionWidth() const
+    {
+        return ElementButtonWidth + 4.0f;
     }
 
     void FMapEntryRow::DrawExtraControlsSection()
     {
-        FMapProperty* MapProperty = MapRow->MapProperty;
-        void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
-        const int64 Index = EntryIndex;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
-        if (ImGuiX::FlatButton(LE_ICON_TRASH_CAN, ImVec2(18, 24), ArrayControlSeed))
+        if (ElementButton(LE_ICON_TRASH_CAN, true, "Remove entry"))
         {
-            MapRow->QueueMutation([MapProperty, Container, Index]
-            {
-                if (Container != nullptr && static_cast<size_t>(Index) < MapProperty->GetNum(Container))
-                {
-                    MapProperty->RemoveByKey(Container, MapProperty->GetKeyAt(Container, static_cast<size_t>(Index)));
-                }
-            });
-        }
-        ImGui::PopStyleVar();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        {
-            ImGuiX::TextTooltip_Internal("Remove entry");
+            MapRow->QueueRemoveEntry(EntryIndex);
         }
     }
 
@@ -2086,16 +2496,24 @@ namespace Lumina
         ChangeOp = EPropertyChangeOp::None;
     }
 
-    FString FStructPropertyRow::GetHeaderLabel() const
+    void FStructPropertyRow::SyncChildren()
     {
-        if (!IsArrayElementProperty())
+        if (Customization == nullptr && PropertyHandle->GetValuePtr() != BuiltValue)
         {
-            return StructProperty->GetPropertyDisplayName().c_str();
+            RebuildKeepingExpansion([this] { RebuildChildren(); });
+        }
+    }
+
+    FFixedString FStructPropertyRow::GetHeaderLabel() const
+    {
+        if (!IsArrayElement())
+        {
+            return FFixedString(StructProperty->GetPropertyDisplayName().c_str());
         }
 
-        FString Label = "[";
-        Label += std::to_string(PropertyHandle->Index).c_str();
-        Label += "]";
+        char Index[32];
+        snprintf(Index, sizeof(Index), "[%lld]", static_cast<long long>(PropertyHandle->Index));
+        FFixedString Label(Index);
         const FArrayPropertyRow* ArrayRow = static_cast<const FArrayPropertyRow*>(ParentRow);
         FProperty* ArrayProperty = ArrayRow->GetPropertyHandle()->Property;
         FCStringView TitleName = ArrayProperty->GetMetadata("TitleProperty");
@@ -2111,22 +2529,18 @@ namespace Lumina
             return Label;
         }
 
-        FString Title;
+        const char* Title = nullptr;
         if (TitleProperty->GetType() == EPropertyTypeFlags::Name)
         {
-            FName Value;
-            TitleProperty->GetValue(StructValue, &Value);
-            if (!Value.IsNone())
-            {
-                Title = Value.ToString();
-            }
+            const FName* Value = TitleProperty->GetValuePtr<FName>(StructValue);
+            Title = Value->IsNone() ? nullptr : Value->c_str();
         }
         else if (TitleProperty->GetType() == EPropertyTypeFlags::String)
         {
-            TitleProperty->GetValue(StructValue, &Title);
+            Title = TitleProperty->GetValuePtr<FString>(StructValue)->c_str();
         }
 
-        if (!Title.empty())
+        if (Title != nullptr && Title[0] != 0)
         {
             Label += "  ";
             Label += Title;
@@ -2134,148 +2548,50 @@ namespace Lumina
         return Label;
     }
 
-    void FStructPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
+    void FStructPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
     {
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
-
-        const FString Label = GetHeaderLabel();
+        const FFixedString Label = GetHeaderLabel();
 
         // A customization draws the whole value in one row, so there is nothing for an arrow to fold.
+        bool bClipped = false;
         if (Customization)
         {
-            const bool bLabelClipped = DrawHeaderLabel(Label.c_str());
-            DrawRowTooltip(PropertyHandle.get(), StructProperty, bLabelClipped, FStringView(Label.c_str(), Label.size()));
-            return;
+            bClipped = DrawHeaderLabel(Label.c_str());
         }
-
-        ImGui::SetNextItemOpen(bExpanded);
-        ImGui::PushStyleColor(ImGuiCol_Header, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
-        bool bClipped = false;
-        bExpanded = CollapsingHeaderEllipsis(Label.c_str(), 0, bClipped, this);
-        ImGui::PopStyleColor(3);
-
+        else
+        {
+            bExpanded = DrawRowFoldout(Label.c_str(), bExpanded, 0, bClipped, this);
+        }
         DrawRowTooltip(PropertyHandle.get(), StructProperty, bClipped, FStringView(Label.c_str(), Label.size()));
     }
 
     void FStructPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
-        if (!bExpanded && !Customization)
-        {
-            return;
-        }
-
-        ImGui::BeginDisabled(IsReadOnly());
-
         if (Customization)
         {
+            ImGui::BeginDisabled(IsReadOnly());
             ChangeOp = Customization->UpdateAndDraw(PropertyHandle, Args);
+            ImGui::EndDisabled();
         }
-
-        ImGui::EndDisabled();
     }
 
     float FStructPropertyRow::GetMeasuredHeaderTextWidth() const
     {
-        const FString Label = GetHeaderLabel();
+        const FFixedString Label = GetHeaderLabel();
         const float LabelWidth = ImGui::CalcTextSize(Label.c_str()).x;
         return Customization ? LabelWidth : ImGui::GetTreeNodeToLabelSpacing() + LabelWidth;
     }
 
     void FStructPropertyRow::RebuildChildren()
     {
+        BuiltValue = PropertyHandle->GetValuePtr();
+
         // A customization draws the whole value itself, so member rows would show it twice.
         if (Customization)
         {
             return;
         }
-        BuildMemberRows(StructProperty->GetStruct(), PropertyHandle->GetValuePtr(), PropertyHandle->GetDefaultValuePtr());
-    }
-
-    static const char* InstancedStructLabel(const CStruct* Type)
-    {
-        return StructIdentity(Type).c_str();
-    }
-
-    // Whether Candidate lists Interface among the interfaces its C# type implements.
-    static bool ImplementsInterface(const CStruct* Candidate, FStringView Interface)
-    {
-        if (!Candidate->HasMeta("Implements"))
-        {
-            return false;
-        }
-        const FString& Listed = Candidate->GetMeta("Implements");
-        const FStringView All(Listed.c_str(), Listed.size());
-        size_t Start = 0;
-        while (Start <= All.size())
-        {
-            size_t End = Start;
-            while (End < All.size() && All[End] != ';')
-            {
-                ++End;
-            }
-            if (All.substr(Start, End - Start) == Interface)
-            {
-                return true;
-            }
-            Start = End + 1;
-        }
-        return false;
-    }
-
-    // A None entry sits at index 0. A nonempty Implements keeps only the structs that implement that interface.
-    static CStruct* DrawInstancedStructTypePicker(const char* StrId, CStruct* Base, FStringView Implements, CStruct* Current, bool& bOutChanged)
-    {
-        bOutChanged = false;
-
-        TVector<CStruct*> Candidates;
-        for (TObjectIterator<CStruct> It; It; ++It)
-        {
-            CStruct* Candidate = *It;
-            if (!IsInstancableStructType(Candidate))
-            {
-                continue;
-            }
-            if ((Base == nullptr || Candidate->IsChildOf(Base)) && (Implements.empty() || ImplementsInterface(Candidate, Implements)))
-            {
-                Candidates.push_back(Candidate);
-            }
-        }
-
-        Algo::Sort(Candidates, [](CStruct* A, CStruct* B)
-        {
-            return strcmp(InstancedStructLabel(A), InstancedStructLabel(B)) < 0;
-        });
-
-        int32 CurrentIndex = 0;
-        for (size_t i = 0; i < Candidates.size(); ++i)
-        {
-            if (Candidates[i] == Current)
-            {
-                CurrentIndex = static_cast<int32>(i + 1);
-                break;
-            }
-        }
-
-        const char* Preview = Current ? InstancedStructLabel(Current) : "None";
-
-        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-        const int32 Picked = ImGuiX::SearchableCombo(StrId, Preview, static_cast<int32>(Candidates.size()) + 1, CurrentIndex,
-            [&Candidates](int32 Index) -> FFixedString
-            {
-                return (Index == 0) ? FFixedString("None") : FFixedString(InstancedStructLabel(Candidates[Index - 1]));
-            }, LE_ICON_CUBE_OUTLINE);
-        ImGui::PopItemWidth();
-
-        if (Picked != Constants::kIndexNone)
-        {
-            bOutChanged = true;
-            return (Picked == 0) ? nullptr : Candidates[Picked - 1];
-        }
-
-        return Current;
+        BuildMemberRows(StructProperty->GetStruct(), BuiltValue, PropertyHandle->GetDefaultValuePtr());
     }
 
     FInstancedStructPropertyRow::FInstancedStructPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
@@ -2292,30 +2608,35 @@ namespace Lumina
 
     void FInstancedStructPropertyRow::Update()
     {
-        // Detect a type change underneath us (undo, gameplay, reset) and rebuild the nested table.
-        if (auto* Instance = static_cast<FInstancedStruct*>(PropertyHandle->GetValuePtr());
-            Instance && Instance->GetScriptStruct() != CachedType)
-        {
-            RebuildChildren();
-        }
-
         DispatchChange(ChangeOp);
         ChangeOp = EPropertyChangeOp::None;
     }
 
-    void FInstancedStructPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
+    void FInstancedStructPropertyRow::SyncChildren()
     {
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
+        // Loading or assigning the value reallocates its memory even when the type stays, as every undo does.
+        auto* Instance = static_cast<FInstancedStruct*>(PropertyHandle->GetValuePtr());
+        void* Memory = Instance ? Instance->GetMutableMemory() : nullptr;
+        CStruct* Type = Instance ? Instance->GetScriptStruct() : nullptr;
+        if (Type == CachedType && Memory == BuiltMemory)
+        {
+            return;
+        }
 
-        ImGui::SetNextItemOpen(bExpanded);
-        ImGui::PushStyleColor(ImGuiCol_Header, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
+        if (Type != CachedType)
+        {
+            RebuildChildren();
+        }
+        else
+        {
+            RebuildKeepingExpansion([this] { RebuildChildren(); });
+        }
+    }
+
+    void FInstancedStructPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
+    {
         bool bClipped = false;
-        bExpanded = CollapsingHeaderEllipsis(InstancedStructProperty->GetPropertyDisplayName().c_str(), 0, bClipped);
-        ImGui::PopStyleColor(3);
-
+        bExpanded = DrawRowFoldout(InstancedStructProperty->GetPropertyDisplayName().c_str(), bExpanded, 0, bClipped);
         DrawRowTooltip(PropertyHandle.get(), InstancedStructProperty, bClipped);
     }
 
@@ -2338,11 +2659,10 @@ namespace Lumina
 
         if (bChanged && Picked != Current)
         {
-            // A type swap reallocates the instance, so run it as one transaction and rebuild the table.
+            // A type swap reallocates the instance, so it runs as one transaction and rebuilds the member rows.
             DispatchChange(EPropertyChangeOp::Started);
             Instance->InitializeAs(Picked);
             RebuildChildren();
-            DispatchChange(EPropertyChangeOp::Updated);
             DispatchChange(EPropertyChangeOp::Finished);
         }
 
@@ -2357,6 +2677,7 @@ namespace Lumina
     void FInstancedStructPropertyRow::RebuildChildren()
     {
         auto* Instance = static_cast<FInstancedStruct*>(PropertyHandle->GetValuePtr());
+        BuiltMemory = Instance ? Instance->GetMutableMemory() : nullptr;
         CStruct* Type = Instance ? Instance->GetScriptStruct() : nullptr;
         CachedType = Type;
 
@@ -2367,35 +2688,34 @@ namespace Lumina
         }
 
         // Diff/reset of the instance's own fields compares against that struct's default instance.
-        BuildMemberRows(Type, Instance->GetMutableMemory(), Type->GetDefaultInstance());
+        BuildMemberRows(Type, BuiltMemory, Type->GetDefaultInstance());
     }
 
     FOptionalPropertyRow::FOptionalPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
         : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
         , OptionalProperty(static_cast<FOptionalProperty*>(InPropHandle->Property))
     {
-        bWasEngaged = OptionalProperty->HasValue(GetPropertyHandle()->GetValuePtr());
         RebuildChildren();
     }
 
     void FOptionalPropertyRow::Update()
     {
-        // Detects an external change such as gameplay code or an undo, and rebuilds before drawing.
-        const bool bEngagedNow = OptionalProperty->HasValue(GetPropertyHandle()->GetValuePtr());
-        if (bEngagedNow != bWasEngaged)
-        {
-            bWasEngaged = bEngagedNow;
-            RebuildChildren();
-        }
-
         DispatchChange(ChangeOp);
         ChangeOp = EPropertyChangeOp::None;
     }
 
-    void FOptionalPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
+    void FOptionalPropertyRow::SyncChildren()
     {
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
+        void* ContainerPtr = PropertyHandle->GetValuePtr();
+        void* Payload = ContainerPtr != nullptr && OptionalProperty->HasValue(ContainerPtr) ? OptionalProperty->GetValue(ContainerPtr) : nullptr;
+        if (Payload != BuiltPayload)
+        {
+            RebuildChildren();
+        }
+    }
+
+    void FOptionalPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
+    {
         const bool bClipped = DrawHeaderLabel(OptionalProperty->GetPropertyDisplayName().c_str());
         DrawRowTooltip(PropertyHandle.get(), OptionalProperty, bClipped);
     }
@@ -2403,12 +2723,17 @@ namespace Lumina
     void FOptionalPropertyRow::DrawEditor(const FPropertyDrawArgs& Args)
     {
         void* ContainerPtr = GetPropertyHandle()->GetValuePtr();
+        if (ContainerPtr == nullptr)
+        {
+            return;
+        }
         bool bEngaged = OptionalProperty->HasValue(ContainerPtr);
 
         ImGui::BeginDisabled(Args.bReadOnly || IsReadOnly());
         if (ImGui::Checkbox("##OptionalSet", &bEngaged))
         {
-            // Engaging default-constructs the payload, so children rebuild now to keep the UI in sync.
+            // Opened before the write, so an undo snapshot captures the optional as it was.
+            DispatchChange(EPropertyChangeOp::Started);
             if (bEngaged)
             {
                 OptionalProperty->SetValue(ContainerPtr, nullptr);
@@ -2417,22 +2742,13 @@ namespace Lumina
             {
                 OptionalProperty->Reset(ContainerPtr);
             }
-
-            bWasEngaged = bEngaged;
             RebuildChildren();
-            ChangeOp = EPropertyChangeOp::Updated;
+            DispatchChange(EPropertyChangeOp::Finished);
         }
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (bEngaged)
-        {
-            ImGui::TextDisabled("set");
-        }
-        else
-        {
-            ImGui::TextDisabled("(none)");
-        }
+        ImGui::TextDisabled(bEngaged ? "set" : "(none)");
     }
 
     float FOptionalPropertyRow::GetMeasuredHeaderTextWidth() const
@@ -2440,19 +2756,14 @@ namespace Lumina
         return ImGui::CalcTextSize(OptionalProperty->GetPropertyDisplayName().c_str()).x;
     }
 
-    void FOptionalPropertyRow::OnValueResetToDefault()
-    {
-        bWasEngaged = OptionalProperty->HasValue(GetPropertyHandle()->GetValuePtr());
-        RebuildChildren();
-    }
-
     void FOptionalPropertyRow::RebuildChildren()
     {
         DestroyChildren();
+        BuiltPayload = nullptr;
 
         void* ContainerPtr = GetPropertyHandle()->GetValuePtr();
         void* DefaultContainerPtr = GetPropertyHandle()->GetDefaultValuePtr();
-        if (!OptionalProperty->HasValue(ContainerPtr))
+        if (ContainerPtr == nullptr || !OptionalProperty->HasValue(ContainerPtr))
         {
             return;
         }
@@ -2463,32 +2774,20 @@ namespace Lumina
             return;
         }
 
-        // Pass &T directly as the child container; default payload is only meaningful when the default is also engaged.
+        // The payload is the child's container, and the default only counts when the default is engaged too.
         void* DefaultPayload = nullptr;
         if (DefaultContainerPtr != nullptr && OptionalProperty->HasValue(DefaultContainerPtr))
         {
             DefaultPayload = OptionalProperty->GetValue(DefaultContainerPtr);
         }
-        TSharedPtr<FPropertyHandle> InnerHandle = MakeShared<FPropertyHandle>(OptionalProperty->GetValue(ContainerPtr), DefaultPayload, Inner);
-        Children.push_back(CreatePropertyRow(InnerHandle, this, Callbacks));
+        BuiltPayload = OptionalProperty->GetValue(ContainerPtr);
+        AddPropertyRow(MakeShared<FPropertyHandle>(BuiltPayload, DefaultPayload, Inner));
     }
 
-    FCategoryPropertyRow::FCategoryPropertyRow(void* InObj, const FName& InCategory, const FPropertyChangedEventCallbacks& InCallbacks)
+    FCategoryPropertyRow::FCategoryPropertyRow(const FName& InCategory, const FPropertyChangedEventCallbacks& InCallbacks)
         : FPropertyRow(InCallbacks)
         , Category(InCategory)
     {
-        OwnerObject = InObj;
-    }
-
-    void FCategoryPropertyRow::AddProperty(const TSharedPtr<FPropertyHandle>& InPropHandle)
-    {
-        TUniquePtr<FPropertyRow> NewRow = CreatePropertyRow(InPropHandle, this, Callbacks);
-        Children.emplace_back(Move(NewRow));
-    }
-
-    FCategoryPropertyRow* FCategoryPropertyRow::FindOrCreateChildCategory(const FName& InCategory)
-    {
-        return FindOrCreateCategoryChild(InCategory, OwnerObject);
     }
 
     FStringView FCategoryPropertyRow::GetFilterLabel() const
@@ -2496,14 +2795,11 @@ namespace Lumina
         return FStringView(Category.c_str());
     }
 
-    void FCategoryPropertyRow::DrawHeader(float Offset, const FPropertyDrawArgs& Args)
+    void FCategoryPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
     {
         // A darker background reads as a section break independent of the row-bg alternation.
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, CategoryBgColor());
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, CategoryBgColor());
-
-        ImGui::Dummy(ImVec2(Offset, 0));
-        ImGui::SameLine();
 
         ImGui::SetNextItemOpen(bExpanded);
         ImGui::PushStyleColor(ImGuiCol_Header, 0);
@@ -2525,24 +2821,26 @@ namespace Lumina
         return ImGui::GetTreeNodeToLabelSpacing() + ImGui::CalcTextSize(Category.c_str()).x;
     }
 
-    namespace
+}
+
+namespace Lumina
+{
+    FPropertyTable::FPropertyTable()
+        : FPropertyTable(nullptr, nullptr, nullptr)
     {
-        // The type's default instance to diff against, unless the object is that default itself.
-        void* DefaultInstanceFor(void* InObject, CStruct* InType)
-        {
-            void* Default = InType != nullptr && InObject != nullptr ? InType->GetDefaultInstance() : nullptr;
-            return Default != InObject ? Default : nullptr;
-        }
     }
 
     FPropertyTable::FPropertyTable(void* InObject, CStruct* InType)
+        : FPropertyTable(InObject, InType, PropertyTableInternal::DefaultInstanceFor(InObject, InType))
     {
-        Bind(InObject, InType, DefaultInstanceFor(InObject, InType));
     }
 
     FPropertyTable::FPropertyTable(void* InObject, CStruct* InType, void* InDefaultObject)
     {
         Bind(InObject, InType, InDefaultObject);
+
+        // The rows reach into script types, so they go while those types are still alive.
+        ScriptsWillReloadHandle = FCoreDelegates::OnScriptsWillReload.AddLambda([this] { DropRows(); });
     }
 
     FPropertyTable::FPropertyTable(CObject* InObject)
@@ -2550,47 +2848,9 @@ namespace Lumina
     {
     }
 
-    void FPropertyTable::RebuildTree()
+    FPropertyTable::~FPropertyTable()
     {
-        Categories.clear();
-
-        if (Struct == nullptr || Object == nullptr)
-        {
-            return;
-        }
-
-        for (FProperty* Current : Struct->GetProperties())
-        {
-            if (Current->IsVisible())
-            {
-                FString CategoryPath = "General";
-                if (Current->HasMetadata("Category"))
-                {
-                    CategoryPath = Current->GetMetadata("Category").c_str();
-                }
-                
-                FCategoryPropertyRow* TargetRow = nullptr;
-                for (const FName& SegmentName : SplitCategoryPath(FStringView(CategoryPath.data(), CategoryPath.size())))
-                {
-                    TargetRow = (TargetRow == nullptr)
-                        ? FindOrCreateCategoryRow(SegmentName)
-                        : TargetRow->FindOrCreateChildCategory(SegmentName);
-                }
-                
-                if (TargetRow == nullptr)
-                {
-                    TargetRow = FindOrCreateCategoryRow(FName("General"));
-                }
-
-                TSharedPtr<FPropertyHandle> Property = MakeShared<FPropertyHandle>(Object, DefaultObject, Current);
-                TargetRow->AddProperty(Property);
-            }
-        }
-    }
-
-    void FPropertyTable::MarkDirty()
-    {
-        bDirty = true;
+        FCoreDelegates::OnScriptsWillReload.Remove(ScriptsWillReloadHandle);
     }
 
     void FPropertyTable::DrawTree(bool bReadOnly)
@@ -2601,118 +2861,50 @@ namespace Lumina
     void FPropertyTable::DrawTree(const FPropertyDrawArgs& InArgs)
     {
         // A table with no context of its own inherits the caller's, which is what nests a struct row.
-        const FPropertyDrawArgs Args{ InArgs.bReadOnly, (Context != nullptr) ? *Context : InArgs.Context };
+        const FPropertyDrawArgs Args{ InArgs.bReadOnly, Context != nullptr ? *Context : InArgs.Context };
 
         EnsureTreeBuilt();
-
         if (Customization)
         {
-            if (PropertyHandle == nullptr)
-            {
-                PropertyHandle = MakeShared<FPropertyHandle>(Object, nullptr);
-            }
-
-            const EPropertyChangeOp ChangeOp = Customization->UpdateAndDraw(PropertyHandle, Args);
-            if (ChangeOp != EPropertyChangeOp::None)
-            {
-                const bool bObjectSessionActiveForHooks = bObjectEditSessionActive || (ChangeOp == EPropertyChangeOp::Started);
-                const bool bFirePreEdit  = IsPreEditOp(ChangeOp, bObjectSessionActiveForHooks);
-                const bool bFirePostEdit = IsCommitOp(ChangeOp, bObjectSessionActiveForHooks);
-
-                const FPropertyChangedEvent Event{Struct, PropertyHandle->Property,
-                    PropertyHandle->Property ? PropertyHandle->Property->Name : FName(), bFirePostEdit,
-                    ValueOffsetInOuter(PropertyHandle->GetValuePtr(), ChangeEventCallbacks.Instance, ChangeEventCallbacks.Type)};
-
-                if (ChangeOp == EPropertyChangeOp::Started && ChangeEventCallbacks.StartChangeCallback)
-                {
-                    ChangeEventCallbacks.StartChangeCallback(Event);
-                }
-                
-                // Null for script-defined structs; see FPropertyRow::DispatchChange.
-                FStructOps* Ops = ChangeEventCallbacks.Type ? ChangeEventCallbacks.Type->GetStructOps() : nullptr;
-
-                if (ChangeOp == EPropertyChangeOp::Started)
-                {
-                    bObjectEditSessionActive = true;
-                }
-                if (ChangeOp == EPropertyChangeOp::Finished)
-                {
-                    bObjectEditSessionActive = false;
-                }
-
-                if (Ops && Ops->HasPreEdit() && ChangeEventCallbacks.Instance && bFirePreEdit)
-                {
-                    Ops->PreEdit(ChangeEventCallbacks.Instance, Event);
-                }
-
-                if (ChangeEventCallbacks.PreChangeCallback)
-                {
-                    ChangeEventCallbacks.PreChangeCallback(Event);
-                }
-
-                Customization->UpdatePropertyValue(PropertyHandle);
-
-                if (Ops && Ops->HasPostEdit() && ChangeEventCallbacks.Instance && bFirePostEdit)
-                {
-                    Ops->PostEdit(ChangeEventCallbacks.Instance, Event);
-                }
-                
-                if (ChangeEventCallbacks.PostChangeCallback)
-                {
-                    ChangeEventCallbacks.PostChangeCallback(Event);
-                }
-
-                if (ChangeOp == EPropertyChangeOp::Finished && ChangeEventCallbacks.FinishChangeCallback)
-                {
-                    ChangeEventCallbacks.FinishChangeCallback(Event);
-                }
-            }
+            DrawCustomization(Args);
             return;
         }
 
-        constexpr ImGuiTableFlags Flags =
-            ImGuiTableFlags_BordersOuter |
-            ImGuiTableFlags_NoBordersInBodyUntilResize |
-            ImGuiTableFlags_SizingStretchSame |
-            ImGuiTableFlags_RowBg;
+        ImGui::PushID(this);
 
         // Search runs first, so a filtered-out row cannot size the header column.
         if (bShowSearchBar)
         {
-            // PushID(this) only covers rows, so two tables in one window collided on the same widget id.
-            ImGui::PushID(this);
             ImGuiX::SearchBar("##PropertySearch", PropertyFilter, LE_ICON_MAGNIFY " Search properties...");
-            ImGui::PopID();
+        }
+        ApplyFilterState();
+
+        float HeaderColumnWidth = 0.0f;
+        for (const TUniquePtr<PropertyTableInternal::FCategoryPropertyRow>& Row : Categories)
+        {
+            if (Row->PassesFilter())
+            {
+                HeaderColumnWidth = Math::Max(HeaderColumnWidth, Row->ComputeRequiredHeaderWidth(0.0f));
+            }
         }
 
-        ApplyFilterState();
+        // Long or deeply nested labels clip and keep their hover tooltip, rather than squeezing the values out.
+        const float MaxHeaderWidth = Math::Max(ImGui::GetContentRegionAvail().x * PropertyTableInternal::MaxHeaderColumnShare, 80.0f);
+        HeaderColumnWidth = Math::Min(HeaderColumnWidth + 18.0f, MaxHeaderWidth);
 
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4, 3));
         ImGui::PushStyleColor(ImGuiCol_TableRowBg, EditorColors::U32(EditorColors::PanelBg()));
         ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, EditorColors::U32(EditorColors::RowBg()));
-        ImGui::PushID(this);
-        
-        float HeaderColumnWidth = 0.0f;
-        for (auto& [Name, Row] : Categories)
-        {
-            if (!Row->PassesFilter())
-            {
-                continue;
-            }
-            HeaderColumnWidth = Math::Max(HeaderColumnWidth, Row->ComputeRequiredHeaderWidth(0.0f));
-        }
-        HeaderColumnWidth += 18.0f;
 
-        // Long or deeply nested labels clip and keep their hover tooltip, rather than squeezing the values out.
-        HeaderColumnWidth = Math::Min(HeaderColumnWidth, Math::Max(ImGui::GetContentRegionAvail().x * MaxHeaderColumnShare, 80.0f));
-
+        constexpr ImGuiTableFlags Flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_NoBordersInBodyUntilResize
+            | ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_RowBg;
         if (ImGui::BeginTable("GridTable", 2, Flags))
         {
             ImGui::TableSetupColumn("##Header", ImGuiTableColumnFlags_WidthFixed, HeaderColumnWidth);
             ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
 
-            const bool bFoldSoleCategory = Categories.size() == 1 && !OwnerHeading.IsNone() && Categories.begin()->first == OwnerHeading;
-            for (auto& [Name, Row] : Categories)
+            const bool bFoldSoleCategory = Categories.size() == 1 && !OwnerHeading.IsNone() && Categories.front()->GetCategoryName() == OwnerHeading;
+            for (const TUniquePtr<PropertyTableInternal::FCategoryPropertyRow>& Row : Categories)
             {
                 // UpdateRow drains queued array mutations, so skipping it strands an edit made before the search.
                 Row->UpdateRow();
@@ -2734,9 +2926,9 @@ namespace Lumina
             ImGui::EndTable();
         }
 
-        ImGui::PopID();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar();
+        ImGui::PopID();
     }
 
     void FPropertyTable::UpdateRows()
@@ -2745,69 +2937,75 @@ namespace Lumina
         {
             return;
         }
-        for (auto& [Name, Row] : Categories)
+        for (const TUniquePtr<PropertyTableInternal::FCategoryPropertyRow>& Row : Categories)
         {
             Row->UpdateRow();
         }
     }
 
-    void FPropertyTable::OnScriptsReloaded(const Scripting::FScriptReload& Reload)
+    void FPropertyTable::MarkDirty()
     {
-        // Only an object table can be reinstanced, so a struct table's value pointer is never looked up as one.
-        const bool bObjectTable = Struct != nullptr && Struct->IsA<CClass>();
-        if (CObject* Replacement = bObjectTable ? Reload.FindReplacement(Object) : nullptr)
-        {
-            Bind(Replacement, Replacement->GetClass(), DefaultInstanceFor(Replacement, Replacement->GetClass()));
-        }
-        else if (CObject* ReplacedType = Reload.FindReplacement(Struct))
-        {
-            Bind(Object, static_cast<CStruct*>(ReplacedType), DefaultObject);
-        }
-
-        // Dropped rather than reused, since the properties the old rows point at belong to the previous block.
-        Categories.clear();
-        Customization = nullptr;
         bDirty = true;
     }
 
-    void FPropertyTable::EnsureTreeBuilt()
+    void FPropertyTable::SetObject(void* InObject, CStruct* StructType)
     {
-        if (!bDirty)
+        if (Object != InObject || Struct != StructType)
+        {
+            SetObject(InObject, StructType, PropertyTableInternal::DefaultInstanceFor(InObject, StructType));
+        }
+    }
+
+    void FPropertyTable::SetObject(void* InObject, CStruct* StructType, void* InDefaultObject)
+    {
+        // Rebinding drops every row and its expansion state, so pointing at what the table already holds is skipped.
+        if (Object == InObject && Struct == StructType && DefaultObject == InDefaultObject)
         {
             return;
         }
-
-        FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
-        Customization = Registry->GetPropertyCustomizationForType(Struct->GetName());
-
-        if (Customization == nullptr)
-        {
-            RebuildTree();
-        }
-        bDirty = false;
+        Bind(InObject, StructType, InDefaultObject);
+        DropRows();
     }
 
-    void FPropertyTable::ApplyFilterState()
+    void FPropertyTable::SetPreEditCallback(FPropertyChangedEventFn Callback)
     {
-        const bool bFiltering   = PropertyFilter.IsActive();
-        const bool bJustActive  = bFiltering && !bWasFiltering;
-        const bool bJustCleared = !bFiltering && bWasFiltering;
-        bWasFiltering = bFiltering;
+        Callbacks.PreChangeCallback = Move(Callback);
+    }
 
-        // The tree is rebuilt underneath by array edits and object swaps, so a stale flag would hide a row.
-        if (bFiltering || bJustCleared)
-        {
-            for (auto& [Name, Row] : Categories)
-            {
-                Row->ApplyFilter(PropertyFilter, bFiltering, bJustActive, bJustCleared);
-            }
-        }
+    void FPropertyTable::SetPostEditCallback(FPropertyChangedEventFn Callback)
+    {
+        Callbacks.PostChangeCallback = Move(Callback);
+    }
+
+    void FPropertyTable::SetStartEditCallback(FPropertyChangedEventFn Callback)
+    {
+        Callbacks.StartChangeCallback = Move(Callback);
+    }
+
+    void FPropertyTable::SetFinishEditCallback(FPropertyChangedEventFn Callback)
+    {
+        Callbacks.FinishChangeCallback = Move(Callback);
+    }
+
+    void FPropertyTable::SetMultiValueFn(FPropertyMultiValueFn Fn)
+    {
+        Callbacks.IsMultiValueFn = Move(Fn);
+    }
+
+    void FPropertyTable::SetEditMultipleValues(bool bEdit)
+    {
+        Callbacks.bEditMultipleValues = bEdit;
+    }
+
+    void FPropertyTable::SetTrailingControl(FPropertyTrailingControlFn Fn, float Width)
+    {
+        Callbacks.TrailingControlFn = Move(Fn);
+        Callbacks.TrailingControlWidth = Width;
     }
 
     void FPropertyTable::SetSearchText(FStringView Text)
     {
-        const size_t Capacity = sizeof(PropertyFilter.InputBuf) - 1;
-        const size_t Count    = Text.size() < Capacity ? Text.size() : Capacity;
+        const size_t Count = Math::Min(Text.size(), sizeof(PropertyFilter.InputBuf) - 1);
         if (Count > 0)
         {
             Memory::Memcpy(PropertyFilter.InputBuf, Text.data(), Count);
@@ -2827,13 +3025,12 @@ namespace Lumina
         }
 
         ApplyFilterState();
-
         if (!PropertyFilter.IsActive())
         {
             return true;
         }
 
-        for (auto& [Name, Row] : Categories)
+        for (const TUniquePtr<PropertyTableInternal::FCategoryPropertyRow>& Row : Categories)
         {
             if (Row->PassesFilter())
             {
@@ -2843,89 +3040,149 @@ namespace Lumina
         return false;
     }
 
-    void FPropertyTable::ClearSearch()
+    void FPropertyTable::OnScriptsReloaded(const Scripting::FScriptReload& Reload)
     {
-        PropertyFilter.Clear();
+        // A replaced type may already be freed, so it is only compared and its replacement is what gets read.
+        CStruct* ReplacedType = static_cast<CStruct*>(Reload.FindReplacement(Struct));
+        CStruct* LiveType = ReplacedType != nullptr ? ReplacedType : Struct;
 
-        // Restored immediately, so the button press and the restore look like one action.
-        if (bWasFiltering)
+        // Only an object table can be reinstanced, so a struct table's value pointer is never looked up as one.
+        const bool bObjectTable = LiveType != nullptr && LiveType->IsA<CClass>();
+        if (CObject* Replacement = bObjectTable ? Reload.FindReplacement(Object) : nullptr)
         {
-            for (auto& [Name, Row] : Categories)
-            {
-                Row->ApplyFilter(PropertyFilter, /*bFilterActive*/ false, /*bJustActivated*/ false, /*bJustCleared*/ true);
-            }
-            bWasFiltering = false;
+            Bind(Replacement, Replacement->GetClass(), PropertyTableInternal::DefaultInstanceFor(Replacement, Replacement->GetClass()));
         }
-    }
+        else if (ReplacedType != nullptr)
+        {
+            Bind(Object, ReplacedType, DefaultObject);
+        }
 
-    void FPropertyTable::SetObject(void* InObject, CStruct* StructType)
-    {
-        if (Object != InObject || Struct != StructType)
-        {
-            SetObject(InObject, StructType, DefaultInstanceFor(InObject, StructType));
-        }
-    }
-
-    void FPropertyTable::SetObject(void* InObject, CStruct* StructType, void* InDefaultObject)
-    {
-        // A rebuild drops every row and its expansion state, so repointing at what the table already holds is skipped.
-        if (Object == InObject && Struct == StructType && DefaultObject == InDefaultObject)
-        {
-            return;
-        }
-        Bind(InObject, StructType, InDefaultObject);
-        RebuildTree();
+        DropRows();
     }
 
     void FPropertyTable::Bind(void* InObject, CStruct* StructType, void* InDefaultObject)
     {
         Object = InObject;
         Struct = StructType;
-        // Kept in lockstep with the object; a stale Type here would type-pun the edit hooks.
-        ChangeEventCallbacks.Type = StructType;
-        ChangeEventCallbacks.Instance = InObject;
         DefaultObject = InDefaultObject;
+        Callbacks.Type = StructType;
+        Callbacks.Instance = InObject;
     }
 
-    void FPropertyTable::SetPreEditCallback(const FPropertyChangedEventFn& Callback)
+    void FPropertyTable::DropRows()
     {
-        ChangeEventCallbacks.PreChangeCallback = Callback;
+        Categories.clear();
+        Customization = nullptr;
+        CustomizationHandle = nullptr;
+        bCustomizationEditActive = false;
+        bDirty = true;
     }
 
-    void FPropertyTable::SetPostEditCallback(const FPropertyChangedEventFn& Callback)
+    void FPropertyTable::EnsureTreeBuilt()
     {
-        ChangeEventCallbacks.PostChangeCallback = Callback;
-    }
-
-    void FPropertyTable::SetStartEditCallback(const FPropertyChangedEventFn& Callback)
-    {
-        ChangeEventCallbacks.StartChangeCallback = Callback;
-    }
-
-    void FPropertyTable::SetFinishEditCallback(const FPropertyChangedEventFn& Callback)
-    {
-        ChangeEventCallbacks.FinishChangeCallback = Callback;
-    }
-
-    FCategoryPropertyRow* FPropertyTable::FindOrCreateCategoryRow(const FName& CategoryName)
-    {
-        for (auto& [Name, Row] : Categories)
+        if (!bDirty)
         {
-            if (Name == CategoryName)
+            return;
+        }
+
+        FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+        Customization = Struct != nullptr ? Registry->GetPropertyCustomizationForType(Struct->GetName()) : nullptr;
+        if (Customization == nullptr)
+        {
+            RebuildTree();
+        }
+        bDirty = false;
+    }
+
+    void FPropertyTable::RebuildTree()
+    {
+        Categories.clear();
+        if (Struct == nullptr || Object == nullptr)
+        {
+            return;
+        }
+
+        for (FProperty* Property : Struct->GetProperties())
+        {
+            if (!Property->IsVisible())
+            {
+                continue;
+            }
+
+            const FCStringView Path = Property->HasMetadata("Category") ? Property->GetMetadata("Category") : FCStringView("General");
+            PropertyTableInternal::FPropertyRow* Target = nullptr;
+            for (const FName& Segment : PropertyTableInternal::SplitCategoryPath(FStringView(Path.c_str(), Path.size())))
+            {
+                Target = Target == nullptr ? FindOrCreateCategoryRow(Segment) : Target->FindOrCreateCategoryChild(Segment);
+            }
+            if (Target == nullptr)
+            {
+                Target = FindOrCreateCategoryRow(FName("General"));
+            }
+            Target->AddPropertyRow(MakeShared<FPropertyHandle>(Object, DefaultObject, Property));
+        }
+    }
+
+    void FPropertyTable::ApplyFilterState()
+    {
+        const bool bFiltering   = PropertyFilter.IsActive();
+        const bool bJustActive  = bFiltering && !bWasFiltering;
+        const bool bJustCleared = !bFiltering && bWasFiltering;
+        bWasFiltering = bFiltering;
+
+        // The tree is rebuilt underneath by array edits and object swaps, so a stale flag would hide a row.
+        if (!bFiltering && !bJustCleared)
+        {
+            return;
+        }
+        for (const TUniquePtr<PropertyTableInternal::FCategoryPropertyRow>& Row : Categories)
+        {
+            Row->ApplyFilter(PropertyFilter, bFiltering, bJustActive, bJustCleared);
+        }
+    }
+
+    void FPropertyTable::DrawCustomization(const FPropertyDrawArgs& Args)
+    {
+        if (CustomizationHandle == nullptr)
+        {
+            CustomizationHandle = MakeShared<FPropertyHandle>(Object, nullptr);
+        }
+
+        const EPropertyChangeOp Op = Customization->UpdateAndDraw(CustomizationHandle, Args);
+        PropertyTableInternal::DispatchPropertyChange(Op, bCustomizationEditActive, Callbacks, nullptr, nullptr, [this]
+        {
+            Customization->UpdatePropertyValue(CustomizationHandle);
+        });
+    }
+
+    PropertyTableInternal::FCategoryPropertyRow* FPropertyTable::FindOrCreateCategoryRow(const FName& CategoryName)
+    {
+        for (const TUniquePtr<PropertyTableInternal::FCategoryPropertyRow>& Row : Categories)
+        {
+            if (Row->GetCategoryName() == CategoryName)
             {
                 return Row.get();
             }
         }
 
-        Categories.emplace_back(CategoryName, MakeUnique<FCategoryPropertyRow>(Object, CategoryName, ChangeEventCallbacks));
-        return Categories.back().second.get();
+        Categories.push_back(MakeUnique<PropertyTableInternal::FCategoryPropertyRow>(CategoryName, Callbacks));
+        return Categories.back().get();
+    }
+
+    TSharedPtr<IPropertyTypeCustomization> MakeInlinePropertyCustomization(FProperty* Prop)
+    {
+        if (Prop->GetType() == EPropertyTypeFlags::Struct)
+        {
+            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+            return Registry->GetPropertyCustomizationForType(static_cast<FStructProperty*>(Prop)->GetStruct()->GetName());
+        }
+        return PropertyTableInternal::MakeLeafPropertyCustomization(Prop);
     }
 
     bool DrawInstancedStructEditor(const char* StrId, FInstancedStruct& Value, CStruct* BaseStruct, FPropertyTable& Table)
     {
         CStruct* Chosen = Value.GetScriptStruct();
         bool bChanged = false;
-
         if (ImGuiX::StructCombo(StrId, BaseStruct, Chosen))
         {
             Value.InitializeAs(Chosen);
@@ -2934,7 +3191,7 @@ namespace Lumina
 
         if (CStruct* Current = Value.GetScriptStruct())
         {
-            // SetObject rebuilds the row tree, so doing it every frame would discard any edit in progress.
+            // Rebinding drops the rows, so only a real change of memory or type does it.
             void* Memory = Value.GetMutableMemory();
             if (Table.GetObject() != Memory || Table.GetType() != Current)
             {

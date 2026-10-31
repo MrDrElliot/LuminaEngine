@@ -436,7 +436,7 @@ namespace Lumina
         SyncPreviewLighting(true);
     }
 
-    namespace
+    namespace PrefabEditorToolInternal
     {
         template<typename T>
         void SetComponentPresent(ECS::FRegistry& Registry, ECS::FEntity Entity, bool bPresent)
@@ -481,9 +481,9 @@ namespace Lumina
             bStudioLighting = !bPrefabSuppliesLighting;
         }
 
-        SetComponentPresent<SDirectionalLightComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
-        SetComponentPresent<SEnvironmentComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
-        SetComponentPresent<SSkyLightComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
+        PrefabEditorToolInternal::SetComponentPresent<SDirectionalLightComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
+        PrefabEditorToolInternal::SetComponentPresent<SEnvironmentComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
+        PrefabEditorToolInternal::SetComponentPresent<SSkyLightComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
     }
 
     void FPrefabEditorTool::CommitPreviewWorldToPrefab()
@@ -651,7 +651,7 @@ namespace Lumina
         TVector<ECS::FEntity> Doomed;
         while (!EntityDestroyRequests.empty())
         {
-            Doomed.push_back(EntityDestroyRequests.back());
+            Doomed.push_back(EntityDestroyRequests.front());
             EntityDestroyRequests.pop();
         }
 

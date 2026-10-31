@@ -277,9 +277,17 @@ namespace Lumina::MCP
 
             Agent::FToolResult Outcome;
 
+            // A tool that throws, such as json refusing a string that is not UTF-8, reports the failure instead of ending the editor.
             const auto Invoke = [&Outcome, &Tool, &Params, &Result]()
             {
-                Outcome = Tool.Invoke(Params.Get(), Result.Get());
+                try
+                {
+                    Outcome = Tool.Invoke(Params.Get(), Result.Get());
+                }
+                catch (const std::exception& Exception)
+                {
+                    Outcome = Agent::FToolResult::Error(FString("The tool failed: ") + Exception.what());
+                }
             };
 
             if (Tool.Thread == Agent::EToolThread::GameThread)

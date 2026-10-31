@@ -372,7 +372,6 @@ namespace Lumina::RmlBinding
         }
     }
 
-    using namespace Scanning;
 
     bool FDocumentBindings::IsAlias(FStringView Model, FStringView Name) const
     {
@@ -398,20 +397,20 @@ namespace Lumina::RmlBinding
     void Scan(std::string_view Text, FDocumentBindings& Out)
     {
         Out = FDocumentBindings();
-        const FLineIndex Lines(Text);
-        TVector<FOpenElement> Stack;
+        const Scanning::FLineIndex Lines(Text);
+        TVector<Scanning::FOpenElement> Stack;
 
         size_t Cursor = 0;
         while (Cursor < Text.size())
         {
             const std::string_view Rest = Text.substr(Cursor);
-            if (StartsWith(Rest, "<!--"))
+            if (Scanning::StartsWith(Rest, "<!--"))
             {
                 const size_t End = Text.find("-->", Cursor + 4);
                 Cursor = End == std::string_view::npos ? Text.size() : End + 3;
                 continue;
             }
-            if (StartsWith(Rest, "<![CDATA["))
+            if (Scanning::StartsWith(Rest, "<![CDATA["))
             {
                 const size_t End = Text.find("]]>", Cursor);
                 Cursor = End == std::string_view::npos ? Text.size() : End + 3;
@@ -420,7 +419,7 @@ namespace Lumina::RmlBinding
             if (Text[Cursor] == '<' && Cursor + 1 < Text.size() && Text[Cursor + 1] == '/')
             {
                 size_t NameEnd = Cursor + 2;
-                while (NameEnd < Text.size() && IsIdentChar(Text[NameEnd]))
+                while (NameEnd < Text.size() && Scanning::IsIdentChar(Text[NameEnd]))
                 {
                     ++NameEnd;
                 }
@@ -437,50 +436,50 @@ namespace Lumina::RmlBinding
                 Cursor = Close == std::string_view::npos ? Text.size() : Close + 1;
                 continue;
             }
-            if (Text[Cursor] == '<' && Cursor + 1 < Text.size() && IsIdentStart(Text[Cursor + 1]))
+            if (Text[Cursor] == '<' && Cursor + 1 < Text.size() && Scanning::IsIdentStart(Text[Cursor + 1]))
             {
                 size_t NameEnd = Cursor + 1;
-                while (NameEnd < Text.size() && (IsIdentChar(Text[NameEnd]) || Text[NameEnd] == '-'))
+                while (NameEnd < Text.size() && (Scanning::IsIdentChar(Text[NameEnd]) || Text[NameEnd] == '-'))
                 {
                     ++NameEnd;
                 }
                 const std::string_view Tag = Text.substr(Cursor + 1, NameEnd - Cursor - 1);
 
-                TVector<FRawAttribute> Attributes;
+                TVector<Scanning::FRawAttribute> Attributes;
                 bool bSelfClosing = false;
-                Cursor = ParseAttributes(Text, NameEnd, Attributes, bSelfClosing);
+                Cursor = Scanning::ParseAttributes(Text, NameEnd, Attributes, bSelfClosing);
 
-                FOpenElement Element;
+                Scanning::FOpenElement Element;
                 Element.Tag = Tag;
-                for (const FRawAttribute& Attribute : Attributes)
+                for (const Scanning::FRawAttribute& Attribute : Attributes)
                 {
                     if (Attribute.Name == "data-model")
                     {
-                        Element.Model = ToFString(Trim(Attribute.Value));
+                        Element.Model = Scanning::ToFString(Scanning::Trim(Attribute.Value));
                         Out.Models.push_back(Element.Model);
                         Out.ModelLines.push_back(Lines.LineAt(Attribute.ValueOffset));
                     }
                 }
 
-                const FString Model = Element.Model.empty() ? CurrentModel(Stack) : Element.Model;
-                for (const FRawAttribute& Attribute : Attributes)
+                const FString Model = Element.Model.empty() ? Scanning::CurrentModel(Stack) : Element.Model;
+                for (const Scanning::FRawAttribute& Attribute : Attributes)
                 {
-                    if (!StartsWith(Attribute.Name, "data-") || Attribute.Name == "data-model" || StartsWith(Attribute.Name, "data-alias-"))
+                    if (!Scanning::StartsWith(Attribute.Name, "data-") || Attribute.Name == "data-model" || Scanning::StartsWith(Attribute.Name, "data-alias-"))
                     {
                         continue;
                     }
                     const int32 Line = Lines.LineAt(Attribute.ValueOffset);
                     if (Attribute.Name == "data-for")
                     {
-                        ScanForScope(Attribute.Value, Line, Model, Out);
+                        Scanning::ScanForScope(Attribute.Value, Line, Model, Out);
                     }
-                    else if (StartsWith(Attribute.Name, "data-event-"))
+                    else if (Scanning::StartsWith(Attribute.Name, "data-event-"))
                     {
-                        ScanExpression(Attribute.Value, true, ERefUse::Event, Line, Model, Out.Refs);
+                        Scanning::ScanExpression(Attribute.Value, true, ERefUse::Event, Line, Model, Out.Refs);
                     }
                     else
                     {
-                        ScanExpression(Attribute.Value, false, UseOf(Attribute.Name), Line, Model, Out.Refs);
+                        Scanning::ScanExpression(Attribute.Value, false, Scanning::UseOf(Attribute.Name), Line, Model, Out.Refs);
                     }
                 }
 
@@ -492,7 +491,7 @@ namespace Lumina::RmlBinding
                     Cursor = End == std::string_view::npos ? Text.size() : End;
                     continue;
                 }
-                if (!bSelfClosing && !IsVoidTag(Tag))
+                if (!bSelfClosing && !Scanning::IsVoidTag(Tag))
                 {
                     Stack.push_back(Element);
                 }
@@ -514,7 +513,7 @@ namespace Lumina::RmlBinding
                 {
                     break;
                 }
-                ScanExpression(Run.substr(Open + 2, Close - Open - 2), false, ERefUse::Text, Lines.LineAt(Cursor + Open), CurrentModel(Stack), Out.Refs);
+                Scanning::ScanExpression(Run.substr(Open + 2, Close - Open - 2), false, ERefUse::Text, Lines.LineAt(Cursor + Open), Scanning::CurrentModel(Stack), Out.Refs);
                 Open = Run.find("{{", Close + 2);
             }
             Cursor = TextEnd;
@@ -529,7 +528,7 @@ namespace Lumina::RmlBinding
 
         for (const FForScope& Scope : Bindings.ForScopes)
         {
-            if (Scope.Model != ModelName || ContainsName(Model.Lists, FStringView(Scope.List.c_str(), Scope.List.size())))
+            if (Scope.Model != ModelName || Scanning::ContainsName(Model.Lists, FStringView(Scope.List.c_str(), Scope.List.size())))
             {
                 continue;
             }
@@ -546,7 +545,7 @@ namespace Lumina::RmlBinding
             const FStringView Name(Ref.Name.c_str(), Ref.Name.size());
             if (Ref.Kind == ERefKind::Command)
             {
-                if (!ContainsName(Model.Commands, Name))
+                if (!Scanning::ContainsName(Model.Commands, Name))
                 {
                     Model.Commands.emplace_back().Name = Ref.Name;
                 }
@@ -573,7 +572,7 @@ namespace Lumina::RmlBinding
                 continue;
             }
 
-            if (ContainsName(Model.Lists, Name))
+            if (Scanning::ContainsName(Model.Lists, Name))
             {
                 continue;
             }
@@ -702,7 +701,7 @@ namespace Lumina::RmlBinding
             }
             if (Ref.Kind == ERefKind::ListSource)
             {
-                if (!ContainsName(Model->Lists, Name))
+                if (!Scanning::ContainsName(Model->Lists, Name))
                 {
                     Add(Ref.Line, "'" + Ref.Name + "' is not a bound collection of " + TypeName + ".", true);
                 }
@@ -728,7 +727,7 @@ namespace Lumina::RmlBinding
                 Add(Ref.Line, "'" + Ref.Name + "' is not a [Property(Bind)] member of " + TypeName + ".", true);
                 continue;
             }
-            const bool bStruct = !Ref.Member.empty() && Model->FindScalar(Name) == nullptr && !ContainsName(Model->Lists, Name);
+            const bool bStruct = !Ref.Member.empty() && Model->FindScalar(Name) == nullptr && !Scanning::ContainsName(Model->Lists, Name);
             if (bStruct)
             {
                 const FString Field = Ref.Member.substr(0, Ref.Member.find_first_of(".["));
@@ -751,18 +750,18 @@ namespace Lumina::RmlBinding
             return;
         }
         size_t NameEnd = OpenLt + 1;
-        while (NameEnd < Text.size() && (IsIdentChar(Text[NameEnd]) || Text[NameEnd] == '-'))
+        while (NameEnd < Text.size() && (Scanning::IsIdentChar(Text[NameEnd]) || Text[NameEnd] == '-'))
         {
             ++NameEnd;
         }
-        TVector<FRawAttribute> Attributes;
+        TVector<Scanning::FRawAttribute> Attributes;
         bool bSelfClosing = false;
-        ParseAttributes(Text, NameEnd, Attributes, bSelfClosing);
-        for (const FRawAttribute& Attribute : Attributes)
+        Scanning::ParseAttributes(Text, NameEnd, Attributes, bSelfClosing);
+        for (const Scanning::FRawAttribute& Attribute : Attributes)
         {
-            if (StartsWith(Attribute.Name, "data-"))
+            if (Scanning::StartsWith(Attribute.Name, "data-"))
             {
-                Out.push_back(FAttribute{ ToFString(Attribute.Name), ToFString(Attribute.Value) });
+                Out.push_back(FAttribute{ Scanning::ToFString(Attribute.Name), Scanning::ToFString(Attribute.Value) });
             }
         }
     }
@@ -779,11 +778,11 @@ namespace Lumina::RmlBinding
                 return FString();
             }
             size_t Start = Prefix.size() - 1;
-            while (Start > 0 && IsIdentChar(Prefix[Start - 1]))
+            while (Start > 0 && Scanning::IsIdentChar(Prefix[Start - 1]))
             {
                 --Start;
             }
-            return ToFString(Prefix.substr(Start, Prefix.size() - 1 - Start));
+            return Scanning::ToFString(Prefix.substr(Start, Prefix.size() - 1 - Start));
         };
 
         const size_t Open = Prefix.rfind("{{");
@@ -853,7 +852,7 @@ namespace Lumina::RmlBinding
         }
 
         Value = Prefix.substr(ValueStart);
-        if (!StartsWith(Attribute, "data-"))
+        if (!Scanning::StartsWith(Attribute, "data-"))
         {
             return Context;
         }
@@ -873,7 +872,7 @@ namespace Lumina::RmlBinding
             Context.Kind = ECompletion::AliasMember;
             return Context;
         }
-        Context.Kind = StartsWith(Attribute, "data-event-") ? ECompletion::Command : ECompletion::Value;
+        Context.Kind = Scanning::StartsWith(Attribute, "data-event-") ? ECompletion::Command : ECompletion::Value;
         return Context;
     }
 

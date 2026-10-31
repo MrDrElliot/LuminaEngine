@@ -11,12 +11,78 @@
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "Core/Object/Cast.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 
 
 namespace Lumina
 {
+    FAssetEditorTool::FAssetEditorTool(IEditorToolContext* Context, const FString& AssetName, CObject* InAsset, CWorld* InWorld)
+        : FEditorTool(Context, AssetName, InWorld)
+        , bAssetLoadBroadcasted(false)
+        , bOpenedOnAsset(InAsset != nullptr)
+    {
+        Asset = InAsset;
+        if (InAsset != nullptr)
+        {
+            if (CPackage* Package = InAsset->GetPackage())
+            {
+                AssetVirtualPath = Package->GetPackagePath();
+            }
+
+            PropertyTable.SetObject(InAsset, InAsset->GetClass());
+            PropertyTable.MarkDirty();
+
+            // Property edits bypass the setters that invalidate the mesh resolve cache, so this one place covers them all.
+            PropertyTable.SetPostEditCallback([this](const FPropertyChangedEvent&) { NotifyAssetDataChanged(); });
+
+            SetupPropertyUndo();
+            SetupAutoAssetUndo();
+        }
+
+        // Here rather than in OnInitialize, which every asset editor overrides without calling the base.
+        SubscribeToAssetDataChanges();
+    }
+
+    FAssetEditorTool::FAssetEditorTool(IEditorToolContext* Context, const FString& DisplayName)
+        : FAssetEditorTool(Context, DisplayName, nullptr, nullptr)
+    {
+    }
+
     void FAssetEditorTool::OnInitialize()
     {
+    }
+
+    void FAssetEditorTool::VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func)
+    {
+        FEditorTool::VisitObjectReferences(Func);
+
+        // Cached before the visit can null the asset, so a lost asset still names its path.
+        (void)GetAssetVirtualPath();
+        Asset = Func(Asset.Get());
+    }
+
+    bool FAssetEditorTool::IsUnsavedDocument()
+    {
+        return Asset.IsValid() && Asset->GetPackage() != nullptr && Asset->GetPackage()->IsDirty();
+    }
+
+    void FAssetEditorTool::NotifyAssetDataChanged()
+    {
+        if (!Asset.IsValid())
+        {
+            return;
+        }
+
+        if (CPackage* Package = Asset->GetPackage())
+        {
+            Package->MarkDirty();
+        }
+
+        // Meshes and materials are interned into the resolve cache by pointer, so an in-place edit needs the epoch bumped to show.
+        if (Asset->IsA<CMesh>() || Asset->IsA<CMaterialInterface>())
+        {
+            FMeshResolveCache::BumpEpoch();
+        }
     }
 
     void FAssetEditorTool::SubscribeToAssetDataChanges()

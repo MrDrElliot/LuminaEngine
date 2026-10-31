@@ -35,6 +35,9 @@ namespace Lumina
 
     private:
 
+        // A script reload replaces a component's layout, so the type is looked up again rather than trusted from the edit.
+        NODISCARD CStruct* ResolveType() const;
+
         void Capture(TVector<uint8>& Out, TVector<TVector<FName>>& OutOverrides) const;
         void Restore(const TVector<uint8>& In, const TVector<TVector<FName>>& Overrides) const;
 

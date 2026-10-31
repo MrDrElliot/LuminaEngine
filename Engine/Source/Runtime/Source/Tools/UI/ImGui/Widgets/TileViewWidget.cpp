@@ -457,23 +457,14 @@ namespace Lumina
         }
     }
 
-    void FTileViewWidget::RebuildTree(const FTileViewContext& Context, bool bKeepSelections)
+    void FTileViewWidget::RebuildTree(const FTileViewContext& Context)
     {
         ASSERT(bDirty);
 
-        TVector<FTileViewItem*> CachedSelections = Selections;
-        
+        // Selections point at items ClearTree destroys, so they go first and the rebuild selects anew.
         ClearSelections();
         ClearTree();
 
-        if (bKeepSelections)
-        {
-            for (FTileViewItem* Select : CachedSelections)
-            {
-                ToggleSelection(Select, Context);
-            }
-        }
-        
         // Cleared first, so a refresh requested while the tree rebuilds runs again next frame.
         bDirty = false;
         Context.RebuildTreeFunction(this);

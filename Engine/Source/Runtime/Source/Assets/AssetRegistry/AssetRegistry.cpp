@@ -360,18 +360,26 @@ namespace Lumina
 
     void FAssetRegistry::AssetCreated(const CObject* Asset)
     {
-        FFixedString FilePath = Asset->GetPackage()->GetPackagePath();
+        const FFixedString FilePath = Asset->GetPackage()->GetPackagePath();
 
         auto AssetData = MakeShared<FAssetData>();
         AssetData->AssetClass    = Asset->GetClass()->GetName();
         AssetData->AssetGUID     = Asset->GetGUID();
         AssetData->AssetName     = Asset->GetName();
-        AssetData->Path          = Move(FilePath);
+        AssetData->Path          = FilePath;
         AssetData->OwningPlugin  = ExtractOwningPlugin(AssetData->Path);
+
+        const bool bOnDisk = VFS::Exists(AssetData->Path);
 
         {
             FWriteScopeLock Lock(AssetsMutex);
             InsertAssetLocked(Move(AssetData));
+        }
+
+        // Every create path saves before announcing, so the file's import table is the dependency list a fresh entry lacks.
+        if (bOnDisk)
+        {
+            ProcessPackagePath(FStringView(FilePath.c_str(), FilePath.size()));
         }
 
         {

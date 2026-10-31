@@ -2167,7 +2167,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
 
         ImGuiID sourceToolID = SourceTool->GetPrevDockspaceID();
-        ImGuiID destinationToolID = SourceTool->GetCurrDockspaceID();
+        ImGuiID destinationToolID = SourceTool->GetCurrentDockspaceID();
         ASSERT(sourceToolID != 0 && destinationToolID != 0);
         
         // Helper to build an array of strings pointer into the same contiguous memory buffer.

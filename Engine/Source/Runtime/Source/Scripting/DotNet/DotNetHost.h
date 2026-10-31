@@ -35,7 +35,8 @@ namespace Lumina::DotNet
 
     //~ Registry signal listeners, tracked per world so teardown destroys the ones script never disposed.
     RUNTIME_API void TrackSignalListener(CWorld* World, void* Listener);
-    RUNTIME_API void ForgetSignalListener(CWorld* World, void* Listener);
+    // False when the world's teardown already released the listener, so the handle must not be touched again.
+    NODISCARD RUNTIME_API bool ForgetSignalListener(CWorld* World, void* Listener);
 
     // Drops managed state keyed on a world, early enough that its disconnects still reach a live world.
     RUNTIME_API void NotifyWorldTeardown(CWorld* World);

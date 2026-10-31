@@ -210,6 +210,9 @@ namespace Lumina::ImGuiX
     // in the return value, which stays Constants::kIndexNone.
     RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr, FFixedString* OutCreatedText = nullptr);
 
+    // Whether that combo's list is open, so a caller can skip gathering items nobody can see.
+    RUNTIME_API bool IsSearchableComboOpen(const char* StrId);
+
     // Searchable combo for picking an asset of (or deriving from) FilterClass from the registry.
     // Writes the chosen asset's GUID into InOutGUID and returns true when it changes.
     RUNTIME_API bool AssetReferenceCombo(const char* StrId, CClass* FilterClass, FGuid& InOutGUID, const char* ItemIcon = nullptr);

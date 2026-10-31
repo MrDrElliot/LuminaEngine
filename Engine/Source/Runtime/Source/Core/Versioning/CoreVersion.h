@@ -113,6 +113,8 @@ enum class ELuminaEngineVersion : uint32
 
 	// A held value carries the entity remaps that copies made while its type was gone.
 	HELD_VALUE_ENTITY_REMAP,
+	// An array records its element kind beside the element size, so a retyped element converts or is skipped instead of misread.
+	ARRAY_ELEMENT_KIND,
 
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1

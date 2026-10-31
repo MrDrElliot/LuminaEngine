@@ -14,6 +14,7 @@
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Threading/Atomic.h"
+#include "Core/Threading/Thread.h"
 #include "Scripting/ScriptableObject.h"
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
@@ -196,6 +197,9 @@ namespace Lumina::DotNet
 
         // Signal listeners per world, since nothing else would destroy one the script never disposed.
         THashMap<CWorld*, TVector<void*>>           GSignalListeners;
+
+        // Scripts can subscribe and dispose from parallel jobs while another world tears down.
+        FMutex                                      GSignalListenersMutex;
 
         hostfxr_get_runtime_delegate_fn             GGetDelegate = nullptr;
         FExporterTable                              GExports{};
@@ -860,25 +864,29 @@ namespace Lumina::DotNet
     {
         if (World != nullptr && Listener != nullptr)
         {
+            FScopeLock Lock(GSignalListenersMutex);
             GSignalListeners[World].push_back(Listener);
         }
     }
 
-    void ForgetSignalListener(CWorld* World, void* Listener)
+    bool ForgetSignalListener(CWorld* World, void* Listener)
     {
+        FScopeLock Lock(GSignalListenersMutex);
         auto It = GSignalListeners.find(World);
         if (It == GSignalListeners.end())
         {
-            return;
+            return false;
         }
 
         TVector<void*>& Listeners = It->second;
+        bool bFound = false;
         for (size_t Index = 0; Index < Listeners.size(); ++Index)
         {
             if (Listeners[Index] == Listener)
             {
                 Listeners[Index] = Listeners.back();
                 Listeners.pop_back();
+                bFound = true;
                 break;
             }
         }
@@ -887,6 +895,7 @@ namespace Lumina::DotNet
         {
             GSignalListeners.erase(It);
         }
+        return bFound;
     }
 
     void NotifyWorldTeardown(CWorld* World)
@@ -896,19 +905,24 @@ namespace Lumina::DotNet
             return;
         }
 
-        // Destroying a listener releases its managed binding, and the registry is still alive for the disconnect.
-        auto It = GSignalListeners.find(World);
-        if (It != GSignalListeners.end())
+        // Taken out under the lock, so a script disposing the same subscription later finds it gone instead of freeing it twice.
+        TVector<void*> Listeners;
         {
-            TVector<void*> Listeners = Move(It->second);
-            GSignalListeners.erase(It);
-
-            for (void* Handle : Listeners)
+            FScopeLock Lock(GSignalListenersMutex);
+            auto It = GSignalListeners.find(World);
+            if (It != GSignalListeners.end())
             {
-                auto* Listener = static_cast<FManagedSignalListener*>(Handle);
-                Listener->Connection.Release();
-                delete Listener;
+                Listeners = Move(It->second);
+                GSignalListeners.erase(It);
             }
+        }
+
+        // Destroying a listener releases its managed binding, and the registry is still alive for the disconnect.
+        for (void* Handle : Listeners)
+        {
+            auto* Listener = static_cast<FManagedSignalListener*>(Handle);
+            Listener->Connection.Release();
+            delete Listener;
         }
 
         if (!bInitialized || GManaged.OnWorldTeardown == nullptr)

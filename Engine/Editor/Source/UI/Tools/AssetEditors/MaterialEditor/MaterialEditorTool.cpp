@@ -336,7 +336,7 @@ namespace Lumina
         }
     }
 
-    bool FMaterialEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
+    void FMaterialEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
         const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
@@ -381,13 +381,10 @@ namespace Lumina
         ImGui::SetCursorPos(Origin + ImStyle.ItemSpacing);
         DrawViewportToolbar(UpdateContext);
         
-        if (ImGuiDockNode* pDockNode = ImGui::GetWindowDockNode())
+        if (ImGuiDockNode* DockNode = ImGui::GetWindowDockNode())
         {
-           pDockNode->LocalFlags = 0;
-           pDockNode->LocalFlags |= ImGuiDockNodeFlags_NoDockingOverMe;
+            DockNode->LocalFlags = ImGuiDockNodeFlags_NoDockingOverMe;
         }
-
-        return false;
     }
 
     void FMaterialEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)

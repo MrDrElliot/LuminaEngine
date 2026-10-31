@@ -1,74 +1,93 @@
-﻿
-#include "FileSystem/FileSystem.h"
-#include "Containers/StringFormat.h"
-#include "Renderer/RHICore.h"
-#include "World/ECS/Registry.h"
-#include "EditorTool.h"
-#include "World/Scene/RenderScene/EditorGridRequest.h"
+﻿#include "EditorTool.h"
 
-#include <Tools/PrimitiveManager/PrimitiveManager.h>
-
-#include "imgui_internal.h"
 #include "EditorToolContext.h"
 #include "ToolFlags.h"
 #include "Animation/SkeletonDebugDraw.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
-#include "Core/Console/ConsoleVariable.h"
-#include "Core/Object/Package/Package.h"
-#include "Core/Windows/Window.h"
-#include "Core/Serialization/MemoryArchiver.h"
-#include "Core/Serialization/ObjectArchiver.h"
-#include "Transactions/EcsRegistrySnapshotCommand.h"
-#include "Transactions/EntityComponentSnapshotCommand.h"
+#include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
+#include "Core/Console/ConsoleVariable.h"
+#include "Core/Object/Package/Package.h"
+#include "Core/UpdateContext.h"
+#include "FileSystem/FileSystem.h"
+#include "Input/InputContext.h"
+#include "Input/InputViewport.h"
+#include "Log/Log.h"
+#include "Renderer/RHI.h"
+#include "Renderer/RHICore.h"
+#include "Settings/EditorSettings.h"
+#include "Thumbnails/ThumbnailUtils.h"
+#include "Tools/ComponentVisualizers/ComponentVisualizer.h"
+#include "Tools/PrimitiveManager/PrimitiveManager.h"
+#include "Tools/Screenshot/MovieCapture.h"
+#include "Tools/UI/ImGui/EditorColors.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
+#include "Transactions/EcsRegistrySnapshotCommand.h"
+#include "Transactions/EntityComponentSnapshotCommand.h"
 #include "Transactions/EntityCreationCommand.h"
 #include "Transactions/EntityDestroyCommand.h"
 #include "Transactions/EntityRelationshipCommand.h"
 #include "Transactions/EntityTransformCommand.h"
 #include "Transactions/ObjectSnapshotCommand.h"
-#include "Settings/EditorSettings.h"
-#include "Thumbnails/ThumbnailManager.h"
-#include "Thumbnails/ThumbnailUtils.h"
-#include "Tools/Screenshot/MovieCapture.h"
-#include "Tools/UI/ImGui/ImGuiX.h"
-#include "UI/Tools/EditorAssetDropHandlers.h"
-#include "Core/Application/Application.h"
-#include "Core/UpdateContext.h"
-#include "Input/InputContext.h"
-#include "Input/InputViewport.h"
-#include "Renderer/RHI.h"
 #include "UI/RmlUiBridge.h"
+#include "UI/Tools/EditorAssetDropHandlers.h"
 #include "World/WorldManager.h"
-#include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/InputComponent.h"
-#include "World/Entity/Components/SocketAttachmentComponent.h"
-#include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
+#include "World/Entity/Components/SocketAttachmentComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Scene/RenderScene/EditorGridRequest.h"
 #include "World/Subsystems/TerrainSculptSystem.h"
-#include "Tools/ComponentVisualizers/ComponentVisualizer.h"
-#include "Tools/UI/ImGui/EditorColors.h"
-#include "Log/Log.h"
+
+namespace Lumina::EditorToolInternal
+{
+    TConsoleVar<bool>  CVarDrawSkeletons    ("Editor.Debug.Skeletons",        false, "Draw the bone hierarchy for every skeletal mesh in the editor viewport.");
+    TConsoleVar<bool>  CVarSkeletonNames    ("Editor.Debug.SkeletonNames",    false, "Label bones with their names (requires Editor.Debug.Skeletons).");
+    TConsoleVar<bool>  CVarSkeletonAxes     ("Editor.Debug.SkeletonAxes",     false, "Draw a per-bone local X/Y/Z axis triad.");
+    TConsoleVar<bool>  CVarSkeletonXRay     ("Editor.Debug.SkeletonXRay",     true,  "Draw bones without depth testing so they show through the mesh.");
+    TConsoleVar<float> CVarSkeletonNameDist ("Editor.Debug.SkeletonNameDist", 10.0f, "Max camera distance (meters) at which bone names are drawn.");
+    TConsoleVar<float> CVarSkeletonJointDist("Editor.Debug.SkeletonJointDist", 20.0f, "Max camera distance (meters) at which joint spheres and axes are drawn.");
+    TConsoleVar<float> CVarSkeletonShapeDist("Editor.Debug.SkeletonShapeDist", 75.0f, "Max camera distance (meters) at which bones keep their octahedral shape instead of collapsing to a line.");
+
+    // Under ImGui's 15px tap threshold, so a gesture can never both arm the camera and read as a tap.
+    constexpr float RightLookArmThresholdPixels = 4.0f;
+
+    // How far along Normal a mesh's origin sits when its bounds just touch a surface facing Normal.
+    float RestingOffset(const SAABB& Bounds, const FVector3& Normal)
+    {
+        const FVector3 Center = (Bounds.Min + Bounds.Max) * 0.5f;
+        const FVector3 Half   = (Bounds.Max - Bounds.Min) * 0.5f;
+        return Math::Abs(Normal.x) * Half.x + Math::Abs(Normal.y) * Half.y + Math::Abs(Normal.z) * Half.z - Math::Dot(Center, Normal);
+    }
+
+    FVector3 AbsComponents(const FVector3& Value)
+    {
+        return FVector3(Math::Abs(Value.x), Math::Abs(Value.y), Math::Abs(Value.z));
+    }
+
+    // The box about the origin that holds Bounds once turned by Rotation and scaled by Scale.
+    SAABB OrientBounds(const SAABB& Bounds, const FQuat& Rotation, float Scale)
+    {
+        const FVector3 Center = Rotation * ((Bounds.Min + Bounds.Max) * (0.5f * Scale));
+        const FVector3 Half   = (Bounds.Max - Bounds.Min) * (0.5f * Scale);
+        const FVector3 Extent = AbsComponents(Rotation * FVector3(Half.x, 0.0f, 0.0f))
+                              + AbsComponents(Rotation * FVector3(0.0f, Half.y, 0.0f))
+                              + AbsComponents(Rotation * FVector3(0.0f, 0.0f, Half.z));
+        SAABB Oriented;
+        Oriented.Min = Center - Extent;
+        Oriented.Max = Center + Extent;
+        return Oriented;
+    }
+}
 
 namespace Lumina
 {
-    namespace
-    {
-        // Editor-scoped and off by default, and the master CVar reaches every editor viewport.
-        static TConsoleVar<bool>  CVarDrawSkeletons    ("Editor.Debug.Skeletons",       false, "Draw the bone hierarchy for every skeletal mesh in the editor viewport.");
-        static TConsoleVar<bool>  CVarSkeletonNames    ("Editor.Debug.SkeletonNames",   false, "Label bones with their names (requires Editor.Debug.Skeletons).");
-        static TConsoleVar<bool>  CVarSkeletonAxes     ("Editor.Debug.SkeletonAxes",    false, "Draw a per-bone local X/Y/Z axis triad.");
-        static TConsoleVar<bool>  CVarSkeletonXRay     ("Editor.Debug.SkeletonXRay",    true,  "Draw bones without depth testing so they show through the mesh.");
-        static TConsoleVar<float> CVarSkeletonNameDist ("Editor.Debug.SkeletonNameDist", 10.0f, "Max camera distance (meters) at which bone names are drawn.");
-        static TConsoleVar<float> CVarSkeletonJointDist("Editor.Debug.SkeletonJointDist", 20.0f, "Max camera distance (meters) at which joint spheres and axes are drawn.");
-        static TConsoleVar<float> CVarSkeletonShapeDist("Editor.Debug.SkeletonShapeDist", 75.0f, "Max camera distance (meters) at which bones keep their octahedral shape instead of collapsing to a line.");
-    }
 
     FEditorTool::FEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld)
         : ToolContext(Context)
@@ -108,24 +127,20 @@ namespace Lumina
         const RHI::FGPUAllocation Readback = RHI::Malloc((uint64)SourceWidth * SourceHeight * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
         RHI::SetDebugName(Readback.Gpu, "Readback.ToolPreview");
 
-        auto RecordCapture = [&]()
-        {
-            RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
-                RHI::EStageFlags::Transfer,
-                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
-            RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                RHI::EStageFlags::Host,
-                RHI::EAccessFlags::HostRead);
-            // Waits on this copy only, since a device-wide idle would stall unrelated in-flight frame work.
-            const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
-            RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
-        };
+        RHI::FCmdListH CL = RHI::OpenCommandList();
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+        RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Host,
+            RHI::EAccessFlags::HostRead);
 
-        RecordCapture();
+        // Waits on this copy only, since a device-wide idle would stall unrelated in-flight frame work.
+        const uint64 CaptureValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+        RHI::WaitSemaphore(RHI::GetQueueTimeline(RHI::EQueueType::Graphics), CaptureValue);
 
         if (const void* MappedMemory = Readback.Cpu)
         {
@@ -180,6 +195,13 @@ namespace Lumina
 
         ToolWindows.clear();
 
+        // A tool closed mid look would otherwise leave the cursor captured with nothing left to release it.
+        if (CameraState.bWasLooking)
+        {
+            EndEditorLookCapture();
+            CameraState.bWasLooking = false;
+        }
+
         if (InputViewport)
         {
             FInputViewportRegistry::Get().Unregister(InputViewport.get());
@@ -188,12 +210,16 @@ namespace Lumina
 
         if (HasWorld())
         {
-            // Do NOT ForceDestroyNow, since this TStrongObjectPtr still holds the world and would then dangle.
+            // Not force destroyed, since this TStrongObjectPtr still holds the world and would then dangle.
             GWorldManager->DestroyWorldContext(World.Get());
             World.Reset();
         }
+    }
 
-        ToolWindows.clear();
+    void FEditorTool::VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func)
+    {
+        World = Cast<CWorld>(Func(World.Get()));
+        TransactionManager.VisitObjectReferences(Func);
     }
 
     void FEditorTool::Update(const FUpdateContext& UpdateContext)
@@ -223,23 +249,23 @@ namespace Lumina
 
     void FEditorTool::DrawSkeletonDebug()
     {
-        if (World == nullptr || !CVarDrawSkeletons.GetValue())
+        if (World == nullptr || !EditorToolInternal::CVarDrawSkeletons.GetValue())
         {
             return;
         }
 
         SkeletonDebugDraw::FOptions Options;
-        Options.bAxes          = CVarSkeletonAxes.GetValue();
-        Options.bDepthTest     = !CVarSkeletonXRay.GetValue();
-        Options.JointDistance  = CVarSkeletonJointDist.GetValue();
-        Options.ShapeDistance  = CVarSkeletonShapeDist.GetValue();
+        Options.bAxes          = EditorToolInternal::CVarSkeletonAxes.GetValue();
+        Options.bDepthTest     = !EditorToolInternal::CVarSkeletonXRay.GetValue();
+        Options.JointDistance  = EditorToolInternal::CVarSkeletonJointDist.GetValue();
+        Options.ShapeDistance  = EditorToolInternal::CVarSkeletonShapeDist.GetValue();
 
         SkeletonDebugDraw::DrawWorldSkeletons(World.Get(), World->GetDebugInterface(), Options);
     }
 
     void FEditorTool::DrawSkeletonNameLabels(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
     {
-        if (World == nullptr || !CVarDrawSkeletons.GetValue() || !CVarSkeletonNames.GetValue())
+        if (World == nullptr || !EditorToolInternal::CVarDrawSkeletons.GetValue() || !EditorToolInternal::CVarSkeletonNames.GetValue())
         {
             return;
         }
@@ -256,7 +282,7 @@ namespace Lumina
         const FMatrix4 ViewProj = Proj * Camera->GetViewMatrix();
         const FVector3 CameraPos = FVector3(Math::Inverse(Camera->GetViewMatrix())[3]);
 
-        const float MaxDist = CVarSkeletonNameDist.GetValue();
+        const float MaxDist = EditorToolInternal::CVarSkeletonNameDist.GetValue();
 
         TVector<SkeletonDebugDraw::FBoneLabel> Labels;
         SkeletonDebugDraw::GatherWorldBoneLabels(World.Get(), CameraPos, MaxDist, Labels);
@@ -268,7 +294,7 @@ namespace Lumina
         ImDrawList* DrawList    = ImGui::GetWindowDrawList();
         const ImU32 TextColor   = IM_COL32(245, 248, 255, 255);
         const ImU32 PillColor   = IM_COL32(18, 19, 24, 190);
-        const ImU32 BorderColor = IM_COL32(255, 168, 56, 130);  // matches the amber bones
+        const ImU32 BorderColor = IM_COL32(255, 168, 56, 130);
         const ImU32 DotColor    = IM_COL32(255, 210, 120, 255);
         const ImVec2 Pad(5.0f, 2.0f);
 
@@ -278,7 +304,7 @@ namespace Lumina
             const FVector4 Clip = ViewProj * FVector4(Label.WorldPosition, 1.0f);
             if (Clip.w <= 1e-4f)
             {
-                continue; // behind the camera
+                continue;
             }
 
             const float NdcX = Clip.x / Clip.w;
@@ -457,6 +483,12 @@ namespace Lumina
         return Out;
     }
 
+    FFixedString FEditorTool::GetToolWindowName(char const* ToolWindowName, ImGuiID InDockspaceID)
+    {
+        DEBUG_ASSERT(ToolWindowName != nullptr);
+        return FormatAs<FFixedString>("{}##{:08X}", ToolWindowName, InDockspaceID);
+    }
+
     ImGuiID FEditorTool::CalculateDockspaceID() const
     {
         uint32 DockspaceID = CurrLocationID;
@@ -585,7 +617,7 @@ namespace Lumina
             }
         }
 
-        ImGui::BeginDisabled(!AllowsUndoRedo() || !CanUndo());
+        ImGui::BeginDisabled(!CanApplyHistory() || !CanUndo());
 
         if (ImGui::MenuItem(LE_ICON_UNDO_VARIANT"##Undo"))
         {
@@ -602,7 +634,7 @@ namespace Lumina
             ImGuiX::TextTooltip("Nothing to undo");
         }
 
-        ImGui::BeginDisabled(!AllowsUndoRedo() || !CanRedo());
+        ImGui::BeginDisabled(!CanApplyHistory() || !CanRedo());
 
         if (ImGui::MenuItem(LE_ICON_REDO_VARIANT"##Redo"))
         {
@@ -963,7 +995,7 @@ namespace Lumina
         FInputViewportRegistry::Get().UpdateViewportFocus(InputViewport.get(), bViewportHovered, bViewportFocused);
     }
 
-    bool FEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
+    void FEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
         const ImVec2 PanelMin = ImGui::GetCursorScreenPos();
@@ -992,17 +1024,13 @@ namespace Lumina
             );
         }
 
+        else
         {
-            if (!bHasSceneImage)
-            {
-                const char* Message = Scene == nullptr
-                                    ? "No renderer for this world"
-                                    : "Waiting for the first rendered frame";
-                const ImVec2 TextSize = ImGui::CalcTextSize(Message);
-                const ImVec2 TextPos(WindowPosition.x + (ViewportSize.x - TextSize.x) * 0.5f,
-                                     WindowPosition.y + (ViewportSize.y - TextSize.y) * 0.5f);
-                ImGui::GetWindowDrawList()->AddText(TextPos, EditorColors::U32(EditorColors::TextMuted()), Message);
-            }
+            const char* Message = Scene == nullptr ? "No renderer for this world" : "Waiting for the first rendered frame";
+            const ImVec2 TextSize = ImGui::CalcTextSize(Message);
+            const ImVec2 TextPos(WindowPosition.x + (ViewportSize.x - TextSize.x) * 0.5f,
+                                 WindowPosition.y + (ViewportSize.y - TextSize.y) * 0.5f);
+            ImGui::GetWindowDrawList()->AddText(TextPos, EditorColors::U32(EditorColors::TextMuted()), Message);
         }
 
         const ImGuiStyle& ImStyle = ImGui::GetStyle();
@@ -1036,14 +1064,10 @@ namespace Lumina
             }
         }
 
-        if (ImGuiDockNode* pDockNode = ImGui::GetWindowDockNode())
+        if (ImGuiDockNode* DockNode = ImGui::GetWindowDockNode())
         {
-           pDockNode->LocalFlags = 0;
-           pDockNode->LocalFlags |= ImGuiDockNodeFlags_NoDockingOverMe;
-           pDockNode->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+            DockNode->LocalFlags = ImGuiDockNodeFlags_NoDockingOverMe | ImGuiDockNodeFlags_NoTabBar;
         }
-
-        return false;
     }
 
     bool FEditorTool::BeginViewportToolbarWindow(float& OutButtonSize)
@@ -1420,7 +1444,8 @@ namespace Lumina
             return;
         }
 
-        if (!World->IsValidEntity(Entity))
+        if (!World->IsValidEntity(Entity) || !World->HasComponent<STransformComponent>(Entity)
+            || !World->IsValidEntity(EditorEntity) || !World->HasComponent<STransformComponent>(EditorEntity))
         {
             return;
         }
@@ -1636,9 +1661,6 @@ namespace Lumina
         }
     }
 
-    // Under ImGui's 15px tap threshold, so a gesture can never both arm the camera and read as a tap.
-    static constexpr float RightLookArmThresholdPixels = 4.0f;
-
     void FEditorTool::TickEditorCamera(double DeltaTime)
     {
         // Cleared first, so a tool that early-outs never leaves the gesture flag latched for later readers.
@@ -1700,7 +1722,7 @@ namespace Lumina
                                   || ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_D)
                                   || ImGui::IsKeyDown(ImGuiKey_Q) || ImGui::IsKeyDown(ImGuiKey_E);
 
-            CameraState.bRightLookArmed = CameraState.RightLookTravel >= RightLookArmThresholdPixels
+            CameraState.bRightLookArmed = CameraState.RightLookTravel >= EditorToolInternal::RightLookArmThresholdPixels
                                        || bFlyKeyDown
                                        || WheelDelta != 0.0;
         }
@@ -2171,16 +2193,10 @@ namespace Lumina
     void FEditorTool::DrawHelpTextRow(const char* Label, const char* Text) const
     {
         ImGui::TableNextRow();
-
         ImGui::TableNextColumn();
-        {
-            ImGui::TextUnformatted(Label);
-        }
-
+        ImGui::TextUnformatted(Label);
         ImGui::TableNextColumn();
-        {
-            ImGui::TextUnformatted(Text);
-        }
+        ImGui::TextUnformatted(Text);
     }
 
     void FEditorTool::BeginTransaction()
@@ -2190,7 +2206,6 @@ namespace Lumina
             return;
         }
 
-        // World/prefab editors record a whole-registry snapshot as one command (migrated to fine-grained in Phase 3).
         TransactionManager.BeginTransaction(FName());
         TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World.Get()));
     }
@@ -2333,15 +2348,23 @@ namespace Lumina
             return;
         }
 
-        TransactionManager.BeginTransaction(Label);
+        // Joined to an edit already open rather than starting its own, which would discard that edit's before-image.
+        const bool bJoinOpenEdit = TransactionManager.IsRecording();
+        if (!bJoinOpenEdit)
+        {
+            TransactionManager.BeginTransaction(Label);
+        }
         TransactionManager.Record(MakeUnique<FObjectSnapshotCommand>(Object, Label));
         Mutate();
-        TransactionManager.CommitTransaction();
+        if (!bJoinOpenEdit)
+        {
+            TransactionManager.CommitTransaction();
+        }
     }
 
     bool FEditorTool::RunUndo()
     {
-        if (!AllowsUndoRedo() || !TransactionManager.CanUndo())
+        if (!CanApplyHistory() || !TransactionManager.CanUndo())
         {
             return false;
         }
@@ -2352,7 +2375,7 @@ namespace Lumina
 
     bool FEditorTool::RunRedo()
     {
-        if (!AllowsUndoRedo() || !TransactionManager.CanRedo())
+        if (!CanApplyHistory() || !TransactionManager.CanRedo())
         {
             return false;
         }
@@ -2361,23 +2384,29 @@ namespace Lumina
         return true;
     }
 
+    bool FEditorTool::CanApplyHistory() const
+    {
+        // An edit still open holds a before-image an undo underneath it would make stale, so history waits for it to close.
+        return AllowsUndoRedo() && !TransactionManager.IsRecording();
+    }
+
     void FEditorTool::Undo()
     {
-        if (!AllowsUndoRedo() || !TransactionManager.CanUndo())
+        if (!CanApplyHistory() || !TransactionManager.CanUndo())
         {
             return;
         }
 
         const FName Name = TransactionManager.PeekUndoName();
         bRestoringTransaction = true;
-        TransactionManager.Undo();   // applies the transaction and fires OnPostApply -> OnPostUndoRedo
+        TransactionManager.Undo();
         bRestoringTransaction = false;
         ImGuiX::Notifications::NotifyInfo("Undid {}", Name);
     }
 
     void FEditorTool::Redo()
     {
-        if (!AllowsUndoRedo() || !TransactionManager.CanRedo())
+        if (!CanApplyHistory() || !TransactionManager.CanRedo())
         {
             return;
         }
@@ -2394,12 +2423,11 @@ namespace Lumina
         TransactionManager.Clear();
     }
 
-    FTransform FEditorTool::GetCameraSpawnTransform(float DistanceForward) const
+    const SCameraComponent* FEditorTool::FindViewCamera() const
     {
-        FTransform Result;
         if (World == nullptr)
         {
-            return Result;
+            return nullptr;
         }
 
         // Falls back to the EditorEntity, since asset editors often own the camera there directly.
@@ -2408,7 +2436,18 @@ namespace Lumina
         {
             Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
         }
+        return Camera;
+    }
 
+    FTransform FEditorTool::GetCameraSpawnTransform(float DistanceForward) const
+    {
+        FTransform Result;
+        if (World == nullptr)
+        {
+            return Result;
+        }
+
+        const SCameraComponent* Camera = FindViewCamera();
         if (Camera == nullptr)
         {
             return Result;
@@ -2417,36 +2456,6 @@ namespace Lumina
         const FVector3 Position = Camera->GetPosition() + Camera->GetForwardVector() * DistanceForward;
         Result.SetLocation(Position);
         return Result;
-    }
-
-    namespace
-    {
-        // How far along Normal a mesh's origin sits when its bounds just touch a surface facing Normal.
-        float RestingOffset(const SAABB& Bounds, const FVector3& Normal)
-        {
-            const FVector3 Center = (Bounds.Min + Bounds.Max) * 0.5f;
-            const FVector3 Half   = (Bounds.Max - Bounds.Min) * 0.5f;
-            return Math::Abs(Normal.x) * Half.x + Math::Abs(Normal.y) * Half.y + Math::Abs(Normal.z) * Half.z - Math::Dot(Center, Normal);
-        }
-
-        FVector3 AbsComponents(const FVector3& Value)
-        {
-            return FVector3(Math::Abs(Value.x), Math::Abs(Value.y), Math::Abs(Value.z));
-        }
-
-        // The box about the origin that holds Bounds once turned by Rotation and scaled by Scale.
-        SAABB OrientBounds(const SAABB& Bounds, const FQuat& Rotation, float Scale)
-        {
-            const FVector3 Center = Rotation * ((Bounds.Min + Bounds.Max) * (0.5f * Scale));
-            const FVector3 Half   = (Bounds.Max - Bounds.Min) * (0.5f * Scale);
-            const FVector3 Extent = AbsComponents(Rotation * FVector3(Half.x, 0.0f, 0.0f))
-                                  + AbsComponents(Rotation * FVector3(0.0f, Half.y, 0.0f))
-                                  + AbsComponents(Rotation * FVector3(0.0f, 0.0f, Half.z));
-            SAABB Oriented;
-            Oriented.Min = Center - Extent;
-            Oriented.Max = Center + Extent;
-            return Oriented;
-        }
     }
 
     FTransform FEditorTool::GetDropSpawnTransform(CObject* Placed) const
@@ -2462,7 +2471,7 @@ namespace Lumina
         FVector3   Location  = Hit.Location;
         if (const CMesh* Mesh = Cast<CMesh>(Placed))
         {
-            Location += Hit.Normal * RestingOffset(OrientBounds(Mesh->GetAABB(), Rotation, Scale), Hit.Normal);
+            Location += Hit.Normal * EditorToolInternal::RestingOffset(EditorToolInternal::OrientBounds(Mesh->GetAABB(), Rotation, Scale), Hit.Normal);
         }
         Placement.SetLocation(Location);
         Placement.SetRotation(Rotation);
@@ -2490,11 +2499,7 @@ namespace Lumina
             return false;
         }
 
-        const SCameraComponent* Camera = World->GetCamera()->GetActiveCamera();
-        if (Camera == nullptr && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity))
-        {
-            Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
-        }
+        const SCameraComponent* Camera = FindViewCamera();
         if (Camera == nullptr)
         {
             return false;
@@ -2560,7 +2565,7 @@ namespace Lumina
         ECS::FEntity* OutHitEntity = &OutHit.Entity;
         FVector3      OutLocation(0.0f);
         FVector3      HitNormal(0.0f, 1.0f, 0.0f);
-        auto Hit = [&](const FVector3& Location)
+        auto Land = [&](const FVector3& Location)
         {
             OutHit.Location = Location;
             OutHit.Normal   = HitNormal;
@@ -2581,18 +2586,11 @@ namespace Lumina
         {
             const ECS::FEntity Picked = Renderer->GetEntityAtPixel(PixelX, PixelY);
             *OutHitEntity = World->IsValidEntity(Picked) && !Algo::Contains(Ignored, Picked) ? Picked : ECS::NullEntity;
-            return Hit(SurfaceLocation);
+            return Land(SurfaceLocation);
         }
 
-        const SCameraComponent* Camera = World->GetCamera()->GetActiveCamera();
-        if (Camera == nullptr && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity))
-        {
-            Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
-        }
-        if (Camera == nullptr)
-        {
-            return false;
-        }
+        // The surface probe may have written a partial normal, so every fallback starts from straight up.
+        HitNormal = FVector3(0.0f, 1.0f, 0.0f);
 
         FVector3 RayOrigin, RayDir;
         if (!BuildViewportRay(ScreenPos, RayOrigin, RayDir))
@@ -2614,14 +2612,14 @@ namespace Lumina
                 TerrainOrigin = TerrainTransform->GetLocation();
             }
 
-            FVector3 Hit;
-            if (FTerrainSculptSystem::Raycast(Terrain, TerrainOrigin, RayOrigin, RayDir, Hit))
+            FVector3 TerrainHit;
+            if (FTerrainSculptSystem::Raycast(Terrain, TerrainOrigin, RayOrigin, RayDir, TerrainHit))
             {
-                const float Distance = Math::Distance(RayOrigin, Hit);
+                const float Distance = Math::Distance(RayOrigin, TerrainHit);
                 if (Distance < BestDistance)
                 {
                     BestDistance = Distance;
-                    OutLocation  = Hit;
+                    OutLocation  = TerrainHit;
                     bHit         = true;
                 }
             }
@@ -2661,7 +2659,7 @@ namespace Lumina
                 const float T    = Along - Back;
                 if (T <= 0.0f || T >= BestDistance)
                 {
-                    continue;   // behind the camera, or something nearer already won
+                    continue;
                 }
 
                 BestDistance = T;
@@ -2677,7 +2675,7 @@ namespace Lumina
 
         if (bHit)
         {
-            return Hit(OutLocation);
+            return Land(OutLocation);
         }
 
         // Only when the ray descends, or a camera tilted up would place the asset behind the viewer.
@@ -2686,13 +2684,13 @@ namespace Lumina
             const float T = -RayOrigin.y / RayDir.y;
             if (T > 0.0f && T < 1000.0f)
             {
-                return Hit(RayOrigin + RayDir * T);
+                return Land(RayOrigin + RayDir * T);
             }
         }
 
         // Along the CURSOR ray rather than straight ahead, so the asset still lands where they pointed.
         HitNormal = -RayDir;
-        return Hit(RayOrigin + RayDir * FallbackDistance);
+        return Land(RayOrigin + RayDir * FallbackDistance);
     }
 
     CObject* FEditorTool::LoadDroppedAsset(FStringView VirtualPath) const

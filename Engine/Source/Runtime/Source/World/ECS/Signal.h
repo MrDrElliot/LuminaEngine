@@ -175,11 +175,19 @@ namespace Lumina::ECS
 
         // Out of line so an empty signal costs the caller nothing but the branch above.
         // Never inlined, so a pool with no listeners costs the empty check and nothing else.
+        // Indexed and copied, since a handler may connect or disconnect on this very signal while it runs.
         FORCENOINLINE void BroadcastSlow(FRegistry& Registry, FEntity Entity) const
         {
-            for (const FComponentListener& Listener : Listeners)
+            for (size_t Index = 0; Index < Listeners.size();)
             {
+                const FComponentListener Listener = Listeners[Index];
                 Listener.Callback(Listener.Payload, Registry, Entity);
+
+                // A handler that disconnected itself left the next listener in its slot.
+                if (Index < Listeners.size() && Listeners[Index] == Listener)
+                {
+                    ++Index;
+                }
             }
         }
 

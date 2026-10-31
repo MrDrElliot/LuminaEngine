@@ -14,6 +14,7 @@
 #include "Containers/Algorithm.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
+#include "Session/SessionOps.h"
 #include "Tools/Import/Importer.h"
 #include "Tools/Import/TextureImporter.h"
 #include "UI/Tools/EditorAssetActions.h"
@@ -44,22 +45,7 @@ namespace Lumina::MCP
 
         bool IsWellFormedName(const FString& Name, FString& OutError)
         {
-            if (Name.empty())
-            {
-                OutError = "A name cannot be empty.";
-                return false;
-            }
-
-            for (char Character : Name)
-            {
-                if (Character == '/' || Character == (char)0x5C || Character == ':')
-                {
-                    OutError = "A name is just the name, so it cannot contain a path separator.";
-                    return false;
-                }
-            }
-
-            return true;
+            return AssetOps::IsValidLeafName(FStringView(Name.c_str(), Name.size()), &OutError);
         }
 
         Agent::FToolResult ReportPathOp(const AssetOps::FPathOpResult& Result, SPathOpResult& Out,
@@ -322,22 +308,12 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    CPackage* Package = Object->GetPackage();
-                    if (Package == nullptr)
+                    if (!SessionOps::SaveAsset(Object, Error))
                     {
-                        return Agent::FToolResult::Error("That asset has no package to save.");
+                        return Agent::FToolResult::Error(Error);
                     }
 
-                    const FFixedString Path = Package->GetPackagePath();
-
-                    if (!CPackage::SavePackage(Package, Path))
-                    {
-                        return Agent::FToolResult::Error(Lumina::Format("Could not save {}.", Path));
-                    }
-
-                    FAssetRegistry::Get().AssetSaved(Object);
-
-                    Out.Path = FString(Path.c_str());
+                    Out.Path = FString(Object->GetPackage()->GetPackagePath().c_str());
 
                     return Agent::FToolResult::Ok(Lumina::Format("Saved {}.", Out.Path));
                 });
