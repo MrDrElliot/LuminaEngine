@@ -21,6 +21,26 @@ namespace
         (void)Payload;
         (*Fn)();
     }
+
+    // Captured by a handler, so its destructor marks the moment the delegate frees that handler's callable.
+    struct FFreedFlag
+    {
+        explicit FFreedFlag(bool* InFreed) : bFreed(InFreed) {}
+        FFreedFlag(FFreedFlag&& Other) noexcept : bFreed(Other.bFreed) { Other.bFreed = nullptr; }
+        FFreedFlag(const FFreedFlag&) = delete;
+        FFreedFlag& operator=(const FFreedFlag&) = delete;
+        FFreedFlag& operator=(FFreedFlag&&) = delete;
+
+        ~FFreedFlag()
+        {
+            if (bFreed != nullptr)
+            {
+                *bFreed = true;
+            }
+        }
+
+        bool* bFreed = nullptr;
+    };
 }
 
 // A handler that frees its own delegate used to leave Broadcast writing into the freed object.
@@ -64,6 +84,46 @@ TEST(DelegateReentrancy, ANativeHandlerMayDestroyItsOwnDelegate)
 
     EXPECT_EQ(NativeCalls, 1);
     EXPECT_EQ(ManagedCalls, 0) << "the managed fan-out must not run against a destroyed delegate";
+    EXPECT_EQ(Owner, nullptr);
+}
+
+TEST(DelegateReentrancy, AHandlerThatRemovesItselfKeepsItsCapturesUntilTheBroadcastEnds)
+{
+    TScriptDelegate<int32> Event;
+    bool bFreed = false;
+    bool bFreedWhileRunning = true;
+    FDelegateHandle Handle;
+
+    Handle = Event.AddLambda([&Event, &Handle, &bFreed, &bFreedWhileRunning, Flag = FFreedFlag(&bFreed)](const int32&)
+    {
+        Event.Remove(Handle);
+        bFreedWhileRunning = bFreed;
+    });
+
+    Event.Broadcast(1);
+
+    EXPECT_FALSE(bFreedWhileRunning) << "the running handler's own captures were freed out from under it";
+    EXPECT_TRUE(bFreed) << "the removed callable must still be freed once the broadcast is over";
+    EXPECT_FALSE(Event.IsBound());
+}
+
+TEST(DelegateReentrancy, AHandlerThatDestroysItsOwnerKeepsItsCapturesUntilTheBroadcastEnds)
+{
+    FOwner* Owner = Memory::New<FOwner>();
+    bool bFreed = false;
+    bool bFreedWhileRunning = true;
+
+    Owner->Event.AddLambda([&Owner, &bFreed, &bFreedWhileRunning, Flag = FFreedFlag(&bFreed)](const int32&)
+    {
+        Memory::Delete(Owner);
+        Owner = nullptr;
+        bFreedWhileRunning = bFreed;
+    });
+
+    Owner->Event.Broadcast(2);
+
+    EXPECT_FALSE(bFreedWhileRunning) << "destroying the owner freed the handler that was still running";
+    EXPECT_TRUE(bFreed) << "the destroyed delegate's callables must be freed when its broadcast unwinds";
     EXPECT_EQ(Owner, nullptr);
 }
 

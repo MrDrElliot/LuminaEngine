@@ -1,6 +1,7 @@
 ﻿#include "Core/Threading/Thread.h"
 #include "RuntimePCH.h"
 #include "Memory.h"
+#include "DebugAllocator.h"
 #include "Core/Threading/Atomic.h"
 #include "MemoryTracking.h"
 #include "Allocators/Allocator.h"
@@ -66,7 +67,11 @@ namespace Lumina
         DEBUG_ASSERT(Alignment % sizeof(void*) == 0);
         
         EnsureThisThreadInitialized();
+    #if LUMINA_DEBUG_ALLOCATOR
+        return DebugAllocator::Allocate(Size, Alignment);
+    #else
         return rpaligned_alloc(Alignment, Size);
+    #endif
     }
 
     void* Memory::FMalloc::Realloc(void* Memory, size_t NewSize, size_t Alignment)
@@ -75,15 +80,39 @@ namespace Lumina
         DEBUG_ASSERT((Alignment & (Alignment - 1)) == 0);
         DEBUG_ASSERT(Alignment % sizeof(void*) == 0);
         EnsureThisThreadInitialized();
+    #if LUMINA_DEBUG_ALLOCATOR
+        return DebugAllocator::Reallocate(Memory, NewSize, Alignment);
+    #else
         return rpaligned_realloc(Memory, Alignment, NewSize, 0, 0);
+    #endif
     }
 
     void Memory::FMalloc::Free(void* Memory)
     {
         EnsureThisThreadInitialized();
+    #if LUMINA_DEBUG_ALLOCATOR
+        DebugAllocator::Free(Memory);
+    #else
         rpfree(Memory);
+    #endif
     }
 
+#if LUMINA_DEBUG_ALLOCATOR
+    size_t Memory::GetCurrentMappedMemory()    { return DebugAllocator::GetStats().LiveBytes; }
+    size_t Memory::GetPeakMappedMemory()       { return DebugAllocator::GetStats().PeakLiveBytes; }
+    size_t Memory::GetCachedMemory()           { return DebugAllocator::GetStats().QuarantineBytes; }
+    size_t Memory::GetCurrentHugeAllocMemory() { return 0; }
+    size_t Memory::GetPeakHugeAllocMemory()    { return 0; }
+    size_t Memory::GetTotalMappedMemory()      { return 0; }
+    size_t Memory::GetTotalUnmappedMemory()    { return 0; }
+    size_t Memory::GetCommittedMemory()        { const DebugAllocator::FStats Stats = DebugAllocator::GetStats(); return Stats.LiveBytes + Stats.QuarantineBytes; }
+    bool   Memory::UsesHugePages()             { return false; }
+
+    bool Memory::DumpAllocatorStatistics(const char* Path)
+    {
+        return DebugAllocator::DumpLiveAllocations(Path);
+    }
+#else
     size_t Memory::GetCurrentMappedMemory()    { rpmalloc_global_statistics_t s; rpmalloc_global_statistics(&s); return s.mapped; }
     size_t Memory::GetPeakMappedMemory()       { rpmalloc_global_statistics_t s; rpmalloc_global_statistics(&s); return s.mapped_peak; }
     size_t Memory::GetCachedMemory()           { rpmalloc_global_statistics_t s; rpmalloc_global_statistics(&s); return s.cached; }
@@ -105,6 +134,7 @@ namespace Lumina
         fclose(File);
         return true;
     }
+#endif
 
     namespace
     {
@@ -118,6 +148,9 @@ namespace Lumina
         const size_t CommitBefore = Platform::GetProcessMemoryUsageBytes();
         const double Start = PlatformTime::Seconds();
         GThreadTrimEpoch = GCacheTrimEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
+    #if LUMINA_DEBUG_ALLOCATOR
+        DebugAllocator::FlushQuarantine();
+    #endif
         rpmalloc_thread_trim_caches();
         rpmalloc_global_trim_caches();
         const size_t CommitAfter = Platform::GetProcessMemoryUsageBytes();
@@ -185,12 +218,16 @@ namespace Lumina
 
     size_t Memory::GetAllocationSize(void* Memory)
     {
+    #if LUMINA_DEBUG_ALLOCATOR
+        return DebugAllocator::GetAllocationSize(Memory);
+    #else
         return (Memory != nullptr) ? rpmalloc_usable_size(Memory) : 0;
+    #endif
     }
 
     bool Memory::TryExpandInPlace(void* Memory, size_t NewSize)
     {
-        if (Memory == nullptr || rpmalloc_usable_size(Memory) < NewSize)
+        if (Memory == nullptr || GetAllocationSize(Memory) < NewSize)
         {
             return false;
         }

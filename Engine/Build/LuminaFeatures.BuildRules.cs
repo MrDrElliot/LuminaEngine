@@ -28,6 +28,8 @@ public static class LuminaFeatures
 
     public const string DevUI = "DevUI";
 
+    public const string DebugAllocator = "DebugAllocator";
+
     public static bool IsActive(TargetInfo Target, string Feature)
     {
         switch (Target.Options.GetMode(Feature))
@@ -82,6 +84,9 @@ public static class LuminaFeatures
 
             // Editor only, never Game: a game built on Lumina must not report to the engine's database.
             BugSplat => Target.Type == TargetType.Editor && Target.Platform == BuildPlatform.Windows64,
+
+            // Replaces rpmalloc with a slow checking allocator, so only an explicit -DebugAllocator=on builds it.
+            DebugAllocator => false,
 
             _ => false,
         };
@@ -146,6 +151,11 @@ public static class LuminaFeatures
         if (IsActive(Target, BugSplat))
         {
             Definitions.Add("WITH_BUGSPLAT");
+        }
+
+        if (IsActive(Target, DebugAllocator))
+        {
+            Definitions.Add("LUMINA_DEBUG_ALLOCATOR=1");
         }
 
         // Always defined, valued 0 or 1, so code tests it with USING(WITH_DEV_UI) like WITH_EDITOR.

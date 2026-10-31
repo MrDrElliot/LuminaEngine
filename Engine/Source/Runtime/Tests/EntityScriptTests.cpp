@@ -660,6 +660,8 @@ TEST(EntityScriptUnification, FindAndRemoveByClass)
     EntityScripts::FindAll(Registry, Entity, CEntityScriptTest::StaticClass(), All);
     EXPECT_EQ(All.size(), 2u);
 
+    // Held, since Remove drops the component's reference and the reads below would otherwise touch a freed script.
+    const TStrongObjectPtr<CEntityScriptTest> PinnedFirst(First);
     EXPECT_TRUE(EntityScripts::Remove(Registry, Entity, First));
     EXPECT_EQ(First->DetachCount, 1) << "Remove must run OnDetach";
     EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.size(), 1u);
