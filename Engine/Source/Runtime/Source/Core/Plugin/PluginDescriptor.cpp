@@ -142,11 +142,18 @@ namespace Lumina
             OutDescriptor.Dependencies.reserve(It->size());
             for (const auto& D : *It)
             {
-                if (!D.is_object()) continue;
                 FPluginDependency Dep;
-                Dep.Name      = GetString(D, "Name");
-                Dep.Version   = GetInt(D,   "Version", 0);
-                Dep.bOptional = GetBool(D,  "Optional", false);
+                if (D.is_string())
+                {
+                    const std::string& S = D.get_ref<const std::string&>();
+                    Dep.Name.assign(S.c_str(), S.size());
+                }
+                else if (D.is_object())
+                {
+                    Dep.Name      = GetString(D, "Name");
+                    Dep.Version   = GetInt(D,   "Version", 0);
+                    Dep.bOptional = GetBool(D,  "Optional", false);
+                }
                 if (!Dep.Name.empty())
                 {
                     OutDescriptor.Dependencies.emplace_back(Move(Dep));
