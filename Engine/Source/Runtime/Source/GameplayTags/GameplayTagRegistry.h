@@ -14,11 +14,8 @@ namespace Lumina
     {
     public:
 
-        static FGameplayTagRegistry& Get()
-        {
-            static FGameplayTagRegistry Instance;
-            return Instance;
-        }
+        // Out of line so every DLL shares one table; an inline static gave the editor picker its own copy.
+        RUNTIME_API static FGameplayTagRegistry& Get();
 
         // Intern a tag and its ancestor chain; returns the id (0 for an empty name).
         uint32 RequestTag(FStringView Name)

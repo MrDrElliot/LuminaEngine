@@ -5,6 +5,12 @@
 
 namespace Lumina
 {
+    FGameplayTagRegistry& FGameplayTagRegistry::Get()
+    {
+        static FGameplayTagRegistry Instance;
+        return Instance;
+    }
+
     namespace
     {
         // Resolve a tag's FName to its registry id (interning it on first use).
