@@ -84,6 +84,12 @@ namespace Lumina
             AnimPose::DecomposeTRS(Fix.RootCorrection * AnimPose::ComposeTRS(T, R, S), T, R, S);
         }
 
+        // The target's own offset plus the clip's motion away from the source rest, so joints keep the target's anatomy.
+        FORCEINLINE FVector3 RetargetTranslation(const FAnimationResource::FRetargetFix& Fix, const FVector3& ClipT)
+        {
+            return Fix.TargetBindT + (ClipT - Fix.SourceBindT) * Fix.TranslationScale;
+        }
+
         const FAnimationResource::FRetargetFix* FindRetargetFix(const FAnimationResource::FResolvedSkeleton& Resolved, int32 Bone)
         {
             for (const FAnimationResource::FRetargetFix& Fix : Resolved.RetargetFixes)
@@ -130,18 +136,13 @@ namespace Lumina
                     continue;
                 }
 
-                FVector3 TargetT, TargetS;
+                FVector3 TargetS;
                 FQuat TargetR;
-                AnimPose::GetBindLocalTRS(&Target, Bone, TargetT, TargetR, TargetS);
+                AnimPose::GetBindLocalTRS(&Target, Bone, Fix.TargetBindT, TargetR, TargetS);
 
                 const float SourceLength = Math::Length(Fix.SourceBindT);
-                if (SourceLength < kRetargetTolerance)
-                {
-                    continue;
-                }
-
-                Fix.TranslationScale = Math::Length(TargetT) / SourceLength;
-                if (Math::Abs(Fix.TranslationScale - 1.0f) > 1e-3f)
+                Fix.TranslationScale = SourceLength < kRetargetTolerance ? 1.0f : Math::Length(Fix.TargetBindT) / SourceLength;
+                if (Math::Length(Fix.TargetBindT - Fix.SourceBindT) > kRetargetTolerance)
                 {
                     Resolved.RetargetFixes.push_back(Fix);
                 }
@@ -511,7 +512,7 @@ namespace Lumina
             }
             else if (Touched & Detail::TouchedT)
             {
-                ScratchT[i] = ScratchT[i] * Fix.TranslationScale;
+                ScratchT[i] = Detail::RetargetTranslation(Fix, ScratchT[i]);
             }
         }
 
@@ -785,7 +786,7 @@ namespace Lumina
             }
             else if (bHasT)
             {
-                OutPose.SetTranslation(Fix.Bone, OutPose.GetTranslation(Fix.Bone) * Fix.TranslationScale);
+                OutPose.SetTranslation(Fix.Bone, Detail::RetargetTranslation(Fix, OutPose.GetTranslation(Fix.Bone)));
             }
         }
     }
@@ -827,7 +828,7 @@ namespace Lumina
             return;
         }
 
-        if (Decoded.Touched & Detail::TouchedT) OutT = (Fix != nullptr) ? Decoded.T * Fix->TranslationScale : Decoded.T;
+        if (Decoded.Touched & Detail::TouchedT) OutT = (Fix != nullptr) ? Detail::RetargetTranslation(*Fix, Decoded.T) : Decoded.T;
         if (Decoded.Touched & Detail::TouchedR) OutR = Decoded.R;
         if (Decoded.Touched & Detail::TouchedS) OutS = Decoded.S;
     }

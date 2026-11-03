@@ -177,6 +177,26 @@ TEST(AnimRetarget, MatrixAndSingleBonePathsAgreeWithLocalPose)
     EXPECT_NEAR(RetargetAngleDegrees(SpineR, SpineRotationAt(Time)), 0.0f, RetargetAngleTolerance);
 }
 
+// A target whose joint sits off the source bone's direction keeps its own offset at rest, not a rescaled source one.
+TEST(AnimRetarget, RestTranslationLandsOnTargetBindNotRescaledSource)
+{
+    CSkeleton* Source = NewObject<CSkeleton>();
+    Source->SetSkeletonResource(MakeRig(FMatrix4::Identity(), FVector3(0.0f, 0.5f, 0.0f)));
+    CAnimation* Clip = MakeClipOn(Source);
+
+    const FVector3 TargetSpine(0.1f, 0.3f, 0.0f);
+    TUniquePtr<FSkeletonResource> Target = MakeRig(FMatrix4::Identity(), TargetSpine);
+
+    FPose Pose;
+    Clip->SampleLocalPose(0.5f, Target.get(), Pose);
+    EXPECT_NEAR(Math::Length(Pose.GetTranslation(1) - TargetSpine), 0.0f, RetargetPositionTolerance);
+
+    FVector3 T, S;
+    FQuat R;
+    Clip->SampleBoneLocal(0.5f, Target.get(), 1, T, R, S);
+    EXPECT_NEAR(Math::Length(T - TargetSpine), 0.0f, RetargetPositionTolerance);
+}
+
 TEST(AnimRetarget, SourceSkeletonStillSamplesUnchanged)
 {
     const FRetargetRigs Rigs = MakeMismatchedRigs();
