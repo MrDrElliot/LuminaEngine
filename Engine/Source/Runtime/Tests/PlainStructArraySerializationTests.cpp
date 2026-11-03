@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "Core/Versioning/CoreVersion.h"
 #include "Core/Object/Class.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Serialization/MemoryArchiver.h"
@@ -105,8 +106,10 @@ TEST(PlainStructArraySerialization, StillReadsTheTaggedFormat)
         Property->GetInternalProperty()->Serialize(Writer, &Instance);
     }
 
+    // Hand-written in the header layout files had before they recorded the element kind.
     TVector<SFoliageInstance> Loaded;
     FMemoryReader Reader(Bytes);
+    Reader.SetFileVersion(static_cast<int32>(ELuminaEngineVersion::ARRAY_ELEMENT_KIND) - 1);
     Property->Serialize(Reader, &Loaded);
     ASSERT_FALSE(Reader.HasError());
     ASSERT_EQ(Loaded.size(), Source.size());

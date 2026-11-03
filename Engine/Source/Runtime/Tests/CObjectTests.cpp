@@ -6,6 +6,7 @@
 #include "Core/Object/ObjectArray.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Memory/DebugAllocator.h"
 #include "Scripting/ScriptableTest.h"
 
 using namespace Lumina;
@@ -40,6 +41,14 @@ TEST(CObjectLifetime, DestroyingAnUnpinnedListFreesAnEntryBeforeItsTurn)
 
     EXPECT_TRUE(Object::Internal::ConditionalDestroy(Parent));
     EXPECT_FALSE(WeakChild.IsValid()) << "releasing the parent already freed the child";
+
+#if LUMINA_DEBUG_ALLOCATOR
+    // The call below reads the freed child on purpose, which a page-guarded heap faults on.
+    if (Memory::DebugAllocator::GetStats().bPageGuard)
+    {
+        return;
+    }
+#endif
     EXPECT_FALSE(Object::Internal::ConditionalDestroy(Child)) << "the child's own turn lands on a freed slot";
 }
 

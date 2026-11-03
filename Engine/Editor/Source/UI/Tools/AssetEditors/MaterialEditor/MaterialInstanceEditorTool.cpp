@@ -87,6 +87,34 @@ namespace Lumina
         {
             World->GetRenderSettings().bDrawBillboards = false;
         }
+
+        if (const CMaterialInstance* Instance = Cast<CMaterialInstance>(Asset.Get()))
+        {
+            TrackedParent = Instance->Material.Get();
+        }
+    }
+
+    void FMaterialInstanceEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+
+        CMaterialInstance* Instance = Cast<CMaterialInstance>(Asset.Get());
+        if (Instance == nullptr)
+        {
+            return;
+        }
+
+        CMaterialInterface* Restored = Instance->Material.Get();
+        if (Restored != TrackedParent.Get())
+        {
+            Instance->Material = TrackedParent.Get();
+            Instance->SetParentMaterial(Restored);
+            TrackedParent = Instance->Material.Get();
+        }
+        else
+        {
+            Instance->PostPropertyChange(nullptr);
+        }
     }
 
     void FMaterialInstanceEditorTool::SetDebugMesh(EDebugMesh Mesh)

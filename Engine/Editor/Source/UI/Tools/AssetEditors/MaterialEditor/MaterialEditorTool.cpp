@@ -123,10 +123,7 @@ namespace Lumina
         
         GetPropertyTable()->SetPostEditCallback([this](const FPropertyChangedEvent& Event)
         {
-            if (Asset.IsValid())
-            {
-                Asset->GetPackage()->MarkDirty();
-            }
+            NotifyAssetDataChanged();
 
             // A property edit changes the shader as much as rewiring, so it counts toward needing a compile.
             if (NodeGraph != nullptr)
@@ -339,7 +336,7 @@ namespace Lumina
         }
     }
 
-    bool FMaterialEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
+    void FMaterialEditorTool::DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture)
     {
         const ImVec2 ContentRegion = ImGui::GetContentRegionAvail();
         const ImVec2 ViewportSize(Math::Max(ContentRegion.x, 64.0f), Math::Max(ContentRegion.y, 64.0f));
@@ -384,13 +381,10 @@ namespace Lumina
         ImGui::SetCursorPos(Origin + ImStyle.ItemSpacing);
         DrawViewportToolbar(UpdateContext);
         
-        if (ImGuiDockNode* pDockNode = ImGui::GetWindowDockNode())
+        if (ImGuiDockNode* DockNode = ImGui::GetWindowDockNode())
         {
-           pDockNode->LocalFlags = 0;
-           pDockNode->LocalFlags |= ImGuiDockNodeFlags_NoDockingOverMe;
+            DockNode->LocalFlags = ImGuiDockNodeFlags_NoDockingOverMe;
         }
-
-        return false;
     }
 
     void FMaterialEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
@@ -1378,6 +1372,12 @@ namespace Lumina
         {
             ImGuiX::Notifications::NotifyWarning("Material compiled with {0} warnings.", (SIZE_T)CompilationResult.Warnings.size());
         }
+    }
+
+    void FMaterialEditorTool::OnPostUndoRedo()
+    {
+        FAssetEditorTool::OnPostUndoRedo();
+        CodeEditorBoundNode = nullptr;
     }
 
     void FMaterialEditorTool::OnSave()

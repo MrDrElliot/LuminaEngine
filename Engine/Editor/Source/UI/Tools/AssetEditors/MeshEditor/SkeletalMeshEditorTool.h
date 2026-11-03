@@ -90,6 +90,8 @@ namespace Lumina
         void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;
         void OnAssetDataChangedExternally() override;
         void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
+        void OnSave() override;
+        bool IsUnsavedDocument() override;
         void OnPostUndoRedo() override;
         void CreatePreviewMeshEntity();
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
@@ -102,6 +104,7 @@ namespace Lumina
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;
+        TWeakObjectPtr<CSkeleton> PreviewSkeleton;
 
         // Unwrapped-UV inspector; owns its own view state (zoom/pan/LOD) across frames.
         FMeshUVViewer UVViewer;

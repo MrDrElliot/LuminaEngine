@@ -815,9 +815,9 @@ namespace Lumina
                     EndAssetTransaction();
                 }
             }
-            else if (DraggedSample < (int32)BlendSpace->Samples.size())
+            else if (DraggedSample < (int32)BlendSpace->Samples.size() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
             {
-                BlendSpace->Samples[DraggedSample].Position = SnapToGrid(CanvasToAxis(MousePos));
+                BlendSpace->Samples[DraggedSample].Position = SnapToGrid(CanvasToAxis(MousePos) - DragGrabOffset);
                 BlendSpace->RebuildTopology();
                 NotifyAssetDataChanged();
             }
@@ -843,6 +843,7 @@ namespace Lumina
             {
                 SelectedSample = Hit;
                 DraggedSample = Hit;
+                DragGrabOffset = CanvasToAxis(MousePos) - BlendSpace->Samples[Hit].Position;
                 BeginAssetTransaction("Move Blend Sample");
                 bDragTransactionOpen = true;
             }

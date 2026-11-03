@@ -6,6 +6,113 @@
 #include "Core/Serialization/NetArchive.h"
 #include "Log/Log.h"
 #include "Memory/Memcpy.h"
+#include "Core/Object/ObjectCore.h"
+#include "Core/Object/PropertyFlags.h"
+#include "Core/Versioning/CoreVersion.h"
+
+namespace Lumina::ArrayPropertyInternal
+{
+    // An older file stored only a size, so a changed numeric width is read as the same family at the old width.
+    EPropertyTypeFlags GuessNumericKind(EPropertyTypeFlags Current, SIZE_T SerializedSize)
+    {
+        switch (Current)
+        {
+        case EPropertyTypeFlags::Float:
+        case EPropertyTypeFlags::Double:
+            return SerializedSize == 4 ? EPropertyTypeFlags::Float : SerializedSize == 8 ? EPropertyTypeFlags::Double : EPropertyTypeFlags::None;
+        case EPropertyTypeFlags::Int8:
+        case EPropertyTypeFlags::Int16:
+        case EPropertyTypeFlags::Int32:
+        case EPropertyTypeFlags::Int64:
+            switch (SerializedSize)
+            {
+            case 1:  return EPropertyTypeFlags::Int8;
+            case 2:  return EPropertyTypeFlags::Int16;
+            case 4:  return EPropertyTypeFlags::Int32;
+            case 8:  return EPropertyTypeFlags::Int64;
+            default: return EPropertyTypeFlags::None;
+            }
+        case EPropertyTypeFlags::UInt8:
+        case EPropertyTypeFlags::UInt16:
+        case EPropertyTypeFlags::UInt32:
+        case EPropertyTypeFlags::UInt64:
+            switch (SerializedSize)
+            {
+            case 1:  return EPropertyTypeFlags::UInt8;
+            case 2:  return EPropertyTypeFlags::UInt16;
+            case 4:  return EPropertyTypeFlags::UInt32;
+            case 8:  return EPropertyTypeFlags::UInt64;
+            default: return EPropertyTypeFlags::None;
+            }
+        default:
+            return EPropertyTypeFlags::None;
+        }
+    }
+
+    void DrainBytes(FArchive& Ar, SIZE_T Remaining)
+    {
+        uint8 Scratch[1024];
+        while (Remaining > 0 && !Ar.HasError())
+        {
+            const SIZE_T Chunk = Remaining < sizeof(Scratch) ? Remaining : sizeof(Scratch);
+            Ar.Serialize(Scratch, static_cast<int64>(Chunk));
+            Remaining -= Chunk;
+        }
+    }
+
+    // True when the elements were saved as another kind and have been converted or dropped, rather than read as this one.
+    bool ReadRetypedElements(FArchive& Ar, const FArrayProperty& Array, void* Value, SIZE_T Count, SIZE_T SerializedSize, bool bKindRecorded, EPropertyTypeFlags SerializedKind)
+    {
+        const FProperty* Inner = Array.GetInternalProperty();
+        const EPropertyTypeFlags CurrentKind = Inner->GetType();
+
+        EPropertyTypeFlags OldKind = SerializedKind;
+        if (!bKindRecorded)
+        {
+            if (SerializedSize == Inner->GetElementSize() || !IsPropertyNumeric(CurrentKind))
+            {
+                return false;
+            }
+            OldKind = GuessNumericKind(CurrentKind, SerializedSize);
+        }
+        else if (OldKind == CurrentKind)
+        {
+            return false;
+        }
+
+        Array.Resize(Value, 0);
+
+        if (IsPropertyNumeric(OldKind) && IsPropertyNumeric(CurrentKind) && GetNumericSize(OldKind) == SerializedSize)
+        {
+            Array.Resize(Value, Count);
+            uint8 Scratch[8] = {};
+            SIZE_T Lost = 0;
+            for (SIZE_T Index = 0; Index < Count && !Ar.HasError(); ++Index)
+            {
+                Ar.Serialize(Scratch, static_cast<int64>(SerializedSize));
+                FNumericValue Number;
+                if (!ReadNumber(OldKind, Scratch, Number) || !WriteNumber(CurrentKind, Array.GetAt(Value, Index), Number))
+                {
+                    ++Lost;
+                }
+            }
+
+            LOG_WARN("Array '{}' was saved holding {} and now holds {}; converted its elements ({} did not fit and were left at zero).",
+                Array.Name.ToString(), PropertyTypeToString(OldKind), PropertyTypeToString(CurrentKind), Lost);
+            return true;
+        }
+
+        LOG_WARN("Array '{}' was saved holding {} and now holds {}, which do not convert; its elements were dropped.",
+            Array.Name.ToString(), PropertyTypeToString(OldKind), PropertyTypeToString(CurrentKind));
+
+        // A fixed-width element is drained here; anything else is skipped by the tagged reader seeking past the property.
+        if (const uint32 FixedSize = OldKind == EPropertyTypeFlags::Bool ? 1u : GetNumericSize(OldKind); FixedSize != 0 && FixedSize == SerializedSize)
+        {
+            DrainBytes(Ar, Count * SerializedSize);
+        }
+        return true;
+    }
+}
 
 namespace Lumina
 {
@@ -476,6 +583,18 @@ namespace Lumina
         if (Ar.IsReading() && (SerializedInnerElementSize & PlainStructArrayFlag) != 0)
         {
             ReadPlainStructs(Ar, *this, Value, ElementCount, SerializedInnerElementSize & ~PlainStructArrayFlag);
+            return;
+        }
+
+        uint8 SerializedInnerKind = static_cast<uint8>(Inner->GetType());
+        const bool bKindRecorded = Ar.GetFileVersion() >= static_cast<int32>(ELuminaEngineVersion::ARRAY_ELEMENT_KIND);
+        if (bKindRecorded)
+        {
+            Ar << SerializedInnerKind;
+        }
+
+        if (Ar.IsReading() && ArrayPropertyInternal::ReadRetypedElements(Ar, *this, Value, ElementCount, SerializedInnerElementSize, bKindRecorded, static_cast<EPropertyTypeFlags>(SerializedInnerKind)))
+        {
             return;
         }
 

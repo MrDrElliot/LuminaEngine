@@ -58,13 +58,22 @@ namespace Lumina
 
     FScriptDelegateBase::~FScriptDelegateBase()
     {
+        FBroadcastFrame* const Outermost = OutermostBroadcast();
         EndOpenBroadcasts();
         ManagedBoundDelegates().erase(this);
 
-        // A managed listener's Destroy is what releases its GCHandle, so this frees both kinds.
+        // A handler destroying its own delegate is still running, so the broadcast that called it frees the callables.
         for (FListener& Listener : Listeners)
         {
-            if (Listener.Destroy != nullptr)
+            if (Listener.Destroy == nullptr)
+            {
+                continue;
+            }
+            if (Outermost != nullptr)
+            {
+                Outermost->PendingDestroy.push_back(Listener);
+            }
+            else
             {
                 Listener.Destroy(Listener.Context);
             }
@@ -75,6 +84,7 @@ namespace Lumina
 
     FScriptDelegateBase::FScriptDelegateBase(FScriptDelegateBase&& Other) noexcept
     {
+        FBroadcastFrame* const Outermost = Other.OutermostBroadcast();
         Other.EndOpenBroadcasts();
 
         // Retired slots stay behind, since only an open broadcast needed them kept in place.
@@ -83,6 +93,10 @@ namespace Lumina
             if (Listener.Thunk != nullptr)
             {
                 Listeners.push_back(Listener);
+            }
+            else if (Listener.Destroy != nullptr && Outermost != nullptr)
+            {
+                Outermost->PendingDestroy.push_back(Listener);
             }
         }
         LiveCount = (uint16)Listeners.size();
@@ -106,6 +120,16 @@ namespace Lumina
         ActiveBroadcast    = nullptr;
         LockCount          = 0;
         bCompactionPending = false;
+    }
+
+    FScriptDelegateBase::FBroadcastFrame* FScriptDelegateBase::OutermostBroadcast() const
+    {
+        FBroadcastFrame* Frame = ActiveBroadcast;
+        while (Frame != nullptr && Frame->Previous != nullptr)
+        {
+            Frame = Frame->Previous;
+        }
+        return Frame;
     }
 
     bool FScriptDelegateBase::UnbindManagedAnywhere(const void* LastKnownAddress, uint64 Id)
@@ -169,7 +193,7 @@ namespace Lumina
         return false;
     }
 
-    // Frees a native listener's callable and blanks the slot; the slot itself goes on the next compaction.
+    // During a broadcast the callable may be the one running, so it is kept until the compaction after the broadcast.
     void FScriptDelegateBase::RetireAt(size_t Index)
     {
         FListener& Listener = Listeners[Index];
@@ -178,24 +202,21 @@ namespace Lumina
             return;
         }
 
-        if (Listener.Destroy != nullptr)
-        {
-            Listener.Destroy(Listener.Context);
-        }
-
-        Listener.Id      = 0;
-        Listener.Thunk   = nullptr;
-        Listener.Context = nullptr;
-        Listener.Destroy = nullptr;
+        Listener.Id    = 0;
+        Listener.Thunk = nullptr;
         --LiveCount;
 
         if (LockCount > 0)
         {
             bCompactionPending = true;
+            return;
         }
-        else
+
+        const FListener Retired = Listener;
+        Listeners.erase(Listeners.begin() + Index);
+        if (Retired.Destroy != nullptr)
         {
-            Listeners.erase(Listeners.begin() + Index);
+            Retired.Destroy(Retired.Context);
         }
     }
 
@@ -203,19 +224,31 @@ namespace Lumina
     {
         bCompactionPending = false;
 
+        TVector<FListener> Retired;
         size_t Write = 0;
         for (size_t Read = 0; Read < Listeners.size(); ++Read)
         {
-            if (Listeners[Read].Thunk != nullptr)
+            if (Listeners[Read].Thunk == nullptr)
             {
-                if (Write != Read)
+                if (Listeners[Read].Destroy != nullptr)
                 {
-                    Listeners[Write] = Listeners[Read];
+                    Retired.push_back(Listeners[Read]);
                 }
-                ++Write;
+                continue;
             }
+            if (Write != Read)
+            {
+                Listeners[Write] = Listeners[Read];
+            }
+            ++Write;
         }
         Listeners.resize(Write);
+
+        // Last, since freeing a callable can run a destructor that destroys this delegate's owner.
+        for (const FListener& Listener : Retired)
+        {
+            Listener.Destroy(Listener.Context);
+        }
     }
 
     uint64 FScriptDelegateBase::BindManaged(SScriptCallback Callback)
@@ -367,6 +400,10 @@ namespace Lumina
 
         if (!Frame.bAlive)
         {
+            for (const FListener& Listener : Frame.PendingDestroy)
+            {
+                Listener.Destroy(Listener.Context);
+            }
             return;
         }
 

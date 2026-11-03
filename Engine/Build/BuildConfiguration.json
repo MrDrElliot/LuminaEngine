@@ -7,6 +7,8 @@
 
   "//Box3DDebugChecks": "Box3D's own asserts and internal validation. auto means Debug only, so a Development physics measurement is not an instrumented one. Turn it on when chasing a Box3D-side assert.",
 
+  "//DebugAllocator": "Replaces rpmalloc with a slow allocator that checks every allocation for double frees, overruns, underruns, writes after free and frees of pointers it never handed out. auto means off. Build with -DebugAllocator=on to chase heap corruption; the environment variables LUMINA_DEBUG_ALLOCATOR_PAGEGUARD=N (a guard page behind every Nth block, 1 for all), _STACKS, _VALIDATE_EVERY, _BREAK_ON, _QUARANTINE_MB and _NOFILL tune it at runtime.",
+
   "//ForceInlineHint": "What LUMINA_FORCEINLINE_HINT expands to, for code hot enough to want inlining but big enough that forcing it everywhere costs more size than it wins back. auto means forced except in Debug; off demotes it to plain inline and leaves the choice to the optimizer, which is what a PGO or size-tuned build wants. Plain FORCEINLINE is unaffected.",
 
   "Features": {
@@ -17,6 +19,7 @@
     "RadeonGpuDetective": "auto",
     "VerboseLogging": "auto",
     "BugSplat": "auto",
-    "ForceInlineHint": "auto"
+    "ForceInlineHint": "auto",
+    "DebugAllocator": "auto"
   }
 }

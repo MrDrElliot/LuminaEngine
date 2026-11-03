@@ -3,6 +3,7 @@
 
 #include "Core/Console/ConsoleVariable.h"
 #include "Containers/StringFormat.h"
+#include "Core/Math/Math.h"
 
 namespace Lumina
 {
@@ -80,22 +81,18 @@ namespace Lumina
         const uint32 NumVars = (uint32)Registry.GetAll().size();
         const uint32 NumCmds = (uint32)Registry.GetAllCommands().size();
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.12f, 0.15f, 1.0f));
-        ImGui::BeginChild("##CVarFilterBar", ImVec2(0, 50.0f), true, ImGuiWindowFlags_NoScrollbar);
+        const FFixedString Counts = FormatAs<FFixedString>("{} variables, {} commands", NumVars, NumCmds);
+        const float CountsWidth = ImGui::CalcTextSize(Counts.c_str()).x;
+
+        ImGui::SetNextItemWidth(Math::Max(ImGui::GetContentRegionAvail().x - CountsWidth - ImGui::GetStyle().ItemSpacing.x, 120.0f));
+        if (ImGui::InputTextWithHint("##Search", LE_ICON_MAGNIFY " Filter by name or description...", SearchBuffer, IM_ARRAYSIZE(SearchBuffer)))
         {
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 220.0f);
-            if (ImGui::InputTextWithHint("##Search", LE_ICON_MAGNIFY " Filter by name or description...", SearchBuffer, IM_ARRAYSIZE(SearchBuffer)))
-            {
-                SearchFilter = SearchBuffer;
-            }
-
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%u vars, %u cmds", NumVars, NumCmds);
+            SearchFilter = SearchBuffer;
         }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
 
-        ImGui::Spacing();
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%s", Counts.c_str());
 
         if (ImGui::BeginTabBar("##CVarTabs", ImGuiTabBarFlags_None))
         {
@@ -163,9 +160,11 @@ namespace Lumina
             ImGui::PushID(Var->Name.data());
 
             ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ImVec4(0.85f, 1.00f, 0.85f, 1.0f), "%.*s", (int)Var->Name.size(), Var->Name.data());
 
             ImGui::TableSetColumnIndex(1);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextColored(TypeColor(*Var->ValuePtr), "%s", TypeLabel(*Var->ValuePtr));
 
             ImGui::TableSetColumnIndex(2);
@@ -226,7 +225,7 @@ namespace Lumina
             }, *Var->ValuePtr);
 
             ImGui::TableSetColumnIndex(3);
-            if (ImGui::SmallButton("Reset"))
+            if (!(*Var->ValuePtr == Var->DefaultValue) && ImGui::Button("Reset", ImVec2(-FLT_MIN, 0.0f)))
             {
                 visit([&]<typename T0>(const T0& DefaultValue)
                 {
@@ -248,7 +247,12 @@ namespace Lumina
             }
 
             ImGui::TableSetColumnIndex(4);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f), "%.*s", (int)Var->Hint.size(), Var->Hint.data());
+            if (ImGui::IsItemHovered() && ImGui::GetItemRectMax().x > ImGui::GetWindowPos().x + ImGui::GetWindowWidth())
+            {
+                ImGui::SetTooltip("%.*s", (int)Var->Hint.size(), Var->Hint.data());
+            }
 
             ImGui::PopID();
         }
@@ -300,15 +304,17 @@ namespace Lumina
             ImGui::PushID(Cmd->Name.data());
 
             ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ImVec4(0.85f, 1.00f, 0.85f, 1.0f), "%.*s", (int)Cmd->Name.size(), Cmd->Name.data());
 
             ImGui::TableSetColumnIndex(1);
-            if (ImGui::SmallButton(LE_ICON_PLAY " Execute"))
+            if (ImGui::Button(LE_ICON_PLAY " Execute", ImVec2(-FLT_MIN, 0.0f)))
             {
                 Registry.ExecuteCommand(Cmd->Name);
             }
 
             ImGui::TableSetColumnIndex(2);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f), "%.*s", (int)Cmd->Hint.size(), Cmd->Hint.data());
 
             ImGui::PopID();

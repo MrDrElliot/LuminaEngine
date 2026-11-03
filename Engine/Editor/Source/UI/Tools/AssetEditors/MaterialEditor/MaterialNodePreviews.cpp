@@ -180,6 +180,10 @@ namespace Lumina
             }
 
             const CEdGraphNode* Node = Graph->FindNode(NodeID);
+            if (Node == nullptr || Node->GetOutputPins().empty())
+            {
+                continue;
+            }
             if (Preview->Material.Launch(Graph, Node->GetOutputPins()[0]->GetPinGUID()))
             {
                 ++Compiling;

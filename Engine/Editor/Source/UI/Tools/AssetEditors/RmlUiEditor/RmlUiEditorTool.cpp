@@ -7,6 +7,7 @@
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Object/ObjectCore.h"
 #include "Settings/EditorSettings.h"
+#include "UI/Tools/EditorToolContext.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Renderer/RenderManager.h"
@@ -32,7 +33,7 @@
 
 namespace Lumina
 {
-    namespace
+    namespace RmlUiEditorToolInternal
     {
         const char* RmlEditorWindowName    = "RmlEditor";
         const char* RmlPreviewWindowName   = "RmlPreview";
@@ -597,7 +598,7 @@ namespace Lumina
     }
 
     FRmlUiEditorTool::FRmlUiEditorTool(IEditorToolContext* Context, FStringView InVirtualPath)
-        : FAssetEditorTool(Context, DisplayNameFromPath(InVirtualPath))
+        : FAssetEditorTool(Context, RmlUiEditorToolInternal::DisplayNameFromPath(InVirtualPath))
         , VirtualPath(InVirtualPath.data(), InVirtualPath.size())
         , Language(InVirtualPath.ends_with(".rcss"))
     {
@@ -633,6 +634,8 @@ namespace Lumina
             VirtualPath.assign(New.data(), New.size());
             const FStringView ParentView = VFS::Parent(New, true);
             ParentDir.assign(ParentView.data(), ParentView.size());
+            FileWatcher.Stop();
+            StartWatching();
         });
 
         // The preview instances belong to classes the reload is about to replace, and the next frame rebuilds them.
@@ -683,7 +686,7 @@ namespace Lumina
             }
         }, 0.9f);
 
-        CreateToolWindow(RmlEditorWindowName, [this](bool bFocused)
+        CreateToolWindow(RmlUiEditorToolInternal::RmlEditorWindowName, [this](bool bFocused)
         {
             DrawEditorToolbar();
             ImGui::Separator();
@@ -702,7 +705,7 @@ namespace Lumina
             DrawEditorStatusBar();
         });
 
-        CreateToolWindow(RmlPreviewWindowName, [this](bool bFocused)
+        CreateToolWindow(RmlUiEditorToolInternal::RmlPreviewWindowName, [this](bool bFocused)
         {
             DrawPreviewToolbar();
             ImGui::Separator();
@@ -724,9 +727,9 @@ namespace Lumina
                 return true;
             }
 
-            const FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
-            return ContainsCI(FString(Data.Tag.c_str(), Data.Tag.size()), HierarchySearch)
-                || (!Data.Id.empty() && ContainsCI(FString(Data.Id.c_str(), Data.Id.size()), HierarchySearch));
+            const RmlUiEditorToolInternal::FRmlHierarchyItem& Data = Tree.Get<RmlUiEditorToolInternal::FRmlHierarchyItem>(Item);
+            return RmlUiEditorToolInternal::ContainsCI(FString(Data.Tag.c_str(), Data.Tag.size()), HierarchySearch)
+                || (!Data.Id.empty() && RmlUiEditorToolInternal::ContainsCI(FString(Data.Id.c_str(), Data.Id.size()), HierarchySearch));
         };
 
         HierarchyContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool)
@@ -736,7 +739,7 @@ namespace Lumina
                 return;
             }
 
-            const FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+            const RmlUiEditorToolInternal::FRmlHierarchyItem& Data = Tree.Get<RmlUiEditorToolInternal::FRmlHierarchyItem>(Item);
 
             // The open-tag offset addresses an element the live DOM cannot, since only ids reach a slot.
             SelectedSlotId = Data.bIsBody ? FString() : FString(Data.Id.c_str(), Data.Id.size());
@@ -746,27 +749,35 @@ namespace Lumina
 
         HierarchyContext.HoveredFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
-            const FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+            const RmlUiEditorToolInternal::FRmlHierarchyItem& Data = Tree.Get<RmlUiEditorToolInternal::FRmlHierarchyItem>(Item);
             if (!Data.bIsBody && !Data.Id.empty())
             {
                 PendingHoveredSlotId = FString(Data.Id.c_str(), Data.Id.size());
             }
         };
 
-        CreateToolWindow(RmlHierarchyWindowName, [this](bool bFocused)
+        CreateToolWindow(RmlUiEditorToolInternal::RmlHierarchyWindowName, [this](bool bFocused)
         {
             DrawHierarchyPanel();
         });
 
-        CreateToolWindow(RmlInspectorWindowName, [this](bool bFocused)
+        CreateToolWindow(RmlUiEditorToolInternal::RmlInspectorWindowName, [this](bool bFocused)
         {
             DrawInspectorPanel();
         });
 
-        CreateToolWindow(RmlDataWindowName, [this](bool bFocused)
+        CreateToolWindow(RmlUiEditorToolInternal::RmlDataWindowName, [this](bool bFocused)
         {
             DrawDataPanel();
         });
+    }
+
+    void FRmlUiEditorTool::OnScriptsReloaded(const Scripting::FScriptReload& Reload)
+    {
+        FAssetEditorTool::OnScriptsReloaded(Reload);
+
+        // A reload can add or rename model members, so the preview picks the new model up on its next poll.
+        bScriptsReloaded = true;
     }
 
     void FRmlUiEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
@@ -791,12 +802,14 @@ namespace Lumina
             if (!bBufferDirty)
             {
                 // Someone saved the file in another editor, which is as deliberate an act as saving here.
+                bDiskChangedWhileDirty = false;
                 LoadFromDisk();
                 ReloadDocument(/*bAlwaysReport*/ true);
             }
-            else
+            else if (!bDiskChangedWhileDirty)
             {
-                LOG_WARN("[RmlUiEditor] '{}' changed on disk but buffer is dirty; ignoring.", VirtualPath.c_str());
+                bDiskChangedWhileDirty = true;
+                ImGuiX::Notifications::NotifyWarning("'{0}' changed on disk while it has unsaved edits here. Saving will ask before overwriting.", VirtualPath.c_str());
             }
         }
 
@@ -821,6 +834,42 @@ namespace Lumina
     }
 
     void FRmlUiEditorTool::OnSave()
+    {
+        if (!ToolContext->ConfirmWritable({ FString(VirtualPath.c_str()) }, [this] { OnSave(); }))
+        {
+            return;
+        }
+
+        if (!bDiskChangedWhileDirty)
+        {
+            WriteBufferToDisk();
+            return;
+        }
+
+        ToolContext->PushModal("File Changed On Disk", ImVec2(520.0f, 0.0f), [this]() -> bool
+        {
+            ImGui::TextWrapped("'%s' was changed by another program after you started editing it here.", VirtualPath.c_str());
+            ImGui::Spacing();
+            if (ImGui::Button("Overwrite"))
+            {
+                bDiskChangedWhileDirty = false;
+                WriteBufferToDisk();
+                return true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reload From Disk"))
+            {
+                bDiskChangedWhileDirty = false;
+                LoadFromDisk();
+                ReloadDocument(true);
+                return true;
+            }
+            ImGui::SameLine();
+            return ImGui::Button("Cancel");
+        });
+    }
+
+    void FRmlUiEditorTool::WriteBufferToDisk()
     {
         if (GetDefault<CCodeEditorSettings>()->bTrimTrailingWhitespaceOnSave)
         {
@@ -860,11 +909,11 @@ namespace Lumina
         ImGuiID DataDockID = 0, InspectorDockID = 0;
         ImGui::DockBuilderSplitNode(LowerDockID, ImGuiDir_Down, 0.45f, &InspectorDockID, &DataDockID);
 
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlEditorWindowName).c_str(), LeftDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlPreviewWindowName).c_str(), PreviewDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlHierarchyWindowName).c_str(), HierarchyDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlInspectorWindowName).c_str(), InspectorDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlDataWindowName).c_str(), DataDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlEditorWindowName).c_str(), LeftDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlPreviewWindowName).c_str(), PreviewDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlHierarchyWindowName).c_str(), HierarchyDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlInspectorWindowName).c_str(), InspectorDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlUiEditorToolInternal::RmlDataWindowName).c_str(), DataDockID);
     }
 
     void FRmlUiEditorTool::DrawEditorToolbar()
@@ -1268,20 +1317,20 @@ namespace Lumina
         ImGui::SameLine();
         ImGui::SetNextItemWidth(140.0f);
 
-        const char* Items[IM_ARRAYSIZE(ResolutionPresets)];
-        for (int i = 0; i < IM_ARRAYSIZE(ResolutionPresets); ++i) Items[i] = ResolutionPresets[i].Label;
+        const char* Items[IM_ARRAYSIZE(RmlUiEditorToolInternal::ResolutionPresets)];
+        for (int i = 0; i < IM_ARRAYSIZE(RmlUiEditorToolInternal::ResolutionPresets); ++i) Items[i] = RmlUiEditorToolInternal::ResolutionPresets[i].Label;
 
         if (ImGui::Combo("##rml_resolution", &ResolutionPreset, Items, IM_ARRAYSIZE(Items)))
         {
-            if (ResolutionPreset != CustomPresetIndex)
+            if (ResolutionPreset != RmlUiEditorToolInternal::CustomPresetIndex)
             {
-                CanvasWidth = ResolutionPresets[ResolutionPreset].Width;
-                CanvasHeight = ResolutionPresets[ResolutionPreset].Height;
+                CanvasWidth = RmlUiEditorToolInternal::ResolutionPresets[ResolutionPreset].Width;
+                CanvasHeight = RmlUiEditorToolInternal::ResolutionPresets[ResolutionPreset].Height;
             }
         }
         ImGuiX::TextTooltip("Render canvas resolution. The preview pane scales the canvas to fit; use View Zoom for 1:1 inspection.");
 
-        if (ResolutionPreset == CustomPresetIndex)
+        if (ResolutionPreset == RmlUiEditorToolInternal::CustomPresetIndex)
         {
             ImGui::SameLine();
             int W = (int)CanvasWidth, H = (int)CanvasHeight;
@@ -1299,7 +1348,7 @@ namespace Lumina
             if (ImGui::SmallButton(LE_ICON_PHONE_ROTATE_PORTRAIT "##rml_swap"))
             {
                 std::swap(CanvasWidth, CanvasHeight);
-                ResolutionPreset = CustomPresetIndex;
+                ResolutionPreset = RmlUiEditorToolInternal::CustomPresetIndex;
             }
             ImGuiX::TextTooltip("Swap width and height (portrait/landscape).");
         }
@@ -1530,7 +1579,7 @@ namespace Lumina
         }
         else if (BgMode == EBgMode::Solid)
         {
-            DL->AddRectFilled(CanvasMin, CanvasMax, RmlUiToU32(BgColor));
+            DL->AddRectFilled(CanvasMin, CanvasMax, RmlUiEditorToolInternal::RmlUiToU32(BgColor));
         }
         // Transparent, draw nothing, the pane background shows through.
 
@@ -1582,7 +1631,7 @@ namespace Lumina
 
         if (bShowGrid && GridSize > 0.0f)
         {
-            const ImU32 GridU = RmlUiToU32(GridColor);
+            const ImU32 GridU = RmlUiEditorToolInternal::RmlUiToU32(GridColor);
             const float Step = GridSize * ScalePx;
             DL->PushClipRect(CanvasMin, CanvasMax, true);
             for (float x = CanvasMin.x + Step; x < CanvasMax.x; x += Step)
@@ -1598,7 +1647,7 @@ namespace Lumina
 
         if (bShowSafeZones)
         {
-            const ImU32 SafeU = RmlUiToU32(SafeZoneColor);
+            const ImU32 SafeU = RmlUiEditorToolInternal::RmlUiToU32(SafeZoneColor);
             auto DrawSafe = [&](float Frac)
             {
                 const ImVec2 Sz(CanvasSize.x * Frac, CanvasSize.y * Frac);
@@ -1695,11 +1744,11 @@ namespace Lumina
         std::string Doc;
         if (bIsStylesheet)
         {
-            Doc = BuildStylesheetSpecimen(Body);
+            Doc = RmlUiEditorToolInternal::BuildStylesheetSpecimen(Body);
         }
-        else if (IsTemplateDocument(Body))
+        else if (RmlUiEditorToolInternal::IsTemplateDocument(Body))
         {
-            Doc = BuildTemplatePreview(Body);
+            Doc = RmlUiEditorToolInternal::BuildTemplatePreview(Body);
         }
         else
         {
@@ -1988,14 +2037,14 @@ namespace Lumina
             Slot.ChildCount = Src.ChildCount;
 
             const std::string Id(Src.Id.c_str(), Src.Id.size());
-            const std::string Assigned = ParseSlotAssignment(CompAssignText, Id);
+            const std::string Assigned = RmlUiEditorToolInternal::ParseSlotAssignment(CompAssignText, Id);
             Slot.AssignedSrc = FString(Assigned.c_str(), Assigned.size());
 
             // GetAbsoluteOffset excludes the CSS transform, so add it back for the overlay to sit right.
-            const std::string Tf = GetInlineStyleProp(CompAssignText, Id, "transform");
+            const std::string Tf = RmlUiEditorToolInternal::GetInlineStyleProp(CompAssignText, Id, "transform");
             if (!Tf.empty())
             {
-                const ImVec2 TDp = ParseTranslateDp(Tf);
+                const ImVec2 TDp = RmlUiEditorToolInternal::ParseTranslateDp(Tf);
                 const float Dpi = Math::Max(0.01f, PreviewDpiScale);
                 Slot.OffsetPx.x += TDp.x * Dpi;
                 Slot.OffsetPx.y += TDp.y * Dpi;
@@ -2026,20 +2075,20 @@ namespace Lumina
             FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Body);
             Display.TooltipText = "The document body. New elements land here when nothing else is selected.";
 
-            FRmlHierarchyItem& Item = Tree.EmplaceUserData<FRmlHierarchyItem>(Body);
+            RmlUiEditorToolInternal::FRmlHierarchyItem& Item = Tree.EmplaceUserData<RmlUiEditorToolInternal::FRmlHierarchyItem>(Body);
             Item.bIsBody = true;
 
             Tree.Get<FTreeNodeState>(Body).bExpanded = true;
         }
 
-        std::vector<FSourceNode> Nodes;
-        ParseSourceElements(CompAssignText, Nodes);
+        std::vector<RmlUiEditorToolInternal::FSourceNode> Nodes;
+        RmlUiEditorToolInternal::ParseSourceElements(CompAssignText, Nodes);
 
         // One stack indexed by depth turns the parser's flat list back into a tree.
         TVector<FTreeNodeID> ParentAtDepth;
         ParentAtDepth.push_back(Body);
 
-        for (const FSourceNode& Node : Nodes)
+        for (const RmlUiEditorToolInternal::FSourceNode& Node : Nodes)
         {
             if (Node.Tag == "template")
             {
@@ -2055,7 +2104,7 @@ namespace Lumina
             const FTreeNodeID Parent = ParentAtDepth[Depth];
             const bool bHasId = !Node.Id.empty();
 
-            const std::string Assigned = bHasId ? ParseSlotAssignment(CompAssignText, Node.Id) : std::string();
+            const std::string Assigned = bHasId ? RmlUiEditorToolInternal::ParseSlotAssignment(CompAssignText, Node.Id) : std::string();
             const bool bAssigned = !Assigned.empty();
 
             const char* Icon = bAssigned ? LE_ICON_PUZZLE
@@ -2083,7 +2132,7 @@ namespace Lumina
                 Display.TooltipChips.push_back(FString(Assigned.c_str(), Assigned.size()));
             }
 
-            FRmlHierarchyItem& Item = Tree.EmplaceUserData<FRmlHierarchyItem>(Handle);
+            RmlUiEditorToolInternal::FRmlHierarchyItem& Item = Tree.EmplaceUserData<RmlUiEditorToolInternal::FRmlHierarchyItem>(Handle);
             Item.Tag    = Node.Tag;
             Item.Id     = Node.Id;
             Item.OpenLt = Node.OpenLt;
@@ -2162,7 +2211,7 @@ namespace Lumina
             return;
         }
 
-        SectionHeader(LE_ICON_COG, "Inspector");
+        RmlUiEditorToolInternal::SectionHeader(LE_ICON_COG, "Inspector");
 
         if (SelectedSlotId.empty())
         {
@@ -2187,7 +2236,7 @@ namespace Lumina
         const std::string Sel(SelectedSlotId.c_str(), SelectedSlotId.size());
 
         std::string Inner;
-        if (!Sel.empty() && GetEditableInnerText(CompAssignText, Sel, Inner) && !Inner.empty())
+        if (!Sel.empty() && RmlUiEditorToolInternal::GetEditableInnerText(CompAssignText, Sel, Inner) && !Inner.empty())
         {
             ImGui::TextDisabled(LE_ICON_FORMAT_TEXT " Text");
             ImGui::TextWrapped("%s", Inner.c_str());
@@ -2350,7 +2399,7 @@ namespace Lumina
             {
                 SelectedSlotId = Slot.Id;
                 SelectedTag    = Slot.Tag;
-                SelectedOpenLt = LocateSlotTag(CompAssignText, std::string(Slot.Id.c_str(), Slot.Id.size())).TagStart;
+                SelectedOpenLt = RmlUiEditorToolInternal::LocateSlotTag(CompAssignText, std::string(Slot.Id.c_str(), Slot.Id.size())).TagStart;
             }
             ImGui::PopID();
         }

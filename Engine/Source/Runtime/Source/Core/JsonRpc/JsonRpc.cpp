@@ -23,9 +23,10 @@ namespace Lumina::JsonRpc
             return FString(Text.c_str(), Text.size());
         }
 
+        // Replaced rather than thrown, since a stored string that is not UTF-8 must not take the process down with the reply.
         FString Dump(const nlohmann::json& Value)
         {
-            return ToEngine(Value.dump());
+            return ToEngine(Value.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
         }
 
         nlohmann::json MakeErrorObject(const FError& Error)

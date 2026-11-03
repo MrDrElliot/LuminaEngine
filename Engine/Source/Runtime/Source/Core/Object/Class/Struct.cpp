@@ -468,6 +468,11 @@ namespace Lumina
                             Header.Name, PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
                         }
                     }
+                    else
+                    {
+                        LOG_WARN("Property '{}' type changed from '{}' to '{}', which do not convert; it keeps its default.",
+                            Header.Name, PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
+                    }
                 }
                 else
                 {

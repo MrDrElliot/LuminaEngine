@@ -1,14 +1,12 @@
 #pragma once
 
-#include "World/ECS/Registry.h"
-
-
-#include "Containers/Queue.h"
 #include "AssetEditors/AssetEditorTool.h"
+#include "Containers/Queue.h"
 #include "ImGuizmo.h"
 #include "Tools/ComponentVisualizers/ComponentVisualizerContext.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
 #include "UI/Properties/PropertyEditContexts.h"
+#include "World/ECS/Registry.h"
 
 namespace Lumina::DragDrop
 {
@@ -17,16 +15,16 @@ namespace Lumina::DragDrop
 
 namespace Lumina
 {
-    class CWorld;
-    class CObject;
-    class CStruct;
-    class CStaticMesh;
-    class CPackage;
-    class IRenderScene;
     class CComponentVisualizer;
+    class CObject;
+    class CPackage;
+    class CStaticMesh;
+    class CStruct;
+    class CWorld;
+    class IRenderScene;
+    struct FPropertyChangedEvent;
     struct SSceneFolderComponent;
     struct SStaticMeshComponent;
-    struct FPropertyChangedEvent;
 
     class EDITOR_API FSceneEditorTool : public FAssetEditorTool, public IComponentVisualizerHost
     {
@@ -34,542 +32,384 @@ namespace Lumina
 
     public:
 
-        void OnScriptsReloaded(const Scripting::FScriptReload& Reload) override
-        {
-            Super::OnScriptsReloaded(Reload);
-            bDetailsScriptsReloaded = true;
-        }
-
-        // Prefab path: a distinct asset (e.g. CPrefab) edited through a separate preview world.
+        // The prefab path, editing a separate asset through a preview world.
         FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CObject* InAsset, CWorld* InWorld);
 
-        // World path: the CWorld itself is the document/asset (forwarded as both).
+        // The world path, where the world itself is the document.
         FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld);
 
         ~FSceneEditorTool() override = default;
 
         NODISCARD FSceneEditorTool* AsSceneEditor() override { return this; }
-        
+        void OnScriptsReloaded(const Scripting::FScriptReload& Reload) override;
         void OnSave() override;
 
-    protected:
-
-        // Fired once when the backing asset has loaded (via FAssetEditorTool's broadcast).
-        // Renamed scene-flavored hook; the prefab editor loads its preview world here.
-        virtual void OnSceneLoaded() {}
-
-        // Write the editing surface back into the backing asset. No-op for the world editor
-        // (it edits the live CWorld in place); the prefab editor commits its preview world.
-        virtual void CommitScene() {}
-
-        // Mark the scene's package dirty (guards the transient no-package case).
-        void MarkSceneDirty();
-        
-        virtual CPackage* GetScenePackage() const;
-
-        // Routes FAssetEditorTool's asset-loaded broadcast to OnSceneLoaded.
-        void OnAssetLoadFinished() final;
-        
-
-        // Replace the selection with a single entity (implicit clear); the common "click" path.
-        void SetSingleSelectedEntity(ECS::FEntity Entity);
-        // Add to the selection and promote to last-selected. bRebuild is vestigial.
-        void AddSelectedEntity(ECS::FEntity Entity, bool bRebuild = false);
-        // Remove from the selection; picks a new last-selected if the focus was removed.
-        void RemoveSelectedEntity(ECS::FEntity Entity, bool bRebuild = false);
-        // Ctrl-click semantics.
-        void ToggleSelectedEntity(ECS::FEntity Entity);
-        void ClearSelectedEntities();
-
-        // Drops the selection and its mirror tags, null-safe because teardown runs after the world is gone.
-        void ResetSelectionState();
-        // Rebuild the cached set + last-selected from the registry tags (after undo/redo/world swap).
-        void ResyncSelectionFromRegistry();
-
-        // Re-stamp the non-serialized selection tags from the surviving CPU set (a true-restore keeps handles but drops tags).
-        void ReapplySelectionTags();
-
-        NODISCARD bool IsEntitySelected(ECS::FEntity Entity) const { return SelectedEntities.find(Entity) != SelectedEntities.end(); }
-        NODISCARD const THashSet<ECS::FEntity>& GetSelectedEntities() const { return SelectedEntities; }
-        NODISCARD ECS::FEntity GetLastSelectedEntity() const { return LastSelectedEntity; }
-
-        // The world whose scene the outliner/details/selection currently inspect. Defaults to the
-        // tool's own World; the world editor can repoint it at another live world (e.g. a networked
-        // client/server) for inspect-only viewing. Null means "follow World".
-        NODISCARD CWorld* GetObservedWorld() const { return ObservedWorld != nullptr ? ObservedWorld : World.Get(); }
-        // True while inspecting a world other than the tool's own (authoring/gizmo are suppressed).
-        NODISCARD bool IsInspectingForeignWorld() const { return ObservedWorld != nullptr && ObservedWorld != World.Get(); }
-
-        // The registry holding the scene's entities (the observed world's registry).
-        NODISCARD ECS::FRegistry& GetSceneRegistry() const { return GetObservedWorld()->GetEntityRegistry(); }
-
-    public:
-
-        // Read access to the scene this tool is showing, for callers outside it such as an agent endpoint.
         NODISCARD CWorld* GetSceneWorld() const { return GetObservedWorld(); }
-
         NODISCARD ECS::FRegistry& GetSceneEntityRegistry() const { return GetSceneRegistry(); }
 
-        // Brackets a mutation from outside the tool, so an agent edit lands on the same undo stack.
+        // Mutations from outside the tool, so an agent edit lands on the same undo stack as a panel edit.
         void RunTransacted(FName Label, const TFunction<void()>& Mutate);
+        void RunCreationTransacted(FName Label, const TFunction<void()>& Mutate);
+        void RunDestroyTransacted(FName Label, const TVector<ECS::FEntity>& Doomed, const TFunction<void()>& Mutate);
+        void RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, const TFunction<void()>& Mutate);
+        void RemoveComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType);
+        void AddComponentTransacted(const TVector<ECS::FEntity>& Targets, CStruct* ComponentType) { ApplyAddComponentToTargets(Targets, ComponentType); }
 
-        // The same for an edit that only adds entities, which records far less than a full snapshot.
         // Gives an entity made outside SpawnEntityTransacted the same setup, such as prefab membership.
         void AdoptCreatedEntity(ECS::FEntity Entity) { OnEntityCreatedInScene(Entity); }
-
-        // A copy of Source and its children as this editor's Duplicate makes it, such as with fresh prefab stable IDs.
-        virtual ECS::FEntity DuplicateEntityForScene(ECS::FEntity Source);
-
-        // Whether Duplicate may copy the entity, which a locked prefab child or a prefab root may not.
-        virtual bool CanDuplicateEntity(ECS::FEntity Entity) const { return true; }
-
-        // Copies every entity Duplicate may copy as one undo step, then selects the copies.
-        void DuplicateAndSelect(TSpan<const ECS::FEntity> Entities, FName Label = "Duplicate");
-
-        // Alt pressed on the gizmo copies the selection first, so the drag moves the copies. True while Alt holds the gizmo.
-        bool HandleAltDragCopy(bool bInputTaken);
 
         // Makes a spawned subtree belong to this scene as a content drop would; the prefab editor copies it in unlinked.
         virtual void AdoptSpawnedSubtree(ECS::FEntity Root) {}
 
-        void RunCreationTransacted(FName Label, const TFunction<void()>& Mutate);
+        // A copy of Source and its children as Duplicate makes it, such as with fresh prefab stable IDs.
+        virtual ECS::FEntity DuplicateEntityForScene(ECS::FEntity Source);
+        virtual bool CanDuplicateEntity(ECS::FEntity Entity) const { return true; }
+        void DuplicateAndSelect(TSpan<const ECS::FEntity> Entities, FName Label = "Duplicate");
 
-        // The same for an edit that destroys Doomed, recording only what those entities reach.
-        void RunDestroyTransacted(FName Label, const TVector<ECS::FEntity>& Doomed, const TFunction<void()>& Mutate);
+        // Alt pressed on the gizmo copies the selection first, so the drag moves the copies; true while Alt holds the gizmo.
+        bool HandleAltDragCopy(bool bInputTaken);
 
-        // Replaces the selection, as clicking the entities in the outliner would.
         void SelectEntities(const TVector<ECS::FEntity>& Entities);
-
-        // Why Entity cannot move under NewParent in this scene, or empty when it can. A null parent means the top level.
-        NODISCARD virtual FString GetReparentRefusal(ECS::FEntity Entity, ECS::FEntity NewParent);
-
-        // The outliner's reparent, so a drag and a scripted call apply the same rules and make the same undo step.
-        bool ReparentEntityTransacted(ECS::FEntity Entity, ECS::FEntity NewParent, bool bKeepWorldTransform = true, FString* OutRefusal = nullptr);
-
-        // The add-component picker's apply, for a caller outside the details panel.
-        void AddComponentTransacted(const TVector<ECS::FEntity>& Targets, CStruct* ComponentType) { ApplyAddComponentToTargets(Targets, ComponentType); }
-
-        // Removes one component as its own undo step, recording only that component type on that entity.
-        // Mutate under a one-component undo step, which also records the edit as a prefab instance override.
-        void RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, const TFunction<void()>& Mutate);
-        void RemoveComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType);
-
-    protected:
-
-
-        // Outliner observes this world instead of World (null/own-world = follow World). Subclasses
-        // that switch worlds set it; the base only reads it through GetObservedWorld/GetSceneRegistry.
-        CWorld*                 ObservedWorld = nullptr;
-
-        // Mirror a row's selected visual into the outliner tree.
-        void SyncOutlinerRowSelection(ECS::FEntity Entity, bool bSelected);
-
-    public:
-
-        // Scrolls the outliner to Entity's row.
         void RevealEntityInOutliner(ECS::FEntity Entity);
 
-    protected:
+        // Why Entity cannot move under NewParent, or empty when it can; a null parent means the top level.
+        NODISCARD virtual FString GetReparentRefusal(ECS::FEntity Entity, ECS::FEntity NewParent);
+        bool ReparentEntityTransacted(ECS::FEntity Entity, ECS::FEntity NewParent, bool bKeepWorldTransform = true, FString* OutRefusal = nullptr);
 
-        // Hook: the selection focus changed. The world editor marks its details panel dirty.
-        virtual void OnSelectionChanged() {}
-
-        THashSet<ECS::FEntity>  SelectedEntities;
-        ECS::FEntity            LastSelectedEntity = ECS::NullEntity;
-
-        THashMap<uint32, CComponentVisualizer*> VisualizerCache;
-        SIZE_T                                  CachedVisualizerCount = ~(SIZE_T)0;
-        TVector<ECS::FEntity>                   VisualizerEntityScratch;
-
-        struct FVisualizerBinding
-        {
-            ECS::FSparseSet*      Storage = nullptr;
-            CComponentVisualizer* Visualizer = nullptr;
-            CStruct*              ComponentType = nullptr;
-        };
-
-        // bInteractiveOnly drops the visualizers that have no main-thread pass.
-        void GatherVisualizerBindings(TVector<FVisualizerBinding>& OutBindings, bool bInteractiveOnly);
-
-        // The selected entities, which the interactive pass edits.
-        void GatherVisualizerEntities(TVector<ECS::FEntity>& OutEntities);
-
-        // Grows the selection into what the wireframe pass draws, its children, or with bShowHierarchyVisualizers every tree it belongs to.
-        void ExpandVisualizerEntities(TVector<ECS::FEntity>& InOutEntities);
-
-        TVector<FVisualizerBinding> VisualizerBindingScratch;
-        FVisualizerInteractionState VisualizerInteraction;
-
-    public:
-
-        // Main-thread visualizer pass, called from the viewport overlay once the gizmo has had the mouse.
-        void DrawComponentVisualizerOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
-            const SCameraComponent& Camera, bool bAllowInput);
-
-        // True while a visualizer handle or panel owns the mouse; the host must not pick or gizmo then.
+        // Called from the viewport overlay once the gizmo has had the mouse.
+        void DrawComponentVisualizerOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, const SCameraComponent& Camera, bool bAllowInput);
         NODISCARD bool AreVisualizersCapturingInput() const { return VisualizerInteraction.bCapturedInput; }
-
-        // True while the selected sub-element's visualizer wants Delete for itself.
         NODISCARD bool HasVisualizerSubSelection() const;
-
         void BeginVisualizerTransaction(ECS::FEntity Entity, CStruct* ComponentType) override;
         void EndVisualizerTransaction(FName Label) override;
         void MarkVisualizerSceneDirty() override;
 
-    protected:
-
-        struct FEntityListViewItemData
-        {
-            ECS::FEntity Entity = ECS::NullEntity;
-            // Non-zero on a folder row, in which case Entity is null.
-            uint32       FolderID = 0;
-        };
-
-        // Repopulate roots (children fill lazily on expand). Wire as the tree's RebuildTreeFunction.
-        void RebuildSceneOutliner(FTreeListView& Tree);
-        // Add an entity row (under its parent if present). Returns the node or InvalidTreeNode.
-        FTreeNodeID AddEntityToOutliner(ECS::FEntity Entity);
-        // Populate a row's rich hover tooltip (title, subtitle, component chips). Deferred to first
-        // hover because the component scan is expensive; no-op once Display.bTooltipBuilt is set.
-        void BuildEntityTooltip(ECS::FEntity Entity, FTreeNodeDisplay& Display);
-        void RemoveEntityFromOutliner(ECS::FEntity Entity);
-        void ReparentEntityInOutliner(ECS::FEntity Entity);
-        void RefreshOutlinerExpander(ECS::FEntity Entity);
-        // Lazily build child rows for a node on first expand. Wire as BuildChildrenFunction.
-        void BuildEntityChildren(FTreeListView& Tree, FTreeNodeID Item);
-        // Drain PendingOutlinerAdds before the tree draws (signal-driven path).
-        void FlushOutlinerPending();
-
-    public:
-        // SNameComponent observers (signal-driven world path). Public so subclasses can
-        // connect them on their registry via &FSceneEditorTool::On... (protected access would block it).
+        // Public so a subclass can bind them on its registry through &FSceneEditorTool::On..., which protected access blocks.
         void OnOutlinerEntityConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void OnOutlinerEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
     protected:
 
-        // Outliner folders. The table lives on the world's singleton entity, which the outliner hides.
+        struct FVisualizerBinding
+        {
+            ECS::FSparseSet*        Storage = nullptr;
+            CComponentVisualizer*   Visualizer = nullptr;
+            CStruct*                ComponentType = nullptr;
+        };
 
-        // Hook: does this tool offer folders? Only the world editor does; the prefab editor's rows stay entities.
-        NODISCARD virtual bool SupportsSceneFolders() const { return false; }
-
-        // The observed world's folder table for reading; null when there is none (or folders are unsupported).
-        NODISCARD const SSceneFolderComponent* GetSceneFolders() const;
-        // Same table for writing. Null while inspecting a foreign world, or before the first folder exists.
-        NODISCARD SSceneFolderComponent* GetEditableSceneFolders() const;
-
-        NODISCARD uint32 GetEntityFolderID(ECS::FEntity Entity) const;
-        NODISCARD FTreeNodeID FindFolderNode(uint32 FolderID) const;
-        // "Lighting/Sky" style path, for menu labels.
-        NODISCARD FString GetFolderPath(uint32 FolderID) const;
-        NODISCARD FName MakeUniqueFolderName(uint32 ParentID) const;
-
-        // Materialize every folder row and refresh the entity->folder cache. Runs before the entity rows.
-        void BuildFolderNodes(FTreeListView& Tree);
-        // Entities filed under a folder, optionally including its subfolders'.
-        void CollectFolderEntities(uint32 FolderID, TVector<ECS::FEntity>& OutEntities, bool bRecursive) const;
-
-        uint32 CreateSceneFolder(const FName& Name, uint32 ParentID);
-        void RenameSceneFolder(uint32 FolderID, FStringView NewName);
-        void DeleteSceneFolder(uint32 FolderID, bool bDeleteContents);
-        void MoveFolderIntoFolder(uint32 FolderID, uint32 NewParentID);
-        // Files entities under FolderID (0 unfiles them), detaching any that are parented to another entity.
-        void MoveEntitiesToFolder(const TVector<ECS::FEntity>& Entities, uint32 FolderID);
-        void SelectFolderContents(uint32 FolderID);
-        void SetFolderContentsHidden(uint32 FolderID, bool bHidden);
-
-        // Context-menu bodies, shared by both outliner menus.
-        void DrawFolderContextMenu(uint32 FolderID);
-        void DrawMoveToFolderMenuItems(const TVector<ECS::FEntity>& Entities);
-        // "New Folder" toolbar button next to the Scene Graph "+".
-        void DrawNewFolderButton(float ButtonSize);
-
-        THashMap<uint32, FTreeNodeID>  FolderToTreeNode;
-        THashMap<ECS::FEntity, uint32> EntityFolderCache;
-        // Folder whose row should enter inline rename on the next draw (a freshly created one).
-        uint32                         PendingFolderRename = 0;
-
-        // Hook: which entities appear in the outliner. Base = named + not FHideInSceneOutliner;
-        // the prefab editor also requires SPrefabComponent so preview fixtures stay hidden.
-        virtual bool IsOutlinerEntityVisible(ECS::FEntity Entity) const;
-
-        // The whole "Scene Graph" panel (add button + search + filter + count + tree) is shared.
-        void DrawOutliner(bool bFocused);
-        // Hook: extra row drawn between the search toolbar and the entity tree. The world editor
-        // draws its live-world selector here when networked play has more than one world.
-        virtual void DrawOutlinerWorldSelector() {}
-        // Component-type filter checklist (shown in the panel's filter popup).
-        void DrawFilterOptions();
-        // Count of entities currently shown in the outliner (IsOutlinerEntityVisible).
-        NODISCARD size_t CountOutlinerEntities() const;
-
-        // The shared "Add" menu opened by the Scene Graph "+" button (and reusable for a focused
-        // entity): empty entity, primitives, components, and instantiable prefabs. Identical in both tools.
-        void DrawAddToEntityOrWorldPopup(ECS::FEntity Entity = ECS::NullEntity);
-        ImGuiTextFilter AddEntityComponentFilter;
-
-        virtual void HandleOutlinerEmptyAreaDrop() {}
-        virtual void HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget, const FTransform* SpawnTransform = nullptr) {}
-
-        // Routes a drag landing here, an asset to HandlePrefabContentDrop, a .cs file to HandleScriptSourceDrop and a create-menu entry to HandleNewEntityDrop.
-        void AcceptContentBrowserPayload(ECS::FEntity DropTarget, bool bAttachToTarget);
-
-        // The viewport as one drop target, moving a live preview of what a drag places. True while a drag hovers it.
-        bool DrawViewportDropTarget();
-
-        // Creates the entity a create-menu drag describes, under DropTarget when attaching, at the cursor unless SpawnTransform says.
-        void HandleNewEntityDrop(const DragDrop::FPayload& Payload, ECS::FEntity DropTarget, bool bAttachToTarget, const FTransform* SpawnTransform = nullptr);
-
-        // Gives a new entity what a create-menu payload names, a component or a primitive mesh.
-        void DecorateNewEntity(const DragDrop::FPayload& Payload, ECS::FEntity Entity);
-
-        // Spawns what Payload places as an untransacted preview, when it places anything without a target.
-        void SpawnPlacementPreview(const DragDrop::FPayload& Payload);
-        void DestroyPlacementPreview();
-
-        // Tab switches the wheel between turning and scaling the placement preview, Ctrl taking coarser steps.
-        void HandlePlacementInput();
-
-        // Shows the preview's turn or scale around its base and beside the cursor.
-        void DrawPlacementAdjustment(const FViewportHit& Hit) const;
-
-        NODISCARD FQuat GetPlacementRotation() const;
-
-        // Attaches the script a .cs file declares to DropTarget, or to a new entity when there is none.
-        virtual void HandleScriptSourceDrop(FStringView VirtualPath, ECS::FEntity DropTarget);
-
-        // Lets a tool file an entity a drop created, such as into the folder row it landed on.
-        virtual void OnDropSpawnedEntity(ECS::FEntity Entity) {}
+        struct FEntityListViewItemData
+        {
+            ECS::FEntity    Entity = ECS::NullEntity;
+            uint32          FolderID = 0;
+        };
 
         struct FEntityListFilterState
         {
             ImGuiTextFilter FilterName;
             TVector<FName>  ComponentFilters;
         };
-        FEntityListFilterState              EntityFilterState;
-
-        // True while the Scene Graph panel is focused/hovered, so selection shortcuts work from here.
-        bool                                bOutlinerActive = false;
-
-        FTreeListView                       OutlinerListView;
-
-        // What a viewport drag is placing, spawned outside any transaction and replaced by a transacted drop on release.
-        ECS::FEntity                        PlacementPreview = ECS::NullEntity;
-        CObject*                            PlacementPreviewAsset = nullptr;
-        TVector<ECS::FEntity>               PlacementPreviewEntities;
-        bool                                bPlacementPreviewAttempted = false;
-        // The renderer's copy of the scene from before the preview existed, which the placement reads under it.
-        bool                                bPlacementSnapshotRequested = false;
-        float                               PlacementYawDegrees = 0.0f;
-        float                               PlacementScale = 1.0f;
-        // Smooth trackpads report fractions of a notch, kept here until they add up to one.
-        float                               PlacementWheelCarry = 0.0f;
-        bool                                bPlacementScaling = false;
-        FTreeListViewContext                OutlinerContext;
-        THashMap<ECS::FEntity, FTreeNodeID> EntityToTreeNode;
-        TVector<ECS::FEntity>               PendingOutlinerAdds;
-        TVector<ECS::FEntity>               PendingExpanderRefresh;
-
-        // Destroyed rows, removed in one batch at the next flush since a streaming burst destroys thousands.
-        TVector<ECS::FEntity>               PendingOutlinerRemovals;
-        TVector<ECS::FEntity>               PendingFolderRemovals;
-        void                                FlushOutlinerRemovals();
 
         struct FComponentDestroyRequest
         {
-            const CStruct* Type = nullptr;
-            ECS::FEntity   EntityID = ECS::NullEntity;
+            const CStruct*  Type = nullptr;
+            ECS::FEntity    EntityID = ECS::NullEntity;
         };
 
+        // A table edits component memory in place, so the instances it was built over are kept to tell when they move.
         struct FComponentTableEntry
         {
-            TUniquePtr<FPropertyTable> Table;
-            const CStruct*             ReflectedType = nullptr;  // reflected component CStruct
-            FString                    Title;                    // header label + sort key
-            // The section's height when last drawn, which it reserves instead while it is out of view.
-            float                      LastDrawnHeight = 0.0f;
+            TUniquePtr<FPropertyTable>  Table;
+            const CStruct*              ReflectedType = nullptr;
+            FString                     Title;
+            void*                       Instance = nullptr;
+            TVector<void*>              OtherInstances;
+            float                       LastDrawnHeight = 0.0f;
         };
 
-        // Rebuild PropertyTables for Entity (component intersection + multi-edit across the selection).
+        virtual void OnSceneLoaded() {}
+
+        // Writes the editing surface back into the asset; the world editor edits in place, the prefab editor commits its preview world.
+        virtual void CommitScene() {}
+
+        virtual CPackage* GetScenePackage() const;
+        virtual void OnSelectionChanged() {}
+        NODISCARD virtual bool SupportsSceneFolders() const { return false; }
+
+        // Base shows named entities not tagged FHideInSceneOutliner; the prefab editor also requires prefab membership.
+        virtual bool IsOutlinerEntityVisible(ECS::FEntity Entity) const;
+
+        // A row between the outliner's search bar and its tree, where the world editor picks a networked world.
+        virtual void DrawOutlinerWorldSelector() {}
+
+        virtual void HandleOutlinerEmptyAreaDrop() {}
+        virtual void HandlePrefabContentDrop(FStringView VirtualPath, ECS::FEntity DropTarget, bool bAttachToTarget, const FTransform* SpawnTransform = nullptr) {}
+
+        // Attaches the script a .cs file declares to DropTarget, or to a new entity when there is none.
+        virtual void HandleScriptSourceDrop(FStringView VirtualPath, ECS::FEntity DropTarget);
+
+        virtual void OnDropSpawnedEntity(ECS::FEntity Entity) {}
+        virtual bool IsComponentHiddenInDetails(const CStruct* Type) const;
+        virtual void OnEntityCreatedInScene(ECS::FEntity Entity) {}
+        virtual FTransform GetNewEntitySpawnTransform() const;
+        virtual bool CanDeleteEntity(ECS::FEntity Entity) const { return true; }
+        virtual void PersistGizmoSettings() {}
+        virtual void PersistCameraPreviewScale() {}
+        virtual bool AllowCameraPreview() const { return true; }
+        virtual bool IsViewportPlaying() const { return false; }
+        virtual void DrawViewportToolbarPlayControls(float ButtonSize) {}
+        virtual void DrawViewportToolbarModeSelector(float ButtonSize) {}
+
+        void OnAssetLoadFinished() final;
+        void EndFrame() override;
+        void DrawViewportToolbar(const FUpdateContext& UpdateContext) override;
+        NODISCARD bool DrawsViewModeInViewportToolbar() const override { return true; }
+
+        void MarkSceneDirty();
+
+        // The world the outliner, details and selection inspect, which the world editor can point at another live world.
+        NODISCARD CWorld* GetObservedWorld() const { return ObservedWorld != nullptr ? ObservedWorld : World.Get(); }
+        NODISCARD bool IsInspectingForeignWorld() const { return ObservedWorld != nullptr && ObservedWorld != World.Get(); }
+        NODISCARD ECS::FRegistry& GetSceneRegistry() const { return GetObservedWorld()->GetEntityRegistry(); }
+
+        void SetSingleSelectedEntity(ECS::FEntity Entity);
+        void AddSelectedEntity(ECS::FEntity Entity);
+        void RemoveSelectedEntity(ECS::FEntity Entity);
+        void ToggleSelectedEntity(ECS::FEntity Entity);
+        void ClearSelectedEntities();
+
+        // Null safe, since teardown runs after the world is gone.
+        void ResetSelectionState();
+
+        // Rebuilds the selection from the registry tags, after an undo or a world swap.
+        void ResyncSelectionFromRegistry();
+
+        // Restamps the unserialized selection tags from the CPU set, since a true restore keeps handles but drops tags.
+        void ReapplySelectionTags();
+
+        NODISCARD bool IsEntitySelected(ECS::FEntity Entity) const { return SelectedEntities.find(Entity) != SelectedEntities.end(); }
+        NODISCARD const THashSet<ECS::FEntity>& GetSelectedEntities() const { return SelectedEntities; }
+        NODISCARD ECS::FEntity GetLastSelectedEntity() const { return LastSelectedEntity; }
+
+        // bInteractiveOnly drops the visualizers that have no main-thread pass.
+        void GatherVisualizerBindings(TVector<FVisualizerBinding>& OutBindings, bool bInteractiveOnly);
+        void GatherVisualizerEntities(TVector<ECS::FEntity>& OutEntities);
+
+        // Grows the selection into what the wireframe pass draws, its children or with bShowHierarchyVisualizers every tree it is in.
+        void ExpandVisualizerEntities(TVector<ECS::FEntity>& InOutEntities);
+
+        void RebuildSceneOutliner(FTreeListView& Tree);
+        FTreeNodeID AddEntityToOutliner(ECS::FEntity Entity);
+
+        // Built on first hover, since the component scan behind a row's tooltip is expensive.
+        void BuildEntityTooltip(ECS::FEntity Entity, FTreeNodeDisplay& Display);
+
+        void RemoveEntityFromOutliner(ECS::FEntity Entity);
+        void ReparentEntityInOutliner(ECS::FEntity Entity);
+        void RefreshOutlinerExpander(ECS::FEntity Entity);
+        void BuildEntityChildren(FTreeListView& Tree, FTreeNodeID Item);
+        void FlushOutlinerPending();
+        void FlushOutlinerRemovals();
+        void SyncOutlinerRowSelection(ECS::FEntity Entity, bool bSelected);
+        void DrawOutliner(bool bFocused);
+        void DrawFilterOptions();
+        NODISCARD size_t CountOutlinerEntities() const;
+        void DrawAddToEntityOrWorldPopup(ECS::FEntity Entity = ECS::NullEntity);
+
+        // The folder table lives on the world's singleton entity, which the outliner hides.
+        NODISCARD const SSceneFolderComponent* GetSceneFolders() const;
+        NODISCARD SSceneFolderComponent* GetEditableSceneFolders() const;
+        NODISCARD ECS::FEntity GetSceneFolderOwner() const;
+        NODISCARD uint32 GetEntityFolderID(ECS::FEntity Entity) const;
+        NODISCARD FTreeNodeID FindFolderNode(uint32 FolderID) const;
+        NODISCARD FString GetFolderPath(uint32 FolderID) const;
+        NODISCARD FName MakeUniqueFolderName(uint32 ParentID) const;
+        void BuildFolderNodes(FTreeListView& Tree);
+        void CollectFolderEntities(uint32 FolderID, TVector<ECS::FEntity>& OutEntities, bool bRecursive) const;
+        uint32 CreateSceneFolder(const FName& Name, uint32 ParentID);
+        void RenameSceneFolder(uint32 FolderID, FStringView NewName);
+        void DeleteSceneFolder(uint32 FolderID, bool bDeleteContents);
+        void MoveFolderIntoFolder(uint32 FolderID, uint32 NewParentID);
+
+        // Folder 0 unfiles the entities, and any parented to another entity are detached first.
+        void MoveEntitiesToFolder(const TVector<ECS::FEntity>& Entities, uint32 FolderID);
+
+        void SelectFolderContents(uint32 FolderID);
+        void SetFolderContentsHidden(uint32 FolderID, bool bHidden);
+        void DrawFolderContextMenu(uint32 FolderID);
+        void DrawMoveToFolderMenuItems(const TVector<ECS::FEntity>& Entities);
+        void DrawNewFolderButton(float ButtonSize);
+        void BeginFolderTransaction();
+        void RecordSceneFolderSnapshot();
+
+        void AcceptContentBrowserPayload(ECS::FEntity DropTarget, bool bAttachToTarget);
+
+        // The viewport as one drop target, moving a live preview of what a drag places; true while a drag hovers it.
+        bool DrawViewportDropTarget();
+
+        void HandleNewEntityDrop(const DragDrop::FPayload& Payload, ECS::FEntity DropTarget, bool bAttachToTarget, const FTransform* SpawnTransform = nullptr);
+        void DecorateNewEntity(const DragDrop::FPayload& Payload, ECS::FEntity Entity);
+
+        // An untransacted preview of what Payload places, replaced by a transacted drop on release.
+        void SpawnPlacementPreview(const DragDrop::FPayload& Payload);
+        void DestroyPlacementPreview();
+
+        // Tab switches the wheel between turning and scaling the placement preview, Ctrl taking coarser steps.
+        void HandlePlacementInput();
+
+        void DrawPlacementAdjustment(const FViewportHit& Hit) const;
+        NODISCARD FQuat GetPlacementRotation() const;
+
         void RebuildPropertyTables(ECS::FEntity Entity);
-        // Draw every component row for Entity.
+
+        // False once any table's component moved or went, as a swap remove from another entity does to it.
+        NODISCARD bool AreDetailsTablesCurrent() const;
+
+        void DrawDetailsPanel(bool bFocused);
+        void DrawEntityProperties(ECS::FEntity Entity);
+        void DrawEmptyState();
         void DrawComponentList(ECS::FEntity Entity);
 
-        // One search box over the whole details panel. Matches a component by its title, and otherwise
-        // filters INTO each component's property table, so searching a property name shows only the
-        // components that actually have it.
+        // One search box over the whole panel, matching a component by title and otherwise filtering into its table.
         void DrawComponentSearchBar();
 
-        ImGuiTextFilter DetailsFilter;
         void DrawComponentHeader(FComponentTableEntry& Entry, ECS::FEntity Entity);
-
-        // Under a static mesh with nothing to collide with, the one-click ways to give it collision.
         void DrawStaticMeshCollisionHint(ECS::FEntity Entity, const SStaticMeshComponent& MeshComponent);
+        void DrawAddCollisionMenuItem(ECS::FEntity Entity);
         void AddMeshCollisionTransacted(const TVector<ECS::FEntity>& Entities);
 
-        // Right-click entry that gives the entity, or every selected one, collision from its static mesh.
-        void DrawAddCollisionMenuItem(ECS::FEntity Entity);
-        // Sockets/bones on Entity's parent's mesh, for SocketPicker FName properties in the details.
         void BuildSocketPickerData(ECS::FEntity Entity, FSocketEditContext& Out);
 
-        // Provided to every details table this tool draws, refreshed per entity as the panel walks them.
-        FPropertyEditContext  PropertyContext;
-        FAnimGraphEditContext AnimGraphCtx;
-        FSocketEditContext    SocketCtx;
-        FWorldEditContext    WorldCtx;
-        FEntityPickContext   PickCtx;
-        // Remove a reflected component from Entity (marks details dirty for rebuild).
         void RemoveComponent(ECS::FEntity Entity, const CStruct* ComponentType);
-        // Drain queued reflected-component removals inside one transaction. Call from Update.
+
         void ProcessComponentEditRequests();
 
         void OnPrePropertyChangeEvent(const FPropertyChangedEvent& Event);
         void OnPostPropertyChangeEvent(const FPropertyChangedEvent& Event);
-
-        // Opens a transaction over just the component the details panel is about to write.
         void BeginPropertyEditTransaction(CStruct* ComponentType);
-
-        // Opens a transaction over just the folder table; for edits that touch nothing else.
-        void BeginFolderTransaction();
-
-        // Adds the folder table to an open transaction, for an edit that also rewires the hierarchy.
-        void RecordSceneFolderSnapshot();
-
-        // Adds the prefab override ledger to an open transaction, for a component add or remove.
         void RecordPrefabOverrideSnapshot(const TVector<ECS::FEntity>& Entities);
+        void PushRenameEntityModal(ECS::FEntity Entity);
+        void PushAddTagModal(ECS::FEntity Entity);
+        void DrawTagSection(ECS::FEntity Entity);
 
-        // The singleton entity carrying SSceneFolderComponent, or null before the world has one.
-        NODISCARD ECS::FEntity GetSceneFolderOwner() const;
-
-        // Hook: components that should never appear in the details panel. Base hides STagComponent
-        // (rendered separately as chips); the prefab editor also hides its SPrefabComponent.
-        virtual bool IsComponentHiddenInDetails(const CStruct* Type) const;
-        
         // Wraps the transaction, the creation hook, selection and dirty marking that every spawn shares.
-        ECS::FEntity SpawnEntityTransacted(FName Name, FName TransactionLabel,
-            const TFunction<void(ECS::FEntity)>& Decorate, const FTransform* SpawnTransform = nullptr);
+        ECS::FEntity SpawnEntityTransacted(FName Name, FName TransactionLabel, const TFunction<void(ECS::FEntity)>& Decorate, const FTransform* SpawnTransform = nullptr);
 
         void CreateEntity();
         void CreateEntityWithComponent(const CStruct* Component);
         void CreatePrimitiveEntity(CStaticMesh* PrimitiveMesh, const char* DisplayName);
 
-        // Entities a component-add targets: the whole selection when Entity is part of a
-        // multi-selection, otherwise just Entity.
+        // The whole selection when Entity is part of a multi-selection, otherwise just Entity.
         TVector<ECS::FEntity> GetComponentEditTargets(ECS::FEntity Entity);
-        // Add the picked reflected component to every target (skips ones already holding it).
+
         void ApplyAddComponentToTargets(const TVector<ECS::FEntity>& Targets, CStruct* PickedMetaType);
-        // Filterable, categorized list of addable reflected components.
-        // Fills OutMetaType/OutStruct and returns true on click.
-        // With OutDragging set, rows also drag out as new entities, and it reports whether one is being dragged.
+
+        // True on a click; with OutDragging set, rows also drag out as new entities and it reports whether one is.
         bool DrawAddableComponentList(const ImGuiTextFilter& Filter, const TVector<ECS::FEntity>& Targets, CStruct*& OutMetaType, CStruct*& OutStruct, bool* OutDragging = nullptr);
-        
-        virtual void OnEntityCreatedInScene(ECS::FEntity Entity) {}
-        virtual FTransform GetNewEntitySpawnTransform() const;
-        
-        // Entity clipboard (mirrored on the registry as FCopiedTag).
+
+        // The entity clipboard, mirrored on the registry as FCopiedTag.
         void AddEntityToCopies(ECS::FEntity Entity);
         void RemoveEntityFromCopies(ECS::FEntity Entity);
         void ClearCopies() const;
-        // Deep-copy From into a new entity To (component duplicate via the editor's default filter).
         void CopyEntity(ECS::FEntity& To, ECS::FEntity From);
-
-        // Draws component visualizers for the current selection (+ their children). Shared EndFrame body.
-        void EndFrame() override;
 
         void CycleGuizmoOp();
         void ToggleGuizmoMode();
-
-        // Hook: persist the current gizmo snap members to the tool's settings object. Default no-op;
-        // World/Prefab editors override to write their CDeveloperSettings + save.
-        virtual void PersistGizmoSettings() {}
-        
-        void DrawViewportToolbar(const FUpdateContext& UpdateContext) override;
-
-        // The scene viewport toolbar carries the eye button, so the menu-bar "Visualize" dropdown stays off.
-        NODISCARD bool DrawsViewModeInViewportToolbar() const override { return true; }
         void DrawCameraControls(float ButtonSize);
         void DrawViewportOptions(float ButtonSize);
         void DrawSnapSettingsPopup();
-
-        // Hook: true while the viewport is showing a running/simulating game (shrinks the bar).
-        virtual bool IsViewportPlaying() const { return false; }
-        // Hook: leading play/simulate controls (+ its own trailing separator). World only.
-        virtual void DrawViewportToolbarPlayControls(float ButtonSize) {}
-        // Hook: trailing editor-mode selector + active-mode toolbar (+ its own leading separator). World only.
-        virtual void DrawViewportToolbarModeSelector(float ButtonSize) {}
-
-        ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
-        ImGuizmo::MODE      GuizmoMode = ImGuizmo::WORLD;
-
         void UpdateCameraPreview();
         void DrawCameraPreviewOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize);
 
-        // Hook: extra gate for the preview (world editor: off during game view).
-        virtual bool AllowCameraPreview() const { return true; }
-        // Hook: persist CameraPreviewScale after a resize drag. Default no-op; World/Prefab
-        // editors write their CDeveloperSettings + save (mirrors PersistGizmoSettings).
-        virtual void PersistCameraPreviewScale() {}
+        static constexpr uint32                 CameraPreviewWidth = 720;
+        static constexpr uint32                 CameraPreviewHeight = 405;
 
-        IRenderScene*           CameraPreviewScene = nullptr;
-        int32                   CameraPreviewHandle = -1;
-        bool                    bCameraPreviewActive = false;
-        static constexpr uint32 CameraPreviewWidth  = 720;
-        static constexpr uint32 CameraPreviewHeight = 405;
+        CWorld*                                 ObservedWorld = nullptr;
+        THashSet<ECS::FEntity>                  SelectedEntities;
+        ECS::FEntity                            LastSelectedEntity = ECS::NullEntity;
 
-        // Preview overlay display scale + corner drag-resize state. bCameraPreviewMouseOver is
-        // last frame's grip hover/drag; it gates viewport picking so a resize drag never falls
-        // through to selection.
-        float                   CameraPreviewScale = 0.6f;
-        bool                    bCameraPreviewResizing = false;
-        bool                    bCameraPreviewMouseOver = false;
+        THashMap<uint32, CComponentVisualizer*> VisualizerCache;
+        SIZE_T                                  CachedVisualizerCount = ~(SIZE_T)0;
+        TVector<ECS::FEntity>                   VisualizerEntityScratch;
+        TVector<FVisualizerBinding>             VisualizerBindingScratch;
+        FVisualizerInteractionState             VisualizerInteraction;
 
-        // The camera popup's euler row is authored, since re-deriving it snaps 179 to a gimbal-equivalent triple.
-        FVector3                CameraEulerDegrees = FVector3(0.0f);
-        FQuat                   CameraEulerRotationSource = FQuat::Identity();
+        FTreeListView                           OutlinerListView;
+        FTreeListViewContext                    OutlinerContext;
+        FEntityListFilterState                  EntityFilterState;
+        ImGuiTextFilter                         AddEntityComponentFilter;
+        THashMap<ECS::FEntity, FTreeNodeID>     EntityToTreeNode;
+        THashMap<uint32, FTreeNodeID>           FolderToTreeNode;
+        THashMap<ECS::FEntity, uint32>          EntityFolderCache;
+        TVector<ECS::FEntity>                   PendingOutlinerAdds;
+        TVector<ECS::FEntity>                   PendingExpanderRefresh;
 
+        // Removed in one batch at the next flush, since a streaming burst destroys thousands.
+        TVector<ECS::FEntity>                   PendingOutlinerRemovals;
+        TVector<ECS::FEntity>                   PendingFolderRemovals;
 
+        // A freshly created folder, whose row enters inline rename on the next draw.
+        uint32                                  PendingFolderRename = 0;
+        bool                                    bOutlinerActive = false;
 
-        // Tool-window body: resolves the last-selected entity, rebuilds tables, draws the panel.
-        void DrawDetailsPanel(bool bFocused);
-        // The panel header (name + add-component + delete) and component list for one entity.
-        void DrawEntityProperties(ECS::FEntity Entity);
-        void DrawEmptyState();
+        ECS::FEntity                            PlacementPreview = ECS::NullEntity;
+        CObject*                                PlacementPreviewAsset = nullptr;
+        TVector<ECS::FEntity>                   PlacementPreviewEntities;
+        float                                   PlacementYawDegrees = 0.0f;
+        float                                   PlacementScale = 1.0f;
 
-        // Hook: whether Entity may be deleted from the panel (prefab forbids the root).
-        virtual bool CanDeleteEntity(ECS::FEntity Entity) const { return true; }
-        // Modal name prompt for one entity. Also reached from the outliner context menu.
-        void PushRenameEntityModal(ECS::FEntity Entity);
+        // Smooth trackpads report fractions of a notch, kept here until they add up to one.
+        float                                   PlacementWheelCarry = 0.0f;
+        bool                                    bPlacementScaling = false;
+        bool                                    bPlacementPreviewAttempted = false;
 
-        // Any registry carries tags, so prefab entities get the same section and prompt as world ones.
-        void PushAddTagModal(ECS::FEntity Entity);
-        void DrawTagSection(ECS::FEntity Entity);
+        // The renderer's copy of the scene from before the preview existed, which the placement reads under it.
+        bool                                    bPlacementSnapshotRequested = false;
+
+        TVector<FComponentTableEntry>           PropertyTables;
+        TVector<ECS::FEntity>                   DetailsOtherEntities;
+        ImGuiTextFilter                         DetailsFilter;
+        ECS::FEntity                            DetailsEntity = ECS::NullEntity;
+        TQueue<FComponentDestroyRequest>        ComponentDestroyRequests;
+        TQueue<ECS::FEntity>                    EntityDestroyRequests;
+        bool                                    bDetailsDirty = false;
+
+        // A table points into a value buffer and a layout that a script reload frees, so the next draw drops them all.
+        bool                                    bDetailsScriptsReloaded = false;
+
+        // A prefab refresh rewrites an instance's components and replaces the baselines its reset-to-prefab points into.
+        uint32                                  DetailsPrefabGeneration = 0;
+
+        // Armed by a selection change and consumed by the next tick, rather than resolving transforms every frame.
+        bool                                    bSelectionTransformRefreshPending = false;
+
+        FPropertyEditContext                    PropertyContext;
+        FAnimGraphEditContext                   AnimGraphCtx;
+        FSocketEditContext                      SocketCtx;
+        FWorldEditContext                       WorldCtx;
+        FEntityPickContext                      PickCtx;
 
         // Owned by the tool rather than the modal lambda, which cannot hold state across frames.
-        FFixedString TextModalBuffer;
+        FFixedString                            TextModalBuffer;
 
-        TQueue<ECS::FEntity> EntityDestroyRequests;
-        bool                bImGuizmoUsedOnce = false;
-        bool                bGuizmoSnapEnabled = true;
-        float               GuizmoSnapTranslate = 0.1f;
-        float               GuizmoSnapRotate = 5.0f;
-        float               GuizmoSnapScale = 0.1f;
+        ImGuizmo::OPERATION                     GuizmoOp = ImGuizmo::TRANSLATE;
+        ImGuizmo::MODE                          GuizmoMode = ImGuizmo::WORLD;
+        float                                   GuizmoSnapTranslate = 0.1f;
+        float                                   GuizmoSnapRotate = 5.0f;
+        float                                   GuizmoSnapScale = 0.1f;
+        bool                                    bGuizmoSnapEnabled = true;
+        bool                                    bImGuizmoUsedOnce = false;
 
-        TVector<FComponentTableEntry>    PropertyTables;
-        TQueue<FComponentDestroyRequest> ComponentDestroyRequests;
-        ECS::FEntity                     DetailsEntity = ECS::NullEntity;
-        bool                             bDetailsDirty = false;
+        IRenderScene*                           CameraPreviewScene = nullptr;
+        int32                                   CameraPreviewHandle = -1;
+        float                                   CameraPreviewScale = 0.6f;
+        bool                                    bCameraPreviewActive = false;
+        bool                                    bCameraPreviewResizing = false;
 
-        // One-shot: arm a transform resolve for the newly selected entities on the next tick. Set from
-        // OnSelectionChanged (which every selection mutator already calls), consumed and cleared by the
-        // tool's tick. Selection used to arm this EVERY frame, which is O(subtree) per frame -- see the
-        // consuming site in WorldEditorTool.
-        bool                             bSelectionTransformRefreshPending = false;
+        // Last frame's grip hover or drag, which keeps a resize from falling through to viewport picking.
+        bool                                    bCameraPreviewMouseOver = false;
 
-        // A component table points into a value buffer and a layout that a script reload frees, so the next draw drops them all.
-        bool                             bDetailsScriptsReloaded = false;
-
-        // Same contract for prefab data: a refresh rewrites an instance's component set and a re-capture
-        // replaces the prefab registry the reset-to-prefab baselines point into.
-        uint32                           DetailsPrefabGeneration = 0;
+        // Authored rather than derived each frame, since re-deriving a rotation snaps 179 to a gimbal-equivalent triple.
+        FVector3                                CameraEulerDegrees = FVector3(0.0f);
+        FQuat                                   CameraEulerRotationSource = FQuat::Identity();
     };
 }

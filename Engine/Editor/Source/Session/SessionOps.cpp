@@ -2,6 +2,7 @@
 
 #include "Session/SessionOps.h"
 
+#include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectIterator.h"
@@ -646,6 +647,39 @@ namespace Lumina::SessionOps
             OutError = Lumina::Format("{} package(s) failed to save.", OutFailedPaths.size());
             return false;
         }
+        return true;
+    }
+
+    bool SaveAsset(CObject* Asset, FString& OutError)
+    {
+        CPackage* Package = Asset != nullptr ? Asset->GetPackage() : nullptr;
+        if (Package == nullptr)
+        {
+            OutError = "That asset has no package to save.";
+            return false;
+        }
+
+        if (FEditorUI* UI = FindUI())
+        {
+            if (FEditorTool* Tool = UI->FindAssetEditor(Asset))
+            {
+                Tool->OnSave();
+                if (Package->IsDirty())
+                {
+                    OutError = Lumina::Format("{}'s editor refused to save it.", Package->GetPackagePath());
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        if (!CPackage::SavePackage(Package, Package->GetPackagePath()))
+        {
+            OutError = Lumina::Format("Could not save {}.", Package->GetPackagePath());
+            return false;
+        }
+
+        FAssetRegistry::Get().AssetSaved(Asset);
         return true;
     }
 

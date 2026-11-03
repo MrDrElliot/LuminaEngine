@@ -80,25 +80,29 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        /** How far the grid reaches from the origin, in world units. */
-        PROPERTY(Editable, Category = "Grid", ClampMin = 10.0f, ClampMax = 10000.0f)
-        float Extent = 500.0f;
-
-        /** Distance between grid lines, in world units. */
-        PROPERTY(Editable, Category = "Grid", ClampMin = 0.1f, ClampMax = 1000.0f)
+        /** Size of the smallest grid cell, in world units. Lines every 10 and 100 cells take over as the camera pulls back. */
+        PROPERTY(Editable, Category = "Grid", ClampMin = 0.01f, ClampMax = 1000.0f)
         float Spacing = 1.0f;
 
-        /** Screen thickness of the ordinary grid lines. */
-        PROPERTY(Editable, Category = "Grid", ClampMin = 0.1f, ClampMax = 10.0f)
-        float LineThickness = 1.25f;
+        /** How far from the camera the grid fades out, in world units. It reaches further as the camera rises. */
+        PROPERTY(Editable, Category = "Grid", DisplayName = "Fade Distance", ClampMin = 10.0f, ClampMax = 100000.0f)
+        float Extent = 500.0f;
 
-        /** Color and opacity of the ordinary grid lines. */
+        /** Screen width of the grid lines, in pixels. */
+        PROPERTY(Editable, Category = "Grid", ClampMin = 0.5f, ClampMax = 4.0f)
+        float LineThickness = 1.0f;
+
+        /** Color and opacity of the finest grid lines. */
         PROPERTY(Editable, Color, Category = "Grid")
-        FVector4 LineColor = FVector4(0.05f, 0.05f, 0.05f, 0.025f);
+        FVector4 MinorLineColor = FVector4(0.05f, 0.05f, 0.05f, 0.28f);
 
-        /** Screen thickness of the X and Z axis lines through the origin. */
-        PROPERTY(Editable, Category = "Axes", ClampMin = 0.1f, ClampMax = 20.0f)
-        float AxisThickness = 2.5f;
+        /** Color and opacity of every tenth grid line. */
+        PROPERTY(Editable, Color, Category = "Grid")
+        FVector4 MajorLineColor = FVector4(0.05f, 0.05f, 0.05f, 0.50f);
+
+        /** Screen width of the X and Z axis lines through the origin, in pixels. */
+        PROPERTY(Editable, Category = "Axes", ClampMin = 0.5f, ClampMax = 8.0f)
+        float AxisThickness = 2.0f;
 
         /** Draw the vertical (Y) axis line through the origin. */
         PROPERTY(Editable, Category = "Axes")
@@ -108,10 +112,6 @@ namespace Lumina
         PROPERTY(Editable, Category = "Axes", ClampMin = 0.1f, ClampMax = 20.0f)
         float VerticalAxisThickness = 4.0f;
 
-        /** Upper bound on grid lines per axis. Extent/Spacing combinations past this coarsen rather
-            than flooding the line batcher; a 10000 extent at 0.1 spacing would otherwise be 200k lines. */
-        PROPERTY(Editable, Category = "Grid", ClampMin = 16, ClampMax = 8192)
-        int32 MaxLinesPerAxis = 2048;
     };
 
     // External application C# script sources open in.

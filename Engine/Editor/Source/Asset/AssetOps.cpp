@@ -178,11 +178,60 @@ namespace Lumina::AssetOps
         }
     }
 
+    bool IsValidLeafName(FStringView Name, FString* OutReason)
+    {
+        const auto Fail = [OutReason](const char* Reason)
+        {
+            if (OutReason != nullptr)
+            {
+                *OutReason = Reason;
+            }
+            return false;
+        };
+
+        if (Name.empty())
+        {
+            return Fail("A name cannot be empty.");
+        }
+
+        if (Name == "." || Name == "..")
+        {
+            return Fail("A name cannot be '.' or '..'.");
+        }
+
+        for (const char Character : Name)
+        {
+            if (static_cast<unsigned char>(Character) < 0x20 || FStringView("<>:\"/\\|?*").find(Character) != FStringView::npos)
+            {
+                return Fail("A name cannot contain a path separator or any of < > : \" | ? *.");
+            }
+        }
+
+        if (Name.back() == '.' || Name.back() == ' ' || Name.front() == ' ')
+        {
+            return Fail("A name cannot start with a space or end with a space or a dot.");
+        }
+
+        return true;
+    }
+
     FPathOpResult MovePath(FStringView OldPath, FStringView NewPath)
     {
         if (OldPath.empty() || NewPath.empty())
         {
             return FPathOpResult::Fail("A move needs both a source and a destination.");
+        }
+
+        // A file whose stem is empty registers under no name, which is how a rename to 'Folder/' left an orphaned '.lasset'.
+        const FStringView Leaf = VFS::FileName(NewPath);
+        FString LeafReason;
+        if (!IsValidLeafName(Leaf, &LeafReason))
+        {
+            return FPathOpResult::Fail(Lumina::Format("'{}' is not a valid name. {}", Leaf, LeafReason));
+        }
+        if (!VFS::IsDirectory(OldPath) && VFS::FileName(NewPath, true).empty())
+        {
+            return FPathOpResult::Fail("A file needs a name before its extension.");
         }
 
         if (OldPath == NewPath)
@@ -294,6 +343,43 @@ namespace Lumina::AssetOps
         return false;
     }
 
+    FString FindDependentPrefabVariants(FStringView AssetPath)
+    {
+        const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath);
+        CClass* AssetClass = Data != nullptr ? FindObject<CClass>(Data->AssetClass) : nullptr;
+        if (AssetClass == nullptr || !AssetClass->IsChildOf(CPrefab::StaticClass()))
+        {
+            return FString();
+        }
+
+        CPrefab* Prefab = LoadObject<CPrefab>(Data->AssetGUID);
+        if (Prefab == nullptr)
+        {
+            return FString();
+        }
+
+        // FindDirectVariants walks loaded objects, so a variant nobody opened has to be brought in first.
+        for (const FAssetData* Referencer : FAssetRegistry::Get().GetReferencersOf(Data->AssetGUID))
+        {
+            CClass* ReferencerClass = Referencer != nullptr ? FindObject<CClass>(Referencer->AssetClass) : nullptr;
+            if (ReferencerClass != nullptr && ReferencerClass->IsChildOf(CPrefab::StaticClass()))
+            {
+                LoadObject<CPrefab>(Referencer->AssetGUID);
+            }
+        }
+
+        FString Variants;
+        for (CPrefab* Variant : Prefab->FindDirectVariants())
+        {
+            if (!Variants.empty())
+            {
+                Variants += ", ";
+            }
+            Variants += Variant->GetName().c_str();
+        }
+        return Variants;
+    }
+
     FDeleteAssetResult DeleteAsset(FStringView AssetPath, IEditorToolContext* Context)
     {
         FDeleteAssetResult Result;
@@ -313,6 +399,13 @@ namespace Lumina::AssetOps
         if (IsLoadedWorldAsset(AssetPath))
         {
             Result.Error = Lumina::Format("{} is the loaded world; open another world first.", AssetPath);
+            return Result;
+        }
+
+        // Refused rather than cascaded, since a variant is defined by its parent and resolves to nothing without it.
+        if (const FString Variants = FindDependentPrefabVariants(AssetPath); !Variants.empty())
+        {
+            Result.Error = Lumina::Format("{} is the parent of {}. Delete or reparent those first.", AssetPath, Variants);
             return Result;
         }
 

@@ -181,8 +181,7 @@ namespace Lumina
         CreateToolWindow(GridWindowName, [this](bool) { DrawGrid(); });
         CreateToolWindow(DetailsWindowName, [this](bool) { DrawDetails(); });
 
-        FPropertyChangedEventCallbacks& Callbacks = Details.ChangeEventCallbacks;
-        Callbacks.bEditMultipleValues = true;
+        Details.SetEditMultipleValues(true);
         Details.SetStartEditCallback([this](const FPropertyChangedEvent& Event)
         {
             if (!Selection.empty())
@@ -193,16 +192,15 @@ namespace Lumina
         Details.SetPostEditCallback([this](const FPropertyChangedEvent&) { SpreadEdit(); });
         Details.SetFinishEditCallback([this](const FPropertyChangedEvent&) { FinishEdit(); });
 
-        Callbacks.IsMultiValueFn = [this](FProperty* Property)
+        Details.SetMultiValueFn([this](FProperty* Property)
         {
             return Algo::AnyOf(Selection, [this, Property](CObject* Object)
             {
                 return !Property->Identical_InContainer(Selection.front(), Object);
             });
-        };
+        });
 
-        Callbacks.RowTrailingControlWidth = ImGui::GetFrameHeight();
-        Callbacks.RowTrailingControlFn = [this](FProperty* Property)
+        Details.SetTrailingControl([this](FProperty* Property)
         {
             if (!Algo::Contains(ColumnCandidates, Property))
             {
@@ -224,7 +222,7 @@ namespace Lumina
             {
                 ImGuiX::TextTooltip("Show this property as a column in the grid");
             }
-        };
+        }, ImGui::GetFrameHeight());
     }
 
     void FPropertyMatrixTool::OnDeinitialize(const FUpdateContext& UpdateContext)

@@ -1098,6 +1098,12 @@ namespace Lumina
                 }
 
                 #if USING(WITH_EDITOR)
+                // After the temporal resolve, since its lines are anti-aliased analytically and jitter would only blur them.
+                {
+                    SCENE_GPU_SCOPE(CL, "Editor Grid");
+                    EditorGridPass(CL);
+                }
+
                 // After SMAA so the neighborhood blend cannot smear the outline, before Widgets so UI wins.
                 {
                     SCENE_GPU_SCOPE(CL, "Selection Outline");

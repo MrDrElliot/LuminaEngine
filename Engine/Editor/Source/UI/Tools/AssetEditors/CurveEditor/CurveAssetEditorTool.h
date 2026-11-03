@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UI/CurveEditor/CurveEditorWidget.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
@@ -25,6 +25,8 @@ namespace Lumina
 
         void OnInitialize() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override {}
+        void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
+        void OnPostUndoRedo() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
     private:

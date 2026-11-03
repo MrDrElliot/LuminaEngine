@@ -129,8 +129,13 @@ namespace Lumina::ECS
 
     private:
 
+        NODISCARD FComponentTypeID FindByNameLocked(const FName& Name) const;
+
         // Boxed, so a reference handed out for one type survives every later registration.
         TVector<TUniquePtr<FComponentTypeInfo>> Types;
+
+        // Loader threads first-touch types in parallel, and an unguarded append hands two types one id and one pool.
+        mutable FMutex TypesLock;
 
         // Only pools of runtime-layout types, the ones a reshape has to reach.
         TVector<FSparseSet*> RuntimeLayoutPools;
@@ -381,12 +386,12 @@ namespace Lumina::ECS
         // Constant-initialized, so unlike a lazy static this carries no thread-safe-init guard on every read.
         static std::atomic<FComponentTypeID> Cached{ InvalidComponentTypeID };
 
-        FComponentTypeID TypeID = Cached.load(std::memory_order_relaxed);
+        FComponentTypeID TypeID = Cached.load(std::memory_order_acquire);
         if (TypeID == InvalidComponentTypeID) [[unlikely]]
         {
-            // Acquire is idempotent per name, so two threads racing here resolve the same id.
+            // Acquire is idempotent per name under its lock, so two threads racing here resolve the same id.
             TypeID = FComponentTypeRegistry::Get().Acquire(MakeComponentTypeInfo<T>());
-            Cached.store(TypeID, std::memory_order_relaxed);
+            Cached.store(TypeID, std::memory_order_release);
         }
         return TypeID;
     }

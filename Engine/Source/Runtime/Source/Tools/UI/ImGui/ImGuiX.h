@@ -155,6 +155,9 @@ namespace Lumina::ImGuiX
     RUNTIME_API bool SelectAllCheckbox(const char* Label, uint32 NumChecked, uint32 NumTotal, bool& bOutCheckAll);
     RUNTIME_API bool ToggleSwitch(const char* Label, bool* Value);
 
+    // Top-left position that centers a lone icon glyph in a rectangle: on its advance across, and on its ink vertically.
+    RUNTIME_API ImVec2 CenteredIconPos(const char* Icon, const ImVec2& Min, const ImVec2& Max);
+
     inline bool FlatButton( char const* pLabel, ImVec2 const& size = ImVec2( 0, 0 ), const ImColor& foregroundColor = ImGui::ColorConvertFloat4ToU32( ImGui::GetStyle().Colors[ImGuiCol_Text] ) )
     {
         return ButtonEx( nullptr, pLabel, size, ImColor(0), ImColor(0), ImGui::ColorConvertFloat4ToU32(ImGui::GetStyle().Colors[ImGuiCol_Text]));
@@ -206,6 +209,9 @@ namespace Lumina::ImGuiX
     // offering the typed text appears whenever it matches no item, and the pick lands there instead of
     // in the return value, which stays Constants::kIndexNone.
     RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr, FFixedString* OutCreatedText = nullptr);
+
+    // Whether that combo's list is open, so a caller can skip gathering items nobody can see.
+    RUNTIME_API bool IsSearchableComboOpen(const char* StrId);
 
     // Searchable combo for picking an asset of (or deriving from) FilterClass from the registry.
     // Writes the chosen asset's GUID into InOutGUID and returns true when it changes.
@@ -341,7 +347,7 @@ namespace Lumina::ImGuiX
         static float GetWindowControlsWidth();
 
         // Height of the single row the sections draw on. Content taller than a line of text (icons,
-        // images) must be offset up by half the difference to stay centered on the bar.
+        // images) should be centered on the section's height, since the menu cursor is not on the text row.
         static float GetContentRowHeight();
 
     private:

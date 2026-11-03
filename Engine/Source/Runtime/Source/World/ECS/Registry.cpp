@@ -35,7 +35,9 @@ namespace Lumina::ECS
 
     FComponentTypeID FComponentTypeRegistry::Acquire(const FComponentTypeInfo& Info)
     {
-        if (const FComponentTypeID Existing = FindByName(Info.Name); Existing != InvalidComponentTypeID)
+        FScopeLock Lock(TypesLock);
+
+        if (const FComponentTypeID Existing = FindByNameLocked(Info.Name); Existing != InvalidComponentTypeID)
         {
             return Existing;
         }
@@ -59,6 +61,12 @@ namespace Lumina::ECS
 
     FComponentTypeID FComponentTypeRegistry::FindByName(const FName& Name) const
     {
+        FScopeLock Lock(TypesLock);
+        return FindByNameLocked(Name);
+    }
+
+    FComponentTypeID FComponentTypeRegistry::FindByNameLocked(const FName& Name) const
+    {
         for (const TUniquePtr<FComponentTypeInfo>& Info : Types)
         {
             if (Info->Name == Name)
@@ -76,6 +84,7 @@ namespace Lumina::ECS
             return InvalidComponentTypeID;
         }
 
+        FScopeLock Lock(TypesLock);
         for (const TUniquePtr<FComponentTypeInfo>& Info : Types)
         {
             if (Info->GetStruct() == Struct)
@@ -88,6 +97,7 @@ namespace Lumina::ECS
 
     size_t FComponentTypeRegistry::Num() const
     {
+        FScopeLock Lock(TypesLock);
         return Types.size();
     }
 
@@ -431,10 +441,12 @@ namespace Lumina::ECS
         HierarchyChanged.Broadcast(*this, OldParent);
     }
 
+    // Indexed, since an OnDestroy handler that first touches a type grows ActiveStorages under the loop.
     void FRegistry::DetachFromAllStorages(FEntity Entity)
     {
-        for (FSparseSet* Storage : ActiveStorages)
+        for (size_t Index = 0; Index < ActiveStorages.size(); ++Index)
         {
+            FSparseSet* Storage = ActiveStorages[Index];
             if (!Storage->Contains(Entity))
             {
                 continue;

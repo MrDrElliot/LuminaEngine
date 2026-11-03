@@ -3,6 +3,7 @@
 
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
+#include "UI/Tools/EditorToolContext.h"
 #include "Core/Object/Cast.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -876,6 +877,7 @@ namespace Lumina
         MeshEntity = World->ConstructEntity("MeshEntity");
         SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
         MeshComponent.SetSkeletalMesh(SkeletalMesh);
+        PreviewSkeleton = SkeletalMesh->Skeleton.Get();
 
         if (SkeletalMesh->Skeleton.IsValid())
         {
@@ -1165,6 +1167,7 @@ namespace Lumina
 
     void FSkeletalMeshEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
+        SocketHierarchy.CloseOpenDragTransaction();
     }
 
     void FSkeletalMeshEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
@@ -1182,6 +1185,14 @@ namespace Lumina
         CSkeletalMesh* SkeletalMesh = CastAsserted<CSkeletalMesh>(Asset.Get());
         SocketHierarchy.Initialize(SkeletalMesh->Skeleton.Get(), SkeletalMesh, &GetTransactionManager());
         SocketHierarchy.OnUndoRedo();
+
+        if (MeshEntity != ECS::NullEntity && PreviewSkeleton.Get() != SkeletalMesh->Skeleton.Get())
+        {
+            SkeletalMesh->RemapJointIndicesToSkeleton();
+            PreviewClip = nullptr;
+            World->DestroyEntity(MeshEntity);
+            CreatePreviewMeshEntity();
+        }
     }
 
     void FSkeletalMeshEditorTool::OnAssetLoadFinished()
@@ -1205,6 +1216,29 @@ namespace Lumina
         SocketHierarchy.Initialize(SkeletalMesh->Skeleton.Get(), SkeletalMesh, &GetTransactionManager());
     }
 
+    void FSkeletalMeshEditorTool::OnSave()
+    {
+        FAssetEditorTool::OnSave();
+
+        CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
+        CPackage* SkeletonPackage = SkeletalMesh != nullptr && SkeletalMesh->Skeleton.IsValid() ? SkeletalMesh->Skeleton->GetPackage() : nullptr;
+        if (SkeletonPackage != nullptr && SkeletonPackage->IsDirty())
+        {
+            ToolContext->SavePackages({ SkeletonPackage });
+        }
+    }
+
+    bool FSkeletalMeshEditorTool::IsUnsavedDocument()
+    {
+        if (FAssetEditorTool::IsUnsavedDocument())
+        {
+            return true;
+        }
+        CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
+        CPackage* SkeletonPackage = SkeletalMesh != nullptr && SkeletalMesh->Skeleton.IsValid() ? SkeletalMesh->Skeleton->GetPackage() : nullptr;
+        return SkeletonPackage != nullptr && SkeletonPackage->IsDirty();
+    }
+
     void FSkeletalMeshEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
     {
         CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
@@ -1215,6 +1249,7 @@ namespace Lumina
 
         // The property table never calls PostPropertyChange, so a Skeleton swap would leave the indices behind.
         SkeletalMesh->RemapJointIndicesToSkeleton();
+        SkeletalMesh->BumpSocketGeneration();
 
         if (Event.PropertyName == "Skeleton")
         {
@@ -1267,7 +1302,7 @@ namespace Lumina
         if (ImGui::BeginMenu(LE_ICON_MOVE_RESIZE " Gizmo Control"))
         {
             const char* operations[] = { "Translate", "Rotate", "Scale" };
-            static int currentOp = 0;
+            int currentOp = GuizmoOp == ImGuizmo::ROTATE ? 1 : (GuizmoOp == ImGuizmo::SCALE ? 2 : 0);
 
             if (ImGui::Combo("##", &currentOp, operations, IM_ARRAYSIZE(operations)))
             {

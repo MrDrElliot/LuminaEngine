@@ -13,6 +13,7 @@
 namespace Lumina
 {
     class CAnimation;
+    class CSkeletalMesh;
     class CAnimationMontage;
     struct SSimpleAnimationComponent;
 
@@ -97,9 +98,13 @@ namespace Lumina
         float          DragGrabOffset = 0.0f;
 
         float LaneAddTime = 0.0f;
+        int32 LaneAddTrack = 0;
+        int32 SelectedNotifyTrack = 0;
+        float TrackScroll = 0.0f;
 
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;
         FPreviewMeshSelection PreviewMeshSelection;
+        TWeakObjectPtr<CSkeletalMesh> PreviewMeshInUse;
     };
 }

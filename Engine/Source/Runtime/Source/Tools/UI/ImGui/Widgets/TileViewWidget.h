@@ -172,7 +172,7 @@ namespace Lumina
         // lands on empty space.
         void HandleSelectionKeys(const FTileViewContext& Context);
 
-        void RebuildTree(const FTileViewContext& Context, bool bKeepSelections = false);
+        void RebuildTree(const FTileViewContext& Context);
 
         // Draws one full cell (icon button + label) as a single group for SameLine layout.
         void DrawTile(FTileViewItem* Item, const FTileViewContext& Context);

@@ -145,6 +145,24 @@ namespace Lumina
     RUNTIME_API bool IsValueValidForType(double Value, EPropertyTypeFlags Type);
     RUNTIME_API bool IsPropertyNumeric(EPropertyTypeFlags Type);
 
+    // A number held at the width it was read, so converting between integer kinds never rounds through a double.
+    struct FNumericValue
+    {
+        enum class EKind : uint8 { Signed, Unsigned, Float };
+
+        EKind   Kind = EKind::Signed;
+        int64   Signed = 0;
+        uint64  Unsigned = 0;
+        double  Float = 0.0;
+    };
+
+    // Bytes a numeric kind occupies, or zero for anything else.
+    NODISCARD RUNTIME_API uint32 GetNumericSize(EPropertyTypeFlags Type);
+    RUNTIME_API bool ReadNumber(EPropertyTypeFlags Type, const void* Memory, FNumericValue& Out);
+
+    // False, leaving Memory untouched, when the value does not fit Type.
+    RUNTIME_API bool WriteNumber(EPropertyTypeFlags Type, void* Memory, const FNumericValue& Value);
+
     // Builds the property and every inner its type describes, attached wherever Owner says.
     RUNTIME_API FProperty* ConstructProperty(const FPropertyOwner& Owner, const FPropertyDesc& Desc);
 

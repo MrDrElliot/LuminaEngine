@@ -129,6 +129,12 @@ namespace Lumina
             // Commit first, since the after-image has to be captured before any recompile.
             GetTransactionManager().CommitTransaction();
 
+            CObject* Edited = SelectedObject != nullptr ? SelectedObject : Asset.Get();
+            if (Edited != nullptr && Edited->GetPackage() != nullptr)
+            {
+                Edited->GetPackage()->MarkDirty();
+            }
+
             if (SelectedModule == nullptr && Cast<CEdGraphNode>(SelectedObject) == nullptr)
             {
                 return;   // system-wide settings feed the sim uniforms directly
@@ -593,9 +599,8 @@ namespace Lumina
         {
             DrawList->AddRectFilled(Min, ImVec2(Min.x + Size, Min.y + Size), EditorColors::U32(EditorColors::Lighten(EditorColors::RowBgHovered(), 0.05f)), 4.0f);
         }
-        const ImVec2 Glyph = ImGui::CalcTextSize(Icon);
-        const ImVec4 Tint  = !bEnabled ? EditorColors::WithAlpha(Color, 0.3f) : bHovered ? HoverColor : Color;
-        DrawList->AddText(ImVec2(Min.x + (Size - Glyph.x) * 0.5f, Min.y + (Size - Glyph.y) * 0.5f), EditorColors::U32(Tint), Icon);
+        const ImVec4 Tint = !bEnabled ? EditorColors::WithAlpha(Color, 0.3f) : bHovered ? HoverColor : Color;
+        DrawList->AddText(ImGuiX::CenteredIconPos(Icon, Min, ImVec2(Min.x + Size, Min.y + Size)), EditorColors::U32(Tint), Icon);
         if (bHovered && Tooltip != nullptr)
         {
             ImGui::SetTooltip("%s", Tooltip);
@@ -1208,6 +1213,27 @@ namespace Lumina
                 ImGuiX::Notifications::NotifyError("Failed to save emitter asset '{0}'.", Emitter->GetName().c_str());
             }
         }
+    }
+
+    bool FParticleSystemEditorTool::IsUnsavedDocument()
+    {
+        if (FAssetEditorTool::IsUnsavedDocument())
+        {
+            return true;
+        }
+        if (GetSystem() == nullptr)
+        {
+            return false;
+        }
+        for (const TStrongObjectPtr<CParticleEmitter>& Emitter : GetSystem()->Emitters)
+        {
+            const CPackage* Package = Emitter.IsValid() ? Emitter->GetPackage() : nullptr;
+            if (Package != nullptr && Package->IsDirty())
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     void FParticleSystemEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const

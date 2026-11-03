@@ -77,6 +77,13 @@ namespace Lumina::Agent
             return Result;
         }
 
+        // Held to the details panel's rule, since a read-only field such as a prefab's parent is derived and editing it breaks what it derives from.
+        if (Target.Property->IsReadOnly())
+        {
+            Result.Error = Lumina::Format("'{}' is read-only, so it cannot be set directly.", Path);
+            return Result;
+        }
+
         // Checked before anything is recorded, so a bad value costs no snapshot.
         if (const FMarshalResult Checked = ValidatePropertyValue(Value, Target.Property, Path); !Checked.IsValid())
         {

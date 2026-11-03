@@ -610,6 +610,12 @@ namespace Lumina::MCP
                             "Value is not JSON. Strings need quotes, so \"Torch\" rather than Torch."));
                     }
 
+                    // The details panel never writes a read-only field, so an agent does not either.
+                    if (Target.Property->IsReadOnly())
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("'{}' is read-only, so it cannot be set directly.", In.Path));
+                    }
+
                     if (!ResolveEntityTokens(Registry, Target.Property, Value, Error))
                     {
                         return Agent::FToolResult::Error(Error);

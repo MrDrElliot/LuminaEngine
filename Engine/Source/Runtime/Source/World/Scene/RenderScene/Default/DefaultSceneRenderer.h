@@ -21,6 +21,9 @@
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/SceneUpscaler.h"
 #include "World/Scene/RenderScene/SceneCullContext.h"
+#if USING(WITH_EDITOR)
+#include "World/Scene/RenderScene/EditorGridRequest.h"
+#endif
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "World/Scene/RenderScene/TexturePaintTypes.h"
@@ -579,6 +582,7 @@ namespace Lumina
 
                 #if USING(WITH_EDITOR)
                 TVector<uint32>                  SelectionBits;
+                FEditorGridRequest               Grid;
                 #endif
             } Extracts;
 
@@ -915,6 +919,7 @@ namespace Lumina
         void LightFunctionPass(RHI::FCmdListH CL);
         #if USING(WITH_EDITOR)
         void PickerResolvePass(RHI::FCmdListH CL);
+        void EditorGridPass(RHI::FCmdListH CL);
         void SelectionOutlinePass(RHI::FCmdListH CL);
         FSceneBuffer SelectionTileStampBuffer { "Editor.SelectionOutlineTiles", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer SelectionTileListBuffer { "Editor.SelectionOutlineTileList", 1.5f };

@@ -99,20 +99,20 @@ namespace Lumina
 
         
         
-        PROPERTY(Editable, NoResize, NoReorder, Category = "Materials")
+        PROPERTY(Editable, NoResize, NoReorder, Category = "Materials", DisplayName = "Slots")
         TVector<TStrongObjectPtr<CMaterialInterface>> Materials;
 
         PROPERTY(Hidden, Category = "AABB")
         SAABB BoundingBox;
 
         // Multiplies this mesh's LOD errors, so 2 switches twice as far away and 0.5 lets card foliage coarsen sooner.
-        PROPERTY(Editable, Category = "Level Of Detail", ClampMin = 0.05f, ClampMax = 4.0f)
+        PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.05f, ClampMax = 4.0f)
         float LODDistanceScale = 1.0f;
 
         /** Build inputs for this mesh's signed distance field. Edited here rather than only at import so
          *  a field can be added, retuned, or dropped without round-tripping the source file; the mesh
          *  editor's Build Distance Field action applies them. Seeded from the import dialog. */
-        PROPERTY(Editable, Category = "Distance Field")
+        PROPERTY(Editable, Category = "Distance Field", DisplayName = "Settings")
         SDistanceFieldBuildSettings DistanceFieldSettings;
 
         /** File this mesh was last imported from, so "Reimport From File..." can open on it. Empty for

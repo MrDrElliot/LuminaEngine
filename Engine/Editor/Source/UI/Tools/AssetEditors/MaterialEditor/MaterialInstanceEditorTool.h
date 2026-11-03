@@ -32,6 +32,7 @@ namespace Lumina
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
+        void OnPostUndoRedo() override;
 
         void OnAssetLoadFinished() override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
@@ -40,6 +41,8 @@ namespace Lumina
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
     private:
+
+        TWeakObjectPtr<CMaterialInterface> TrackedParent;
 
         void DrawParameterEditor(bool bFocused);
 

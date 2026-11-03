@@ -83,6 +83,10 @@ namespace Lumina
         /** Re-bake the pieces from SourceMesh using NumPieces/Seed and copy its materials. Returns the piece count. */
         int32 Rebuild();
 
+        void SerializeFractureData(FArchive& Ar) { Ar << Data; }
+
+        void InvalidatePieceMeshes() { PieceMeshes.clear(); }
+
         /** Bake convex Voronoi pieces from a source mesh's bounds. Returns a new collection owned by Outer. */
         static CGeometryCollection* GenerateFromMesh(CStaticMesh* Source, const FFractureSettings& Settings, CObject* Outer = nullptr);
 

@@ -541,6 +541,12 @@ namespace Lumina
         }
     }
 
+    bool FCodeWorkspaceTool::SaveFileChanges()
+    {
+        SaveAll();
+        return !IsUnsavedDocument();
+    }
+
     void FCodeWorkspaceTool::SaveAll()
     {
         int32 Saved = 0;

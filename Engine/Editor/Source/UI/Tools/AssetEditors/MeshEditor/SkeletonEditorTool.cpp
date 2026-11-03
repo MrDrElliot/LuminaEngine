@@ -2,6 +2,7 @@
 #include "World/ECS/Registry.h"
 #include "ImGuiDrawUtils.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
+#include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -118,7 +119,30 @@ namespace Lumina
         
         CameraState.Speed = 5.0f;
 
-        if (!Skeleton->PreviewMesh.IsValid())
+        RefreshPreviewMesh();
+        if (MeshEntity == ECS::NullEntity)
+        {
+            return;
+        }
+        
+        STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
+        STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
+
+        FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetWorldLocation()+ FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
+        EditorTransform.SetRotation(Rotation);
+    }
+
+    void FSkeletonEditorTool::RefreshPreviewMesh()
+    {
+        if (MeshEntity != ECS::NullEntity)
+        {
+            World->DestroyEntity(MeshEntity);
+            MeshEntity = ECS::NullEntity;
+        }
+
+        CSkeleton* Skeleton = GetAsset<CSkeleton>();
+        PreviewMeshInUse = Skeleton != nullptr ? Skeleton->PreviewMesh.Get() : nullptr;
+        if (Skeleton == nullptr || !Skeleton->PreviewMesh.IsValid())
         {
             return;
         }
@@ -128,12 +152,6 @@ namespace Lumina
         MeshComponent.SetSkeletalMesh(Skeleton->PreviewMesh.Get());
         Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
         MeshComponent.bRenderBonesDirty = true;
-        
-        STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
-        STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
-
-        FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetWorldLocation()+ FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
-        EditorTransform.SetRotation(Rotation);
     }
 
     void FSkeletonEditorTool::Update(const FUpdateContext& UpdateContext)
@@ -143,6 +161,11 @@ namespace Lumina
         if (!World.IsValid())
         {
             return;
+        }
+
+        if (const CSkeleton* Skeleton = GetAsset<CSkeleton>(); Skeleton != nullptr && Skeleton->PreviewMesh.Get() != PreviewMeshInUse.Get())
+        {
+            RefreshPreviewMesh();
         }
         
         if (World && World->GetRenderer())
@@ -187,6 +210,7 @@ namespace Lumina
 
     void FSkeletonEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
+        SocketHierarchy.CloseOpenDragTransaction();
     }
 
     void FSkeletonEditorTool::OnAssetLoadFinished()
@@ -196,6 +220,10 @@ namespace Lumina
     // Sockets are edited in the property table too, so any edit can rename, move or remove a row.
     void FSkeletonEditorTool::OnPropertyEditFinished(const FPropertyChangedEvent& Event)
     {
+        if (CSkeleton* Skeleton = GetAsset<CSkeleton>())
+        {
+            Skeleton->BumpSocketGeneration();
+        }
         SocketHierarchy.Refresh();
     }
 
@@ -215,15 +243,14 @@ namespace Lumina
     {
         DrawHelpTextRow("Hierarchy",
             "Bone tree on the left mirrors the import. Click a bone to select; transforms come from the "
-            "bind pose. Multi-select extends sockets/constraints across bones.");
+            "bind pose.");
         DrawHelpTextRow("Sockets",
             "Sockets are named transforms relative to a bone, listed in gold under their bone. Right-click a "
             "bone to add one and a socket to delete it. Runtime code looks them up by name (e.g. 'WeaponR').");
         DrawHelpTextRow("Retargeting",
-            "Two skeletons with identical bone names auto-retarget animations between them. Otherwise, "
-            "set up a per-bone mapping table on the asset.");
+            "Two skeletons with identical bone names auto-retarget animations between them.");
         DrawHelpTextRow("Preview",
-            "Drop a skeletal mesh into the viewport to see the skeleton applied. Useful for verifying "
+            "Set Preview Mesh in the details to see the skeleton applied. Useful for verifying "
             "socket positions.");
     }
 

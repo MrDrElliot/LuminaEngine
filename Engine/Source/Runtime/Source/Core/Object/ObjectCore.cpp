@@ -2,6 +2,9 @@
 #include "Containers/Algorithm.h"
 
 #include <atomic>
+#include <cmath>
+#include <limits>
+#include <type_traits>
 
 #include "ObjectCore.h"
 #include "FileSystem/FileSystem.h"
@@ -327,6 +330,119 @@ namespace Lumina
         case EPropertyTypeFlags::UInt64: return Value >= 0 && Value < 18446744073709551616.0;
         case EPropertyTypeFlags::Float:
         case EPropertyTypeFlags::Double: return true;
+        default:                         return false;
+        }
+    }
+
+    namespace ObjectCoreInternal
+    {
+        template<typename T>
+        bool StoreNumber(void* Memory, const FNumericValue& Value)
+        {
+            if constexpr (std::is_floating_point_v<T>)
+            {
+                const double Wide = Value.Kind == FNumericValue::EKind::Float ? Value.Float
+                                  : Value.Kind == FNumericValue::EKind::Signed ? static_cast<double>(Value.Signed)
+                                  : static_cast<double>(Value.Unsigned);
+                *static_cast<T*>(Memory) = static_cast<T>(Wide);
+                return true;
+            }
+            else
+            {
+                using FLimits = std::numeric_limits<T>;
+                if (Value.Kind == FNumericValue::EKind::Signed)
+                {
+                    if constexpr (std::is_signed_v<T>)
+                    {
+                        if (Value.Signed < static_cast<int64>(FLimits::min()) || Value.Signed > static_cast<int64>(FLimits::max()))
+                        {
+                            return false;
+                        }
+                    }
+                    else if (Value.Signed < 0 || static_cast<uint64>(Value.Signed) > static_cast<uint64>(FLimits::max()))
+                    {
+                        return false;
+                    }
+                    *static_cast<T*>(Memory) = static_cast<T>(Value.Signed);
+                    return true;
+                }
+
+                if (Value.Kind == FNumericValue::EKind::Unsigned)
+                {
+                    if (Value.Unsigned > static_cast<uint64>(FLimits::max()))
+                    {
+                        return false;
+                    }
+                    *static_cast<T*>(Memory) = static_cast<T>(Value.Unsigned);
+                    return true;
+                }
+
+                // Bounds are powers of two, which a double holds exactly, unlike the limits themselves at 64 bits.
+                const double Whole = std::trunc(Value.Float);
+                const double Upper = std::ldexp(1.0, FLimits::digits);
+                const double Lower = std::is_signed_v<T> ? -Upper : 0.0;
+                if (!std::isfinite(Whole) || Whole < Lower || Whole >= Upper)
+                {
+                    return false;
+                }
+                *static_cast<T*>(Memory) = static_cast<T>(Whole);
+                return true;
+            }
+        }
+    }
+
+    uint32 GetNumericSize(EPropertyTypeFlags Type)
+    {
+        switch (Type)
+        {
+        case EPropertyTypeFlags::Int8:
+        case EPropertyTypeFlags::UInt8:  return 1;
+        case EPropertyTypeFlags::Int16:
+        case EPropertyTypeFlags::UInt16: return 2;
+        case EPropertyTypeFlags::Int32:
+        case EPropertyTypeFlags::UInt32:
+        case EPropertyTypeFlags::Float:  return 4;
+        case EPropertyTypeFlags::Int64:
+        case EPropertyTypeFlags::UInt64:
+        case EPropertyTypeFlags::Double: return 8;
+        default:                         return 0;
+        }
+    }
+
+    bool ReadNumber(EPropertyTypeFlags Type, const void* Memory, FNumericValue& Out)
+    {
+        using EKind = FNumericValue::EKind;
+        Out = FNumericValue();
+        switch (Type)
+        {
+        case EPropertyTypeFlags::Int8:   Out.Kind = EKind::Signed;   Out.Signed = *static_cast<const int8*>(Memory);    return true;
+        case EPropertyTypeFlags::Int16:  Out.Kind = EKind::Signed;   Out.Signed = *static_cast<const int16*>(Memory);   return true;
+        case EPropertyTypeFlags::Int32:  Out.Kind = EKind::Signed;   Out.Signed = *static_cast<const int32*>(Memory);   return true;
+        case EPropertyTypeFlags::Int64:  Out.Kind = EKind::Signed;   Out.Signed = *static_cast<const int64*>(Memory);   return true;
+        case EPropertyTypeFlags::UInt8:  Out.Kind = EKind::Unsigned; Out.Unsigned = *static_cast<const uint8*>(Memory);  return true;
+        case EPropertyTypeFlags::UInt16: Out.Kind = EKind::Unsigned; Out.Unsigned = *static_cast<const uint16*>(Memory); return true;
+        case EPropertyTypeFlags::UInt32: Out.Kind = EKind::Unsigned; Out.Unsigned = *static_cast<const uint32*>(Memory); return true;
+        case EPropertyTypeFlags::UInt64: Out.Kind = EKind::Unsigned; Out.Unsigned = *static_cast<const uint64*>(Memory); return true;
+        case EPropertyTypeFlags::Float:  Out.Kind = EKind::Float;    Out.Float = *static_cast<const float*>(Memory);     return true;
+        case EPropertyTypeFlags::Double: Out.Kind = EKind::Float;    Out.Float = *static_cast<const double*>(Memory);    return true;
+        default:                         return false;
+        }
+    }
+
+    bool WriteNumber(EPropertyTypeFlags Type, void* Memory, const FNumericValue& Value)
+    {
+        switch (Type)
+        {
+        case EPropertyTypeFlags::Int8:   return ObjectCoreInternal::StoreNumber<int8>(Memory, Value);
+        case EPropertyTypeFlags::Int16:  return ObjectCoreInternal::StoreNumber<int16>(Memory, Value);
+        case EPropertyTypeFlags::Int32:  return ObjectCoreInternal::StoreNumber<int32>(Memory, Value);
+        case EPropertyTypeFlags::Int64:  return ObjectCoreInternal::StoreNumber<int64>(Memory, Value);
+        case EPropertyTypeFlags::UInt8:  return ObjectCoreInternal::StoreNumber<uint8>(Memory, Value);
+        case EPropertyTypeFlags::UInt16: return ObjectCoreInternal::StoreNumber<uint16>(Memory, Value);
+        case EPropertyTypeFlags::UInt32: return ObjectCoreInternal::StoreNumber<uint32>(Memory, Value);
+        case EPropertyTypeFlags::UInt64: return ObjectCoreInternal::StoreNumber<uint64>(Memory, Value);
+        case EPropertyTypeFlags::Float:  return ObjectCoreInternal::StoreNumber<float>(Memory, Value);
+        case EPropertyTypeFlags::Double: return ObjectCoreInternal::StoreNumber<double>(Memory, Value);
         default:                         return false;
         }
     }

@@ -6,20 +6,110 @@
 #include "Scripting/ScriptStruct.h"
 
 #include "Class.h"
+#include "ObjectCore.h"
+#include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
+#include "Core/Reflection/Type/Properties/OptionalProperty.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Memory/Memory.h"
+
+namespace Lumina::InstancedStructInternal
+{
+    // Same kind is not same layout: every list is one size whatever it holds, and a reload reshapes the struct inside.
+    bool ShapesMatch(const FProperty* Old, const FProperty* New)
+    {
+        if (Old == nullptr || New == nullptr)
+        {
+            return Old == New;
+        }
+
+        if (Old->TypeFlags != New->TypeFlags || Old->GetElementSize() != New->GetElementSize() || Old->GetTypeName() != New->GetTypeName())
+        {
+            return false;
+        }
+
+        switch (Old->GetType())
+        {
+        case EPropertyTypeFlags::Struct:
+            return static_cast<const FStructProperty*>(Old)->GetStruct() == static_cast<const FStructProperty*>(New)->GetStruct();
+        case EPropertyTypeFlags::Vector:
+            return ShapesMatch(static_cast<const FArrayProperty*>(Old)->GetInternalProperty(), static_cast<const FArrayProperty*>(New)->GetInternalProperty());
+        case EPropertyTypeFlags::Map:
+            return ShapesMatch(static_cast<const FMapProperty*>(Old)->GetKeyProperty(), static_cast<const FMapProperty*>(New)->GetKeyProperty())
+                && ShapesMatch(static_cast<const FMapProperty*>(Old)->GetValueProperty(), static_cast<const FMapProperty*>(New)->GetValueProperty());
+        case EPropertyTypeFlags::Optional:
+            return ShapesMatch(static_cast<const FOptionalProperty*>(Old)->GetInternalProperty(), static_cast<const FOptionalProperty*>(New)->GetInternalProperty());
+        default:
+            return true;
+        }
+    }
+
+    bool MigrateValue(const FProperty* Old, const void* OldValue, const FProperty* New, void* NewValue);
+
+    bool MigrateArray(const FArrayProperty* Old, const void* OldValue, const FArrayProperty* New, void* NewValue)
+    {
+        const FProperty* OldInner = Old->GetInternalProperty();
+        const FProperty* NewInner = New->GetInternalProperty();
+        if (OldInner == nullptr || NewInner == nullptr || Old->GetOps() == nullptr || New->GetOps() == nullptr)
+        {
+            return false;
+        }
+
+        const bool bNumeric = IsPropertyNumeric(OldInner->GetType()) && IsPropertyNumeric(NewInner->GetType());
+        if (!bNumeric && OldInner->GetType() != NewInner->GetType())
+        {
+            return false;
+        }
+
+        // Each side walks its own stride, which is what a retyped element changed.
+        const SIZE_T Count = Old->GetNum(OldValue);
+        New->Resize(NewValue, 0);
+        New->Resize(NewValue, Count);
+        for (SIZE_T Index = 0; Index < Count; ++Index)
+        {
+            MigrateValue(OldInner, Old->GetAt(const_cast<void*>(OldValue), Index), NewInner, New->GetAt(NewValue, Index));
+        }
+        return true;
+    }
+
+    // A value that cannot be carried across is left at the new layout's default rather than reinterpreted.
+    bool MigrateValue(const FProperty* Old, const void* OldValue, const FProperty* New, void* NewValue)
+    {
+        const EPropertyTypeFlags OldType = Old->GetType();
+        const EPropertyTypeFlags NewType = New->GetType();
+
+        if (IsPropertyNumeric(OldType) && IsPropertyNumeric(NewType))
+        {
+            FNumericValue Number;
+            return ReadNumber(OldType, OldValue, Number) && WriteNumber(NewType, NewValue, Number);
+        }
+
+        if (ShapesMatch(Old, New))
+        {
+            New->CopyCompleteValue(NewValue, OldValue);
+            return true;
+        }
+
+        if (OldType != NewType)
+        {
+            return false;
+        }
+
+        switch (NewType)
+        {
+        case EPropertyTypeFlags::Struct:
+            MigrateStructByFieldName(static_cast<const FStructProperty*>(Old)->GetStruct(), OldValue, static_cast<const FStructProperty*>(New)->GetStruct(), NewValue);
+            return true;
+        case EPropertyTypeFlags::Vector:
+            return MigrateArray(static_cast<const FArrayProperty*>(Old), OldValue, static_cast<const FArrayProperty*>(New), NewValue);
+        default:
+            return false;
+        }
+    }
+}
 
 namespace Lumina
 {
-    namespace
-    {
-        // Matching type flags alone would let a retyped field copy one type's bytes into another's slot.
-        bool CanMigrateField(const FProperty* Old, const FProperty* New)
-        {
-            return Old->TypeFlags == New->TypeFlags
-                && Old->GetElementSize() == New->GetElementSize()
-                && Old->GetTypeName() == New->GetTypeName();
-        }
-    }
 
     FInstancedStruct::~FInstancedStruct()
     {
@@ -265,15 +355,14 @@ namespace Lumina
 
         const_cast<CStruct*>(To)->ForEachProperty<FProperty>([&](FProperty* NewProp)
         {
-            FProperty* OldProp = const_cast<CStruct*>(From)->GetProperty(NewProp->Name);
-            if (OldProp == nullptr || !CanMigrateField(OldProp, NewProp))
+            const FProperty* OldProp = const_cast<CStruct*>(From)->GetProperty(NewProp->Name);
+            if (OldProp == nullptr)
             {
                 return;
             }
 
             // Each side addressed through its own property, or a reordered field reads the wrong bytes.
-            NewProp->CopyCompleteValue(NewProp->GetValuePtr<void>(ToMemory),
-                                       OldProp->GetValuePtr<void>(FromMemory));
+            InstancedStructInternal::MigrateValue(OldProp, OldProp->GetValuePtr<void>(FromMemory), NewProp, NewProp->GetValuePtr<void>(ToMemory));
         });
     }
 

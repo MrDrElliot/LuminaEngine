@@ -6,6 +6,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Log/Log.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "UI/Tools/NodeGraph/Material/MaterialFunctionGraph.h"
@@ -204,8 +205,15 @@ namespace Lumina
     void FMaterialFunctionEditorTool::OnSave()
     {
         CompileAndSyncSignature();
+        const bool bHasErrors = !CompilationLog.empty();
+        if (bHasErrors && Asset != nullptr)
+        {
+            LOG_ERROR("Material function '{}' failed to compile:\n{}", Asset->GetName().c_str(), CompilationLog.c_str());
+            ImGuiX::Notifications::NotifyError("'{0}' has compile errors, so materials using it were not recompiled. See the Signature panel.", Asset->GetName().c_str());
+        }
+
         FAssetEditorTool::OnSave();
-        if (Asset != nullptr && Asset->GetPackage() != nullptr && !Asset->GetPackage()->IsDirty())
+        if (!bHasErrors && Asset != nullptr && Asset->GetPackage() != nullptr && !Asset->GetPackage()->IsDirty())
         {
             QueueMaterialFunctionRecompiles(Asset->GetGUID());
         }

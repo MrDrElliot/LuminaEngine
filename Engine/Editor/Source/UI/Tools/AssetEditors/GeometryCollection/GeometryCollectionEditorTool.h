@@ -31,6 +31,8 @@ namespace Lumina
         // Bulk data, so a whole-asset snapshot per edit would cost more than the undo is worth.
         bool WantsAutomaticAssetUndo() override { return false; }
         void OnInitialize() override;
+        void OnPropertyEditFinished(const FPropertyChangedEvent& Event) override;
+        void OnPostUndoRedo() override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override {}

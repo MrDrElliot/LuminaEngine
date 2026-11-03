@@ -141,12 +141,8 @@ namespace Lumina
 
     TSharedPtr<IPropertyTypeCustomization> FPropertyCustomizationRegistry::GetPropertyCustomizationForType(const FName& Type)
     {
-        if (RegisteredProperties.find(Type) != RegisteredProperties.end())
-        {
-            return RegisteredProperties[Type]();
-        }
-
-        return nullptr;
+        auto It = RegisteredProperties.find(Type);
+        return It != RegisteredProperties.end() ? It->second() : nullptr;
     }
     
 }

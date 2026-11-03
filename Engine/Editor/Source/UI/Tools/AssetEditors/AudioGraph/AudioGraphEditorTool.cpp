@@ -308,6 +308,7 @@ namespace Lumina
 
     void FAudioGraphEditorTool::StartPreview()
     {
+        const TVector<FPreviewParameter> Previous = PreviewParameters;
         StopPreview();
 
         CAudioGraph* Graph = GetAsset<CAudioGraph>();
@@ -346,6 +347,25 @@ namespace Lumina
             Parameter.FloatValue = Input.DefaultFloat;
             Parameter.IntValue   = Input.DefaultInt;
             Parameter.BoolValue  = Input.DefaultBool;
+
+            for (const FPreviewParameter& Old : Previous)
+            {
+                if (Old.Name != Parameter.Name || Old.Type != Parameter.Type)
+                {
+                    continue;
+                }
+                Parameter.FloatValue = Old.FloatValue;
+                Parameter.IntValue   = Old.IntValue;
+                Parameter.BoolValue  = Old.BoolValue;
+                switch (Parameter.Type)
+                {
+                case EAudioGraphType::Float: PreviewInstance->SetFloatParameter(Parameter.Name, Parameter.FloatValue); break;
+                case EAudioGraphType::Int32: PreviewInstance->SetIntParameter(Parameter.Name, Parameter.IntValue);     break;
+                case EAudioGraphType::Bool:  PreviewInstance->SetBoolParameter(Parameter.Name, Parameter.BoolValue);   break;
+                default: break;
+                }
+                break;
+            }
             PreviewParameters.push_back(Parameter);
         }
     }

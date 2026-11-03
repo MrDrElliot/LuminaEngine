@@ -102,8 +102,12 @@ namespace Lumina
         }
 
         // Fit the sheet to the pane, keeping the grid square so cell picking stays honest.
-        float SheetW = (float)Texture->GetTextureResource().Mips[0].Width;
-        float SheetH = (float)Texture->GetTextureResource().Mips[0].Height;
+        if (Texture->TextureResource == nullptr)
+        {
+            return;
+        }
+        const float SheetW = (float)Texture->TextureResource->ImageDescription.Extent.x;
+        const float SheetH = (float)Texture->TextureResource->ImageDescription.Extent.y;
         if (SheetW <= 0.0f || SheetH <= 0.0f)
         {
             return;
@@ -381,12 +385,19 @@ namespace Lumina
         const ImVec4 UV  = CellUVs(Clip->Frames[Slot]);
 
         const ImVec2 Avail = ImGui::GetContentRegionAvail();
-        const float  Side  = Math::Max(Math::Min(Avail.x, Avail.y), 16.0f);
+        float FrameW = 1.0f;
+        float FrameH = 1.0f;
+        if (Texture->TextureResource != nullptr)
+        {
+            FrameW = Math::Max(Math::Abs(UV.z - UV.x) * (float)Texture->TextureResource->ImageDescription.Extent.x, 1.0f);
+            FrameH = Math::Max(Math::Abs(UV.w - UV.y) * (float)Texture->TextureResource->ImageDescription.Extent.y, 1.0f);
+        }
+        const float Fit = Math::Max(Math::Min(Avail.x / FrameW, Avail.y / FrameH), 16.0f / Math::Max(FrameW, FrameH));
 
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
         ImGuiX::BeginTextureDisplay(DrawList, Texture);
         ImGui::Image(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()),
-                     ImVec2(Side, Side), ImVec2(UV.x, UV.y), ImVec2(UV.z, UV.w));
+                     ImVec2(FrameW * Fit, FrameH * Fit), ImVec2(UV.x, UV.y), ImVec2(UV.z, UV.w));
         ImGuiX::EndTextureDisplay(DrawList);
     }
 
