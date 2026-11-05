@@ -22,6 +22,7 @@
 #include "MCPSequenceTools.h"
 #include "MCPStressTools.h"
 #include "MCPTerrainTools.h"
+#include "Platform/Time/PlatformTime.h"
 
 namespace Lumina::MCP
 {
@@ -34,6 +35,8 @@ namespace Lumina::MCP
         constexpr const char* GServerVersion = "0.1.0";
 
         constexpr const char* GOwner = "MCPEditor";
+
+        constexpr FStringView GSessionHeader = "Mcp-Session-Id";
 
         // What a model reads. A tool that ran and failed says so here rather than as a transport error.
         FJsonValue MakeContent(const Agent::FToolResult& Outcome)
@@ -87,6 +90,11 @@ namespace Lumina::MCP
 
     using namespace MCPServerInternal;
 
+    FServer::FServer()
+    {
+        RegisterProtocolMethods();
+    }
+
     FServer::~FServer()
     {
         Stop();
@@ -102,7 +110,6 @@ namespace Lumina::MCP
 
         Settings = InSettings;
 
-        RegisterProtocolMethods();
         RegisterBuiltinTools(GOwner);
         RegisterSceneTools(GOwner);
         RegisterAssetTools(GOwner);
@@ -133,7 +140,6 @@ namespace Lumina::MCP
         if (!bStarted)
         {
             LOG_ERROR("[MCP] Failed to listen on port {}.", Settings.Port);
-            Dispatcher.UnregisterOwner(GOwner);
             return false;
         }
 
@@ -152,7 +158,6 @@ namespace Lumina::MCP
         KeptLoaded.Reset();
 
         UnregisterEditorSessionTools();
-        Dispatcher.UnregisterOwner(GOwner);
         Agent::FToolRegistry::Get().UnregisterOwner(GOwner);
     }
 
@@ -324,9 +329,12 @@ namespace Lumina::MCP
             return Http::FResponse::Empty(405, "Method Not Allowed");
         }
 
-        // Ending a session costs nothing to honor, since no per-session state is kept yet.
+        const FStringView Session = Request.FindHeader(GSessionHeader);
+
+        // The session only labels the client in the log, so ending one has nothing else to release.
         if (Request.Method == "DELETE")
         {
+            Log.RecordDisconnect(Session);
             return Http::FResponse::Empty(204, "No Content");
         }
 
@@ -341,14 +349,29 @@ namespace Lumina::MCP
             return Http::FResponse::Empty(415, "Unsupported Media Type");
         }
 
-        const FString Reply = Dispatcher.HandleMessage(FStringView(Request.Body));
+        FReply Reply = HandleMessage(FStringView(Request.Body), Session);
 
         // A notification produces nothing to send, which over HTTP is an accepted empty response.
-        if (Reply.IsEmpty())
+        if (Reply.Body.IsEmpty())
         {
             return Http::FResponse::Empty(202, "Accepted");
         }
 
-        return Http::FResponse::Json(Reply);
+        Http::FResponse Response = Http::FResponse::Json(Move(Reply.Body));
+        if (!Reply.OpenedSession.IsEmpty())
+        {
+            Response.ExtraHeaders.Add({ FString(GSessionHeader), Move(Reply.OpenedSession) });
+        }
+        return Response;
+    }
+
+    FServer::FReply FServer::HandleMessage(FStringView Message, FStringView Session)
+    {
+        const PlatformTime::FStopwatch Stopwatch;
+
+        FReply Reply;
+        Reply.Body = Dispatcher.HandleMessage(Message);
+        Reply.OpenedSession = Log.Record(Session, Message, FStringView(Reply.Body), Stopwatch.ElapsedMilliseconds());
+        return Reply;
     }
 }

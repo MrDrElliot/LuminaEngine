@@ -97,6 +97,11 @@ namespace Lumina
         requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         T* CreateTool(Args&&... args);
 
+        // A tool that lives in the footer bar and docks like the console, which is also how a plugin adds one.
+        template<typename T, typename... Args>
+        requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
+        T* CreateDrawerTool(const char* Icon, const char* Label, ImGuiKeyChord Shortcut, Args&&... args);
+
         // The tool editing this asset, or null when nothing has it open.
         NODISCARD FEditorTool* FindAssetEditor(CObject* Asset) const;
 
@@ -467,6 +472,15 @@ namespace Lumina
     T* FEditorUI::CreateTool(Args&&... args)
     {
         return static_cast<T*>(FinalizeNewTool(Memory::New<T>(std::forward<Args>(args)...)));
+    }
+
+    template <typename T, typename ... Args>
+    requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
+    T* FEditorUI::CreateDrawerTool(const char* Icon, const char* Label, ImGuiKeyChord Shortcut, Args&&... args)
+    {
+        T* Tool = CreateTool<T>(std::forward<Args>(args)...);
+        FooterDrawers.Emplace(Tool, Icon, Label, Shortcut);
+        return Tool;
     }
 
     template <typename T>

@@ -1066,6 +1066,31 @@ namespace Lumina
         RefreshContentBrowser();
     }
 
+    void FContentBrowserEditorTool::SortListing(TVector<FListingEntry>& Entries, EContentBrowserSortMode Mode, bool bAscending)
+    {
+        Task::ParallelSort(Entries.begin(), Entries.end(), [Mode, bAscending](const FListingEntry& LHS, const FListingEntry& RHS)
+        {
+            if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
+            {
+                return LHS.Info.IsDirectory();
+            }
+
+            std::strong_ordering Order = std::strong_ordering::equal;
+            switch (Mode)
+            {
+            case EContentBrowserSortMode::Type:         Order = FStringView(*LHS.TypeLabel) <=> FStringView(*RHS.TypeLabel); break;
+            case EContentBrowserSortMode::Size:         Order = LHS.Info.Size <=> RHS.Info.Size; break;
+            case EContentBrowserSortMode::DateModified: Order = LHS.Info.LastModifyTime <=> RHS.Info.LastModifyTime; break;
+            case EContentBrowserSortMode::Name:         break;
+            }
+            if (Order == 0)
+            {
+                Order = LHS.Info.Name <=> RHS.Info.Name;
+            }
+            return bAscending ? Order < 0 : Order > 0;
+        });
+    }
+
     void FContentBrowserEditorTool::RefilterContentBrowser()
     {
         ContentBrowserTileView.MarkTreeDirty();
@@ -1508,14 +1533,8 @@ namespace Lumina
                     Entry.bMissingType = (*Cached) == MissingTypeLabel;
                 }
 
-                Task::ParallelSort(Listing.begin(), Listing.end(), [](const FListingEntry& LHS, const FListingEntry& RHS)
-                {
-                    if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
-                    {
-                        return LHS.Info.IsDirectory();
-                    }
-                    return LHS.Info.Name < RHS.Info.Name;
-                });
+                const CContentBrowserSettings* Settings = GetDefault<CContentBrowserSettings>();
+                SortListing(Listing, Settings->SortMode, Settings->bSortAscending);
             }
 
             LUMINA_PROFILE_SECTION("ContentBrowser Tiles Filter+Add");
@@ -2193,7 +2212,28 @@ namespace Lumina
                 GConfig->SaveSettings(CContentBrowserSettings::StaticClass());
                 ContentBrowserTileView.SetTileSize(ContentBrowserTileSize);
             }
-            
+
+            ImGui::SeparatorText("Sort By");
+            CContentBrowserSettings* Settings = GetMutableDefault<CContentBrowserSettings>();
+            bool bSortChanged = false;
+            constexpr const char* SortModeLabels[] = { "Name", "Type", "Size", "Date Modified" };
+            for (uint8 Index = 0; Index < std::size(SortModeLabels); ++Index)
+            {
+                const EContentBrowserSortMode Mode = static_cast<EContentBrowserSortMode>(Index);
+                if (ImGui::MenuItem(SortModeLabels[Index], nullptr, Settings->SortMode == Mode))
+                {
+                    Settings->SortMode = Mode;
+                    bSortChanged = true;
+                }
+            }
+            ImGui::Separator();
+            bSortChanged |= ImGui::MenuItem("Ascending", nullptr, &Settings->bSortAscending);
+            if (bSortChanged)
+            {
+                GConfig->SaveSettings(CContentBrowserSettings::StaticClass());
+                RefreshContentBrowser();
+            }
+
             ImGui::EndMenu();
         }
     }

@@ -673,8 +673,9 @@ namespace Lumina
         TStrongObjectPtr<CWorld> World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
 
         WorldEditorTool = CreateTool<FWorldEditorTool>(this, World.Get());
-        ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);
-        ContentBrowser = CreateTool<FContentBrowserEditorTool>(this);
+        // They start undocked, living in the bottom status bar instead of a dock split.
+        ContentBrowser = CreateDrawerTool<FContentBrowserEditorTool>(LE_ICON_FOLDER, "Content Browser", ImGuiMod_Ctrl | ImGuiKey_Space, this);
+        ConsoleLogTool = CreateDrawerTool<FConsoleLogEditorTool>(LE_ICON_CONSOLE_LINE, "Output Log", ImGuiMod_Ctrl | ImGuiKey_J, this);
 
         // Spawns and destroys extra-player Game Preview tools as the world editor starts and stops play.
         // Play shows the player's saved quality, and stopping hands the editor its project values back.
@@ -689,10 +690,6 @@ namespace Lumina
             Scalability::RestoreProjectValues();
         });
 
-        // They start undocked, living in the bottom status bar instead of a dock split.
-        FooterDrawers.Emplace(ContentBrowser, LE_ICON_FOLDER,       "Content Browser", ImGuiMod_Ctrl | ImGuiKey_Space);
-        FooterDrawers.Emplace(ConsoleLogTool, LE_ICON_CONSOLE_LINE, "Output Log",       ImGuiMod_Ctrl | ImGuiKey_J);
-        
         if (GEditorEngine->GetProjectName().IsEmpty())
         {
             // Falls through to the Open dialog when Editor.StartupProject is also missing or stale.
@@ -1838,6 +1835,13 @@ namespace Lumina
         if (Tool == nullptr)
         {
             return false;
+        }
+
+        // An undocked drawer has no window to focus, so it slides open instead.
+        if (FFooterDrawer* Drawer = FindDrawerForTool(Tool))
+        {
+            ShowDrawer(*Drawer);
+            return true;
         }
 
         FocusTargetWindowName = FString(*Tool->GetToolName());

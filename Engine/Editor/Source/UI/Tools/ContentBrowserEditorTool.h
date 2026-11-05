@@ -25,6 +25,7 @@ namespace Lumina
     class FPropertyTable;
     struct FAssetData;
     struct FImportRequest;
+    enum class EContentBrowserSortMode : uint8;
 
     class FContentBrowserEditorTool : public FEditorTool
     {
@@ -71,6 +72,19 @@ namespace Lumina
         // The one selected file's virtual path, or empty when a folder, several items or nothing is selected.
         NODISCARD FFixedString GetSelectedFilePath() const;
 
+        struct FListingEntry
+        {
+            VFS::FFileInfo  Info;
+            FName           TypeLabel;
+            FName           AssetClass;
+
+            // The asset's class is no longer registered, so it cannot be loaded or opened, only deleted.
+            bool            bMissingType = false;
+        };
+
+        // Folders first under every mode, and entries the mode cannot tell apart fall back to name order.
+        EDITOR_API static void SortListing(TVector<FListingEntry>& Entries, EContentBrowserSortMode Mode, bool bAscending);
+
     private:
 
         using FTileItem = ContentBrowserEditorToolInternal::FContentBrowserTileViewItem;
@@ -84,16 +98,6 @@ namespace Lumina
             TUniquePtr<FDirectoryWatcher>   Watcher;
             FFixedString                    VirtualPrefix;
             int32                           WatchRootLen = 0;
-        };
-
-        struct FListingEntry
-        {
-            VFS::FFileInfo  Info;
-            FName           TypeLabel;
-            FName           AssetClass;
-
-            // The asset's class is no longer registered, so it cannot be loaded or opened, only deleted.
-            bool            bMissingType = false;
         };
 
         void OnProjectLoaded();

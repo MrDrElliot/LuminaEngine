@@ -16,7 +16,10 @@ public class MCPEditor : LuminaModuleRules
         {
             "AgentCore",
             "Editor",
+            "ImGui",
             "RPMalloc",
         });
+
+        TestDependencyModuleNames.Add("AgentCore");
     }
 }
