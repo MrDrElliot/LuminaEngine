@@ -76,6 +76,10 @@ namespace Lumina
         FUNCTION()
         void RunsBeforeSystem(FName System);
 
+        // Answers to Set as well as its class names, so one RunsAfterSystem or RunsBeforeSystem orders against every member.
+        FUNCTION()
+        void JoinSet(FName Set);
+
         template<typename... Ts>
         void RunsAfter() { (RunsAfterSystem(Ts::StaticClass()->GetName()), ...); }
 
@@ -100,6 +104,7 @@ namespace Lumina
         bool RunsInStage(EUpdateStage Stage) const { return (StageMask & (1u << (uint32)Stage)) != 0; }
         const TVector<FName>& GetRunsAfter() const { return After; }
         const TVector<FName>& GetRunsBefore() const { return Before; }
+        const TVector<FName>& GetSets() const { return Sets; }
         const FSystemAccess& GetAccess() const { return Access; }
 
         // Set by the driver before Configure runs.
@@ -116,12 +121,16 @@ namespace Lumina
 
         CWorld* GetOwningWorld() const { return OwningWorld; }
 
+        // For a HasWork override whose system also holds lookup-only queries that must not count as work.
+        template<typename... TQueries>
+        static bool AnyQueryHasRows(const TQueries&... Queries) { return (!Queries.IsEmpty() || ...); }
+
         // Set by CExclusiveSystem, so the system always runs alone.
         bool                bExclusiveClass = false;
 
     private:
 
-        friend void RegisterSystemParam(void* Param, const FSystemParamOps& Ops);
+        friend RUNTIME_API void RegisterSystemParam(void* Param, const FSystemParamOps& Ops);
 
         struct FRegisteredParam
         {
@@ -134,6 +143,7 @@ namespace Lumina
         CWorld*             OwningWorld = nullptr;
         TVector<FName>      After;
         TVector<FName>      Before;
+        TVector<FName>      Sets;
         FSystemAccess       Access;
         uint8               StageMask = 0;
         bool                bStarted = false;

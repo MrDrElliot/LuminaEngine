@@ -185,16 +185,23 @@ namespace Lumina
 
         bool ExecuteCommand(FStringView Name);
 
-        // A command name, or a variable name with an optional new value, as every console types it. Echoes to the log when asked.
+        // A command name, or a variable name with an optional new value, as every console types it. Successful sets are saved to config.
         FConsoleLineResult ExecuteLine(FStringView Line, bool bEchoToLog);
 
         void SaveToConfig();
         void LoadFromConfig();
 
+        // Writes the numeric and bool variables that differ from their defaults, keeping entries for names not registered yet.
+        bool SaveToFile(FStringView Path);
+        bool LoadFromFile(FStringView Path);
+
+        static FString GetConfigFilePath();
+
     private:
 
         FConsoleContainer ConsoleVariables;
         FCommandContainer ConsoleCommands;
+        FString LoadedConfigText;
     };
 
 

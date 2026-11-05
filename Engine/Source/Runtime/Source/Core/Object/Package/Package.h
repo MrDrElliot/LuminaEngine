@@ -34,6 +34,7 @@ namespace Lumina
         FGuid ObjectGUID;
         FName ObjectName;
         FName ClassName;
+        FName ClassPackage;
         int64 Offset;
         int64 Size;
         TWeakObjectPtr<CObject> Object;
@@ -43,12 +44,19 @@ namespace Lumina
             Ar << Data.ObjectGUID;
             Ar << Data.ObjectName;
             Ar << Data.ClassName;
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::EXPORT_CLASS_PACKAGE)
+            {
+                Ar << Data.ClassPackage;
+            }
             Ar << Data.Offset;
             Ar << Data.Size;
-            
+
             return Ar;
         }
     };
+
+    // A type package of a module the shipped game never loads, whose objects in an asset are editor state such as a node graph.
+    RUNTIME_API bool IsEditorTypePackage(const FName& PackageName);
 
     struct FObjectImport
     {

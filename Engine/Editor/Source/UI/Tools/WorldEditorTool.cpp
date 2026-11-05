@@ -1450,11 +1450,6 @@ namespace Lumina
         }
     }
 
-    void FWorldEditorTool::OnEntityCreated(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        // @TODO MarkTreeDirty here is too expensive; outliner is updated incrementally.
-    }
-
     void FWorldEditorTool::OnEntityScriptChanged(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         OutlinerListView.MarkTreeDirty();
@@ -3842,7 +3837,6 @@ namespace Lumina
         {
             return;
         }
-        ObservedRegistry->OnEntityCreated().Disconnect<&FWorldEditorTool::OnEntityCreated>(this);
         ObservedRegistry->OnEntityDestroyed().Disconnect<&FWorldEditorTool::OnEntityDestroyed>(this);
         ObservedRegistry->GetSignals<SNameComponent>().OnConstruct.Disconnect<&FSceneEditorTool::OnOutlinerEntityConstructed>(this);
         ObservedRegistry->GetSignals<SNameComponent>().OnDestroy.Disconnect<&FSceneEditorTool::OnOutlinerEntityDestroyed>(this);
@@ -3856,7 +3850,6 @@ namespace Lumina
         UnbindRegistryObservers();
 
         ECS::FRegistry& Registry = GetObservedWorld()->GetEntityRegistry();
-        Registry.OnEntityCreated().Connect<&FWorldEditorTool::OnEntityCreated>(this);
         Registry.OnEntityDestroyed().Connect<&FWorldEditorTool::OnEntityDestroyed>(this);
         Registry.GetSignals<SNameComponent>().OnConstruct.Connect<&FSceneEditorTool::OnOutlinerEntityConstructed>(this);
         Registry.GetSignals<SNameComponent>().OnDestroy.Connect<&FSceneEditorTool::OnOutlinerEntityDestroyed>(this);
@@ -4462,6 +4455,7 @@ namespace Lumina
             { "Post Physics",   "Runs once physics results are in, which is where gameplay reads them back." },
             { "Frame End",      "Runs last each frame, before the world is handed to the renderer." },
             { "Paused",         "Runs instead of the gameplay stages while the world is not simulating, which is how systems keep working in the editor." },
+            { "Fixed Update",   "Runs zero or more times a frame at the physics rate, after Pre Physics, for gameplay that must not depend on frame rate." },
             { "No Update",      "Asks for no stage, so it only runs its startup and teardown, and whatever those set going." },
         };
         static_assert(std::size(kSystemStages) == (size_t)EUpdateStage::Max + 1, "One description per update stage, then the systems in none.");

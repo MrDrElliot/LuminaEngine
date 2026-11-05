@@ -9,7 +9,6 @@
 
 #include "renderdoc_app.h"
 #include "Core/Assertions/Assert.h"
-#include "Platform/Filesystem/FileHelper.h"
 #include "Platform/Process/PlatformProcess.h"
 
 namespace Lumina
@@ -47,12 +46,6 @@ namespace Lumina
             auto RENDERDOC_GetAPI = Platform::LumGetProcAddress<pRENDERDOC_GetAPI>(Module, "RENDERDOC_GetAPI");
             int Ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_1_2, (void**)&RenderDocAPI);
             ASSERT(Ret);
-        }
-
-        // @TODO - Post settings, let user manually enter render doc UI path.
-        if (FileHelper::DoesDirectoryExist("C:Program Files/RenderDoc/renderdocui.exe"))
-        {
-            RenderDocExePath = "C:Program Files/RenderDoc/renderdocui.exe";
         }
     }
 

@@ -65,7 +65,6 @@ namespace Lumina
             ECS::TQuery<ECS::Read<SDynamicMeshColliderComponent>>   DynamicMeshPool;
 
             // Lookups only, each strict to its one component, for what a source reads beside its collider.
-            ECS::TQuery<ECS::Read<STransformComponent>>             Transforms;
             ECS::TQuery<ECS::Read<SRigidBodyComponent>>             RigidBodies;
             ECS::TQuery<ECS::Read<STerrainComponent>>               Terrains;
             ECS::TQuery<ECS::Read<SStaticMeshComponent>>            StaticMeshes;
@@ -77,7 +76,7 @@ namespace Lumina
 
     private:
 
-        ECS::TQuery<ECS::Write<SNavMeshComponent>> Volumes;
+        ECS::TQuery<ECS::Write<SNavMeshComponent>, ECS::Optional<ECS::Read<STransformComponent>>> Volumes;
         FSourceQueries                             SourceQueries;
         TRes<FSignificanceState>                   SignificanceState;
         TUniquePtr<FNavSourceTracker>              Tracker;

@@ -72,35 +72,7 @@ namespace Lumina
             return Pool;
         }
 
-        // Quintic offset-decay (Bollo 2018) with x(0)=X0, x'(0)=V0, x''(0)=0 and x(t1)=x'(t1)=x''(t1)=0.
-        [[maybe_unused]] float InertEval(float X0, float V0, float T1, float T)
-        {
-            if (T1 <= 1e-5f || X0 <= 1e-7f)
-            {
-                return 0.0f;
-            }
-            if (V0 < 0.0f)
-            {
-                T1 = Math::Min(T1, -5.0f * X0 / V0); // clamp duration so the curve never overshoots below zero
-                if (T1 <= 1e-5f)
-                {
-                    return 0.0f;
-                }
-            }
-            if (T >= T1)
-            {
-                return 0.0f;
-            }
-            const float t1_2 = T1 * T1; const float t1_3 = t1_2 * T1; const float t1_4 = t1_3 * T1; const float t1_5 = t1_4 * T1;
-            const float A = -(3.0f * V0 * T1 + 6.0f  * X0) / t1_5;
-            const float B =  (8.0f * V0 * T1 + 15.0f * X0) / t1_4;
-            const float C = -(6.0f * V0 * T1 + 10.0f * X0) / t1_3;
-            const float t2 = T * T; const float t3 = t2 * T; const float t4 = t3 * T; const float t5 = t4 * T;
-            const float X = A * t5 + B * t4 + C * t3 + V0 * T + X0;
-            return X > 0.0f ? X : 0.0f;
-        }
-
-        // The same curve, 8 bones at a time, and every branch above becomes a select.
+        // Quintic offset-decay (Bollo 2018) with x(0)=X0, x'(0)=V0, x''(0)=0 and x(t1)=x'(t1)=x''(t1)=0, 8 bones at a time.
         void InertEvalChannels(FInertChannelSet& Set, float Duration, float T)
         {
             const int32 N = Set.NumLanes();

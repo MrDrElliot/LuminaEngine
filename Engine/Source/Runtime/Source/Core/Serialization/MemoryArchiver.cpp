@@ -49,7 +49,7 @@ namespace Lumina
             // Only serialize if we have the requested amount of data
             if (Offset + Size <= TotalSize())
             {
-                Memory::Memcpy(V, &Bytes[Offset], Size);
+                Memory::Memcpy(V, &Bytes[IntCastChecked<int32>(Offset)], Size);
                 Offset += Size;
             }
             else
@@ -147,7 +147,7 @@ namespace Lumina
 
         ASSERT((Offset + Size) <= Bytes.Num());
         
-        Memory::Memcpy(&Bytes[Offset], Data, Size);
+        Memory::Memcpy(&Bytes[IntCastChecked<int32>(Offset)], Data, Size);
         Offset += Size;
     }
 }

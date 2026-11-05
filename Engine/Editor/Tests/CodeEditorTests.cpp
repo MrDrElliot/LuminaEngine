@@ -562,6 +562,8 @@ TEST(CodeEditorThemes, ShippedThemesGiveEveryColor)
     {
         FString Original;
         ASSERT_TRUE(VFS::ReadFile(Original, CodeEditorThemes::PathOf(Theme.View()).View()));
+        // Git may check the shipped files out with CRLF while Save always writes LF.
+        Original.ReplaceInline("\r\n", "\n");
         FCodeEditorPalette Palette = FCodeEditorPalette::Dark();
         ASSERT_TRUE(CodeEditorThemes::Load(Theme.View(), Palette));
         ASSERT_TRUE(CodeEditorThemes::Save(Theme.View(), Palette));

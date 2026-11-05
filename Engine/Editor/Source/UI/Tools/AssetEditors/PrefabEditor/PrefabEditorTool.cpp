@@ -312,6 +312,7 @@ namespace Lumina
     void FPrefabEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         // A prefab is edited in its authored pose, so animation preview starts off and the toolbar turns it on.
         World->SetAnimatesWhilePaused(false);
@@ -578,8 +579,6 @@ namespace Lumina
                 ClearTransactionHistory();
             }
         }
-
-        World->GetRenderSettings().bDrawBillboards = false;
 
         // Drive the selected-camera preview (shared with the world editor) before extract.
         UpdateCameraPreview();

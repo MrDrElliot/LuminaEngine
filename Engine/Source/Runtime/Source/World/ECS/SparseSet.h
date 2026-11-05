@@ -207,6 +207,12 @@ namespace Lumina::ECS
             std::atomic_ref<uint32>(ChangeTicks[static_cast<int32>(DenseIndex)]).store(Tick, std::memory_order_relaxed);
         }
 
+        // Where a write handle stamps a row; an untracked pool hands back the walk's own sink, so the handle never branches on tracking.
+        NODISCARD FORCEINLINE uint32* GetChangeTickSlot(uint32 DenseIndex, uint32& WalkSink)
+        {
+            return bTrackChanges ? ChangeTicks.GetData() + DenseIndex : &WalkSink;
+        }
+
         // Records that a stamp of this tick is about to land, moving the epoch once per tick rather than once per stamp.
         FORCEINLINE void NoteStampTick(uint32 Tick)
         {

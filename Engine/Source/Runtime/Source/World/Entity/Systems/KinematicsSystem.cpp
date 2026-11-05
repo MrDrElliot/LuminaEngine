@@ -40,38 +40,17 @@ namespace Lumina
         }
 
         // Only the components whose systems read a velocity, since differencing every transform paid for static scenery and crowds.
-        uint32 MaxIndex = 0;
-        bool bAnyConsumer = false;
-        const auto AddConsumer = [&](const auto& View)
-        {
-            if (!View.IsEmpty())
-            {
-                bAnyConsumer = true;
-                MaxIndex = Math::Max(MaxIndex, View.MaxLiveIndex());
-            }
-        };
-        AddConsumer(SkeletalConsumers.View());
-        AddConsumer(AudioSourceConsumers.View());
-        AddConsumer(ListenerConsumers.View());
-        AddConsumer(CameraConsumers.View());
-        AddConsumer(Velocities.View());
-
-        ++KinematicsState.Stamp;
-        if (!bAnyConsumer)
+        TStampedEntityCache<FEntityKinematics>& Cache = KinematicsState.Entries;
+        if (!Cache.BeginPass(SkeletalConsumers.View(), AudioSourceConsumers.View(), ListenerConsumers.View(),
+                             CameraConsumers.View(), Velocities.View()))
         {
             return;
         }
 
-        if ((uint32)KinematicsState.ByEntityIndex.Num() <= MaxIndex)
-        {
-            KinematicsState.ByEntityIndex.SetNum(IntCastChecked<int32>(static_cast<int64>(MaxIndex) + 1u));
-        }
-
-        const uint32 Stamp     = KinematicsState.Stamp;
+        const uint32 Stamp     = Cache.Stamp;
         const float  DeltaTime = Context.GetDeltaTime();
         const float  InvDelta  = DeltaTime > 0.0f ? (1.0f / DeltaTime) : 0.0f;
-        const uint32 NumEntries = (uint32)KinematicsState.ByEntityIndex.Num();
-        FEntityKinematics* Entries = KinematicsState.ByEntityIndex.GetData();
+        FEntityKinematics* Entries = Cache.ByEntityIndex.GetData();
 
         // An entity in two consumer pools is differenced once, since the second visit sees this pass's stamp.
         const auto Difference = [&](ECS::FEntity Entity, const auto&)
@@ -83,7 +62,7 @@ namespace Lumina
             }
 
             FEntityKinematics& Entry = Entries[Entity.GetIndex()];
-            if (Entry.Owner == Entity && Entry.Stamp == Stamp)
+            if (Cache.IsFresh(Entry, Entity))
             {
                 return;
             }
@@ -115,13 +94,11 @@ namespace Lumina
         // Refines only what the difference pass stamped, so a body with no transform is skipped.
         const auto Refine = [&](ECS::FEntity Entity, const FVector3& Velocity)
         {
-            FEntityKinematics& Entry = Entries[Entity.GetIndex()];
-            if (Entry.Owner != Entity || Entry.Stamp != Stamp)
+            if (FEntityKinematics* Entry = Cache.Find(Entity))
             {
-                return;
+                Entry->LinearVelocity = Velocity;
+                Entry->Speed          = Math::Length(Velocity);
             }
-            Entry.LinearVelocity = Velocity;
-            Entry.Speed          = Math::Length(Velocity);
         };
 
         // The solver's own value beats a difference, which smears a collision across the whole frame.
@@ -131,12 +108,7 @@ namespace Lumina
             Bodies.ParallelForEach([&](ECS::FEntity Entity, const SRigidBodyComponent&, const STransformComponent&)
             {
                 // Most bodies have no consumer, and the stamp check is far cheaper than the scene's status lookup.
-                const uint32 Index = Entity.GetIndex();
-                if (Index >= NumEntries || Entries[Index].Owner != Entity || Entries[Index].Stamp != Stamp)
-                {
-                    return;
-                }
-                if (PhysicsQueries->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
+                if (Cache.Find(Entity) != nullptr && PhysicsQueries->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
                 {
                     Refine(Entity, PhysicsQueries->GetLinearVelocity(Entity));
                 }
@@ -150,12 +122,11 @@ namespace Lumina
         });
 
         // Mirrored so the reflected component reads the same value in the editor and in script.
-        Velocities.ForEach([&](ECS::FEntity Entity, SVelocityComponent& Out)
+        Velocities.ForEach([&](ECS::FEntity Entity, ECS::TMut<SVelocityComponent> OutMut)
         {
-            const uint32 Index = Entity.GetIndex();
-            const bool bFresh = Index < NumEntries && Entries[Index].Owner == Entity && Entries[Index].Stamp == Stamp;
-            Out.Velocity = bFresh ? Entries[Index].LinearVelocity : FVector3(0.0f);
-            Out.Speed    = bFresh ? Entries[Index].Speed : 0.0f;
+            const FEntityKinematics* Entry = Cache.Find(Entity);
+            OutMut.SetIfChanged(&SVelocityComponent::Velocity, Entry != nullptr ? Entry->LinearVelocity : FVector3(0.0f));
+            OutMut.SetIfChanged(&SVelocityComponent::Speed, Entry != nullptr ? Entry->Speed : 0.0f);
         });
     }
 }

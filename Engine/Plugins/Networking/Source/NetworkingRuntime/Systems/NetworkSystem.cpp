@@ -105,18 +105,19 @@ namespace Lumina
         void RefreshNetRoles(ECS::FRegistry& Registry, const FNetWorldState& State, bool bServer)
         {
             LUMINA_PROFILE_SCOPE();
-            Registry.View<ECS::Write<SNetworkComponent>>().ForEach([&](SNetworkComponent& Net)
+            Registry.View<ECS::Write<SNetworkComponent>>().ForEach([&](ECS::TMut<SNetworkComponent> NetMut)
             {
+                const SNetworkComponent& Net = NetMut.Get();
                 if (bServer)
                 {
-                    Net.LocalRole  = ENetRole::Authority;
-                    Net.RemoteRole = (Net.OwningConnectionId != 0) ? ENetRole::AutonomousProxy : ENetRole::SimulatedProxy;
+                    NetMut.SetIfChanged(&SNetworkComponent::LocalRole, ENetRole::Authority);
+                    NetMut.SetIfChanged(&SNetworkComponent::RemoteRole, (Net.OwningConnectionId != 0) ? ENetRole::AutonomousProxy : ENetRole::SimulatedProxy);
                 }
                 else
                 {
                     const bool bOwnedHere = (Net.OwningConnectionId != 0) && (Net.OwningConnectionId == State.LocalPeerId);
-                    Net.LocalRole  = bOwnedHere ? ENetRole::AutonomousProxy : ENetRole::SimulatedProxy;
-                    Net.RemoteRole = ENetRole::Authority;
+                    NetMut.SetIfChanged(&SNetworkComponent::LocalRole, bOwnedHere ? ENetRole::AutonomousProxy : ENetRole::SimulatedProxy);
+                    NetMut.SetIfChanged(&SNetworkComponent::RemoteRole, ENetRole::Authority);
                 }
             });
         }
@@ -244,10 +245,10 @@ namespace Lumina
             LUMINA_PROFILE_SCOPE();
             for (auto [Entity, Net] : Registry.View<ECS::Write<SNetworkComponent>>().Each())
             {
-                if (Net.bNetLoadOnClient && Net.NetGUID.Value == 0)
+                if (Net.Get().bNetLoadOnClient && Net.Get().NetGUID.Value == 0)
                 {
-                    Net.NetGUID = State.GuidTable.AllocateDynamic();
-                    State.GuidTable.Register(Net.NetGUID, Entity);
+                    Net->NetGUID = State.GuidTable.AllocateDynamic();
+                    State.GuidTable.Register(Net.Get().NetGUID, Entity);
                 }
             }
         }
@@ -498,14 +499,16 @@ namespace Lumina
                 return;
             }
 
-            Registry.View<ECS::Write<SNetworkComponent>>().ForEach([&](ECS::FEntity Entity, SNetworkComponent& Net)
+            Registry.View<ECS::Write<SNetworkComponent>>().ForEach([&](ECS::FEntity Entity, ECS::TMut<SNetworkComponent> NetMut)
             {
-                const bool bIsProxy = Net.LocalRole == ENetRole::SimulatedProxy || Net.LocalRole == ENetRole::AutonomousProxy;
-                if (Net.bProxyPhysicsConfigured || !bIsProxy)
+                const SNetworkComponent& Current = NetMut.Get();
+                const bool bIsProxy = Current.LocalRole == ENetRole::SimulatedProxy || Current.LocalRole == ENetRole::AutonomousProxy;
+                if (Current.bProxyPhysicsConfigured || !bIsProxy)
                 {
                     return;
                 }
 
+                SNetworkComponent& Net = NetMut.GetMut();
                 // A character has no solver body to freeze, since the network drives its capsule directly.
                 if (Registry.HasAny<SCharacterPhysicsComponent>(Entity))
                 {
@@ -1253,16 +1256,15 @@ namespace Lumina
             auto TransformStorage = Registry.GetStorage<STransformComponent>();
 
             TVector<FTransformSendRecord> Records;
-            Registry.View<ECS::Write<SNetworkComponent>, ECS::Write<FRepTransform>>().ForEach([&](ECS::FEntity Entity, SNetworkComponent& Net, FRepTransform& Rep)
+            Registry.View<ECS::Write<SNetworkComponent>, ECS::Write<FRepTransform>>().ForEach([&](ECS::FEntity Entity, ECS::TMut<SNetworkComponent> NetMut, ECS::TMut<FRepTransform> RepMut)
             {
-                if (Net.LocalRole != ENetRole::AutonomousProxy || !Net.bReplicatesMovement || NetPrediction::IsPredictedCharacter(Registry, Entity))
+                if (NetMut.Get().LocalRole != ENetRole::AutonomousProxy || !NetMut.Get().bReplicatesMovement
+                    || NetPrediction::IsPredictedCharacter(Registry, Entity) || !TransformStorage.Contains(Entity))
                 {
                     return;
                 }
-                if (!TransformStorage.Contains(Entity))
-                {
-                    return;
-                }
+                FRepTransform& Rep = RepMut.GetMut();
+                SNetworkComponent& Net = NetMut.GetMut();
                 STransformComponent& T = TransformStorage.Get(Entity);
 
                 bool bScale = false;
@@ -2070,11 +2072,11 @@ namespace Lumina
                     }
 
                     // Release anything this connection owned so it doesn't stay stuck as an orphan proxy.
-                    Registry.View<ECS::Write<SNetworkComponent>>().ForEach([&](ECS::FEntity Entity, SNetworkComponent& Net)
+                    Registry.View<ECS::Write<SNetworkComponent>>().ForEach([&](ECS::FEntity Entity, ECS::TMut<SNetworkComponent> NetMut)
                     {
-                        if (Net.OwningConnectionId == Event.Connection.Value)
+                        if (NetMut.Get().OwningConnectionId == Event.Connection.Value)
                         {
-                            Net.OwningConnectionId = 0;
+                            NetMut->OwningConnectionId = 0;
                             State->OwnershipChanged.Add(Entity);
                         }
                     });

@@ -376,7 +376,8 @@ namespace Lumina
     void FStaticMeshEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
-        
+        World->GetRenderSettings().bDrawBillboards = false;
+
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
         World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
         World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
@@ -407,12 +408,6 @@ namespace Lumina
         if (!World.IsValid())
         {
             return;
-        }
-        
-        // @TODO figure out why this needs to exist..
-        if (World->GetRenderer())
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
         }
 
         SStaticMeshComponent& StaticMeshComponent = World->GetComponent<SStaticMeshComponent>(MeshEntity);

@@ -945,7 +945,7 @@ namespace Lumina::ECS::Utils
             }
             else
             {
-                Consumer.Overflow.EnqueueBulk(Entities, Count);
+                Consumer.Overflow.EnqueueBulk(Entities, IntCastChecked<uint32>(Count));
             }
         }
 

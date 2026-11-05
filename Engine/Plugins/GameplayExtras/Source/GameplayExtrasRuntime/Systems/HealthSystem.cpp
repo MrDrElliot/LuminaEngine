@@ -26,12 +26,14 @@ namespace Lumina
             return;
         }
 
-        Regenerators.ForEach([&](ECS::FEntity Entity, SHealthComponent& Health)
+        Regenerators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SHealthComponent> HealthMut)
         {
-            if (Health.bDead || !Health.RegenPerSecond.IsSet())
+            const SHealthComponent& Current = HealthMut.Get();
+            if (Current.bDead || !Current.RegenPerSecond.IsSet() || Current.Health >= Current.MaxHealth)
             {
                 return;
             }
+            SHealthComponent& Health = HealthMut.GetMut();
 
             if (Health.RegenCooldown > 0.0f)
             {

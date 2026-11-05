@@ -68,8 +68,8 @@ namespace Lumina
         RUNTIME_API uint64 GetEnumValueByName(const FName& Name);
         RUNTIME_API FFixedString GetValueOrBitFieldAsString(int64 Value);
         
-        RUNTIME_API FName GetNameAtIndex(int64 Index) const  { return Names[Index].Key; }
-        RUNTIME_API uint64 GetValueAtIndex(int64 Index) const { return Names[Index].Value; }
+        RUNTIME_API FName GetNameAtIndex(int64 Index) const  { return Names[static_cast<int32>(Index)].Key; }
+        RUNTIME_API uint64 GetValueAtIndex(int64 Index) const { return Names[static_cast<int32>(Index)].Value; }
         
         void AddEnum(FName Name, uint64 Value);
         void ForEachEnum(const TFunction<void(const TPair<FName, uint64>&)>& Functor);

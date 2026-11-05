@@ -705,6 +705,12 @@ namespace Lumina
         // Deferred timers run inside TickSystems now, still before gameplay systems.
         TickSystems(SystemContext);
 
+        // After the variable-rate PrePhysics systems and before the physics step.
+        if (Stage == EUpdateStage::PrePhysics)
+        {
+            TickFixedUpdate(DeltaTime);
+        }
+
         // The frame's one propagation, owned here so a world with no renderer still settles, since physics syncs bodies from local transforms.
         if ((Stage == EUpdateStage::FrameEnd || Stage == EUpdateStage::Paused) && ECS::Utils::AnyTransformsDirty(EntityRegistry))
         {
@@ -1644,9 +1650,14 @@ namespace Lumina
 
     namespace
     {
-        // A system answers to its own class and every class it derives from, so ordering against a base covers its subclasses.
+        // A system answers to its sets, its own class and every class it derives from, so ordering against a base covers its subclasses.
         bool IsSystemNamed(const CEntitySystem* System, FName Name)
         {
+            if (Algo::Contains(System->GetSets(), Name))
+            {
+                return true;
+            }
+
             for (const CClass* Class = System->GetClass(); Class != nullptr && Class != CEntitySystem::StaticClass(); Class = Class->GetSuperClass())
             {
                 if (Class->GetName() == Name)
@@ -1942,13 +1953,27 @@ namespace Lumina
         {
             StageSchedules[i] = SystemSchedule::OrderStage(InStage[i], (EUpdateStage)i);
 
+            #if !defined(LE_SHIPPING)
             const FStageSchedule& Stage = StageSchedules[i];
             for (const SystemSchedule::FAmbiguity& Ambiguity : SystemSchedule::FindAmbiguities(Stage))
             {
-                LOG_INFO("World: systems {} and {} both access {} in stage {} with no RunsAfter or RunsBefore between them, so registration order decides which runs first",
-                    Stage.Systems[Ambiguity.First]->GetClass()->GetName(), Stage.Systems[Ambiguity.Second]->GetClass()->GetName(),
-                    GetAccessTypeName(Ambiguity.ConflictId), GUpdateStageNames[i]);
+                const FName FirstName = Stage.Systems[Ambiguity.First]->GetClass()->GetName();
+                const FName SecondName = Stage.Systems[Ambiguity.Second]->GetClass()->GetName();
+
+                // Keyed by class name in either order, since a rebuild may reorder the pair or recreate a system as a new object.
+                const size_t FirstHash = GetTypeHash(FirstName);
+                const size_t SecondHash = GetTypeHash(SecondName);
+                size_t Key = Math::Min(FirstHash, SecondHash);
+                Hash::HashCombine(Key, Math::Max(FirstHash, SecondHash));
+                Hash::HashCombine(Key, (size_t)Ambiguity.ConflictId);
+                Hash::HashCombine(Key, (size_t)i);
+                if (ReportedAmbiguities.TryAdd(Key))
+                {
+                    LOG_INFO("World: systems {} and {} both access {} in stage {} with no RunsAfter or RunsBefore between them, so registration order decides which runs first",
+                        FirstName, SecondName, GetAccessTypeName(Ambiguity.ConflictId), GUpdateStageNames[i]);
+                }
             }
+            #endif
 
             // Built on the next tick, once each system has said whether it has work.
             SystemSegments[i].Reset();
@@ -2333,6 +2358,49 @@ namespace Lumina
 
             FlushCommands();
         }
+    }
+
+    void CWorld::TickFixedUpdate(double FrameDeltaSeconds)
+    {
+        if (StageSchedules[(uint32)EUpdateStage::FixedUpdate].Systems.IsEmpty())
+        {
+            FixedUpdateAccumulator = 0.0f;
+            return;
+        }
+
+        const SDefaultWorldSettings& Settings = GetDefaultWorldSettings();
+        const float FixedDt  = 1.0f / Math::Max(10.0f, Settings.PhysicsHz);
+        const int32 MaxSteps = (int32)Settings.MaxPhysicsSteps;
+        if (MaxSteps <= 0)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SCOPE();
+
+        // Clamped as a spiral-of-death guard, so a long hitch cannot queue a hundred steps.
+        FixedUpdateAccumulator = Math::Min(FixedUpdateAccumulator + (float)FrameDeltaSeconds, (float)MaxSteps * FixedDt);
+
+        const int32 Steps = Math::Min(MaxSteps, (int32)(FixedUpdateAccumulator / FixedDt));
+        if (Steps <= 0)
+        {
+            return;
+        }
+
+        FixedUpdateAccumulator -= (float)Steps * FixedDt;
+
+        const EUpdateStage OuterStage = SystemContext.UpdateStage;
+        const double OuterDeltaTime   = SystemContext.DeltaTime;
+
+        SystemContext.UpdateStage = EUpdateStage::FixedUpdate;
+        SystemContext.DeltaTime   = FixedDt;
+        for (int32 Step = 0; Step < Steps; ++Step)
+        {
+            TickSystems(SystemContext);
+        }
+
+        SystemContext.UpdateStage = OuterStage;
+        SystemContext.DeltaTime   = OuterDeltaTime;
     }
 
     void CWorld::FlushCommands()

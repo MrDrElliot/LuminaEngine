@@ -68,12 +68,13 @@ namespace Lumina
             return;
         }
 
-        FoliageSets.ForEach([&](ECS::FEntity Entity, SFoliageComponent& Foliage)
+        FoliageSets.ForEach([&](ECS::FEntity Entity, ECS::TMut<SFoliageComponent> FoliageMut)
         {
-            if (Foliage.Instances.IsEmpty())
+            if (FoliageMut.Get().Instances.IsEmpty())
             {
                 return;
             }
+            SFoliageComponent& Foliage = FoliageMut.GetMut();
 
             // Each instance reads the shared terrains and writes only its own Position.y.
             std::atomic<bool> bMovedAny{ false };

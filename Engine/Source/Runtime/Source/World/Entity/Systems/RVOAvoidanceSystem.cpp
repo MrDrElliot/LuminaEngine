@@ -34,7 +34,7 @@ namespace Lumina
 
     bool SRVOAvoidanceSystem::HasWork(const SSystemContext& Context)
     {
-        return !Avoiders.IsEmpty();
+        return AnyQueryHasRows(Avoiders);
     }
 
     void SRVOAvoidanceSystem::OnUpdate(const SSystemContext& Context)

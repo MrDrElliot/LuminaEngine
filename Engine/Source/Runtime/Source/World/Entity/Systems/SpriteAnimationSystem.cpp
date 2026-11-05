@@ -22,8 +22,9 @@ namespace Lumina
     {
         const float Dt = Context.GetDeltaTime();
 
-        Animators.ParallelForEach([Dt](SAnimatedSprite3DComponent& Animated, SSprite3DComponent& Sprite)
+        Animators.ParallelForEach([Dt](ECS::TMut<SAnimatedSprite3DComponent> AnimatedMut, ECS::TMut<SSprite3DComponent> SpriteMut)
         {
+            const SAnimatedSprite3DComponent& Animated = AnimatedMut.Get();
             CSpriteSheet* Sheet = Animated.SpriteSheet.Get();
             if (Sheet == nullptr)
             {
@@ -39,10 +40,11 @@ namespace Lumina
             // Retargeting mid-clip would land on a frame index the new clip may not have.
             if (Animated.ActiveAnimation != Animated.Animation)
             {
-                Animated.ActiveAnimation = Animated.Animation;
-                Animated.Frame           = 0;
-                Animated.FrameProgress   = 0.0f;
-                Animated.bFinished       = false;
+                SAnimatedSprite3DComponent& Retargeted = AnimatedMut.GetMut();
+                Retargeted.ActiveAnimation = Animated.Animation;
+                Retargeted.Frame           = 0;
+                Retargeted.FrameProgress   = 0.0f;
+                Retargeted.bFinished       = false;
             }
 
             FSpritePlayback Playback;
@@ -60,16 +62,16 @@ namespace Lumina
                 Playback.Frame = Math::Clamp(Playback.Frame, 0, Clip->Frames.Num() - 1);
             }
 
-            Animated.Frame         = Playback.Frame;
-            Animated.FrameProgress = Playback.Progress;
-            Animated.bFinished     = Playback.bFinished;
+            AnimatedMut.SetIfChanged(&SAnimatedSprite3DComponent::Frame, Playback.Frame);
+            AnimatedMut.SetIfChanged(&SAnimatedSprite3DComponent::FrameProgress, Playback.Progress);
+            AnimatedMut.SetIfChanged(&SAnimatedSprite3DComponent::bFinished, Playback.bFinished);
 
             // The sheet owns the grid, so the sprite is driven rather than authored alongside it.
-            Sprite.Texture        = Sheet->Texture;
-            Sprite.HFrames        = Math::Max(Sheet->HFrames, 1);
-            Sprite.VFrames        = Math::Max(Sheet->VFrames, 1);
-            Sprite.bRegionEnabled = false;
-            Sprite.Frame          = Math::Clamp(Clip->Frames[Animated.Frame], 0, Sheet->GetFrameCount() - 1);
+            SpriteMut.SetIfChanged(&SSprite3DComponent::Texture, Sheet->Texture);
+            SpriteMut.SetIfChanged(&SSprite3DComponent::HFrames, Math::Max(Sheet->HFrames, 1));
+            SpriteMut.SetIfChanged(&SSprite3DComponent::VFrames, Math::Max(Sheet->VFrames, 1));
+            SpriteMut.SetIfChanged(&SSprite3DComponent::bRegionEnabled, false);
+            SpriteMut.SetIfChanged(&SSprite3DComponent::Frame, Math::Clamp(Clip->Frames[Playback.Frame], 0, Sheet->GetFrameCount() - 1));
         });
     }
 }

@@ -846,12 +846,6 @@ namespace Lumina
                 }
             }
             ImGuiX::TextTooltip("Write the image this texture was imported from to a folder on disk.");
-            
-            if (ImGui::Button("Analyze Color Distribution", ImVec2(-1, 0)))
-            {
-                // TODO Implement analysis
-            }
-            ImGuiX::TextTooltip("Analyze the color distribution across all pixels.");
         });
     }
 

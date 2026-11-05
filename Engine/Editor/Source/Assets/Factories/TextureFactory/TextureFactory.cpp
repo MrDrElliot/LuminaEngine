@@ -1169,19 +1169,19 @@ namespace Lumina
             const uint8* Texel = &Source.Pixels[i * Stride * Bytes];
             if (Bytes == 1)
             {
-                Out[i] = float(Texel[0]) / 255.0f;
+                Out[static_cast<int32>(i)] = float(Texel[0]) / 255.0f;
             }
             else if (Bytes == 2)
             {
                 uint16 Value;
                 Memory::Memcpy(&Value, Texel, sizeof(Value));
-                Out[i] = float(Value) / 65535.0f;
+                Out[static_cast<int32>(i)] = float(Value) / 65535.0f;
             }
             else
             {
                 float Value;
                 Memory::Memcpy(&Value, Texel, sizeof(Value));
-                Out[i] = std::isfinite(Value) ? Math::Clamp(Value, -65504.0f, 65504.0f) : 0.0f;
+                Out[static_cast<int32>(i)] = std::isfinite(Value) ? Math::Clamp(Value, -65504.0f, 65504.0f) : 0.0f;
             }
         }
         return true;
@@ -1824,7 +1824,7 @@ namespace Lumina
             }
             for (int64 i = 0; i < Texels; ++i)
             {
-                WriteTexel(i, Mip.Pixels[i], 0, 0, 0xFF);
+                WriteTexel(i, Mip.Pixels[static_cast<int32>(i)], 0, 0, 0xFF);
             }
             return true;
         }
@@ -1838,7 +1838,7 @@ namespace Lumina
             for (int64 i = 0; i < Texels; ++i)
             {
                 uint16 Half;
-                Memory::Memcpy(&Half, &Mip.Pixels[i * 2], sizeof(Half));
+                Memory::Memcpy(&Half, &Mip.Pixels[static_cast<int32>(i * 2)], sizeof(Half));
                 const float Value = Math::UnpackHalf2x16((uint32)Half).x;
                 WriteTexel(i, (uint8)std::lround(Math::Clamp(Value, 0.0f, 1.0f) * 255.0f), 0, 0, 0xFF);
             }

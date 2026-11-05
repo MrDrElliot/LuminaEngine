@@ -2300,7 +2300,7 @@ namespace Lumina::RmlUi
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         // GetDataModel logs a miss as an error, and a miss is the answer this asks for.
-        return State.bInitialized && Context != nullptr && Context->GetDataModels().contains(Rml::String(Name.GetData(), Name.Len())) > 0;
+        return State.bInitialized && Context != nullptr && Context->GetDataModels().contains(Rml::String(Name.GetData(), Name.Len()));
     }
 
     void UnloadScreenDocument(CWorld* World, void* Document)

@@ -62,7 +62,7 @@ namespace Lumina
 
     bool SRagdollSystem::HasWork(const SSystemContext& Context)
     {
-        return !Ragdolls.IsEmpty();
+        return AnyQueryHasRows(Ragdolls);
     }
 
     void SRagdollSystem::OnUpdate(const SSystemContext& Context)
@@ -77,17 +77,18 @@ namespace Lumina
 
         if (Stage == EUpdateStage::PrePhysics)
         {
-            Ragdolls.ForEach([&](ECS::FEntity Entity, SRagdollComponent& Ragdoll, const SSkeletalMeshComponent& Mesh, const STransformComponent& Transform)
+            Ragdolls.ForEach([&](ECS::FEntity Entity, ECS::TMut<SRagdollComponent> RagdollMut, const SSkeletalMeshComponent& Mesh, const STransformComponent& Transform)
             {
+                const SRagdollComponent& Ragdoll = RagdollMut.Get();
                 if (Ragdoll.State == ERagdollState::Powered)
                 {
-                    CaptureMuscleTargets(Ragdoll, Mesh);
+                    CaptureMuscleTargets(RagdollMut.GetMut(), Mesh);
                 }
 
                 // Limp and powered share one set of bodies, so moving between them only changes what the muscles do.
                 if (Ragdoll.State != ERagdollState::Inactive && Ragdoll.RealizedState != ERagdollState::Inactive)
                 {
-                    Ragdoll.RealizedState = Ragdoll.State;
+                    RagdollMut.SetIfChanged(&SRagdollComponent::RealizedState, Ragdoll.State);
                 }
 
                 // Into physics, so build the ragdoll from the current animated pose.
@@ -161,8 +162,9 @@ namespace Lumina
         }
         else if (Stage == EUpdateStage::PostPhysics)
         {
-            Ragdolls.ForEach([&](ECS::FEntity Entity, SRagdollComponent& Ragdoll, const SSkeletalMeshComponent& ReadMesh, const STransformComponent& Transform)
+            Ragdolls.ForEach([&](ECS::FEntity Entity, ECS::TMut<SRagdollComponent> RagdollMut, const SSkeletalMeshComponent& ReadMesh, const STransformComponent& Transform)
             {
+                const SRagdollComponent& Ragdoll = RagdollMut.Get();
                 if (Ragdoll.RealizedState == ERagdollState::Inactive || !Ragdoll.Ragdoll || !PhysicsQueries->IsRagdollReady(*Ragdoll.Ragdoll))
                 {
                     return;

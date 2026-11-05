@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
+#include "Containers/Algorithm.h"
 #include "Containers/Name.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectBase.h"
@@ -11,6 +12,7 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/Package/PackageNameTable.h"
 #include "Core/Versioning/CoreVersion.h"
+#include "Log/Log.h"
 
 using namespace Lumina;
 
@@ -397,6 +399,62 @@ TEST(PackageNameTable, AContainerReaderDecodesTheExportTableWithoutAPackage)
     ASSERT_NE(Found, nullptr) << "the scan could not find the export it just wrote";
     EXPECT_EQ(Found->ObjectName, ExportName);
     EXPECT_EQ(Found->ClassName, CParticleEmitter::StaticClass()->GetName());
+}
+
+namespace
+{
+    // Loads a saved emitter whose export is re-labeled as a class this process never registered, and counts the resolve errors.
+    int32 CountErrorsLoadingUnregisteredClass(const char* Tag, const FName& ClassPackage)
+    {
+        EnsureCompatMount();
+        CParticleEmitter::StaticClass()->Link();
+
+        char Path[128];
+        std::snprintf(Path, sizeof(Path), "%s/%s.lasset", kCompatAlias, Tag);
+        const FGuid Guid = FGuid::New();
+        const FName MissingClass("CUnregisteredNodeGraph");
+
+        {
+            CPackage* Package = CPackage::CreatePackage(Path);
+            EXPECT_NE(NewObject(CParticleEmitter::StaticClass(), Package, "Graph", Guid), nullptr) << Tag;
+            EXPECT_TRUE(CPackage::SavePackage(Package, Path)) << Tag;
+            RetireCompatPackage(Package);
+        }
+
+        CPackage* Loaded = CPackage::LoadPackage(Path);
+        EXPECT_NE(Loaded, nullptr) << Tag;
+        FObjectExport* Export = Algo::FindIf(Loaded->ExportTable, [&](const FObjectExport& E) { return E.ObjectGUID == Guid; });
+        EXPECT_NE(Export, nullptr) << Tag;
+        EXPECT_EQ(Export->ClassPackage, CParticleEmitter::StaticClass()->GetPackage()->GetName()) << Tag << ": the save must record the class's type package";
+
+        Export->ClassName    = MissingClass;
+        Export->ClassPackage = ClassPackage;
+
+        Logging::ClearLogQueue();
+        EXPECT_EQ(Loaded->LoadObject(Guid), nullptr) << Tag;
+        Logging::Flush();
+
+        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
+        int32 Errors = 0;
+        for (int32 Index = 0; Index < Messages.Num(); ++Index)
+        {
+            Errors += Messages[Index].Level == ELogLevel::Error && Messages[Index].Message.View().Contains("CUnregisteredNodeGraph");
+        }
+
+        RetireCompatPackage(Loaded);
+        return Errors;
+    }
+}
+
+TEST(PackageExportClass, EditorDataLoadsQuietlyWithoutTheEditorModule)
+{
+    ASSERT_EQ(FindObject<CPackage>(FName("/Types/Editor")), nullptr) << "the test binary must not register the editor's types";
+    EXPECT_EQ(CountErrorsLoadingUnregisteredClass("EditorOnlyExport", "/Types/Editor"), 0);
+}
+
+TEST(PackageExportClass, AMissingRuntimeClassStillLogs)
+{
+    EXPECT_EQ(CountErrorsLoadingUnregisteredClass("MissingClassExport", CParticleEmitter::StaticClass()->GetPackage()->GetName()), 1);
 }
 
 // reading the tables without standing the name table up first must not invent plausible names

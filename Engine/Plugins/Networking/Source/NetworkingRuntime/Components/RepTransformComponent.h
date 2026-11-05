@@ -22,7 +22,7 @@ namespace Lumina
         int Count = 0; // valid samples
         int Head  = 0; // physical index of the oldest
 
-        FNetInterpSample& Logical(int Index) { return Samples[(Head + Index) % Capacity]; }
+        const FNetInterpSample& Logical(int Index) const { return Samples[(Head + Index) % Capacity]; }
         const FNetInterpSample& Newest() const { return Samples[(Head + Count - 1) % Capacity]; }
 
         // Average spacing between buffered samples (seconds), i.e. this entity's effective send interval.
@@ -56,7 +56,7 @@ namespace Lumina
         // Pose at RenderTime. Holds at the low end, lerps between bracketing samples, and past the newest
         // sample extrapolates position from the last velocity (capped) when bExtrapolate; rotation is held.
         void Evaluate(double RenderTime, FVector3& OutPos, FQuat& OutRot, bool bExtrapolate, double MaxExtrapolation,
-            float TeleportDistance = 0.0f)
+            float TeleportDistance = 0.0f) const
         {
             if (Count == 0)
             {
@@ -68,10 +68,10 @@ namespace Lumina
             }
             if (RenderTime >= Logical(Count - 1).Time)
             {
-                FNetInterpSample& Last = Logical(Count - 1);
+                const FNetInterpSample& Last = Logical(Count - 1);
                 if (bExtrapolate)
                 {
-                    FNetInterpSample& Prev = Logical(Count - 2);
+                    const FNetInterpSample& Prev = Logical(Count - 2);
                     const double Span = Last.Time - Prev.Time;
                     if (Span > 1e-9)
                     {
@@ -87,8 +87,8 @@ namespace Lumina
             }
             for (int i = 0; i < Count - 1; ++i)
             {
-                FNetInterpSample& A = Logical(i);
-                FNetInterpSample& B = Logical(i + 1);
+                const FNetInterpSample& A = Logical(i);
+                const FNetInterpSample& B = Logical(i + 1);
                 if (RenderTime >= A.Time && RenderTime <= B.Time)
                 {
                     // A jump this far was a teleport, so it lands at B's time instead of sliding across the gap.

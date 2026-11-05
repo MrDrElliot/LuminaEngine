@@ -410,22 +410,49 @@ namespace Lumina
             return Search(Mesh, Filter, StartKey, StartRef, EndKey, StartPos, EndPos, Abandon, Out);
         }
 
-        // A different island, so the route heads for the part of the start's island nearest the goal instead.
+        // A different island, so the route heads for the part of the start's island nearest the goal, searched in tile rings around the goal.
         uint64 NearestKey = StartKey;
-        float NearestDistance = TNumericLimits<float>::Max();
-        for (int32 t = 0; t < Tiles.Num(); ++t)
+        float NearestDistance = Math::LengthSquared(Tiles[TileOfKey(StartKey)].Centers[ClusterOfKey(StartKey)] - EndPos);
+        const float RingWidth = Math::Min(Mesh.getParams()->tileWidth, Mesh.getParams()->tileHeight);
+        int32 GoalX = 0, GoalY = 0;
+        Mesh.calcTileLoc(&EndPos.x, &GoalX, &GoalY);
+        for (int32 Ring = 0;; ++Ring)
         {
-            if (t % 1024 == 0 && Abandon.load(std::memory_order_relaxed) != 0)
+            const float RingGap = (float)Math::Max(0, Ring - 1) * RingWidth;
+            if (RingGap * RingGap > NearestDistance)
+            {
+                break;
+            }
+            if (Abandon.load(std::memory_order_relaxed) != 0)
             {
                 return ERoute::Abandoned;
             }
-            for (int32 c = 0; c < Tiles[t].Centers.Num(); ++c)
+            for (int32 Dy = -Ring; Dy <= Ring; ++Dy)
             {
-                const float Distance = ComponentOf(PackKey((uint32)t, (uint16)c)) == StartComponent ? Math::LengthSquared(Tiles[t].Centers[c] - EndPos) : TNumericLimits<float>::Max();
-                if (Distance < NearestDistance)
+                const int32 Step = Math::Abs(Dy) == Ring ? 1 : 2 * Ring;
+                for (int32 Dx = -Ring; Dx <= Ring; Dx += Math::Max(1, Step))
                 {
-                    NearestDistance = Distance;
-                    NearestKey = PackKey((uint32)t, (uint16)c);
+                    const dtMeshTile* Found[kMaxTilesPerCell];
+                    const int32 Count = Mesh.getTilesAt(GoalX + Dx, GoalY + Dy, Found, kMaxTilesPerCell);
+                    for (int32 i = 0; i < Count; ++i)
+                    {
+                        const uint32 TileIndex = Mesh.decodePolyIdTile(Mesh.getTileRef(Found[i]));
+                        if (TileIndex >= (uint32)Tiles.Num() || Tiles[TileIndex].Salt != Found[i]->salt)
+                        {
+                            continue;
+                        }
+                        const TVector<FVector3>& Centers = Tiles[TileIndex].Centers;
+                        for (int32 c = 0; c < Centers.Num(); ++c)
+                        {
+                            const uint64 Key = PackKey(TileIndex, (uint16)c);
+                            const float Distance = Math::LengthSquared(Centers[c] - EndPos);
+                            if ((Distance < NearestDistance || (Distance == NearestDistance && Key < NearestKey)) && ComponentOf(Key) == StartComponent)
+                            {
+                                NearestDistance = Distance;
+                                NearestKey = Key;
+                            }
+                        }
+                    }
                 }
             }
         }

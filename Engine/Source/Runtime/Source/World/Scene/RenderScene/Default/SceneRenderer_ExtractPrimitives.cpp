@@ -86,8 +86,9 @@ namespace Lumina
         const FFrustum& WidgetFrustum = Frame.CameraFrustum;
         const bool      bCullWidgets   = SceneGlobalData.CullData.bFrustumCull != 0u;
 
-        WidgetView.ForEach([&](ECS::FEntity Entity, SWidgetComponent& WidgetComponent)
+        WidgetView.ForEach([&](ECS::FEntity Entity, ECS::TMut<SWidgetComponent> WidgetComponentMut)
         {
+            SWidgetComponent& WidgetComponent = WidgetComponentMut.BypassChangeDetection();
             FWidgetRuntime& Runtime = WidgetComponent.Runtime;
 
             const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrixCached();

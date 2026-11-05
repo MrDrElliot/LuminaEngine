@@ -463,7 +463,7 @@ namespace Lumina
                 {
                     if (!FoundProperty->ShouldSerialize())
                     {
-                        LOG_WARN("Property '{}' that was previously serialized, is not marked transient. Skipping.", Header.Name.ToString());
+                        LOG_WARN("Property '{}' in struct '{}' that was previously serialized, is not marked transient. Skipping.", Header.Name.ToString(), GetName());
                         Ar.Seek(DataStartPos + Header.Size);
                         continue;
                     }
@@ -488,24 +488,24 @@ namespace Lumina
                         {
                             SetConvertedNumericValue(*FoundProperty, Data, OldValue);
 
-                            LOG_WARN("Property '{}' type changed from '{}' to '{}', converted value to new type.",
-                            Header.Name, PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
+                            LOG_WARN("Property '{}' in struct '{}' type changed from '{}' to '{}', converted value to new type.",
+                            Header.Name, GetName(), PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
                         }
                         else
                         {
-                            LOG_WARN("Property '{}' type changed from '{}' to '{}', but the value cannot fit in the new type.",
-                            Header.Name, PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
+                            LOG_WARN("Property '{}' in struct '{}' type changed from '{}' to '{}', but the value cannot fit in the new type.",
+                            Header.Name, GetName(), PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
                         }
                     }
                     else
                     {
-                        LOG_WARN("Property '{}' type changed from '{}' to '{}', which do not convert; it keeps its default.",
-                            Header.Name, PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
+                        LOG_WARN("Property '{}' in struct '{}' type changed from '{}' to '{}', which do not convert; it keeps its default.",
+                            Header.Name, GetName(), PropertyTypeToString(Header.Type), PropertyTypeToString(FoundProperty->GetType()));
                     }
                 }
                 else
                 {
-                    LOG_WARN("Property '{}' of type '{}' not found in struct, skipping", Header.Name.ToString(), PropertyTypeToString(Header.Type));
+                    LOG_WARN("Property '{}' of type '{}' not found in struct '{}', skipping", Header.Name.ToString(), PropertyTypeToString(Header.Type), GetName());
                 }
         
                 Ar.Seek(DataStartPos + Header.Size);

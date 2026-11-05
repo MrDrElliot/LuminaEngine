@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -223,9 +224,17 @@ namespace
         int32  Corners = 0;
         double Total = 0.0;
         double Worst = 0.0;
+        uint64 Fingerprint = 14695981039346656037ull;
 
         void Add(const FNavPath& Path, bool bFound, double Ms)
         {
+            for (const FVector3& Corner : Path.Corners)
+            {
+                for (int32 Axis = 0; Axis < 3; ++Axis)
+                {
+                    Fingerprint = (Fingerprint ^ std::bit_cast<uint32>(Corner[Axis])) * 1099511628211ull;
+                }
+            }
             Total += Ms;
             Worst = Math::Max(Worst, Ms);
             Succeeded += bFound && !Path.bPartial ? 1 : 0;
@@ -236,9 +245,10 @@ namespace
 
         void Print(const char* Band, const char* Mode, int32 Ran) const
         {
-            std::printf("[NavBench] path %-6s %-6s %4d queries, %8.1f us avg, %7.2f ms worst, %5.1f%% full, %5.1f%% partial, %5.1f%% truncated, %.0f corners avg\n",
+            std::printf("[NavBench] path %-6s %-6s %4d queries, %8.1f us avg, %7.2f ms worst, %5.1f%% full, %5.1f%% partial, %5.1f%% truncated, %.0f corners avg, corners hash %016llx\n",
                 Band, Mode, Ran, Ran ? Total * 1000.0 / Ran : 0.0, Worst, Ran ? 100.0 * Succeeded / Ran : 0.0,
-                Ran ? 100.0 * Partial / Ran : 0.0, Ran ? 100.0 * Truncated / Ran : 0.0, Ran ? (double)Corners / Ran : 0.0);
+                Ran ? 100.0 * Partial / Ran : 0.0, Ran ? 100.0 * Truncated / Ran : 0.0, Ran ? (double)Corners / Ran : 0.0,
+                (unsigned long long)Fingerprint);
         }
     };
 

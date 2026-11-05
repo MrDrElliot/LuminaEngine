@@ -645,7 +645,7 @@ namespace Lumina::Platform
         // Only the pipe is handed down, since a child that inherits a server's listening socket keeps its port bound after we exit.
         SIZE_T AttributeBytes = 0;
         InitializeProcThreadAttributeList(nullptr, 1, 0, &AttributeBytes);
-        TVector<uint8> AttributeStorage(AttributeBytes);
+        TVector<uint8> AttributeStorage(static_cast<int32>(AttributeBytes));
         si.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(AttributeStorage.GetData());
         HANDLE InheritedHandles[] = { WriteEnd };
         const bool bAttributeList = InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &AttributeBytes) != FALSE;

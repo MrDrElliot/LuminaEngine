@@ -902,7 +902,7 @@ namespace Lumina
 
     bool SAnimationSystem::HasWork(const SSystemContext& Context)
     {
-        return !SimpleAnimators.IsEmpty() || !GraphAnimators.IsEmpty();
+        return AnyQueryHasRows(SimpleAnimators, GraphAnimators);
     }
 
     void SAnimationSystem::OnUpdate(const SSystemContext& Context)
@@ -944,8 +944,10 @@ namespace Lumina
         // Each pass depends on the one before it, so the graph pass runs after the simple pass and a dual-component entity resolves the same way.
         if (bHasSimple)
         {
-            SimpleAnimators.ParallelForEach([&](ECS::FEntity Entity, SSimpleAnimationComponent& Anim, SSkeletalMeshComponent& Mesh)
+            SimpleAnimators.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SSimpleAnimationComponent> AnimMut, ECS::TMut<SSkeletalMeshComponent> MeshMut)
             {
+                SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
+                SSimpleAnimationComponent& Anim = AnimMut.GetMut();
                 UpdateSimple(Anim, Mesh, Entity, DeltaTime, Now);
                 if (bFuseExecute && !GraphView.Contains(Entity))
                 {
@@ -967,8 +969,10 @@ namespace Lumina
 
         if (bHasGraph)
         {
-            GraphAnimators.ParallelForEach([&](ECS::FEntity Entity, SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh)
+            GraphAnimators.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent> MeshMut)
             {
+                SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
+                SAnimationGraphComponent& AnimGraph = AnimGraphMut.GetMut();
                 UpdateGraph(Context, Entity, AnimGraph, Mesh, Placements.TryGet<STransformComponent>(Entity), DeltaTime, Now, SharedKinematics);
                 SendMontageEvents(MontageStarted, MontageBlendingOut, MontageEnded, Entity, AnimGraph.Montages);
 
@@ -991,16 +995,19 @@ namespace Lumina
         }
 
         // Each mesh has at most one recipe, so no entity is touched twice by the execute pass.
-        Meshes.ParallelForEach([&](ECS::FEntity, SSkeletalMeshComponent& Mesh)
+        Meshes.ParallelForEach([&](ECS::FEntity, ECS::TMut<SSkeletalMeshComponent> MeshMut)
         {
+            SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
             ExecuteMeshRecipe(Mesh);
         }, 16);
 
         // Copying is its own pass so every leader finishes before any follower reads one.
         if (bHasFollower)
         {
-            Followers.ParallelForEach([&](ECS::FEntity Entity, SFollowerPoseComponent& Follower, SSkeletalMeshComponent& Mesh)
+            Followers.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SFollowerPoseComponent> FollowerMut, ECS::TMut<SSkeletalMeshComponent> MeshMut)
             {
+                SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
+                SFollowerPoseComponent& Follower = FollowerMut.GetMut();
                 Follower.bSharesLeaderPose = false;
 
                 const ECS::FEntity LeaderEntity = SkeletalUtils::ResolvePoseLeader(PoseLinks, LeaderMeshes, Context.GetHierarchy(), [&Context](ECS::FEntity Candidate) { return Context.IsValidEntity(Candidate); }, Entity);
@@ -1111,16 +1118,18 @@ namespace Lumina
 
         if (bHasSimple)
         {
-            SimpleAnimators.ForEach([&](ECS::FEntity Entity, SSimpleAnimationComponent& Anim, SSkeletalMeshComponent&)
+            SimpleAnimators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SSimpleAnimationComponent> AnimMut, ECS::TMut<SSkeletalMeshComponent>)
             {
+                SSimpleAnimationComponent& Anim = AnimMut.GetMut();
                 ApplyRootMotion(Entity, Anim.PendingRootMotion);
             });
         }
 
         if (bHasGraph)
         {
-            GraphAnimators.ForEach([&](ECS::FEntity Entity, SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent&)
+            GraphAnimators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent>)
             {
+                SAnimationGraphComponent& AnimGraph = AnimGraphMut.GetMut();
                 ApplyRootMotion(Entity, AnimGraph.PendingRootMotion);
             });
         }

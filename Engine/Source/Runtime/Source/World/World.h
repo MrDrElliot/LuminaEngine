@@ -745,6 +745,10 @@ namespace Lumina
         //~ System scheduling.
 
         void TickSystems(SSystemContext& Context);
+
+        // Runs the FixedUpdate stage 0..MaxPhysicsSteps times at 1/PhysicsHz, from this world's own accumulator.
+        void TickFixedUpdate(double FrameDeltaSeconds);
+
         void RunScheduledSystem(CEntitySystem* System, SSystemContext& Context);
         void RunSegment(const FStageSchedule& Stage, const FSystemSegment& Segment, SSystemContext& Context);
 
@@ -805,6 +809,9 @@ namespace Lumina
         // Per stage, the dependency-ordered systems TickSystems runs.
         FStageSchedule          StageSchedules[(int32)EUpdateStage::Max];
 
+        // Hashes of the stage, system pair and component of every ambiguity already warned about, so rebuilds only report new ones.
+        THashSet<uint64>        ReportedAmbiguities;
+
         // What TickSystems runs, rebuilt only when the set of systems with work changes between frames.
         TVector<FSystemSegment> SystemSegments[(int32)EUpdateStage::Max];
 
@@ -842,6 +849,9 @@ namespace Lumina
         double                  DeltaTime = 0.0;
         double                  RealDeltaTime = 0.0;
         double                  TimeSinceCreation = 0.0;
+
+        // Unspent frame time toward the next FixedUpdate step.
+        float                   FixedUpdateAccumulator = 0.0f;
 
         // Engine clock time the world went suspended, or -1 while active, for the idle reclaim grace.
         double                  SuspendedTime = -1.0;

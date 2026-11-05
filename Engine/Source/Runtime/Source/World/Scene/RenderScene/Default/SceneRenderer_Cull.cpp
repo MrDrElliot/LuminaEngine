@@ -51,6 +51,27 @@ namespace Lumina
             return Wanted;
         }
 
+        struct FSceneListFloor
+        {
+            uint32 Blocks   = 0;
+            uint32 Meshlets = 0;
+        };
+
+        // Every view appending every slot at its largest LOD, the most a frame can append before its readback lands.
+        FSceneListFloor SceneListFloorOf(const FDefaultSceneRenderer::FFrameData& Frame)
+        {
+            const auto&  Upload = Frame.Geometry.RetainedUpload;
+            const uint64 Views  = Math::Max<uint64>(Frame.Views.CullViews.Num(), 1u);
+            // A two-phase view reserves its blocks twice, matching CullInstances.
+            uint64 BlockViews = Views;
+            for (const FCullView& View : Frame.Views.CullViews)
+            {
+                BlockViews += (GetCullViewFlags(View) & ECullViewFlags::MeshletHiZ) != 0u ? 1u : 0u;
+            }
+            return { (uint32)Math::Min<uint64>((uint64)Upload.MeshletVisibilityWords * BlockViews, 0xFFFFFFFFull),
+                     (uint32)Math::Min<uint64>(Upload.LargestLODMeshlets * Views, 0xFFFFFFFFull) };
+        }
+
         // The readback lags the frame by the ring depth, so a moving camera outgrows an exact fit before it is seen.
         uint32 WithHeadroom(uint32 Demand)
         {
@@ -709,19 +730,43 @@ namespace Lumina
         UpdateMeshletBoundFeedback(CurrentFrameSlot);
 
         const bool bAfterCameraCut = TrackCameraCut(Frame);
+        const bool bSceneGrew      = TrackSceneGrowth(Frame);
 
         DrawListPeak  = Math::Max(DrawListPeak, LastDrawListRequired);
         BlockListPeak = Math::Max(BlockListPeak, LastBlocksRequested);
 
+        // Only until the readback has seen the new scene or view, so a large world does not hold its worst case every frame.
+        const SceneRendererCullInternal::FSceneListFloor Floor = (bAfterCameraCut || bSceneGrew)
+            ? SceneRendererCullInternal::SceneListFloorOf(Frame) : SceneRendererCullInternal::FSceneListFloor{};
+
         // Windowed like the other GPU-fed sizes, so the raw readback's lag does not collapse it.
-        const uint32 DrawListWindowed = Math::Max(SceneRendererCullInternal::WithHeadroom(DrawListDemand.Observe(LastDrawListRequired)), 65536u);
+        const uint32 DrawListWindowed = Math::Max(SceneRendererCullInternal::WithHeadroom(DrawListDemand.Observe(LastDrawListRequired)), Floor.Meshlets);
         const uint32 DrawListWanted   = SceneRendererCullInternal::ApplyDebugCapacityScale(bAfterCameraCut ? Math::Max(DrawListWindowed, DrawListPeak) : DrawListWindowed);
 
         ReservePreSkinBuffers(CL, PreSkinWanted);
         ReserveMeshletDrawBuffers(CL, Frame, DrawListWanted);
         ReserveVisibleInstanceBuffers(CL, Frame);
-        ReserveMeshletBlockList(CL, bAfterCameraCut);
+        ReserveMeshletBlockList(CL, bAfterCameraCut, Floor.Blocks);
         LogCullOverflow();
+    }
+
+    bool FDefaultSceneRenderer::TrackSceneGrowth(const FFrameData& Frame)
+    {
+        // The extent moves only when a slot outgrows the free lists or the set resets, so steady churn leaves it alone.
+        const uint32 VisibilityWords = Frame.Geometry.RetainedUpload.MeshletVisibilityWords;
+        if (VisibilityWords != LastSceneVisibilityWords)
+        {
+            if (SceneFloorFramesLeft == 0u)
+            {
+                LOG_INFO("RenderScene: meshlet lists floored at the scene, {} visibility words and {} largest-LOD meshlets across {} cull views.",
+                         VisibilityWords, Frame.Geometry.RetainedUpload.LargestLODMeshlets, Frame.Views.CullViews.Num());
+            }
+            LastSceneVisibilityWords = VisibilityWords;
+            SceneFloorFramesLeft     = RHI::kFramesInFlight + 2u;
+        }
+        const bool bGrew = SceneFloorFramesLeft > 0u;
+        SceneFloorFramesLeft = bGrew ? SceneFloorFramesLeft - 1u : 0u;
+        return bGrew;
     }
 
     bool FDefaultSceneRenderer::TrackCameraCut(const FFrameData& Frame)
@@ -850,10 +895,10 @@ namespace Lumina
                                                  InstanceViewRangeRing[Slot].CapacityOf<FUIntVector2>() / RangeViews);
     }
 
-    void FDefaultSceneRenderer::ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut)
+    void FDefaultSceneRenderer::ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut, uint32 SceneListFloor)
     {
         // Only the GPU knows how many blocks were appended, and its counter lags the frames in flight.
-        const uint32 BlockListWindowed = SceneRendererCullInternal::WithHeadroom(BlockListDemand.Observe(LastBlocksRequested));
+        const uint32 BlockListWindowed = Math::Max(SceneRendererCullInternal::WithHeadroom(BlockListDemand.Observe(LastBlocksRequested)), SceneListFloor);
         const uint32 BlockListWanted   = SceneRendererCullInternal::ApplyDebugCapacityScale(bAfterCameraCut ? Math::Max(BlockListWindowed, BlockListPeak) : BlockListWindowed);
 
         const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(

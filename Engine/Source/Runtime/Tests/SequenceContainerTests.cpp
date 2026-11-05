@@ -206,7 +206,7 @@ namespace LuminaSequenceTests
         size_t Position = 0;
         for (; Position < 3; ++Position, ++Expected)
         {
-            EXPECT_EQ(Values[Position], Expected) << "order lost at " << Position;
+            EXPECT_EQ(Values[static_cast<int32>(Position)], Expected) << "order lost at " << Position;
         }
     }
 

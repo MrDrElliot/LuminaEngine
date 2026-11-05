@@ -4,6 +4,7 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Log/Log.h"
 
 #include "Scripting/ScriptableTest.h"
 #include "World/ECS/Registry.h"
@@ -13,6 +14,7 @@
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/World.h"
+#include "WorldTestAccess.h"
 
 using namespace Lumina;
 
@@ -55,6 +57,114 @@ namespace
     {
         return Cast<CEntitySystemTest>(EntitySystems::Find(Systems, CEntitySystemTest::StaticClass()));
     }
+
+    template<typename TSystem>
+    CEntitySystem* AddSystem(CWorld* World)
+    {
+        CEntitySystem* System = NewObject<TSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+        System->SetOwningWorld(World);
+        System->ConfigureSystem();
+        World->Systems.Add(System);
+        return System;
+    }
+
+    // Both systems write the transform, so only a declared order keeps the pair out of the ambiguity report.
+    CWorld* ScheduleTwoTransformWriters(bool bDeclareOrder)
+    {
+        CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+        AddSystem<CEntitySystemTest>(World);
+        CEntitySystem* SecondWriter = AddSystem<CEntitySystemTransformReaderTest>(World);
+
+        SecondWriter->DeclareWrite("STransformComponent");
+        if (bDeclareOrder)
+        {
+            SecondWriter->RunsAfter<CEntitySystemTest>();
+        }
+
+        Logging::ClearLogQueue();
+        FWorldTestAccess::RebuildSystemSchedule(*World);
+        return World;
+    }
+
+    int32 CountAmbiguityReports()
+    {
+        Logging::Flush();
+        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
+        int32 Count = 0;
+        for (int32 Index = 0; Index < Messages.Num(); ++Index)
+        {
+            const FStringView Text = Messages[Index].Message.View();
+            if (Messages[Index].Level == ELogLevel::Info && Text.Contains("CEntitySystemTest") && Text.Contains("CEntitySystemTransformReaderTest")
+                && Text.Contains("STransformComponent"))
+            {
+                ++Count;
+            }
+        }
+        return Count;
+    }
+}
+
+TEST(EntitySystem, FirstScheduleWarnsOnceAboutUnorderedWritersOfOneComponent)
+{
+    FCreationGate Gate;
+
+    CWorld* World = ScheduleTwoTransformWriters(false);
+    EXPECT_EQ(CountAmbiguityReports(), 1) << "the pair shares only PrePhysics, so it is reported once";
+
+    Logging::ClearLogQueue();
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+    EXPECT_EQ(CountAmbiguityReports(), 0) << "a later rebuild must not restate what the first schedule reported";
+}
+
+TEST(EntitySystem, ASystemAddedAfterTheFirstScheduleStillReportsItsConflict)
+{
+    FCreationGate Gate;
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    AddSystem<CEntitySystemTest>(World);
+    AddSystem<CEntitySystemReaderTest>(World);
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+
+    AddSystem<CEntitySystemTransformReaderTest>(World)->DeclareWrite("STransformComponent");
+    Logging::ClearLogQueue();
+    FWorldTestAccess::RebuildSystemSchedule(*World);
+    EXPECT_EQ(CountAmbiguityReports(), 1) << "a conflict a later system brings in must be reported on the rebuild that adds it";
+}
+
+TEST(EntitySystem, DeclaredOrderSilencesTheAmbiguityWarning)
+{
+    FCreationGate Gate;
+
+    ScheduleTwoTransformWriters(true);
+    EXPECT_EQ(CountAmbiguityReports(), 0);
+}
+
+TEST(EntitySystem, RunsAfterASetOrdersAfterEveryMember)
+{
+    FCreationGate Gate;
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* Writer = NewObject<CEntitySystemTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* TransformReader = NewObject<CEntitySystemTransformReaderTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CEntitySystem* Reader = NewObject<CEntitySystemReaderTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    for (CEntitySystem* System : { Writer, TransformReader, Reader })
+    {
+        System->SetOwningWorld(World);
+        System->ConfigureSystem();
+    }
+
+    const FName SetName = "EntitySystemTestSet";
+    Writer->JoinSet(SetName);
+    TransformReader->JoinSet(SetName);
+    Reader->RunsAfterSystem(SetName);
+
+    const CWorld::FStageSchedule Stage = SystemSchedule::OrderStage({ Reader, Writer, TransformReader }, EUpdateStage::PrePhysics);
+    ASSERT_EQ(Stage.Systems.Num(), 3);
+
+    const int32 ReaderIndex = Stage.Systems.Find(Reader);
+    EXPECT_EQ(ReaderIndex, 2) << "a system ordered after a set runs after every member";
+    EXPECT_TRUE(Stage.MustPrecede(Stage.Systems.Find(Writer), ReaderIndex));
+    EXPECT_TRUE(Stage.MustPrecede(Stage.Systems.Find(TransformReader), ReaderIndex));
 }
 
 TEST(EntitySystem, TeardownOnlyRunsForASystemThatStarted)

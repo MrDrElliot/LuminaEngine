@@ -203,7 +203,7 @@ namespace Lumina
 
     bool SPerceptionSystem::HasWork(const SSystemContext& Context)
     {
-        return !Perceivers.IsEmpty();
+        return AnyQueryHasRows(Perceivers);
     }
 
     void SPerceptionSystem::OnUpdate(const SSystemContext& Context)
@@ -246,8 +246,9 @@ namespace Lumina
 
         // Read-only for the whole parallel body, so the workers share it without synchronizing.
         const FSignificanceState& Significance = *SignificanceState;
-        Perceivers.ParallelForEach([&](ECS::FEntity E, SPerceptionComponent& Comp, const STransformComponent& Xform)
+        Perceivers.ParallelForEach([&](ECS::FEntity E, ECS::TMut<SPerceptionComponent> CompMut, const STransformComponent& Xform)
         {
+            SPerceptionComponent& Comp = CompMut.GetMut();
             const FVector3 Loc = Xform.GetWorldLocationCached();
             const FVector3 Eye = Loc + Comp.EyeOffset;
             const FVector3 Forward = Xform.GetWorldTransformCached().GetForward();
@@ -340,8 +341,9 @@ namespace Lumina
             Perceivers.CompleteRun();
         }
 
-        Perceivers.ForEach([&](ECS::FEntity E, SPerceptionComponent& Comp, const STransformComponent&)
+        Perceivers.ForEach([&](ECS::FEntity E, ECS::TMut<SPerceptionComponent> CompMut, const STransformComponent&)
         {
+            SPerceptionComponent& Comp = CompMut.GetMut();
             for (int32 i = 0; i < Comp.PerceivedCount; )
             {
                 FPerceivedTarget& T = Comp.PerceivedTargets[i];

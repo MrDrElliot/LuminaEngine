@@ -145,7 +145,7 @@ namespace Lumina::ECS
     template<typename T>
     concept CHasStaticStruct = requires { { T::StaticStruct() } -> std::convertible_to<CStruct*>; };
 
-    // Spellings of an access, interchangeable with const T (reads, never stamps) and a plain T (writes, stamps): Read<T> and Write<T>.
+    // Read<T> reads like const T; Write<T> walks hand out TMut<T>, which stamps a row only on mutable access, while a plain T walks untracked.
     template<typename T>
     struct Read
     {
@@ -158,6 +158,58 @@ namespace Lumina::ECS
     {
         using Component = T;
         static constexpr bool bWrite = true;
+    };
+
+    // One Write<T> row. Const access never stamps; mutable access stores the walk's tick into the row's change-tick slot.
+    template<typename T>
+    class TMut
+    {
+    public:
+
+        FORCEINLINE TMut(T& InValue, uint32* InTick, uint32 InNow)
+            : Value(&InValue)
+            , Tick(InTick)
+            , Now(InNow)
+        {}
+
+        NODISCARD FORCEINLINE const T& Get() const { return *Value; }
+        NODISCARD FORCEINLINE const T* operator -> () const { return Value; }
+        NODISCARD FORCEINLINE const T& operator * () const { return *Value; }
+        FORCEINLINE operator const T& () const { return *Value; }
+
+        NODISCARD FORCEINLINE T& GetMut() { Stamp(); return *Value; }
+        NODISCARD FORCEINLINE T* operator -> () { Stamp(); return Value; }
+        NODISCARD FORCEINLINE T& operator * () { Stamp(); return *Value; }
+
+        // Returns whether it wrote, so an unchanged value leaves Changed<T> quiet.
+        FORCEINLINE bool SetIfChanged(const T& NewValue) { return AssignIfChanged(*Value, NewValue); }
+
+        template<typename TField>
+        FORCEINLINE bool SetIfChanged(TField T::* Field, const std::type_identity_t<TField>& NewValue) { return AssignIfChanged(Value->*Field, NewValue); }
+
+        // For a write no Changed<T> reader should see, such as runtime bookkeeping inside the component.
+        NODISCARD FORCEINLINE T& BypassChangeDetection() const { return *Value; }
+
+    private:
+
+        template<typename TDest>
+        FORCEINLINE bool AssignIfChanged(TDest& Dest, const TDest& NewValue)
+        {
+            if (Dest == NewValue)
+            {
+                return false;
+            }
+            Dest = NewValue;
+            Stamp();
+            return true;
+        }
+
+        // Relaxed, since parallel walks stamp disjoint rows and an untracked pool's rows share one sink.
+        FORCEINLINE void Stamp() { std::atomic_ref<uint32>(*Tick).store(Now, std::memory_order_relaxed); }
+
+        T* Value;
+        uint32* Tick;
+        uint32 Now;
     };
 
     template<typename T> inline constexpr bool bIsAccessWrapper           = false;
@@ -233,6 +285,13 @@ namespace Lumina::ECS
 
     template<typename T>
     using TViewType = typename TAccessViewType<T>::Type;
+
+    // A view keeps an include as TViewType spells it, except a Write<T> stays spelled so its walks hand out TMut<T>.
+    template<typename T> struct TViewIncludeSpelling           { using Type = TViewType<T>; };
+    template<typename T> struct TViewIncludeSpelling<Write<T>> { using Type = Write<T>; };
+
+    template<typename T>
+    using TViewInclude = typename TViewIncludeSpelling<T>::Type;
 
     // A pool stores objects, so a reference, a pointer, a cv-qualified spelling or an access wrapper is a call-site mistake.
     template<typename T>
@@ -419,7 +478,7 @@ namespace Lumina::ECS
         static FName GetName()
         {
             constexpr std::string_view Name = GetSignatureTypeName<T>();
-            return FName(FStringView(Name.data(), Name.size()));
+            return FName(FStringView(Name.data(), static_cast<int32>(Name.size())));
         }
     };
 

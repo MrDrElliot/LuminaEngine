@@ -139,8 +139,9 @@ namespace Lumina
         ParticleItemMaterials.Reset();
 
         int32 NumItems = 0;
-        ParticleView.ForEach([&](ECS::FEntity Entity, SParticleSystemComponent& Component)
+        ParticleView.ForEach([&](ECS::FEntity Entity, ECS::TMut<SParticleSystemComponent> ComponentMut)
         {
+            SParticleSystemComponent& Component = ComponentMut.BypassChangeDetection();
             FParticleSystemWork& Work = ParticleSystemWork.EmplaceGetRef();
             Work.Entity    = Entity;
             Work.Component = &Component;

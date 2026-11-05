@@ -1752,6 +1752,7 @@ namespace Lumina
         case ENamedImage::CloudDepth:         return "Scene.CloudDepth";
         case ENamedImage::CloudScatterHistory: return "Scene.CloudScatterHistory";
         case ENamedImage::CloudDepthHistory:  return "Scene.CloudDepthHistory";
+        case ENamedImage::CloudMarch:         return "Scene.CloudMarch";
         case ENamedImage::CloudShadow:        return "Scene.CloudShadow";
         case ENamedImage::BRDFLut:            return "Scene.BRDFLut";
         case ENamedImage::SkyCube:            return "Scene.SkyCube";
@@ -2281,6 +2282,11 @@ namespace Lumina
             CloudDepthDesc.Format = EFormat::R32_FLOAT;
             View.Images[(int)ENamedImage::CloudDepth]        = CreateSceneImage(CloudDepthDesc, true, true);
             View.Images[(int)ENamedImage::CloudDepthHistory] = CreateSceneImage(CloudDepthDesc, true, true);
+
+            // One texel per 2x2 scatter block, so the resolve can read every fresh march sample while it rewrites the scatter.
+            RHI::FTextureDesc MarchDesc = ScatterDesc;
+            MarchDesc.Dimension = FUIntVector3((ScatterDesc.Dimension.x + 1u) / 2u, (ScatterDesc.Dimension.y + 1u) / 2u, 1);
+            View.Images[(int)ENamedImage::CloudMarch] = CreateSceneImage(MarchDesc, true, true);
             View.bCloudHistoryValid = false;
 
             int32 CloudShadowRes = 512;

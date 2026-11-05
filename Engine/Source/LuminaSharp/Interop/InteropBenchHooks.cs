@@ -327,7 +327,7 @@ internal static unsafe partial class InteropBenchHooks
             if (bBeginOnly == 0)
             {
                 int Count;
-                while ((Count = Native.ViewNextChunk(State, Entities, Pointers, 1024, 1)) > 0)
+                while ((Count = Native.ViewNextChunk(State, Entities, Pointers, null, 1024, 1)) > 0)
                 {
                     Seen += Count;
                 }

@@ -388,6 +388,7 @@ namespace Lumina
         SlotMeshletVisibility.Reset();
         MeshletVisibilityFreeLists.Reset();
         MeshletVisibilityExtent = 1u;
+        LargestLODMeshletTotal  = 0u;
 
         // The blocks lived in the retained arrays just dropped, so a species re-acquires one rather than scattering over other slots.
         GrassSpecies.Reset();

@@ -35,35 +35,42 @@ namespace Lumina
 			float        Weight = 0.0f;
 		};
 
+		struct FGroupVoice
+		{
+			ECS::FEntity                 Entity;
+			const SAudioVolumeComponent* Volume = nullptr;
+		};
+
 		// Each volume fades toward its own weight when it is ungrouped or wins its group, and toward silence otherwise.
 		template <typename TVolumeQuery, typename TTransformQuery>
 		void UpdateAudioVolumes(TVolumeQuery& Volumes, const TTransformQuery& Transforms, const FVector3& Listener, float DeltaTime)
 		{
 			TVector<FVolumeGroupWinner> Winners;
-			TVector<SAudioVolumeComponent*> GroupVoices;
-			Volumes.ForEach([&](ECS::FEntity Entity, SAudioVolumeComponent& Volume)
+			TVector<FGroupVoice> GroupVoices;
+			Volumes.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioVolumeComponent> Volume)
 			{
-				if (Volume.bPlaying && !Volume.Group.IsNone())
+				const SAudioVolumeComponent& Current = Volume.Get();
+				if (Current.bPlaying && !Current.Group.IsNone())
 				{
-					GroupVoices.Add(&Volume);
+					GroupVoices.Add(FGroupVoice{ Entity, &Current });
 				}
 
-				const STransformComponent* Xform = Volume.bEnabled ? Transforms.template TryGet<STransformComponent>(Entity) : nullptr;
-				Volume.InsideWeight = Xform != nullptr ? Volume.ListenerWeight(*Xform, Listener) : 0.0f;
-				Volume.bListenerInside = Volume.InsideWeight > 0.0f;
-				if (!Volume.bListenerInside)
+				const STransformComponent* Xform = Current.bEnabled ? Transforms.template TryGet<STransformComponent>(Entity) : nullptr;
+				Volume.SetIfChanged(&SAudioVolumeComponent::InsideWeight, Xform != nullptr ? Current.ListenerWeight(*Xform, Listener) : 0.0f);
+				Volume.SetIfChanged(&SAudioVolumeComponent::bListenerInside, Current.InsideWeight > 0.0f);
+				if (!Current.bListenerInside)
 				{
-					Volume.bFinishedThisVisit = false;
+					Volume.SetIfChanged(&SAudioVolumeComponent::bFinishedThisVisit, false);
 					return;
 				}
-				if (Volume.Group.IsNone())
+				if (Current.Group.IsNone())
 				{
 					return;
 				}
 				FVolumeGroupWinner* Winner = nullptr;
 				for (FVolumeGroupWinner& Candidate : Winners)
 				{
-					if (Candidate.Group == Volume.Group)
+					if (Candidate.Group == Current.Group)
 					{
 						Winner = &Candidate;
 						break;
@@ -71,84 +78,87 @@ namespace Lumina
 				}
 				if (Winner == nullptr)
 				{
-					Winners.Emplace(Volume.Group, Entity, Volume.Priority, Volume.InsideWeight);
+					Winners.Emplace(Current.Group, Entity, Current.Priority, Current.InsideWeight);
 				}
-				else if (Volume.Priority > Winner->Priority || (Volume.Priority == Winner->Priority && Volume.InsideWeight > Winner->Weight))
+				else if (Current.Priority > Winner->Priority || (Current.Priority == Winner->Priority && Current.InsideWeight > Winner->Weight))
 				{
-					*Winner = FVolumeGroupWinner{ Volume.Group, Entity, Volume.Priority, Volume.InsideWeight };
+					*Winner = FVolumeGroupWinner{ Current.Group, Entity, Current.Priority, Current.InsideWeight };
 				}
 			});
 
-			Volumes.ForEach([&](ECS::FEntity Entity, SAudioVolumeComponent& Volume)
+			Volumes.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioVolumeComponent> Volume)
 			{
-				bool bWinsGroup = Volume.Group.IsNone();
+				const SAudioVolumeComponent& Current = Volume.Get();
+				bool bWinsGroup = Current.Group.IsNone();
 				for (const FVolumeGroupWinner& Winner : Winners)
 				{
-					if (Winner.Group == Volume.Group)
+					if (Winner.Group == Current.Group)
 					{
 						bWinsGroup = Winner.Entity == Entity;
 						break;
 					}
 				}
 
-				const float Target = (Volume.bListenerInside && bWinsGroup) ? Volume.InsideWeight : 0.0f;
-				const float FadeTime = Target > Volume.Gain ? Volume.FadeInTime : Volume.FadeOutTime;
-				Volume.Gain = MoveTowards(Volume.Gain, Target, FadeTime > 0.0f ? DeltaTime / FadeTime : 1.0f);
+				const float Target = (Current.bListenerInside && bWinsGroup) ? Current.InsideWeight : 0.0f;
+				const float FadeTime = Target > Current.Gain ? Current.FadeInTime : Current.FadeOutTime;
+				Volume.SetIfChanged(&SAudioVolumeComponent::Gain, MoveTowards(Current.Gain, Target, FadeTime > 0.0f ? DeltaTime / FadeTime : 1.0f));
 
 				// A one-shot that played out stays quiet until the listener leaves and comes back.
-				if (Volume.bPlaying && Audio::Context().GetVoiceState(Volume.ActiveHandle) == EAudioVoiceState::Free)
+				if (Current.bPlaying && Audio::Context().GetVoiceState(Current.ActiveHandle) == EAudioVoiceState::Free)
 				{
-					Volume.bPlaying = false;
-					Volume.ActiveHandle = SAudioHandle::Invalid();
-					Volume.ResumeFrame = 0;
-					Volume.bFinishedThisVisit = !Volume.bLooping;
+					Volume->bPlaying = false;
+					Volume->ActiveHandle = SAudioHandle::Invalid();
+					Volume->ResumeFrame = 0;
+					Volume->bFinishedThisVisit = !Current.bLooping;
 				}
 
 				// Neighboring volumes of a group that play the same sound pass the voice along instead of restarting it.
-				if (!Volume.bPlaying && Target > 0.0f && !Volume.Group.IsNone())
+				if (!Current.bPlaying && Target > 0.0f && !Current.Group.IsNone())
 				{
-					for (SAudioVolumeComponent* Other : GroupVoices)
+					for (const FGroupVoice& Voice : GroupVoices)
 					{
-						if (Other != &Volume && Other->bPlaying && Other->Group == Volume.Group && Other->Sound == Volume.Sound)
+						const SAudioVolumeComponent& Other = *Voice.Volume;
+						if (&Other != &Current && Other.bPlaying && Other.Group == Current.Group && Other.Sound == Current.Sound)
 						{
-							Volume.ActiveHandle  = Other->ActiveHandle;
-							Volume.Gain          = Math::Max(Volume.Gain, Other->Gain);
-							Volume.AppliedVolume = Other->AppliedVolume;
-							Volume.bPlaying      = true;
-							Other->ActiveHandle  = SAudioHandle::Invalid();
-							Other->bPlaying      = false;
-							Other->Gain          = 0.0f;
+							Volume->ActiveHandle  = Other.ActiveHandle;
+							Volume->Gain          = Math::Max(Current.Gain, Other.Gain);
+							Volume->AppliedVolume = Other.AppliedVolume;
+							Volume->bPlaying      = true;
+							SAudioVolumeComponent& Handoff = Volumes.template Get<SAudioVolumeComponent>(Voice.Entity);
+							Handoff.ActiveHandle = SAudioHandle::Invalid();
+							Handoff.bPlaying     = false;
+							Handoff.Gain         = 0.0f;
 							break;
 						}
 					}
 				}
 
-				const float Wanted = Volume.Volume * Volume.Gain;
-				if (!Volume.bPlaying)
+				const float Wanted = Current.Volume * Current.Gain;
+				if (!Current.bPlaying)
 				{
-					if (Volume.Gain > 0.0f && !Volume.bFinishedThisVisit && Volume.Sound != nullptr && Volume.Sound->IsPlayable())
+					if (Current.Gain > 0.0f && !Current.bFinishedThisVisit && Current.Sound != nullptr && Current.Sound->IsPlayable())
 					{
 						SAudioPlayParams Params;
 						Params.Volume       = Wanted;
-						Params.bLooping     = Volume.bLooping;
+						Params.bLooping     = Current.bLooping;
 						Params.bSpatialized = false;
-						Params.Bus          = Volume.Bus;
-						Params.StartFrame   = Volume.bResumePlayback ? Volume.ResumeFrame : 0;
-						Volume.ActiveHandle  = Audio::PlaySound(Volume.Sound.Get(), Params).Handle;
-						Volume.bPlaying      = Volume.ActiveHandle.IsValid();
-						Volume.AppliedVolume = Wanted;
+						Params.Bus          = Current.Bus;
+						Params.StartFrame   = Current.bResumePlayback ? Current.ResumeFrame : 0;
+						Volume->ActiveHandle  = Audio::PlaySound(Current.Sound.Get(), Params).Handle;
+						Volume->bPlaying      = Current.ActiveHandle.IsValid();
+						Volume->AppliedVolume = Wanted;
 					}
 					return;
 				}
 
-				if (Volume.Gain <= 0.0f)
+				if (Current.Gain <= 0.0f)
 				{
-					Volume.StopVoice();
+					Volume->StopVoice();
 				}
-				else if (Math::Abs(Wanted - Volume.AppliedVolume) > 0.002f)
+				else if (Math::Abs(Wanted - Current.AppliedVolume) > 0.002f)
 				{
-					Audio::Context().SetVolume(Volume.ActiveHandle, Wanted);
-					Volume.AppliedVolume = Wanted;
+					Audio::Context().SetVolume(Current.ActiveHandle, Wanted);
+					Volume->AppliedVolume = Wanted;
 				}
 			});
 		}
@@ -156,7 +166,7 @@ namespace Lumina
 
 	bool SAudioSystem::HasWork(const SSystemContext& Context)
 	{
-		return !Listeners.IsEmpty() || !Volumes.IsEmpty() || !Sources.IsEmpty() || !ProceduralSources.IsEmpty();
+		return AnyQueryHasRows(Listeners, Volumes, Sources, ProceduralSources);
 	}
 
 	void SAudioSystem::OnTeardown(const SExclusiveContext& Context)
@@ -169,31 +179,27 @@ namespace Lumina
 		}
 
 		// Stop all sounds owned by audio source components in this world.
-		AllSources.ForEach([](SAudioSourceComponent& Audio)
+		auto StopOwnedSound = [](auto Audio)
 		{
-			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
+			if (Audio.Get().bPlaying && Audio.Get().ActiveHandle.IsValid())
 			{
-				Audio::Context().StopSound(Audio.ActiveHandle);
-				Audio.ActiveHandle = SAudioHandle::Invalid();
-				Audio.bPlaying = false;
+				Audio::Context().StopSound(Audio.Get().ActiveHandle);
+				Audio->ActiveHandle = SAudioHandle::Invalid();
+				Audio->bPlaying = false;
 			}
-		});
+		};
+		AllSources.ForEach(StopOwnedSound);
+		ProceduralSources.ForEach(StopOwnedSound);
 
-		ProceduralSources.ForEach([](SProceduralAudioComponent& Audio)
+		Volumes.ForEach([](ECS::TMut<SAudioVolumeComponent> Volume)
 		{
-			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
+			const SAudioVolumeComponent& Current = Volume.Get();
+			if (Current.bPlaying || Current.ResumeFrame != 0 || Current.Gain != 0.0f)
 			{
-				Audio::Context().StopSound(Audio.ActiveHandle);
-				Audio.ActiveHandle = SAudioHandle::Invalid();
-				Audio.bPlaying = false;
+				Volume->ResumeFrame = 0;
+				Volume->StopVoice();
+				Volume->Gain = 0.0f;
 			}
-		});
-
-		Volumes.ForEach([](SAudioVolumeComponent& Volume)
-		{
-			Volume.ResumeFrame = 0;
-			Volume.StopVoice();
-			Volume.Gain = 0.0f;
 		});
 	}
 
@@ -261,8 +267,9 @@ namespace Lumina
 		const FSignificanceState& Significance = *SignificanceState;
 
 		{
-			Sources.ForEach([&](ECS::FEntity Entity, SAudioSourceComponent& Audio, const STransformComponent& Transform)
+			Sources.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioSourceComponent> Source, const STransformComponent& Transform)
 			{
+				SAudioSourceComponent& Audio = Source.GetMut();
 				const FVector3 Position = Transform.GetWorldLocation();
 				Audio.LastPosition = Position;
 
@@ -381,8 +388,9 @@ namespace Lumina
 		}
 
 		{
-			ProceduralSources.ForEach([&](ECS::FEntity Entity, SProceduralAudioComponent& Audio)
+			ProceduralSources.ForEach([&](ECS::FEntity Entity, ECS::TMut<SProceduralAudioComponent> Source)
 			{
+				SProceduralAudioComponent& Audio = Source.GetMut();
 				if (!Audio.bReady)
 				{
 					Audio.bReady = true;

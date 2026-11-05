@@ -370,6 +370,7 @@ namespace Lumina
                     uint32                      MaxSurfaceDescMeshlets = 0;
 
                     uint32                      MeshletVisibilityWords = 0;
+                    uint64                      LargestLODMeshlets = 0;
 
                     // Moved instances the extract wrote straight to GPU-visible memory, scattered after the uploads above.
                     RHI::FGPURange              StreamRecords;
@@ -652,6 +653,7 @@ namespace Lumina
             CloudDepth,
             CloudScatterHistory,
             CloudDepthHistory,
+            CloudMarch,
             CloudShadow,
             BRDFLut,
             SkyCube,
@@ -705,6 +707,7 @@ namespace Lumina
             // Picks which texel of each 2x2 block the clouds march this frame, the rest coming from history.
             uint32                                          CloudFrame = 0;
             bool                                            bCloudHistoryValid = false;
+            FVector2                                        CloudHistoryWindOffset = FVector2(0.0f);
             uint32                                          FroxelFrame = 0;
             bool                                            bFroxelShadowHistoryValid = false;
             float                                           FroxelHistoryNear = 0.0f;
@@ -1156,10 +1159,11 @@ namespace Lumina
         void CompileDrawCommands_Render(RHI::FCmdListH CL);
         void PlanCullCapacities(RHI::FCmdListH CL, const FFrameData& Frame);
         bool TrackCameraCut(const FFrameData& Frame);
+        bool TrackSceneGrowth(const FFrameData& Frame);
         void ReservePreSkinBuffers(RHI::FCmdListH CL, uint32 PreSkinWanted);
         void ReserveMeshletDrawBuffers(RHI::FCmdListH CL, const FFrameData& Frame, uint32 DrawListWanted);
         void ReserveVisibleInstanceBuffers(RHI::FCmdListH CL, const FFrameData& Frame);
-        void ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut);
+        void ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut, uint32 SceneListFloor);
         void LogCullOverflow();
         void UploadLightData(FFrameData& Frame);
         void PublishSceneRoot(RHI::FCmdListH CL, FFrameData& Frame);
@@ -1976,6 +1980,9 @@ namespace Lumina
         FVector3                                            LastCullOrigin = FVector3(0.0f);
         bool                                                bHasLastCullOrigin = false;
         uint32                                              CameraCutFramesLeft = 0;
+        // A load appends before its readback lands, so the lists hold the whole scene for the frames in between.
+        uint32                                              SceneFloorFramesLeft = 0;
+        uint32                                              LastSceneVisibilityWords = 0;
         FDemandWindow                                       PreSkinDemand;
         FDemandWindow                                       VisibleInstanceDemand;
         FDemandWindow                                       DrawListDemand;

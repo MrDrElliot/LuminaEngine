@@ -24,8 +24,9 @@ namespace Lumina
         void OnUpdate(const SSystemContext& Context) override
         {
             const float Dt = Context.GetDeltaTime();
-            Expiring.ParallelForEach([&](ECS::FEntity Entity, SLifetimeComponent& Component)
+            Expiring.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SLifetimeComponent> ComponentMut)
             {
+                SLifetimeComponent& Component = ComponentMut.GetMut();
                 Component.Lifetime -= Dt;
                 if (Component.Lifetime <= 0.0f)
                 {

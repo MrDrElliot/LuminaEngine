@@ -98,6 +98,7 @@ namespace Lumina
         // Ahead of everything below, since a base that moves marks its slot static-dirty.
         ScenePrimitives.AssignMeshletVisibility();
         Out.MeshletVisibilityWords = ScenePrimitives.GetMeshletVisibilityExtent();
+        Out.LargestLODMeshlets     = ScenePrimitives.GetLargestLODMeshletTotal();
 
         const uint32 SlotCount = ScenePrimitives.GetRetainedSlotCount();
         Out.SlotCount = SlotCount;

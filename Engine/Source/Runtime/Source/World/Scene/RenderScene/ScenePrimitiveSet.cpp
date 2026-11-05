@@ -1160,9 +1160,10 @@ namespace Lumina
     {
         if (Slot < (uint32)SlotMeshletVisibility.Num())
         {
-            FUIntVector2& Range = SlotMeshletVisibility[Slot];
+            FUIntVector3& Range = SlotMeshletVisibility[Slot];
             FreeMeshletVisibilityRange(Range.x, Range.y);
-            Range = FUIntVector2(kNoMeshletVisibility, 0u);
+            LargestLODMeshletTotal -= Range.z;
+            Range = FUIntVector3(kNoMeshletVisibility, 0u, 0u);
         }
 
         // A reused slot carries its payload's base forward, so a freed range must not survive in it.
@@ -1172,7 +1173,7 @@ namespace Lumina
         }
     }
 
-    uint32 FScenePrimitiveSet::MeshletVisibilityWordsOf(uint32 Slot) const
+    uint32 FScenePrimitiveSet::LargestLODMeshletsOf(uint32 Slot) const
     {
         const FInstanceCullEntry& Cull = RetainedCullEntries[Slot];
         if ((Cull.DrawIDAndFlags & ScenePrimitiveSetInternal::kActiveBit) == 0u || Cull.SurfaceDescIndex >= (uint32)SurfaceDescs.Num())
@@ -1186,14 +1187,15 @@ namespace Lumina
         {
             LargestLOD = Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
         }
-        return (LargestLOD + MESHLET_CULL_GROUP_SIZE - 1u) / MESHLET_CULL_GROUP_SIZE;
+        return LargestLOD;
     }
 
     void FScenePrimitiveSet::UpdateMeshletVisibility(uint32 Slot)
     {
-        const uint32 Words = MeshletVisibilityWordsOf(Slot);
+        const uint32 Meshlets = LargestLODMeshletsOf(Slot);
+        const uint32 Words    = (Meshlets + MESHLET_CULL_GROUP_SIZE - 1u) / MESHLET_CULL_GROUP_SIZE;
 
-        FUIntVector2& Range = SlotMeshletVisibility[Slot];
+        FUIntVector3& Range = SlotMeshletVisibility[Slot];
         if (Range.y != Words)
         {
             ReleaseMeshletVisibility(Slot);
@@ -1212,6 +1214,8 @@ namespace Lumina
                 Range.y = Words;
             }
         }
+        LargestLODMeshletTotal = LargestLODMeshletTotal - Range.z + Meshlets;
+        Range.z = Meshlets;
 
         if (RetainedStatic[Slot].MeshletVisibilityBase != Range.x)
         {
@@ -1225,7 +1229,7 @@ namespace Lumina
         const uint32 SlotCount = (uint32)RetainedCullEntries.Num();
         if (static_cast<uint32>(SlotMeshletVisibility.Num()) < SlotCount)
         {
-            SlotMeshletVisibility.SetNum(SlotCount, FUIntVector2(kNoMeshletVisibility, 0u));
+            SlotMeshletVisibility.SetNum(SlotCount, FUIntVector3(kNoMeshletVisibility, 0u, 0u));
         }
 
         if (bFullInstanceUpload || bFullStaticUpload)
@@ -1235,8 +1239,8 @@ namespace Lumina
 
             const auto IsStale = [this](uint32 Slot)
             {
-                const FUIntVector2& Range = SlotMeshletVisibility[Slot];
-                return Range.y != MeshletVisibilityWordsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
+                const FUIntVector3& Range = SlotMeshletVisibility[Slot];
+                return Range.z != LargestLODMeshletsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
             };
             constexpr uint32 kMeshletVisibilityScanGrain = 4096;
             Jobs::ParallelForOrSerial(SlotCount, kMeshletVisibilityScanGrain, [&](const Jobs::FParallelRange& Range)

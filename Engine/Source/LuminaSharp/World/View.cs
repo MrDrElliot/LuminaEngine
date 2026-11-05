@@ -66,6 +66,7 @@ internal unsafe struct ViewHeader
     public ulong World;
     public int Includes;
     public uint WriteMask;
+    public uint StampTick;
     public fixed long Tokens[MaxIncludes];
     public fixed long EpochSlots[MaxIncludes];
     public fixed uint ChunkEpochs[MaxIncludes];
@@ -82,6 +83,7 @@ internal unsafe struct ViewCursor : IDisposable
     private ViewHeader* Header;
     private uint* Entities;
     private nint* Pointers;
+    private uint** Ticks;
     private IntPtr State;
     private int Count;
     private int Index;
@@ -104,7 +106,7 @@ internal unsafe struct ViewCursor : IDisposable
         ReadEpochs();
     }
 
-    // A query field's view, whose Read includes are never stamped and whose filters, when applied, keep only rows changed since its last run.
+    // A query field's view, whose Write terms stamp a row only on mutable access and whose filters, when applied, keep only rows changed since its last run.
     public ViewCursor(SystemParamBlock* Query, bool bApplyFilters)
         : this((ulong)Query->World, Query->NumIncludes, Query->WriteMask)
     {
@@ -112,8 +114,10 @@ internal unsafe struct ViewCursor : IDisposable
         {
             Header->Tokens[i] = Query->Includes[i];
         }
+        Ticks = (uint**)NativeMemory.Alloc((nuint)(ChunkSize * Query->NumIncludes) * (nuint)sizeof(uint*));
         State = Native.QueryViewBegin((ulong)Query->World, (IntPtr*)Query->Includes, Query->NumIncludes, Query->WriteMask, (IntPtr*)Query->Excludes, Query->NumExcludes,
-                                      (IntPtr*)Query->Requires, Query->NumRequires, (IntPtr*)Query->Filters, bApplyFilters ? Query->NumFilters : 0, Query->AddedMask, Query->LastRunTick);
+                                      (IntPtr*)Query->Requires, Query->NumRequires, (IntPtr*)Query->Filters, bApplyFilters ? Query->NumFilters : 0, Query->AddedMask, Query->LastRunTick,
+                                      &Header->StampTick);
         ReadEpochs();
     }
 
@@ -122,6 +126,7 @@ internal unsafe struct ViewCursor : IDisposable
         Header = (ViewHeader*)NativeMemory.AllocZeroed((nuint)sizeof(ViewHeader));
         Entities = (uint*)NativeMemory.Alloc(ChunkSize * sizeof(uint));
         Pointers = (nint*)NativeMemory.Alloc((nuint)(ChunkSize * Includes) * (nuint)sizeof(nint));
+        Ticks = null;
         State = IntPtr.Zero;
         Count = 0;
         Index = -1;
@@ -179,7 +184,7 @@ internal unsafe struct ViewCursor : IDisposable
         {
             if (++Index >= Count)
             {
-                Count = Native.ViewNextChunk(State, Entities, Pointers, ChunkSize, Header->Includes);
+                Count = Native.ViewNextChunk(State, Entities, Pointers, Ticks, ChunkSize, Header->Includes);
                 Index = 0;
                 if (Count == 0)
                 {
@@ -235,6 +240,11 @@ internal unsafe struct ViewCursor : IDisposable
                 return false;
             }
             Row[i] = Found;
+            if (Ticks != null)
+            {
+                // GetComponent stamped a written row already, and the slot the chunk gathered may have moved with its pool.
+                Ticks[Index * Includes + i] = null;
+            }
         }
         return true;
     }
@@ -246,6 +256,10 @@ internal unsafe struct ViewCursor : IDisposable
     public nint* Row => Pointers + Index * Header->Includes;
 
     public void* At(int Include) => (void*)Pointers[Index * Header->Includes + Include];
+
+    public uint* TickAt(int Include) => Ticks != null ? Ticks[Index * Header->Includes + Include] : null;
+
+    public TTerm Term<TTerm>(int Include) where TTerm : struct, IQueryTerm<TTerm> => TTerm.At((nint)At(Include), TickAt(Include), Header->StampTick);
 
     public void Dispose()
     {
@@ -259,9 +273,11 @@ internal unsafe struct ViewCursor : IDisposable
             NativeMemory.Free(Header);
             NativeMemory.Free(Entities);
             NativeMemory.Free(Pointers);
+            NativeMemory.Free(Ticks);
             Header = null;
             Entities = null;
             Pointers = null;
+            Ticks = null;
         }
     }
 }

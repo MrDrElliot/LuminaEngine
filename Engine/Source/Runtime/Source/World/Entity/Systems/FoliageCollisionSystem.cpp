@@ -100,8 +100,9 @@ namespace Lumina
     {
         Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
 
-        Context.GetRegistry().View<ECS::Write<SFoliageComponent>>().ForEach([&](SFoliageComponent& Foliage)
+        Context.GetRegistry().View<ECS::Write<SFoliageComponent>>().ForEach([&](ECS::TMut<SFoliageComponent> FoliageMut)
         {
+            SFoliageComponent& Foliage = FoliageMut.GetMut();
             if (Scene != nullptr && Foliage.CollisionGroupID != 0)
             {
                 Scene->DestroyStaticBodyGroup(Foliage.CollisionGroupID);

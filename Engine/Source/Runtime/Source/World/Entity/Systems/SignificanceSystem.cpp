@@ -65,41 +65,22 @@ namespace Lumina
             return;
         }
 
-        // Only the components whose systems read a score, so static scenery and crowds nobody asks about cost nothing.
-        uint32 MaxIndex = 0;
-        bool bAnyConsumer = false;
-        const auto AddConsumer = [&](const auto& View)
-        {
-            if (!View.IsEmpty())
-            {
-                bAnyConsumer = true;
-                MaxIndex = Math::Max(MaxIndex, View.MaxLiveIndex());
-            }
-        };
-        AddConsumer(AudioSourceConsumers.View());
-        AddConsumer(PathFollowConsumers.View());
-        AddConsumer(PerceptionConsumers.View());
-        AddConsumer(AvoidanceConsumers.View());
-
         const FVector3 ViewOrigin = Resolved.ViewVolume.GetViewPosition();
         const FFrustum Frustum    = Resolved.ViewVolume.GetFrustum();
 
-        ++SignificanceState.Stamp;
         SignificanceState.ViewOrigin = ViewOrigin;
         SignificanceState.bHasView   = true;
 
-        if (!bAnyConsumer)
+        // Only the components whose systems read a score, so static scenery and crowds nobody asks about cost nothing.
+        TStampedEntityCache<FEntitySignificance>& Cache = SignificanceState.Scores;
+        if (!Cache.BeginPass(AudioSourceConsumers.View(), PathFollowConsumers.View(), PerceptionConsumers.View(),
+                             AvoidanceConsumers.View()))
         {
             return;
         }
 
-        if ((uint32)SignificanceState.ByEntityIndex.Num() <= MaxIndex)
-        {
-            SignificanceState.ByEntityIndex.SetNum(IntCastChecked<int32>(static_cast<int64>(MaxIndex) + 1u));
-        }
-
-        const uint32 Stamp = SignificanceState.Stamp;
-        FEntitySignificance* Scores = SignificanceState.ByEntityIndex.GetData();
+        const uint32 Stamp = Cache.Stamp;
+        FEntitySignificance* Scores = Cache.ByEntityIndex.GetData();
 
         // Every entity owns a distinct index, and one in two pools writes the same score twice, so the body never races.
         const auto Score = [&](ECS::FEntity Entity, const auto&)

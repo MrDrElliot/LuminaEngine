@@ -107,7 +107,8 @@ namespace Lumina
     void FSkeletonEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
-        
+        World->GetRenderSettings().bDrawBillboards = false;
+
         CreateFloorPlane();
         
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
@@ -167,12 +168,7 @@ namespace Lumina
         {
             RefreshPreviewMesh();
         }
-        
-        if (World && World->GetRenderer())
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
-        }
-        
+
         CSkeleton* Skeleton = GetAsset<CSkeleton>();
         FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
 

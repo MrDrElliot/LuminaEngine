@@ -8,6 +8,13 @@ using namespace Lumina;
 
 namespace ECSQueryTestsInternal
 {
+#if defined(LE_PLATFORM_WINDOWS)
+    // Windows reports abort and the crash handler as exit codes, not signals.
+    inline bool Aborted(int ExitStatus) { return ExitStatus != 0; }
+#else
+    inline bool Aborted(int ExitStatus) { return testing::KilledBySignal(SIGABRT)(ExitStatus); }
+#endif
+
     struct FQueryPosition
     {
         int32 Value = 0;
@@ -25,7 +32,7 @@ namespace ECSQueryTestsInternal
     using FActive = ECS::TQuery<ECS::Read<FQueryPosition>, ECS::Without<FQueryDisabled>>;
     using FMoving = ECS::TQuery<ECS::Read<FQueryPosition>, ECS::With<FQueryVelocity>, ECS::Without<FQueryDisabled>>;
 
-    static_assert(std::is_same_v<FMovers::FView, ECS::TView<ECS::TExclude<>, FQueryPosition, const FQueryVelocity>>);
+    static_assert(std::is_same_v<FMovers::FView, ECS::TView<ECS::TExclude<>, ECS::Write<FQueryPosition>, const FQueryVelocity>>);
     static_assert(std::is_same_v<FActive::FView, ECS::TView<ECS::TExclude<FQueryDisabled>, const FQueryPosition>>);
     static_assert(std::is_same_v<FMoving::FView, ECS::TView<ECS::TExclude<ECS::With<FQueryVelocity>, FQueryDisabled>, const FQueryPosition>>);
 
@@ -40,9 +47,9 @@ namespace ECSQueryTestsInternal
     int32 RunMovers(ECS::FRegistry& Registry, FMovers& Movers)
     {
         int32 Visited = 0;
-        Movers.ForEach(Registry, [&](FQueryPosition& Position, const FQueryVelocity& Velocity)
+        Movers.ForEach(Registry, [&](ECS::TMut<FQueryPosition> Position, const FQueryVelocity& Velocity)
         {
-            Position.Value += Velocity.Value;
+            Position->Value += Velocity.Value;
             ++Visited;
         });
         return Visited;
@@ -220,10 +227,10 @@ TEST(ECSQuery, OptionalIsNullWhenThePoolDoesNotExist)
 
     ECS::TQuery<ECS::Optional<ECS::Read<FQueryVelocity>>, ECS::Write<FQueryPosition>> Query;
     int32 Seen = 0;
-    Query.ForEach(Registry, [&](const FQueryVelocity* Velocity, FQueryPosition& Position)
+    Query.ForEach(Registry, [&](const FQueryVelocity* Velocity, ECS::TMut<FQueryPosition> Position)
     {
         EXPECT_EQ(Velocity, nullptr);
-        Position.Value += 1;
+        Position->Value += 1;
         ++Seen;
     });
     EXPECT_EQ(Seen, 1);
@@ -280,7 +287,7 @@ TEST(ECSQuery, OptionalWorksInParallelAndFilteredWalks)
     ECS::TQuery<ECS::Write<FQueryPosition>, ECS::Optional<ECS::Read<FQueryVelocity>>> Query;
     std::atomic<int32> WithVelocity = 0;
     std::atomic<int32> Visited = 0;
-    Query.ParallelForEach(Registry, [&](FQueryPosition& Position, const FQueryVelocity* Velocity)
+    Query.ParallelForEach(Registry, [&](const FQueryPosition& Position, const FQueryVelocity* Velocity)
     {
         if (Velocity != nullptr)
         {
@@ -333,12 +340,12 @@ TEST(ECSQuery, ViewLookupsRejectEntitiesOutsideTheViewInEveryBuild)
     EXPECT_FALSE(Filtered.Contains(Disabled));
     EXPECT_NE(Filtered.TryGet<FQueryPosition>(Moving), nullptr);
     EXPECT_EQ(Filtered.TryGet<FQueryPosition>(Disabled), nullptr);
-    EXPECT_EXIT((void)Filtered.Get<FQueryPosition>(Disabled), testing::KilledBySignal(SIGABRT), "");
-    EXPECT_EXIT((void)Filtered.GetAll(Disabled), testing::KilledBySignal(SIGABRT), "");
+    EXPECT_EXIT((void)Filtered.Get<FQueryPosition>(Disabled), Aborted, "");
+    EXPECT_EXIT((void)Filtered.GetAll(Disabled), Aborted, "");
 
     const auto Joined = Registry.View<FQueryPosition, const FQueryVelocity>();
     EXPECT_EQ(Joined.TryGet<FQueryPosition>(Still), nullptr);
-    EXPECT_EXIT((void)Joined.Get<FQueryPosition>(Still), testing::KilledBySignal(SIGABRT), "");
-    EXPECT_EXIT(([&] { auto [Position, Velocity] = Joined.Get<FQueryPosition, FQueryVelocity>(Still); (void)Position; (void)Velocity; }()), testing::KilledBySignal(SIGABRT), "");
+    EXPECT_EXIT((void)Joined.Get<FQueryPosition>(Still), Aborted, "");
+    EXPECT_EXIT(([&] { auto [Position, Velocity] = Joined.Get<FQueryPosition, FQueryVelocity>(Still); (void)Position; (void)Velocity; }()), Aborted, "");
     EXPECT_EQ(Joined.Get<FQueryVelocity>(Moving).Value, 2);
 }

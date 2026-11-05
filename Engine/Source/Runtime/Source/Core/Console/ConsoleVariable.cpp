@@ -4,10 +4,30 @@
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Containers/StringFormat.h"
+#include "Core/Json/Json.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
 
 
 namespace Lumina
 {
+    namespace
+    {
+        bool ApplySavedValue(FConsoleVariable& ConsoleVar, const FJsonValue& Saved)
+        {
+            return Visit([&]<typename T0>(T0& Value) -> bool
+            {
+                if constexpr (std::is_same_v<std::decay_t<T0>, FStringView>)
+                {
+                    return false;
+                }
+                else
+                {
+                    return Saved.TryGet(Value);
+                }
+            }, *ConsoleVar.ValuePtr);
+        }
+    }
+
     FConsoleRegistry& FConsoleRegistry::Get() noexcept
     {
         static FConsoleRegistry Instance;
@@ -17,7 +37,20 @@ namespace Lumina
     void FConsoleRegistry::Register(FConsoleVariable&& Var) noexcept
     {
         FStringView VarName = Var.Name.GetData();
-        ConsoleVariables.TryAdd(VarName, Move(Var));
+        if (!ConsoleVariables.TryAdd(VarName, Move(Var)) || LoadedConfigText.IsEmpty())
+        {
+            return;
+        }
+
+        // OnChange is skipped since nothing has read the variable yet and its module may still be running static initializers.
+        FJsonValue Saved;
+        if (FJsonValue::Parse(LoadedConfigText.View(), Saved) && Saved.IsObject())
+        {
+            if (const FJsonValue* Member = Saved.Find(VarName))
+            {
+                ApplySavedValue(*Find(VarName), *Member);
+            }
+        }
     }
 
     void FConsoleRegistry::RegisterCommand(FConsoleCommand&& Cmd) noexcept
@@ -121,6 +154,10 @@ namespace Lumina
         const TOptional<FString> Current = GetValueAsString(Name);
         Result.Value = Current.IsSet() ? *Current : FString("<unprintable>");
         Result.Kind = Value.IsEmpty() ? EConsoleLineResult::ReadVariable : EConsoleLineResult::SetVariable;
+        if (Result.Kind == EConsoleLineResult::SetVariable)
+        {
+            SaveToConfig();
+        }
         if (bEchoToLog)
         {
             LOG_INFO("{} = {}", Name, Result.Value);
@@ -153,7 +190,6 @@ namespace Lumina
         if (bSuccess && ConsoleVar->OnChange)
         {
             ConsoleVar->OnChange(*(ConsoleVar->ValuePtr));
-            SaveToConfig();
         }
 
         return bSuccess;
@@ -212,11 +248,83 @@ namespace Lumina
 
     void FConsoleRegistry::SaveToConfig()
     {
-        // TODO serialize console variables to the config directory.
+        SaveToFile(GetConfigFilePath());
     }
 
     void FConsoleRegistry::LoadFromConfig()
     {
-        // TODO restore console variables from the config directory.
+        LoadFromFile(GetConfigFilePath());
+    }
+
+    FString FConsoleRegistry::GetConfigFilePath()
+    {
+        return Paths::GetUserDataDirectory() + "/Lumina/ConsoleVariables.json";
+    }
+
+    bool FConsoleRegistry::SaveToFile(FStringView Path)
+    {
+        FJsonValue Saved;
+        FString Text;
+        if (!Filesystem::Exists(Path) || !Filesystem::ReadFile(Text, Path) || !FJsonValue::Parse(Text.View(), Saved) || !Saved.IsObject())
+        {
+            Saved = FJsonValue::MakeObject();
+        }
+
+        for (const auto& [Name, Var] : ConsoleVariables)
+        {
+            // String variables hold a view into storage they do not own, so they are not persisted.
+            if (*Var.ValuePtr == Var.DefaultValue || Containers::GetIf<FStringView>(Var.ValuePtr) != nullptr)
+            {
+                Saved.Remove(Name);
+                continue;
+            }
+
+            Visit([&]<typename T0>(const T0& Value)
+            {
+                if constexpr (!std::is_same_v<std::decay_t<T0>, FStringView>)
+                {
+                    Saved.Set(Name, FJsonValue(Value));
+                }
+            }, *Var.ValuePtr);
+        }
+
+        Text = Saved.ToString(4);
+        if (!Filesystem::MakeParentDirectoryTree(Path)
+            || !Filesystem::WriteFile(Path, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len())))
+        {
+            LOG_ERROR("Console variables could not be written to {}.", Path);
+            return false;
+        }
+        return true;
+    }
+
+    bool FConsoleRegistry::LoadFromFile(FStringView Path)
+    {
+        FString Text;
+        if (!Filesystem::Exists(Path) || !Filesystem::ReadFile(Text, Path))
+        {
+            return false;
+        }
+
+        FJsonValue Saved;
+        FJsonParseError Error;
+        if (!FJsonValue::Parse(Text.View(), Saved, &Error) || !Saved.IsObject())
+        {
+            LOG_WARN("Console variables at {} could not be read ({}); keeping the defaults.", Path, Error.Message);
+            return false;
+        }
+
+        for (const FJsonMember& Member : Saved.Members())
+        {
+            FConsoleVariable* ConsoleVar = Find(Member.Key.View());
+            if (ConsoleVar != nullptr && ApplySavedValue(*ConsoleVar, Member.Value) && ConsoleVar->OnChange != nullptr)
+            {
+                ConsoleVar->OnChange(*ConsoleVar->ValuePtr);
+            }
+        }
+
+        // Plugin modules register their variables after this, so their saved values wait here for Register.
+        LoadedConfigText = Move(Text);
+        return true;
     }
 }

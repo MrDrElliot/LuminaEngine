@@ -9,6 +9,7 @@
 #include "Renderer/MaterialTypes.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
 #include "UI/Tools/TerrainEditMode.h"
+#include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/CloudComponent.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/ExponentialHeightFogComponent.h"
@@ -288,6 +289,16 @@ namespace Lumina::DefaultScene
             BuildAtmosphereAndGrading(World);
             return Sun;
         }
+
+        // Play activates this view, so a fresh level never falls back to a camera the world has to invent.
+        void BuildPlayerCamera(CWorld* World)
+        {
+            const FCameraPose Pose = { FVector3(0.0f, 2.0f, 5.0f), FVector3(0.0f) };
+            FTransform Transform(Pose.Location);
+            Transform.SetRotation(Math::FindLookAtRotation(Pose.Target, Pose.Location));
+
+            World->EmplaceComponent<SCameraComponent>(World->ConstructEntity("Camera", Transform)).bAutoActivate = true;
+        }
     }
 
     void PopulateStarterLevel(CWorld* World)
@@ -299,6 +310,7 @@ namespace Lumina::DefaultScene
 
         // Saved levels keep the default material, because a runtime instance has no package to be saved into.
         BuildStarterLevel(World, nullptr);
+        BuildPlayerCamera(World);
     }
 
     void PopulateWelcomeScene(CWorld* World)

@@ -366,6 +366,7 @@ namespace Lumina
         // Sizes every changed slot's meshlet visibility from its surface's largest LOD. Serial, before the dirty lists are consumed.
         void                        AssignMeshletVisibility();
         uint32                      GetMeshletVisibilityExtent() const { return MeshletVisibilityExtent; }
+        uint64                      GetLargestLODMeshletTotal() const { return LargestLODMeshletTotal; }
 
         void                        NotifyResolveTableChanged() { bResolveTableChanged = true; }
 
@@ -535,16 +536,17 @@ namespace Lumina
         uint32                              MaxSurfaceDescMeshlets = 0;
 
         void    UpdateMeshletVisibility(uint32 Slot);
-        // Visibility words the slot's largest LOD needs, zero for an inactive slot.
-        uint32  MeshletVisibilityWordsOf(uint32 Slot) const;
+        // Meshlets in the slot's largest LOD, zero for an inactive slot.
+        uint32  LargestLODMeshletsOf(uint32 Slot) const;
         void    ReleaseMeshletVisibility(uint32 Slot);
         void    FreeMeshletVisibilityRange(uint32 Base, uint32 Words);
 
-        // Per retained slot, x the first word and y the word count.
-        TVector<FUIntVector2>               SlotMeshletVisibility;
+        // Per retained slot, x the first word, y the word count and z the largest LOD's meshlets.
+        TVector<FUIntVector3>               SlotMeshletVisibility;
         // Indexed by word count, since a streaming burst frees a range per foliage slot and a hash per free showed.
         TVector<TVector<uint32>>            MeshletVisibilityFreeLists;
         uint32                              MeshletVisibilityExtent = 1;
+        uint64                              LargestLODMeshletTotal = 0;
         TVector<uint32>                     MeshletVisibilityScratch;
 
         //~ Grass

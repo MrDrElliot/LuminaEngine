@@ -72,8 +72,9 @@ TEST_F(FManagedChangeFilterTest, CSharpChangedAndAddedFiltersMatchTQuery)
     auto* IsEmpty  = (FEmptyFn)DotNet::ResolveManagedExport("Test_ChangeFilterIsEmpty");
     auto* ReadAll  = (FProbeFn)DotNet::ResolveManagedExport("Test_ChangeFilterReadAll");
     auto* WriteOne = (FProbeFn)DotNet::ResolveManagedExport("Test_ChangeFilterWriteOne");
+    auto* WriteWalk = (FProbeFn)DotNet::ResolveManagedExport("Test_ChangeFilterWriteWalk");
     auto* Release  = (FReleaseFn)DotNet::ResolveManagedExport("Test_ChangeFilterRelease");
-    ASSERT_TRUE(Bind && Run && LastTick && IsEmpty && ReadAll && WriteOne && Release);
+    ASSERT_TRUE(Bind && Run && LastTick && IsEmpty && ReadAll && WriteOne && WriteWalk && Release);
 
     RegisterPendingTypes();
     TStrongObjectPtr<CWorld> World(NewObject<CWorld>(nullptr, FName("ManagedChangeFilterWorld"), FGuid::New(), OF_Transient));
@@ -118,6 +119,9 @@ TEST_F(FManagedChangeFilterTest, CSharpChangedAndAddedFiltersMatchTQuery)
 
     EXPECT_EQ(WriteOne(Managed, (uint32)A), 1);
     EXPECT_EQ(Run(Managed, Renamed, 0), 1) << "a Write TryGet still marks the row";
+
+    EXPECT_EQ(WriteWalk(Managed, (uint32)B), 4) << "ForEach and ParallelForEach hand every row a Write term";
+    EXPECT_EQ(Run(Managed, Renamed, 0), 1) << "reads and bypassed writes leave a row unchanged, and mutable access marks it";
 
     EXPECT_EQ(Run(Managed, Spawned, 0), 2) << "the first run reports every row as added";
     EXPECT_EQ(Run(Managed, Spawned, 0), 0);

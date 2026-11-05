@@ -15,7 +15,7 @@ namespace Lumina::DefaultScene
         FVector3 Target;
     };
 
-    // Sky, sun, ambient, ground, fog and grading, which is what a newly created level asset starts from.
+    // Sky, sun, ambient, ground, fog, grading and a play camera, which is what a newly created level asset starts from.
     void PopulateStarterLevel(CWorld* World);
 
     // The starter level plus the showcase the editor opens on when the project names no startup map.

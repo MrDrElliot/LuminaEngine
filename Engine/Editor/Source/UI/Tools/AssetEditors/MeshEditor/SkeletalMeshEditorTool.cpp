@@ -846,6 +846,7 @@ namespace Lumina
     void FSkeletalMeshEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
         World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
@@ -1033,11 +1034,6 @@ namespace Lumina
         if (!World.IsValid() || MeshEntity == ECS::NullEntity)
         {
             return;
-        }
-
-        if (World->GetRenderer())
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
         }
 
         SSkeletalMeshComponent& MeshComponent = World->GetComponent<SSkeletalMeshComponent>(MeshEntity);

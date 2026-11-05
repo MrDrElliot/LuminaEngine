@@ -117,33 +117,11 @@ namespace Lumina
             return true;
         }
 
-        // Type packages of modules the shipped game never loads, whose objects in an asset are editor state such as a node graph.
-        const THashSet<FName>& EditorTypePackages()
-        {
-            static const THashSet<FName> Packages = []
-            {
-                THashSet<FName> Out;
-                Out.Emplace("/Types/Editor");
-                for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
-                {
-                    for (const FPluginModuleDescriptor& Module : Plugin->GetDescriptor().Modules)
-                    {
-                        if (Module.Type != EPluginModuleType::Runtime)
-                        {
-                            Out.Emplace(*(FString("/Types/") + Module.Name));
-                        }
-                    }
-                }
-                return Out;
-            }();
-            return Packages;
-        }
-
         // A graph's nodes and pins are exports of their own, each an editor class, so they go by the same test.
         bool IsEditorOnlyObject(const CObject* Object)
         {
             const CClass* Class = Object->GetClass();
-            return Class != nullptr && Class->GetPackage() != nullptr && EditorTypePackages().Contains(Class->GetPackage()->GetName());
+            return Class != nullptr && Class->GetPackage() != nullptr && IsEditorTypePackage(Class->GetPackage()->GetName());
         }
 
         // Every instance under a master, through instances of instances, since each may select its own permutation.
@@ -357,7 +335,7 @@ namespace Lumina
             const bool bEligible = Class != nullptr
                 && !Class->IsChildOf(CMaterialInterface::StaticClass())
                 && !Class->IsChildOf(CTexture::StaticClass())
-                && !(Class->GetPackage() != nullptr && EditorTypePackages().Contains(Class->GetPackage()->GetName()))
+                && !(Class->GetPackage() != nullptr && IsEditorTypePackage(Class->GetPackage()->GetName()))
                 && !HasEditorOnlyData(Class, StructMemo);
 
             ClassMemo[Data->AssetClass] = bEligible;

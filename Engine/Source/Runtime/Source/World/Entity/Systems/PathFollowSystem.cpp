@@ -161,7 +161,7 @@ namespace Lumina
 
     bool SPathFollowSystem::HasWork(const SSystemContext&)
     {
-        return !Followers.IsEmpty();
+        return AnyQueryHasRows(Followers);
     }
 
     void SPathFollowSystem::OnUpdate(const SSystemContext& Context)
@@ -424,9 +424,10 @@ namespace Lumina
         }
 
         // A path query costs as much as hundreds of plain followers, so queries are set aside rather than run inside a chunk.
-        Followers.ParallelForEach([&](ECS::FEntity Entity, SPathFollowComponent& Comp, const STransformComponent& Xform, SVehicleComponent* Vehicle, SRVOAgentComponent* Avoidance,
+        Followers.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SPathFollowComponent> CompMut, const STransformComponent& Xform, SVehicleComponent* Vehicle, SRVOAgentComponent* Avoidance,
             SCharacterControllerComponent* Controller, const SCharacterMovementComponent* Movement)
         {
+            SPathFollowComponent& Comp = CompMut.GetMut();
             FVector3 Goal;
             FVector3 AgentPos;
             bool bNeedRepath = false;

@@ -1629,7 +1629,7 @@ namespace Lumina
                 }
                 for (size_t Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
                 {
-                    Mesh->SetMaterialAtSlot(Slot, OverrideMaterial.Get());
+                    Mesh->SetMaterialAtSlot(static_cast<int32>(Slot), OverrideMaterial.Get());
                 }
             }
         }

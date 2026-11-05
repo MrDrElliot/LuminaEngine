@@ -433,12 +433,15 @@ TEST(ECSChangeTracking, MutableViewsStampAndConstViewsDoNot)
     EXPECT_FALSE(Registry.View<FChangeTrackedOther>().StampsChanges()) << "an untracked include never stamps";
     EXPECT_TRUE(ChangedSince(Registry, Since).IsEmpty()) << "a const include stamps nothing";
 
-    Registry.View<FChangeTrackedValue, const FChangeTrackedOther>().ForEach([](FChangeTrackedValue&, const FChangeTrackedOther&) {});
+    Registry.View<ECS::Write<FChangeTrackedValue>, const FChangeTrackedOther>().ForEach([](ECS::TMut<FChangeTrackedValue>, const FChangeTrackedOther&) {});
+    EXPECT_TRUE(ChangedSince(Registry, Since).IsEmpty()) << "a walk that never writes stamps nothing";
+
+    Registry.View<ECS::Write<FChangeTrackedValue>, const FChangeTrackedOther>().ForEach([](ECS::TMut<FChangeTrackedValue> Value, const FChangeTrackedOther&) { ++Value->Value; });
     const TVector<ECS::FEntity> Filtered = ChangedSince(Registry, Since);
     ASSERT_EQ(Filtered.Num(), 1);
-    EXPECT_EQ(Filtered[0], B) << "a filtered walk stamps only the entities it visits";
+    EXPECT_EQ(Filtered[0], B) << "a filtered walk stamps only the entities it writes";
 
-    Registry.View<FChangeTrackedValue>().ForEach([](FChangeTrackedValue& Value) { ++Value.Value; });
+    Registry.View<ECS::Write<FChangeTrackedValue>>().ForEach([](ECS::TMut<FChangeTrackedValue> Value) { ++Value->Value; });
     EXPECT_EQ(ChangedSince(Registry, Since).Num(), 2);
 }
 
@@ -465,9 +468,9 @@ TEST(ECSChangeTracking, MutableViewsStampThroughEachAndGet)
     EXPECT_EQ(Changed[0], B);
 
     Since = Registry.AdvanceChangeTick();
-    for (auto [Entity, Value, Other] : Registry.View<FChangeTrackedValue, const FChangeTrackedOther>().Each())
+    for (auto [Entity, Value, Other] : Registry.View<ECS::Write<FChangeTrackedValue>, const FChangeTrackedOther>().Each())
     {
-        Value.Value = Other.Value;
+        Value->Value = Other.Value;
     }
     Changed = ChangedSince(Registry, Since);
     ASSERT_EQ(Changed.Num(), 1);

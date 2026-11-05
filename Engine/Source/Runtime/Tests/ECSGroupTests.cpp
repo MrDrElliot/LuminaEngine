@@ -161,7 +161,7 @@ TEST(ECSGroup, PartialMatchStaysOutside)
 
     int32 Visited = 0;
     FAll Query;
-    Query.ForEach(Registry, [&](ECS::FEntity Entity, FGroupA&, const FGroupB&, const FGroupC&)
+    Query.ForEach(Registry, [&](ECS::FEntity Entity, const FGroupA&, const FGroupB&, const FGroupC&)
     {
         EXPECT_EQ(Entity, Full);
         ++Visited;

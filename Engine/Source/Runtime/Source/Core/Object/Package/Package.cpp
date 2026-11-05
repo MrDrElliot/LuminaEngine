@@ -8,6 +8,7 @@
 #include "Core/Object/ObjectHash.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/ObjectReferenceReplacer.h"
+#include "Core/Plugin/PluginManager.h"
 #include "Core/Profiler/Profile.h"
 #include "Memory/MemoryTracking.h"
 #include "Core/Serialization/Package/PackageLoader.h"
@@ -685,6 +686,7 @@ namespace Lumina
         ObjectGUID      = InObject->GetGUID();
         ObjectName      = InObject->GetName();
         ClassName       = InObject->GetClass()->GetName();
+        ClassPackage    = InObject->GetClass()->GetPackage()->GetName();
         Offset          = 0;
         Size            = 0;
         Object          = InObject;
@@ -695,7 +697,27 @@ namespace Lumina
         ObjectGUID      = InObject->GetGUID();
         Object          = InObject;
     }
-    
+
+    bool IsEditorTypePackage(const FName& PackageName)
+    {
+        if (PackageName == FName("/Types/Editor"))
+        {
+            return true;
+        }
+
+        for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
+        {
+            for (const FPluginModuleDescriptor& Module : Plugin->GetDescriptor().Modules)
+            {
+                if (Module.Type != EPluginModuleType::Runtime && PackageName == FName(FString("/Types/") + Module.Name))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     void CPackage::OnDestroy()
     {
         
@@ -1910,7 +1932,12 @@ namespace Lumina
             CClass* ObjectClass = FindObject<CClass>(Export.ClassName);
             if (ObjectClass == nullptr)
             {
-                LOG_ERROR("CreateExportShell: class '{}' for export '{}' in package '{}' could not be resolved", Export.ClassName, Export.ObjectName, GetName());
+                // Editor data in an uncooked asset is expected to stay unloaded where the editor module never registered its types.
+                const bool bEditorDataWithoutEditor = IsEditorTypePackage(Export.ClassPackage) && FindObject<CPackage>(Export.ClassPackage) == nullptr;
+                if (!bEditorDataWithoutEditor)
+                {
+                    LOG_ERROR("CreateExportShell: class '{}' for export '{}' in package '{}' could not be resolved", Export.ClassName, Export.ObjectName, GetName());
+                }
                 return nullptr;
             }
 

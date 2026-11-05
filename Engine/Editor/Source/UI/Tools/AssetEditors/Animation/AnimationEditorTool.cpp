@@ -71,6 +71,7 @@ namespace Lumina
     void FAnimationEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         CreateFloorPlane();
 
@@ -139,11 +140,6 @@ namespace Lumina
         if (World.IsValid() && Animation != nullptr && PreviewMeshSelection.Resolve(Animation->Skeleton.Get()) != PreviewMeshInUse.Get())
         {
             CreatePreviewEntity();
-        }
-
-        if (World && World->GetRenderer())
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
         }
     }
 

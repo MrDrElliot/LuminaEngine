@@ -348,7 +348,6 @@ namespace Lumina
 
         if (World != nullptr && World->GetRenderer() != nullptr)
         {
-            World->GetRenderSettings().bDrawBillboards = false;
             bWorldGridEnabled = false;
         }
 

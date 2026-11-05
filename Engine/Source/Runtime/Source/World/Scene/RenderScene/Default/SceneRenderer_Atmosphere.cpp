@@ -692,8 +692,12 @@ namespace Lumina
             float  LayerBottom;
             float  LayerTop;
             float  MaxDistance;
+
+            uint32   FreshIndex;
+            uint32   _Pad0;
+            FVector2 WindDelta;
         };
-        static_assert(sizeof(FCloudResolvePushConstants) == 48,
+        static_assert(sizeof(FCloudResolvePushConstants) == 64,
             "FCloudResolvePushConstants must match VolumetricCloudsResolve.slang::FPushConstants.");
 
         // Visits every texel of a 2x2 block once in four frames, alternating diagonals so a still frame converges evenly.
@@ -806,8 +810,9 @@ namespace Lumina
         const FSceneImage& CloudDepth   = GetNamedImage(ENamedImage::CloudDepth);
         const FSceneImage& History      = GetNamedImage(ENamedImage::CloudScatterHistory);
         const FSceneImage& HistoryDepth = GetNamedImage(ENamedImage::CloudDepthHistory);
+        const FSceneImage& March        = GetNamedImage(ENamedImage::CloudMarch);
         const FSceneImage& Depth        = GetNamedImage(ENamedImage::DepthAttachment);
-        if (!Noise.IsValid() || !Scatter.IsValid() || !CloudDepth.IsValid() || !History.IsValid() || !HistoryDepth.IsValid())
+        if (!Noise.IsValid() || !Scatter.IsValid() || !CloudDepth.IsValid() || !History.IsValid() || !HistoryDepth.IsValid() || !March.IsValid())
         {
             return false;
         }
@@ -843,7 +848,8 @@ namespace Lumina
 
         const int32 ScatterUAV    = Scatter.GetMipUAVIndex(0);
         const int32 CloudDepthUAV = CloudDepth.GetMipUAVIndex(0);
-        if (ScatterUAV < 0 || CloudDepthUAV < 0)
+        const int32 MarchUAV      = March.GetMipUAVIndex(0);
+        if (ScatterUAV < 0 || CloudDepthUAV < 0 || MarchUAV < 0)
         {
             return false;
         }
@@ -885,6 +891,7 @@ namespace Lumina
         PC.Stride  = bTemporal ? 2u : 1u;
         PC.OffsetX = bTemporal ? Offset[0] : 0u;
         PC.OffsetY = bTemporal ? Offset[1] : 0u;
+        PC.ScatterUAV = bTemporal ? (uint32)MarchUAV : (uint32)ScatterUAV;
 
         DispatchCompute(CL, CloudCS, PC,
                          RenderUtils::GetGroupCount((PC.ScreenW + PC.Stride - 1u) / PC.Stride, CloudTileSize),
@@ -909,11 +916,14 @@ namespace Lumina
             Resolve.LayerBottom       = PC.LayerBottom;
             Resolve.LayerTop          = PC.LayerTop;
             Resolve.MaxDistance       = PC.MaxDistance;
+            Resolve.FreshIndex        = (uint32)March.GetResourceID();
+            Resolve.WindDelta         = PC.WindOffset - CurrentView->CloudHistoryWindOffset;
             DispatchCompute(CL, ResolveCS, Resolve,
                              RenderUtils::GetGroupCount(PC.ScreenW, CloudTileSize),
                              RenderUtils::GetGroupCount(PC.ScreenH, CloudTileSize), 1);
         }
-        CurrentView->bCloudHistoryValid = true;
+        CurrentView->bCloudHistoryValid     = true;
+        CurrentView->CloudHistoryWindOffset = PC.WindOffset;
 
         // The scatter volume feeds AtmosphereCompositePass and the cloud shadow map, both dispatches.
         RHI::CmdBarrier(CL,

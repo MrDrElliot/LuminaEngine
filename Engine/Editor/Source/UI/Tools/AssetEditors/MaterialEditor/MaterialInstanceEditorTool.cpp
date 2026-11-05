@@ -53,7 +53,8 @@ namespace Lumina
     void FMaterialInstanceEditorTool::SetupWorldForTool()
     {
         FAssetEditorTool::SetupWorldForTool();
-        
+        World->GetRenderSettings().bDrawBillboards = false;
+
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
         World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
         World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
@@ -82,12 +83,6 @@ namespace Lumina
     void FMaterialInstanceEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::Update(UpdateContext);
-        
-        // @TODO figure out why this needs to exist..
-        if (World->GetRenderer())
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
-        }
 
         if (const CMaterialInstance* Instance = Cast<CMaterialInstance>(Asset.Get()))
         {

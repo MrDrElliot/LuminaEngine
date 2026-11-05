@@ -281,6 +281,29 @@ namespace Lumina
         void Configure() override { RequireUpdate(EUpdateStage::FrameStart); }
     };
 
+    // Counts its FixedUpdate ticks, so a test can prove the world steps at a fixed rate whatever the frame delta.
+    REFLECT()
+    class RUNTIME_API CEntitySystemFixedUpdateTest : public CEntitySystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override { RequireUpdate(EUpdateStage::FixedUpdate); }
+
+        void OnUpdate(const SSystemContext& Context) override
+        {
+            ++TickCount;
+            LastStage     = Context.GetUpdateStage();
+            LastDeltaTime = Context.GetDeltaTime();
+        }
+
+        int32        TickCount = 0;
+        EUpdateStage LastStage = EUpdateStage::Max;
+        float        LastDeltaTime = 0.0f;
+    };
+
     // Only reads what CEntitySystemTest reads, so the two never conflict and may share a batch.
     REFLECT()
     class RUNTIME_API CEntitySystemReaderTest : public CEntitySystem

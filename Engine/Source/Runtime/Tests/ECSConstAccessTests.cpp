@@ -23,7 +23,7 @@ namespace ECSConstAccessTestsInternal
     using FBoth    = ECS::TQuery<ECS::Read<FAccessValue>, FAccessOther>;
 
     static_assert(std::is_same_v<FMixed::FView, ECS::TView<ECS::TExclude<>, const FAccessValue, FAccessOther>>);
-    static_assert(std::is_same_v<FWrapped::FView, FMixed::FView>, "Read<T> and const T are one access, Write<T> and T another");
+    static_assert(std::is_same_v<FWrapped::FView, ECS::TView<ECS::TExclude<>, const FAccessValue, ECS::Write<FAccessOther>>>, "Read<T> and const T are one access, and Write<T> keeps its spelling");
     static_assert(std::is_same_v<FBoth::FView, FMixed::FView>, "the two spellings mix in one query");
     static_assert(std::is_same_v<decltype(std::declval<const FWrapped&>().TryGet<FAccessValue>(ECS::FEntity{})), const FAccessValue*>);
     static_assert(std::is_same_v<decltype(std::declval<ECS::FRegistry&>().Get<const FAccessValue>(ECS::FEntity{})), const FAccessValue&>);

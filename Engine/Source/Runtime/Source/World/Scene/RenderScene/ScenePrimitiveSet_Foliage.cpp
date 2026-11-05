@@ -726,7 +726,7 @@ namespace Lumina
         // The slots scatter across the retained arrays, so the cache misses spread over workers instead of one thread.
         Jobs::ParallelFor(Count, [this](const Jobs::FParallelRange& Range)
         {
-            // Pairs of base and word count, so the serial pass after only appends to the free lists.
+            // Triples of base, word count and meshlets, so the serial pass after only appends to the free lists.
             TVector<uint32>& FreedRanges = BucketFor(Range.Thread).Slots;
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {
@@ -735,22 +735,24 @@ namespace Lumina
                 RetainedStatic[Slot].MeshletVisibilityBase = kNoMeshletVisibility;
                 if (Slot < (uint32)SlotMeshletVisibility.Num())
                 {
-                    FUIntVector2& Visibility = SlotMeshletVisibility[Slot];
+                    FUIntVector3& Visibility = SlotMeshletVisibility[Slot];
                     if (Visibility.y != 0u)
                     {
                         FreedRanges.Add(Visibility.x);
                         FreedRanges.Add(Visibility.y);
+                        FreedRanges.Add(Visibility.z);
                     }
-                    Visibility = FUIntVector2(kNoMeshletVisibility, 0u);
+                    Visibility = FUIntVector3(kNoMeshletVisibility, 0u, 0u);
                 }
             }
         }, 16384);
 
         for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
         {
-            for (int32 i = 0; i + 1 < Bucket.Slots.Num(); i += 2)
+            for (int32 i = 0; i + 2 < Bucket.Slots.Num(); i += 3)
             {
                 FreeMeshletVisibilityRange(Bucket.Slots[i], Bucket.Slots[i + 1]);
+                LargestLODMeshletTotal -= Bucket.Slots[i + 2];
             }
             Bucket.Slots.Reset();
         }

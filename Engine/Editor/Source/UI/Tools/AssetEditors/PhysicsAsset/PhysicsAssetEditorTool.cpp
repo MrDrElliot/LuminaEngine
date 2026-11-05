@@ -407,6 +407,7 @@ namespace Lumina
     void FPhysicsAssetEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         CreateFloorPlane();
 
@@ -512,11 +513,6 @@ namespace Lumina
         }
 
         SyncDetailsTable();
-
-        if (World->GetRenderer() != nullptr)
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
-        }
 
         // The overlays are drawn from the bind pose, which the live ragdoll has already left behind.
         if (bSimulating)

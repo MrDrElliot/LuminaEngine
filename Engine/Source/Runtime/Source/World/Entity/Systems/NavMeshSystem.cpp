@@ -1991,8 +1991,8 @@ namespace Lumina
             Comp.Runtime.State = ENavBakeState::Building;
         }
 
-        void TickComponent(const SSystemContext& Context, SNavMeshSystem::FSourceQueries& Queries, const FSignificanceState& SignificanceState, ECS::FEntity Entity,
-                           SNavMeshComponent& Comp, FNavSourceTracker& Sources)
+        void TickComponent(const SSystemContext& Context, SNavMeshSystem::FSourceQueries& Queries, const FSignificanceState& SignificanceState,
+                           SNavMeshComponent& Comp, const STransformComponent* Transform, FNavSourceTracker& Sources)
         {
             // Held until the mesh can take them, so a change made while it baked or hydrated still rebakes its tiles.
             if (Comp.bDynamicRebuild && !Sources.Changes.IsEmpty())
@@ -2009,9 +2009,9 @@ namespace Lumina
             }
 
             // Scale always mirrors, location only in the editor, since runtime keeps the serialized Center.
-            if (const STransformComponent* X = Queries.Transforms.TryGet<STransformComponent>(Entity))
+            if (Transform)
             {
-                const FTransform& WT = X->GetWorldTransform();
+                const FTransform& WT = Transform->GetWorldTransform();
                 const FVector3 WS = WT.GetScale();
                 Comp.Runtime.WorldScale = FVector3(std::fabs(WS.x), std::fabs(WS.y), std::fabs(WS.z));
                 if (Context.GetWorldType() == EWorldType::Editor)
@@ -2547,8 +2547,6 @@ namespace Lumina
                     }
                 });
             }
-
-            (void)Entity;
         }
 
         template<typename TView>
@@ -2619,9 +2617,10 @@ namespace Lumina
 
         NavMeshSystemInternal::UpdateSources(Context, SourceQueries, *Tracker);
 
-        Volumes.ForEach([&](ECS::FEntity Entity, SNavMeshComponent& Comp)
+        Volumes.ForEach([&](ECS::TMut<SNavMeshComponent> CompMut, const STransformComponent* Transform)
         {
-            NavMeshSystemInternal::TickComponent(Context, SourceQueries, *SignificanceState, Entity, Comp, *Tracker);
+            SNavMeshComponent& Comp = CompMut.GetMut();
+            NavMeshSystemInternal::TickComponent(Context, SourceQueries, *SignificanceState, Comp, Transform, *Tracker);
         });
     }
 
@@ -2642,17 +2641,19 @@ namespace Lumina
                 Sources.Counts[0], Sources.Counts[1], Sources.Counts[2], Sources.Counts[3]);
         }
 
-        Volumes.ForEach([&](ECS::FEntity Entity, SNavMeshComponent& Comp)
+        Volumes.ForEach([&](ECS::TMut<SNavMeshComponent> CompMut, const STransformComponent* Transform)
         {
-            NavMeshSystemInternal::TickComponent(Context, SourceQueries, *SignificanceState, Entity, Comp, Sources);
+            SNavMeshComponent& Comp = CompMut.GetMut();
+            NavMeshSystemInternal::TickComponent(Context, SourceQueries, *SignificanceState, Comp, Transform, Sources);
         });
     }
 
     void SNavMeshSystem::OnTeardown(const SExclusiveContext& Context)
     {
         LUMINA_PROFILE_SCOPE();
-        Volumes.ForEach([&](SNavMeshComponent& Comp)
+        Volumes.ForEach([&](ECS::TMut<SNavMeshComponent> CompMut, const STransformComponent*)
         {
+            SNavMeshComponent& Comp = CompMut.GetMut();
             if (Comp.Runtime.ActiveBake)
             {
                 Comp.Runtime.ActiveBake->bCancelRequested.store(true, std::memory_order_release);

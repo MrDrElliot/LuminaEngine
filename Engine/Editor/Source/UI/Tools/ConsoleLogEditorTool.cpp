@@ -654,7 +654,7 @@ namespace Lumina
                     if (HistoryIndex != PrevHistoryIndex)
                     {
                         const FString& Replacement = (HistoryIndex < static_cast<uint64>(CommandHistory.Num()))
-                            ? CommandHistory[HistoryIndex]
+                            ? CommandHistory[static_cast<int32>(HistoryIndex)]
                             : FString();
                         Data->DeleteChars(0, Data->BufTextLen);
                         if (!Replacement.IsEmpty())

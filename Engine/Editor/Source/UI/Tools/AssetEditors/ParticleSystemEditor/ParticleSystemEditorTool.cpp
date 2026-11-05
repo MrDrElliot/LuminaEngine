@@ -67,6 +67,7 @@ namespace Lumina
     void FParticleSystemEditorTool::SetupWorldForTool()
     {
         FAssetEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
         World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
@@ -178,12 +179,6 @@ namespace Lumina
             {
                 ReplayPreview();
             }
-        }
-
-        // Re-applied every frame, since idle reclaim can rebuild the render scene and its settings.
-        if (World.IsValid() && World->GetRenderer() != nullptr)
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
         }
     }
 

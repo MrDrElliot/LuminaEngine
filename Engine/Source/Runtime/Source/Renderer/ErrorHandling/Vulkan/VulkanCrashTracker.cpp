@@ -102,7 +102,7 @@ namespace Lumina::RHI
         }
 
         const FString* Marker = static_cast<const FString*>(MarkerData);
-        ResolveMarker(reinterpret_cast<const void*>(*(*Marker)), static_cast<uint32>(Marker->Num()));
+        ResolveMarker(reinterpret_cast<const void*>(*(*Marker)), static_cast<uint32>(Marker->Len()));
     }
 
     template<typename T>

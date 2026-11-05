@@ -109,6 +109,32 @@ internal static unsafe class ChangeFilterTestHooks
     public static int Test_ChangeFilterWriteOne(IntPtr Handle, uint Target)
         => Resolve(Handle) is { } Tested && Tested.NameWriters.TryGet(new FEntity(Target), out Write<SNameComponent> _) ? 1 : 0;
 
+    // Walks every name through Write terms, reading each and bypassing on each, and takes mutable access to Target alone.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static int Test_ChangeFilterWriteWalk(IntPtr Handle, uint Target)
+    {
+        if (Resolve(Handle) is not { } Tested)
+        {
+            return 0;
+        }
+
+        int Visited = 0;
+        void Visit(FEntity Entity, Write<SNameComponent> Name)
+        {
+            _ = Name.AsRead.Value;
+            _ = Unsafe.AsPointer(ref Name.BypassChangeDetection());
+            if (Entity.Id == Target)
+            {
+                _ = Unsafe.AsPointer(ref Name.Value);
+            }
+            Interlocked.Increment(ref Visited);
+        }
+        Tested.NameWriters.ForEach(Visit);
+        Tested.NameWriters.ParallelForEach(Visit, 1);
+        return Visited;
+    }
+
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static void Test_ChangeFilterRelease(IntPtr Handle)

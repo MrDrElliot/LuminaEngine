@@ -21,13 +21,15 @@ namespace Lumina
         Physics::IPhysicsQueries* Queries = Context.GetPhysics();
         const FVector3 Gravity = WorldSettings->Gravity;
 
-        Flyers.ParallelForEach([&](ECS::FEntity Entity, SProjectileComponent& Projectile, STransformComponent& Transform)
+        Flyers.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SProjectileComponent> ProjectileMut, ECS::TMut<STransformComponent> TransformMut)
         {
-            if (Projectile.bHasHit)
+            if (ProjectileMut.Get().bHasHit)
             {
                 return;
             }
 
+            STransformComponent& Transform = TransformMut.GetMut();
+            SProjectileComponent& Projectile = ProjectileMut.GetMut();
             if (Projectile.GravityScale != 0.0f)
             {
                 Projectile.Velocity += Gravity * Projectile.GravityScale * Dt;

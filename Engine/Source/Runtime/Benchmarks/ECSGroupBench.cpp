@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "World/ECS/Registry.h"
 #include "Platform/Time/PlatformTime.h"
+#include "TaskSystem/TaskSystem.h"
 #include <cstdio>
 #include <random>
 
@@ -33,15 +34,23 @@ namespace ECSGroupBenchInternal
     }
 
     template<typename... Ts>
-    double TimeIteration(int32 Count, bool bGrouped)
+    double TimeIteration(int32 Count, bool bGrouped, bool bTracked = false)
     {
         ECS::FRegistry Registry;
-        if (bGrouped)
+        if constexpr (sizeof...(Ts) > 1)
         {
-            Registry.DeclareGroup<Ts...>();
+            if (bGrouped)
+            {
+                Registry.DeclareGroup<Ts...>();
+            }
         }
         Populate<Ts...>(Registry, Count);
+        if (bTracked)
+        {
+            (Registry.TrackChanges<Ts>(), ...);
+        }
         auto View = Registry.View<Ts...>();
+        auto WriteView = Registry.View<ECS::Write<Ts>...>();
 
         constexpr int32 Passes = 50;
         float Sink = 0.f;
@@ -49,6 +58,16 @@ namespace ECSGroupBenchInternal
         const uint64 Start = PlatformTime::Cycles();
         for (int32 Pass = 0; Pass < Passes; ++Pass)
         {
+            if (bTracked)
+            {
+                WriteView.ForEach([&](ECS::TMut<Ts>... Values)
+                {
+                    ((Sink += reinterpret_cast<const float&>(Values.Get())), ...);
+                    ((reinterpret_cast<float&>(Values.GetMut()) += 1.f), ...);
+                    ++Visits;
+                });
+                continue;
+            }
             View.ForEach([&](Ts&... Values)
             {
                 ((Sink += reinterpret_cast<const float&>(Values)), ...);
@@ -62,15 +81,48 @@ namespace ECSGroupBenchInternal
     }
 
     template<typename... Ts>
-    void ReportIteration(const char* Label)
+    void ReportIteration(const char* Label, bool bTracked = false)
     {
         for (int32 Count : { 10000, 100000 })
         {
-            const double Plain = TimeIteration<Ts...>(Count, false);
-            const double Grouped = TimeIteration<Ts...>(Count, true);
-            std::printf("[ECSGroupBench] %s %7d entities: ungrouped %.2f ns/entity, grouped %.2f ns/entity (%.2fx)\n",
-                Label, Count, Plain, Grouped, Grouped > 0.0 ? Plain / Grouped : 0.0);
+            const double Plain = TimeIteration<Ts...>(Count, false, bTracked);
+            const double Grouped = TimeIteration<Ts...>(Count, true, bTracked);
+            std::printf("[ECSGroupBench] %s%s %7d entities: ungrouped %.2f ns/entity, grouped %.2f ns/entity (%.2fx)\n",
+                Label, bTracked ? " tracked" : "", Count, Plain, Grouped, Grouped > 0.0 ? Plain / Grouped : 0.0);
         }
+    }
+
+    // Parallel slices of one write view, where handles into an untracked pool must not share a sink line across workers.
+    double TimeParallelWrite(bool bHandles, bool bTracked)
+    {
+        constexpr int32 Count = 1000000;
+        ECS::FRegistry Registry;
+        Populate<FBenchP, FBenchV>(Registry, Count);
+        if (bTracked)
+        {
+            Registry.TrackChanges<FBenchP>();
+            Registry.TrackChanges<FBenchV>();
+        }
+        auto View = Registry.View<FBenchP, FBenchV>();
+        auto WriteView = Registry.View<ECS::Write<FBenchP>, ECS::Write<FBenchV>>();
+        const uint32 Slots = static_cast<uint32>(WriteView.NumDenseSlots());
+
+        constexpr int32 Passes = 30;
+        const uint64 Start = PlatformTime::Cycles();
+        for (int32 Pass = 0; Pass < Passes; ++Pass)
+        {
+            Jobs::ParallelFor(Slots, [&](const Jobs::FParallelRange& Range)
+            {
+                if (bHandles)
+                {
+                    WriteView.ForEachInRange(Range.Start, Range.End, [](ECS::TMut<FBenchP> P, ECS::TMut<FBenchV> V) { P->X += V.Get().X; });
+                    return;
+                }
+                View.ForEachInRange(Range.Start, Range.End, [](FBenchP& P, const FBenchV& V) { P.X += V.X; });
+            }, 4096);
+        }
+        const uint64 End = PlatformTime::Cycles();
+        return NanosPer(Start, End, static_cast<int64>(Passes) * Count);
     }
 
     double TimeChurn(int32 Count, bool bGrouped)
@@ -114,6 +166,15 @@ TEST(ECSGroupBench, DISABLED_GroupedVsUngroupedIteration)
     ReportIteration<FBenchP, FBenchV>("2 components");
     ReportIteration<FBenchP, FBenchV, FBenchM>("3 components");
     ReportIteration<FBenchP, FBenchV, FBenchM, FBenchH>("4 components");
+}
+
+TEST(ECSGroupBench, DISABLED_TrackedWriteIteration)
+{
+    ReportIteration<FBenchP>("1 component", true);
+    ReportIteration<FBenchP, FBenchV>("2 components", true);
+    ReportIteration<FBenchP, FBenchV, FBenchM>("3 components", true);
+    std::printf("[ECSGroupBench] parallel 2 components 1M entities: bare %.2f, handle untracked %.2f, handle tracked %.2f ns/entity\n",
+        TimeParallelWrite(false, false), TimeParallelWrite(true, false), TimeParallelWrite(true, true));
 }
 
 TEST(ECSGroupBench, DISABLED_AddRemoveChurn)

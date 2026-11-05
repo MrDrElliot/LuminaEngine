@@ -2,8 +2,8 @@
 
 #include "World/ECS/Registry.h"
 
-#include "Containers/Vector.h"
 #include "EntitySystem.h"
+#include "StampedEntityCache.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectMacros.h"
 #include "World/Entity/Components/AudioSourceComponent.h"
@@ -42,8 +42,7 @@ namespace Lumina
     // Per-world scores published as a resource ahead of every consumer.
     struct FSignificanceState : ECS::FResource
     {
-        // Indexed by ECS::FEntity::GetIndex(), sparse, an entry whose Owner mismatches is unscored.
-        TVector<FEntitySignificance> ByEntityIndex;
+        TStampedEntityCache<FEntitySignificance> Scores;
 
         FVector3    ViewOrigin = FVector3(0.0f);
 
@@ -52,21 +51,11 @@ namespace Lumina
 
         bool        bEnabled = true;
 
-        // Bumped once per scoring pass; an entry from an older pass reads as unscored.
-        uint32      Stamp = 0;
-
         // Full significance for anything unscored, so a consumer that finds nothing keeps ticking.
         NODISCARD FEntitySignificance Get(ECS::FEntity Entity) const
         {
-            const uint32 Index = Entity.GetIndex();
-            if (!bEnabled || !bHasView || Index >= (uint32)ByEntityIndex.Num())
-            {
-                return FEntitySignificance{};
-            }
-
-            const FEntitySignificance& Entry = ByEntityIndex[Index];
-            const bool bFresh = Entry.Owner == Entity && Entry.Stamp == Stamp;
-            return bFresh ? Entry : FEntitySignificance{};
+            const FEntitySignificance* Entry = (bEnabled && bHasView) ? Scores.Find(Entity) : nullptr;
+            return Entry != nullptr ? *Entry : FEntitySignificance{};
         }
     };
 

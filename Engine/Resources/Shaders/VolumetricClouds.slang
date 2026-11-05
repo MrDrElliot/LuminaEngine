@@ -9,7 +9,7 @@
 
 struct FPushConstants
 {
-    FRWTexture2D Scatter;      // half-res rgb = scattered radiance, a = transmittance
+    FRWTexture2D Scatter;      // rgb = scattered radiance, a = transmittance, indexed by block when Stride is 2
     FTexture2D   Depth;        // scene depth, clamps the march
     FTexture3D   Noise;        // the baked shape and erosion volume
     uint         ScreenW;
@@ -113,17 +113,20 @@ static const float kOctaveEccentricity = 0.5;
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
     uint2 Size = uint2(Pass().ScreenW, Pass().ScreenH);
-    int2  P    = int2(DTid.xy * Pass().Stride + uint2(Pass().OffsetX, Pass().OffsetY));
-    if (P.x >= int(Size.x) || P.y >= int(Size.y))
+    if (any(DTid.xy * Pass().Stride >= Size))
     {
         return;
     }
+    // A block cut by an odd screen edge still marches, on its in-bounds texel.
+    const int2 P = min(int2(DTid.xy * Pass().Stride + uint2(Pass().OffsetX, Pass().OffsetY)), int2(Size) - 1);
+
+    const int2 Out = Pass().Stride > 1u ? int2(DTid.xy) : P;
 
     const FCloudRay Ray = Cloud_SetupRay(Pass().Depth, P, Size, Pass().LayerBottom, Pass().LayerTop, Pass().MaxDistance);
     Pass().CloudDepth[P] = float4(Ray.RawDepth, 0.0, 0.0, 0.0);
     if (Ray.End <= Ray.Start)
     {
-        Pass().Scatter[P] = float4(0.0, 0.0, 0.0, 1.0);
+        Pass().Scatter[Out] = float4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 
@@ -262,5 +265,5 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     Scattered     *= DistanceFade;
     Transmittance  = lerp(1.0, Transmittance, DistanceFade);
 
-    Pass().Scatter[P] = float4(SanitizeRadiance(Scattered), Transmittance);
+    Pass().Scatter[Out] = float4(SanitizeRadiance(Scattered), Transmittance);
 }

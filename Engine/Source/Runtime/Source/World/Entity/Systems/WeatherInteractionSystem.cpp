@@ -231,12 +231,13 @@ namespace Lumina
         Physics::IPhysicsQueries* Physics = Context.GetPhysics();
         const ECS::FHierarchy& Hierarchy = Context.GetHierarchy();
 
-        Interactors.ForEach([&](ECS::FEntity Entity, SWeatherInteractorComponent& Interactor, const STransformComponent& Transform)
+        Interactors.ForEach([&](ECS::FEntity Entity, ECS::TMut<SWeatherInteractorComponent> InteractorMut, const STransformComponent& Transform)
         {
-            if (!Interactor.bEnabled)
+            if (!InteractorMut.Get().bEnabled)
             {
                 return;
             }
+            SWeatherInteractorComponent& Interactor = InteractorMut.GetMut();
 
             const SSkeletalMeshComponent* Skeletal = SkeletalMeshes.TryGet<SSkeletalMeshComponent>(Entity);
             const SStaticMeshComponent*   Static   = StaticMeshes.TryGet<SStaticMeshComponent>(Entity);

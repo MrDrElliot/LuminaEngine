@@ -62,8 +62,9 @@ namespace Lumina
         // The per-entity interp delay is subtracted in the parallel body so each proxy stays behind its OWN rate.
         const double ServerRenderNow = State.ServerPlaybackTime;
 
-        Proxies.ParallelForEach([&](ECS::FEntity Entity, FRepTransform& Rep, STransformComponent& T, const SNetworkComponent& Net)
+        Proxies.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<FRepTransform> RepMut, ECS::TMut<STransformComponent> Transform, const SNetworkComponent& Net)
         {
+            const FRepTransform& Rep = RepMut.Get();
             // An AutonomousProxy is locally controlled, and an empty ring has no data yet.
             if (Rep.Ring.Count == 0 || Net.LocalRole == ENetRole::AutonomousProxy)
             {
@@ -77,14 +78,8 @@ namespace Lumina
             {
                 TargetDelay = BufferIntervals * Interval;
             }
-            if (Rep.SmoothedInterpDelay < 0.0)
-            {
-                Rep.SmoothedInterpDelay = TargetDelay;
-            }
-            else
-            {
-                Rep.SmoothedInterpDelay += (TargetDelay - Rep.SmoothedInterpDelay) * 0.1;
-            }
+            RepMut.SetIfChanged(&FRepTransform::SmoothedInterpDelay, Rep.SmoothedInterpDelay < 0.0
+                ? TargetDelay : Rep.SmoothedInterpDelay + (TargetDelay - Rep.SmoothedInterpDelay) * 0.1);
             const double RenderTime = ServerRenderNow - Rep.SmoothedInterpDelay;
 
             FVector3 Pos;
@@ -92,9 +87,15 @@ namespace Lumina
             Rep.Ring.Evaluate(RenderTime, Pos, Rot, bExtrapolate, MaxExtrap, TeleportDistance);
 
             // Scale isn't interpolated; apply the latest replicated value, else keep the local scale.
+            const STransformComponent& T = Transform.Get();
             const FVector3 Scale = Rep.bHasScale ? Rep.CurrentScaleQ.ToVector(NetQuantize::ScaleQuantum)
                                                  : T.GetLocalScale();
-            T.SetRaw(Pos, Rot, Scale);
+            // A settled proxy would otherwise queue a transform resolve every frame for a pose that did not move.
+            if (Pos == T.GetLocalLocation() && Rot == T.GetLocalRotation() && Scale == T.GetLocalScale())
+            {
+                return;
+            }
+            Transform->SetRaw(Pos, Rot, Scale);
             Context.Emplace<FNeedsTransformUpdate>(Entity);
         }, 16u);
     }

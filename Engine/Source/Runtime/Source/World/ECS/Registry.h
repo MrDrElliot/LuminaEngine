@@ -538,9 +538,9 @@ namespace Lumina::ECS
         }
 
         template<CViewComponent... TInclude, CComponent... TExcl>
-        NODISCARD TView<TExclude<TExcl...>, TViewType<TInclude>...> View(TExclude<TExcl...>)
+        NODISCARD TView<TExclude<TExcl...>, TViewInclude<TInclude>...> View(TExclude<TExcl...>)
         {
-            TView<TExclude<TExcl...>, TViewType<TInclude>...> Result(AssureStorage<TBareComponent<TInclude>>()...);
+            TView<TExclude<TExcl...>, TViewInclude<TInclude>...> Result(AssureStorage<TBareComponent<TInclude>>()...);
             Result.BindFilters(AssureStorage<TExcl>().GetSet()...);
             return Result;
         }
@@ -553,9 +553,9 @@ namespace Lumina::ECS
         }
 
         template<CViewComponent... TInclude, CComponent... TExcl>
-        NODISCARD TView<TExclude<TExcl...>, TViewType<TInclude>...> FindView(TExclude<TExcl...>) const
+        NODISCARD TView<TExclude<TExcl...>, TViewInclude<TInclude>...> FindView(TExclude<TExcl...>) const
         {
-            TView<TExclude<TExcl...>, TViewType<TInclude>...> Result(FindStorage<TBareComponent<TInclude>>()...);
+            TView<TExclude<TExcl...>, TViewInclude<TInclude>...> Result(FindStorage<TBareComponent<TInclude>>()...);
             Result.BindFilters(FindStorage<TExcl>().GetSet()...);
             return Result;
         }

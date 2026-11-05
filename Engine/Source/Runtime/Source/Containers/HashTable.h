@@ -832,7 +832,7 @@ namespace Private
             if (Cap != 0)
             {
                 HashTableInternal::ResetCtrl(Ctrl, Cap);
-                GrowthLeft = HashTableInternal::CapacityToGrowth(Cap);
+                GrowthLeft = static_cast<uint32>(HashTableInternal::CapacityToGrowth(Cap));
             }
         }
 
@@ -1242,7 +1242,7 @@ namespace Private
             {
                 PointAtBlock(FStorage::GetInlineBlock(), kInlineCapacity);
                 ElementCount = 0;
-                GrowthLeft = HashTableInternal::CapacityToGrowth(kInlineCapacity);
+                GrowthLeft = static_cast<uint32>(HashTableInternal::CapacityToGrowth(kInlineCapacity));
             }
         }
 
@@ -1287,7 +1287,7 @@ namespace Private
 
                 Other.ElementCount = 0;
                 HashTableInternal::ResetCtrl(Other.Ctrl, Other.Cap);
-                Other.GrowthLeft = HashTableInternal::CapacityToGrowth(Other.Cap);
+                Other.GrowthLeft = static_cast<uint32>(HashTableInternal::CapacityToGrowth(Other.Cap));
             }
         }
 
@@ -1379,14 +1379,14 @@ namespace Private
                 if (bCanReuseInline && NewCapacity <= kInlineCapacity)
                 {
                     PointAtBlock(FStorage::GetInlineBlock(), kInlineCapacity);
-                    GrowthLeft = HashTableInternal::CapacityToGrowth(Cap) - ElementCount;
+                    GrowthLeft = static_cast<uint32>(HashTableInternal::CapacityToGrowth(Cap) - ElementCount);
                     return;
                 }
             }
 
             const size_t Bytes = HashTableInternal::AllocSize(NewCapacity, sizeof(slot_type), kSlotAlign);
             PointAtBlock(TAllocator::Allocate(Bytes, kBlockAlign), NewCapacity);
-            GrowthLeft = HashTableInternal::CapacityToGrowth(Cap) - ElementCount;
+            GrowthLeft = static_cast<uint32>(HashTableInternal::CapacityToGrowth(Cap) - ElementCount);
         }
 
         // Under half full it clears tombstones in place, else it doubles: twice as fast under churn as abseil's 25/32, as measured.
@@ -1455,7 +1455,7 @@ namespace Private
                 --Index;
             }
 
-            GrowthLeft = HashTableInternal::CapacityToGrowth(Cap) - ElementCount;
+            GrowthLeft = static_cast<uint32>(HashTableInternal::CapacityToGrowth(Cap) - ElementCount);
         }
 
         FCtrl*     Ctrl           = HashTableInternal::EmptyGroup();

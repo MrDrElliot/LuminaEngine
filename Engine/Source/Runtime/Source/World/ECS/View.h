@@ -56,6 +56,10 @@ namespace Lumina::ECS
         template<size_t Slot>
         using TBareAt = TBareComponent<TIncludeAt<Slot>>;
 
+        // A Write include walks as a TMut handle; every other include walks as its reference, const for a read.
+        template<size_t Slot>
+        static constexpr bool bHandleAt = bIsWriteAccess<TIncludeAt<Slot>>;
+
         // Const when either the include or the request is, so a read-only spelling (const T or Read<T>) never hands out a mutable reference.
         template<typename T>
         using TAccess = std::conditional_t<std::is_const_v<TViewType<T>> || std::is_const_v<TIncludeAt<SlotOf<T>()>>,
@@ -143,7 +147,7 @@ namespace Lumina::ECS
         // The driver bounds the result, so this is an upper bound rather than a count.
         NODISCARD FORCEINLINE int32 Num() const { return NumCandidates(); }
 
-        // Whether reading through this view stamps change ticks, which a mutable include of a tracked pool does.
+        // Whether a mutable Get on this view stamps change ticks, which a mutable include of a tracked pool does. Walks never stamp.
         NODISCARD FORCEINLINE bool StampsChanges() const { return StampMask != 0; }
 
         // Range-for support, so a call site can walk entities without a callback. Backward, like ForEach.
@@ -219,12 +223,9 @@ namespace Lumina::ECS
             {
                 const int32 Index = EndSlot - 1;
                 const FEntity Entity = View->GetDriver()->GetDenseData()[Index];
-                if (View->StampMask != 0)
-                {
-                    View->StampVisited(Entity, static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{});
-                }
-                return TupleCat(TTuple<FEntity>(Entity),
-                    View->RefTupleAt(Entity, static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{}));
+                uint32 DenseSlots[IncludeCount];
+                (void)View->FindDenseSlots(Entity, static_cast<uint32>(Index), DenseSlots, std::index_sequence_for<TInclude...>{});
+                return TupleCat(TTuple<FEntity>(Entity), View->ArgsAt(DenseSlots, TickSink, std::index_sequence_for<TInclude...>{}));
             }
 
             FEachIterator& operator ++ () { --EndSlot; Advance(); return *this; }
@@ -253,6 +254,9 @@ namespace Lumina::ECS
             // One past the current slot, so the finished walk sits at zero without wrapping.
             int32 EndSlot = 0;
             FFilterProbes Probes{};
+
+            // Where handles into an untracked pool stamp, owned by the walk so parallel walks never share a line.
+            mutable uint32 TickSink = 0;
         };
 
         struct FEachRange
@@ -269,7 +273,9 @@ namespace Lumina::ECS
         NODISCARD auto GetAll(FEntity Entity) const
         {
             CheckMembership(Entity);
-            return RefTuple(Entity, std::index_sequence_for<TInclude...>{});
+            uint32 DenseSlots[IncludeCount];
+            (void)FindDenseSlots(Entity, Driver->GetDenseIndex(Entity), DenseSlots, std::index_sequence_for<TInclude...>{});
+            return ArgsAt(DenseSlots, GetAllTickSink, std::index_sequence_for<TInclude...>{});
         }
 
         template<typename T>
@@ -329,16 +335,19 @@ namespace Lumina::ECS
             return TTuple<TAccess<T0>*, TAccess<T1>*, TAccess<TRest>*...>(TryGet<T0>(Entity), TryGet<T1>(Entity), TryGet<TRest>(Entity)...);
         }
 
-        // One entity, stamping the mutable includes like a walk would; false when the entity does not match the view.
+        // One entity, handed over like a walk would; false when the entity does not match the view.
         template<typename TFunc>
         bool VisitEntity(FEntity Entity, TFunc&& Func) const
         {
-            if (!Contains(Entity))
+            uint32 DenseSlots[IncludeCount];
+            if (Driver == nullptr || FailsFilters(Entity)
+                || !FindDenseSlots(Entity, Driver->FindLiveDense(Entity), DenseSlots, std::index_sequence_for<TInclude...>{}))
             {
                 return false;
             }
-            StampEntityIncludes(Entity, std::index_sequence_for<TInclude...>{});
-            Apply([&Func, Entity](auto&... Values) { InvokeEntityCallback(Func, Entity, Values...); }, RefTuple(Entity, std::index_sequence_for<TInclude...>{}));
+            uint32 TickSink = 0;
+            auto Args = ArgsAt(DenseSlots, TickSink, std::index_sequence_for<TInclude...>{});
+            Apply([&Func, Entity](auto&... Values) { InvokeEntityCallback(Func, Entity, Values...); }, Args);
             return true;
         }
 
@@ -369,22 +378,10 @@ namespace Lumina::ECS
                 }
             }
 
-            if constexpr (bIsDirectScan)
+            // A write handle needs its row's dense slot, which only the indexed walk carries.
+            if constexpr (bIsDirectScan && !bHandleAt<0>)
             {
-                // A direct scan without excludes visits every element, so one fill stamps exactly what it touches.
-                if (StampMask == 0)
-                {
-                    ForEachDirect(std::move(Func));
-                }
-                else if constexpr (FilterCount == 0)
-                {
-                    Lumina::Get<0>(Includes).GetSet()->StampAllChanges(StampTick);
-                    ForEachDirect(std::move(Func));
-                }
-                else
-                {
-                    ForEachFiltered(std::move(Func));
-                }
+                ForEachDirect(std::move(Func));
             }
             else
             {
@@ -415,6 +412,7 @@ namespace Lumina::ECS
             const uint8* DriverPackedBlock = Driver->GetPackedBlock();
             const int32 Last = End < DenseSize ? End : DenseSize;
             const FFilterProbes Probes = MakeFilterProbes();
+            uint32 TickSink = 0;
 
             // Backward, so removing the current entity only pulls an already visited one into its slot.
             for (int32 Index = Last; Index-- > Begin;)
@@ -433,27 +431,15 @@ namespace Lumina::ECS
                     }
                 }
 
-                if (!TagsPresent(Entity, std::index_sequence_for<TInclude...>{}))
+                // One lookup per pool, reused for the callback argument, so membership is never tested twice.
+                uint32 DenseSlots[IncludeCount];
+                if (!FindDenseSlots(Entity, static_cast<uint32>(Index), DenseSlots, std::index_sequence_for<TInclude...>{}))
                 {
                     continue;
                 }
 
-                // One lookup per data pool, reused as the callback argument, so membership is never tested twice.
-                auto Values = Gather(Entity, static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{});
-
-                const bool bComplete = Apply([](auto*... Value) { return ((Value != nullptr) && ... && true); }, Values);
-                if (!bComplete)
-                {
-                    continue;
-                }
-
-                // Before the callback, which may swap-remove the entity and move its stamp.
-                if (StampMask != 0)
-                {
-                    StampVisited(Entity, static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{});
-                }
-
-                Apply([&Func, Entity](auto*... Value) { InvokeEntityCallback(Func, Entity, *Value...); }, Values);
+                auto Args = ArgsAt(DenseSlots, TickSink, std::index_sequence_for<TInclude...>{});
+                Apply([&Func, Entity](auto&... Value) { InvokeEntityCallback(Func, Entity, Value...); }, Args);
             }
 
             CheckWalkDidNotReallocate(Driver, DenseData, DriverPackedBlock);
@@ -581,6 +567,7 @@ namespace Lumina::ECS
             const int32 Last = End < Group->Num ? End : Group->Num;
             const FFilterProbes Probes = MakeFilterProbes();
             const auto Bases = Apply([](const auto&... Storage) { return TTuple<decltype(GroupBase(Storage))...>(GroupBase(Storage)...); }, Includes);
+            uint32 TickSink = 0;
 
             for (int32 Index = Last; Index-- > Begin;)
             {
@@ -593,12 +580,7 @@ namespace Lumina::ECS
                     }
                 }
 
-                if (StampMask != 0)
-                {
-                    StampGrouped(static_cast<uint32>(Index), std::index_sequence_for<TInclude...>{});
-                }
-
-                InvokeGrouped(Func, Entity, Bases, Index, std::index_sequence_for<TInclude...>{});
+                InvokeGrouped(Func, Entity, Bases, Index, TickSink, std::index_sequence_for<TInclude...>{});
             }
 
             CheckWalkDidNotReallocate(Driver, DenseData, DriverPackedBlock);
@@ -620,7 +602,7 @@ namespace Lumina::ECS
         }
 
         template<size_t Slot, typename TBase>
-        NODISCARD FORCEINLINE auto GroupedSlot(const TBase& Base, int32 Index) const
+        NODISCARD FORCEINLINE auto GroupedSlot(const TBase& Base, int32 Index, uint32& TickSink) const
         {
             if constexpr (!CDataComponent<TBareAt<Slot>>)
             {
@@ -628,25 +610,19 @@ namespace Lumina::ECS
             }
             else if constexpr (std::is_pointer_v<TBase>)
             {
-                return TTuple<TIncludeAt<Slot>&>(Base[Index]);
+                return ArgFor<Slot>(Base[Index], static_cast<uint32>(Index), TickSink);
             }
             else
             {
-                return TTuple<TIncludeAt<Slot>&>(Base.GetAtDense(static_cast<uint32>(Index)));
+                return ArgFor<Slot>(Base.GetAtDense(static_cast<uint32>(Index)), static_cast<uint32>(Index), TickSink);
             }
         }
 
         template<typename TFunc, typename TBases, size_t... Slots>
-        FORCEINLINE void InvokeGrouped(TFunc& Func, FEntity Entity, const TBases& Bases, int32 Index, std::index_sequence<Slots...>) const
+        FORCEINLINE void InvokeGrouped(TFunc& Func, FEntity Entity, const TBases& Bases, int32 Index, uint32& TickSink, std::index_sequence<Slots...>) const
         {
-            Apply([&Func, Entity](auto&... Value) { InvokeEntityCallback(Func, Entity, Value...); },
-                TupleCat(GroupedSlot<Slots>(Lumina::Get<Slots>(Bases), Index)...));
-        }
-
-        template<size_t... Slots>
-        FORCEINLINE void StampGrouped(uint32 DenseIndex, std::index_sequence<Slots...>) const
-        {
-            (StampAt<Slots>(DenseIndex), ...);
+            auto Args = TupleCat(GroupedSlot<Slots>(Lumina::Get<Slots>(Bases), Index, TickSink)...);
+            Apply([&Func, Entity](auto&... Value) { InvokeEntityCallback(Func, Entity, Value...); }, Args);
         }
 
         // Dense slots rather than live count, since a stable pool walks its tombstones too; an empty pool ends the scan outright.
@@ -664,12 +640,12 @@ namespace Lumina::ECS
             }
         }
 
-        // Settled once here, so a walk tests one mask. The epoch moves now, since the view hands out mutable references from here on.
+        // The epoch moves now, since the view hands out mutable access from here on; a write handle takes the tick even before its pool is tracked.
         template<size_t... Slots>
         void BindStamps(std::index_sequence<Slots...>)
         {
             StampMask = ((WantsStamp<Slots>() ? (1u << Slots) : 0u) | ... | 0u);
-            if (StampMask != 0)
+            if (StampMask != 0 || (bHandleAt<Slots> || ...))
             {
                 StampTick = FSparseSet::GetChangeTick();
                 (NoteStampSlot<Slots>(), ...);
@@ -699,12 +675,6 @@ namespace Lumina::ECS
             }
         }
 
-        template<size_t... Slots>
-        FORCEINLINE void StampEntityIncludes(FEntity Entity, std::index_sequence<Slots...>) const
-        {
-            ((((StampMask & (1u << Slots)) != 0) ? Lumina::Get<Slots>(Includes).GetSet()->StampEntity(Entity) : void()), ...);
-        }
-
         template<size_t Slot>
         FORCEINLINE void StampAt(uint32 DenseIndex) const
         {
@@ -712,23 +682,6 @@ namespace Lumina::ECS
             {
                 Lumina::Get<Slot>(Includes).GetSet()->SetChangeTickAt(DenseIndex, StampTick);
             }
-        }
-
-        // The driver's stamp comes from the walk index, so only the other stamped pools pay a lookup.
-        template<size_t Slot>
-        FORCEINLINE void StampVisitedSlot(FEntity Entity, uint32 DriverDenseIndex) const
-        {
-            if ((StampMask & (1u << Slot)) != 0)
-            {
-                FSparseSet* Set = Lumina::Get<Slot>(Includes).GetSet();
-                Set->SetChangeTickAt(Slot == DriverSlot ? DriverDenseIndex : Set->GetDenseIndex(Entity), StampTick);
-            }
-        }
-
-        template<size_t... Slots>
-        FORCEINLINE void StampVisited(FEntity Entity, uint32 DriverDenseIndex, std::index_sequence<Slots...>) const
-        {
-            (StampVisitedSlot<Slots>(Entity, DriverDenseIndex), ...);
         }
 
         NODISCARD FORCEINLINE bool FailsFilters(FEntity Entity) const
@@ -764,14 +717,35 @@ namespace Lumina::ECS
             return Result;
         }
 
-        // A tag carries no value, so it never reaches the tuple the iterator hands back.
-        template<size_t Slot>
-        NODISCARD auto RefSlot(FEntity Entity) const
+        // Every include's dense slot, the driver's taken from the walk; false when any pool lacks the entity.
+        template<size_t... Slots>
+        NODISCARD FORCEINLINE bool FindDenseSlots(FEntity Entity, uint32 DriverDenseIndex, uint32 (&Out)[IncludeCount], std::index_sequence<Slots...>) const
         {
-            using TSlot = TIncludeAt<Slot>;
+            ((Out[Slots] = (Slots == DriverSlot ? DriverDenseIndex : Lumina::Get<Slots>(Includes).GetSet()->FindLiveDense(Entity))), ...);
+            return ((Out[Slots] != FSparseSet::InvalidDenseIndex) && ... && true);
+        }
+
+        template<size_t Slot>
+        NODISCARD FORCEINLINE auto ArgFor(TBareAt<Slot>& Value, uint32 DenseIndex, uint32& TickSink) const
+        {
+            if constexpr (bHandleAt<Slot>)
+            {
+                using FHandle = TMut<TBareAt<Slot>>;
+                return TTuple<FHandle>(FHandle(Value, Lumina::Get<Slot>(Includes).GetSet()->GetChangeTickSlot(DenseIndex, TickSink), StampTick));
+            }
+            else
+            {
+                return TTuple<TViewType<TIncludeAt<Slot>>&>(Value);
+            }
+        }
+
+        // A tag carries no value, so it never reaches the callback or the tuple the iterator hands back.
+        template<size_t Slot>
+        NODISCARD FORCEINLINE auto ArgAt(uint32 DenseIndex, uint32& TickSink) const
+        {
             if constexpr (CDataComponent<TBareAt<Slot>>)
             {
-                return TTuple<TSlot&>(GetMatched<TSlot>(Entity));
+                return ArgFor<Slot>(Lumina::Get<Slot>(Includes).GetAtDense(DenseIndex), DenseIndex, TickSink);
             }
             else
             {
@@ -780,35 +754,9 @@ namespace Lumina::ECS
         }
 
         template<size_t... Slots>
-        NODISCARD auto RefTuple(FEntity Entity, std::index_sequence<Slots...>) const
+        NODISCARD FORCEINLINE auto ArgsAt(const uint32 (&DenseSlots)[IncludeCount], uint32& TickSink, std::index_sequence<Slots...>) const
         {
-            return TupleCat(RefSlot<Slots>(Entity)...);
-        }
-
-        // The driver's element is already addressed by the walk, so only the other slots look theirs up.
-        template<size_t Slot>
-        NODISCARD FORCEINLINE auto RefSlotAt(FEntity Entity, uint32 DriverDenseIndex) const
-        {
-            using TSlot = TIncludeAt<Slot>;
-            if constexpr (CDataComponent<TBareAt<Slot>>)
-            {
-                const auto& Storage = Lumina::Get<Slot>(Includes);
-                if (Slot == DriverSlot)
-                {
-                    return TTuple<TSlot&>(Storage.GetAtDense(DriverDenseIndex));
-                }
-                return TTuple<TSlot&>(Storage.GetUntracked(Entity));
-            }
-            else
-            {
-                return TTuple<>{};
-            }
-        }
-
-        template<size_t... Slots>
-        NODISCARD FORCEINLINE auto RefTupleAt(FEntity Entity, uint32 DriverDenseIndex, std::index_sequence<Slots...>) const
-        {
-            return TupleCat(RefSlotAt<Slots>(Entity, DriverDenseIndex)...);
+            return TupleCat(ArgAt<Slots>(DenseSlots[Slots], TickSink)...);
         }
 
         NODISCARD FORCEINLINE bool MatchesIncludes(FEntity Entity) const
@@ -874,46 +822,6 @@ namespace Lumina::ECS
             }
         }
 
-        // The driver's element is already addressed by the loop index, so it never pays for a lookup.
-        template<size_t Slot>
-        NODISCARD FORCEINLINE auto* GatherOne(FEntity Entity, uint32 DriverDenseIndex) const
-            requires CDataComponent<TBareAt<Slot>>
-        {
-            const auto& Storage = Lumina::Get<Slot>(Includes);
-            if (Slot == DriverSlot)
-            {
-                return &Storage.GetAtDense(DriverDenseIndex);
-            }
-            return Storage.TryGetUntracked(Entity);
-        }
-
-        // An empty slot contributes an empty tuple, so one tuple_cat drops the tags from the argument list.
-        template<size_t Slot>
-        NODISCARD FORCEINLINE auto GatherSlot(FEntity Entity, uint32 DriverDenseIndex) const
-        {
-            if constexpr (CDataComponent<TBareAt<Slot>>)
-            {
-                return TTuple<TIncludeAt<Slot>*>(GatherOne<Slot>(Entity, DriverDenseIndex));
-            }
-            else
-            {
-                return TTuple<>{};
-            }
-        }
-
-        template<size_t... Slots>
-        NODISCARD FORCEINLINE auto Gather(FEntity Entity, uint32 DriverDenseIndex, std::index_sequence<Slots...>) const
-        {
-            return TupleCat(GatherSlot<Slots>(Entity, DriverDenseIndex)...);
-        }
-
-        // Membership for the tag includes, which the gather above deliberately leaves out.
-        template<size_t... Slots>
-        NODISCARD FORCEINLINE bool TagsPresent(FEntity Entity, std::index_sequence<Slots...>) const
-        {
-            return ((CDataComponent<TBareAt<Slots>> || Lumina::Get<Slots>(Includes).Contains(Entity)) && ... && true);
-        }
-
         template<typename TFunc>
         FORCEINLINE void ForEachFiltered(TFunc Func) const
         {
@@ -931,6 +839,9 @@ namespace Lumina::ECS
         // One bit per include slot this view stamps, set only for a mutable include of a tracked pool.
         uint32 StampMask = 0;
         uint32 StampTick = 0;
+
+        // The handles GetAll returns outlive the call, so their untracked sink lives with the view.
+        mutable uint32 GetAllTickSink = 0;
     };
 
     // Type-erased iteration for tools and script, where the component types are not known at compile time.
@@ -1116,7 +1027,7 @@ namespace Lumina::ECS
         template<typename... TIncludes, typename... TMemberships>
         struct TBuild<TTypeList<TIncludes...>, TTypeList<TMemberships...>>
         {
-            using Type = TView<TExclude<typename TFilterSpelling<TMemberships>::Type...>, TViewType<TIncludes>...>;
+            using Type = TView<TExclude<typename TFilterSpelling<TMemberships>::Type...>, TViewInclude<TIncludes>...>;
 
             template<typename TRegistry>
             static Type Assure(TRegistry& Registry)

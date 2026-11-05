@@ -58,8 +58,9 @@ namespace Lumina
     {
         const float DeltaTime = Context.GetDeltaTime();
 
-        Spawners.ForEach([&](ECS::FEntity Entity, SPrefabSpawnerComponent& SpawnComponent, const STransformComponent& Transform)
+        Spawners.ForEach([&](ECS::FEntity Entity, ECS::TMut<SPrefabSpawnerComponent> SpawnComponentMut, const STransformComponent& Transform)
         {
+            SPrefabSpawnerComponent& SpawnComponent = SpawnComponentMut.GetMut();
             if (Math::Max(SpawnComponent.SpawnTimeRange.x, SpawnComponent.SpawnTimeRange.y) <= 0.0f)
             {
                 SpawnComponent.TimeUntilNextSpawn = 0.0f;

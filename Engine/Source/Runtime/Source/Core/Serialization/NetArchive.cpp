@@ -31,11 +31,11 @@ namespace Lumina
         }
         if (Bit)
         {
-            (*WriteBytes)[ByteIndex] |= static_cast<uint8>(1u << BitIndex);
+            (*WriteBytes)[static_cast<int32>(ByteIndex)] |= static_cast<uint8>(1u << BitIndex);
         }
         else
         {
-            (*WriteBytes)[ByteIndex] &= static_cast<uint8>(~(1u << BitIndex));
+            (*WriteBytes)[static_cast<int32>(ByteIndex)] &= static_cast<uint8>(~(1u << BitIndex));
         }
         ++BitCursor;
         TotalBits = Math::Max(BitCursor, TotalBits);

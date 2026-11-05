@@ -331,6 +331,14 @@ namespace Lumina
         }
     }
 
+    void CEntitySystem::JoinSet(FName Set)
+    {
+        if (!Algo::Contains(Sets, Set))
+        {
+            Sets.Add(Set);
+        }
+    }
+
     void CEntitySystem::DeclareWrite(FName Component)
     {
         ECS::FResourceTypeRegistry& Resources = ECS::FResourceTypeRegistry::Get();
@@ -420,6 +428,7 @@ namespace Lumina
         StageMask = 0;
         After.Reset();
         Before.Reset();
+        Sets.Reset();
         Access = FSystemAccess();
         Access.bExclusive = bExclusiveClass;
 

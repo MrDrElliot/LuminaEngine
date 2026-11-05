@@ -62,7 +62,7 @@ namespace Lumina
 
     bool SSocketAttachmentSystem::HasWork(const SSystemContext& Context)
     {
-        return !Attachments.IsEmpty();
+        return AnyQueryHasRows(Attachments);
     }
 
     void SSocketAttachmentSystem::OnUpdate(const SSystemContext& Context)
@@ -81,8 +81,9 @@ namespace Lumina
         // Editing a socket in the editor changes nothing the cache keys on, so a paused world resolves every update.
         const bool bAlwaysResolve = Context.GetUpdateStage() == EUpdateStage::Paused;
 
-        const auto Attach = [&](ECS::FEntity Entity, const SSocketAttachmentComponent& Attachment, STransformComponent& Transform)
+        const auto Attach = [&](ECS::FEntity Entity, const SSocketAttachmentComponent& Attachment, ECS::TMut<STransformComponent> TransformMut)
         {
+            const STransformComponent& Transform = TransformMut.Get();
             const ECS::FEntity Parent = Context.GetHierarchy().GetParent(Entity);
             if (Parent == ECS::NullEntity)
             {
@@ -159,7 +160,7 @@ namespace Lumina
             const FTransform NewLocal(SocketTransform);
             if (NewLocal != Transform.LocalTransform)
             {
-                Transform.SetLocalTransform(NewLocal);
+                TransformMut->SetLocalTransform(NewLocal);
             }
             Entry.LastLocal = Transform.LocalTransform;
             Entry.bWritten  = true;

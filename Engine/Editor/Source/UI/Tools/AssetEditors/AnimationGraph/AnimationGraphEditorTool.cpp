@@ -519,6 +519,7 @@ namespace Lumina
     void FAnimationGraphEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         CreateFloorPlane();
 
@@ -592,11 +593,6 @@ namespace Lumina
     void FAnimationGraphEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::Update(UpdateContext);
-
-        if (World.IsValid() && World->GetRenderer() != nullptr)
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
-        }
 
         // The skeleton is often assigned after the tool is open, so pick it up here too.
         SyncPreviewMesh();

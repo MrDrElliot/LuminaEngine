@@ -122,7 +122,7 @@ public interface IQueryTerm<TSelf> where TSelf : struct, IQueryTerm<TSelf>
     static abstract string ComponentName { get; }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    static abstract TSelf At(nint Component);
+    static abstract unsafe TSelf At(nint Component, uint* Tick, uint Now);
 }
 
 // A query term that reads T in place, so the system runs beside any other reader of T. Its Value, T.ReadOnly, is a generated extension.
@@ -130,7 +130,7 @@ public readonly unsafe struct Read<T> : IQueryTerm<Read<T>> where T : struct, IC
 {
     private readonly nint Pointer;
 
-    private Read(nint Pointer)
+    internal Read(nint Pointer)
     {
         this.Pointer = Pointer;
     }
@@ -141,25 +141,46 @@ public readonly unsafe struct Read<T> : IQueryTerm<Read<T>> where T : struct, IC
     static IntPtr IQueryTerm<Read<T>>.Token => ComponentOps<T>.Token;
     static bool IQueryTerm<Read<T>>.IsWrite => false;
     static string IQueryTerm<Read<T>>.ComponentName => T.NativeName;
-    static Read<T> IQueryTerm<Read<T>>.At(nint Component) => new(Component);
+    static Read<T> IQueryTerm<Read<T>>.At(nint Component, uint* Tick, uint Now) => new(Component);
 }
 
-// A query term that writes T in place, so the system runs alone against anything else touching T.
+// A query term that writes T in place, so the system runs alone against anything else touching T. Like ECS::TMut, only mutable access stamps the row.
 public readonly unsafe struct Write<T> : IQueryTerm<Write<T>> where T : struct, IComponent<T>
 {
     private readonly nint Pointer;
+    private readonly uint* Tick;
+    private readonly uint Now;
 
-    private Write(nint Pointer)
+    private Write(nint Pointer, uint* Tick, uint Now)
     {
         this.Pointer = Pointer;
+        this.Tick = Tick;
+        this.Now = Now;
     }
 
-    public ref T Value => ref Unsafe.AsRef<T>((void*)Pointer);
+    public ref T Value
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get
+        {
+            if (Tick != null)
+            {
+                *Tick = Now;
+            }
+            return ref Unsafe.AsRef<T>((void*)Pointer);
+        }
+    }
+
+    // The same row as a Read<T>, which never stamps.
+    public Read<T> AsRead => new(Pointer);
+
+    // For a write no Changed<T> reader should see.
+    public ref T BypassChangeDetection() => ref Unsafe.AsRef<T>((void*)Pointer);
 
     static IntPtr IQueryTerm<Write<T>>.Token => ComponentOps<T>.Token;
     static bool IQueryTerm<Write<T>>.IsWrite => true;
     static string IQueryTerm<Write<T>>.ComponentName => T.NativeName;
-    static Write<T> IQueryTerm<Write<T>>.At(nint Component) => new(Component);
+    static Write<T> IQueryTerm<Write<T>>.At(nint Component, uint* Tick, uint Now) => new(Component, Tick, Now);
 }
 
 internal interface IQueryExclude
@@ -359,7 +380,7 @@ public abstract unsafe class QueryParam : SystemParam
         {
             return false;
         }
-        Term = TTerm.At(Found);
+        Term = TTerm.At(Found, null, 0);
         return true;
     }
 
@@ -382,13 +403,21 @@ public abstract unsafe class QueryParam : SystemParam
         throw new InvalidOperationException($"This query does not name {TTerm.ComponentName} with {(TTerm.IsWrite ? "write" : "read")} access.");
     }
 
-    private protected delegate void RowFunc(FEntity Entity, nint[] Pointers, int Row);
+    // The rows a parallel walk gathered, each include's component beside the tick slot its Write term stamps.
+    private protected readonly struct GatheredRows(nint[] Pointers, nint[] Ticks, uint Now)
+    {
+        public TTerm At<TTerm>(int Slot) where TTerm : struct, IQueryTerm<TTerm> => TTerm.At(Pointers[Slot], (uint*)Ticks[Slot], Now);
+    }
+
+    private protected delegate void RowFunc(FEntity Entity, GatheredRows Rows, int Row);
 
     private protected void RunParallel(int MinRange, RowFunc Body)
     {
         int Includes = Tokens.Length;
         uint[] Entities = ArrayPool<uint>.Shared.Rent(256);
         nint[] Pointers = ArrayPool<nint>.Shared.Rent(256 * Includes);
+        nint[] Ticks = ArrayPool<nint>.Shared.Rent(256 * Includes);
+        uint Now = 0;
         int Count = 0;
         try
         {
@@ -400,27 +429,32 @@ public abstract unsafe class QueryParam : SystemParam
                     {
                         Grow(ref Entities, Count * 2);
                         Grow(ref Pointers, Count * 2 * Includes);
+                        Grow(ref Ticks, Count * 2 * Includes);
                     }
                     Entities[Count] = Cursor.Entity.Id;
                     for (int Include = 0; Include < Includes; ++Include)
                     {
                         Pointers[Count * Includes + Include] = (nint)Cursor.At(Include);
+                        Ticks[Count * Includes + Include] = (nint)Cursor.TickAt(Include);
                     }
                     ++Count;
                 }
+                Now = Cursor.Shared->StampTick;
             }
+
+            GatheredRows Rows = new(Pointers, Ticks, Now);
 
             int Range = Math.Max(MinRange, 1);
             if (Count <= Range)
             {
                 for (int Row = 0; Row < Count; ++Row)
                 {
-                    Body(new FEntity(Entities[Row]), Pointers, Row * Includes);
+                    Body(new FEntity(Entities[Row]), Rows, Row * Includes);
                 }
             }
             else
             {
-                CTaskLibrary.ParallelFor((uint)Count, (uint)Range, ScriptCallback.Bind(new RowBody(Body, Entities, Pointers, Includes)), 1);
+                CTaskLibrary.ParallelFor((uint)Count, (uint)Range, ScriptCallback.Bind(new RowBody(Body, Entities, Rows, Includes)), 1);
             }
             CompleteRun();
         }
@@ -428,6 +462,7 @@ public abstract unsafe class QueryParam : SystemParam
         {
             ArrayPool<uint>.Shared.Return(Entities);
             ArrayPool<nint>.Shared.Return(Pointers);
+            ArrayPool<nint>.Shared.Return(Ticks);
         }
     }
 
@@ -443,14 +478,14 @@ public abstract unsafe class QueryParam : SystemParam
     {
         private readonly RowFunc Body;
         private readonly uint[] Entities;
-        private readonly nint[] Pointers;
+        private readonly GatheredRows Rows;
         private readonly int Includes;
 
-        public RowBody(RowFunc Body, uint[] Entities, nint[] Pointers, int Includes)
+        public RowBody(RowFunc Body, uint[] Entities, GatheredRows Rows, int Includes)
         {
             this.Body = Body;
             this.Entities = Entities;
-            this.Pointers = Pointers;
+            this.Rows = Rows;
             this.Includes = Includes;
         }
 
@@ -458,7 +493,7 @@ public abstract unsafe class QueryParam : SystemParam
         {
             for (int Row = (int)(uint)Payload, End = (int)(Payload >> 32); Row < End; ++Row)
             {
-                Body(new FEntity(Entities[Row]), Pointers, Row * Includes);
+                Body(new FEntity(Entities[Row]), Rows, Row * Includes);
             }
             return 0;
         }
@@ -477,13 +512,13 @@ public sealed class TQuery<T1> : QueryParam where T1 : struct, IQueryTerm<T1>
         using ViewCursor Cursor = Open();
         while (Cursor.MoveNext())
         {
-            Func(Cursor.Entity, T1.At((nint)Cursor.At(0)));
+            Func(Cursor.Entity, Cursor.Term<T1>(0));
         }
         CompleteRun();
     }
 
     public void ParallelForEach(QueryFunc<T1> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Pointers, Row) => Func(Entity, T1.At(Pointers[Row])));
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row)));
 }
 
 public sealed class TQuery<T1, T2> : QueryParam where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2>
@@ -497,13 +532,13 @@ public sealed class TQuery<T1, T2> : QueryParam where T1 : struct, IQueryTerm<T1
         using ViewCursor Cursor = Open();
         while (Cursor.MoveNext())
         {
-            Func(Cursor.Entity, T1.At((nint)Cursor.At(0)), T2.At((nint)Cursor.At(1)));
+            Func(Cursor.Entity, Cursor.Term<T1>(0), Cursor.Term<T2>(1));
         }
         CompleteRun();
     }
 
     public void ParallelForEach(QueryFunc<T1, T2> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Pointers, Row) => Func(Entity, T1.At(Pointers[Row]), T2.At(Pointers[Row + 1])));
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1)));
 }
 
 public sealed class TQuery<T1, T2, T3> : QueryParam where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3>
@@ -517,13 +552,13 @@ public sealed class TQuery<T1, T2, T3> : QueryParam where T1 : struct, IQueryTer
         using ViewCursor Cursor = Open();
         while (Cursor.MoveNext())
         {
-            Func(Cursor.Entity, T1.At((nint)Cursor.At(0)), T2.At((nint)Cursor.At(1)), T3.At((nint)Cursor.At(2)));
+            Func(Cursor.Entity, Cursor.Term<T1>(0), Cursor.Term<T2>(1), Cursor.Term<T3>(2));
         }
         CompleteRun();
     }
 
     public void ParallelForEach(QueryFunc<T1, T2, T3> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Pointers, Row) => Func(Entity, T1.At(Pointers[Row]), T2.At(Pointers[Row + 1]), T3.At(Pointers[Row + 2])));
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1), Rows.At<T3>(Row + 2)));
 }
 
 public sealed class TQuery<T1, T2, T3, T4> : QueryParam
@@ -538,13 +573,13 @@ public sealed class TQuery<T1, T2, T3, T4> : QueryParam
         using ViewCursor Cursor = Open();
         while (Cursor.MoveNext())
         {
-            Func(Cursor.Entity, T1.At((nint)Cursor.At(0)), T2.At((nint)Cursor.At(1)), T3.At((nint)Cursor.At(2)), T4.At((nint)Cursor.At(3)));
+            Func(Cursor.Entity, Cursor.Term<T1>(0), Cursor.Term<T2>(1), Cursor.Term<T3>(2), Cursor.Term<T4>(3));
         }
         CompleteRun();
     }
 
     public void ParallelForEach(QueryFunc<T1, T2, T3, T4> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Pointers, Row) => Func(Entity, T1.At(Pointers[Row]), T2.At(Pointers[Row + 1]), T3.At(Pointers[Row + 2]), T4.At(Pointers[Row + 3])));
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1), Rows.At<T3>(Row + 2), Rows.At<T4>(Row + 3)));
 }
 
 // A system field that reads every T sent since it last read, like ECS::TEventReader. Read and ReadViews come from SystemEvents.

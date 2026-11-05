@@ -1599,7 +1599,7 @@ namespace Lumina
 
             if (SessionKeyHasPrefix(Tab, GSessionAssetPrefix))
             {
-                const FString GuidText = Tab.Mid(strlen(GSessionAssetPrefix));
+                const FString GuidText = Tab.Mid(static_cast<int32>(strlen(GSessionAssetPrefix)));
                 const TOptional<FGuid> Guid = FGuid::TryParse(FStringView(*GuidText, GuidText.Len()));
                 if (!Guid.IsSet())
                 {
@@ -1632,7 +1632,7 @@ namespace Lumina
             }
             else if (SessionKeyHasPrefix(Tab, GSessionFilePrefix))
             {
-                const FString Path = Tab.Mid(strlen(GSessionFilePrefix));
+                const FString Path = Tab.Mid(static_cast<int32>(strlen(GSessionFilePrefix)));
                 if (!VFS::Exists(FStringView(*Path, Path.Len())))
                 {
                     continue;   // the file is genuinely gone, so drop it

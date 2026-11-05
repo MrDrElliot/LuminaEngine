@@ -73,6 +73,7 @@ namespace Lumina
     void FBlendSpaceEditorTool::SetupWorldForTool()
     {
         FEditorTool::SetupWorldForTool();
+        World->GetRenderSettings().bDrawBillboards = false;
 
         CreateFloorPlane();
 
@@ -154,11 +155,6 @@ namespace Lumina
         if (CachedSkeleton.Get() != GetSkeleton())
         {
             RefreshPreviewMesh();
-        }
-
-        if (World->GetRenderer() != nullptr)
-        {
-            World->GetRenderSettings().bDrawBillboards = false;
         }
 
         SyncSampleTable();

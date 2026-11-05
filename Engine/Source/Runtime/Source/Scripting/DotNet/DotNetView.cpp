@@ -24,8 +24,10 @@ namespace Lumina::DotNetViewInternal
         TVector<ECS::FSparseSet*>  ExcludeStorages;
         TVector<ECS::FSparseSet*>  RequireStorages;
 
-        // The tracked includes the caller writes in place, whose rows are stamped as they are handed out.
+        // The tracked includes a query writes in place, whose rows hand out their change-tick slots so a write handle stamps only what it touches.
         uint32                     StampMask = 0;
+        uint32                     StampTick = 0;
+        uint32                     TickSink = 0;
     };
 
     NODISCARD uint32 AllIncludes(int NInc)
@@ -58,6 +60,8 @@ namespace Lumina::DotNetViewInternal
             if ((WriteMask & (1u << i)) != 0 && Storage->IsTrackingChanges())
             {
                 Storage->MarkPointersEscaped();
+                State->StampTick = ECS::FSparseSet::GetChangeTick();
+                Storage->NoteStampTick(State->StampTick);
                 State->StampMask |= 1u << i;
             }
 
@@ -148,7 +152,7 @@ namespace Lumina::DotNetViewInternal
     }
 }
 
-// The runtime view is consumed here, and only the snapshot and storages live on. Every include is written in place.
+// The runtime view is consumed here, and only the snapshot and storages live on. Every include is handed out writable and, like a plain T walk, never stamped.
 LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeOps, int NInc, const void* const* ExcludeOps, int NExc)
 {
     Lumina::CWorld* W = Lumina::DotNet::AsWorld(World);
@@ -165,9 +169,9 @@ LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeO
     return State;
 }
 
-// A C# query field's view: only its Write includes stamp, and with filters it holds just the rows written or added after Since.
+// A C# query field's view, whose Write includes hand out tick slots stamped with OutStampTick, and which with filters holds just the rows written or added after Since.
 LUMINA_DOTNET_EXPORT(void*, QueryViewBegin)(uint64 World, const void* const* IncludeOps, int NInc, uint32 WriteMask, const void* const* ExcludeOps, int NExc,
-                                            const void* const* RequireOps, int NReq, const void* const* FilterOps, int NFilter, uint32 AddedMask, uint32 Since)
+                                            const void* const* RequireOps, int NReq, const void* const* FilterOps, int NFilter, uint32 AddedMask, uint32 Since, uint32* OutStampTick)
 {
     Lumina::CWorld* W = Lumina::DotNet::AsWorld(World);
     if (W == nullptr || IncludeOps == nullptr || NInc <= 0)
@@ -177,6 +181,7 @@ LUMINA_DOTNET_EXPORT(void*, QueryViewBegin)(uint64 World, const void* const* Inc
 
     Lumina::ECS::FRegistry& Registry = W->GetEntityRegistry();
     Lumina::DotNetViewInternal::FViewState* State = Lumina::DotNetViewInternal::BeginView(Registry, IncludeOps, NInc, WriteMask, ExcludeOps, NExc, RequireOps, NReq);
+    *OutStampTick = State->StampTick;
     if (State->IncludeStorages.IsEmpty())
     {
         return State;
@@ -198,8 +203,8 @@ LUMINA_DOTNET_EXPORT(uint32, AdvanceChangeTick)()
     return Lumina::ECS::FSparseSet::AdvanceChangeTick();
 }
 
-// Pointers resolve fresh per chunk, so a storage realloc between chunks is harmless.
-LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, void** OutPtrs, int MaxCount, int NInclude)
+// Pointers resolve fresh per chunk, so a storage realloc between chunks is harmless. OutTicks, when given, gets each row's change-tick slot per include, null where nothing stamps.
+LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, void** OutPtrs, uint32** OutTicks, int MaxCount, int NInclude)
 {
     Lumina::DotNetViewInternal::FViewState* State = static_cast<Lumina::DotNetViewInternal::FViewState*>(StatePtr);
     if (State == nullptr || OutEntities == nullptr || OutPtrs == nullptr || MaxCount <= 0 || State->Driver == nullptr)
@@ -295,14 +300,13 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
             continue;
         }
 
-        if (State->StampMask != 0)
+        if (OutTicks != nullptr)
         {
-            for (int k = 0; k < N; ++k)
+            uint32** Ticks = OutTicks + (size_t)Count * (size_t)NInclude;
+            for (int k = 0; k < K; ++k)
             {
-                if ((State->StampMask & (1u << k)) != 0)
-                {
-                    Includes[k]->StampEntity(Entity);
-                }
+                const bool bStamps = (State->StampMask & (1u << k)) != 0;
+                Ticks[k] = bStamps ? Includes[k]->GetChangeTickSlot(Includes[k]->FindLiveDense(Entity), State->TickSink) : nullptr;
             }
         }
 

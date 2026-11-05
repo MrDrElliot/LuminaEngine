@@ -59,7 +59,7 @@ namespace Lumina
 
     bool SCameraRigSystem::HasWork(const SSystemContext&)
     {
-        return !Followers.IsEmpty() || !SpringArms.IsEmpty();
+        return AnyQueryHasRows(Followers, SpringArms);
     }
 
     void SCameraRigSystem::OnUpdate(const SSystemContext& Context)
@@ -70,14 +70,16 @@ namespace Lumina
         Physics::IPhysicsQueries* PhysicsQueries = Context.GetPhysics();
 
         //~ Follow eases toward Target + Offset, optionally facing the target.
-        Followers.ForEach([&](SCameraFollowComponent& Follow, STransformComponent& Xform)
+        Followers.ForEach([&](ECS::TMut<SCameraFollowComponent> FollowMut, ECS::TMut<STransformComponent> XformMut)
         {
-            const STransformComponent* TargetXform = Targets.TryGet<STransformComponent>(Follow.Target);
+            const STransformComponent* TargetXform = Targets.TryGet<STransformComponent>(FollowMut.Get().Target);
             if (TargetXform == nullptr)
             {
                 return;
             }
 
+            STransformComponent& Xform = XformMut.GetMut();
+            SCameraFollowComponent& Follow = FollowMut.GetMut();
             const FVector3 TargetPos = TargetXform->GetWorldLocation();
             const FQuat TargetRot = TargetXform->GetWorldRotation();
 
@@ -124,8 +126,10 @@ namespace Lumina
         });
 
         //~ Spring arm places the camera a collision-shortened distance behind the pivot.
-        SpringArms.ForEach([&](ECS::FEntity Entity, SSpringArmComponent& Arm, STransformComponent& Xform)
+        SpringArms.ForEach([&](ECS::FEntity Entity, ECS::TMut<SSpringArmComponent> ArmMut, ECS::TMut<STransformComponent> XformMut)
         {
+            STransformComponent& Xform = XformMut.GetMut();
+            SSpringArmComponent& Arm = ArmMut.GetMut();
             const ECS::FEntity Target = Arm.Target;
             const STransformComponent* TargetXform = Targets.TryGet<STransformComponent>(Target);
             const bool bHasTarget = TargetXform != nullptr;
