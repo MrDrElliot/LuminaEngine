@@ -178,8 +178,9 @@ namespace Lumina
             FQuat    SourceBindR;
             FVector3 SourceBindS;
 
-            // Other bones keep the clip's rotation and scale its translation to the target's bone length.
-            float TranslationScale = 1.0f;
+            // Other bones keep the clip's rotation; translation is the target's bind offset plus the clip's scaled motion.
+            FVector3 TargetBindT;
+            float    TranslationScale = 1.0f;
         };
 
         // Resolved once per (skeleton, bind generation) and never mutated after, so sampling inside ParallelFor needs no lock.
